@@ -1,0 +1,131 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # release upload needs this when a tag triggers the workflow
+
+env:
+  GO_VERSION: '1.23'
+  NODE_VERSION: '20'
+  WAILS_VERSION: 'v2.12.0'
+
+jobs:
+  build-linux:
+    name: linux/amd64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: install wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: install frontend deps
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: vet
+        run: go vet -tags webkit2_41 ./...
+
+      - name: e2e test (lazy uplink protocol)
+        run: go test -tags webkit2_41 -timeout 60s ./desktop/
+
+      - name: build
+        working-directory: desktop
+        run: wails build -tags webkit2_41 -platform linux/amd64
+
+      - name: package
+        run: |
+          cd desktop/build/bin
+          tar -czf "atterm-desktop-linux-amd64.tar.gz" atterm-desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atterm-desktop-linux-amd64
+          path: desktop/build/bin/atterm-desktop-linux-amd64.tar.gz
+          if-no-files-found: error
+
+  build-darwin-arm:
+    name: darwin/arm64
+    runs-on: macos-14 # Apple Silicon by default
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: install wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: install frontend deps
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: build
+        working-directory: desktop
+        run: wails build -platform darwin/arm64
+
+      - name: package
+        run: |
+          cd desktop/build/bin
+          zip -r "atterm-desktop-darwin-arm64.zip" atterm-desktop.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atterm-desktop-darwin-arm64
+          path: desktop/build/bin/atterm-desktop-darwin-arm64.zip
+          if-no-files-found: error
+
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-darwin-arm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: list
+        run: find artifacts -type f
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/atterm-desktop-linux-amd64/atterm-desktop-linux-amd64.tar.gz
+            artifacts/atterm-desktop-darwin-arm64/atterm-desktop-darwin-arm64.zip
+          generate_release_notes: true

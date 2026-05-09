@@ -121,10 +121,57 @@ jobs:
           path: desktop/build/bin/atterm-desktop-darwin-arm64.zip
           if-no-files-found: error
 
+  build-windows:
+    name: windows/amd64
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash # use Git Bash so the recipes match the other jobs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: install wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: install frontend deps
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: build frontend
+        working-directory: desktop/frontend
+        run: npm run build
+
+      - name: build
+        working-directory: desktop
+        run: wails build -platform windows/amd64 -s
+
+      - name: package
+        working-directory: desktop/build/bin
+        run: 7z a "atterm-desktop-windows-amd64.zip" atterm-desktop.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atterm-desktop-windows-amd64
+          path: desktop/build/bin/atterm-desktop-windows-amd64.zip
+          if-no-files-found: error
+
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-darwin-arm]
+    needs: [build-linux, build-darwin-arm, build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -139,4 +186,5 @@ jobs:
           files: |
             artifacts/atterm-desktop-linux-amd64/atterm-desktop-linux-amd64.tar.gz
             artifacts/atterm-desktop-darwin-arm64/atterm-desktop-darwin-arm64.zip
+            artifacts/atterm-desktop-windows-amd64/atterm-desktop-windows-amd64.zip
           generate_release_notes: true

@@ -48,6 +48,13 @@ jobs:
         working-directory: desktop/frontend
         run: npm ci
 
+      # desktop/main.go has //go:embed all:frontend/dist — Go demands the
+      # directory exists at compile time even for `vet`. Build the frontend
+      # before any Go tooling touches the desktop package.
+      - name: build frontend (populate embed target)
+        working-directory: desktop/frontend
+        run: npm run build
+
       - name: vet
         run: go vet -tags webkit2_41 ./...
 
@@ -56,7 +63,7 @@ jobs:
 
       - name: build
         working-directory: desktop
-        run: wails build -tags webkit2_41 -platform linux/amd64
+        run: wails build -tags webkit2_41 -platform linux/amd64 -s
 
       - name: package
         run: |
@@ -95,9 +102,13 @@ jobs:
         working-directory: desktop/frontend
         run: npm ci
 
+      - name: build frontend
+        working-directory: desktop/frontend
+        run: npm run build
+
       - name: build
         working-directory: desktop
-        run: wails build -platform darwin/arm64
+        run: wails build -platform darwin/arm64 -s
 
       - name: package
         run: |

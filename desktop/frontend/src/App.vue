@@ -183,6 +183,26 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
   const t = currentTab.value;
   if (!t) return;
 
+  // Pick mode: bail before mutating layout if there's nothing the picker
+  // could populate. Otherwise the user gets a permanently empty quadrant
+  // they have to manually close after canceling.
+  if (mode === "pick") {
+    const usedIds = new Set(
+      t.panes.map((p) => p.sessionId).filter((id): id is string => !!id),
+    );
+    const eligible =
+      localList.value.filter((s) => !usedIds.has(s.id)).length +
+      remoteList.value.filter((s) => !usedIds.has(s.id)).length;
+    if (eligible === 0) {
+      showToast(
+        remoteEndpoint.value
+          ? "no other sessions to attach"
+          : "no other sessions — connect a relay or start one locally",
+      );
+      return;
+    }
+  }
+
   // Capture the active pane's cwd BEFORE mutation. After transitionLayout the
   // active idx points at the new (empty) slot, so we'd lose the parent.
   let parentCwd = "";

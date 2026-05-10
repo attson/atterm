@@ -59,44 +59,46 @@ function formatWho(info: SessionInfo | null): string {
       />
       <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
 
-      <div
-        v-if="pane.sessionId && pane.remote"
-        class="remote-badge"
-        :title="
-          (sessionInfoFor(pane)?.host_id
-            ? 'host_id ' + sessionInfoFor(pane)!.host_id + '\n'
-            : '') + 'session ' + pane.sessionId
-        "
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="11" height="11"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.4"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
+      <div class="cell-controls">
+        <div
+          v-if="pane.sessionId && pane.remote"
+          class="remote-badge"
+          :title="
+            (sessionInfoFor(pane)?.host_id
+              ? 'host_id ' + sessionInfoFor(pane)!.host_id + '\n'
+              : '') + 'session ' + pane.sessionId
+          "
         >
-          <path d="M2 16.1A5 5 0 0 1 5.9 20" />
-          <path d="M2 12.05A9 9 0 0 1 9.95 20" />
-          <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
-          <line x1="2" y1="20" x2="2.01" y2="20" />
-        </svg>
-        <span v-if="formatWho(sessionInfoFor(pane))" class="who">
-          {{ formatWho(sessionInfoFor(pane)) }}
-        </span>
-        <span v-else class="who dim">remote</span>
-        <span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>
-      </div>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="11" height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M2 16.1A5 5 0 0 1 5.9 20" />
+            <path d="M2 12.05A9 9 0 0 1 9.95 20" />
+            <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
+            <line x1="2" y1="20" x2="2.01" y2="20" />
+          </svg>
+          <span v-if="formatWho(sessionInfoFor(pane))" class="who">
+            {{ formatWho(sessionInfoFor(pane)) }}
+          </span>
+          <span v-else class="who dim">remote</span>
+          <span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>
+        </div>
 
-      <button
-        v-if="tab.layout !== 'single'"
-        class="close-pane"
-        title="close pane (⌘W / Ctrl+W)"
-        @click.stop="emit('close-pane', idx)"
-      >×</button>
+        <button
+          v-if="tab.layout !== 'single'"
+          class="close-pane"
+          title="close pane (⌘W / Ctrl+W)"
+          @click.stop="emit('close-pane', idx)"
+        >×</button>
+      </div>
     </div>
   </div>
 </template>
@@ -129,10 +131,18 @@ function formatWho(info: SessionInfo | null): string {
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.remote-badge {
+.cell-controls {
   position: absolute;
   top: 6px;
-  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* badge + close button float over the terminal; clicks on empty space
+     between them should pass through to xterm. Each child opts back in. */
+  pointer-events: none;
+}
+.remote-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -144,8 +154,9 @@ function formatWho(info: SessionInfo | null): string {
   line-height: 1.5;
   color: #d29922;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  pointer-events: none;
   user-select: none;
+  /* badge is informational only; let clicks fall through to terminal */
+  pointer-events: none;
 }
 .remote-badge svg { display: block; }
 .remote-badge .who { font-weight: 600; }
@@ -159,9 +170,6 @@ function formatWho(info: SessionInfo | null): string {
   margin-right: 4px;
 }
 .close-pane {
-  position: absolute;
-  top: 4px;
-  right: 4px;
   border: none;
   background: rgba(13, 17, 23, 0.7);
   color: var(--fg-dim);
@@ -171,6 +179,7 @@ function formatWho(info: SessionInfo | null): string {
   border-radius: 4px;
   cursor: pointer;
   opacity: 0;
+  pointer-events: auto;
   transition: opacity 120ms, background 120ms, color 120ms;
 }
 .cell:hover .close-pane { opacity: 1; }

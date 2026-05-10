@@ -41,6 +41,19 @@ function safeFit() {
   } catch {
     /* ignore initial-mount races */
   }
+  // Diagnostic: terminal sometimes rendered at default 24 rows when
+  // FitAddon's proposeDimensions saw "auto" on the parent's computed
+  // height during a layout race. Surface to the console so we can spot it.
+  if (term && termContainer.value) {
+    const r = termContainer.value.getBoundingClientRect();
+    if (term.rows < Math.floor(r.height / 30)) {
+      // Heuristic: if cell can fit > N rows but term has way fewer, fit failed.
+      console.warn(
+        "[atterm] suspicious term size after fit",
+        { containerW: r.width, containerH: r.height, cols: term.cols, rows: term.rows },
+      );
+    }
+  }
 }
 
 function ensureTerm() {
@@ -96,6 +109,15 @@ function startConnection() {
 onMounted(() => {
   ensureTerm();
   startConnection();
+  // Re-fit on the next two animation frames. Layout for the cell may not
+  // be fully resolved at term.open() time — getComputedStyle('height') on
+  // the absolute+inset:0 .term sometimes still reads "auto" right after
+  // mount, which makes FitAddon return NaN and bail. By the time we get a
+  // second rAF the layout has definitely settled.
+  requestAnimationFrame(() => {
+    safeFit();
+    requestAnimationFrame(() => safeFit());
+  });
 });
 
 onBeforeUnmount(() => {

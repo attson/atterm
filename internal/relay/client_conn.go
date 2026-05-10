@@ -56,13 +56,16 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn) {
 					err := c.Ping(ctx)
 					cancel()
 					if err != nil {
+						s.debugf("client ping_failed error=%q", err)
 						return
 					}
 				case f := <-sub.Out():
+					s.debugFrame("client", "send", f)
 					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
 					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 					cancel()
 					if err != nil {
+						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 						return
 					}
 				}
@@ -79,6 +82,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn) {
 			}
 			return
 		}
+		s.debugFrame("client", "recv", f)
 		switch f.Type {
 		case proto.TypeList:
 			sessions := s.registry.List()
@@ -87,13 +91,13 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn) {
 				infos = append(infos, ss.Info())
 			}
 			payload, _ := json.Marshal(infos)
+			resp := proto.Frame{Type: proto.TypeListResp, Payload: payload}
+			s.debugFrame("client", "send", resp)
 			ctx, cancel := context.WithTimeout(ctx, clientWriteWait)
-			err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
-				Type:    proto.TypeListResp,
-				Payload: payload,
-			}))
+			err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(resp))
 			cancel()
 			if err != nil {
+				s.debugf("client write_failed frame=LIST_RESP error=%q", err)
 				return
 			}
 
@@ -120,10 +124,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn) {
 			}
 			sess = target
 			sub, _ = sess.Subscribe(ap.SinceSeq)
+			s.debugf("client attached session=%s since_seq=%d", id, ap.SinceSeq)
 			startWriter()
 
 		case proto.TypeIn, proto.TypeResize:
 			if sess == nil {
+				s.debugf("client drop frame=%s reason=not_attached", frameTypeName(f.Type))
 				continue
 			}
 			if !sess.SendInbound(f) {

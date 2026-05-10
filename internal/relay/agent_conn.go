@@ -34,6 +34,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn) {
 		_ = c.Close(websocket.StatusPolicyViolation, "first frame must be OPEN")
 		return
 	}
+	s.debugFrame("agent", "recv", openFrame)
 	var op proto.OpenPayload
 	if err := json.Unmarshal(openFrame.Payload, &op); err != nil {
 		_ = c.Close(websocket.StatusPolicyViolation, "bad OPEN payload")
@@ -72,16 +73,19 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn) {
 				err := c.Ping(ctx)
 				cancel()
 				if err != nil {
+					s.debugf("agent ping_failed session=%s error=%q", openFrame.SessionID, err)
 					return
 				}
 			case f, ok := <-sess.Inbound():
 				if !ok {
 					return
 				}
+				s.debugFrame("agent", "send", f)
 				ctx, cancel := context.WithTimeout(writerCtx, agentWriteWait)
 				err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 				cancel()
 				if err != nil {
+					s.debugf("agent write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 					return
 				}
 			}
@@ -98,6 +102,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn) {
 			}
 			return
 		}
+		s.debugFrame("agent", "recv", f)
 		switch f.Type {
 		case proto.TypeOut:
 			seq, data, err := proto.DecodeOut(f.Payload)

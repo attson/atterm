@@ -18,6 +18,10 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
 	origins := flag.String("origins", "", "comma-separated allowed Origin host patterns (empty = allow any, dev only)")
+	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
+	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
+	debug := flag.Bool("debug", debugDefault, "enable verbose relay interaction logs (or ATTERM_RELAY_DEBUG=1)")
+	debugPayload := flag.Bool("debug-payload", debugPayloadDefault, "include IN/OUT byte contents in debug logs (or ATTERM_RELAY_DEBUG_PAYLOAD=1)")
 	flag.Parse()
 
 	token := os.Getenv("ATTERM_TOKEN")
@@ -26,8 +30,10 @@ func main() {
 	}
 
 	cfg := relay.Config{
-		Token:  token,
-		WebDir: *webDir,
+		Token:        token,
+		WebDir:       *webDir,
+		Debug:        *debug || *debugPayload,
+		DebugPayload: *debugPayload,
 	}
 	if *origins != "" {
 		cfg.AllowedOrigins = splitCSV(*origins)
@@ -56,6 +62,15 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
+}
+
+func envEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitCSV(s string) []string {

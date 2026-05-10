@@ -47,6 +47,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 		_ = c.Close(websocket.StatusPolicyViolation, "first frame must be ANNOUNCE")
 		return
 	}
+	s.debugFrame("uplink", "recv", first)
 	var ann proto.AnnouncePayload
 	if err := json.Unmarshal(first.Payload, &ann); err != nil {
 		_ = c.Close(websocket.StatusPolicyViolation, "bad ANNOUNCE payload")
@@ -85,7 +86,9 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 
 		// notify uplink to start sending bytes
 		payload, _ := json.Marshal(proto.StreamRequestPayload{SessionID: id.String()})
-		enqueue(proto.Frame{Type: proto.TypeStreamRequest, SessionID: id, Payload: payload})
+		frame := proto.Frame{Type: proto.TypeStreamRequest, SessionID: id, Payload: payload}
+		s.debugFrame("uplink", "enqueue", frame)
+		enqueue(frame)
 
 		// drain the mirror session's inbound (IN/RESIZE coming from web clients)
 		// and push them up the WS to the uplink, so the desktop can route them
@@ -100,6 +103,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 					if !ok {
 						return
 					}
+					s.debugFrame("uplink", "enqueue", f)
 					select {
 					case uplinkOut <- f:
 					case <-fwdCtx.Done():
@@ -121,7 +125,9 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 		ms.fwdCancel = nil
 		mu.Unlock()
 		payload, _ := json.Marshal(proto.StreamStopPayload{SessionID: id.String()})
-		enqueue(proto.Frame{Type: proto.TypeStreamStop, SessionID: id, Payload: payload})
+		frame := proto.Frame{Type: proto.TypeStreamStop, SessionID: id, Payload: payload}
+		s.debugFrame("uplink", "enqueue", frame)
+		enqueue(frame)
 	}
 
 	// reconcile applies a fresh ANNOUNCE: add new sessions, remove vanished
@@ -140,6 +146,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 			mu.Unlock()
 			if ok {
 				existing.sess.UpdateMeta(proto.MetaPayload{Cwd: info.Cwd, Title: info.Title})
+				s.debugf("uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
 				continue
 			}
 
@@ -154,6 +161,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 			mu.Lock()
 			mirrors[id] = &mirrorState{sess: sess}
 			mu.Unlock()
+			s.debugf("uplink mirror_add session=%s command=%q host_id=%q host=%q user=%q", id, info.Command, info.HostID, info.Host, info.User)
 		}
 		// remove sessions no longer in the manifest
 		mu.Lock()
@@ -173,6 +181,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 				ms.fwdCancel()
 			}
 			s.registry.Remove(id)
+			s.debugf("uplink mirror_remove session=%s reason=missing_from_announce", id)
 		}
 	}
 
@@ -186,6 +195,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 		mu.Unlock()
 		for _, id := range ids {
 			s.registry.Remove(id)
+			s.debugf("uplink mirror_remove session=%s reason=connection_cleanup", id)
 		}
 	}
 	defer cleanup()
@@ -217,10 +227,12 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 					return
 				}
 			case f := <-uplinkOut:
+				s.debugFrame("uplink", "send", f)
 				wctx, wc := context.WithTimeout(connCtx, uplinkWriteWait)
 				err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(f))
 				wc()
 				if err != nil {
+					s.debugf("uplink write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 					return
 				}
 			}
@@ -237,6 +249,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 			}
 			return
 		}
+		s.debugFrame("uplink", "recv", f)
 		switch f.Type {
 		case proto.TypeAnnounce:
 			var p proto.AnnouncePayload

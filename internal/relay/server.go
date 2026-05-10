@@ -6,7 +6,9 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/attson/atterm/internal/proto"
@@ -23,6 +25,14 @@ type Config struct {
 	// AllowedOrigins, when non-empty, gates browser WS upgrades by Origin host.
 	// Empty allows any origin (dev mode).
 	AllowedOrigins []string
+	// Debug enables verbose relay interaction logs. PTY byte payloads are
+	// summarized by default; set DebugPayload to include IN/OUT contents.
+	Debug bool
+	// DebugPayload includes IN/OUT bytes in debug logs. This may leak command
+	// input or terminal output; only enable during local debugging.
+	DebugPayload bool
+	// DebugLog overrides where debug logs are written. Nil writes to stderr.
+	DebugLog io.Writer
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -34,6 +44,9 @@ type Server struct {
 
 // NewServer builds a Server with its routes installed.
 func NewServer(cfg Config) *Server {
+	if cfg.DebugLog == nil {
+		cfg.DebugLog = os.Stderr
+	}
 	s := &Server{
 		cfg:      cfg,
 		registry: session.NewRegistry(),
@@ -77,32 +90,39 @@ func (s *Server) acceptOptions() *websocket.AcceptOptions {
 
 func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	if !authorize(r, s.cfg.Token) {
+		s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	c, err := websocket.Accept(w, r, s.acceptOptions())
 	if err != nil {
+		s.debugf("ws reject path=/agent remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
 		return
 	}
+	s.debugf("ws accept path=/agent remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
 	s.handleAgent(r.Context(), c)
 }
 
 func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 	if !authorize(r, s.cfg.Token) {
+		s.debugf("http reject path=/uplink remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	c, err := websocket.Accept(w, r, s.acceptOptions())
 	if err != nil {
+		s.debugf("ws reject path=/uplink remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
 		return
 	}
+	s.debugf("ws accept path=/uplink remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
 	s.handleUplink(r.Context(), c)
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	if !authorize(r, s.cfg.Token) {
+		s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -119,18 +139,22 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := websocket.Accept(w, r, opts)
 	if err != nil {
+		s.debugf("ws reject path=/client remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
 		return
 	}
+	s.debugf("ws accept path=/client remote=%s origin=%q subprotocol=%q", r.RemoteAddr, r.Header.Get("Origin"), c.Subprotocol())
 	defer c.Close(websocket.StatusInternalError, "")
 	s.handleClient(r.Context(), c)
 }
 
 func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	if !authorize(r, s.cfg.Token) {
+		s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	sessions := s.registry.List()
+	s.debugf("http api_sessions remote=%s sessions=%d", r.RemoteAddr, len(sessions))
 	infos := make([]proto.SessionInfo, 0, len(sessions))
 	for _, ss := range sessions {
 		infos = append(infos, ss.Info())

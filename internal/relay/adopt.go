@@ -36,6 +36,8 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 	info.ID = id.String()
 	sess := session.New(id, info)
 	s.registry.Add(sess)
+	s.debugf("adopt open session=%s command=%q cwd=%q title=%q host_id=%q host=%q user=%q cols=%d rows=%d",
+		id, info.Command, info.Cwd, info.Title, info.HostID, info.Host, info.User, info.Cols, info.Rows)
 
 	loopCtx, cancel := context.WithCancel(ctx)
 	var (
@@ -47,6 +49,7 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 		closeOnce.Do(func() {
 			cancel()
 			s.registry.Remove(id)
+			s.debugf("adopt cleanup session=%s", id)
 		})
 	}
 
@@ -60,7 +63,10 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 			}
 			n, err := host.Read(buf)
 			if n > 0 {
-				sess.PushOut(seq.Add(1), append([]byte(nil), buf[:n]...))
+				nextSeq := seq.Add(1)
+				frame := proto.EncodeOut(id, nextSeq, buf[:n])
+				s.debugFrame("adopt", "recv", frame)
+				sess.PushOut(nextSeq, append([]byte(nil), buf[:n]...))
 			}
 			if err != nil {
 				if !errors.Is(err, io.EOF) && loopCtx.Err() == nil {
@@ -76,6 +82,7 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 					SessionID: id,
 					Payload:   closePayload,
 				})
+				s.debugFrame("adopt", "recv", proto.Frame{Type: proto.TypeClose, SessionID: id, Payload: closePayload})
 				cleanup()
 				return
 			}
@@ -92,6 +99,7 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 				if !ok {
 					return
 				}
+				s.debugFrame("adopt", "send", f)
 				switch f.Type {
 				case proto.TypeIn:
 					if _, err := host.Write(f.Payload); err != nil {

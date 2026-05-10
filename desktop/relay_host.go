@@ -52,7 +52,9 @@ func startRelayHost() (*relayHost, error) {
 		return nil, err
 	}
 	srv := relay.NewServer(relay.Config{
-		Token: token,
+		Token:        token,
+		Debug:        relayDebugEnabled(),
+		DebugPayload: relayDebugPayloadEnabled(),
 		// Loopback-only listener already constrains who can reach us; allow
 		// any origin so the webview's wails:// scheme and Vite dev's
 		// http://localhost:* both pass the WS upgrade check.
@@ -80,6 +82,23 @@ func startRelayHost() (*relayHost, error) {
 		sessions: make(map[uuid.UUID]*activeSession),
 		changes:  make(chan struct{}, 1),
 	}, nil
+}
+
+func relayDebugEnabled() bool {
+	return envEnabled("ATTERM_RELAY_DEBUG") || relayDebugPayloadEnabled()
+}
+
+func relayDebugPayloadEnabled() bool {
+	return envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
+}
+
+func envEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // notifyChange marks the session set dirty for any uplink watching it.

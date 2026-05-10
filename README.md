@@ -4,7 +4,7 @@
 
 **当前能力**
 
-- ✅ Wails 桌面 app（Linux / macOS / Windows）：多 tab、每 tab 1/2/4 pane 分屏（⌘D / ⌘⇧D，Linux/Windows 用 Ctrl）、本地 PTY、cwd 跟踪、远程 cast 面板
+- ✅ Wails 桌面 app（Linux / macOS / Windows）：多 tab、每 tab 1/2/4 pane 分屏（⌘N / ⌘⇧N，Linux/Windows 用 Ctrl）、本地 PTY、cwd 跟踪、远程 cast 面板
 - ✅ 中央 relay：本地或公网部署，统一 attach 入口
 - ✅ Lazy 远程同步：远程 relay 静默时不传字节，按需上传，本地体验不受其可达性影响
 - ⬜ 用户系统、TLS 自动化、移动端、shell 集成（路线图见 [`doc/spec/architecture.md`](doc/spec/architecture.md)）

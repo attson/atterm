@@ -45,7 +45,7 @@ function onPaneClick(idx: number) {
         :active="active"
         :focused="active && idx === tab.activePaneIdx"
       />
-      <div v-else class="empty">[empty pane — press ⌘D / Ctrl+D to fill]</div>
+      <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
       <button
         v-if="tab.layout !== 'single'"
         class="close-pane"

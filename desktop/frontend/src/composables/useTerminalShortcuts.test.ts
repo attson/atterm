@@ -29,28 +29,30 @@ describe("useTerminalShortcuts", () => {
     scope.stop();
   });
 
-  it("Ctrl+D → onSplitVertical('new')", () => {
-    fireKey({ key: "d", code: "KeyD", ctrlKey: true });
+  it("Ctrl+N → onSplitVertical('new')", () => {
+    fireKey({ key: "n", code: "KeyN", ctrlKey: true });
     expect(handlers.onSplitVertical).toHaveBeenCalledWith("new");
   });
 
-  it("Ctrl+Shift+D → onSplitHorizontal('new')", () => {
-    fireKey({ key: "D", code: "KeyD", ctrlKey: true, shiftKey: true });
+  it("Ctrl+Shift+N → onSplitHorizontal('new')", () => {
+    fireKey({ key: "N", code: "KeyN", ctrlKey: true, shiftKey: true });
     expect(handlers.onSplitHorizontal).toHaveBeenCalledWith("new");
   });
 
-  it("Ctrl+Alt+D → onSplitVertical('pick')", () => {
-    fireKey({ key: "d", code: "KeyD", ctrlKey: true, altKey: true });
+  it("Ctrl+Alt+N → onSplitVertical('pick')", () => {
+    fireKey({ key: "n", code: "KeyN", ctrlKey: true, altKey: true });
     expect(handlers.onSplitVertical).toHaveBeenCalledWith("pick");
   });
 
-  it("Ctrl+Alt+Shift+D → onSplitHorizontal('pick')", () => {
-    fireKey({ key: "D", code: "KeyD", ctrlKey: true, altKey: true, shiftKey: true });
+  it("Ctrl+Alt+Shift+N → onSplitHorizontal('pick')", () => {
+    fireKey({ key: "N", code: "KeyN", ctrlKey: true, altKey: true, shiftKey: true });
     expect(handlers.onSplitHorizontal).toHaveBeenCalledWith("pick");
   });
 
-  it("macOS ⌘⌥D synthesizes key='∂' but code='KeyD' → still triggers pick", () => {
-    fireKey({ key: "∂", code: "KeyD", ctrlKey: true, altKey: true });
+  it("macOS ⌘⌥N synthesizes key='˜' but code='KeyN' → still triggers pick", () => {
+    // ⌥N on US layout produces "˜" (combining tilde dead key); handler must
+    // match by physical key (e.code), not e.key.
+    fireKey({ key: "˜", code: "KeyN", ctrlKey: true, altKey: true });
     expect(handlers.onSplitVertical).toHaveBeenCalledWith("pick");
   });
 
@@ -85,19 +87,19 @@ describe("useTerminalShortcuts", () => {
     expect(handlers.onSwitchTab).toHaveBeenCalledWith(-1);
   });
 
-  it("plain D (no modifier) → ignored", () => {
-    fireKey({ key: "d", code: "KeyD" });
+  it("plain N (no modifier) → ignored", () => {
+    fireKey({ key: "n", code: "KeyN" });
     expect(handlers.onSplitVertical).not.toHaveBeenCalled();
   });
 
-  it("Ctrl+D preventDefault + stopPropagation", () => {
-    const ev = fireKey({ key: "d", code: "KeyD", ctrlKey: true });
+  it("Ctrl+N preventDefault + stopPropagation", () => {
+    const ev = fireKey({ key: "n", code: "KeyN", ctrlKey: true });
     expect(ev.defaultPrevented).toBe(true);
   });
 
   it("scope.stop unbinds the listener", () => {
     scope.stop();
-    fireKey({ key: "d", code: "KeyD", ctrlKey: true });
+    fireKey({ key: "n", code: "KeyN", ctrlKey: true });
     expect(handlers.onSplitVertical).not.toHaveBeenCalled();
   });
 });

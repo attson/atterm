@@ -51,7 +51,10 @@ export function useTerminalShortcuts(
     // stays "KeyD" / "BracketLeft" regardless.
     const code = e.code;
 
-    if (code === "KeyD") {
+    if (code === "KeyN") {
+      // Split shortcut. ⌥⌘D was the original choice but macOS has hardcoded
+      // ⌥⌘D = "Toggle Dock auto-hide" at the OS level — WKWebView never sees
+      // the keydown. N (for "new pane") is unclaimed by any menu we register.
       e.preventDefault();
       e.stopPropagation();
       const mode: SplitMode = e.altKey ? "pick" : "new";

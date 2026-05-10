@@ -13,6 +13,11 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// Version is set at build time via -ldflags -X main.Version=<tag>.
+// Empty / "dev" disables the auto-update subsystem (the running build is
+// not from a tagged release, so there's no sensible base to compare).
+var Version = "dev"
+
 func main() {
 	app := NewApp()
 

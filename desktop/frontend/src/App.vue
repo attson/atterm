@@ -68,6 +68,11 @@ function endpointFor(pane: Pane): Endpoint | null {
   return pane.remote ? remoteEndpoint.value : localEndpoint.value;
 }
 
+function paneSessionInfo(pane: Pane): SessionInfo | null {
+  if (!pane.sessionId) return null;
+  return findSessionInfo(pane.sessionId, pane.remote) ?? null;
+}
+
 function showToast(msg: string) {
   toast.value = msg;
   if (toastHandle !== null) window.clearTimeout(toastHandle);
@@ -451,6 +456,7 @@ onUnmounted(() => {
           :key="t.id"
           :tab="t"
           :endpoint-for="endpointFor"
+          :session-info-for="paneSessionInfo"
           :active="t.id === currentTabId"
           @set-active-pane="(idx) => (t.activePaneIdx = idx)"
           @close-pane="(idx) => closePaneAt(t, idx)"

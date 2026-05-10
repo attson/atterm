@@ -2,11 +2,13 @@
 import { computed } from "vue";
 import TerminalView from "./TerminalView.vue";
 import type { Endpoint } from "../lib/api";
+import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab } from "../lib/types";
 
 const props = defineProps<{
   tab: Tab;
   endpointFor: (pane: Pane) => Endpoint | null;
+  sessionInfoFor: (pane: Pane) => SessionInfo | null;
   active: boolean;
 }>();
 
@@ -27,6 +29,14 @@ const areaFor = computed(() => AREA_FOR_LAYOUT[props.tab.layout]);
 function onPaneClick(idx: number) {
   if (idx !== props.tab.activePaneIdx) emit("set-active-pane", idx);
 }
+
+function formatWho(info: SessionInfo | null): string {
+  if (!info) return "";
+  const u = info.user || "";
+  const h = info.host || "";
+  if (u && h) return `${u}@${h}`;
+  return h || u || "";
+}
 </script>
 
 <template>
@@ -46,6 +56,39 @@ function onPaneClick(idx: number) {
         :focused="active && idx === tab.activePaneIdx"
       />
       <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
+
+      <div
+        v-if="pane.sessionId && pane.remote"
+        class="remote-badge"
+        :title="
+          (sessionInfoFor(pane)?.host_id
+            ? 'host_id ' + sessionInfoFor(pane)!.host_id + '\n'
+            : '') + 'session ' + pane.sessionId
+        "
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="11" height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M2 16.1A5 5 0 0 1 5.9 20" />
+          <path d="M2 12.05A9 9 0 0 1 9.95 20" />
+          <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
+          <line x1="2" y1="20" x2="2.01" y2="20" />
+        </svg>
+        <span v-if="formatWho(sessionInfoFor(pane))" class="who">
+          {{ formatWho(sessionInfoFor(pane)) }}
+        </span>
+        <span v-else class="who dim">remote</span>
+        <span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>
+      </div>
+
       <button
         v-if="tab.layout !== 'single'"
         class="close-pane"
@@ -83,6 +126,35 @@ function onPaneClick(idx: number) {
   color: var(--fg-dim);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.remote-badge {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(13, 17, 23, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #d29922;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  pointer-events: none;
+  user-select: none;
+}
+.remote-badge svg { display: block; }
+.remote-badge .who { font-weight: 600; }
+.remote-badge .who.dim { color: var(--fg-dim); font-weight: 400; }
+.remote-badge .sid {
+  color: var(--fg-dim);
+  font-weight: 400;
+}
+.remote-badge .sid::before {
+  content: "·";
+  margin-right: 4px;
 }
 .close-pane {
   position: absolute;

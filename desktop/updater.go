@@ -57,9 +57,10 @@ type updaterConfig struct {
 type Updater struct {
 	cfg updaterConfig
 
-	mu       sync.Mutex
-	state    UpdateState
-	cachedAt time.Time // when we last fetched the latest-release manifest
+	mu         sync.Mutex
+	state      UpdateState
+	cachedAt   time.Time // when we last fetched the latest-release manifest
+	cancelLoop context.CancelFunc
 }
 
 func newUpdater(cfg updaterConfig) *Updater {
@@ -505,4 +506,58 @@ func buildHelperCommand(helperPath, pid, src, dst string) *exec.Cmd {
 		)
 	}
 	return exec.Command("false")
+}
+
+const checkInterval = 24 * time.Hour
+
+// Start launches a background goroutine that runs Check() once on boot,
+// then every 24h. Idempotent — calling Start twice is a no-op for the
+// second call.
+func (u *Updater) Start(ctx context.Context) {
+	u.mu.Lock()
+	if u.cancelLoop != nil {
+		u.mu.Unlock()
+		return
+	}
+	loopCtx, cancel := context.WithCancel(ctx)
+	u.cancelLoop = cancel
+	u.mu.Unlock()
+
+	if u.devOrEmpty() {
+		// Don't bother spinning the goroutine for dev builds.
+		return
+	}
+
+	go func() {
+		// Boot check: kick off after a brief delay so the rest of startup
+		// finishes first (relay host, polling, etc.).
+		select {
+		case <-loopCtx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+		_ = u.Check(loopCtx, false)
+
+		t := time.NewTicker(checkInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			case <-t.C:
+				_ = u.Check(loopCtx, false)
+			}
+		}
+	}()
+}
+
+// Stop cancels the background loop. Safe to call multiple times.
+func (u *Updater) Stop() {
+	u.mu.Lock()
+	cancel := u.cancelLoop
+	u.cancelLoop = nil
+	u.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }

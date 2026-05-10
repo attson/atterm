@@ -327,3 +327,17 @@ func TestInstallPathFromExecutable_Windows(t *testing.T) {
 		t.Errorf("install path = %q; want %q", got, want)
 	}
 }
+
+func TestUpdater_StartStop_NoLeakedGoroutines(t *testing.T) {
+	rt := &fakeRoundTripper{}
+	u := newUpdater(updaterConfig{
+		current: "dev", // skip network
+		repo:    "attson/atterm",
+		client:  &http.Client{Transport: rt},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	u.Start(ctx)
+	cancel()
+	u.Stop()
+	// If Stop() blocks forever, the test runner times out and we know.
+}

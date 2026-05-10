@@ -12,10 +12,11 @@ import {
   getEndpoint,
   getHostInfo,
   getRelayConfig,
+  getUpdateState,
   listShells,
   newSession,
 } from "./lib/api";
-import type { Endpoint } from "./lib/api";
+import type { Endpoint, UpdateState } from "./lib/api";
 import { fetchSessions, type SessionInfo } from "./lib/connection";
 import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
 import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
@@ -37,6 +38,9 @@ const starting = ref(false);
 const showSettings = ref(false);
 const showRemote = ref(false);
 const toast = ref<string>("");
+
+const updateBadge = ref(false);
+let updatePollHandle: number | null = null;
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
@@ -420,6 +424,25 @@ const tabSummaries = computed(() =>
 
 const sessionCount = computed(() => allUsedSessionIds.value.size);
 
+const localSessionCount = computed(() => {
+  let n = 0;
+  for (const t of tabs.value) {
+    for (const p of t.panes) {
+      if (p.sessionId && !p.remote) n++;
+    }
+  }
+  return n;
+});
+const remoteSessionCount = computed(() => {
+  let n = 0;
+  for (const t of tabs.value) {
+    for (const p of t.panes) {
+      if (p.sessionId && p.remote) n++;
+    }
+  }
+  return n;
+});
+
 useTerminalShortcuts({
   onSplitVertical: (mode) => onSplit("vertical", mode),
   onSplitHorizontal: (mode) => onSplit("horizontal", mode),
@@ -453,6 +476,18 @@ onMounted(async () => {
   await pollSessions();
   pollHandle = window.setInterval(pollSessions, 2000);
 
+  // Auto-update poll: every 5s pull state.available || ready and toggle the
+  // ⚙ badge dot. Lower frequency than session poll because update state
+  // changes are rare (boot check + 24h ticker).
+  updatePollHandle = window.setInterval(async () => {
+    try {
+      const st: UpdateState = await getUpdateState();
+      updateBadge.value = !!(st.available || st.ready);
+    } catch {
+      /* ignore — never block UI on updater failures */
+    }
+  }, 5000);
+
   if (!autoStarted && tabs.value.length === 0) {
     autoStarted = true;
     startNewTab();
@@ -463,6 +498,7 @@ onUnmounted(() => {
   window.removeEventListener("hashchange", syncRoute);
   if (pollHandle !== null) window.clearInterval(pollHandle);
   if (toastHandle !== null) window.clearTimeout(toastHandle);
+  if (updatePollHandle !== null) window.clearInterval(updatePollHandle);
   teardownMeasureProbe();
 });
 </script>
@@ -520,6 +556,7 @@ onUnmounted(() => {
           <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
           <circle cx="12" cy="12" r="3" />
         </svg>
+        <span v-if="updateBadge" class="dot"></span>
       </button>
     </header>
 
@@ -554,6 +591,8 @@ onUnmounted(() => {
 
     <SettingsDialog
       v-if="showSettings"
+      :local-session-count="localSessionCount"
+      :remote-session-count="remoteSessionCount"
       @close="showSettings = false"
     />
     <RemoteSessionsDialog
@@ -598,6 +637,12 @@ onUnmounted(() => {
   background: #d29922; color: #0d1117; font-size: 9px; font-weight: 700;
   border-radius: 10px; padding: 1px 5px; line-height: 1.3;
   min-width: 16px; text-align: center;
+}
+.icon-btn .dot {
+  position: absolute; top: 2px; right: 2px;
+  width: 6px; height: 6px;
+  background: #d29922;
+  border-radius: 50%;
 }
 
 .main { flex: 1 1 auto; position: relative; background: #000; overflow: hidden; }

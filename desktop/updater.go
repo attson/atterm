@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,11 @@ import (
 
 	"golang.org/x/mod/semver"
 )
+
+//go:embed scripts/install-darwin.sh
+//go:embed scripts/install-linux.sh
+//go:embed scripts/install-windows.ps1
+var installScripts embed.FS
 
 // UpdateState is the observable view of the auto-update subsystem.
 // Mirrored as a TypeScript interface in desktop/frontend/src/lib/api.ts.

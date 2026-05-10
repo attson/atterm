@@ -23,6 +23,29 @@ html, body {
 
 #app { height: 100%; }
 
+/* xterm.js viewport scrollbar — color-only override.
+ *
+ * Deliberately don't touch `scrollbar-width` or `scrollbar-color` (modern
+ * CSS scrollbar properties): combining them with ::-webkit-scrollbar caused
+ * xterm-viewport's height computation to land at ~24 rows on WKWebView
+ * earlier, leaving the bottom half of the pane empty. The webkit pseudo-
+ * elements alone are pure paint, no layout impact.
+ *
+ * Track is transparent so it disappears on the dark terminal bg; thumb is
+ * a faint slate that just barely registers when scrollback exists, with a
+ * brighter hover state for affordance.
+ */
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
 button, input, select {
   font: inherit;
   color: var(--fg);

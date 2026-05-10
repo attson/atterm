@@ -63,7 +63,9 @@ jobs:
 
       - name: build
         working-directory: desktop
-        run: wails build -tags webkit2_41 -platform linux/amd64 -s
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+        run: wails build -tags webkit2_41 -platform linux/amd64 -s -ldflags "-X main.Version=$VERSION"
 
       - name: package
         run: |
@@ -108,7 +110,9 @@ jobs:
 
       - name: build
         working-directory: desktop
-        run: wails build -platform darwin/arm64 -s
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+        run: wails build -platform darwin/arm64 -s -ldflags "-X main.Version=$VERSION"
 
       - name: package
         run: |
@@ -156,7 +160,9 @@ jobs:
 
       - name: build
         working-directory: desktop
-        run: wails build -platform windows/amd64 -s
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+        run: wails build -platform windows/amd64 -s -ldflags "-X main.Version=$VERSION"
 
       - name: package
         working-directory: desktop/build/bin

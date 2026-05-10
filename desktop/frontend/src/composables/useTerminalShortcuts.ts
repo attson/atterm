@@ -45,9 +45,13 @@ export function useTerminalShortcuts(
 
   function handler(e: KeyboardEvent) {
     if (!isMod(e) || wrongMod(e)) return;
-    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    // Letter / bracket keys: match e.code (physical key, layout-independent).
+    // e.key is unreliable here on macOS — when Option is held it produces
+    // dead-key characters (⌥D → "∂"), and Shift turns "[" into "{". e.code
+    // stays "KeyD" / "BracketLeft" regardless.
+    const code = e.code;
 
-    if (key === "d") {
+    if (code === "KeyD") {
       e.preventDefault();
       e.stopPropagation();
       const mode: SplitMode = e.altKey ? "pick" : "new";
@@ -55,13 +59,13 @@ export function useTerminalShortcuts(
       else h.onSplitVertical(mode);
       return;
     }
-    if (key === "w" && !e.altKey) {
+    if (code === "KeyW" && !e.altKey) {
       e.preventDefault();
       e.stopPropagation();
       h.onClosePane();
       return;
     }
-    if (key === "t" && !e.altKey && !e.shiftKey) {
+    if (code === "KeyT" && !e.altKey && !e.shiftKey) {
       e.preventDefault();
       e.stopPropagation();
       h.onNewTab();
@@ -73,10 +77,10 @@ export function useTerminalShortcuts(
       h.onFocusPane(ARROW_TO_DIR[e.key]);
       return;
     }
-    if (e.shiftKey && (key === "[" || key === "]")) {
+    if (e.shiftKey && (code === "BracketLeft" || code === "BracketRight")) {
       e.preventDefault();
       e.stopPropagation();
-      h.onSwitchTab(key === "]" ? 1 : -1);
+      h.onSwitchTab(code === "BracketRight" ? 1 : -1);
       return;
     }
   }

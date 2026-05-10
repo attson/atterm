@@ -30,68 +30,74 @@ describe("useTerminalShortcuts", () => {
   });
 
   it("Ctrl+D → onSplitVertical('new')", () => {
-    fireKey({ key: "d", ctrlKey: true });
+    fireKey({ key: "d", code: "KeyD", ctrlKey: true });
     expect(handlers.onSplitVertical).toHaveBeenCalledWith("new");
   });
 
   it("Ctrl+Shift+D → onSplitHorizontal('new')", () => {
-    fireKey({ key: "D", ctrlKey: true, shiftKey: true });
+    fireKey({ key: "D", code: "KeyD", ctrlKey: true, shiftKey: true });
     expect(handlers.onSplitHorizontal).toHaveBeenCalledWith("new");
   });
 
   it("Ctrl+Alt+D → onSplitVertical('pick')", () => {
-    fireKey({ key: "d", ctrlKey: true, altKey: true });
+    fireKey({ key: "d", code: "KeyD", ctrlKey: true, altKey: true });
     expect(handlers.onSplitVertical).toHaveBeenCalledWith("pick");
   });
 
   it("Ctrl+Alt+Shift+D → onSplitHorizontal('pick')", () => {
-    fireKey({ key: "D", ctrlKey: true, altKey: true, shiftKey: true });
+    fireKey({ key: "D", code: "KeyD", ctrlKey: true, altKey: true, shiftKey: true });
     expect(handlers.onSplitHorizontal).toHaveBeenCalledWith("pick");
   });
 
+  it("macOS ⌘⌥D synthesizes key='∂' but code='KeyD' → still triggers pick", () => {
+    fireKey({ key: "∂", code: "KeyD", ctrlKey: true, altKey: true });
+    expect(handlers.onSplitVertical).toHaveBeenCalledWith("pick");
+  });
+
   it("Ctrl+W → onClosePane", () => {
-    fireKey({ key: "w", ctrlKey: true });
+    fireKey({ key: "w", code: "KeyW", ctrlKey: true });
     expect(handlers.onClosePane).toHaveBeenCalled();
   });
 
   it("Ctrl+T → onNewTab", () => {
-    fireKey({ key: "t", ctrlKey: true });
+    fireKey({ key: "t", code: "KeyT", ctrlKey: true });
     expect(handlers.onNewTab).toHaveBeenCalled();
   });
 
   it("Ctrl+Alt+ArrowLeft → onFocusPane('left')", () => {
-    fireKey({ key: "ArrowLeft", ctrlKey: true, altKey: true });
+    fireKey({ key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, altKey: true });
     expect(handlers.onFocusPane).toHaveBeenCalledWith("left");
   });
 
   it("Ctrl+Alt+ArrowRight → onFocusPane('right')", () => {
-    fireKey({ key: "ArrowRight", ctrlKey: true, altKey: true });
+    fireKey({ key: "ArrowRight", code: "ArrowRight", ctrlKey: true, altKey: true });
     expect(handlers.onFocusPane).toHaveBeenCalledWith("right");
   });
 
-  it("Ctrl+Shift+] → onSwitchTab(+1)", () => {
-    fireKey({ key: "]", ctrlKey: true, shiftKey: true });
+  it("Ctrl+Shift+] (key='}') → onSwitchTab(+1)", () => {
+    // Shift+] produces "}" on US layout — handler must use code, not key.
+    fireKey({ key: "}", code: "BracketRight", ctrlKey: true, shiftKey: true });
     expect(handlers.onSwitchTab).toHaveBeenCalledWith(1);
   });
 
-  it("Ctrl+Shift+[ → onSwitchTab(-1)", () => {
-    fireKey({ key: "[", ctrlKey: true, shiftKey: true });
+  it("Ctrl+Shift+[ (key='{') → onSwitchTab(-1)", () => {
+    fireKey({ key: "{", code: "BracketLeft", ctrlKey: true, shiftKey: true });
     expect(handlers.onSwitchTab).toHaveBeenCalledWith(-1);
   });
 
   it("plain D (no modifier) → ignored", () => {
-    fireKey({ key: "d" });
+    fireKey({ key: "d", code: "KeyD" });
     expect(handlers.onSplitVertical).not.toHaveBeenCalled();
   });
 
   it("Ctrl+D preventDefault + stopPropagation", () => {
-    const ev = fireKey({ key: "d", ctrlKey: true });
+    const ev = fireKey({ key: "d", code: "KeyD", ctrlKey: true });
     expect(ev.defaultPrevented).toBe(true);
   });
 
   it("scope.stop unbinds the listener", () => {
     scope.stop();
-    fireKey({ key: "d", ctrlKey: true });
+    fireKey({ key: "d", code: "KeyD", ctrlKey: true });
     expect(handlers.onSplitVertical).not.toHaveBeenCalled();
   });
 });

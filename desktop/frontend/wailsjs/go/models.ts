@@ -78,6 +78,42 @@ export namespace main {
 	        this.connected = source["connected"];
 	    }
 	}
+	export class UpdateState {
+	    current: string;
+	    latest: string;
+	    available: boolean;
+	    notes: string;
+	    checking: boolean;
+	    last_check_at: number;
+	    downloading: boolean;
+	    download_pct: number;
+	    ready: boolean;
+	    error: string;
+	    asset_url: string;
+	    asset_size: number;
+	    download_dir: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current = source["current"];
+	        this.latest = source["latest"];
+	        this.available = source["available"];
+	        this.notes = source["notes"];
+	        this.checking = source["checking"];
+	        this.last_check_at = source["last_check_at"];
+	        this.downloading = source["downloading"];
+	        this.download_pct = source["download_pct"];
+	        this.ready = source["ready"];
+	        this.error = source["error"];
+	        this.asset_url = source["asset_url"];
+	        this.asset_size = source["asset_size"];
+	        this.download_dir = source["download_dir"];
+	    }
+	}
 
 }
 

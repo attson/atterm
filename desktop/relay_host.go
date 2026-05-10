@@ -201,7 +201,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	argv := append([]string{req.Command}, req.Args...)
 	pty, err := ptyhost.Open(ctx, ptyhost.Config{
 		Argv: argv,
-		Env:  os.Environ(),
+		Env:  terminalEnvForXterm(os.Environ()),
 		Cwd:  cwd,
 		Cols: cols,
 		Rows: rows,

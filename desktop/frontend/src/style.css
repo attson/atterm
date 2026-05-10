@@ -19,10 +19,6 @@ html, body {
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
   font-size: 14px;
-  /* Pin the document so any stray child overflow can't paint root-level
-     scrollbars — WKWebView with "always show scrollbars" otherwise draws
-     bright tracks at the viewport edges. */
-  overflow: hidden;
 }
 
 #app { height: 100%; }

@@ -176,6 +176,35 @@ function reduceTwoFilled(panes: Pane[], idx: number[]): CloseResult {
   };
 }
 
+type NeighborMap = Record<number, Partial<Record<FocusDir, number>>>;
+
+const NEIGHBORS: Record<LayoutKind, NeighborMap> = {
+  single: { 0: {} },
+  vertical: {
+    0: { right: 1 },
+    1: { left: 0 },
+  },
+  horizontal: {
+    0: { down: 1 },
+    1: { up: 0 },
+  },
+  grid2x2: {
+    0: { right: 1, down: 2 },
+    1: { left: 0, down: 3 },
+    2: { up: 0, right: 3 },
+    3: { up: 1, left: 2 },
+  },
+};
+
+export function focusNeighbor(
+  layout: LayoutKind,
+  activeIdx: number,
+  dir: FocusDir,
+): number | null {
+  const next = NEIGHBORS[layout]?.[activeIdx]?.[dir];
+  return typeof next === "number" ? next : null;
+}
+
 // Re-export so consumers only import from layout.ts.
 export type { Pane, Tab, LayoutKind, SplitDir, FocusDir };
 export { PANE_COUNT, EMPTY_PANE };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { closePane, transitionLayout } from "./layout";
+import { closePane, focusNeighbor, transitionLayout } from "./layout";
 import type { Pane } from "./types";
 
 const P = (id: string): Pane => ({ sessionId: id, remote: false });
@@ -205,5 +205,46 @@ describe("closePane", () => {
       const r = closePane("grid2x2", [E, P("b"), E, E], 1);
       expect(r.closeTab).toBe(true);
     });
+  });
+});
+
+describe("focusNeighbor", () => {
+  it("single → all dirs return null", () => {
+    expect(focusNeighbor("single", 0, "left")).toBeNull();
+    expect(focusNeighbor("single", 0, "right")).toBeNull();
+    expect(focusNeighbor("single", 0, "up")).toBeNull();
+    expect(focusNeighbor("single", 0, "down")).toBeNull();
+  });
+
+  it("vertical: 0 ↔ 1 horizontal only", () => {
+    expect(focusNeighbor("vertical", 0, "right")).toBe(1);
+    expect(focusNeighbor("vertical", 1, "left")).toBe(0);
+    expect(focusNeighbor("vertical", 0, "left")).toBeNull();
+    expect(focusNeighbor("vertical", 0, "up")).toBeNull();
+    expect(focusNeighbor("vertical", 0, "down")).toBeNull();
+  });
+
+  it("horizontal: 0 ↔ 1 vertical only", () => {
+    expect(focusNeighbor("horizontal", 0, "down")).toBe(1);
+    expect(focusNeighbor("horizontal", 1, "up")).toBe(0);
+    expect(focusNeighbor("horizontal", 0, "left")).toBeNull();
+    expect(focusNeighbor("horizontal", 0, "right")).toBeNull();
+  });
+
+  it("grid2x2: every quadrant has the right two neighbors", () => {
+    // 0 (TL): right=1, down=2
+    expect(focusNeighbor("grid2x2", 0, "right")).toBe(1);
+    expect(focusNeighbor("grid2x2", 0, "down")).toBe(2);
+    expect(focusNeighbor("grid2x2", 0, "left")).toBeNull();
+    expect(focusNeighbor("grid2x2", 0, "up")).toBeNull();
+    // 1 (TR): left=0, down=3
+    expect(focusNeighbor("grid2x2", 1, "left")).toBe(0);
+    expect(focusNeighbor("grid2x2", 1, "down")).toBe(3);
+    // 2 (BL): up=0, right=3
+    expect(focusNeighbor("grid2x2", 2, "up")).toBe(0);
+    expect(focusNeighbor("grid2x2", 2, "right")).toBe(3);
+    // 3 (BR): up=1, left=2
+    expect(focusNeighbor("grid2x2", 3, "up")).toBe(1);
+    expect(focusNeighbor("grid2x2", 3, "left")).toBe(2);
   });
 });

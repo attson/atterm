@@ -8,7 +8,7 @@
 - ✅ 内置自动更新：Settings → Updates 检查/下载/用户主动重启升级（GitHub Releases，dev 构建禁用）
 - ✅ 中央 relay：本地或公网部署，统一 attach 入口
 - ✅ Lazy 远程同步：远程 relay 静默时不传字节，按需上传，本地体验不受其可达性影响
-- ⬜ 用户系统、TLS 自动化、移动端、shell 集成（路线图见 [`doc/spec/architecture.md`](doc/spec/architecture.md)）
+- ⬜ 用户系统、TLS 自动化、移动端、shell 集成（路线图见 [`docs/spec/architecture.md`](docs/spec/architecture.md)）
 
 ## 三种使用方式
 
@@ -36,7 +36,7 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 
 ### 3. 桌面 + 远程 relay 多设备同步
 
-桌面 app 启动后点齿轮，填远程 relay URL/token。然后另一设备的浏览器或桌面 app 连同一 relay 即可互相 attach。详见 [`doc/spec/architecture.md`](doc/spec/architecture.md) §三种核心数据流。
+桌面 app 启动后点齿轮，填远程 relay URL/token。然后另一设备的浏览器或桌面 app 连同一 relay 即可互相 attach。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md) §三种核心数据流。
 
 ---
 
@@ -193,7 +193,7 @@ cd desktop && wails dev -tags webkit2_41
 cd desktop && wails dev -tags webkit2_41
 ```
 
-两个 app 的 cast 面板（📡）里能互看对方的 session。详见 [`doc/spec/architecture.md`](doc/spec/architecture.md) §流 3。
+两个 app 的 cast 面板（📡）里能互看对方的 session。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md) §流 3。
 
 ## 仓库结构（简表）
 
@@ -202,7 +202,7 @@ cmd/         二进制入口（atterm-relay / atterm-agent）
 internal/    可复用业务包（proto / session / relay / ptyhost / agent / hostid / ringbuf）
 desktop/     Wails 桌面端（Go 后端 + Vue3 + xterm.js 前端）
 web/         浏览器客户端（vanilla HTML/JS）
-doc/spec/    协议、架构、约定规范
+docs/spec/    协议、架构、约定规范
 .github/     CI workflow
 ```
 
@@ -211,16 +211,16 @@ doc/spec/    协议、架构、约定规范
 ## 文档
 
 - [`AGENTS.md`](AGENTS.md) — 项目导览、设计红线、何时改哪里
-- [`doc/spec/architecture.md`](doc/spec/architecture.md) — 整体架构、三条核心数据流、组件矩阵、phase 路线
-- [`doc/spec/protocol.md`](doc/spec/protocol.md) — wire 协议规范（帧格式、12 个帧类型 schema、重连续传）
-- [`doc/spec/conventions.md`](doc/spec/conventions.md) — Go/TS 代码约定、commit 风格、扩展 recipe
+- [`docs/spec/architecture.md`](docs/spec/architecture.md) — 整体架构、三条核心数据流、组件矩阵、phase 路线
+- [`docs/spec/protocol.md`](docs/spec/protocol.md) — wire 协议规范（帧格式、12 个帧类型 schema、重连续传）
+- [`docs/spec/conventions.md`](docs/spec/conventions.md) — Go/TS 代码约定、commit 风格、扩展 recipe
 
 ## 贡献
 
-- 风格：见 [`doc/spec/conventions.md`](doc/spec/conventions.md)
+- 风格：见 [`docs/spec/conventions.md`](docs/spec/conventions.md)
 - 提交前本地跑：`go vet -tags webkit2_41 ./...` + `go test -tags webkit2_41 ./desktop/` + `cd desktop/frontend && npm run build`
 - CI 在 `.github/workflows/build.yml`：push main / PR / tag v* / manual 都会触发，三平台并行构建
-- 协议变更：必须同步更新 [`doc/spec/protocol.md`](doc/spec/protocol.md) 与 TS 端 `desktop/frontend/src/lib/proto.ts`
+- 协议变更：必须同步更新 [`docs/spec/protocol.md`](docs/spec/protocol.md) 与 TS 端 `desktop/frontend/src/lib/proto.ts`
 
 ## 许可证
 

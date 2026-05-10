@@ -28,14 +28,17 @@ desktop/frontend/src/
 ├── main.ts             Vue 入口
 ├── App.vue             根组件
 ├── components/         全部 *.vue，每个组件单文件
+├── composables/        Vue 3 setup helpers (e.g. useTerminalShortcuts.ts)
 ├── lib/                pure TS 模块（无 Vue 依赖）
 │   ├── proto.ts        协议层
 │   ├── connection.ts   WS 连接 + 重连
+│   ├── types.ts        共享类型定义（LayoutKind / Pane / Tab 等）
+│   ├── layout.ts       纯函数（pane 布局 transition / close / focus 导航）
 │   └── api.ts          Wails bindings 包装
 └── store/              （未来）pinia / composables
 ```
 
-`lib/` 不依赖 Vue（便于单元测试、未来共享给 web/）。组件不直接 fetch / WebSocket，全走 `lib/`。
+`lib/` 不依赖 Vue（便于单元测试、未来共享给 web/）。组件不直接 fetch / WebSocket，全走 `lib/`。`lib/layout.ts` 这种纯函数模块用 vitest 跑单测，TDD 增量覆盖。
 
 ## 命名
 
@@ -174,7 +177,7 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 4. 加接收方分支（在 reader switch 里）
 5. 同步 TS 端 `desktop/frontend/src/lib/proto.ts` 的 `TYPE` 枚举（如果是 client 路径用到）
 6. 同步 `web/app.js` 的 `TYPE` 字典（如果浏览器需要）
-7. 更新 `doc/spec/protocol.md` 帧类型表
+7. 更新 `docs/spec/protocol.md` 帧类型表
 8. 加 e2e 测试（`desktop/uplink_e2e_test.go` 或新文件）
 9. 提交：subject 用 `proto:` 前缀
 

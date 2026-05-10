@@ -13,6 +13,22 @@ import (
 type appConfig struct {
 	RelayURL   string `json:"relay_url,omitempty"`
 	RelayToken string `json:"relay_token,omitempty"`
+
+	// Auto-update settings. Nil means "never set" → treated as default true
+	// at read time. Stored as a pointer so we can distinguish "user opted
+	// out" from "fresh install".
+	AutoCheckUpdates *bool  `json:"auto_check_updates,omitempty"`
+	LastCheckAt      int64  `json:"last_check_at,omitempty"`
+	SkipVersion      string `json:"skip_version,omitempty"`
+}
+
+// AutoCheckUpdatesOrDefault returns the user's preference, defaulting to
+// true when the field has never been set (fresh installs).
+func (c appConfig) AutoCheckUpdatesOrDefault() bool {
+	if c.AutoCheckUpdates == nil {
+		return true
+	}
+	return *c.AutoCheckUpdates
 }
 
 func configPath() string {

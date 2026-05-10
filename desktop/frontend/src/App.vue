@@ -15,7 +15,7 @@ import {
 } from "./lib/api";
 import type { Endpoint } from "./lib/api";
 import { fetchSessions, type SessionInfo } from "./lib/connection";
-import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
+import type { Pane, Tab, SplitDir } from "./lib/types";
 import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 
@@ -140,46 +140,10 @@ function findSessionInfo(sid: string, remote: boolean): SessionInfo | undefined 
   return (remote ? remoteList.value : localList.value).find((s) => s.id === sid);
 }
 
-// Predict the future cell dimensions for a freshly-created pane so the PTY
-// is born at roughly the right size. Without this the backend defaults to
-// 80x24, which usually mismatches the xterm fit and provokes a SIGWINCH
-// during zsh's first-prompt window — some prompt frameworks redraw the
-// prompt on resize, which then trips PROMPT_EOL_MARK ("%") because the
-// cursor sits mid-line at that moment.
-function predictCellDims(layout: LayoutKind): { cols: number; rows: number } {
-  const main = typeof document !== "undefined"
-    ? (document.querySelector(".main") as HTMLElement | null)
-    : null;
-  if (!main || main.clientWidth < 100 || main.clientHeight < 100) {
-    return { cols: 80, rows: 24 };
-  }
-  const colsDiv = layout === "vertical" || layout === "grid2x2" ? 2 : 1;
-  const rowsDiv = layout === "horizontal" || layout === "grid2x2" ? 2 : 1;
-  // Approximate xterm metrics for our 13px ui-monospace stack. A few cells
-  // off in either direction is fine — the goal is just to avoid the
-  // 80-vs-actual delta that produces the SIGWINCH spike.
-  const charW = 7.8;
-  const charH = 17;
-  const cellW = (main.clientWidth - 2) / colsDiv;   // 2px = grid gap
-  const cellH = (main.clientHeight - 2) / rowsDiv;
-  return {
-    cols: Math.max(20, Math.floor(cellW / charW)),
-    rows: Math.max(5, Math.floor(cellH / charH)),
-  };
-}
-
-async function spawnLocalShell(
-  cwd: string,
-  dims: { cols: number; rows: number },
-): Promise<string> {
+async function spawnLocalShell(cwd: string): Promise<string> {
   const shells = await listShells();
   if (shells.length === 0) throw new Error("no shells found on this machine");
-  const resp = await newSession({
-    command: shells[0],
-    cwd,
-    cols: dims.cols,
-    rows: dims.rows,
-  });
+  const resp = await newSession({ command: shells[0], cwd });
   // Reflect immediately so PaneGrid finds the endpoint without poll lag.
   localList.value = [
     ...localList.value,
@@ -188,8 +152,8 @@ async function spawnLocalShell(
       command: shells[0],
       cwd: cwd || "",
       title: shells[0],
-      cols: dims.cols,
-      rows: dims.rows,
+      cols: 80,
+      rows: 24,
       started_at: Math.floor(Date.now() / 1000),
       host_id: localHostID.value,
     },
@@ -202,7 +166,7 @@ async function startNewTab() {
   starting.value = true;
   errorMsg.value = "";
   try {
-    const sid = await spawnLocalShell("", predictCellDims("single"));
+    const sid = await spawnLocalShell("");
     const id = newId();
     tabs.value.push({
       id,
@@ -260,11 +224,11 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
   }
 
   // New shell starts in the default directory (HOME) — matches iTerm's
-  // out-of-the-box behavior. Predict the new cell's char dimensions so the
-  // PTY is born at the right size and zsh doesn't see a SIGWINCH that would
-  // redraw its prompt and surface PROMPT_EOL_MARK.
+  // out-of-the-box behavior. Inheriting the parent pane's cwd would also
+  // surface zsh frameworks' async-git prompt redraws (PROMPT_EOL_MARK '%')
+  // that don't fire in HOME.
   try {
-    const sid = await spawnLocalShell("", predictCellDims(result.layout));
+    const sid = await spawnLocalShell("");
     t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
   } catch (e: any) {
     showToast("split failed: " + (e?.message ?? e));

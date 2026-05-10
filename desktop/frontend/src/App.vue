@@ -1,9 +1,10 @@
 <script lang="ts" setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import TabBar from "./components/TabBar.vue";
-import TerminalView from "./components/TerminalView.vue";
+import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
+import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import {
   closeSession,
   getEndpoint,
@@ -14,50 +15,70 @@ import {
 } from "./lib/api";
 import type { Endpoint } from "./lib/api";
 import { fetchSessions, type SessionInfo } from "./lib/connection";
-
-interface AggSession extends SessionInfo {
-  remote: boolean;
-}
+import type { Pane, Tab, SplitDir } from "./lib/types";
+import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
+import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
 const localHostID = ref<string>("");
 
-// Two source-of-truth lists from polling. Combined into the displayed tab list
-// based on which remotes the user has actively opened.
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
-const openedRemotes = ref<Set<string>>(new Set());
 
-const currentSessionId = ref<string | null>(null);
+const tabs = ref<Tab[]>([]);
+const currentTabId = ref<string | null>(null);
+
 const status = ref<"loading" | "ready" | "error">("loading");
 const errorMsg = ref<string>("");
 const starting = ref(false);
 const showSettings = ref(false);
 const showRemote = ref(false);
+const toast = ref<string>("");
+
+// Picker state. When non-null, dialog is open and the resolved pick will go
+// into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
+const pickerCtx = ref<{ tabId: string; paneIdx: number } | null>(null);
+
 let autoStarted = false;
-
 let pollHandle: number | null = null;
+let toastHandle: number | null = null;
 
-// Sessions actually shown as tabs: all local + remote ones the user opened.
-const sessions = computed<AggSession[]>(() => {
-  const out: AggSession[] = localList.value.map((s) => ({ ...s, remote: false }));
-  for (const r of remoteList.value) {
-    if (openedRemotes.value.has(r.id)) {
-      out.push({ ...r, remote: true });
-    }
-  }
-  return out;
+const newId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : "tab-" + Math.random().toString(36).slice(2);
+
+const currentTab = computed<Tab | null>(
+  () => tabs.value.find((t) => t.id === currentTabId.value) ?? null,
+);
+
+// Sessions visible across all current tabs (drives sweep + remote-discover panel).
+const allUsedSessionIds = computed(() => {
+  const s = new Set<string>();
+  for (const t of tabs.value) for (const p of t.panes) if (p.sessionId) s.add(p.sessionId);
+  return s;
 });
 
-// Remote sessions still available to open — i.e. not already in tabs.
 const availableRemote = computed<SessionInfo[]>(() =>
-  remoteList.value.filter((r) => !openedRemotes.value.has(r.id))
+  remoteList.value.filter((r) => !allUsedSessionIds.value.has(r.id)),
 );
+
+function endpointFor(pane: Pane): Endpoint | null {
+  return pane.remote ? remoteEndpoint.value : localEndpoint.value;
+}
+
+function showToast(msg: string) {
+  toast.value = msg;
+  if (toastHandle !== null) window.clearTimeout(toastHandle);
+  toastHandle = window.setTimeout(() => {
+    toast.value = "";
+    toastHandle = null;
+  }, 2000);
+}
 
 async function pollSessions() {
   if (!localEndpoint.value) return;
-
   let cfg = { url: "", token: "", connected: false };
   try {
     cfg = await getRelayConfig();
@@ -73,69 +94,82 @@ async function pollSessions() {
     ? await fetchSessions(remoteEndpoint.value).catch(() => [] as SessionInfo[])
     : [];
 
-  // Dedupe by session_id: a remote entry with the same id as a local one is
-  // our own session mirrored back; prefer the local (zero-latency) path.
   const localIds = new Set(local.map((s) => s.id));
   const filteredRemote = remote.filter((s) => !localIds.has(s.id));
 
   localList.value = local;
   remoteList.value = filteredRemote;
 
-  // Drop any opened-remote ids that have since vanished (remote host closed
-  // them or went offline), so they don't linger as broken tabs forever.
+  // Sweep: if any pane references a session id no longer reported, null it.
   const remoteIds = new Set(filteredRemote.map((s) => s.id));
-  for (const id of Array.from(openedRemotes.value)) {
-    if (!remoteIds.has(id)) {
-      openedRemotes.value.delete(id);
+  for (const t of tabs.value) {
+    for (let i = 0; i < t.panes.length; i++) {
+      const p = t.panes[i];
+      if (!p.sessionId) continue;
+      if (p.remote ? !remoteIds.has(p.sessionId) : !localIds.has(p.sessionId)) {
+        t.panes[i] = { sessionId: null, remote: p.remote };
+      }
     }
   }
 
   if (status.value !== "ready") status.value = "ready";
 }
 
-function endpointFor(s: AggSession): Endpoint | null {
-  return s.remote ? remoteEndpoint.value : localEndpoint.value;
-}
-
 function parseHash(): string | null {
-  const m = location.hash.match(/^#\/s\/([0-9a-f-]{36})$/i);
+  const m = location.hash.match(/^#\/t\/([\w-]+)$/);
   return m ? m[1] : null;
 }
-
 function syncRoute() {
-  currentSessionId.value = parseHash();
+  const id = parseHash();
+  if (id && tabs.value.some((t) => t.id === id)) currentTabId.value = id;
 }
-
-function gotoSession(id: string) {
-  if (location.hash !== "#/s/" + id) {
-    location.hash = "#/s/" + id;
+function gotoTab(id: string) {
+  if (location.hash !== "#/t/" + id) {
+    location.hash = "#/t/" + id;
   } else {
-    currentSessionId.value = id;
+    currentTabId.value = id;
   }
 }
 
-async function startDefaultSession() {
+function findSessionInfo(sid: string, remote: boolean): SessionInfo | undefined {
+  return (remote ? remoteList.value : localList.value).find((s) => s.id === sid);
+}
+
+async function spawnLocalShell(cwd: string): Promise<string> {
+  const shells = await listShells();
+  if (shells.length === 0) throw new Error("no shells found on this machine");
+  const resp = await newSession({ command: shells[0], cwd });
+  // Reflect immediately so PaneGrid finds the endpoint without poll lag.
+  localList.value = [
+    ...localList.value,
+    {
+      id: resp.session_id,
+      command: shells[0],
+      cwd: cwd || "",
+      title: shells[0],
+      cols: 80,
+      rows: 24,
+      started_at: Math.floor(Date.now() / 1000),
+      host_id: localHostID.value,
+    },
+  ];
+  return resp.session_id;
+}
+
+async function startNewTab() {
   if (starting.value) return;
   starting.value = true;
   errorMsg.value = "";
   try {
-    const shells = await listShells();
-    if (shells.length === 0) throw new Error("no shells found on this machine");
-    const resp = await newSession({ command: shells[0] });
-    localList.value = [
-      ...localList.value,
-      {
-        id: resp.session_id,
-        command: shells[0],
-        cwd: "",
-        title: shells[0],
-        cols: 80,
-        rows: 24,
-        started_at: Math.floor(Date.now() / 1000),
-        host_id: localHostID.value,
-      },
-    ];
-    gotoSession(resp.session_id);
+    const sid = await spawnLocalShell("");
+    const id = newId();
+    tabs.value.push({
+      id,
+      layout: "single",
+      panes: [{ sessionId: sid, remote: false }],
+      activePaneIdx: 0,
+    });
+    gotoTab(id);
     pollSessions();
   } catch (e: any) {
     status.value = "error";
@@ -145,49 +179,153 @@ async function startDefaultSession() {
   }
 }
 
-function openRemote(sessionId: string) {
-  // make sure the new Set reference triggers reactivity
-  const next = new Set(openedRemotes.value);
-  next.add(sessionId);
-  openedRemotes.value = next;
+async function onSplit(dir: SplitDir, mode: SplitMode) {
+  const t = currentTab.value;
+  if (!t) return;
+
+  // Capture the active pane's cwd BEFORE mutation. After transitionLayout the
+  // active idx points at the new (empty) slot, so we'd lose the parent.
+  let parentCwd = "";
+  const activePane: Pane | undefined = t.panes[t.activePaneIdx];
+  if (activePane?.sessionId && !activePane.remote) {
+    const info = findSessionInfo(activePane.sessionId, false);
+    if (info?.cwd) parentCwd = info.cwd;
+  }
+
+  const result = transitionLayout(t.layout, t.panes, t.activePaneIdx, dir);
+  if (result.noop) {
+    showToast("pane full — close one first");
+    return;
+  }
+
+  t.layout = result.layout;
+  t.panes = result.panes;
+  t.activePaneIdx = result.activePaneIdx;
+
+  if (mode === "pick") {
+    pickerCtx.value = { tabId: t.id, paneIdx: result.newPaneIdx };
+    return;
+  }
+
+  try {
+    const sid = await spawnLocalShell(parentCwd);
+    t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
+  } catch (e: any) {
+    showToast("split failed: " + (e?.message ?? e));
+  }
+}
+
+function onPickerPick(payload: { sessionId: string; remote: boolean }) {
+  const ctx = pickerCtx.value;
+  pickerCtx.value = null;
+  if (!ctx) return;
+  const t = tabs.value.find((tt) => tt.id === ctx.tabId);
+  if (!t) return;
+  if (t.panes.some((p, i) => i !== ctx.paneIdx && p.sessionId === payload.sessionId)) {
+    showToast("that session is already in this tab");
+    return;
+  }
+  t.panes[ctx.paneIdx] = { sessionId: payload.sessionId, remote: payload.remote };
+}
+
+function onPickerClose() {
+  pickerCtx.value = null;
+}
+
+async function onClosePane() {
+  const t = currentTab.value;
+  if (!t) return;
+  closePaneAt(t, t.activePaneIdx);
+}
+
+async function closePaneAt(t: Tab, idx: number) {
+  const target = t.panes[idx];
+  if (target?.sessionId && !target.remote) {
+    try { await closeSession(target.sessionId); } catch { /* sweep cleans up */ }
+  }
+  const r = closePane(t.layout, t.panes, idx);
+  t.layout = r.layout;
+  t.panes = r.panes;
+  t.activePaneIdx = r.activePaneIdx;
+  if (r.closeTab) {
+    closeTab(t.id);
+  }
+}
+
+async function closeTab(id: string) {
+  const t = tabs.value.find((tt) => tt.id === id);
+  if (!t) return;
+  const closures: Promise<void>[] = [];
+  for (const p of t.panes) {
+    if (p.sessionId && !p.remote) {
+      closures.push(closeSession(p.sessionId).catch(() => undefined));
+    }
+  }
+  await Promise.all(closures);
+  tabs.value = tabs.value.filter((tt) => tt.id !== id);
+  if (currentTabId.value === id) {
+    if (tabs.value.length > 0) gotoTab(tabs.value[0].id);
+    else location.hash = "";
+  }
+}
+
+function onFocusPane(dir: "left" | "right" | "up" | "down") {
+  const t = currentTab.value;
+  if (!t) return;
+  const next = focusNeighbor(t.layout, t.activePaneIdx, dir);
+  if (next !== null) t.activePaneIdx = next;
+}
+
+function onSwitchTab(delta: number) {
+  if (tabs.value.length === 0) return;
+  const idx = tabs.value.findIndex((t) => t.id === currentTabId.value);
+  if (idx === -1) return;
+  const next = (idx + delta + tabs.value.length) % tabs.value.length;
+  gotoTab(tabs.value[next].id);
+}
+
+function openRemoteAsTab(sessionId: string) {
+  const id = newId();
+  tabs.value.push({
+    id,
+    layout: "single",
+    panes: [{ sessionId, remote: true }],
+    activePaneIdx: 0,
+  });
   showRemote.value = false;
-  gotoSession(sessionId);
+  gotoTab(id);
 }
 
-async function onTabClose(id: string) {
-  const target = sessions.value.find((s) => s.id === id);
-  if (target && target.remote) {
-    // Closing a remote tab is a local detach — the PTY keeps running on the
-    // owning host. Just remove from openedRemotes; poll will keep the entry
-    // available in the discover panel.
-    const next = new Set(openedRemotes.value);
-    next.delete(id);
-    openedRemotes.value = next;
-  } else {
-    try {
-      await closeSession(id);
-    } catch {
-      /* will reconcile via poll */
-    }
-    localList.value = localList.value.filter((s) => s.id !== id);
-  }
-  if (currentSessionId.value === id) {
-    if (sessions.value.length > 0) {
-      gotoSession(sessions.value[0].id);
-    } else {
-      location.hash = "";
-    }
-  }
-}
+const tabSummaries = computed(() =>
+  tabs.value.map((t) => {
+    const active = t.panes[t.activePaneIdx];
+    const info = active?.sessionId ? findSessionInfo(active.sessionId, active.remote) ?? null : null;
+    return {
+      id: t.id,
+      layout: t.layout,
+      activeSession: info,
+      activeRemote: !!active?.remote,
+      paneCount: t.panes.length,
+    };
+  }),
+);
 
-watch([sessions, currentSessionId], () => {
-  if (sessions.value.length === 0) return;
-  const id = currentSessionId.value;
-  if (id && sessions.value.find((s) => s.id === id)) return;
-  gotoSession(sessions.value[0].id);
+const sessionCount = computed(() => allUsedSessionIds.value.size);
+
+useTerminalShortcuts({
+  onSplitVertical: (mode) => onSplit("vertical", mode),
+  onSplitHorizontal: (mode) => onSplit("horizontal", mode),
+  onClosePane,
+  onFocusPane,
+  onNewTab: startNewTab,
+  onSwitchTab,
 });
 
-const sessionCount = computed(() => sessions.value.length);
+watch([tabs, currentTabId], () => {
+  if (tabs.value.length === 0) return;
+  if (currentTabId.value && tabs.value.find((t) => t.id === currentTabId.value)) return;
+  gotoTab(tabs.value[0].id);
+});
 
 onMounted(async () => {
   syncRoute();
@@ -204,15 +342,16 @@ onMounted(async () => {
   await pollSessions();
   pollHandle = window.setInterval(pollSessions, 2000);
 
-  if (!autoStarted && localList.value.length === 0) {
+  if (!autoStarted && tabs.value.length === 0) {
     autoStarted = true;
-    startDefaultSession();
+    startNewTab();
   }
 });
 
 onUnmounted(() => {
   window.removeEventListener("hashchange", syncRoute);
   if (pollHandle !== null) window.clearInterval(pollHandle);
+  if (toastHandle !== null) window.clearTimeout(toastHandle);
 });
 </script>
 
@@ -242,11 +381,8 @@ onUnmounted(() => {
           xmlns="http://www.w3.org/2000/svg"
           width="16" height="16"
           viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+          fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
           aria-hidden="true"
         >
           <path d="M2 16.1A5 5 0 0 1 5.9 20" />
@@ -265,11 +401,8 @@ onUnmounted(() => {
           xmlns="http://www.w3.org/2000/svg"
           width="16" height="16"
           viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+          fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
           aria-hidden="true"
         >
           <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -279,28 +412,31 @@ onUnmounted(() => {
     </header>
 
     <TabBar
-      :sessions="sessions"
-      :current-id="currentSessionId"
+      :tabs="tabSummaries"
+      :current-id="currentTabId"
       :starting="starting"
-      @activate="gotoSession"
-      @close="onTabClose"
-      @new="startDefaultSession"
+      @activate="gotoTab"
+      @close="closeTab"
+      @new="startNewTab"
     />
 
     <main class="main">
       <template v-if="localEndpoint">
-        <div v-if="sessions.length === 0" class="empty">
+        <div v-if="tabs.length === 0" class="empty">
           starting first session…
         </div>
-        <TerminalView
-          v-for="s in sessions"
-          v-show="s.id === currentSessionId"
-          :key="s.id + '|' + (endpointFor(s)?.url ?? '')"
-          :endpoint="endpointFor(s)!"
-          :session-id="s.id"
-          :active="s.id === currentSessionId"
+        <PaneGrid
+          v-for="t in tabs"
+          v-show="t.id === currentTabId"
+          :key="t.id"
+          :tab="t"
+          :endpoint-for="endpointFor"
+          :active="t.id === currentTabId"
+          @set-active-pane="(idx) => (t.activePaneIdx = idx)"
+          @close-pane="(idx) => closePaneAt(t, idx)"
         />
       </template>
+      <div v-if="toast" class="toast">{{ toast }}</div>
     </main>
 
     <SettingsDialog
@@ -310,90 +446,56 @@ onUnmounted(() => {
     <RemoteSessionsDialog
       v-if="showRemote"
       :sessions="availableRemote"
-      @open="openRemote"
+      @open="openRemoteAsTab"
       @close="showRemote = false"
+    />
+    <SessionPickerDialog
+      v-if="pickerCtx"
+      :exclude-session-ids="currentTab ? currentTab.panes.map((p) => p.sessionId).filter((id): id is string => !!id) : []"
+      :local-sessions="localList"
+      :remote-sessions="remoteList"
+      @pick="onPickerPick"
+      @close="onPickerClose"
     />
   </div>
 </template>
 
 <style scoped>
-.app {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-}
+.app { display: flex; flex-direction: column; height: 100vh; }
 .topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--border); flex: 0 0 auto;
 }
-.brand {
-  font-weight: 600;
-  letter-spacing: 0.06em;
-}
-.status {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--fg-dim);
-}
+.brand { font-weight: 600; letter-spacing: 0.06em; }
+.status { margin-left: auto; font-size: 12px; color: var(--fg-dim); }
 .status .bad { color: var(--bad); }
 .status .dim { color: var(--good); }
 
 .icon-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--fg-dim);
-  line-height: 1;
-  padding: 6px 8px;
-  border-radius: 6px;
-  cursor: pointer;
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--fg-dim); line-height: 1;
+  padding: 6px 8px; border-radius: 6px; cursor: pointer;
   transition: color 120ms, background 120ms;
 }
 .icon-btn svg { display: block; }
-.icon-btn:hover:not(:disabled) {
-  color: var(--accent);
-  background: rgba(88, 166, 255, 0.08);
-}
-.icon-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+.icon-btn:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
+.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .icon-btn .badge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  background: #d29922;
-  color: #0d1117;
-  font-size: 9px;
-  font-weight: 700;
-  border-radius: 10px;
-  padding: 1px 5px;
-  line-height: 1.3;
-  min-width: 16px;
-  text-align: center;
+  position: absolute; top: -2px; right: -2px;
+  background: #d29922; color: #0d1117; font-size: 9px; font-weight: 700;
+  border-radius: 10px; padding: 1px 5px; line-height: 1.3;
+  min-width: 16px; text-align: center;
 }
 
-.main {
-  flex: 1 1 auto;
-  position: relative;
-  background: #000;
-  overflow: hidden;
-}
+.main { flex: 1 1 auto; position: relative; background: #000; overflow: hidden; }
 .empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-dim);
-  font-size: 13px;
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--fg-dim); font-size: 13px;
+}
+.toast {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  background: rgba(13, 17, 23, 0.92); border: 1px solid var(--border);
+  color: var(--fg); padding: 6px 12px; border-radius: 6px; font-size: 12px;
+  pointer-events: none;
 }
 </style>

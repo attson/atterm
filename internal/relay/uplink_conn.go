@@ -197,6 +197,13 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 	go func() {
 		ticker := time.NewTicker(uplinkPingPeriod)
 		defer ticker.Stop()
+		// When the writer exits — either ping timeout (peer is unreachable)
+		// or write error (TCP gone) — tear down the conn so the reader
+		// unblocks and the deferred cleanup() runs. Without this, kill -9 /
+		// network drop / machine sleep on the desktop side leaves orphan
+		// mirror sessions in the registry until OS-level TCP keepalive
+		// finally errors the read (potentially many minutes).
+		defer cancelConn()
 		for {
 			select {
 			case <-connCtx.Done():
@@ -206,6 +213,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 				err := c.Ping(wctx)
 				wc()
 				if err != nil {
+					log.Printf("uplink: ping failed (%v), closing", err)
 					return
 				}
 			case f := <-uplinkOut:

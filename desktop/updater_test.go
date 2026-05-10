@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // fakeRoundTripper fails any request — used to assert "no network calls".
@@ -87,5 +89,127 @@ func TestAssetNameForPlatform_Unsupported(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected error for %s/%s", c.goos, c.goarch)
 		}
+	}
+}
+
+// helper: spin up a fake GitHub releases endpoint that returns the supplied
+// payload and counts requests.
+func fakeGitHub(t *testing.T, payload any) (string, *int) {
+	t.Helper()
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, &hits
+}
+
+func releasePayload(tag string, prerelease bool) map[string]any {
+	return map[string]any{
+		"tag_name":   tag,
+		"name":       tag,
+		"body":       "release notes for " + tag,
+		"prerelease": prerelease,
+		"assets": []map[string]any{
+			{
+				"name":                 "atterm-desktop-darwin-arm64.zip",
+				"browser_download_url": "https://example.com/" + tag + "/darwin.zip",
+				"size":                 int64(12345),
+			},
+			{
+				"name":                 "atterm-desktop-linux-amd64.tar.gz",
+				"browser_download_url": "https://example.com/" + tag + "/linux.tar.gz",
+				"size":                 int64(54321),
+			},
+			{
+				"name":                 "atterm-desktop-windows-amd64.zip",
+				"browser_download_url": "https://example.com/" + tag + "/windows.zip",
+				"size":                 int64(99999),
+			},
+		},
+	}
+}
+
+func TestUpdater_Check_NewVersionAvailable(t *testing.T) {
+	apiURL, _ := fakeGitHub(t, releasePayload("v0.2.0", false))
+	u := newUpdater(updaterConfig{
+		current:    "v0.1.0",
+		repo:       "attson/atterm",
+		releaseURL: apiURL,
+	})
+	if err := u.Check(context.Background(), true); err != nil {
+		t.Fatalf("Check err: %v", err)
+	}
+	st := u.State()
+	if !st.Available {
+		t.Errorf("Available = false; want true (v0.2.0 > v0.1.0)")
+	}
+	if st.Latest != "v0.2.0" {
+		t.Errorf("Latest = %q; want v0.2.0", st.Latest)
+	}
+	if st.Notes == "" {
+		t.Errorf("Notes empty")
+	}
+}
+
+func TestUpdater_Check_UpToDate(t *testing.T) {
+	apiURL, _ := fakeGitHub(t, releasePayload("v0.1.0", false))
+	u := newUpdater(updaterConfig{
+		current:    "v0.1.0",
+		repo:       "attson/atterm",
+		releaseURL: apiURL,
+	})
+	_ = u.Check(context.Background(), true)
+	st := u.State()
+	if st.Available {
+		t.Errorf("Available = true; want false (same version)")
+	}
+}
+
+func TestUpdater_Check_PrereleaseSkipped(t *testing.T) {
+	apiURL, _ := fakeGitHub(t, releasePayload("v0.2.0", true))
+	u := newUpdater(updaterConfig{
+		current:    "v0.1.0",
+		repo:       "attson/atterm",
+		releaseURL: apiURL,
+	})
+	_ = u.Check(context.Background(), true)
+	st := u.State()
+	if st.Available {
+		t.Errorf("Available = true on prerelease; want false")
+	}
+}
+
+func TestUpdater_Check_CacheRespected(t *testing.T) {
+	apiURL, hits := fakeGitHub(t, releasePayload("v0.2.0", false))
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	u := newUpdater(updaterConfig{
+		current:    "v0.1.0",
+		repo:       "attson/atterm",
+		releaseURL: apiURL,
+		now:        func() time.Time { return now },
+	})
+	_ = u.Check(context.Background(), false)
+	_ = u.Check(context.Background(), false) // within cache window
+	if *hits != 1 {
+		t.Errorf("hits = %d; want 1 (second Check should be cached)", *hits)
+	}
+}
+
+func TestUpdater_Check_ForceBypassesCache(t *testing.T) {
+	apiURL, hits := fakeGitHub(t, releasePayload("v0.2.0", false))
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	u := newUpdater(updaterConfig{
+		current:    "v0.1.0",
+		repo:       "attson/atterm",
+		releaseURL: apiURL,
+		now:        func() time.Time { return now },
+	})
+	_ = u.Check(context.Background(), true)
+	_ = u.Check(context.Background(), true) // force=true bypasses cache
+	if *hits != 2 {
+		t.Errorf("hits = %d; want 2 (force should always fetch)", *hits)
 	}
 }

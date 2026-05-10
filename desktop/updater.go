@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // UpdateState is the observable view of the auto-update subsystem.
@@ -30,10 +34,11 @@ type UpdateState struct {
 // substitutes the http.Client and now() to drive the cache + network paths
 // without hitting GitHub or wall-clock time.
 type updaterConfig struct {
-	current string
-	repo    string // e.g. "attson/atterm"
-	client  *http.Client
-	now     func() time.Time // optional; defaults to time.Now
+	current    string
+	repo       string // e.g. "attson/atterm"
+	releaseURL string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
+	client     *http.Client
+	now        func() time.Time // optional; defaults to time.Now
 }
 
 // Updater owns state for the auto-update flow. All methods are goroutine-safe.
@@ -86,12 +91,107 @@ func assetNameForPlatform(goos, goarch string) (string, error) {
 	return "", fmt.Errorf("no atterm build for %s/%s", goos, goarch)
 }
 
+const releaseCacheTTL = 1 * time.Hour
+
+// githubReleaseAPI returns the URL to fetch the latest release manifest.
+func (u *Updater) githubReleaseAPI() string {
+	if u.cfg.releaseURL != "" {
+		return u.cfg.releaseURL
+	}
+	return "https://api.github.com/repos/" + u.cfg.repo + "/releases/latest"
+}
+
+// githubAsset is the subset of the release-asset JSON we care about.
+type githubAsset struct {
+	Name        string `json:"name"`
+	DownloadURL string `json:"browser_download_url"`
+	Size        int64  `json:"size"`
+}
+
+// githubRelease is the subset of the release JSON we care about.
+type githubRelease struct {
+	TagName    string        `json:"tag_name"`
+	Body       string        `json:"body"`
+	Prerelease bool          `json:"prerelease"`
+	Assets     []githubAsset `json:"assets"`
+}
+
 // Check fetches the latest release. force=true bypasses the 1h response cache.
 // In dev/empty builds it's a no-op that never touches the network.
 func (u *Updater) Check(ctx context.Context, force bool) error {
 	if u.devOrEmpty() {
 		return nil
 	}
-	// real implementation lands in Task 5
+
+	u.mu.Lock()
+	if !force && !u.cachedAt.IsZero() && u.cfg.now().Sub(u.cachedAt) < releaseCacheTTL {
+		u.mu.Unlock()
+		return nil
+	}
+	u.state.Checking = true
+	u.state.Error = ""
+	u.mu.Unlock()
+
+	rel, err := u.fetchLatest(ctx)
+
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.state.Checking = false
+	u.state.LastCheckAt = u.cfg.now().Unix()
+	if err != nil {
+		u.state.Error = err.Error()
+		return err
+	}
+	u.cachedAt = u.cfg.now()
+
+	if rel.Prerelease {
+		// Don't expose pre-releases as "available" in v0.
+		u.state.Latest = ""
+		u.state.Available = false
+		u.state.Notes = ""
+		u.state.AssetURL = ""
+		u.state.AssetSize = 0
+		return nil
+	}
+
+	u.state.Latest = rel.TagName
+	u.state.Notes = rel.Body
+	u.state.Available = semver.IsValid(rel.TagName) &&
+		semver.IsValid(u.cfg.current) &&
+		semver.Compare(u.cfg.current, rel.TagName) < 0
+
+	// Pick the asset matching this platform; ignore failure (state stays
+	// without an asset URL — UI surfaces the error separately).
+	if name, perr := assetNameForPlatform(runtime.GOOS, runtime.GOARCH); perr == nil {
+		for _, a := range rel.Assets {
+			if a.Name == name {
+				u.state.AssetURL = a.DownloadURL
+				u.state.AssetSize = a.Size
+				break
+			}
+		}
+	}
 	return nil
+}
+
+func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u.githubReleaseAPI(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "atterm-desktop/"+u.cfg.current)
+	resp, err := u.cfg.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("github returned http %d", resp.StatusCode)
+	}
+	var rel githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, err
+	}
+	return &rel, nil
 }

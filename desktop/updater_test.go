@@ -295,3 +295,35 @@ func TestUpdater_Download_SizeMismatch(t *testing.T) {
 
 // silence unused-import warnings
 var _ = io.Discard
+
+func TestInstallPathFromExecutable_Darwin(t *testing.T) {
+	got := installPathFromExecutable("/Applications/atterm-desktop.app/Contents/MacOS/atterm-desktop", "darwin")
+	want := "/Applications/atterm-desktop.app"
+	if got != want {
+		t.Errorf("install path = %q; want %q", got, want)
+	}
+}
+
+func TestInstallPathFromExecutable_DarwinDeepPath(t *testing.T) {
+	got := installPathFromExecutable("/Users/x/Applications/atterm-desktop.app/Contents/MacOS/atterm-desktop", "darwin")
+	want := "/Users/x/Applications/atterm-desktop.app"
+	if got != want {
+		t.Errorf("install path = %q; want %q", got, want)
+	}
+}
+
+func TestInstallPathFromExecutable_Linux(t *testing.T) {
+	got := installPathFromExecutable("/home/x/.local/bin/atterm-desktop", "linux")
+	want := "/home/x/.local/bin/atterm-desktop"
+	if got != want {
+		t.Errorf("install path = %q; want %q", got, want)
+	}
+}
+
+func TestInstallPathFromExecutable_Windows(t *testing.T) {
+	got := installPathFromExecutable(`C:\Users\x\atterm-desktop.exe`, "windows")
+	want := `C:\Users\x\atterm-desktop.exe`
+	if got != want {
+		t.Errorf("install path = %q; want %q", got, want)
+	}
+}

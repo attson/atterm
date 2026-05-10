@@ -350,3 +350,27 @@ func (u *Updater) recordError(err error) {
 	u.state.Error = err.Error()
 	u.state.Ready = false
 }
+
+// installPathFromExecutable maps os.Executable() output to the path the
+// install helper must replace. On macOS the running binary lives inside
+// .app/Contents/MacOS/, but the helper replaces the .app bundle as a
+// whole — walk back to it.
+func installPathFromExecutable(exe, goos string) string {
+	if goos == "darwin" {
+		// Walk parents until we hit a directory ending in ".app". Robust
+		// against alternate install locations (~/Applications, /Applications,
+		// /opt/atterm/Applications/...).
+		dir := exe
+		for {
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				return exe // not in a bundle; fall back to executable path
+			}
+			if filepath.Ext(parent) == ".app" {
+				return parent
+			}
+			dir = parent
+		}
+	}
+	return exe
+}

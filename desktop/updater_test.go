@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -213,3 +217,81 @@ func TestUpdater_Check_ForceBypassesCache(t *testing.T) {
 		t.Errorf("hits = %d; want 2 (force should always fetch)", *hits)
 	}
 }
+
+func TestUpdater_Download_WritesAtomicAsset(t *testing.T) {
+	body := []byte("fake-archive-bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmpCache := t.TempDir()
+	u := newUpdater(updaterConfig{
+		current:  "v0.1.0",
+		repo:     "attson/atterm",
+		cacheDir: tmpCache,
+	})
+	// Pretend Check has already populated state.
+	u.state.AssetURL = srv.URL
+	u.state.AssetSize = int64(len(body))
+	u.state.Latest = "v0.2.0"
+
+	if err := u.Download(context.Background()); err != nil {
+		t.Fatalf("Download err: %v", err)
+	}
+	st := u.State()
+	if !st.Ready {
+		t.Errorf("Ready = false; want true after successful download")
+	}
+	matches, _ := filepath.Glob(filepath.Join(tmpCache, "atterm", "updates", "*"))
+	var nonPartial []string
+	for _, m := range matches {
+		if filepath.Ext(m) != ".partial" {
+			nonPartial = append(nonPartial, m)
+		}
+	}
+	if len(nonPartial) != 1 {
+		t.Errorf("expected 1 finished file in cache; got %v", matches)
+	}
+	got, _ := os.ReadFile(nonPartial[0])
+	if string(got) != string(body) {
+		t.Errorf("file content = %q; want %q", string(got), string(body))
+	}
+}
+
+func TestUpdater_Download_SizeMismatch(t *testing.T) {
+	body := []byte("short")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	tmpCache := t.TempDir()
+	u := newUpdater(updaterConfig{
+		current:  "v0.1.0",
+		repo:     "attson/atterm",
+		cacheDir: tmpCache,
+	})
+	u.state.AssetURL = srv.URL
+	u.state.AssetSize = int64(len(body) + 100)
+	u.state.Latest = "v0.2.0"
+
+	if err := u.Download(context.Background()); err == nil {
+		t.Errorf("Download err = nil; want size-mismatch error")
+	}
+	st := u.State()
+	if st.Ready {
+		t.Errorf("Ready = true after size mismatch; want false")
+	}
+	if st.Error == "" {
+		t.Errorf("Error = empty after size mismatch")
+	}
+	matches, _ := filepath.Glob(filepath.Join(tmpCache, "atterm", "updates", "*"))
+	if len(matches) != 0 {
+		t.Errorf("expected cleanup of partial; got %v", matches)
+	}
+}
+
+// silence unused-import warnings
+var _ = io.Discard

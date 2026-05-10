@@ -5,7 +5,10 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -43,6 +46,7 @@ type updaterConfig struct {
 	current    string
 	repo       string // e.g. "attson/atterm"
 	releaseURL string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
+	cacheDir   string // overrides os.UserCacheDir(); for tests
 	client     *http.Client
 	now        func() time.Time // optional; defaults to time.Now
 }
@@ -200,4 +204,149 @@ func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {
 		return nil, err
 	}
 	return &rel, nil
+}
+
+func (u *Updater) updatesDir() (string, error) {
+	base := u.cfg.cacheDir
+	if base == "" {
+		var err error
+		base, err = os.UserCacheDir()
+		if err != nil {
+			return "", err
+		}
+	}
+	dir := filepath.Join(base, "atterm", "updates")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// Download fetches the asset URL recorded in state to the cache dir,
+// streaming through a .partial file before atomic-renaming on success.
+// Reports size-mismatch errors loudly so the UI can offer Retry.
+func (u *Updater) Download(ctx context.Context) error {
+	u.mu.Lock()
+	url := u.state.AssetURL
+	expectedSize := u.state.AssetSize
+	latest := u.state.Latest
+	u.mu.Unlock()
+	if url == "" {
+		return fmt.Errorf("no asset URL — Check first")
+	}
+
+	dir, err := u.updatesDir()
+	if err != nil {
+		u.recordError(err)
+		return err
+	}
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		u.recordError(err)
+		return err
+	}
+	final := filepath.Join(dir, latest+"-"+name)
+	partial := final + ".partial"
+
+	u.mu.Lock()
+	u.state.Downloading = true
+	u.state.DownloadPct = 0
+	u.state.Ready = false
+	u.state.Error = ""
+	u.state.DownloadDir = dir
+	u.mu.Unlock()
+
+	defer func() {
+		u.mu.Lock()
+		u.state.Downloading = false
+		u.mu.Unlock()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		u.recordError(err)
+		return err
+	}
+	resp, err := u.cfg.client.Do(req)
+	if err != nil {
+		u.recordError(err)
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		err := fmt.Errorf("download http %d", resp.StatusCode)
+		u.recordError(err)
+		return err
+	}
+
+	out, err := os.Create(partial)
+	if err != nil {
+		u.recordError(err)
+		return err
+	}
+
+	written, copyErr := u.copyWithProgress(out, resp.Body, expectedSize)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(partial)
+		u.recordError(copyErr)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(partial)
+		u.recordError(closeErr)
+		return closeErr
+	}
+
+	if expectedSize > 0 && written != expectedSize {
+		_ = os.Remove(partial)
+		err := fmt.Errorf("download size mismatch: got %d bytes, expected %d", written, expectedSize)
+		u.recordError(err)
+		return err
+	}
+
+	if err := os.Rename(partial, final); err != nil {
+		_ = os.Remove(partial)
+		u.recordError(err)
+		return err
+	}
+
+	u.mu.Lock()
+	u.state.Ready = true
+	u.state.DownloadPct = 100
+	u.state.Error = ""
+	u.mu.Unlock()
+	return nil
+}
+
+func (u *Updater) copyWithProgress(dst io.Writer, src io.Reader, expectedSize int64) (int64, error) {
+	buf := make([]byte, 32*1024)
+	var written int64
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return written, werr
+			}
+			written += int64(n)
+			u.mu.Lock()
+			if expectedSize > 0 {
+				u.state.DownloadPct = int(written * 100 / expectedSize)
+			}
+			u.mu.Unlock()
+		}
+		if rerr == io.EOF {
+			return written, nil
+		}
+		if rerr != nil {
+			return written, rerr
+		}
+	}
+}
+
+func (u *Updater) recordError(err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.state.Error = err.Error()
+	u.state.Ready = false
 }

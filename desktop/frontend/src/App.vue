@@ -1,5 +1,7 @@
 <script lang="ts" setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { Terminal } from "xterm";
+import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
 import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
@@ -15,7 +17,7 @@ import {
 } from "./lib/api";
 import type { Endpoint } from "./lib/api";
 import { fetchSessions, type SessionInfo } from "./lib/connection";
-import type { Pane, Tab, SplitDir } from "./lib/types";
+import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
 import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 
@@ -43,6 +45,71 @@ const pickerCtx = ref<{ tabId: string; paneIdx: number } | null>(null);
 let autoStarted = false;
 let pollHandle: number | null = null;
 let toastHandle: number | null = null;
+
+// One-shot off-screen Terminal+FitAddon used as a measure probe. We resize
+// its parent div to a target cell size, call FitAddon.proposeDimensions(),
+// and use the result to spawn the PTY at the same cols/rows xterm.js would
+// pick on the real cell. Goal: avoid the SIGWINCH between fork and first
+// prompt that triggers zsh's PROMPT_EOL_MARK ('%') for some prompt themes.
+let measureTerm: Terminal | null = null;
+let measureFit: FitAddon | null = null;
+let measureDiv: HTMLDivElement | null = null;
+
+function setupMeasureProbe(): Promise<void> {
+  return new Promise((resolve) => {
+    measureDiv = document.createElement("div");
+    measureDiv.style.cssText =
+      "position:absolute;left:-99999px;top:0;width:400px;height:300px;visibility:hidden;";
+    document.body.appendChild(measureDiv);
+    measureTerm = new Terminal({
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      fontSize: 13,
+      allowProposedApi: true,
+    });
+    measureFit = new FitAddon();
+    measureTerm.loadAddon(measureFit);
+    measureTerm.open(measureDiv);
+    // Renderer needs a frame to compute the css cell size.
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function teardownMeasureProbe() {
+  measureTerm?.dispose();
+  if (measureDiv && measureDiv.parentElement) {
+    measureDiv.parentElement.removeChild(measureDiv);
+  }
+  measureTerm = null;
+  measureFit = null;
+  measureDiv = null;
+}
+
+// Predict what xterm.js's FitAddon will pick for a cell of the given px
+// dimensions. Routes through the probe so the math is the same as the real
+// fit() call — within a column.
+function predictCellDimsForSize(width: number, height: number): { cols: number; rows: number } {
+  if (!measureFit || !measureDiv) return { cols: 80, rows: 24 };
+  measureDiv.style.width = `${Math.max(40, Math.floor(width))}px`;
+  measureDiv.style.height = `${Math.max(40, Math.floor(height))}px`;
+  // Force layout so proposeDimensions reads the new size.
+  void measureDiv.offsetWidth;
+  const dims = measureFit.proposeDimensions();
+  if (!dims || !dims.cols || !dims.rows) return { cols: 80, rows: 24 };
+  return { cols: dims.cols, rows: dims.rows };
+}
+
+function predictCellDims(layout: LayoutKind): { cols: number; rows: number } {
+  const main = document.querySelector(".main") as HTMLElement | null;
+  if (!main || main.clientWidth < 100 || main.clientHeight < 100) {
+    return { cols: 80, rows: 24 };
+  }
+  const colsDiv = layout === "vertical" || layout === "grid2x2" ? 2 : 1;
+  const rowsDiv = layout === "horizontal" || layout === "grid2x2" ? 2 : 1;
+  // PaneGrid has gap:2px between cells.
+  const cellW = (main.clientWidth - (colsDiv - 1) * 2) / colsDiv;
+  const cellH = (main.clientHeight - (rowsDiv - 1) * 2) / rowsDiv;
+  return predictCellDimsForSize(cellW, cellH);
+}
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -140,10 +207,18 @@ function findSessionInfo(sid: string, remote: boolean): SessionInfo | undefined 
   return (remote ? remoteList.value : localList.value).find((s) => s.id === sid);
 }
 
-async function spawnLocalShell(cwd: string): Promise<string> {
+async function spawnLocalShell(
+  cwd: string,
+  dims: { cols: number; rows: number },
+): Promise<string> {
   const shells = await listShells();
   if (shells.length === 0) throw new Error("no shells found on this machine");
-  const resp = await newSession({ command: shells[0], cwd });
+  const resp = await newSession({
+    command: shells[0],
+    cwd,
+    cols: dims.cols,
+    rows: dims.rows,
+  });
   // Reflect immediately so PaneGrid finds the endpoint without poll lag.
   localList.value = [
     ...localList.value,
@@ -152,8 +227,8 @@ async function spawnLocalShell(cwd: string): Promise<string> {
       command: shells[0],
       cwd: cwd || "",
       title: shells[0],
-      cols: 80,
-      rows: 24,
+      cols: dims.cols,
+      rows: dims.rows,
       started_at: Math.floor(Date.now() / 1000),
       host_id: localHostID.value,
     },
@@ -166,7 +241,7 @@ async function startNewTab() {
   starting.value = true;
   errorMsg.value = "";
   try {
-    const sid = await spawnLocalShell("");
+    const sid = await spawnLocalShell("", predictCellDims("single"));
     const id = newId();
     tabs.value.push({
       id,
@@ -223,12 +298,13 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
     return;
   }
 
-  // New shell starts in the default directory (HOME) — matches iTerm's
-  // out-of-the-box behavior. Inheriting the parent pane's cwd would also
-  // surface zsh frameworks' async-git prompt redraws (PROMPT_EOL_MARK '%')
-  // that don't fire in HOME.
+  // New shell starts in HOME (cwd="") — matches iTerm's default behavior.
+  // Cols/rows are predicted via the FitAddon probe so the PTY is born at
+  // the same dimensions xterm.js will land on after fit(); without this
+  // there's a SIGWINCH between fork and first prompt that some zsh themes
+  // turn into a stray PROMPT_EOL_MARK ('%').
   try {
-    const sid = await spawnLocalShell("");
+    const sid = await spawnLocalShell("", predictCellDims(result.layout));
     t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
   } catch (e: any) {
     showToast("split failed: " + (e?.message ?? e));
@@ -350,6 +426,9 @@ watch([tabs, currentTabId], () => {
 onMounted(async () => {
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
+  // Set up the size-prediction probe before anything spawns a PTY — the
+  // probe must be ready by the time auto-startNewTab fires.
+  await setupMeasureProbe();
   try {
     localEndpoint.value = await getEndpoint();
     const info = await getHostInfo();
@@ -372,6 +451,7 @@ onUnmounted(() => {
   window.removeEventListener("hashchange", syncRoute);
   if (pollHandle !== null) window.clearInterval(pollHandle);
   if (toastHandle !== null) window.clearTimeout(toastHandle);
+  teardownMeasureProbe();
 });
 </script>
 

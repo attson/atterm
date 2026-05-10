@@ -39,6 +39,10 @@ export class SessionConnection {
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private detached = false;
+  // Latest pending resize request whose WS write was deferred (WS still in
+  // CONNECTING state). Flushed in ws.onopen right after the ATTACH frame.
+  // Only the most recent request is kept; earlier ones are stale.
+  private pendingResize: { cols: number; rows: number } | null = null;
 
   constructor(
     private endpoint: Endpoint,
@@ -75,8 +79,15 @@ export class SessionConnection {
   }
 
   sendResize(cols: number, rows: number): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
+      this.pendingResize = null;
+      return;
+    }
+    // WS not open yet (initial CONNECTING, or mid-reconnect). Stash and
+    // flush in ws.onopen below — otherwise the size we just learned never
+    // reaches the relay and the PTY drifts from xterm's view.
+    this.pendingResize = { cols, rows };
   }
 
   private url(): string {
@@ -99,6 +110,14 @@ export class SessionConnection {
         JSON.stringify({ session_id: this.sessionId, since_seq: this.lastSeq })
       );
       ws.send(encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload));
+      // Flush any resize that arrived while WS was still CONNECTING. Order
+      // matters: ATTACH first, RESIZE after, so the relay applies the size
+      // to the right session subscription.
+      if (this.pendingResize) {
+        const { cols, rows } = this.pendingResize;
+        this.pendingResize = null;
+        ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
+      }
     };
 
     ws.onmessage = (ev: MessageEvent) => {

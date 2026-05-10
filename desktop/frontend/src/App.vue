@@ -51,16 +51,27 @@ let toastHandle: number | null = null;
 // and use the result to spawn the PTY at the same cols/rows xterm.js would
 // pick on the real cell. Goal: avoid the SIGWINCH between fork and first
 // prompt that triggers zsh's PROMPT_EOL_MARK ('%') for some prompt themes.
+//
+// Probe layout: a 0x0 overflow:hidden host pinned at the top-left of the
+// viewport, with the actual measure div (400x300, position:absolute) inside
+// it. The host's clip prevents the probe from extending document scroll
+// area — earlier `position:absolute; left:-99999px` placement leaked into
+// body.scrollWidth and made WKWebView paint root-level scrollbars on the
+// real terminal.
 let measureTerm: Terminal | null = null;
 let measureFit: FitAddon | null = null;
 let measureDiv: HTMLDivElement | null = null;
+let measureHost: HTMLDivElement | null = null;
 
 function setupMeasureProbe(): Promise<void> {
   return new Promise((resolve) => {
+    measureHost = document.createElement("div");
+    measureHost.style.cssText =
+      "position:fixed;top:0;left:0;width:0;height:0;overflow:hidden;pointer-events:none;visibility:hidden;";
     measureDiv = document.createElement("div");
-    measureDiv.style.cssText =
-      "position:absolute;left:-99999px;top:0;width:400px;height:300px;visibility:hidden;";
-    document.body.appendChild(measureDiv);
+    measureDiv.style.cssText = "position:absolute;top:0;left:0;width:400px;height:300px;";
+    measureHost.appendChild(measureDiv);
+    document.body.appendChild(measureHost);
     measureTerm = new Terminal({
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
       fontSize: 13,
@@ -76,12 +87,13 @@ function setupMeasureProbe(): Promise<void> {
 
 function teardownMeasureProbe() {
   measureTerm?.dispose();
-  if (measureDiv && measureDiv.parentElement) {
-    measureDiv.parentElement.removeChild(measureDiv);
+  if (measureHost && measureHost.parentElement) {
+    measureHost.parentElement.removeChild(measureHost);
   }
   measureTerm = null;
   measureFit = null;
   measureDiv = null;
+  measureHost = null;
 }
 
 // Predict what xterm.js's FitAddon will pick for a cell of the given px

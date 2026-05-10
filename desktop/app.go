@@ -10,8 +10,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Endpoint is what the frontend uses to open a WebSocket to the in-process relay.
@@ -61,11 +63,18 @@ type App struct {
 	mu           sync.Mutex
 	uplink       *uplink
 	uplinkCancel context.CancelFunc
+
+	updater *Updater
 }
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
-	return &App{}
+	a := &App{}
+	a.updater = newUpdater(updaterConfig{
+		current: Version,
+		repo:    "attson/atterm",
+	})
+	return a
 }
 
 // startup is called when the Wails runtime is ready. Boot the in-process
@@ -89,6 +98,12 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 	a.applyRelayConfig(cfg)
+
+	// Auto-update background loop, gated on the persisted preference.
+	// New installs default to enabled (AutoCheckUpdatesOrDefault returns true).
+	if a.updater != nil && cfg.AutoCheckUpdatesOrDefault() {
+		a.updater.Start(ctx)
+	}
 }
 
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
@@ -99,6 +114,9 @@ func (a *App) shutdown(ctx context.Context) {
 		a.uplinkCancel = nil
 	}
 	a.mu.Unlock()
+	if a.updater != nil {
+		a.updater.Stop()
+	}
 	if a.host != nil {
 		a.host.Stop()
 		a.host = nil
@@ -224,4 +242,80 @@ func (a *App) ListShells() []string {
 		}
 	}
 	return out
+}
+
+// GetUpdateState returns the current updater state. The frontend polls
+// this from its existing 2s session-poll loop.
+func (a *App) GetUpdateState() UpdateState {
+	if a.updater == nil {
+		return UpdateState{Current: "dev"}
+	}
+	return a.updater.State()
+}
+
+// CheckUpdate forces a fresh GitHub fetch, bypassing the 1h cache.
+// Triggered by Settings > Updates > "Check now".
+func (a *App) CheckUpdate() error {
+	if a.updater == nil {
+		return nil
+	}
+	return a.updater.Check(a.ctx, true)
+}
+
+// StartDownload begins fetching the platform asset to the cache dir.
+// Idempotent if already running.
+func (a *App) StartDownload() error {
+	if a.updater == nil {
+		return nil
+	}
+	return a.updater.Download(a.ctx)
+}
+
+// InstallUpdate spawns the install helper detached and quits the app.
+// The helper waits for our PID to exit then replaces the install and
+// relaunches.
+func (a *App) InstallUpdate() error {
+	if a.updater == nil {
+		return fmt.Errorf("updater not initialized")
+	}
+	if err := a.updater.InstallAndQuit(); err != nil {
+		return err
+	}
+	// Quit ourselves so the helper's wait-for-PID-exit loop unblocks.
+	go func() {
+		// Tiny delay so this RPC return reaches the frontend before we exit.
+		time.Sleep(200 * time.Millisecond)
+		wailsruntime.Quit(a.ctx)
+	}()
+	return nil
+}
+
+// GetAutoCheckUpdates reports the persisted preference (default true).
+func (a *App) GetAutoCheckUpdates() bool {
+	if a.cfgStore == nil {
+		return true
+	}
+	return a.cfgStore.Get().AutoCheckUpdatesOrDefault()
+}
+
+// SetAutoCheckUpdates persists the preference and starts/stops the
+// background loop accordingly.
+func (a *App) SetAutoCheckUpdates(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.AutoCheckUpdates = &enabled
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	if a.updater == nil {
+		return nil
+	}
+	if enabled {
+		a.updater.Start(a.ctx)
+	} else {
+		a.updater.Stop()
+	}
+	return nil
 }

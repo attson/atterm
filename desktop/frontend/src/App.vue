@@ -208,15 +208,6 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
     }
   }
 
-  // Capture the active pane's cwd BEFORE mutation. After transitionLayout the
-  // active idx points at the new (empty) slot, so we'd lose the parent.
-  let parentCwd = "";
-  const activePane: Pane | undefined = t.panes[t.activePaneIdx];
-  if (activePane?.sessionId && !activePane.remote) {
-    const info = findSessionInfo(activePane.sessionId, false);
-    if (info?.cwd) parentCwd = info.cwd;
-  }
-
   const result = transitionLayout(t.layout, t.panes, t.activePaneIdx, dir);
   if (result.noop) {
     showToast("pane full — close one first");
@@ -232,8 +223,12 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
     return;
   }
 
+  // New shell starts in the default directory (HOME) — matches iTerm's
+  // out-of-the-box behavior. Inheriting the parent pane's cwd would also
+  // surface zsh frameworks' async-git prompt redraws (PROMPT_EOL_MARK '%')
+  // that don't fire in HOME.
   try {
-    const sid = await spawnLocalShell(parentCwd);
+    const sid = await spawnLocalShell("");
     t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
   } catch (e: any) {
     showToast("split failed: " + (e?.message ?? e));

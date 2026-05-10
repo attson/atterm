@@ -11,6 +11,14 @@ const props = withDefaults(
     sessionId: string;
     active?: boolean;
     focused?: boolean;
+    // The PTY's known size at the time of attach (from SessionInfo).
+    // When this matches the local xterm's fit dimensions, we skip the
+    // initial RESIZE so cross-attached remote shells don't see a
+    // gratuitous SIGWINCH (which some prompt themes turn into a stray
+    // '%' via PROMPT_EOL_MARK). Undefined → treat as unknown and
+    // send the resize anyway (safe fallback).
+    expectedCols?: number;
+    expectedRows?: number;
   }>(),
   { active: true, focused: false }
 );
@@ -71,7 +79,18 @@ function startConnection() {
     },
   });
   conn.attach();
-  if (term) conn.sendResize(term.cols, term.rows);
+  // Skip the no-op RESIZE if our fit landed on the same size the relay
+  // already knows about. Net effect: locally-spawned shells (PTY born at
+  // predicted dims) and cross-attached shells whose owner happens to be
+  // the same size get zero startup SIGWINCH. Mismatched sizes still send,
+  // accepting the SIGWINCH cost — that's the cross-client cost iTerm
+  // doesn't incur because it doesn't have this attach-existing model.
+  if (
+    term &&
+    (props.expectedCols !== term.cols || props.expectedRows !== term.rows)
+  ) {
+    conn.sendResize(term.cols, term.rows);
+  }
 }
 
 onMounted(() => {

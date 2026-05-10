@@ -10,8 +10,9 @@ const props = withDefaults(
     endpoint: Endpoint;
     sessionId: string;
     active?: boolean;
+    focused?: boolean;
   }>(),
-  { active: true }
+  { active: true, focused: false }
 );
 
 const termContainer = ref<HTMLDivElement | null>(null);
@@ -104,7 +105,7 @@ watch(
 </script>
 
 <template>
-  <div class="term-view">
+  <div class="term-view" :class="{ focused }">
     <div ref="termContainer" class="term"></div>
     <div v-if="active && status !== 'attached'" class="overlay">
       <span v-if="status === 'connecting'">connecting…</span>
@@ -142,4 +143,7 @@ watch(
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }
 .overlay .dim { color: var(--fg-dim); }
+.term-view.focused {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 </style>

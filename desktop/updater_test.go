@@ -54,3 +54,38 @@ func TestUpdater_EmptyVersion_TreatedAsDev(t *testing.T) {
 
 // silence-the-unused-import warnings for httptest in later tasks.
 var _ = httptest.NewServer
+
+func TestAssetNameForPlatform(t *testing.T) {
+	cases := []struct {
+		goos, goarch string
+		want         string
+	}{
+		{"linux", "amd64", "atterm-desktop-linux-amd64.tar.gz"},
+		{"darwin", "arm64", "atterm-desktop-darwin-arm64.zip"},
+		{"windows", "amd64", "atterm-desktop-windows-amd64.zip"},
+	}
+	for _, c := range cases {
+		got, err := assetNameForPlatform(c.goos, c.goarch)
+		if err != nil {
+			t.Errorf("assetNameForPlatform(%q,%q) err = %v", c.goos, c.goarch, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("assetNameForPlatform(%q,%q) = %q; want %q", c.goos, c.goarch, got, c.want)
+		}
+	}
+}
+
+func TestAssetNameForPlatform_Unsupported(t *testing.T) {
+	cases := []struct{ goos, goarch string }{
+		{"darwin", "amd64"},
+		{"linux", "arm64"},
+		{"freebsd", "amd64"},
+	}
+	for _, c := range cases {
+		_, err := assetNameForPlatform(c.goos, c.goarch)
+		if err == nil {
+			t.Errorf("expected error for %s/%s", c.goos, c.goarch)
+		}
+	}
+}

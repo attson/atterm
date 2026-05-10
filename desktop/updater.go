@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -67,6 +68,22 @@ func (u *Updater) State() UpdateState {
 // devOrEmpty reports whether we should short-circuit out of all update logic.
 func (u *Updater) devOrEmpty() bool {
 	return u.cfg.current == "" || u.cfg.current == "dev"
+}
+
+// assetNameForPlatform returns the GitHub Release asset filename for the
+// given runtime.GOOS/GOARCH pair. Unsupported pairs return an error so the
+// UI can display "no build for $platform" instead of silently picking a
+// wrong artifact.
+func assetNameForPlatform(goos, goarch string) (string, error) {
+	switch {
+	case goos == "linux" && goarch == "amd64":
+		return "atterm-desktop-linux-amd64.tar.gz", nil
+	case goos == "darwin" && goarch == "arm64":
+		return "atterm-desktop-darwin-arm64.zip", nil
+	case goos == "windows" && goarch == "amd64":
+		return "atterm-desktop-windows-amd64.zip", nil
+	}
+	return "", fmt.Errorf("no atterm build for %s/%s", goos, goarch)
 }
 
 // Check fetches the latest release. force=true bypasses the 1h response cache.

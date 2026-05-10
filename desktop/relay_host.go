@@ -143,8 +143,12 @@ func (h *relayHost) SendLocalInbound(id uuid.UUID, f proto.Frame) error {
 	return nil
 }
 
-// CloseSession terminates the PTY for a session. The relay-side cleanup
-// follows automatically via the EOF-driven path in AdoptSession.
+// CloseSession terminates the PTY for a session and synchronously evicts
+// it from the local registry, so the uplink learns NOW (rather than after
+// the eventual pty.Wait() in the watcher goroutine) and the upstream relay
+// drops the mirror promptly. Without this, the close-to-uplink-ANNOUNCE
+// delay was bounded by how long zsh took to notice EOF and exit — which
+// for shells in the middle of a foreground command can be arbitrary.
 func (h *relayHost) CloseSession(id uuid.UUID) error {
 	h.mu.Lock()
 	s, ok := h.sessions[id]
@@ -152,7 +156,12 @@ func (h *relayHost) CloseSession(id uuid.UUID) error {
 	if !ok {
 		return fmt.Errorf("no such session")
 	}
-	return s.host.Close()
+	err := s.host.Close()
+	// AdoptSession's cleanup is sync.Once-guarded; calling it here is safe
+	// even if the watcher goroutine also reaches it later.
+	s.cleanup()
+	h.notifyChange()
+	return err
 }
 
 // Stop tears down all live PTYs and shuts down the HTTP server. Idempotent.

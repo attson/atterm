@@ -23,5 +23,8 @@ services:
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_POLL_INTERVAL: ${ATTERM_WATCHTOWER_INTERVAL:-300}
+      # Newer Docker daemons reject very old client API versions. Keep
+      # watchtower on the daemon-supported floor used by modern engines.
+      DOCKER_API_VERSION: "${ATTERM_WATCHTOWER_DOCKER_API_VERSION:-1.40}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

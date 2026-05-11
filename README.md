@@ -51,6 +51,8 @@ ATTERM_TOKEN=dev docker compose up -d atterm-relay
 - `ATTERM_RELAY_DEBUG=1`：打印 relay 交互日志
 - `ATTERM_RELAY_DEBUG_PAYLOAD=1`：额外打印 IN/OUT 字节内容（仅调试用）
 - `ATTERM_WATCHTOWER_INTERVAL`：启用自动更新时的检查间隔秒数，默认 `300`
+- `ATTERM_WATCHTOWER_DOCKER_API_VERSION`：watchtower 连接本机 Docker daemon
+  使用的 API 版本，默认 `1.40`
 
 如果希望 DockerHub `latest` 更新后自动拉取并重启 relay，可以启用可选的
 `auto-update` profile：
@@ -62,6 +64,12 @@ ATTERM_TOKEN=dev docker compose --profile auto-update up -d
 自动更新由 `watchtower` 容器完成，只会更新带有 watchtower label 的
 `atterm-relay` 服务。该模式需要挂载 Docker socket；不需要自动更新时继续使用
 普通 `docker compose up -d atterm-relay` 即可。
+
+如果修改了自动更新配置，建议重建 watchtower 容器：
+
+```bash
+docker compose --profile auto-update up -d --force-recreate watchtower
+```
 
 本地构建镜像用于调试：
 

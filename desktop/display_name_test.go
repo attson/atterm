@@ -66,6 +66,7 @@ func TestInstallersUseATTermNameAndIcons(t *testing.T) {
 		"../.github/workflows/build.yml": {
 			`APP_ARTIFACT_NAME: 'AT-Term'`,
 			`AT-Term-linux-${{ matrix.arch }}.tar.gz`,
+			`cp -R "at-term.app" "AT Term.app"`,
 			`AT Term.app`,
 			`AT Term.exe`,
 			`at-term-amd64-installer.exe`,

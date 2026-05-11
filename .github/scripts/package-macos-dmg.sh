@@ -5,6 +5,9 @@ version_no_v="${VERSION#v}"
 app="desktop/build/bin/AT Term.app"
 out="desktop/build/bin/${ARTIFACT_NAME}_${version_no_v}_${ARCH}.dmg"
 
+if [ ! -d "$app" ]; then
+  cp -R "desktop/build/bin/at-term.app" "$app"
+fi
 test -d "$app"
 rm -f "$out"
 hdiutil create -volname "AT Term" -srcfolder "$app" -ov -format UDZO "$out"

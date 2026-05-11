@@ -158,6 +158,9 @@ jobs:
         run: |
           set -euo pipefail
           cd desktop/build/bin
+          if [ ! -d "AT Term.app" ]; then
+            cp -R "at-term.app" "AT Term.app"
+          fi
           ditto -c -k --keepParent "AT Term.app" "AT-Term-darwin-${{ matrix.arch }}.zip"
           ls -la "AT-Term-darwin-${{ matrix.arch }}.zip"
 

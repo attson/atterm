@@ -27,6 +27,7 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
 	origins := flag.String("origins", "", "comma-separated allowed Origin host patterns (empty = allow any, dev only)")
+	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
 	readOnlyTokens := flag.String("read-only-tokens", os.Getenv("ATTERM_READ_ONLY_TOKENS"), "comma-separated read-only bearer tokens (or ATTERM_READ_ONLY_TOKENS)")
@@ -44,6 +45,7 @@ func main() {
 		token:        os.Getenv("ATTERM_TOKEN"),
 		readOnly:     *readOnlyTokens,
 		origins:      *origins,
+		configPath:   *configPath,
 		rateLimit:    *rateLimit,
 		maxConns:     *maxConns,
 		debug:        *debug || *debugPayload,
@@ -120,6 +122,7 @@ type relayOptions struct {
 	token        string
 	readOnly     string
 	origins      string
+	configPath   string
 	rateLimit    int
 	maxConns     int
 	debug        bool
@@ -145,17 +148,38 @@ func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
 		return relay.Config{}, "", fmt.Errorf("refusing public relay with weak token; set a strong ATTERM_TOKEN or pass --dev-insecure for development")
 	}
 	allowedOrigins := splitCSV(opts.origins)
+	adminCfg := relay.AdminConfig{}
+	if opts.configPath != "" {
+		var err error
+		adminCfg, err = relay.LoadAdminConfig(opts.configPath)
+		if err != nil {
+			return relay.Config{}, "", fmt.Errorf("load relay config: %w", err)
+		}
+	}
+	rateLimit := opts.rateLimit
+	if rateLimit == 0 {
+		rateLimit = adminCfg.RateLimitPerMinute
+	}
+	maxConns := opts.maxConns
+	if maxConns == 0 {
+		maxConns = adminCfg.MaxConnectionsPerKey
+	}
+	readOnlyHashes := make([]string, 0, len(adminCfg.ReadOnlyTokens))
+	for _, tok := range adminCfg.ReadOnlyTokens {
+		readOnlyHashes = append(readOnlyHashes, tok.Hash)
+	}
 
 	cfg := relay.Config{
 		Token:                token,
 		ReadOnlyTokens:       splitCSV(opts.readOnly),
+		ReadOnlyTokenHashes:  readOnlyHashes,
 		WebDir:               opts.webDir,
 		Version:              opts.version,
 		AllowedOrigins:       allowedOrigins,
 		Debug:                opts.debug || opts.debugPayload,
 		DebugPayload:         opts.debugPayload,
-		RateLimitPerMinute:   opts.rateLimit,
-		MaxConnectionsPerKey: opts.maxConns,
+		RateLimitPerMinute:   rateLimit,
+		MaxConnectionsPerKey: maxConns,
 	}
 	logStartupSecurity(opts, token, generated, publicListen)
 	return cfg, token, nil

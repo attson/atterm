@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/attson/atterm/internal/relay"
 )
 
 func TestRelaySecurityGeneratesTokenWhenUnset(t *testing.T) {
@@ -97,5 +101,35 @@ func TestRelaySecurityConfiguresReadOnlyTokensAndLimits(t *testing.T) {
 	}
 	if cfg.MaxConnectionsPerKey != 7 {
 		t.Fatalf("MaxConnectionsPerKey = %d; want 7", cfg.MaxConnectionsPerKey)
+	}
+}
+
+func TestRelaySecurityLoadsPersistentAdminConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "relay.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "rate_limit_per_minute": 22,
+  "max_connections_per_key": 5,
+  "read_only_tokens": [{"id":"viewer","hash":"`+relay.HashBearerToken("secret")+`","created_at":123}]
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := buildRelayConfig(relayOptions{
+		addr:       "127.0.0.1:8080",
+		token:      "main-write-token",
+		configPath: configPath,
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatalf("buildRelayConfig err: %v", err)
+	}
+	if cfg.Token != "main-write-token" {
+		t.Fatalf("Token = %q; want env/flag main token", cfg.Token)
+	}
+	if cfg.RateLimitPerMinute != 22 || cfg.MaxConnectionsPerKey != 5 {
+		t.Fatalf("limits = %d/%d; want 22/5", cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
+	}
+	if len(cfg.ReadOnlyTokenHashes) != 1 {
+		t.Fatalf("ReadOnlyTokenHashes = %#v; want one hash", cfg.ReadOnlyTokenHashes)
 	}
 }

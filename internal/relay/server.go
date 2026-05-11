@@ -24,6 +24,9 @@ type Config struct {
 	// ReadOnlyTokens can list and attach to sessions, but cannot send input,
 	// resize, paste images, or register agent/uplink connections.
 	ReadOnlyTokens []string
+	// ReadOnlyTokenHashes are sha256:base64url token hashes from persistent
+	// admin config. They behave like ReadOnlyTokens without storing secrets.
+	ReadOnlyTokenHashes []string
 	// WebDir is the filesystem path to the static web client. Empty disables /.
 	WebDir string
 	// Version is the application version exposed to web clients.
@@ -171,7 +174,7 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens)
+	scope := authorizeClientWithConfig(r, s.cfg)
 	if scope == authNone {
 		s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -205,7 +208,7 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens)
+	scope := authorizeClientWithConfig(r, s.cfg)
 	if scope == authNone {
 		s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -228,7 +231,7 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens) == authNone {
+	if authorizeClientWithConfig(r, s.cfg) == authNone {
 		s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -240,7 +243,7 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens) == authNone {
+	if authorizeClientWithConfig(r, s.cfg) == authNone {
 		s.debugf("http reject path=/api/version remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

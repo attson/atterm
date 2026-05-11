@@ -174,6 +174,47 @@ func TestReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
 	}
 }
 
+func TestHashedReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
+	srv := NewServer(Config{Token: "rw", ReadOnlyTokenHashes: []string{HashBearerToken("ro-hash")}})
+	id := uuid.MustParse("33333333-3333-4333-8333-444444444444")
+	sess := session.New(id, proto.SessionInfo{Command: "bash"})
+	srv.registry.Add(sess)
+
+	apiReq := httptest.NewRequest(http.MethodGet, "/api/sessions?token=ro-hash", nil)
+	apiRec := httptest.NewRecorder()
+	srv.ServeHTTP(apiRec, apiReq)
+	if apiRec.Code != http.StatusOK {
+		t.Fatalf("hashed read-only list status = %d; want 200", apiRec.Code)
+	}
+
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token=ro-hash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	attachPayload, _ := json.Marshal(proto.AttachPayload{SessionID: id.String()})
+	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+		Type: proto.TypeAttach, SessionID: id, Payload: attachPayload,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+		Type: proto.TypeIn, SessionID: id, Payload: []byte("whoami\n"),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case f := <-sess.Inbound():
+		t.Fatalf("hashed read-only token delivered inbound frame: %+v", f)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestSessionPermissionViewDropsInputForWriteToken(t *testing.T) {
 	srv := NewServer(Config{Token: "rw"})
 	id := uuid.MustParse("44444444-4444-4444-8444-444444444444")

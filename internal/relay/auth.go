@@ -22,11 +22,19 @@ func authorize(r *http.Request, expected string) bool {
 }
 
 func authorizeClient(r *http.Request, expected string, readOnlyTokens []string) authScope {
-	return authorizeWithScope(r, expected, readOnlyTokens)
+	return authorizeWithScopeAndHashes(r, expected, readOnlyTokens, nil)
 }
 
 func authorizeWithScope(r *http.Request, expected string, readOnlyTokens []string) authScope {
-	if expected == "" && len(readOnlyTokens) == 0 {
+	return authorizeWithScopeAndHashes(r, expected, readOnlyTokens, nil)
+}
+
+func authorizeClientWithConfig(r *http.Request, cfg Config) authScope {
+	return authorizeWithScopeAndHashes(r, cfg.Token, cfg.ReadOnlyTokens, cfg.ReadOnlyTokenHashes)
+}
+
+func authorizeWithScopeAndHashes(r *http.Request, expected string, readOnlyTokens []string, readOnlyHashes []string) authScope {
+	if expected == "" && len(readOnlyTokens) == 0 && len(readOnlyHashes) == 0 {
 		return authWrite // dev mode: no token configured
 	}
 	got := tokenFromRequest(r)
@@ -38,6 +46,11 @@ func authorizeWithScope(r *http.Request, expected string, readOnlyTokens []strin
 	}
 	for _, ro := range readOnlyTokens {
 		if tokenEqual(got, ro) {
+			return authRead
+		}
+	}
+	for _, hash := range readOnlyHashes {
+		if tokenMatchesHash(got, hash) {
 			return authRead
 		}
 	}

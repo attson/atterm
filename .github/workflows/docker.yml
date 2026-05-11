@@ -15,6 +15,7 @@ jobs:
   relay:
     name: relay image
     runs-on: ubuntu-24.04
+    environment: prod
     steps:
       - uses: actions/checkout@v4
 

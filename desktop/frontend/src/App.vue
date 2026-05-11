@@ -17,7 +17,7 @@ import {
   newSession,
 } from "./lib/api";
 import type { Endpoint, UpdateState } from "./lib/api";
-import { fetchSessions, type SessionInfo } from "./lib/connection";
+import { SessionListConnection, type SessionInfo } from "./lib/connection";
 import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
 import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
@@ -28,6 +28,7 @@ const localHostID = ref<string>("");
 
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
+const remoteRawList = ref<SessionInfo[]>([]);
 
 const tabs = ref<Tab[]>([]);
 const currentTabId = ref<string | null>(null);
@@ -47,8 +48,9 @@ let updatePollHandle: number | null = null;
 const pickerCtx = ref<{ tabId: string; paneIdx: number } | null>(null);
 
 let autoStarted = false;
-let pollHandle: number | null = null;
 let toastHandle: number | null = null;
+let localSessionListConn: SessionListConnection | null = null;
+let remoteSessionListConn: SessionListConnection | null = null;
 
 // One-shot off-screen Terminal+FitAddon used as a measure probe. We resize
 // its parent div to a target cell size, call FitAddon.proposeDimensions(),
@@ -165,31 +167,9 @@ function showToast(msg: string) {
   }, 2000);
 }
 
-async function pollSessions() {
-  if (!localEndpoint.value) return;
-  let cfg = { url: "", token: "", connected: false };
-  try {
-    cfg = await getRelayConfig();
-  } catch {
-    /* keep last known */
-  }
-  remoteEndpoint.value = cfg.connected && cfg.url
-    ? { url: cfg.url, token: cfg.token }
-    : null;
-
-  const local = await fetchSessions(localEndpoint.value).catch(() => [] as SessionInfo[]);
-  const remote: SessionInfo[] = remoteEndpoint.value
-    ? await fetchSessions(remoteEndpoint.value).catch(() => [] as SessionInfo[])
-    : [];
-
-  const localIds = new Set(local.map((s) => s.id));
-  const filteredRemote = remote.filter((s) => !localIds.has(s.id));
-
-  localList.value = local;
-  remoteList.value = filteredRemote;
-
-  // Sweep: if any pane references a session id no longer reported, null it.
-  const remoteIds = new Set(filteredRemote.map((s) => s.id));
+function sweepMissingSessions() {
+  const localIds = new Set(localList.value.map((s) => s.id));
+  const remoteIds = new Set(remoteList.value.map((s) => s.id));
   for (const t of tabs.value) {
     for (let i = 0; i < t.panes.length; i++) {
       const p = t.panes[i];
@@ -199,8 +179,68 @@ async function pollSessions() {
       }
     }
   }
+}
 
+function refreshVisibleRemoteSessions() {
+  const localIds = new Set(localList.value.map((s) => s.id));
+  remoteList.value = remoteRawList.value.filter((s) => !localIds.has(s.id));
+}
+
+function applyLocalSessions(sessions: SessionInfo[]) {
+  localList.value = sessions;
+  refreshVisibleRemoteSessions();
+  sweepMissingSessions();
   if (status.value !== "ready") status.value = "ready";
+}
+
+function applyRemoteSessions(sessions: SessionInfo[]) {
+  remoteRawList.value = sessions;
+  refreshVisibleRemoteSessions();
+  sweepMissingSessions();
+}
+
+function connectLocalSessionList(endpoint: Endpoint) {
+  localSessionListConn?.detach();
+  localSessionListConn = new SessionListConnection(endpoint, {
+    onSessions: applyLocalSessions,
+    onStatus: (s) => {
+      if (s === "error") status.value = "error";
+    },
+  });
+  localSessionListConn.attach();
+}
+
+function connectRemoteSessionList(endpoint: Endpoint | null) {
+  remoteSessionListConn?.detach();
+  remoteSessionListConn = null;
+  remoteRawList.value = [];
+  remoteList.value = [];
+  remoteEndpoint.value = endpoint;
+  sweepMissingSessions();
+  if (!endpoint) return;
+  remoteSessionListConn = new SessionListConnection(endpoint, {
+    onSessions: applyRemoteSessions,
+  });
+  remoteSessionListConn.attach();
+}
+
+async function refreshRelayConfig() {
+  let cfg = { url: "", token: "", connected: false };
+  try {
+    cfg = await getRelayConfig();
+  } catch {
+    /* keep last known */
+  }
+  const next = cfg.connected && cfg.url
+    ? { url: cfg.url, token: cfg.token }
+    : null;
+  if (
+    remoteEndpoint.value?.url === next?.url &&
+    remoteEndpoint.value?.token === next?.token
+  ) {
+    return;
+  }
+  connectRemoteSessionList(next);
 }
 
 function parseHash(): string | null {
@@ -266,7 +306,6 @@ async function startNewTab() {
       activePaneIdx: 0,
     });
     gotoTab(id);
-    pollSessions();
   } catch (e: any) {
     status.value = "error";
     errorMsg.value = e?.message ?? String(e);
@@ -468,13 +507,13 @@ onMounted(async () => {
     localEndpoint.value = await getEndpoint();
     const info = await getHostInfo();
     localHostID.value = info.host_id;
+    connectLocalSessionList(localEndpoint.value);
+    await refreshRelayConfig();
   } catch (e: any) {
     status.value = "error";
     errorMsg.value = e?.message ?? "Wails bindings unavailable";
     return;
   }
-  await pollSessions();
-  pollHandle = window.setInterval(pollSessions, 2000);
 
   // Auto-update poll: every 5s pull state.available || ready and toggle the
   // ⚙ badge dot. Lower frequency than session poll because update state
@@ -496,7 +535,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("hashchange", syncRoute);
-  if (pollHandle !== null) window.clearInterval(pollHandle);
+  localSessionListConn?.detach();
+  remoteSessionListConn?.detach();
   if (toastHandle !== null) window.clearTimeout(toastHandle);
   if (updatePollHandle !== null) window.clearInterval(updatePollHandle);
   teardownMeasureProbe();
@@ -593,7 +633,8 @@ onUnmounted(() => {
       v-if="showSettings"
       :local-session-count="localSessionCount"
       :remote-session-count="remoteSessionCount"
-      @close="showSettings = false"
+      @relay-config-changed="refreshRelayConfig"
+      @close="showSettings = false; refreshRelayConfig()"
     />
     <RemoteSessionsDialog
       v-if="showRemote"

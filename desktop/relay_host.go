@@ -274,8 +274,8 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 
 // watchCwd polls the child's /proc-reported cwd once a second and broadcasts
 // a META frame whenever it changes. The local mini-relay fans the META out
-// to attached clients (so the desktop frontend's poll picks up the new value
-// or reacts immediately if it is listening to META).
+// to attached clients and notifies the uplink so remote relays only receive
+// an ANNOUNCE when the advertised snapshot actually changed.
 func (h *relayHost) watchCwd(id uuid.UUID, pty *ptyhost.Host, initial string, done <-chan struct{}) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -296,11 +296,13 @@ func (h *relayHost) watchCwd(id uuid.UUID, pty *ptyhost.Host, initial string, do
 			return
 		}
 		sess.UpdateMeta(proto.MetaPayload{Cwd: cwd})
+		h.server.Registry().NotifyChange()
 		payload, err := json.Marshal(proto.MetaPayload{Cwd: cwd})
 		if err != nil {
 			continue
 		}
 		sess.Broadcast(proto.Frame{Type: proto.TypeMeta, SessionID: id, Payload: payload})
+		h.notifyChange()
 	}
 }
 

@@ -85,12 +85,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn) {
 		s.debugFrame("client", "recv", f)
 		switch f.Type {
 		case proto.TypeList:
-			sessions := s.registry.List()
-			infos := make([]proto.SessionInfo, 0, len(sessions))
-			for _, ss := range sessions {
-				infos = append(infos, ss.Info())
-			}
-			payload, _ := json.Marshal(infos)
+			payload, _ := json.Marshal(s.sessionInfoList())
 			resp := proto.Frame{Type: proto.TypeListResp, Payload: payload}
 			s.debugFrame("client", "send", resp)
 			ctx, cancel := context.WithTimeout(ctx, clientWriteWait)

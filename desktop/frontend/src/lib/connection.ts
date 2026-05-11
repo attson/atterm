@@ -32,6 +32,90 @@ export interface ConnectionHandlers {
   onStatus?: (s: Status) => void;
 }
 
+export interface SessionListHandlers {
+  onSessions: (sessions: SessionInfo[]) => void;
+  onStatus?: (s: Status) => void;
+}
+
+export class SessionListConnection {
+  private ws: WebSocket | null = null;
+  private reconnectAttempts = 0;
+  private reconnectTimer: number | null = null;
+  private detached = false;
+
+  constructor(
+    private endpoint: Endpoint,
+    private handlers: SessionListHandlers,
+  ) {}
+
+  attach(): void {
+    if (this.detached) return;
+    this.openWS();
+  }
+
+  detach(): void {
+    this.detached = true;
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+    }
+  }
+
+  private url(): string {
+    const t = encodeURIComponent(this.endpoint.token);
+    const base = this.endpoint.url.replace(/\/$/, "");
+    return `${base}/client-sessions${t ? `?token=${t}` : ""}`;
+  }
+
+  private openWS(): void {
+    if (this.detached) return;
+    const ws = new WebSocket(this.url());
+    ws.binaryType = "arraybuffer";
+    this.ws = ws;
+    this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
+
+    ws.onopen = () => {
+      this.reconnectAttempts = 0;
+      this.handlers.onStatus?.("attached");
+    };
+
+    ws.onmessage = (ev: MessageEvent) => {
+      let f;
+      try {
+        f = decodeFrame(new Uint8Array(ev.data as ArrayBuffer));
+      } catch {
+        return;
+      }
+      if (f.type !== TYPE.LIST_RESP) return;
+      try {
+        this.handlers.onSessions(JSON.parse(decodeText(f.payload)) as SessionInfo[]);
+      } catch {
+        /* ignore malformed snapshots */
+      }
+    };
+
+    ws.onclose = () => {
+      this.ws = null;
+      if (this.detached) return;
+      this.handlers.onStatus?.("reconnecting");
+      const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
+      this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
+    };
+
+    ws.onerror = () => {
+      // onclose follows
+    };
+  }
+}
+
 export class SessionConnection {
   private ws: WebSocket | null = null;
   private sidBytes: Uint8Array;

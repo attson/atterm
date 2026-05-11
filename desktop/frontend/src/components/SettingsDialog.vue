@@ -18,7 +18,10 @@ const props = defineProps<{
   remoteSessionCount: number;
 }>();
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "relay-config-changed"): void;
+}>();
 
 const url = ref("");
 const token = ref("");
@@ -70,6 +73,7 @@ async function save() {
     await setRelayConfig({ url: url.value.trim(), token: token.value.trim() });
     const cfg = await getRelayConfig();
     connected.value = cfg.connected;
+    emit("relay-config-changed");
     emit("close");
   } catch (e: any) {
     error.value = e?.message ?? String(e);
@@ -86,6 +90,7 @@ async function disconnect() {
     url.value = "";
     token.value = "";
     connected.value = false;
+    emit("relay-config-changed");
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {

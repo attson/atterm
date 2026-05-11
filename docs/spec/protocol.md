@@ -129,9 +129,18 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
   "started_at": 1715234567,
   "host_id": "<uuid>",
   "host": "myhost",
-  "user": "alice"
+  "user": "alice",
+  "remote_permission": "full"
 }]
 ```
+
+`remote_permission` 是 owner desktop 发布的可选字段；缺省表示 `full`，保持旧客户端兼容。
+
+| 值 | 远程允许 | relay/host 拦截 |
+|----|----------|-----------------|
+| `view` | list / attach / 接收输出与历史 | `IN` / `RESIZE` / `PASTE_IMAGE` |
+| `control` | `view` + `IN` + `RESIZE` | `PASTE_IMAGE` |
+| `full` 或空 | `control` + `PASTE_IMAGE` | 无 |
 
 实践中很少用（前端走 REST `/api/sessions` 更直接）。
 
@@ -243,6 +252,10 @@ scope 目前是 relay 内部鉴权结果，不改变 wire frame 格式：
 - read token：`ATTERM_READ_ONLY_TOKENS` / `--read-only-tokens` / `Config.ReadOnlyTokens`。可调用 `/api/sessions`、`/api/version`，可连接 `/client`/`/client-sessions` 并 `LIST`/`ATTACH`/接收输出；relay 会丢弃 `IN`、`RESIZE`、`PASTE_IMAGE`，且拒绝 `/agent`/`/uplink`。
 - none：未命中任何 token 时返回 401；`Config.Token == "" && ReadOnlyTokens == nil` 的本地/dev 模式视为 write。
 
+有效远程权限 = token scope 与 session owner 发布的 `remote_permission` 取交集。
+read token 始终只有 `view`；write token 也不能超过 owner 发布的权限。relay
+先拦截越权帧，desktop uplink 在写入本机 PTY 前再做第二次拦截。
+
 `cmd/atterm-relay` 的启动安全策略：
 
 - 未设置 `ATTERM_TOKEN`：自动生成 32 字节随机 token（base64url）并打印访问 URL。
@@ -250,7 +263,21 @@ scope 目前是 relay 内部鉴权结果，不改变 wire frame 格式：
 - 未设置 `--origins` 时允许启动但打印 warning；浏览器 WS 将接受任意 Origin。生产建议显式设置。
 - `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用。
 - `--max-connections-per-key` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用。
+- `--config` / `ATTERM_RELAY_CONFIG`：持久化 relay admin JSON 配置路径。只保存运行参数和 hash 后的只读 token，不保存主 write token。
+- `--admin-token` / `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 和 `/admin/api/*`。admin API 只接受 `Authorization: Bearer <admin-token>`，不支持 query token。
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输和弱鉴权风险警告。
+
+持久化 admin config 示例：
+
+```json
+{
+  "rate_limit_per_minute": 600,
+  "max_connections_per_key": 64,
+  "read_only_tokens": [
+    { "id": "mobile-view", "hash": "sha256:<base64url>", "created_at": 1770000000 }
+  ]
+}
+```
 
 ## 重连与续传
 

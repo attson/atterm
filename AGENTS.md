@@ -49,6 +49,7 @@ atterm/
 8. **自动更新必须验签**：release 构建通过 ldflags 注入 `main.UpdateVerifyPublicKey`。下载 asset 后必须先用 Ed25519 验证 `SHA256SUMS.sig`，再校验 asset SHA256；缺公钥、缺 `SHA256SUMS`/`.sig`、签名或 hash 不匹配都必须 fail-closed，不允许 install。
 9. **公网 relay 默认安全**：`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时自动生成高强度 token 并打印到日志。公网监听拒绝弱 token（如 `dev` 或长度 <16），除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP/token 做 HTTP/WS rate limit 与连接数限制。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
 10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源静态资源；xterm 资源放在 `web/vendor/` 并由 service worker 缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
+11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay read-only token 是运维侧兜底限制，和 owner 权限取交集。
 
 ## 开发命令
 
@@ -83,6 +84,8 @@ gh run list --repo attson/atterm --limit 10
 - `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 bearer token；可 list/attach/看输出，但 relay 会丢弃 `IN`/`RESIZE`/`PASTE_IMAGE`，且不能连 `/agent`/`/uplink`
 - `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用
 - `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用
+- `ATTERM_RELAY_CONFIG`：relay admin 持久化 JSON 配置路径；只保存运行参数和 hash 后的只读 token，不保存主 write token
+- `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 与 `/admin/api/*`；只接受 `Authorization: Bearer`，不要放 URL query
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
 - `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：GitHub prod environment secret；base64 Ed25519 公钥，release 构建时注入桌面 app
@@ -103,6 +106,8 @@ gh run list --repo attson/atterm --limit 10
 | 改 relay 启动安全策略 | `cmd/atterm-relay/main.go` + `cmd/atterm-relay/main_test.go` + `internal/relay/*_test.go` + `docs/spec/protocol.md` |
 | 改 web 安全头 / 静态资源 | `internal/relay/server.go` + `web/index.html` + `web/sw.js` + `web/*test.mjs` |
 | 改桌面远程 relay 配置 | `desktop/app.go` + `desktop/config.go` + `desktop/relay_security.go` + `desktop/frontend/src/components/SettingsDialog.vue` |
+| 改远程权限模型 | `internal/proto/frame.go` + `internal/relay/permissions.go` + `desktop/uplink.go` + Settings UI + 协议规范 |
+| 改 relay admin 配置 | `internal/relay/admin_config.go` + `internal/relay/admin_http.go` + `cmd/atterm-relay/main.go` + README/spec |
 | relay 注册表清理 | `internal/relay/uplink_conn.go`（writer ping fail 触发 cancelConn → cleanup mirror sessions） |
 
 ## 风格摘要
@@ -127,6 +132,8 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 公网 relay 使用弱 token/空鉴权，除非用户显式 `--dev-insecure`
 - ❌ 桌面端默认允许非 loopback `ws://`；必须由用户打开 insecure mode
 - ❌ `web/` 重新引入外部 CDN script/style，或让 token 长期留在浏览器地址栏
+- ❌ 把主 write token 持久化到 relay admin config；只能来自 env/flag/启动自动生成
+- ❌ 只在访问者客户端 UI 隐藏输入按钮而不在 relay/desktop host 强制拦截
 
 ## 文档导引
 

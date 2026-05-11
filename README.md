@@ -46,6 +46,8 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 - 浏览器客户端不再从 CDN 加载 xterm；所有 web 静态资源都走同源 `web/vendor/`，service worker 会缓存这些资源。
 - URL 里的 `?token=...` 会在读取并保存到浏览器本地存储后从地址栏移除，降低分享/截图/历史记录泄漏风险。
 - 可用 `ATTERM_READ_ONLY_TOKENS` 或 `--read-only-tokens` 配只读 token；只读用户可以列出/attach/看输出，但不能向 PTY 输入、resize 或粘贴图片。
+- 桌面端 Settings 可设置本机 session 的远程权限：`view` / `control` / `full`。该权限由 owner 发布，relay 与 desktop host 双重强制执行；read-only token 会继续把有效权限压成只读。
+- 可用 `ATTERM_RELAY_CONFIG`/`--config` + `ATTERM_ADMIN_TOKEN`/`--admin-token` 启用持久化 relay admin 配置和 `/admin/` 管理页。持久化配置不保存主 write token，只保存运行参数和 hash 后的只读 token。
 - 桌面端默认拒绝非本机 `ws://` 明文 relay；如果确实在可信内网使用 `ws://`，需要在 Settings 勾选 insecure mode，并接受 token/输入/输出明文传输风险。
 
 也可以直接用 Docker Compose 启动 relay：
@@ -63,6 +65,8 @@ docker compose logs atterm-relay   # 查看自动生成的 token
 - `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 token，适合临时分享“只能看不能输入”的会话入口
 - `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的请求/upgrade 分钟限额；`0` 用内置默认值，负数禁用
 - `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用内置默认值，负数禁用
+- `ATTERM_RELAY_CONFIG`：持久化 admin 配置 JSON 路径，例如 `/etc/atterm/relay.json`
+- `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 管理页和 `/admin/api/*`；admin API 只接受 Authorization header
 - `ATTERM_RELAY_DEBUG=1`：打印 relay 交互日志
 - `ATTERM_RELAY_DEBUG_PAYLOAD=1`：额外打印 IN/OUT 字节内容（仅调试用）
 - `ATTERM_WATCHTOWER_INTERVAL`：启用自动更新时的检查间隔秒数，默认 `300`

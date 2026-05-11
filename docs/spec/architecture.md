@@ -221,11 +221,25 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 - 默认返回 CSP/security headers，`web/` 只允许同源 script/style；xterm 静态资源放在 `web/vendor/`；
 - 按远端 IP/token 对 HTTP 请求和 WS upgrade 做分钟级 rate limit，并限制同一 key 的活跃 WS 连接数；
 - 支持只读 token（`ATTERM_READ_ONLY_TOKENS` / `--read-only-tokens`）：可 list/attach/看输出，但不能输入、resize、粘贴图片，也不能注册 agent/uplink；
+- 支持 owner 发布的 `remote_permission`（view/control/full），relay 和 desktop uplink 双重强制执行；
+- 可选 `--config` + `--admin-token` 启用持久化 admin 配置和 `/admin/`，但主 write token 永远不写入该配置；
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
 
 `internal/relay.NewServer(relay.Config{Token:""})` 作为库仍保留“不鉴权”
 语义，供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
 的生产默认行为。
+
+## 远程权限与 admin 配置
+
+远程权限由拥有 PTY 的 desktop app 决定。Settings 中的默认权限会写入
+`desktop/config.go`，`desktop/uplink.go` 在 `ANNOUNCE` 的每个 `SessionInfo`
+里发布 `remote_permission`。远端 relay 计算 token scope 与 owner 权限的交集：
+只读 token 始终只能 view；write token 也不能超过 owner 发布的 view/control/full。
+
+relay admin 配置只服务运维场景：调整 rate limit、连接数和持久化只读 token。
+admin-created read-only token 只显示一次，配置文件中仅保存 `sha256:<base64url>`
+hash。主 write token 仍由 `ATTERM_TOKEN` / flag / 启动自动生成提供，不能通过
+admin 页面读取、写入或轮换。
 
 ## 前端架构细节
 

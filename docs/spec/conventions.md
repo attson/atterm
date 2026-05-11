@@ -111,8 +111,8 @@ if err != nil {
 - e2e 必须自包含：起 server、起 client、断言完整流程
 - 安全边界必须有测试：relay token/`--dev-insecure`/只读 token/限流行为在
   `cmd/atterm-relay/main_test.go` 与 `internal/relay/*_test.go`；桌面 ws/wss 策略在
-  `desktop/relay_security_test.go`；自动更新签名/hash 校验在
-  `desktop/updater_test.go`
+  `desktop/relay_security_test.go`；owner remote permission 要同时覆盖 relay 拦截
+  与 desktop uplink 本机写 PTY 前拦截；自动更新签名/hash 校验在 `desktop/updater_test.go`
 
 例：`desktop/uplink_e2e_test.go::TestUplinkE2E` / `TestTwoHostsCrossAttach` 是模板。
 
@@ -178,6 +178,8 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
 - ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用同源 vendored 资源，避免 CSP/PWA 回归
 - ❌ 读取 `?token=` 后继续把 secret 留在地址栏、日志或可分享 URL 中
+- ❌ 让 relay admin config 持久化主 write token；只能保存 hash 后的只读 token
+- ❌ 把远程权限只做成 UI 提示；relay 和 desktop host 都必须实际拦截越权帧
 
 ## Release 签名与发版
 

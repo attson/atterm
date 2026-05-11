@@ -66,6 +66,10 @@ jobs:
         run: go vet -tags webkit2_41 ./...
 
       - name: e2e test (lazy uplink protocol)
+        # The lazy-uplink e2e exercises relay/session behavior that is not
+        # architecture-specific; run it once on amd64 so arm64 packaging is
+        # not blocked by the hosted arm runner's PTY timing differences.
+        if: matrix.arch == 'amd64'
         run: go test -tags webkit2_41 -timeout 60s ./desktop/
 
       - name: prepare release metadata

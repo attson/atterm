@@ -25,6 +25,7 @@ const emit = defineEmits<{
 
 const url = ref("");
 const token = ref("");
+const allowInsecureRelay = ref(false);
 const connected = ref(false);
 const loading = ref(true);
 const saving = ref(false);
@@ -45,6 +46,7 @@ onMounted(async () => {
     ]);
     url.value = cfg.url;
     token.value = cfg.token;
+    allowInsecureRelay.value = cfg.allow_insecure_relay;
     connected.value = cfg.connected;
     updateState.value = st;
     autoCheck.value = ac;
@@ -70,7 +72,11 @@ async function save() {
   saving.value = true;
   error.value = "";
   try {
-    await setRelayConfig({ url: url.value.trim(), token: token.value.trim() });
+    await setRelayConfig({
+      url: url.value.trim(),
+      token: token.value.trim(),
+      allow_insecure_relay: allowInsecureRelay.value,
+    });
     const cfg = await getRelayConfig();
     connected.value = cfg.connected;
     emit("relay-config-changed");
@@ -86,9 +92,10 @@ async function disconnect() {
   saving.value = true;
   error.value = "";
   try {
-    await setRelayConfig({ url: "", token: "" });
+    await setRelayConfig({ url: "", token: "", allow_insecure_relay: false });
     url.value = "";
     token.value = "";
+    allowInsecureRelay.value = false;
     connected.value = false;
     emit("relay-config-changed");
   } catch (e: any) {
@@ -187,7 +194,7 @@ const isDev = computed(
         <input
           v-model="url"
           type="text"
-          placeholder="ws://relay.example.com:8080"
+          placeholder="wss://relay.example.com"
           :disabled="saving"
           @keyup.enter="save"
         />
@@ -200,6 +207,19 @@ const isDev = computed(
           :disabled="saving"
           @keyup.enter="save"
         />
+
+        <label class="checkbox insecure-toggle">
+          <input
+            v-model="allowInsecureRelay"
+            type="checkbox"
+            :disabled="saving"
+          />
+          enable insecure mode (allow ws:// cleartext relay)
+        </label>
+        <p v-if="allowInsecureRelay" class="warning">
+          ws:// sends the relay token, terminal output, and your input in
+          clear text. Use this only on trusted private networks.
+        </p>
 
         <div class="status">
           <span :class="connected ? 'on' : 'off'">●</span>
@@ -318,6 +338,9 @@ label {
 .status .off { color: var(--fg-dim); }
 .dim { color: var(--fg-dim); font-size: 13px; padding: 8px 0; }
 .error { color: var(--bad); font-size: 12px; margin-top: 6px; }
+.warning {
+  color: var(--bad); font-size: 12px; line-height: 1.45; margin: 2px 0 0;
+}
 .row {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
 }
@@ -342,6 +365,9 @@ button.danger:hover { background: rgba(248, 81, 73, 0.1); }
 .checkbox {
   display: flex; align-items: center; gap: 6px;
   font-size: 12px; color: var(--fg);
+}
+.insecure-toggle {
+  margin-top: 10px;
 }
 .notes {
   margin-top: 8px; font-size: 12px; color: var(--fg);

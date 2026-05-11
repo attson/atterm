@@ -51,7 +51,7 @@ atterm/
 export PATH=$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
 # 命令行 relay（Phase 0）
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr :8080 --web web
+ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
 
 # 命令行 agent（Phase 0 wrapper，调试用）
 ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
@@ -68,7 +68,7 @@ cd desktop/frontend && npm run build               # 前端 type-check + build
 ```
 
 环境变量：
-- `ATTERM_TOKEN`：relay 共享 bearer token，空 = dev 模式不鉴权
+- `ATTERM_TOKEN`：relay 共享 bearer token；`atterm-relay` 启动时未指定会自动生成并打印到日志
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
 

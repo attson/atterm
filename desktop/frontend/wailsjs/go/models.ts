@@ -65,6 +65,7 @@ export namespace main {
 	export class RelayConfig {
 	    url: string;
 	    token: string;
+	    allow_insecure_relay: boolean;
 	    connected: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -75,6 +76,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
 	        this.token = source["token"];
+	        this.allow_insecure_relay = source["allow_insecure_relay"];
 	        this.connected = source["connected"];
 	    }
 	}
@@ -116,4 +118,3 @@ export namespace main {
 	}
 
 }
-

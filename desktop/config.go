@@ -13,6 +13,9 @@ import (
 type appConfig struct {
 	RelayURL   string `json:"relay_url,omitempty"`
 	RelayToken string `json:"relay_token,omitempty"`
+	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
+	// It is off by default because ws:// exposes the bearer token and PTY data.
+	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`
 
 	// Auto-update settings. Nil means "never set" → treated as default true
 	// at read time. Stored as a pointer so we can distinguish "user opted

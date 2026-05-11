@@ -49,9 +49,10 @@ type HostInfo struct {
 // Connected reflects whether the uplink goroutine is currently running; it is
 // read-only from the frontend's perspective.
 type RelayConfig struct {
-	URL       string `json:"url"`
-	Token     string `json:"token"`
-	Connected bool   `json:"connected"`
+	URL                string `json:"url"`
+	Token              string `json:"token"`
+	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
+	Connected          bool   `json:"connected"`
 }
 
 // App is the Wails-bound application surface.
@@ -71,8 +72,9 @@ type App struct {
 func NewApp() *App {
 	a := &App{}
 	a.updater = newUpdater(updaterConfig{
-		current: Version,
-		repo:    "attson/atterm",
+		current:         Version,
+		repo:            "attson/atterm",
+		verifyPublicKey: parseUpdateVerifyPublicKey(UpdateVerifyPublicKey),
 	})
 	return a
 }
@@ -137,6 +139,10 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 		log.Printf("desktop: uplink disabled")
 		return
 	}
+	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
+		log.Printf("desktop: uplink disabled: %v", err)
+		return
+	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
 	a.uplink = newUplink(cfg.RelayURL, cfg.RelayToken, a.host)
@@ -173,7 +179,12 @@ func (a *App) GetRelayConfig() RelayConfig {
 	a.mu.Lock()
 	connected := a.uplink != nil
 	a.mu.Unlock()
-	return RelayConfig{URL: cfg.RelayURL, Token: cfg.RelayToken, Connected: connected}
+	return RelayConfig{
+		URL:                cfg.RelayURL,
+		Token:              cfg.RelayToken,
+		AllowInsecureRelay: cfg.AllowInsecureRelay,
+		Connected:          connected,
+	}
 }
 
 // SetRelayConfig persists a new relay URL/token and (re)starts the uplink. To
@@ -182,9 +193,12 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	if a.cfgStore == nil {
 		return fmt.Errorf("config store not ready")
 	}
-	cfg := appConfig{
-		RelayURL:   strings.TrimSpace(req.URL),
-		RelayToken: strings.TrimSpace(req.Token),
+	cfg := a.cfgStore.Get()
+	cfg.RelayURL = strings.TrimSpace(req.URL)
+	cfg.RelayToken = strings.TrimSpace(req.Token)
+	cfg.AllowInsecureRelay = req.AllowInsecureRelay
+	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
+		return err
 	}
 	if err := a.cfgStore.Set(cfg); err != nil {
 		return err

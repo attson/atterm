@@ -185,9 +185,12 @@ desktop/updater.go         自动更新 state machine
                            Start(ctx)：boot 后 2s 跑首次 Check，之后 24h ticker
                            Check(force)：拉 api.github.com/repos/<repo>/releases/latest
                                           1h 缓存（force=true 旁路）；semver.Compare；
-                                          prerelease 跳过；按 GOOS/GOARCH 选 asset
+                                          prerelease 跳过；按 GOOS/GOARCH 选 asset +
+                                          SHA256SUMS/SHA256SUMS.sig
                            Download(ctx)：流式下载到 ${UserCacheDir}/atterm/updates/
-                                          <ver>-<asset>.partial → 校验 size → atomic rename
+                                          <ver>-<asset>.partial → 校验 size →
+                                          Ed25519 验签 SHA256SUMS → 校验 asset hash →
+                                          atomic rename
                            InstallAndQuit()：取出 go:embed 的 install helper 到 cache，
                                               spawn detached（bash on POSIX，
                                               powershell on Windows），传 PID 让它等待
@@ -270,7 +273,8 @@ boot →
 
 用户点 Download →
   StartDownload() → fetch asset → ${UserCacheDir}/atterm/updates/<ver>-<asset>.partial
-  → size 校验 → atomic rename → state.Ready=true → 按钮变 "Force install & restart"
+  → size 校验 → 验证 SHA256SUMS.sig → 校验 asset SHA256 → atomic rename
+  → state.Ready=true → 按钮变 "Force install & restart"
 
 用户点 Force install & restart →
   ConfirmInstallDialog（列出受影响 session 数）

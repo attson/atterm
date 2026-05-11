@@ -22,6 +22,7 @@ export interface NewSessionResp {
 export interface RelayConfig {
   url: string;
   token: string;
+  allow_insecure_relay: boolean;
   connected: boolean;
 }
 
@@ -101,8 +102,17 @@ export function getRelayConfig(): Promise<RelayConfig> {
   return bindings().GetRelayConfig();
 }
 
-export function setRelayConfig(cfg: { url: string; token: string }): Promise<void> {
-  return bindings().SetRelayConfig({ ...cfg, connected: false });
+export function setRelayConfig(cfg: {
+  url: string;
+  token: string;
+  allow_insecure_relay?: boolean;
+}): Promise<void> {
+  return bindings().SetRelayConfig({
+    url: cfg.url,
+    token: cfg.token,
+    allow_insecure_relay: cfg.allow_insecure_relay ?? false,
+    connected: false,
+  });
 }
 
 export function getHostInfo(): Promise<HostInfo> {

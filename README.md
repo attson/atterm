@@ -29,7 +29,7 @@
 不想装桌面端，只想在浏览器里看：
 
 ```bash
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr :8080 --web web
+ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
 ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 # 浏览器: http://localhost:8080/?token=dev
 ```
@@ -40,8 +40,9 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 也可以直接用 Docker Compose 启动 relay：
 
 ```bash
-ATTERM_TOKEN=dev docker compose up -d atterm-relay
-# 浏览器: http://localhost:8080/?token=dev
+docker compose up -d atterm-relay
+docker compose logs atterm-relay   # 查看自动生成的 token
+# 浏览器: http://localhost:8080/?token=<日志里的 token>
 ```
 
 可选环境变量：
@@ -58,12 +59,20 @@ ATTERM_TOKEN=dev docker compose up -d atterm-relay
 `auto-update` profile：
 
 ```bash
-ATTERM_TOKEN=dev docker compose --profile auto-update up -d
+docker compose --profile auto-update up -d
 ```
 
 自动更新由 `watchtower` 容器完成，只会更新带有 watchtower label 的
 `atterm-relay` 服务。该模式需要挂载 Docker socket；不需要自动更新时继续使用
 普通 `docker compose up -d atterm-relay` 即可。
+
+桌面端自动更新要求 GitHub Release 里同时存在 `SHA256SUMS` 和
+`SHA256SUMS.sig`。CI 的 `build` workflow 会在 tag release 时用 prod
+environment secret `ATTERM_UPDATE_VERIFY_PUBLIC_KEY` 注入桌面 app，并用
+prod environment secret `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 生成
+`SHA256SUMS` / `SHA256SUMS.sig` 后上传到 release。两个值均为 base64；
+public key 是 32 字节 Ed25519 公钥，private key 是 64 字节 Ed25519 私钥。
+私钥只放 GitHub environment secret，不要提交到仓库。
 
 如果修改了自动更新配置，建议重建 watchtower 容器：
 
@@ -230,7 +239,7 @@ wails build                                      # 出可执行（macOS / Window
 
 ```bash
 # 终端 1：启远程 relay
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr :8080 --web web
+ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
 
 # 终端 2：启 app A，配 relay
 cd desktop && wails dev -tags webkit2_41

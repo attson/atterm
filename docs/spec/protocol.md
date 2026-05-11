@@ -228,7 +228,9 @@ GET /client?token=<urlencoded_token>
 Sec-WebSocket-Protocol: atterm-token.<token>
 ```
 
-token 由部署方设置（环境变量 `ATTERM_TOKEN`）。空 = 不鉴权（仅 dev）。
+token 由部署方设置（环境变量 `ATTERM_TOKEN`）。`atterm-relay`
+启动时若未设置会自动生成高强度 token 并打印到日志；`internal/relay`
+作为库使用时 `Config.Token == ""` 仍表示无鉴权（仅用于本地/dev 嵌入场景）。
 
 ## 重连与续传
 

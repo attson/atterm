@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +28,10 @@ import (
 //go:embed scripts/install-linux.sh
 //go:embed scripts/install-windows.ps1
 var installScripts embed.FS
+
+// UpdateVerifyPublicKey is set by release builds to the base64-encoded
+// Ed25519 public key that signs SHA256SUMS. Empty disables installation.
+var UpdateVerifyPublicKey string
 
 // UpdateState is the observable view of the auto-update subsystem.
 // Mirrored as a TypeScript interface in desktop/frontend/src/lib/api.ts.
@@ -47,13 +55,14 @@ type UpdateState struct {
 // substitutes the http.Client and now() to drive the cache + network paths
 // without hitting GitHub or wall-clock time.
 type updaterConfig struct {
-	current    string
-	repo       string // e.g. "attson/atterm"
-	releaseURL string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
-	latestURL  string // override of https://github.com/<repo>/releases/latest, for tests
-	cacheDir   string // overrides os.UserCacheDir(); for tests
-	client     *http.Client
-	now        func() time.Time // optional; defaults to time.Now
+	current         string
+	repo            string // e.g. "attson/atterm"
+	releaseURL      string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
+	latestURL       string // override of https://github.com/<repo>/releases/latest, for tests
+	cacheDir        string // overrides os.UserCacheDir(); for tests
+	client          *http.Client
+	now             func() time.Time // optional; defaults to time.Now
+	verifyPublicKey ed25519.PublicKey
 }
 
 // Updater owns state for the auto-update flow. All methods are goroutine-safe.
@@ -64,6 +73,10 @@ type Updater struct {
 	state      UpdateState
 	cachedAt   time.Time // when we last fetched the latest-release manifest
 	cancelLoop context.CancelFunc
+
+	checksumURL    string
+	checksumSigURL string
+	fetchBytes     func(ctx context.Context, url string, maxBytes int64) ([]byte, error)
 }
 
 func newUpdater(cfg updaterConfig) *Updater {
@@ -172,14 +185,16 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 		return err
 	}
 	u.cachedAt = u.cfg.now()
+	u.checksumURL = ""
+	u.checksumSigURL = ""
+	u.state.AssetURL = ""
+	u.state.AssetSize = 0
 
 	if rel.Prerelease {
 		// Don't expose pre-releases as "available" in v0.
 		u.state.Latest = ""
 		u.state.Available = false
 		u.state.Notes = ""
-		u.state.AssetURL = ""
-		u.state.AssetSize = 0
 		return nil
 	}
 
@@ -188,6 +203,15 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 	u.state.Available = semver.IsValid(rel.TagName) &&
 		semver.IsValid(u.cfg.current) &&
 		semver.Compare(u.cfg.current, rel.TagName) < 0
+
+	for _, a := range rel.Assets {
+		switch a.Name {
+		case "SHA256SUMS":
+			u.checksumURL = a.DownloadURL
+		case "SHA256SUMS.sig":
+			u.checksumSigURL = a.DownloadURL
+		}
+	}
 
 	// Pick the asset matching this platform; ignore failure (state stays
 	// without an asset URL — UI surfaces the error separately).
@@ -397,6 +421,12 @@ func (u *Updater) Download(ctx context.Context) error {
 		return err
 	}
 
+	if err := u.verifyDownloadedArchive(ctx, partial, name); err != nil {
+		_ = os.Remove(partial)
+		u.recordError(err)
+		return err
+	}
+
 	if err := os.Rename(partial, final); err != nil {
 		_ = os.Remove(partial)
 		u.recordError(err)
@@ -434,6 +464,117 @@ func (u *Updater) copyWithProgress(dst io.Writer, src io.Reader, expectedSize in
 			return written, rerr
 		}
 	}
+}
+
+func (u *Updater) verifyDownloadedArchive(ctx context.Context, path, assetName string) error {
+	key := u.cfg.verifyPublicKey
+	if len(key) != ed25519.PublicKeySize {
+		return fmt.Errorf("update verification public key not configured")
+	}
+	u.mu.Lock()
+	checksumURL := u.checksumURL
+	checksumSigURL := u.checksumSigURL
+	u.mu.Unlock()
+	if checksumURL == "" || checksumSigURL == "" {
+		return fmt.Errorf("release is missing SHA256SUMS verification assets")
+	}
+	fetch := u.fetchBytes
+	if fetch == nil {
+		fetch = u.fetchSmallFile
+	}
+	sums, err := fetch(ctx, checksumURL, 1024*1024)
+	if err != nil {
+		return fmt.Errorf("fetch SHA256SUMS: %w", err)
+	}
+	sig, err := fetch(ctx, checksumSigURL, 1024)
+	if err != nil {
+		return fmt.Errorf("fetch SHA256SUMS signature: %w", err)
+	}
+	if !ed25519.Verify(key, sums, sig) {
+		return fmt.Errorf("SHA256SUMS signature verification failed")
+	}
+	want, err := checksumForAsset(sums, assetName)
+	if err != nil {
+		return err
+	}
+	got, err := sha256File(path)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("asset checksum mismatch: got %s want %s", got, want)
+	}
+	return nil
+}
+
+func (u *Updater) fetchSmallFile(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "AT-Term/"+u.cfg.current)
+	resp, err := u.cfg.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes", maxBytes)
+	}
+	return body, nil
+}
+
+func checksumForAsset(sums []byte, assetName string) (string, error) {
+	for _, line := range strings.Split(string(sums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := strings.TrimPrefix(fields[len(fields)-1], "*")
+		if filepath.Base(name) != assetName {
+			continue
+		}
+		sum := strings.ToLower(fields[0])
+		if len(sum) != sha256.Size*2 {
+			return "", fmt.Errorf("invalid checksum for %s", assetName)
+		}
+		if _, err := hex.DecodeString(sum); err != nil {
+			return "", fmt.Errorf("invalid checksum for %s: %w", assetName, err)
+		}
+		return sum, nil
+	}
+	return "", fmt.Errorf("checksum for %s not found in SHA256SUMS", assetName)
+}
+
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func parseUpdateVerifyPublicKey(encoded string) ed25519.PublicKey {
+	if strings.TrimSpace(encoded) == "" {
+		return nil
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil || len(b) != ed25519.PublicKeySize {
+		return nil
+	}
+	return ed25519.PublicKey(b)
 }
 
 func (u *Updater) recordError(err error) {

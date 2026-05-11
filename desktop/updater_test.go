@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,6 +137,16 @@ func releasePayload(tag string, prerelease bool) map[string]any {
 				"name":                 "AT-Term-windows-amd64.zip",
 				"browser_download_url": "https://example.com/" + tag + "/windows.zip",
 				"size":                 int64(99999),
+			},
+			{
+				"name":                 "SHA256SUMS",
+				"browser_download_url": "https://example.com/" + tag + "/SHA256SUMS",
+				"size":                 int64(100),
+			},
+			{
+				"name":                 "SHA256SUMS.sig",
+				"browser_download_url": "https://example.com/" + tag + "/SHA256SUMS.sig",
+				"size":                 int64(ed25519.SignatureSize),
 			},
 		},
 	}
@@ -265,6 +280,7 @@ func TestUpdater_Check_FallsBackToLatestRedirectOnGitHubForbidden(t *testing.T) 
 
 func TestUpdater_Download_WritesAtomicAsset(t *testing.T) {
 	body := []byte("fake-archive-bytes")
+	pub, sums, sig := signedSumsForAsset(t, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH+assetExtForRuntime(t), body)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 		_, _ = w.Write(body)
@@ -273,14 +289,27 @@ func TestUpdater_Download_WritesAtomicAsset(t *testing.T) {
 
 	tmpCache := t.TempDir()
 	u := newUpdater(updaterConfig{
-		current:  "v0.1.0",
-		repo:     "attson/atterm",
-		cacheDir: tmpCache,
+		current:         "v0.1.0",
+		repo:            "attson/atterm",
+		cacheDir:        tmpCache,
+		verifyPublicKey: pub,
 	})
 	// Pretend Check has already populated state.
 	u.state.AssetURL = srv.URL
 	u.state.AssetSize = int64(len(body))
 	u.state.Latest = "v0.2.0"
+	u.checksumURL = "mem://SHA256SUMS"
+	u.checksumSigURL = "mem://SHA256SUMS.sig"
+	u.fetchBytes = func(_ context.Context, url string, _ int64) ([]byte, error) {
+		switch url {
+		case "mem://SHA256SUMS":
+			return sums, nil
+		case "mem://SHA256SUMS.sig":
+			return sig, nil
+		default:
+			return nil, fmt.Errorf("unexpected url %s", url)
+		}
+	}
 
 	if err := u.Download(context.Background()); err != nil {
 		t.Fatalf("Download err: %v", err)
@@ -338,6 +367,112 @@ func TestUpdater_Download_SizeMismatch(t *testing.T) {
 	}
 }
 
+func TestUpdater_Download_FailsWithoutVerificationKey(t *testing.T) {
+	body := []byte("fake-archive-bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	u := newUpdater(updaterConfig{
+		current:  "v0.1.0",
+		repo:     "attson/atterm",
+		cacheDir: t.TempDir(),
+	})
+	u.state.AssetURL = srv.URL
+	u.state.AssetSize = int64(len(body))
+	u.state.Latest = "v0.2.0"
+	u.checksumURL = "mem://SHA256SUMS"
+	u.checksumSigURL = "mem://SHA256SUMS.sig"
+
+	err := u.Download(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "verification public key") {
+		t.Fatalf("Download err = %v; want missing verification public key", err)
+	}
+	if u.State().Ready {
+		t.Fatal("Ready = true after missing verification key; want false")
+	}
+}
+
+func TestUpdater_Download_FailsWhenChecksumSignatureInvalid(t *testing.T) {
+	body := []byte("fake-archive-bytes")
+	pub, sums, sig := signedSumsForAsset(t, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH+assetExtForRuntime(t), body)
+	sig[0] ^= 0xff
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	u := newUpdater(updaterConfig{
+		current:         "v0.1.0",
+		repo:            "attson/atterm",
+		cacheDir:        t.TempDir(),
+		verifyPublicKey: pub,
+	})
+	u.state.AssetURL = srv.URL
+	u.state.AssetSize = int64(len(body))
+	u.state.Latest = "v0.2.0"
+	u.checksumURL = "mem://SHA256SUMS"
+	u.checksumSigURL = "mem://SHA256SUMS.sig"
+	u.fetchBytes = func(_ context.Context, url string, _ int64) ([]byte, error) {
+		switch url {
+		case "mem://SHA256SUMS":
+			return sums, nil
+		case "mem://SHA256SUMS.sig":
+			return sig, nil
+		default:
+			return nil, fmt.Errorf("unexpected url %s", url)
+		}
+	}
+
+	err := u.Download(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "signature") {
+		t.Fatalf("Download err = %v; want signature failure", err)
+	}
+	if u.State().Ready {
+		t.Fatal("Ready = true after bad signature; want false")
+	}
+}
+
+func TestUpdater_Download_FailsWhenAssetHashMismatches(t *testing.T) {
+	body := []byte("fake-archive-bytes")
+	pub, sums, sig := signedSumsForAsset(t, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH+assetExtForRuntime(t), []byte("different"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	u := newUpdater(updaterConfig{
+		current:         "v0.1.0",
+		repo:            "attson/atterm",
+		cacheDir:        t.TempDir(),
+		verifyPublicKey: pub,
+	})
+	u.state.AssetURL = srv.URL
+	u.state.AssetSize = int64(len(body))
+	u.state.Latest = "v0.2.0"
+	u.checksumURL = "mem://SHA256SUMS"
+	u.checksumSigURL = "mem://SHA256SUMS.sig"
+	u.fetchBytes = func(_ context.Context, url string, _ int64) ([]byte, error) {
+		switch url {
+		case "mem://SHA256SUMS":
+			return sums, nil
+		case "mem://SHA256SUMS.sig":
+			return sig, nil
+		default:
+			return nil, fmt.Errorf("unexpected url %s", url)
+		}
+	}
+
+	err := u.Download(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("Download err = %v; want checksum failure", err)
+	}
+	if u.State().Ready {
+		t.Fatal("Ready = true after checksum mismatch; want false")
+	}
+}
+
 // silence unused-import warnings
 var _ = io.Discard
 
@@ -385,4 +520,24 @@ func TestUpdater_StartStop_NoLeakedGoroutines(t *testing.T) {
 	cancel()
 	u.Stop()
 	// If Stop() blocks forever, the test runner times out and we know.
+}
+
+func signedSumsForAsset(t *testing.T, name string, body []byte) (ed25519.PublicKey, []byte, []byte) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	sums := []byte(hex.EncodeToString(sum[:]) + "  " + name + "\n")
+	return pub, sums, ed25519.Sign(priv, sums)
+}
+
+func assetExtForRuntime(t *testing.T) string {
+	t.Helper()
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimPrefix(name, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH)
 }

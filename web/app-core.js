@@ -74,3 +74,7 @@ export function sessionTitle(session) {
 export function shouldAutoScrollToBottom({ userScrolledUp, isReplay }) {
   return isReplay || !userScrolledUp;
 }
+
+export function versionLabel(version) {
+  return `version ${version || "dev"}`;
+}

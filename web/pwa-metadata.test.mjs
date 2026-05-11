@@ -11,6 +11,7 @@ test("index contains PWA and iOS metadata", () => {
   assert.match(html, /<meta name="apple-mobile-web-app-title" content="atterm"/);
   assert.match(html, /<link rel="apple-touch-icon" href="icon\.svg"/);
   assert.match(html, /<script type="module" src="app\.js"><\/script>/);
+  assert.match(html, /<div class="version" id="version">version dev<\/div>/);
 });
 
 test("manifest is installable and scoped to relay root", () => {

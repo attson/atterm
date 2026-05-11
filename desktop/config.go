@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/attson/atterm/internal/proto"
 )
 
 // appConfig is what we persist to ~/.config/atterm/config.json.
@@ -16,6 +18,9 @@ type appConfig struct {
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`
+	// RemotePermission is the default owner permission announced for this
+	// desktop's sessions on the remote relay.
+	RemotePermission string `json:"remote_permission,omitempty"`
 
 	// Auto-update settings. Nil means "never set" → treated as default true
 	// at read time. Stored as a pointer so we can distinguish "user opted
@@ -32,6 +37,15 @@ func (c appConfig) AutoCheckUpdatesOrDefault() bool {
 		return true
 	}
 	return *c.AutoCheckUpdates
+}
+
+func (c appConfig) RemotePermissionOrDefault() string {
+	switch c.RemotePermission {
+	case proto.RemotePermissionView, proto.RemotePermissionControl, proto.RemotePermissionFull:
+		return c.RemotePermission
+	default:
+		return proto.RemotePermissionFull
+	}
 }
 
 func configPath() string {

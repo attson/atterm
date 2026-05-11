@@ -33,18 +33,20 @@ const (
 
 // uplink runs the desktop side of the lazy mirror. One instance per desktop app.
 type uplink struct {
-	relayURL string
-	token    string
-	host     *relayHost
+	relayURL         string
+	token            string
+	remotePermission string
+	host             *relayHost
 
 	announced announceCache
 }
 
-func newUplink(relayURL, token string, host *relayHost) *uplink {
+func newUplink(relayURL, token, remotePermission string, host *relayHost) *uplink {
 	return &uplink{
-		relayURL: strings.TrimRight(relayURL, "/"),
-		token:    token,
-		host:     host,
+		relayURL:         strings.TrimRight(relayURL, "/"),
+		token:            token,
+		remotePermission: normalizeRemotePermission(remotePermission),
+		host:             host,
 	}
 }
 
@@ -253,6 +255,10 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			}
 			stopStream(id)
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
+			if !localFrameAllowedByPermission(u.remotePermission, f.Type) {
+				log.Printf("uplink: drop inbound frame 0x%02x for permission %s", f.Type, u.remotePermission)
+				continue
+			}
 			if err := u.host.SendLocalInbound(f.SessionID, f); err != nil {
 				log.Printf("uplink: forward inbound: %v", err)
 			}
@@ -266,7 +272,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 
 func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error {
 	hostID, host, user := u.host.HostMeta()
-	payload, err := buildAnnouncePayload(hostID, host, user, u.host.Snapshot())
+	payload, err := buildAnnouncePayload(hostID, host, user, u.host.Snapshot(), u.remotePermission)
 	if err != nil {
 		return err
 	}
@@ -285,8 +291,12 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error 
 	return nil
 }
 
-func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInfo) ([]byte, error) {
+func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInfo, remotePermission string) ([]byte, error) {
 	snapshot := append([]proto.SessionInfo(nil), sessions...)
+	perm := normalizeRemotePermission(remotePermission)
+	for i := range snapshot {
+		snapshot[i].RemotePermission = perm
+	}
 	sort.Slice(snapshot, func(i, j int) bool { return snapshot[i].ID < snapshot[j].ID })
 	return json.Marshal(proto.AnnouncePayload{
 		HostID:   hostID,
@@ -294,6 +304,26 @@ func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInf
 		User:     user,
 		Sessions: snapshot,
 	})
+}
+
+func normalizeRemotePermission(value string) string {
+	switch value {
+	case proto.RemotePermissionView, proto.RemotePermissionControl, proto.RemotePermissionFull:
+		return value
+	default:
+		return proto.RemotePermissionFull
+	}
+}
+
+func localFrameAllowedByPermission(remotePermission string, typ proto.Type) bool {
+	switch typ {
+	case proto.TypeIn, proto.TypeResize:
+		return remotePermission == proto.RemotePermissionControl || remotePermission == proto.RemotePermissionFull
+	case proto.TypePasteImage:
+		return remotePermission == proto.RemotePermissionFull
+	default:
+		return true
+	}
 }
 
 type announceCache struct {

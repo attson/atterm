@@ -26,6 +26,7 @@ const emit = defineEmits<{
 const url = ref("");
 const token = ref("");
 const allowInsecureRelay = ref(false);
+const remotePermission = ref("full");
 const connected = ref(false);
 const loading = ref(true);
 const saving = ref(false);
@@ -47,6 +48,7 @@ onMounted(async () => {
     url.value = cfg.url;
     token.value = cfg.token;
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    remotePermission.value = cfg.remote_permission || "full";
     connected.value = cfg.connected;
     updateState.value = st;
     autoCheck.value = ac;
@@ -76,6 +78,7 @@ async function save() {
       url: url.value.trim(),
       token: token.value.trim(),
       allow_insecure_relay: allowInsecureRelay.value,
+      remote_permission: remotePermission.value,
     });
     const cfg = await getRelayConfig();
     connected.value = cfg.connected;
@@ -96,6 +99,7 @@ async function disconnect() {
     url.value = "";
     token.value = "";
     allowInsecureRelay.value = false;
+    remotePermission.value = "full";
     connected.value = false;
     emit("relay-config-changed");
   } catch (e: any) {
@@ -207,6 +211,17 @@ const isDev = computed(
           :disabled="saving"
           @keyup.enter="save"
         />
+
+        <label>remote session permissions</label>
+        <select v-model="remotePermission" :disabled="saving">
+          <option value="view">view only — remote clients can watch output</option>
+          <option value="control">control — allow input and resize</option>
+          <option value="full">full — allow input, resize, and image paste</option>
+        </select>
+        <p class="hint">
+          This is announced as the owner policy for sessions from this desktop.
+          Relay-side read-only tokens can still reduce access to view only.
+        </p>
 
         <label class="checkbox insecure-toggle">
           <input

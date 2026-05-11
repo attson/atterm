@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -52,6 +53,7 @@ type RelayConfig struct {
 	URL                string `json:"url"`
 	Token              string `json:"token"`
 	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
+	RemotePermission   string `json:"remote_permission"`
 	Connected          bool   `json:"connected"`
 }
 
@@ -145,7 +147,7 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
-	a.uplink = newUplink(cfg.RelayURL, cfg.RelayToken, a.host)
+	a.uplink = newUplink(cfg.RelayURL, cfg.RelayToken, cfg.RemotePermissionOrDefault(), a.host)
 	go a.uplink.Run(uplinkCtx)
 	log.Printf("desktop: uplink configured for %s", cfg.RelayURL)
 }
@@ -183,6 +185,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 		URL:                cfg.RelayURL,
 		Token:              cfg.RelayToken,
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
+		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		Connected:          connected,
 	}
 }
@@ -197,6 +200,14 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	cfg.RelayURL = strings.TrimSpace(req.URL)
 	cfg.RelayToken = strings.TrimSpace(req.Token)
 	cfg.AllowInsecureRelay = req.AllowInsecureRelay
+	switch req.RemotePermission {
+	case proto.RemotePermissionView, proto.RemotePermissionControl, proto.RemotePermissionFull:
+		cfg.RemotePermission = req.RemotePermission
+	case "":
+		cfg.RemotePermission = proto.RemotePermissionFull
+	default:
+		return fmt.Errorf("bad remote permission: %s", req.RemotePermission)
+	}
 	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
 		return err
 	}

@@ -53,8 +53,8 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go newUplink("ws://"+remoteAddr, "rt", h1).Run(ctx)
-	go newUplink("ws://"+remoteAddr, "rt", h2).Run(ctx)
+	go newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h1).Run(ctx)
+	go newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h2).Run(ctx)
 
 	// host2 acts as a viewer: it should see h1's session via remote relay's
 	// /api/sessions and successfully attach.
@@ -178,7 +178,7 @@ func TestUplinkE2E(t *testing.T) {
 	// 3. uplink
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u := newUplink("ws://"+remoteAddr, "rt", host)
+	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host)
 	go u.Run(ctx)
 
 	// 4. wait for ANNOUNCE → fetch /api/sessions on remote

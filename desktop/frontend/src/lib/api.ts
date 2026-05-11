@@ -23,6 +23,7 @@ export interface RelayConfig {
   url: string;
   token: string;
   allow_insecure_relay: boolean;
+  remote_permission: string;
   connected: boolean;
 }
 
@@ -106,11 +107,13 @@ export function setRelayConfig(cfg: {
   url: string;
   token: string;
   allow_insecure_relay?: boolean;
+  remote_permission?: string;
 }): Promise<void> {
   return bindings().SetRelayConfig({
     url: cfg.url,
     token: cfg.token,
     allow_insecure_relay: cfg.allow_insecure_relay ?? false,
+    remote_permission: cfg.remote_permission ?? "full",
     connected: false,
   });
 }

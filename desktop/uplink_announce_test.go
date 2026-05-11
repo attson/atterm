@@ -61,9 +61,41 @@ func TestBuildAnnouncePayloadSortsSessionsForStableComparison(t *testing.T) {
 	}
 }
 
+func TestBuildAnnouncePayloadStampsRemotePermission(t *testing.T) {
+	payload, err := buildAnnouncePayload("host-id", "host", "user", []proto.SessionInfo{{
+		ID:      "11111111-1111-4111-8111-111111111111",
+		Command: "bash",
+	}}, proto.RemotePermissionView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ann proto.AnnouncePayload
+	if err := json.Unmarshal(payload, &ann); err != nil {
+		t.Fatal(err)
+	}
+	if got := ann.Sessions[0].RemotePermission; got != proto.RemotePermissionView {
+		t.Fatalf("RemotePermission=%q; want view", got)
+	}
+}
+
+func TestLocalFrameAllowedByPermission(t *testing.T) {
+	if localFrameAllowedByPermission(proto.RemotePermissionView, proto.TypeIn) {
+		t.Fatal("view permission allowed IN")
+	}
+	if localFrameAllowedByPermission(proto.RemotePermissionControl, proto.TypePasteImage) {
+		t.Fatal("control permission allowed PASTE_IMAGE")
+	}
+	if !localFrameAllowedByPermission(proto.RemotePermissionControl, proto.TypeResize) {
+		t.Fatal("control permission blocked RESIZE")
+	}
+	if !localFrameAllowedByPermission(proto.RemotePermissionFull, proto.TypePasteImage) {
+		t.Fatal("full permission blocked PASTE_IMAGE")
+	}
+}
+
 func mustAnnouncePayload(t *testing.T, sessions []proto.SessionInfo) []byte {
 	t.Helper()
-	payload, err := buildAnnouncePayload("host-id", "host", "user", sessions)
+	payload, err := buildAnnouncePayload("host-id", "host", "user", sessions, proto.RemotePermissionFull)
 	if err != nil {
 		t.Fatal(err)
 	}

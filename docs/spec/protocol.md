@@ -6,8 +6,8 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / 直连 client）；浏览器 client 无法跨源带 header，所以也支持 `?token=<urlencoded>` query 参数和 `Sec-WebSocket-Protocol: atterm-token.<token>`。空 token 是 dev 模式（不鉴权）。
-- CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`（loopback 监听本身已是安全护栏；公网部署应当套反向代理）
+- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / 直连 client）；浏览器 client 无法跨源带 header，所以也支持 `?token=<urlencoded>` query 参数和 `Sec-WebSocket-Protocol: atterm-token.<token>`。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。
+- CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署建议设置 `--origins https://relay.example.com` 并套 HTTPS/WSS 反向代理。
 
 ## 帧格式
 
@@ -231,6 +231,13 @@ Sec-WebSocket-Protocol: atterm-token.<token>
 token 由部署方设置（环境变量 `ATTERM_TOKEN`）。`atterm-relay`
 启动时若未设置会自动生成高强度 token 并打印到日志；`internal/relay`
 作为库使用时 `Config.Token == ""` 仍表示无鉴权（仅用于本地/dev 嵌入场景）。
+
+`cmd/atterm-relay` 的启动安全策略：
+
+- 未设置 `ATTERM_TOKEN`：自动生成 32 字节随机 token（base64url）并打印访问 URL。
+- 公网监听（例如 `:8080` / `0.0.0.0:8080`）拒绝弱 token（`dev` 或长度 <16），除非显式传 `--dev-insecure`。
+- 未设置 `--origins` 时允许启动但打印 warning；浏览器 WS 将接受任意 Origin。生产建议显式设置。
+- `--dev-insecure` 只用于开发/可信内网，会打印明文传输和弱鉴权风险警告。
 
 ## 重连与续传
 

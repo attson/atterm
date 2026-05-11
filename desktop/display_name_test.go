@@ -62,6 +62,7 @@ func TestInstallersUseATTermNameAndIcons(t *testing.T) {
 		"../.github/scripts/package-macos-dmg.sh": {
 			`AT Term.app`,
 			`AT Term`,
+			`/Applications`,
 		},
 		"../.github/workflows/build.yml": {
 			`APP_ARTIFACT_NAME: 'AT-Term'`,

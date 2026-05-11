@@ -157,9 +157,9 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 - ✅ Phase 0：协议骨架，命令行 wrapper + relay + vanilla web
 - ✅ Phase 1：Wails 桌面壳，多 tab，自动建会话，cwd-driven 标题
 - ✅ Phase 1.5：lazy 远程镜像（ANNOUNCE/STREAM_REQUEST/STOP），GUI 设置入口，cast 面板
-- ✅ Phase 2：每 tab 1/2/4 pane 分屏（layout pure fns + iTerm-style ⌘N/⌘⇧N 快捷键）；自动更新（GitHub Releases，dev 短路，用户手动 force install）
+- ✅ Phase 2：每 tab 1/2/4 pane 分屏（layout pure fns + iTerm-style ⌘N/⌘⇧N 快捷键）；自动更新（GitHub Releases，Ed25519/SHA256 验签，dev 短路，用户手动 force install）
 - ⬜ Phase 3：web 端 UI 升级（按 host 分组、host alias、active 指示）；主题、字体、配置 DSL
-- ⬜ Phase 4：用户系统、TLS 自动化、安装包签名、PWA 移动端
+- ⬜ Phase 4：用户系统、TLS 自动化、平台 codesign/notarization、PWA 移动端
 
 ## 桌面端架构细节
 
@@ -167,7 +167,7 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 desktop/main.go            创建 *App，wails.Run；OnStartup→app.startup，OnShutdown→app.shutdown
                            macOS-only: 自定义 NSMenu（保留 App + Edit role，不要 Window
                            submenu，让 ⌘W 留给前端）
-                           var Version (ldflags 注入)
+                           var Version / UpdateVerifyPublicKey (ldflags 注入)
 desktop/app.go             A 持有 *relayHost、*uplink、*configStore、*Updater
                            暴露 13 个 binding：6 session/relay + 6 update +
                            CloseSession sync 注销（cleanup() 同步调，notifyChange 立即
@@ -181,6 +181,8 @@ desktop/uplink.go          连远程 /uplink，发 ANNOUNCE
                            收 STREAM_STOP → cancel forwarder
                            IN/RESIZE → host.SendLocalInbound
                            所有 conn.Write 通过单一 out channel + writer goroutine 串行化
+desktop/relay_security.go  校验远程 relay URL；默认只允许非 loopback 使用 wss://，
+                           用户在 Settings 打开 insecure mode 后才允许远程 ws://
 desktop/updater.go         自动更新 state machine
                            Start(ctx)：boot 后 2s 跑首次 Check，之后 24h ticker
                            Check(force)：拉 api.github.com/repos/<repo>/releases/latest
@@ -202,9 +204,23 @@ desktop/scripts/           install-darwin.sh / install-linux.sh / install-window
                            Linux `chmod +x`，Windows 重试 Move-Item 应对 file-lock 滞后）
                            → 重启新副本 → 清理临时文件
 desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write-temp-rename
-                           包含 AutoCheckUpdates *bool（nil = default true）+
+                           包含 RelayURL/RelayToken/AllowInsecureRelay +
+                           AutoCheckUpdates *bool（nil = default true）+
                            LastCheckAt + SkipVersion（v0 reserved）
 ```
+
+## Relay 启动安全
+
+`cmd/atterm-relay` 是生产入口，默认 fail-closed：
+
+- `ATTERM_TOKEN` 为空时自动生成 32 字节随机 token，并在日志打印一次访问 URL；
+- 公网监听时拒绝弱 token（`dev` 或长度 <16），除非显式 `--dev-insecure`；
+- 未设置 `--origins` 时允许启动但 warning，生产建议设置为实际 HTTPS origin；
+- `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
+
+`internal/relay.NewServer(relay.Config{Token:""})` 作为库仍保留“不鉴权”
+语义，供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
+的生产默认行为。
 
 ## 前端架构细节
 
@@ -287,6 +303,20 @@ helper 在子进程跑：
     while kill -0 $pid; do sleep 0.5; done   # 等我们退出
     解压 archive → 替换原位 → 平台特异收尾 → 启动新副本 → 清理
 ```
+
+release CI：
+
+```
+push tag v* →
+  build jobs 使用 prod environment secret
+    ATTERM_UPDATE_VERIFY_PUBLIC_KEY → ldflags 注入 main.UpdateVerifyPublicKey
+  release job 下载所有 artifacts
+    ATTERM_UPDATE_SIGNING_PRIVATE_KEY → .github/scripts/sign-release-checksums.go
+    → 生成 SHA256SUMS + SHA256SUMS.sig
+    → softprops/action-gh-release 上传 artifacts + 校验文件
+```
+
+公钥可以公开；私钥只放 GitHub prod environment secret，不进仓库。
 
 dev/empty Version 的整个路径短路（不查 GitHub、UI 显示 "development build"）。
 跨实例 attach 的远程 session 在 fit 后的 cols/rows 与 SessionInfo 一致时跳过初始

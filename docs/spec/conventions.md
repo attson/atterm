@@ -109,6 +109,10 @@ if err != nil {
 - 测试名 `TestXxx` PascalCase
 - 用 `testing.Short()` 跳过慢测试
 - e2e 必须自包含：起 server、起 client、断言完整流程
+- 安全边界必须有测试：relay token/`--dev-insecure` 行为在
+  `cmd/atterm-relay/main_test.go`；桌面 ws/wss 策略在
+  `desktop/relay_security_test.go`；自动更新签名/hash 校验在
+  `desktop/updater_test.go`
 
 例：`desktop/uplink_e2e_test.go::TestUplinkE2E` / `TestTwoHostsCrossAttach` 是模板。
 
@@ -168,6 +172,32 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 在 PTY 字节流路径加 JSON 解析或 regex 匹配
 - ❌ 用 `--no-verify` skip git hook（修复 hook 失败的根因，不是绕过）
 - ❌ 给 frontend 加新依赖未经讨论（已有 vue + xterm 已够）
+- ❌ 自动更新缺少 Ed25519/SHA256 校验时继续安装（缺公钥也必须 fail-closed）
+- ❌ 把 `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 写进仓库、日志或 release artifact
+- ❌ 公网 relay 默认允许弱 token/空鉴权；需要 `--dev-insecure` 才能放开弱 token
+- ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
+
+## Release 签名与发版
+
+GitHub `prod` environment 需要两个 secrets：
+
+- `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：base64 Ed25519 公钥（32 bytes），构建桌面 app 时通过 ldflags 注入 `main.UpdateVerifyPublicKey`
+- `ATTERM_UPDATE_SIGNING_PRIVATE_KEY`：base64 Ed25519 私钥（64 bytes），只在 release job 里用于签 `SHA256SUMS`
+
+tag `v*` 触发 `.github/workflows/build.yml`：
+
+1. 多平台 build jobs 产出 updater archives / installer artifacts；
+2. release job 下载 artifacts；
+3. `.github/scripts/sign-release-checksums.go` 生成 `SHA256SUMS` 和 `SHA256SUMS.sig`；
+4. `softprops/action-gh-release` 上传所有 artifacts。
+
+本地查看 Actions 状态：
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+gh run list --repo attson/atterm --limit 10
+# 或直接 /opt/homebrew/bin/gh run list --repo attson/atterm --limit 10
+```
 
 ## 如何修改协议
 

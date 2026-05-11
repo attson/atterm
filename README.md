@@ -6,6 +6,7 @@
 
 - ✅ Wails 桌面 app（Linux / macOS / Windows）：多 tab、每 tab 1/2/4 pane 分屏（⌘N / ⌘⇧N，Linux/Windows 用 Ctrl）、本地 PTY、cwd 跟踪、远程 cast 面板
 - ✅ 内置自动更新：Settings → Updates 检查/下载/用户主动重启升级（GitHub Releases，dev 构建禁用）
+- ✅ 自动更新验签：release asset 通过 `SHA256SUMS` + Ed25519 签名校验后才允许安装
 - ✅ 中央 relay：本地或公网部署，统一 attach 入口
 - ✅ Lazy 远程同步：远程 relay 静默时不传字节，按需上传，本地体验不受其可达性影响
 - ⬜ 用户系统、TLS 自动化、移动端、shell 集成（路线图见 [`docs/spec/architecture.md`](docs/spec/architecture.md)）
@@ -36,6 +37,12 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 
 手机接管：iPhone Safari 可以直接打开同一个 relay URL，例如
 `https://relay.example.com/?token=...`。页面支持添加到主屏幕作为 PWA；手机端会显示触控优化的 session 列表、终端视图和 `Esc` / `Tab` / `Ctrl-C` / 方向键等快捷键。真实部署建议使用 HTTPS/WSS。
+
+安全默认值：
+
+- `atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成高强度 token，并在启动日志打印访问 URL。
+- 公网监听时拒绝弱 token（例如 `dev` 或长度 <16），除非显式传 `--dev-insecure`。
+- 桌面端默认拒绝非本机 `ws://` 明文 relay；如果确实在可信内网使用 `ws://`，需要在 Settings 勾选 insecure mode，并接受 token/输入/输出明文传输风险。
 
 也可以直接用 Docker Compose 启动 relay：
 
@@ -74,6 +81,14 @@ prod environment secret `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 生成
 public key 是 32 字节 Ed25519 公钥，private key 是 64 字节 Ed25519 私钥。
 私钥只放 GitHub environment secret，不要提交到仓库。
 
+手动构建 release 版时也必须注入公钥：
+
+```bash
+cd desktop
+VERSION=v0.1.14
+wails build -ldflags "-X main.Version=$VERSION -X main.UpdateVerifyPublicKey=$ATTERM_UPDATE_VERIFY_PUBLIC_KEY"
+```
+
 如果修改了自动更新配置，建议重建 watchtower 容器：
 
 ```bash
@@ -109,8 +124,15 @@ ATTERM_RELAY_IMAGE=atterm-relay:local docker compose up -d atterm-relay
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 # 加到 PATH
-export PATH="$(go env GOPATH)/bin:$PATH"
+export PATH="/opt/homebrew/bin:$(go env GOPATH)/bin:$HOME/sdk/go1.23.12/bin:$PATH"
 wails version  # 应当看到 v2.12.0
+```
+
+macOS 上 Homebrew 安装的 `gh` 通常在 `/opt/homebrew/bin/gh`。如果非交互
+shell 找不到 `gh`，优先检查 PATH，或直接使用完整路径：
+
+```bash
+/opt/homebrew/bin/gh run list --repo attson/atterm --limit 10
 ```
 
 国内拉模块慢可设置：

@@ -10,5 +10,15 @@ if [ ! -d "$app" ]; then
 fi
 test -d "$app"
 rm -f "$out"
-hdiutil create -volname "AT Term" -srcfolder "$app" -ov -format UDZO "$out"
+
+staging="$(mktemp -d "${TMPDIR:-/tmp}/atterm-dmg.XXXXXX")"
+cleanup() {
+  rm -rf "$staging"
+}
+trap cleanup EXIT
+
+cp -R "$app" "$staging/AT Term.app"
+ln -s /Applications "$staging/Applications"
+
+hdiutil create -volname "AT Term" -srcfolder "$staging" -ov -format UDZO "$out"
 ls -la "$out"

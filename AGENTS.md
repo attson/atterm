@@ -32,7 +32,9 @@ atterm/
 │   └── frontend/           Vue 3 + Vite + TS（含 PaneGrid + ConfirmInstallDialog）
 ├── web/                    极简 vanilla 浏览器客户端（直连 atterm-relay）
 ├── docs/spec/               规范文档（细节见此目录）
-└── .github/workflows/      CI（linux/amd64 + darwin/arm64 自动构建）
+└── .github/
+    ├── workflows/          CI/release（desktop 多平台构建 + relay docker）
+    └── scripts/            release 打包辅助（deb/dmg/version/checksum 签名）
 ```
 
 ## 关键设计原则（红线）
@@ -44,11 +46,15 @@ atterm/
 5. **internal 包不依赖 desktop/**：依赖方向永远是 `desktop/ → internal/*`。`internal/relay` 通过 `AdoptSession(PtyHost)` 接口被桌面端复用，但本身不能 import 桌面端代码。
 6. **PTY winsize 必须在 fork 时设好**：前端的 `predictCellDims`（FitAddon 探针）→ `NewSession(cols/rows)` → `pty.StartWithSize`。子进程从一开始就是终态尺寸，避免开局 SIGWINCH 触发某些 zsh 主题的 `PROMPT_EOL_MARK`。`SessionConnection.sendResize` 在 WS 还 CONNECTING 时排队，TerminalView 比对 expectedCols/Rows 跳过无意义 RESIZE。三件耦合，单独动一个会回归。
 7. **更新流程不打扰用户**：`updater.go` 永远手动触发——后台只检查、不静默重启。`InstallAndQuit` 必须由用户在 Settings 里点 "force install & restart" 走过 `ConfirmInstallDialog` 确认才执行。dev 构建（`Version == "dev"`）整个 update 子系统短路。
+8. **自动更新必须验签**：release 构建通过 ldflags 注入 `main.UpdateVerifyPublicKey`。下载 asset 后必须先用 Ed25519 验证 `SHA256SUMS.sig`，再校验 asset SHA256；缺公钥、缺 `SHA256SUMS`/`.sig`、签名或 hash 不匹配都必须 fail-closed，不允许 install。
+9. **公网 relay 默认安全**：`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时自动生成高强度 token 并打印到日志。公网监听拒绝弱 token（如 `dev` 或长度 <16），除非显式 `--dev-insecure`。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
 
 ## 开发命令
 
 ```bash
-export PATH=$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
+# macOS Homebrew 的 gh 在 /opt/homebrew/bin；Codex/CI 的非交互 shell
+# 不一定加载你的 ~/.zshrc，所以本项目命令默认显式带上它。
+export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
 # 命令行 relay（Phase 0）
 ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
@@ -65,12 +71,17 @@ wails build -tags webkit2_41             # 出 desktop/build/bin/AT Term
 go vet -tags webkit2_41 ./...
 go test -tags webkit2_41 -timeout 60s ./desktop/   # 跑 lazy uplink e2e 协议测试
 cd desktop/frontend && npm run build               # 前端 type-check + build
+
+# 查看 GitHub Actions / release 状态（如 PATH 未加载，可直接用 /opt/homebrew/bin/gh）
+gh run list --repo attson/atterm --limit 10
 ```
 
 环境变量：
 - `ATTERM_TOKEN`：relay 共享 bearer token；`atterm-relay` 启动时未指定会自动生成并打印到日志
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
+- `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：GitHub prod environment secret；base64 Ed25519 公钥，release 构建时注入桌面 app
+- `ATTERM_UPDATE_SIGNING_PRIVATE_KEY`：GitHub prod environment secret；base64 Ed25519 私钥，只在 release job 里签 `SHA256SUMS`
 
 ## 何时改哪里
 
@@ -83,7 +94,9 @@ cd desktop/frontend && npm run build               # 前端 type-check + build
 | 桌面端协议路径 | `desktop/uplink.go` 或 `desktop/relay_host.go`，**不要**碰 `internal/agent/` |
 | CLI wrapper 行为 | `internal/agent/` + `cmd/atterm-agent/` |
 | 改 pane 布局 / 分屏键 | `desktop/frontend/src/lib/layout.ts`（纯函数 + 单测） + `composables/useTerminalShortcuts.ts`（document capture）+ `components/PaneGrid.vue` |
-| 改自动更新 | `desktop/updater.go`（state machine） + `desktop/scripts/`（平台 helper） + `desktop/app.go`（6 binding）+ Settings UI |
+| 改自动更新 | `desktop/updater.go`（state machine + Ed25519/SHA256 校验）+ `desktop/scripts/`（平台 helper）+ `.github/scripts/sign-release-checksums.go` + `.github/workflows/build.yml` + Settings UI |
+| 改 relay 启动安全策略 | `cmd/atterm-relay/main.go` + `cmd/atterm-relay/main_test.go` + `docs/spec/protocol.md` |
+| 改桌面远程 relay 配置 | `desktop/app.go` + `desktop/config.go` + `desktop/relay_security.go` + `desktop/frontend/src/components/SettingsDialog.vue` |
 | relay 注册表清理 | `internal/relay/uplink_conn.go`（writer ping fail 触发 cancelConn → cleanup mirror sessions） |
 
 ## 风格摘要
@@ -104,6 +117,9 @@ cd desktop/frontend && npm run build               # 前端 type-check + build
 - ❌ 给 OUT 帧 seq 重置（重连必须保持单调递增，client 续传依赖此）
 - ❌ 在 desktop/ 之外用 `os.UserConfigDir()` 做持久化（其他组件应当无状态）
 - ❌ 直接 `conn.Write` from 多个 goroutine（nhooyr/websocket 不允许并发写；走单 writer goroutine + channel）
+- ❌ 自动更新跳过 Ed25519/SHA256 校验，或在缺公钥时降级允许安装
+- ❌ 公网 relay 使用弱 token/空鉴权，除非用户显式 `--dev-insecure`
+- ❌ 桌面端默认允许非 loopback `ws://`；必须由用户打开 insecure mode
 
 ## 文档导引
 

@@ -1,6 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#05070d"/>
-  <path d="M112 166c0-28 22-50 50-50h188c28 0 50 22 50 50v180c0 28-22 50-50 50H162c-28 0-50-22-50-50V166z" fill="#0f172a" stroke="#38bdf8" stroke-width="18"/>
-  <path d="M176 206l54 50-54 50" fill="none" stroke="#f8fafc" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M258 310h86" stroke="#facc15" stroke-width="28" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="AT Term icon">
+  <defs>
+    <linearGradient id="bg" x1="92" y1="72" x2="432" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#061012"/>
+      <stop offset="0.58" stop-color="#0e302d"/>
+      <stop offset="1" stop-color="#071012"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="64%" cy="34%" r="62%">
+      <stop offset="0" stop-color="#48f0cf" stop-opacity="0.34"/>
+      <stop offset="0.52" stop-color="#48f0cf" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#48f0cf" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="35" y="35" width="442" height="442" rx="104" fill="url(#bg)"/>
+  <rect x="35" y="35" width="442" height="442" rx="104" fill="url(#glow)"/>
+  <rect x="76" y="95" width="360" height="302" rx="38" fill="#040c0e" fill-opacity="0.68" stroke="#44e1c7" stroke-opacity="0.56" stroke-width="4"/>
+  <circle cx="110" cy="129" r="7" fill="#47e1c8"/>
+  <circle cx="134" cy="129" r="7" fill="#f5dd6d" fill-opacity="0.86"/>
+  <circle cx="158" cy="129" r="7" fill="#819fff" fill-opacity="0.76"/>
+  <path d="M113 348c56-86 156-129 286-126" fill="none" stroke="#44e1c7" stroke-opacity="0.34" stroke-width="8" stroke-linecap="round"/>
+  <text x="256" y="269" text-anchor="middle" font-family="SF Pro Display, Avenir Next Condensed, Helvetica Neue, Arial, sans-serif" font-size="170" font-weight="900" letter-spacing="-16" fill="#eaf9f4" filter="url(#soft-glow)">AT</text>
+  <text x="126" y="369" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="54" font-weight="700" fill="#4aebcc">&gt;</text>
+  <rect x="196" y="348" width="98" height="22" rx="6" fill="#f4d65d"/>
+  <rect x="48" y="48" width="416" height="416" rx="91" fill="none" stroke="#ffffff" stroke-opacity="0.13" stroke-width="2"/>
 </svg>

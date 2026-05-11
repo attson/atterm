@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +29,9 @@ func main() {
 	origins := flag.String("origins", "", "comma-separated allowed Origin host patterns (empty = allow any, dev only)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
+	readOnlyTokens := flag.String("read-only-tokens", os.Getenv("ATTERM_READ_ONLY_TOKENS"), "comma-separated read-only bearer tokens (or ATTERM_READ_ONLY_TOKENS)")
+	rateLimit := flag.Int("rate-limit-per-minute", envInt("ATTERM_RATE_LIMIT_PER_MINUTE", 0), "request/upgrade limit per remote IP/token per minute; 0=default, negative=disable")
+	maxConns := flag.Int("max-connections-per-key", envInt("ATTERM_MAX_CONNECTIONS_PER_KEY", 0), "active websocket limit per remote IP/token; 0=default, negative=disable")
 	debug := flag.Bool("debug", debugDefault, "enable verbose relay interaction logs (or ATTERM_RELAY_DEBUG=1)")
 	debugPayload := flag.Bool("debug-payload", debugPayloadDefault, "include IN/OUT byte contents in debug logs (or ATTERM_RELAY_DEBUG_PAYLOAD=1)")
 	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (weak token); development/private networks only")
@@ -38,7 +42,10 @@ func main() {
 		webDir:       *webDir,
 		version:      Version,
 		token:        os.Getenv("ATTERM_TOKEN"),
+		readOnly:     *readOnlyTokens,
 		origins:      *origins,
+		rateLimit:    *rateLimit,
+		maxConns:     *maxConns,
 		debug:        *debug || *debugPayload,
 		debugPayload: *debugPayload,
 		devInsecure:  *devInsecure,
@@ -82,6 +89,18 @@ func envEnabled(name string) bool {
 	}
 }
 
+func envInt(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	out, err := strconv.Atoi(value)
+	if err != nil {
+		log.Fatalf("%s must be an integer: %v", name, err)
+	}
+	return out
+}
+
 func splitCSV(s string) []string {
 	parts := strings.Split(s, ",")
 	out := parts[:0]
@@ -99,7 +118,10 @@ type relayOptions struct {
 	webDir       string
 	version      string
 	token        string
+	readOnly     string
 	origins      string
+	rateLimit    int
+	maxConns     int
 	debug        bool
 	debugPayload bool
 	devInsecure  bool
@@ -125,12 +147,15 @@ func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
 	allowedOrigins := splitCSV(opts.origins)
 
 	cfg := relay.Config{
-		Token:          token,
-		WebDir:         opts.webDir,
-		Version:        opts.version,
-		AllowedOrigins: allowedOrigins,
-		Debug:          opts.debug || opts.debugPayload,
-		DebugPayload:   opts.debugPayload,
+		Token:                token,
+		ReadOnlyTokens:       splitCSV(opts.readOnly),
+		WebDir:               opts.webDir,
+		Version:              opts.version,
+		AllowedOrigins:       allowedOrigins,
+		Debug:                opts.debug || opts.debugPayload,
+		DebugPayload:         opts.debugPayload,
+		RateLimitPerMinute:   opts.rateLimit,
+		MaxConnectionsPerKey: opts.maxConns,
 	}
 	logStartupSecurity(opts, token, generated, publicListen)
 	return cfg, token, nil

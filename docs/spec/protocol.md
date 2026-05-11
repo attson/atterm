@@ -6,8 +6,9 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / 直连 client）；浏览器 client 无法跨源带 header，所以也支持 `?token=<urlencoded>` query 参数和 `Sec-WebSocket-Protocol: atterm-token.<token>`。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。
+- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / 直连 client）；浏览器 client 无法跨源带 header，所以也支持 `?token=<urlencoded>` query 参数和 `Sec-WebSocket-Protocol: atterm-token.<token>`。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。浏览器 web client 读取 `?token=` 后会保存到本地存储并清理地址栏。
 - CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署建议设置 `--origins https://relay.example.com` 并套 HTTPS/WSS 反向代理。
+- 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端必须只加载同源静态资源；xterm 资源 vendored 在 `web/vendor/`。
 
 ## 帧格式
 
@@ -205,10 +206,14 @@ payload = JSON：
 | `/agent` | GET (Upgrade: websocket) | agent 上行 |
 | `/uplink` | GET (Upgrade: websocket) | 桌面 app 控制连 |
 | `/client` | GET (Upgrade: websocket) | client attach |
+| `/client-sessions` | GET (Upgrade: websocket) | session 列表推送 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
+| `/api/version` | GET | JSON 版本信息 |
 | `/` (relay 自带) | GET | 静态 web 客户端（仅 `cmd/atterm-relay --web web`） |
 
-CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直接 204。
+CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直接 204。非 `OPTIONS`
+请求进入 mux 前会经过按远端 IP/token 计算的固定窗口 rate limit；WebSocket upgrade
+还会经过同一 key 的活跃连接数限制。
 
 ## 鉴权
 
@@ -232,11 +237,19 @@ token 由部署方设置（环境变量 `ATTERM_TOKEN`）。`atterm-relay`
 启动时若未设置会自动生成高强度 token 并打印到日志；`internal/relay`
 作为库使用时 `Config.Token == ""` 仍表示无鉴权（仅用于本地/dev 嵌入场景）。
 
+scope 目前是 relay 内部鉴权结果，不改变 wire frame 格式：
+
+- write token：`ATTERM_TOKEN` / `Config.Token`。可连接 `/agent`、`/uplink`、`/client`、`/client-sessions`，可发送 `IN`、`RESIZE`、`PASTE_IMAGE`。
+- read token：`ATTERM_READ_ONLY_TOKENS` / `--read-only-tokens` / `Config.ReadOnlyTokens`。可调用 `/api/sessions`、`/api/version`，可连接 `/client`/`/client-sessions` 并 `LIST`/`ATTACH`/接收输出；relay 会丢弃 `IN`、`RESIZE`、`PASTE_IMAGE`，且拒绝 `/agent`/`/uplink`。
+- none：未命中任何 token 时返回 401；`Config.Token == "" && ReadOnlyTokens == nil` 的本地/dev 模式视为 write。
+
 `cmd/atterm-relay` 的启动安全策略：
 
 - 未设置 `ATTERM_TOKEN`：自动生成 32 字节随机 token（base64url）并打印访问 URL。
 - 公网监听（例如 `:8080` / `0.0.0.0:8080`）拒绝弱 token（`dev` 或长度 <16），除非显式传 `--dev-insecure`。
 - 未设置 `--origins` 时允许启动但打印 warning；浏览器 WS 将接受任意 Origin。生产建议显式设置。
+- `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用。
+- `--max-connections-per-key` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用。
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输和弱鉴权风险警告。
 
 ## 重连与续传

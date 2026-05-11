@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
@@ -20,6 +21,9 @@ import (
 type Config struct {
 	// Token is the shared bearer token. Empty means no auth (dev only).
 	Token string
+	// ReadOnlyTokens can list and attach to sessions, but cannot send input,
+	// resize, paste images, or register agent/uplink connections.
+	ReadOnlyTokens []string
 	// WebDir is the filesystem path to the static web client. Empty disables /.
 	WebDir string
 	// Version is the application version exposed to web clients.
@@ -35,6 +39,12 @@ type Config struct {
 	DebugPayload bool
 	// DebugLog overrides where debug logs are written. Nil writes to stderr.
 	DebugLog io.Writer
+	// RateLimitPerMinute limits HTTP requests and WS upgrade attempts per
+	// remote IP/token pair. Zero uses a conservative default; negative disables.
+	RateLimitPerMinute int
+	// MaxConnectionsPerKey limits active WS connections per remote IP/token
+	// pair. Zero uses a conservative default; negative disables.
+	MaxConnectionsPerKey int
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -42,6 +52,8 @@ type Server struct {
 	cfg      Config
 	registry *session.Registry
 	mux      *http.ServeMux
+	rate     *fixedWindowLimiter
+	conns    *connectionLimiter
 }
 
 // NewServer builds a Server with its routes installed.
@@ -49,10 +61,20 @@ func NewServer(cfg Config) *Server {
 	if cfg.DebugLog == nil {
 		cfg.DebugLog = os.Stderr
 	}
+	rateLimit := cfg.RateLimitPerMinute
+	if rateLimit == 0 {
+		rateLimit = defaultRateLimitPerMinute
+	}
+	connLimit := cfg.MaxConnectionsPerKey
+	if connLimit == 0 {
+		connLimit = defaultMaxConnections
+	}
 	s := &Server{
 		cfg:      cfg,
 		registry: session.NewRegistry(),
 		mux:      http.NewServeMux(),
+		rate:     newFixedWindowLimiter(rateLimit, time.Minute),
+		conns:    newConnectionLimiter(connLimit),
 	}
 	s.mux.HandleFunc("/agent", s.handleAgentHTTP)
 	s.mux.HandleFunc("/uplink", s.handleUplinkHTTP)
@@ -78,8 +100,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Permissions-Policy", "clipboard-read=(self), clipboard-write=(self)")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !s.rate.allow(requestLimitKey(r)) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 	s.mux.ServeHTTP(w, r)
@@ -97,11 +127,17 @@ func (s *Server) acceptOptions() *websocket.AcceptOptions {
 }
 
 func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
-	if !authorize(r, s.cfg.Token) {
+	if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
 		s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	key := requestLimitKey(r)
+	if !s.conns.acquire(key) {
+		http.Error(w, "too many connections", http.StatusTooManyRequests)
+		return
+	}
+	defer s.conns.release(key)
 	c, err := websocket.Accept(w, r, s.acceptOptions())
 	if err != nil {
 		s.debugf("ws reject path=/agent remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
@@ -113,11 +149,17 @@ func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
-	if !authorize(r, s.cfg.Token) {
+	if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
 		s.debugf("http reject path=/uplink remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	key := requestLimitKey(r)
+	if !s.conns.acquire(key) {
+		http.Error(w, "too many connections", http.StatusTooManyRequests)
+		return
+	}
+	defer s.conns.release(key)
 	c, err := websocket.Accept(w, r, s.acceptOptions())
 	if err != nil {
 		s.debugf("ws reject path=/uplink remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
@@ -129,11 +171,18 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
-	if !authorize(r, s.cfg.Token) {
+	scope := authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens)
+	if scope == authNone {
 		s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	key := requestLimitKey(r)
+	if !s.conns.acquire(key) {
+		http.Error(w, "too many connections", http.StatusTooManyRequests)
+		return
+	}
+	defer s.conns.release(key)
 	// browsers need to negotiate the same subprotocol if used for auth
 	opts := s.acceptOptions()
 	if p := r.Header.Get("Sec-WebSocket-Protocol"); p != "" {
@@ -152,15 +201,22 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/client remote=%s origin=%q subprotocol=%q", r.RemoteAddr, r.Header.Get("Origin"), c.Subprotocol())
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClient(r.Context(), c)
+	s.handleClient(r.Context(), c, scope == authRead)
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	if !authorize(r, s.cfg.Token) {
+	scope := authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens)
+	if scope == authNone {
 		s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	key := requestLimitKey(r)
+	if !s.conns.acquire(key) {
+		http.Error(w, "too many connections", http.StatusTooManyRequests)
+		return
+	}
+	defer s.conns.release(key)
 	c, err := websocket.Accept(w, r, s.acceptOptions())
 	if err != nil {
 		s.debugf("ws reject path=/client-sessions remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
@@ -172,7 +228,7 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	if !authorize(r, s.cfg.Token) {
+	if authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens) == authNone {
 		s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -184,7 +240,7 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
-	if !authorize(r, s.cfg.Token) {
+	if authorizeClient(r, s.cfg.Token, s.cfg.ReadOnlyTokens) == authNone {
 		s.debugf("http reject path=/api/version remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

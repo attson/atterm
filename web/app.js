@@ -16,6 +16,7 @@ import {
   shortSessionID,
   shortcutInput,
   tokenFromLocation,
+  tokenURLWithoutSecret,
   versionLabel,
   wsURL as makeWSURL,
 } from "./app-core.js";
@@ -162,6 +163,9 @@ maybeShowInstallHint();
 registerServiceWorker();
 
 let token = tokenFromLocation(location.href, localStorage);
+if (new URL(location.href).searchParams.has("token")) {
+  history.replaceState(null, "", tokenURLWithoutSecret(location.href));
+}
 tokenInput.value = token;
 
 function getToken() {

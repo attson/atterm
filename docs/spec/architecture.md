@@ -40,7 +40,8 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 │  /agent — 旧式 agent（CLI wrapper）注册 session                │
 │  /uplink — 桌面 app 控制连，收 ANNOUNCE 维护 mirror sessions  │
 │  /client — web/桌面 客户端 attach（ATTACH/IN/RESIZE/收 OUT）  │
-│  /api/sessions — JSON 列表（local + mirror 全量）              │
+│  /api/sessions / /api/version — JSON API                      │
+│  CSP/security headers + IP/token rate/connection limits        │
 │                                                                │
 │  SessionRegistry：                                             │
 │   - local sessions（来自 /agent，字节流持续）                   │
@@ -68,6 +69,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update) | 不实现协议 |
+| `web/` | web | vanilla 浏览器/PWA client，使用同源 vendored xterm 资源直连 relay | 不从 CDN 加载 script/style，不持久化除 token 以外的会话状态 |
 
 ## 三种核心数据流
 
@@ -216,6 +218,9 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 - `ATTERM_TOKEN` 为空时自动生成 32 字节随机 token，并在日志打印一次访问 URL；
 - 公网监听时拒绝弱 token（`dev` 或长度 <16），除非显式 `--dev-insecure`；
 - 未设置 `--origins` 时允许启动但 warning，生产建议设置为实际 HTTPS origin；
+- 默认返回 CSP/security headers，`web/` 只允许同源 script/style；xterm 静态资源放在 `web/vendor/`；
+- 按远端 IP/token 对 HTTP 请求和 WS upgrade 做分钟级 rate limit，并限制同一 key 的活跃 WS 连接数；
+- 支持只读 token（`ATTERM_READ_ONLY_TOKENS` / `--read-only-tokens`）：可 list/attach/看输出，但不能输入、resize、粘贴图片，也不能注册 agent/uplink；
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
 
 `internal/relay.NewServer(relay.Config{Token:""})` 作为库仍保留“不鉴权”

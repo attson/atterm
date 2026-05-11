@@ -10,6 +10,7 @@ import {
   isIOSWebKit,
   shouldAutoScrollToBottom,
   shouldShowInstallHint,
+  tokenURLWithoutSecret,
   parseSessionRoute,
   shortcutInput,
   tokenFromLocation,
@@ -28,6 +29,17 @@ test("tokenFromLocation stores query token and returns it", () => {
 
   assert.equal(token, "new-token");
   assert.deepEqual(stored, [["atterm-token", "new-token"]]);
+});
+
+test("tokenURLWithoutSecret removes token query parameter without changing route", () => {
+  assert.equal(
+    tokenURLWithoutSecret("https://relay.example.com/?token=new-token&x=1#/s/11111111-1111-4111-8111-111111111111"),
+    "https://relay.example.com/?x=1#/s/11111111-1111-4111-8111-111111111111",
+  );
+  assert.equal(
+    tokenURLWithoutSecret("https://relay.example.com/?token=new-token"),
+    "https://relay.example.com/",
+  );
 });
 
 test("tokenFromLocation falls back to stored token", () => {

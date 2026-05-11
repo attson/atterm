@@ -6,15 +6,46 @@ import (
 	"strings"
 )
 
+type authScope uint8
+
+const (
+	authNone authScope = iota
+	authRead
+	authWrite
+)
+
 // authorize accepts either an Authorization: Bearer <token> header or a
 // ?token=<token> query parameter. The query form exists because browser
 // WebSocket clients cannot set custom headers cross-origin.
 func authorize(r *http.Request, expected string) bool {
-	if expected == "" {
-		return true // dev mode: no token configured
+	return authorizeWithScope(r, expected, nil) == authWrite
+}
+
+func authorizeClient(r *http.Request, expected string, readOnlyTokens []string) authScope {
+	return authorizeWithScope(r, expected, readOnlyTokens)
+}
+
+func authorizeWithScope(r *http.Request, expected string, readOnlyTokens []string) authScope {
+	if expected == "" && len(readOnlyTokens) == 0 {
+		return authWrite // dev mode: no token configured
 	}
 	got := tokenFromRequest(r)
 	if got == "" {
+		return authNone
+	}
+	if tokenEqual(got, expected) {
+		return authWrite
+	}
+	for _, ro := range readOnlyTokens {
+		if tokenEqual(got, ro) {
+			return authRead
+		}
+	}
+	return authNone
+}
+
+func tokenEqual(got, expected string) bool {
+	if expected == "" {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1

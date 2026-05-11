@@ -4,6 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 
 const html = await readFile(new URL("./index.html", import.meta.url), "utf8");
 const manifest = JSON.parse(await readFile(new URL("./manifest.webmanifest", import.meta.url), "utf8"));
+const sw = await readFile(new URL("./sw.js", import.meta.url), "utf8");
 
 test("index contains PWA and iOS metadata", () => {
   assert.match(html, /<link rel="manifest" href="manifest\.webmanifest"/);
@@ -15,6 +16,13 @@ test("index contains PWA and iOS metadata", () => {
   assert.match(html, /Add to Home Screen/);
   assert.match(html, /<script type="module" src="app\.js"><\/script>/);
   assert.match(html, /<div class="version" id="version">version dev<\/div>/);
+});
+
+test("index uses vendored terminal assets only", () => {
+  assert.doesNotMatch(html, /cdn\.jsdelivr\.net/);
+  assert.match(html, /<link rel="stylesheet" href="vendor\/xterm\/xterm\.css"/);
+  assert.match(html, /<script src="vendor\/xterm\/xterm\.js"><\/script>/);
+  assert.match(html, /<script src="vendor\/xterm-addon-fit\/xterm-addon-fit\.js"><\/script>/);
 });
 
 test("manifest is installable and scoped to relay root", () => {
@@ -34,7 +42,12 @@ test("PWA PNG icon exists for iOS install surfaces", async () => {
 });
 
 test("service worker is present for secure-context PWA installs", async () => {
-  const sw = await readFile(new URL("./sw.js", import.meta.url), "utf8");
   assert.match(sw, /self\.addEventListener\("install"/);
   assert.match(sw, /self\.addEventListener\("fetch"/);
+});
+
+test("service worker caches vendored terminal assets", () => {
+  assert.match(sw, /"\.\/vendor\/xterm\/xterm\.css"/);
+  assert.match(sw, /"\.\/vendor\/xterm\/xterm\.js"/);
+  assert.match(sw, /"\.\/vendor\/xterm-addon-fit\/xterm-addon-fit\.js"/);
 });

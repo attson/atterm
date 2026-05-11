@@ -42,6 +42,10 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 
 - `atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成高强度 token，并在启动日志打印访问 URL。
 - 公网监听时拒绝弱 token（例如 `dev` 或长度 <16），除非显式传 `--dev-insecure`。
+- relay 默认返回 CSP / Referrer-Policy / nosniff / Permissions-Policy 等安全头，并按远端 IP/token 限制请求速率与活跃 WebSocket 连接数。
+- 浏览器客户端不再从 CDN 加载 xterm；所有 web 静态资源都走同源 `web/vendor/`，service worker 会缓存这些资源。
+- URL 里的 `?token=...` 会在读取并保存到浏览器本地存储后从地址栏移除，降低分享/截图/历史记录泄漏风险。
+- 可用 `ATTERM_READ_ONLY_TOKENS` 或 `--read-only-tokens` 配只读 token；只读用户可以列出/attach/看输出，但不能向 PTY 输入、resize 或粘贴图片。
 - 桌面端默认拒绝非本机 `ws://` 明文 relay；如果确实在可信内网使用 `ws://`，需要在 Settings 勾选 insecure mode，并接受 token/输入/输出明文传输风险。
 
 也可以直接用 Docker Compose 启动 relay：
@@ -56,6 +60,9 @@ docker compose logs atterm-relay   # 查看自动生成的 token
 
 - `ATTERM_RELAY_IMAGE`：relay 镜像，默认 `attson/atterm-relay:latest`
 - `ATTERM_RELAY_PORT`：宿主机端口，默认 `8080`
+- `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 token，适合临时分享“只能看不能输入”的会话入口
+- `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的请求/upgrade 分钟限额；`0` 用内置默认值，负数禁用
+- `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用内置默认值，负数禁用
 - `ATTERM_RELAY_DEBUG=1`：打印 relay 交互日志
 - `ATTERM_RELAY_DEBUG_PAYLOAD=1`：额外打印 IN/OUT 字节内容（仅调试用）
 - `ATTERM_WATCHTOWER_INTERVAL`：启用自动更新时的检查间隔秒数，默认 `300`
@@ -296,7 +303,7 @@ docs/spec/    协议、架构、约定规范
 ## 贡献
 
 - 风格：见 [`docs/spec/conventions.md`](docs/spec/conventions.md)
-- 提交前本地跑：`go vet -tags webkit2_41 ./...` + `go test -tags webkit2_41 ./desktop/` + `cd desktop/frontend && npm run build`
+- 提交前本地跑：`go vet -tags webkit2_41 ./...` + `go test -tags webkit2_41 ./...` + `node --test web/*.test.mjs` + `cd desktop/frontend && npm run build`
 - CI 在 `.github/workflows/build.yml`：push main / PR / tag v* / manual 都会触发，三平台并行构建
 - 协议变更：必须同步更新 [`docs/spec/protocol.md`](docs/spec/protocol.md) 与 TS 端 `desktop/frontend/src/lib/proto.ts`
 

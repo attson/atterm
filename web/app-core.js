@@ -10,6 +10,12 @@ export function tokenFromLocation(href, storage) {
   return storage.getItem(TOKEN_KEY) || "";
 }
 
+export function tokenURLWithoutSecret(href) {
+  const url = new URL(href);
+  url.searchParams.delete("token");
+  return url.toString();
+}
+
 export function persistToken(storage, value) {
   storage.setItem(TOKEN_KEY, value.trim());
 }

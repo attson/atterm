@@ -76,3 +76,26 @@ func TestRelaySecurityDevInsecureAllowsWeakPublicConfig(t *testing.T) {
 		t.Fatalf("startup log %q does not warn about insecure mode", log.String())
 	}
 }
+
+func TestRelaySecurityConfiguresReadOnlyTokensAndLimits(t *testing.T) {
+	cfg, _, err := buildRelayConfig(relayOptions{
+		addr:      "127.0.0.1:8080",
+		token:     "strong-random-token",
+		readOnly:  "reader-a, reader-b",
+		rateLimit: 42,
+		maxConns:  7,
+		version:   "test",
+	})
+	if err != nil {
+		t.Fatalf("buildRelayConfig err: %v", err)
+	}
+	if len(cfg.ReadOnlyTokens) != 2 || cfg.ReadOnlyTokens[0] != "reader-a" || cfg.ReadOnlyTokens[1] != "reader-b" {
+		t.Fatalf("ReadOnlyTokens = %#v; want reader-a/reader-b", cfg.ReadOnlyTokens)
+	}
+	if cfg.RateLimitPerMinute != 42 {
+		t.Fatalf("RateLimitPerMinute = %d; want 42", cfg.RateLimitPerMinute)
+	}
+	if cfg.MaxConnectionsPerKey != 7 {
+		t.Fatalf("MaxConnectionsPerKey = %d; want 7", cfg.MaxConnectionsPerKey)
+	}
+}

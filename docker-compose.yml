@@ -7,6 +7,9 @@ services:
       # Optional: set in your shell or .env. If empty, relay generates a token
       # at startup and prints it in `docker compose logs atterm-relay`.
       ATTERM_TOKEN: ${ATTERM_TOKEN:-}
+      ATTERM_READ_ONLY_TOKENS: ${ATTERM_READ_ONLY_TOKENS:-}
+      ATTERM_RATE_LIMIT_PER_MINUTE: ${ATTERM_RATE_LIMIT_PER_MINUTE:-0}
+      ATTERM_MAX_CONNECTIONS_PER_KEY: ${ATTERM_MAX_CONNECTIONS_PER_KEY:-0}
       ATTERM_RELAY_DEBUG: ${ATTERM_RELAY_DEBUG:-0}
       ATTERM_RELAY_DEBUG_PAYLOAD: ${ATTERM_RELAY_DEBUG_PAYLOAD:-0}
     ports:

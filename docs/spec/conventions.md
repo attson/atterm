@@ -109,8 +109,8 @@ if err != nil {
 - 测试名 `TestXxx` PascalCase
 - 用 `testing.Short()` 跳过慢测试
 - e2e 必须自包含：起 server、起 client、断言完整流程
-- 安全边界必须有测试：relay token/`--dev-insecure` 行为在
-  `cmd/atterm-relay/main_test.go`；桌面 ws/wss 策略在
+- 安全边界必须有测试：relay token/`--dev-insecure`/只读 token/限流行为在
+  `cmd/atterm-relay/main_test.go` 与 `internal/relay/*_test.go`；桌面 ws/wss 策略在
   `desktop/relay_security_test.go`；自动更新签名/hash 校验在
   `desktop/updater_test.go`
 
@@ -176,6 +176,8 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 把 `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 写进仓库、日志或 release artifact
 - ❌ 公网 relay 默认允许弱 token/空鉴权；需要 `--dev-insecure` 才能放开弱 token
 - ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
+- ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用同源 vendored 资源，避免 CSP/PWA 回归
+- ❌ 读取 `?token=` 后继续把 secret 留在地址栏、日志或可分享 URL 中
 
 ## Release 签名与发版
 

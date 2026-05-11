@@ -113,6 +113,8 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 					}
 				case proto.TypeResize:
 					if cols, rows, err := proto.DecodeResize(f.Payload); err == nil {
+						sess.UpdateSize(cols, rows)
+						s.registry.NotifyChange()
 						_ = host.Resize(cols, rows)
 					}
 				case proto.TypePasteImage:

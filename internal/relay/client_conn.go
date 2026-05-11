@@ -127,6 +127,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn) {
 				s.debugf("client drop frame=%s reason=not_attached", frameTypeName(f.Type))
 				continue
 			}
+			if f.Type == proto.TypeResize {
+				if cols, rows, err := proto.DecodeResize(f.Payload); err == nil {
+					sess.UpdateSize(cols, rows)
+					s.registry.NotifyChange()
+				}
+			}
 			if !sess.SendInbound(f) {
 				log.Printf("client: inbound full, dropping frame type 0x%02x", f.Type)
 			}

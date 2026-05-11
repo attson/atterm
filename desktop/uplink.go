@@ -125,13 +125,14 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	go func() {
 		ticker := time.NewTicker(announceInterval)
 		defer ticker.Stop()
-		changes := u.host.WatchChanges()
+		changes := u.host.server.Registry().SubscribeChanges()
+		defer changes.Close()
 		for {
 			select {
 			case <-connCtx.Done():
 				return
 			case <-ticker.C:
-			case <-changes:
+			case <-changes.C():
 			}
 			if err := u.writeAnnounce(connCtx, conn); err != nil {
 				cancelConn()

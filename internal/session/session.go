@@ -101,6 +101,18 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	}
 }
 
+// UpdateSize records the latest PTY window size advertised by a client resize.
+func (s *Session) UpdateSize(cols, rows uint16) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cols > 0 {
+		s.meta.Cols = cols
+	}
+	if rows > 0 {
+		s.meta.Rows = rows
+	}
+}
+
 // PushOut is called by the agent reader loop for each TypeOut frame.
 // It records the chunk to scrollback and fans out to current subscribers.
 // Slow subscribers are dropped (their channels are closed) so they reconnect.

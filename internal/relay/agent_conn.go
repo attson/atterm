@@ -81,6 +81,12 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn) {
 					return
 				}
 				s.debugFrame("agent", "send", f)
+				if f.Type == proto.TypeResize {
+					if cols, rows, err := proto.DecodeResize(f.Payload); err == nil {
+						sess.UpdateSize(cols, rows)
+						s.registry.NotifyChange()
+					}
+				}
 				ctx, cancel := context.WithTimeout(writerCtx, agentWriteWait)
 				err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 				cancel()

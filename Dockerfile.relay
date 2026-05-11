@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+
+FROM golang:1.23-bookworm AS build
+
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd ./cmd
+COPY internal ./internal
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/atterm-relay \
+    ./cmd/atterm-relay
+
+FROM alpine:3.20
+
+RUN addgroup -S atterm && adduser -S -G atterm atterm
+
+WORKDIR /app
+
+COPY --from=build /out/atterm-relay /usr/local/bin/atterm-relay
+COPY web ./web
+
+USER atterm
+
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/atterm-relay"]
+CMD ["--addr", ":8080", "--web", "/app/web"]

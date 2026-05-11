@@ -34,6 +34,30 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 # 浏览器: http://localhost:8080/?token=dev
 ```
 
+也可以直接用 Docker Compose 启动 relay：
+
+```bash
+ATTERM_TOKEN=dev docker compose up -d atterm-relay
+# 浏览器: http://localhost:8080/?token=dev
+```
+
+可选环境变量：
+
+- `ATTERM_RELAY_IMAGE`：relay 镜像，默认 `attson/atterm-relay:latest`
+- `ATTERM_RELAY_PORT`：宿主机端口，默认 `8080`
+- `ATTERM_RELAY_DEBUG=1`：打印 relay 交互日志
+- `ATTERM_RELAY_DEBUG_PAYLOAD=1`：额外打印 IN/OUT 字节内容（仅调试用）
+
+本地构建镜像用于调试：
+
+```bash
+docker build -f Dockerfile.relay -t atterm-relay:local .
+ATTERM_RELAY_IMAGE=atterm-relay:local docker compose up -d atterm-relay
+```
+
+`main` 分支推送后 GitHub Actions 会构建并推送 `attson/atterm-relay:latest`。
+仓库需要配置 Docker Hub secrets：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`。
+
 ### 3. 桌面 + 远程 relay 多设备同步
 
 桌面 app 启动后点齿轮，填远程 relay URL/token。然后另一设备的浏览器或桌面 app 连同一 relay 即可互相 attach。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md) §三种核心数据流。

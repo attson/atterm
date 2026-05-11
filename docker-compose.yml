@@ -1,0 +1,13 @@
+services:
+  atterm-relay:
+    image: ${ATTERM_RELAY_IMAGE:-attson/atterm-relay:latest}
+    container_name: atterm-relay
+    restart: unless-stopped
+    environment:
+      # Override in your shell or a local .env file before starting.
+      ATTERM_TOKEN: ${ATTERM_TOKEN:-dev}
+      ATTERM_RELAY_DEBUG: ${ATTERM_RELAY_DEBUG:-0}
+      ATTERM_RELAY_DEBUG_PAYLOAD: ${ATTERM_RELAY_DEBUG_PAYLOAD:-0}
+    ports:
+      - "${ATTERM_RELAY_PORT:-8080}:8080"
+    command: ["--addr", ":8080", "--web", "/app/web"]

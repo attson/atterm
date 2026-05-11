@@ -1,23 +1,33 @@
-// atterm web client. Two views, share one WebSocket lifecycle for the session view.
+// atterm web client. Mobile-first PWA shell plus the existing relay protocol.
+
+import {
+  apiURL as makeAPIURL,
+  formatHost,
+  parseSessionRoute,
+  persistToken,
+  sessionTitle,
+  shortSessionID,
+  shortcutInput,
+  tokenFromLocation,
+  wsURL as makeWSURL,
+} from "./app-core.js";
 
 const TYPE = {
-  OPEN:     0x01,
-  IN:       0x02,
-  OUT:      0x03,
-  RESIZE:   0x04,
-  META:     0x05,
-  CLOSE:    0x06,
-  ATTACH:   0x10,
-  LIST:     0x11,
-  LIST_RESP:0x12,
-  PING:     0x20,
-  PONG:     0x21,
+  OPEN: 0x01,
+  IN: 0x02,
+  OUT: 0x03,
+  RESIZE: 0x04,
+  META: 0x05,
+  CLOSE: 0x06,
+  ATTACH: 0x10,
+  LIST: 0x11,
+  LIST_RESP: 0x12,
+  PING: 0x20,
+  PONG: 0x21,
 };
 const VERSION = 1;
 const HEADER_LEN = 6;
 const SID_LEN = 16;
-
-// ─── frame codec ────────────────────────────────────────────────────────────
 
 function uuidParse(s) {
   const hex = s.replace(/-/g, "");
@@ -28,7 +38,7 @@ function uuidParse(s) {
 }
 const NIL_SID = new Uint8Array(16);
 
-function encodeFrame(type, sid /* Uint8Array(16) */, payload /* Uint8Array */) {
+function encodeFrame(type, sid, payload) {
   const p = payload || new Uint8Array(0);
   const buf = new Uint8Array(HEADER_LEN + SID_LEN + p.length);
   const dv = new DataView(buf.buffer);
@@ -40,7 +50,7 @@ function encodeFrame(type, sid /* Uint8Array(16) */, payload /* Uint8Array */) {
   return buf;
 }
 
-function decodeFrame(arr /* Uint8Array */) {
+function decodeFrame(arr) {
   if (arr.length < HEADER_LEN + SID_LEN) throw new Error("short");
   if (arr[0] !== VERSION) throw new Error("bad version");
   const dv = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -56,11 +66,9 @@ function decodeFrame(arr /* Uint8Array */) {
 function decodeOutPayload(p) {
   if (p.length < 8) return { seq: 0, data: new Uint8Array(0) };
   const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
-  // JS bigint for u64
   const hi = dv.getUint32(0, false);
   const lo = dv.getUint32(4, false);
-  const seq = hi * 0x100000000 + lo; // safe up to 2^53; agents won't hit that
-  return { seq, data: p.slice(8) };
+  return { seq: hi * 0x100000000 + lo, data: p.slice(8) };
 }
 
 function encodeResize(cols, rows) {
@@ -74,53 +82,65 @@ function encodeResize(cols, rows) {
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-// ─── token / config ─────────────────────────────────────────────────────────
-
 const tokenInput = document.getElementById("token");
-function getToken() {
-  const fromQuery = new URLSearchParams(location.search).get("token");
-  if (fromQuery) {
-    localStorage.setItem("atterm-token", fromQuery);
-    return fromQuery;
-  }
-  return localStorage.getItem("atterm-token") || "";
-}
-tokenInput.value = getToken();
-tokenInput.addEventListener("change", () => {
-  localStorage.setItem("atterm-token", tokenInput.value.trim());
-});
-
-function wsURL(path) {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const t = encodeURIComponent(getToken());
-  return `${proto}//${location.host}${path}${t ? `?token=${t}` : ""}`;
-}
-function apiURL(path) {
-  const t = encodeURIComponent(getToken());
-  return `${path}${t ? `?token=${t}` : ""}`;
-}
-
-// ─── status indicator ───────────────────────────────────────────────────────
-
+const tokenToggle = document.getElementById("token-toggle");
+const tokenPanel = document.getElementById("token-panel");
+const tokenSave = document.getElementById("token-save");
 const statusEl = document.getElementById("status");
-function setStatus(text, kind) {
-  statusEl.textContent = text;
-  statusEl.className = "status" + (kind ? " " + kind : "");
-}
-
-// ─── list view ──────────────────────────────────────────────────────────────
-
+const sessionTitleEl = document.getElementById("session-title");
 const listView = document.getElementById("list-view");
 const termView = document.getElementById("term-view");
 const listEl = document.getElementById("list");
 const emptyEl = document.getElementById("empty");
 const backBtn = document.getElementById("back");
+const refreshBtn = document.getElementById("refresh");
+const pasteBtn = document.getElementById("paste");
+const pasteFallback = document.getElementById("paste-fallback");
+const pasteText = document.getElementById("paste-text");
+const pasteCancel = document.getElementById("paste-cancel");
+
+let token = tokenFromLocation(location.href, localStorage);
+tokenInput.value = token;
+
+function getToken() {
+  return token;
+}
+
+function saveToken() {
+  token = tokenInput.value.trim();
+  persistToken(localStorage, token);
+  tokenPanel.hidden = true;
+  tokenToggle.setAttribute("aria-expanded", "false");
+  refreshList();
+}
+
+tokenInput.addEventListener("change", saveToken);
+tokenSave.addEventListener("click", saveToken);
+tokenToggle.addEventListener("click", () => {
+  tokenPanel.hidden = !tokenPanel.hidden;
+  tokenToggle.setAttribute("aria-expanded", String(!tokenPanel.hidden));
+});
+
+function wsURL(path) {
+  return makeWSURL(location.protocol, location.host, path, getToken());
+}
+function apiURL(path) {
+  return makeAPIURL(path, getToken());
+}
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (kind ? " " + kind : "");
+}
 
 backBtn.addEventListener("click", () => {
   location.hash = "";
 });
+refreshBtn.addEventListener("click", () => refreshList());
 
 let listTimer = null;
+let lastSessions = [];
+
 async function refreshList() {
   try {
     const res = await fetch(apiURL("/api/sessions"), {
@@ -128,21 +148,16 @@ async function refreshList() {
     });
     if (!res.ok) {
       setStatus(res.status === 401 ? "unauthorized" : `http ${res.status}`, "err");
+      if (res.status === 401) tokenPanel.hidden = false;
       return;
     }
     setStatus("connected", "ok");
     const sessions = await res.json();
-    renderList(sessions || []);
-  } catch (e) {
+    lastSessions = sessions || [];
+    renderList(lastSessions);
+  } catch {
     setStatus("offline", "err");
   }
-}
-
-function formatHost(s) {
-  const u = s.user || "";
-  const h = s.host || "";
-  if (u && h) return `${u}@${h}`;
-  return u || h || "unknown host";
 }
 
 function renderList(sessions) {
@@ -153,7 +168,8 @@ function renderList(sessions) {
   }
   emptyEl.hidden = true;
   for (const s of sessions) {
-    const card = document.createElement("div");
+    const card = document.createElement("button");
+    card.type = "button";
     card.className = "card";
     card.innerHTML = `
       <div class="host">
@@ -175,7 +191,7 @@ function renderList(sessions) {
       hostidEl.hidden = true;
     }
     card.querySelector(".cmd").textContent = s.command || "(unknown)";
-    card.querySelector(".id").textContent = s.id.slice(0, 8);
+    card.querySelector(".id").textContent = shortSessionID(s.id);
     card.querySelector(".size").textContent = `${s.cols}×${s.rows}`;
     card.querySelector(".cwd").textContent = s.cwd || "";
     card.addEventListener("click", () => {
@@ -185,12 +201,21 @@ function renderList(sessions) {
   }
 }
 
-// ─── term view ──────────────────────────────────────────────────────────────
-
-let term = null, fitAddon = null, currentWS = null, currentSID = null;
+let term = null;
+let fitAddon = null;
+let currentWS = null;
+let currentSID = null;
 let lastSeq = 0;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
+let fitTimer = null;
+
+function scheduleFit() {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(() => {
+    if (fitAddon) fitAddon.fit();
+  }, 50);
+}
 
 function ensureTerm() {
   if (term) return;
@@ -206,19 +231,28 @@ function ensureTerm() {
   fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(document.getElementById("term"));
-  fitAddon.fit();
-  window.addEventListener("resize", () => { if (fitAddon) fitAddon.fit(); });
-  term.onData(data => sendInput(data));
+  scheduleFit();
+  window.addEventListener("resize", scheduleFit);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", scheduleFit);
+    window.visualViewport.addEventListener("scroll", scheduleFit);
+  }
+  term.onData((data) => sendInput(data));
   term.onResize(({ cols, rows }) => sendResize(cols, rows));
 }
 
 function sendInput(s) {
-  if (!currentWS || currentWS.readyState !== 1) return;
+  if (!currentWS || currentWS.readyState !== 1 || !currentSID) return;
   currentWS.send(encodeFrame(TYPE.IN, currentSID, enc.encode(s)));
+  if (term) term.focus();
 }
 function sendResize(cols, rows) {
-  if (!currentWS || currentWS.readyState !== 1) return;
+  if (!currentWS || currentWS.readyState !== 1 || !currentSID) return;
   currentWS.send(encodeFrame(TYPE.RESIZE, currentSID, encodeResize(cols, rows)));
+}
+
+function sessionForID(sessionId) {
+  return lastSessions.find((s) => s.id === sessionId) || { id: sessionId };
 }
 
 function attachToSession(sessionId) {
@@ -226,6 +260,7 @@ function attachToSession(sessionId) {
   term.reset();
   lastSeq = 0;
   currentSID = uuidParse(sessionId);
+  sessionTitleEl.textContent = sessionTitle(sessionForID(sessionId));
   openWS(sessionId);
 }
 
@@ -233,7 +268,7 @@ function openWS(sessionId) {
   const ws = new WebSocket(wsURL("/client"));
   ws.binaryType = "arraybuffer";
   currentWS = ws;
-  setStatus("connecting…");
+  setStatus("connecting...");
 
   ws.onopen = () => {
     reconnectAttempts = 0;
@@ -243,16 +278,21 @@ function openWS(sessionId) {
       since_seq: lastSeq,
     }));
     ws.send(encodeFrame(TYPE.ATTACH, currentSID, attachPayload));
-    // push current size right away so PTY matches the browser viewport
     if (term) {
+      scheduleFit();
       const { cols, rows } = term;
       sendResize(cols, rows);
+      term.focus();
     }
   };
 
   ws.onmessage = (ev) => {
     let f;
-    try { f = decodeFrame(new Uint8Array(ev.data)); } catch { return; }
+    try {
+      f = decodeFrame(new Uint8Array(ev.data));
+    } catch {
+      return;
+    }
     if (f.type === TYPE.OUT) {
       const { seq, data } = decodeOutPayload(f.payload);
       term.write(data);
@@ -262,21 +302,21 @@ function openWS(sessionId) {
       try {
         const info = JSON.parse(dec.decode(f.payload));
         term.write(`\r\n\x1b[33m[atterm] session ended (exit ${info.exit_code})\x1b[0m\r\n`);
-      } catch {}
-    } else if (f.type === TYPE.META) {
-      // future: update title
+      } catch {
+        term.write("\r\n\x1b[33m[atterm] session ended\x1b[0m\r\n");
+      }
     }
   };
 
-  ws.onclose = (ev) => {
-    if (location.hash !== "#/s/" + sessionId) return; // user navigated away
-    setStatus("reconnecting…", "err");
+  ws.onclose = () => {
+    if (parseSessionRoute(location.hash) !== sessionId) return;
+    setStatus("reconnecting...", "err");
     const delay = Math.min(8000, 500 * Math.pow(2, reconnectAttempts++));
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => openWS(sessionId), delay);
   };
 
-  ws.onerror = () => { /* onclose follows */ };
+  ws.onerror = () => {};
 }
 
 function closeWS() {
@@ -284,28 +324,63 @@ function closeWS() {
   reconnectTimer = null;
   reconnectAttempts = 0;
   if (currentWS) {
-    try { currentWS.close(); } catch {}
+    try {
+      currentWS.close();
+    } catch {}
     currentWS = null;
   }
   currentSID = null;
 }
 
-// ─── routing ────────────────────────────────────────────────────────────────
+document.getElementById("shortcut-bar").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("button[data-shortcut]");
+  if (!btn) return;
+  const input = shortcutInput(btn.dataset.shortcut);
+  if (input) sendInput(input);
+});
+
+pasteBtn.addEventListener("click", async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) sendInput(text);
+  } catch {
+    pasteFallback.hidden = false;
+    pasteText.focus();
+  }
+});
+
+pasteCancel.addEventListener("click", () => {
+  pasteFallback.hidden = true;
+  pasteText.value = "";
+});
+
+pasteFallback.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  if (pasteText.value) sendInput(pasteText.value);
+  pasteText.value = "";
+  pasteFallback.hidden = true;
+});
 
 function route() {
-  const m = location.hash.match(/^#\/s\/([0-9a-f-]{36})$/i);
-  if (m) {
+  const sessionId = parseSessionRoute(location.hash);
+  if (sessionId) {
     listView.hidden = true;
     termView.hidden = false;
     backBtn.hidden = false;
-    if (listTimer) { clearInterval(listTimer); listTimer = null; }
-    attachToSession(m[1]);
-    setTimeout(() => fitAddon && fitAddon.fit(), 0);
+    tokenToggle.hidden = true;
+    if (listTimer) {
+      clearInterval(listTimer);
+      listTimer = null;
+    }
+    attachToSession(sessionId);
+    scheduleFit();
   } else {
     closeWS();
     listView.hidden = false;
     termView.hidden = true;
     backBtn.hidden = true;
+    tokenToggle.hidden = false;
+    sessionTitleEl.textContent = "mobile relay";
     refreshList();
     if (!listTimer) listTimer = setInterval(refreshList, 2000);
   }

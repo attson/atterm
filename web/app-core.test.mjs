@@ -83,3 +83,16 @@ test("buildDownloadURL creates GitHub release asset URL", () => {
     "https://github.com/attson/atterm/releases/download/v0.1.6/atterm.zip",
   );
 });
+
+import { sessionTitle } from "./app-core.js";
+
+test("sessionTitle prefers command and short id", () => {
+  assert.equal(
+    sessionTitle({ id: "11111111-1111-4111-8111-111111111111", command: "/bin/zsh" }),
+    "/bin/zsh · 11111111",
+  );
+  assert.equal(
+    sessionTitle({ id: "22222222-2222-4222-8222-222222222222", title: "vim" }),
+    "vim · 22222222",
+  );
+});

@@ -65,3 +65,8 @@ export function buildDownloadURL(releaseURL, tag, assetName) {
   url.hash = "";
   return url.toString();
 }
+
+export function sessionTitle(session) {
+  const label = session.command || session.title || "session";
+  return `${label} · ${shortSessionID(session.id)}`;
+}

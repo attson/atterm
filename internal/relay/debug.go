@@ -93,6 +93,12 @@ func (s *Server) debugFrameDetails(f proto.Frame) string {
 			return fmt.Sprintf(" payload_bytes=%d bad_payload=%q", len(f.Payload), err)
 		}
 		return fmt.Sprintf(" stream_session=%s", p.SessionID)
+	case proto.TypePasteImage:
+		var p proto.PasteImagePayload
+		if err := json.Unmarshal(f.Payload, &p); err != nil {
+			return fmt.Sprintf(" payload_bytes=%d bad_payload=%q", len(f.Payload), err)
+		}
+		return fmt.Sprintf(" filename=%q content_type=%q image_bytes=%d", p.Filename, p.ContentType, len(p.Data))
 	default:
 		return fmt.Sprintf(" payload_bytes=%d", len(f.Payload))
 	}
@@ -136,6 +142,8 @@ func frameTypeName(t proto.Type) string {
 		return "STREAM_REQUEST"
 	case proto.TypeStreamStop:
 		return "STREAM_STOP"
+	case proto.TypePasteImage:
+		return "PASTE_IMAGE"
 	default:
 		return fmt.Sprintf("UNKNOWN(0x%02x)", byte(t))
 	}

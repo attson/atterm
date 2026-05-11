@@ -37,6 +37,18 @@ export interface SessionListHandlers {
   onStatus?: (s: Status) => void;
 }
 
+const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let out = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    out += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(out);
+}
+
 export class SessionListConnection {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
@@ -160,6 +172,21 @@ export class SessionConnection {
   sendInput(s: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
+  }
+
+  async sendPasteImage(blob: Blob, filename = "clipboard-image"): Promise<boolean> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    if (blob.size > MAX_PASTE_IMAGE_BYTES) {
+      this.handlers.onStatus?.("error");
+      return false;
+    }
+    const payload = encodeText(JSON.stringify({
+      filename,
+      content_type: blob.type || "image/png",
+      data: arrayBufferToBase64(await blob.arrayBuffer()),
+    }));
+    this.ws.send(encodeFrame(TYPE.PASTE_IMAGE, this.sidBytes, payload));
+    return true;
   }
 
   sendResize(cols: number, rows: number): void {

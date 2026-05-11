@@ -16,3 +16,8 @@ test("css keeps desktop responsive session grid", () => {
   assert.match(css, /@media \(min-width: 720px\)/);
   assert.match(css, /grid-template-columns: repeat\(auto-fill, minmax\(320px, 1fr\)\)/);
 });
+
+test("css hides mobile terminal shortcuts on desktop web", () => {
+  assert.match(css, /body\.desktop-web #shortcut-bar/);
+  assert.match(css, /display: none/);
+});

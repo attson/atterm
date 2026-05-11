@@ -162,6 +162,9 @@ button { -webkit-tap-highlight-color: transparent; }
   padding: 10px 12px;
 }
 #shortcut-bar button:active { background: #1e293b; color: var(--accent); }
+body.desktop-web #shortcut-bar {
+  display: none;
+}
 #paste-fallback {
   position: fixed;
   left: 12px;

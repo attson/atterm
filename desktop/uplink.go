@@ -90,7 +90,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	conn.SetReadLimit(2 * 1024 * 1024)
+	conn.SetReadLimit(17 * 1024 * 1024)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	connCtx, cancelConn := context.WithCancel(ctx)
@@ -251,7 +251,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				continue
 			}
 			stopStream(id)
-		case proto.TypeIn, proto.TypeResize:
+		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
 			if err := u.host.SendLocalInbound(f.SessionID, f); err != nil {
 				log.Printf("uplink: forward inbound: %v", err)
 			}

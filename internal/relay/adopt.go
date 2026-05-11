@@ -23,6 +23,12 @@ type PtyHost interface {
 	Resize(cols, rows uint16) error
 }
 
+// ImagePasteHost is implemented by desktop PTY wrappers that can bridge a
+// remote browser image paste into the local app running inside the PTY.
+type ImagePasteHost interface {
+	PasteImage(ctx context.Context, sessionID uuid.UUID, payload proto.PasteImagePayload) error
+}
+
 // AdoptSession registers an in-process PTY as a relay session, bypassing the
 // /agent WebSocket entirely. It is the desktop app's hook for surfacing
 // locally-spawned PTYs to the same xterm.js code path that handles remote
@@ -108,6 +114,15 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 				case proto.TypeResize:
 					if cols, rows, err := proto.DecodeResize(f.Payload); err == nil {
 						_ = host.Resize(cols, rows)
+					}
+				case proto.TypePasteImage:
+					pasteHost, ok := host.(ImagePasteHost)
+					if !ok {
+						continue
+					}
+					var p proto.PasteImagePayload
+					if err := json.Unmarshal(f.Payload, &p); err == nil {
+						_ = pasteHost.PasteImage(loopCtx, f.SessionID, p)
 					}
 				}
 			}

@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	clientReadLimit  = 1 * 1024 * 1024
+	clientReadLimit  = 17 * 1024 * 1024
 	clientWriteWait  = 10 * time.Second
 	clientPingPeriod = 25 * time.Second
 )
@@ -122,7 +122,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn) {
 			s.debugf("client attached session=%s since_seq=%d", id, ap.SinceSeq)
 			startWriter()
 
-		case proto.TypeIn, proto.TypeResize:
+		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
 			if sess == nil {
 				s.debugf("client drop frame=%s reason=not_attached", frameTypeName(f.Type))
 				continue

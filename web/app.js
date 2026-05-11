@@ -2,7 +2,11 @@
 
 import {
   apiURL as makeAPIURL,
+  arrayBufferToBase64,
+  copyTerminalSelection,
+  detectClientMode,
   formatHost,
+  isTerminalCopyShortcut,
   parseSessionRoute,
   persistToken,
   sessionTitle,
@@ -26,10 +30,12 @@ const TYPE = {
   LIST_RESP: 0x12,
   PING: 0x20,
   PONG: 0x21,
+  PASTE_IMAGE: 0x33,
 };
 const VERSION = 1;
 const HEADER_LEN = 6;
 const SID_LEN = 16;
+const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
 
 function uuidParse(s) {
   const hex = s.replace(/-/g, "");
@@ -97,10 +103,26 @@ const listEl = document.getElementById("list");
 const emptyEl = document.getElementById("empty");
 const backBtn = document.getElementById("back");
 const refreshBtn = document.getElementById("refresh");
+const copyBtn = document.getElementById("copy");
 const pasteBtn = document.getElementById("paste");
 const pasteFallback = document.getElementById("paste-fallback");
 const pasteText = document.getElementById("paste-text");
 const pasteCancel = document.getElementById("paste-cancel");
+
+function applyClientModeClass() {
+  const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  const mode = detectClientMode({
+    coarsePointer,
+    maxTouchPoints: navigator.maxTouchPoints || 0,
+    width: window.innerWidth,
+  });
+  document.body.classList.toggle("mobile-web", mode === "mobile-web");
+  document.body.classList.toggle("desktop-web", mode === "desktop-web");
+}
+
+applyClientModeClass();
+window.addEventListener("resize", applyClientModeClass);
+window.matchMedia?.("(pointer: coarse)").addEventListener?.("change", applyClientModeClass);
 
 let token = tokenFromLocation(location.href, localStorage);
 tokenInput.value = token;
@@ -259,7 +281,10 @@ function ensureTerm() {
   });
   fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
-  term.open(document.getElementById("term"));
+  const termEl = document.getElementById("term");
+  term.open(termEl);
+  termEl.addEventListener("keydown", handleCopyShortcut, { capture: true });
+  termEl.addEventListener("paste", handlePasteEvent, { capture: true });
   scheduleFit();
   term.onScroll((line) => {
     const buffer = term.buffer.active;
@@ -283,6 +308,59 @@ function sendInput(s) {
 function sendResize(cols, rows) {
   if (!currentWS || currentWS.readyState !== 1 || !currentSID) return;
   currentWS.send(encodeFrame(TYPE.RESIZE, currentSID, encodeResize(cols, rows)));
+}
+
+async function sendImagePaste(blob, filename = "clipboard-image") {
+  if (!currentWS || currentWS.readyState !== 1 || !currentSID) return false;
+  if (blob.size > MAX_PASTE_IMAGE_BYTES) {
+    setStatus("image too large", "err");
+    return false;
+  }
+  const payload = {
+    filename,
+    content_type: blob.type || "image/png",
+    data: arrayBufferToBase64(await blob.arrayBuffer()),
+  };
+  currentWS.send(encodeFrame(TYPE.PASTE_IMAGE, currentSID, enc.encode(JSON.stringify(payload))));
+  if (term) term.focus();
+  return true;
+}
+
+async function pasteClipboardImage() {
+  if (!navigator.clipboard?.read) return false;
+  const items = await navigator.clipboard.read();
+  for (const item of items) {
+    const type = item.types.find((t) => t.startsWith("image/"));
+    if (!type) continue;
+    return sendImagePaste(await item.getType(type), "clipboard-image");
+  }
+  return false;
+}
+
+async function handlePasteEvent(ev) {
+  const item = Array.from(ev.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
+  if (!item) return;
+  const file = item.getAsFile();
+  if (!file) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  await sendImagePaste(file, file.name || "clipboard-image");
+}
+
+async function copySelection() {
+  if (!term) return;
+  try {
+    await copyTerminalSelection(term);
+  } catch (err) {
+    console.warn("[atterm] failed to copy terminal selection", err);
+  }
+}
+
+function handleCopyShortcut(ev) {
+  if (!term || !isTerminalCopyShortcut(ev)) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  copySelection();
 }
 
 function sessionForID(sessionId) {
@@ -377,6 +455,7 @@ document.getElementById("shortcut-bar").addEventListener("click", (ev) => {
 
 pasteBtn.addEventListener("click", async () => {
   try {
+    if (await pasteClipboardImage()) return;
     const text = await navigator.clipboard.readText();
     if (text) sendInput(text);
   } catch {
@@ -384,6 +463,8 @@ pasteBtn.addEventListener("click", async () => {
     pasteText.focus();
   }
 });
+
+copyBtn.addEventListener("click", copySelection);
 
 pasteCancel.addEventListener("click", () => {
   pasteFallback.hidden = true;

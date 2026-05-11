@@ -50,6 +50,7 @@ const (
     TypeAnnounce      Type = 0x30  // uplink → relay  (Phase 1.5)
     TypeStreamRequest Type = 0x31  // relay → uplink
     TypeStreamStop    Type = 0x32  // relay → uplink
+    TypePasteImage    Type = 0x33  // client → relay → desktop PTY host
 )
 ```
 
@@ -176,6 +177,26 @@ relay 端 mirror session 最后一个 subscriber 离开时发，请求桌面 app
 ```
 
 桌面 app 收到后取消 forwarder goroutine 并 `UnsubscribeLocal`。session 仍在本地活动，仅停止往远程上传字节。
+
+### `PASTE_IMAGE` (0x33) — client → relay → desktop PTY host
+
+远程 web/mobile client 粘贴图片时发送。relay 将其按 session inbound 路径转发给拥有该 PTY 的 desktop host；desktop host 保存图片并尽量模拟本机图片粘贴（设置宿主机系统剪贴板图片后向 PTY 发送 `Ctrl-V`），不支持原生图片剪贴板的平台回退为向 PTY 粘贴临时文件路径。当前原生剪贴板路径：
+
+- macOS: `osascript`
+- Linux: 优先 `wl-copy`，再尝试 `xclip` / `xsel`
+- Windows: PowerShell STA + `System.Windows.Forms.Clipboard`
+
+payload = JSON：
+
+```json
+{
+  "filename": "clipboard-image.png",
+  "content_type": "image/png",
+  "data": "<base64 image bytes>"
+}
+```
+
+`data` 解码后最大 10 MiB（JSON/base64 后仍需低于协议 16 MiB payload 上限）。`content_type` 必须是 `image/*`。
 
 ## HTTP 端点（非帧协议）
 

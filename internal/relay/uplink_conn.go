@@ -32,8 +32,8 @@ type mirrorState struct {
 
 // handleUplink services a desktop app's "control" connection. The first frame
 // must be ANNOUNCE; subsequent ANNOUNCEs are full-snapshot reconciliations.
-// OUT/META/CLOSE frames flow uplink→relay; STREAM_REQUEST/STOP and IN/RESIZE
-// flow relay→uplink.
+// OUT/META/CLOSE frames flow uplink→relay; STREAM_REQUEST/STOP and
+// IN/RESIZE/PASTE_IMAGE flow relay→uplink.
 func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 	c.SetReadLimit(uplinkReadLimit)
 

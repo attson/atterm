@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   apiURL,
   buildDownloadURL,
+  detectClientMode,
   formatHost,
   shouldAutoScrollToBottom,
   parseSessionRoute,
@@ -111,4 +112,14 @@ test("versionLabel formats current app version", () => {
   assert.equal(versionLabel("v0.1.9"), "version v0.1.9");
   assert.equal(versionLabel(""), "version dev");
   assert.equal(versionLabel(undefined), "version dev");
+});
+
+test("detectClientMode classifies touch/coarse pointer as mobile web", () => {
+  assert.equal(detectClientMode({ coarsePointer: true, maxTouchPoints: 0 }), "mobile-web");
+  assert.equal(detectClientMode({ coarsePointer: false, maxTouchPoints: 2, width: 390 }), "mobile-web");
+});
+
+test("detectClientMode classifies fine pointer without touch as desktop web", () => {
+  assert.equal(detectClientMode({ coarsePointer: false, maxTouchPoints: 0 }), "desktop-web");
+  assert.equal(detectClientMode({ coarsePointer: false, maxTouchPoints: 2, width: 1440 }), "desktop-web");
 });

@@ -27,6 +27,7 @@ const (
 	TypeAnnounce      Type = 0x30
 	TypeStreamRequest Type = 0x31
 	TypeStreamStop    Type = 0x32
+	TypePasteImage    Type = 0x33 // client -> relay -> desktop PTY host
 )
 
 // Frame is a single protocol message.
@@ -85,6 +86,15 @@ type StreamRequestPayload struct {
 // StreamStopPayload is the JSON body of TypeStreamStop.
 type StreamStopPayload struct {
 	SessionID string `json:"session_id"`
+}
+
+// PasteImagePayload carries an image clipboard item from a remote web client
+// to the desktop host that owns the PTY. Data is JSON/base64 encoded on the
+// wire via Go's []byte JSON encoding.
+type PasteImagePayload struct {
+	Filename    string `json:"filename,omitempty"`
+	ContentType string `json:"content_type"`
+	Data        []byte `json:"data"`
 }
 
 // SessionInfo is one entry of TypeListResp.

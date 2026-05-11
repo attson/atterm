@@ -18,6 +18,7 @@ export const TYPE = {
   LIST_RESP: 0x12,
   PING: 0x20,
   PONG: 0x21,
+  PASTE_IMAGE: 0x33,
 } as const;
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE];

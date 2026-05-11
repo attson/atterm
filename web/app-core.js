@@ -44,6 +44,74 @@ export function shortcutInput(action) {
   return map[action] || "";
 }
 
+function currentPlatform() {
+  if (typeof navigator === "undefined") return "other";
+  return navigator.platform?.toLowerCase().includes("mac") ? "mac" : "other";
+}
+
+function isCopyKey(ev) {
+  return ev.code === "KeyC" || String(ev.key || "").toLowerCase() === "c";
+}
+
+function fallbackCopyText(text) {
+  if (typeof document === "undefined") return false;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+  return copied;
+}
+
+export function isTerminalCopyShortcut(ev, platform = currentPlatform()) {
+  if (!isCopyKey(ev) || ev.altKey) return false;
+  if (platform === "mac") {
+    return ev.metaKey && !ev.ctrlKey && !ev.shiftKey;
+  }
+  return ev.ctrlKey && ev.shiftKey && !ev.metaKey;
+}
+
+export async function copyTerminalSelection(
+  term,
+  clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard,
+) {
+  const text = term.getSelection();
+  if (!text) return false;
+  if (clipboard?.writeText) {
+    await clipboard.writeText(text);
+    return true;
+  }
+  return fallbackCopyText(text);
+}
+
+export function detectClientMode({
+  coarsePointer = false,
+  maxTouchPoints = 0,
+  width = 1024,
+} = {}) {
+  if (coarsePointer) return "mobile-web";
+  if (maxTouchPoints > 0 && width < 900) return "mobile-web";
+  return "desktop-web";
+}
+
+export function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let out = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    out += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(out);
+}
+
 export function formatHost(session) {
   const u = session.user || "";
   const h = session.host || "";

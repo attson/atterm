@@ -4,6 +4,7 @@ import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
+import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
 
 const props = withDefaults(
   defineProps<{
@@ -30,6 +31,32 @@ let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
 let resizeObserver: ResizeObserver | null = null;
+let copyKeyTarget: HTMLDivElement | null = null;
+
+async function handleCopyShortcut(e: KeyboardEvent) {
+  if (!term || !isTerminalCopyShortcut(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    await copyTerminalSelection(term);
+  } catch (err) {
+    console.warn("[atterm] failed to copy terminal selection", err);
+  }
+}
+
+async function handleImagePaste(e: ClipboardEvent) {
+  const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
+  if (!item) return;
+  const file = item.getAsFile();
+  if (!file) return;
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    await conn?.sendPasteImage(file, file.name || "clipboard-image");
+  } catch (err) {
+    console.warn("[atterm] failed to paste terminal image", err);
+  }
+}
 
 function safeFit() {
   if (!fit || !termContainer.value) return;
@@ -70,6 +97,10 @@ function ensureTerm() {
   fit = new FitAddon();
   term.loadAddon(fit);
   term.open(termContainer.value!);
+  const keyTarget = termContainer.value!;
+  copyKeyTarget = keyTarget;
+  keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
+  keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
   term.onData((data) => conn?.sendInput(data));
   term.onResize(({ cols, rows }) => conn?.sendResize(cols, rows));
@@ -125,6 +156,9 @@ onBeforeUnmount(() => {
   conn = null;
   resizeObserver?.disconnect();
   resizeObserver = null;
+  copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
+  copyKeyTarget = null;
   term?.dispose();
   term = null;
   fit = null;

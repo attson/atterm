@@ -243,7 +243,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		StartedAt: time.Now().Unix(),
 	}
 
-	cleanup := h.server.AdoptSession(ctx, id, info, pty)
+	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty})
 
 	h.mu.Lock()
 	if h.sessions == nil {

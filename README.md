@@ -34,6 +34,9 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 # 浏览器: http://localhost:8080/?token=dev
 ```
 
+手机接管：iPhone Safari 可以直接打开同一个 relay URL，例如
+`https://relay.example.com/?token=...`。页面支持添加到主屏幕作为 PWA；手机端会显示触控优化的 session 列表、终端视图和 `Esc` / `Tab` / `Ctrl-C` / 方向键等快捷键。真实部署建议使用 HTTPS/WSS。
+
 也可以直接用 Docker Compose 启动 relay：
 
 ```bash

@@ -3,31 +3,73 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b1020" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="atterm" />
 <title>atterm</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header id="topbar">
-  <div class="brand">atterm</div>
-  <div class="status" id="status">disconnected</div>
-  <div class="actions">
-    <button id="back" hidden>&larr; sessions</button>
-    <input id="token" type="password" placeholder="token" />
-  </div>
-</header>
-<main id="main">
-  <section id="list-view">
-    <h1>active sessions</h1>
-    <div id="list"></div>
-    <div id="empty" hidden>no live sessions. start one with <code>atterm-agent</code>.</div>
+<div id="app-shell">
+  <header id="topbar">
+    <button id="back" class="ghost-btn" hidden aria-label="Back to sessions">←</button>
+    <div class="brand-block">
+      <div class="brand">atterm</div>
+      <div class="subtitle" id="session-title">mobile relay</div>
+    </div>
+    <div class="status" id="status">disconnected</div>
+    <button id="token-toggle" class="ghost-btn" aria-expanded="false" aria-controls="token-panel">token</button>
+  </header>
+
+  <section id="token-panel" class="token-panel" hidden>
+    <label for="token">relay token</label>
+    <div class="token-row">
+      <input id="token" type="password" placeholder="shared bearer token" autocomplete="off" />
+      <button id="token-save" type="button">save</button>
+    </div>
   </section>
-  <section id="term-view" hidden>
-    <div id="term"></div>
-  </section>
-</main>
+
+  <main id="main">
+    <section id="list-view">
+      <div class="section-head">
+        <h1>active sessions</h1>
+        <button id="refresh" type="button">refresh</button>
+      </div>
+      <div id="list"></div>
+      <div id="empty" hidden>no live sessions. start one from a desktop app or <code>atterm-agent</code>.</div>
+    </section>
+
+    <section id="term-view" hidden>
+      <div id="term"></div>
+      <div id="shortcut-bar" aria-label="terminal shortcuts">
+        <button data-shortcut="esc" type="button">Esc</button>
+        <button data-shortcut="tab" type="button">Tab</button>
+        <button data-shortcut="ctrl-c" type="button">Ctrl-C</button>
+        <button data-shortcut="ctrl-d" type="button">Ctrl-D</button>
+        <button data-shortcut="left" type="button">←</button>
+        <button data-shortcut="down" type="button">↓</button>
+        <button data-shortcut="up" type="button">↑</button>
+        <button data-shortcut="right" type="button">→</button>
+        <button id="paste" type="button">Paste</button>
+      </div>
+      <form id="paste-fallback" hidden>
+        <textarea id="paste-text" rows="3" placeholder="paste text here"></textarea>
+        <div class="paste-actions">
+          <button type="button" id="paste-cancel">cancel</button>
+          <button type="submit">send</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

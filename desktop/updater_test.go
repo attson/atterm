@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -67,7 +68,9 @@ func TestAssetNameForPlatform(t *testing.T) {
 		want         string
 	}{
 		{"linux", "amd64", "atterm-desktop-linux-amd64.tar.gz"},
+		{"linux", "arm64", "atterm-desktop-linux-arm64.tar.gz"},
 		{"darwin", "arm64", "atterm-desktop-darwin-arm64.zip"},
+		{"darwin", "amd64", "atterm-desktop-darwin-amd64.zip"},
 		{"windows", "amd64", "atterm-desktop-windows-amd64.zip"},
 	}
 	for _, c := range cases {
@@ -84,8 +87,6 @@ func TestAssetNameForPlatform(t *testing.T) {
 
 func TestAssetNameForPlatform_Unsupported(t *testing.T) {
 	cases := []struct{ goos, goarch string }{
-		{"darwin", "amd64"},
-		{"linux", "arm64"},
 		{"freebsd", "amd64"},
 	}
 	for _, c := range cases {
@@ -215,6 +216,50 @@ func TestUpdater_Check_ForceBypassesCache(t *testing.T) {
 	_ = u.Check(context.Background(), true) // force=true bypasses cache
 	if *hits != 2 {
 		t.Errorf("hits = %d; want 2 (force should always fetch)", *hits)
+	}
+}
+
+func TestUpdater_Check_FallsBackToLatestRedirectOnGitHubForbidden(t *testing.T) {
+	var apiHits, latestHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api":
+			apiHits++
+			http.Error(w, "API rate limit exceeded", http.StatusForbidden)
+		case "/attson/atterm/releases/latest":
+			latestHits++
+			http.Redirect(w, r, "/attson/atterm/releases/tag/v0.2.0", http.StatusFound)
+		case "/attson/atterm/releases/tag/v0.2.0":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	u := newUpdater(updaterConfig{
+		current:    "v0.1.0",
+		repo:       "attson/atterm",
+		releaseURL: srv.URL + "/api",
+		latestURL:  srv.URL + "/attson/atterm/releases/latest",
+	})
+	if err := u.Check(context.Background(), true); err != nil {
+		t.Fatalf("Check err: %v", err)
+	}
+	if apiHits != 1 || latestHits != 1 {
+		t.Fatalf("apiHits=%d latestHits=%d; want 1 each", apiHits, latestHits)
+	}
+	st := u.State()
+	if st.Latest != "v0.2.0" || !st.Available {
+		t.Fatalf("Latest=%q Available=%v; want v0.2.0 true", st.Latest, st.Available)
+	}
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantURL := srv.URL + "/attson/atterm/releases/download/v0.2.0/" + name
+	if st.AssetURL != wantURL {
+		t.Fatalf("AssetURL=%q; want %q", st.AssetURL, wantURL)
 	}
 }
 

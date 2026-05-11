@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +50,7 @@ type updaterConfig struct {
 	current    string
 	repo       string // e.g. "attson/atterm"
 	releaseURL string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
+	latestURL  string // override of https://github.com/<repo>/releases/latest, for tests
 	cacheDir   string // overrides os.UserCacheDir(); for tests
 	client     *http.Client
 	now        func() time.Time // optional; defaults to time.Now
@@ -96,8 +99,12 @@ func assetNameForPlatform(goos, goarch string) (string, error) {
 	switch {
 	case goos == "linux" && goarch == "amd64":
 		return "atterm-desktop-linux-amd64.tar.gz", nil
+	case goos == "linux" && goarch == "arm64":
+		return "atterm-desktop-linux-arm64.tar.gz", nil
 	case goos == "darwin" && goarch == "arm64":
 		return "atterm-desktop-darwin-arm64.zip", nil
+	case goos == "darwin" && goarch == "amd64":
+		return "atterm-desktop-darwin-amd64.zip", nil
 	case goos == "windows" && goarch == "amd64":
 		return "atterm-desktop-windows-amd64.zip", nil
 	}
@@ -112,6 +119,15 @@ func (u *Updater) githubReleaseAPI() string {
 		return u.cfg.releaseURL
 	}
 	return "https://api.github.com/repos/" + u.cfg.repo + "/releases/latest"
+}
+
+// githubLatestURL returns the browser endpoint whose redirect target carries
+// the latest tag without consuming GitHub's unauthenticated API quota.
+func (u *Updater) githubLatestURL() string {
+	if u.cfg.latestURL != "" {
+		return u.cfg.latestURL
+	}
+	return "https://github.com/" + u.cfg.repo + "/releases/latest"
 }
 
 // githubAsset is the subset of the release-asset JSON we care about.
@@ -200,13 +216,86 @@ func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("github returned http %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusForbidden || u.cfg.latestURL != "" {
+			if rel, ferr := u.fetchLatestViaRedirect(ctx); ferr == nil {
+				return rel, nil
+			}
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		detail := strings.TrimSpace(string(body))
+		if detail == "" {
+			return nil, fmt.Errorf("github returned http %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("github returned http %d: %s", resp.StatusCode, detail)
 	}
 	var rel githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return nil, err
 	}
 	return &rel, nil
+}
+
+func (u *Updater) fetchLatestViaRedirect(ctx context.Context) (*githubRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, "HEAD", u.githubLatestURL(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "atterm-desktop/"+u.cfg.current)
+	resp, err := u.cfg.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("github latest redirect returned http %d", resp.StatusCode)
+	}
+	final := resp.Request.URL
+	tag, err := tagFromReleaseURL(final)
+	if err != nil {
+		return nil, err
+	}
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return nil, err
+	}
+	return &githubRelease{
+		TagName: tag,
+		Assets: []githubAsset{{
+			Name:        name,
+			DownloadURL: assetDownloadURL(final, tag, name),
+		}},
+	}, nil
+}
+
+func tagFromReleaseURL(u *url.URL) (string, error) {
+	const marker = "/releases/tag/"
+	idx := strings.LastIndex(u.Path, marker)
+	if idx < 0 {
+		return "", fmt.Errorf("github latest redirect target %q has no release tag", u.String())
+	}
+	tag, err := url.PathUnescape(strings.Trim(u.Path[idx+len(marker):], "/"))
+	if err != nil {
+		return "", err
+	}
+	if tag == "" {
+		return "", fmt.Errorf("github latest redirect target %q has empty release tag", u.String())
+	}
+	return tag, nil
+}
+
+func assetDownloadURL(final *url.URL, tag, name string) string {
+	const marker = "/releases/tag/"
+	idx := strings.LastIndex(final.Path, marker)
+	prefix := ""
+	if idx >= 0 {
+		prefix = final.Path[:idx]
+	}
+	out := *final
+	out.Path = prefix + "/releases/download/" + url.PathEscape(tag) + "/" + url.PathEscape(name)
+	out.RawPath = ""
+	out.RawQuery = ""
+	out.Fragment = ""
+	return out.String()
 }
 
 func (u *Updater) updatesDir() (string, error) {

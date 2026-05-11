@@ -82,6 +82,14 @@ jobs:
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: wails build -tags webkit2_41 -platform linux/${{ matrix.arch }} -s -ldflags "-X main.Version=$VERSION"
 
+      - name: package updater archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          cd desktop/build/bin
+          tar -czf "atterm-desktop-linux-${{ matrix.arch }}.tar.gz" atterm-desktop
+          ls -la "atterm-desktop-linux-${{ matrix.arch }}.tar.gz"
+
       - name: package deb
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -94,7 +102,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: atterm-desktop-linux-${{ matrix.arch }}
-          path: desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_${{ matrix.arch }}.deb
+          path: |
+            desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_${{ matrix.arch }}.deb
+            desktop/build/bin/atterm-desktop-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   build-darwin:
@@ -143,6 +153,14 @@ jobs:
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: wails build -platform darwin/${{ matrix.arch }} -s -ldflags "-X main.Version=$VERSION"
 
+      - name: package updater archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          cd desktop/build/bin
+          ditto -c -k --keepParent atterm-desktop.app "atterm-desktop-darwin-${{ matrix.arch }}.zip"
+          ls -la "atterm-desktop-darwin-${{ matrix.arch }}.zip"
+
       - name: package dmg
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -155,7 +173,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: atterm-desktop-darwin-${{ matrix.arch }}
-          path: desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_${{ matrix.arch }}.dmg
+          path: |
+            desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_${{ matrix.arch }}.dmg
+            desktop/build/bin/atterm-desktop-darwin-${{ matrix.arch }}.zip
           if-no-files-found: error
 
   build-windows:
@@ -206,6 +226,15 @@ jobs:
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
         run: wails build -platform windows/amd64 -nsis -s -ldflags "-X main.Version=$VERSION"
 
+      - name: package updater archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          cd desktop/build/bin
+          test -f atterm-desktop.exe
+          7z a "atterm-desktop-windows-amd64.zip" atterm-desktop.exe
+          ls -la "atterm-desktop-windows-amd64.zip"
+
       - name: stage installer
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -224,7 +253,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: atterm-desktop-windows-amd64
-          path: desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_amd64.exe
+          path: |
+            desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_amd64.exe
+            desktop/build/bin/atterm-desktop-windows-amd64.zip
           if-no-files-found: error
 
   release:

@@ -53,6 +53,7 @@ func startRelayHost() (*relayHost, error) {
 	}
 	srv := relay.NewServer(relay.Config{
 		Token:        token,
+		Version:      Version,
 		Debug:        relayDebugEnabled(),
 		DebugPayload: relayDebugPayloadEnabled(),
 		// Loopback-only listener already constrains who can reach us; allow

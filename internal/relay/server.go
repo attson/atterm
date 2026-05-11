@@ -22,6 +22,8 @@ type Config struct {
 	Token string
 	// WebDir is the filesystem path to the static web client. Empty disables /.
 	WebDir string
+	// Version is the application version exposed to web clients.
+	Version string
 	// AllowedOrigins, when non-empty, gates browser WS upgrades by Origin host.
 	// Empty allows any origin (dev mode).
 	AllowedOrigins []string
@@ -57,10 +59,15 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/client", s.handleClientHTTP)
 	s.mux.HandleFunc("/client-sessions", s.handleClientSessionsHTTP)
 	s.mux.HandleFunc("/api/sessions", s.handleSessionsHTTP)
+	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	if cfg.WebDir != "" {
 		s.mux.Handle("/", http.FileServer(http.Dir(cfg.WebDir)))
 	}
 	return s
+}
+
+type versionResponse struct {
+	Version string `json:"version"`
 }
 
 // ServeHTTP makes Server an http.Handler. CORS headers are added unconditionally
@@ -174,6 +181,21 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	s.debugf("http api_sessions remote=%s sessions=%d", r.RemoteAddr, len(infos))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(infos)
+}
+
+func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
+	if !authorize(r, s.cfg.Token) {
+		s.debugf("http reject path=/api/version remote=%s reason=unauthorized", r.RemoteAddr)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	version := s.cfg.Version
+	if version == "" {
+		version = "dev"
+	}
+	s.debugf("http api_version remote=%s version=%s", r.RemoteAddr, version)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(versionResponse{Version: version})
 }
 
 // readFrame reads one WS binary message and decodes it as a Frame.

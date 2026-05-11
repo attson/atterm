@@ -18,6 +18,12 @@ jobs:
     environment: prod
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: describe version
+        id: version
+        run: echo "version=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
 
@@ -34,4 +40,6 @@ jobs:
           file: Dockerfile.relay
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
           tags: ${{ env.DOCKER_IMAGE }}:latest

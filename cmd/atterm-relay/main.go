@@ -14,6 +14,9 @@ import (
 	"github.com/attson/atterm/internal/relay"
 )
 
+// Version is set at build time via -ldflags -X main.Version=<tag>.
+var Version = "dev"
+
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
@@ -32,6 +35,7 @@ func main() {
 	cfg := relay.Config{
 		Token:        token,
 		WebDir:       *webDir,
+		Version:      Version,
 		Debug:        *debug || *debugPayload,
 		DebugPayload: *debugPayload,
 	}

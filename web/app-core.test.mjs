@@ -9,6 +9,7 @@ import {
   parseSessionRoute,
   shortcutInput,
   tokenFromLocation,
+  versionLabel,
   wsURL,
 } from "./app-core.js";
 
@@ -103,4 +104,11 @@ test("shouldAutoScrollToBottom keeps attach replay pinned to bottom", () => {
   assert.equal(shouldAutoScrollToBottom({ userScrolledUp: false, isReplay: false }), true);
   assert.equal(shouldAutoScrollToBottom({ userScrolledUp: true, isReplay: false }), false);
   assert.equal(shouldAutoScrollToBottom({ userScrolledUp: true, isReplay: true }), true);
+});
+
+
+test("versionLabel formats current app version", () => {
+  assert.equal(versionLabel("v0.1.9"), "version v0.1.9");
+  assert.equal(versionLabel(""), "version dev");
+  assert.equal(versionLabel(undefined), "version dev");
 });

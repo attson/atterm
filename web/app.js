@@ -10,6 +10,7 @@ import {
   shortSessionID,
   shortcutInput,
   tokenFromLocation,
+  versionLabel,
   wsURL as makeWSURL,
 } from "./app-core.js";
 
@@ -89,6 +90,7 @@ const tokenPanel = document.getElementById("token-panel");
 const tokenSave = document.getElementById("token-save");
 const statusEl = document.getElementById("status");
 const sessionTitleEl = document.getElementById("session-title");
+const versionEl = document.getElementById("version");
 const listView = document.getElementById("list-view");
 const termView = document.getElementById("term-view");
 const listEl = document.getElementById("list");
@@ -158,6 +160,19 @@ async function refreshList() {
     renderList(lastSessions);
   } catch {
     setStatus("offline", "err");
+  }
+}
+
+async function refreshVersion() {
+  try {
+    const res = await fetch(apiURL("/api/version"), {
+      headers: getToken() ? { Authorization: "Bearer " + getToken() } : {},
+    });
+    if (!res.ok) return;
+    const info = await res.json();
+    versionEl.textContent = versionLabel(info?.version);
+  } catch {
+    // Version display is informational; session connectivity owns status.
   }
 }
 
@@ -408,4 +423,5 @@ function route() {
 }
 
 window.addEventListener("hashchange", route);
+refreshVersion();
 route();

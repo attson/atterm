@@ -50,3 +50,22 @@ func TestPackagedDisplayNameIsATTerm(t *testing.T) {
 		t.Fatalf("frontend/index.html title is not AT Term")
 	}
 }
+
+func TestDarwinPlistsAllowWebViewRelaySockets(t *testing.T) {
+	for _, path := range []string{"build/darwin/Info.plist", "build/darwin/Info.dev.plist"} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(body)
+		for _, want := range []string{
+			"<key>NSAppTransportSecurity</key>",
+			"<key>NSAllowsLocalNetworking</key>",
+			"<key>NSAllowsArbitraryLoadsInWebContent</key>",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %s", path, want)
+			}
+		}
+	}
+}

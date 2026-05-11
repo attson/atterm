@@ -6,6 +6,9 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "info": {
+    "productName": "AT Term"
+  },
   "author": {
     "name": "liuzaisen",
     "email": "liuzaisen@wanxinbuzhi.com"

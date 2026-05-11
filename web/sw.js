@@ -1,0 +1,39 @@
+const CACHE = "at-term-web-v1";
+const ASSETS = [
+  "./",
+  "./app-core.js",
+  "./app.js",
+  "./style.css",
+  "./manifest.webmanifest",
+  "./icon.png",
+  "./icon.svg",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(ASSETS))
+      .then(() => self.skipWaiting()),
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
+  if (req.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith("/api/")) {
+    return;
+  }
+  if (req.mode === "navigate") {
+    event.respondWith(fetch(req).catch(() => caches.match("./")));
+    return;
+  }
+  event.respondWith(caches.match(req, { ignoreSearch: true }).then((cached) => cached || fetch(req)));
+});

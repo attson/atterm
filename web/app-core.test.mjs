@@ -4,9 +4,12 @@ import assert from "node:assert/strict";
 import {
   apiURL,
   buildDownloadURL,
+  canRegisterServiceWorker,
   detectClientMode,
   formatHost,
+  isIOSWebKit,
   shouldAutoScrollToBottom,
+  shouldShowInstallHint,
   parseSessionRoute,
   shortcutInput,
   tokenFromLocation,
@@ -122,4 +125,25 @@ test("detectClientMode classifies touch/coarse pointer as mobile web", () => {
 test("detectClientMode classifies fine pointer without touch as desktop web", () => {
   assert.equal(detectClientMode({ coarsePointer: false, maxTouchPoints: 0 }), "desktop-web");
   assert.equal(detectClientMode({ coarsePointer: false, maxTouchPoints: 2, width: 1440 }), "desktop-web");
+});
+
+test("isIOSWebKit detects iPhone Safari and excludes other iOS browsers", () => {
+  const safari = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+  const chrome = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0 Mobile/15E148 Safari/604.1";
+  assert.equal(isIOSWebKit(safari), true);
+  assert.equal(isIOSWebKit(chrome), false);
+});
+
+test("shouldShowInstallHint only shows for non-standalone iOS Safari", () => {
+  const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+  assert.equal(shouldShowInstallHint({ userAgent }), true);
+  assert.equal(shouldShowInstallHint({ userAgent, standalone: true }), false);
+  assert.equal(shouldShowInstallHint({ userAgent, dismissed: true }), false);
+});
+
+test("canRegisterServiceWorker requires HTTPS except loopback development", () => {
+  const serviceWorker = {};
+  assert.equal(canRegisterServiceWorker({ protocol: "https:", hostname: "relay.example.com", serviceWorker }), true);
+  assert.equal(canRegisterServiceWorker({ protocol: "http:", hostname: "127.0.0.1", serviceWorker }), true);
+  assert.equal(canRegisterServiceWorker({ protocol: "http:", hostname: "192.168.1.10", serviceWorker }), false);
 });

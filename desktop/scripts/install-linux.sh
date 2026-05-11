@@ -18,9 +18,9 @@ done
 
 tmp=$(mktemp -d)
 tar -xzf "$src" -C "$tmp"
-[ -f "$tmp/atterm-desktop" ] || { echo "atterm-desktop not in archive"; exit 1; }
+[ -f "$tmp/AT Term" ] || { echo "AT Term not in archive"; exit 1; }
 
-mv "$tmp/atterm-desktop" "$dst"
+mv "$tmp/AT Term" "$dst"
 chmod +x "$dst"
 
 # Detach the relaunched process from this script.

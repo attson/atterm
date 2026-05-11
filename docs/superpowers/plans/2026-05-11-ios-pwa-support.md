@@ -315,7 +315,7 @@ Replace `web/index.html` with:
         <button id="refresh" type="button">refresh</button>
       </div>
       <div id="list"></div>
-      <div id="empty" hidden>no live sessions. start one from a desktop app or <code>atterm-agent</code>.</div>
+      <div id="empty" hidden>no live sessions. start one from AT Term or <code>atterm-agent</code>.</div>
     </section>
 
     <section id="term-view" hidden>
@@ -755,9 +755,9 @@ function openWS(sessionId) {
       setStatus("session ended", "err");
       try {
         const info = JSON.parse(dec.decode(f.payload));
-        term.write(`\r\n\x1b[33m[atterm] session ended (exit ${info.exit_code})\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`);
       } catch {
-        term.write("\r\n\x1b[33m[atterm] session ended\x1b[0m\r\n");
+        term.write("\r\n\x1b[33m[AT Term] session ended\x1b[0m\r\n");
       }
     }
   };

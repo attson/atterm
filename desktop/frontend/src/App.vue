@@ -546,7 +546,7 @@ onUnmounted(() => {
 <template>
   <div class="app">
     <header class="topbar">
-      <div class="brand">atterm</div>
+      <div class="brand">AT Term</div>
       <div class="status">
         <template v-if="status === 'loading'">starting…</template>
         <template v-else-if="status === 'error'">

@@ -15,7 +15,7 @@ env:
   GO_VERSION: '1.23'
   NODE_VERSION: '20'
   WAILS_VERSION: 'v2.12.0'
-  APP_ARTIFACT_NAME: 'AT.Term'
+  APP_ARTIFACT_NAME: 'AT-Term'
 
 jobs:
   build-linux:
@@ -87,8 +87,8 @@ jobs:
         run: |
           set -euo pipefail
           cd desktop/build/bin
-          tar -czf "atterm-desktop-linux-${{ matrix.arch }}.tar.gz" atterm-desktop
-          ls -la "atterm-desktop-linux-${{ matrix.arch }}.tar.gz"
+          tar -czf "AT-Term-linux-${{ matrix.arch }}.tar.gz" "AT Term"
+          ls -la "AT-Term-linux-${{ matrix.arch }}.tar.gz"
 
       - name: package deb
         if: startsWith(github.ref, 'refs/tags/v')
@@ -101,10 +101,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          name: atterm-desktop-linux-${{ matrix.arch }}
+          name: AT-Term-linux-${{ matrix.arch }}
           path: |
             desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_${{ matrix.arch }}.deb
-            desktop/build/bin/atterm-desktop-linux-${{ matrix.arch }}.tar.gz
+            desktop/build/bin/AT-Term-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   build-darwin:
@@ -158,8 +158,8 @@ jobs:
         run: |
           set -euo pipefail
           cd desktop/build/bin
-          ditto -c -k --keepParent atterm-desktop.app "atterm-desktop-darwin-${{ matrix.arch }}.zip"
-          ls -la "atterm-desktop-darwin-${{ matrix.arch }}.zip"
+          ditto -c -k --keepParent "AT Term.app" "AT-Term-darwin-${{ matrix.arch }}.zip"
+          ls -la "AT-Term-darwin-${{ matrix.arch }}.zip"
 
       - name: package dmg
         if: startsWith(github.ref, 'refs/tags/v')
@@ -172,10 +172,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          name: atterm-desktop-darwin-${{ matrix.arch }}
+          name: AT-Term-darwin-${{ matrix.arch }}
           path: |
             desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_${{ matrix.arch }}.dmg
-            desktop/build/bin/atterm-desktop-darwin-${{ matrix.arch }}.zip
+            desktop/build/bin/AT-Term-darwin-${{ matrix.arch }}.zip
           if-no-files-found: error
 
   build-windows:
@@ -231,9 +231,9 @@ jobs:
         run: |
           set -euo pipefail
           cd desktop/build/bin
-          test -f atterm-desktop.exe
-          7z a "atterm-desktop-windows-amd64.zip" atterm-desktop.exe
-          ls -la "atterm-desktop-windows-amd64.zip"
+          test -f "AT Term.exe"
+          7z a "AT-Term-windows-amd64.zip" "AT Term.exe"
+          ls -la "AT-Term-windows-amd64.zip"
 
       - name: stage installer
         if: startsWith(github.ref, 'refs/tags/v')
@@ -243,19 +243,31 @@ jobs:
         run: |
           set -euo pipefail
           version_no_v="${VERSION#v}"
-          src="desktop/build/bin/atterm-desktop-amd64-installer.exe"
+          src=""
+          for candidate in \
+            "desktop/build/bin/AT Term-amd64-installer.exe" \
+            "desktop/build/bin/at-term-amd64-installer.exe"; do
+            if [ -f "$candidate" ]; then
+              src="$candidate"
+              break
+            fi
+          done
+          if [ -z "$src" ]; then
+            echo "windows installer not found"
+            ls -la desktop/build/bin
+            exit 1
+          fi
           dst="desktop/build/bin/${ARTIFACT_NAME}_${version_no_v}_amd64.exe"
-          test -f "$src"
           mv "$src" "$dst"
           ls -la "$dst"
 
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          name: atterm-desktop-windows-amd64
+          name: AT-Term-windows-amd64
           path: |
             desktop/build/bin/${{ env.APP_ARTIFACT_NAME }}_*_amd64.exe
-            desktop/build/bin/atterm-desktop-windows-amd64.zip
+            desktop/build/bin/AT-Term-windows-amd64.zip
           if-no-files-found: error
 
   release:

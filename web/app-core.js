@@ -102,6 +102,30 @@ export function detectClientMode({
   return "desktop-web";
 }
 
+export function isIOSWebKit(userAgent = "") {
+  const ua = userAgent.toLowerCase();
+  const iOS = /\b(iphone|ipad|ipod)\b/.test(ua) || (/\bmacintosh\b/.test(ua) && /\bmobile\//.test(ua));
+  return iOS && /\bsafari\//.test(ua) && !/\b(crios|fxios|edgios)\b/.test(ua);
+}
+
+export function shouldShowInstallHint({
+  userAgent = "",
+  standalone = false,
+  dismissed = false,
+} = {}) {
+  return isIOSWebKit(userAgent) && !standalone && !dismissed;
+}
+
+export function canRegisterServiceWorker({
+  protocol = "",
+  hostname = "",
+  serviceWorker = undefined,
+} = {}) {
+  if (!serviceWorker) return false;
+  if (protocol === "https:") return true;
+  return protocol === "http:" && /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])$/.test(hostname);
+}
+
 export function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let out = "";

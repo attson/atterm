@@ -6,10 +6,10 @@
 <meta name="theme-color" content="#0b1020" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="atterm" />
-<title>atterm</title>
+<meta name="apple-mobile-web-app-title" content="AT Term" />
+<title>AT Term</title>
 <link rel="manifest" href="manifest.webmanifest" />
-<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="apple-touch-icon" href="icon.png" />
 <link rel="icon" href="icon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
 <link rel="stylesheet" href="style.css" />
@@ -19,7 +19,7 @@
   <header id="topbar">
     <button id="back" class="ghost-btn" hidden aria-label="Back to sessions">←</button>
     <div class="brand-block">
-      <div class="brand">atterm</div>
+      <div class="brand">AT Term</div>
       <div class="subtitle" id="session-title">mobile relay</div>
       <div class="version" id="version">version dev</div>
     </div>
@@ -35,6 +35,14 @@
     </div>
   </section>
 
+  <section id="install-hint" class="install-hint" hidden>
+    <div>
+      <strong>install AT Term</strong>
+      <span>on iPhone, open this site with HTTPS, then tap Share → Add to Home Screen.</span>
+    </div>
+    <button id="install-dismiss" type="button" aria-label="Dismiss install hint">×</button>
+  </section>
+
   <main id="main">
     <section id="list-view">
       <div class="section-head">
@@ -42,7 +50,7 @@
         <button id="refresh" type="button">refresh</button>
       </div>
       <div id="list"></div>
-      <div id="empty" hidden>no live sessions. start one from a desktop app or <code>atterm-agent</code>.</div>
+      <div id="empty" hidden>no live sessions. start one from AT Term or <code>atterm-agent</code>.</div>
     </section>
 
     <section id="term-view" hidden>

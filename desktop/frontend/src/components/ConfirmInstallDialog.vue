@@ -18,10 +18,10 @@ function plural(n: number, word: string) {
 <template>
   <div class="backdrop" @click.self="$emit('cancel')">
     <div class="dialog">
-      <h2>install atterm {{ version }}</h2>
+      <h2>install AT Term {{ version }}</h2>
 
       <p>
-        atterm will quit and relaunch on the new version.
+        AT Term will quit and relaunch on the new version.
         <template v-if="localCount > 0 || remoteCount > 0"> This will:</template>
       </p>
 

@@ -1,4 +1,4 @@
-// Atterm wire protocol — TypeScript port of internal/proto. Frames are
+// AT Term wire protocol — TypeScript port of internal/proto. Frames are
 // binary WebSocket messages: 6-byte header (ver + type + u32BE payload_len),
 // 16-byte session id, then payload.
 

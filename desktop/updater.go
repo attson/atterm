@@ -98,15 +98,15 @@ func (u *Updater) devOrEmpty() bool {
 func assetNameForPlatform(goos, goarch string) (string, error) {
 	switch {
 	case goos == "linux" && goarch == "amd64":
-		return "atterm-desktop-linux-amd64.tar.gz", nil
+		return "AT-Term-linux-amd64.tar.gz", nil
 	case goos == "linux" && goarch == "arm64":
-		return "atterm-desktop-linux-arm64.tar.gz", nil
+		return "AT-Term-linux-arm64.tar.gz", nil
 	case goos == "darwin" && goarch == "arm64":
-		return "atterm-desktop-darwin-arm64.zip", nil
+		return "AT-Term-darwin-arm64.zip", nil
 	case goos == "darwin" && goarch == "amd64":
-		return "atterm-desktop-darwin-amd64.zip", nil
+		return "AT-Term-darwin-amd64.zip", nil
 	case goos == "windows" && goarch == "amd64":
-		return "atterm-desktop-windows-amd64.zip", nil
+		return "AT-Term-windows-amd64.zip", nil
 	}
 	return "", fmt.Errorf("no atterm build for %s/%s", goos, goarch)
 }
@@ -209,7 +209,7 @@ func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "atterm-desktop/"+u.cfg.current)
+	req.Header.Set("User-Agent", "AT-Term/"+u.cfg.current)
 	resp, err := u.cfg.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -240,7 +240,7 @@ func (u *Updater) fetchLatestViaRedirect(ctx context.Context) (*githubRelease, e
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "atterm-desktop/"+u.cfg.current)
+	req.Header.Set("User-Agent", "AT-Term/"+u.cfg.current)
 	resp, err := u.cfg.client.Do(req)
 	if err != nil {
 		return nil, err

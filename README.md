@@ -18,9 +18,9 @@
 
 | 平台 | 文件 |
 |------|------|
-| Linux x64 | `atterm-desktop-linux-amd64.tar.gz` |
-| macOS Apple Silicon | `atterm-desktop-darwin-arm64.zip` |
-| Windows x64 | `atterm-desktop-windows-amd64.zip` |
+| Linux x64 | `AT-Term-linux-amd64.tar.gz` |
+| macOS Apple Silicon | `AT-Term-darwin-arm64.zip` |
+| Windows x64 | `AT-Term-windows-amd64.zip` |
 
 解压运行即可。Linux 需要系统已装 `libwebkit2gtk-4.1-0`；Windows 需要 WebView2 Runtime（Win11 自带）。
 
@@ -138,7 +138,7 @@ wails doctor
 ```bash
 cd desktop
 wails dev   -tags webkit2_41           # 开发模式（Vite HMR）
-wails build -tags webkit2_41           # 产出 desktop/build/bin/atterm-desktop
+wails build -tags webkit2_41           # 产出 desktop/build/bin/AT Term
 ```
 
 **Linux 必须加 `-tags webkit2_41`**——Wails CLI 默认匹配旧的 4.0 SDK，新发行版只有 4.1。
@@ -161,7 +161,7 @@ wails doctor
 ```bash
 cd desktop
 wails dev                 # 开发模式
-wails build               # 产出 desktop/build/bin/atterm-desktop.app
+wails build               # 产出 desktop/build/bin/AT Term.app
 ```
 
 要打 universal 二进制（Intel + Apple Silicon 同 bundle）：
@@ -193,7 +193,7 @@ wails doctor
 ```powershell
 cd desktop
 wails dev
-wails build               # 产出 desktop\build\bin\atterm-desktop.exe
+wails build               # 产出 desktop\build\bin\AT Term.exe
 ```
 
 带 NSIS 安装包：

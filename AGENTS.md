@@ -59,7 +59,7 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 # 桌面 app
 cd desktop
 wails dev -tags webkit2_41               # Linux 必须加 -tags webkit2_41
-wails build -tags webkit2_41             # 出 desktop/build/bin/atterm-desktop
+wails build -tags webkit2_41             # 出 desktop/build/bin/AT Term
 
 # 测试
 go vet -tags webkit2_41 ./...

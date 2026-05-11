@@ -363,7 +363,7 @@ configuration. No new runtime dependencies.
 5. `Mod+Alt+←/→/↑/↓` traverses 2×2 panes; boundary attempts are no-ops.
 6. `Mod+W`: `grid2x2` (4) → `grid2x2` (3, one empty) → `vertical`/`horizontal`
    (2) → `single` → tab closes → auto-restart `single`.
-7. Shell exits naturally inside a pane: pane shows `[atterm] session ended`,
+7. Shell exits naturally inside a pane: pane shows `[AT Term] session ended`,
    slot empties, layout unchanged.
 8. Disconnect remote relay: remote pane shows `reconnecting…`; local panes
    unaffected (red line #1).

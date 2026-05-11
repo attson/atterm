@@ -7,7 +7,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 ## 组件全图
 
 ```
-┌─────────────── 桌面 app（atterm-desktop，单进程）──────────────┐
+┌─────────────── 桌面 app（AT Term，单进程）──────────────┐
 │                                                                │
 │  ┌─ 前端 webview（Vue3 + xterm.js）─┐                          │
 │  │  TabBar · TerminalView · 设置 · │                          │

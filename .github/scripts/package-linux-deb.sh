@@ -2,21 +2,22 @@
 set -euo pipefail
 
 version_no_v="${VERSION#v}"
-bin="desktop/build/bin/atterm-desktop"
+bin="desktop/build/bin/AT Term"
 out="desktop/build/bin/${ARTIFACT_NAME}_${version_no_v}_${ARCH}.deb"
 root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
 
 test -f "$bin"
 
-install -Dm755 "$bin" "$root/usr/bin/atterm-desktop"
-install -Dm644 desktop/build/appicon.png "$root/usr/share/pixmaps/atterm-desktop.png"
-install -Dm644 /dev/stdin "$root/usr/share/applications/atterm-desktop.desktop" <<DESKTOP
+install -Dm755 "$bin" "$root/usr/bin/AT-Term"
+install -Dm644 desktop/build/appicon.png "$root/usr/share/pixmaps/AT-Term.png"
+install -Dm644 desktop/build/appicon.png "$root/usr/share/icons/hicolor/1024x1024/apps/AT-Term.png"
+install -Dm644 /dev/stdin "$root/usr/share/applications/AT-Term.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=AT Term
-Exec=atterm-desktop
-Icon=atterm-desktop
+Exec=AT-Term
+Icon=AT-Term
 Terminal=false
 Categories=System;TerminalEmulator;
 DESKTOP
@@ -24,7 +25,7 @@ DESKTOP
 installed_size="$(du -sk "$root/usr" | awk '{print $1}')"
 mkdir -p "$root/DEBIAN"
 cat > "$root/DEBIAN/control" <<CONTROL
-Package: atterm-desktop
+Package: at-term
 Version: ${version_no_v}
 Section: utils
 Priority: optional

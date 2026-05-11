@@ -191,7 +191,7 @@ Endpoint: `GET https://api.github.com/repos/attson/atterm/releases/latest`
 
 Headers:
 - `Accept: application/vnd.github+json`
-- `User-Agent: atterm-desktop/<Version>` (GitHub requires UA)
+- `User-Agent: AT Term/<Version>` (GitHub requires UA)
 
 Unauthenticated → 60 req/h per source IP. Per-user 24h cadence + 1h
 local response cache means we touch GitHub at most ~24/day per user.
@@ -203,9 +203,9 @@ Asset selection by `runtime.GOOS` × `runtime.GOARCH`:
 
 | Platform        | Asset name                                      |
 |-----------------|-------------------------------------------------|
-| `linux/amd64`   | `atterm-desktop-linux-amd64.tar.gz`             |
-| `darwin/arm64`  | `atterm-desktop-darwin-arm64.zip`               |
-| `windows/amd64` | `atterm-desktop-windows-amd64.zip`              |
+| `linux/amd64`   | `AT-Term-linux-amd64.tar.gz`             |
+| `darwin/arm64`  | `AT-Term-darwin-arm64.zip`               |
+| `windows/amd64` | `AT-Term-windows-amd64.zip`              |
 
 Other (`darwin/amd64`, `linux/arm64`, etc.) → `state.Error =
 "no build for $GOOS/$GOARCH"`. UI shows the error; manual download
@@ -304,9 +304,9 @@ done
 
 tmp=$(mktemp -d)
 tar -xzf "$src" -C "$tmp"
-[ -f "$tmp/atterm-desktop" ] || { echo "atterm-desktop not in archive"; exit 1; }
+[ -f "$tmp/AT Term" ] || { echo "AT Term not in archive"; exit 1; }
 
-mv "$tmp/atterm-desktop" "$dst"
+mv "$tmp/AT Term" "$dst"
 chmod +x "$dst"
 
 setsid "$dst" >/dev/null 2>&1 < /dev/null &
@@ -338,8 +338,8 @@ while ($attempts -lt 60) {
 
 $tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "atterm-update-$([guid]::NewGuid())")
 Expand-Archive -Path $Src -DestinationPath $tmp.FullName -Force
-$exe = Join-Path $tmp.FullName "atterm-desktop.exe"
-if (-not (Test-Path $exe)) { throw "atterm-desktop.exe not in archive" }
+$exe = Join-Path $tmp.FullName "AT Term.exe"
+if (-not (Test-Path $exe)) { throw "AT Term.exe not in archive" }
 
 # Move-Item can transiently fail if the OS still holds the .exe handle
 # (close-after-exit can lag). Retry briefly before giving up.

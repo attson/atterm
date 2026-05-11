@@ -24,8 +24,8 @@ func TestPackagedDisplayNameIsATTerm(t *testing.T) {
 	if cfg.Info.ProductName != "AT Term" {
 		t.Fatalf("productName = %q; want AT Term", cfg.Info.ProductName)
 	}
-	if cfg.OutputFilename != "atterm-desktop" {
-		t.Fatalf("outputfilename = %q; want atterm-desktop", cfg.OutputFilename)
+	if cfg.OutputFilename != "AT Term" {
+		t.Fatalf("outputfilename = %q; want AT Term", cfg.OutputFilename)
 	}
 
 	for _, path := range []string{"build/darwin/Info.plist", "build/darwin/Info.dev.plist"} {
@@ -48,6 +48,45 @@ func TestPackagedDisplayNameIsATTerm(t *testing.T) {
 	}
 	if !strings.Contains(string(index), "<title>AT Term</title>") {
 		t.Fatalf("frontend/index.html title is not AT Term")
+	}
+}
+
+func TestInstallersUseATTermNameAndIcons(t *testing.T) {
+	checks := map[string][]string{
+		"../.github/scripts/package-linux-deb.sh": {
+			`Name=AT Term`,
+			`Exec=AT-Term`,
+			`Icon=AT-Term`,
+			`/usr/share/icons/hicolor/1024x1024/apps/AT-Term.png`,
+		},
+		"../.github/scripts/package-macos-dmg.sh": {
+			`AT Term.app`,
+			`AT Term`,
+		},
+		"../.github/workflows/build.yml": {
+			`APP_ARTIFACT_NAME: 'AT-Term'`,
+			`AT-Term-linux-${{ matrix.arch }}.tar.gz`,
+			`AT Term.app`,
+			`AT Term.exe`,
+			`at-term-amd64-installer.exe`,
+			`AT-Term-windows-amd64.zip`,
+		},
+		"build/windows/installer/project.nsi": {
+			`MUI_ICON "..\icon.ico"`,
+			`MUI_UNICON "..\icon.ico"`,
+		},
+	}
+	for path, wants := range checks {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(body)
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q", path, want)
+			}
+		}
 	}
 }
 

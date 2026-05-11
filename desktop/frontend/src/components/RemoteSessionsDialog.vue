@@ -24,7 +24,7 @@ function formatHost(s: SessionInfo): string {
       <h2>remote sessions</h2>
 
       <div v-if="sessions.length === 0" class="empty">
-        no remote sessions visible. start one in another atterm app connected
+        no remote sessions visible. start one in another AT Term app connected
         to the same relay.
       </div>
 

@@ -40,7 +40,7 @@ async function handleCopyShortcut(e: KeyboardEvent) {
   try {
     await copyTerminalSelection(term);
   } catch (err) {
-    console.warn("[atterm] failed to copy terminal selection", err);
+    console.warn("[AT Term] failed to copy terminal selection", err);
   }
 }
 
@@ -54,7 +54,7 @@ async function handleImagePaste(e: ClipboardEvent) {
   try {
     await conn?.sendPasteImage(file, file.name || "clipboard-image");
   } catch (err) {
-    console.warn("[atterm] failed to paste terminal image", err);
+    console.warn("[AT Term] failed to paste terminal image", err);
   }
 }
 
@@ -76,7 +76,7 @@ function safeFit() {
     if (term.rows < Math.floor(r.height / 30)) {
       // Heuristic: if cell can fit > N rows but term has way fewer, fit failed.
       console.warn(
-        "[atterm] suspicious term size after fit",
+        "[AT Term] suspicious term size after fit",
         { containerW: r.width, containerH: r.height, cols: term.cols, rows: term.rows },
       );
     }
@@ -115,7 +115,7 @@ function startConnection() {
     onOutput: (data) => term?.write(data),
     onClose: (info) => {
       term?.write(
-        `\r\n\x1b[33m[atterm] session ended (exit ${info.exit_code})\x1b[0m\r\n`
+        `\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`
       );
     },
     onStatus: (s) => {

@@ -19,8 +19,8 @@ while ($attempts -lt 60) {
 
 $tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "atterm-update-$([guid]::NewGuid())")
 Expand-Archive -Path $Src -DestinationPath $tmp.FullName -Force
-$exe = Join-Path $tmp.FullName "atterm-desktop.exe"
-if (-not (Test-Path $exe)) { throw "atterm-desktop.exe not in archive" }
+$exe = Join-Path $tmp.FullName "AT Term.exe"
+if (-not (Test-Path $exe)) { throw "AT Term.exe not in archive" }
 
 # Move-Item can transiently fail if Windows still holds the .exe handle
 # (close-after-exit can lag). Retry briefly before giving up.

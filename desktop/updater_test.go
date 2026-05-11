@@ -67,11 +67,11 @@ func TestAssetNameForPlatform(t *testing.T) {
 		goos, goarch string
 		want         string
 	}{
-		{"linux", "amd64", "atterm-desktop-linux-amd64.tar.gz"},
-		{"linux", "arm64", "atterm-desktop-linux-arm64.tar.gz"},
-		{"darwin", "arm64", "atterm-desktop-darwin-arm64.zip"},
-		{"darwin", "amd64", "atterm-desktop-darwin-amd64.zip"},
-		{"windows", "amd64", "atterm-desktop-windows-amd64.zip"},
+		{"linux", "amd64", "AT-Term-linux-amd64.tar.gz"},
+		{"linux", "arm64", "AT-Term-linux-arm64.tar.gz"},
+		{"darwin", "arm64", "AT-Term-darwin-arm64.zip"},
+		{"darwin", "amd64", "AT-Term-darwin-amd64.zip"},
+		{"windows", "amd64", "AT-Term-windows-amd64.zip"},
 	}
 	for _, c := range cases {
 		got, err := assetNameForPlatform(c.goos, c.goarch)
@@ -119,17 +119,17 @@ func releasePayload(tag string, prerelease bool) map[string]any {
 		"prerelease": prerelease,
 		"assets": []map[string]any{
 			{
-				"name":                 "atterm-desktop-darwin-arm64.zip",
+				"name":                 "AT-Term-darwin-arm64.zip",
 				"browser_download_url": "https://example.com/" + tag + "/darwin.zip",
 				"size":                 int64(12345),
 			},
 			{
-				"name":                 "atterm-desktop-linux-amd64.tar.gz",
+				"name":                 "AT-Term-linux-amd64.tar.gz",
 				"browser_download_url": "https://example.com/" + tag + "/linux.tar.gz",
 				"size":                 int64(54321),
 			},
 			{
-				"name":                 "atterm-desktop-windows-amd64.zip",
+				"name":                 "AT-Term-windows-amd64.zip",
 				"browser_download_url": "https://example.com/" + tag + "/windows.zip",
 				"size":                 int64(99999),
 			},
@@ -342,32 +342,32 @@ func TestUpdater_Download_SizeMismatch(t *testing.T) {
 var _ = io.Discard
 
 func TestInstallPathFromExecutable_Darwin(t *testing.T) {
-	got := installPathFromExecutable("/Applications/atterm-desktop.app/Contents/MacOS/atterm-desktop", "darwin")
-	want := "/Applications/atterm-desktop.app"
+	got := installPathFromExecutable("/Applications/AT Term.app/Contents/MacOS/AT Term", "darwin")
+	want := "/Applications/AT Term.app"
 	if got != want {
 		t.Errorf("install path = %q; want %q", got, want)
 	}
 }
 
 func TestInstallPathFromExecutable_DarwinDeepPath(t *testing.T) {
-	got := installPathFromExecutable("/Users/x/Applications/atterm-desktop.app/Contents/MacOS/atterm-desktop", "darwin")
-	want := "/Users/x/Applications/atterm-desktop.app"
+	got := installPathFromExecutable("/Users/x/Applications/AT Term.app/Contents/MacOS/AT Term", "darwin")
+	want := "/Users/x/Applications/AT Term.app"
 	if got != want {
 		t.Errorf("install path = %q; want %q", got, want)
 	}
 }
 
 func TestInstallPathFromExecutable_Linux(t *testing.T) {
-	got := installPathFromExecutable("/home/x/.local/bin/atterm-desktop", "linux")
-	want := "/home/x/.local/bin/atterm-desktop"
+	got := installPathFromExecutable("/home/x/.local/bin/AT Term", "linux")
+	want := "/home/x/.local/bin/AT Term"
 	if got != want {
 		t.Errorf("install path = %q; want %q", got, want)
 	}
 }
 
 func TestInstallPathFromExecutable_Windows(t *testing.T) {
-	got := installPathFromExecutable(`C:\Users\x\atterm-desktop.exe`, "windows")
-	want := `C:\Users\x\atterm-desktop.exe`
+	got := installPathFromExecutable(`C:\Users\x\AT Term.exe`, "windows")
+	want := `C:\Users\x\AT Term.exe`
 	if got != want {
 		t.Errorf("install path = %q; want %q", got, want)
 	}

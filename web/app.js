@@ -3,6 +3,7 @@
 import {
   apiURL as makeAPIURL,
   arrayBufferToBase64,
+  canRegisterServiceWorker,
   copyTerminalSelection,
   detectClientMode,
   formatHost,
@@ -10,6 +11,7 @@ import {
   parseSessionRoute,
   persistToken,
   sessionTitle,
+  shouldShowInstallHint,
   shouldAutoScrollToBottom,
   shortSessionID,
   shortcutInput,
@@ -108,6 +110,8 @@ const pasteBtn = document.getElementById("paste");
 const pasteFallback = document.getElementById("paste-fallback");
 const pasteText = document.getElementById("paste-text");
 const pasteCancel = document.getElementById("paste-cancel");
+const installHint = document.getElementById("install-hint");
+const installDismiss = document.getElementById("install-dismiss");
 
 function applyClientModeClass() {
   const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -123,6 +127,39 @@ function applyClientModeClass() {
 applyClientModeClass();
 window.addEventListener("resize", applyClientModeClass);
 window.matchMedia?.("(pointer: coarse)").addEventListener?.("change", applyClientModeClass);
+
+function isStandaloneDisplay() {
+  return window.matchMedia?.("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true;
+}
+
+function maybeShowInstallHint() {
+  if (!installHint) return;
+  const dismissed = localStorage.getItem("at-term-install-hint-dismissed") === "1";
+  installHint.hidden = !shouldShowInstallHint({
+    userAgent: navigator.userAgent,
+    standalone: isStandaloneDisplay(),
+    dismissed,
+  });
+}
+
+function registerServiceWorker() {
+  if (!canRegisterServiceWorker({
+    protocol: location.protocol,
+    hostname: location.hostname,
+    serviceWorker: navigator.serviceWorker,
+  })) return;
+  navigator.serviceWorker.register("./sw.js").catch((err) => {
+    console.warn("[AT Term] service worker registration failed", err);
+  });
+}
+
+installDismiss?.addEventListener("click", () => {
+  localStorage.setItem("at-term-install-hint-dismissed", "1");
+  if (installHint) installHint.hidden = true;
+});
+maybeShowInstallHint();
+registerServiceWorker();
 
 let token = tokenFromLocation(location.href, localStorage);
 tokenInput.value = token;
@@ -352,7 +389,7 @@ async function copySelection() {
   try {
     await copyTerminalSelection(term);
   } catch (err) {
-    console.warn("[atterm] failed to copy terminal selection", err);
+    console.warn("[AT Term] failed to copy terminal selection", err);
   }
 }
 
@@ -415,9 +452,9 @@ function openWS(sessionId) {
       setStatus("session ended", "err");
       try {
         const info = JSON.parse(dec.decode(f.payload));
-        term.write(`\r\n\x1b[33m[atterm] session ended (exit ${info.exit_code})\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`);
       } catch {
-        term.write("\r\n\x1b[33m[atterm] session ended\x1b[0m\r\n");
+        term.write("\r\n\x1b[33m[AT Term] session ended\x1b[0m\r\n");
       }
     }
   };

@@ -22,7 +22,7 @@ func main() {
 	app := NewApp()
 
 	opts := &options.App{
-		Title:  "atterm",
+		Title:  "AT Term",
 		Width:  1100,
 		Height: 720,
 		AssetServer: &assetserver.Options{

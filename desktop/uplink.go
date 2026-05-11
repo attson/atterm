@@ -8,10 +8,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +36,8 @@ type uplink struct {
 	relayURL string
 	token    string
 	host     *relayHost
+
+	announced announceCache
 }
 
 func newUplink(relayURL, token string, host *relayHost) *uplink {
@@ -91,6 +95,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 
 	connCtx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()
+	u.announced.reset()
 
 	out := make(chan proto.Frame, uplinkOutQueueDepth)
 
@@ -260,19 +265,48 @@ func (u *uplink) runOnce(ctx context.Context) error {
 
 func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error {
 	hostID, host, user := u.host.HostMeta()
-	payload, err := json.Marshal(proto.AnnouncePayload{
-		HostID:   hostID,
-		Host:     host,
-		User:     user,
-		Sessions: u.host.Snapshot(),
-	})
+	payload, err := buildAnnouncePayload(hostID, host, user, u.host.Snapshot())
 	if err != nil {
 		return err
 	}
+	if !u.announced.shouldSend(payload) {
+		return nil
+	}
 	wctx, cancel := context.WithTimeout(ctx, uplinkWriteTimeout)
 	defer cancel()
-	return conn.Write(wctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+	if err := conn.Write(wctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
 		Type:    proto.TypeAnnounce,
 		Payload: payload,
-	}))
+	})); err != nil {
+		return err
+	}
+	u.announced.markSent(payload)
+	return nil
+}
+
+func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInfo) ([]byte, error) {
+	snapshot := append([]proto.SessionInfo(nil), sessions...)
+	sort.Slice(snapshot, func(i, j int) bool { return snapshot[i].ID < snapshot[j].ID })
+	return json.Marshal(proto.AnnouncePayload{
+		HostID:   hostID,
+		Host:     host,
+		User:     user,
+		Sessions: snapshot,
+	})
+}
+
+type announceCache struct {
+	last []byte
+}
+
+func (c *announceCache) shouldSend(payload []byte) bool {
+	return !bytes.Equal(c.last, payload)
+}
+
+func (c *announceCache) markSent(payload []byte) {
+	c.last = append(c.last[:0], payload...)
+}
+
+func (c *announceCache) reset() {
+	c.last = nil
 }

@@ -70,3 +70,7 @@ export function sessionTitle(session) {
   const label = session.command || session.title || "session";
   return `${label} · ${shortSessionID(session.id)}`;
 }
+
+export function shouldAutoScrollToBottom({ userScrolledUp, isReplay }) {
+  return isReplay || !userScrolledUp;
+}

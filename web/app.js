@@ -6,6 +6,7 @@ import {
   parseSessionRoute,
   persistToken,
   sessionTitle,
+  shouldAutoScrollToBottom,
   shortSessionID,
   shortcutInput,
   tokenFromLocation,
@@ -209,12 +210,25 @@ let lastSeq = 0;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let fitTimer = null;
+let userScrolledUp = false;
+let autoScrollTimer = null;
 
 function scheduleFit() {
   clearTimeout(fitTimer);
   fitTimer = setTimeout(() => {
-    if (fitAddon) fitAddon.fit();
+    if (fitAddon) {
+      fitAddon.fit();
+      scheduleScrollToBottom(true);
+    }
   }, 50);
+}
+
+function scheduleScrollToBottom(isReplay = false) {
+  if (!term || !shouldAutoScrollToBottom({ userScrolledUp, isReplay })) return;
+  clearTimeout(autoScrollTimer);
+  autoScrollTimer = setTimeout(() => {
+    term?.scrollToBottom();
+  }, 0);
 }
 
 function ensureTerm() {
@@ -232,6 +246,11 @@ function ensureTerm() {
   term.loadAddon(fitAddon);
   term.open(document.getElementById("term"));
   scheduleFit();
+  term.onScroll((line) => {
+    const buffer = term.buffer.active;
+    const bottom = buffer.baseY + buffer.cursorY;
+    userScrolledUp = line < bottom;
+  });
   window.addEventListener("resize", scheduleFit);
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", scheduleFit);
@@ -258,6 +277,7 @@ function sessionForID(sessionId) {
 function attachToSession(sessionId) {
   ensureTerm();
   term.reset();
+  userScrolledUp = false;
   lastSeq = 0;
   currentSID = uuidParse(sessionId);
   sessionTitleEl.textContent = sessionTitle(sessionForID(sessionId));
@@ -296,6 +316,7 @@ function openWS(sessionId) {
     if (f.type === TYPE.OUT) {
       const { seq, data } = decodeOutPayload(f.payload);
       term.write(data);
+      scheduleScrollToBottom(lastSeq === 0);
       if (seq > lastSeq) lastSeq = seq;
     } else if (f.type === TYPE.CLOSE) {
       setStatus("session ended", "err");

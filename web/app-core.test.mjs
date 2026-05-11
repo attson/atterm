@@ -5,6 +5,7 @@ import {
   apiURL,
   buildDownloadURL,
   formatHost,
+  shouldAutoScrollToBottom,
   parseSessionRoute,
   shortcutInput,
   tokenFromLocation,
@@ -95,4 +96,11 @@ test("sessionTitle prefers command and short id", () => {
     sessionTitle({ id: "22222222-2222-4222-8222-222222222222", title: "vim" }),
     "vim · 22222222",
   );
+});
+
+test("shouldAutoScrollToBottom keeps attach replay pinned to bottom", () => {
+  assert.equal(shouldAutoScrollToBottom({ userScrolledUp: false, isReplay: true }), true);
+  assert.equal(shouldAutoScrollToBottom({ userScrolledUp: false, isReplay: false }), true);
+  assert.equal(shouldAutoScrollToBottom({ userScrolledUp: true, isReplay: false }), false);
+  assert.equal(shouldAutoScrollToBottom({ userScrolledUp: true, isReplay: true }), true);
 });

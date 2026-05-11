@@ -23,7 +23,7 @@ const (
 // frames accepted are LIST. Once ATTACH locks onto a session, frames flow:
 // agent -> session -> sub.Out() -> client (writer goroutine), and client ->
 // IN/RESIZE -> session.SendInbound (reader loop).
-func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, readOnly bool) {
+func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope) {
 	c.SetReadLimit(clientReadLimit)
 
 	var (
@@ -123,12 +123,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, readOnly b
 			startWriter()
 
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
-			if readOnly {
-				s.debugf("client drop frame=%s reason=read_only", frameTypeName(f.Type))
-				continue
-			}
 			if sess == nil {
 				s.debugf("client drop frame=%s reason=not_attached", frameTypeName(f.Type))
+				continue
+			}
+			if !frameAllowedByPermission(scope, sessionRemotePermission(sess), f.Type) {
+				s.debugf("client drop frame=%s reason=permission", frameTypeName(f.Type))
 				continue
 			}
 			if f.Type == proto.TypeResize {

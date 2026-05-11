@@ -146,6 +146,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 			mu.Unlock()
 			if ok {
 				existing.sess.UpdateMeta(proto.MetaPayload{Cwd: info.Cwd, Title: info.Title})
+				existing.sess.UpdateRemotePermission(info.RemotePermission)
 				s.registry.NotifyChange()
 				s.debugf("uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
 				continue

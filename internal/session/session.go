@@ -101,6 +101,14 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	}
 }
 
+// UpdateRemotePermission records the owner-published remote permission for
+// mirror sessions. Empty keeps the backwards-compatible full-control default.
+func (s *Session) UpdateRemotePermission(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.meta.RemotePermission = value
+}
+
 // UpdateSize records the latest PTY window size advertised by a client resize.
 func (s *Session) UpdateSize(cols, rows uint16) {
 	s.mu.Lock()

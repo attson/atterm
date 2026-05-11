@@ -9,6 +9,12 @@ const Version uint8 = 1
 type Type uint8
 
 const (
+	RemotePermissionView    = "view"
+	RemotePermissionControl = "control"
+	RemotePermissionFull    = "full"
+)
+
+const (
 	TypeOpen     Type = 0x01 // agent -> relay
 	TypeIn       Type = 0x02 // client -> relay -> agent
 	TypeOut      Type = 0x03 // agent -> relay -> client (8B seq prefix)
@@ -109,4 +115,7 @@ type SessionInfo struct {
 	HostID    string `json:"host_id"`
 	Host      string `json:"host"`
 	User      string `json:"user"`
+	// RemotePermission is owner-published permission for remote attachers.
+	// Empty means full for backwards compatibility with older ANNOUNCEs.
+	RemotePermission string `json:"remote_permission,omitempty"`
 }

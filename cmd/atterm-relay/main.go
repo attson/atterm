@@ -28,6 +28,7 @@ func main() {
 	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
 	origins := flag.String("origins", "", "comma-separated allowed Origin host patterns (empty = allow any, dev only)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
+	adminToken := flag.String("admin-token", os.Getenv("ATTERM_ADMIN_TOKEN"), "admin bearer token for /admin routes (or ATTERM_ADMIN_TOKEN; empty disables admin)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
 	readOnlyTokens := flag.String("read-only-tokens", os.Getenv("ATTERM_READ_ONLY_TOKENS"), "comma-separated read-only bearer tokens (or ATTERM_READ_ONLY_TOKENS)")
@@ -46,6 +47,7 @@ func main() {
 		readOnly:     *readOnlyTokens,
 		origins:      *origins,
 		configPath:   *configPath,
+		adminToken:   *adminToken,
 		rateLimit:    *rateLimit,
 		maxConns:     *maxConns,
 		debug:        *debug || *debugPayload,
@@ -123,6 +125,7 @@ type relayOptions struct {
 	readOnly     string
 	origins      string
 	configPath   string
+	adminToken   string
 	rateLimit    int
 	maxConns     int
 	debug        bool
@@ -149,12 +152,14 @@ func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
 	}
 	allowedOrigins := splitCSV(opts.origins)
 	adminCfg := relay.AdminConfig{}
+	var adminStore *relay.AdminConfigStore
 	if opts.configPath != "" {
 		var err error
 		adminCfg, err = relay.LoadAdminConfig(opts.configPath)
 		if err != nil {
 			return relay.Config{}, "", fmt.Errorf("load relay config: %w", err)
 		}
+		adminStore = relay.NewAdminConfigStore(opts.configPath, adminCfg)
 	}
 	rateLimit := opts.rateLimit
 	if rateLimit == 0 {
@@ -180,6 +185,8 @@ func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
 		DebugPayload:         opts.debugPayload,
 		RateLimitPerMinute:   rateLimit,
 		MaxConnectionsPerKey: maxConns,
+		AdminToken:           strings.TrimSpace(opts.adminToken),
+		AdminConfigStore:     adminStore,
 	}
 	logStartupSecurity(opts, token, generated, publicListen)
 	return cfg, token, nil

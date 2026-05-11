@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,15 @@ import (
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
+
+func mustReadFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
 
 func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
 	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
@@ -63,6 +74,88 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	}
 	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Fatalf("X-Content-Type-Options = %q; want nosniff", got)
+	}
+}
+
+func TestAdminRoutesHiddenWithoutAdminToken(t *testing.T) {
+	srv := NewServer(Config{})
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d; want 404", rec.Code)
+	}
+}
+
+func TestAdminConfigRequiresAdminToken(t *testing.T) {
+	srv := NewServer(Config{AdminToken: "admin"})
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d; want 401", rec.Code)
+	}
+}
+
+func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.json")
+	store := NewAdminConfigStore(path, AdminConfig{})
+	srv := NewServer(Config{AdminToken: "admin", AdminConfigStore: store})
+	body := strings.NewReader(`{"rate_limit_per_minute":33,"max_connections_per_key":4}`)
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", body)
+	req.Header.Set("Authorization", "Bearer admin")
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s; want 200", rec.Code, rec.Body.String())
+	}
+	cfg, err := LoadAdminConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RateLimitPerMinute != 33 || cfg.MaxConnectionsPerKey != 4 {
+		t.Fatalf("persisted limits=%d/%d; want 33/4", cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
+	}
+}
+
+func TestAdminCreateReadOnlyTokenStoresHashAndAuthenticates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.json")
+	store := NewAdminConfigStore(path, AdminConfig{})
+	srv := NewServer(Config{Token: "rw", AdminToken: "admin", AdminConfigStore: store})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/read-only-tokens", strings.NewReader(`{"id":"viewer"}`))
+	req.Header.Set("Authorization", "Bearer admin")
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s; want 200", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != "viewer" || created.Token == "" {
+		t.Fatalf("created = %+v; want id and one-time token", created)
+	}
+	data := mustReadFileString(t, path)
+	if strings.Contains(data, created.Token) {
+		t.Fatalf("config leaked created token: %s", data)
+	}
+	apiReq := httptest.NewRequest(http.MethodGet, "/api/version?token="+created.Token, nil)
+	apiRec := httptest.NewRecorder()
+	srv.ServeHTTP(apiRec, apiReq)
+	if apiRec.Code != http.StatusOK {
+		t.Fatalf("created read-only token status=%d; want 200", apiRec.Code)
 	}
 }
 

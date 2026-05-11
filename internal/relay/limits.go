@@ -59,6 +59,16 @@ func (l *fixedWindowLimiter) allow(key string) bool {
 	return true
 }
 
+func (l *fixedWindowLimiter) setLimit(limit int) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.limit = limit
+	l.hits = make(map[string]windowHit)
+}
+
 type connectionLimiter struct {
 	mu    sync.Mutex
 	limit int
@@ -96,6 +106,15 @@ func (l *connectionLimiter) release(key string) {
 		return
 	}
 	l.open[key]--
+}
+
+func (l *connectionLimiter) setLimit(limit int) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.limit = limit
 }
 
 func requestLimitKey(r *http.Request) string {

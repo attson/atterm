@@ -48,6 +48,11 @@ type Config struct {
 	// MaxConnectionsPerKey limits active WS connections per remote IP/token
 	// pair. Zero uses a conservative default; negative disables.
 	MaxConnectionsPerKey int
+	// AdminToken enables /admin routes when non-empty. It is never accepted via
+	// query parameters.
+	AdminToken string
+	// AdminConfigStore persists admin API changes when configured.
+	AdminConfigStore *AdminConfigStore
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -87,6 +92,12 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	if cfg.WebDir != "" {
 		s.mux.Handle("/", http.FileServer(http.Dir(cfg.WebDir)))
+	}
+	if cfg.AdminToken != "" {
+		s.mux.HandleFunc("/admin/", s.handleAdminPage)
+		s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
+		s.mux.HandleFunc("/admin/api/read-only-tokens", s.handleAdminReadOnlyTokensHTTP)
+		s.mux.HandleFunc("/admin/api/read-only-tokens/", s.handleAdminReadOnlyTokenHTTP)
 	}
 	return s
 }

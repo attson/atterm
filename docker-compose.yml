@@ -10,4 +10,18 @@ services:
       ATTERM_RELAY_DEBUG_PAYLOAD: ${ATTERM_RELAY_DEBUG_PAYLOAD:-0}
     ports:
       - "${ATTERM_RELAY_PORT:-8080}:8080"
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     command: ["--addr", ":8080", "--web", "/app/web"]
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: atterm-watchtower
+    profiles: ["auto-update"]
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_POLL_INTERVAL: ${ATTERM_WATCHTOWER_INTERVAL:-300}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

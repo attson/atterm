@@ -26,7 +26,7 @@ var Version = "dev"
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
-	origins := flag.String("origins", "", "comma-separated allowed Origin host patterns (empty = allow any, dev only)")
+	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin host patterns (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
 	adminToken := flag.String("admin-token", os.Getenv("ATTERM_ADMIN_TOKEN"), "admin bearer token for /admin routes (or ATTERM_ADMIN_TOKEN; empty disables admin)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
@@ -151,6 +151,13 @@ func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
 		return relay.Config{}, "", fmt.Errorf("refusing public relay with weak token; set a strong ATTERM_TOKEN or pass --dev-insecure for development")
 	}
 	allowedOrigins := splitCSV(opts.origins)
+	if publicListen && len(allowedOrigins) == 0 && !opts.devInsecure {
+		return relay.Config{}, "", fmt.Errorf("refusing public relay without --origins; set --origins https://relay.example.com or pass --dev-insecure for development")
+	}
+	adminToken := strings.TrimSpace(opts.adminToken)
+	if publicListen && adminToken != "" && isWeakAdminToken(adminToken) && !opts.devInsecure {
+		return relay.Config{}, "", fmt.Errorf("refusing public relay with weak admin token; set a strong ATTERM_ADMIN_TOKEN or pass --dev-insecure for development")
+	}
 	adminCfg := relay.AdminConfig{}
 	var adminStore *relay.AdminConfigStore
 	if opts.configPath != "" {
@@ -185,7 +192,7 @@ func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
 		DebugPayload:         opts.debugPayload,
 		RateLimitPerMinute:   rateLimit,
 		MaxConnectionsPerKey: maxConns,
-		AdminToken:           strings.TrimSpace(opts.adminToken),
+		AdminToken:           adminToken,
 		AdminConfigStore:     adminStore,
 	}
 	logStartupSecurity(opts, token, generated, publicListen)
@@ -219,6 +226,11 @@ func generateRelayToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func isWeakAdminToken(token string) bool {
+	token = strings.TrimSpace(token)
+	return token == "admin" || token == "dev" || len(token) < 16
 }
 
 func isPublicListenAddr(addr string) bool {

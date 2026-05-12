@@ -8,6 +8,9 @@ services:
       # at startup and prints it in `docker compose logs atterm-relay`.
       ATTERM_TOKEN: ${ATTERM_TOKEN:-}
       ATTERM_READ_ONLY_TOKENS: ${ATTERM_READ_ONLY_TOKENS:-}
+      # Required for non-insecure public relay startup. Set this to the exact
+      # browser origin, e.g. https://relay.example.com.
+      ATTERM_ORIGINS: ${ATTERM_ORIGINS:-http://localhost:8080}
       ATTERM_RATE_LIMIT_PER_MINUTE: ${ATTERM_RATE_LIMIT_PER_MINUTE:-0}
       ATTERM_MAX_CONNECTIONS_PER_KEY: ${ATTERM_MAX_CONNECTIONS_PER_KEY:-0}
       ATTERM_RELAY_CONFIG: ${ATTERM_RELAY_CONFIG:-}

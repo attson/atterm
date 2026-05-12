@@ -20,7 +20,7 @@ import {
   tokenFromLocation,
   tokenURLWithoutSecret,
   versionLabel,
-  wsURL as makeWSURL,
+  webSocketAuth as makeWebSocketAuth,
 } from "./app-core.js";
 
 const TYPE = {
@@ -193,11 +193,11 @@ tokenToggle.addEventListener("click", () => {
   tokenToggle.setAttribute("aria-expanded", String(!tokenPanel.hidden));
 });
 
-function wsURL(path) {
-  return makeWSURL(location.protocol, location.host, path, getToken());
+function wsAuth(path) {
+  return makeWebSocketAuth(location.protocol, location.host, path, getToken());
 }
 function apiURL(path) {
-  return makeAPIURL(path, getToken());
+  return makeAPIURL(path, "");
 }
 
 function setStatus(text, kind) {
@@ -439,7 +439,8 @@ function attachToSession(sessionId) {
 }
 
 function openWS(sessionId) {
-  const ws = new WebSocket(wsURL("/client"));
+  const auth = wsAuth("/client");
+  const ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
   ws.binaryType = "arraybuffer";
   currentWS = ws;
   setStatus("connecting...");

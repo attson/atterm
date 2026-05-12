@@ -16,7 +16,7 @@ import {
   shortcutInput,
   tokenFromLocation,
   versionLabel,
-  wsURL,
+  webSocketAuth,
 } from "./app-core.js";
 
 test("tokenFromLocation stores query token and returns it", () => {
@@ -52,14 +52,10 @@ test("tokenFromLocation falls back to stored token", () => {
   assert.equal(tokenFromLocation("https://relay.example.com/", storage), "stored-token");
 });
 
-test("wsURL follows page protocol and appends token query", () => {
-  assert.equal(
-    wsURL("https:", "relay.example.com", "/client", "tok en"),
-    "wss://relay.example.com/client?token=tok%20en",
-  );
-  assert.equal(
-    wsURL("http:", "127.0.0.1:8080", "/client", ""),
-    "ws://127.0.0.1:8080/client",
+test("webSocketAuth sends token with subprotocol instead of query", () => {
+  assert.deepEqual(
+    webSocketAuth("https:", "relay.example.com", "/client", "tok_en-123"),
+    { url: "wss://relay.example.com/client", protocols: ["atterm-token.tok_en-123"] },
   );
 });
 

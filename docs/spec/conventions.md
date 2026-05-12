@@ -174,10 +174,10 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 给 frontend 加新依赖未经讨论（已有 vue + xterm 已够）
 - ❌ 自动更新缺少 Ed25519/SHA256 校验时继续安装（缺公钥也必须 fail-closed）
 - ❌ 把 `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 写进仓库、日志或 release artifact
-- ❌ 公网 relay 默认允许弱 token/空鉴权；需要 `--dev-insecure` 才能放开弱 token
+- ❌ 公网 relay 默认允许弱 token/空鉴权、缺失 `--origins` 或弱 admin token；需要 `--dev-insecure` 才能放开这些限制
 - ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
 - ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用同源 vendored 资源，避免 CSP/PWA 回归
-- ❌ 读取 `?token=` 后继续把 secret 留在地址栏、日志或可分享 URL 中
+- ❌ 读取 `?token=` 后继续把 secret 留在地址栏、日志或可分享 URL 中；WS 鉴权必须用 `Sec-WebSocket-Protocol`，relay 不接受 `/client?token=...`
 - ❌ 让 relay admin config 持久化主 write token；只能保存 hash 后的只读 token
 - ❌ 把远程权限只做成 UI 提示；relay 和 desktop host 都必须实际拦截越权帧
 

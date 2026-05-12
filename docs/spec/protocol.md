@@ -6,8 +6,8 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / 直连 client）；浏览器 client 无法跨源带 header，所以也支持 `?token=<urlencoded>` query 参数和 `Sec-WebSocket-Protocol: atterm-token.<token>`。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。浏览器 web client 读取 `?token=` 后会保存到本地存储并清理地址栏。
-- CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署建议设置 `--origins https://relay.example.com` 并套 HTTPS/WSS 反向代理。
+- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / REST）；浏览器 WebSocket client 使用 `Sec-WebSocket-Protocol: atterm-token.<token>` 或 `atterm-token-b64.<base64url(utf8 token)>`，避免 token 进入 URL 日志。`?token=<urlencoded>` query 参数只用于手工打开 web 页面时的 bootstrap 和 REST 兼容；`/client`、`/client-sessions` 不再接受 query token。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。浏览器 web client 读取 `?token=` 后会保存到本地存储并清理地址栏。
+- CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。
 - 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端必须只加载同源静态资源；xterm 资源 vendored 在 `web/vendor/`。
 
 ## 帧格式
@@ -247,16 +247,11 @@ CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直
 Authorization: Bearer <token>
 ```
 
-或：
-
-```
-GET /client?token=<urlencoded_token>
-```
-
-或（仅浏览器 WS subprotocol）：
+或（仅浏览器 WS subprotocol；`/client` 和 `/client-sessions` 必须使用这种方式，不能用 query token）：
 
 ```
 Sec-WebSocket-Protocol: atterm-token.<token>
+Sec-WebSocket-Protocol: atterm-token-b64.<base64url(utf8 token)>
 ```
 
 token 由部署方设置（环境变量 `ATTERM_TOKEN`）。`atterm-relay`
@@ -277,8 +272,9 @@ read token 始终只有 `view`；write token 也不能超过 owner 发布的权�
 
 - 未设置 `ATTERM_TOKEN`：自动生成 32 字节随机 token（base64url）并打印访问 URL。
 - 公网监听（例如 `:8080` / `0.0.0.0:8080`）拒绝弱 token（`dev` 或长度 <16），除非显式传 `--dev-insecure`。
-- 未设置 `--origins` 时允许启动但打印 warning；浏览器 WS 将接受任意 Origin。生产建议显式设置。
-- `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用。
+- 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式传 `--dev-insecure`。
+- 公网监听启用 `/admin/` 时拒绝弱 `ATTERM_ADMIN_TOKEN`（`admin`、`dev` 或长度 <16），除非显式传 `--dev-insecure`。
+- `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：HTTP 请求与 WS upgrade 先按远端 IP 限流；鉴权成功后再按远端 IP + token hash 限流。`0` 用默认值，负数禁用。
 - `--max-connections-per-key` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用。
 - `--config` / `ATTERM_RELAY_CONFIG`：持久化 relay admin JSON 配置路径。只保存运行参数和 hash 后的只读 token，不保存主 write token。
 - `--admin-token` / `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 和 `/admin/api/*`。admin API 只接受 `Authorization: Bearer <admin-token>`，不支持 query token。

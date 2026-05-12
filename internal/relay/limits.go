@@ -129,3 +129,11 @@ func requestLimitKey(r *http.Request) string {
 	sum := sha256.Sum256([]byte(token))
 	return host + "\x00" + base64.RawURLEncoding.EncodeToString(sum[:])
 }
+
+func requestIPLimitKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}

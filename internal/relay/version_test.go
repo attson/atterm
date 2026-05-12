@@ -26,6 +26,12 @@ func mustReadFileString(t *testing.T, path string) string {
 	return string(data)
 }
 
+func dialClientWithToken(ctx context.Context, url, token string) (*websocket.Conn, *http.Response, error) {
+	return websocket.Dial(ctx, url, &websocket.DialOptions{
+		Subprotocols: []string{"atterm-token." + token},
+	})
+}
+
 func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
 	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
 	req := httptest.NewRequest(http.MethodGet, "/api/version?token=rt", nil)
@@ -179,6 +185,26 @@ func TestRateLimitRejectsExcessRequests(t *testing.T) {
 	}
 }
 
+func TestRateLimitBadTokensShareIPBucket(t *testing.T) {
+	srv := NewServer(Config{Token: "real-token", Version: "v1.2.3", RateLimitPerMinute: 1})
+
+	req1 := httptest.NewRequest(http.MethodGet, "/api/version?token=bad-a", nil)
+	req1.RemoteAddr = "203.0.113.10:10000"
+	rec1 := httptest.NewRecorder()
+	srv.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusUnauthorized {
+		t.Fatalf("first status = %d; want 401", rec1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/version?token=bad-b", nil)
+	req2.RemoteAddr = "203.0.113.10:10001"
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status = %d; want 429", rec2.Code)
+	}
+}
+
 func TestRequestLimitKeyDoesNotExposeBearerToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/version?token=secret-token", nil)
 	req.RemoteAddr = "203.0.113.10:10000"
@@ -190,6 +216,65 @@ func TestRequestLimitKeyDoesNotExposeBearerToken(t *testing.T) {
 	}
 	if !strings.HasPrefix(key, "203.0.113.10\x00") {
 		t.Fatalf("limit key = %q; want remote host prefix", key)
+	}
+}
+
+func TestClientSessionsAcceptsSubprotocolToken(t *testing.T) {
+	srv := NewServer(Config{Token: "rw"})
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client-sessions", &websocket.DialOptions{
+		Subprotocols: []string{"atterm-token.rw"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if conn.Subprotocol() != "atterm-token.rw" {
+		t.Fatalf("subprotocol = %q; want atterm-token.rw", conn.Subprotocol())
+	}
+}
+
+func TestClientWebSocketRejectsQueryToken(t *testing.T) {
+	srv := NewServer(Config{Token: "rw"})
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	conn, resp, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token=rw", "rw")
+	if err == nil {
+		conn.Close(websocket.StatusNormalClosure, "")
+		t.Fatal("websocket connected with query token; want rejection")
+	}
+	if resp == nil {
+		t.Fatalf("response is nil; err=%v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d; want 401; err=%v", resp.StatusCode, err)
+	}
+}
+
+func TestClientSessionsWebSocketRejectsQueryToken(t *testing.T) {
+	srv := NewServer(Config{Token: "rw"})
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	conn, resp, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client-sessions?token=rw", "rw")
+	if err == nil {
+		conn.Close(websocket.StatusNormalClosure, "")
+		t.Fatal("session list websocket connected with query token; want rejection")
+	}
+	if resp == nil {
+		t.Fatalf("response is nil; err=%v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d; want 401; err=%v", resp.StatusCode, err)
 	}
 }
 
@@ -243,7 +328,7 @@ func TestReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token=ro", nil)
+	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "ro")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +369,7 @@ func TestHashedReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token=ro-hash", nil)
+	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "ro-hash")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +403,7 @@ func TestSessionPermissionViewDropsInputForWriteToken(t *testing.T) {
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token=rw", nil)
+	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "rw")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +437,7 @@ func TestSessionPermissionControlAllowsInputButDropsPasteImage(t *testing.T) {
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token=rw", nil)
+	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "rw")
 	if err != nil {
 		t.Fatal(err)
 	}

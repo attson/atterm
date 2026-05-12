@@ -122,7 +122,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !s.rate.allow(requestLimitKey(r)) {
+	if !s.rate.allow(requestIPLimitKey(r)) {
 		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
@@ -140,10 +140,38 @@ func (s *Server) acceptOptions() *websocket.AcceptOptions {
 	}
 }
 
+func (s *Server) acceptOptionsWithAuthSubprotocol(r *http.Request) *websocket.AcceptOptions {
+	opts := s.acceptOptions()
+	if p := r.Header.Get("Sec-WebSocket-Protocol"); p != "" {
+		for _, sp := range strings.Split(p, ",") {
+			sp = strings.TrimSpace(sp)
+			if strings.HasPrefix(sp, "atterm-token.") || strings.HasPrefix(sp, "atterm-token-b64.") {
+				opts.Subprotocols = []string{sp}
+				break
+			}
+		}
+	}
+	return opts
+}
+
+func (s *Server) allowAuthenticatedRequest(w http.ResponseWriter, r *http.Request) bool {
+	if tokenFromRequest(r) == "" {
+		return true
+	}
+	if !s.rate.allow(requestLimitKey(r)) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
 		s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
 	key := requestLimitKey(r)
@@ -168,6 +196,9 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !s.allowAuthenticatedRequest(w, r) {
+		return
+	}
 	key := requestLimitKey(r)
 	if !s.conns.acquire(key) {
 		http.Error(w, "too many connections", http.StatusTooManyRequests)
@@ -185,10 +216,13 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClientWithConfig(r, s.cfg)
+	scope := authorizeClientWebSocketWithConfig(r, s.cfg)
 	if scope == authNone {
 		s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
 	key := requestLimitKey(r)
@@ -198,16 +232,7 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.conns.release(key)
 	// browsers need to negotiate the same subprotocol if used for auth
-	opts := s.acceptOptions()
-	if p := r.Header.Get("Sec-WebSocket-Protocol"); p != "" {
-		for _, sp := range strings.Split(p, ",") {
-			sp = strings.TrimSpace(sp)
-			if strings.HasPrefix(sp, "atterm-token.") {
-				opts.Subprotocols = []string{sp}
-				break
-			}
-		}
-	}
+	opts := s.acceptOptionsWithAuthSubprotocol(r)
 	c, err := websocket.Accept(w, r, opts)
 	if err != nil {
 		s.debugf("ws reject path=/client remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
@@ -219,10 +244,13 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClientWithConfig(r, s.cfg)
+	scope := authorizeClientWebSocketWithConfig(r, s.cfg)
 	if scope == authNone {
 		s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
 	key := requestLimitKey(r)
@@ -231,7 +259,7 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer s.conns.release(key)
-	c, err := websocket.Accept(w, r, s.acceptOptions())
+	c, err := websocket.Accept(w, r, s.acceptOptionsWithAuthSubprotocol(r))
 	if err != nil {
 		s.debugf("ws reject path=/client-sessions remote=%s origin=%q error=%q", r.RemoteAddr, r.Header.Get("Origin"), err)
 		return
@@ -247,6 +275,9 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !s.allowAuthenticatedRequest(w, r) {
+		return
+	}
 	infos := s.sessionInfoList()
 	s.debugf("http api_sessions remote=%s sessions=%d", r.RemoteAddr, len(infos))
 	w.Header().Set("Content-Type", "application/json")
@@ -257,6 +288,9 @@ func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
 	if authorizeClientWithConfig(r, s.cfg) == authNone {
 		s.debugf("http reject path=/api/version remote=%s reason=unauthorized", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
 	version := s.cfg.Version

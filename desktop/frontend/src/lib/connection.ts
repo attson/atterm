@@ -40,6 +40,7 @@ export interface SessionListHandlers {
 }
 
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
+const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -49,6 +50,28 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
     out += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(out);
+}
+
+function stringToBase64URL(value: string): string {
+  return arrayBufferToBase64(new TextEncoder().encode(value).buffer)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function tokenSubprotocol(token: string): string | undefined {
+  if (!token) return undefined;
+  if (SUBPROTOCOL_SAFE.test(token)) return `atterm-token.${token}`;
+  return `atterm-token-b64.${stringToBase64URL(token)}`;
+}
+
+export function webSocketAuth(endpoint: Endpoint, path: string): { url: string; protocols?: string[] } {
+  const base = endpoint.url.replace(/\/$/, "");
+  const protocol = tokenSubprotocol(endpoint.token);
+  return {
+    url: `${base}${path}`,
+    protocols: protocol ? [protocol] : undefined,
+  };
 }
 
 export class SessionListConnection {
@@ -83,15 +106,10 @@ export class SessionListConnection {
     }
   }
 
-  private url(): string {
-    const t = encodeURIComponent(this.endpoint.token);
-    const base = this.endpoint.url.replace(/\/$/, "");
-    return `${base}/client-sessions${t ? `?token=${t}` : ""}`;
-  }
-
   private openWS(): void {
     if (this.detached) return;
-    const ws = new WebSocket(this.url());
+    const auth = webSocketAuth(this.endpoint, "/client-sessions");
+    const ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
@@ -203,15 +221,10 @@ export class SessionConnection {
     this.pendingResize = { cols, rows };
   }
 
-  private url(): string {
-    const t = encodeURIComponent(this.endpoint.token);
-    const base = this.endpoint.url.replace(/\/$/, "");
-    return `${base}/client${t ? `?token=${t}` : ""}`;
-  }
-
   private openWS(): void {
     if (this.detached) return;
-    const ws = new WebSocket(this.url());
+    const auth = webSocketAuth(this.endpoint, "/client");
+    const ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
@@ -283,9 +296,8 @@ export class SessionConnection {
 }
 
 export async function fetchSessions(endpoint: Endpoint): Promise<SessionInfo[]> {
-  const t = encodeURIComponent(endpoint.token);
   const httpUrl = endpoint.url.replace(/^ws/, "http").replace(/\/$/, "");
-  const url = `${httpUrl}/api/sessions${t ? `?token=${t}` : ""}`;
+  const url = `${httpUrl}/api/sessions`;
   let res: Response;
   try {
     res = await fetch(url, {

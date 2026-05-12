@@ -44,19 +44,14 @@ func TestRelaySecurityRejectsWeakTokenOnPublicListen(t *testing.T) {
 	}
 }
 
-func TestRelaySecurityWarnsButAllowsPublicListenWithoutOriginsWithStrongToken(t *testing.T) {
-	var log bytes.Buffer
+func TestRelaySecurityRejectsPublicListenWithoutOrigins(t *testing.T) {
 	_, _, err := buildRelayConfig(relayOptions{
 		addr:    ":8080",
 		token:   "strong-random-token",
 		version: "test",
-		log:     &log,
 	})
-	if err != nil {
-		t.Fatalf("buildRelayConfig err: %v", err)
-	}
-	if !strings.Contains(log.String(), "origins") {
-		t.Fatalf("startup log %q does not warn about origins", log.String())
+	if err == nil || !strings.Contains(err.Error(), "origins") {
+		t.Fatalf("err = %v; want origins rejection", err)
 	}
 }
 
@@ -131,5 +126,18 @@ func TestRelaySecurityLoadsPersistentAdminConfig(t *testing.T) {
 	}
 	if len(cfg.ReadOnlyTokenHashes) != 1 {
 		t.Fatalf("ReadOnlyTokenHashes = %#v; want one hash", cfg.ReadOnlyTokenHashes)
+	}
+}
+
+func TestRelaySecurityRejectsWeakAdminTokenOnPublicListen(t *testing.T) {
+	_, _, err := buildRelayConfig(relayOptions{
+		addr:       ":8080",
+		token:      "strong-random-token",
+		origins:    "https://relay.example.com",
+		adminToken: "admin",
+		version:    "test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "weak admin token") {
+		t.Fatalf("err = %v; want weak admin token rejection", err)
 	}
 }

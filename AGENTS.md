@@ -47,7 +47,7 @@ atterm/
 6. **PTY winsize 必须在 fork 时设好**：前端的 `predictCellDims`（FitAddon 探针）→ `NewSession(cols/rows)` → `pty.StartWithSize`。子进程从一开始就是终态尺寸，避免开局 SIGWINCH 触发某些 zsh 主题的 `PROMPT_EOL_MARK`。`SessionConnection.sendResize` 在 WS 还 CONNECTING 时排队，TerminalView 比对 expectedCols/Rows 跳过无意义 RESIZE。三件耦合，单独动一个会回归。
 7. **更新流程不打扰用户**：`updater.go` 永远手动触发——后台只检查、不静默重启。`InstallAndQuit` 必须由用户在 Settings 里点 "force install & restart" 走过 `ConfirmInstallDialog` 确认才执行。dev 构建（`Version == "dev"`）整个 update 子系统短路。
 8. **自动更新必须验签**：release 构建通过 ldflags 注入 `main.UpdateVerifyPublicKey`。下载 asset 后必须先用 Ed25519 验证 `SHA256SUMS.sig`，再校验 asset SHA256；缺公钥、缺 `SHA256SUMS`/`.sig`、签名或 hash 不匹配都必须 fail-closed，不允许 install。
-9. **公网 relay 默认安全**：`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时自动生成高强度 token 并打印到日志。公网监听拒绝弱 token（如 `dev` 或长度 <16），除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP/token 做 HTTP/WS rate limit 与连接数限制。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
+9. **公网 relay 默认安全**：`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时自动生成高强度 token 并打印到日志。公网监听拒绝弱 token（如 `dev` 或长度 <16）、拒绝缺失 `--origins`/`ATTERM_ORIGINS`、拒绝弱 admin token，除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP + 已认证 token hash 做 HTTP/WS rate limit 与连接数限制。`/client` 和 `/client-sessions` WS token 必须走 `Sec-WebSocket-Protocol`，不接受 `?token=`。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
 10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源静态资源；xterm 资源放在 `web/vendor/` 并由 service worker 缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
 11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay read-only token 是运维侧兜底限制，和 owner 权限取交集。
 12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
@@ -83,6 +83,7 @@ gh run list --repo attson/atterm --limit 10
 环境变量：
 - `ATTERM_TOKEN`：relay 共享 bearer token；`atterm-relay` 启动时未指定会自动生成并打印到日志
 - `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 bearer token；可 list/attach/看输出，但 relay 会丢弃 `IN`/`RESIZE`/`PASTE_IMAGE`，且不能连 `/agent`/`/uplink`
+- `ATTERM_ORIGINS`：逗号分隔的浏览器 WebSocket Origin 白名单；公网 relay 必须配置（除非 `--dev-insecure`）
 - `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用
 - `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用
 - `ATTERM_RELAY_CONFIG`：relay admin 持久化 JSON 配置路径；只保存运行参数和 hash 后的只读 token，不保存主 write token

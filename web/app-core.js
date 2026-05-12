@@ -20,10 +20,31 @@ export function persistToken(storage, value) {
   storage.setItem(TOKEN_KEY, value.trim());
 }
 
-export function wsURL(protocol, host, path, token) {
+const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+function stringToBase64URL(value) {
+  const bytes = new TextEncoder().encode(value);
+  let out = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    out += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(out).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+export function tokenSubprotocol(token) {
+  if (!token) return undefined;
+  if (SUBPROTOCOL_SAFE.test(token)) return `atterm-token.${token}`;
+  return `atterm-token-b64.${stringToBase64URL(token)}`;
+}
+
+export function webSocketAuth(protocol, host, path, token) {
   const proto = protocol === "https:" ? "wss:" : "ws:";
-  const t = encodeURIComponent(token || "");
-  return `${proto}//${host}${path}${t ? `?token=${t}` : ""}`;
+  const subprotocol = tokenSubprotocol(token || "");
+  return {
+    url: `${proto}//${host}${path}`,
+    protocols: subprotocol ? [subprotocol] : undefined,
+  };
 }
 
 export function apiURL(path, token) {

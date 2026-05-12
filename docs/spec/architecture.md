@@ -217,9 +217,10 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 
 - `ATTERM_TOKEN` 为空时自动生成 32 字节随机 token，并在日志打印一次访问 URL；
 - 公网监听时拒绝弱 token（`dev` 或长度 <16），除非显式 `--dev-insecure`；
-- 未设置 `--origins` 时允许启动但 warning，生产建议设置为实际 HTTPS origin；
+- 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`；
+- 公网监听启用 `/admin/` 时拒绝弱 admin token（`admin`、`dev` 或长度 <16）；
 - 默认返回 CSP/security headers，`web/` 只允许同源 script/style；xterm 静态资源放在 `web/vendor/`；
-- 按远端 IP/token 对 HTTP 请求和 WS upgrade 做分钟级 rate limit，并限制同一 key 的活跃 WS 连接数；
+- 对 HTTP 请求和 WS upgrade 先按远端 IP 限流，鉴权成功后再按远端 IP + token hash 限流，并限制同一 key 的活跃 WS 连接数；
 - 支持只读 token（`ATTERM_READ_ONLY_TOKENS` / `--read-only-tokens`）：可 list/attach/看输出，但不能输入、resize、粘贴图片，也不能注册 agent/uplink；
 - 支持 owner 发布的 `remote_permission`（view/control/full），relay 和 desktop uplink 双重强制执行；
 - 可选 `--config` + `--admin-token` 启用持久化 admin 配置和 `/admin/`，但主 write token 永远不写入该配置；

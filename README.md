@@ -42,9 +42,11 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 
 - `atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成高强度 token，并在启动日志打印访问 URL。
 - 公网监听时拒绝弱 token（例如 `dev` 或长度 <16），除非显式传 `--dev-insecure`。
-- relay 默认返回 CSP / Referrer-Policy / nosniff / Permissions-Policy 等安全头，并按远端 IP/token 限制请求速率与活跃 WebSocket 连接数。
+- 公网监听必须配置 `--origins` / `ATTERM_ORIGINS`，并且 admin token 不能是 `admin`/`dev`/短 token，除非显式传 `--dev-insecure`。
+- relay 默认返回 CSP / Referrer-Policy / nosniff / Permissions-Policy 等安全头；请求先按远端 IP 限流，鉴权成功后再按 IP + token hash 限流，并限制活跃 WebSocket 连接数。
 - 浏览器客户端不再从 CDN 加载 xterm；所有 web 静态资源都走同源 `web/vendor/`，service worker 会缓存这些资源。
 - URL 里的 `?token=...` 会在读取并保存到浏览器本地存储后从地址栏移除，降低分享/截图/历史记录泄漏风险。
+- 桌面/web 客户端的 WebSocket 连接必须用 `Sec-WebSocket-Protocol` 传 token，避免 token 进入 WS URL；relay 端 `/client` 和 `/client-sessions` 不再接受 query token。
 - 可用 `ATTERM_READ_ONLY_TOKENS` 或 `--read-only-tokens` 配只读 token；只读用户可以列出/attach/看输出，但不能向 PTY 输入、resize 或粘贴图片。
 - 桌面端 Settings 可设置本机 session 的远程权限：`view` / `control` / `full`。该权限由 owner 发布，relay 与 desktop host 双重强制执行；read-only token 会继续把有效权限压成只读。
 - 可用 `ATTERM_RELAY_CONFIG`/`--config` + `ATTERM_ADMIN_TOKEN`/`--admin-token` 启用持久化 relay admin 配置和 `/admin/` 管理页。持久化配置不保存主 write token，只保存运行参数和 hash 后的只读 token。
@@ -62,6 +64,7 @@ docker compose logs atterm-relay   # 查看自动生成的 token
 
 - `ATTERM_RELAY_IMAGE`：relay 镜像，默认 `attson/atterm-relay:latest`
 - `ATTERM_RELAY_PORT`：宿主机端口，默认 `8080`
+- `ATTERM_ORIGINS`：浏览器 WebSocket Origin 白名单，默认 compose 示例为 `http://localhost:8080`；公网部署请改成实际 HTTPS origin，例如 `https://relay.example.com`
 - `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 token，适合临时分享“只能看不能输入”的会话入口
 - `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的请求/upgrade 分钟限额；`0` 用内置默认值，负数禁用
 - `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用内置默认值，负数禁用

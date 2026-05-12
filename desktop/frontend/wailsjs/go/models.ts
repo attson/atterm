@@ -94,6 +94,7 @@ export namespace main {
 	    asset_url: string;
 	    asset_size: number;
 	    download_dir: string;
+	    download_path: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UpdateState(source);
@@ -114,6 +115,7 @@ export namespace main {
 	        this.asset_url = source["asset_url"];
 	        this.asset_size = source["asset_size"];
 	        this.download_dir = source["download_dir"];
+	        this.download_path = source["download_path"];
 	    }
 	}
 

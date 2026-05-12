@@ -49,6 +49,7 @@ export interface UpdateState {
   asset_url: string;
   asset_size: number;
   download_dir: string;
+  download_path: string;
 }
 
 interface AppBindings {

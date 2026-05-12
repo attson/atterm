@@ -271,6 +271,15 @@ const isDev = computed(
               <span class="k">status</span>
               <span class="v">{{ updateStatusLine }}</span>
             </div>
+            <div
+              v-if="updateState!.download_path && (updateState!.ready || updateState!.downloading)"
+              class="kv"
+            >
+              <span class="k">download path</span>
+              <span class="v path" :title="updateState!.download_path">
+                {{ updateState!.download_path }}
+              </span>
+            </div>
           </div>
 
           <div v-if="!isDev" class="row autocheck">
@@ -373,9 +382,14 @@ button.danger:hover { background: rgba(248, 81, 73, 0.1); }
 .grid {
   display: grid; gap: 6px; font-size: 12px;
 }
-.kv { display: flex; gap: 12px; }
+.kv { display: flex; align-items: flex-start; gap: 12px; }
 .kv .k { color: var(--fg-dim); width: 130px; }
 .kv .v { color: var(--fg); }
+.kv .path {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
 .autocheck { justify-content: flex-start; margin-top: 12px; }
 .checkbox {
   display: flex; align-items: center; gap: 6px;

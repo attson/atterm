@@ -328,6 +328,9 @@ func TestUpdater_Download_WritesAtomicAsset(t *testing.T) {
 	if len(nonPartial) != 1 {
 		t.Errorf("expected 1 finished file in cache; got %v", matches)
 	}
+	if st.DownloadPath != nonPartial[0] {
+		t.Errorf("DownloadPath = %q; want %q", st.DownloadPath, nonPartial[0])
+	}
 	got, _ := os.ReadFile(nonPartial[0])
 	if string(got) != string(body) {
 		t.Errorf("file content = %q; want %q", string(got), string(body))

@@ -36,19 +36,20 @@ var UpdateVerifyPublicKey string
 // UpdateState is the observable view of the auto-update subsystem.
 // Mirrored as a TypeScript interface in desktop/frontend/src/lib/api.ts.
 type UpdateState struct {
-	Current     string `json:"current"`
-	Latest      string `json:"latest"`
-	Available   bool   `json:"available"`
-	Notes       string `json:"notes"`
-	Checking    bool   `json:"checking"`
-	LastCheckAt int64  `json:"last_check_at"`
-	Downloading bool   `json:"downloading"`
-	DownloadPct int    `json:"download_pct"`
-	Ready       bool   `json:"ready"`
-	Error       string `json:"error"`
-	AssetURL    string `json:"asset_url"`
-	AssetSize   int64  `json:"asset_size"`
-	DownloadDir string `json:"download_dir"`
+	Current      string `json:"current"`
+	Latest       string `json:"latest"`
+	Available    bool   `json:"available"`
+	Notes        string `json:"notes"`
+	Checking     bool   `json:"checking"`
+	LastCheckAt  int64  `json:"last_check_at"`
+	Downloading  bool   `json:"downloading"`
+	DownloadPct  int    `json:"download_pct"`
+	Ready        bool   `json:"ready"`
+	Error        string `json:"error"`
+	AssetURL     string `json:"asset_url"`
+	AssetSize    int64  `json:"asset_size"`
+	DownloadDir  string `json:"download_dir"`
+	DownloadPath string `json:"download_path"`
 }
 
 // updaterConfig is the constructor-time bag for Updater. Test code
@@ -370,6 +371,7 @@ func (u *Updater) Download(ctx context.Context) error {
 	u.state.Ready = false
 	u.state.Error = ""
 	u.state.DownloadDir = dir
+	u.state.DownloadPath = final
 	u.mu.Unlock()
 
 	defer func() {

@@ -18,3 +18,11 @@ describe("TerminalView overlay placement", () => {
     expect(offsetStyle).toMatch(/top\s*:\s*34px/);
   });
 });
+
+describe("TerminalView fit geometry", () => {
+  test("puts terminal padding on xterm element so FitAddon subtracts it", () => {
+    const termStyle = styleBlockFor(".term");
+    expect(termStyle).not.toMatch(/padding\s*:/);
+    expect(source).toMatch(/:deep\(\.xterm\)\s*\{[^}]*padding\s*:\s*6px 8px/);
+  });
+});

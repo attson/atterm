@@ -217,6 +217,9 @@ watch(
 .term {
   position: absolute;
   inset: 0;
+}
+.term :deep(.xterm) {
+  /* FitAddon subtracts padding from the xterm element, not this host. */
   padding: 6px 8px;
 }
 .overlay {

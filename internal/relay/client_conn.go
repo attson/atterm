@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
@@ -13,8 +14,9 @@ import (
 	"nhooyr.io/websocket"
 )
 
-const (
-	clientReadLimit  = 17 * 1024 * 1024
+const clientReadLimit = 17 * 1024 * 1024
+
+var (
 	clientWriteWait  = 10 * time.Second
 	clientPingPeriod = 25 * time.Second
 )
@@ -58,6 +60,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					cancel()
 					if err != nil {
 						s.debugf("client ping_failed error=%q", err)
+						// If only the writer side notices a dead browser, tear
+						// down the websocket so the reader loop unblocks and the
+						// subscriber is removed. Otherwise mirror sessions can stay
+						// stuck above zero subscribers and never issue another
+						// STREAM_REQUEST.
+						_ = c.CloseNow()
 						return
 					}
 				case f := <-sub.Out():
@@ -67,6 +75,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					cancel()
 					if err != nil {
 						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
+						_ = c.CloseNow()
 						return
 					}
 					if pacer.observe(f) {
@@ -91,7 +100,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		f, err := readFrame(ctx, c)
 		if err != nil {
 			var ce websocket.CloseError
-			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) {
+			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
 				log.Printf("client: read: %v", err)
 			}
 			return

@@ -13,7 +13,7 @@ services:
       ATTERM_ORIGINS: ${ATTERM_ORIGINS:-http://localhost:8080}
       ATTERM_RATE_LIMIT_PER_MINUTE: ${ATTERM_RATE_LIMIT_PER_MINUTE:-0}
       ATTERM_MAX_CONNECTIONS_PER_KEY: ${ATTERM_MAX_CONNECTIONS_PER_KEY:-0}
-      ATTERM_RELAY_CONFIG: ${ATTERM_RELAY_CONFIG:-}
+      ATTERM_RELAY_CONFIG: ${ATTERM_RELAY_CONFIG:-/etc/atterm/relay.json}
       ATTERM_ADMIN_TOKEN: ${ATTERM_ADMIN_TOKEN:-}
       ATTERM_RELAY_DEBUG: ${ATTERM_RELAY_DEBUG:-0}
       ATTERM_RELAY_DEBUG_PAYLOAD: ${ATTERM_RELAY_DEBUG_PAYLOAD:-0}
@@ -22,6 +22,8 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     command: ["--addr", ":8080", "--web", "/app/web"]
+    volumes:
+      - ${ATTERM_RELAY_CONFIG_DIR:-./data/atterm-relay}:/etc/atterm
 
   watchtower:
     image: containrrr/watchtower:latest

@@ -68,7 +68,8 @@ docker compose logs atterm-relay   # 查看自动生成的 token
 - `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 token，适合临时分享“只能看不能输入”的会话入口
 - `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的请求/upgrade 分钟限额；`0` 用内置默认值，负数禁用
 - `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用内置默认值，负数禁用
-- `ATTERM_RELAY_CONFIG`：持久化 admin 配置 JSON 路径，例如 `/etc/atterm/relay.json`
+- `ATTERM_RELAY_CONFIG`：容器内持久化 admin 配置 JSON 路径，默认 `/etc/atterm/relay.json`
+- `ATTERM_RELAY_CONFIG_DIR`：宿主机绑定目录，默认 `./data/atterm-relay`，会挂载到容器 `/etc/atterm`
 - `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 管理页和 `/admin/api/*`；admin API 只接受 Authorization header
 - `ATTERM_RELAY_DEBUG=1`：打印 relay 交互日志
 - `ATTERM_RELAY_DEBUG_PAYLOAD=1`：额外打印 IN/OUT 字节内容（仅调试用）

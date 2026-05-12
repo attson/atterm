@@ -13,6 +13,7 @@ const props = withDefaults(
     sessionId: string;
     active?: boolean;
     focused?: boolean;
+    avoidTopRightBadge?: boolean;
     // The PTY's known size at the time of attach (from SessionInfo).
     // When this matches the local xterm's fit dimensions, we skip the
     // initial RESIZE so cross-attached remote shells don't see a
@@ -22,7 +23,7 @@ const props = withDefaults(
     expectedCols?: number;
     expectedRows?: number;
   }>(),
-  { active: true, focused: false }
+  { active: true, focused: false, avoidTopRightBadge: false }
 );
 
 const termContainer = ref<HTMLDivElement | null>(null);
@@ -187,7 +188,11 @@ watch(
 <template>
   <div class="term-view" :class="{ focused }">
     <div ref="termContainer" class="term"></div>
-    <div v-if="active && (status !== 'attached' || replayProgress)" class="overlay">
+    <div
+      v-if="active && (status !== 'attached' || replayProgress)"
+      class="overlay"
+      :class="{ 'avoid-top-right-badge': avoidTopRightBadge }"
+    >
       <template v-if="replayProgress">
         <span>{{ formatReplayProgress(replayProgress) }}</span>
         <div class="progress-track" aria-hidden="true">
@@ -225,6 +230,9 @@ watch(
   font-size: 12px;
   color: var(--fg-dim);
   pointer-events: none;
+}
+.overlay.avoid-top-right-badge {
+  top: 34px;
 }
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }

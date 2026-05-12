@@ -56,6 +56,7 @@ function formatWho(info: SessionInfo | null): string {
         :focused="active && idx === tab.activePaneIdx"
         :expected-cols="sessionInfoFor(pane)?.cols"
         :expected-rows="sessionInfoFor(pane)?.rows"
+        :avoid-top-right-badge="pane.remote"
       />
       <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
 

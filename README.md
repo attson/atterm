@@ -1,320 +1,306 @@
-# atterm
+# AT Term
 
-跨平台终端模拟器 + 内建会话云同步。所有从 atterm 启动的会话都可在任意设备 attach、查看历史、继续输入。核心场景：本机跑 codex/claude 类的长 AI 任务，离开工位后用手机或另一台机器接管。
+AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动的 shell、Codex、Claude 等长任务，可以在离开电脑后从手机、浏览器或另一台电脑继续查看和输入。
 
-**当前能力**
+> 一句话：本地先好用；需要远程时，再把会话安全地同步到自己的 relay。
 
-- ✅ Wails 桌面 app（Linux / macOS / Windows）：多 tab、每 tab 1/2/4 pane 分屏（⌘N / ⌘⇧N，Linux/Windows 用 Ctrl）、本地 PTY、cwd 跟踪、远程 cast 面板
-- ✅ 内置自动更新：Settings → Updates 检查/下载/用户主动重启升级（GitHub Releases，dev 构建禁用）
-- ✅ 自动更新验签：release asset 通过 `SHA256SUMS` + Ed25519 签名校验后才允许安装
-- ✅ 中央 relay：本地或公网部署，统一 attach 入口
-- ✅ Lazy 远程同步：远程 relay 静默时不传字节，按需上传，本地体验不受其可达性影响
-- ⬜ 用户系统、TLS 自动化、移动端、shell 集成（路线图见 [`docs/spec/architecture.md`](docs/spec/architecture.md)）
+## 适合谁
 
-## 三种使用方式
+- 经常跑长时间 AI / 构建 / 运维任务，希望离开工位后还能接着看的用户。
+- 想用一个轻量桌面终端，同时保留浏览器远程 attach 能力的开发者。
+- 偏好自托管，不想把终端输入输出交给第三方平台的人。
 
-### 1. 桌面 app（多数用户用这个）
+## 现在能做什么
 
-下载预编译产物：[Releases](https://github.com/attson/atterm/releases)。
-
-| 平台 | 文件 |
+| 能力 | 状态 |
 |------|------|
-| Linux x64 | `AT-Term-linux-amd64.tar.gz` |
-| macOS Apple Silicon | `AT-Term-darwin-arm64.zip` |
-| Windows x64 | `AT-Term-windows-amd64.zip` |
+| 桌面终端 | 支持 macOS / Linux / Windows，多 tab、本地 PTY、cwd 跟踪 |
+| 分屏 | 每个 tab 支持 1 / 2 / 4 pane，macOS 用 `⌘N` / `⌘⇧N`，Linux/Windows 用 `Ctrl` |
+| 远程接管 | 桌面端连上 relay 后，其他浏览器或桌面端可 attach 同一会话 |
+| 手机浏览器 | 支持 PWA、会话列表、触控终端、常用快捷键 |
+| Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
+| 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
+| 公网 relay 安全默认值 | 强 token、Origin 白名单、限流、安全响应头、只读 token |
 
-解压运行即可。Linux 需要系统已装 `libwebkit2gtk-4.1-0`；Windows 需要 WebView2 Runtime（Win11 自带）。
+还在路线图中的能力：用户系统、TLS 自动化、移动端原生应用、shell 集成、主题/字体配置。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
 
-### 2. 自己跑 relay + 浏览器
+## 快速开始
 
-不想装桌面端，只想在浏览器里看：
+### 方式 A：只用桌面端
 
-```bash
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
-ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
-# 浏览器: http://localhost:8080/#token=dev
-```
+1. 到 [Releases](https://github.com/attson/atterm/releases) 下载对应平台的包。
+2. 解压或安装后启动 `AT Term`。
+3. 像普通终端一样新建 tab、分屏、运行命令。
 
-手机接管：iPhone Safari 可以直接打开同一个 relay URL，例如
-`https://relay.example.com/#token=...`。页面支持添加到主屏幕作为 PWA；手机端会显示触控优化的 session 列表、终端视图和 `Esc` / `Tab` / `Ctrl-C` / 方向键等快捷键。真实部署建议使用 HTTPS/WSS。
+| 平台 | 推荐文件 | 备注 |
+|------|----------|------|
+| macOS Apple Silicon | `AT-Term_*_arm64.dmg` 或 `AT-Term-darwin-arm64.zip` | Intel 机器选 `amd64` |
+| Linux x64 | `AT-Term_*_amd64.deb` 或 `AT-Term-linux-amd64.tar.gz` | 需要 `libwebkit2gtk-4.1-0` |
+| Linux arm64 | `AT-Term_*_arm64.deb` 或 `AT-Term-linux-arm64.tar.gz` | 适合 ARM Linux 桌面 |
+| Windows x64 | `AT-Term_*_amd64.exe` 或 `AT-Term-windows-amd64.zip` | Windows 11 自带 WebView2；Windows 10 可能需另装 |
 
-安全默认值：
+### 方式 B：桌面端 + 自托管 relay
 
-- `atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成高强度 token，并在启动日志打印访问 URL。
-- 公网监听时拒绝弱 token（例如 `dev` 或长度 <16），除非显式传 `--dev-insecure`。
-- 公网监听必须配置 `--origins` / `ATTERM_ORIGINS`，并且 admin token 不能是 `admin`/`dev`/短 token，除非显式传 `--dev-insecure`。
-- relay 默认返回 CSP / Referrer-Policy / nosniff / Permissions-Policy 等安全头；请求先按远端 IP 限流，鉴权成功后再按 IP + token hash 限流，并限制活跃 WebSocket 连接数。
-- 浏览器客户端不再从 CDN 加载 xterm；所有 web 静态资源都走同源 `web/vendor/`，service worker 会缓存这些资源。
-- URL fragment 里的 `#token=...` 会在读取并保存到浏览器本地存储后从地址栏移除；fragment 不会发送给 relay。服务端所有鉴权接口都不接受 `?token=`。
-- 桌面/web 客户端的 WebSocket 连接必须用 `Sec-WebSocket-Protocol` 传 token，避免 token 进入 WS URL。
-- 可用 `ATTERM_READ_ONLY_TOKENS` 或 `--read-only-tokens` 配只读 token；只读用户可以列出/attach/看输出，但不能向 PTY 输入、resize 或粘贴图片。
-- 桌面端 Settings 可设置本机 session 的远程权限：`view` / `control` / `full`。该权限由 owner 发布，relay 与 desktop host 双重强制执行；read-only token 会继续把有效权限压成只读。
-- 可用 `ATTERM_RELAY_CONFIG`/`--config` + `ATTERM_ADMIN_TOKEN`/`--admin-token` 启用持久化 relay admin 配置和 `/admin/` 管理页。持久化配置不保存主 write token，只保存运行参数和 hash 后的只读 token。
-- 桌面端默认拒绝非本机 `ws://` 明文 relay；如果确实在可信内网使用 `ws://`，需要在 Settings 勾选 insecure mode，并接受 token/输入/输出明文传输风险。
+这个模式适合“电脑上跑任务，手机/另一台机器接管”。
 
-也可以直接用 Docker Compose 启动 relay：
+1. 启动 relay：
 
 ```bash
 docker compose up -d atterm-relay
-docker compose logs atterm-relay   # 查看自动生成的 token
-# 浏览器: http://localhost:8080/#token=<日志里的 token>
+docker compose logs atterm-relay
 ```
 
-可选环境变量：
+2. 从日志里复制自动生成的 token。
+3. 在桌面端打开 Settings，填写 relay 地址和 token。
+   - 本机测试：`ws://localhost:8080`
+   - 公网部署：建议使用 `wss://relay.example.com`
+4. 在手机或另一台电脑打开：
 
-- `ATTERM_RELAY_IMAGE`：relay 镜像，默认 `attson/atterm-relay:latest`
-- `ATTERM_RELAY_PORT`：宿主机端口，默认 `8080`
-- `ATTERM_ORIGINS`：浏览器 WebSocket Origin 白名单，默认 compose 示例为 `http://localhost:8080`；公网部署请改成实际 HTTPS origin，例如 `https://relay.example.com`
-- `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 token，适合临时分享“只能看不能输入”的会话入口
-- `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的请求/upgrade 分钟限额；`0` 用内置默认值，负数禁用
-- `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用内置默认值，负数禁用
-- `ATTERM_RELAY_CONFIG`：容器内持久化 admin 配置 JSON 路径，默认 `/etc/atterm/relay.json`
-- `ATTERM_RELAY_CONFIG_DIR`：宿主机绑定目录，默认 `./data/atterm-relay`，会挂载到容器 `/etc/atterm`
-- `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 管理页和 `/admin/api/*`；admin API 只接受 Authorization header
-- `ATTERM_RELAY_DEBUG=1`：打印 relay 交互日志
-- `ATTERM_RELAY_DEBUG_PAYLOAD=1`：额外打印 IN/OUT 字节内容（仅调试用）
-- `ATTERM_WATCHTOWER_INTERVAL`：启用自动更新时的检查间隔秒数，默认 `300`
-- `ATTERM_WATCHTOWER_DOCKER_API_VERSION`：watchtower 连接本机 Docker daemon
-  使用的 API 版本，默认 `1.40`
+```text
+http://localhost:8080/#token=<token>
+```
 
-如果希望 DockerHub `latest` 更新后自动拉取并重启 relay，可以启用可选的
-`auto-update` profile：
+公网部署时把地址换成你的 HTTPS 域名，例如：
+
+```text
+https://relay.example.com/#token=<token>
+```
+
+> token 放在 `#fragment` 中，不会被浏览器发送给 HTTP 服务；WebSocket 鉴权走 `Sec-WebSocket-Protocol`。
+
+### 方式 C：源码启动调试
+
+```bash
+export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
+
+# 终端 1：启动 relay + web 客户端
+ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
+
+# 终端 2：启动桌面端
+cd desktop
+wails dev -tags webkit2_41   # Linux 需要 tag；macOS/Windows 可省略
+```
+
+桌面端 Settings 填：
+
+```text
+relay URL: ws://localhost:8080
+token: dev
+```
+
+浏览器访问：
+
+```text
+http://localhost:8080/#token=dev
+```
+
+## 常见使用场景
+
+### 在电脑上跑 AI 任务，手机继续看
+
+1. 在 AT Term 新建会话，运行 `codex`、`claude`、构建命令或部署脚本。
+2. 确认桌面端已连接远程 relay。
+3. 手机打开 relay web 地址。
+4. 点进对应 session，就能看历史输出；有权限时也能继续输入。
+
+### 只分享查看权限
+
+relay 支持只读 token。只读用户可以查看 session 和历史输出，但不能输入、resize 或粘贴图片。
+
+```bash
+ATTERM_READ_ONLY_TOKENS=viewer-token docker compose up -d atterm-relay
+```
+
+分享给别人时使用：
+
+```text
+https://relay.example.com/#token=viewer-token
+```
+
+### 选择远程权限
+
+桌面端 Settings 可以为本机 session 设置远程权限：
+
+| 权限 | 远程用户可以做什么 |
+|------|--------------------|
+| `view` | 只能查看输出和历史 |
+| `control` | 可以输入和 resize |
+| `full` | 保留完整远程控制能力 |
+
+最终权限由“桌面端设置”和“relay token 类型”取交集。也就是说，只读 token 永远不能获得输入权限。
+
+## 部署 relay
+
+### Docker Compose
+
+最简单的部署方式：
+
+```bash
+docker compose up -d atterm-relay
+docker compose logs atterm-relay
+```
+
+常用环境变量：
+
+| 变量 | 用途 |
+|------|------|
+| `ATTERM_TOKEN` | 主 token；留空时启动自动生成并打印到日志 |
+| `ATTERM_ORIGINS` | 浏览器 Origin 白名单；公网部署必须设成真实域名 |
+| `ATTERM_READ_ONLY_TOKENS` | 逗号分隔的只读 token |
+| `ATTERM_ADMIN_TOKEN` | 启用 `/admin/` 管理页和 admin API |
+| `ATTERM_RELAY_PORT` | 宿主机端口，默认 `8080` |
+| `ATTERM_RELAY_CONFIG_DIR` | relay 持久化配置目录，默认 `./data/atterm-relay` |
+| `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP/token 的请求与 WS upgrade 分钟限额 |
+| `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP/token 的活跃 WebSocket 连接上限 |
+
+公网示例：
+
+```bash
+ATTERM_TOKEN='replace-with-a-long-random-token' \
+ATTERM_ORIGINS='https://relay.example.com' \
+docker compose up -d atterm-relay
+```
+
+如果希望 Docker Hub `latest` 更新后自动拉取并重启 relay：
 
 ```bash
 docker compose --profile auto-update up -d
 ```
 
-自动更新由 `watchtower` 容器完成，只会更新带有 watchtower label 的
-`atterm-relay` 服务。该模式需要挂载 Docker socket；不需要自动更新时继续使用
-普通 `docker compose up -d atterm-relay` 即可。
+该模式使用 watchtower，并需要挂载 Docker socket；不需要自动更新时，不要启用这个 profile。
 
-桌面端自动更新要求 GitHub Release 里同时存在 `SHA256SUMS` 和
-`SHA256SUMS.sig`。CI 的 `build` workflow 会在 tag release 时用 prod
-environment secret `ATTERM_UPDATE_VERIFY_PUBLIC_KEY` 注入桌面 app，并用
-prod environment secret `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 生成
-`SHA256SUMS` / `SHA256SUMS.sig` 后上传到 release。两个值均为 base64；
-public key 是 32 字节 Ed25519 公钥，private key 是 64 字节 Ed25519 私钥。
-私钥只放 GitHub environment secret，不要提交到仓库。
-
-手动构建 release 版时也必须注入公钥：
+### Go 直接运行
 
 ```bash
-cd desktop
-VERSION=v0.1.14
-wails build -ldflags "-X main.Version=$VERSION -X main.UpdateVerifyPublicKey=$ATTERM_UPDATE_VERIFY_PUBLIC_KEY"
+ATTERM_TOKEN='replace-with-a-long-random-token' \
+ATTERM_ORIGINS='https://relay.example.com' \
+go run ./cmd/atterm-relay --addr :8080 --web web
 ```
 
-如果修改了自动更新配置，建议重建 watchtower 容器：
+本地开发可以临时使用弱 token：
 
 ```bash
-docker compose --profile auto-update up -d --force-recreate watchtower
+ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
 ```
 
-本地构建镜像用于调试：
+公网监听默认拒绝弱 token、缺失 Origin 白名单、弱 admin token。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
 
-```bash
-docker build -f Dockerfile.relay -t atterm-relay:local .
-ATTERM_RELAY_IMAGE=atterm-relay:local docker compose up -d atterm-relay
-```
+## 安全模型
 
-`main` 分支推送后 GitHub Actions 会构建并推送 `attson/atterm-relay:latest`。
-仓库需要配置 Docker Hub secrets：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`。
+AT Term 的默认策略是 fail-closed：
 
-### 3. 桌面 + 远程 relay 多设备同步
+- relay 未提供 `ATTERM_TOKEN` 时会生成高强度 token，并只打印在启动日志里。
+- 公网 relay 必须使用强 token 和明确的 `ATTERM_ORIGINS`。
+- 服务端鉴权不接受 `?token=`；浏览器入口只用 `#token=...` 做首次引导。
+- WebSocket token 通过 `Sec-WebSocket-Protocol` 传递，避免写进 URL。
+- web 客户端只加载同源静态资源，不依赖 CDN。
+- relay 默认启用 CSP、Referrer-Policy、nosniff、Permissions-Policy 等安全头。
+- relay 按远端 IP 和认证后的 token hash 做限流与连接数限制。
+- 桌面端默认拒绝非 loopback 的明文 `ws://` relay；可信内网需要在 Settings 手动开启 insecure mode。
+- 自动更新必须通过 Ed25519 签名和 SHA256 校验；缺公钥、缺签名、签名不匹配或 hash 不匹配都会失败。
 
-桌面 app 启动后点齿轮，填远程 relay URL/token。然后另一设备的浏览器或桌面 app 连同一 relay 即可互相 attach。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md) §三种核心数据流。
+## 开发环境
 
----
-
-## 开发环境搭建
-
-### 通用前置
+### 依赖
 
 | 工具 | 版本 | 用途 |
 |------|------|------|
-| Go | **1.23+** | 后端 |
-| Node | **20+** | 前端构建 |
-| Wails CLI | **v2.12.0** | 桌面端构建 |
+| Go | 1.23+ | 后端、relay、PTY host |
+| Node.js | 20+ | 桌面前端构建 |
+| Wails CLI | v2.12.0 | 桌面应用开发与打包 |
+
+安装 Wails：
 
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
-# 加到 PATH
 export PATH="/opt/homebrew/bin:$(go env GOPATH)/bin:$HOME/sdk/go1.23.12/bin:$PATH"
-wails version  # 应当看到 v2.12.0
+wails version
 ```
 
-macOS 上 Homebrew 安装的 `gh` 通常在 `/opt/homebrew/bin/gh`。如果非交互
-shell 找不到 `gh`，优先检查 PATH，或直接使用完整路径：
-
-```bash
-/opt/homebrew/bin/gh run list --repo attson/atterm --limit 10
-```
-
-国内拉模块慢可设置：
+国内拉 Go 模块慢时：
 
 ```bash
 go env -w GOPROXY=https://goproxy.cn,direct
 ```
 
-### Linux（Ubuntu 24.04 / Debian 12）
+### Linux 依赖
+
+Ubuntu 24.04 / Debian 12：
 
 ```bash
 sudo apt update
-sudo apt install -y \
-    build-essential pkg-config \
-    libgtk-3-dev libwebkit2gtk-4.1-dev
+sudo apt install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
-Ubuntu 22.04 没有 `libwebkit2gtk-4.1-dev`，需要：
+Ubuntu 22.04 可能需要额外启用 WebKitGTK 4.1 来源：
 
 ```bash
-sudo add-apt-repository ppa:webkit-team/ppa  # 或自行编译 4.1
+sudo add-apt-repository ppa:webkit-team/ppa
 sudo apt install -y libwebkit2gtk-4.1-dev
 ```
 
-校验环境：
+### 常用命令
 
 ```bash
-wails doctor
-# 关键行：libwebkit ... Installed
-```
+# 仓库根目录
+go vet -tags webkit2_41 ./...
+go test -tags webkit2_41 -timeout 60s ./desktop/
+go build ./...
+node --test web/*.test.mjs
 
-构建 / 开发：
+# 桌面前端
+cd desktop/frontend
+npm ci
+npm run build
+npm run dev
 
-```bash
+# 桌面 app
 cd desktop
-wails dev   -tags webkit2_41           # 开发模式（Vite HMR）
-wails build -tags webkit2_41           # 产出 desktop/build/bin/AT Term
+wails dev -tags webkit2_41      # Linux
+wails build -tags webkit2_41    # Linux
+wails dev                       # macOS / Windows
+wails build                     # macOS / Windows
 ```
 
-**Linux 必须加 `-tags webkit2_41`**——Wails CLI 默认匹配旧的 4.0 SDK，新发行版只有 4.1。
-
-### macOS（Apple Silicon / Intel）
+macOS 上 Homebrew 的 `gh` 通常在 `/opt/homebrew/bin/gh`。非交互 shell 找不到时可以直接使用完整路径：
 
 ```bash
-xcode-select --install   # Xcode Command Line Tools
-brew install go node     # 也可用 asdf / mise 管理版本
+/opt/homebrew/bin/gh run list --repo attson/atterm --limit 10
 ```
 
-校验：
+## 仓库结构
 
-```bash
-wails doctor
+```text
+cmd/          atterm-relay 和 atterm-agent 入口
+internal/     proto、session、relay、ptyhost、agent、hostid、ringbuf 等复用包
+desktop/      Wails 桌面 app：Go 后端 + Vue 3 + xterm.js 前端
+web/          vanilla 浏览器/PWA 客户端
+docs/spec/    架构、协议、工程约定
+.github/      CI、release、打包脚本
 ```
 
-构建：
-
-```bash
-cd desktop
-wails dev                 # 开发模式
-wails build               # 产出 desktop/build/bin/AT Term.app
-```
-
-要打 universal 二进制（Intel + Apple Silicon 同 bundle）：
-
-```bash
-wails build -platform darwin/universal
-```
-
-### Windows（10 / 11，x64）
-
-需要：
-
-- Go：[官方安装包](https://go.dev/dl/) 或 `winget install GoLang.Go`
-- Node：[nodejs.org](https://nodejs.org/) 或 `winget install OpenJS.NodeJS.LTS`
-- WebView2 Runtime：Win11 自带；Win10 装 [Evergreen Bootstrapper](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
-- C 编译器（cgo 用）：`winget install MartinStorsjo.LLVM-MinGW.UCRT` 或装 [TDM-GCC](https://jmeubank.github.io/tdm-gcc/)
-
-PowerShell 里：
-
-```powershell
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
-$env:Path = "$(go env GOPATH)\bin;$env:Path"
-wails version
-wails doctor
-```
-
-构建：
-
-```powershell
-cd desktop
-wails dev
-wails build               # 产出 desktop\build\bin\AT Term.exe
-```
-
-带 NSIS 安装包：
-
-```powershell
-wails build -nsis
-```
-
-需要先装 NSIS：`winget install NSIS.NSIS`。
-
----
-
-## 开发常用命令
-
-```bash
-# 在仓库根
-go vet -tags webkit2_41 ./...                    # 静态检查（Linux 加 tag，其他平台可省）
-go test -tags webkit2_41 -timeout 60s ./desktop/ # 跑 lazy uplink e2e 协议测试
-go build ./...                                   # 编译所有非 desktop 包
-
-# 在 desktop/frontend
-npm ci                                           # 装前端依赖
-npm run build                                    # vue-tsc + vite build → dist/
-npm run dev                                      # Vite dev server（不通过 wails）
-
-# 在 desktop/
-wails dev   -tags webkit2_41                     # 推荐开发入口（Linux）
-wails dev                                        # macOS / Windows
-wails build -tags webkit2_41                     # 出可执行（Linux）
-wails build                                      # 出可执行（macOS / Windows）
-```
-
-### 调试两台 atterm 互相接管
-
-```bash
-# 终端 1：启远程 relay
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
-
-# 终端 2：启 app A，配 relay
-cd desktop && wails dev -tags webkit2_41
-# 在 app 里点齿轮 → URL=ws://localhost:8080，token=dev
-
-# 终端 3：启 app B，同样配置
-cd desktop && wails dev -tags webkit2_41
-```
-
-两个 app 的 cast 面板（📡）里能互看对方的 session。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md) §流 3。
-
-## 仓库结构（简表）
-
-```
-cmd/         二进制入口（atterm-relay / atterm-agent）
-internal/    可复用业务包（proto / session / relay / ptyhost / agent / hostid / ringbuf）
-desktop/     Wails 桌面端（Go 后端 + Vue3 + xterm.js 前端）
-web/         浏览器客户端（vanilla HTML/JS）
-docs/spec/    协议、架构、约定规范
-.github/     CI workflow
-```
-
-完整结构 + 各模块职责见 [`AGENTS.md`](AGENTS.md) §仓库布局。
+更多模块职责见 [`AGENTS.md`](AGENTS.md)。
 
 ## 文档
 
-- [`AGENTS.md`](AGENTS.md) — 项目导览、设计红线、何时改哪里
-- [`docs/spec/architecture.md`](docs/spec/architecture.md) — 整体架构、三条核心数据流、组件矩阵、phase 路线
-- [`docs/spec/protocol.md`](docs/spec/protocol.md) — wire 协议规范（帧格式、12 个帧类型 schema、重连续传）
-- [`docs/spec/conventions.md`](docs/spec/conventions.md) — Go/TS 代码约定、commit 风格、扩展 recipe
+- [`docs/spec/architecture.md`](docs/spec/architecture.md)：架构、数据流、生命周期、路线图。
+- [`docs/spec/protocol.md`](docs/spec/protocol.md)：二进制 WebSocket 帧协议、帧类型、重连语义。
+- [`docs/spec/conventions.md`](docs/spec/conventions.md)：Go / TypeScript 风格、测试组织、提交约定。
+- [`AGENTS.md`](AGENTS.md)：给开发代理和贡献者看的项目红线与修改指引。
 
-## 贡献
+## 贡献前检查
 
-- 风格：见 [`docs/spec/conventions.md`](docs/spec/conventions.md)
-- 提交前本地跑：`go vet -tags webkit2_41 ./...` + `go test -tags webkit2_41 ./...` + `node --test web/*.test.mjs` + `cd desktop/frontend && npm run build`
-- CI 在 `.github/workflows/build.yml`：push main / PR / tag v* / manual 都会触发，三平台并行构建
-- 协议变更：必须同步更新 [`docs/spec/protocol.md`](docs/spec/protocol.md) 与 TS 端 `desktop/frontend/src/lib/proto.ts`
+提交前建议至少跑：
+
+```bash
+go vet -tags webkit2_41 ./...
+go test -tags webkit2_41 ./...
+node --test web/*.test.mjs
+cd desktop/frontend && npm run build
+```
+
+如果改了协议或权限模型，请同步更新 [`docs/spec/protocol.md`](docs/spec/protocol.md) 和相关客户端实现。
 
 ## 许可证
 
-未指定（默认 All Rights Reserved）。后续会加 license。
+暂未指定 license，默认 All Rights Reserved。

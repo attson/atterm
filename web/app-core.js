@@ -173,6 +173,24 @@ export function shouldAutoScrollToBottom({ userScrolledUp, isReplay }) {
   return isReplay || !userScrolledUp;
 }
 
+function formatBytes(value) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function replayProgressPercent(progress) {
+  if (!progress || progress.total_bytes <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((progress.bytes / progress.total_bytes) * 100)));
+}
+
+export function formatReplayProgress(progress) {
+  if (!progress || progress.total_bytes <= 0) {
+    return `loading history · ${formatBytes(progress?.bytes || 0)}`;
+  }
+  return `loading history ${replayProgressPercent(progress)}% · ${formatBytes(progress.bytes)} / ${formatBytes(progress.total_bytes)}`;
+}
+
 export function versionLabel(version) {
   return `version ${version || "dev"}`;
 }

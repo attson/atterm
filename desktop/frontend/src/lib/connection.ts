@@ -12,6 +12,7 @@ import {
   encodeResize,
   uuidParse,
 } from "./proto";
+import type { ReplayProgress } from "./replayProgress";
 
 export interface ClosePayload {
   exit_code: number;
@@ -30,6 +31,7 @@ export interface ConnectionHandlers {
   onClose?: (info: ClosePayload) => void;
   onMeta?: (meta: { cwd?: string; title?: string }) => void;
   onStatus?: (s: Status) => void;
+  onReplayProgress?: (progress: ReplayProgress) => void;
 }
 
 export interface SessionListHandlers {
@@ -254,6 +256,12 @@ export class SessionConnection {
         try {
           const meta = JSON.parse(decodeText(f.payload));
           this.handlers.onMeta?.(meta);
+        } catch {
+          /* ignore */
+        }
+      } else if (f.type === TYPE.REPLAY_PROGRESS) {
+        try {
+          this.handlers.onReplayProgress?.(JSON.parse(decodeText(f.payload)) as ReplayProgress);
         } catch {
           /* ignore */
         }

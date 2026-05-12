@@ -46,6 +46,7 @@ const (
     TypeAttach        Type = 0x10  // client → relay
     TypeList          Type = 0x11  // client → relay
     TypeListResp      Type = 0x12  // relay → client
+    TypeReplayProgress Type = 0x13 // relay → client
     TypePing          Type = 0x20
     TypePong          Type = 0x21
     TypeAnnounce      Type = 0x30  // uplink → relay  (Phase 1.5)
@@ -143,6 +144,22 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
 | `full` 或空 | `control` + `PASTE_IMAGE` | 无 |
 
 实践中很少用（前端走 REST `/api/sessions` 更直接）。
+
+### `REPLAY_PROGRESS` (0x13) — attach 历史回放进度
+
+relay 在 client `ATTACH` 后、初始 scrollback 回放期间发送。payload = JSON：
+
+```json
+{ "phase": "start", "bytes": 0, "total_bytes": 4194304, "seq": 0 }
+{ "phase": "chunk", "bytes": 1048576, "total_bytes": 4194304, "seq": 123 }
+{ "phase": "end", "bytes": 4194304, "total_bytes": 4194304, "seq": 456 }
+```
+
+- `phase=start`：回放开始，client 可显示 loading history。
+- `phase=chunk`：回放中间进度；`bytes` 是已回放 PTY 字节数，`total_bytes` 是本次 ATTACH 需要回放的 PTY 字节数。
+- `phase=end`：回放结束，此后 subscriber 已切到实时流。
+
+`REPLAY_PROGRESS` 不改变 `OUT.seq` 语义；老 client 收到未知帧应忽略。relay `/client` writer 在 replay 期间会按字节批次短暂停顿，让浏览器能绘制进度条，避免大历史会话看起来卡在 connecting。
 
 ### `PING` (0x20) / `PONG` (0x21)
 
@@ -287,7 +304,7 @@ agent 用同一 `session_id` 重连发 OPEN，relay 识别并复用既有 sessio
 
 ### Client 短线重连
 
-client 重连后发 `ATTACH(session_id, since_seq=最后收到的 seq)`，relay 从 ringbuf 取 `seq > since_seq` 的帧补发，再切到实时流。
+client 重连后发 `ATTACH(session_id, since_seq=最后收到的 seq)`，relay 从 ringbuf 取 `seq > since_seq` 的帧补发，并用 `REPLAY_PROGRESS` 标记补发进度，再切到实时流。
 
 ### 间隙补不上
 

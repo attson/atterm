@@ -6,6 +6,7 @@ import {
   buildDownloadURL,
   canRegisterServiceWorker,
   detectClientMode,
+  formatReplayProgress,
   formatHost,
   isIOSWebKit,
   shouldAutoScrollToBottom,
@@ -120,6 +121,17 @@ test("shouldAutoScrollToBottom keeps attach replay pinned to bottom", () => {
   assert.equal(shouldAutoScrollToBottom({ userScrolledUp: false, isReplay: false }), true);
   assert.equal(shouldAutoScrollToBottom({ userScrolledUp: true, isReplay: false }), false);
   assert.equal(shouldAutoScrollToBottom({ userScrolledUp: true, isReplay: true }), true);
+});
+
+test("formatReplayProgress formats percent and byte units", () => {
+  assert.equal(
+    formatReplayProgress({ phase: "chunk", bytes: 1_048_576, total_bytes: 4_194_304 }),
+    "loading history 25% · 1.0 MB / 4.0 MB",
+  );
+  assert.equal(
+    formatReplayProgress({ phase: "start", bytes: 512, total_bytes: 0 }),
+    "loading history · 512 B",
+  );
 });
 
 

@@ -50,6 +50,7 @@ atterm/
 9. **公网 relay 默认安全**：`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时自动生成高强度 token 并打印到日志。公网监听拒绝弱 token（如 `dev` 或长度 <16），除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP/token 做 HTTP/WS rate limit 与连接数限制。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
 10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源静态资源；xterm 资源放在 `web/vendor/` 并由 service worker 缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
 11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay read-only token 是运维侧兜底限制，和 owner 权限取交集。
+12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
 
 ## 开发命令
 

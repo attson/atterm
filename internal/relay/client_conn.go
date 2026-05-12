@@ -43,6 +43,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 	startWriter := func() {
 		go func() {
 			ticker := time.NewTicker(clientPingPeriod)
+			pacer := newReplayPacer(replayPaceBytes)
 			defer ticker.Stop()
 			for {
 				select {
@@ -67,6 +68,19 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					if err != nil {
 						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
 						return
+					}
+					if pacer.observe(f) {
+						timer := time.NewTimer(2 * time.Millisecond)
+						select {
+						case <-writerCtx.Done():
+							timer.Stop()
+							return
+						case <-sub.Done():
+							timer.Stop()
+							_ = c.Close(websocket.StatusGoingAway, "session ended")
+							return
+						case <-timer.C:
+						}
 					}
 				}
 			}

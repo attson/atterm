@@ -6,6 +6,7 @@
 package session
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 )
 
 const (
-	subscriberQueueDepth = 256
-	scrollbackBytes      = 4 * 1024 * 1024
-	inboundQueueDepth    = 64
+	subscriberQueueDepth        = 4096
+	scrollbackBytes             = 4 * 1024 * 1024
+	inboundQueueDepth           = 64
+	replayProgressIntervalBytes = 64 * 1024
 )
 
 // Session is the relay-side state for one PTY.
@@ -163,6 +165,8 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
+	totalBytes := replayBytes(chunks)
+	_ = enqueueReplayProgress(sub, s.ID, proto.ReplayProgressStart, 0, totalBytes, 0)
 	// If the client asked for a seq older than what we still have, the gap
 	// is unrecoverable: send a soft truncation marker (clear screen) so the
 	// terminal does not render torn state, then replay everything we have.
@@ -173,28 +177,44 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 		default:
 		}
 	}
-	var lastSeq uint64
-	for _, c := range chunks {
-		select {
-		case sub.out <- proto.EncodeOut(s.ID, c.Seq, c.Data):
-			lastSeq = c.Seq
-		default:
-			// queue is sized so this should not happen during initial replay,
-			// but if it does we cut the replay short rather than block.
-			break
-		}
+	var (
+		lastSeq       uint64
+		replayedBytes uint64
+		nextProgress  uint64 = replayProgressIntervalBytes
+		ok            bool
+	)
+	lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, chunks, lastSeq, replayedBytes, totalBytes, nextProgress)
+	if !ok {
+		sub.close()
+		return sub, lastSeq
 	}
 
 	s.mu.Lock()
+	for !s.closed {
+		catchup := s.scroll.Since(lastSeq)
+		if len(catchup) == 0 {
+			break
+		}
+		totalBytes += replayBytes(catchup)
+		s.mu.Unlock()
+		lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, catchup, lastSeq, replayedBytes, totalBytes, nextProgress)
+		if !ok {
+			sub.close()
+			return sub, lastSeq
+		}
+		s.mu.Lock()
+	}
 	closed := s.closed
 	wasEmpty := len(s.subs) == 0
-	if !closed {
+	added := false
+	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
 		s.subs[sub] = struct{}{}
+		added = true
 	}
 	firstHook := s.onFirstSubscribe
 	s.mu.Unlock()
 
-	if closed {
+	if closed || !added {
 		sub.close()
 		return sub, lastSeq
 	}
@@ -202,6 +222,51 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 		go firstHook()
 	}
 	return sub, lastSeq
+}
+
+func replayBytes(chunks []ringbuf.Chunk) uint64 {
+	var total uint64
+	for _, c := range chunks {
+		total += uint64(len(c.Data))
+	}
+	return total
+}
+
+func enqueueReplayChunks(sub *Subscriber, id uuid.UUID, chunks []ringbuf.Chunk, lastSeq, replayedBytes, totalBytes, nextProgress uint64) (uint64, uint64, uint64, bool) {
+	for _, c := range chunks {
+		select {
+		case sub.out <- proto.EncodeOut(id, c.Seq, c.Data):
+			lastSeq = c.Seq
+			replayedBytes += uint64(len(c.Data))
+		default:
+			return lastSeq, replayedBytes, nextProgress, false
+		}
+		for replayedBytes >= nextProgress && nextProgress > 0 {
+			if !enqueueReplayProgress(sub, id, proto.ReplayProgressChunk, replayedBytes, totalBytes, lastSeq) {
+				return lastSeq, replayedBytes, nextProgress, false
+			}
+			nextProgress += replayProgressIntervalBytes
+		}
+	}
+	return lastSeq, replayedBytes, nextProgress, true
+}
+
+func enqueueReplayProgress(sub *Subscriber, id uuid.UUID, phase string, bytes, totalBytes, seq uint64) bool {
+	payload, err := json.Marshal(proto.ReplayProgressPayload{
+		Phase:      phase,
+		Bytes:      bytes,
+		TotalBytes: totalBytes,
+		Seq:        seq,
+	})
+	if err != nil {
+		return false
+	}
+	select {
+	case sub.out <- proto.Frame{Type: proto.TypeReplayProgress, SessionID: id, Payload: payload}:
+		return true
+	default:
+		return false
+	}
 }
 
 // Unsubscribe removes a client outbox.

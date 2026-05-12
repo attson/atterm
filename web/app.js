@@ -6,10 +6,12 @@ import {
   canRegisterServiceWorker,
   copyTerminalSelection,
   detectClientMode,
+  formatReplayProgress,
   formatHost,
   isTerminalCopyShortcut,
   parseSessionRoute,
   persistToken,
+  replayProgressPercent,
   sessionTitle,
   shouldShowInstallHint,
   shouldAutoScrollToBottom,
@@ -31,6 +33,7 @@ const TYPE = {
   ATTACH: 0x10,
   LIST: 0x11,
   LIST_RESP: 0x12,
+  REPLAY_PROGRESS: 0x13,
   PING: 0x20,
   PONG: 0x21,
   PASTE_IMAGE: 0x33,
@@ -111,6 +114,9 @@ const pasteBtn = document.getElementById("paste");
 const pasteFallback = document.getElementById("paste-fallback");
 const pasteText = document.getElementById("paste-text");
 const pasteCancel = document.getElementById("paste-cancel");
+const replayProgress = document.getElementById("replay-progress");
+const replayProgressText = document.getElementById("replay-progress-text");
+const replayProgressFill = document.getElementById("replay-progress-fill");
 const installHint = document.getElementById("install-hint");
 const installDismiss = document.getElementById("install-dismiss");
 
@@ -291,6 +297,19 @@ let fitTimer = null;
 let userScrolledUp = false;
 let autoScrollTimer = null;
 
+function setReplayProgress(progress) {
+  if (!replayProgress || !replayProgressText || !replayProgressFill) return;
+  if (!progress || progress.phase === "end") {
+    replayProgress.hidden = true;
+    replayProgressText.textContent = "";
+    replayProgressFill.style.width = "0%";
+    return;
+  }
+  replayProgress.hidden = false;
+  replayProgressText.textContent = formatReplayProgress(progress);
+  replayProgressFill.style.width = `${replayProgressPercent(progress)}%`;
+}
+
 function scheduleFit() {
   clearTimeout(fitTimer);
   fitTimer = setTimeout(() => {
@@ -413,6 +432,7 @@ function attachToSession(sessionId) {
   term.reset();
   userScrolledUp = false;
   lastSeq = 0;
+  setReplayProgress(null);
   currentSID = uuidParse(sessionId);
   sessionTitleEl.textContent = sessionTitle(sessionForID(sessionId));
   openWS(sessionId);
@@ -453,6 +473,7 @@ function openWS(sessionId) {
       scheduleScrollToBottom(lastSeq === 0);
       if (seq > lastSeq) lastSeq = seq;
     } else if (f.type === TYPE.CLOSE) {
+      setReplayProgress(null);
       setStatus("session ended", "err");
       try {
         const info = JSON.parse(dec.decode(f.payload));
@@ -460,6 +481,10 @@ function openWS(sessionId) {
       } catch {
         term.write("\r\n\x1b[33m[AT Term] session ended\x1b[0m\r\n");
       }
+    } else if (f.type === TYPE.REPLAY_PROGRESS) {
+      try {
+        setReplayProgress(JSON.parse(dec.decode(f.payload)));
+      } catch {}
     }
   };
 
@@ -485,6 +510,7 @@ function closeWS() {
     currentWS = null;
   }
   currentSID = null;
+  setReplayProgress(null);
 }
 
 document.getElementById("shortcut-bar").addEventListener("click", (ev) => {

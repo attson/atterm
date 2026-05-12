@@ -4,6 +4,7 @@ import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
+import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
 
 const props = withDefaults(
@@ -26,6 +27,7 @@ const props = withDefaults(
 
 const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
+const replayProgress = ref<ReplayProgress | null>(null);
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -121,6 +123,9 @@ function startConnection() {
     onStatus: (s) => {
       status.value = s;
     },
+    onReplayProgress: (progress) => {
+      replayProgress.value = progress.phase === "end" ? null : progress;
+    },
   });
   conn.attach();
   // Skip the no-op RESIZE if our fit landed on the same size the relay
@@ -182,8 +187,14 @@ watch(
 <template>
   <div class="term-view" :class="{ focused }">
     <div ref="termContainer" class="term"></div>
-    <div v-if="active && status !== 'attached'" class="overlay">
-      <span v-if="status === 'connecting'">connecting…</span>
+    <div v-if="active && (status !== 'attached' || replayProgress)" class="overlay">
+      <template v-if="replayProgress">
+        <span>{{ formatReplayProgress(replayProgress) }}</span>
+        <div class="progress-track" aria-hidden="true">
+          <div class="progress-fill" :style="{ width: `${progressPercent(replayProgress)}%` }"></div>
+        </div>
+      </template>
+      <span v-else-if="status === 'connecting'">connecting…</span>
       <span v-else-if="status === 'reconnecting'" class="warn">reconnecting…</span>
       <span v-else-if="status === 'ended'" class="dim">session ended</span>
       <span v-else-if="status === 'error'" class="bad">connection error</span>
@@ -218,6 +229,20 @@ watch(
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }
 .overlay .dim { color: var(--fg-dim); }
+.progress-track {
+  width: 190px;
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.24);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #4ade80);
+  transition: width 120ms ease;
+}
 .term-view.focused {
   box-shadow: inset 0 0 0 1px var(--accent);
 }

@@ -132,6 +132,8 @@ func frameTypeName(t proto.Type) string {
 		return "LIST"
 	case proto.TypeListResp:
 		return "LIST_RESP"
+	case proto.TypeReplayProgress:
+		return "REPLAY_PROGRESS"
 	case proto.TypePing:
 		return "PING"
 	case proto.TypePong:

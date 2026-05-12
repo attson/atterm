@@ -24,8 +24,11 @@ const (
 	TypeAttach   Type = 0x10 // client -> relay
 	TypeList     Type = 0x11 // client -> relay
 	TypeListResp Type = 0x12 // relay -> client
-	TypePing     Type = 0x20
-	TypePong     Type = 0x21
+	// TypeReplayProgress brackets the initial ATTACH scrollback replay so
+	// clients can show history-loading progress before the session is live.
+	TypeReplayProgress Type = 0x13 // relay -> client
+	TypePing           Type = 0x20
+	TypePong           Type = 0x21
 
 	// Lazy-mirror frames (Phase 1.5). An "uplink" is an agent that wants to
 	// advertise sessions cheaply and only stream their bytes when a client
@@ -71,6 +74,20 @@ type ClosePayload struct {
 type AttachPayload struct {
 	SessionID string `json:"session_id"`
 	SinceSeq  uint64 `json:"since_seq,omitempty"`
+}
+
+const (
+	ReplayProgressStart = "start"
+	ReplayProgressChunk = "chunk"
+	ReplayProgressEnd   = "end"
+)
+
+// ReplayProgressPayload reports ATTACH replay progress in terminal bytes.
+type ReplayProgressPayload struct {
+	Phase      string `json:"phase"`
+	Bytes      uint64 `json:"bytes"`
+	TotalBytes uint64 `json:"total_bytes"`
+	Seq        uint64 `json:"seq,omitempty"`
 }
 
 // AnnouncePayload is the JSON body of a TypeAnnounce frame. It is a full

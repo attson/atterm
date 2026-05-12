@@ -190,6 +190,9 @@ func (u *uplink) runOnce(ctx context.Context) error {
 					if !ok {
 						return
 					}
+					if !localSubscriberFrameForwardedToUplink(f.Type) {
+						continue
+					}
 					select {
 					case out <- f:
 					case <-fwdCtx.Done():
@@ -323,6 +326,15 @@ func localFrameAllowedByPermission(remotePermission string, typ proto.Type) bool
 		return remotePermission == proto.RemotePermissionFull
 	default:
 		return true
+	}
+}
+
+func localSubscriberFrameForwardedToUplink(typ proto.Type) bool {
+	switch typ {
+	case proto.TypeOut, proto.TypeMeta, proto.TypeClose:
+		return true
+	default:
+		return false
 	}
 }
 

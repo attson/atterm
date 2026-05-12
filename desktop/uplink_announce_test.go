@@ -101,3 +101,18 @@ func mustAnnouncePayload(t *testing.T, sessions []proto.SessionInfo) []byte {
 	}
 	return payload
 }
+
+func TestLocalSubscriberFrameForwardedToUplink(t *testing.T) {
+	if !localSubscriberFrameForwardedToUplink(proto.TypeOut) {
+		t.Fatal("OUT should be forwarded to remote relay")
+	}
+	if !localSubscriberFrameForwardedToUplink(proto.TypeMeta) {
+		t.Fatal("META should be forwarded to remote relay")
+	}
+	if !localSubscriberFrameForwardedToUplink(proto.TypeClose) {
+		t.Fatal("CLOSE should be forwarded to remote relay")
+	}
+	if localSubscriberFrameForwardedToUplink(proto.TypeReplayProgress) {
+		t.Fatal("REPLAY_PROGRESS is local subscriber progress and must not be sent to /uplink")
+	}
+}

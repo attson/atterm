@@ -65,6 +65,19 @@ func TestUpdater_EmptyVersion_TreatedAsDev(t *testing.T) {
 	}
 }
 
+func TestUpdater_DefaultClientDoesNotCapDownloadAtCheckTimeout(t *testing.T) {
+	u := newUpdater(updaterConfig{
+		current: "v0.1.0",
+		repo:    "attson/atterm",
+	})
+	if u.cfg.client.Timeout != 0 {
+		t.Fatalf("default client timeout = %s; want 0 so Download uses its longer request context", u.cfg.client.Timeout)
+	}
+	if updaterDownloadTimeout <= updaterCheckTimeout {
+		t.Fatalf("download timeout = %s; want greater than check timeout %s", updaterDownloadTimeout, updaterCheckTimeout)
+	}
+}
+
 // silence-the-unused-import warnings for httptest in later tasks.
 var _ = httptest.NewServer
 

@@ -82,7 +82,7 @@ type Updater struct {
 
 func newUpdater(cfg updaterConfig) *Updater {
 	if cfg.client == nil {
-		cfg.client = &http.Client{Timeout: 15 * time.Second}
+		cfg.client = &http.Client{}
 	}
 	if cfg.now == nil {
 		cfg.now = time.Now
@@ -125,7 +125,11 @@ func assetNameForPlatform(goos, goarch string) (string, error) {
 	return "", fmt.Errorf("no atterm build for %s/%s", goos, goarch)
 }
 
-const releaseCacheTTL = 1 * time.Hour
+const (
+	releaseCacheTTL        = 1 * time.Hour
+	updaterCheckTimeout    = 15 * time.Second
+	updaterDownloadTimeout = 10 * time.Minute
+)
 
 // githubReleaseAPI returns the URL to fetch the latest release manifest.
 func (u *Updater) githubReleaseAPI() string {
@@ -175,7 +179,9 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 	u.state.Error = ""
 	u.mu.Unlock()
 
-	rel, err := u.fetchLatest(ctx)
+	checkCtx, cancelCheck := context.WithTimeout(ctx, updaterCheckTimeout)
+	rel, err := u.fetchLatest(checkCtx)
+	cancelCheck()
 
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -371,6 +377,9 @@ func (u *Updater) updatesDir() (string, error) {
 // streaming through a .partial file before atomic-renaming on success.
 // Reports size-mismatch errors loudly so the UI can offer Retry.
 func (u *Updater) Download(ctx context.Context) error {
+	downloadCtx, cancelDownload := context.WithTimeout(ctx, updaterDownloadTimeout)
+	defer cancelDownload()
+
 	u.mu.Lock()
 	url := u.state.AssetURL
 	expectedSize := u.state.AssetSize
@@ -408,7 +417,7 @@ func (u *Updater) Download(ctx context.Context) error {
 		u.mu.Unlock()
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(downloadCtx, "GET", url, nil)
 	if err != nil {
 		u.recordError(err)
 		return err
@@ -451,7 +460,7 @@ func (u *Updater) Download(ctx context.Context) error {
 		return err
 	}
 
-	if err := u.verifyDownloadedArchive(ctx, partial, name); err != nil {
+	if err := u.verifyDownloadedArchive(downloadCtx, partial, name); err != nil {
 		_ = os.Remove(partial)
 		u.recordError(err)
 		return err

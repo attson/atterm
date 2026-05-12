@@ -158,10 +158,13 @@ button { -webkit-tap-highlight-color: transparent; }
 #term {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 6px 8px;
   background: #000;
 }
-.xterm { height: 100%; }
+#term .xterm {
+  height: 100%;
+  /* FitAddon subtracts padding from the xterm element, not its parent. */
+  padding: 6px 8px;
+}
 .xterm-viewport { background: transparent !important; }
 #replay-progress {
   position: fixed;

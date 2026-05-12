@@ -295,6 +295,8 @@ let lastSeq = 0;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let fitTimer = null;
+let fitRetryTimer = null;
+let termResizeObserver = null;
 let userScrolledUp = false;
 let autoScrollTimer = null;
 
@@ -311,13 +313,37 @@ function setReplayProgress(progress) {
   replayProgressFill.style.width = `${replayProgressPercent(progress)}%`;
 }
 
+function fitTerminal() {
+  if (!fitAddon || !term) return false;
+  const termEl = document.getElementById("term");
+  const rect = termEl?.getBoundingClientRect();
+  if (!rect || rect.width < 2 || rect.height < 2) return false;
+  try {
+    const dims = typeof fitAddon.proposeDimensions === "function" ? fitAddon.proposeDimensions() : null;
+    if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) return false;
+    fitAddon.fit();
+    scheduleScrollToBottom(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function retryFitAfterLayout() {
+  cancelAnimationFrame(fitRetryTimer);
+  fitRetryTimer = requestAnimationFrame(() => {
+    if (fitTerminal()) return;
+    fitRetryTimer = requestAnimationFrame(() => {
+      if (fitTerminal()) return;
+      setTimeout(() => fitTerminal(), 100);
+    });
+  });
+}
+
 function scheduleFit() {
   clearTimeout(fitTimer);
   fitTimer = setTimeout(() => {
-    if (fitAddon) {
-      fitAddon.fit();
-      scheduleScrollToBottom(true);
-    }
+    if (!fitTerminal()) retryFitAfterLayout();
   }, 50);
 }
 
@@ -346,6 +372,10 @@ function ensureTerm() {
   term.open(termEl);
   termEl.addEventListener("keydown", handleCopyShortcut, { capture: true });
   termEl.addEventListener("paste", handlePasteEvent, { capture: true });
+  if (window.ResizeObserver) {
+    termResizeObserver = new ResizeObserver(scheduleFit);
+    termResizeObserver.observe(termEl);
+  }
   scheduleFit();
   term.onScroll((line) => {
     const buffer = term.buffer.active;
@@ -455,6 +485,7 @@ function openWS(sessionId) {
     }));
     ws.send(encodeFrame(TYPE.ATTACH, currentSID, attachPayload));
     if (term) {
+      fitTerminal();
       scheduleFit();
       const { cols, rows } = term;
       sendResize(cols, rows);

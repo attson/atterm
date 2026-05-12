@@ -207,7 +207,7 @@ func logStartupSecurity(opts relayOptions, token string, generated, publicListen
 	logger := log.New(w, "", log.LstdFlags)
 	if generated {
 		logger.Printf("generated relay token: %s", token)
-		logger.Printf("open %s/?token=%s", relayHTTPURL(opts.addr), token)
+		logger.Printf("open %s/#token=%s", relayHTTPURL(opts.addr), token)
 	}
 	if opts.devInsecure {
 		logger.Printf("WARNING: INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")

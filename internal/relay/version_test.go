@@ -32,9 +32,27 @@ func dialClientWithToken(ctx context.Context, url, token string) (*websocket.Con
 	})
 }
 
-func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
+func newBearerRequest(method, target, token string) *http.Request {
+	req := httptest.NewRequest(method, target, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
+}
+
+func TestQueryTokenDoesNotAuthorizeREST(t *testing.T) {
 	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
 	req := httptest.NewRequest(http.MethodGet, "/api/version?token=rt", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d; want 401", rec.Code)
+	}
+}
+
+func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
+	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
+	req := newBearerRequest(http.MethodGet, "/api/version", "rt")
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -157,7 +175,7 @@ func TestAdminCreateReadOnlyTokenStoresHashAndAuthenticates(t *testing.T) {
 	if strings.Contains(data, created.Token) {
 		t.Fatalf("config leaked created token: %s", data)
 	}
-	apiReq := httptest.NewRequest(http.MethodGet, "/api/version?token="+created.Token, nil)
+	apiReq := newBearerRequest(http.MethodGet, "/api/version", created.Token)
 	apiRec := httptest.NewRecorder()
 	srv.ServeHTTP(apiRec, apiReq)
 	if apiRec.Code != http.StatusOK {
@@ -188,7 +206,7 @@ func TestRateLimitRejectsExcessRequests(t *testing.T) {
 func TestRateLimitBadTokensShareIPBucket(t *testing.T) {
 	srv := NewServer(Config{Token: "real-token", Version: "v1.2.3", RateLimitPerMinute: 1})
 
-	req1 := httptest.NewRequest(http.MethodGet, "/api/version?token=bad-a", nil)
+	req1 := newBearerRequest(http.MethodGet, "/api/version", "bad-a")
 	req1.RemoteAddr = "203.0.113.10:10000"
 	rec1 := httptest.NewRecorder()
 	srv.ServeHTTP(rec1, req1)
@@ -196,7 +214,7 @@ func TestRateLimitBadTokensShareIPBucket(t *testing.T) {
 		t.Fatalf("first status = %d; want 401", rec1.Code)
 	}
 
-	req2 := httptest.NewRequest(http.MethodGet, "/api/version?token=bad-b", nil)
+	req2 := newBearerRequest(http.MethodGet, "/api/version", "bad-b")
 	req2.RemoteAddr = "203.0.113.10:10001"
 	rec2 := httptest.NewRecorder()
 	srv.ServeHTTP(rec2, req2)
@@ -206,7 +224,7 @@ func TestRateLimitBadTokensShareIPBucket(t *testing.T) {
 }
 
 func TestRequestLimitKeyDoesNotExposeBearerToken(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/version?token=secret-token", nil)
+	req := newBearerRequest(http.MethodGet, "/api/version", "secret-token")
 	req.RemoteAddr = "203.0.113.10:10000"
 
 	key := requestLimitKey(req)
@@ -310,14 +328,14 @@ func TestReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
 	sess := session.New(id, proto.SessionInfo{Command: "bash"})
 	srv.registry.Add(sess)
 
-	apiReq := httptest.NewRequest(http.MethodGet, "/api/sessions?token=ro", nil)
+	apiReq := newBearerRequest(http.MethodGet, "/api/sessions", "ro")
 	apiRec := httptest.NewRecorder()
 	srv.ServeHTTP(apiRec, apiReq)
 	if apiRec.Code != http.StatusOK {
 		t.Fatalf("read-only list status = %d; want 200", apiRec.Code)
 	}
 
-	agentReq := httptest.NewRequest(http.MethodGet, "/agent?token=ro", nil)
+	agentReq := newBearerRequest(http.MethodGet, "/agent", "ro")
 	agentRec := httptest.NewRecorder()
 	srv.ServeHTTP(agentRec, agentReq)
 	if agentRec.Code != http.StatusUnauthorized {
@@ -358,7 +376,7 @@ func TestHashedReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
 	sess := session.New(id, proto.SessionInfo{Command: "bash"})
 	srv.registry.Add(sess)
 
-	apiReq := httptest.NewRequest(http.MethodGet, "/api/sessions?token=ro-hash", nil)
+	apiReq := newBearerRequest(http.MethodGet, "/api/sessions", "ro-hash")
 	apiRec := httptest.NewRecorder()
 	srv.ServeHTTP(apiRec, apiReq)
 	if apiRec.Code != http.StatusOK {

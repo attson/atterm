@@ -32,11 +32,11 @@
 ```bash
 ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
 ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
-# 浏览器: http://localhost:8080/?token=dev
+# 浏览器: http://localhost:8080/#token=dev
 ```
 
 手机接管：iPhone Safari 可以直接打开同一个 relay URL，例如
-`https://relay.example.com/?token=...`。页面支持添加到主屏幕作为 PWA；手机端会显示触控优化的 session 列表、终端视图和 `Esc` / `Tab` / `Ctrl-C` / 方向键等快捷键。真实部署建议使用 HTTPS/WSS。
+`https://relay.example.com/#token=...`。页面支持添加到主屏幕作为 PWA；手机端会显示触控优化的 session 列表、终端视图和 `Esc` / `Tab` / `Ctrl-C` / 方向键等快捷键。真实部署建议使用 HTTPS/WSS。
 
 安全默认值：
 
@@ -45,8 +45,8 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 - 公网监听必须配置 `--origins` / `ATTERM_ORIGINS`，并且 admin token 不能是 `admin`/`dev`/短 token，除非显式传 `--dev-insecure`。
 - relay 默认返回 CSP / Referrer-Policy / nosniff / Permissions-Policy 等安全头；请求先按远端 IP 限流，鉴权成功后再按 IP + token hash 限流，并限制活跃 WebSocket 连接数。
 - 浏览器客户端不再从 CDN 加载 xterm；所有 web 静态资源都走同源 `web/vendor/`，service worker 会缓存这些资源。
-- URL 里的 `?token=...` 会在读取并保存到浏览器本地存储后从地址栏移除，降低分享/截图/历史记录泄漏风险。
-- 桌面/web 客户端的 WebSocket 连接必须用 `Sec-WebSocket-Protocol` 传 token，避免 token 进入 WS URL；relay 端 `/client` 和 `/client-sessions` 不再接受 query token。
+- URL fragment 里的 `#token=...` 会在读取并保存到浏览器本地存储后从地址栏移除；fragment 不会发送给 relay。服务端所有鉴权接口都不接受 `?token=`。
+- 桌面/web 客户端的 WebSocket 连接必须用 `Sec-WebSocket-Protocol` 传 token，避免 token 进入 WS URL。
 - 可用 `ATTERM_READ_ONLY_TOKENS` 或 `--read-only-tokens` 配只读 token；只读用户可以列出/attach/看输出，但不能向 PTY 输入、resize 或粘贴图片。
 - 桌面端 Settings 可设置本机 session 的远程权限：`view` / `control` / `full`。该权限由 owner 发布，relay 与 desktop host 双重强制执行；read-only token 会继续把有效权限压成只读。
 - 可用 `ATTERM_RELAY_CONFIG`/`--config` + `ATTERM_ADMIN_TOKEN`/`--admin-token` 启用持久化 relay admin 配置和 `/admin/` 管理页。持久化配置不保存主 write token，只保存运行参数和 hash 后的只读 token。
@@ -57,7 +57,7 @@ ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
 ```bash
 docker compose up -d atterm-relay
 docker compose logs atterm-relay   # 查看自动生成的 token
-# 浏览器: http://localhost:8080/?token=<日志里的 token>
+# 浏览器: http://localhost:8080/#token=<日志里的 token>
 ```
 
 可选环境变量：

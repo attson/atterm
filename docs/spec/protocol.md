@@ -6,7 +6,7 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / REST）；浏览器 WebSocket client 使用 `Sec-WebSocket-Protocol: atterm-token.<token>` 或 `atterm-token-b64.<base64url(utf8 token)>`，避免 token 进入 URL 日志。`?token=<urlencoded>` query 参数只用于手工打开 web 页面时的 bootstrap 和 REST 兼容；`/client`、`/client-sessions` 不再接受 query token。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。浏览器 web client 读取 `?token=` 后会保存到本地存储并清理地址栏。
+- 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / REST）；浏览器 WebSocket client 使用 `Sec-WebSocket-Protocol: atterm-token.<token>` 或 `atterm-token-b64.<base64url(utf8 token)>`，避免 token 进入 URL 日志。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。浏览器 web client 可用 `#token=<urlencoded>` fragment bootstrap；fragment 不会发送给 relay，读取后会保存到本地存储并清理地址栏。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。
 - CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。
 - 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端必须只加载同源静态资源；xterm 资源 vendored 在 `web/vendor/`。
 
@@ -247,7 +247,7 @@ CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直
 Authorization: Bearer <token>
 ```
 
-或（仅浏览器 WS subprotocol；`/client` 和 `/client-sessions` 必须使用这种方式，不能用 query token）：
+或（仅浏览器 WS subprotocol；`/client` 和 `/client-sessions` 必须使用这种方式）：
 
 ```
 Sec-WebSocket-Protocol: atterm-token.<token>
@@ -257,6 +257,8 @@ Sec-WebSocket-Protocol: atterm-token-b64.<base64url(utf8 token)>
 token 由部署方设置（环境变量 `ATTERM_TOKEN`）。`atterm-relay`
 启动时若未设置会自动生成高强度 token 并打印到日志；`internal/relay`
 作为库使用时 `Config.Token == ""` 仍表示无鉴权（仅用于本地/dev 嵌入场景）。
+服务端不接受 URL query token；手工打开 web 页面时只能使用 `/#token=<token>`
+fragment bootstrap。
 
 scope 目前是 relay 内部鉴权结果，不改变 wire frame 格式：
 

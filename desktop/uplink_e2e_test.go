@@ -16,6 +16,15 @@ import (
 	"nhooyr.io/websocket"
 )
 
+func getRemoteSessions(remoteAddr, token string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/api/sessions", remoteAddr), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return http.DefaultClient.Do(req)
+}
+
 // TestTwoHostsCrossAttach simulates two desktop apps connected to the same
 // remote relay: host1 spawns a session, host2 attaches to it through the
 // remote relay. This is the "open atterm twice and look at each other" path.
@@ -61,7 +70,7 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	saw := false
 	for time.Now().Before(deadline) && !saw {
-		res, err := http.Get(fmt.Sprintf("http://%s/api/sessions?token=rt", remoteAddr))
+		res, err := getRemoteSessions(remoteAddr, "rt")
 		if err == nil {
 			body, _ := io.ReadAll(res.Body)
 			_ = res.Body.Close()
@@ -186,7 +195,7 @@ func TestUplinkE2E(t *testing.T) {
 		t.Helper()
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
-			res, err := http.Get(fmt.Sprintf("http://%s/api/sessions?token=rt", remoteAddr))
+			res, err := getRemoteSessions(remoteAddr, "rt")
 			if err == nil {
 				body, _ := io.ReadAll(res.Body)
 				_ = res.Body.Close()

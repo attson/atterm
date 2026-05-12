@@ -15,8 +15,9 @@ const (
 	authWrite
 )
 
-// authorize accepts an Authorization: Bearer <token> header, a REST/bootstrap
-// ?token=<token> query parameter, or an auth WebSocket subprotocol.
+// authorize accepts an Authorization: Bearer <token> header or an auth
+// WebSocket subprotocol. URL query tokens are intentionally ignored so
+// secrets do not become a supported server-side credential path.
 func authorize(r *http.Request, expected string) bool {
 	return authorizeWithScope(r, expected, nil) == authWrite
 }
@@ -77,9 +78,6 @@ func tokenEqual(got, expected string) bool {
 func tokenFromRequest(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
-	}
-	if q := r.URL.Query().Get("token"); q != "" {
-		return q
 	}
 	return tokenFromSubprotocol(r)
 }

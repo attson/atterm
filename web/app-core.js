@@ -2,10 +2,13 @@ const TOKEN_KEY = "atterm-token";
 
 export function tokenFromLocation(href, storage) {
   const url = new URL(href);
-  const fromQuery = url.searchParams.get("token");
-  if (fromQuery) {
-    storage.setItem(TOKEN_KEY, fromQuery);
-    return fromQuery;
+  const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+  if (hash && !hash.startsWith("/")) {
+    const fromFragment = new URLSearchParams(hash).get("token");
+    if (fromFragment) {
+      storage.setItem(TOKEN_KEY, fromFragment);
+      return fromFragment;
+    }
   }
   return storage.getItem(TOKEN_KEY) || "";
 }
@@ -13,6 +16,15 @@ export function tokenFromLocation(href, storage) {
 export function tokenURLWithoutSecret(href) {
   const url = new URL(href);
   url.searchParams.delete("token");
+  const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+  if (hash && !hash.startsWith("/")) {
+    const params = new URLSearchParams(hash);
+    if (params.has("token")) {
+      params.delete("token");
+      const next = params.toString();
+      url.hash = next ? `#${next}` : "";
+    }
+  }
   return url.toString();
 }
 
@@ -47,9 +59,8 @@ export function webSocketAuth(protocol, host, path, token) {
   };
 }
 
-export function apiURL(path, token) {
-  const t = encodeURIComponent(token || "");
-  return `${path}${t ? `?token=${t}` : ""}`;
+export function apiURL(path, _token) {
+  return path;
 }
 
 export function parseSessionRoute(hash) {

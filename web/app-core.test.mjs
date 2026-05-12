@@ -19,27 +19,36 @@ import {
   webSocketAuth,
 } from "./app-core.js";
 
-test("tokenFromLocation stores query token and returns it", () => {
+test("tokenFromLocation stores fragment token and returns it", () => {
   const stored = [];
   const storage = {
     getItem: () => "old-token",
     setItem: (key, value) => stored.push([key, value]),
   };
 
-  const token = tokenFromLocation("https://relay.example.com/?token=new-token", storage);
+  const token = tokenFromLocation("https://relay.example.com/#token=new-token", storage);
 
   assert.equal(token, "new-token");
   assert.deepEqual(stored, [["atterm-token", "new-token"]]);
 });
 
-test("tokenURLWithoutSecret removes token query parameter without changing route", () => {
+test("tokenFromLocation ignores query token", () => {
+  const storage = {
+    getItem: (key) => (key === "atterm-token" ? "stored-token" : null),
+    setItem: () => assert.fail("setItem should not be called"),
+  };
+
+  assert.equal(tokenFromLocation("https://relay.example.com/?token=query-token", storage), "stored-token");
+});
+
+test("tokenURLWithoutSecret removes token fragment without changing route", () => {
   assert.equal(
-    tokenURLWithoutSecret("https://relay.example.com/?token=new-token&x=1#/s/11111111-1111-4111-8111-111111111111"),
-    "https://relay.example.com/?x=1#/s/11111111-1111-4111-8111-111111111111",
+    tokenURLWithoutSecret("https://relay.example.com/#token=new-token"),
+    "https://relay.example.com/",
   );
   assert.equal(
-    tokenURLWithoutSecret("https://relay.example.com/?token=new-token"),
-    "https://relay.example.com/",
+    tokenURLWithoutSecret("https://relay.example.com/#/s/11111111-1111-4111-8111-111111111111"),
+    "https://relay.example.com/#/s/11111111-1111-4111-8111-111111111111",
   );
 });
 
@@ -59,8 +68,8 @@ test("webSocketAuth sends token with subprotocol instead of query", () => {
   );
 });
 
-test("apiURL appends token query", () => {
-  assert.equal(apiURL("/api/sessions", "dev"), "/api/sessions?token=dev");
+test("apiURL never appends token query", () => {
+  assert.equal(apiURL("/api/sessions", "dev"), "/api/sessions");
   assert.equal(apiURL("/api/sessions", ""), "/api/sessions");
 });
 

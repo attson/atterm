@@ -169,8 +169,9 @@ maybeShowInstallHint();
 registerServiceWorker();
 
 let token = tokenFromLocation(location.href, localStorage);
-if (new URL(location.href).searchParams.has("token")) {
-  history.replaceState(null, "", tokenURLWithoutSecret(location.href));
+const cleanTokenURL = tokenURLWithoutSecret(location.href);
+if (cleanTokenURL !== location.href) {
+  history.replaceState(null, "", cleanTokenURL);
 }
 tokenInput.value = token;
 

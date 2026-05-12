@@ -92,7 +92,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 桌面 app 启动时 uplink.Run 已建立控制连接
 桌面 NewSession 后 → notifyChange → uplink 发新 ANNOUNCE → relay 建 mirror session
 
-浏览器打开 http://relay/?token=… → ATTACH(sid)
+浏览器打开 http://relay/#token=… → ATTACH(sid)
        ↓
 relay client_conn → mirror.Subscribe()  ← 触发 lifecycle.onFirstSubscribe
        ↓

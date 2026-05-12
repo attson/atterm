@@ -30,6 +30,9 @@ func TestRelaySecurityGeneratesTokenWhenUnset(t *testing.T) {
 	if !strings.Contains(log.String(), token) {
 		t.Fatalf("startup log %q does not include generated token", log.String())
 	}
+	if strings.Contains(log.String(), "?token=") || !strings.Contains(log.String(), "#token=") {
+		t.Fatalf("startup log %q should print fragment token URL only", log.String())
+	}
 }
 
 func TestRelaySecurityRejectsWeakTokenOnPublicListen(t *testing.T) {

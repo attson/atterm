@@ -2,12 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/relay"
+	"nhooyr.io/websocket"
 )
 
 func TestRelaySecurityGeneratesTokenWhenUnset(t *testing.T) {
@@ -143,4 +149,68 @@ func TestRelaySecurityRejectsWeakAdminTokenOnPublicListen(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "weak admin token") {
 		t.Fatalf("err = %v; want weak admin token rejection", err)
 	}
+}
+
+func TestRelaySecurityNormalizesOriginsAndAllowsDesktopWebviews(t *testing.T) {
+	cfg, _, err := buildRelayConfig(relayOptions{
+		addr:    ":8080",
+		token:   "strong-random-token",
+		origins: "https://relay.example.com,*.trusted.example.com",
+		version: "test",
+	})
+	if err != nil {
+		t.Fatalf("buildRelayConfig err: %v", err)
+	}
+	want := []string{"relay.example.com", "*.trusted.example.com", "wails", "wails.localhost", "wails.localhost:*"}
+	for _, origin := range want {
+		if !containsString(cfg.AllowedOrigins, origin) {
+			t.Fatalf("AllowedOrigins = %#v; want %q", cfg.AllowedOrigins, origin)
+		}
+	}
+}
+
+func TestRelaySecurityAcceptsDesktopWebviewSessionListWS(t *testing.T) {
+	cfg, _, err := buildRelayConfig(relayOptions{
+		addr:    ":8080",
+		token:   "strong-random-token",
+		origins: "https://relay.example.com",
+		version: "test",
+	})
+	if err != nil {
+		t.Fatalf("buildRelayConfig err: %v", err)
+	}
+	httpSrv := httptest.NewServer(relay.NewServer(cfg))
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpSrv.URL, "http")+"/client-sessions", &websocket.DialOptions{
+		HTTPHeader:   http.Header{"Origin": []string{"wails://wails"}},
+		Subprotocols: []string{"atterm-token.strong-random-token"},
+	})
+	if err != nil {
+		t.Fatalf("desktop webview /client-sessions dial err: %v", err)
+	}
+	defer conn.CloseNow()
+
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read initial session list: %v", err)
+	}
+	frame, err := proto.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal initial session list: %v", err)
+	}
+	if frame.Type != proto.TypeListResp {
+		t.Fatalf("frame.Type = 0x%02x; want LIST_RESP", frame.Type)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

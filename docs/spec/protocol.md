@@ -7,7 +7,7 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
 - 鉴权：HTTP `Authorization: Bearer <token>`（agent / uplink / REST）；浏览器 WebSocket client 使用 `Sec-WebSocket-Protocol: atterm-token.<token>` 或 `atterm-token-b64.<base64url(utf8 token)>`，避免 token 进入 URL 日志。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。浏览器 web client 可用 `#token=<urlencoded>` fragment bootstrap；fragment 不会发送给 relay，读取后会保存到本地存储并清理地址栏。`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时会自动生成强 token 并打印到日志；`internal/relay.Config.Token == ""` 仅供本地/dev 嵌入场景表示不鉴权。
-- CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。
+- CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。`--origins` 可写完整 URL 或 host pattern；relay 会按 WebSocket 库要求规范成 Origin host pattern，并在启用白名单时自动允许 Wails 桌面客户端的本地 asset hosts。
 - 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端必须只加载同源静态资源；xterm 资源 vendored 在 `web/vendor/`。
 
 ## 帧格式
@@ -239,7 +239,10 @@ payload = JSON：
 
 CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直接 204。非 `OPTIONS`
 请求进入 mux 前会经过按远端 IP/token 计算的固定窗口 rate limit；WebSocket upgrade
-还会经过同一 key 的活跃连接数限制。
+还会经过同一 key 的活跃连接数限制。WebSocket Origin 白名单匹配的是 Origin
+host（例如 `relay.example.com`、`*.example.com`）；`cmd/atterm-relay` 接受完整 URL
+输入并规范成 host，同时追加 Wails 桌面客户端需要的 `wails` / `wails.localhost`
+host pattern，这样桌面客户端和同源 web 客户端都能连接。
 
 ## 鉴权
 

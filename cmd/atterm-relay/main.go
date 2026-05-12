@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -26,7 +27,7 @@ var Version = "dev"
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
-	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin host patterns (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
+	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
 	adminToken := flag.String("admin-token", os.Getenv("ATTERM_ADMIN_TOKEN"), "admin bearer token for /admin routes (or ATTERM_ADMIN_TOKEN; empty disables admin)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
@@ -117,6 +118,46 @@ func splitCSV(s string) []string {
 	return out
 }
 
+var desktopWebviewOriginHosts = []string{
+	"wails",
+	"wails.localhost",
+	"wails.localhost:*",
+}
+
+func allowedOriginHosts(raw string) []string {
+	origins := splitCSV(raw)
+	if len(origins) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(origins)+len(desktopWebviewOriginHosts))
+	for _, origin := range origins {
+		out = appendUniqueString(out, normalizeOriginHostPattern(origin))
+	}
+	// nhooyr matches OriginPatterns against the Origin host only. A packaged
+	// Wails desktop client uses these local asset hosts, while the remote relay
+	// still requires the bearer token before accepting any WebSocket.
+	for _, origin := range desktopWebviewOriginHosts {
+		out = appendUniqueString(out, origin)
+	}
+	return out
+}
+
+func normalizeOriginHostPattern(origin string) string {
+	if u, err := url.Parse(origin); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return origin
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 type relayOptions struct {
 	addr         string
 	webDir       string
@@ -150,7 +191,7 @@ func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
 	if publicListen && weakToken && !opts.devInsecure {
 		return relay.Config{}, "", fmt.Errorf("refusing public relay with weak token; set a strong ATTERM_TOKEN or pass --dev-insecure for development")
 	}
-	allowedOrigins := splitCSV(opts.origins)
+	allowedOrigins := allowedOriginHosts(opts.origins)
 	if publicListen && len(allowedOrigins) == 0 && !opts.devInsecure {
 		return relay.Config{}, "", fmt.Errorf("refusing public relay without --origins; set --origins https://relay.example.com or pass --dev-insecure for development")
 	}

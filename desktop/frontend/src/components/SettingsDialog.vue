@@ -342,6 +342,9 @@ const isDev = computed(
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; padding: 20px 24px; width: 460px;
   max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-sizing: border-box;
   display: flex; flex-direction: column; gap: 8px;
 }
 .dialog h2 {

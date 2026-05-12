@@ -175,6 +175,42 @@ func TestUpdater_Check_NewVersionAvailable(t *testing.T) {
 	}
 }
 
+func TestUpdater_Check_ClearsReadyWhenDownloadedAssetIsForOlderVersion(t *testing.T) {
+	apiURL, _ := fakeGitHub(t, releasePayload("v0.2.0", false))
+	tmpCache := t.TempDir()
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(tmpCache, "atterm", "updates", "v0.1.5-"+name)
+	u := newUpdater(updaterConfig{
+		current:  "v0.1.0",
+		repo:     "attson/atterm",
+		cacheDir: tmpCache,
+	})
+	// Simulate a previous successful download that is no longer the latest
+	// release after the next Check refreshes GitHub state.
+	u.state.Latest = "v0.1.5"
+	u.state.Ready = true
+	u.state.DownloadPct = 100
+	u.state.DownloadPath = oldPath
+	u.cfg.releaseURL = apiURL
+
+	if err := u.Check(context.Background(), true); err != nil {
+		t.Fatalf("Check err: %v", err)
+	}
+	st := u.State()
+	if st.Ready {
+		t.Fatalf("Ready = true with stale download %q; want false", st.DownloadPath)
+	}
+	if !st.Available {
+		t.Fatalf("Available = false; want true so UI can offer download %s", st.Latest)
+	}
+	if st.DownloadPath != "" {
+		t.Fatalf("DownloadPath = %q; want empty after stale ready is cleared", st.DownloadPath)
+	}
+}
+
 func TestUpdater_Check_UpToDate(t *testing.T) {
 	apiURL, _ := fakeGitHub(t, releasePayload("v0.1.0", false))
 	u := newUpdater(updaterConfig{

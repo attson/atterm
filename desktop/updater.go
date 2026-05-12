@@ -225,7 +225,35 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 			}
 		}
 	}
+	u.clearStaleReadyLocked()
 	return nil
+}
+
+func (u *Updater) clearStaleReadyLocked() {
+	if !u.state.Ready {
+		return
+	}
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		u.state.Ready = false
+		u.state.DownloadPct = 0
+		u.state.DownloadPath = ""
+		return
+	}
+	dir, err := u.updatesDir()
+	if err != nil {
+		u.state.Ready = false
+		u.state.DownloadPct = 0
+		u.state.DownloadPath = ""
+		return
+	}
+	expected := filepath.Join(dir, u.state.Latest+"-"+name)
+	if u.state.DownloadPath == expected {
+		return
+	}
+	u.state.Ready = false
+	u.state.DownloadPct = 0
+	u.state.DownloadPath = ""
 }
 
 func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {

@@ -20,8 +20,15 @@ tmp=$(mktemp -d)
 tar -xzf "$src" -C "$tmp"
 [ -f "$tmp/AT Term" ] || { echo "AT Term not in archive"; exit 1; }
 
-mv "$tmp/AT Term" "$dst"
-chmod +x "$dst"
+if ! mv "$tmp/AT Term" "$dst"; then
+  if ! command -v pkexec >/dev/null 2>&1; then
+    echo "could not replace $dst and pkexec is not available" >&2
+    exit 1
+  fi
+  pkexec /bin/sh -c 'mv "$1" "$2" && chmod +x "$2"' sh "$tmp/AT Term" "$dst"
+else
+  chmod +x "$dst"
+fi
 
 # Detach the relaunched process from this script.
 setsid "$dst" >/dev/null 2>&1 < /dev/null &

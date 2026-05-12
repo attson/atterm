@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -508,6 +509,80 @@ func TestInstallPathFromExecutable_Windows(t *testing.T) {
 	want := `C:\Users\x\AT Term.exe`
 	if got != want {
 		t.Errorf("install path = %q; want %q", got, want)
+	}
+}
+
+func TestLinuxInstallHelperFallsBackToPkexecWhenDirectReplaceFails(t *testing.T) {
+	if _, err := os.Stat("/bin/bash"); err != nil {
+		t.Skip("/bin/bash not available")
+	}
+	dir := t.TempDir()
+	fakeBin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "mv-first-call")
+	pkexecLog := filepath.Join(dir, "pkexec.log")
+	setsidLog := filepath.Join(dir, "setsid.log")
+	writeExecutable(t, filepath.Join(fakeBin, "mv"), fmt.Sprintf(`#!/bin/sh
+if [ ! -f %q ]; then
+  echo first > %q
+  exit 1
+fi
+exec /bin/mv "$@"
+`, marker, marker))
+	writeExecutable(t, filepath.Join(fakeBin, "pkexec"), fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+exec "$@"
+`, pkexecLog))
+	writeExecutable(t, filepath.Join(fakeBin, "setsid"), fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+exit 0
+`, setsidLog))
+
+	payloadDir := filepath.Join(dir, "payload")
+	if err := os.Mkdir(payloadDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(payloadDir, "AT Term"), []byte("new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "update.tar.gz")
+	run := exec.Command("tar", "-czf", archive, "-C", payloadDir, "AT Term")
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("tar: %v\n%s", err, out)
+	}
+	dst := filepath.Join(dir, "AT-Term")
+	if err := os.WriteFile(dst, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("/bin/bash", "scripts/install-linux.sh", "999999", archive, dst)
+	cmd.Dir = "."
+	cmd.Env = append(os.Environ(),
+		"HOME="+filepath.Join(dir, "home"),
+		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install-linux.sh: %v\nstdout/stderr:\n%s", err, out)
+	}
+
+	body, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "new" {
+		t.Fatalf("dst content = %q; want new", body)
+	}
+	if _, err := os.Stat(pkexecLog); err != nil {
+		t.Fatalf("pkexec was not invoked after direct replace failed: %v", err)
+	}
+}
+
+func writeExecutable(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 

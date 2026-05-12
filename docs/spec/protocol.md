@@ -309,13 +309,13 @@ client 重连后发 `ATTACH(session_id, since_seq=最后收到的 seq)`，relay 
 
 ### 间隙补不上
 
-ringbuf 容量 4 MiB（按字节预算丢最老）。client 请求的 `since_seq` 老于 ringbuf 最老 seq 时，relay 发：
+ringbuf 容量 4 MiB（按字节预算丢最老）。client 请求的 `since_seq` 老于 ringbuf 最老 seq 时，或首次 attach（`since_seq=0`）但会话开头已经被 ringbuf 淘汰时，relay 发：
 
 ```
 OUT(seq=0, payload="\x1b[2J\x1b[H")  // ANSI clear screen + cursor home
 ```
 
-随后从 ringbuf 当前最老 seq 开始补，让 client 重置渲染状态。
+如果 relay 记录到会话当前处于 alternate screen，marker 会先进入 alternate screen（`\x1b[?1049h`）再清屏归位。随后从 ringbuf 当前最老 seq 开始补，让 client 重置渲染状态。
 
 ### Uplink 断线
 

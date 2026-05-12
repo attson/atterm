@@ -27,12 +27,14 @@ type Session struct {
 	ID        uuid.UUID
 	StartedAt time.Time
 
-	mu      sync.RWMutex
-	meta    proto.SessionInfo
-	closed  bool
-	subs    map[*Subscriber]struct{}
-	scroll  *ringbuf.Buffer
-	inbound chan proto.Frame // bounded; client -> agent
+	mu        sync.RWMutex
+	meta      proto.SessionInfo
+	closed    bool
+	subs      map[*Subscriber]struct{}
+	scroll    *ringbuf.Buffer
+	inbound   chan proto.Frame // bounded; client -> agent
+	altScreen bool
+	termTail  []byte
 
 	// Optional lifecycle hooks. Used by mirror sessions (Phase 1.5 lazy
 	// uplink) so the relay can ask the upstream host to start/stop a stream
@@ -127,6 +129,7 @@ func (s *Session) UpdateSize(cols, rows uint16) {
 // It records the chunk to scrollback and fans out to current subscribers.
 // Slow subscribers are dropped (their channels are closed) so they reconnect.
 func (s *Session) PushOut(seq uint64, data []byte) {
+	s.updateTerminalState(data)
 	s.scroll.Push(ringbuf.Chunk{Seq: seq, Data: append([]byte(nil), data...)})
 	frame := proto.EncodeOut(s.ID, seq, data)
 	s.fanout(frame)
@@ -165,13 +168,16 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
+	s.mu.RLock()
+	altScreen := s.altScreen
+	s.mu.RUnlock()
 	totalBytes := replayBytes(chunks)
 	_ = enqueueReplayProgress(sub, s.ID, proto.ReplayProgressStart, 0, totalBytes, 0)
-	// If the client asked for a seq older than what we still have, the gap
-	// is unrecoverable: send a soft truncation marker (clear screen) so the
-	// terminal does not render torn state, then replay everything we have.
-	if sinceSeq > 0 && s.scroll.OldestSeq() > sinceSeq+1 && len(chunks) > 0 {
-		marker := proto.EncodeOut(s.ID, 0, []byte("\x1b[2J\x1b[H"))
+	// If the replay starts after evicted bytes, the gap is unrecoverable:
+	// send a soft truncation marker so a fresh xterm doesn't render a torn
+	// tail of cursor-addressed output on top of an unrelated blank state.
+	if replayIsTruncated(s.scroll.OldestSeq(), sinceSeq, len(chunks)) {
+		marker := proto.EncodeOut(s.ID, 0, replayResetMarker(altScreen))
 		select {
 		case sub.out <- marker:
 		default:
@@ -222,6 +228,104 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 		go firstHook()
 	}
 	return sub, lastSeq
+}
+
+func replayIsTruncated(oldestSeq, sinceSeq uint64, chunkCount int) bool {
+	if chunkCount == 0 {
+		return false
+	}
+	if sinceSeq == 0 {
+		return oldestSeq > 1
+	}
+	return oldestSeq > sinceSeq+1
+}
+
+func replayResetMarker(altScreen bool) []byte {
+	if altScreen {
+		return []byte("\x1b[?1049h\x1b[2J\x1b[H")
+	}
+	return []byte("\x1b[2J\x1b[H")
+}
+
+func (s *Session) updateTerminalState(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	const tailLen = 32
+	prevTail := s.termTail
+	if len(prevTail) > 0 {
+		prefixLen := tailLen - len(prevTail)
+		if prefixLen > len(data) {
+			prefixLen = len(data)
+		}
+		prefix := append(append([]byte(nil), prevTail...), data[:prefixLen]...)
+		s.altScreen = scanAltScreenMode(s.altScreen, prefix)
+	}
+	s.altScreen = scanAltScreenMode(s.altScreen, data)
+	s.termTail = appendTrailingBytes(s.termTail[:0], prevTail, data, tailLen)
+}
+
+func scanAltScreenMode(alt bool, data []byte) bool {
+	for i := 0; i+2 < len(data); i++ {
+		if data[i] != 0x1b || data[i+1] != '[' {
+			continue
+		}
+		j := i + 2
+		if j >= len(data) || data[j] != '?' {
+			continue
+		}
+		j++
+		paramsStart := j
+		for j < len(data) && (data[j] < 0x40 || data[j] > 0x7e) {
+			j++
+		}
+		if j >= len(data) {
+			break
+		}
+		final := data[j]
+		if final == 'h' || final == 'l' {
+			if csiParamsContainAltScreen(data[paramsStart:j]) {
+				alt = final == 'h'
+			}
+		}
+		i = j
+	}
+	return alt
+}
+
+func csiParamsContainAltScreen(params []byte) bool {
+	value := 0
+	haveDigits := false
+	for _, b := range params {
+		if b >= '0' && b <= '9' {
+			value = value*10 + int(b-'0')
+			haveDigits = true
+			continue
+		}
+		if haveDigits && isAltScreenMode(value) {
+			return true
+		}
+		value = 0
+		haveDigits = false
+	}
+	return haveDigits && isAltScreenMode(value)
+}
+
+func isAltScreenMode(value int) bool {
+	return value == 47 || value == 1047 || value == 1049
+}
+
+func appendTrailingBytes(dst, prev, data []byte, max int) []byte {
+	if len(data) >= max {
+		return append(dst, data[len(data)-max:]...)
+	}
+	combined := append(append([]byte(nil), prev...), data...)
+	if len(combined) > max {
+		combined = combined[len(combined)-max:]
+	}
+	return append(dst, combined...)
 }
 
 func replayBytes(chunks []ringbuf.Chunk) uint64 {

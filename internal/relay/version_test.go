@@ -101,6 +101,22 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersAllowXtermRuntimeStylesWithoutUnsafeScript(t *testing.T) {
+	srv := NewServer(Config{Version: "v1.2.3"})
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
+		t.Fatalf("Content-Security-Policy = %q; want style-src to allow xterm runtime inline styles", csp)
+	}
+	if strings.Contains(csp, "script-src 'unsafe-inline'") || strings.Contains(csp, "script-src 'unsafe-eval'") {
+		t.Fatalf("Content-Security-Policy = %q; must not allow unsafe script execution", csp)
+	}
+}
+
 func TestAdminRoutesHiddenWithoutAdminToken(t *testing.T) {
 	srv := NewServer(Config{})
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)

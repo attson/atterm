@@ -38,6 +38,12 @@ type appConfig struct {
 	// TerminalTheme is the user's global desktop terminal theme preference.
 	// Unknown values fall back to classic so older configs remain usable.
 	TerminalTheme string `json:"terminal_theme,omitempty"`
+	// LogToFileEnabled controls whether desktop logs are persisted to a file.
+	// Nil means "never set" and defaults to true for existing installs.
+	LogToFileEnabled *bool `json:"log_to_file_enabled,omitempty"`
+	// LogFilePath overrides the platform default desktop log file path.
+	// Empty means "use the platform default".
+	LogFilePath string `json:"log_file_path,omitempty"`
 
 	// Auto-update settings. Nil means "never set" → treated as default true
 	// at read time. Stored as a pointer so we can distinguish "user opted
@@ -70,6 +76,20 @@ func (c appConfig) TerminalThemeOrDefault() string {
 		return c.TerminalTheme
 	}
 	return terminalThemeClassic
+}
+
+func (c appConfig) LogToFileEnabledOrDefault() bool {
+	if c.LogToFileEnabled == nil {
+		return true
+	}
+	return *c.LogToFileEnabled
+}
+
+func (c appConfig) LogFilePathOrDefault() string {
+	if c.LogFilePath != "" {
+		return c.LogFilePath
+	}
+	return defaultLogFilePath()
 }
 
 func isSupportedTerminalTheme(theme string) bool {

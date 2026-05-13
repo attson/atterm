@@ -44,3 +44,28 @@ describe("TerminalView themes", () => {
     expect(source).toMatch(/background:\s*var\(--terminal-overlay\)/);
   });
 });
+
+describe("TerminalView right-click menu", () => {
+  test("accepts remote permission and renders a teleported context menu", () => {
+    expect(source).toContain("remotePermission?: string");
+    expect(source).toContain('@contextmenu.prevent="openContextMenu"');
+    expect(source).toContain('Teleport to="body"');
+    expect(source).toContain('class="term-context-menu"');
+    expect(source).toContain('emit("toast", result.reason');
+    expect(paneSource).toContain(':remote-permission="sessionInfoFor(pane)?.remote_permission"');
+  });
+
+  test("renders copy/paste buttons with disabled state bindings", () => {
+    expect(source).toContain('class="term-context-item"');
+    expect(source).toContain(">copy<");
+    expect(source).toContain(">paste<");
+    expect(source).toContain(':disabled="!menuHasSelection"');
+    expect(source).toContain(':disabled="!menuCanPaste || pasteBusy"');
+  });
+
+  test("uses fixed-position menu styling so overflow-hidden panes do not clip it", () => {
+    const menuStyle = styleBlockFor(".term-context-menu");
+    expect(menuStyle).toMatch(/position\s*:\s*fixed/);
+    expect(menuStyle).toMatch(/z-index\s*:/);
+  });
+});

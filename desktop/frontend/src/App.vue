@@ -644,6 +644,7 @@ onUnmounted(() => {
           :terminal-theme="currentTerminalTheme.xtermTheme"
           @set-active-pane="(idx) => (t.activePaneIdx = idx)"
           @close-pane="(idx) => closePaneAt(t, idx)"
+          @toast="showToast"
         />
       </template>
       <div v-if="toast" class="toast">{{ toast }}</div>

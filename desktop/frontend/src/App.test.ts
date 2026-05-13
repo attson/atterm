@@ -11,3 +11,9 @@ describe("tab activation", () => {
     expect(currentIdx).toBeLessThan(hashIdx);
   });
 });
+
+describe("terminal toasts", () => {
+  test("wires pane-grid toast events to the existing toast surface", () => {
+    expect(source).toContain('@toast="showToast"');
+  });
+});

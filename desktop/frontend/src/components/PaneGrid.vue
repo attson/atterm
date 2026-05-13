@@ -17,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "set-active-pane", paneIdx: number): void;
   (e: "close-pane", paneIdx: number): void;
+  (e: "toast", message: string): void;
 }>();
 
 const AREA_FOR_LAYOUT = {
@@ -58,8 +59,10 @@ function formatWho(info: SessionInfo | null): string {
         :focused="active && idx === tab.activePaneIdx"
         :expected-cols="sessionInfoFor(pane)?.cols"
         :expected-rows="sessionInfoFor(pane)?.rows"
+        :remote-permission="sessionInfoFor(pane)?.remote_permission"
         :avoid-top-right-badge="pane.remote"
         :theme="terminalTheme"
+        @toast="emit('toast', $event)"
       />
       <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
 

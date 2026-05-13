@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, onBeforeUnmount, ref, watch, nextTick } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
@@ -7,6 +7,8 @@ import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
+import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
+import { pasteFromClipboard } from "../lib/terminalPaste";
 
 const props = withDefaults(
   defineProps<{
@@ -23,20 +25,36 @@ const props = withDefaults(
     // send the resize anyway (safe fallback).
     expectedCols?: number;
     expectedRows?: number;
+    remotePermission?: string;
     theme: ITheme;
   }>(),
   { active: true, focused: false, avoidTopRightBadge: false }
 );
 
+const emit = defineEmits<{
+  (e: "toast", message: string): void;
+}>();
+
 const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
 const replayProgress = ref<ReplayProgress | null>(null);
+const menuOpen = ref(false);
+const menuX = ref(0);
+const menuY = ref(0);
+const menuHasSelection = ref(false);
+const pasteBusy = ref(false);
+const menuRef = ref<HTMLDivElement | null>(null);
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
+
+const MENU_WIDTH = 150;
+const MENU_HEIGHT = 76;
+
+const menuCanPaste = computed(() => isPasteAllowed(status.value, props.remotePermission));
 
 async function handleCopyShortcut(e: KeyboardEvent) {
   if (!term || !isTerminalCopyShortcut(e)) return;
@@ -60,6 +78,74 @@ async function handleImagePaste(e: ClipboardEvent) {
     await conn?.sendPasteImage(file, file.name || "clipboard-image");
   } catch (err) {
     console.warn("[AT Term] failed to paste terminal image", err);
+  }
+}
+
+function closeContextMenu() {
+  menuOpen.value = false;
+}
+
+function openContextMenu(e: MouseEvent) {
+  if (!term) return;
+  const pos = clampContextMenuPosition(
+    e.clientX,
+    e.clientY,
+    MENU_WIDTH,
+    MENU_HEIGHT,
+    window.innerWidth,
+    window.innerHeight,
+  );
+  menuHasSelection.value = !!term.getSelection();
+  menuX.value = pos.left;
+  menuY.value = pos.top;
+  menuOpen.value = true;
+}
+
+function onDocumentMouseDown(e: MouseEvent) {
+  if (!menuOpen.value) return;
+  const target = e.target;
+  if (target instanceof Node && menuRef.value?.contains(target)) return;
+  closeContextMenu();
+}
+
+function onDocumentKeyDown(e: KeyboardEvent) {
+  if (e.key === "Escape") closeContextMenu();
+}
+
+async function onMenuCopy() {
+  closeContextMenu();
+  if (!term) return;
+  try {
+    await copyTerminalSelection(term);
+  } catch (err) {
+    console.warn("[AT Term] failed to copy terminal selection", err);
+    emit("toast", "copy failed");
+  }
+}
+
+async function onMenuPaste() {
+  if (!term || !conn || pasteBusy.value) return;
+  pasteBusy.value = true;
+  console.info("[AT Term] terminal menu paste requested", {
+    status: status.value,
+    remotePermission: props.remotePermission ?? "full",
+  });
+  try {
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: status.value,
+      remotePermission: props.remotePermission,
+    });
+    if (!result.ok && result.reason) {
+      emit("toast", result.reason);
+    }
+  } catch (err: any) {
+    console.warn("[AT Term] failed to paste from terminal menu", err);
+    emit("toast", err?.message ?? "paste failed");
+  } finally {
+    pasteBusy.value = false;
+    closeContextMenu();
   }
 }
 
@@ -148,6 +234,8 @@ function startConnection() {
 onMounted(() => {
   ensureTerm();
   startConnection();
+  document.addEventListener("mousedown", onDocumentMouseDown);
+  document.addEventListener("keydown", onDocumentKeyDown);
   // Re-fit on the next two animation frames. Layout for the cell may not
   // be fully resolved at term.open() time — getComputedStyle('height') on
   // the absolute+inset:0 .term sometimes still reads "auto" right after
@@ -160,6 +248,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocumentMouseDown);
+  document.removeEventListener("keydown", onDocumentKeyDown);
   conn?.detach();
   conn = null;
   resizeObserver?.disconnect();
@@ -182,6 +272,8 @@ watch(
         safeFit();
         term?.focus();
       });
+    } else {
+      closeContextMenu();
     }
   }
 );
@@ -192,11 +284,15 @@ watch(
     if (term) term.options.theme = theme;
   }
 );
+
+watch(status, (nextStatus) => {
+  if (nextStatus !== "attached") closeContextMenu();
+});
 </script>
 
 <template>
   <div class="term-view" :class="{ focused }">
-    <div ref="termContainer" class="term"></div>
+    <div ref="termContainer" class="term" @contextmenu.prevent="openContextMenu"></div>
     <div
       v-if="active && (status !== 'attached' || replayProgress)"
       class="overlay"
@@ -213,6 +309,19 @@ watch(
       <span v-else-if="status === 'ended'" class="dim">session ended</span>
       <span v-else-if="status === 'error'" class="bad">connection error</span>
     </div>
+    <Teleport to="body">
+      <div
+        v-if="menuOpen"
+        ref="menuRef"
+        class="term-context-menu"
+        :style="{ left: `${menuX}px`, top: `${menuY}px` }"
+        @mousedown.stop
+        @click.stop
+      >
+        <button class="term-context-item" :disabled="!menuHasSelection" @click="onMenuCopy">copy</button>
+        <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">paste</button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -262,6 +371,33 @@ watch(
   border-radius: inherit;
   background: linear-gradient(90deg, var(--accent), #4ade80);
   transition: width 120ms ease;
+}
+.term-context-menu {
+  position: fixed;
+  min-width: 150px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(13, 17, 23, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+}
+.term-context-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.term-context-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+.term-context-item:disabled {
+  color: var(--fg-dim);
+  cursor: default;
 }
 .term-view.focused {
   box-shadow: inset 0 0 0 1px var(--accent);

@@ -9,6 +9,9 @@
   --accent: #58a6ff;
   --good: #3fb950;
   --bad: #f85149;
+  --terminal-bg: #000000;
+  --terminal-grid: #11161d;
+  --terminal-overlay: rgba(13, 17, 23, 0.85);
 }
 
 * { box-sizing: border-box; }

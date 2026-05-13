@@ -113,7 +113,7 @@ function formatWho(info: SessionInfo | null): string {
   inset: 0;
   display: grid;
   gap: 2px;
-  background: #11161d;
+  background: var(--terminal-grid);
 }
 .pane-grid.single     { grid-template: "a"; }
 .pane-grid.vertical   { grid-template: "a b" / 1fr 1fr; }
@@ -122,7 +122,7 @@ function formatWho(info: SessionInfo | null): string {
 
 .cell {
   position: relative;
-  background: #000;
+  background: var(--terminal-bg);
   overflow: hidden;
 }
 .empty {

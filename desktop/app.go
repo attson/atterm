@@ -336,6 +336,16 @@ func (a *App) GetLogPreview() (LogPreview, error) {
 	}, nil
 }
 
+func (a *App) GetClipboardPastePayload() (ClipboardPastePayload, error) {
+	if a.ctx == nil {
+		return ClipboardPastePayload{
+			Kind:   "none",
+			Reason: "runtime context not ready",
+		}, nil
+	}
+	return readClipboardPastePayloadFromRuntime(a.ctx), nil
+}
+
 // GetTerminalTheme returns the user's global terminal theme preference.
 func (a *App) GetTerminalTheme() string {
 	if a.cfgStore == nil {

@@ -4,29 +4,39 @@ import {
   checkUpdate,
   getAutoCheckUpdates,
   getRelayConfig,
+  getTerminalThemePreference,
   getUpdateState,
   installUpdate,
   setAutoCheckUpdates,
   setRelayConfig,
+  setTerminalThemePreference,
   startDownload,
   type UpdateState,
 } from "../lib/api";
+import {
+  TERMINAL_THEMES,
+  getTerminalTheme,
+} from "../lib/terminalThemes";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 
 const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
+  terminalThemeId: string;
 }>();
 
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "relay-config-changed"): void;
+  (e: "terminal-theme-changed", themeID: string): void;
 }>();
 
 const url = ref("");
 const token = ref("");
 const allowInsecureRelay = ref(false);
 const remotePermission = ref("full");
+const selectedTerminalTheme = ref(getTerminalTheme(props.terminalThemeId).id);
+const persistedTerminalTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 const connected = ref(false);
 const loading = ref(true);
 const saving = ref(false);
@@ -40,10 +50,11 @@ let pollHandle: number | null = null;
 
 onMounted(async () => {
   try {
-    const [cfg, st, ac] = await Promise.all([
+    const [cfg, st, ac, themeID] = await Promise.all([
       getRelayConfig(),
       getUpdateState(),
       getAutoCheckUpdates(),
+      getTerminalThemePreference(),
     ]);
     url.value = cfg.url;
     token.value = cfg.token;
@@ -52,6 +63,8 @@ onMounted(async () => {
     connected.value = cfg.connected;
     updateState.value = st;
     autoCheck.value = ac;
+    selectedTerminalTheme.value = getTerminalTheme(themeID).id;
+    persistedTerminalTheme.value = selectedTerminalTheme.value;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -111,6 +124,22 @@ async function disconnect() {
 
 function close() {
   if (!saving.value) emit("close");
+}
+
+async function onTerminalThemeChange() {
+  const nextTheme = getTerminalTheme(selectedTerminalTheme.value).id;
+  const previousTheme = persistedTerminalTheme.value;
+  selectedTerminalTheme.value = nextTheme;
+  error.value = "";
+  try {
+    await setTerminalThemePreference(nextTheme);
+    persistedTerminalTheme.value = nextTheme;
+    emit("terminal-theme-changed", nextTheme);
+  } catch (e: any) {
+    selectedTerminalTheme.value = previousTheme;
+    emit("terminal-theme-changed", previousTheme);
+    error.value = e?.message ?? String(e);
+  }
 }
 
 async function onCheckNow() {
@@ -192,6 +221,24 @@ const isDev = computed(
           configure a remote atterm-relay so this machine's sessions can be
           attached from other devices. when no one is attached, no bytes leave
           this machine.
+        </p>
+
+        <label>terminal theme</label>
+        <select
+          v-model="selectedTerminalTheme"
+          :disabled="saving"
+          @change="onTerminalThemeChange"
+        >
+          <option
+            v-for="theme in TERMINAL_THEMES"
+            :key="theme.id"
+            :value="theme.id"
+          >
+            {{ theme.label }} — {{ theme.description }}
+          </option>
+        </select>
+        <p class="hint">
+          Applies to all terminal panes immediately and is saved as your local desktop preference.
         </p>
 
         <label>relay url</label>

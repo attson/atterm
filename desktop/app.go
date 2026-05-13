@@ -218,6 +218,28 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	return nil
 }
 
+// GetTerminalTheme returns the user's global terminal theme preference.
+func (a *App) GetTerminalTheme() string {
+	if a.cfgStore == nil {
+		return terminalThemeClassic
+	}
+	return a.cfgStore.Get().TerminalThemeOrDefault()
+}
+
+// SetTerminalTheme persists the user's global terminal theme preference.
+func (a *App) SetTerminalTheme(theme string) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	theme = strings.TrimSpace(theme)
+	if !isSupportedTerminalTheme(theme) {
+		return fmt.Errorf("bad terminal theme: %s", theme)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.TerminalTheme = theme
+	return a.cfgStore.Set(cfg)
+}
+
 // NewSession spawns a local PTY child and adopts it as a relay session.
 // Returns the session id, which the frontend uses to ATTACH via WS.
 func (a *App) NewSession(req NewSessionReq) (NewSessionResp, error) {

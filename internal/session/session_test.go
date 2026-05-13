@@ -141,6 +141,61 @@ func TestAltScreenTrackingHandlesSplitEscapeSequence(t *testing.T) {
 	}
 }
 
+func TestSubscribeManySmallChunksCoalescesIntoBatches(t *testing.T) {
+	id := uuid.New()
+	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})
+	chunkCount := subscriberQueueDepth + 1000
+	for i := 0; i < chunkCount; i++ {
+		s.PushOut(uint64(i+1), []byte{'a'})
+	}
+	sub, replayToSeq := s.Subscribe(0)
+	defer s.Unsubscribe(sub)
+
+	select {
+	case <-sub.Done():
+		t.Fatal("Subscribe closed sub even though replay should now coalesce")
+	default:
+	}
+	if replayToSeq != uint64(chunkCount) {
+		t.Fatalf("replayToSeq = %d; want %d (every chunk replayed)", replayToSeq, chunkCount)
+	}
+
+	var (
+		outBytes  int
+		outFrames int
+		sawEnd    bool
+	)
+	timeout := time.After(time.Second)
+	for !sawEnd {
+		select {
+		case f := <-sub.Out():
+			switch f.Type {
+			case proto.TypeOut:
+				_, data, err := proto.DecodeOut(f.Payload)
+				if err != nil {
+					t.Fatalf("decode OUT: %v", err)
+				}
+				outBytes += len(data)
+				outFrames++
+			case proto.TypeReplayProgress:
+				p := decodeProgressForTest(t, f)
+				if p.Phase == proto.ReplayProgressEnd {
+					sawEnd = true
+				}
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for replay end (got %d OUT frames, %d bytes)", outFrames, outBytes)
+		}
+	}
+	if outBytes != chunkCount {
+		t.Fatalf("replayed bytes = %d; want %d", outBytes, chunkCount)
+	}
+	// 16 KiB batches over 5096 bytes should land in well under chunkCount/subscriberQueueDepth frames.
+	if outFrames >= chunkCount/4 {
+		t.Fatalf("OUT frame count = %d; coalescing should have collapsed it to a small constant (chunkCount=%d)", outFrames, chunkCount)
+	}
+}
+
 func readFrameForTest(t *testing.T, sub *Subscriber) proto.Frame {
 	t.Helper()
 	select {

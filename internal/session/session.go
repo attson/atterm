@@ -20,6 +20,11 @@ const (
 	scrollbackBytes             = 4 * 1024 * 1024
 	inboundQueueDepth           = 64
 	replayProgressIntervalBytes = 64 * 1024
+	// Replay coalesces consecutive small chunks into one OUT frame up to this
+	// many bytes so the subscriber outbox can't be exhausted by chunk count.
+	// At 16 KiB, a full 4 MiB scrollback replays in at most 256 OUT frames —
+	// well below subscriberQueueDepth — regardless of original chunk granularity.
+	replayCoalesceTargetBytes = 16 * 1024
 )
 
 // Session is the relay-side state for one PTY.
@@ -337,20 +342,50 @@ func replayBytes(chunks []ringbuf.Chunk) uint64 {
 }
 
 func enqueueReplayChunks(sub *Subscriber, id uuid.UUID, chunks []ringbuf.Chunk, lastSeq, replayedBytes, totalBytes, nextProgress uint64) (uint64, uint64, uint64, bool) {
-	for _, c := range chunks {
+	var (
+		batchData []byte
+		batchSeq  uint64
+	)
+	flush := func() bool {
+		if len(batchData) == 0 {
+			return true
+		}
 		select {
-		case sub.out <- proto.EncodeOut(id, c.Seq, c.Data):
-			lastSeq = c.Seq
-			replayedBytes += uint64(len(c.Data))
+		case sub.out <- proto.EncodeOut(id, batchSeq, batchData):
+			lastSeq = batchSeq
+			replayedBytes += uint64(len(batchData))
+			batchData = nil
+			batchSeq = 0
 		default:
-			return lastSeq, replayedBytes, nextProgress, false
+			return false
 		}
 		for replayedBytes >= nextProgress && nextProgress > 0 {
 			if !enqueueReplayProgress(sub, id, proto.ReplayProgressChunk, replayedBytes, totalBytes, lastSeq) {
-				return lastSeq, replayedBytes, nextProgress, false
+				return false
 			}
 			nextProgress += replayProgressIntervalBytes
 		}
+		return true
+	}
+	for _, c := range chunks {
+		// Flush the current batch before appending if combining would push it
+		// past the target — keeps large chunks as their own frame so existing
+		// progress-bytes math stays per-chunk-boundary aligned.
+		if len(batchData) > 0 && len(batchData)+len(c.Data) > replayCoalesceTargetBytes {
+			if !flush() {
+				return lastSeq, replayedBytes, nextProgress, false
+			}
+		}
+		batchData = append(batchData, c.Data...)
+		batchSeq = c.Seq
+		if len(batchData) >= replayCoalesceTargetBytes {
+			if !flush() {
+				return lastSeq, replayedBytes, nextProgress, false
+			}
+		}
+	}
+	if !flush() {
+		return lastSeq, replayedBytes, nextProgress, false
 	}
 	return lastSeq, replayedBytes, nextProgress, true
 }

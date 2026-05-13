@@ -335,4 +335,5 @@ export interface SessionInfo {
   host_id?: string;
   host?: string;
   user?: string;
+  remote_permission?: string;
 }

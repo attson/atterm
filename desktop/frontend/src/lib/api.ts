@@ -47,6 +47,15 @@ export interface LogPreview {
   content: string;
 }
 
+export interface ClipboardPastePayload {
+  kind: "none" | "text" | "image";
+  text?: string;
+  filename?: string;
+  content_type?: string;
+  data_base64?: string;
+  reason?: string;
+}
+
 // Mirrors desktop/updater.go UpdateState. Field names are snake_case from
 // Wails JSON marshaling; we match exactly.
 export interface UpdateState {
@@ -67,6 +76,7 @@ export interface UpdateState {
 }
 
 interface AppBindings {
+  GetClipboardPastePayload(): Promise<ClipboardPastePayload>;
   GetEndpoint(): Promise<Endpoint>;
   GetHostInfo(): Promise<HostInfo>;
   NewSession(req: NewSessionReq): Promise<NewSessionResp>;
@@ -102,6 +112,10 @@ function bindings(): AppBindings {
   const b = window.go?.main?.App;
   if (!b) throw new Error("Wails bindings not ready");
   return b;
+}
+
+export function getClipboardPastePayload(): Promise<ClipboardPastePayload> {
+  return bindings().GetClipboardPastePayload();
 }
 
 export function getEndpoint(): Promise<Endpoint> {

@@ -1,0 +1,40 @@
+import type { Status } from "./connection";
+
+export type EffectiveRemotePermission = "view" | "control" | "full";
+
+export function effectiveRemotePermission(permission?: string): EffectiveRemotePermission {
+  switch (permission) {
+    case "view":
+    case "control":
+    case "full":
+      return permission;
+    default:
+      return "full";
+  }
+}
+
+export function isPasteAllowed(status: Status, permission?: string): boolean {
+  return status === "attached" && effectiveRemotePermission(permission) !== "view";
+}
+
+export function imagePasteBlockedReason(permission?: string): string | null {
+  const effective = effectiveRemotePermission(permission);
+  if (effective === "full") return null;
+  if (effective === "control") return "image paste requires full remote permission";
+  return "session is read-only";
+}
+
+export function clampContextMenuPosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  viewportWidth = window.innerWidth,
+  viewportHeight = window.innerHeight,
+): { left: number; top: number } {
+  const margin = 8;
+  return {
+    left: Math.min(Math.max(x, margin), Math.max(margin, viewportWidth - width - margin)),
+    top: Math.min(Math.max(y, margin), Math.max(margin, viewportHeight - height - margin)),
+  };
+}

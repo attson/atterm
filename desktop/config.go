@@ -10,6 +10,20 @@ import (
 	"github.com/attson/atterm/internal/proto"
 )
 
+const (
+	terminalThemeClassic       = "classic"
+	terminalThemeNord          = "nord"
+	terminalThemeSolarizedDark = "solarized-dark"
+	terminalThemeDaylight      = "daylight"
+)
+
+var terminalThemes = map[string]struct{}{
+	terminalThemeClassic:       {},
+	terminalThemeNord:          {},
+	terminalThemeSolarizedDark: {},
+	terminalThemeDaylight:      {},
+}
+
 // appConfig is what we persist to ~/.config/atterm/config.json.
 // Empty fields mean "not configured" — RelayURL == "" disables uplink entirely.
 type appConfig struct {
@@ -21,6 +35,9 @@ type appConfig struct {
 	// RemotePermission is the default owner permission announced for this
 	// desktop's sessions on the remote relay.
 	RemotePermission string `json:"remote_permission,omitempty"`
+	// TerminalTheme is the user's global desktop terminal theme preference.
+	// Unknown values fall back to classic so older configs remain usable.
+	TerminalTheme string `json:"terminal_theme,omitempty"`
 
 	// Auto-update settings. Nil means "never set" → treated as default true
 	// at read time. Stored as a pointer so we can distinguish "user opted
@@ -45,6 +62,27 @@ func (c appConfig) RemotePermissionOrDefault() string {
 		return c.RemotePermission
 	default:
 		return proto.RemotePermissionFull
+	}
+}
+
+func (c appConfig) TerminalThemeOrDefault() string {
+	if isSupportedTerminalTheme(c.TerminalTheme) {
+		return c.TerminalTheme
+	}
+	return terminalThemeClassic
+}
+
+func isSupportedTerminalTheme(theme string) bool {
+	_, ok := terminalThemes[theme]
+	return ok
+}
+
+func supportedTerminalThemes() []string {
+	return []string{
+		terminalThemeClassic,
+		terminalThemeNord,
+		terminalThemeSolarizedDark,
+		terminalThemeDaylight,
 	}
 }
 

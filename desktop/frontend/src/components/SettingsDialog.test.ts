@@ -35,3 +35,19 @@ describe("SettingsDialog terminal theme selector", () => {
     expect(source).toContain('@change="onTerminalThemeChange"');
   });
 });
+
+describe("SettingsDialog logging controls", () => {
+  test("loads logging settings and picker helpers", () => {
+    expect(source).toContain("getLoggingConfig");
+    expect(source).toContain("setLoggingConfig");
+    expect(source).toContain("pickLogFilePath");
+    expect(source).toContain("getLogPreview");
+  });
+
+  test("renders logging controls and viewer button", () => {
+    expect(source).toContain("write logs to file");
+    expect(source).toContain("change location");
+    expect(source).toContain("reset default");
+    expect(source).toContain("view logs");
+  });
+});

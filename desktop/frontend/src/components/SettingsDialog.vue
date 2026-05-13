@@ -3,14 +3,19 @@ import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import {
   checkUpdate,
   getAutoCheckUpdates,
+  getLoggingConfig,
+  getLogPreview,
   getRelayConfig,
   getTerminalThemePreference,
   getUpdateState,
   installUpdate,
+  pickLogFilePath,
   setAutoCheckUpdates,
+  setLoggingConfig,
   setRelayConfig,
   setTerminalThemePreference,
   startDownload,
+  type LogPreview,
   type UpdateState,
 } from "../lib/api";
 import {
@@ -41,6 +46,11 @@ const connected = ref(false);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref("");
+const logToFileEnabled = ref(true);
+const logFilePath = ref("");
+const effectiveLogFilePath = ref("");
+const logPreview = ref<LogPreview | null>(null);
+const showLogViewer = ref(false);
 
 const updateState = ref<UpdateState | null>(null);
 const autoCheck = ref(true);
@@ -50,8 +60,9 @@ let pollHandle: number | null = null;
 
 onMounted(async () => {
   try {
-    const [cfg, st, ac, themeID] = await Promise.all([
+    const [cfg, loggingCfg, st, ac, themeID] = await Promise.all([
       getRelayConfig(),
+      getLoggingConfig(),
       getUpdateState(),
       getAutoCheckUpdates(),
       getTerminalThemePreference(),
@@ -61,6 +72,9 @@ onMounted(async () => {
     allowInsecureRelay.value = cfg.allow_insecure_relay;
     remotePermission.value = cfg.remote_permission || "full";
     connected.value = cfg.connected;
+    logToFileEnabled.value = loggingCfg.enabled;
+    logFilePath.value = loggingCfg.path;
+    effectiveLogFilePath.value = loggingCfg.effective_path;
     updateState.value = st;
     autoCheck.value = ac;
     selectedTerminalTheme.value = getTerminalTheme(themeID).id;
@@ -181,6 +195,70 @@ async function onAutoCheckToggle(e: Event) {
   await setAutoCheckUpdates(target.checked);
 }
 
+async function onLoggingToggle(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previousEnabled = logToFileEnabled.value;
+  logToFileEnabled.value = target.checked;
+  error.value = "";
+  try {
+    await setLoggingConfig({
+      enabled: target.checked,
+      path: logFilePath.value,
+    });
+    const cfg = await getLoggingConfig();
+    logToFileEnabled.value = cfg.enabled;
+    logFilePath.value = cfg.path;
+    effectiveLogFilePath.value = cfg.effective_path;
+  } catch (e: any) {
+    logToFileEnabled.value = previousEnabled;
+    error.value = e?.message ?? String(e);
+  }
+}
+
+async function onPickLogFilePath() {
+  error.value = "";
+  try {
+    const pickedPath = await pickLogFilePath();
+    if (!pickedPath) return;
+    await setLoggingConfig({
+      enabled: logToFileEnabled.value,
+      path: pickedPath,
+    });
+    const cfg = await getLoggingConfig();
+    logToFileEnabled.value = cfg.enabled;
+    logFilePath.value = cfg.path;
+    effectiveLogFilePath.value = cfg.effective_path;
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  }
+}
+
+async function onResetLogFilePath() {
+  error.value = "";
+  try {
+    await setLoggingConfig({
+      enabled: logToFileEnabled.value,
+      path: "",
+    });
+    const cfg = await getLoggingConfig();
+    logToFileEnabled.value = cfg.enabled;
+    logFilePath.value = cfg.path;
+    effectiveLogFilePath.value = cfg.effective_path;
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  }
+}
+
+async function openLogViewer() {
+  error.value = "";
+  try {
+    logPreview.value = await getLogPreview();
+    showLogViewer.value = true;
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  }
+}
+
 const updateStatusLine = computed(() => {
   const st = updateState.value;
   if (!st) return "";
@@ -286,6 +364,34 @@ const isDev = computed(
         <div class="status">
           <span :class="connected ? 'on' : 'off'">●</span>
           {{ connected ? "uplink running" : "uplink stopped" }}
+        </div>
+
+        <div class="updates">
+          <h2>logging</h2>
+          <label class="checkbox">
+            <input
+              type="checkbox"
+              :checked="logToFileEnabled"
+              @change="onLoggingToggle"
+            />
+            write logs to file
+          </label>
+          <div class="grid">
+            <div class="kv">
+              <span class="k">current log file</span>
+              <span class="v path" :title="effectiveLogFilePath">
+                {{ effectiveLogFilePath }}
+              </span>
+            </div>
+          </div>
+          <div class="row">
+            <button @click="onPickLogFilePath">change location</button>
+            <button @click="onResetLogFilePath">reset default</button>
+            <button @click="openLogViewer">view logs</button>
+          </div>
+          <div v-if="showLogViewer && logPreview" class="hint">
+            loaded preview from {{ logPreview.path }}
+          </div>
         </div>
 
         <div v-if="error" class="error">{{ error }}</div>

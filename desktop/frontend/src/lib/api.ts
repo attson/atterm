@@ -33,6 +33,20 @@ export interface HostInfo {
   user: string;
 }
 
+export interface LoggingConfig {
+  enabled: boolean;
+  path: string;
+  effective_path: string;
+  dev_dual_output: boolean;
+}
+
+export interface LogPreview {
+  path: string;
+  exists: boolean;
+  truncated: boolean;
+  content: string;
+}
+
 // Mirrors desktop/updater.go UpdateState. Field names are snake_case from
 // Wails JSON marshaling; we match exactly.
 export interface UpdateState {
@@ -60,6 +74,10 @@ interface AppBindings {
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
+  GetLoggingConfig(): Promise<LoggingConfig>;
+  SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
+  PickLogFilePath(): Promise<string>;
+  GetLogPreview(): Promise<LogPreview>;
   GetTerminalTheme(): Promise<string>;
   SetTerminalTheme(themeID: string): Promise<void>;
   GetUpdateState(): Promise<UpdateState>;
@@ -119,6 +137,30 @@ export function setRelayConfig(cfg: {
     remote_permission: cfg.remote_permission ?? "full",
     connected: false,
   });
+}
+
+export function getLoggingConfig(): Promise<LoggingConfig> {
+  return bindings().GetLoggingConfig();
+}
+
+export function setLoggingConfig(cfg: {
+  enabled: boolean;
+  path?: string;
+}): Promise<void> {
+  return bindings().SetLoggingConfig({
+    enabled: cfg.enabled,
+    path: cfg.path ?? "",
+    effective_path: "",
+    dev_dual_output: false,
+  });
+}
+
+export function pickLogFilePath(): Promise<string> {
+  return bindings().PickLogFilePath();
+}
+
+export function getLogPreview(): Promise<LogPreview> {
+  return bindings().GetLogPreview();
 }
 
 export function getTerminalThemePreference(): Promise<string> {

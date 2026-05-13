@@ -252,10 +252,9 @@ function syncRoute() {
   if (id && tabs.value.some((t) => t.id === id)) currentTabId.value = id;
 }
 function gotoTab(id: string) {
+  currentTabId.value = id;
   if (location.hash !== "#/t/" + id) {
     location.hash = "#/t/" + id;
-  } else {
-    currentTabId.value = id;
   }
 }
 

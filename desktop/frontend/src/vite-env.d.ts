@@ -5,3 +5,7 @@ declare module '*.vue' {
     const component: DefineComponent<{}, {}, any>
     export default component
 }
+
+declare module 'node:fs' {
+    export function readFileSync(path: string, encoding: string): string
+}

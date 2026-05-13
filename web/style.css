@@ -24,6 +24,10 @@ html, body {
   overscroll-behavior: none;
 }
 body { min-height: var(--app-height); }
+body.terminal-active {
+  height: var(--app-height);
+  overflow: hidden;
+}
 button, input, textarea { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 
@@ -31,6 +35,10 @@ button { -webkit-tap-highlight-color: transparent; }
   min-height: var(--app-height);
   display: flex;
   flex-direction: column;
+}
+body.terminal-active #app-shell {
+  height: var(--app-height);
+  min-height: 0;
 }
 #topbar {
   min-height: calc(var(--topbar-h) + env(safe-area-inset-top));
@@ -162,11 +170,25 @@ button { -webkit-tap-highlight-color: transparent; }
   padding: 0;
   height: calc(var(--app-height) - var(--topbar-h) - env(safe-area-inset-top));
 }
+body.terminal-active #main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  height: auto;
+}
 #term-view {
   height: 100%;
   display: flex;
   flex-direction: column;
   background: #000;
+}
+body.terminal-active #term-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
 }
 #term-view[hidden] { display: none; }
 #term {
@@ -263,5 +285,6 @@ body.desktop-web #shortcut-bar {
   #list { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
   .subtitle { max-width: 360px; }
   #shortcut-bar { justify-content: center; }
-  #main:has(#term-view:not([hidden])) { height: calc(100vh - 58px); }
+  #main:has(#term-view:not([hidden])) { height: calc(100vh - var(--topbar-h)); }
+  body.terminal-active #main { height: auto; }
 }

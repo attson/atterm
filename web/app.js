@@ -615,6 +615,7 @@ pasteFallback.addEventListener("submit", (ev) => {
 
 function route() {
   const sessionId = parseSessionRoute(location.hash);
+  document.body.classList.toggle("terminal-active", Boolean(sessionId));
   if (sessionId) {
     listView.hidden = true;
     termView.hidden = false;

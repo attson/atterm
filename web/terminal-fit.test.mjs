@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const app = await readFile(new URL("./app.js", import.meta.url), "utf8");
 const css = await readFile(new URL("./style.css", import.meta.url), "utf8");
+const sw = await readFile(new URL("./sw.js", import.meta.url), "utf8");
 
 function styleBlockFor(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -22,4 +23,17 @@ test("web terminal retries fit after layout settles", () => {
 test("web terminal padding is on xterm so FitAddon accounts for it", () => {
   assert.doesNotMatch(styleBlockFor("#term"), /padding\s*:/);
   assert.match(styleBlockFor("#term .xterm"), /padding\s*:\s*6px 8px/);
+});
+
+test("web terminal uses a route class for full-height layout", () => {
+  assert.match(app, /classList\.toggle\("terminal-active", Boolean\(sessionId\)\)/);
+  assert.match(css, /body\.terminal-active\s*\{[^}]*height\s*:\s*var\(--app-height\)[^}]*overflow\s*:\s*hidden/s);
+  assert.match(styleBlockFor("body.terminal-active #app-shell"), /height\s*:\s*var\(--app-height\)/);
+  assert.match(styleBlockFor("body.terminal-active #main"), /display\s*:\s*flex/);
+  assert.match(styleBlockFor("body.terminal-active #main"), /min-height\s*:\s*0/);
+  assert.match(styleBlockFor("body.terminal-active #term-view"), /flex\s*:\s*1 1 auto/);
+});
+
+test("service worker cache is bumped for web shell asset changes", () => {
+  assert.match(sw, /at-term-web-v3/);
 });

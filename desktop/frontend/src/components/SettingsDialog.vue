@@ -23,6 +23,7 @@ import {
   getTerminalTheme,
 } from "../lib/terminalThemes";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
+import LogViewerDialog from "./LogViewerDialog.vue";
 
 const props = defineProps<{
   localSessionCount: number;
@@ -50,6 +51,8 @@ const logToFileEnabled = ref(true);
 const logFilePath = ref("");
 const effectiveLogFilePath = ref("");
 const logPreview = ref<LogPreview | null>(null);
+const logViewerError = ref("");
+const logViewerLoading = ref(false);
 const showLogViewer = ref(false);
 
 const updateState = ref<UpdateState | null>(null);
@@ -250,12 +253,19 @@ async function onResetLogFilePath() {
 }
 
 async function openLogViewer() {
-  error.value = "";
+  showLogViewer.value = true;
+  await refreshLogViewer();
+}
+
+async function refreshLogViewer() {
+  logViewerError.value = "";
+  logViewerLoading.value = true;
   try {
     logPreview.value = await getLogPreview();
-    showLogViewer.value = true;
   } catch (e: any) {
-    error.value = e?.message ?? String(e);
+    logViewerError.value = e?.message ?? String(e);
+  } finally {
+    logViewerLoading.value = false;
   }
 }
 
@@ -389,9 +399,6 @@ const isDev = computed(
             <button @click="onResetLogFilePath">reset default</button>
             <button @click="openLogViewer">view logs</button>
           </div>
-          <div v-if="showLogViewer && logPreview" class="hint">
-            loaded preview from {{ logPreview.path }}
-          </div>
         </div>
 
         <div v-if="error" class="error">{{ error }}</div>
@@ -482,6 +489,14 @@ const isDev = computed(
       :remote-count="props.remoteSessionCount"
       @confirm="onConfirmInstall"
       @cancel="showConfirm = false"
+    />
+    <LogViewerDialog
+      v-if="showLogViewer"
+      :preview="logPreview ?? { path: effectiveLogFilePath, exists: false, truncated: false, content: '' }"
+      :loading="logViewerLoading"
+      :error="logViewerError"
+      @refresh="refreshLogViewer"
+      @close="showLogViewer = false"
     />
   </div>
 </template>

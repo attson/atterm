@@ -319,10 +319,20 @@ func (u *Updater) fetchLatestViaRedirect(ctx context.Context) (*githubRelease, e
 	}
 	return &githubRelease{
 		TagName: tag,
-		Assets: []githubAsset{{
-			Name:        name,
-			DownloadURL: assetDownloadURL(final, tag, name),
-		}},
+		Assets: []githubAsset{
+			{
+				Name:        name,
+				DownloadURL: assetDownloadURL(final, tag, name),
+			},
+			{
+				Name:        "SHA256SUMS",
+				DownloadURL: assetDownloadURL(final, tag, "SHA256SUMS"),
+			},
+			{
+				Name:        "SHA256SUMS.sig",
+				DownloadURL: assetDownloadURL(final, tag, "SHA256SUMS.sig"),
+			},
+		},
 	}, nil
 }
 

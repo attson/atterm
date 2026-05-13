@@ -326,6 +326,12 @@ func TestUpdater_Check_FallsBackToLatestRedirectOnGitHubForbidden(t *testing.T) 
 	if st.AssetURL != wantURL {
 		t.Fatalf("AssetURL=%q; want %q", st.AssetURL, wantURL)
 	}
+	if u.checksumURL != srv.URL+"/attson/atterm/releases/download/v0.2.0/SHA256SUMS" {
+		t.Fatalf("checksumURL=%q; want fallback SHA256SUMS URL", u.checksumURL)
+	}
+	if u.checksumSigURL != srv.URL+"/attson/atterm/releases/download/v0.2.0/SHA256SUMS.sig" {
+		t.Fatalf("checksumSigURL=%q; want fallback SHA256SUMS.sig URL", u.checksumSigURL)
+	}
 }
 
 func TestUpdater_Download_WritesAtomicAsset(t *testing.T) {

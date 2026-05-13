@@ -12,7 +12,11 @@ import {
   shouldAutoScrollToBottom,
   shouldShowInstallHint,
   tokenURLWithoutSecret,
+  relayBaseURLFromLocation,
   parseSessionRoute,
+  persistInsecureMode,
+  normalizeRelayBaseURL,
+  insecureModeFromStorage,
   shortcutInput,
   tokenFromLocation,
   versionLabel,
@@ -61,6 +65,83 @@ test("tokenFromLocation falls back to stored token", () => {
   assert.equal(tokenFromLocation("https://relay.example.com/", storage), "stored-token");
 });
 
+test("relayBaseURLFromLocation stores fragment relay and returns normalized URL", () => {
+  const stored = [];
+  const storage = {
+    getItem: () => "https://old.example.com",
+    setItem: (key, value) => stored.push([key, value]),
+  };
+
+  const relay = relayBaseURLFromLocation("capacitor://localhost/#relay=https%3A%2F%2Frelay.example.com%2F", storage);
+
+  assert.equal(relay, "https://relay.example.com");
+  assert.deepEqual(stored, [["atterm-relay-url", "https://relay.example.com"]]);
+});
+
+test("relayBaseURLFromLocation allows public http only when insecure mode is enabled", () => {
+  const storage = {
+    getItem: () => null,
+    setItem: () => {},
+  };
+
+  assert.throws(
+    () => relayBaseURLFromLocation("capacitor://localhost/#relay=http%3A%2F%2F121.43.40.128%3A23301", storage),
+    /enable insecure mode/,
+  );
+  assert.equal(
+    relayBaseURLFromLocation(
+      "capacitor://localhost/#relay=http%3A%2F%2F121.43.40.128%3A23301",
+      storage,
+      { allowInsecure: true },
+    ),
+    "http://121.43.40.128:23301",
+  );
+});
+
+test("relayBaseURLFromLocation falls back to stored relay URL", () => {
+  const storage = {
+    getItem: (key) => (key === "atterm-relay-url" ? "https://relay.example.com/" : null),
+    setItem: () => assert.fail("setItem should not be called"),
+  };
+
+  assert.equal(relayBaseURLFromLocation("capacitor://localhost/", storage), "https://relay.example.com");
+});
+
+test("relayBaseURLFromLocation ignores invalid stored relay URL", () => {
+  const storage = {
+    getItem: (key) => (key === "atterm-relay-url" ? "notaurl" : null),
+    setItem: () => assert.fail("setItem should not be called"),
+  };
+
+  assert.equal(relayBaseURLFromLocation("capacitor://localhost/", storage), "");
+});
+
+test("normalizeRelayBaseURL accepts http and https origins only", () => {
+  assert.equal(normalizeRelayBaseURL(" https://relay.example.com/path "), "https://relay.example.com");
+  assert.equal(normalizeRelayBaseURL("http://127.0.0.1:8080"), "http://127.0.0.1:8080");
+  assert.throws(() => normalizeRelayBaseURL("http://121.43.40.128:23301"), /enable insecure mode/);
+  assert.equal(
+    normalizeRelayBaseURL("http://121.43.40.128:23301", { allowInsecure: true }),
+    "http://121.43.40.128:23301",
+  );
+  assert.equal(normalizeRelayBaseURL(""), "");
+  assert.throws(() => normalizeRelayBaseURL("ftp://relay.example.com"), /http or https/);
+});
+
+test("insecure mode persists as an explicit opt-in", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+  };
+
+  assert.equal(insecureModeFromStorage(storage), false);
+  persistInsecureMode(storage, true);
+  assert.equal(insecureModeFromStorage(storage), true);
+  persistInsecureMode(storage, false);
+  assert.equal(insecureModeFromStorage(storage), false);
+});
+
 test("webSocketAuth sends token with subprotocol instead of query", () => {
   assert.deepEqual(
     webSocketAuth("https:", "relay.example.com", "/client", "tok_en-123"),
@@ -68,9 +149,27 @@ test("webSocketAuth sends token with subprotocol instead of query", () => {
   );
 });
 
+test("webSocketAuth can target a configured relay base URL for bundled webviews", () => {
+  assert.deepEqual(
+    webSocketAuth("capacitor:", "localhost", "/client", "tok_en-123", "https://relay.example.com"),
+    { url: "wss://relay.example.com/client", protocols: ["atterm-token.tok_en-123"] },
+  );
+  assert.deepEqual(
+    webSocketAuth("capacitor:", "localhost", "/client", "", "http://127.0.0.1:8080"),
+    { url: "ws://127.0.0.1:8080/client", protocols: undefined },
+  );
+});
+
 test("apiURL never appends token query", () => {
   assert.equal(apiURL("/api/sessions", "dev"), "/api/sessions");
   assert.equal(apiURL("/api/sessions", ""), "/api/sessions");
+});
+
+test("apiURL can target a configured relay base URL without token query", () => {
+  assert.equal(
+    apiURL("/api/sessions", "secret", "https://relay.example.com"),
+    "https://relay.example.com/api/sessions",
+  );
 });
 
 test("parseSessionRoute accepts only session routes", () => {

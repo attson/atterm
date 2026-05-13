@@ -8,9 +8,13 @@ import {
   detectClientMode,
   formatReplayProgress,
   formatHost,
+  insecureModeFromStorage,
   isTerminalCopyShortcut,
   parseSessionRoute,
+  persistInsecureMode,
+  persistRelayBaseURL,
   persistToken,
+  relayBaseURLFromLocation,
   replayProgressPercent,
   sessionTitle,
   shouldShowInstallHint,
@@ -97,6 +101,8 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 const tokenInput = document.getElementById("token");
+const relayURLInput = document.getElementById("relay-url");
+const insecureModeInput = document.getElementById("insecure-mode");
 const tokenToggle = document.getElementById("token-toggle");
 const tokenPanel = document.getElementById("token-panel");
 const tokenSave = document.getElementById("token-save");
@@ -169,36 +175,65 @@ maybeShowInstallHint();
 registerServiceWorker();
 
 let token = tokenFromLocation(location.href, localStorage);
+let insecureMode = insecureModeFromStorage(localStorage);
+let relayBaseURL = "";
+try {
+  relayBaseURL = relayBaseURLFromLocation(location.href, localStorage, { allowInsecure: insecureMode });
+} catch (err) {
+  setStatus(err instanceof Error ? err.message : "bad relay url", "err");
+  tokenPanel.hidden = false;
+  tokenToggle.setAttribute("aria-expanded", "true");
+}
 const cleanTokenURL = tokenURLWithoutSecret(location.href);
 if (cleanTokenURL !== location.href) {
   history.replaceState(null, "", cleanTokenURL);
 }
 tokenInput.value = token;
+relayURLInput.value = relayBaseURL;
+insecureModeInput.checked = insecureMode;
 
 function getToken() {
   return token;
 }
 
-function saveToken() {
+function getRelayBaseURL() {
+  return relayBaseURL;
+}
+
+function saveConnectionSettings() {
   token = tokenInput.value.trim();
+  insecureMode = insecureModeInput.checked;
   persistToken(localStorage, token);
+  persistInsecureMode(localStorage, insecureMode);
+  try {
+    relayBaseURL = persistRelayBaseURL(localStorage, relayURLInput.value, { allowInsecure: insecureMode });
+  } catch (err) {
+    tokenPanel.hidden = false;
+    tokenToggle.setAttribute("aria-expanded", "true");
+    setStatus(err instanceof Error ? err.message : "bad relay url", "err");
+    relayURLInput.focus();
+    return;
+  }
   tokenPanel.hidden = true;
   tokenToggle.setAttribute("aria-expanded", "false");
+  refreshVersion();
   refreshList();
 }
 
-tokenInput.addEventListener("change", saveToken);
-tokenSave.addEventListener("click", saveToken);
+tokenInput.addEventListener("change", saveConnectionSettings);
+relayURLInput.addEventListener("change", saveConnectionSettings);
+insecureModeInput.addEventListener("change", saveConnectionSettings);
+tokenSave.addEventListener("click", saveConnectionSettings);
 tokenToggle.addEventListener("click", () => {
   tokenPanel.hidden = !tokenPanel.hidden;
   tokenToggle.setAttribute("aria-expanded", String(!tokenPanel.hidden));
 });
 
 function wsAuth(path) {
-  return makeWebSocketAuth(location.protocol, location.host, path, getToken());
+  return makeWebSocketAuth(location.protocol, location.host, path, getToken(), getRelayBaseURL());
 }
 function apiURL(path) {
-  return makeAPIURL(path, "");
+  return makeAPIURL(path, "", getRelayBaseURL());
 }
 
 function setStatus(text, kind) {

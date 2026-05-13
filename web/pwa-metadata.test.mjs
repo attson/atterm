@@ -16,6 +16,8 @@ test("index contains PWA and iOS metadata", () => {
   assert.match(html, /Add to Home Screen/);
   assert.match(html, /<script type="module" src="app\.js"><\/script>/);
   assert.match(html, /<div class="version" id="version">version dev<\/div>/);
+  assert.match(html, /id="insecure-mode"/);
+  assert.match(html, /allow insecure HTTP relay/);
 });
 
 test("index uses vendored terminal assets only", () => {

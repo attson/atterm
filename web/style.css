@@ -78,6 +78,20 @@ button { -webkit-tap-highlight-color: transparent; }
   border-radius: 12px;
   padding: 11px 12px;
 }
+.check-row {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 12px;
+  padding: 10px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: 12px;
+  background: rgba(120, 53, 15, 0.18);
+}
+.check-row input { margin-top: 3px; accent-color: var(--accent-2); }
+.check-row span { display: grid; gap: 2px; }
+.check-row strong { color: var(--accent-2); font-size: 12px; }
+.check-row small { color: var(--fg-dim); font-size: 11px; line-height: 1.35; }
 .install-hint {
   display: flex;
   align-items: center;

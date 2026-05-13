@@ -1,0 +1,8 @@
+{
+  "appId": "com.attson.atterm",
+  "appName": "AT Term",
+  "webDir": "www",
+  "ios": {
+    "scheme": "ATTerm"
+  }
+}

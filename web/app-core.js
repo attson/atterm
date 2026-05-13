@@ -1,4 +1,53 @@
 const TOKEN_KEY = "atterm-token";
+const RELAY_URL_KEY = "atterm-relay-url";
+const INSECURE_MODE_KEY = "atterm-insecure-mode";
+
+function isLoopbackHostname(hostname) {
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    hostname === "::1" ||
+    hostname === "[::1]";
+}
+
+export function insecureModeFromStorage(storage) {
+  return storage.getItem(INSECURE_MODE_KEY) === "1";
+}
+
+export function persistInsecureMode(storage, enabled) {
+  storage.setItem(INSECURE_MODE_KEY, enabled ? "1" : "0");
+}
+
+export function normalizeRelayBaseURL(value, { allowInsecure = false } = {}) {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+  const url = new URL(trimmed);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("relay URL must use http or https");
+  }
+  if (url.protocol === "http:" && !allowInsecure && !isLoopbackHostname(url.hostname)) {
+    throw new Error("enable insecure mode to use a public HTTP relay");
+  }
+  return url.origin;
+}
+
+export function relayBaseURLFromLocation(href, storage, options = {}) {
+  const url = new URL(href);
+  const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+  if (hash && !hash.startsWith("/")) {
+    const fromFragment = new URLSearchParams(hash).get("relay");
+    if (fromFragment) {
+      const relay = normalizeRelayBaseURL(fromFragment, options);
+      storage.setItem(RELAY_URL_KEY, relay);
+      return relay;
+    }
+  }
+  try {
+    return normalizeRelayBaseURL(storage.getItem(RELAY_URL_KEY) || "", options);
+  } catch {
+    return "";
+  }
+}
 
 export function tokenFromLocation(href, storage) {
   const url = new URL(href);
@@ -32,6 +81,12 @@ export function persistToken(storage, value) {
   storage.setItem(TOKEN_KEY, value.trim());
 }
 
+export function persistRelayBaseURL(storage, value, options = {}) {
+  const relay = normalizeRelayBaseURL(value, options);
+  storage.setItem(RELAY_URL_KEY, relay);
+  return relay;
+}
+
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function stringToBase64URL(value) {
@@ -50,16 +105,26 @@ export function tokenSubprotocol(token) {
   return `atterm-token-b64.${stringToBase64URL(token)}`;
 }
 
-export function webSocketAuth(protocol, host, path, token) {
-  const proto = protocol === "https:" ? "wss:" : "ws:";
+function relayURLForPath(relayBaseURL, path) {
+  if (!relayBaseURL) return null;
+  return new URL(path, normalizeRelayBaseURL(relayBaseURL, { allowInsecure: true }));
+}
+
+export function webSocketAuth(protocol, host, path, token, relayBaseURL = "") {
+  const relayURL = relayURLForPath(relayBaseURL, path);
+  const proto = relayURL
+    ? (relayURL.protocol === "https:" ? "wss:" : "ws:")
+    : (protocol === "https:" ? "wss:" : "ws:");
   const subprotocol = tokenSubprotocol(token || "");
   return {
-    url: `${proto}//${host}${path}`,
+    url: relayURL ? `${proto}//${relayURL.host}${relayURL.pathname}${relayURL.search}` : `${proto}//${host}${path}`,
     protocols: subprotocol ? [subprotocol] : undefined,
   };
 }
 
-export function apiURL(path, _token) {
+export function apiURL(path, _token, relayBaseURL = "") {
+  const relayURL = relayURLForPath(relayBaseURL, path);
+  if (relayURL) return relayURL.toString();
   return path;
 }
 

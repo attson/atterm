@@ -1,0 +1,20 @@
+{
+  "name": "atterm-mobile",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs",
+    "sync-web": "node scripts/sync-web.mjs",
+    "ios:add": "npm run sync-web && cap add ios",
+    "ios:sync": "npm run sync-web && cap sync ios",
+    "ios:open": "npm run ios:sync && cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.3.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.3.3",
+    "@capacitor/ios": "8.3.3"
+  }
+}

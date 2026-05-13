@@ -7,3 +7,8 @@
 .DS_Store
 .idea/
 .vscode/
+/mobile/node_modules/
+/mobile/www/
+/mobile/ios/App/Pods/
+/mobile/ios/App/App/public/
+/mobile/ios/App/App.xcworkspace/

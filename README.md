@@ -17,12 +17,12 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 桌面终端 | 支持 macOS / Linux / Windows，多 tab、本地 PTY、cwd 跟踪 |
 | 分屏 | 每个 tab 支持 1 / 2 / 4 pane，macOS 用 `⌘N` / `⌘⇧N`，Linux/Windows 用 `Ctrl` |
 | 远程接管 | 桌面端连上 relay 后，其他浏览器或桌面端可 attach 同一会话 |
-| 手机浏览器 | 支持 PWA、会话列表、触控终端、常用快捷键 |
+| 手机浏览器 / iOS App | 支持 PWA、Capacitor iOS WebView MVP、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
 | 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
 | 公网 relay 安全默认值 | 强 token、Origin 白名单、限流、安全响应头、只读 token |
 
-还在路线图中的能力：用户系统、TLS 自动化、移动端原生应用、shell 集成、主题/字体配置。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
+还在路线图中的能力：用户系统、TLS 自动化、移动端原生体验增强、shell 集成、主题/字体配置。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
 
 ## 快速开始
 
@@ -93,6 +93,43 @@ token: dev
 ```text
 http://localhost:8080/#token=dev
 ```
+
+### 方式 D：iOS WebView MVP
+
+`mobile/` 提供一个 Capacitor iOS 壳，把现有 `web/` 客户端打包进 `WKWebView`。手机端仍然只连接远程 relay，不在 iOS 本地运行 PTY。
+
+```bash
+cd mobile
+npm install
+npm run ios:add   # 首次创建 Xcode 工程；已存在时不用重复执行
+npm run ios:open  # 同步 web/ 静态资源并打开 Xcode
+```
+
+iOS App 首次启动后，在 token 面板里填写：
+
+```text
+relay URL: https://relay.example.com
+token: <token>
+```
+
+如果只是用公网 IP:port 做内测，也可以在手机端勾选 `allow insecure HTTP relay` 后填写：
+
+```text
+relay URL: http://121.43.40.128:23301
+token: <token>
+```
+
+这个 insecure mode 只适合可信测试环境；正式使用仍建议配置 HTTPS/WSS 域名。
+
+公网 relay 需要允许 Capacitor WebView 的 Origin：
+
+```bash
+ATTERM_ORIGINS='https://relay.example.com,capacitor://localhost' \
+ATTERM_TOKEN='replace-with-a-long-random-token' \
+go run ./cmd/atterm-relay --addr :8080 --web web
+```
+
+详见 [`mobile/README.md`](mobile/README.md)。
 
 ## 常见使用场景
 
@@ -208,6 +245,7 @@ AT Term 的默认策略是 fail-closed：
 | Go | 1.23+ | 后端、relay、PTY host |
 | Node.js | 20+ | 桌面前端构建 |
 | Wails CLI | v2.12.0 | 桌面应用开发与打包 |
+| Xcode | 15+ | iOS WebView MVP 构建 |
 
 安装 Wails：
 

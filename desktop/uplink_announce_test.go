@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/attson/atterm/internal/proto"
@@ -125,7 +126,7 @@ func TestForwardLocalSubscriberFrameRequestsRepaintForAltScreenReset(t *testing.
 	repaints := 0
 	frame := proto.EncodeOut(id, 0, []byte("\x1b[?1049h\x1b[2J\x1b[H"))
 
-	if ok := forwardLocalSubscriberFrame(context.Background(), out, frame, func() { repaints++ }); !ok {
+	if ok := forwardLocalSubscriberFrame(context.Background(), out, frame, nil, func() { repaints++ }); !ok {
 		t.Fatal("forwardLocalSubscriberFrame returned false")
 	}
 	if repaints != 1 {
@@ -138,5 +139,26 @@ func TestForwardLocalSubscriberFrameRequestsRepaintForAltScreenReset(t *testing.
 		}
 	default:
 		t.Fatal("reset OUT frame was not forwarded")
+	}
+}
+
+func TestDesktopUplinkFrameLogDetailsSummarizesPasteImage(t *testing.T) {
+	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	payload, err := json.Marshal(proto.PasteImagePayload{
+		Filename:    "clip.png",
+		ContentType: "image/png",
+		Data:        []byte("png-bytes"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := desktopUplinkFrameLogDetails(proto.Frame{Type: proto.TypePasteImage, SessionID: id, Payload: payload})
+	for _, want := range []string{"session=11111111-1111-4111-8111-111111111111", "filename=\"clip.png\"", "content_type=\"image/png\"", "image_bytes=9"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("details %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "png-bytes") {
+		t.Fatalf("details leaked image payload: %q", got)
 	}
 }

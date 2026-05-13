@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -79,6 +80,78 @@ type streamingLocal struct {
 	id        uuid.UUID
 	sub       *session.Subscriber
 	cancelFwd context.CancelFunc
+}
+
+type streamForwardStats struct {
+	sessionID        uuid.UUID
+	started          time.Time
+	outFrames        int
+	outBytes         int
+	metaFrames       int
+	closeFrames      int
+	firstOutLogged   bool
+	replayDropLogged bool
+	nextReportBytes  int
+	nextReportFrames int
+}
+
+func newStreamForwardStats(id uuid.UUID) *streamForwardStats {
+	return &streamForwardStats{
+		sessionID:        id,
+		started:          time.Now(),
+		nextReportBytes:  1024 * 1024,
+		nextReportFrames: 256,
+	}
+}
+
+func (s *streamForwardStats) observe(f proto.Frame) {
+	switch f.Type {
+	case proto.TypeOut:
+		seq, data, err := proto.DecodeOut(f.Payload)
+		if err != nil {
+			log.Printf("desktop-uplink: stream_out_decode_failed session=%s error=%v", s.sessionID, err)
+			return
+		}
+		s.outFrames++
+		s.outBytes += len(data)
+		if !s.firstOutLogged {
+			s.firstOutLogged = true
+			log.Printf("desktop-uplink: stream_out_first session=%s seq=%d bytes=%d", s.sessionID, seq, len(data))
+		}
+		if s.outBytes >= s.nextReportBytes || s.outFrames >= s.nextReportFrames {
+			log.Printf("desktop-uplink: stream_out_progress session=%s out_frames=%d out_bytes=%d last_seq=%d", s.sessionID, s.outFrames, s.outBytes, seq)
+			for s.outBytes >= s.nextReportBytes {
+				s.nextReportBytes += 1024 * 1024
+			}
+			for s.outFrames >= s.nextReportFrames {
+				s.nextReportFrames += 256
+			}
+		}
+	case proto.TypeMeta:
+		s.metaFrames++
+		log.Printf("desktop-uplink: stream_meta_forward session=%s payload_bytes=%d", s.sessionID, len(f.Payload))
+	case proto.TypeClose:
+		s.closeFrames++
+		log.Printf("desktop-uplink: stream_close_forward session=%s payload_bytes=%d", s.sessionID, len(f.Payload))
+	case proto.TypeReplayProgress:
+		if !s.replayDropLogged {
+			s.replayDropLogged = true
+			log.Printf("desktop-uplink: stream_replay_progress_drop session=%s reason=local_subscriber_only", s.sessionID)
+		}
+	}
+}
+
+func (s *streamForwardStats) finish(reason string) {
+	log.Printf(
+		"desktop-uplink: stream_end session=%s reason=%s out_frames=%d out_bytes=%d meta_frames=%d close_frames=%d duration=%s",
+		s.sessionID,
+		reason,
+		s.outFrames,
+		s.outBytes,
+		s.metaFrames,
+		s.closeFrames,
+		time.Since(s.started).Round(time.Millisecond),
+	)
 }
 
 func (u *uplink) runOnce(ctx context.Context) error {
@@ -163,39 +236,49 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	}()
 
 	startStream := func(id uuid.UUID, sinceSeq uint64) {
+		log.Printf("desktop-uplink: stream_request session=%s since_seq=%d", id, sinceSeq)
 		mu.Lock()
 		if _, ok := streaming[id]; ok {
 			mu.Unlock()
+			log.Printf("desktop-uplink: stream_request_duplicate session=%s since_seq=%d", id, sinceSeq)
 			return
 		}
-		sub, err := u.host.SubscribeLocal(id, sinceSeq)
+		sub, replayToSeq, err := u.host.SubscribeLocal(id, sinceSeq)
 		if err != nil {
 			mu.Unlock()
-			log.Printf("uplink: STREAM_REQUEST for unknown session %s", id)
+			log.Printf("desktop-uplink: stream_request_failed session=%s since_seq=%d error=%v", id, sinceSeq, err)
 			return
 		}
 		fwdCtx, cancelFwd := context.WithCancel(connCtx)
 		streaming[id] = &streamingLocal{id: id, sub: sub, cancelFwd: cancelFwd}
 		mu.Unlock()
+		log.Printf("desktop-uplink: stream_subscribed session=%s since_seq=%d replay_to_seq=%d", id, sinceSeq, replayToSeq)
 
 		// Forwarder: copies frames from local subscriber to remote out queue.
 		// Frames already carry SessionID == id, which the remote uplink_conn
 		// uses to route into the mirror session's PushOut/Broadcast.
 		go func() {
+			stats := newStreamForwardStats(id)
+			reason := "unknown"
+			defer func() { stats.finish(reason) }()
 			for {
 				select {
 				case <-fwdCtx.Done():
+					reason = "context_done"
 					return
 				case f, ok := <-sub.Out():
 					if !ok {
+						reason = "subscriber_closed"
 						return
 					}
-					if !forwardLocalSubscriberFrame(fwdCtx, out, f, func() {
+					if !forwardLocalSubscriberFrame(fwdCtx, out, f, stats, func() {
 						u.host.RequestLocalRepaint(id)
 					}) {
+						reason = "uplink_out_closed"
 						return
 					}
 				case <-sub.Done():
+					reason = "subscriber_done"
 					return
 				}
 			}
@@ -210,8 +293,10 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		}
 		mu.Unlock()
 		if !ok {
+			log.Printf("desktop-uplink: stream_stop_unknown session=%s", id)
 			return
 		}
+		log.Printf("desktop-uplink: stream_stop session=%s", id)
 		s.cancelFwd()
 		u.host.UnsubscribeLocal(id, s.sub)
 	}
@@ -255,12 +340,15 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			}
 			stopStream(id)
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
+			log.Printf("desktop-uplink: inbound_recv type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
 			if !localFrameAllowedByPermission(u.remotePermission, f.Type) {
-				log.Printf("uplink: drop inbound frame 0x%02x for permission %s", f.Type, u.remotePermission)
+				log.Printf("desktop-uplink: inbound_drop_permission type=%s permission=%s %s", desktopUplinkFrameTypeName(f.Type), u.remotePermission, desktopUplinkFrameLogDetails(f))
 				continue
 			}
 			if err := u.host.SendLocalInbound(f.SessionID, f); err != nil {
-				log.Printf("uplink: forward inbound: %v", err)
+				log.Printf("desktop-uplink: inbound_forward_failed type=%s %s error=%v", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f), err)
+			} else {
+				log.Printf("desktop-uplink: inbound_forward_ok type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
 			}
 		case proto.TypePong:
 			// keepalive ack from relay
@@ -335,8 +423,12 @@ func localSubscriberFrameForwardedToUplink(typ proto.Type) bool {
 	}
 }
 
-func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f proto.Frame, requestRepaint func()) bool {
+func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f proto.Frame, stats *streamForwardStats, requestRepaint func()) bool {
+	if stats != nil {
+		stats.observe(f)
+	}
 	if localSubscriberFrameRequestsRepaint(f) && requestRepaint != nil {
+		log.Printf("desktop-uplink: stream_request_repaint %s", desktopUplinkFrameLogDetails(f))
 		requestRepaint()
 	}
 	if !localSubscriberFrameForwardedToUplink(f.Type) {
@@ -356,6 +448,60 @@ func localSubscriberFrameRequestsRepaint(f proto.Frame) bool {
 	}
 	seq, data, err := proto.DecodeOut(f.Payload)
 	return err == nil && seq == 0 && bytes.Equal(data, []byte("\x1b[?1049h\x1b[2J\x1b[H"))
+}
+
+func desktopUplinkFrameTypeName(typ proto.Type) string {
+	switch typ {
+	case proto.TypeIn:
+		return "IN"
+	case proto.TypeResize:
+		return "RESIZE"
+	case proto.TypeOut:
+		return "OUT"
+	case proto.TypeMeta:
+		return "META"
+	case proto.TypeClose:
+		return "CLOSE"
+	case proto.TypePasteImage:
+		return "PASTE_IMAGE"
+	case proto.TypeReplayProgress:
+		return "REPLAY_PROGRESS"
+	default:
+		return fmt.Sprintf("0x%02x", typ)
+	}
+}
+
+func desktopUplinkFrameLogDetails(f proto.Frame) string {
+	prefix := fmt.Sprintf("session=%s payload_bytes=%d", f.SessionID, len(f.Payload))
+	switch f.Type {
+	case proto.TypePasteImage:
+		var p proto.PasteImagePayload
+		if err := json.Unmarshal(f.Payload, &p); err != nil {
+			return prefix + fmt.Sprintf(" bad_payload=%q", err)
+		}
+		return fmt.Sprintf(
+			"session=%s filename=%q content_type=%q image_bytes=%d payload_bytes=%d",
+			f.SessionID,
+			p.Filename,
+			p.ContentType,
+			len(p.Data),
+			len(f.Payload),
+		)
+	case proto.TypeResize:
+		cols, rows, err := proto.DecodeResize(f.Payload)
+		if err != nil {
+			return prefix + fmt.Sprintf(" bad_payload=%q", err)
+		}
+		return fmt.Sprintf("session=%s cols=%d rows=%d", f.SessionID, cols, rows)
+	case proto.TypeOut:
+		seq, data, err := proto.DecodeOut(f.Payload)
+		if err != nil {
+			return prefix + fmt.Sprintf(" bad_payload=%q", err)
+		}
+		return fmt.Sprintf("session=%s seq=%d out_bytes=%d", f.SessionID, seq, len(data))
+	default:
+		return prefix
+	}
 }
 
 type announceCache struct {

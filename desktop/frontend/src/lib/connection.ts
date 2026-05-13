@@ -42,6 +42,14 @@ export interface SessionListHandlers {
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
+export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {
+  if (wsReadyState !== WebSocket.OPEN) return "websocket is not open";
+  if (blobSize > MAX_PASTE_IMAGE_BYTES) {
+    return `image too large: ${blobSize} bytes exceeds ${MAX_PASTE_IMAGE_BYTES}`;
+  }
+  return null;
+}
+
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let out = "";
@@ -195,17 +203,23 @@ export class SessionConnection {
   }
 
   async sendPasteImage(blob: Blob, filename = "clipboard-image"): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
-    if (blob.size > MAX_PASTE_IMAGE_BYTES) {
+    const ws = this.ws;
+    const blocked = pasteImageBlockReason(ws?.readyState, blob.size);
+    if (blocked || !ws) {
       this.handlers.onStatus?.("error");
-      return false;
+      throw new Error(blocked ?? "websocket is not open");
     }
     const payload = encodeText(JSON.stringify({
       filename,
       content_type: blob.type || "image/png",
       data: arrayBufferToBase64(await blob.arrayBuffer()),
     }));
-    this.ws.send(encodeFrame(TYPE.PASTE_IMAGE, this.sidBytes, payload));
+    console.info("[AT Term] sending paste image", {
+      filename,
+      contentType: blob.type || "image/png",
+      bytes: blob.size,
+    });
+    ws.send(encodeFrame(TYPE.PASTE_IMAGE, this.sidBytes, payload));
     return true;
   }
 

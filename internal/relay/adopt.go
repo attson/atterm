@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"sync"
 	"sync/atomic"
 
@@ -120,11 +121,16 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 				case proto.TypePasteImage:
 					pasteHost, ok := host.(ImagePasteHost)
 					if !ok {
+						log.Printf("adopt: paste image unavailable session=%s", f.SessionID)
 						continue
 					}
 					var p proto.PasteImagePayload
-					if err := json.Unmarshal(f.Payload, &p); err == nil {
-						_ = pasteHost.PasteImage(loopCtx, f.SessionID, p)
+					if err := json.Unmarshal(f.Payload, &p); err != nil {
+						log.Printf("adopt: bad paste image payload session=%s payload_bytes=%d error=%v", f.SessionID, len(f.Payload), err)
+						continue
+					}
+					if err := pasteHost.PasteImage(loopCtx, f.SessionID, p); err != nil {
+						log.Printf("adopt: paste image failed session=%s filename=%q content_type=%q image_bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
 					}
 				}
 			}

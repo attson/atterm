@@ -133,13 +133,15 @@ func (h *relayHost) HostMeta() (hostID, host, user string) {
 
 // SubscribeLocal returns a Subscriber for the local session with the given id.
 // Used by the uplink when the remote relay asks it to start streaming.
-func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subscriber, error) {
+func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subscriber, uint64, error) {
 	sess, ok := h.server.Registry().Get(id)
 	if !ok {
-		return nil, fmt.Errorf("no such local session %s", id)
+		return nil, 0, fmt.Errorf("no such local session %s", id)
 	}
-	sub, _ := sess.Subscribe(sinceSeq)
-	return sub, nil
+	sub, replayToSeq := sess.Subscribe(sinceSeq)
+	info := sess.Info()
+	log.Printf("desktop-uplink: subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d", id, sinceSeq, replayToSeq, info.Cols, info.Rows)
+	return sub, replayToSeq, nil
 }
 
 // UnsubscribeLocal removes a previously-acquired subscriber.
@@ -172,22 +174,31 @@ func (h *relayHost) RequestLocalRepaint(id uuid.UUID) {
 	active := h.sessions[id]
 	h.mu.Unlock()
 	if active == nil || active.host == nil {
+		log.Printf("desktop-repaint: skip session=%s reason=no_active_host", id)
 		return
 	}
 	sess, ok := h.server.Registry().Get(id)
 	if !ok {
+		log.Printf("desktop-repaint: skip session=%s reason=no_session", id)
 		return
 	}
 	info := sess.Info()
 	if info.Cols < 2 || info.Rows < 2 {
+		log.Printf("desktop-repaint: skip session=%s reason=invalid_size cols=%d rows=%d", id, info.Cols, info.Rows)
 		return
 	}
+	log.Printf("desktop-repaint: nudge_start session=%s cols=%d rows=%d", id, info.Cols, info.Rows)
 	go func(cols, rows uint16) {
 		if err := active.host.Resize(cols, rows-1); err != nil {
+			log.Printf("desktop-repaint: nudge_failed session=%s step=shrink cols=%d rows=%d error=%v", id, cols, rows-1, err)
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
-		_ = active.host.Resize(cols, rows)
+		if err := active.host.Resize(cols, rows); err != nil {
+			log.Printf("desktop-repaint: nudge_failed session=%s step=restore cols=%d rows=%d error=%v", id, cols, rows, err)
+			return
+		}
+		log.Printf("desktop-repaint: nudge_ok session=%s cols=%d rows=%d", id, cols, rows)
 	}(info.Cols, info.Rows)
 }
 

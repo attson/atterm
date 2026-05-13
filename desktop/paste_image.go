@@ -23,18 +23,35 @@ type desktopPtyHost struct {
 }
 
 func (h *desktopPtyHost) PasteImage(ctx context.Context, sessionID uuid.UUID, p proto.PasteImagePayload) error {
+	log.Printf("desktop-paste: request %s", pasteImageLogDetails(sessionID, p))
 	path, err := savePastedImage(sessionID, p)
 	if err != nil {
+		log.Printf("desktop-paste: save_failed %s error=%v", pasteImageLogDetails(sessionID, p), err)
 		return err
 	}
+	log.Printf("desktop-paste: saved %s path=%q", pasteImageLogDetails(sessionID, p), path)
 	if err := setNativeClipboardImage(ctx, path, p.ContentType); err == nil {
 		_, err = h.Write([]byte("\x16"))
+		if err != nil {
+			log.Printf("desktop-paste: native_write_failed session=%s path=%q error=%v", sessionID, path, err)
+		} else {
+			log.Printf("desktop-paste: native_clipboard_ok session=%s path=%q", sessionID, path)
+		}
 		return err
 	} else {
-		log.Printf("paste image: native clipboard failed, falling back to path paste: %v", err)
+		log.Printf("desktop-paste: native_clipboard_failed %s path=%q error=%v", pasteImageLogDetails(sessionID, p), path, err)
 	}
 	_, err = h.Write([]byte(path))
+	if err != nil {
+		log.Printf("desktop-paste: fallback_path_write_failed session=%s path=%q error=%v", sessionID, path, err)
+	} else {
+		log.Printf("desktop-paste: fallback_path_write_ok session=%s path=%q", sessionID, path)
+	}
 	return err
+}
+
+func pasteImageLogDetails(sessionID uuid.UUID, p proto.PasteImagePayload) string {
+	return fmt.Sprintf("session=%s filename=%q content_type=%q image_bytes=%d", sessionID, p.Filename, p.ContentType, len(p.Data))
 }
 
 func setNativeClipboardImage(ctx context.Context, path, contentType string) error {

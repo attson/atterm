@@ -19,7 +19,15 @@ var assets embed.FS
 var Version = "dev"
 
 func main() {
-	app := NewApp()
+	cfgStore := loadConfig()
+	logger, err := newDesktopLoggingManager(cfgStore.Get(), Version)
+	if err != nil {
+		println("Error:", err.Error())
+		return
+	}
+	defer logger.Close()
+
+	app := NewApp(cfgStore, logger)
 
 	opts := &options.App{
 		Title:  "AT Term",

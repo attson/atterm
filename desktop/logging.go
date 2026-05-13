@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -167,6 +168,29 @@ func defaultLogFilePath() string {
 		}
 	}
 	return "desktop.log"
+}
+
+func isDevBuild(version string) bool {
+	version = strings.TrimSpace(version)
+	return version == "" || version == "dev"
+}
+
+func newDesktopLoggingManager(cfg appConfig, version string) (*loggingManager, error) {
+	m, err := newLoggingManager(loggingOptions{
+		devMode:  isDevBuild(version),
+		terminal: os.Stderr,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.Apply(loggingConfigState{
+		enabled: cfg.LogToFileEnabledOrDefault(),
+		path:    cfg.LogFilePath,
+	}); err != nil {
+		_ = m.Close()
+		return nil, err
+	}
+	return m, nil
 }
 
 func readLogPreview(path string, limit int64) (logPreview, error) {

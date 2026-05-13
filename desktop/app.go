@@ -57,11 +57,26 @@ type RelayConfig struct {
 	Connected          bool   `json:"connected"`
 }
 
+type LoggingConfig struct {
+	Enabled       bool   `json:"enabled"`
+	Path          string `json:"path"`
+	EffectivePath string `json:"effective_path"`
+	DevDualOutput bool   `json:"dev_dual_output"`
+}
+
+type LogPreview struct {
+	Path      string `json:"path"`
+	Exists    bool   `json:"exists"`
+	Truncated bool   `json:"truncated"`
+	Content   string `json:"content"`
+}
+
 // App is the Wails-bound application surface.
 type App struct {
 	ctx      context.Context
 	host     *relayHost
 	cfgStore *configStore
+	logger   *loggingManager
 
 	mu           sync.Mutex
 	uplink       *uplink
@@ -71,8 +86,8 @@ type App struct {
 }
 
 // NewApp creates a new App application struct.
-func NewApp() *App {
-	a := &App{}
+func NewApp(cfgStore *configStore, logger *loggingManager) *App {
+	a := &App{cfgStore: cfgStore, logger: logger}
 	a.updater = newUpdater(updaterConfig{
 		current:         Version,
 		repo:            "attson/atterm",
@@ -92,13 +107,21 @@ func (a *App) startup(ctx context.Context) {
 		log.Fatalf("desktop: start relay host: %v", err)
 	}
 	a.host = h
-	a.cfgStore = loadConfig()
+	if a.cfgStore == nil {
+		a.cfgStore = loadConfig()
+	}
 
 	cfg := a.cfgStore.Get()
 	if cfg.RelayURL == "" {
 		if env := strings.TrimSpace(os.Getenv("ATTERM_RELAY_URL")); env != "" {
 			cfg.RelayURL = env
 			cfg.RelayToken = strings.TrimSpace(os.Getenv("ATTERM_RELAY_TOKEN"))
+		}
+	}
+	if a.logger == nil {
+		a.logger, err = newDesktopLoggingManager(cfg, Version)
+		if err != nil {
+			log.Fatalf("desktop: init logging: %v", err)
 		}
 	}
 	a.applyRelayConfig(cfg)
@@ -120,6 +143,10 @@ func (a *App) shutdown(ctx context.Context) {
 	a.mu.Unlock()
 	if a.updater != nil {
 		a.updater.Stop()
+	}
+	if a.logger != nil {
+		_ = a.logger.Close()
+		a.logger = nil
 	}
 	if a.host != nil {
 		a.host.Stop()
@@ -216,6 +243,97 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	}
 	a.applyRelayConfig(cfg)
 	return nil
+}
+
+func (a *App) GetLoggingConfig() LoggingConfig {
+	cfg := appConfig{}
+	if a.cfgStore != nil {
+		cfg = a.cfgStore.Get()
+	}
+	effectivePath := cfg.LogFilePathOrDefault()
+	if a.logger != nil {
+		effectivePath = a.logger.EffectivePath(cfg.LogFilePath)
+	}
+	return LoggingConfig{
+		Enabled:       cfg.LogToFileEnabledOrDefault(),
+		Path:          cfg.LogFilePath,
+		EffectivePath: effectivePath,
+		DevDualOutput: isDevBuild(Version),
+	}
+}
+
+func (a *App) SetLoggingConfig(req LoggingConfig) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	path := strings.TrimSpace(req.Path)
+	if path != "" && !filepath.IsAbs(path) {
+		return fmt.Errorf("log path must be absolute")
+	}
+
+	prevCfg := a.cfgStore.Get()
+	prevState := loggingConfigState{
+		enabled: prevCfg.LogToFileEnabledOrDefault(),
+		path:    prevCfg.LogFilePath,
+	}
+	nextCfg := prevCfg
+	nextCfg.LogFilePath = path
+	nextCfg.LogToFileEnabled = &req.Enabled
+
+	if a.logger != nil {
+		if err := a.logger.Apply(loggingConfigState{
+			enabled: req.Enabled,
+			path:    path,
+		}); err != nil {
+			return err
+		}
+	}
+	if err := a.cfgStore.Set(nextCfg); err != nil {
+		if a.logger != nil {
+			_ = a.logger.Apply(prevState)
+		}
+		return err
+	}
+	return nil
+}
+
+func (a *App) PickLogFilePath() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("runtime context not ready")
+	}
+	current := a.GetLoggingConfig().EffectivePath
+	return wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		Title:            "Choose desktop log file",
+		DefaultDirectory: filepath.Dir(current),
+		DefaultFilename:  filepath.Base(current),
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "Log Files (*.log)", Pattern: "*.log"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+		CanCreateDirectories: true,
+		ShowHiddenFiles:      true,
+	})
+}
+
+func (a *App) GetLogPreview() (LogPreview, error) {
+	if a.cfgStore == nil {
+		return LogPreview{}, fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	path := cfg.LogFilePathOrDefault()
+	if a.logger != nil {
+		path = a.logger.EffectivePath(cfg.LogFilePath)
+	}
+	preview, err := readLogPreview(path, defaultLogPreviewBytes)
+	if err != nil {
+		return LogPreview{}, err
+	}
+	return LogPreview{
+		Path:      preview.Path,
+		Exists:    preview.Exists,
+		Truncated: preview.Truncated,
+		Content:   preview.Content,
+	}, nil
 }
 
 // GetTerminalTheme returns the user's global terminal theme preference.

@@ -163,6 +163,34 @@ func (h *relayHost) SendLocalInbound(id uuid.UUID, f proto.Frame) error {
 	return nil
 }
 
+// RequestLocalRepaint nudges a full-screen terminal app to redraw after a
+// remote attach receives only a truncated alternate-screen replay. Many TUIs
+// repaint on SIGWINCH, which is the only reliable signal available outside
+// the PTY byte stream.
+func (h *relayHost) RequestLocalRepaint(id uuid.UUID) {
+	h.mu.Lock()
+	active := h.sessions[id]
+	h.mu.Unlock()
+	if active == nil || active.host == nil {
+		return
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		return
+	}
+	info := sess.Info()
+	if info.Cols < 2 || info.Rows < 2 {
+		return
+	}
+	go func(cols, rows uint16) {
+		if err := active.host.Resize(cols, rows-1); err != nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+		_ = active.host.Resize(cols, rows)
+	}(info.Cols, info.Rows)
+}
+
 // CloseSession terminates the PTY for a session and synchronously evicts
 // it from the local registry, so the uplink learns NOW (rather than after
 // the eventual pty.Wait() in the watcher goroutine) and the upstream relay

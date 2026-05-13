@@ -190,12 +190,9 @@ func (u *uplink) runOnce(ctx context.Context) error {
 					if !ok {
 						return
 					}
-					if !localSubscriberFrameForwardedToUplink(f.Type) {
-						continue
-					}
-					select {
-					case out <- f:
-					case <-fwdCtx.Done():
+					if !forwardLocalSubscriberFrame(fwdCtx, out, f, func() {
+						u.host.RequestLocalRepaint(id)
+					}) {
 						return
 					}
 				case <-sub.Done():
@@ -336,6 +333,29 @@ func localSubscriberFrameForwardedToUplink(typ proto.Type) bool {
 	default:
 		return false
 	}
+}
+
+func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f proto.Frame, requestRepaint func()) bool {
+	if localSubscriberFrameRequestsRepaint(f) && requestRepaint != nil {
+		requestRepaint()
+	}
+	if !localSubscriberFrameForwardedToUplink(f.Type) {
+		return true
+	}
+	select {
+	case out <- f:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func localSubscriberFrameRequestsRepaint(f proto.Frame) bool {
+	if f.Type != proto.TypeOut {
+		return false
+	}
+	seq, data, err := proto.DecodeOut(f.Payload)
+	return err == nil && seq == 0 && bytes.Equal(data, []byte("\x1b[?1049h\x1b[2J\x1b[H"))
 }
 
 type announceCache struct {

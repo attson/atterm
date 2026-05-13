@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/google/uuid"
 )
 
 func TestAnnounceCacheSkipsUnchangedSnapshot(t *testing.T) {
@@ -114,5 +116,27 @@ func TestLocalSubscriberFrameForwardedToUplink(t *testing.T) {
 	}
 	if localSubscriberFrameForwardedToUplink(proto.TypeReplayProgress) {
 		t.Fatal("REPLAY_PROGRESS is local subscriber progress and must not be sent to /uplink")
+	}
+}
+
+func TestForwardLocalSubscriberFrameRequestsRepaintForAltScreenReset(t *testing.T) {
+	id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	out := make(chan proto.Frame, 1)
+	repaints := 0
+	frame := proto.EncodeOut(id, 0, []byte("\x1b[?1049h\x1b[2J\x1b[H"))
+
+	if ok := forwardLocalSubscriberFrame(context.Background(), out, frame, func() { repaints++ }); !ok {
+		t.Fatal("forwardLocalSubscriberFrame returned false")
+	}
+	if repaints != 1 {
+		t.Fatalf("repaints = %d; want 1", repaints)
+	}
+	select {
+	case got := <-out:
+		if got.Type != proto.TypeOut {
+			t.Fatalf("forwarded type = 0x%02x; want OUT", got.Type)
+		}
+	default:
+		t.Fatal("reset OUT frame was not forwarded")
 	}
 }

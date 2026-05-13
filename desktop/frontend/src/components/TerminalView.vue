@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { onMounted, onBeforeUnmount, ref, watch, nextTick } from "vue";
 import { Terminal } from "xterm";
+import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
@@ -22,6 +23,7 @@ const props = withDefaults(
     // send the resize anyway (safe fallback).
     expectedCols?: number;
     expectedRows?: number;
+    theme: ITheme;
   }>(),
   { active: true, focused: false, avoidTopRightBadge: false }
 );
@@ -93,7 +95,7 @@ function ensureTerm() {
     fontSize: 13,
     cursorBlink: true,
     scrollback: 20000,
-    theme: { background: "#000000" },
+    theme: props.theme,
     convertEol: false,
     allowProposedApi: true,
   });
@@ -183,6 +185,13 @@ watch(
     }
   }
 );
+
+watch(
+  () => props.theme,
+  (theme) => {
+    if (term) term.options.theme = theme;
+  }
+);
 </script>
 
 <template>
@@ -211,7 +220,7 @@ watch(
 .term-view {
   position: absolute;
   inset: 0;
-  background: #000;
+  background: var(--terminal-bg);
   overflow: hidden;
 }
 .term {
@@ -226,7 +235,7 @@ watch(
   position: absolute;
   top: 8px;
   right: 12px;
-  background: rgba(13, 17, 23, 0.85);
+  background: var(--terminal-overlay);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 10px;

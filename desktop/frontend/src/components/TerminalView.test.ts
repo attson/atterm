@@ -26,3 +26,21 @@ describe("TerminalView fit geometry", () => {
     expect(source).toMatch(/:deep\(\.xterm\)\s*\{[^}]*padding\s*:\s*6px 8px/);
   });
 });
+
+describe("TerminalView themes", () => {
+  test("accepts a theme prop and uses it when creating xterm", () => {
+    expect(source).toContain("theme: ITheme");
+    expect(source).toMatch(/new Terminal\(\{[\s\S]*theme:\s*props\.theme/);
+  });
+
+  test("updates existing terminals without recreating the connection", () => {
+    expect(source).toMatch(/watch\(\s*\(\)\s*=>\s*props\.theme/);
+    expect(source).toContain("term.options.theme = theme");
+    expect(source).not.toContain("watch(\n  () => props.theme,\n  () => {\n    ensureTerm()");
+  });
+
+  test("uses theme variables for terminal backgrounds", () => {
+    expect(styleBlockFor(".term-view")).toMatch(/background\s*:\s*var\(--terminal-bg\)/);
+    expect(source).toMatch(/background:\s*var\(--terminal-overlay\)/);
+  });
+});

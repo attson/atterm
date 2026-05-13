@@ -4,12 +4,14 @@ import TerminalView from "./TerminalView.vue";
 import type { Endpoint } from "../lib/api";
 import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab } from "../lib/types";
+import type { TerminalThemeDefinition } from "../lib/terminalThemes";
 
 const props = defineProps<{
   tab: Tab;
   endpointFor: (pane: Pane) => Endpoint | null;
   sessionInfoFor: (pane: Pane) => SessionInfo | null;
   active: boolean;
+  terminalTheme: TerminalThemeDefinition["xtermTheme"];
 }>();
 
 const emit = defineEmits<{
@@ -57,6 +59,7 @@ function formatWho(info: SessionInfo | null): string {
         :expected-cols="sessionInfoFor(pane)?.cols"
         :expected-rows="sessionInfoFor(pane)?.rows"
         :avoid-top-right-badge="pane.remote"
+        :theme="terminalTheme"
       />
       <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
 

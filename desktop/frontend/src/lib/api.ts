@@ -60,6 +60,8 @@ interface AppBindings {
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
+  GetTerminalTheme(): Promise<string>;
+  SetTerminalTheme(themeID: string): Promise<void>;
   GetUpdateState(): Promise<UpdateState>;
   CheckUpdate(): Promise<void>;
   StartDownload(): Promise<void>;
@@ -117,6 +119,14 @@ export function setRelayConfig(cfg: {
     remote_permission: cfg.remote_permission ?? "full",
     connected: false,
   });
+}
+
+export function getTerminalThemePreference(): Promise<string> {
+  return bindings().GetTerminalTheme();
+}
+
+export function setTerminalThemePreference(themeID: string): Promise<void> {
+  return bindings().SetTerminalTheme(themeID);
 }
 
 export function getHostInfo(): Promise<HostInfo> {

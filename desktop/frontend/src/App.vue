@@ -12,6 +12,7 @@ import {
   getEndpoint,
   getHostInfo,
   getRelayConfig,
+  getTerminalThemePreference,
   getUpdateState,
   listShells,
   newSession,
@@ -21,6 +22,11 @@ import { SessionListConnection, type SessionInfo } from "./lib/connection";
 import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
 import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
+import {
+  DEFAULT_TERMINAL_THEME_ID,
+  getTerminalTheme,
+  type TerminalThemeID,
+} from "./lib/terminalThemes";
 
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
@@ -42,6 +48,10 @@ const toast = ref<string>("");
 
 const updateBadge = ref(false);
 let updatePollHandle: number | null = null;
+
+const currentTerminalThemeID = ref<TerminalThemeID>(DEFAULT_TERMINAL_THEME_ID);
+const currentTerminalTheme = computed(() => getTerminalTheme(currentTerminalThemeID.value));
+const themeStyle = computed(() => currentTerminalTheme.value.appVars);
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
@@ -241,6 +251,15 @@ async function refreshRelayConfig() {
     return;
   }
   connectRemoteSessionList(next);
+}
+
+async function refreshTerminalTheme() {
+  const themeID = await getTerminalThemePreference();
+  currentTerminalThemeID.value = getTerminalTheme(themeID).id;
+}
+
+function onTerminalThemeChanged(themeID: string) {
+  currentTerminalThemeID.value = getTerminalTheme(themeID).id;
 }
 
 function parseHash(): string | null {
@@ -503,6 +522,7 @@ onMounted(async () => {
   // probe must be ready by the time auto-startNewTab fires.
   await setupMeasureProbe();
   try {
+    await refreshTerminalTheme();
     localEndpoint.value = await getEndpoint();
     const info = await getHostInfo();
     localHostID.value = info.host_id;
@@ -543,7 +563,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :style="themeStyle">
     <header class="topbar">
       <div class="brand">AT Term</div>
       <div class="status">
@@ -621,6 +641,7 @@ onUnmounted(() => {
           :endpoint-for="endpointFor"
           :session-info-for="paneSessionInfo"
           :active="t.id === currentTabId"
+          :terminal-theme="currentTerminalTheme.xtermTheme"
           @set-active-pane="(idx) => (t.activePaneIdx = idx)"
           @close-pane="(idx) => closePaneAt(t, idx)"
         />
@@ -632,6 +653,8 @@ onUnmounted(() => {
       v-if="showSettings"
       :local-session-count="localSessionCount"
       :remote-session-count="remoteSessionCount"
+      :terminal-theme-id="currentTerminalThemeID"
+      @terminal-theme-changed="onTerminalThemeChanged"
       @relay-config-changed="refreshRelayConfig"
       @close="showSettings = false; refreshRelayConfig()"
     />

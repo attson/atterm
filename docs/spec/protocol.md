@@ -100,6 +100,7 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
   "cwd": "/var/log",
   "title": "log",
   "driver_client_id": "<uuid>",
+  "driver_client_name": "Alice's MacBook",
   "cols": 132,
   "rows": 39
 }
@@ -108,9 +109,10 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
 字段都 optional。agent 在 cwd / title 变化时发；relay 在 driver 变化或 PTY 尺寸（`UpdateSize`）变化时也会自行 broadcast 一帧。subscriber 收到后：
 
 - `driver_client_id` 与本地生成的 `ATTACH.client_id` 比对，决定自己是 driver 还是 viewer
+- `driver_client_name` 是 driver 当前 attach 时报上来的 `ATTACH.client_name`（典型是其 hostname），viewer 端用它在遮罩里显示 "by &lt;hostname&gt;"
 - `cols` / `rows` 是 PTY 当前真实尺寸；viewer 把自己的 xterm `term.resize(cols, rows)` 锁到这个值（不跑 FitAddon）
 
-每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id 和 cols/rows，作为初始状态。
+每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id / driver_client_name / cols / rows，作为初始状态。
 
 ### `CLOSE` (0x06) — 会话结束
 
@@ -123,12 +125,19 @@ agent 发出后 relay 移除 session，所有 subscriber 收到 CLOSE 后断开�
 ### `ATTACH` (0x10) — client 接管 session
 
 ```json
-{ "session_id": "<uuid string>", "since_seq": 0, "client_id": "<uuid>" }
+{
+  "session_id": "<uuid string>",
+  "since_seq": 0,
+  "client_id": "<uuid>",
+  "client_name": "Alice's MacBook"
+}
 ```
 
 session_id 同时填到帧 header 的 `session_id` 字段（冗余但便于路由）。`since_seq` 0 = 全量 scrollback；非 0 = 只补发 seq > N 的帧。
 
 `client_id` 是 client 在创建 `SessionConnection` 时自己生成的 UUID，每个 connection 实例一个。relay 把它存在对应 `Subscriber` 上，并在 `META.driver_client_id` 里回放，让 client 通过本地 ID 比对识别自己是不是当前 driver。该字段可选——旧版 client 不发 client_id 时 relay 仍接受订阅，只是 client 永远不会渲染成 driver（始终 viewer 视觉）；服务端 driver 指针仍正确指向该 sub，IN/RESIZE 仍可通过，UI 行为退化为静默 driver。
+
+`client_name` 是人类可读的客户端标识（典型来自 `getHostInfo().host` 也就是本机 hostname）。relay 把它存在 `Subscriber` 上，并在 `META.driver_client_name` 里回放，让 viewer 在遮罩里显示 "by &lt;name&gt;"。该字段可选。
 
 ### `LIST` (0x11) / `LIST_RESP` (0x12)
 
@@ -244,10 +253,10 @@ payload = JSON：
 viewer 想接管成为 driver 时发。payload = JSON：
 
 ```json
-{ "client_id": "<uuid>" }
+{ "client_id": "<uuid>", "client_name": "Alice's MacBook" }
 ```
 
-`client_id` 应与发送方 `ATTACH.client_id` 相同（end-to-end 标识）；relay 把它原样写进新一帧 META 的 `driver_client_id` 广播给所有 subscriber。无需当前 driver 确认——立即生效。
+`client_id` 应与发送方 `ATTACH.client_id` 相同（end-to-end 标识）；`client_name` 同 `ATTACH.client_name`。relay 把这两个字段原样写进新一帧 META 的 `driver_client_id` / `driver_client_name` 广播给所有 subscriber。无需当前 driver 确认——立即生效。
 
 relay 拒绝以下情形（debug log 但不发错误帧给 client）：
 - 未 attach

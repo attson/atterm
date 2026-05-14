@@ -357,10 +357,10 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				log.Printf("desktop-uplink: inbound_drop type=CLAIM_DRIVER reason=bad_payload session=%s err=%q", f.SessionID, err)
 				continue
 			}
-			if err := u.host.ClaimLocalDriver(f.SessionID, cp.ClientID); err != nil {
+			if err := u.host.ClaimLocalDriver(f.SessionID, cp.ClientID, cp.ClientName); err != nil {
 				log.Printf("desktop-uplink: inbound_drop type=CLAIM_DRIVER reason=%q session=%s", err, f.SessionID)
 			} else {
-				log.Printf("desktop-uplink: inbound_forward_ok type=CLAIM_DRIVER session=%s client_id=%q", f.SessionID, cp.ClientID)
+				log.Printf("desktop-uplink: inbound_forward_ok type=CLAIM_DRIVER session=%s client_id=%q client_name=%q", f.SessionID, cp.ClientID, cp.ClientName)
 			}
 		case proto.TypePong:
 			// keepalive ack from relay

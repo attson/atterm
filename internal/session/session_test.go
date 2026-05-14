@@ -28,7 +28,7 @@ func TestSubscribeEmitsReplayProgress(t *testing.T) {
 	s.PushOut(1, first)
 	s.PushOut(2, second)
 
-	sub, _ := s.Subscribe(0, "")
+	sub, _ := s.Subscribe(0, "", "")
 	defer s.Unsubscribe(sub)
 
 	start := readFrameForTest(t, sub)
@@ -78,7 +78,7 @@ func TestSubscribeFromStartMarksTruncatedScrollback(t *testing.T) {
 		t.Fatalf("oldest seq = %d; want scrollback truncated past seq 1", oldest)
 	}
 
-	sub, _ := s.Subscribe(0, "")
+	sub, _ := s.Subscribe(0, "", "")
 	defer s.Unsubscribe(sub)
 
 	if got := readFrameForTest(t, sub); got.Type != proto.TypeReplayProgress {
@@ -109,7 +109,7 @@ func TestSubscribeTruncatedAltScreenReplayRestoresAltScreenMode(t *testing.T) {
 		t.Fatalf("oldest seq = %d; want scrollback truncated past alt-screen enter", oldest)
 	}
 
-	sub, _ := s.Subscribe(0, "")
+	sub, _ := s.Subscribe(0, "", "")
 	defer s.Unsubscribe(sub)
 
 	if got := readFrameForTest(t, sub); got.Type != proto.TypeReplayProgress {
@@ -148,7 +148,7 @@ func TestSubscribeManySmallChunksCoalescesIntoBatches(t *testing.T) {
 	for i := 0; i < chunkCount; i++ {
 		s.PushOut(uint64(i+1), []byte{'a'})
 	}
-	sub, replayToSeq := s.Subscribe(0, "")
+	sub, replayToSeq := s.Subscribe(0, "", "")
 	defer s.Unsubscribe(sub)
 
 	select {
@@ -219,7 +219,7 @@ func decodeProgressForTest(t *testing.T, f proto.Frame) proto.ReplayProgressPayl
 func TestSubscribeAutoPromotesFirstSubscriberToDriver(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 
-	sub, _ := s.Subscribe(0, "client-alpha")
+	sub, _ := s.Subscribe(0, "client-alpha", "alpha-host")
 	defer s.Unsubscribe(sub)
 
 	if !s.IsDriver(sub) {
@@ -233,9 +233,9 @@ func TestSubscribeAutoPromotesFirstSubscriberToDriver(t *testing.T) {
 func TestSubscribeSecondSubscriberIsViewer(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 
-	first, _ := s.Subscribe(0, "client-alpha")
+	first, _ := s.Subscribe(0, "client-alpha", "alpha-host")
 	defer s.Unsubscribe(first)
-	second, _ := s.Subscribe(0, "client-beta")
+	second, _ := s.Subscribe(0, "client-beta", "beta-host")
 	defer s.Unsubscribe(second)
 
 	if !s.IsDriver(first) {
@@ -250,15 +250,15 @@ func TestClaimDriverTransfersAndBroadcastsMeta(t *testing.T) {
 	id := uuid.New()
 	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})
 
-	first, _ := s.Subscribe(0, "client-alpha")
+	first, _ := s.Subscribe(0, "client-alpha", "alpha-host")
 	defer s.Unsubscribe(first)
 	drainInitialFrames(t, first)
 
-	second, _ := s.Subscribe(0, "client-beta")
+	second, _ := s.Subscribe(0, "client-beta", "beta-host")
 	defer s.Unsubscribe(second)
 	drainInitialFrames(t, second)
 
-	s.ClaimDriver(second, "client-beta")
+	s.ClaimDriver(second, "client-beta", "beta-host")
 
 	if !s.IsDriver(second) {
 		t.Fatal("second should now be driver after ClaimDriver")
@@ -316,10 +316,10 @@ func drainInitialFrames(t *testing.T, sub *Subscriber) {
 func TestRemoveDriverSubscriberClearsAndBroadcasts(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 
-	first, _ := s.Subscribe(0, "client-alpha")
+	first, _ := s.Subscribe(0, "client-alpha", "alpha-host")
 	drainInitialFrames(t, first)
 
-	second, _ := s.Subscribe(0, "client-beta")
+	second, _ := s.Subscribe(0, "client-beta", "beta-host")
 	defer s.Unsubscribe(second)
 	drainInitialFrames(t, second)
 

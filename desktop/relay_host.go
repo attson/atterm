@@ -145,7 +145,10 @@ func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subs
 		return nil, 0, fmt.Errorf("no such local session %s", id)
 	}
 	uplinkSubClientID := "uplink:" + uuid.New().String()
-	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID)
+	// Pseudo-name for the uplink subscriber; the real per-remote-client name
+	// gets propagated via CLAIM_DRIVER end-to-end when a remote claims.
+	uplinkSubClientName := "remote"
+	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID, uplinkSubClientName)
 	h.mu.Lock()
 	h.uplinkSubs[id] = sub
 	h.mu.Unlock()
@@ -167,9 +170,10 @@ func (h *relayHost) UnsubscribeLocal(id uuid.UUID, sub *session.Subscriber) {
 }
 
 // ClaimLocalDriver promotes the uplink's own local-session subscriber to
-// driver for the given session, attributing the end-to-end client_id. Called
-// by uplink when a remote subscriber on the public relay sends CLAIM_DRIVER.
-func (h *relayHost) ClaimLocalDriver(id uuid.UUID, clientID string) error {
+// driver for the given session, attributing the end-to-end client_id and
+// client_name. Called by uplink when a remote subscriber on the public relay
+// sends CLAIM_DRIVER.
+func (h *relayHost) ClaimLocalDriver(id uuid.UUID, clientID, clientName string) error {
 	h.mu.Lock()
 	uplinkSub := h.uplinkSubs[id]
 	h.mu.Unlock()
@@ -180,7 +184,7 @@ func (h *relayHost) ClaimLocalDriver(id uuid.UUID, clientID string) error {
 	if !ok {
 		return fmt.Errorf("no local session %s", id)
 	}
-	sess.ClaimDriver(uplinkSub, clientID)
+	sess.ClaimDriver(uplinkSub, clientID, clientName)
 	return nil
 }
 

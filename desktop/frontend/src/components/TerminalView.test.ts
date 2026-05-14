@@ -148,3 +148,21 @@ describe("PaneGrid session label forwarding", () => {
     expect(paneSource).toContain(':session-label="extractSessionLabel(sessionInfoFor(pane))"');
   });
 });
+
+describe("TerminalView driver hostname", () => {
+  test("fetches local hostname via getHostInfo and passes as clientName", () => {
+    expect(source).toMatch(/getHostInfo/);
+    expect(source).toMatch(/clientName:\s*localHostname\.value/);
+  });
+
+  test("tracks driverHostname from onDriverChange callback", () => {
+    expect(source).toMatch(/driverHostname\s*=\s*ref/);
+    expect(source).toMatch(/driverHostname\.value\s*=/);
+  });
+
+  test("overlay renders driverHostname when present", () => {
+    expect(source).toContain("v-if=\"driverHostname\"");
+    expect(source).toContain('class="viewer-overlay-host"');
+    expect(source).toContain('by {{ driverHostname }}');
+  });
+});

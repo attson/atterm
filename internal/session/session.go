@@ -182,13 +182,30 @@ func (s *Session) Broadcast(f proto.Frame) {
 	s.fanout(f)
 }
 
+// subsSnapshotPool reuses the temporary slice of subscribers fanout copies out
+// of s.subs each call. PushOut is a hot path (every PTY OUT frame); without
+// pooling, every chunk would allocate a fresh []*Subscriber proportional to
+// the subscriber count.
+var subsSnapshotPool = sync.Pool{
+	New: func() any {
+		buf := make([]*Subscriber, 0, 8)
+		return &buf
+	},
+}
+
 func (s *Session) fanout(f proto.Frame) {
 	s.mu.RLock()
-	subs := make([]*Subscriber, 0, len(s.subs))
+	if len(s.subs) == 0 {
+		s.mu.RUnlock()
+		return
+	}
+	bufPtr := subsSnapshotPool.Get().(*[]*Subscriber)
+	subs := (*bufPtr)[:0]
 	for sub := range s.subs {
 		subs = append(subs, sub)
 	}
 	s.mu.RUnlock()
+
 	for _, sub := range subs {
 		select {
 		case sub.out <- f:
@@ -197,6 +214,14 @@ func (s *Session) fanout(f proto.Frame) {
 			s.removeSubscriber(sub)
 		}
 	}
+
+	// Clear references before returning to the pool so the GC can reclaim
+	// any *Subscriber whose only remaining root is this buffer.
+	for i := range subs {
+		subs[i] = nil
+	}
+	*bufPtr = subs[:0]
+	subsSnapshotPool.Put(bufPtr)
 }
 
 // Subscribe registers a new client outbox and replays scrollback strictly

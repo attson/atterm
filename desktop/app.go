@@ -566,3 +566,45 @@ func (a *App) ShowNotification(title, body string) error {
 		body,
 	)
 }
+
+// GetShellIntegrationEnabled returns the current persisted preference for
+// OSC 133 shell-hook injection. Defaults to true for fresh installs.
+func (a *App) GetShellIntegrationEnabled() bool {
+	if a.cfgStore == nil {
+		return true
+	}
+	return a.cfgStore.Get().ShellIntegrationEnabledOrDefault()
+}
+
+// SetShellIntegrationEnabled persists the user's toggle. Already-running
+// sessions are unaffected; only newly spawned shells use the new value.
+func (a *App) SetShellIntegrationEnabled(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.ShellIntegrationEnabled = &enabled
+	return a.cfgStore.Set(cfg)
+}
+
+// GetCommandNotifyThresholdSeconds returns the current persisted command-
+// finished notification threshold. Clamped to [1, 600] at read time;
+// defaults to 10 for fresh installs.
+func (a *App) GetCommandNotifyThresholdSeconds() int {
+	if a.cfgStore == nil {
+		return 10
+	}
+	return a.cfgStore.Get().CommandNotifyThresholdSecondsOrDefault()
+}
+
+// SetCommandNotifyThresholdSeconds persists the user's threshold. The
+// stored value is clamped on read, so out-of-range writes (e.g. from a
+// stale UI) are tolerated.
+func (a *App) SetCommandNotifyThresholdSeconds(seconds int) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.CommandNotifyThresholdSeconds = &seconds
+	return a.cfgStore.Set(cfg)
+}

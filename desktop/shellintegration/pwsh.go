@@ -24,6 +24,8 @@ func preparePwsh(sessionID string) Plan {
 	}
 	return Plan{
 		Shell: "pwsh",
+		// -NoExit -Command "& '<path>'" - : the trailing '-' forces pwsh to drop to
+		// the interactive prompt after the script; without it, pwsh exits even with -NoExit.
 		ExtraArgs: []string{
 			"-NoExit",
 			"-Command",

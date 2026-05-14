@@ -154,6 +154,10 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.debugf("client drop frame=%s reason=permission", frameTypeName(f.Type))
 				continue
 			}
+			if !sess.IsDriver(sub) {
+				s.debugf("client drop frame=%s reason=not_driver session=%s", frameTypeName(f.Type), sess.ID)
+				continue
+			}
 			if f.Type == proto.TypeResize {
 				if cols, rows, err := proto.DecodeResize(f.Payload); err == nil {
 					sess.UpdateSize(cols, rows)
@@ -163,6 +167,27 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			if !sess.SendInbound(f) {
 				log.Printf("client: inbound full, dropping frame type 0x%02x", f.Type)
 			}
+
+		case proto.TypeClaimDriver:
+			if sess == nil {
+				s.debugf("client drop frame=CLAIM_DRIVER reason=not_attached")
+				continue
+			}
+			if scope == authRead {
+				s.debugf("client drop frame=CLAIM_DRIVER reason=read_only_scope session=%s", sess.ID)
+				continue
+			}
+			if sessionRemotePermission(sess) == permView {
+				s.debugf("client drop frame=CLAIM_DRIVER reason=view_only session=%s", sess.ID)
+				continue
+			}
+			var cp proto.ClaimDriverPayload
+			if err := json.Unmarshal(f.Payload, &cp); err != nil {
+				s.debugf("client drop frame=CLAIM_DRIVER reason=bad_payload session=%s err=%q", sess.ID, err)
+				continue
+			}
+			sess.ClaimDriver(sub, cp.ClientID)
+			s.debugf("client claim_driver session=%s client_id=%q", sess.ID, cp.ClientID)
 
 		case proto.TypePong:
 			// keepalive response

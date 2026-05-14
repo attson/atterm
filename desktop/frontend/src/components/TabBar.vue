@@ -83,9 +83,12 @@ function onClose(e: MouseEvent, id: string) {
   border-bottom: 1px solid var(--border); flex: 0 0 auto; height: 34px;
   overflow: hidden;
 }
-.tabs { display: flex; flex: 1 1 auto; overflow-x: auto; scrollbar-width: thin; }
-.tabs::-webkit-scrollbar { height: 4px; }
-.tabs::-webkit-scrollbar-thumb { background: var(--border); }
+.tabs {
+  display: flex; flex: 1 1 auto; overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
 
 .tab {
   display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px;

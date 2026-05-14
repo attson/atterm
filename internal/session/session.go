@@ -41,6 +41,13 @@ type Session struct {
 	altScreen bool
 	termTail  []byte
 
+	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
+	// frames are forwarded to the PTY. Nil means no driver is currently
+	// assigned. driverClientID is the end-to-end client_id broadcast in META
+	// so clients can recognize themselves.
+	driverSubscriber *Subscriber
+	driverClientID   string
+
 	// Optional lifecycle hooks. Used by mirror sessions (Phase 1.5 lazy
 	// uplink) so the relay can ask the upstream host to start/stop a stream
 	// only when there's at least one local subscriber.
@@ -50,9 +57,10 @@ type Session struct {
 
 // Subscriber is a client connection's outbox.
 type Subscriber struct {
-	out    chan proto.Frame
-	closed chan struct{}
-	once   sync.Once
+	out      chan proto.Frame
+	closed   chan struct{}
+	once     sync.Once
+	clientID string // end-to-end ID echoed in META.driver_client_id when this sub is driver
 }
 
 // Out returns the channel this subscriber should be drained from.
@@ -465,4 +473,11 @@ func (s *Session) IsClosed() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.closed
+}
+
+// IsDriver reports whether sub is currently the session driver.
+func (s *Session) IsDriver(sub *Subscriber) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.driverSubscriber == sub
 }

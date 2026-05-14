@@ -125,3 +125,19 @@ describe("TerminalView viewer overlay", () => {
     expect(cardCss).toMatch(/text-align\s*:\s*center/);
   });
 });
+
+describe("TerminalView bell notifications", () => {
+  test("accepts a sessionLabel prop", () => {
+    expect(source).toContain("sessionLabel?: string");
+  });
+
+  test("subscribes to term.onBell and wires through shouldNotify + showNotification", () => {
+    expect(source).toContain("term.onBell");
+    expect(source).toContain("shouldNotify");
+    expect(source).toContain("showNotification");
+  });
+
+  test("passes the resolved sessionLabel into the notification body", () => {
+    expect(source).toMatch(/Bell in \$\{\s*props\.sessionLabel/);
+  });
+});

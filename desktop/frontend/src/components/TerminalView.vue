@@ -7,8 +7,10 @@ import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
+import { shouldNotify } from "../lib/terminalBell";
 import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
+import { showNotification } from "../lib/api";
 
 const props = withDefaults(
   defineProps<{
@@ -17,6 +19,7 @@ const props = withDefaults(
     active?: boolean;
     focused?: boolean;
     avoidTopRightBadge?: boolean;
+    sessionLabel?: string;
     // The PTY's known size at the time of attach (from SessionInfo).
     // When this matches the local xterm's fit dimensions, we skip the
     // initial RESIZE so cross-attached remote shells don't see a
@@ -241,6 +244,14 @@ function ensureTerm() {
   term.onResize(({ cols, rows }) => {
     if (!isDriver.value) return; // viewer's local resize is FitAddon-suppressed anyway
     conn?.sendResize(cols, rows);
+  });
+
+  let lastBellAt = 0;
+  term.onBell(() => {
+    const focused = typeof document !== "undefined" && document.hasFocus();
+    if (!shouldNotify(Date.now(), lastBellAt, focused)) return;
+    lastBellAt = Date.now();
+    void showNotification("AT Term", `Bell in ${props.sessionLabel || "session"}`);
   });
 
   resizeObserver = new ResizeObserver(() => safeFit());

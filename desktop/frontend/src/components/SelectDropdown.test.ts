@@ -91,3 +91,52 @@ describe("SelectDropdown open/close", () => {
     wrapper.unmount();
   });
 });
+
+describe("SelectDropdown selection", () => {
+  const options = [
+    { value: "a", label: "Apple", description: "red fruit" },
+    { value: "b", label: "Banana", description: "yellow fruit" },
+    { value: "c", label: "Cherry" },
+  ];
+
+  test("clicking an option emits update:modelValue and closes the menu", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    await wrapper.get('[data-testid="select-trigger"]').trigger("click");
+    const items = wrapper.findAll('[data-testid="select-option"]');
+    expect(items).toHaveLength(3);
+    await items[1].trigger("click");
+    expect(wrapper.emitted("update:modelValue")).toEqual([["b"]]);
+    expect(wrapper.find('[data-testid="select-menu"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  test("clicking the currently selected option closes without emitting", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    await wrapper.get('[data-testid="select-trigger"]').trigger("click");
+    const items = wrapper.findAll('[data-testid="select-option"]');
+    await items[0].trigger("click");
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+    expect(wrapper.find('[data-testid="select-menu"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  test("options render their description text under the label", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    await wrapper.get('[data-testid="select-trigger"]').trigger("click");
+    const items = wrapper.findAll('[data-testid="select-option"]');
+    expect(items[0].text()).toContain("Apple");
+    expect(items[0].text()).toContain("red fruit");
+    expect(items[2].text()).toContain("Cherry");
+    expect(items[2].text()).not.toContain("undefined");
+    wrapper.unmount();
+  });
+});

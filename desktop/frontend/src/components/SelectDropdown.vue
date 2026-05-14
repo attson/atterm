@@ -14,7 +14,7 @@ const props = defineProps<{
   ariaLabel?: string;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
 }>();
 
@@ -33,6 +33,13 @@ function openMenu() {
 
 function closeMenu() {
   open.value = false;
+}
+
+function selectOption(option: SelectOption) {
+  closeMenu();
+  if (option.value !== props.modelValue) {
+    emit("update:modelValue", option.value);
+  }
 }
 
 function onTriggerClick() {
@@ -94,7 +101,10 @@ onBeforeUnmount(() => {
         v-for="option in options"
         :key="option.value"
         class="option"
+        data-testid="select-option"
         role="option"
+        :aria-selected="option.value === modelValue ? 'true' : 'false'"
+        @click="selectOption(option)"
       >
         <span class="option-label">{{ option.label }}</span>
         <span v-if="option.description" class="option-description">

@@ -13,6 +13,7 @@ const props = defineProps<{
   sessionInfoFor: (pane: Pane) => SessionInfo | null;
   active: boolean;
   terminalTheme: TerminalThemeDefinition["xtermTheme"];
+  commandNotifyThresholdSec: number;
 }>();
 
 const emit = defineEmits<{
@@ -64,6 +65,8 @@ function formatWho(info: SessionInfo | null): string {
         :session-label="extractSessionLabel(sessionInfoFor(pane))"
         :avoid-top-right-badge="pane.remote"
         :theme="terminalTheme"
+        :is-local-session="!pane.remote"
+        :command-notify-threshold-sec="commandNotifyThresholdSec"
         @toast="emit('toast', $event)"
       />
       <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>

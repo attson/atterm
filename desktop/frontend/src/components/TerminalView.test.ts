@@ -166,3 +166,29 @@ describe("TerminalView driver hostname", () => {
     expect(source).toContain('by {{ driverHostname }}');
   });
 });
+
+describe("TerminalView OSC 133 command notifications", () => {
+  test("imports CommandTracker and shouldNotifyCommand from commandFinish", () => {
+    expect(source).toContain("CommandTracker");
+    expect(source).toContain("shouldNotifyCommand");
+    expect(source).toContain('from "../lib/commandFinish"');
+  });
+
+  test("declares commandNotifyThresholdSec and isLocalSession props", () => {
+    expect(source).toContain("commandNotifyThresholdSec");
+    expect(source).toContain("isLocalSession");
+  });
+
+  test("registers OSC 133 handler on the xterm parser", () => {
+    expect(source).toMatch(/term\.parser\.registerOscHandler\(\s*133\s*,/);
+  });
+
+  test("invokes showNotification with a Command-finished body when gate passes", () => {
+    expect(source).toContain("Command finished");
+    expect(source).toMatch(/showNotification\(/);
+  });
+
+  test("notification is gated by shouldNotifyCommand with focused, isLocal, threshold", () => {
+    expect(source).toMatch(/shouldNotifyCommand\([\s\S]*focused[\s\S]*thresholdSec[\s\S]*isLocal/);
+  });
+});

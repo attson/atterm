@@ -100,6 +100,10 @@ interface AppBindings {
   GetNotificationsEnabled(): Promise<boolean>;
   SetNotificationsEnabled(enabled: boolean): Promise<void>;
   ShowNotification(title: string, body: string): Promise<void>;
+  GetShellIntegrationEnabled(): Promise<boolean>;
+  SetShellIntegrationEnabled(enabled: boolean): Promise<void>;
+  GetCommandNotifyThresholdSeconds(): Promise<number>;
+  SetCommandNotifyThresholdSeconds(seconds: number): Promise<void>;
 }
 
 declare global {
@@ -231,4 +235,20 @@ export function setNotificationsEnabled(enabled: boolean): Promise<void> {
 
 export function showNotification(title: string, body: string): Promise<void> {
   return bindings().ShowNotification(title, body);
+}
+
+export function getShellIntegrationEnabled(): Promise<boolean> {
+  return bindings().GetShellIntegrationEnabled();
+}
+
+export function setShellIntegrationEnabled(enabled: boolean): Promise<void> {
+  return bindings().SetShellIntegrationEnabled(enabled);
+}
+
+export function getCommandNotifyThresholdSeconds(): Promise<number> {
+  return bindings().GetCommandNotifyThresholdSeconds();
+}
+
+export function setCommandNotifyThresholdSeconds(seconds: number): Promise<void> {
+  return bindings().SetCommandNotifyThresholdSeconds(seconds);
 }

@@ -15,6 +15,7 @@ import {
   getEndpoint,
   getHostInfo,
   getRelayConfig,
+  getCommandNotifyThresholdSeconds,
   getTerminalThemePreference,
   getUpdateState,
   listShells,
@@ -75,6 +76,8 @@ let updatePollHandle: number | null = null;
 const currentTerminalThemeID = ref<TerminalThemeID>(DEFAULT_TERMINAL_THEME_ID);
 const currentTerminalTheme = computed(() => getTerminalTheme(currentTerminalThemeID.value));
 const themeStyle = computed(() => currentTerminalTheme.value.appVars);
+
+const commandNotifyThresholdSec = ref<number>(10);
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
@@ -283,6 +286,10 @@ async function refreshTerminalTheme() {
 
 function onTerminalThemeChanged(themeID: string) {
   currentTerminalThemeID.value = getTerminalTheme(themeID).id;
+}
+
+function onCommandNotifyThresholdChanged(seconds: number) {
+  commandNotifyThresholdSec.value = seconds;
 }
 
 function parseHash(): string | null {
@@ -546,6 +553,11 @@ onMounted(async () => {
   // probe must be ready by the time auto-startNewTab fires.
   await setupMeasureProbe();
   try {
+    commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
+  } catch (e) {
+    console.warn("[AT Term] failed to load command-notify threshold", e);
+  }
+  try {
     await refreshTerminalTheme();
     localEndpoint.value = await getEndpoint();
     const info = await getHostInfo();
@@ -668,6 +680,7 @@ onUnmounted(() => {
           :session-info-for="paneSessionInfo"
           :active="t.id === currentTabId"
           :terminal-theme="currentTerminalTheme.xtermTheme"
+          :command-notify-threshold-sec="commandNotifyThresholdSec"
           @set-active-pane="(idx) => (t.activePaneIdx = idx)"
           @close-pane="(idx) => closePaneAt(t, idx)"
           @toast="showToast"
@@ -682,6 +695,7 @@ onUnmounted(() => {
       :remote-session-count="remoteSessionCount"
       :terminal-theme-id="currentTerminalThemeID"
       @terminal-theme-changed="onTerminalThemeChanged"
+      @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @relay-config-changed="refreshRelayConfig"
       @close="showSettings = false; refreshRelayConfig()"
     />

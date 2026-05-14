@@ -39,6 +39,11 @@ type relayHost struct {
 	mu       sync.Mutex
 	sessions map[uuid.UUID]*activeSession
 	changes  chan struct{} // capacity 1; signals "session set has changed"
+	// uplinkSubs remembers, for each session id, the local Subscriber created
+	// in SubscribeLocal. ClaimLocalDriver looks the sub up here when a remote
+	// attacher (behind the uplink) sends CLAIM_DRIVER and we need to promote
+	// that subscription to driver on the local session.
+	uplinkSubs map[uuid.UUID]*session.Subscriber
 }
 
 type activeSession struct {
@@ -80,8 +85,9 @@ func startRelayHost() (*relayHost, error) {
 		hostID:   hostid.Get(),
 		host:     hostnameOrUnknown(),
 		user:     usernameOrUid(),
-		sessions: make(map[uuid.UUID]*activeSession),
-		changes:  make(chan struct{}, 1),
+		sessions:   make(map[uuid.UUID]*activeSession),
+		changes:    make(chan struct{}, 1),
+		uplinkSubs: make(map[uuid.UUID]*session.Subscriber),
 	}, nil
 }
 
@@ -138,9 +144,13 @@ func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subs
 	if !ok {
 		return nil, 0, fmt.Errorf("no such local session %s", id)
 	}
-	sub, replayToSeq := sess.Subscribe(sinceSeq)
+	uplinkSubClientID := "uplink:" + uuid.New().String()
+	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID)
+	h.mu.Lock()
+	h.uplinkSubs[id] = sub
+	h.mu.Unlock()
 	info := sess.Info()
-	log.Printf("desktop-uplink: subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d", id, sinceSeq, replayToSeq, info.Cols, info.Rows)
+	log.Printf("desktop-uplink: subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d client_id=%q", id, sinceSeq, replayToSeq, info.Cols, info.Rows, uplinkSubClientID)
 	return sub, replayToSeq, nil
 }
 
@@ -149,6 +159,29 @@ func (h *relayHost) UnsubscribeLocal(id uuid.UUID, sub *session.Subscriber) {
 	if sess, ok := h.server.Registry().Get(id); ok {
 		sess.Unsubscribe(sub)
 	}
+	h.mu.Lock()
+	if h.uplinkSubs[id] == sub {
+		delete(h.uplinkSubs, id)
+	}
+	h.mu.Unlock()
+}
+
+// ClaimLocalDriver promotes the uplink's own local-session subscriber to
+// driver for the given session, attributing the end-to-end client_id. Called
+// by uplink when a remote subscriber on the public relay sends CLAIM_DRIVER.
+func (h *relayHost) ClaimLocalDriver(id uuid.UUID, clientID string) error {
+	h.mu.Lock()
+	uplinkSub := h.uplinkSubs[id]
+	h.mu.Unlock()
+	if uplinkSub == nil {
+		return fmt.Errorf("no uplink subscriber for session %s", id)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		return fmt.Errorf("no local session %s", id)
+	}
+	sess.ClaimDriver(uplinkSub, clientID)
+	return nil
 }
 
 // SendLocalInbound forwards an IN/RESIZE frame from a remote attacher into the

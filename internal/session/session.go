@@ -41,6 +41,13 @@ type Session struct {
 	altScreen bool
 	termTail  []byte
 
+	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
+	// frames are forwarded to the PTY. Nil means no driver is currently
+	// assigned. driverClientID is the end-to-end client_id broadcast in META
+	// so clients can recognize themselves.
+	driverSubscriber *Subscriber
+	driverClientID   string
+
 	// Optional lifecycle hooks. Used by mirror sessions (Phase 1.5 lazy
 	// uplink) so the relay can ask the upstream host to start/stop a stream
 	// only when there's at least one local subscriber.
@@ -50,9 +57,10 @@ type Session struct {
 
 // Subscriber is a client connection's outbox.
 type Subscriber struct {
-	out    chan proto.Frame
-	closed chan struct{}
-	once   sync.Once
+	out      chan proto.Frame
+	closed   chan struct{}
+	once     sync.Once
+	clientID string // end-to-end ID echoed in META.driver_client_id when this sub is driver
 }
 
 // Out returns the channel this subscriber should be drained from.
@@ -119,14 +127,24 @@ func (s *Session) UpdateRemotePermission(value string) {
 }
 
 // UpdateSize records the latest PTY window size advertised by a client resize.
+// On real change, broadcasts a META frame so viewers can update their xterm
+// dims to match the new PTY size.
 func (s *Session) UpdateSize(cols, rows uint16) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if cols > 0 {
+	changed := false
+	if cols > 0 && s.meta.Cols != cols {
 		s.meta.Cols = cols
+		changed = true
 	}
-	if rows > 0 {
+	if rows > 0 && s.meta.Rows != rows {
 		s.meta.Rows = rows
+		changed = true
+	}
+	metaCopy := s.meta
+	driverID := s.driverClientID
+	s.mu.Unlock()
+	if changed {
+		s.broadcastDriverMeta(metaCopy, driverID)
 	}
 }
 
@@ -164,12 +182,14 @@ func (s *Session) fanout(f proto.Frame) {
 
 // Subscribe registers a new client outbox and replays scrollback strictly
 // greater than sinceSeq. When sinceSeq is 0 the full scrollback is replayed.
-// Returns the subscriber and the largest seq replayed (so the client can
-// resume from that point on the live stream).
-func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
+// clientID is the end-to-end identifier echoed in META.driver_client_id when
+// this subscriber is the active driver; empty is allowed.
+// Returns the subscriber and the largest seq replayed.
+func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint64) {
 	sub := &Subscriber{
-		out:    make(chan proto.Frame, subscriberQueueDepth),
-		closed: make(chan struct{}),
+		out:      make(chan proto.Frame, subscriberQueueDepth),
+		closed:   make(chan struct{}),
+		clientID: clientID,
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
@@ -218,9 +238,21 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 	closed := s.closed
 	wasEmpty := len(s.subs) == 0
 	added := false
+	var (
+		promotedToDriver bool
+		snapshotMeta     proto.SessionInfo
+		snapshotDriverID string
+	)
 	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
 		s.subs[sub] = struct{}{}
 		added = true
+		if s.driverSubscriber == nil {
+			s.driverSubscriber = sub
+			s.driverClientID = sub.clientID
+			promotedToDriver = true
+		}
+		snapshotMeta = s.meta
+		snapshotDriverID = s.driverClientID
 	}
 	firstHook := s.onFirstSubscribe
 	s.mu.Unlock()
@@ -229,10 +261,70 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 		sub.close()
 		return sub, lastSeq
 	}
+	if promotedToDriver {
+		s.broadcastDriverMeta(snapshotMeta, snapshotDriverID)
+	} else {
+		s.sendSnapshotMeta(sub, snapshotMeta, snapshotDriverID)
+	}
 	if wasEmpty && firstHook != nil {
 		go firstHook()
 	}
 	return sub, lastSeq
+}
+
+// ClaimDriver makes sub the active driver, recording clientID as the
+// end-to-end identifier. Broadcasts a META frame with the new driver to all
+// subscribers. No-op if sub is no longer registered with the session.
+func (s *Session) ClaimDriver(sub *Subscriber, clientID string) {
+	s.mu.Lock()
+	if _, ok := s.subs[sub]; !ok {
+		s.mu.Unlock()
+		return
+	}
+	s.driverSubscriber = sub
+	s.driverClientID = clientID
+	metaCopy := s.meta
+	s.mu.Unlock()
+
+	s.broadcastDriverMeta(metaCopy, clientID)
+}
+
+func (s *Session) broadcastDriverMeta(meta proto.SessionInfo, driverClientID string) {
+	payload, err := encodeMetaPayload(meta, driverClientID)
+	if err != nil {
+		return
+	}
+	s.Broadcast(proto.Frame{Type: proto.TypeMeta, SessionID: s.ID, Payload: payload})
+}
+
+func (s *Session) sendSnapshotMeta(sub *Subscriber, meta proto.SessionInfo, driverClientID string) {
+	payload, err := encodeMetaPayload(meta, driverClientID)
+	if err != nil {
+		return
+	}
+	select {
+	case sub.out <- proto.Frame{Type: proto.TypeMeta, SessionID: s.ID, Payload: payload}:
+	default:
+		// channel full — next fanout will drop this slow consumer normally
+	}
+}
+
+func encodeMetaPayload(meta proto.SessionInfo, driverClientID string) ([]byte, error) {
+	return json.Marshal(proto.MetaPayload{
+		Cwd:            meta.Cwd,
+		Title:          meta.Title,
+		DriverClientID: driverClientID,
+		Cols:           meta.Cols,
+		Rows:           meta.Rows,
+	})
+}
+
+// DriverClientID returns the end-to-end client_id of the current driver, or
+// "" if no driver is assigned.
+func (s *Session) DriverClientID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.driverClientID
 }
 
 func replayIsTruncated(oldestSeq, sinceSeq uint64, chunkCount int) bool {
@@ -419,10 +511,19 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	if was {
 		delete(s.subs, sub)
 	}
+	wasDriver := s.driverSubscriber == sub
+	if wasDriver {
+		s.driverSubscriber = nil
+		s.driverClientID = ""
+	}
 	nowEmpty := len(s.subs) == 0
 	lastHook := s.onLastUnsubscribe
+	metaCopy := s.meta
 	s.mu.Unlock()
 	sub.close()
+	if wasDriver {
+		s.broadcastDriverMeta(metaCopy, "")
+	}
 	if was && nowEmpty && lastHook != nil {
 		go lastHook()
 	}
@@ -465,4 +566,11 @@ func (s *Session) IsClosed() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.closed
+}
+
+// IsDriver reports whether sub is currently the session driver.
+func (s *Session) IsDriver(sub *Subscriber) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.driverSubscriber == sub
 }

@@ -44,6 +44,12 @@ const menuY = ref(0);
 const menuHasSelection = ref(false);
 const pasteBusy = ref(false);
 const menuRef = ref<HTMLDivElement | null>(null);
+// Driver state: true = our IN/RESIZE go through, FitAddon sizes xterm to the
+// container. false = viewer: xterm.cols/rows locked to PTY's reported dims
+// from META. Starts optimistic; first META corrects it.
+const isDriver = ref(true);
+const ptyCols = ref<number | null>(null);
+const ptyRows = ref<number | null>(null);
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -55,6 +61,18 @@ const MENU_WIDTH = 150;
 const MENU_HEIGHT = 110;
 
 const menuCanPaste = computed(() => isPasteAllowed(status.value, props.remotePermission));
+
+function handleViewerKeydown(event: KeyboardEvent) {
+  if (isDriver.value) return; // driver mode passes through
+  // Only intercept bare space (no modifiers) so Cmd+C copy, arrow-key scroll,
+  // and other existing shortcuts still work in viewer mode. disableStdin on
+  // the terminal already blocks the IN forwarding path for other keys.
+  if (event.key === " " && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    conn?.claimDriver();
+  }
+}
 
 async function handleCopyShortcut(e: KeyboardEvent) {
   if (!term || !isTerminalCopyShortcut(e)) return;
@@ -149,6 +167,22 @@ async function onMenuPaste() {
   }
 }
 
+function applyViewerSize() {
+  if (!term) return;
+  if (isDriver.value) {
+    // Driver path: re-engage FitAddon (term.onResize → sendResize fires from here).
+    safeFit();
+    return;
+  }
+  const cols = ptyCols.value;
+  const rows = ptyRows.value;
+  if (typeof cols === "number" && typeof rows === "number" && cols > 0 && rows > 0) {
+    if (term.cols !== cols || term.rows !== rows) {
+      term.resize(cols, rows);
+    }
+  }
+}
+
 function onMenuClear() {
   closeContextMenu();
   if (!term) return;
@@ -156,6 +190,9 @@ function onMenuClear() {
 }
 
 function safeFit() {
+  // In viewer mode, FitAddon must not size the terminal — the PTY dims drive
+  // term.cols/rows via applyViewerSize. Skip the fit entirely.
+  if (!isDriver.value) return;
   if (!fit || !termContainer.value) return;
   // fit() crashes with NaN dims when the container is display:none. Guard.
   const rect = termContainer.value.getBoundingClientRect();
@@ -197,10 +234,14 @@ function ensureTerm() {
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
+  keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
   term.onData((data) => conn?.sendInput(data));
-  term.onResize(({ cols, rows }) => conn?.sendResize(cols, rows));
+  term.onResize(({ cols, rows }) => {
+    if (!isDriver.value) return; // viewer's local resize is FitAddon-suppressed anyway
+    conn?.sendResize(cols, rows);
+  });
 
   resizeObserver = new ResizeObserver(() => safeFit());
   resizeObserver.observe(termContainer.value!);
@@ -220,6 +261,20 @@ function startConnection() {
     },
     onReplayProgress: (progress) => {
       replayProgress.value = progress.phase === "end" ? null : progress;
+    },
+    onMeta: (meta) => {
+      if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
+      if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
+      applyViewerSize();
+    },
+    onDriverChange: (_driverID, isMe) => {
+      const wasDriver = isDriver.value;
+      isDriver.value = isMe;
+      if (term) term.options.disableStdin = !isMe;
+      applyViewerSize();
+      if (wasDriver !== isMe) {
+        emit("toast", isMe ? "you are now the driver" : "you are now a viewer");
+      }
     },
   });
   conn.attach();
@@ -261,6 +316,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
   term?.dispose();
@@ -315,6 +371,12 @@ watch(status, (nextStatus) => {
       <span v-else-if="status === 'ended'" class="dim">session ended</span>
       <span v-else-if="status === 'error'" class="bad">connection error</span>
     </div>
+    <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
+      <div class="viewer-overlay-card">
+        <div class="viewer-overlay-title">remote has taken control</div>
+        <div class="viewer-overlay-hint">press space to take back</div>
+      </div>
+    </div>
     <Teleport to="body">
       <div
         v-if="menuOpen"
@@ -361,6 +423,35 @@ watch(status, (nextStatus) => {
 }
 .overlay.avoid-top-right-badge {
   top: 34px;
+}
+.viewer-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+}
+.viewer-overlay-card {
+  background: var(--terminal-overlay);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 22px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.viewer-overlay-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.viewer-overlay-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
 }
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }

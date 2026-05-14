@@ -29,9 +29,13 @@ export interface Endpoint {
 export interface ConnectionHandlers {
   onOutput?: (data: Uint8Array) => void;
   onClose?: (info: ClosePayload) => void;
-  onMeta?: (meta: { cwd?: string; title?: string }) => void;
+  onMeta?: (meta: { cwd?: string; title?: string; cols?: number; rows?: number; driver_client_id?: string }) => void;
   onStatus?: (s: Status) => void;
   onReplayProgress?: (progress: ReplayProgress) => void;
+  // onDriverChange fires whenever this connection's driver-or-viewer role
+  // changes. isMe is true when the broadcast driver_client_id matches our
+  // locally-generated clientID; false otherwise (including empty/no-driver).
+  onDriverChange?: (driverClientID: string, isMe: boolean) => void;
 }
 
 export interface SessionListHandlers {
@@ -167,6 +171,12 @@ export class SessionConnection {
   // CONNECTING state). Flushed in ws.onopen right after the ATTACH frame.
   // Only the most recent request is kept; earlier ones are stale.
   private pendingResize: { cols: number; rows: number } | null = null;
+  // clientID identifies this SessionConnection end-to-end. Sent in ATTACH,
+  // echoed back in META.driver_client_id when this connection is the driver.
+  private clientID: string;
+  // currentDriverClientID is the last driver_client_id we observed in a META
+  // frame. Used to detect transitions and decide whether to fire onDriverChange.
+  private currentDriverClientID = "";
 
   constructor(
     private endpoint: Endpoint,
@@ -174,6 +184,7 @@ export class SessionConnection {
     private handlers: ConnectionHandlers = {}
   ) {
     this.sidBytes = uuidParse(sessionId);
+    this.clientID = crypto.randomUUID();
   }
 
   attach(): void {
@@ -200,6 +211,14 @@ export class SessionConnection {
   sendInput(s: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
+  }
+
+  // claimDriver sends a CLAIM_DRIVER frame so the relay promotes this
+  // subscription to driver. Idempotent — safe to call when already driver.
+  claimDriver(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const payload = encodeText(JSON.stringify({ client_id: this.clientID }));
+    this.ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
   }
 
   async sendPasteImage(blob: Blob, filename = "clipboard-image"): Promise<boolean> {
@@ -247,7 +266,11 @@ export class SessionConnection {
       this.reconnectAttempts = 0;
       this.handlers.onStatus?.("attached");
       const attachPayload = encodeText(
-        JSON.stringify({ session_id: this.sessionId, since_seq: this.lastSeq })
+        JSON.stringify({
+          session_id: this.sessionId,
+          since_seq: this.lastSeq,
+          client_id: this.clientID,
+        })
       );
       ws.send(encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload));
       // Flush any resize that arrived while WS was still CONNECTING. Order
@@ -283,6 +306,11 @@ export class SessionConnection {
         try {
           const meta = JSON.parse(decodeText(f.payload));
           this.handlers.onMeta?.(meta);
+          const newDriver = String(meta.driver_client_id ?? "");
+          if (newDriver !== this.currentDriverClientID) {
+            this.currentDriverClientID = newDriver;
+            this.handlers.onDriverChange?.(newDriver, newDriver !== "" && newDriver === this.clientID);
+          }
         } catch {
           /* ignore */
         }

@@ -37,6 +37,7 @@ const (
 	TypeStreamRequest Type = 0x31
 	TypeStreamStop    Type = 0x32
 	TypePasteImage    Type = 0x33 // client -> relay -> desktop PTY host
+	TypeClaimDriver   Type = 0x34 // client -> relay (viewer claims driver role)
 )
 
 // Frame is a single protocol message.
@@ -62,6 +63,13 @@ type OpenPayload struct {
 type MetaPayload struct {
 	Cwd   string `json:"cwd,omitempty"`
 	Title string `json:"title,omitempty"`
+	// DriverClientID is the end-to-end client_id of the subscriber currently
+	// allowed to send IN/RESIZE/PASTE_IMAGE. Empty = no driver assigned.
+	DriverClientID string `json:"driver_client_id,omitempty"`
+	// Cols/Rows snapshot the PTY's current size so viewers can lock their
+	// xterm.cols/rows to the PTY (they don't run FitAddon).
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
 }
 
 // ClosePayload is the JSON body of a TypeClose frame.
@@ -74,6 +82,16 @@ type ClosePayload struct {
 type AttachPayload struct {
 	SessionID string `json:"session_id"`
 	SinceSeq  uint64 `json:"since_seq,omitempty"`
+	// ClientID is a UUID generated client-side per SessionConnection. The
+	// relay echoes it back in META.driver_client_id when this subscriber is
+	// the active driver so the client can recognize itself. Empty is allowed
+	// (older clients) — they participate but never UI-render as driver.
+	ClientID string `json:"client_id,omitempty"`
+}
+
+// ClaimDriverPayload is the JSON body of a TypeClaimDriver frame.
+type ClaimDriverPayload struct {
+	ClientID string `json:"client_id"`
 }
 
 const (

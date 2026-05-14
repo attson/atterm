@@ -77,3 +77,51 @@ describe("TerminalView right-click menu", () => {
     expect(source).toMatch(/const\s+MENU_HEIGHT\s*=\s*110/);
   });
 });
+
+describe("TerminalView driver/viewer mode", () => {
+  test("tracks isDriver ref from onDriverChange", () => {
+    expect(source).toMatch(/const\s+isDriver\s*=\s*ref/);
+    expect(source).toMatch(/onDriverChange/);
+  });
+
+  test("locks term to META dims in viewer mode", () => {
+    expect(source).toMatch(/term\.resize\(\s*cols\s*,\s*rows\s*\)/);
+  });
+
+  test("disables stdin when not driver", () => {
+    expect(source).toMatch(/disableStdin/);
+  });
+});
+
+describe("TerminalView viewer key handling", () => {
+  test("intercepts bare Space in viewer mode and calls claimDriver", () => {
+    expect(source).toMatch(/handleViewerKeydown/);
+    expect(source).toMatch(/claimDriver/);
+    expect(source).toMatch(/event\.key\s*===\s*" "/);
+  });
+});
+
+describe("TerminalView viewer overlay", () => {
+  test("renders a prominent viewer overlay when not driver", () => {
+    expect(source).toContain('class="viewer-overlay"');
+    expect(source).toContain('class="viewer-overlay-card"');
+    expect(source).toContain('remote has taken control');
+    expect(source).toContain('press space to take back');
+    expect(source).toMatch(/v-if=["']!isDriver["']/);
+  });
+
+  test("viewer-overlay covers the term-view with a dim backdrop", () => {
+    const overlayCss = styleBlockFor(".viewer-overlay");
+    expect(overlayCss).toMatch(/position\s*:\s*absolute/);
+    expect(overlayCss).toMatch(/inset\s*:\s*0/);
+    expect(overlayCss).toMatch(/background/); // dim backdrop
+    expect(overlayCss).toMatch(/pointer-events\s*:\s*none/); // don't block scroll/mouse
+  });
+
+  test("viewer-overlay-card has prominent centered content", () => {
+    const cardCss = styleBlockFor(".viewer-overlay-card");
+    expect(cardCss).toMatch(/border-radius/);
+    expect(cardCss).toMatch(/padding/);
+    expect(cardCss).toMatch(/text-align\s*:\s*center/);
+  });
+});

@@ -141,8 +141,8 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				return
 			}
 			sess = target
-			sub, _ = sess.Subscribe(ap.SinceSeq)
-			s.debugf("client attached session=%s since_seq=%d", id, ap.SinceSeq)
+			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID)
+			s.debugf("client attached session=%s since_seq=%d client_id=%q", id, ap.SinceSeq, ap.ClientID)
 			startWriter()
 
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:

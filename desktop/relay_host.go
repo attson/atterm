@@ -138,9 +138,10 @@ func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subs
 	if !ok {
 		return nil, 0, fmt.Errorf("no such local session %s", id)
 	}
-	sub, replayToSeq := sess.Subscribe(sinceSeq)
+	uplinkSubClientID := "uplink:" + uuid.New().String()
+	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID)
 	info := sess.Info()
-	log.Printf("desktop-uplink: subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d", id, sinceSeq, replayToSeq, info.Cols, info.Rows)
+	log.Printf("desktop-uplink: subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d client_id=%q", id, sinceSeq, replayToSeq, info.Cols, info.Rows, uplinkSubClientID)
 	return sub, replayToSeq, nil
 }
 

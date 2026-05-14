@@ -28,7 +28,7 @@ func TestSubscribeEmitsReplayProgress(t *testing.T) {
 	s.PushOut(1, first)
 	s.PushOut(2, second)
 
-	sub, _ := s.Subscribe(0)
+	sub, _ := s.Subscribe(0, "")
 	defer s.Unsubscribe(sub)
 
 	start := readFrameForTest(t, sub)
@@ -78,7 +78,7 @@ func TestSubscribeFromStartMarksTruncatedScrollback(t *testing.T) {
 		t.Fatalf("oldest seq = %d; want scrollback truncated past seq 1", oldest)
 	}
 
-	sub, _ := s.Subscribe(0)
+	sub, _ := s.Subscribe(0, "")
 	defer s.Unsubscribe(sub)
 
 	if got := readFrameForTest(t, sub); got.Type != proto.TypeReplayProgress {
@@ -109,7 +109,7 @@ func TestSubscribeTruncatedAltScreenReplayRestoresAltScreenMode(t *testing.T) {
 		t.Fatalf("oldest seq = %d; want scrollback truncated past alt-screen enter", oldest)
 	}
 
-	sub, _ := s.Subscribe(0)
+	sub, _ := s.Subscribe(0, "")
 	defer s.Unsubscribe(sub)
 
 	if got := readFrameForTest(t, sub); got.Type != proto.TypeReplayProgress {
@@ -148,7 +148,7 @@ func TestSubscribeManySmallChunksCoalescesIntoBatches(t *testing.T) {
 	for i := 0; i < chunkCount; i++ {
 		s.PushOut(uint64(i+1), []byte{'a'})
 	}
-	sub, replayToSeq := s.Subscribe(0)
+	sub, replayToSeq := s.Subscribe(0, "")
 	defer s.Unsubscribe(sub)
 
 	select {
@@ -214,4 +214,34 @@ func decodeProgressForTest(t *testing.T, f proto.Frame) proto.ReplayProgressPayl
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestSubscribeAutoPromotesFirstSubscriberToDriver(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	sub, _ := s.Subscribe(0, "client-alpha")
+	defer s.Unsubscribe(sub)
+
+	if !s.IsDriver(sub) {
+		t.Fatal("first subscriber should be driver")
+	}
+	if got := s.DriverClientID(); got != "client-alpha" {
+		t.Fatalf("driver client id = %q; want %q", got, "client-alpha")
+	}
+}
+
+func TestSubscribeSecondSubscriberIsViewer(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	first, _ := s.Subscribe(0, "client-alpha")
+	defer s.Unsubscribe(first)
+	second, _ := s.Subscribe(0, "client-beta")
+	defer s.Unsubscribe(second)
+
+	if !s.IsDriver(first) {
+		t.Fatal("first subscriber should remain driver after second attaches")
+	}
+	if s.IsDriver(second) {
+		t.Fatal("second subscriber should be viewer")
+	}
 }

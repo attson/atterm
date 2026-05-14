@@ -172,12 +172,14 @@ func (s *Session) fanout(f proto.Frame) {
 
 // Subscribe registers a new client outbox and replays scrollback strictly
 // greater than sinceSeq. When sinceSeq is 0 the full scrollback is replayed.
-// Returns the subscriber and the largest seq replayed (so the client can
-// resume from that point on the live stream).
-func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
+// clientID is the end-to-end identifier echoed in META.driver_client_id when
+// this subscriber is the active driver; empty is allowed.
+// Returns the subscriber and the largest seq replayed.
+func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint64) {
 	sub := &Subscriber{
-		out:    make(chan proto.Frame, subscriberQueueDepth),
-		closed: make(chan struct{}),
+		out:      make(chan proto.Frame, subscriberQueueDepth),
+		closed:   make(chan struct{}),
+		clientID: clientID,
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
@@ -226,9 +228,21 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 	closed := s.closed
 	wasEmpty := len(s.subs) == 0
 	added := false
+	var (
+		promotedToDriver bool
+		snapshotMeta     proto.SessionInfo
+		snapshotDriverID string
+	)
 	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
 		s.subs[sub] = struct{}{}
 		added = true
+		if s.driverSubscriber == nil {
+			s.driverSubscriber = sub
+			s.driverClientID = sub.clientID
+			promotedToDriver = true
+		}
+		snapshotMeta = s.meta
+		snapshotDriverID = s.driverClientID
 	}
 	firstHook := s.onFirstSubscribe
 	s.mu.Unlock()
@@ -237,10 +251,34 @@ func (s *Session) Subscribe(sinceSeq uint64) (*Subscriber, uint64) {
 		sub.close()
 		return sub, lastSeq
 	}
+	if promotedToDriver {
+		s.broadcastDriverMeta(snapshotMeta, snapshotDriverID)
+	} else {
+		s.sendSnapshotMeta(sub, snapshotMeta, snapshotDriverID)
+	}
 	if wasEmpty && firstHook != nil {
 		go firstHook()
 	}
 	return sub, lastSeq
+}
+
+// broadcastDriverMeta and sendSnapshotMeta are filled in in Task 4 (this
+// commit leaves stubs so the Task 3 tests focus on IsDriver/DriverClientID
+// state without observing META frames).
+func (s *Session) broadcastDriverMeta(meta proto.SessionInfo, driverClientID string) {
+	_, _ = meta, driverClientID
+}
+
+func (s *Session) sendSnapshotMeta(sub *Subscriber, meta proto.SessionInfo, driverClientID string) {
+	_, _, _ = sub, meta, driverClientID
+}
+
+// DriverClientID returns the end-to-end client_id of the current driver, or
+// "" if no driver is assigned.
+func (s *Session) DriverClientID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.driverClientID
 }
 
 func replayIsTruncated(oldestSeq, sinceSeq uint64, chunkCount int) bool {

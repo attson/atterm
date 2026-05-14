@@ -44,4 +44,25 @@ describe("SettingsGeneral notification toggle", () => {
     expect(source).toMatch(/onNotificationsToggle/);
     expect(source).toContain('@change="onNotificationsToggle"');
   });
+
+  test("renders shell integration toggle wired to setShellIntegrationEnabled", () => {
+    expect(source).toContain("Enable shell integration");
+    expect(source).toMatch(/setShellIntegrationEnabled\(/);
+  });
+
+  test("renders command-notify threshold number input wired to setCommandNotifyThresholdSeconds", () => {
+    expect(source).toContain("Command-finished notification threshold");
+    expect(source).toMatch(/setCommandNotifyThresholdSeconds\(/);
+    expect(source).toContain('min="1"');
+    expect(source).toContain('max="600"');
+  });
+
+  test("loads shell integration and threshold on mount", () => {
+    expect(source).toMatch(/getShellIntegrationEnabled\(\)/);
+    expect(source).toMatch(/getCommandNotifyThresholdSeconds\(\)/);
+  });
+
+  test("emits command-notify-threshold-changed when threshold saves", () => {
+    expect(source).toContain('"command-notify-threshold-changed"');
+  });
 });

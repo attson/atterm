@@ -288,6 +288,10 @@ function onTerminalThemeChanged(themeID: string) {
   currentTerminalThemeID.value = getTerminalTheme(themeID).id;
 }
 
+function onCommandNotifyThresholdChanged(seconds: number) {
+  commandNotifyThresholdSec.value = seconds;
+}
+
 function parseHash(): string | null {
   const m = location.hash.match(/^#\/t\/([\w-]+)$/);
   return m ? m[1] : null;
@@ -691,7 +695,7 @@ onUnmounted(() => {
       :remote-session-count="remoteSessionCount"
       :terminal-theme-id="currentTerminalThemeID"
       @terminal-theme-changed="onTerminalThemeChanged"
-      @command-notify-threshold-changed="(seconds: number) => (commandNotifyThresholdSec = seconds)"
+      @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @relay-config-changed="refreshRelayConfig"
       @close="showSettings = false; refreshRelayConfig()"
     />

@@ -21,3 +21,19 @@ describe("SessionConnection driver state", () => {
     expect(source).toMatch(/TYPE\.CLAIM_DRIVER/);
   });
 });
+
+describe("SessionConnection client_name", () => {
+  test("accepts a clientName option and sends it in ATTACH", () => {
+    expect(source).toMatch(/options:\s*SessionConnectionOptions/);
+    expect(source).toMatch(/client_name\s*:\s*this\.clientName/);
+  });
+
+  test("includes client_name in CLAIM_DRIVER payload", () => {
+    expect(source).toMatch(/client_id:\s*this\.clientID,\s*client_name:\s*this\.clientName/);
+  });
+
+  test("parses driver_client_name from META and passes to onDriverChange", () => {
+    expect(source).toMatch(/driver_client_name/);
+    expect(source).toMatch(/newDriverName/);
+  });
+});

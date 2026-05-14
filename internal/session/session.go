@@ -44,9 +44,11 @@ type Session struct {
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
 	// frames are forwarded to the PTY. Nil means no driver is currently
 	// assigned. driverClientID is the end-to-end client_id broadcast in META
-	// so clients can recognize themselves.
+	// so clients can recognize themselves; driverClientName is the
+	// human-readable hostname shown in the viewer overlay.
 	driverSubscriber *Subscriber
 	driverClientID   string
+	driverClientName string
 
 	// Optional lifecycle hooks. Used by mirror sessions (Phase 1.5 lazy
 	// uplink) so the relay can ask the upstream host to start/stop a stream
@@ -57,10 +59,11 @@ type Session struct {
 
 // Subscriber is a client connection's outbox.
 type Subscriber struct {
-	out      chan proto.Frame
-	closed   chan struct{}
-	once     sync.Once
-	clientID string // end-to-end ID echoed in META.driver_client_id when this sub is driver
+	out        chan proto.Frame
+	closed     chan struct{}
+	once       sync.Once
+	clientID   string // end-to-end ID echoed in META.driver_client_id when this sub is driver
+	clientName string // human-readable name (hostname) echoed in META.driver_client_name
 }
 
 // Out returns the channel this subscriber should be drained from.
@@ -142,9 +145,10 @@ func (s *Session) UpdateSize(cols, rows uint16) {
 	}
 	metaCopy := s.meta
 	driverID := s.driverClientID
+	driverName := s.driverClientName
 	s.mu.Unlock()
 	if changed {
-		s.broadcastDriverMeta(metaCopy, driverID)
+		s.broadcastDriverMeta(metaCopy, driverID, driverName)
 	}
 }
 
@@ -183,13 +187,15 @@ func (s *Session) fanout(f proto.Frame) {
 // Subscribe registers a new client outbox and replays scrollback strictly
 // greater than sinceSeq. When sinceSeq is 0 the full scrollback is replayed.
 // clientID is the end-to-end identifier echoed in META.driver_client_id when
-// this subscriber is the active driver; empty is allowed.
+// this subscriber is the active driver. clientName is the human-readable
+// hostname echoed in META.driver_client_name. Both may be empty.
 // Returns the subscriber and the largest seq replayed.
-func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint64) {
+func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string) (*Subscriber, uint64) {
 	sub := &Subscriber{
-		out:      make(chan proto.Frame, subscriberQueueDepth),
-		closed:   make(chan struct{}),
-		clientID: clientID,
+		out:        make(chan proto.Frame, subscriberQueueDepth),
+		closed:     make(chan struct{}),
+		clientID:   clientID,
+		clientName: clientName,
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
@@ -239,9 +245,10 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint
 	wasEmpty := len(s.subs) == 0
 	added := false
 	var (
-		promotedToDriver bool
-		snapshotMeta     proto.SessionInfo
-		snapshotDriverID string
+		promotedToDriver   bool
+		snapshotMeta       proto.SessionInfo
+		snapshotDriverID   string
+		snapshotDriverName string
 	)
 	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
 		s.subs[sub] = struct{}{}
@@ -249,10 +256,12 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint
 		if s.driverSubscriber == nil {
 			s.driverSubscriber = sub
 			s.driverClientID = sub.clientID
+			s.driverClientName = sub.clientName
 			promotedToDriver = true
 		}
 		snapshotMeta = s.meta
 		snapshotDriverID = s.driverClientID
+		snapshotDriverName = s.driverClientName
 	}
 	firstHook := s.onFirstSubscribe
 	s.mu.Unlock()
@@ -262,9 +271,9 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint
 		return sub, lastSeq
 	}
 	if promotedToDriver {
-		s.broadcastDriverMeta(snapshotMeta, snapshotDriverID)
+		s.broadcastDriverMeta(snapshotMeta, snapshotDriverID, snapshotDriverName)
 	} else {
-		s.sendSnapshotMeta(sub, snapshotMeta, snapshotDriverID)
+		s.sendSnapshotMeta(sub, snapshotMeta, snapshotDriverID, snapshotDriverName)
 	}
 	if wasEmpty && firstHook != nil {
 		go firstHook()
@@ -272,10 +281,11 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint
 	return sub, lastSeq
 }
 
-// ClaimDriver makes sub the active driver, recording clientID as the
-// end-to-end identifier. Broadcasts a META frame with the new driver to all
-// subscribers. No-op if sub is no longer registered with the session.
-func (s *Session) ClaimDriver(sub *Subscriber, clientID string) {
+// ClaimDriver makes sub the active driver, recording clientID and clientName
+// as the end-to-end identifier and human-readable hostname respectively.
+// Broadcasts a META frame with the new driver to all subscribers. No-op if
+// sub is no longer registered with the session.
+func (s *Session) ClaimDriver(sub *Subscriber, clientID, clientName string) {
 	s.mu.Lock()
 	if _, ok := s.subs[sub]; !ok {
 		s.mu.Unlock()
@@ -283,22 +293,23 @@ func (s *Session) ClaimDriver(sub *Subscriber, clientID string) {
 	}
 	s.driverSubscriber = sub
 	s.driverClientID = clientID
+	s.driverClientName = clientName
 	metaCopy := s.meta
 	s.mu.Unlock()
 
-	s.broadcastDriverMeta(metaCopy, clientID)
+	s.broadcastDriverMeta(metaCopy, clientID, clientName)
 }
 
-func (s *Session) broadcastDriverMeta(meta proto.SessionInfo, driverClientID string) {
-	payload, err := encodeMetaPayload(meta, driverClientID)
+func (s *Session) broadcastDriverMeta(meta proto.SessionInfo, driverClientID, driverClientName string) {
+	payload, err := encodeMetaPayload(meta, driverClientID, driverClientName)
 	if err != nil {
 		return
 	}
 	s.Broadcast(proto.Frame{Type: proto.TypeMeta, SessionID: s.ID, Payload: payload})
 }
 
-func (s *Session) sendSnapshotMeta(sub *Subscriber, meta proto.SessionInfo, driverClientID string) {
-	payload, err := encodeMetaPayload(meta, driverClientID)
+func (s *Session) sendSnapshotMeta(sub *Subscriber, meta proto.SessionInfo, driverClientID, driverClientName string) {
+	payload, err := encodeMetaPayload(meta, driverClientID, driverClientName)
 	if err != nil {
 		return
 	}
@@ -309,13 +320,14 @@ func (s *Session) sendSnapshotMeta(sub *Subscriber, meta proto.SessionInfo, driv
 	}
 }
 
-func encodeMetaPayload(meta proto.SessionInfo, driverClientID string) ([]byte, error) {
+func encodeMetaPayload(meta proto.SessionInfo, driverClientID, driverClientName string) ([]byte, error) {
 	return json.Marshal(proto.MetaPayload{
-		Cwd:            meta.Cwd,
-		Title:          meta.Title,
-		DriverClientID: driverClientID,
-		Cols:           meta.Cols,
-		Rows:           meta.Rows,
+		Cwd:              meta.Cwd,
+		Title:            meta.Title,
+		DriverClientID:   driverClientID,
+		DriverClientName: driverClientName,
+		Cols:             meta.Cols,
+		Rows:             meta.Rows,
 	})
 }
 
@@ -325,6 +337,14 @@ func (s *Session) DriverClientID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.driverClientID
+}
+
+// DriverClientName returns the human-readable hostname of the current driver,
+// or "" if no driver / driver didn't supply a name.
+func (s *Session) DriverClientName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.driverClientName
 }
 
 func replayIsTruncated(oldestSeq, sinceSeq uint64, chunkCount int) bool {
@@ -515,6 +535,7 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	if wasDriver {
 		s.driverSubscriber = nil
 		s.driverClientID = ""
+		s.driverClientName = ""
 	}
 	nowEmpty := len(s.subs) == 0
 	lastHook := s.onLastUnsubscribe
@@ -522,7 +543,7 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	s.mu.Unlock()
 	sub.close()
 	if wasDriver {
-		s.broadcastDriverMeta(metaCopy, "")
+		s.broadcastDriverMeta(metaCopy, "", "")
 	}
 	if was && nowEmpty && lastHook != nil {
 		go lastHook()

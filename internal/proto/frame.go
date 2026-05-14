@@ -66,6 +66,10 @@ type MetaPayload struct {
 	// DriverClientID is the end-to-end client_id of the subscriber currently
 	// allowed to send IN/RESIZE/PASTE_IMAGE. Empty = no driver assigned.
 	DriverClientID string `json:"driver_client_id,omitempty"`
+	// DriverClientName is the human-readable name reported by the driver
+	// (typically its hostname). Empty when no driver, or when the driver
+	// didn't supply a name.
+	DriverClientName string `json:"driver_client_name,omitempty"`
 	// Cols/Rows snapshot the PTY's current size so viewers can lock their
 	// xterm.cols/rows to the PTY (they don't run FitAddon).
 	Cols uint16 `json:"cols,omitempty"`
@@ -87,11 +91,16 @@ type AttachPayload struct {
 	// the active driver so the client can recognize itself. Empty is allowed
 	// (older clients) — they participate but never UI-render as driver.
 	ClientID string `json:"client_id,omitempty"`
+	// ClientName is a human-readable identifier for the attacher (typically
+	// the device hostname). Echoed back in META.driver_client_name so
+	// viewers can show "taken over by <name>" in their overlay.
+	ClientName string `json:"client_name,omitempty"`
 }
 
 // ClaimDriverPayload is the JSON body of a TypeClaimDriver frame.
 type ClaimDriverPayload struct {
-	ClientID string `json:"client_id"`
+	ClientID   string `json:"client_id"`
+	ClientName string `json:"client_name,omitempty"`
 }
 
 const (

@@ -29,13 +29,23 @@ export interface Endpoint {
 export interface ConnectionHandlers {
   onOutput?: (data: Uint8Array) => void;
   onClose?: (info: ClosePayload) => void;
-  onMeta?: (meta: { cwd?: string; title?: string; cols?: number; rows?: number; driver_client_id?: string }) => void;
+  onMeta?: (meta: { cwd?: string; title?: string; cols?: number; rows?: number; driver_client_id?: string; driver_client_name?: string }) => void;
   onStatus?: (s: Status) => void;
   onReplayProgress?: (progress: ReplayProgress) => void;
   // onDriverChange fires whenever this connection's driver-or-viewer role
   // changes. isMe is true when the broadcast driver_client_id matches our
   // locally-generated clientID; false otherwise (including empty/no-driver).
-  onDriverChange?: (driverClientID: string, isMe: boolean) => void;
+  // driverClientName is the human-readable hostname of the new driver (may
+  // be empty when no driver or driver didn't report a name).
+  onDriverChange?: (driverClientID: string, isMe: boolean, driverClientName: string) => void;
+}
+
+export interface SessionConnectionOptions {
+  // clientName is the human-readable identifier sent to the relay (typically
+  // the local machine's hostname). Echoed back in META.driver_client_name
+  // when this connection holds the driver role. Defaults to a generic
+  // identifier derived from navigator.platform when omitted.
+  clientName?: string;
 }
 
 export interface SessionListHandlers {
@@ -69,6 +79,17 @@ function stringToBase64URL(value: string): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
+}
+
+// defaultClientName returns a best-effort human-readable identifier for the
+// running environment. Desktop callers should override via the constructor
+// option (passing the real hostname from getHostInfo()).
+function defaultClientName(): string {
+  if (typeof navigator !== "undefined") {
+    const platform = (navigator as any)?.userAgentData?.platform || navigator.platform || "";
+    if (platform) return `browser (${platform})`;
+  }
+  return "browser";
 }
 
 function tokenSubprotocol(token: string): string | undefined {
@@ -174,6 +195,7 @@ export class SessionConnection {
   // clientID identifies this SessionConnection end-to-end. Sent in ATTACH,
   // echoed back in META.driver_client_id when this connection is the driver.
   private clientID: string;
+  private clientName: string;
   // currentDriverClientID is the last driver_client_id we observed in a META
   // frame. Used to detect transitions and decide whether to fire onDriverChange.
   private currentDriverClientID = "";
@@ -181,10 +203,12 @@ export class SessionConnection {
   constructor(
     private endpoint: Endpoint,
     private sessionId: string,
-    private handlers: ConnectionHandlers = {}
+    private handlers: ConnectionHandlers = {},
+    options: SessionConnectionOptions = {}
   ) {
     this.sidBytes = uuidParse(sessionId);
     this.clientID = crypto.randomUUID();
+    this.clientName = (options.clientName ?? "").trim() || defaultClientName();
   }
 
   attach(): void {
@@ -217,7 +241,7 @@ export class SessionConnection {
   // subscription to driver. Idempotent — safe to call when already driver.
   claimDriver(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    const payload = encodeText(JSON.stringify({ client_id: this.clientID }));
+    const payload = encodeText(JSON.stringify({ client_id: this.clientID, client_name: this.clientName }));
     this.ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload));
   }
 
@@ -270,6 +294,7 @@ export class SessionConnection {
           session_id: this.sessionId,
           since_seq: this.lastSeq,
           client_id: this.clientID,
+          client_name: this.clientName,
         })
       );
       ws.send(encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload));
@@ -307,9 +332,10 @@ export class SessionConnection {
           const meta = JSON.parse(decodeText(f.payload));
           this.handlers.onMeta?.(meta);
           const newDriver = String(meta.driver_client_id ?? "");
+          const newDriverName = String(meta.driver_client_name ?? "");
           if (newDriver !== this.currentDriverClientID) {
             this.currentDriverClientID = newDriver;
-            this.handlers.onDriverChange?.(newDriver, newDriver !== "" && newDriver === this.clientID);
+            this.handlers.onDriverChange?.(newDriver, newDriver !== "" && newDriver === this.clientID, newDriverName);
           }
         } catch {
           /* ignore */

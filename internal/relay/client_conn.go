@@ -141,8 +141,8 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				return
 			}
 			sess = target
-			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID)
-			s.debugf("client attached session=%s since_seq=%d client_id=%q", id, ap.SinceSeq, ap.ClientID)
+			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID, ap.ClientName)
+			s.debugf("client attached session=%s since_seq=%d client_id=%q client_name=%q", id, ap.SinceSeq, ap.ClientID, ap.ClientName)
 			startWriter()
 
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
@@ -186,8 +186,8 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.debugf("client drop frame=CLAIM_DRIVER reason=bad_payload session=%s err=%q", sess.ID, err)
 				continue
 			}
-			sess.ClaimDriver(sub, cp.ClientID)
-			s.debugf("client claim_driver session=%s client_id=%q", sess.ID, cp.ClientID)
+			sess.ClaimDriver(sub, cp.ClientID, cp.ClientName)
+			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
 
 		case proto.TypePong:
 			// keepalive response

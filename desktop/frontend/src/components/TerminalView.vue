@@ -10,7 +10,7 @@ import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCo
 import { shouldNotify } from "../lib/terminalBell";
 import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
-import { showNotification } from "../lib/api";
+import { getHostInfo, showNotification } from "../lib/api";
 
 const props = withDefaults(
   defineProps<{
@@ -53,6 +53,13 @@ const menuRef = ref<HTMLDivElement | null>(null);
 const isDriver = ref(true);
 const ptyCols = ref<number | null>(null);
 const ptyRows = ref<number | null>(null);
+// driverHostname is the human-readable name of whoever currently holds the
+// driver role (broadcast via META.driver_client_name). Used in the viewer
+// overlay's sub-line ("by <hostname>"). Empty when nobody or self drives.
+const driverHostname = ref("");
+// localHostname is this machine's hostname (from getHostInfo). Sent as
+// client_name in ATTACH and CLAIM_DRIVER so other clients can label us.
+const localHostname = ref("");
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -260,34 +267,40 @@ function ensureTerm() {
 
 function startConnection() {
   if (!term) return;
-  conn = new SessionConnection(props.endpoint, props.sessionId, {
-    onOutput: (data) => term?.write(data),
-    onClose: (info) => {
-      term?.write(
-        `\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`
-      );
+  conn = new SessionConnection(
+    props.endpoint,
+    props.sessionId,
+    {
+      onOutput: (data) => term?.write(data),
+      onClose: (info) => {
+        term?.write(
+          `\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`
+        );
+      },
+      onStatus: (s) => {
+        status.value = s;
+      },
+      onReplayProgress: (progress) => {
+        replayProgress.value = progress.phase === "end" ? null : progress;
+      },
+      onMeta: (meta) => {
+        if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
+        if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
+        applyViewerSize();
+      },
+      onDriverChange: (_driverID, isMe, driverName) => {
+        const wasDriver = isDriver.value;
+        isDriver.value = isMe;
+        driverHostname.value = isMe ? "" : driverName;
+        if (term) term.options.disableStdin = !isMe;
+        applyViewerSize();
+        if (wasDriver !== isMe) {
+          emit("toast", isMe ? "you are now the driver" : "you are now a viewer");
+        }
+      },
     },
-    onStatus: (s) => {
-      status.value = s;
-    },
-    onReplayProgress: (progress) => {
-      replayProgress.value = progress.phase === "end" ? null : progress;
-    },
-    onMeta: (meta) => {
-      if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
-      if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
-      applyViewerSize();
-    },
-    onDriverChange: (_driverID, isMe) => {
-      const wasDriver = isDriver.value;
-      isDriver.value = isMe;
-      if (term) term.options.disableStdin = !isMe;
-      applyViewerSize();
-      if (wasDriver !== isMe) {
-        emit("toast", isMe ? "you are now the driver" : "you are now a viewer");
-      }
-    },
-  });
+    { clientName: localHostname.value }
+  );
   conn.attach();
   // Skip the no-op RESIZE if our fit landed on the same size the relay
   // already knows about. Net effect: locally-spawned shells (PTY born at
@@ -303,8 +316,17 @@ function startConnection() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   ensureTerm();
+  // Resolve the local hostname before opening the WS so the very first ATTACH
+  // carries the correct client_name. Failure (e.g. Wails not ready in tests
+  // or a future browser-only build) falls back to the default in connection.ts.
+  try {
+    const info = await getHostInfo();
+    if (info?.host) localHostname.value = info.host;
+  } catch {
+    /* fall back to default */
+  }
   startConnection();
   document.addEventListener("mousedown", onDocumentMouseDown);
   document.addEventListener("keydown", onDocumentKeyDown);
@@ -385,6 +407,7 @@ watch(status, (nextStatus) => {
     <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
       <div class="viewer-overlay-card">
         <div class="viewer-overlay-title">remote has taken control</div>
+        <div v-if="driverHostname" class="viewer-overlay-host">by {{ driverHostname }}</div>
         <div class="viewer-overlay-hint">press space to take back</div>
       </div>
     </div>
@@ -458,6 +481,13 @@ watch(status, (nextStatus) => {
   font-size: 14px;
   font-weight: 600;
   color: var(--fg);
+}
+.viewer-overlay-host {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.85;
 }
 .viewer-overlay-hint {
   margin-top: 6px;

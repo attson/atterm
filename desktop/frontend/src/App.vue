@@ -76,7 +76,7 @@ const currentTerminalThemeID = ref<TerminalThemeID>(DEFAULT_TERMINAL_THEME_ID);
 const currentTerminalTheme = computed(() => getTerminalTheme(currentTerminalThemeID.value));
 const themeStyle = computed(() => currentTerminalTheme.value.appVars);
 
-const commandNotifyThresholdSec = ref<number>(5);
+const commandNotifyThresholdSec = ref<number>(10);
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).

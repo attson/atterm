@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -372,13 +371,12 @@ func (h *relayHost) watchCwd(id uuid.UUID, pty *ptyhost.Host, initial string, do
 		if !ok {
 			return
 		}
+		// UpdateMeta broadcasts a META frame internally with the full session
+		// state (including driver fields) — don't construct a "lite" META
+		// here, doing so clobbers driver_client_id and makes clients render
+		// the viewer overlay on every cwd change.
 		sess.UpdateMeta(proto.MetaPayload{Cwd: cwd})
 		h.server.Registry().NotifyChange()
-		payload, err := json.Marshal(proto.MetaPayload{Cwd: cwd})
-		if err != nil {
-			continue
-		}
-		sess.Broadcast(proto.Frame{Type: proto.TypeMeta, SessionID: id, Payload: payload})
 		h.notifyChange()
 	}
 }

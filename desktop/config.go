@@ -56,6 +56,16 @@ type appConfig struct {
 	// native system notification when the window is unfocused. Nil means
 	// "never set" and defaults to true for existing installs.
 	NotificationsEnabled *bool `json:"notifications_enabled,omitempty"`
+
+	// ShellIntegrationEnabled controls whether atterm-spawned shells receive
+	// OSC 133 hook injection at spawn time. Nil means "never set" and
+	// defaults to true for existing installs. Only affects new sessions;
+	// already-running PTYs keep their current behavior.
+	ShellIntegrationEnabled *bool `json:"shell_integration_enabled,omitempty"`
+	// CommandNotifyThresholdSeconds gates the command-finished notification:
+	// commands shorter than this duration (start-to-finish) do not produce
+	// a notification. Nil → default 10. Clamped to [1, 600] at read time.
+	CommandNotifyThresholdSeconds *int `json:"command_notify_threshold_seconds,omitempty"`
 }
 
 // AutoCheckUpdatesOrDefault returns the user's preference, defaulting to
@@ -102,6 +112,32 @@ func (c appConfig) LogFilePathOrDefault() string {
 		return c.LogFilePath
 	}
 	return defaultLogFilePath()
+}
+
+func (c appConfig) ShellIntegrationEnabledOrDefault() bool {
+	if c.ShellIntegrationEnabled == nil {
+		return true
+	}
+	return *c.ShellIntegrationEnabled
+}
+
+func (c appConfig) CommandNotifyThresholdSecondsOrDefault() int {
+	const (
+		minSec     = 1
+		maxSec     = 600
+		defaultSec = 10
+	)
+	if c.CommandNotifyThresholdSeconds == nil {
+		return defaultSec
+	}
+	v := *c.CommandNotifyThresholdSeconds
+	if v < minSec {
+		return minSec
+	}
+	if v > maxSec {
+		return maxSec
+	}
+	return v
 }
 
 func isSupportedTerminalTheme(theme string) bool {

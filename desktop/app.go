@@ -524,3 +524,45 @@ func (a *App) ConfirmQuit() {
 	}
 	wailsruntime.Quit(a.ctx)
 }
+
+// GetNotificationsEnabled returns the current persisted preference.
+// Defaults to true for fresh installs.
+func (a *App) GetNotificationsEnabled() bool {
+	if a.cfgStore == nil {
+		return true
+	}
+	return a.cfgStore.Get().NotificationsEnabledOrDefault()
+}
+
+// SetNotificationsEnabled persists the user's toggle.
+func (a *App) SetNotificationsEnabled(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.NotificationsEnabled = &enabled
+	return a.cfgStore.Set(cfg)
+}
+
+// ShowNotification is called from the frontend when a terminal bell fires
+// and the window is unfocused. Routes through the platform-native
+// notification system. Failures are logged, never propagated.
+func (a *App) ShowNotification(title, body string) error {
+	if a.ctx == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
+	defer cancel()
+	return showNotification(
+		ctx,
+		func() bool {
+			if a.cfgStore == nil {
+				return true
+			}
+			return a.cfgStore.Get().NotificationsEnabledOrDefault()
+		},
+		runNativeNotify,
+		title,
+		body,
+	)
+}

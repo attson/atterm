@@ -44,6 +44,12 @@ const menuY = ref(0);
 const menuHasSelection = ref(false);
 const pasteBusy = ref(false);
 const menuRef = ref<HTMLDivElement | null>(null);
+// Driver state: true = our IN/RESIZE go through, FitAddon sizes xterm to the
+// container. false = viewer: xterm.cols/rows locked to PTY's reported dims
+// from META. Starts optimistic; first META corrects it.
+const isDriver = ref(true);
+const ptyCols = ref<number | null>(null);
+const ptyRows = ref<number | null>(null);
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -149,7 +155,26 @@ async function onMenuPaste() {
   }
 }
 
+function applyViewerSize() {
+  if (!term) return;
+  if (isDriver.value) {
+    // Driver path: re-engage FitAddon (term.onResize → sendResize fires from here).
+    safeFit();
+    return;
+  }
+  const cols = ptyCols.value;
+  const rows = ptyRows.value;
+  if (typeof cols === "number" && typeof rows === "number" && cols > 0 && rows > 0) {
+    if (term.cols !== cols || term.rows !== rows) {
+      term.resize(cols, rows);
+    }
+  }
+}
+
 function safeFit() {
+  // In viewer mode, FitAddon must not size the terminal — the PTY dims drive
+  // term.cols/rows via applyViewerSize. Skip the fit entirely.
+  if (!isDriver.value) return;
   if (!fit || !termContainer.value) return;
   // fit() crashes with NaN dims when the container is display:none. Guard.
   const rect = termContainer.value.getBoundingClientRect();
@@ -194,7 +219,10 @@ function ensureTerm() {
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
   term.onData((data) => conn?.sendInput(data));
-  term.onResize(({ cols, rows }) => conn?.sendResize(cols, rows));
+  term.onResize(({ cols, rows }) => {
+    if (!isDriver.value) return; // viewer's local resize is FitAddon-suppressed anyway
+    conn?.sendResize(cols, rows);
+  });
 
   resizeObserver = new ResizeObserver(() => safeFit());
   resizeObserver.observe(termContainer.value!);
@@ -214,6 +242,20 @@ function startConnection() {
     },
     onReplayProgress: (progress) => {
       replayProgress.value = progress.phase === "end" ? null : progress;
+    },
+    onMeta: (meta) => {
+      if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
+      if (typeof meta?.rows === "number") ptyRows.value = meta.rows;
+      applyViewerSize();
+    },
+    onDriverChange: (_driverID, isMe) => {
+      const wasDriver = isDriver.value;
+      isDriver.value = isMe;
+      if (term) term.options.disableStdin = !isMe;
+      applyViewerSize();
+      if (wasDriver !== isMe) {
+        emit("toast", isMe ? "you are now the driver" : "you are now a viewer");
+      }
     },
   });
   conn.attach();

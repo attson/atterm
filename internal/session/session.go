@@ -127,14 +127,24 @@ func (s *Session) UpdateRemotePermission(value string) {
 }
 
 // UpdateSize records the latest PTY window size advertised by a client resize.
+// On real change, broadcasts a META frame so viewers can update their xterm
+// dims to match the new PTY size.
 func (s *Session) UpdateSize(cols, rows uint16) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if cols > 0 {
+	changed := false
+	if cols > 0 && s.meta.Cols != cols {
 		s.meta.Cols = cols
+		changed = true
 	}
-	if rows > 0 {
+	if rows > 0 && s.meta.Rows != rows {
 		s.meta.Rows = rows
+		changed = true
+	}
+	metaCopy := s.meta
+	driverID := s.driverClientID
+	s.mu.Unlock()
+	if changed {
+		s.broadcastDriverMeta(metaCopy, driverID)
 	}
 }
 

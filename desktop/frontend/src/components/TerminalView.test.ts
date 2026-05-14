@@ -69,3 +69,18 @@ describe("TerminalView right-click menu", () => {
     expect(menuStyle).toMatch(/z-index\s*:/);
   });
 });
+
+describe("TerminalView driver/viewer mode", () => {
+  test("tracks isDriver ref from onDriverChange", () => {
+    expect(source).toMatch(/const\s+isDriver\s*=\s*ref/);
+    expect(source).toMatch(/onDriverChange/);
+  });
+
+  test("locks term to META dims in viewer mode", () => {
+    expect(source).toMatch(/term\.resize\(\s*cols\s*,\s*rows\s*\)/);
+  });
+
+  test("disables stdin when not driver", () => {
+    expect(source).toMatch(/disableStdin/);
+  });
+});

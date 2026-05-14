@@ -26,3 +26,20 @@ describe("SettingsGeneral", () => {
     expect(source).toMatch(/error\.value\s*=/);
   });
 });
+
+describe("SettingsGeneral notification toggle", () => {
+  test("imports notification getter and setter", () => {
+    expect(source).toContain("getNotificationsEnabled");
+    expect(source).toContain("setNotificationsEnabled");
+  });
+
+  test("renders the checkbox with label and focus-only hint", () => {
+    expect(source).toContain("Show system notifications on terminal bell");
+    expect(source).toContain("Only fires when the AT Term window is not focused.");
+  });
+
+  test("wires checkbox change handler to setNotificationsEnabled", () => {
+    expect(source).toMatch(/onNotificationsToggle/);
+    expect(source).toContain('@change="onNotificationsToggle"');
+  });
+});

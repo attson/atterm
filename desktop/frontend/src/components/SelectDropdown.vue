@@ -7,12 +7,7 @@ export interface SelectOption {
   description?: string;
 }
 
-let idSeq = 0;
-function makeId(): string {
-  idSeq += 1;
-  return `select-dropdown-${idSeq}`;
-}
-const instanceId = makeId();
+const instanceId = `select-dropdown-${Math.random().toString(36).slice(2, 10)}`;
 
 function optionId(index: number): string {
   return `${instanceId}-opt-${index}`;

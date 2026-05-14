@@ -280,4 +280,34 @@ describe("SelectDropdown visual state", () => {
     expect(items[0].classes()).not.toContain("option-highlight");
     wrapper.unmount();
   });
+
+  test("two instances on the same page have distinct option ids", () => {
+    const options = [
+      { value: "a", label: "Apple" },
+      { value: "b", label: "Banana" },
+    ];
+    const wrapperA = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    const wrapperB = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+
+    const triggerA = wrapperA.get('[data-testid="select-trigger"]');
+    const triggerB = wrapperB.get('[data-testid="select-trigger"]');
+    triggerA.trigger("click");
+    triggerB.trigger("click");
+
+    return Promise.resolve().then(() => {
+      const idsA = wrapperA.findAll('[data-testid="select-option"]').map((w) => w.attributes("id"));
+      const idsB = wrapperB.findAll('[data-testid="select-option"]').map((w) => w.attributes("id"));
+      for (const idA of idsA) {
+        expect(idsB).not.toContain(idA);
+      }
+      wrapperA.unmount();
+      wrapperB.unmount();
+    });
+  });
 });

@@ -20,6 +20,7 @@ export const TYPE = {
   PING: 0x20,
   PONG: 0x21,
   PASTE_IMAGE: 0x33,
+  CLAIM_DRIVER: 0x34,
 } as const;
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE];

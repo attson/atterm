@@ -10,6 +10,7 @@ import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCo
 import { shouldNotify } from "../lib/terminalBell";
 import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
+import { stripC1Controls } from "../lib/stripC1Controls";
 import { getHostInfo, showNotification } from "../lib/api";
 
 const props = withDefaults(
@@ -247,7 +248,17 @@ function ensureTerm() {
   keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
-  term.onData((data) => conn?.sendInput(data));
+  term.onData((data) => {
+    const { cleaned, dropped } = stripC1Controls(data);
+    if (dropped.length > 0) {
+      console.warn("[AT Term] dropped C1 control chars from terminal input", {
+        droppedCodepoints: dropped.map((cp) => "U+" + cp.toString(16).toUpperCase().padStart(4, "0")),
+        originalLength: data.length,
+        cleanedLength: cleaned.length,
+      });
+    }
+    if (cleaned) conn?.sendInput(cleaned);
+  });
   term.onResize(({ cols, rows }) => {
     if (!isDriver.value) return; // viewer's local resize is FitAddon-suppressed anyway
     conn?.sendResize(cols, rows);

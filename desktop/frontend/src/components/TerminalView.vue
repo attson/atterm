@@ -365,6 +365,7 @@ watch(status, (nextStatus) => {
       <span v-else-if="status === 'ended'" class="dim">session ended</span>
       <span v-else-if="status === 'error'" class="bad">connection error</span>
     </div>
+    <div v-if="!isDriver" class="viewer-badge">viewer · press space to take over</div>
     <Teleport to="body">
       <div
         v-if="menuOpen"
@@ -410,6 +411,19 @@ watch(status, (nextStatus) => {
 }
 .overlay.avoid-top-right-badge {
   top: 34px;
+}
+.viewer-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  background: var(--terminal-overlay);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  pointer-events: none;
+  user-select: none;
 }
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }

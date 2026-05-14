@@ -92,3 +92,18 @@ describe("TerminalView viewer key handling", () => {
     expect(source).toMatch(/event\.key\s*===\s*" "/);
   });
 });
+
+describe("TerminalView viewer badge", () => {
+  test("renders a viewer badge when not driver", () => {
+    expect(source).toContain('viewer · press space to take over');
+    expect(source).toContain('class="viewer-badge"');
+    expect(source).toMatch(/v-if=["']!isDriver["']/);
+  });
+
+  test("viewer-badge style sits in the bottom-left", () => {
+    const css = styleBlockFor(".viewer-badge");
+    expect(css).toMatch(/position\s*:\s*absolute/);
+    expect(css).toMatch(/bottom\s*:/);
+    expect(css).toMatch(/left\s*:/);
+  });
+});

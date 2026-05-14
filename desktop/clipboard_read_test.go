@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -110,6 +112,147 @@ func TestClipboardPastePayloadStillReturnsTextWhenLinuxToolsMissing(t *testing.T
 	}
 	if got.Text != "echo hi\n" {
 		t.Fatalf("Text = %q; want original text", got.Text)
+	}
+}
+
+func TestParseClipboardFileURIsHandlesURIList(t *testing.T) {
+	raw := []byte("# this is a comment\r\nfile:///home/x/a.png\r\nfile:///home/x/b%20c.jpg\r\n")
+	got := parseClipboardFileURIs("text/uri-list", raw)
+	want := []string{"/home/x/a.png", "/home/x/b c.jpg"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v; want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got[%d] = %q; want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestParseClipboardFileURIsSkipsGnomeCopyHeader(t *testing.T) {
+	raw := []byte("copy\nfile:///home/x/foo.png\nfile:///home/x/bar.png\n")
+	got := parseClipboardFileURIs("x-special/gnome-copied-files", raw)
+	want := []string{"/home/x/foo.png", "/home/x/bar.png"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v; want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got[%d] = %q; want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestParseClipboardFileURIsIgnoresNonFileURIs(t *testing.T) {
+	raw := []byte("https://example.com/foo.png\nfile:///ok.png\n")
+	got := parseClipboardFileURIs("text/uri-list", raw)
+	if len(got) != 1 || got[0] != "/ok.png" {
+		t.Fatalf("got %v; want [/ok.png]", got)
+	}
+}
+
+func TestClipboardImagePathContentType(t *testing.T) {
+	cases := []struct {
+		path string
+		mime string
+		ok   bool
+	}{
+		{"/a/b.PNG", "image/png", true},
+		{"foo.jpg", "image/jpeg", true},
+		{"foo.JPEG", "image/jpeg", true},
+		{"foo.gif", "image/gif", true},
+		{"foo.webp", "image/webp", true},
+		{"foo.tiff", "image/tiff", true},
+		{"foo.tif", "image/tiff", true},
+		{"foo.txt", "", false},
+		{"noext", "", false},
+	}
+	for _, c := range cases {
+		mime, ok := clipboardImagePathContentType(c.path)
+		if mime != c.mime || ok != c.ok {
+			t.Fatalf("path=%q got (%q,%v); want (%q,%v)", c.path, mime, ok, c.mime, c.ok)
+		}
+	}
+}
+
+func TestResolveLinuxClipboardImageFromFileURIReadsFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shot.png")
+	body := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveLinuxClipboardImageFromFileURI(func(mime string) []byte {
+		if mime == "text/uri-list" {
+			return []byte("file://" + path + "\n")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("err = %v; want nil", err)
+	}
+	if got == nil {
+		t.Fatal("got = nil; want image data")
+	}
+	if got.ContentType != "image/png" {
+		t.Fatalf("ContentType = %q; want image/png", got.ContentType)
+	}
+	if got.Filename != "shot.png" {
+		t.Fatalf("Filename = %q; want shot.png", got.Filename)
+	}
+	if !bytes.Equal(got.Data, body) {
+		t.Fatalf("Data = %v; want %v", got.Data, body)
+	}
+}
+
+func TestResolveLinuxClipboardImageFromFileURISkipsNonImageEntries(t *testing.T) {
+	dir := t.TempDir()
+	txt := filepath.Join(dir, "note.txt")
+	img := filepath.Join(dir, "ok.png")
+	if err := os.WriteFile(txt, []byte("hi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(img, []byte{0x89}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveLinuxClipboardImageFromFileURI(func(mime string) []byte {
+		if mime == "text/uri-list" {
+			return []byte("file://" + txt + "\nfile://" + img + "\n")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("err = %v; want nil", err)
+	}
+	if got == nil || got.Filename != "ok.png" {
+		t.Fatalf("got = %+v; want ok.png", got)
+	}
+}
+
+func TestResolveLinuxClipboardImageFromFileURIReturnsTooLarge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.png")
+	if err := os.WriteFile(path, bytes.Repeat([]byte{0x89}, maxPasteImageBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := resolveLinuxClipboardImageFromFileURI(func(mime string) []byte {
+		if mime == "text/uri-list" {
+			return []byte("file://" + path + "\n")
+		}
+		return nil
+	})
+	if !errors.Is(err, errClipboardImageTooLarge) {
+		t.Fatalf("err = %v; want errClipboardImageTooLarge", err)
+	}
+}
+
+func TestResolveLinuxClipboardImageFromFileURINoMatchReturnsNoImage(t *testing.T) {
+	_, err := resolveLinuxClipboardImageFromFileURI(func(string) []byte { return nil })
+	if !errors.Is(err, errClipboardNoImage) {
+		t.Fatalf("err = %v; want errClipboardNoImage", err)
 	}
 }
 

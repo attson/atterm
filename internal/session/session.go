@@ -109,15 +109,30 @@ func (s *Session) SetSubscriberLifecycle(first, last func()) {
 	s.onLastUnsubscribe = last
 }
 
-// UpdateMeta merges new cwd/title from a META frame.
+// UpdateMeta merges new cwd/title from a META frame and, on real change,
+// broadcasts a META frame that reflects the full current session state
+// (driver_client_id/name + cols/rows + cwd/title). The driver fields are
+// critical: a "lite" META containing only cwd would make clients read
+// driver_client_id="" and re-render as viewers, even when a driver is
+// active. Always go through this helper instead of constructing a META
+// frame manually at the caller.
 func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if m.Cwd != "" {
+	changed := false
+	if m.Cwd != "" && s.meta.Cwd != m.Cwd {
 		s.meta.Cwd = m.Cwd
+		changed = true
 	}
-	if m.Title != "" {
+	if m.Title != "" && s.meta.Title != m.Title {
 		s.meta.Title = m.Title
+		changed = true
+	}
+	metaCopy := s.meta
+	driverID := s.driverClientID
+	driverName := s.driverClientName
+	s.mu.Unlock()
+	if changed {
+		s.broadcastDriverMeta(metaCopy, driverID, driverName)
 	}
 }
 

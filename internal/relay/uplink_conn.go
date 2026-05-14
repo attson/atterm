@@ -278,9 +278,15 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 			ms := mirrors[f.SessionID]
 			mu.Unlock()
 			if ms != nil {
+				// UpdateMeta broadcasts the mirror's full META (with its own
+				// driver_client_id, not the upstream local relay's) so the
+				// public relay's subscribers see correct driver state for
+				// their layer. Don't re-broadcast the raw upstream frame
+				// here — it would carry the local relay's driver_client_id
+				// and confuse mobile/web clients into thinking someone else
+				// on the upstream desktop is driving.
 				ms.sess.UpdateMeta(m)
 				s.registry.NotifyChange()
-				ms.sess.Broadcast(f)
 			}
 		case proto.TypeClose:
 			mu.Lock()

@@ -348,3 +348,35 @@ func TestRemoveDriverSubscriberClearsAndBroadcasts(t *testing.T) {
 		t.Fatalf("meta.DriverClientID after driver unsub = %q; want empty", meta.DriverClientID)
 	}
 }
+
+func TestUpdateMetaBroadcastsPreservesDriverState(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	sub, _ := s.Subscribe(0, "client-alpha", "alpha-host")
+	defer s.Unsubscribe(sub)
+	drainInitialFrames(t, sub) // 2 progress + 1 snapshot META
+
+	// Trigger a cwd change (mimics watchCwd detecting `cd /tmp`).
+	s.UpdateMeta(proto.MetaPayload{Cwd: "/tmp"})
+
+	// Subscriber should receive a META frame with the new cwd AND the
+	// existing driver_client_id/driver_client_name still set — otherwise
+	// the client thinks "no driver" and renders the viewer overlay.
+	f := readFrameForTest(t, sub)
+	if f.Type != proto.TypeMeta {
+		t.Fatalf("frame type = 0x%02x; want META", f.Type)
+	}
+	var m proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &m); err != nil {
+		t.Fatalf("meta unmarshal: %v", err)
+	}
+	if m.Cwd != "/tmp" {
+		t.Fatalf("meta.Cwd = %q; want /tmp", m.Cwd)
+	}
+	if m.DriverClientID != "client-alpha" {
+		t.Fatalf("meta.DriverClientID = %q; want client-alpha (was clobbered by lite META)", m.DriverClientID)
+	}
+	if m.DriverClientName != "alpha-host" {
+		t.Fatalf("meta.DriverClientName = %q; want alpha-host", m.DriverClientName)
+	}
+}

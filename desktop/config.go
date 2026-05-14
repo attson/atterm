@@ -51,6 +51,11 @@ type appConfig struct {
 	AutoCheckUpdates *bool  `json:"auto_check_updates,omitempty"`
 	LastCheckAt      int64  `json:"last_check_at,omitempty"`
 	SkipVersion      string `json:"skip_version,omitempty"`
+
+	// NotificationsEnabled controls whether terminal BEL (\x07) triggers a
+	// native system notification when the window is unfocused. Nil means
+	// "never set" and defaults to true for existing installs.
+	NotificationsEnabled *bool `json:"notifications_enabled,omitempty"`
 }
 
 // AutoCheckUpdatesOrDefault returns the user's preference, defaulting to
@@ -60,6 +65,13 @@ func (c appConfig) AutoCheckUpdatesOrDefault() bool {
 		return true
 	}
 	return *c.AutoCheckUpdates
+}
+
+func (c appConfig) NotificationsEnabledOrDefault() bool {
+	if c.NotificationsEnabled == nil {
+		return true
+	}
+	return *c.NotificationsEnabled
 }
 
 func (c appConfig) RemotePermissionOrDefault() string {

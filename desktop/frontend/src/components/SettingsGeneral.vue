@@ -1,11 +1,12 @@
 <script lang="ts" setup>
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   getNotificationsEnabled,
   setNotificationsEnabled,
   setTerminalThemePreference,
 } from "../lib/api";
 import { TERMINAL_THEMES, getTerminalTheme } from "../lib/terminalThemes";
+import SelectDropdown from "./SelectDropdown.vue";
 
 const props = defineProps<{
   terminalThemeId: string;
@@ -19,6 +20,14 @@ const selected = ref(getTerminalTheme(props.terminalThemeId).id);
 const persisted = ref(selected.value);
 const saving = ref(false);
 const error = ref("");
+
+const themeOptions = computed(() =>
+  TERMINAL_THEMES.map((theme) => ({
+    value: theme.id,
+    label: theme.label,
+    description: theme.description,
+  })),
+);
 
 const notificationsEnabled = ref(true);
 const notificationsLoading = ref(true);
@@ -69,15 +78,13 @@ async function onChange() {
 <template>
   <div class="tab-pane">
     <label class="field-label">terminal theme</label>
-    <select v-model="selected" :disabled="saving" @change="onChange">
-      <option
-        v-for="theme in TERMINAL_THEMES"
-        :key="theme.id"
-        :value="theme.id"
-      >
-        {{ theme.label }} — {{ theme.description }}
-      </option>
-    </select>
+    <SelectDropdown
+      v-model="selected"
+      :options="themeOptions"
+      :disabled="saving"
+      aria-label="terminal theme"
+      @update:modelValue="onChange"
+    />
     <p class="hint">
       Applies to all terminal panes immediately and is saved as your local desktop preference.
     </p>
@@ -127,18 +134,5 @@ async function onChange() {
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
-}
-select {
-  height: 32px;
-  padding: 6px 10px;
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 13px;
-}
-select:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent);
 }
 </style>

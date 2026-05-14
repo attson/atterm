@@ -14,9 +14,11 @@ describe("SettingsGeneral", () => {
     expect(source).toContain('emit("terminal-theme-changed", nextTheme)');
   });
 
-  test("renders a theme select bound to the local selected ref", () => {
+  test("renders a SelectDropdown bound to the local selected ref", () => {
+    expect(source).toContain("import SelectDropdown");
+    expect(source).toContain("<SelectDropdown");
     expect(source).toContain('v-model="selected"');
-    expect(source).toContain('@change="onChange"');
+    expect(source).toContain('@update:modelValue="onChange"');
     expect(source).toContain("terminal theme");
   });
 

@@ -312,3 +312,39 @@ func drainInitialFrames(t *testing.T, sub *Subscriber) {
 		t.Fatal("timeout draining snapshot META")
 	}
 }
+
+func TestRemoveDriverSubscriberClearsAndBroadcasts(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	first, _ := s.Subscribe(0, "client-alpha")
+	drainInitialFrames(t, first)
+
+	second, _ := s.Subscribe(0, "client-beta")
+	defer s.Unsubscribe(second)
+	drainInitialFrames(t, second)
+
+	if !s.IsDriver(first) {
+		t.Fatal("first should be driver before unsubscribe")
+	}
+
+	s.Unsubscribe(first)
+
+	if s.IsDriver(first) {
+		t.Fatal("driver flag should clear after unsubscribe")
+	}
+	if got := s.DriverClientID(); got != "" {
+		t.Fatalf("DriverClientID after driver unsub = %q; want empty", got)
+	}
+
+	f := readFrameForTest(t, second)
+	if f.Type != proto.TypeMeta {
+		t.Fatalf("next frame type = 0x%02x; want META", f.Type)
+	}
+	var meta proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &meta); err != nil {
+		t.Fatalf("meta unmarshal: %v", err)
+	}
+	if meta.DriverClientID != "" {
+		t.Fatalf("meta.DriverClientID after driver unsub = %q; want empty", meta.DriverClientID)
+	}
+}

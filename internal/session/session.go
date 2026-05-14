@@ -501,10 +501,19 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	if was {
 		delete(s.subs, sub)
 	}
+	wasDriver := s.driverSubscriber == sub
+	if wasDriver {
+		s.driverSubscriber = nil
+		s.driverClientID = ""
+	}
 	nowEmpty := len(s.subs) == 0
 	lastHook := s.onLastUnsubscribe
+	metaCopy := s.meta
 	s.mu.Unlock()
 	sub.close()
+	if wasDriver {
+		s.broadcastDriverMeta(metaCopy, "")
+	}
 	if was && nowEmpty && lastHook != nil {
 		go lastHook()
 	}

@@ -4,8 +4,6 @@
 if ($env:ATTERM_SHELL_INTEGRATION_LOADED) { return }
 $env:ATTERM_SHELL_INTEGRATION_LOADED = "1"
 
-$global:__atterm_last_exit = 0
-
 # Preserve the user's original prompt function (if any) so frameworks like
 # oh-my-posh still render normally; we only wrap markers around it.
 if (Get-Command __atterm_user_prompt -ErrorAction SilentlyContinue) { } else {

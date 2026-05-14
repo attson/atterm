@@ -2,7 +2,7 @@
 # Auto-loaded by fish from $XDG_CONFIG_HOME/fish/conf.d/.
 
 if set -q __atterm_loaded
-    exit 0
+    return
 end
 set -g __atterm_loaded 1
 

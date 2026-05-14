@@ -96,6 +96,7 @@ interface AppBindings {
   InstallUpdate(): Promise<void>;
   GetAutoCheckUpdates(): Promise<boolean>;
   SetAutoCheckUpdates(enabled: boolean): Promise<void>;
+  ConfirmQuit(): Promise<void>;
 }
 
 declare global {
@@ -211,4 +212,8 @@ export function getAutoCheckUpdates(): Promise<boolean> {
 
 export function setAutoCheckUpdates(enabled: boolean): Promise<void> {
   return bindings().SetAutoCheckUpdates(enabled);
+}
+
+export function confirmQuit(): Promise<void> {
+  return bindings().ConfirmQuit();
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	stdruntime "runtime"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -39,6 +41,11 @@ func main() {
 		BackgroundColour: &options.RGBA{R: 13, G: 17, B: 23, A: 1},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
+		OnBeforeClose: func(ctx context.Context) bool {
+			return app.beforeClose(ctx, func() {
+				wailsruntime.EventsEmit(ctx, "before-close")
+			})
+		},
 		Bind: []interface{}{
 			app,
 		},

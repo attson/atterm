@@ -68,6 +68,14 @@ describe("TerminalView right-click menu", () => {
     expect(menuStyle).toMatch(/position\s*:\s*fixed/);
     expect(menuStyle).toMatch(/z-index\s*:/);
   });
+
+  test("renders a clear buffer menu item wired to onMenuClear", () => {
+    expect(source).toContain(">clear buffer<");
+    expect(source).toContain('@click="onMenuClear"');
+    expect(source).toMatch(/function\s+onMenuClear\s*\(\s*\)/);
+    expect(source).toContain("term.clear()");
+    expect(source).toMatch(/const\s+MENU_HEIGHT\s*=\s*110/);
+  });
 });
 
 describe("TerminalView driver/viewer mode", () => {

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
+	"log"
 	"strings"
 	"testing"
 )
@@ -62,6 +65,51 @@ func TestReadClipboardPastePayloadUsesImagePriority(t *testing.T) {
 
 	if got.Kind != "image" {
 		t.Fatalf("Kind = %q; want image", got.Kind)
+	}
+}
+
+func TestReadLinuxClipboardImageReportsMissingToolsSilently(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	var buf bytes.Buffer
+	orig := log.Default().Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(orig) })
+
+	_, err := readLinuxClipboardImage(context.Background())
+	if !errors.Is(err, errClipboardNoLinuxTools) {
+		t.Fatalf("err = %v; want errClipboardNoLinuxTools", err)
+	}
+	if buf.Len() > 0 {
+		t.Fatalf("log output = %q; want silent", buf.String())
+	}
+	msg := errClipboardNoLinuxTools.Error()
+	for _, want := range []string{"xclip", "wl-paste", "xsel"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error message %q missing %q", msg, want)
+		}
+	}
+}
+
+func TestClipboardPastePayloadSurfacesMissingLinuxToolsAsReason(t *testing.T) {
+	got := clipboardPastePayload("", nil, errClipboardNoLinuxTools)
+
+	if got.Kind != "none" {
+		t.Fatalf("Kind = %q; want none", got.Kind)
+	}
+	if !strings.Contains(got.Reason, "xclip") {
+		t.Fatalf("Reason = %q; want install hint", got.Reason)
+	}
+}
+
+func TestClipboardPastePayloadStillReturnsTextWhenLinuxToolsMissing(t *testing.T) {
+	got := clipboardPastePayload("echo hi\n", nil, errClipboardNoLinuxTools)
+
+	if got.Kind != "text" {
+		t.Fatalf("Kind = %q; want text (text paste shouldn't be blocked by missing image tools)", got.Kind)
+	}
+	if got.Text != "echo hi\n" {
+		t.Fatalf("Text = %q; want original text", got.Text)
 	}
 }
 

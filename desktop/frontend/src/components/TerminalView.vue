@@ -58,7 +58,7 @@ let resizeObserver: ResizeObserver | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
 
 const MENU_WIDTH = 150;
-const MENU_HEIGHT = 76;
+const MENU_HEIGHT = 110;
 
 const menuCanPaste = computed(() => isPasteAllowed(status.value, props.remotePermission));
 
@@ -181,6 +181,12 @@ function applyViewerSize() {
       term.resize(cols, rows);
     }
   }
+}
+
+function onMenuClear() {
+  closeContextMenu();
+  if (!term) return;
+  term.clear();
 }
 
 function safeFit() {
@@ -382,6 +388,7 @@ watch(status, (nextStatus) => {
       >
         <button class="term-context-item" :disabled="!menuHasSelection" @click="onMenuCopy">copy</button>
         <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">paste</button>
+        <button class="term-context-item" @click="onMenuClear">clear buffer</button>
       </div>
     </Teleport>
   </div>

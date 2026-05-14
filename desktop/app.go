@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
@@ -83,6 +84,11 @@ type App struct {
 	uplinkCancel context.CancelFunc
 
 	updater *Updater
+
+	// quitApproved gates OnBeforeClose: once the frontend confirms a quit
+	// via ConfirmQuit(), subsequent close attempts proceed without the
+	// before-close prompt round trip.
+	quitApproved atomic.Bool
 }
 
 // NewApp creates a new App application struct.
@@ -493,4 +499,28 @@ func (a *App) SetAutoCheckUpdates(enabled bool) error {
 		a.updater.Stop()
 	}
 	return nil
+}
+
+// beforeClose is wired to wails options.OnBeforeClose. If a previous
+// ConfirmQuit() call set quitApproved, the close proceeds. Otherwise it
+// emits a before-close event to the frontend and tells Wails to abort
+// this close. The emit function is a parameter so tests can verify the
+// gating without bringing up a Wails runtime.
+func (a *App) beforeClose(ctx context.Context, emit func()) bool {
+	if a.quitApproved.Load() {
+		return false
+	}
+	emit()
+	return true
+}
+
+// ConfirmQuit is called from the frontend after the user confirms the
+// quit dialog. Sets the gating flag and asks Wails to quit; the next
+// OnBeforeClose call returns false and the framework proceeds.
+func (a *App) ConfirmQuit() {
+	a.quitApproved.Store(true)
+	if a.ctx == nil {
+		return
+	}
+	wailsruntime.Quit(a.ctx)
 }

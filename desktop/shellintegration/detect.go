@@ -31,7 +31,7 @@ func (s Shell) String() string {
 	case ShellPwsh:
 		return "pwsh"
 	default:
-		return ""
+		return "unknown"
 	}
 }
 

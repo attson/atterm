@@ -10,10 +10,13 @@ describe("SettingsRelay", () => {
     expect(source).toContain("disconnect,");
   });
 
-  test("renders url, token, permissions, insecure toggle, and status pill", () => {
+  test("renders url, token, permissions SelectDropdown, insecure toggle, and status pill", () => {
     expect(source).toContain('placeholder="wss://relay.example.com"');
     expect(source).toContain('type="password"');
     expect(source).toContain("remote session permissions");
+    expect(source).toContain("import SelectDropdown");
+    expect(source).toContain("<SelectDropdown");
+    expect(source).toContain('v-model="remotePermission"');
     expect(source).toContain("enable insecure mode");
     expect(source).toContain("uplink running");
     expect(source).toContain("uplink stopped");

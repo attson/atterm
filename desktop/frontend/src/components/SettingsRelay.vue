@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from "vue";
 import { getRelayConfig, setRelayConfig } from "../lib/api";
+import SelectDropdown from "./SelectDropdown.vue";
 
 const emit = defineEmits<{
   (e: "relay-config-changed"): void;
@@ -20,6 +21,12 @@ const persistedUrl = ref("");
 const persistedToken = ref("");
 const persistedAllowInsecure = ref(false);
 const persistedPermission = ref("full");
+
+const permissionOptions = [
+  { value: "view", label: "view only", description: "remote clients can watch output" },
+  { value: "control", label: "control", description: "allow input and resize" },
+  { value: "full", label: "full", description: "allow input, resize, and image paste" },
+];
 
 const dirty = computed(
   () =>
@@ -141,11 +148,12 @@ defineExpose({
       />
 
       <label class="field-label">remote session permissions</label>
-      <select v-model="remotePermission" :disabled="saving">
-        <option value="view">view only — remote clients can watch output</option>
-        <option value="control">control — allow input and resize</option>
-        <option value="full">full — allow input, resize, and image paste</option>
-      </select>
+      <SelectDropdown
+        v-model="remotePermission"
+        :options="permissionOptions"
+        :disabled="saving"
+        aria-label="remote session permissions"
+      />
       <p class="hint">
         This is announced as the owner policy for sessions from this desktop.
         Relay-side read-only tokens can still reduce access to view only.
@@ -228,8 +236,7 @@ defineExpose({
   margin: 0;
 }
 input[type="text"],
-input[type="password"],
-select {
+input[type="password"] {
   height: 32px;
   padding: 6px 10px;
   background: var(--bg);
@@ -238,8 +245,7 @@ select {
   border-radius: 6px;
   font-size: 13px;
 }
-input:focus,
-select:focus {
+input:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent);
 }

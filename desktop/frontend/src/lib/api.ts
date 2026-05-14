@@ -97,6 +97,9 @@ interface AppBindings {
   GetAutoCheckUpdates(): Promise<boolean>;
   SetAutoCheckUpdates(enabled: boolean): Promise<void>;
   ConfirmQuit(): Promise<void>;
+  GetNotificationsEnabled(): Promise<boolean>;
+  SetNotificationsEnabled(enabled: boolean): Promise<void>;
+  ShowNotification(title: string, body: string): Promise<void>;
 }
 
 declare global {
@@ -216,4 +219,16 @@ export function setAutoCheckUpdates(enabled: boolean): Promise<void> {
 
 export function confirmQuit(): Promise<void> {
   return bindings().ConfirmQuit();
+}
+
+export function getNotificationsEnabled(): Promise<boolean> {
+  return bindings().GetNotificationsEnabled();
+}
+
+export function setNotificationsEnabled(enabled: boolean): Promise<void> {
+  return bindings().SetNotificationsEnabled(enabled);
+}
+
+export function showNotification(title: string, body: string): Promise<void> {
+  return bindings().ShowNotification(title, body);
 }

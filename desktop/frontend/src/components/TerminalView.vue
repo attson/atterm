@@ -8,6 +8,11 @@ import type { Endpoint } from "../lib/api";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
 import { shouldNotify } from "../lib/terminalBell";
+import {
+  CommandTracker,
+  shouldNotifyCommand,
+  formatElapsed,
+} from "../lib/commandFinish";
 import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
@@ -31,8 +36,10 @@ const props = withDefaults(
     expectedRows?: number;
     remotePermission?: string;
     theme: ITheme;
+    commandNotifyThresholdSec?: number;
+    isLocalSession?: boolean;
   }>(),
-  { active: true, focused: false, avoidTopRightBadge: false }
+  { active: true, focused: false, avoidTopRightBadge: false, commandNotifyThresholdSec: 10, isLocalSession: true }
 );
 
 const emit = defineEmits<{
@@ -271,6 +278,28 @@ function ensureTerm() {
     lastBellAt = Date.now();
     void showNotification("AT Term", `Bell in ${props.sessionLabel || "session"}`);
   });
+
+  const cmdTracker = new CommandTracker();
+  try {
+    term.parser.registerOscHandler(133, (payload) => {
+      const ev = cmdTracker.onOsc133(payload, Date.now());
+      if (!ev) return false;
+      const focused = typeof document !== "undefined" && document.hasFocus();
+      const passed = shouldNotifyCommand(ev, {
+        focused,
+        thresholdSec: props.commandNotifyThresholdSec ?? 10,
+        isLocal: props.isLocalSession ?? true,
+      });
+      if (!passed) return false;
+      void showNotification(
+        "AT Term",
+        `Command finished · exit ${ev.exitCode} · ${formatElapsed(ev.elapsedMs)} · ${props.sessionLabel || "session"}`,
+      );
+      return false;
+    });
+  } catch (err) {
+    console.warn("[AT Term] OSC 133 handler registration failed", err);
+  }
 
   resizeObserver = new ResizeObserver(() => safeFit());
   resizeObserver.observe(termContainer.value!);

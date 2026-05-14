@@ -7,6 +7,17 @@ export interface SelectOption {
   description?: string;
 }
 
+let idSeq = 0;
+function makeId(): string {
+  idSeq += 1;
+  return `select-dropdown-${idSeq}`;
+}
+const instanceId = makeId();
+
+function optionId(index: number): string {
+  return `${instanceId}-opt-${index}`;
+}
+
 const props = defineProps<{
   modelValue: string;
   options: SelectOption[];
@@ -138,6 +149,7 @@ onBeforeUnmount(() => {
       :aria-label="ariaLabel"
       aria-haspopup="listbox"
       :aria-expanded="open ? 'true' : 'false'"
+      :aria-activedescendant="open && highlightIndex >= 0 ? optionId(highlightIndex) : undefined"
       :disabled="disabled"
       @click="onTriggerClick"
       @keydown="onTriggerKeydown"
@@ -151,13 +163,19 @@ onBeforeUnmount(() => {
       role="listbox"
     >
       <li
-        v-for="option in options"
+        v-for="(option, index) in options"
+        :id="optionId(index)"
         :key="option.value"
         class="option"
+        :class="{
+          'option-highlight': index === highlightIndex,
+          'option-selected': option.value === modelValue,
+        }"
         data-testid="select-option"
         role="option"
         :aria-selected="option.value === modelValue ? 'true' : 'false'"
         @click="selectOption(option)"
+        @mouseenter="highlightIndex = index"
       >
         <span class="option-label">{{ option.label }}</span>
         <span v-if="option.description" class="option-description">
@@ -237,6 +255,7 @@ onBeforeUnmount(() => {
   z-index: 1000;
 }
 .option {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -252,5 +271,22 @@ onBeforeUnmount(() => {
   color: var(--fg-dim);
   font-size: 12px;
   line-height: 1.3;
+}
+.option-highlight {
+  background: rgba(255, 255, 255, 0.06);
+}
+.option-selected::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.option-selected .option-label {
+  color: var(--fg);
+  font-weight: 500;
 }
 </style>

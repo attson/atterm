@@ -213,3 +213,71 @@ describe("SelectDropdown keyboard navigation", () => {
     wrapper.unmount();
   });
 });
+
+describe("SelectDropdown visual state", () => {
+  const options = [
+    { value: "a", label: "Apple" },
+    { value: "b", label: "Banana" },
+    { value: "c", label: "Cherry" },
+  ];
+
+  test("currently selected option has aria-selected=true and a selected class", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "b", options },
+      attachTo: document.body,
+    });
+    await wrapper.get('[data-testid="select-trigger"]').trigger("click");
+    const items = wrapper.findAll('[data-testid="select-option"]');
+    expect(items[1].attributes("aria-selected")).toBe("true");
+    expect(items[1].classes()).toContain("option-selected");
+    expect(items[0].attributes("aria-selected")).toBe("false");
+    expect(items[0].classes()).not.toContain("option-selected");
+    wrapper.unmount();
+  });
+
+  test("trigger sets aria-activedescendant to the highlighted option while open", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.get('[data-testid="select-trigger"]');
+    expect(trigger.attributes("aria-activedescendant")).toBeUndefined();
+    await trigger.trigger("click");
+    const items = wrapper.findAll('[data-testid="select-option"]');
+    const firstId = items[0].attributes("id");
+    expect(firstId).toBeTruthy();
+    expect(trigger.attributes("aria-activedescendant")).toBe(firstId);
+    await trigger.trigger("keydown", { key: "ArrowDown" });
+    expect(trigger.attributes("aria-activedescendant")).toBe(items[1].attributes("id"));
+    wrapper.unmount();
+  });
+
+  test("highlight class follows the keyboard highlight", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.get('[data-testid="select-trigger"]');
+    await trigger.trigger("click");
+    let items = wrapper.findAll('[data-testid="select-option"]');
+    expect(items[0].classes()).toContain("option-highlight");
+    await trigger.trigger("keydown", { key: "ArrowDown" });
+    items = wrapper.findAll('[data-testid="select-option"]');
+    expect(items[0].classes()).not.toContain("option-highlight");
+    expect(items[1].classes()).toContain("option-highlight");
+    wrapper.unmount();
+  });
+
+  test("hovering an option moves the highlight to it", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    await wrapper.get('[data-testid="select-trigger"]').trigger("click");
+    const items = wrapper.findAll('[data-testid="select-option"]');
+    await items[2].trigger("mouseenter");
+    expect(items[2].classes()).toContain("option-highlight");
+    expect(items[0].classes()).not.toContain("option-highlight");
+    wrapper.unmount();
+  });
+});

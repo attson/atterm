@@ -76,6 +76,8 @@ const currentTerminalThemeID = ref<TerminalThemeID>(DEFAULT_TERMINAL_THEME_ID);
 const currentTerminalTheme = computed(() => getTerminalTheme(currentTerminalThemeID.value));
 const themeStyle = computed(() => currentTerminalTheme.value.appVars);
 
+const commandNotifyThresholdSec = ref<number>(5);
+
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
 const pickerCtx = ref<{ tabId: string; paneIdx: number } | null>(null);
@@ -668,6 +670,7 @@ onUnmounted(() => {
           :session-info-for="paneSessionInfo"
           :active="t.id === currentTabId"
           :terminal-theme="currentTerminalTheme.xtermTheme"
+          :command-notify-threshold-sec="commandNotifyThresholdSec"
           @set-active-pane="(idx) => (t.activePaneIdx = idx)"
           @close-pane="(idx) => closePaneAt(t, idx)"
           @toast="showToast"

@@ -262,15 +262,51 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID string) (*Subscriber, uint
 	return sub, lastSeq
 }
 
-// broadcastDriverMeta and sendSnapshotMeta are filled in in Task 4 (this
-// commit leaves stubs so the Task 3 tests focus on IsDriver/DriverClientID
-// state without observing META frames).
+// ClaimDriver makes sub the active driver, recording clientID as the
+// end-to-end identifier. Broadcasts a META frame with the new driver to all
+// subscribers. No-op if sub is no longer registered with the session.
+func (s *Session) ClaimDriver(sub *Subscriber, clientID string) {
+	s.mu.Lock()
+	if _, ok := s.subs[sub]; !ok {
+		s.mu.Unlock()
+		return
+	}
+	s.driverSubscriber = sub
+	s.driverClientID = clientID
+	metaCopy := s.meta
+	s.mu.Unlock()
+
+	s.broadcastDriverMeta(metaCopy, clientID)
+}
+
 func (s *Session) broadcastDriverMeta(meta proto.SessionInfo, driverClientID string) {
-	_, _ = meta, driverClientID
+	payload, err := encodeMetaPayload(meta, driverClientID)
+	if err != nil {
+		return
+	}
+	s.Broadcast(proto.Frame{Type: proto.TypeMeta, SessionID: s.ID, Payload: payload})
 }
 
 func (s *Session) sendSnapshotMeta(sub *Subscriber, meta proto.SessionInfo, driverClientID string) {
-	_, _, _ = sub, meta, driverClientID
+	payload, err := encodeMetaPayload(meta, driverClientID)
+	if err != nil {
+		return
+	}
+	select {
+	case sub.out <- proto.Frame{Type: proto.TypeMeta, SessionID: s.ID, Payload: payload}:
+	default:
+		// channel full — next fanout will drop this slow consumer normally
+	}
+}
+
+func encodeMetaPayload(meta proto.SessionInfo, driverClientID string) ([]byte, error) {
+	return json.Marshal(proto.MetaPayload{
+		Cwd:            meta.Cwd,
+		Title:          meta.Title,
+		DriverClientID: driverClientID,
+		Cols:           meta.Cols,
+		Rows:           meta.Rows,
+	})
 }
 
 // DriverClientID returns the end-to-end client_id of the current driver, or

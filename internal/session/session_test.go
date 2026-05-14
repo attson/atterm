@@ -245,3 +245,70 @@ func TestSubscribeSecondSubscriberIsViewer(t *testing.T) {
 		t.Fatal("second subscriber should be viewer")
 	}
 }
+
+func TestClaimDriverTransfersAndBroadcastsMeta(t *testing.T) {
+	id := uuid.New()
+	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})
+
+	first, _ := s.Subscribe(0, "client-alpha")
+	defer s.Unsubscribe(first)
+	drainInitialFrames(t, first)
+
+	second, _ := s.Subscribe(0, "client-beta")
+	defer s.Unsubscribe(second)
+	drainInitialFrames(t, second)
+
+	s.ClaimDriver(second, "client-beta")
+
+	if !s.IsDriver(second) {
+		t.Fatal("second should now be driver after ClaimDriver")
+	}
+	if s.IsDriver(first) {
+		t.Fatal("first should no longer be driver")
+	}
+	if got := s.DriverClientID(); got != "client-beta" {
+		t.Fatalf("DriverClientID = %q; want client-beta", got)
+	}
+
+	for label, sub := range map[string]*Subscriber{"first": first, "second": second} {
+		f := readFrameForTest(t, sub)
+		if f.Type != proto.TypeMeta {
+			t.Fatalf("%s: next frame type = 0x%02x; want META (0x05)", label, f.Type)
+		}
+		var meta proto.MetaPayload
+		if err := json.Unmarshal(f.Payload, &meta); err != nil {
+			t.Fatalf("%s: meta unmarshal: %v", label, err)
+		}
+		if meta.DriverClientID != "client-beta" {
+			t.Fatalf("%s: meta.DriverClientID = %q; want client-beta", label, meta.DriverClientID)
+		}
+		if meta.Cols != 80 || meta.Rows != 24 {
+			t.Fatalf("%s: meta.Cols/Rows = %dx%d; want 80x24", label, meta.Cols, meta.Rows)
+		}
+	}
+}
+
+// drainInitialFrames consumes the frames Subscribe enqueues for a new
+// subscriber: REPLAY_PROGRESS start, REPLAY_PROGRESS end, and one snapshot
+// META carrying the current driver_client_id and PTY cols/rows.
+func drainInitialFrames(t *testing.T, sub *Subscriber) {
+	t.Helper()
+	for i := 0; i < 2; i++ {
+		select {
+		case f := <-sub.Out():
+			if f.Type != proto.TypeReplayProgress {
+				t.Fatalf("frame %d type = 0x%02x; want REPLAY_PROGRESS", i, f.Type)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout draining replay progress")
+		}
+	}
+	select {
+	case f := <-sub.Out():
+		if f.Type != proto.TypeMeta {
+			t.Fatalf("3rd initial frame type = 0x%02x; want META snapshot", f.Type)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout draining snapshot META")
+	}
+}

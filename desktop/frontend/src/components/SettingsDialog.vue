@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (e: "close"): void;
   (e: "relay-config-changed"): void;
   (e: "terminal-theme-changed", themeID: string): void;
+  (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
 const activeTab = ref<"general" | "relay" | "logging" | "updates">("general");
@@ -92,6 +93,10 @@ function onRelayConfigChanged() {
 function onTerminalThemeChanged(themeID: string) {
   persistedTheme.value = getTerminalTheme(themeID).id;
   emit("terminal-theme-changed", themeID);
+}
+
+function onCommandNotifyThresholdChanged(seconds: number) {
+  emit("command-notify-threshold-changed", seconds);
 }
 
 async function openLogViewer() {
@@ -171,6 +176,7 @@ function onDisconnectClick() {
             v-show="activeTab === 'general'"
             :terminal-theme-id="persistedTheme"
             @terminal-theme-changed="onTerminalThemeChanged"
+            @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
           />
           <SettingsRelay
             v-show="activeTab === 'relay'"

@@ -15,6 +15,7 @@ import {
   getEndpoint,
   getHostInfo,
   getRelayConfig,
+  getCommandNotifyThresholdSeconds,
   getTerminalThemePreference,
   getUpdateState,
   listShells,
@@ -548,6 +549,11 @@ onMounted(async () => {
   // probe must be ready by the time auto-startNewTab fires.
   await setupMeasureProbe();
   try {
+    commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
+  } catch (e) {
+    console.warn("[AT Term] failed to load command-notify threshold", e);
+  }
+  try {
     await refreshTerminalTheme();
     localEndpoint.value = await getEndpoint();
     const info = await getHostInfo();
@@ -685,6 +691,7 @@ onUnmounted(() => {
       :remote-session-count="remoteSessionCount"
       :terminal-theme-id="currentTerminalThemeID"
       @terminal-theme-changed="onTerminalThemeChanged"
+      @command-notify-threshold-changed="(seconds: number) => (commandNotifyThresholdSec = seconds)"
       @relay-config-changed="refreshRelayConfig"
       @close="showSettings = false; refreshRelayConfig()"
     />

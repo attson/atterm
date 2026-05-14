@@ -116,6 +116,7 @@ func (a *App) startup(ctx context.Context) {
 	if a.cfgStore == nil {
 		a.cfgStore = loadConfig()
 	}
+	a.host.setConfigStore(a.cfgStore)
 
 	cfg := a.cfgStore.Get()
 	if cfg.RelayURL == "" {

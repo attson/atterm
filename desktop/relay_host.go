@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/desktop/shellintegration"
 	"github.com/attson/atterm/internal/hostid"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ptyhost"
@@ -34,6 +35,8 @@ type relayHost struct {
 	hostID string
 	host   string
 	user   string
+
+	cfg *configStore
 
 	mu       sync.Mutex
 	sessions map[uuid.UUID]*activeSession
@@ -88,6 +91,13 @@ func startRelayHost() (*relayHost, error) {
 		changes:    make(chan struct{}, 1),
 		uplinkSubs: make(map[uuid.UUID]*session.Subscriber),
 	}, nil
+}
+
+// setConfigStore wires the shared appConfig store after construction; the
+// uplink and shell-integration logic both consult it. Safe to call exactly
+// once at startup.
+func (h *relayHost) setConfigStore(cfg *configStore) {
+	h.cfg = cfg
 }
 
 func relayDebugEnabled() bool {
@@ -294,18 +304,34 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	}
 
 	argv := append([]string{req.Command}, req.Args...)
+	env := terminalEnvForXterm(os.Environ())
+
+	enabled := true
+	if h.cfg != nil {
+		enabled = h.cfg.Get().ShellIntegrationEnabledOrDefault()
+	}
+	sid := uuid.New() // generated here so the plan can scope temp files by id
+	plan := shellintegration.Prepare(req.Command, enabled, sid.String())
+	argv, env = mergeShellIntegrationPlan(argv, env, plan)
+	if plan.Shell != "" {
+		log.Printf("desktop-shell-integration: enabled session=%s shell=%s", sid, plan.Shell)
+	}
+
 	pty, err := ptyhost.Open(ctx, ptyhost.Config{
 		Argv: argv,
-		Env:  terminalEnvForXterm(os.Environ()),
+		Env:  env,
 		Cwd:  cwd,
 		Cols: cols,
 		Rows: rows,
 	})
 	if err != nil {
+		if plan.Cleanup != nil {
+			plan.Cleanup()
+		}
 		return uuid.Nil, fmt.Errorf("open pty: %w", err)
 	}
 
-	id := uuid.New()
+	id := sid
 	info := proto.SessionInfo{
 		Command:   strings.Join(argv, " "),
 		Cwd:       cwd,
@@ -320,14 +346,21 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 
 	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty})
 
+	combinedCleanup := func() {
+		cleanup()
+		if plan.Cleanup != nil {
+			plan.Cleanup()
+		}
+	}
+
 	h.mu.Lock()
 	if h.sessions == nil {
 		h.mu.Unlock()
-		cleanup()
+		combinedCleanup()
 		_ = pty.Close()
 		return uuid.Nil, fmt.Errorf("relay host stopped")
 	}
-	h.sessions[id] = &activeSession{host: pty, cleanup: cleanup}
+	h.sessions[id] = &activeSession{host: pty, cleanup: combinedCleanup}
 	h.mu.Unlock()
 	h.notifyChange()
 
@@ -337,7 +370,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	go func() {
 		_ = pty.Wait()
 		close(done)
-		cleanup()
+		combinedCleanup()
 		_ = pty.Close()
 		h.mu.Lock()
 		delete(h.sessions, id)
@@ -401,4 +434,22 @@ func usernameOrUid() string {
 		return u.Username
 	}
 	return fmt.Sprintf("uid%d", os.Getuid())
+}
+
+// mergeShellIntegrationPlan returns (argv', env') with the plan's args
+// appended after argv[0] and its env appended after base. Zero plans are
+// the identity transform.
+func mergeShellIntegrationPlan(argv, env []string, p shellintegration.Plan) ([]string, []string) {
+	if len(p.ExtraArgs) == 0 && len(p.ExtraEnv) == 0 {
+		return argv, env
+	}
+	outArgv := append([]string{}, argv...)
+	if len(p.ExtraArgs) > 0 {
+		outArgv = append(outArgv, p.ExtraArgs...)
+	}
+	outEnv := append([]string{}, env...)
+	if len(p.ExtraEnv) > 0 {
+		outEnv = append(outEnv, p.ExtraEnv...)
+	}
+	return outArgv, outEnv
 }

@@ -93,17 +93,27 @@ describe("TerminalView viewer key handling", () => {
   });
 });
 
-describe("TerminalView viewer badge", () => {
-  test("renders a viewer badge when not driver", () => {
-    expect(source).toContain('viewer · press space to take over');
-    expect(source).toContain('class="viewer-badge"');
+describe("TerminalView viewer overlay", () => {
+  test("renders a prominent viewer overlay when not driver", () => {
+    expect(source).toContain('class="viewer-overlay"');
+    expect(source).toContain('class="viewer-overlay-card"');
+    expect(source).toContain('remote has taken control');
+    expect(source).toContain('press space to take back');
     expect(source).toMatch(/v-if=["']!isDriver["']/);
   });
 
-  test("viewer-badge style sits in the bottom-left", () => {
-    const css = styleBlockFor(".viewer-badge");
-    expect(css).toMatch(/position\s*:\s*absolute/);
-    expect(css).toMatch(/bottom\s*:/);
-    expect(css).toMatch(/left\s*:/);
+  test("viewer-overlay covers the term-view with a dim backdrop", () => {
+    const overlayCss = styleBlockFor(".viewer-overlay");
+    expect(overlayCss).toMatch(/position\s*:\s*absolute/);
+    expect(overlayCss).toMatch(/inset\s*:\s*0/);
+    expect(overlayCss).toMatch(/background/); // dim backdrop
+    expect(overlayCss).toMatch(/pointer-events\s*:\s*none/); // don't block scroll/mouse
+  });
+
+  test("viewer-overlay-card has prominent centered content", () => {
+    const cardCss = styleBlockFor(".viewer-overlay-card");
+    expect(cardCss).toMatch(/border-radius/);
+    expect(cardCss).toMatch(/padding/);
+    expect(cardCss).toMatch(/text-align\s*:\s*center/);
   });
 });

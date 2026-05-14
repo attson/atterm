@@ -365,7 +365,12 @@ watch(status, (nextStatus) => {
       <span v-else-if="status === 'ended'" class="dim">session ended</span>
       <span v-else-if="status === 'error'" class="bad">connection error</span>
     </div>
-    <div v-if="!isDriver" class="viewer-badge">viewer · press space to take over</div>
+    <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
+      <div class="viewer-overlay-card">
+        <div class="viewer-overlay-title">remote has taken control</div>
+        <div class="viewer-overlay-hint">press space to take back</div>
+      </div>
+    </div>
     <Teleport to="body">
       <div
         v-if="menuOpen"
@@ -412,18 +417,34 @@ watch(status, (nextStatus) => {
 .overlay.avoid-top-right-badge {
   top: 34px;
 }
-.viewer-badge {
+.viewer-overlay {
   position: absolute;
-  bottom: 8px;
-  left: 12px;
-  background: var(--terminal-overlay);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
-  color: var(--fg-dim);
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
   user-select: none;
+  z-index: 5;
+}
+.viewer-overlay-card {
+  background: var(--terminal-overlay);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 22px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.viewer-overlay-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.viewer-overlay-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
 }
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }

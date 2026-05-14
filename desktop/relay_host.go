@@ -346,11 +346,14 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 
 	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty})
 
+	var cleanupOnce sync.Once
 	combinedCleanup := func() {
-		cleanup()
-		if plan.Cleanup != nil {
-			plan.Cleanup()
-		}
+		cleanupOnce.Do(func() {
+			cleanup()
+			if plan.Cleanup != nil {
+				plan.Cleanup()
+			}
+		})
 	}
 
 	h.mu.Lock()

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,8 +223,8 @@ func linuxClipboardImageReadSpecs(contentType string) []commandSpec {
 
 func readLinuxClipboardImage(ctx context.Context) (*clipboardImageData, error) {
 	foundTool := false
-	for _, contentType := range []string{"image/png", "image/jpeg", "image/gif", "image/webp", "image/tiff"} {
-		for _, spec := range linuxClipboardImageReadSpecs(contentType) {
+	readMime := func(mime string) []byte {
+		for _, spec := range linuxClipboardImageReadSpecs(mime) {
 			if _, err := exec.LookPath(spec.name); err != nil {
 				continue
 			}
@@ -232,18 +233,132 @@ func readLinuxClipboardImage(ctx context.Context) (*clipboardImageData, error) {
 			if err != nil || len(out) == 0 {
 				continue
 			}
-			if len(out) > maxPasteImageBytes {
-				return nil, errClipboardImageTooLarge
-			}
-			return &clipboardImageData{
-				Filename:    "clipboard-image" + pasteImageExt(contentType, "clipboard-image"),
-				ContentType: contentType,
-				Data:        out,
-			}, nil
+			return out
 		}
+		return nil
 	}
+
+	for _, contentType := range []string{"image/png", "image/jpeg", "image/gif", "image/webp", "image/tiff"} {
+		out := readMime(contentType)
+		if len(out) == 0 {
+			continue
+		}
+		if len(out) > maxPasteImageBytes {
+			return nil, errClipboardImageTooLarge
+		}
+		return &clipboardImageData{
+			Filename:    "clipboard-image" + pasteImageExt(contentType, "clipboard-image"),
+			ContentType: contentType,
+			Data:        out,
+		}, nil
+	}
+
+	// Fallback: file managers (Nautilus, Dolphin, ...) put a file reference
+	// on the clipboard instead of the bitmap. Resolve the file path and read
+	// it ourselves so "copy image file → paste" works the same as "screenshot
+	// → paste".
+	if img, err := resolveLinuxClipboardImageFromFileURI(readMime); err != nil {
+		if errors.Is(err, errClipboardImageTooLarge) {
+			return nil, err
+		}
+	} else if img != nil {
+		return img, nil
+	}
+
 	if !foundTool {
 		return nil, errClipboardNoLinuxTools
 	}
 	return nil, errClipboardNoImage
+}
+
+// resolveLinuxClipboardImageFromFileURI reads file-reference clipboard targets
+// (text/uri-list, x-special/gnome-copied-files), picks the first entry whose
+// extension looks like an image, and returns its bytes.
+func resolveLinuxClipboardImageFromFileURI(readMime func(string) []byte) (*clipboardImageData, error) {
+	for _, target := range []string{"text/uri-list", "x-special/gnome-copied-files"} {
+		raw := readMime(target)
+		if len(raw) == 0 {
+			continue
+		}
+		for _, path := range parseClipboardFileURIs(target, raw) {
+			contentType, ok := clipboardImagePathContentType(path)
+			if !ok {
+				continue
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			if len(data) > maxPasteImageBytes {
+				return nil, errClipboardImageTooLarge
+			}
+			return &clipboardImageData{
+				Filename:    filepath.Base(path),
+				ContentType: contentType,
+				Data:        data,
+			}, nil
+		}
+	}
+	return nil, errClipboardNoImage
+}
+
+// parseClipboardFileURIs decodes a clipboard payload of the given target type
+// into a list of local filesystem paths. Handles both the standard text/uri-list
+// format (RFC 2483, one URI per line, '#' comments) and GNOME's
+// x-special/gnome-copied-files (prepends a "copy"/"cut" header line).
+func parseClipboardFileURIs(target string, raw []byte) []string {
+	var paths []string
+	gnome := target == "x-special/gnome-copied-files"
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if gnome && i == 0 && (line == "copy" || line == "cut") {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "file://") {
+			continue
+		}
+		path, err := fileURIToPath(line)
+		if err != nil {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func fileURIToPath(uri string) (string, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != "file" {
+		return "", fmt.Errorf("not a file URI: %q", uri)
+	}
+	if parsed.Path == "" {
+		return "", fmt.Errorf("file URI has no path: %q", uri)
+	}
+	return parsed.Path, nil
+}
+
+func clipboardImagePathContentType(path string) (string, bool) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png", true
+	case ".jpg", ".jpeg":
+		return "image/jpeg", true
+	case ".gif":
+		return "image/gif", true
+	case ".webp":
+		return "image/webp", true
+	case ".tif", ".tiff":
+		return "image/tiff", true
+	}
+	return "", false
 }

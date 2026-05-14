@@ -141,3 +141,10 @@ describe("TerminalView bell notifications", () => {
     expect(source).toMatch(/Bell in \$\{\s*props\.sessionLabel/);
   });
 });
+
+describe("PaneGrid session label forwarding", () => {
+  test("imports extractSessionLabel and passes it to TerminalView", () => {
+    expect(paneSource).toContain("extractSessionLabel");
+    expect(paneSource).toContain(':session-label="extractSessionLabel(sessionInfoFor(pane))"');
+  });
+});

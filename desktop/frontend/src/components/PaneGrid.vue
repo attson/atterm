@@ -5,6 +5,7 @@ import type { Endpoint } from "../lib/api";
 import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab } from "../lib/types";
 import type { TerminalThemeDefinition } from "../lib/terminalThemes";
+import { extractSessionLabel } from "../lib/terminalBell";
 
 const props = defineProps<{
   tab: Tab;
@@ -60,6 +61,7 @@ function formatWho(info: SessionInfo | null): string {
         :expected-cols="sessionInfoFor(pane)?.cols"
         :expected-rows="sessionInfoFor(pane)?.rows"
         :remote-permission="sessionInfoFor(pane)?.remote_permission"
+        :session-label="extractSessionLabel(sessionInfoFor(pane))"
         :avoid-top-right-badge="pane.remote"
         :theme="terminalTheme"
         @toast="emit('toast', $event)"

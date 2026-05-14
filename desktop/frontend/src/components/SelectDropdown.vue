@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 
 export interface SelectOption {
   value: string;
@@ -18,25 +18,90 @@ defineEmits<{
   (e: "update:modelValue", value: string): void;
 }>();
 
+const open = ref(false);
+const rootRef = ref<HTMLElement | null>(null);
+
 const selectedLabel = computed(() => {
   const match = props.options.find((o) => o.value === props.modelValue);
   return match ? match.label : "";
 });
+
+function openMenu() {
+  if (props.disabled) return;
+  open.value = true;
+}
+
+function closeMenu() {
+  open.value = false;
+}
+
+function onTriggerClick() {
+  if (props.disabled) return;
+  open.value ? closeMenu() : openMenu();
+}
+
+function onTriggerKeydown(e: KeyboardEvent) {
+  if (props.disabled) return;
+  if (e.key === "Escape" && open.value) {
+    e.preventDefault();
+    closeMenu();
+  }
+}
+
+function onDocumentMousedown(e: MouseEvent) {
+  if (!open.value) return;
+  const target = e.target as Node | null;
+  if (rootRef.value && target && rootRef.value.contains(target)) return;
+  closeMenu();
+}
+
+watch(open, (isOpen) => {
+  if (isOpen) {
+    document.addEventListener("mousedown", onDocumentMousedown);
+  } else {
+    document.removeEventListener("mousedown", onDocumentMousedown);
+  }
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocumentMousedown);
+});
 </script>
 
 <template>
-  <div class="select-dropdown">
+  <div ref="rootRef" class="select-dropdown">
     <button
       type="button"
       class="trigger"
+      :class="{ 'trigger-open': open }"
       data-testid="select-trigger"
       :aria-label="ariaLabel"
       aria-haspopup="listbox"
-      aria-expanded="false"
+      :aria-expanded="open ? 'true' : 'false'"
       :disabled="disabled"
+      @click="onTriggerClick"
+      @keydown="onTriggerKeydown"
     >
       <span class="trigger-label">{{ selectedLabel }}</span>
     </button>
+    <ul
+      v-if="open"
+      class="menu"
+      data-testid="select-menu"
+      role="listbox"
+    >
+      <li
+        v-for="option in options"
+        :key="option.value"
+        class="option"
+        role="option"
+      >
+        <span class="option-label">{{ option.label }}</span>
+        <span v-if="option.description" class="option-description">
+          {{ option.description }}
+        </span>
+      </li>
+    </ul>
   </div>
 </template>
 
@@ -88,5 +153,41 @@ const selectedLabel = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.trigger-open::after {
+  transform: rotate(180deg);
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+}
+.option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.option-label {
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.3;
+}
+.option-description {
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.3;
 }
 </style>

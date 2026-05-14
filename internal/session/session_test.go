@@ -380,3 +380,32 @@ func TestUpdateMetaBroadcastsPreservesDriverState(t *testing.T) {
 		t.Fatalf("meta.DriverClientName = %q; want alpha-host", m.DriverClientName)
 	}
 }
+
+// BenchmarkFanoutHotPath measures the per-PushOut cost when several subscribers
+// are draining quickly. The key win from the sync.Pool refactor is zero allocs
+// on the snapshot slice; previously every call allocated len(s.subs)*8 bytes.
+func BenchmarkFanoutHotPath(b *testing.B) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	const nSubs = 4
+	subs := make([]*Subscriber, nSubs)
+	for i := range subs {
+		sub, _ := s.Subscribe(0, "", "")
+		subs[i] = sub
+		go func(out <-chan proto.Frame, done <-chan struct{}) {
+			for {
+				select {
+				case <-out:
+				case <-done:
+					return
+				}
+			}
+		}(sub.Out(), sub.Done())
+	}
+
+	payload := []byte("x")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.PushOut(uint64(i+1), payload)
+	}
+}

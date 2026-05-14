@@ -53,6 +53,7 @@ const (
     TypeStreamRequest Type = 0x31  // relay → uplink
     TypeStreamStop    Type = 0x32  // relay → uplink
     TypePasteImage    Type = 0x33  // client → relay → desktop PTY host
+    TypeClaimDriver   Type = 0x34  // client → relay (viewer claims driver role)
 )
 ```
 
@@ -95,10 +96,21 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
 ### `META` (0x05) — 元数据更新
 
 ```json
-{ "cwd": "/var/log", "title": "log" }
+{
+  "cwd": "/var/log",
+  "title": "log",
+  "driver_client_id": "<uuid>",
+  "cols": 132,
+  "rows": 39
+}
 ```
 
-字段都 optional，agent 在 cwd / title 变化时发。relay 收到后 `UpdateMeta` 并 broadcast 给所有 subscriber。
+字段都 optional。agent 在 cwd / title 变化时发；relay 在 driver 变化或 PTY 尺寸（`UpdateSize`）变化时也会自行 broadcast 一帧。subscriber 收到后：
+
+- `driver_client_id` 与本地生成的 `ATTACH.client_id` 比对，决定自己是 driver 还是 viewer
+- `cols` / `rows` 是 PTY 当前真实尺寸；viewer 把自己的 xterm `term.resize(cols, rows)` 锁到这个值（不跑 FitAddon）
+
+每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id 和 cols/rows，作为初始状态。
 
 ### `CLOSE` (0x06) — 会话结束
 
@@ -111,10 +123,12 @@ agent 发出后 relay 移除 session，所有 subscriber 收到 CLOSE 后断开�
 ### `ATTACH` (0x10) — client 接管 session
 
 ```json
-{ "session_id": "<uuid string>", "since_seq": 0 }
+{ "session_id": "<uuid string>", "since_seq": 0, "client_id": "<uuid>" }
 ```
 
 session_id 同时填到帧 header 的 `session_id` 字段（冗余但便于路由）。`since_seq` 0 = 全量 scrollback；非 0 = 只补发 seq > N 的帧。
+
+`client_id` 是 client 在创建 `SessionConnection` 时自己生成的 UUID，每个 connection 实例一个。relay 把它存在对应 `Subscriber` 上，并在 `META.driver_client_id` 里回放，让 client 通过本地 ID 比对识别自己是不是当前 driver。该字段可选——旧版 client 不发 client_id 时 relay 仍接受订阅，只是 client 永远不会渲染成 driver（始终 viewer 视觉）；服务端 driver 指针仍正确指向该 sub，IN/RESIZE 仍可通过，UI 行为退化为静默 driver。
 
 ### `LIST` (0x11) / `LIST_RESP` (0x12)
 
@@ -224,6 +238,37 @@ payload = JSON：
 ```
 
 `data` 解码后最大 10 MiB（JSON/base64 后仍需低于协议 16 MiB payload 上限）。`content_type` 必须是 `image/*`。
+
+### `CLAIM_DRIVER` (0x34) — client → relay
+
+viewer 想接管成为 driver 时发。payload = JSON：
+
+```json
+{ "client_id": "<uuid>" }
+```
+
+`client_id` 应与发送方 `ATTACH.client_id` 相同（end-to-end 标识）；relay 把它原样写进新一帧 META 的 `driver_client_id` 广播给所有 subscriber。无需当前 driver 确认——立即生效。
+
+relay 拒绝以下情形（debug log 但不发错误帧给 client）：
+- 未 attach
+- 读权限 token（`authRead` scope）
+- session 的 `remote_permission == view`
+- payload 不是合法 JSON
+
+桌面 app 的 uplink 收到 CLAIM_DRIVER 后调 `relayHost.ClaimLocalDriver`，把本地 mini relay 上的 uplink subscriber 提升为 driver（同时把 end-to-end `client_id` 透传）；多跳时 driver 状态由最远端 client 的 ID 决定。
+
+## Driver / Viewer 模型
+
+每个 session 在任意时刻最多有一个 driver subscriber。driver 是唯一允许把 `IN` / `RESIZE` / `PASTE_IMAGE` 转发到 PTY 的连接；其它都是 viewer（只收 `OUT` / `META` / `CLOSE` / `REPLAY_PROGRESS`）。
+
+- **自动晋升**：第一个 `Subscribe` 上来的 subscriber（不论 loopback 还是 uplink）自动 driver。
+- **接管**：viewer 端按空格 → `CLAIM_DRIVER` → relay 切 driver → META 广播。
+- **解绑**：driver subscriber 断开（disconnect / 慢消费被踢 / session 关闭）时 driver 字段清空、`driver_client_id` 广播为 `""`；之后第一个 claim 的 viewer 胜出。
+- **多跳**：公网 relay 当前不在自己一层做仲裁，把所有 subscriber 当作集合代理到 uplink；多个 mobile/web 同时连同一 session 时它们共享"远端 driver"位（cooperative 客户端 v1，后续可在公网 relay 加 driver 状态机做仲裁）。
+- **权限交互**：`remote_permission` 是 session 策略，driver 是运行时角色，两者正交。`view` 权限的 subscriber 永远不能 claim；`control` / `full` 可以。
+- **viewer 视觉**：xterm.js 不跑 FitAddon，`term.resize(meta.cols, meta.rows)` 锁到 PTY 尺寸；`disableStdin=true` 阻止 IN 转发；右下角 badge "viewer · press space to take over"。
+
+新 attach 上来：relay 在 `REPLAY_PROGRESS end` 之后立即发一帧 snapshot `META`，让 client 拿到当前 driver_client_id 和 PTY cols/rows。
 
 ## HTTP 端点（非帧协议）
 

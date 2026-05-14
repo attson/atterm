@@ -7,8 +7,11 @@ import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
+import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
+import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
   closeSession,
+  confirmQuit,
   getEndpoint,
   getHostInfo,
   getRelayConfig,
@@ -45,6 +48,26 @@ const starting = ref(false);
 const showSettings = ref(false);
 const showRemote = ref(false);
 const toast = ref<string>("");
+
+const quitDialogOpen = ref(false);
+let quitListenerOff: (() => void) | null = null;
+
+function handleBeforeClose() {
+  if (localSessionCount.value === 0 && remoteSessionCount.value === 0) {
+    void confirmQuit();
+    return;
+  }
+  quitDialogOpen.value = true;
+}
+
+function onConfirmQuit() {
+  quitDialogOpen.value = false;
+  void confirmQuit();
+}
+
+function onCancelQuit() {
+  quitDialogOpen.value = false;
+}
 
 const updateBadge = ref(false);
 let updatePollHandle: number | null = null;
@@ -516,6 +539,7 @@ watch([tabs, currentTabId], () => {
 });
 
 onMounted(async () => {
+  quitListenerOff = EventsOn("before-close", handleBeforeClose);
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
   // Set up the size-prediction probe before anything spawns a PTY — the
@@ -553,6 +577,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  quitListenerOff?.();
+  quitListenerOff = null;
   window.removeEventListener("hashchange", syncRoute);
   localSessionListConn?.detach();
   remoteSessionListConn?.detach();
@@ -672,6 +698,13 @@ onUnmounted(() => {
       :remote-sessions="remoteList"
       @pick="onPickerPick"
       @close="onPickerClose"
+    />
+    <ConfirmQuitDialog
+      v-if="quitDialogOpen"
+      :local-count="localSessionCount"
+      :remote-count="remoteSessionCount"
+      @confirm="onConfirmQuit"
+      @cancel="onCancelQuit"
     />
   </div>
 </template>

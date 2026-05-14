@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +33,11 @@ type clipboardImageData struct {
 var (
 	errClipboardNoImage       = errors.New("clipboard has no image")
 	errClipboardImageTooLarge = errors.New("clipboard image too large")
+	// errClipboardNoLinuxTools is returned by readLinuxClipboardImage when
+	// none of wl-paste/xclip/xsel are on $PATH. Surfaced verbatim to the
+	// frontend via Reason so the user gets an actionable hint instead of a
+	// silent fall-through to text or a noisy stderr log on every paste.
+	errClipboardNoLinuxTools = errors.New("install xclip, wl-paste, or xsel to paste images")
 )
 
 func clipboardPastePayload(text string, image *clipboardImageData, imageErr error) ClipboardPastePayload {
@@ -217,16 +221,15 @@ func linuxClipboardImageReadSpecs(contentType string) []commandSpec {
 }
 
 func readLinuxClipboardImage(ctx context.Context) (*clipboardImageData, error) {
-	var lastErr error
+	foundTool := false
 	for _, contentType := range []string{"image/png", "image/jpeg", "image/gif", "image/webp", "image/tiff"} {
 		for _, spec := range linuxClipboardImageReadSpecs(contentType) {
 			if _, err := exec.LookPath(spec.name); err != nil {
-				lastErr = err
 				continue
 			}
+			foundTool = true
 			out, err := exec.CommandContext(ctx, spec.name, spec.args...).Output()
 			if err != nil || len(out) == 0 {
-				lastErr = err
 				continue
 			}
 			if len(out) > maxPasteImageBytes {
@@ -239,8 +242,8 @@ func readLinuxClipboardImage(ctx context.Context) (*clipboardImageData, error) {
 			}, nil
 		}
 	}
-	if lastErr != nil {
-		log.Printf("desktop-clipboard: image read unavailable error=%v", lastErr)
+	if !foundTool {
+		return nil, errClipboardNoLinuxTools
 	}
 	return nil, errClipboardNoImage
 }

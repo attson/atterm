@@ -62,6 +62,18 @@ const MENU_HEIGHT = 76;
 
 const menuCanPaste = computed(() => isPasteAllowed(status.value, props.remotePermission));
 
+function handleViewerKeydown(event: KeyboardEvent) {
+  if (isDriver.value) return; // driver mode passes through
+  // Only intercept bare space (no modifiers) so Cmd+C copy, arrow-key scroll,
+  // and other existing shortcuts still work in viewer mode. disableStdin on
+  // the terminal already blocks the IN forwarding path for other keys.
+  if (event.key === " " && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    conn?.claimDriver();
+  }
+}
+
 async function handleCopyShortcut(e: KeyboardEvent) {
   if (!term || !isTerminalCopyShortcut(e)) return;
   e.preventDefault();
@@ -216,6 +228,7 @@ function ensureTerm() {
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
+  keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
   term.onData((data) => conn?.sendInput(data));
@@ -297,6 +310,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
   term?.dispose();

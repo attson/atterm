@@ -84,3 +84,11 @@ describe("TerminalView driver/viewer mode", () => {
     expect(source).toMatch(/disableStdin/);
   });
 });
+
+describe("TerminalView viewer key handling", () => {
+  test("intercepts bare Space in viewer mode and calls claimDriver", () => {
+    expect(source).toMatch(/handleViewerKeydown/);
+    expect(source).toMatch(/claimDriver/);
+    expect(source).toMatch(/event\.key\s*===\s*" "/);
+  });
+});

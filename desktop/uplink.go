@@ -350,6 +350,18 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			} else {
 				log.Printf("desktop-uplink: inbound_forward_ok type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
 			}
+		case proto.TypeClaimDriver:
+			log.Printf("desktop-uplink: inbound_recv type=CLAIM_DRIVER %s", desktopUplinkFrameLogDetails(f))
+			var cp proto.ClaimDriverPayload
+			if err := json.Unmarshal(f.Payload, &cp); err != nil {
+				log.Printf("desktop-uplink: inbound_drop type=CLAIM_DRIVER reason=bad_payload session=%s err=%q", f.SessionID, err)
+				continue
+			}
+			if err := u.host.ClaimLocalDriver(f.SessionID, cp.ClientID); err != nil {
+				log.Printf("desktop-uplink: inbound_drop type=CLAIM_DRIVER reason=%q session=%s", err, f.SessionID)
+			} else {
+				log.Printf("desktop-uplink: inbound_forward_ok type=CLAIM_DRIVER session=%s client_id=%q", f.SessionID, cp.ClientID)
+			}
 		case proto.TypePong:
 			// keepalive ack from relay
 		default:
@@ -464,6 +476,8 @@ func desktopUplinkFrameTypeName(typ proto.Type) string {
 		return "CLOSE"
 	case proto.TypePasteImage:
 		return "PASTE_IMAGE"
+	case proto.TypeClaimDriver:
+		return "CLAIM_DRIVER"
 	case proto.TypeReplayProgress:
 		return "REPLAY_PROGRESS"
 	default:

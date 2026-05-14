@@ -1,27 +1,16 @@
 <script lang="ts" setup>
-import { computed, onMounted, onBeforeUnmount, ref } from "vue";
+import { onMounted, ref } from "vue";
 import {
-  checkUpdate,
-  getAutoCheckUpdates,
-  getLoggingConfig,
   getLogPreview,
-  getRelayConfig,
   getTerminalThemePreference,
-  getUpdateState,
   installUpdate,
-  pickLogFilePath,
-  setAutoCheckUpdates,
-  setLoggingConfig,
-  setRelayConfig,
-  setTerminalThemePreference,
-  startDownload,
   type LogPreview,
-  type UpdateState,
 } from "../lib/api";
-import {
-  TERMINAL_THEMES,
-  getTerminalTheme,
-} from "../lib/terminalThemes";
+import { getTerminalTheme } from "../lib/terminalThemes";
+import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsRelay from "./SettingsRelay.vue";
+import SettingsLogging from "./SettingsLogging.vue";
+import SettingsUpdates from "./SettingsUpdates.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 
@@ -37,219 +26,72 @@ const emit = defineEmits<{
   (e: "terminal-theme-changed", themeID: string): void;
 }>();
 
-const url = ref("");
-const token = ref("");
-const allowInsecureRelay = ref(false);
-const remotePermission = ref("full");
-const selectedTerminalTheme = ref(getTerminalTheme(props.terminalThemeId).id);
-const persistedTerminalTheme = ref(getTerminalTheme(props.terminalThemeId).id);
-const connected = ref(false);
-const loading = ref(true);
-const saving = ref(false);
-const error = ref("");
-const logToFileEnabled = ref(true);
-const logFilePath = ref("");
-const effectiveLogFilePath = ref("");
+const activeTab = ref<"general" | "relay" | "logging" | "updates">("general");
+const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
+
+const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
+const relayDirty = ref(false);
+const pendingTab = ref<"general" | "relay" | "logging" | "updates" | null>(null);
+const showDiscardConfirm = ref(false);
+
 const logPreview = ref<LogPreview | null>(null);
 const logViewerError = ref("");
 const logViewerLoading = ref(false);
 const showLogViewer = ref(false);
 
-const updateState = ref<UpdateState | null>(null);
-const autoCheck = ref(true);
-const checkingNow = ref(false);
 const showConfirm = ref(false);
-let pollHandle: number | null = null;
+const updateVersionForConfirm = ref("");
 
 onMounted(async () => {
   try {
-    const [cfg, loggingCfg, st, ac, themeID] = await Promise.all([
-      getRelayConfig(),
-      getLoggingConfig(),
-      getUpdateState(),
-      getAutoCheckUpdates(),
-      getTerminalThemePreference(),
-    ]);
-    url.value = cfg.url;
-    token.value = cfg.token;
-    allowInsecureRelay.value = cfg.allow_insecure_relay;
-    remotePermission.value = cfg.remote_permission || "full";
-    connected.value = cfg.connected;
-    logToFileEnabled.value = loggingCfg.enabled;
-    logFilePath.value = loggingCfg.path;
-    effectiveLogFilePath.value = loggingCfg.effective_path;
-    updateState.value = st;
-    autoCheck.value = ac;
-    selectedTerminalTheme.value = getTerminalTheme(themeID).id;
-    persistedTerminalTheme.value = selectedTerminalTheme.value;
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    loading.value = false;
+    const themeID = await getTerminalThemePreference();
+    persistedTheme.value = getTerminalTheme(themeID).id;
+  } catch {
+    /* keep the prop value */
   }
-  pollHandle = window.setInterval(async () => {
-    try {
-      updateState.value = await getUpdateState();
-    } catch {
-      /* ignore — relay polling already surfaces general health */
-    }
-  }, 2000);
 });
 
-onBeforeUnmount(() => {
-  if (pollHandle !== null) window.clearInterval(pollHandle);
-});
-
-async function save() {
-  saving.value = true;
-  error.value = "";
-  try {
-    await setRelayConfig({
-      url: url.value.trim(),
-      token: token.value.trim(),
-      allow_insecure_relay: allowInsecureRelay.value,
-      remote_permission: remotePermission.value,
-    });
-    const cfg = await getRelayConfig();
-    connected.value = cfg.connected;
-    emit("relay-config-changed");
-    emit("close");
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    saving.value = false;
+function switchTab(next: "general" | "relay" | "logging" | "updates") {
+  if (activeTab.value === next) return;
+  if (activeTab.value === "relay" && relayDirty.value) {
+    pendingTab.value = next;
+    showDiscardConfirm.value = true;
+    return;
   }
+  activeTab.value = next;
 }
 
-async function disconnect() {
-  saving.value = true;
-  error.value = "";
-  try {
-    await setRelayConfig({ url: "", token: "", allow_insecure_relay: false });
-    url.value = "";
-    token.value = "";
-    allowInsecureRelay.value = false;
-    remotePermission.value = "full";
-    connected.value = false;
-    emit("relay-config-changed");
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    saving.value = false;
+function onConfirmDiscard() {
+  showDiscardConfirm.value = false;
+  if (pendingTab.value) {
+    activeTab.value = pendingTab.value;
+    pendingTab.value = null;
   }
+  relayDirty.value = false;
+}
+
+function onKeepEditing() {
+  showDiscardConfirm.value = false;
+  pendingTab.value = null;
 }
 
 function close() {
-  if (!saving.value) emit("close");
+  if (relayRef.value?.saving) return;
+  emit("close");
 }
 
-async function onTerminalThemeChange() {
-  const nextTheme = getTerminalTheme(selectedTerminalTheme.value).id;
-  const previousTheme = persistedTerminalTheme.value;
-  selectedTerminalTheme.value = nextTheme;
-  error.value = "";
-  try {
-    await setTerminalThemePreference(nextTheme);
-    persistedTerminalTheme.value = nextTheme;
-    emit("terminal-theme-changed", nextTheme);
-  } catch (e: any) {
-    selectedTerminalTheme.value = previousTheme;
-    emit("terminal-theme-changed", previousTheme);
-    error.value = e?.message ?? String(e);
-  }
+function onRelayDirty(value: boolean) {
+  relayDirty.value = value;
 }
 
-async function onCheckNow() {
-  checkingNow.value = true;
-  try {
-    await checkUpdate();
-  } catch {
-    /* state.error reflects in poll */
-  } finally {
-    checkingNow.value = false;
-  }
+function onRelayConfigChanged() {
+  relayDirty.value = false;
+  emit("relay-config-changed");
 }
 
-async function onDownload() {
-  try {
-    await startDownload();
-  } catch {
-    /* state.error reflects in poll */
-  }
-}
-
-function onForceInstallClick() {
-  showConfirm.value = true;
-}
-
-async function onConfirmInstall() {
-  showConfirm.value = false;
-  try {
-    await installUpdate();
-    // App will quit shortly; nothing more to do.
-  } catch {
-    /* state.error reflects in poll */
-  }
-}
-
-async function onAutoCheckToggle(e: Event) {
-  const target = e.target as HTMLInputElement;
-  autoCheck.value = target.checked;
-  await setAutoCheckUpdates(target.checked);
-}
-
-async function onLoggingToggle(e: Event) {
-  const target = e.target as HTMLInputElement;
-  const previousEnabled = logToFileEnabled.value;
-  logToFileEnabled.value = target.checked;
-  error.value = "";
-  try {
-    await setLoggingConfig({
-      enabled: target.checked,
-      path: logFilePath.value,
-    });
-    const cfg = await getLoggingConfig();
-    logToFileEnabled.value = cfg.enabled;
-    logFilePath.value = cfg.path;
-    effectiveLogFilePath.value = cfg.effective_path;
-  } catch (e: any) {
-    logToFileEnabled.value = previousEnabled;
-    error.value = e?.message ?? String(e);
-  }
-}
-
-async function onPickLogFilePath() {
-  error.value = "";
-  try {
-    const pickedPath = await pickLogFilePath();
-    if (!pickedPath) return;
-    await setLoggingConfig({
-      enabled: logToFileEnabled.value,
-      path: pickedPath,
-    });
-    const cfg = await getLoggingConfig();
-    logToFileEnabled.value = cfg.enabled;
-    logFilePath.value = cfg.path;
-    effectiveLogFilePath.value = cfg.effective_path;
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  }
-}
-
-async function onResetLogFilePath() {
-  error.value = "";
-  try {
-    await setLoggingConfig({
-      enabled: logToFileEnabled.value,
-      path: "",
-    });
-    const cfg = await getLoggingConfig();
-    logToFileEnabled.value = cfg.enabled;
-    logFilePath.value = cfg.path;
-    effectiveLogFilePath.value = cfg.effective_path;
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  }
+function onTerminalThemeChanged(themeID: string) {
+  persistedTheme.value = getTerminalTheme(themeID).id;
+  emit("terminal-theme-changed", themeID);
 }
 
 async function openLogViewer() {
@@ -269,222 +111,114 @@ async function refreshLogViewer() {
   }
 }
 
-const updateStatusLine = computed(() => {
-  const st = updateState.value;
-  if (!st) return "";
-  if (st.current === "dev" || st.current === "") {
-    return "development build — auto-update disabled";
-  }
-  if (st.error) return st.error;
-  if (st.checking || checkingNow.value) return "checking…";
-  if (st.ready) return `${st.latest} downloaded — ready to install`;
-  if (st.downloading) return `downloading ${st.latest} (${st.download_pct}%)`;
-  if (st.available) return `${st.latest} available`;
-  if (st.last_check_at > 0) return `up to date · last checked ${formatAgo(st.last_check_at)}`;
-  return "not checked yet";
-});
-
-function formatAgo(unixSec: number) {
-  const diffSec = Math.floor(Date.now() / 1000) - unixSec;
-  if (diffSec < 60) return "just now";
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} min ago`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} h ago`;
-  return `${Math.floor(diffSec / 86400)} d ago`;
+function onForceInstallClick(version: string) {
+  updateVersionForConfirm.value = version;
+  showConfirm.value = true;
 }
 
-const showUpdates = computed(() => updateState.value !== null);
-const isDev = computed(
-  () => updateState.value?.current === "dev" || updateState.value?.current === "",
-);
+async function onConfirmInstall() {
+  showConfirm.value = false;
+  try {
+    await installUpdate();
+  } catch {
+    /* state.error reflects in poll */
+  }
+}
+
+function onSaveClick() {
+  relayRef.value?.save();
+}
+
+function onDisconnectClick() {
+  relayRef.value?.disconnect();
+}
 </script>
 
 <template>
   <div class="backdrop" @click.self="close">
-    <div class="dialog">
-      <h2>relay settings</h2>
+    <div class="settings-dialog">
+      <header class="settings-header">
+        <h2>Settings</h2>
+        <button class="close-btn" @click="close" :disabled="relayRef?.saving">×</button>
+      </header>
 
-      <div v-if="loading" class="dim">loading…</div>
-      <template v-else>
-        <p class="hint">
-          configure a remote atterm-relay so this machine's sessions can be
-          attached from other devices. when no one is attached, no bytes leave
-          this machine.
-        </p>
+      <div class="settings-body">
+        <aside class="settings-nav">
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'general' }"
+            @click="switchTab('general')"
+          >General</button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'relay' }"
+            @click="switchTab('relay')"
+          >Relay</button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'logging' }"
+            @click="switchTab('logging')"
+          >Logging</button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'updates' }"
+            @click="switchTab('updates')"
+          >Updates</button>
+        </aside>
 
-        <label>terminal theme</label>
-        <select
-          v-model="selectedTerminalTheme"
-          :disabled="saving"
-          @change="onTerminalThemeChange"
-        >
-          <option
-            v-for="theme in TERMINAL_THEMES"
-            :key="theme.id"
-            :value="theme.id"
-          >
-            {{ theme.label }} — {{ theme.description }}
-          </option>
-        </select>
-        <p class="hint">
-          Applies to all terminal panes immediately and is saved as your local desktop preference.
-        </p>
-
-        <label>relay url</label>
-        <input
-          v-model="url"
-          type="text"
-          placeholder="wss://relay.example.com"
-          :disabled="saving"
-          @keyup.enter="save"
-        />
-
-        <label>token</label>
-        <input
-          v-model="token"
-          type="password"
-          placeholder="shared bearer token"
-          :disabled="saving"
-          @keyup.enter="save"
-        />
-
-        <label>remote session permissions</label>
-        <select v-model="remotePermission" :disabled="saving">
-          <option value="view">view only — remote clients can watch output</option>
-          <option value="control">control — allow input and resize</option>
-          <option value="full">full — allow input, resize, and image paste</option>
-        </select>
-        <p class="hint">
-          This is announced as the owner policy for sessions from this desktop.
-          Relay-side read-only tokens can still reduce access to view only.
-        </p>
-
-        <label class="checkbox insecure-toggle">
-          <input
-            v-model="allowInsecureRelay"
-            type="checkbox"
-            :disabled="saving"
+        <section class="settings-pane">
+          <SettingsGeneral
+            v-show="activeTab === 'general'"
+            :terminal-theme-id="persistedTheme"
+            @terminal-theme-changed="onTerminalThemeChanged"
           />
-          enable insecure mode (allow ws:// cleartext relay)
-        </label>
-        <p v-if="allowInsecureRelay" class="warning">
-          ws:// sends the relay token, terminal output, and your input in
-          clear text. Use this only on trusted private networks.
-        </p>
+          <SettingsRelay
+            v-show="activeTab === 'relay'"
+            ref="relayRef"
+            @dirty="onRelayDirty"
+            @relay-config-changed="onRelayConfigChanged"
+          />
+          <SettingsLogging
+            v-show="activeTab === 'logging'"
+            @open-log-viewer="openLogViewer"
+          />
+          <SettingsUpdates
+            v-show="activeTab === 'updates'"
+            @request-install="onForceInstallClick"
+          />
+        </section>
+      </div>
 
-        <div class="status">
-          <span :class="connected ? 'on' : 'off'">●</span>
-          {{ connected ? "uplink running" : "uplink stopped" }}
-        </div>
-
-        <div class="updates">
-          <h2>logging</h2>
-          <label class="checkbox">
-            <input
-              type="checkbox"
-              :checked="logToFileEnabled"
-              @change="onLoggingToggle"
-            />
-            write logs to file
-          </label>
-          <div class="grid">
-            <div class="kv">
-              <span class="k">current log file</span>
-              <span class="v path" :title="effectiveLogFilePath">
-                {{ effectiveLogFilePath }}
-              </span>
-            </div>
-          </div>
-          <div class="row">
-            <button @click="onPickLogFilePath">change location</button>
-            <button @click="onResetLogFilePath">reset default</button>
-            <button @click="openLogViewer">view logs</button>
-          </div>
-        </div>
-
-        <div v-if="error" class="error">{{ error }}</div>
-
-        <div class="row">
-          <button @click="close" :disabled="saving">cancel</button>
-          <button
-            v-if="connected"
-            @click="disconnect"
-            :disabled="saving"
-            class="danger"
-          >disconnect</button>
-          <button
-            class="primary"
-            @click="save"
-            :disabled="saving || !url.trim()"
-          >
-            {{ saving ? "saving…" : "save & connect" }}
-          </button>
-        </div>
-
-        <div v-if="showUpdates" class="updates">
-          <h2>updates</h2>
-          <div class="grid">
-            <div class="kv">
-              <span class="k">current version</span>
-              <span class="v">{{ updateState!.current || "(unknown)" }}</span>
-            </div>
-            <div class="kv">
-              <span class="k">status</span>
-              <span class="v">{{ updateStatusLine }}</span>
-            </div>
-            <div
-              v-if="updateState!.download_path && (updateState!.ready || updateState!.downloading)"
-              class="kv"
-            >
-              <span class="k">download path</span>
-              <span class="v path" :title="updateState!.download_path">
-                {{ updateState!.download_path }}
-              </span>
-            </div>
-          </div>
-
-          <div v-if="!isDev" class="row autocheck">
-            <label class="checkbox">
-              <input
-                type="checkbox"
-                :checked="autoCheck"
-                @change="onAutoCheckToggle"
-              />
-              automatically check for updates
-            </label>
-          </div>
-
-          <details v-if="!isDev && updateState!.notes" class="notes">
-            <summary>release notes</summary>
-            <pre>{{ updateState!.notes }}</pre>
-          </details>
-
-          <div v-if="!isDev" class="row">
-            <button
-              @click="onCheckNow"
-              :disabled="checkingNow || updateState!.checking"
-            >check now</button>
-            <button
-              v-if="updateState!.available && !updateState!.ready && !updateState!.downloading"
-              class="primary"
-              @click="onDownload"
-            >download {{ updateState!.latest }}</button>
-            <button
-              v-if="updateState!.downloading"
-              class="primary"
-              disabled
-            >downloading… {{ updateState!.download_pct }}%</button>
-            <button
-              v-if="updateState!.ready"
-              class="primary danger"
-              @click="onForceInstallClick"
-            >force install &amp; restart</button>
-          </div>
-        </div>
-      </template>
+      <footer v-if="activeTab === 'relay'" class="settings-footer">
+        <button @click="close" :disabled="relayRef?.saving">cancel</button>
+        <button
+          v-if="relayRef?.connected"
+          class="danger"
+          @click="onDisconnectClick"
+          :disabled="relayRef?.saving"
+        >disconnect</button>
+        <button
+          class="primary"
+          :disabled="!relayRef?.canSave"
+          @click="onSaveClick"
+        >{{ relayRef?.saveLabel ?? "save & connect" }}</button>
+      </footer>
     </div>
+
+    <div v-if="showDiscardConfirm" class="discard-backdrop" @click.self="onKeepEditing">
+      <div class="discard-dialog">
+        <h3>Discard unsaved relay changes?</h3>
+        <p>Your edits to relay URL, token, permissions, or insecure mode are not saved yet.</p>
+        <div class="discard-row">
+          <button @click="onKeepEditing">stay</button>
+          <button class="danger" @click="onConfirmDiscard">discard</button>
+        </div>
+      </div>
+    </div>
+
     <ConfirmInstallDialog
-      v-if="showConfirm && updateState"
-      :version="updateState.latest"
+      v-if="showConfirm"
+      :version="updateVersionForConfirm"
       :local-count="props.localSessionCount"
       :remote-count="props.remoteSessionCount"
       @confirm="onConfirmInstall"
@@ -492,7 +226,7 @@ const isDev = computed(
     />
     <LogViewerDialog
       v-if="showLogViewer"
-      :preview="logPreview ?? { path: effectiveLogFilePath, exists: false, truncated: false, content: '' }"
+      :preview="logPreview ?? { path: '', exists: false, truncated: false, content: '' }"
       :loading="logViewerLoading"
       :error="logViewerError"
       @refresh="refreshLogViewer"
@@ -503,93 +237,195 @@ const isDev = computed(
 
 <style scoped>
 .backdrop {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
-  display: flex; align-items: center; justify-content: center; z-index: 100;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
 }
-.dialog {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 8px; padding: 20px 24px; width: 460px;
+.settings-dialog {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 720px;
+  height: 540px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  overflow-y: auto;
   box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.dialog h2 {
-  margin: 0 0 12px; font-size: 14px; font-weight: 600;
-  letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-dim);
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
 }
-.hint {
-  font-size: 12px; color: var(--fg-dim); margin: 0 0 8px; line-height: 1.5;
+.settings-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
 }
-label {
-  font-size: 12px; color: var(--fg-dim); margin-top: 6px;
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
 }
-.status {
-  font-size: 12px; color: var(--fg-dim); margin-top: 10px;
-  display: flex; align-items: center; gap: 6px;
+.close-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
 }
-.status .on { color: var(--good); }
-.status .off { color: var(--fg-dim); }
-.dim { color: var(--fg-dim); font-size: 13px; padding: 8px 0; }
-.error { color: var(--bad); font-size: 12px; margin-top: 6px; }
-.warning {
-  color: var(--bad); font-size: 12px; line-height: 1.45; margin: 2px 0 0;
+.settings-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
 }
-.row {
-  display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+.settings-nav {
+  width: 160px;
+  flex: 0 0 160px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 8px 6px;
+  gap: 2px;
 }
-button.danger {
-  border-color: var(--bad); color: var(--bad);
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
 }
-button.danger:hover { background: rgba(248, 81, 73, 0.1); }
-
-.updates {
-  border-top: 1px solid var(--border);
-  margin-top: 16px;
-  padding-top: 16px;
+.settings-nav-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg);
 }
-.updates h2 { margin-bottom: 8px; }
-.grid {
-  display: grid; gap: 6px; font-size: 12px;
-}
-.kv { display: flex; align-items: flex-start; gap: 12px; }
-.kv .k { color: var(--fg-dim); width: 130px; }
-.kv .v { color: var(--fg); }
-.kv .path {
-  flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  overflow-wrap: anywhere;
-}
-.autocheck { justify-content: flex-start; margin-top: 12px; }
-.checkbox {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--fg);
-}
-.insecure-toggle {
-  margin-top: 10px;
-}
-.notes {
-  margin-top: 8px; font-size: 12px; color: var(--fg);
-}
-.notes summary { color: var(--fg-dim); cursor: pointer; }
-.notes pre {
-  background: var(--bg); border: 1px solid var(--border);
-  padding: 8px; border-radius: 6px;
-  white-space: pre-wrap; word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  max-height: 160px; overflow-y: auto;
-  font-size: 11px;
-}
-button.primary {
-  background: var(--accent); color: #0d1117; border-color: var(--accent);
+.settings-nav-item.active {
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent);
   font-weight: 600;
 }
-button.primary:hover { background: #79b8ff; border-color: #79b8ff; color: #0d1117; }
-button.primary.danger {
-  background: var(--bad); color: #0d1117; border-color: var(--bad);
+.settings-pane {
+  flex: 1 1 auto;
+  padding: 20px 24px;
+  overflow-y: auto;
 }
-button.primary.danger:hover {
-  background: #ff6f6a; border-color: #ff6f6a; color: #0d1117;
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.settings-footer button {
+  height: 32px;
+  padding: 6px 14px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.settings-footer button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+}
+.settings-footer button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.settings-footer .primary {
+  background: var(--accent);
+  color: #0d1117;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.settings-footer .primary:hover:not(:disabled) {
+  background: #79b8ff;
+  border-color: #79b8ff;
+}
+.settings-footer .danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.settings-footer .danger:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.discard-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 105;
+}
+.discard-dialog {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.discard-dialog h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.discard-dialog p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+.discard-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.discard-row button {
+  height: 32px;
+  padding: 6px 14px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.discard-row button:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.discard-row .danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.discard-row .danger:hover {
+  background: rgba(248, 81, 73, 0.1);
 }
 </style>

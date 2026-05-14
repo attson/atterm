@@ -20,19 +20,27 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
+const highlightIndex = ref(-1);
 
 const selectedLabel = computed(() => {
   const match = props.options.find((o) => o.value === props.modelValue);
   return match ? match.label : "";
 });
 
+function findSelectedIndex(): number {
+  return props.options.findIndex((o) => o.value === props.modelValue);
+}
+
 function openMenu() {
   if (props.disabled) return;
   open.value = true;
+  const idx = findSelectedIndex();
+  highlightIndex.value = idx >= 0 ? idx : 0;
 }
 
 function closeMenu() {
   open.value = false;
+  highlightIndex.value = -1;
 }
 
 function selectOption(option: SelectOption) {
@@ -42,6 +50,21 @@ function selectOption(option: SelectOption) {
   }
 }
 
+function moveHighlight(delta: number) {
+  if (props.options.length === 0) return;
+  const n = props.options.length;
+  const current = highlightIndex.value < 0 ? findSelectedIndex() : highlightIndex.value;
+  const base = current < 0 ? 0 : current;
+  highlightIndex.value = (base + delta + n) % n;
+}
+
+function commitHighlight() {
+  if (highlightIndex.value < 0) return;
+  const option = props.options[highlightIndex.value];
+  if (!option) return;
+  selectOption(option);
+}
+
 function onTriggerClick() {
   if (props.disabled) return;
   open.value ? closeMenu() : openMenu();
@@ -49,9 +72,39 @@ function onTriggerClick() {
 
 function onTriggerKeydown(e: KeyboardEvent) {
   if (props.disabled) return;
-  if (e.key === "Escape" && open.value) {
+  if (e.key === "Escape") {
+    if (open.value) {
+      e.preventDefault();
+      closeMenu();
+    }
+    return;
+  }
+  if (e.key === "ArrowDown") {
     e.preventDefault();
-    closeMenu();
+    if (!open.value) openMenu();
+    else moveHighlight(1);
+    return;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!open.value) openMenu();
+    else moveHighlight(-1);
+    return;
+  }
+  if (e.key === "Home" && open.value) {
+    e.preventDefault();
+    highlightIndex.value = 0;
+    return;
+  }
+  if (e.key === "End" && open.value) {
+    e.preventDefault();
+    highlightIndex.value = props.options.length - 1;
+    return;
+  }
+  if (e.key === "Enter" && open.value) {
+    e.preventDefault();
+    commitHighlight();
+    return;
   }
 }
 

@@ -140,3 +140,76 @@ describe("SelectDropdown selection", () => {
     wrapper.unmount();
   });
 });
+
+describe("SelectDropdown keyboard navigation", () => {
+  const options = [
+    { value: "a", label: "Apple" },
+    { value: "b", label: "Banana" },
+    { value: "c", label: "Cherry" },
+  ];
+
+  test("ArrowDown then Enter selects the next option", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.get('[data-testid="select-trigger"]');
+    await trigger.trigger("click");
+    await trigger.trigger("keydown", { key: "ArrowDown" });
+    await trigger.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("update:modelValue")).toEqual([["b"]]);
+    wrapper.unmount();
+  });
+
+  test("ArrowDown wraps from last option back to first", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "c", options },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.get('[data-testid="select-trigger"]');
+    await trigger.trigger("click");
+    await trigger.trigger("keydown", { key: "ArrowDown" });
+    await trigger.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("update:modelValue")).toEqual([["a"]]);
+    wrapper.unmount();
+  });
+
+  test("ArrowUp from first option wraps to last", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.get('[data-testid="select-trigger"]');
+    await trigger.trigger("click");
+    await trigger.trigger("keydown", { key: "ArrowUp" });
+    await trigger.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("update:modelValue")).toEqual([["c"]]);
+    wrapper.unmount();
+  });
+
+  test("Home highlights first, End highlights last", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "b", options },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.get('[data-testid="select-trigger"]');
+    await trigger.trigger("click");
+    await trigger.trigger("keydown", { key: "End" });
+    await trigger.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("update:modelValue")).toEqual([["c"]]);
+    wrapper.unmount();
+  });
+
+  test("ArrowDown opens a closed menu without emitting", async () => {
+    const wrapper = mount(SelectDropdown, {
+      props: { modelValue: "a", options },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.get('[data-testid="select-trigger"]');
+    expect(wrapper.find('[data-testid="select-menu"]').exists()).toBe(false);
+    await trigger.trigger("keydown", { key: "ArrowDown" });
+    expect(wrapper.find('[data-testid="select-menu"]').exists()).toBe(true);
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+    wrapper.unmount();
+  });
+});

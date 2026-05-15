@@ -353,3 +353,54 @@ test("groupSessionsByHost collapses every empty-host_id session into one __unkno
   assert.equal(groups[0].key, "__unknown__");
   assert.deepEqual(groups[0].sessions.map((s) => s.id), ["u1", "u2"]);
 });
+
+import { canEnablePush, pushSupported, base64UrlToUint8Array } from "./app-core.js";
+
+test("pushSupported true when ServiceWorker + PushManager + Notification are present", () => {
+  const nav = { serviceWorker: {}, userAgent: "Mozilla/5.0 Chrome/120" };
+  const win = { PushManager: function () {}, Notification: function () {} };
+  assert.equal(pushSupported(nav, win), true);
+});
+
+test("pushSupported false on iOS Safari outside PWA standalone mode", () => {
+  const nav = { serviceWorker: {}, userAgent: "Mozilla/5.0 iPhone Safari/16.4", standalone: false };
+  const win = { PushManager: function () {}, Notification: function () {} };
+  assert.equal(pushSupported(nav, win), false);
+});
+
+test("pushSupported true on iOS PWA (standalone)", () => {
+  const nav = { serviceWorker: {}, userAgent: "Mozilla/5.0 iPhone Safari/16.4", standalone: true };
+  const win = { PushManager: function () {}, Notification: function () {} };
+  assert.equal(pushSupported(nav, win), true);
+});
+
+test("pushSupported false when PushManager missing", () => {
+  const nav = { serviceWorker: {}, userAgent: "Mozilla/5.0" };
+  const win = { Notification: function () {} };
+  assert.equal(pushSupported(nav, win), false);
+});
+
+test("pushSupported false when Notification missing", () => {
+  const nav = { serviceWorker: {}, userAgent: "Mozilla/5.0" };
+  const win = { PushManager: function () {} };
+  assert.equal(pushSupported(nav, win), false);
+});
+
+test("canEnablePush rejects denied, allows default and granted", () => {
+  assert.equal(canEnablePush("denied"), false);
+  assert.equal(canEnablePush("default"), true);
+  assert.equal(canEnablePush("granted"), true);
+});
+
+test("base64UrlToUint8Array round-trips a known value", () => {
+  // base64url-encoded "Hello" => "SGVsbG8"
+  const out = base64UrlToUint8Array("SGVsbG8");
+  assert.equal(out.length, 5);
+  assert.equal(String.fromCharCode(...out), "Hello");
+});
+
+test("base64UrlToUint8Array handles missing padding", () => {
+  // base64url-encoded "Hello!" => "SGVsbG8h"
+  const out = base64UrlToUint8Array("SGVsbG8h");
+  assert.equal(String.fromCharCode(...out), "Hello!");
+});

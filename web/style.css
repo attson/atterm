@@ -292,7 +292,7 @@ body.desktop-web #shortcut-bar {
 
 @media (min-width: 720px) {
   #main { padding: 24px; }
-  #list { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .host-group > .grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
   .subtitle { max-width: 360px; }
   #shortcut-bar { justify-content: center; }
   #main:has(#term-view:not([hidden])) { height: calc(100vh - var(--topbar-h)); }

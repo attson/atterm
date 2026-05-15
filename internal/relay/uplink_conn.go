@@ -15,6 +15,7 @@ import (
 	"nhooyr.io/websocket"
 )
 
+
 const (
 	uplinkReadLimit       = 17 * 1024 * 1024
 	uplinkWriteWait       = 10 * time.Second
@@ -35,7 +36,8 @@ type mirrorState struct {
 // must be ANNOUNCE; subsequent ANNOUNCEs are full-snapshot reconciliations.
 // OUT/META/CLOSE frames flow uplink→relay; STREAM_REQUEST/STOP and
 // IN/RESIZE/PASTE_IMAGE flow relay→uplink.
-func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
+// ownerUserID is the authenticated user's ID (empty for legacy/dev-mode paths).
+func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserID string) {
 	c.SetReadLimit(uplinkReadLimit)
 
 	first, err := readFrame(ctx, c)
@@ -154,13 +156,21 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 			}
 
 			sess := session.New(id, info)
+			sess.OwnerUserID = ownerUserID
 			// snapshot capture: id is per-iteration, must capture by value
 			sid := id
 			sess.SetSubscriberLifecycle(
 				func() { startStream(sid) },
 				func() { stopStream(sid) },
 			)
-			s.registry.Add(sess)
+			if _, err := s.registry.Add(sess); err != nil {
+				// Owner mismatch: another user already holds this session ID.
+				// Close the WS with a well-known code so the desktop can display
+				// a localized error. Do not modify the existing session.
+				s.debugf("uplink mirror_add_rejected session=%s reason=owner_mismatch", id)
+				_ = c.Close(websocket.StatusCode(CloseCodeSessionIDOwnerMismatch), CloseReasonSessionIDOwnerMismatch)
+				return
+			}
 			mu.Lock()
 			mirrors[id] = &mirrorState{sess: sess}
 			mu.Unlock()

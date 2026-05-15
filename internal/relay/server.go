@@ -61,6 +61,10 @@ type Config struct {
 	// WebPush, when non-nil, enables the /api/push/* endpoints and the
 	// TypeCommandEvent uplink handler. May be nil to disable the feature.
 	WebPush *webpush.Service
+	// Resolver, when non-nil, enables Principal-based auth for /uplink and
+	// /agent. When nil, the legacy shared-token (Token field) path is used.
+	// Set this to enable per-user API-token gating (Task 4.1+).
+	Resolver *IdentityResolver
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -204,10 +208,21 @@ func (s *Server) allowAuthenticatedRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
-		s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser || p.TokenID == "" {
+			s.debugf("http reject path=/agent remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
+			s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -225,14 +240,25 @@ func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/agent remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleAgent(r.Context(), c)
+	s.handleAgent(r.Context(), c, ownerUserID)
 }
 
 func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
-		s.debugf("http reject path=/uplink remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser || p.TokenID == "" {
+			s.debugf("http reject path=/uplink remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
+			s.debugf("http reject path=/uplink remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -250,7 +276,7 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/uplink remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleUplink(r.Context(), c)
+	s.handleUplink(r.Context(), c, ownerUserID)
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {

@@ -156,9 +156,19 @@ body.terminal-active #app-shell {
 }
 .card:active { transform: scale(0.99); }
 .card:hover { border-color: var(--accent); }
-.card .host { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; }
-.card .host .who { color: var(--accent-2); }
-.card .host .hostid { color: var(--fg-dim); font-size: 11px; }
+.host-group { margin-bottom: 18px; }
+.host-group > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 4px 2px 8px;
+}
+.host-group > header .hostname { color: var(--fg); }
+.host-group > header .hostid { color: var(--fg-dim); font-size: 11px; cursor: help; }
+.host-group > header .count { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
+.host-group > .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .card .cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; color: var(--fg); margin-bottom: 8px; word-break: break-all; }
 .card .meta { font-size: 11px; color: var(--fg-dim); display: flex; gap: 12px; flex-wrap: wrap; }
 .card .meta .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

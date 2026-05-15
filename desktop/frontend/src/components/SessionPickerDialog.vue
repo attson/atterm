@@ -70,11 +70,12 @@ function shortTitle(s: SessionInfo): string {
 
         <section v-if="remoteOptions.length > 0" class="remote">
           <h3>remote</h3>
-          <section
-            v-for="g in remoteGroups"
-            :key="g.key"
-            class="host-group"
-          >
+          <div class="groups">
+            <section
+              v-for="g in remoteGroups"
+              :key="g.key"
+              class="host-group"
+            >
             <header>
               <span class="hostname">{{ g.hostname }}</span>
               <span
@@ -99,7 +100,8 @@ function shortTitle(s: SessionInfo): string {
                 </div>
               </button>
             </div>
-          </section>
+            </section>
+          </div>
         </section>
       </template>
 
@@ -132,7 +134,13 @@ h3 {
 .empty {
   color: var(--fg-dim); font-size: 13px; text-align: center; padding: 40px 0;
 }
-.host-group { margin-bottom: 10px; }
+.host-group + .host-group { margin-top: 12px; }
+.groups {
+  display: flex;
+  flex-direction: column;
+  max-height: 30vh;
+  overflow-y: auto;
+}
 .host-group > header {
   display: flex;
   align-items: baseline;
@@ -146,7 +154,7 @@ h3 {
 .host-group > header .count { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
 .grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px; max-height: 30vh; overflow-y: auto;
+  gap: 10px;
 }
 .card {
   text-align: left; background: #0d1117; border: 1px solid var(--border);

@@ -179,3 +179,38 @@ func TestMuxEnumerator_EveryMutatingRouteWrapped(t *testing.T) {
 		})
 	}
 }
+
+// TestMuxEnumerator_PushRoutesCsrfGated verifies that the three mutating push routes
+// on the production NewServer mux are CSRF-gated when Resolver is configured.
+// Without a valid cookie+CSRF token they must return 401 or 403, never 200/201/204.
+// This guards against the regression where push routes bypassed CSRF (Fix 2).
+func TestMuxEnumerator_PushRoutesCsrfGated(t *testing.T) {
+	deps := testServerDeps(t)
+	srv := NewServer(Config{
+		Resolver: deps.Resolver,
+		Store:    deps.Store,
+	})
+
+	pushRoutes := []string{
+		"/api/push/subscribe",
+		"/api/push/unsubscribe",
+		"/api/push/test",
+	}
+
+	for _, path := range pushRoutes {
+		t.Run("POST "+path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, nil)
+			// No cookie, no CSRF token — must be rejected.
+			rr := httptest.NewRecorder()
+			srv.mux.ServeHTTP(rr, req)
+
+			code := rr.Code
+			if code == http.StatusOK || code == http.StatusCreated || code == http.StatusNoContent {
+				t.Errorf("POST %s: missing CSRF protection — got %d (want 401/403)", path, code)
+			}
+			if code >= 500 {
+				t.Errorf("POST %s: server error %d — handler panicked or has a bug", path, code)
+			}
+		})
+	}
+}

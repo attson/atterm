@@ -7,16 +7,12 @@ package userstore
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"fmt"
 	"sort"
 	"strings"
 
 	_ "modernc.org/sqlite"
 )
-
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
 
 // SQLiteStore is the production Store backed by a single SQLite file.
 type SQLiteStore struct {
@@ -29,7 +25,7 @@ type SQLiteStore struct {
 func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 	dsn := path
 	if path != ":memory:" {
-		dsn = path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
+		dsn = path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
 	} else {
 		dsn = path + "?_pragma=foreign_keys(on)"
 	}
@@ -37,6 +33,7 @@ func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
+	db.SetMaxOpenConns(1)
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping: %w", err)

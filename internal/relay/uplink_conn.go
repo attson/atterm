@@ -344,7 +344,7 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 	}
 	hostIDStr := ms.sess.Info().HostID
 	hostID, _ := uuid.Parse(hostIDStr) // ignore parse error — hostID is informational
-	s.cfg.WebPush.DispatchCommandFinished(webpush.CommandFinished{
+	s.cfg.WebPush.DispatchCommandFinished(ms.sess.OwnerUserID, webpush.CommandFinished{
 		SessionID: f.SessionID,
 		HostID:    hostID,
 		ExitCode:  payload.ExitCode,

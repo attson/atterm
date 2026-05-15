@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,13 +65,10 @@ func subWithEndpoint(endpoint string) Subscription {
 
 func TestDispatchCommandFinishedFansOutToAllSubscriptions(t *testing.T) {
 	svc, rec := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
-	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/b"))
-	svc.SetSessionResolver(func(_ uuid.UUID) []string {
-		return []string{"tok1"}
-	})
+	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
+	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/b"))
 	sid := uuid.New()
-	svc.DispatchCommandFinished(CommandFinished{
+	svc.DispatchCommandFinished("user1", CommandFinished{
 		SessionID: sid,
 		HostID:    uuid.New(),
 		ExitCode:  0,
@@ -98,10 +96,9 @@ func TestDispatchCommandFinishedFansOutToAllSubscriptions(t *testing.T) {
 
 func TestDispatchCommandFinishedReturnsImmediately(t *testing.T) {
 	svc, _ := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
-	svc.SetSessionResolver(func(_ uuid.UUID) []string { return []string{"tok1"} })
+	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
 	start := time.Now()
-	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	svc.DispatchCommandFinished("user1", CommandFinished{SessionID: uuid.New()})
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
 		t.Fatalf("DispatchCommandFinished took %v; expected to return immediately", elapsed)
 	}
@@ -109,27 +106,25 @@ func TestDispatchCommandFinishedReturnsImmediately(t *testing.T) {
 
 func TestDispatch410PrunesSubscription(t *testing.T) {
 	svc, _ := newServiceWithFakeTransport(t, 410)
-	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/gone"))
-	svc.SetSessionResolver(func(_ uuid.UUID) []string { return []string{"tok1"} })
-	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/gone"))
+	svc.DispatchCommandFinished("user1", CommandFinished{SessionID: uuid.New()})
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(svc.subStore.ByToken("tok1")) == 0 {
+		if len(svc.subStore.ByUser("user1")) == 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("subscription not pruned after 410; got %v", svc.subStore.ByToken("tok1"))
+	t.Fatalf("subscription not pruned after 410; got %v", svc.subStore.ByUser("user1"))
 }
 
 func TestDispatch429KeepsSubscription(t *testing.T) {
 	svc, _ := newServiceWithFakeTransport(t, 429)
-	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/throttled"))
-	svc.SetSessionResolver(func(_ uuid.UUID) []string { return []string{"tok1"} })
-	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/throttled"))
+	svc.DispatchCommandFinished("user1", CommandFinished{SessionID: uuid.New()})
 	// Give the goroutine a moment then assert sub still present.
 	time.Sleep(150 * time.Millisecond)
-	if len(svc.subStore.ByToken("tok1")) != 1 {
+	if len(svc.subStore.ByUser("user1")) != 1 {
 		t.Fatalf("subscription was pruned on 429; want kept")
 	}
 }
@@ -181,8 +176,8 @@ func TestDispatchTruncatesLabelTo256(t *testing.T) {
 
 func TestDispatchSendTest(t *testing.T) {
 	svc, rec := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
-	n := svc.SendTest("tok1")
+	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
+	n := svc.SendTest("user1")
 	if n != 1 {
 		t.Fatalf("SendTest returned %d; want 1", n)
 	}
@@ -199,16 +194,109 @@ func TestDispatchSendTest(t *testing.T) {
 	t.Fatal("SendTest did not POST a push")
 }
 
-func TestDispatchNoOpWhenResolverUnset(t *testing.T) {
+func TestDispatchNoOpWhenEmptyUserID(t *testing.T) {
 	svc, rec := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
-	// No resolver set.
-	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
+	// Dispatch with empty ownerUserID — no subscribers matched, no push.
+	svc.DispatchCommandFinished("", CommandFinished{SessionID: uuid.New()})
 	time.Sleep(100 * time.Millisecond)
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	if len(rec.requests) != 0 {
-		t.Fatalf("unexpected pushes without resolver; %d requests", len(rec.requests))
+		t.Fatalf("unexpected pushes with empty ownerUserID; %d requests", len(rec.requests))
 	}
 	_ = context.Background()
+}
+
+// TestDispatch_FilteredByOwner verifies that DispatchCommandFinished sends
+// pushes only to the ownerUserID's subscriptions and not to other users'.
+func TestDispatch_FilteredByOwner(t *testing.T) {
+	svc, _ := newServiceWithFakeTransport(t)
+
+	// Per-user atomic counters.
+	var userACount, userBCount atomic.Int64
+
+	// Build a per-user fake HTTP client that increments the appropriate counter.
+	makeClient := func(counter *atomic.Int64) HTTPClient {
+		return &funcHTTPClient{fn: func(req *http.Request) (*http.Response, error) {
+			counter.Add(1)
+			return &http.Response{
+				StatusCode: 201,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+				Header:     http.Header{},
+			}, nil
+		}}
+	}
+
+	// We need separate transport per user to distinguish sends. Instead, use
+	// a single shared transport that tracks per-endpoint invocations.
+	// Reset and rebuild with a tracking client.
+	type call struct{ endpoint string }
+	var mu sync.Mutex
+	var calls []call
+	sharedClient := &funcHTTPClient{fn: func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		calls = append(calls, call{endpoint: req.URL.String()})
+		mu.Unlock()
+		return &http.Response{
+			StatusCode: 201,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+			Header:     http.Header{},
+		}, nil
+	}}
+	InjectTransportForTesting(svc, sharedClient)
+
+	// Suppress "unused" warnings.
+	_ = makeClient(&userACount)
+	_ = makeClient(&userBCount)
+
+	// Register one sub each for userA and userB.
+	endpointA := "https://push.example/userA"
+	endpointB := "https://push.example/userB"
+	_ = svc.AddSubscription("u_A", subWithEndpoint(endpointA))
+	_ = svc.AddSubscription("u_B", subWithEndpoint(endpointB))
+
+	// Dispatch for userA only.
+	svc.DispatchCommandFinished("u_A", CommandFinished{
+		SessionID: uuid.New(),
+		HostID:    uuid.New(),
+		ExitCode:  0,
+		ElapsedMS: 1000,
+		Label:     "test",
+	})
+
+	// Wait for the goroutine to fire.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(calls)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Allow a small grace period for any unexpected second call.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	got := append([]call(nil), calls...)
+	mu.Unlock()
+
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 push (userA only); got %d: %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].endpoint, "userA") {
+		t.Fatalf("push went to wrong endpoint %q; want userA's endpoint", got[0].endpoint)
+	}
+}
+
+// funcHTTPClient is a test helper that satisfies HTTPClient with a function.
+type funcHTTPClient struct {
+	fn func(*http.Request) (*http.Response, error)
+}
+
+func (f *funcHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	return f.fn(req)
 }

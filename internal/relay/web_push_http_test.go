@@ -85,7 +85,7 @@ func TestSubscribeHappyPath(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d body=%s", resp.StatusCode, raw)
 	}
-	subs := svc.SubscriptionsForToken(tokenHash("write-token"))
+	subs := svc.SubscriptionsForUser(tokenHash("write-token"))
 	if len(subs) != 1 || subs[0].Endpoint != "https://push.example/abc" {
 		t.Fatalf("subs = %+v", subs)
 	}

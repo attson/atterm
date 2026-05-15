@@ -2,8 +2,86 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 )
+
+// newRelayTestApp creates a minimal App wired for relay/uplink tests.
+// A temp dir is used so cfgStore.Set disk writes succeed.
+func newRelayTestApp(t *testing.T) *App {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("LocalAppData", filepath.Join(root, "local"))
+	a := &App{
+		cfgStore: &configStore{},
+		ctx:      context.Background(),
+	}
+	return a
+}
+
+// TestSetUplinkPaused_TogglesWithoutWipingConfig verifies the
+// "disconnect erases config" fix: pausing/unpausing via SetUplinkPaused
+// must not touch the persisted URL/token, only the pause flag.
+func TestSetUplinkPaused_TogglesWithoutWipingConfig(t *testing.T) {
+	a := newRelayTestApp(t)
+
+	// Seed the store with a relay config (URL/token).
+	if err := a.SetRelayConfig(RelayConfig{
+		URL:              "wss://x",
+		Token:            "atk_test",
+		RemotePermission: "full",
+	}); err != nil {
+		t.Fatalf("SetRelayConfig: %v", err)
+	}
+
+	// After SetRelayConfig the uplink struct should be non-nil (Connected).
+	rc := a.GetRelayConfig()
+	if rc.URL != "wss://x" {
+		t.Fatalf("URL = %q; want %q", rc.URL, "wss://x")
+	}
+	if rc.Token != "atk_test" {
+		t.Fatalf("Token = %q; want %q", rc.Token, "atk_test")
+	}
+
+	// Pause — uplink must stop (Connected=false) but URL/token must survive.
+	if err := a.SetUplinkPaused(true); err != nil {
+		t.Fatalf("SetUplinkPaused(true): %v", err)
+	}
+	rc = a.GetRelayConfig()
+	if rc.URL != "wss://x" {
+		t.Fatalf("after pause: URL = %q; want %q", rc.URL, "wss://x")
+	}
+	if rc.Token != "atk_test" {
+		t.Fatalf("after pause: Token = %q; want %q", rc.Token, "atk_test")
+	}
+	if rc.Connected {
+		t.Fatal("after pause: Connected = true; want false")
+	}
+	if !rc.Paused {
+		t.Fatal("after pause: Paused = false; want true")
+	}
+
+	// Unpause — uplink restarts (Connected=true), URL/token still intact.
+	if err := a.SetUplinkPaused(false); err != nil {
+		t.Fatalf("SetUplinkPaused(false): %v", err)
+	}
+	rc = a.GetRelayConfig()
+	if rc.URL != "wss://x" {
+		t.Fatalf("after unpause: URL = %q; want %q", rc.URL, "wss://x")
+	}
+	if rc.Token != "atk_test" {
+		t.Fatalf("after unpause: Token = %q; want %q", rc.Token, "atk_test")
+	}
+	if !rc.Connected {
+		t.Fatal("after unpause: Connected = false; want true")
+	}
+	if rc.Paused {
+		t.Fatal("after unpause: Paused = true; want false")
+	}
+}
 
 func TestBeforeCloseEmitsAndPreventsByDefault(t *testing.T) {
 	a := &App{}

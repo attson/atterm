@@ -50,12 +50,15 @@ type HostInfo struct {
 // RelayConfig is the user-editable view of the persisted uplink configuration.
 // Connected reflects whether the uplink goroutine is currently running; it is
 // read-only from the frontend's perspective.
+// Paused reflects whether the user has toggled the uplink off without clearing
+// the URL/token (the "pause without erasing config" state).
 type RelayConfig struct {
 	URL                string `json:"url"`
 	Token              string `json:"token"`
 	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
 	RemotePermission   string `json:"remote_permission"`
 	Connected          bool   `json:"connected"`
+	Paused             bool   `json:"paused"`
 }
 
 type LoggingConfig struct {
@@ -171,8 +174,12 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 		a.uplinkCancel = nil
 		a.uplink = nil
 	}
-	if cfg.RelayURL == "" {
-		log.Printf("desktop: uplink disabled")
+	if cfg.RelayURL == "" || cfg.RelayPaused {
+		reason := "no URL"
+		if cfg.RelayPaused {
+			reason = "paused by user"
+		}
+		log.Printf("desktop: uplink disabled (%s)", reason)
 		return
 	}
 	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
@@ -221,6 +228,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		Connected:          connected,
+		Paused:             cfg.RelayPaused,
 	}
 }
 
@@ -245,6 +253,23 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
 		return err
 	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.applyRelayConfig(cfg)
+	return nil
+}
+
+// SetUplinkPaused toggles the user-controlled pause flag without touching the
+// relay URL, token, insecure flag, or remote permission. This fixes the
+// "disconnect erases config" UX bug: the URL and token survive across
+// pause/unpause cycles, and the relay reconnects immediately on unpause.
+func (a *App) SetUplinkPaused(paused bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.RelayPaused = paused
 	if err := a.cfgStore.Set(cfg); err != nil {
 		return err
 	}

@@ -26,4 +26,6 @@ export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 
+export function SetUplinkPaused(arg1:boolean):Promise<void>;
+
 export function StartDownload():Promise<void>;

@@ -66,18 +66,22 @@ export namespace main {
 	    url: string;
 	    token: string;
 	    allow_insecure_relay: boolean;
+	    remote_permission: string;
 	    connected: boolean;
-	
+	    paused: boolean;
+
 	    static createFrom(source: any = {}) {
 	        return new RelayConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
 	        this.token = source["token"];
 	        this.allow_insecure_relay = source["allow_insecure_relay"];
+	        this.remote_permission = source["remote_permission"];
 	        this.connected = source["connected"];
+	        this.paused = source["paused"];
 	    }
 	}
 	export class UpdateState {

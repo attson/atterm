@@ -35,6 +35,10 @@ type appConfig struct {
 	// RemotePermission is the default owner permission announced for this
 	// desktop's sessions on the remote relay.
 	RemotePermission string `json:"remote_permission,omitempty"`
+	// RelayPaused is the user-toggled pause flag. Zero value (false) preserves
+	// the existing "has URL → connect" behavior, so old config.json files
+	// deserialize correctly without any migration code.
+	RelayPaused bool `json:"relay_paused,omitempty"`
 	// TerminalTheme is the user's global desktop terminal theme preference.
 	// Unknown values fall back to classic so older configs remain usable.
 	TerminalTheme string `json:"terminal_theme,omitempty"`

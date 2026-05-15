@@ -105,6 +105,12 @@ func (s *Service) lookupResolver() func(uuid.UUID) []string {
 	return s.resolver
 }
 
+// SubscriptionsForToken is a test-only helper. Returns subscriptions for the
+// given token hash without exposing internal types in production callers.
+func (s *Service) SubscriptionsForToken(tokenHash string) []Subscription {
+	return s.subStore.ByToken(tokenHash)
+}
+
 func (s *Service) persistBestEffort() {
 	if s.dir == "" {
 		return

@@ -97,6 +97,10 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/client-sessions", s.handleClientSessionsHTTP)
 	s.mux.HandleFunc("/api/sessions", s.handleSessionsHTTP)
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
+	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
+	s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
+	s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
+	s.mux.HandleFunc("/api/push/test", s.handlePushTest)
 	if cfg.WebDir != "" {
 		s.mux.Handle("/", http.FileServer(http.Dir(cfg.WebDir)))
 	}

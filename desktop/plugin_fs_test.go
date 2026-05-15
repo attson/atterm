@@ -91,3 +91,39 @@ func TestResolveRejectsDenyPattern(t *testing.T) {
 		t.Fatalf("expected deny on .env, got %v", err)
 	}
 }
+
+func TestListDirReturnsEntries(t *testing.T) {
+	fs, home := makeFS(t)
+	if err := os.Mkdir(filepath.Join(home, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "f.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fs.ListDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(got))
+	}
+	var foundDir, foundFile bool
+	for _, e := range got {
+		if e.Name == "sub" && e.IsDir {
+			foundDir = true
+		}
+		if e.Name == "f.txt" && !e.IsDir && e.Size == 2 {
+			foundFile = true
+		}
+	}
+	if !foundDir || !foundFile {
+		t.Fatalf("entries did not include expected dir+file: %+v", got)
+	}
+}
+
+func TestListDirRefusesOutsideRoots(t *testing.T) {
+	fs, _ := makeFS(t)
+	if _, err := fs.ListDir(t.TempDir()); err == nil {
+		t.Fatal("expected refusal")
+	}
+}

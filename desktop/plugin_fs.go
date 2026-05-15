@@ -12,6 +12,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -90,4 +91,43 @@ func (p *PluginFS) resolve(path string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%w: %s", ErrPathForbidden, resolved)
+}
+
+var osReadDir = func(name string) ([]os.DirEntry, error) {
+	return os.ReadDir(name)
+}
+
+// DirEntry is a serialized representation of one directory entry.
+type DirEntry struct {
+	Name    string `json:"name"`
+	IsDir   bool   `json:"isDir"`
+	Size    int64  `json:"size,omitempty"`
+	ModTime int64  `json:"modTime,omitempty"` // unix ms
+}
+
+// ListDir returns entries inside path. Path must be a directory and inside an
+// allow-root. Hidden filtering is done frontend-side; ListDir is exhaustive.
+func (p *PluginFS) ListDir(path string) ([]DirEntry, error) {
+	resolved, err := p.resolve(path)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := osReadDir(resolved)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DirEntry, 0, len(entries))
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, DirEntry{
+			Name:    e.Name(),
+			IsDir:   e.IsDir(),
+			Size:    info.Size(),
+			ModTime: info.ModTime().UnixMilli(),
+		})
+	}
+	return out, nil
 }

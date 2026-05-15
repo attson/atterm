@@ -22,6 +22,24 @@ export namespace main {
 	        this.reason = source["reason"];
 	    }
 	}
+	export class DirEntry {
+	    name: string;
+	    isDir: boolean;
+	    size?: number;
+	    modTime?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DirEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.isDir = source["isDir"];
+	        this.size = source["size"];
+	        this.modTime = source["modTime"];
+	    }
+	}
 	export class Endpoint {
 	    url: string;
 	    token: string;
@@ -34,6 +52,24 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
 	        this.token = source["token"];
+	    }
+	}
+	export class FileContent {
+	    path: string;
+	    data: number[];
+	    isBinary: boolean;
+	    truncatedAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new FileContent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.data = source["data"];
+	        this.isBinary = source["isBinary"];
+	        this.truncatedAt = source["truncatedAt"];
 	    }
 	}
 	export class FileExplorerConfig {
@@ -54,6 +90,24 @@ export namespace main {
 	        this.panelCollapsed = source["panelCollapsed"];
 	        this.innerTreeRatio = source["innerTreeRatio"];
 	        this.showHidden = source["showHidden"];
+	    }
+	}
+	export class FileMetaInfo {
+	    path: string;
+	    size: number;
+	    modTime: number;
+	    isBinary: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new FileMetaInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.size = source["size"];
+	        this.modTime = source["modTime"];
+	        this.isBinary = source["isBinary"];
 	    }
 	}
 	export class HostInfo {

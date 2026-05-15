@@ -3,6 +3,7 @@ import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { ReadFile, FileMeta } from "../../../wailsjs/go/main/PluginFS";
+import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { languageForPath } from "./languageMap";
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
@@ -14,8 +15,11 @@ const props = defineProps<{
 const host = ref<HTMLDivElement | null>(null);
 const state = ref<"loading" | "tooLarge" | "binary" | "ok" | "error">("loading");
 const errorMsg = ref<string>("");
+const reloadPending = ref(false);
+const loadedAt = ref<number | null>(null);
 
 let view: EditorView | null = null;
+let off: (() => void) | null = null;
 
 async function load() {
   state.value = "loading";
@@ -23,6 +27,8 @@ async function load() {
   view = null;
   try {
     const meta = (await FileMeta(props.path)) as any;
+    loadedAt.value = meta.modTime;
+    reloadPending.value = false;
     if (meta.isBinary) {
       state.value = "binary";
       return;
@@ -54,6 +60,15 @@ async function load() {
 
 onMounted(() => {
   void load();
+  off = EventsOn("plugin-fs:dir-changed", async (dir: string) => {
+    if (!props.path.startsWith(dir + "/") && props.path !== dir) return;
+    try {
+      const meta = (await FileMeta(props.path)) as any;
+      if (loadedAt.value && meta.modTime > loadedAt.value) {
+        reloadPending.value = true;
+      }
+    } catch { /* ignore */ }
+  });
 });
 
 watch(() => props.path, () => {
@@ -63,6 +78,7 @@ watch(() => props.path, () => {
 onBeforeUnmount(() => {
   view?.destroy();
   view = null;
+  if (off) off();
 });
 </script>
 
@@ -71,6 +87,10 @@ onBeforeUnmount(() => {
     <div v-if="state === 'tooLarge'" class="banner">File too large to preview. Open externally.</div>
     <div v-if="state === 'binary'" class="banner">Binary file.</div>
     <div v-if="state === 'error'" class="banner err">Error: {{ errorMsg }}</div>
+    <div v-if="reloadPending" class="reload-badge">
+      File changed on disk
+      <button @click="load">Reload</button>
+    </div>
     <div v-show="state === 'ok'" ref="host" class="cm-host" />
     <div v-if="state === 'loading'" class="banner">Loading…</div>
   </div>
@@ -81,4 +101,6 @@ onBeforeUnmount(() => {
 .cm-host { flex: 1; overflow: auto; }
 .banner { padding: 10px 12px; font-size: 12px; opacity: 0.7; }
 .banner.err { color: #f85149; opacity: 1; }
+.reload-badge { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #1f2937; border-bottom: 1px solid #2d333b; font-size: 11px; }
+.reload-badge button { background: #21262d; border: 1px solid #2d333b; color: #c9d1d9; padding: 1px 8px; border-radius: 3px; cursor: pointer; }
 </style>

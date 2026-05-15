@@ -21,3 +21,11 @@ export function ReadFile(arg1, arg2) {
 export function RevealInOS(arg1) {
   return window['go']['main']['PluginFS']['RevealInOS'](arg1);
 }
+
+export function UnwatchDir(arg1) {
+  return window['go']['main']['PluginFS']['UnwatchDir'](arg1);
+}
+
+export function WatchDir(arg1) {
+  return window['go']['main']['PluginFS']['WatchDir'](arg1);
+}

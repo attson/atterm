@@ -7,6 +7,10 @@ vi.mock("../../../wailsjs/go/main/PluginFS", () => ({
   FileMeta: vi.fn(),
 }));
 
+vi.mock("../../../wailsjs/runtime/runtime", () => ({
+  EventsOn: vi.fn(() => () => undefined),
+}));
+
 import { ReadFile, FileMeta } from "../../../wailsjs/go/main/PluginFS";
 
 beforeEach(() => {

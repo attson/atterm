@@ -1,6 +1,7 @@
 <script lang="ts" setup>
-import { ref, watch, onMounted } from "vue";
-import { ListDir } from "../../../wailsjs/go/main/PluginFS";
+import { ref, watch, onMounted, onBeforeUnmount } from "vue";
+import { ListDir, WatchDir, UnwatchDir } from "../../../wailsjs/go/main/PluginFS";
+import { EventsOn } from "../../../wailsjs/runtime/runtime";
 
 interface DirEntry {
   name: string;
@@ -29,6 +30,7 @@ const emit = defineEmits<{
 }>();
 
 const rootNodes = ref<Node[]>([]);
+const watchHandles = new Map<string, number>();
 
 async function loadDir(path: string): Promise<Node[]> {
   const entries = (await ListDir(path)) as DirEntry[];
@@ -66,11 +68,52 @@ async function toggle(n: Node) {
   if (!n.expanded) {
     if (n.children === null) n.children = await loadDir(n.path);
     n.expanded = true;
+    try {
+      const id = (await WatchDir(n.path)) as number;
+      watchHandles.set(n.path, id);
+    } catch {
+      // cap reached or platform unsupported; ignore — refresh button still works.
+    }
   } else {
+    const id = watchHandles.get(n.path);
+    if (id) {
+      await UnwatchDir(id);
+      watchHandles.delete(n.path);
+    }
     n.expanded = false;
   }
   emit("dir-toggled", n.path, n.expanded);
 }
+
+function findNode(nodes: Node[], path: string): Node | null {
+  for (const n of nodes) {
+    if (n.path === path) return n;
+    if (n.children) {
+      const sub = findNode(n.children, path);
+      if (sub) return sub;
+    }
+  }
+  return null;
+}
+
+const off = EventsOn("plugin-fs:dir-changed", async (dir: string) => {
+  if (dir === props.root) {
+    rootNodes.value = await loadDir(props.root);
+    return;
+  }
+  const node = findNode(rootNodes.value, dir);
+  if (node && node.expanded) {
+    node.children = await loadDir(node.path);
+  }
+});
+
+onBeforeUnmount(async () => {
+  for (const id of watchHandles.values()) {
+    try { await UnwatchDir(id); } catch { /* ignore */ }
+  }
+  watchHandles.clear();
+  off();
+});
 
 function clickFile(n: Node) {
   if (n.isDir) return;

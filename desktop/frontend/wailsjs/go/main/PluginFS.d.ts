@@ -11,3 +11,7 @@ export function OpenExternal(arg1:string):Promise<void>;
 export function ReadFile(arg1:string,arg2:number):Promise<main.FileContent>;
 
 export function RevealInOS(arg1:string):Promise<void>;
+
+export function UnwatchDir(arg1:number):Promise<void>;
+
+export function WatchDir(arg1:string):Promise<number>;

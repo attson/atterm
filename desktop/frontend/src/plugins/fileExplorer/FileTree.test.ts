@@ -4,6 +4,12 @@ import FileTree from "./FileTree.vue";
 
 vi.mock("../../../wailsjs/go/main/PluginFS", () => ({
   ListDir: vi.fn(),
+  WatchDir: vi.fn(() => Promise.resolve(1)),
+  UnwatchDir: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../../../wailsjs/runtime/runtime", () => ({
+  EventsOn: vi.fn(() => () => undefined),
 }));
 
 import { ListDir } from "../../../wailsjs/go/main/PluginFS";

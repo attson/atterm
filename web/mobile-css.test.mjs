@@ -28,3 +28,15 @@ test("shortcut bar lifts above on-screen keyboard via --keyboard-inset", () => {
   assert.match(css, /--keyboard-inset/);
   assert.match(css, /translateY\(calc\(-1 \* var\(--keyboard-inset/);
 });
+
+test("shortcut bar buttons shrink to fit narrow viewports", () => {
+  const buttonStyle = css.match(/#shortcut-bar button\s*\{([^}]*)\}/)?.[1] ?? "";
+  // flex-shrink enabled so buttons can give up width when total > viewport
+  assert.match(buttonStyle, /flex\s*:\s*0\s+1\s+auto/);
+  assert.match(buttonStyle, /min-width\s*:\s*0/);
+});
+
+test("shortcut bar disables double-tap-to-zoom on rapid taps", () => {
+  const buttonStyle = css.match(/#shortcut-bar button\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(buttonStyle, /touch-action\s*:\s*manipulation/);
+});

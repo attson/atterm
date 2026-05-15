@@ -37,12 +37,19 @@ func (a *AdminServer) requireAdmin(inner http.HandlerFunc) http.Handler {
 // AdminRoutes returns an http.Handler with all user-account admin endpoints.
 func (a *AdminServer) AdminRoutes() http.Handler {
 	mux := http.NewServeMux()
+	a.RegisterInto(mux)
+	return mux
+}
+
+// RegisterInto registers all user-account admin routes into the provided mux.
+// Called by AdminRoutes() and by BuildMux so the production mux is assembled
+// from the same set of routes.
+func (a *AdminServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("POST /admin/api/invitations", a.requireAdmin(a.handleCreateInvite))
 	mux.Handle("GET /admin/api/invitations", a.requireAdmin(a.handleListInvites))
 	mux.Handle("GET /admin/api/users", a.requireAdmin(a.handleListUsers))
 	mux.Handle("POST /admin/api/users/{id}/reset-password", a.requireAdmin(a.handleResetPassword))
 	mux.Handle("POST /admin/api/users/{id}/disable", a.requireAdmin(a.handleDisableUser))
-	return mux
 }
 
 // handleCreateInvite implements POST /admin/api/invitations.

@@ -121,6 +121,61 @@ func TestRequireCSRF_NoCookieReturns401(t *testing.T) {
 	}
 }
 
+// TestMuxEnumerator_EveryMutatingRouteWrapped fires synthetic requests at
+// every known mutating route in the production mux and verifies that:
+//   - Routes not flagged as isPublic must NOT return 200/201/204 without a
+//     valid CSRF token or valid auth (i.e. they must be CSRF- or auth-gated).
+//   - Public routes (signup, login, admin token-gated endpoints) are skipped
+//     because they have their own protection gate that is not cookie+CSRF.
+//
+// If a new mutating route is added and not listed here, add it — the test is
+// the living inventory of every state-changing HTTP endpoint.
 func TestMuxEnumerator_EveryMutatingRouteWrapped(t *testing.T) {
-	t.Skip("pending Task 3.4: BuildMux not yet exposed")
+	mux := BuildMux(testServerDeps(t))
+
+	type routeCase struct {
+		method   string
+		path     string
+		isPublic bool // exempt from CSRF check (public or admin-token-gated)
+	}
+
+	cases := []routeCase{
+		// Public auth endpoints — no CSRF required by design.
+		{"POST", "/api/auth/signup", true},
+		{"POST", "/api/auth/login", true},
+		// Cookie+CSRF-gated endpoints — must return 401 (no cookie) or 403 (bad CSRF).
+		{"POST", "/api/auth/logout", false},
+		{"POST", "/api/me/tokens", false},
+		{"DELETE", "/api/me/tokens/testid", false},
+		// Admin-token-gated endpoints — no cookie+CSRF, but admin Bearer token is required.
+		// Treated as public here because any protection (401 from requireAdmin) is fine.
+		{"POST", "/admin/api/invitations", true},
+		{"POST", "/admin/api/users/u1/reset-password", true},
+		{"POST", "/admin/api/users/u1/disable", true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.method+" "+c.path, func(t *testing.T) {
+			req := httptest.NewRequest(c.method, c.path, nil)
+			// Deliberately omit cookies and X-CSRF-Token to test gate behaviour.
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+
+			if c.isPublic {
+				// Public/admin-gated: any status is fine (handler decides).
+				return
+			}
+
+			// CSRF-gated routes: must NOT succeed without a valid token.
+			// Allowed responses: 401 (no session), 403 (bad CSRF), 405 (wrong method).
+			// NOT allowed: 200, 201, 204, or any 5xx.
+			code := rr.Code
+			if code == http.StatusOK || code == http.StatusCreated || code == http.StatusNoContent {
+				t.Errorf("%s %s: missing CSRF protection — got %d (want 401/403/405)", c.method, c.path, code)
+			}
+			if code >= 500 {
+				t.Errorf("%s %s: server error %d — handler panicked or has a bug", c.method, c.path, code)
+			}
+		})
+	}
 }

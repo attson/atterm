@@ -38,6 +38,9 @@ type AuthServer struct {
 	Store    userstore.Store
 	Resolver *IdentityResolver
 	Argon    *Argon2Pool
+	// Limits, when non-nil, enforces per-endpoint rate limits (SEC-5).
+	// Nil disables rate limiting (useful in some unit tests).
+	Limits *LimitRegistry
 	// FailureFloor enforces SEC-5: any failed response (invite invalid,
 	// wrong password, etc.) sleeps until at least this duration has elapsed.
 	// Default 200ms; ±50ms random jitter is added.
@@ -48,6 +51,14 @@ type AuthServer struct {
 // Signup and login are public (no CSRF). Logout and token mutation require CSRF.
 func (a *AuthServer) Routes() http.Handler {
 	mux := http.NewServeMux()
+	a.RegisterInto(mux)
+	return mux
+}
+
+// RegisterInto registers all auth + me routes into the provided mux.
+// Called by Routes() and by BuildMux (Task 3.4) so the production mux is
+// assembled from the same set of routes.
+func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("POST /api/auth/signup", http.HandlerFunc(a.handleSignup))
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(a.handleLogin))
 	mux.Handle("POST /api/auth/logout", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleLogout)))
@@ -55,7 +66,6 @@ func (a *AuthServer) Routes() http.Handler {
 	mux.Handle("GET /api/me/tokens", http.HandlerFunc(a.handleListTokens))
 	mux.Handle("POST /api/me/tokens", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleCreateToken)))
 	mux.Handle("DELETE /api/me/tokens/{id}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleRevokeToken)))
-	return mux
 }
 
 // failureSleep sleeps the remaining time needed to reach FailureFloor (plus
@@ -135,6 +145,14 @@ func ipPrefix(r *http.Request) string {
 func (a *AuthServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
+	// SEC-5: per-IP signup rate limit (5 / hour). Check before any work.
+	ip := ipPrefix(r)
+	if a.Limits != nil && !a.Limits.AllowSignup(ip) {
+		a.failureSleep(start)
+		writeError(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+
 	var body struct {
 		Email      string `json:"email"`
 		Password   string `json:"password"`
@@ -177,6 +195,12 @@ func (a *AuthServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	// row exists but is orphaned (no session, no invite binding). Acceptable
 	// for MVP; see struct comment.
 	if err := a.Store.ConsumeInvitation(r.Context(), body.InviteCode, u.ID); err != nil {
+		// SEC-5: per-IP invite-failure rate limit (10 / hour).
+		if a.Limits != nil && !a.Limits.AllowInviteFail(ip) {
+			a.failureSleep(start)
+			writeError(w, http.StatusTooManyRequests, "rate_limited")
+			return
+		}
 		a.failureSleep(start)
 		writeError(w, http.StatusBadRequest, "invite_invalid")
 		return
@@ -224,6 +248,13 @@ func (a *AuthServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user == nil {
+		// SEC-5: per-(IP, sha256(email)) brute-force limit (10 / 5min).
+		// Check after VerifyPassword so the argon2 work always runs (timing parity).
+		if a.Limits != nil && !a.Limits.AllowLoginFailure(ipPrefix(r), sha256Hex(body.Email)) {
+			a.failureSleep(start)
+			writeError(w, http.StatusTooManyRequests, "rate_limited")
+			return
+		}
 		a.failureSleep(start)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return

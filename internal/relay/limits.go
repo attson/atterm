@@ -137,3 +137,64 @@ func requestIPLimitKey(r *http.Request) string {
 	}
 	return host
 }
+
+// LimitRegistry holds per-feature rate limiters for auth endpoints (SEC-5).
+// All limiters use fixed windows. Create a new registry per server instance
+// (or per test) to avoid bucket leakage.
+type LimitRegistry struct {
+	loginFail  *fixedWindowLimiter // 10 / 5min keyed by "ip\x00sha256hex(email)"
+	signup     *fixedWindowLimiter // 5 / hour keyed by IP
+	inviteFail *fixedWindowLimiter // 10 / hour keyed by IP
+}
+
+// NewLimitRegistry returns a LimitRegistry with the SEC-5 rate limits configured.
+func NewLimitRegistry() *LimitRegistry {
+	return &LimitRegistry{
+		loginFail:  newFixedWindowLimiter(10, 5*time.Minute),
+		signup:     newFixedWindowLimiter(5, time.Hour),
+		inviteFail: newFixedWindowLimiter(10, time.Hour),
+	}
+}
+
+// newLimitRegistryForTest returns a LimitRegistry with the given individual
+// limits set. Pass limit <= 0 to disable a particular bucket. Used in tests
+// to isolate one limiter without another interfering.
+func newLimitRegistryForTest(loginFailLimit, signupLimit, inviteFailLimit int) *LimitRegistry {
+	return &LimitRegistry{
+		loginFail:  newFixedWindowLimiter(loginFailLimit, 5*time.Minute),
+		signup:     newFixedWindowLimiter(signupLimit, time.Hour),
+		inviteFail: newFixedWindowLimiter(inviteFailLimit, time.Hour),
+	}
+}
+
+// AllowLoginFailure returns true if the (ip, emailHash) pair has not exceeded
+// the brute-force login limit (10 failures per 5-minute window).
+// emailHash must be the hex-encoded sha256 of the lowercased email.
+func (r *LimitRegistry) AllowLoginFailure(ip, emailHash string) bool {
+	return r.loginFail.allow(ip + "\x00" + emailHash)
+}
+
+// AllowSignup returns true if the IP has not exceeded the signup rate limit
+// (5 signups per hour).
+func (r *LimitRegistry) AllowSignup(ip string) bool {
+	return r.signup.allow(ip)
+}
+
+// AllowInviteFail returns true if the IP has not exceeded the invite-failure
+// rate limit (10 failures per hour).
+func (r *LimitRegistry) AllowInviteFail(ip string) bool {
+	return r.inviteFail.allow(ip)
+}
+
+// sha256Hex returns the lowercase hex-encoded SHA-256 digest of s.
+// Used to construct per-email brute-force limit keys without storing the email.
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	const hextable = "0123456789abcdef"
+	dst := make([]byte, len(sum)*2)
+	for i, b := range sum {
+		dst[i*2] = hextable[b>>4]
+		dst[i*2+1] = hextable[b&0x0f]
+	}
+	return string(dst)
+}

@@ -70,18 +70,19 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
 }
 
 // failureSleep sleeps the remaining time needed to reach FailureFloor (plus
-// ±50ms jitter) from the provided start time. Must be called before every
-// non-success response (SEC-5).
+// additive jitter up to 50ms) from the provided start time. Must be called
+// before every non-success response (SEC-5).
+//
+// Jitter is always non-negative so the total target is always >= FailureFloor.
+// This makes the floor a true lower bound and prevents the test assertion
+// "elapsed >= FailureFloor" from flaking.
 func (a *AuthServer) failureSleep(start time.Time) {
 	floor := a.FailureFloor
 	if floor <= 0 {
 		floor = 200 * time.Millisecond
 	}
-	jitter := time.Duration(rand.Int63n(int64(100*time.Millisecond))) - 50*time.Millisecond // ±50ms
+	jitter := time.Duration(rand.Int63n(int64(50 * time.Millisecond))) // [0, 50ms)
 	target := floor + jitter
-	if target < 100*time.Millisecond {
-		target = 100 * time.Millisecond
-	}
 	elapsed := time.Since(start)
 	if elapsed < target {
 		time.Sleep(target - elapsed)

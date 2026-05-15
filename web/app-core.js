@@ -291,3 +291,47 @@ export function formatReplayProgress(progress) {
 export function versionLabel(version) {
   return `version ${version || "dev"}`;
 }
+
+const HOST_GROUP_UNKNOWN_KEY = "__unknown__";
+const HOST_GROUP_UNKNOWN_HOSTNAME = "unknown host";
+
+export function groupSessionsByHost(sessions) {
+  const buckets = new Map();
+  for (const s of sessions) {
+    const key = s.host_id ? s.host_id : HOST_GROUP_UNKNOWN_KEY;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+    bucket.push(s);
+  }
+
+  const groups = [];
+  for (const [key, bucket] of buckets) {
+    let displayHost = "";
+    let bestStartedAt = -Infinity;
+    for (const s of bucket) {
+      const h = s.host || "";
+      // >= so that when started_at values tie, the later-arriving entry wins.
+      if (h && s.started_at >= bestStartedAt) {
+        displayHost = h;
+        bestStartedAt = s.started_at;
+      }
+    }
+    groups.push({
+      key,
+      hostname: displayHost || HOST_GROUP_UNKNOWN_HOSTNAME,
+      hostId: key === HOST_GROUP_UNKNOWN_KEY ? "" : key,
+      sessions: bucket,
+    });
+  }
+
+  groups.sort((a, b) => {
+    if (a.key === HOST_GROUP_UNKNOWN_KEY) return 1;
+    if (b.key === HOST_GROUP_UNKNOWN_KEY) return -1;
+    return a.hostname.localeCompare(b.hostname);
+  });
+
+  return groups;
+}

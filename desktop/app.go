@@ -609,3 +609,20 @@ func (a *App) SetCommandNotifyThresholdSeconds(seconds int) error {
 	cfg.CommandNotifyThresholdSeconds = &seconds
 	return a.cfgStore.Set(cfg)
 }
+
+// BroadcastCommandFinished is invoked by the desktop frontend when an OSC
+// 133 command-finished event passes the local notification gate. Sends a
+// TypeCommandEvent frame to the configured remote relay via the uplink so
+// the relay can fan out Web Push notifications to subscribed browsers.
+// Failures (no uplink, no remote relay, invalid uuid) are silent — local
+// OS notification has already fired.
+func (a *App) BroadcastCommandFinished(sessionID string, exitCode, elapsedMS int, label string) {
+	sid, err := uuid.Parse(sessionID)
+	if err != nil {
+		return
+	}
+	if a.uplink == nil {
+		return
+	}
+	a.uplink.SendCommandEvent(sid, exitCode, elapsedMS, label)
+}

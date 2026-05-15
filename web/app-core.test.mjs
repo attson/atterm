@@ -8,6 +8,7 @@ import {
   detectClientMode,
   formatReplayProgress,
   formatHost,
+  groupSessionsByHost,
   isIOSWebKit,
   shouldAutoScrollToBottom,
   shouldShowInstallHint,
@@ -274,4 +275,81 @@ test("canRegisterServiceWorker requires HTTPS except loopback development", () =
   assert.equal(canRegisterServiceWorker({ protocol: "https:", hostname: "relay.example.com", serviceWorker }), true);
   assert.equal(canRegisterServiceWorker({ protocol: "http:", hostname: "127.0.0.1", serviceWorker }), true);
   assert.equal(canRegisterServiceWorker({ protocol: "http:", hostname: "192.168.1.10", serviceWorker }), false);
+});
+
+function makeSession(overrides = {}) {
+  return {
+    id: "s",
+    command: "bash",
+    cwd: "/",
+    title: "",
+    cols: 80,
+    rows: 24,
+    started_at: 0,
+    host_id: "",
+    host: "",
+    user: "",
+    remote_permission: "",
+    ...overrides,
+  };
+}
+
+test("groupSessionsByHost returns [] for empty input", () => {
+  assert.deepEqual(groupSessionsByHost([]), []);
+});
+
+test("groupSessionsByHost groups by host_id and sorts by hostname ascending", () => {
+  const sessions = [
+    makeSession({ id: "a1", host_id: "hidA", host: "mac-mini", started_at: 1 }),
+    makeSession({ id: "b1", host_id: "hidB", host: "attson-air", started_at: 1 }),
+    makeSession({ id: "a2", host_id: "hidA", host: "mac-mini", started_at: 2 }),
+  ];
+  const groups = groupSessionsByHost(sessions);
+  assert.deepEqual(groups.map((g) => g.hostname), ["attson-air", "mac-mini"]);
+  assert.deepEqual(groups[0].sessions.map((s) => s.id), ["b1"]);
+  assert.deepEqual(groups[1].sessions.map((s) => s.id), ["a1", "a2"]);
+});
+
+test("groupSessionsByHost places empty host_id sessions into trailing __unknown__ group", () => {
+  const sessions = [
+    makeSession({ id: "u1", host_id: "", host: "" }),
+    makeSession({ id: "z1", host_id: "hidZ", host: "zeta" }),
+    makeSession({ id: "a1", host_id: "hidA", host: "alpha" }),
+  ];
+  const groups = groupSessionsByHost(sessions);
+  assert.deepEqual(groups.map((g) => g.key), ["hidA", "hidZ", "__unknown__"]);
+  assert.equal(groups[2].hostname, "unknown host");
+  assert.deepEqual(groups[2].sessions.map((s) => s.id), ["u1"]);
+});
+
+test("groupSessionsByHost picks display hostname from the freshest started_at", () => {
+  const sessions = [
+    makeSession({ id: "old", host_id: "hidX", host: "old-name", started_at: 100 }),
+    makeSession({ id: "new", host_id: "hidX", host: "new-name", started_at: 200 }),
+  ];
+  const groups = groupSessionsByHost(sessions);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].hostname, "new-name");
+});
+
+test("groupSessionsByHost falls back to 'unknown host' when host is empty across the bucket", () => {
+  const sessions = [
+    makeSession({ id: "x1", host_id: "hidX", host: "" }),
+    makeSession({ id: "x2", host_id: "hidX", host: "" }),
+  ];
+  const groups = groupSessionsByHost(sessions);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].key, "hidX");
+  assert.equal(groups[0].hostname, "unknown host");
+});
+
+test("groupSessionsByHost collapses every empty-host_id session into one __unknown__ group", () => {
+  const sessions = [
+    makeSession({ id: "u1", host_id: "" }),
+    makeSession({ id: "u2", host_id: "" }),
+  ];
+  const groups = groupSessionsByHost(sessions);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].key, "__unknown__");
+  assert.deepEqual(groups[0].sessions.map((s) => s.id), ["u1", "u2"]);
 });

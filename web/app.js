@@ -7,7 +7,7 @@ import {
   copyTerminalSelection,
   detectClientMode,
   formatReplayProgress,
-  formatHost,
+  groupSessionsByHost,
   insecureModeFromStorage,
   isTerminalCopyShortcut,
   parseSessionRoute,
@@ -288,37 +288,54 @@ function renderList(sessions) {
     return;
   }
   emptyEl.hidden = true;
-  for (const s of sessions) {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "card";
-    card.innerHTML = `
-      <div class="host">
-        <span class="who"></span>
-        <span class="hostid" title=""></span>
-      </div>
-      <div class="cmd"></div>
-      <div class="meta">
-        <span class="id"></span>
-        <span class="size"></span>
-        <span class="cwd"></span>
-      </div>`;
-    card.querySelector(".who").textContent = formatHost(s);
-    const hostidEl = card.querySelector(".hostid");
-    if (s.host_id) {
-      hostidEl.textContent = s.host_id.slice(0, 8);
-      hostidEl.title = "host_id " + s.host_id;
-    } else {
-      hostidEl.hidden = true;
+  const groups = groupSessionsByHost(sessions);
+  for (const g of groups) {
+    const section = document.createElement("section");
+    section.className = "host-group";
+
+    const header = document.createElement("header");
+    const hostnameSpan = document.createElement("span");
+    hostnameSpan.className = "hostname";
+    hostnameSpan.textContent = g.hostname;
+    header.appendChild(hostnameSpan);
+    if (g.hostId) {
+      const hostidSpan = document.createElement("span");
+      hostidSpan.className = "hostid";
+      hostidSpan.textContent = g.hostId.slice(0, 8);
+      hostidSpan.title = "host_id " + g.hostId;
+      header.appendChild(hostidSpan);
     }
-    card.querySelector(".cmd").textContent = s.command || "(unknown)";
-    card.querySelector(".id").textContent = shortSessionID(s.id);
-    card.querySelector(".size").textContent = `${s.cols}×${s.rows}`;
-    card.querySelector(".cwd").textContent = s.cwd || "";
-    card.addEventListener("click", () => {
-      location.hash = "#/s/" + s.id;
-    });
-    listEl.appendChild(card);
+    const countSpan = document.createElement("span");
+    countSpan.className = "count";
+    countSpan.textContent =
+      g.sessions.length + " " + (g.sessions.length === 1 ? "session" : "sessions");
+    header.appendChild(countSpan);
+    section.appendChild(header);
+
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    for (const s of g.sessions) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "card";
+      card.innerHTML = `
+        <div class="cmd"></div>
+        <div class="meta">
+          <span class="id"></span>
+          <span class="size"></span>
+          <span class="cwd"></span>
+        </div>`;
+      card.querySelector(".cmd").textContent = s.command || "(unknown)";
+      card.querySelector(".id").textContent = shortSessionID(s.id);
+      card.querySelector(".size").textContent = `${s.cols}×${s.rows}`;
+      card.querySelector(".cwd").textContent = s.cwd || "";
+      card.addEventListener("click", () => {
+        location.hash = "#/s/" + s.id;
+      });
+      grid.appendChild(card);
+    }
+    section.appendChild(grid);
+    listEl.appendChild(section);
   }
 }
 

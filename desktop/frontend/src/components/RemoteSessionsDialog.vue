@@ -1,5 +1,8 @@
 <script lang="ts" setup>
+import { computed } from "vue";
+
 import type { SessionInfo } from "../lib/connection";
+import { groupSessionsByHost } from "../lib/sessions";
 
 const props = defineProps<{
   sessions: SessionInfo[];
@@ -10,12 +13,7 @@ const emit = defineEmits<{
   (e: "close"): void;
 }>();
 
-function formatHost(s: SessionInfo): string {
-  const u = s.user || "";
-  const h = s.host || "";
-  if (u && h) return `${u}@${h}`;
-  return u || h || "unknown host";
-}
+const groups = computed(() => groupSessionsByHost(props.sessions));
 </script>
 
 <template>
@@ -28,28 +26,33 @@ function formatHost(s: SessionInfo): string {
         to the same relay.
       </div>
 
-      <div v-else class="grid">
-        <div
-          v-for="s in sessions"
-          :key="s.id"
-          class="card"
-          @click="emit('open', s.id)"
-        >
-          <div class="host">
-            <span class="who">{{ formatHost(s) }}</span>
+      <div v-else class="groups">
+        <section v-for="g in groups" :key="g.key" class="host-group">
+          <header>
+            <span class="hostname">{{ g.hostname }}</span>
             <span
-              v-if="s.host_id"
+              v-if="g.hostId"
               class="hostid"
-              :title="'host_id ' + s.host_id"
-            >{{ s.host_id.slice(0, 8) }}</span>
+              :title="'host_id ' + g.hostId"
+            >{{ g.hostId.slice(0, 8) }}</span>
+            <span class="count">{{ g.sessions.length }} {{ g.sessions.length === 1 ? 'session' : 'sessions' }}</span>
+          </header>
+          <div class="grid">
+            <div
+              v-for="s in g.sessions"
+              :key="s.id"
+              class="card"
+              @click="emit('open', s.id)"
+            >
+              <div class="cmd">{{ s.command || "(unknown)" }}</div>
+              <div class="meta">
+                <span class="id">{{ s.id.slice(0, 8) }}</span>
+                <span class="size">{{ s.cols }}×{{ s.rows }}</span>
+                <span class="cwd">{{ s.cwd }}</span>
+              </div>
+            </div>
           </div>
-          <div class="cmd">{{ s.command || "(unknown)" }}</div>
-          <div class="meta">
-            <span class="id">{{ s.id.slice(0, 8) }}</span>
-            <span class="size">{{ s.cols }}×{{ s.rows }}</span>
-            <span class="cwd">{{ s.cwd }}</span>
-          </div>
-        </div>
+        </section>
       </div>
 
       <div class="row">
@@ -95,12 +98,28 @@ function formatHost(s: SessionInfo): string {
   text-align: center;
   padding: 40px 0;
 }
-.grid {
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  max-height: 50vh;
+}
+.host-group > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 4px 0 6px;
+}
+.host-group > header .hostname { color: var(--fg); }
+.host-group > header .hostid { color: var(--fg-dim); font-size: 11px; cursor: help; }
+.host-group > header .count { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
+.host-group > .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px;
-  overflow-y: auto;
-  max-height: 50vh;
 }
 .card {
   background: #0d1117;
@@ -111,16 +130,6 @@ function formatHost(s: SessionInfo): string {
   transition: border-color 120ms;
 }
 .card:hover { border-color: var(--accent); }
-.card .host {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  margin-bottom: 4px;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.card .host .who { color: #d29922; } /* amber, same as remote tab dots */
-.card .host .hostid { color: var(--fg-dim); font-size: 11px; cursor: help; }
 .card .cmd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;

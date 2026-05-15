@@ -188,7 +188,6 @@ const (
 type Principal struct {
     Kind      PrincipalKind
     UserID    string  // User
-    OrgID     string  // reserved; empty for this spec — see §11
     TokenID   string  // User via API token (empty when cookie)
     ShareID   string  // Share
     SessionID string  // Share: bound session
@@ -714,7 +713,7 @@ End-to-end manual checklist for release verification:
 
 | Future | Where the seam is |
 |---|---|
-| Organizations / teams / roles | `Principal` already carries an unused string slot for org id; session ownership pivots from user to org |
+| Organizations / teams / roles | Add `OrgID` to `Principal`, pivot `session.OwnerUserID` to `OwnerOrgID`, change filter call sites (~10 min of mechanical rewrite — not worth pre-reserving) |
 | Email-based password reset | Add SMTP config, `password_resets` table |
 | OAuth providers | New resolution step before cookie; new `oauth_identities` table |
 | Multi-relay clustering | `internal/userstore.Store` is an interface, swap SQLite for Postgres; introduce Redis pub/sub for cross-node session fan-out |
@@ -724,7 +723,6 @@ End-to-end manual checklist for release verification:
 | iOS device-code flow | New `/api/auth/device-code` endpoint, reuses cookie store |
 
 Reserved structural choices that aid future work without abstracting now:
-- `Principal` carries optional `OrgID` (empty for this spec).
 - `internal/userstore.Store` is an interface, not a struct.
 - `api_tokens.last_used_at` updates flow through a buffered channel and
   a single committer goroutine; swapping the store does not move the

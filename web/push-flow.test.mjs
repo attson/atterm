@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { enablePushFlow } from "./app.js";
+import { enablePushFlow, disablePushFlow } from "./app.js";
 
 function makeFakes({ permission = "granted", subscribeOK = true, fetchOK = true, fetchStatus = 200, keyResponse = { key: "AAAA" } } = {}) {
   const calls = { fetch: [], subscribe: 0, requestPermission: 0 };
@@ -68,4 +68,55 @@ test("enablePushFlow handles subscribe throw with reason 'subscribe-failed'", as
   const result = await enablePushFlow(fakes);
   assert.equal(result.ok, false);
   assert.equal(result.reason, "subscribe-failed");
+});
+
+test("disablePushFlow no-op when no subscription exists", async () => {
+  const calls = { fetch: [] };
+  const fakes = {
+    registration: {
+      pushManager: {
+        getSubscription: async () => null,
+      },
+    },
+    fetch: async (url, opts) => { calls.fetch.push({ url, opts }); return { ok: true, status: 200 }; },
+    token: "tok",
+  };
+  const result = await disablePushFlow(fakes);
+  assert.equal(result.ok, true);
+  assert.equal(calls.fetch.length, 0);
+});
+
+test("disablePushFlow unsubscribes and POSTs when subscription exists", async () => {
+  const calls = { fetch: [], unsubscribe: 0 };
+  const fakes = {
+    registration: {
+      pushManager: {
+        getSubscription: async () => ({
+          endpoint: "https://push.example/abc",
+          unsubscribe: async () => { calls.unsubscribe++; return true; },
+        }),
+      },
+    },
+    fetch: async (url, opts) => { calls.fetch.push({ url, opts }); return { ok: true, status: 200 }; },
+    token: "tok",
+  };
+  const result = await disablePushFlow(fakes);
+  assert.equal(result.ok, true);
+  assert.equal(calls.unsubscribe, 1);
+  const unsubscribeCall = calls.fetch.find((c) => c.url.endsWith("/api/push/unsubscribe"));
+  assert.ok(unsubscribeCall, "missing /api/push/unsubscribe call");
+});
+
+test("disablePushFlow swallows errors and still returns ok", async () => {
+  const fakes = {
+    registration: {
+      pushManager: {
+        getSubscription: async () => { throw new Error("boom"); },
+      },
+    },
+    fetch: async () => ({ ok: true, status: 200 }),
+    token: "tok",
+  };
+  const result = await disablePushFlow(fakes);
+  assert.equal(result.ok, true);
 });

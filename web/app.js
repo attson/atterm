@@ -253,11 +253,24 @@ function apiURL(path) {
 }
 
 function setStatus(text, kind) {
-  statusEl.textContent = text;
+  if (!statusEl) return;
+  const span = statusEl.querySelector(".status-text");
+  if (span) span.textContent = text;
+  else statusEl.textContent = text; // fallback before init span exists
   statusEl.className = "status" + (kind ? " " + kind : "");
 }
 
 if (_isBrowser) {
+  // Wrap the initial text content in a span so that setStatus can update it
+  // without destroying sibling elements (e.g. the push-toggle button).
+  if (statusEl && !statusEl.querySelector(".status-text")) {
+    const span = document.createElement("span");
+    span.className = "status-text";
+    span.textContent = statusEl.textContent;
+    statusEl.textContent = "";
+    statusEl.appendChild(span);
+  }
+
   backBtn.addEventListener("click", () => {
     location.hash = "";
   });

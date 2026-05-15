@@ -22,6 +22,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
 | 公网 relay 安全默认值 | 强 token、Origin 白名单、限流、安全响应头、只读 token |
 | Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
+| Web Push 通知 | 浏览器和 PWA 订阅后，命令完成事件通过 self-hosted Web Push 推送，即使页面没打开也能收到（依赖 shell 集成 + 已连远端 relay） |
 
 还在路线图中的能力：用户系统、TLS 自动化、移动端原生体验增强、shell 集成、主题/字体配置。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
 
@@ -325,6 +326,7 @@ docs/spec/    架构、协议、工程约定
 - [`docs/spec/architecture.md`](docs/spec/architecture.md)：架构、数据流、生命周期、路线图。
 - [`docs/spec/protocol.md`](docs/spec/protocol.md)：二进制 WebSocket 帧协议、帧类型、重连语义。
 - [`docs/shell-integration.md`](docs/shell-integration.md)：OSC 133 shell 集成机制、各 shell 的注入方式、如何手动卸载。
+- [`docs/web-push.md`](docs/web-push.md)：浏览器 / PWA 订阅 Web Push 命令完成通知的启用方式、iOS 限制、自托管关键管理。
 - [`docs/spec/conventions.md`](docs/spec/conventions.md)：Go / TypeScript 风格、测试组织、提交约定。
 - [`AGENTS.md`](AGENTS.md)：给开发代理和贡献者看的项目红线与修改指引。
 

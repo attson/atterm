@@ -2,10 +2,23 @@ package webpush
 
 import (
 	"log"
+	"net/http"
 	"sync"
 
 	"github.com/google/uuid"
 )
+
+// HTTPClient mirrors webpush-go's HTTPClient interface (single Do method)
+// so tests outside the package can satisfy it without importing webpush-go.
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// InjectTransportForTesting replaces the transport with one driven by the
+// given HTTPClient. Test-only; production callers should never invoke this.
+func InjectTransportForTesting(s *Service, hc HTTPClient) {
+	s.tr = newTransport(s.vapidPriv, s.vapidPub, s.subject, hc)
+}
 
 // Service is the public face of the webpush package. One per relay process.
 type Service struct {

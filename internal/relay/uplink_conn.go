@@ -10,6 +10,7 @@ import (
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
@@ -300,10 +301,44 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 				}
 				s.registry.Remove(f.SessionID)
 			}
+		case proto.TypeCommandEvent:
+			s.handleUplinkCommandEvent(f, mirrors, &mu)
 		case proto.TypePong:
 			// keepalive
 		default:
 			log.Printf("uplink: unexpected frame type 0x%02x", f.Type)
 		}
 	}
+}
+
+// handleUplinkCommandEvent processes a TypeCommandEvent frame received from
+// an uplink. The frame must reference a session id currently in the
+// uplink's manifest (mirrors map) — this prevents one uplink from forging
+// "command finished" events for another uplink's sessions. host_id is
+// pulled from the session's info, not the payload, for the same reason.
+func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*mirrorState, mu *sync.Mutex) {
+	if s.cfg.WebPush == nil {
+		return
+	}
+	payload, err := proto.DecodeCommandEvent(f)
+	if err != nil {
+		s.debugf("uplink command_event decode_failed session=%s error=%q", f.SessionID, err)
+		return
+	}
+	mu.Lock()
+	ms, ok := mirrors[f.SessionID]
+	mu.Unlock()
+	if !ok || ms == nil {
+		s.debugf("uplink command_event unknown_session session=%s", f.SessionID)
+		return
+	}
+	hostIDStr := ms.sess.Info().HostID
+	hostID, _ := uuid.Parse(hostIDStr) // ignore parse error — hostID is informational
+	s.cfg.WebPush.DispatchCommandFinished(webpush.CommandFinished{
+		SessionID: f.SessionID,
+		HostID:    hostID,
+		ExitCode:  payload.ExitCode,
+		ElapsedMS: payload.ElapsedMS,
+		Label:     payload.Label,
+	})
 }

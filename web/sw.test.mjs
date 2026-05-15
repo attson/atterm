@@ -74,3 +74,34 @@ test("push event with no data uses fallback notification", async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0].title, "AT Term");
 });
+
+test("sw bypasses cache for /api/*", async () => {
+  const { listeners } = loadSWInVM();
+  const fetchHandler = listeners["fetch"];
+  assert.ok(fetchHandler, "fetch event listener must be registered");
+
+  // Requests to /api/* must NOT be intercepted — respondWith must not be called.
+  const apiPaths = ["/api/sessions", "/api/me", "/api/push/key"];
+  for (const pathname of apiPaths) {
+    const respondWithCalls = [];
+    const event = {
+      request: { method: "GET", url: `https://test${pathname}`, mode: "cors" },
+      respondWith(p) { respondWithCalls.push(p); },
+    };
+    fetchHandler(event);
+    assert.equal(
+      respondWithCalls.length,
+      0,
+      `fetch handler must not call respondWith for ${pathname}`,
+    );
+  }
+
+  // Non-GET requests must also bypass the cache.
+  const respondWithCallsPost = [];
+  const postEvent = {
+    request: { method: "POST", url: "https://test/api/push/subscribe", mode: "cors" },
+    respondWith(p) { respondWithCallsPost.push(p); },
+  };
+  fetchHandler(postEvent);
+  assert.equal(respondWithCallsPost.length, 0, "fetch handler must not call respondWith for non-GET");
+});

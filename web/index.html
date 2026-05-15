@@ -24,27 +24,8 @@
       <div class="version" id="version">version dev</div>
     </div>
     <div class="status" id="status">disconnected</div>
-    <button id="token-toggle" class="ghost-btn" aria-expanded="false" aria-controls="token-panel">token</button>
+    <button id="logout" class="ghost-btn" type="button">Sign out</button>
   </header>
-
-  <section id="token-panel" class="token-panel" hidden>
-    <label for="relay-url">relay URL</label>
-    <div class="token-row">
-      <input id="relay-url" type="url" placeholder="https://relay.example.com" autocomplete="url" />
-    </div>
-    <label class="check-row" for="insecure-mode">
-      <input id="insecure-mode" type="checkbox" />
-      <span>
-        <strong>allow insecure HTTP relay</strong>
-        <small>Only use for trusted IP:port testing. HTTPS is required for production.</small>
-      </span>
-    </label>
-    <label for="token">relay token</label>
-    <div class="token-row">
-      <input id="token" type="password" placeholder="shared bearer token" autocomplete="off" />
-      <button id="token-save" type="button">save</button>
-    </div>
-  </section>
 
   <section id="install-hint" class="install-hint" hidden>
     <div>
@@ -100,5 +81,9 @@
 <script src="vendor/xterm/xterm.js"></script>
 <script src="vendor/xterm-addon-fit/xterm-addon-fit.js"></script>
 <script type="module" src="app.js"></script>
+<script type="module">
+  import { logout } from "./auth.js";
+  document.getElementById("logout").addEventListener("click", () => logout());
+</script>
 </body>
 </html>

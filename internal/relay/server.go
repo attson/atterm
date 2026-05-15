@@ -132,7 +132,7 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
 	s.mux.HandleFunc("/api/push/test", s.handlePushTest)
 	if cfg.WebDir != "" {
-		s.mux.Handle("/", http.FileServer(http.Dir(cfg.WebDir)))
+		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebDir))
 	}
 	if cfg.AdminToken != "" {
 		s.mux.HandleFunc("/admin/", s.handleAdminPage)
@@ -415,6 +415,26 @@ func tokenHash(token string) string {
 	}
 	sum := sha256.Sum256([]byte(token))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// newStaticHandler wraps http.FileServer to enforce a login redirect for the
+// root path when the request carries no valid cookie session. Subresources
+// (*.js, *.css, *.html, etc.) are served unconditionally so that login.html
+// can load its own assets without authentication.
+func newStaticHandler(resolver *IdentityResolver, webDir string) http.Handler {
+	fs := http.FileServer(http.Dir(webDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			if resolver != nil {
+				p := resolver.Resolve(r)
+				if p.Kind != PrincipalUser {
+					http.Redirect(w, r, "/login.html", http.StatusFound)
+					return
+				}
+			}
+		}
+		fs.ServeHTTP(w, r)
+	})
 }
 
 // readFrame reads one WS binary message and decodes it as a Frame.

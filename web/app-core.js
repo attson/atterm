@@ -1,4 +1,3 @@
-const TOKEN_KEY = "atterm-token";
 const RELAY_URL_KEY = "atterm-relay-url";
 const INSECURE_MODE_KEY = "atterm-insecure-mode";
 
@@ -49,19 +48,6 @@ export function relayBaseURLFromLocation(href, storage, options = {}) {
   }
 }
 
-export function tokenFromLocation(href, storage) {
-  const url = new URL(href);
-  const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
-  if (hash && !hash.startsWith("/")) {
-    const fromFragment = new URLSearchParams(hash).get("token");
-    if (fromFragment) {
-      storage.setItem(TOKEN_KEY, fromFragment);
-      return fromFragment;
-    }
-  }
-  return storage.getItem(TOKEN_KEY) || "";
-}
-
 export function tokenURLWithoutSecret(href) {
   const url = new URL(href);
   url.searchParams.delete("token");
@@ -77,32 +63,10 @@ export function tokenURLWithoutSecret(href) {
   return url.toString();
 }
 
-export function persistToken(storage, value) {
-  storage.setItem(TOKEN_KEY, value.trim());
-}
-
 export function persistRelayBaseURL(storage, value, options = {}) {
   const relay = normalizeRelayBaseURL(value, options);
   storage.setItem(RELAY_URL_KEY, relay);
   return relay;
-}
-
-const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-
-function stringToBase64URL(value) {
-  const bytes = new TextEncoder().encode(value);
-  let out = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    out += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(out).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-export function tokenSubprotocol(token) {
-  if (!token) return undefined;
-  if (SUBPROTOCOL_SAFE.test(token)) return `atterm-token.${token}`;
-  return `atterm-token-b64.${stringToBase64URL(token)}`;
 }
 
 function relayURLForPath(relayBaseURL, path) {
@@ -110,15 +74,14 @@ function relayURLForPath(relayBaseURL, path) {
   return new URL(path, normalizeRelayBaseURL(relayBaseURL, { allowInsecure: true }));
 }
 
-export function webSocketAuth(protocol, host, path, token, relayBaseURL = "") {
+export function webSocketAuth(protocol, host, path, relayBaseURL = "") {
   const relayURL = relayURLForPath(relayBaseURL, path);
   const proto = relayURL
     ? (relayURL.protocol === "https:" ? "wss:" : "ws:")
     : (protocol === "https:" ? "wss:" : "ws:");
-  const subprotocol = tokenSubprotocol(token || "");
   return {
     url: relayURL ? `${proto}//${relayURL.host}${relayURL.pathname}${relayURL.search}` : `${proto}//${host}${path}`,
-    protocols: subprotocol ? [subprotocol] : undefined,
+    protocols: undefined,
   };
 }
 

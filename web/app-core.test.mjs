@@ -21,32 +21,9 @@ import {
   keyboardInsetFromViewport,
   shortcutInput,
   shouldFocusTerminalAfterInput,
-  tokenFromLocation,
   versionLabel,
   webSocketAuth,
 } from "./app-core.js";
-
-test("tokenFromLocation stores fragment token and returns it", () => {
-  const stored = [];
-  const storage = {
-    getItem: () => "old-token",
-    setItem: (key, value) => stored.push([key, value]),
-  };
-
-  const token = tokenFromLocation("https://relay.example.com/#token=new-token", storage);
-
-  assert.equal(token, "new-token");
-  assert.deepEqual(stored, [["atterm-token", "new-token"]]);
-});
-
-test("tokenFromLocation ignores query token", () => {
-  const storage = {
-    getItem: (key) => (key === "atterm-token" ? "stored-token" : null),
-    setItem: () => assert.fail("setItem should not be called"),
-  };
-
-  assert.equal(tokenFromLocation("https://relay.example.com/?token=query-token", storage), "stored-token");
-});
 
 test("tokenURLWithoutSecret removes token fragment without changing route", () => {
   assert.equal(
@@ -57,15 +34,6 @@ test("tokenURLWithoutSecret removes token fragment without changing route", () =
     tokenURLWithoutSecret("https://relay.example.com/#/s/11111111-1111-4111-8111-111111111111"),
     "https://relay.example.com/#/s/11111111-1111-4111-8111-111111111111",
   );
-});
-
-test("tokenFromLocation falls back to stored token", () => {
-  const storage = {
-    getItem: (key) => (key === "atterm-token" ? "stored-token" : null),
-    setItem: () => assert.fail("setItem should not be called"),
-  };
-
-  assert.equal(tokenFromLocation("https://relay.example.com/", storage), "stored-token");
 });
 
 test("relayBaseURLFromLocation stores fragment relay and returns normalized URL", () => {
@@ -145,20 +113,24 @@ test("insecure mode persists as an explicit opt-in", () => {
   assert.equal(insecureModeFromStorage(storage), false);
 });
 
-test("webSocketAuth sends token with subprotocol instead of query", () => {
+test("webSocketAuth returns cookie-auth URL without subprotocol", () => {
   assert.deepEqual(
-    webSocketAuth("https:", "relay.example.com", "/client", "tok_en-123"),
-    { url: "wss://relay.example.com/client", protocols: ["atterm-token.tok_en-123"] },
+    webSocketAuth("https:", "relay.example.com", "/client"),
+    { url: "wss://relay.example.com/client", protocols: undefined },
+  );
+  assert.deepEqual(
+    webSocketAuth("http:", "localhost:8080", "/client"),
+    { url: "ws://localhost:8080/client", protocols: undefined },
   );
 });
 
 test("webSocketAuth can target a configured relay base URL for bundled webviews", () => {
   assert.deepEqual(
-    webSocketAuth("capacitor:", "localhost", "/client", "tok_en-123", "https://relay.example.com"),
-    { url: "wss://relay.example.com/client", protocols: ["atterm-token.tok_en-123"] },
+    webSocketAuth("capacitor:", "localhost", "/client", "https://relay.example.com"),
+    { url: "wss://relay.example.com/client", protocols: undefined },
   );
   assert.deepEqual(
-    webSocketAuth("capacitor:", "localhost", "/client", "", "http://127.0.0.1:8080"),
+    webSocketAuth("capacitor:", "localhost", "/client", "http://127.0.0.1:8080"),
     { url: "ws://127.0.0.1:8080/client", protocols: undefined },
   );
 });
@@ -446,4 +418,23 @@ test("base64UrlToUint8Array handles missing padding", () => {
   // base64url-encoded "Hello!" => "SGVsbG8h"
   const out = base64UrlToUint8Array("SGVsbG8h");
   assert.equal(String.fromCharCode(...out), "Hello!");
+});
+
+import { readFileSync } from "node:fs";
+
+test("no longer reads token from localStorage", () => {
+  const appJs = readFileSync(new URL("./app.js", import.meta.url), "utf8");
+  const appCoreJs = readFileSync(new URL("./app-core.js", import.meta.url), "utf8");
+
+  // Legacy token storage patterns must be absent from both files.
+  assert.equal(appJs.includes('localStorage.getItem("token"'), false, 'app.js must not call localStorage.getItem("token"');
+  assert.equal(appJs.includes('localStorage.setItem("token"'), false, 'app.js must not call localStorage.setItem("token"');
+  assert.equal(appJs.includes('localStorage.getItem("atterm-token"'), false, 'app.js must not call localStorage.getItem("atterm-token"');
+  assert.equal(appJs.includes('localStorage.setItem("atterm-token"'), false, 'app.js must not call localStorage.setItem("atterm-token"');
+  assert.equal(appJs.includes("tokenFromLocation"), false, "app.js must not call tokenFromLocation");
+  assert.equal(appJs.includes("persistToken"), false, "app.js must not call persistToken");
+  assert.equal(appCoreJs.includes("TOKEN_KEY"), false, "app-core.js must not define TOKEN_KEY");
+  assert.equal(appCoreJs.includes("export function persistToken"), false, "app-core.js must not export persistToken");
+  assert.equal(appCoreJs.includes("export function tokenFromLocation"), false, "app-core.js must not export tokenFromLocation");
+  assert.equal(appCoreJs.includes("export function tokenSubprotocol"), false, "app-core.js must not export tokenSubprotocol");
 });

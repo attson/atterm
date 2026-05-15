@@ -16,7 +16,7 @@ import {
 import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
-import { getHostInfo, showNotification } from "../lib/api";
+import { broadcastCommandFinished, getHostInfo, showNotification } from "../lib/api";
 
 const props = withDefaults(
   defineProps<{
@@ -294,6 +294,12 @@ function ensureTerm() {
       void showNotification(
         "AT Term",
         `Command finished · exit ${ev.exitCode} · ${formatElapsed(ev.elapsedMs)} · ${props.sessionLabel || "session"}`,
+      );
+      void broadcastCommandFinished(
+        props.sessionId,
+        ev.exitCode,
+        ev.elapsedMs,
+        props.sessionLabel || "session",
       );
       return false;
     });

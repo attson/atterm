@@ -40,6 +40,13 @@ type uplink struct {
 	host             *relayHost
 
 	announced announceCache
+
+	// outMu protects out. out is the writer goroutine's input channel for
+	// the currently-active connection. nil when not connected. Producer
+	// callers (e.g. SendCommandEvent) read this under outMu.RLock() and
+	// drop on the floor if nil or if the channel buffer is full.
+	outMu sync.RWMutex
+	out   chan<- proto.Frame
 }
 
 func newUplink(relayURL, token, remotePermission string, host *relayHost) *uplink {
@@ -173,6 +180,14 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	u.announced.reset()
 
 	out := make(chan proto.Frame, uplinkOutQueueDepth)
+	u.outMu.Lock()
+	u.out = out
+	u.outMu.Unlock()
+	defer func() {
+		u.outMu.Lock()
+		u.out = nil
+		u.outMu.Unlock()
+	}()
 
 	// Send first ANNOUNCE so the relay registers the host immediately.
 	if err := u.writeAnnounce(connCtx, conn); err != nil {
@@ -515,6 +530,36 @@ func desktopUplinkFrameLogDetails(f proto.Frame) string {
 		return fmt.Sprintf("session=%s seq=%d out_bytes=%d", f.SessionID, seq, len(data))
 	default:
 		return prefix
+	}
+}
+
+// SendCommandEvent queues a TypeCommandEvent frame for the writer goroutine.
+// Drops on the floor when the uplink is nil, not connected, or its out
+// channel buffer is full. Failure is silent because the local OS
+// notification has already fired and Web Push misses are acceptable.
+func (u *uplink) SendCommandEvent(sessionID uuid.UUID, exit, elapsedMS int, label string) {
+	if u == nil {
+		return
+	}
+	u.outMu.RLock()
+	out := u.out
+	u.outMu.RUnlock()
+	if out == nil {
+		return
+	}
+	frame, err := proto.EncodeCommandEvent(sessionID, proto.CommandEventPayload{
+		ExitCode:  exit,
+		ElapsedMS: elapsedMS,
+		Label:     label,
+	})
+	if err != nil {
+		log.Printf("uplink: SendCommandEvent encode: %v", err)
+		return
+	}
+	select {
+	case out <- frame:
+	default:
+		log.Printf("uplink: out chan full; dropping command event session=%s", sessionID)
 	}
 }
 

@@ -38,6 +38,7 @@ const (
 	TypeStreamStop    Type = 0x32
 	TypePasteImage    Type = 0x33 // client -> relay -> desktop PTY host
 	TypeClaimDriver   Type = 0x34 // client -> relay (viewer claims driver role)
+	TypeCommandEvent  Type = 0x35 // uplink -> relay (Web Push trigger)
 )
 
 // Frame is a single protocol message.

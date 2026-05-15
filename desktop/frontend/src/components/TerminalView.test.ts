@@ -191,4 +191,15 @@ describe("TerminalView OSC 133 command notifications", () => {
   test("notification is gated by shouldNotifyCommand with focused, isLocal, threshold", () => {
     expect(source).toMatch(/shouldNotifyCommand\([\s\S]*focused[\s\S]*thresholdSec[\s\S]*isLocal/);
   });
+
+  test("imports broadcastCommandFinished from api lib", () => {
+    expect(source).toContain("broadcastCommandFinished");
+    expect(source).toMatch(/from "\.\.\/lib\/api"/);
+  });
+
+  test("invokes broadcastCommandFinished after the local-notify gate passes", () => {
+    // Must be inside the same `if (passed)` block as showNotification.
+    const passedBlock = source.match(/if\s*\(\s*!\s*passed\s*\)[\s\S]*?return[\s\S]*?showNotification[\s\S]*?broadcastCommandFinished/);
+    expect(passedBlock).not.toBeNull();
+  });
 });

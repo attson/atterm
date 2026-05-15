@@ -52,8 +52,9 @@ const (
     TypeAnnounce      Type = 0x30  // uplink → relay  (Phase 1.5)
     TypeStreamRequest Type = 0x31  // relay → uplink
     TypeStreamStop    Type = 0x32  // relay → uplink
-    TypePasteImage    Type = 0x33  // client → relay → desktop PTY host
-    TypeClaimDriver   Type = 0x34  // client → relay (viewer claims driver role)
+    TypePasteImage      Type = 0x33  // client → relay → desktop PTY host
+    TypeClaimDriver     Type = 0x34  // client → relay (viewer claims driver role)
+    TypeCommandEvent    Type = 0x35  // uplink → relay (Web Push notification trigger)
 )
 ```
 
@@ -265,6 +266,25 @@ relay 拒绝以下情形（debug log 但不发错误帧给 client）：
 - payload 不是合法 JSON
 
 桌面 app 的 uplink 收到 CLAIM_DRIVER 后调 `relayHost.ClaimLocalDriver`，把本地 mini relay 上的 uplink subscriber 提升为 driver（同时把 end-to-end `client_id` 透传）；多跳时 driver 状态由最远端 client 的 ID 决定。
+
+### `COMMAND_EVENT` (0x35) — uplink → relay only (Web Push notification trigger)
+
+Direction: uplink → relay only. Not forwarded to clients.
+
+Payload (JSON):
+
+```json
+{
+  "exit_code": 0,
+  "elapsed_ms": 12500,
+  "label": "atterm"
+}
+```
+
+- `session_id` rides the frame header (existing pattern).
+- `host_id` is intentionally not in the payload. The relay reconstructs it from the sender's ANNOUNCE manifest at handler time, which makes cross-uplink spoofing impossible.
+- The relay drops the frame silently when `session_id` is not present in the sender's current manifest.
+- `label` is truncated to 256 bytes before being forwarded into a notification payload.
 
 ## Driver / Viewer 模型
 

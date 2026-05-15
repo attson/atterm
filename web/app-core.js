@@ -335,3 +335,28 @@ export function groupSessionsByHost(sessions) {
 
   return groups;
 }
+
+export function pushSupported(navigator, win) {
+  if (!navigator || !win) return false;
+  if (!navigator.serviceWorker) return false;
+  if (!win.PushManager) return false;
+  if (!win.Notification) return false;
+  // iOS Safari requires PWA install (standalone) before Web Push works.
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  if (isIOS && !navigator.standalone) return false;
+  return true;
+}
+
+export function canEnablePush(permission) {
+  return permission === "default" || permission === "granted";
+}
+
+export function base64UrlToUint8Array(value) {
+  const padded = value + "===".slice((value.length + 3) % 4);
+  const base64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}

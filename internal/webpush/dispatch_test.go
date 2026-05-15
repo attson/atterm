@@ -1,0 +1,214 @@
+package webpush
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type recordingHTTPClient struct {
+	mu       sync.Mutex
+	requests []*http.Request
+	statuses []int
+}
+
+func (c *recordingHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requests = append(c.requests, req)
+	status := 201
+	if len(c.statuses) > 0 {
+		status = c.statuses[0]
+		c.statuses = c.statuses[1:]
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(bytes.NewReader(nil)),
+		Header:     http.Header{},
+	}, nil
+}
+
+func newServiceWithFakeTransport(t *testing.T, statuses ...int) (*Service, *recordingHTTPClient) {
+	t.Helper()
+	dir := t.TempDir()
+	svc, err := Open(dir, "mailto:test@example.com")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	rec := &recordingHTTPClient{statuses: statuses}
+	svc.tr = newTransport(svc.vapidPriv, svc.vapidPub, svc.subject, rec)
+	return svc, rec
+}
+
+// validP256SubKey is a real P-256 public key (base64url) usable as a
+// subscription's p256dh value so webpush-go's encryption can succeed.
+const (
+	validP256SubKey = "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk"
+	validAuthKey   = "zqbxT6JKstKSY9JKibZLSQ"
+)
+
+func subWithEndpoint(endpoint string) Subscription {
+	sub := Subscription{Endpoint: endpoint}
+	sub.Keys.P256dh = validP256SubKey
+	sub.Keys.Auth = validAuthKey
+	return sub
+}
+
+func TestDispatchCommandFinishedFansOutToAllSubscriptions(t *testing.T) {
+	svc, rec := newServiceWithFakeTransport(t)
+	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
+	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/b"))
+	svc.SetSessionResolver(func(_ uuid.UUID) []string {
+		return []string{"tok1"}
+	})
+	sid := uuid.New()
+	svc.DispatchCommandFinished(CommandFinished{
+		SessionID: sid,
+		HostID:    uuid.New(),
+		ExitCode:  0,
+		ElapsedMS: 12500,
+		Label:     "atterm",
+	})
+	// Wait briefly for goroutine fanout.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rec.mu.Lock()
+		n := len(rec.requests)
+		rec.mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	rec.mu.Lock()
+	n := len(rec.requests)
+	rec.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("requests = %d; want 2", n)
+	}
+}
+
+func TestDispatchCommandFinishedReturnsImmediately(t *testing.T) {
+	svc, _ := newServiceWithFakeTransport(t)
+	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
+	svc.SetSessionResolver(func(_ uuid.UUID) []string { return []string{"tok1"} })
+	start := time.Now()
+	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("DispatchCommandFinished took %v; expected to return immediately", elapsed)
+	}
+}
+
+func TestDispatch410PrunesSubscription(t *testing.T) {
+	svc, _ := newServiceWithFakeTransport(t, 410)
+	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/gone"))
+	svc.SetSessionResolver(func(_ uuid.UUID) []string { return []string{"tok1"} })
+	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(svc.subStore.ByToken("tok1")) == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("subscription not pruned after 410; got %v", svc.subStore.ByToken("tok1"))
+}
+
+func TestDispatch429KeepsSubscription(t *testing.T) {
+	svc, _ := newServiceWithFakeTransport(t, 429)
+	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/throttled"))
+	svc.SetSessionResolver(func(_ uuid.UUID) []string { return []string{"tok1"} })
+	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	// Give the goroutine a moment then assert sub still present.
+	time.Sleep(150 * time.Millisecond)
+	if len(svc.subStore.ByToken("tok1")) != 1 {
+		t.Fatalf("subscription was pruned on 429; want kept")
+	}
+}
+
+func TestDispatchEmitsPayloadWithSessionTagAndExpectedFields(t *testing.T) {
+	sid := uuid.New()
+	hid := uuid.New()
+	body := payloadJSON(CommandFinished{
+		SessionID: sid, HostID: hid, ExitCode: 127, ElapsedMS: 65000, Label: "build",
+	})
+	var payload struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Tag   string `json:"tag"`
+		Data  struct {
+			ExitCode  int    `json:"exitCode"`
+			ElapsedMs int    `json:"elapsedMs"`
+			SessionID string `json:"sessionId"`
+			HostID    string `json:"hostId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+	if !strings.Contains(payload.Title, "AT Term") || !strings.Contains(payload.Title, "build") {
+		t.Fatalf("title = %q; want contains 'AT Term' and 'build'", payload.Title)
+	}
+	if !strings.Contains(payload.Body, "exit 127") || !strings.Contains(payload.Body, "1m5s") {
+		t.Fatalf("body = %q; want contains 'exit 127' and '1m5s'", payload.Body)
+	}
+	if payload.Tag != sid.String() {
+		t.Fatalf("tag = %q; want %s", payload.Tag, sid)
+	}
+	if payload.Data.SessionID != sid.String() || payload.Data.HostID != hid.String() {
+		t.Fatalf("data ids mismatch: %+v", payload.Data)
+	}
+}
+
+func TestDispatchTruncatesLabelTo256(t *testing.T) {
+	huge := strings.Repeat("a", 1000)
+	body := payloadJSON(CommandFinished{Label: huge})
+	if !strings.Contains(string(body), strings.Repeat("a", 256)) {
+		t.Fatal("payload missing truncated label")
+	}
+	if strings.Contains(string(body), strings.Repeat("a", 257)) {
+		t.Fatal("payload was not truncated to 256")
+	}
+}
+
+func TestDispatchSendTest(t *testing.T) {
+	svc, rec := newServiceWithFakeTransport(t)
+	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
+	n := svc.SendTest("tok1")
+	if n != 1 {
+		t.Fatalf("SendTest returned %d; want 1", n)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rec.mu.Lock()
+		got := len(rec.requests)
+		rec.mu.Unlock()
+		if got >= 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("SendTest did not POST a push")
+}
+
+func TestDispatchNoOpWhenResolverUnset(t *testing.T) {
+	svc, rec := newServiceWithFakeTransport(t)
+	_ = svc.AddSubscription("tok1", subWithEndpoint("https://push.example/a"))
+	// No resolver set.
+	svc.DispatchCommandFinished(CommandFinished{SessionID: uuid.New()})
+	time.Sleep(100 * time.Millisecond)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.requests) != 0 {
+		t.Fatalf("unexpected pushes without resolver; %d requests", len(rec.requests))
+	}
+	_ = context.Background()
+}

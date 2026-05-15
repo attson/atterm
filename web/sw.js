@@ -1,4 +1,4 @@
-const CACHE = "at-term-web-v3";
+const CACHE = "at-term-web-v4";
 const ASSETS = [
   "./",
   "./app-core.js",
@@ -39,4 +39,23 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(caches.match(req, { ignoreSearch: true }).then((cached) => cached || fetch(req)));
+});
+
+self.addEventListener("push", (event) => {
+  event.waitUntil((async () => {
+    let payload = { title: "AT Term", body: "Command finished." };
+    try {
+      if (event.data) {
+        payload = { ...payload, ...event.data.json() };
+      }
+    } catch (_err) {
+      // keep fallback
+    }
+    const { title, body, tag, data } = payload;
+    const options = {};
+    if (body !== undefined) options.body = body;
+    if (tag !== undefined) options.tag = tag;
+    if (data !== undefined) options.data = data;
+    await self.registration.showNotification(title, options);
+  })());
 });

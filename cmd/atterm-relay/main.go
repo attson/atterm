@@ -13,12 +13,14 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/attson/atterm/internal/relay"
+	"github.com/attson/atterm/internal/webpush"
 )
 
 // Version is set at build time via -ldflags -X main.Version=<tag>.
@@ -29,6 +31,8 @@ func main() {
 	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
+	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for web-push.json etc. (or ATTERM_RELAY_CONFIG_DIR)")
+	vapidSubject := flag.String("vapid-subject", envOr("ATTERM_VAPID_SUBJECT", "mailto:noreply@atterm.local"), "VAPID subject (mailto: or https: URL; advertised to push services)")
 	adminToken := flag.String("admin-token", os.Getenv("ATTERM_ADMIN_TOKEN"), "admin bearer token for /admin routes (or ATTERM_ADMIN_TOKEN; empty disables admin)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
@@ -60,7 +64,27 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Resolve persistence directory. If --config-dir not set, derive from
+	// --config file path or fall back to ./data/atterm-relay.
+	wpDir := *configDir
+	if wpDir == "" && *configPath != "" {
+		wpDir = filepath.Dir(*configPath)
+	}
+	if wpDir == "" {
+		wpDir = "./data/atterm-relay"
+	}
+	wpSvc, wpErr := webpush.Open(wpDir, *vapidSubject)
+	if wpErr != nil {
+		log.Printf("WARN: web-push disabled: %v", wpErr)
+		wpSvc = nil
+	}
+	cfg.WebPush = wpSvc
+
 	srv := relay.NewServer(cfg)
+
+	if wpSvc != nil {
+		wpSvc.SetSessionResolver(srv.WebPushSessionResolver)
+	}
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
@@ -104,6 +128,13 @@ func envInt(name string, fallback int) int {
 		log.Fatalf("%s must be an integer: %v", name, err)
 	}
 	return out
+}
+
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func splitCSV(s string) []string {

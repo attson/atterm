@@ -1,7 +1,9 @@
 <script lang="ts" setup>
 import { computed, onMounted } from "vue";
 import { usePluginConfigStore } from "../configStore";
+import { useQuickInputHotkeys } from "./useQuickInputHotkeys";
 import type { PluginContext } from "../types";
+import type { QuickInputButton } from "../configStore";
 
 const props = defineProps<{ context: PluginContext }>();
 const store = usePluginConfigStore();
@@ -10,11 +12,9 @@ onMounted(async () => {
   if (!store.cfg) await store.load();
 });
 
-const buttons = computed(() => store.cfg?.quickInput.buttons ?? []);
+const buttons = computed<QuickInputButton[]>(() => store.cfg?.quickInput.buttons ?? []);
 
-function fire(idx: number) {
-  const b = buttons.value[idx];
-  if (!b) return;
+function fire(b: QuickInputButton) {
   const text = b.appendNewline ? b.send + "\n" : b.send;
   props.context.send(text);
 }
@@ -23,16 +23,18 @@ function tooltipFor(send: string, newline: boolean, hotkey?: string): string {
   const shown = newline ? send + "\\n" : send;
   return hotkey ? `${shown} (${hotkey})` : shown;
 }
+
+useQuickInputHotkeys(buttons, fire);
 </script>
 
 <template>
   <div class="quick-input-bar">
     <button
-      v-for="(b, i) in buttons"
+      v-for="b in buttons"
       :key="b.id"
       class="quick-input-btn"
       :title="tooltipFor(b.send, b.appendNewline, b.hotkey)"
-      @click="fire(i)"
+      @click="fire(b)"
     >{{ b.label }}</button>
   </div>
 </template>

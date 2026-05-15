@@ -22,6 +22,7 @@ import (
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"nhooyr.io/websocket"
 )
 
@@ -47,6 +48,10 @@ type uplink struct {
 	// drop on the floor if nil or if the channel buffer is full.
 	outMu sync.RWMutex
 	out   chan<- proto.Frame
+
+	// eventsEmit is the Wails EventsEmit function used to push events to the
+	// frontend. Defaults to wailsruntime.EventsEmit; overridden in tests.
+	eventsEmit func(ctx context.Context, name string, data ...interface{})
 }
 
 func newUplink(relayURL, token, remotePermission string, host *relayHost) *uplink {
@@ -55,6 +60,7 @@ func newUplink(relayURL, token, remotePermission string, host *relayHost) *uplin
 		token:            token,
 		remotePermission: normalizeRemotePermission(remotePermission),
 		host:             host,
+		eventsEmit:       wailsruntime.EventsEmit,
 	}
 }
 
@@ -321,10 +327,14 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		mt, data, err := conn.Read(connCtx)
 		if err != nil {
 			var ce websocket.CloseError
-			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) {
-				return err
+			if errors.As(err, &ce) {
+				u.handleCloseError(ctx, ce)
+				return nil
 			}
-			return nil
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
 		}
 		if mt != websocket.MessageBinary {
 			continue
@@ -381,6 +391,31 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			// keepalive ack from relay
 		default:
 			log.Printf("uplink: unexpected frame type 0x%02x", f.Type)
+		}
+	}
+}
+
+// handleCloseError inspects a WebSocket close frame and, for auth-related
+// codes (4001-4003), emits a "relay:auth-error" event to the frontend so it
+// can surface a banner prompting the user to update their settings.
+func (u *uplink) handleCloseError(ctx context.Context, ce websocket.CloseError) {
+	// Map the close reason string first; fall back to code-based mapping.
+	reason := ce.Reason
+	if reason == "" {
+		switch int(ce.Code) {
+		case 4001:
+			reason = "auth_invalid_token"
+		case 4002:
+			reason = "session_id_owner_mismatch"
+		case 4003:
+			reason = "forbidden"
+		}
+	}
+	// Only emit for auth-related codes.
+	switch int(ce.Code) {
+	case 4001, 4002, 4003:
+		if u.eventsEmit != nil {
+			u.eventsEmit(ctx, "relay:auth-error", map[string]string{"reason": reason})
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -269,4 +270,84 @@ func TestUplinkE2E(t *testing.T) {
 		}
 	}
 	t.Fatalf("did not see expected echo in %q", seen.String())
+}
+
+// TestUplink_AuthErrorClose_EmitsEvent verifies that when the relay closes the
+// uplink WS with code 4001 (auth_invalid_token), the uplink calls EventsEmit
+// with event "relay:auth-error" and payload {"reason":"auth_invalid_token"}.
+func TestUplink_AuthErrorClose_EmitsEvent(t *testing.T) {
+	// Spin up a fake relay that immediately closes the /uplink connection with
+	// WS close code 4001 and reason "auth_invalid_token".
+	mux := http.NewServeMux()
+	mux.HandleFunc("/uplink", func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		// Close immediately with auth error code.
+		_ = c.Close(websocket.StatusCode(4001), "auth_invalid_token")
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	// Stub EventsEmit to capture calls.
+	type emitCall struct {
+		name string
+		data interface{}
+	}
+	var (
+		mu    sync.Mutex
+		calls []emitCall
+	)
+	stubEmit := func(_ context.Context, name string, data ...interface{}) {
+		mu.Lock()
+		defer mu.Unlock()
+		var d interface{}
+		if len(data) > 0 {
+			d = data[0]
+		}
+		calls = append(calls, emitCall{name: name, data: d})
+	}
+
+	host, err := startRelayHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host)
+	u.eventsEmit = stubEmit
+
+	// Run returns after the connection is closed (no reconnect: ctx times out quickly).
+	// We run a single runOnce to avoid the retry loop.
+	_ = u.runOnce(ctx)
+
+	// Assert the stub was called with the expected event.
+	mu.Lock()
+	defer mu.Unlock()
+	var found *emitCall
+	for i := range calls {
+		if calls[i].name == "relay:auth-error" {
+			found = &calls[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("relay:auth-error event not emitted; got calls: %+v", calls)
+	}
+	m, ok := found.data.(map[string]string)
+	if !ok {
+		t.Fatalf("relay:auth-error data is %T, want map[string]string; value=%v", found.data, found.data)
+	}
+	if m["reason"] != "auth_invalid_token" {
+		t.Errorf("relay:auth-error reason = %q; want %q", m["reason"], "auth_invalid_token")
+	}
 }

@@ -18,6 +18,7 @@ const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
+  initialTab?: "general" | "relay" | "logging" | "updates";
 }>();
 
 const emit = defineEmits<{
@@ -27,7 +28,7 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
-const activeTab = ref<"general" | "relay" | "logging" | "updates">("general");
+const activeTab = ref<"general" | "relay" | "logging" | "updates">(props.initialTab ?? "general");
 const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);

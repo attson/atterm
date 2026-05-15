@@ -104,6 +104,7 @@ interface AppBindings {
   SetShellIntegrationEnabled(enabled: boolean): Promise<void>;
   GetCommandNotifyThresholdSeconds(): Promise<number>;
   SetCommandNotifyThresholdSeconds(seconds: number): Promise<void>;
+  BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;
 }
 
 declare global {
@@ -251,4 +252,13 @@ export function getCommandNotifyThresholdSeconds(): Promise<number> {
 
 export function setCommandNotifyThresholdSeconds(seconds: number): Promise<void> {
   return bindings().SetCommandNotifyThresholdSeconds(seconds);
+}
+
+export function broadcastCommandFinished(
+  sessionId: string,
+  exitCode: number,
+  elapsedMs: number,
+  label: string,
+): Promise<void> {
+  return bindings().BroadcastCommandFinished(sessionId, exitCode, elapsedMs, label);
 }

@@ -109,7 +109,13 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		s.debugFrame("client", "recv", f)
 		switch f.Type {
 		case proto.TypeList:
-			payload, _ := json.Marshal(s.sessionInfoList())
+			var infos []proto.SessionInfo
+			if ownerUserID != "" {
+				infos = s.sessionInfoListForOwner(ownerUserID)
+			} else {
+				infos = s.sessionInfoList()
+			}
+			payload, _ := json.Marshal(infos)
 			resp := proto.Frame{Type: proto.TypeListResp, Payload: payload}
 			s.debugFrame("client", "send", resp)
 			ctx, cancel := context.WithTimeout(ctx, clientWriteWait)

@@ -296,6 +296,73 @@ func TestClient_AttachOtherUsersSessionRejected(t *testing.T) {
 	_ = ce
 }
 
+// TestClient_ListFrameFilteredByOwner: u_A owns session X; u_B connects /client WS,
+// sends a LIST frame, and must receive a LIST_RESP that does NOT include X.
+// u_A sends LIST and must receive X.
+func TestClient_ListFrameFilteredByOwner(t *testing.T) {
+	store, userAID, cookieA, _, cookieB, adminToken := newClientTestStore(t)
+	srv := newClientTestServer(t, store, adminToken)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	// Register a session owned by user A.
+	sid := uuid.New()
+	sess := session.New(sid, proto.SessionInfo{Command: "bash", Cols: 80, Rows: 24})
+	sess.OwnerUserID = userAID
+	srv.registry.Add(sess)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sendListAndRead := func(cookie string) []proto.SessionInfo {
+		t.Helper()
+		conn, _, err := dialClientWS(t, ctx, httpSrv, cookie)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		// Send a LIST frame (empty payload, zero session id).
+		listFrame := proto.Frame{Type: proto.TypeList}
+		if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(listFrame)); err != nil {
+			t.Fatalf("write LIST: %v", err)
+		}
+
+		// Read the LIST_RESP.
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("read LIST_RESP: %v", err)
+		}
+		f, err := proto.Unmarshal(data)
+		if err != nil {
+			t.Fatalf("unmarshal LIST_RESP: %v", err)
+		}
+		if f.Type != proto.TypeListResp {
+			t.Fatalf("got frame type 0x%02x; want LIST_RESP (0x%02x)", f.Type, proto.TypeListResp)
+		}
+		var infos []proto.SessionInfo
+		if err := json.Unmarshal(f.Payload, &infos); err != nil {
+			t.Fatalf("unmarshal infos: %v", err)
+		}
+		return infos
+	}
+
+	// u_B's LIST must return 0 sessions (does not own X).
+	sessionsB := sendListAndRead(cookieB)
+	if len(sessionsB) != 0 {
+		t.Errorf("u_B LIST: got %d sessions; want 0 (owner filter broken)", len(sessionsB))
+	}
+
+	// u_A's LIST must return the 1 session they own.
+	sessionsA := sendListAndRead(cookieA)
+	if len(sessionsA) != 1 {
+		t.Errorf("u_A LIST: got %d sessions; want 1", len(sessionsA))
+	}
+	if len(sessionsA) > 0 && sessionsA[0].ID != sid.String() {
+		t.Errorf("u_A LIST: session id %q; want %q", sessionsA[0].ID, sid.String())
+	}
+}
+
 // TestClient_AttachAdminRejected: admin token at /client → 401.
 func TestClient_AttachAdminRejected(t *testing.T) {
 	store, _, _, _, _, adminToken := newClientTestStore(t)

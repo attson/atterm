@@ -22,7 +22,11 @@ test("web terminal retries fit after layout settles", () => {
 
 test("web terminal padding is on xterm so FitAddon accounts for it", () => {
   assert.doesNotMatch(styleBlockFor("#term"), /padding\s*:/);
-  assert.match(styleBlockFor("#term .xterm"), /padding\s*:\s*6px 8px/);
+  const xtermStyle = styleBlockFor("#term .xterm");
+  assert.match(xtermStyle, /padding\s*:[^;]*\b6px\b/);
+  assert.match(xtermStyle, /padding\s*:[^;]*\b8px\b/);
+  assert.match(xtermStyle, /padding\s*:[^;]*env\(safe-area-inset-left\)/);
+  assert.match(xtermStyle, /padding\s*:[^;]*env\(safe-area-inset-right\)/);
 });
 
 test("web terminal uses a route class for full-height layout", () => {
@@ -35,5 +39,5 @@ test("web terminal uses a route class for full-height layout", () => {
 });
 
 test("service worker cache is bumped for web shell asset changes", () => {
-  assert.match(sw, /at-term-web-v4/);
+  assert.match(sw, /at-term-web-v5/);
 });

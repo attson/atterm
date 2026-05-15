@@ -85,3 +85,15 @@ func TestValidatePluginConfig(t *testing.T) {
 		t.Error("InnerTreeRatio < 0.15 must fail validation")
 	}
 }
+
+func TestAppConfigEmbedsPluginConfig(t *testing.T) {
+	var c appConfig
+	if c.Plugins.QuickInput.Buttons != nil {
+		t.Fatal("expected zero-value Plugins")
+	}
+	// applyConfigDefaults must inject plugin defaults.
+	applyConfigDefaults(&c)
+	if len(c.Plugins.QuickInput.Buttons) != 3 {
+		t.Fatalf("plugin defaults not injected, got %+v", c.Plugins)
+	}
+}

@@ -62,6 +62,20 @@ export namespace main {
 	        this.session_id = source["session_id"];
 	    }
 	}
+	export class RelayMe {
+	    user_id: string;
+	    email: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RelayMe(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.user_id = source["user_id"];
+	        this.email = source["email"];
+	    }
+	}
 	export class RelayConfig {
 	    url: string;
 	    token: string;

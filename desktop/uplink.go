@@ -387,6 +387,13 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			} else {
 				log.Printf("desktop-uplink: inbound_forward_ok type=CLAIM_DRIVER session=%s client_id=%q client_name=%q", f.SessionID, cp.ClientID, cp.ClientName)
 			}
+		case proto.TypeAuthInfo:
+			var info struct {
+				UserID string `json:"user_id"`
+			}
+			if err := json.Unmarshal(f.Payload, &info); err == nil {
+				u.eventsEmit(ctx, "relay:auth-info", info)
+			}
 		case proto.TypePong:
 			// keepalive ack from relay
 		default:

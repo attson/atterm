@@ -67,4 +67,24 @@ describe("SettingsRelay", () => {
     expect(source).toContain("BrowserOpenURL");
     expect(source).toContain("/settings.html");
   });
+
+  // Task 8.1 tests
+  test("status row shows user_id_short when AUTH_INFO received but email not yet fetched", () => {
+    // Must listen for the relay:auth-info event
+    expect(source).toContain('EventsOn("relay:auth-info"');
+    // Must show "connected as <short id>" based on a slice of user_id
+    expect(source).toContain("connected as");
+    expect(source).toContain("connectedUserID");
+    // Should slice connectedUserID to short form (8 chars)
+    expect(source).toMatch(/connectedUserID.*slice\(0,\s*8\)|slice\(0,\s*8\).*connectedUserID/);
+  });
+
+  test("status row shows email once /api/me fetch completes", () => {
+    // Must call fetchRelayMe (the api.ts wrapper)
+    expect(source).toContain("fetchRelayMe");
+    // Must have connectedEmail ref
+    expect(source).toContain("connectedEmail");
+    // Status text should prefer email when available
+    expect(source).toMatch(/connectedEmail.*connected as|connected as.*connectedEmail/);
+  });
 });

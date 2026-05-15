@@ -54,6 +54,10 @@ export function SetUplinkPaused(arg1) {
   return window['go']['main']['App']['SetUplinkPaused'](arg1);
 }
 
+export function FetchRelayMe() {
+  return window['go']['main']['App']['FetchRelayMe']();
+}
+
 export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
 }

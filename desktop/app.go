@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -653,4 +655,45 @@ func (a *App) BroadcastCommandFinished(sessionID string, exitCode, elapsedMS int
 		return
 	}
 	u.SendCommandEvent(sid, exitCode, elapsedMS, label)
+}
+
+// RelayMe is the response body from the relay's /api/me endpoint.
+// Email is never logged or persisted (SEC-1).
+type RelayMe struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+}
+
+// FetchRelayMe queries the configured relay's /api/me endpoint using the
+// stored API token and returns the user's identity. The desktop UI calls
+// this after receiving a relay:auth-info event to display the email in the
+// status row. Email is held in-memory only and is never written to disk.
+func (a *App) FetchRelayMe() (RelayMe, error) {
+	if a.cfgStore == nil {
+		return RelayMe{}, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+		return RelayMe{}, fmt.Errorf("no relay configured")
+	}
+	// Convert WS scheme to HTTP so we can use net/http.
+	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+	req, err := http.NewRequest("GET", baseHTTP+"/api/me", nil)
+	if err != nil {
+		return RelayMe{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return RelayMe{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return RelayMe{}, fmt.Errorf("relay /api/me returned status %d", resp.StatusCode)
+	}
+	var out RelayMe
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return RelayMe{}, err
+	}
+	return out, nil
 }

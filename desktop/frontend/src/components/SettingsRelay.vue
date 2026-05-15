@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setUplinkPaused } from "../lib/api";
-import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
+import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe } from "../lib/api";
+import { BrowserOpenURL, EventsOn } from "../../wailsjs/runtime/runtime";
 import SelectDropdown from "./SelectDropdown.vue";
 
 const emit = defineEmits<{
@@ -18,6 +18,10 @@ const loading = ref(true);
 const saving = ref(false);
 const togglingPause = ref(false);
 const error = ref("");
+
+// In-memory only (SEC-1): never persisted or logged.
+const connectedUserID = ref("");
+const connectedEmail = ref("");
 
 const persistedUrl = ref("");
 const persistedToken = ref("");
@@ -49,6 +53,12 @@ const tokenWarning = computed(() =>
 
 // Status pill matrix per spec §8.2
 const statusPill = computed(() => {
+  if (connectedEmail.value) {
+    return { text: `connected as ${connectedEmail.value}`, cls: "on" };
+  }
+  if (connectedUserID.value) {
+    return { text: `connected as ${connectedUserID.value.slice(0, 8)}`, cls: "on" };
+  }
   if (!url.value) {
     return { text: "not configured", cls: "off" };
   }
@@ -72,6 +82,16 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+
+  EventsOn("relay:auth-info", async (data: { user_id: string }) => {
+    connectedUserID.value = data.user_id || "";
+    try {
+      const me = await fetchRelayMe();
+      connectedEmail.value = me.email || "";
+    } catch {
+      // Ignore; status row falls back to showing the short user_id.
+    }
+  });
 });
 
 function snapshotPersisted() {

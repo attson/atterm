@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,5 +212,46 @@ func TestOpenExternalRefusesForbidden(t *testing.T) {
 	fs, _ := makeFS(t)
 	if err := fs.OpenExternal(t.TempDir()); err == nil {
 		t.Fatal("expected refusal")
+	}
+}
+
+func TestWatchUnwatchLifecycle(t *testing.T) {
+	fs, home := makeFS(t)
+	fs.setupWatcher(context.Background())
+	defer fs.shutdownWatcher()
+
+	id, err := fs.WatchDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero handle id")
+	}
+	if err := fs.UnwatchDir(id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWatchDirCapEnforced(t *testing.T) {
+	fs, home := makeFS(t)
+	fs.setupWatcher(context.Background())
+	defer fs.shutdownWatcher()
+
+	// Create more than the cap of subdirs.
+	for i := 0; i <= maxWatchers; i++ {
+		d := filepath.Join(home, fmt.Sprintf("d%d", i))
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	good := 0
+	for i := 0; i < maxWatchers+1; i++ {
+		_, err := fs.WatchDir(filepath.Join(home, fmt.Sprintf("d%d", i)))
+		if err == nil {
+			good++
+		}
+	}
+	if good != maxWatchers {
+		t.Fatalf("expected %d successful watches, got %d", maxWatchers, good)
 	}
 }

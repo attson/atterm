@@ -10,13 +10,19 @@ package main
 // stays clean.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	stdruntime "runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type PluginFS struct {
@@ -25,6 +31,14 @@ type PluginFS struct {
 	// $HOME plus the live set of active local session cwds (see app.go
 	// wiring).
 	allowRoots []string
+
+	watchOnce  sync.Once
+	watcher    *fsnotify.Watcher
+	watches    map[int64]string
+	watchPaths map[string]int
+	debounce   map[string]*time.Timer
+	mu         sync.Mutex
+	ctx        context.Context
 }
 
 var (
@@ -284,4 +298,106 @@ func (p *PluginFS) OpenExternal(path string) error {
 func NewPluginFS() *PluginFS {
 	home, _ := os.UserHomeDir()
 	return &PluginFS{allowRoots: []string{home}}
+}
+
+const (
+	maxWatchers    = 200
+	debounceWindow = 100 * time.Millisecond
+)
+
+func (p *PluginFS) setupWatcher(ctx context.Context) {
+	p.watchOnce.Do(func() {
+		w, err := fsnotify.NewWatcher()
+		if err != nil {
+			return
+		}
+		p.watcher = w
+		p.watches = make(map[int64]string)
+		p.watchPaths = make(map[string]int)
+		p.debounce = make(map[string]*time.Timer)
+		p.ctx = ctx
+		go p.watcherLoop()
+	})
+}
+
+func (p *PluginFS) shutdownWatcher() {
+	if p.watcher != nil {
+		_ = p.watcher.Close()
+	}
+}
+
+var pluginFSWatchSeq int64
+
+func (p *PluginFS) WatchDir(path string) (int64, error) {
+	resolved, err := p.resolve(path)
+	if err != nil {
+		return 0, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.watches) >= maxWatchers {
+		return 0, fmt.Errorf("plugin_fs: watcher cap %d reached", maxWatchers)
+	}
+	if p.watchPaths[resolved] == 0 {
+		if err := p.watcher.Add(resolved); err != nil {
+			return 0, err
+		}
+	}
+	pluginFSWatchSeq++
+	id := pluginFSWatchSeq
+	p.watches[id] = resolved
+	p.watchPaths[resolved]++
+	return id, nil
+}
+
+func (p *PluginFS) UnwatchDir(handleID int64) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	path, ok := p.watches[handleID]
+	if !ok {
+		return nil
+	}
+	delete(p.watches, handleID)
+	p.watchPaths[path]--
+	if p.watchPaths[path] <= 0 {
+		delete(p.watchPaths, path)
+		_ = p.watcher.Remove(path)
+	}
+	return nil
+}
+
+func (p *PluginFS) watcherLoop() {
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case ev, ok := <-p.watcher.Events:
+			if !ok {
+				return
+			}
+			dir := filepath.Dir(ev.Name)
+			p.scheduleDirChanged(dir)
+		case err, ok := <-p.watcher.Errors:
+			if !ok {
+				return
+			}
+			_ = err
+		}
+	}
+}
+
+func (p *PluginFS) scheduleDirChanged(dir string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t, ok := p.debounce[dir]; ok {
+		t.Stop()
+	}
+	p.debounce[dir] = time.AfterFunc(debounceWindow, func() {
+		p.mu.Lock()
+		delete(p.debounce, dir)
+		p.mu.Unlock()
+		if p.ctx != nil {
+			wailsruntime.EventsEmit(p.ctx, "plugin-fs:dir-changed", dir)
+		}
+	})
 }

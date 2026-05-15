@@ -30,7 +30,6 @@ func main() {
 	defer logger.Close()
 
 	app := NewApp(cfgStore, logger)
-	pluginFS := NewPluginFS()
 
 	opts := &options.App{
 		Title:  "AT Term",
@@ -49,7 +48,7 @@ func main() {
 		},
 		Bind: []interface{}{
 			app,
-			pluginFS,
+			app.pluginFS,
 		},
 	}
 

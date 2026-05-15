@@ -37,6 +37,7 @@ type PluginFS struct {
 	watches    map[int64]string
 	watchPaths map[string]int
 	debounce   map[string]*time.Timer
+	watchSeq   int64 // guarded by mu
 	mu         sync.Mutex
 	ctx        context.Context
 }
@@ -326,8 +327,6 @@ func (p *PluginFS) shutdownWatcher() {
 	}
 }
 
-var pluginFSWatchSeq int64
-
 func (p *PluginFS) WatchDir(path string) (int64, error) {
 	resolved, err := p.resolve(path)
 	if err != nil {
@@ -335,6 +334,9 @@ func (p *PluginFS) WatchDir(path string) (int64, error) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.watcher == nil {
+		return 0, fmt.Errorf("plugin_fs: watcher not available")
+	}
 	if len(p.watches) >= maxWatchers {
 		return 0, fmt.Errorf("plugin_fs: watcher cap %d reached", maxWatchers)
 	}
@@ -343,8 +345,8 @@ func (p *PluginFS) WatchDir(path string) (int64, error) {
 			return 0, err
 		}
 	}
-	pluginFSWatchSeq++
-	id := pluginFSWatchSeq
+	p.watchSeq++
+	id := p.watchSeq
 	p.watches[id] = resolved
 	p.watchPaths[resolved]++
 	return id, nil

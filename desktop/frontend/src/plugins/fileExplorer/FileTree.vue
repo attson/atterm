@@ -71,8 +71,8 @@ async function toggle(n: Node) {
     try {
       const id = (await WatchDir(n.path)) as number;
       watchHandles.set(n.path, id);
-    } catch {
-      // cap reached or platform unsupported; ignore — refresh button still works.
+    } catch (err) {
+      console.warn("plugin-fs: watcher unavailable or cap reached for", n.path, err);
     }
   } else {
     const id = watchHandles.get(n.path);

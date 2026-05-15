@@ -200,15 +200,9 @@ const pluginContext = createPluginContext({
 
 const pluginStore = usePluginConfigStore();
 
-const panelWidth = computed({
-  get: () => pluginStore.cfg?.fileExplorer.panelWidthPx ?? 380,
-  set: (v: number) => {
-    if (!pluginStore.cfg) return;
-    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
-    next.fileExplorer.panelWidthPx = Math.max(240, Math.min(v, window.innerWidth * 0.7));
-    void pluginStore.save(next);
-  },
-});
+const persistedPanelWidth = computed(() => pluginStore.cfg?.fileExplorer.panelWidthPx ?? 380);
+const dragPanelWidth = ref<number | null>(null);
+const panelWidth = computed(() => dragPanelWidth.value ?? persistedPanelWidth.value);
 
 const panelCollapsed = computed({
   get: () => pluginStore.cfg?.fileExplorer.panelCollapsed ?? true,
@@ -224,9 +218,19 @@ function togglePanel() { panelCollapsed.value = !panelCollapsed.value; }
 
 const { onMouseDown: onPanelResizeDown } = useResizer({
   onDrag: (deltaX) => {
-    if (!pluginStore.cfg) return;
-    const next = (pluginStore.cfg.fileExplorer.panelWidthPx ?? 380) - deltaX;
-    panelWidth.value = next;
+    const current = dragPanelWidth.value ?? persistedPanelWidth.value;
+    const next = Math.max(240, Math.min(current - deltaX, window.innerWidth * 0.7));
+    dragPanelWidth.value = next;
+  },
+  onEnd: () => {
+    if (dragPanelWidth.value === null || !pluginStore.cfg) {
+      dragPanelWidth.value = null;
+      return;
+    }
+    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
+    next.fileExplorer.panelWidthPx = dragPanelWidth.value;
+    void pluginStore.save(next);
+    dragPanelWidth.value = null;
   },
 });
 

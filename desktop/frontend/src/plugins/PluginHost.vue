@@ -21,6 +21,7 @@ const loading = ref(false);
 
 async function reconcile() {
   if (!store.cfg) return;
+  if (loading.value) return;
   loading.value = true;
   try {
     const slotPlugins = descriptorsForSlot(props.slotId).filter((d) =>

@@ -14,15 +14,9 @@ const store = usePluginConfigStore();
 // Pinned root (in-memory only; resets on app restart per spec).
 const pinned = ref<string | null>(null);
 
-const innerRatio = computed({
-  get: () => store.cfg?.fileExplorer.innerTreeRatio ?? 0.3,
-  set: (v: number) => {
-    if (!store.cfg) return;
-    const next = JSON.parse(JSON.stringify(store.cfg));
-    next.fileExplorer.innerTreeRatio = Math.max(0.15, Math.min(v, 0.5));
-    void store.save(next);
-  },
-});
+const persistedInnerRatio = computed(() => store.cfg?.fileExplorer.innerTreeRatio ?? 0.3);
+const dragInnerRatio = ref<number | null>(null);
+const innerRatio = computed(() => dragInnerRatio.value ?? persistedInnerRatio.value);
 
 const bodyRef = ref<HTMLDivElement | null>(null);
 
@@ -31,7 +25,19 @@ const { onMouseDown: onDividerDown } = useResizer({
     if (!bodyRef.value) return;
     const width = bodyRef.value.clientWidth;
     if (width <= 0) return;
-    innerRatio.value = innerRatio.value - deltaX / width;
+    const cur = dragInnerRatio.value ?? persistedInnerRatio.value;
+    const next = Math.max(0.15, Math.min(cur - deltaX / width, 0.5));
+    dragInnerRatio.value = next;
+  },
+  onEnd: () => {
+    if (dragInnerRatio.value === null || !store.cfg) {
+      dragInnerRatio.value = null;
+      return;
+    }
+    const next = JSON.parse(JSON.stringify(store.cfg));
+    next.fileExplorer.innerTreeRatio = dragInnerRatio.value;
+    void store.save(next);
+    dragInnerRatio.value = null;
   },
 });
 

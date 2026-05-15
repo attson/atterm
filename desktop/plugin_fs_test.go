@@ -215,6 +215,14 @@ func TestOpenExternalRefusesForbidden(t *testing.T) {
 	}
 }
 
+func TestWatchDirReturnsErrorWhenWatcherUnavailable(t *testing.T) {
+	fs, home := makeFS(t)
+	// Deliberately skip setupWatcher.
+	if _, err := fs.WatchDir(home); err == nil {
+		t.Fatal("expected error when watcher not set up")
+	}
+}
+
 func TestWatchUnwatchLifecycle(t *testing.T) {
 	fs, home := makeFS(t)
 	fs.setupWatcher(context.Background())

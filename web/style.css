@@ -263,7 +263,7 @@ body.terminal-active #term-view {
     calc(8px + env(safe-area-inset-bottom))
     calc(8px + env(safe-area-inset-left));
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
   background: rgba(2, 6, 23, 0.96);
   border-top: 1px solid var(--border);
@@ -272,16 +272,19 @@ body.terminal-active #term-view {
   transition: transform 120ms ease;
   position: relative;
   z-index: 20;
+  touch-action: manipulation;
 }
 #shortcut-bar::-webkit-scrollbar { display: none; }
 #shortcut-bar button {
-  flex: 0 0 auto;
-  min-width: 54px;
+  flex: 0 1 auto;
+  min-width: 0;
   border: 1px solid #334155;
   border-radius: 12px;
   background: #0f172a;
   color: var(--fg);
-  padding: 10px 12px;
+  padding: 10px 8px;
+  white-space: nowrap;
+  touch-action: manipulation;
 }
 #shortcut-bar button:active { background: #1e293b; color: var(--accent); }
 body.desktop-web #shortcut-bar {
@@ -309,6 +312,19 @@ body.desktop-web #shortcut-bar {
   padding: 10px;
 }
 .paste-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.paste-image-pick {
+  display: inline-block;
+  margin-right: auto;
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font: inherit;
+  touch-action: manipulation;
+}
+.paste-image-pick:hover { border-color: var(--accent); color: var(--accent); }
 
 @media (min-width: 720px) {
   #main { padding: 24px; }

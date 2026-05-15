@@ -129,6 +129,7 @@ const pasteBtn = _el("paste");
 const pasteFallback = _el("paste-fallback");
 const pasteText = _el("paste-text");
 const pasteCancel = _el("paste-cancel");
+const pasteImageFile = _el("paste-image-file");
 const replayProgress = _el("replay-progress");
 const replayProgressText = _el("replay-progress-text");
 const replayProgressFill = _el("replay-progress-fill");
@@ -154,6 +155,13 @@ function focusTerminal() {
   if (!term) return;
   if (!shouldFocusTerminalAfterInput(currentClientMode())) return;
   term.focus();
+}
+
+function openPasteFallback() {
+  pasteFallback.hidden = false;
+  // Don't auto-focus the textarea on mobile — that would pop the soft
+  // keyboard, which is unwanted when the user just wants to upload an image.
+  if (currentClientMode() !== "mobile-web") pasteText.focus();
 }
 
 function applyKeyboardInset() {
@@ -661,13 +669,23 @@ if (_isBrowser) {
   });
 
   pasteBtn.addEventListener("click", async () => {
+    // On mobile-web, clipboard read is either silently empty or blocked
+    // behind permission prompts that drop the user gesture, so go straight
+    // to the fallback modal — which now also has a file picker for images.
+    if (currentClientMode() === "mobile-web") {
+      openPasteFallback();
+      return;
+    }
     try {
       if (await pasteClipboardImage()) return;
       const text = await navigator.clipboard.readText();
-      if (text) sendInput(text);
+      if (text) {
+        sendInput(text);
+        return;
+      }
+      openPasteFallback();
     } catch {
-      pasteFallback.hidden = false;
-      pasteText.focus();
+      openPasteFallback();
     }
   });
 
@@ -683,6 +701,21 @@ if (_isBrowser) {
     if (pasteText.value) sendInput(pasteText.value);
     pasteText.value = "";
     pasteFallback.hidden = true;
+  });
+
+  pasteImageFile.addEventListener("change", async () => {
+    const file = pasteImageFile.files?.[0];
+    pasteImageFile.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setStatus("not an image", "err");
+      return;
+    }
+    const ok = await sendImagePaste(file, file.name || "upload");
+    if (ok) {
+      pasteFallback.hidden = true;
+      pasteText.value = "";
+    }
   });
 }
 

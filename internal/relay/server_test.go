@@ -60,6 +60,28 @@ func TestWebPushSessionResolverSkipsReadTokenForViewOnlyRemotePermission(t *test
 	}
 }
 
+func TestWebPushSessionResolverIncludesAdminManagedReadOnlyHashes(t *testing.T) {
+	// Compute the hash the subscribe handler would store for "ro-admin-token".
+	expectedHash := tokenHash("ro-admin-token")
+	// And the canonical admin-stored form (with prefix).
+	prefixed := "sha256:" + expectedHash
+	srv := NewServer(Config{
+		Token:               "write-token",
+		ReadOnlyTokenHashes: []string{prefixed},
+	})
+	sid := uuid.New()
+	info := proto.SessionInfo{
+		HostID:           uuid.New().String(),
+		RemotePermission: proto.RemotePermissionFull,
+	}
+	srv.Registry().Add(session.New(sid, info))
+	defer srv.Registry().Remove(sid)
+	got := srv.WebPushSessionResolver(sid)
+	if !containsString(got, expectedHash) {
+		t.Fatalf("resolver missing admin RO tokenHash; got %v", got)
+	}
+}
+
 func containsString(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {

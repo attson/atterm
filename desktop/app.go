@@ -621,8 +621,11 @@ func (a *App) BroadcastCommandFinished(sessionID string, exitCode, elapsedMS int
 	if err != nil {
 		return
 	}
-	if a.uplink == nil {
+	a.mu.Lock()
+	u := a.uplink
+	a.mu.Unlock()
+	if u == nil {
 		return
 	}
-	a.uplink.SendCommandEvent(sid, exitCode, elapsedMS, label)
+	u.SendCommandEvent(sid, exitCode, elapsedMS, label)
 }

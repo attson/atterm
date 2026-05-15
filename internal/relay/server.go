@@ -334,6 +334,11 @@ func (s *Server) WebPushSessionResolver(sessionID uuid.UUID) []string {
 	for _, t := range s.cfg.ReadOnlyTokens {
 		out = append(out, tokenHash(t))
 	}
+	// Admin-managed RO tokens are stored as "sha256:<base64url>"; strip the
+	// prefix to match the plain base64url form used by tokenHash.
+	for _, h := range s.cfg.ReadOnlyTokenHashes {
+		out = append(out, strings.TrimPrefix(h, "sha256:"))
+	}
 	_ = perm // perm is read for future per-permission filtering; v1 includes all tokens that can view.
 	return out
 }

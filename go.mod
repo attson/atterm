@@ -6,6 +6,7 @@ require (
 	github.com/SherClockHolmes/webpush-go v1.3.0
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
+	github.com/oklog/ulid/v2 v2.1.1
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/mod v0.24.0
 	golang.org/x/term v0.29.0

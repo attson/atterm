@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -47,6 +48,37 @@ func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 }
 
 func (s *SQLiteStore) Close() error { return s.db.Close() }
+
+// Store is the dependency-inversion seam between internal/relay and the
+// concrete SQLite implementation. Tests in internal/relay can substitute
+// a memory implementation that satisfies this interface.
+type Store interface {
+	// Users
+	CreateUser(ctx context.Context, email, password string) (*User, error)
+	VerifyPassword(ctx context.Context, email, password string) (*User, error)
+	GetUser(ctx context.Context, id string) (*User, error)
+	DisableUser(ctx context.Context, id string) error
+
+	// Invitations
+	CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error)
+	ConsumeInvitation(ctx context.Context, plaintext, userID string) error
+	ListInvitations(ctx context.Context) ([]Invitation, error)
+
+	// API tokens
+	CreateAPIToken(ctx context.Context, userID, name string) (Secret, *APIToken, error)
+	LookupAPIToken(ctx context.Context, plaintext string) (tokenID, userID string, err error)
+	RevokeAPIToken(ctx context.Context, tokenID, userID string) error
+	ListAPITokens(ctx context.Context, userID string) ([]APIToken, error)
+	TouchAPIToken(ctx context.Context, tokenID string) error
+
+	// Web sessions (cookie)
+	CreateWebSession(ctx context.Context, userID, userAgent, ipPrefix string) (Secret, error)
+	LookupWebSession(ctx context.Context, plaintext string) (userID string, csrfSecret []byte, err error)
+	DeleteWebSession(ctx context.Context, plaintext string) error
+	PurgeExpiredWebSessions(ctx context.Context) (int64, error)
+
+	Close() error
+}
 
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (

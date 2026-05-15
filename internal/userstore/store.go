@@ -49,6 +49,11 @@ func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
+// DB returns the underlying sql.DB. Only used in tests that need direct
+// SQL access to verify internal state (e.g. csrf_secret rotation). Not part
+// of the Store interface.
+func (s *SQLiteStore) DB() *sql.DB { return s.db }
+
 // Store is the dependency-inversion seam between internal/relay and the
 // concrete SQLite implementation. Tests in internal/relay can substitute
 // a memory implementation that satisfies this interface.
@@ -58,6 +63,8 @@ type Store interface {
 	VerifyPassword(ctx context.Context, email, password string) (*User, error)
 	GetUser(ctx context.Context, id string) (*User, error)
 	DisableUser(ctx context.Context, id string) error
+	ListUsers(ctx context.Context) ([]User, error)
+	ResetUserPassword(ctx context.Context, userID string) (Secret, error)
 
 	// Invitations
 	CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error)

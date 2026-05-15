@@ -204,3 +204,76 @@ func (s *SQLiteStore) DisableUser(ctx context.Context, id string) error {
 		 WHERE id = ? AND disabled_at IS NULL`, id)
 	return err
 }
+
+// ListUsers returns all users ordered by created_at descending (newest first).
+func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, email, created_at, disabled_at FROM users ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var (
+			id, email  string
+			createdAt  int64
+			disabledAt sql.NullInt64
+		)
+		if err := rows.Scan(&id, &email, &createdAt, &disabledAt); err != nil {
+			return nil, err
+		}
+		u := User{ID: id, Email: email, CreatedAt: time.Unix(createdAt, 0)}
+		if disabledAt.Valid {
+			t := time.Unix(disabledAt.Int64, 0)
+			u.DisabledAt = &t
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// ResetUserPassword generates a new temporary password (prefix "tmp_"), updates
+// the user's password_hash, rotates csrf_secret, and deletes all web_sessions
+// for that user — all in one transaction. Returns the plaintext password once.
+func (s *SQLiteStore) ResetUserPassword(ctx context.Context, userID string) (Secret, error) {
+	// Generate 16 random bytes → base64url → "tmp_<22 chars>" (total ~26 chars).
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return Secret{}, fmt.Errorf("rand: %w", err)
+	}
+	plaintext := "tmp_" + base64.RawURLEncoding.EncodeToString(raw)
+
+	hash, err := hashPassword(plaintext)
+	if err != nil {
+		return Secret{}, fmt.Errorf("hash: %w", err)
+	}
+
+	newCSRF := make([]byte, 32)
+	if _, err := rand.Read(newCSRF); err != nil {
+		return Secret{}, fmt.Errorf("csrf rand: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Secret{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET password_hash=?, csrf_secret=? WHERE id=?`,
+		hash, newCSRF, userID); err != nil {
+		return Secret{}, fmt.Errorf("update password: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM web_sessions WHERE user_id=?`, userID); err != nil {
+		return Secret{}, fmt.Errorf("delete sessions: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Secret{}, fmt.Errorf("commit: %w", err)
+	}
+
+	return NewSecret(plaintext, "tmp_"), nil
+}

@@ -17,6 +17,11 @@ import (
 // to callers to prevent oracles.
 var ErrTokenInvalid = errors.New("userstore: api token invalid, revoked, or owner disabled")
 
+// ErrTokenNotOwnedOrMissing is returned by RevokeAPIToken when the token ID
+// does not exist or belongs to a different user. Callers should map this to
+// HTTP 404 (not 403) to avoid disclosing whether a given token ID exists.
+var ErrTokenNotOwnedOrMissing = errors.New("userstore: token not found or not owned by the requesting user")
+
 // APIToken is the row shape exposed for admin/user listings. It never carries
 // the plaintext token — only the stored prefix for UI hinting.
 type APIToken struct {
@@ -119,7 +124,7 @@ func (s *SQLiteStore) RevokeAPIToken(ctx context.Context, tokenID, userID string
 		return fmt.Errorf("rows affected: %w", err)
 	}
 	if affected == 0 {
-		return fmt.Errorf("userstore: token %q not found or not owned by user %q", tokenID, userID)
+		return ErrTokenNotOwnedOrMissing
 	}
 	return nil
 }

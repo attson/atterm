@@ -11,6 +11,18 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 )
 
+// requireUser ensures the request resolves to PrincipalUser. Returns the
+// principal so handlers don't re-resolve. On failure, writes 401 and returns
+// (zero Principal, false).
+func (a *AuthServer) requireUser(w http.ResponseWriter, r *http.Request) (Principal, bool) {
+	p := a.Resolver.Resolve(r)
+	if p.Kind != PrincipalUser {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return p, false
+	}
+	return p, true
+}
+
 // AuthServer handles the /api/auth/* and /api/me endpoints.
 //
 // Signup transaction order: consume invitation first, then create user.
@@ -32,14 +44,17 @@ type AuthServer struct {
 	FailureFloor time.Duration
 }
 
-// Routes returns an http.Handler with the three auth endpoints mounted.
-// Signup and login are public (no CSRF). Logout requires CSRF.
+// Routes returns an http.Handler with all auth + me endpoints mounted.
+// Signup and login are public (no CSRF). Logout and token mutation require CSRF.
 func (a *AuthServer) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/auth/signup", http.HandlerFunc(a.handleSignup))
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(a.handleLogin))
 	mux.Handle("POST /api/auth/logout", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleLogout)))
 	mux.Handle("GET /api/me", http.HandlerFunc(a.handleMe))
+	mux.Handle("GET /api/me/tokens", http.HandlerFunc(a.handleListTokens))
+	mux.Handle("POST /api/me/tokens", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleCreateToken)))
+	mux.Handle("DELETE /api/me/tokens/{id}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleRevokeToken)))
 	return mux
 }
 
@@ -275,6 +290,120 @@ func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONStatus(w, http.StatusOK, resp)
+}
+
+// handleListTokens implements GET /api/me/tokens.
+//
+// Returns all API tokens for the authenticated user. The response array
+// contains {id, name, prefix, created_at} and optional {last_used_at,
+// revoked_at}. No plaintext or token_hash fields are included.
+func (a *AuthServer) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	tokens, err := a.Store.ListAPITokens(r.Context(), p.UserID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	type tokenRow struct {
+		ID         string  `json:"id"`
+		Name       string  `json:"name"`
+		Prefix     string  `json:"prefix"`
+		CreatedAt  string  `json:"created_at"`
+		LastUsedAt *string `json:"last_used_at,omitempty"`
+		RevokedAt  *string `json:"revoked_at,omitempty"`
+	}
+
+	out := make([]tokenRow, 0, len(tokens))
+	for _, t := range tokens {
+		row := tokenRow{
+			ID:        t.ID,
+			Name:      t.Name,
+			Prefix:    t.Prefix,
+			CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if t.LastUsedAt != nil {
+			s := t.LastUsedAt.UTC().Format(time.RFC3339)
+			row.LastUsedAt = &s
+		}
+		if t.RevokedAt != nil {
+			s := t.RevokedAt.UTC().Format(time.RFC3339)
+			row.RevokedAt = &s
+		}
+		out = append(out, row)
+	}
+
+	writeJSONStatus(w, http.StatusOK, out)
+}
+
+// handleCreateToken implements POST /api/me/tokens (CSRF-gated).
+//
+// Body: {"name": "<display name>"}
+// Response 201: {id, plaintext, prefix, created_at}
+// The plaintext is returned exactly once and never stored.
+func (a *AuthServer) handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if strings.TrimSpace(body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "name_required")
+		return
+	}
+
+	secret, tok, err := a.Store.CreateAPIToken(r.Context(), p.UserID, body.Name)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSONStatus(w, http.StatusCreated, map[string]string{
+		"id":         tok.ID,
+		"plaintext":  secret.Expose(), // only call site for plaintext exposure
+		"prefix":     tok.Prefix,
+		"created_at": tok.CreatedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// handleRevokeToken implements DELETE /api/me/tokens/{id} (CSRF-gated).
+//
+// Revokes the named token. Returns 204 on success, 404 if the token does not
+// exist or belongs to a different user (existence-leak protected), 500 on DB error.
+func (a *AuthServer) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	tokenID := r.PathValue("id")
+	if tokenID == "" {
+		http.Error(w, "missing token id", http.StatusBadRequest)
+		return
+	}
+
+	err := a.Store.RevokeAPIToken(r.Context(), tokenID, p.UserID)
+	if err != nil {
+		if errors.Is(err, userstore.ErrTokenNotOwnedOrMissing) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // validEmail is a minimal email format check. The store normalises the case;

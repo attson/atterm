@@ -9,8 +9,7 @@ Replace the relay's shared-token authentication with a per-user account
 system. After this lands:
 
 - Operators run one relay; each end-user has their own account.
-- Each user sees only their own sessions and the sessions they hold an
-  active share link to.
+- Each user sees only their own sessions.
 - Desktop / CLI uplinks authenticate as a specific user via a per-user API
   token issued from the web UI.
 - The existing `ATTERM_TOKEN` and `ATTERM_READ_ONLY_TOKENS` are removed.
@@ -36,14 +35,13 @@ audit logs.
 │      admin_http.go        invite / user admin pages                         │
 │      client_conn.go       list/attach filtered by owner_user_id             │
 │      uplink_conn.go       token → user, set Session.OwnerUserID             │
-│      permissions.go       share-link Principal is enforced read-only        │
+│      permissions.go       enforce remote_permission (view/control/full)     │
 │                                                                             │
 │  internal/userstore/ (new — only package that touches SQLite)               │
 │      store.go             DB handle, migration runner, txn helper           │
 │      users.go             CRUD + argon2id password hashing                  │
 │      invitations.go       create / consume / expire                         │
 │      apitokens.go         issue / revoke; sha256(token) stored              │
-│      sharelinks.go        issue / revoke; bound to session_id               │
 │      websessions.go       cookie session table + sliding expire             │
 │                                                                             │
 │  internal/session/        Session adds OwnerUserID string field             │
@@ -56,7 +54,7 @@ web/  (vanilla JS, multi-page)
   index.html        terminal & sessions list (cookie-gated)
   login.html        email + password
   signup.html       invite code + email + password
-  settings.html     API tokens / share links / change password
+  settings.html     API tokens / change password
   app.js            fetch with cookie; 401 → redirect /login.html
 ```
 
@@ -87,9 +85,6 @@ GET    /api/me                                                  → user info, c
 GET    /api/me/tokens                                           → list (no plaintext)
 POST   /api/me/tokens        {name}                             → returns plaintext atk_… once
 DELETE /api/me/tokens/:id                                       → revoke
-GET    /api/me/sessions/:sid/shares                             → list shares
-POST   /api/me/sessions/:sid/shares {expires_at?}               → returns plaintext shr_… once
-DELETE /api/me/sessions/:sid/shares/:share_id                   → revoke
 
 /admin/api/invitations                                          → create / list / revoke
 /admin/api/users                                                → list / reset password / disable
@@ -136,18 +131,6 @@ CREATE TABLE api_tokens (
 );
 CREATE INDEX idx_api_tokens_user ON api_tokens(user_id) WHERE revoked_at IS NULL;
 
-CREATE TABLE share_links (
-    id             TEXT PRIMARY KEY,                -- ULID
-    owner_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    session_id     TEXT NOT NULL,
-    token_hash     TEXT NOT NULL UNIQUE,
-    token_prefix   TEXT NOT NULL,                   -- 'shr_' + first 8 chars
-    created_at     INTEGER NOT NULL,
-    expires_at     INTEGER,
-    revoked_at     INTEGER
-);
-CREATE INDEX idx_share_links_session ON share_links(session_id) WHERE revoked_at IS NULL;
-
 CREATE TABLE web_sessions (                        -- browser login sessions
     id_hash        TEXT PRIMARY KEY,                -- sha256(cookie value)
     user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -164,12 +147,10 @@ Notes:
 - Password hashing uses `golang.org/x/crypto/argon2`, parameters
   `time=3, memory=64MiB, threads=2, key_len=32`. The encoded format
   carries the parameters so future tuning does not invalidate old hashes.
-- All credentials (invite codes, API tokens, share tokens, cookie values)
-  are stored as `sha256(plaintext)`. Plaintext is returned only at issue
-  time.
+- All credentials (invite codes, API tokens, cookie values) are stored
+  as `sha256(plaintext)`. Plaintext is returned only at issue time.
 - Terminal sessions are not persisted; only their identity (owner) lives
-  in memory on the running relay. A share link whose target session has
-  vanished returns 404 — this is intended.
+  in memory on the running relay.
 - IDs use ULID (`github.com/oklog/ulid/v2`).
 
 ## 4. Identity resolution
@@ -181,25 +162,21 @@ type PrincipalKind uint8
 const (
     PrincipalNone PrincipalKind = iota
     PrincipalUser
-    PrincipalShare
     PrincipalAdmin
 )
 
 type Principal struct {
-    Kind      PrincipalKind
-    UserID    string  // User
-    TokenID   string  // User via API token (empty when cookie)
-    ShareID   string  // Share
-    SessionID string  // Share: bound session
-    Scope     authScope
+    Kind    PrincipalKind
+    UserID  string  // User
+    TokenID string  // User via API token (empty when cookie)
+    Scope   authScope
 }
 ```
 
 Resolution order (first match wins):
 
 1. Cookie `atterm_session=<sid>` → lookup `sha256(sid)` in `web_sessions`,
-   not expired, user not disabled → `Principal{User, write}`. Sliding:
-   if `last_used > 24h`, push `expires_at` to now + 30d.
+   not expired, user not disabled → `Principal{User, write}`.
 2. `Authorization: Bearer <token>` or `Sec-WebSocket-Protocol:
    atterm-token.<token>` / `atterm-token-b64.<...>`:
    - If `constantTimeEqual(token, ATTERM_ADMIN_TOKEN)` →
@@ -207,10 +184,13 @@ Resolution order (first match wins):
    - Else lookup `sha256(token)` in `api_tokens`, not revoked, user not
      disabled → `Principal{User, write, TokenID}`. Bump `last_used_at`
      asynchronously.
-3. `Sec-WebSocket-Protocol: atterm-share.<share_token>` →
-   `sha256(token)` in `share_links`, not revoked, not expired →
-   `Principal{Share, read, SessionID}`.
-4. Otherwise `Principal{None}`.
+3. Otherwise `Principal{None}`.
+
+When a request carries both a cookie and an `Authorization` / WS-token
+header, the cookie wins (step 1). This is documented and covered by a
+test; it is the right default because the cookie binds to a specific
+browser context whereas a leaked Authorization header value would
+otherwise silently override an active session.
 
 ### 4.1 Cookie
 
@@ -219,14 +199,20 @@ Resolution order (first match wins):
   HTTP (dev mode).
 - Value: 32 random bytes (`crypto/rand`), base64url. Stored as
   `sha256(value)`.
-- Lifetime: 30 days with sliding renewal.
+- Lifetime: 30 days, **renewed on every successful lookup**: each
+  request that resolves to this session issues
+  `UPDATE web_sessions SET expires_at = now + 30d`. No `last_used_at`
+  field is needed; an active user effectively never expires while
+  inactive sessions age out within 30 days. The single-row write per
+  request is negligible relative to the request's overall cost.
 
 ### 4.2 CSRF
 
 - All mutating routes under `/api/*` (except `/api/auth/login` and
-  `/api/auth/signup`) require `X-CSRF-Token`. Value equals first 16 bytes
-  of `base64url(sha256(cookie_value || users.csrf_secret))`. Frontend
-  reads its current CSRF token from `GET /api/me`.
+  `/api/auth/signup`) require `X-CSRF-Token`. Value is the full
+  base64url-encoded `sha256(cookie_value || users.csrf_secret)` (43
+  chars, no truncation). Frontend reads its current CSRF token from
+  `GET /api/me`.
 - `/api/auth/login` and `/api/auth/signup` rely on `SameSite=Lax` for
   cross-site form-post mitigation.
 - WebSocket upgrades are not CSRF-protected; they rely on the Origin
@@ -241,14 +227,16 @@ Resolution order (first match wins):
 |---|---|
 | `GET /api/me/*` | User |
 | `GET /api/sessions` | User (filtered to `OwnerUserID == UserID`) |
-| `GET/WS /client?session=<id>` | User (owner) or Share (matching SessionID; read-only enforced) |
+| `GET/WS /client?session=<id>` | User where `session.OwnerUserID == Principal.UserID` (owner-only) |
 | `WS /uplink` | User from API token (TokenID non-empty); cookie source rejected |
 | `WS /agent` | User from API token |
 | `/admin/*` | Admin |
 | `POST /api/auth/{signup,login}` | None (public) |
 
 Rejecting cookie principals at `/uplink` and `/agent` prevents a logged-in
-browser from impersonating a desktop publisher.
+browser from impersonating a desktop publisher. Admin principals are
+never allowed at `/client`, `/uplink`, or `/agent`: the operator-side
+break-glass credential does not double as a session-attach credential.
 
 ## 5. Key flows
 
@@ -331,20 +319,31 @@ they fail on next reconnect / keepalive. This reuses existing teardown.
 desktop → wss://relay/uplink (subprotocol atterm-token.<atk_…>)
   relay.acceptUplink:
     1. resolveIdentity → Principal{User, UserID, TokenID}
-       reject if Kind != User or TokenID empty (rejects cookie / share / admin)
+       reject if Kind != User or TokenID empty (rejects cookie / admin)
     2. read HELLO frame → host_id
     3. connection-scope OwnerUserID = Principal.UserID
   on session publish:
-    session.NewSession(...).OwnerUserID = connection.OwnerUserID
+    if registry already holds session_id:
+      if registry[session_id].OwnerUserID != connection.OwnerUserID:
+        close uplink with reason 'session_id_owner_mismatch'
+    else:
+      session.NewSession(...).OwnerUserID = connection.OwnerUserID
 
 GET /api/sessions  (cookie principal)
-  return [s for s in registry if s.OwnerUserID == Principal.UserID
-                              or s.SessionID has active share for Principal]
+  return [s for s in registry if s.OwnerUserID == Principal.UserID]
 ```
 
 Session-ID-based dedup (red line #3) is unchanged. OwnerUserID is
 per-session, not per-host; a machine can run multiple desktop instances
 logged in as different users.
+
+**Owner-binding invariant:** once a session is registered with an owner,
+that ownership is immutable for the lifetime of the registry entry. A
+re-publish of the same `session_id` by a different user is rejected.
+This prevents a holder of any valid API token from hijacking another
+user's session by publishing a colliding `session_id`. ULIDs make
+collision astronomically unlikely; the check defends against deliberate
+forgery.
 
 ### 5.6 Admin password reset
 
@@ -361,45 +360,26 @@ POST /admin/api/users/:id/reset-password   (Bearer ATTERM_ADMIN_TOKEN)
 No email path. This is acceptable because signup is invite-only (§5.2):
 the admin already has a side channel with the user.
 
-### 5.7 Share link
-
-```
-POST /api/me/sessions/<sid>/shares  {expires_at?}
-  1. require sid ∈ in-memory session registry and OwnerUserID == UserID
-  2. crypto/rand 24B → base64url → 'shr_' + body
-  3. INSERT share_links (id, owner_user_id, session_id, token_hash, token_prefix, expires_at)
-  4. return plaintext URL: '<relay>/#share=shr_…'
-
-visitor → wss://relay/client (subprotocol atterm-share.<shr_…>)
-  resolveIdentity → Principal{Share, SessionID=sid, Scope=read}
-  attach via existing read-only enforcement
-```
-
-Revoke:
-```
-DELETE /api/me/sessions/<sid>/shares/<share_id>
-  → UPDATE share_links SET revoked_at=now
-```
-
-Active visitor is dropped on next frame (existing read-only enforcement
-re-checks principal).
-
 ## 6. Security invariants
 
 These are testable assertions; the test suite enforces them.
 
 **SEC-1.** Credential plaintext (passwords, invite codes, API tokens,
-share tokens, cookie values) never enters the database, log files, or
-any long-term storage. `Secret[T]` newtype's `String()` returns only the
-prefix.
+cookie values) never enters the database, log files, or any long-term
+storage. `Secret[T]` newtype's `String()` and `GoString()` both return
+only the prefix (so `%v`, `%s`, and `%#v` all redact). Tests verify each
+verb path.
 
 **SEC-2.** argon2id parameters are constants in code; the stored hash
 format carries the parameters, so future tuning does not invalidate old
 hashes.
 
 **SEC-3.** Login response timing is independent of whether the email
-exists. Missing-email path runs the same argon2id work against a fixed
-dummy hash.
+exists. On process startup the relay generates one dummy argon2id hash
+**using the current SEC-2 parameters** and reuses it for the
+missing-email path; the dummy hash is regenerated whenever those
+parameters change. This keeps verify-path latency identical to a real
+hash without storing a constant baked into the binary.
 
 **SEC-4.** Every mutating route on the mux (non-GET/HEAD) must be wrapped
 in `csrfmw.Require`. A test enumerates `http.ServeMux` and fails if any
@@ -416,8 +396,18 @@ route is bare.
 Failed responses delay to a minimum of 200 ms (random jitter ±50 ms).
 
 **SEC-6.** On non-loopback listen, relay refuses to start unless
-`ATTERM_ADMIN_TOKEN` is set and has ≥ 32 chars of entropy AND
-`ATTERM_ORIGINS` is set. Exception: `--dev-insecure` (red line #9).
+`ATTERM_ADMIN_TOKEN` and `ATTERM_ORIGINS` are both set and the admin
+token passes all of the following:
+
+- length ≥ 32 characters
+- not in the dev-token blacklist (`dev`, `test`, `admin`, `password`,
+  `changeme`, `letmein`, `12345`, `secret`, and case-insensitive variants)
+- contains characters from at least 3 of {uppercase, lowercase, digit,
+  symbol}
+- no single character or short sequence repeats more than 4 times in a row
+
+Failing any check refuses startup unless `--dev-insecure` is passed
+(red line #9).
 
 **SEC-7.** Identity decisions read the database every request. No
 in-memory cache. Local SQLite query is < 1 ms; revisit only if profiling
@@ -450,8 +440,10 @@ Deletions:
   shortcut and the `readOnlyTokens` / `readOnlyHashes` parameters; only
   `resolveIdentity` remains.
 - `internal/relay/admin_config.go`: drop `ReadOnlyTokenHashes` field.
-- `internal/relay/permissions.go`: drop the read-only-token branch; the
-  read-only path is now exercised solely by share-link Principals.
+- `internal/relay/permissions.go`: drop the read-only-token branch.
+  `remote_permission` (view/control/full) announced by the owner desktop
+  remains the sole mechanism for restricting an attached principal's
+  ability to send `IN` / `RESIZE` / `PASTE_IMAGE`.
 - `web/index.html`: drop the token entry panel; route unauthenticated
   requests to `/login.html`.
 - `README.md`, `AGENTS.md`, `docs/spec/architecture.md`: drop all
@@ -479,8 +471,11 @@ unrelated to releases.
 - On paste, if the value does not start with `atk_`, show a red hint
   ("This doesn't look like an API token."). Non-blocking; save still
   allowed.
-- Status row now reads `connected as <email>` when uplink is up,
-  sourced from the new `AUTH_INFO` frame.
+- Status row reads `connected as <short user id>` from the `AUTH_INFO`
+  frame; on first connect, the desktop also calls `GET /api/me` once
+  (authenticated with the same API token) to resolve the email for a
+  friendlier `connected as <email>` display. Email is cached in memory
+  only — not written to any log or config (SEC-1 applies).
 
 ### 8.2 Fix "disconnect erases config"
 
@@ -543,8 +538,14 @@ authentication, the relay sends an `AUTH_INFO` frame whose payload is
 UTF-8 JSON:
 
 ```json
-{"user_id": "01HX…", "user_email": "alice@example.com"}
+{"user_id": "01HX…"}
 ```
+
+`user_id` is an opaque ULID, not personally identifying. The desktop's
+status row reads `connected as <user_id_short>` by default; when the
+operator wants the email shown, the desktop fetches `GET /api/me` (which
+returns `{user_id, email}` and is gated by the same API token used for
+the uplink). This keeps PII out of the wire frame entirely.
 
 `internal/proto.Version` stays at 1 because semantics of existing frames
 do not change. `docs/spec/protocol.md` records the new frame with its
@@ -568,7 +569,8 @@ do not pre-abstract.
 
 Today, `internal/webpush/subscription.go` keys subscriptions by
 `tokenHash`. After this spec lands, a cookie-based browser has no token,
-and share-link visitors would otherwise inherit subscription rights.
+and command-finished events broadcast to all tokens regardless of which
+user owned the session.
 
 Changes:
 
@@ -578,17 +580,17 @@ Changes:
 - `DispatchCommandFinished` takes the originating session's
   `OwnerUserID` and fans out only to that user's subscriptions, instead
   of broadcasting across all tokens.
-- `/api/push/subscribe` and `/api/push/test` reject share principals
-  (403).
+- `/api/push/subscribe` and `/api/push/test` require a `User` principal
+  (cookie or API token); admin principals are rejected.
 - Persistence (`web-push.json`) schema changes from
   `{tokenHash: [subs]}` to `{userID: [subs]}`. On startup, if an existing
   file has the legacy schema, it is renamed to
   `web-push.json.legacy-<ts>` and a fresh registry is initialized. Users
-  re-enable notifications.
+  re-enable notifications. The legacy file is deleted by a background
+  goroutine after 30 days.
 
 This closes a real isolation hole; without it, command-finished events
-fan out across all users on the relay and share-link visitors can
-subscribe to a stream of someone else's future events.
+fan out across all users on the relay.
 
 ## 9. Test strategy
 
@@ -604,9 +606,7 @@ Standard `testing` package; no new test libraries.
 | `TestInvitationExpired` | expired invite returns `ErrInviteInvalid` and is unchanged |
 | `TestCreateAPIToken_ReturnsPlaintextOnce` | return contains `atk_`; readback does not |
 | `TestAPIToken_RevokedRejected` | revoked token lookup returns `ErrTokenRevoked` |
-| `TestShareLink_ExpiresAt` | expiry boundary ±1 s |
-| `TestShareLink_BoundToSession` | token only attaches its bound session |
-| `TestWebSession_SlidingExpire` | sliding window pushes expires_at forward |
+| `TestWebSession_SlidingRenewal` | each successful lookup pushes `expires_at` to `now + 30d` |
 | `TestMigrate_FromEmpty` | clean directory → applies 0001_init.sql |
 | `TestMigrate_Idempotent` | re-run is a no-op |
 | `TestCSRFSecret_IsRandom` | 100 fresh users have distinct csrf_secrets |
@@ -620,12 +620,19 @@ Sec-WebSocket-Protocol combinations, expected `PrincipalKind` and
 `Scope`. Includes "cookie wins over api token if both present".
 
 - `TestUplinkRejectsCookie`: cookie principal at `/uplink` → reject.
+- `TestUplinkRejectsAdmin`: admin token at `/uplink` → reject.
 - `TestClient_FilterByOwner`: two sessions for two users; cookie user
   sees only their own.
-- `TestClient_ShareCanAttachOnlyBoundSession`: share token bound to
-  session A cannot attach session B.
-- `TestClient_ShareReadOnlyEnforcement`: share principal sending `IN`
-  is dropped by relay and (defense in depth) by desktop uplink.
+- `TestClient_AttachOtherUsersSession_Rejected`: user_A cookie attempts
+  to attach `session_id` owned by user_B → 403 (defense beyond list
+  filtering).
+- `TestUplink_SessionIDOwnerMismatch_Rejected`: token_B publishes a
+  `session_id` already registered under user_A → uplink closed with
+  `session_id_owner_mismatch`; existing entry untouched.
+- `TestUplink_RevokedToken_ActiveConnectionUntouched`: revoking an API
+  token while a uplink connection is active does not kick the
+  connection; the next reconnect attempt fails. Verifies the documented
+  behavior in §5.4.
 
 ### 9.3 CSRF and rate limiting
 
@@ -644,7 +651,7 @@ Sec-WebSocket-Protocol combinations, expected `PrincipalKind` and
 
 - `dispatch_test.go`: command-finished event with `OwnerUserID=A` reaches
   user A's subscriptions only; user B's subscriptions are untouched.
-- `web_push_http_test.go`: share principal's `POST /api/push/subscribe`
+- `web_push_http_test.go`: admin principal's `POST /api/push/subscribe`
   returns 403.
 - Legacy persistence test: starting with a `{tokenHash: [...]}` JSON file
   renames it to `.legacy-<ts>` and the registry is empty.
@@ -687,17 +694,17 @@ End-to-end manual checklist for release verification:
    `/settings.html`.
 3. Paste API token into desktop; observe status `connected as user_a@…`.
 4. As `user_a`, list sessions in the web UI; attach one.
-5. Generate a share link; open in private browser; attach as read-only;
-   send `IN` → relay drops it.
-6. Revoke share link; private browser reconnect fails.
-7. Toggle desktop SettingsRelay OFF → uplink stops, inputs retained;
+5. Toggle desktop SettingsRelay OFF → uplink stops, inputs retained;
    toggle ON → uplink resumes immediately.
-8. Disable `user_a` via `/admin/`; desktop uplink fails on reconnect
+6. Disable `user_a` via `/admin/`; desktop uplink fails on reconnect
    with `Account disabled` banner.
-9. Sign up `user_b`; verify `user_b` does not see `user_a`'s sessions.
-10. Enable Web push notifications as `user_a`; trigger a long command;
-    only `user_a`'s browser receives the push. `user_b`'s browser does
-    not.
+7. Re-enable `user_a`; sign up `user_b` with a new invite; verify
+   `user_b` does not see `user_a`'s sessions.
+8. As `user_b`, attempt to attach a known `session_id` belonging to
+   `user_a` via direct `/client?session=...` → 403.
+9. Enable Web push notifications as `user_a`; trigger a long command;
+   only `user_a`'s browser receives the push. `user_b`'s browser does
+   not.
 
 ## 10. Known risks
 
@@ -705,8 +712,7 @@ End-to-end manual checklist for release verification:
 |---|---|
 | SQLite WAL on NFS / overlay volumes | README warns against placing `ATTERM_RELAY_CONFIG_DIR` on NFS; on `PRAGMA journal_mode=WAL` failure, fall back to truncate mode and log a warning |
 | argon2id memory pressure under concurrent logins | `golang.org/x/sync/semaphore` caps concurrent argon2 to `runtime.NumCPU()`; bounded queue of 32, beyond which 503 |
-| Credentials leaking via logs or panics | All credential types are `Secret[T]` newtypes; `String()` returns only prefix |
-| Session vanished while share link is open | Documented behavior: share link → 404 |
+| Credentials leaking via logs or panics | All credential types are `Secret[T]` newtypes; `String()` and `GoString()` return only the prefix |
 | `web_sessions` table growth | Background goroutine deletes rows where `expires_at < now` every hour |
 
 ## 11. Future extensions (not in scope)
@@ -718,7 +724,8 @@ End-to-end manual checklist for release verification:
 | OAuth providers | New resolution step before cookie; new `oauth_identities` table |
 | Multi-relay clustering | `internal/userstore.Store` is an interface, swap SQLite for Postgres; introduce Redis pub/sub for cross-node session fan-out |
 | Audit log | New `audit_log` table; wrap mutating handlers in audit middleware |
-| User-to-user session grants (not just share links) | New `session_grants` table with `(session_id, grantee_user_id, scope)` |
+| User-to-user session grants | New `session_grants` table with `(session_id, grantee_user_id, scope)`; gate `/client` to also allow grantees |
+| Lightweight read-only share links (deferred from this spec) | New `share_links` table + `PrincipalShare` kind + `atterm-share.*` subprotocol; resolution order must put share-token ahead of cookie to avoid mis-identifying logged-in users visiting their own share URLs |
 | Desktop multi-profile | `desktop/config.go` schema migration to `relays: []ProfileConfig` |
 | iOS device-code flow | New `/api/auth/device-code` endpoint, reuses cookie store |
 
@@ -740,14 +747,13 @@ PR (or a small set of PRs). P8 may land before the rest.
 P1   internal/userstore: schema, migrations, CRUD, unit tests
 P2   internal/relay: resolveIdentity, Principal, CSRF middleware
 P3   HTTP API: /api/auth/*, /api/me/*, admin invite/user pages
-P4   /uplink, /agent, /client filtering by Principal; remove ATTERM_TOKEN
-     and ATTERM_READ_ONLY_TOKENS
+P4   /uplink, /agent, /client filtering by Principal; session_id owner
+     binding invariant; remove ATTERM_TOKEN and ATTERM_READ_ONLY_TOKENS
 P4.5 internal/webpush: key by user_id; dispatch filtered by OwnerUserID;
-     reject share principals; legacy-file rename
-P5   /api/me/sessions/:id/shares + share-token attach flow
-P6   web/ frontend: login / signup / settings pages, cookie flow
-P7   AUTH_INFO frame + docs/spec/protocol.md
-P8   desktop SettingsRelay redesign + RelayPaused toggle (may land first)
-P9   desktop status row + auth-error feedback
-P10  release notes, README, AGENTS.md, docs/spec/architecture.md updates
+     legacy-file rename and 30-day cleanup
+P5   web/ frontend: login / signup / settings pages, cookie flow
+P6   AUTH_INFO frame + docs/spec/protocol.md
+P7   desktop SettingsRelay redesign + RelayPaused toggle (may land first)
+P8   desktop status row + auth-error feedback
+P9   release notes, README, AGENTS.md, docs/spec/architecture.md updates
 ```

@@ -47,9 +47,9 @@ atterm/
 6. **PTY winsize 必须在 fork 时设好**：前端的 `predictCellDims`（FitAddon 探针）→ `NewSession(cols/rows)` → `pty.StartWithSize`。子进程从一开始就是终态尺寸，避免开局 SIGWINCH 触发某些 zsh 主题的 `PROMPT_EOL_MARK`。`SessionConnection.sendResize` 在 WS 还 CONNECTING 时排队，TerminalView 比对 expectedCols/Rows 跳过无意义 RESIZE。三件耦合，单独动一个会回归。
 7. **更新流程不打扰用户**：`updater.go` 永远手动触发——后台只检查、不静默重启。`InstallAndQuit` 必须由用户在 Settings 里点 "force install & restart" 走过 `ConfirmInstallDialog` 确认才执行。dev 构建（`Version == "dev"`）整个 update 子系统短路。
 8. **自动更新必须验签**：release 构建通过 ldflags 注入 `main.UpdateVerifyPublicKey`。下载 asset 后必须先用 Ed25519 验证 `SHA256SUMS.sig`，再校验 asset SHA256；缺公钥、缺 `SHA256SUMS`/`.sig`、签名或 hash 不匹配都必须 fail-closed，不允许 install。
-9. **公网 relay 默认安全**：`cmd/atterm-relay` 未设置 `ATTERM_TOKEN` 时自动生成高强度 token 并打印到日志。公网监听拒绝弱 token（如 `dev` 或长度 <16）、拒绝缺失 `--origins`/`ATTERM_ORIGINS`、拒绝弱 admin token，除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP + 已认证 token hash 做 HTTP/WS rate limit 与连接数限制。服务端所有鉴权接口都不接受 `?token=`；web 手工入口只能用 `#token=...` fragment bootstrap，WS token 必须走 `Sec-WebSocket-Protocol`。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
+9. **公网 relay 默认安全**：`cmd/atterm-relay` 公网监听时必须提供通过强度检查的 `ATTERM_ADMIN_TOKEN`（≥32 字符、≥3 类字符、不在弱 token 黑名单），否则启动拒绝；缺失 `--origins`/`ATTERM_ORIGINS` 同样拒绝，除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP 做 HTTP/WS rate limit 与连接数限制。服务端所有鉴权接口都不接受 `?token=`；桌面端 API token（`atk_…`）通过 `Sec-WebSocket-Protocol` 传递。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
 10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源静态资源；xterm 资源放在 `web/vendor/` 并由 service worker 缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
-11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay read-only token 是运维侧兜底限制，和 owner 权限取交集。
+11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay 不再有共享只读 token；如需限制某用户只读，在桌面端将该 session 的 `remote_permission` 设为 `view`。
 12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
 
 ## 开发命令
@@ -59,11 +59,11 @@ atterm/
 # 不一定加载你的 ~/.zshrc，所以本项目命令默认显式带上它。
 export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
-# 命令行 relay（Phase 0）
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
+# 命令行 relay（本地调试；--dev-insecure 跳过强度校验）
+ATTERM_ADMIN_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
 
-# 命令行 agent（Phase 0 wrapper，调试用）
-ATTERM_TOKEN=dev go run ./cmd/atterm-agent --relay ws://localhost:8080 -- bash
+# 命令行 agent（Phase 0 wrapper，调试用；需先在 relay 创建用户并生成 API token）
+go run ./cmd/atterm-agent --relay ws://localhost:8080 --token atk_... -- bash
 
 # 桌面 app
 cd desktop
@@ -81,13 +81,11 @@ gh run list --repo attson/atterm --limit 10
 ```
 
 环境变量：
-- `ATTERM_TOKEN`：relay 共享 bearer token；`atterm-relay` 启动时未指定会自动生成并打印到日志
-- `ATTERM_READ_ONLY_TOKENS`：逗号分隔的只读 bearer token；可 list/attach/看输出，但 relay 会丢弃 `IN`/`RESIZE`/`PASTE_IMAGE`，且不能连 `/agent`/`/uplink`
+- `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 与 `/admin/api/*`；公网监听时必须通过强度检查（≥32 字符、≥3 类字符、不在弱 token 黑名单内，否则启动拒绝）；本地 loopback 调试时加 `--dev-insecure` 可跳过；只接受 `Authorization: Bearer`，不要放 URL query
 - `ATTERM_ORIGINS`：逗号分隔的浏览器 WebSocket Origin 白名单；公网 relay 必须配置（除非 `--dev-insecure`）
-- `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP/token 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用
-- `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用
-- `ATTERM_RELAY_CONFIG`：relay admin 持久化 JSON 配置路径；只保存运行参数和 hash 后的只读 token，不保存主 write token
-- `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 与 `/admin/api/*`；只接受 `Authorization: Bearer`，不要放 URL query
+- `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用
+- `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP 的活跃 WS 连接上限；`0` 用默认值，负数禁用
+- `ATTERM_RELAY_CONFIG`：relay admin 持久化 JSON 配置路径
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
 - `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：GitHub prod environment secret；base64 Ed25519 公钥，release 构建时注入桌面 app
@@ -97,6 +95,7 @@ gh run list --repo attson/atterm --limit 10
 
 | 修改场景 | 触动文件 |
 |---------|----------|
+| account / token / invitation 数据库操作 | `internal/userstore/`（users / apitokens / invitations / websessions）；Store 接口变更需同步更新所有实现和 `store_iface_test.go` |
 | 新协议帧类型 | `internal/proto/frame.go` + 协议规范 + 接收方 |
 | 改 relay session 行为 | `internal/session/`（local + mirror 都用同一个 Session） |
 | 桌面新 binding | `desktop/app.go`（手写 + Wails 自动生成 `frontend/wailsjs/go/main/App.*`） |

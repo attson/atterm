@@ -35,5 +35,5 @@ test("web terminal uses a route class for full-height layout", () => {
 });
 
 test("service worker cache is bumped for web shell asset changes", () => {
-  assert.match(sw, /at-term-web-v3/);
+  assert.match(sw, /at-term-web-v4/);
 });

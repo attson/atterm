@@ -3,6 +3,7 @@ module github.com/attson/atterm
 go 1.23
 
 require (
+	github.com/SherClockHolmes/webpush-go v1.3.0
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/wailsapp/wails/v2 v2.12.0
@@ -13,8 +14,8 @@ require (
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
-	github.com/SherClockHolmes/webpush-go v1.3.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect

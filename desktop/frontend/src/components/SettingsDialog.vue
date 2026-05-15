@@ -11,6 +11,7 @@ import SettingsGeneral from "./SettingsGeneral.vue";
 import SettingsRelay from "./SettingsRelay.vue";
 import SettingsLogging from "./SettingsLogging.vue";
 import SettingsUpdates from "./SettingsUpdates.vue";
+import SettingsPlugins from "./SettingsPlugins.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 
@@ -27,12 +28,12 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
-const activeTab = ref<"general" | "relay" | "logging" | "updates">("general");
+const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins">("general");
 const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "relay" | "logging" | "updates" | null>(null);
+const pendingTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -52,7 +53,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "relay" | "logging" | "updates") {
+function switchTab(next: "general" | "relay" | "logging" | "updates" | "plugins") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -169,6 +170,11 @@ function onDisconnectClick() {
             :class="{ active: activeTab === 'updates' }"
             @click="switchTab('updates')"
           >Updates</button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'plugins' }"
+            @click="switchTab('plugins')"
+          >Plugins</button>
         </aside>
 
         <section class="settings-pane">
@@ -192,6 +198,7 @@ function onDisconnectClick() {
             v-show="activeTab === 'updates'"
             @request-install="onForceInstallClick"
           />
+          <SettingsPlugins v-show="activeTab === 'plugins'" />
         </section>
       </div>
 

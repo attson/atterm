@@ -8,27 +8,30 @@ function styleBlockFor(selector: string): string {
 }
 
 describe("SettingsDialog shell", () => {
-  test("imports the four tab subcomponents", () => {
+  test("imports the five tab subcomponents", () => {
     expect(source).toContain('import SettingsGeneral from "./SettingsGeneral.vue"');
     expect(source).toContain('import SettingsRelay from "./SettingsRelay.vue"');
     expect(source).toContain('import SettingsLogging from "./SettingsLogging.vue"');
     expect(source).toContain('import SettingsUpdates from "./SettingsUpdates.vue"');
+    expect(source).toContain('import SettingsPlugins from "./SettingsPlugins.vue"');
   });
 
-  test("renders sidebar nav with the four category labels", () => {
+  test("renders sidebar nav with the five category labels", () => {
     expect(source).toContain('class="settings-nav"');
     expect(source).toContain(">General<");
     expect(source).toContain(">Relay<");
     expect(source).toContain(">Logging<");
     expect(source).toContain(">Updates<");
+    expect(source).toContain(">Plugins<");
   });
 
   test("tracks the active tab and switches via sidebar clicks", () => {
-    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']/);
+    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']/);
     expect(source).toContain('@click="switchTab(\'general\')"');
     expect(source).toContain('@click="switchTab(\'relay\')"');
     expect(source).toContain('@click="switchTab(\'logging\')"');
     expect(source).toContain('@click="switchTab(\'updates\')"');
+    expect(source).toContain('@click="switchTab(\'plugins\')"');
   });
 
   test("renders the pinned footer only for the relay tab", () => {

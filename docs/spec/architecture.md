@@ -71,6 +71,58 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update) | 不实现协议 |
 | `web/` | web | vanilla 浏览器/PWA client，使用同源 vendored xterm 资源直连 relay | 不从 CDN 加载 script/style，不持久化除 token 以外的会话状态 |
 
+## User accounts and identity
+
+Since v2, atterm-relay supports per-user accounts in addition to the
+operator-side admin token. All session data, web push subscriptions, and
+API tokens are scoped to a user.
+
+### Storage
+
+`internal/userstore` is the **only** package that opens the SQLite
+database (`${ATTERM_RELAY_CONFIG_DIR}/users.db`, WAL mode by default).
+Tables: `users`, `invitations`, `api_tokens`, `web_sessions`. All
+credentials (passwords, invite codes, API tokens, cookie values) are
+stored as `sha256` (or argon2id for passwords). Plaintext is returned to
+the user exactly once at issue time.
+
+### Principal kinds
+
+`internal/relay/identity.go` resolves every incoming HTTP / WS-upgrade
+request to a `Principal`:
+
+| Kind | Source | Use |
+|------|--------|-----|
+| User | `atterm_session` cookie OR `Authorization: Bearer atk_…` (or `Sec-WebSocket-Protocol: atterm-token.atk_…`) | All user-scoped routes |
+| Admin | `Authorization: Bearer <ATTERM_ADMIN_TOKEN>` | Only `/admin/*` |
+| None | (no valid credential) | Public routes only |
+
+### Entry-point gates
+
+| Entry | Allowed Principal |
+|---|---|
+| `GET /api/me/*` | User |
+| `GET /api/sessions` | User (filtered to `OwnerUserID == UserID`) |
+| `GET/WS /client?session=<id>` | User where `Session.OwnerUserID == Principal.UserID` |
+| `WS /uplink` | User from API token (cookie rejected) |
+| `WS /agent` | User from API token |
+| `/admin/*` | Admin only |
+| `POST /api/auth/{signup,login}` | None (public) |
+
+### Bootstrap path
+
+1. Operator starts relay with `ATTERM_ADMIN_TOKEN` (must satisfy the
+   strength check on public listen: ≥32 chars, ≥3 character classes,
+   not in dev blacklist).
+2. Operator hits `/admin/` with the admin token → creates an invitation.
+3. End user signs up at `/signup.html?invite=inv_…`.
+4. User generates an API token at `/settings.html`.
+5. User pastes the API token into desktop client → uplink connects.
+
+See `docs/superpowers/specs/2026-05-15-saas-user-accounts-design.md`
+for the full design (data model, security invariants, threat model,
+test strategy).
+
 ## 三种核心数据流
 
 ### 流 1：本地新建会话

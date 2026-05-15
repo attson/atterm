@@ -277,3 +277,11 @@ func (p *PluginFS) OpenExternal(path string) error {
 		return exec.Command("xdg-open", resolved).Start()
 	}
 }
+
+// NewPluginFS builds a PluginFS with allowRoots seeded from $HOME. The set is
+// later expanded at call time to include cwds of active local sessions; that
+// dynamic enrichment is plugged in below.
+func NewPluginFS() *PluginFS {
+	home, _ := os.UserHomeDir()
+	return &PluginFS{allowRoots: []string{home}}
+}

@@ -210,6 +210,18 @@ const panelWidth = computed({
   },
 });
 
+const panelCollapsed = computed({
+  get: () => pluginStore.cfg?.fileExplorer.panelCollapsed ?? true,
+  set: (v: boolean) => {
+    if (!pluginStore.cfg) return;
+    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
+    next.fileExplorer.panelCollapsed = v;
+    void pluginStore.save(next);
+  },
+});
+
+function togglePanel() { panelCollapsed.value = !panelCollapsed.value; }
+
 const { onMouseDown: onPanelResizeDown } = useResizer({
   onDrag: (deltaX) => {
     if (!pluginStore.cfg) return;
@@ -733,9 +745,14 @@ onUnmounted(() => {
         </template>
         <div v-if="toast" class="toast">{{ toast }}</div>
       </main>
-      <div class="right-resizer" @mousedown="onPanelResizeDown" />
-      <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel"
-                  :style="{ width: panelWidth + 'px', flex: '0 0 ' + panelWidth + 'px' }" />
+      <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? 'Show panel' : 'Hide panel'">
+        {{ panelCollapsed ? '‹' : '›' }}
+      </button>
+      <template v-if="!panelCollapsed">
+        <div class="right-resizer" @mousedown="onPanelResizeDown" />
+        <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel"
+                    :style="{ flex: '0 0 ' + panelWidth + 'px' }" />
+      </template>
     </div>
     <PluginHost slot-id="bottom-toolbar" :context="pluginContext" class="bottom-toolbar" />
 
@@ -814,6 +831,8 @@ onUnmounted(() => {
 .main { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; background: #000; overflow: hidden; min-width: 0; }
 .right-resizer { width: 4px; cursor: col-resize; background: transparent; flex: 0 0 4px; }
 .right-resizer:hover { background: #2d333b; }
+.panel-toggle { background: #21262d; border: 1px solid #2d333b; color: #c9d1d9; cursor: pointer; padding: 0 4px; font-size: 11px; align-self: stretch; flex: 0 0 auto; }
+.panel-toggle:hover { background: #30363d; }
 .right-panel:empty {
   display: none;
 }

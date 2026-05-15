@@ -17,6 +17,13 @@ async function toggle(id: "quick-input" | "file-explorer", enabled: boolean) {
     console.error("setEnabled failed", err);
   }
 }
+
+async function toggleHidden(v: boolean) {
+  if (!store.cfg) return;
+  const next = JSON.parse(JSON.stringify(store.cfg));
+  next.fileExplorer.showHidden = v;
+  try { await store.save(next); } catch (err) { console.error(err); }
+}
 </script>
 
 <template>
@@ -38,6 +45,14 @@ async function toggle(id: "quick-input" | "file-explorer", enabled: boolean) {
         </label>
         <p class="desc">{{ p.description }}</p>
         <QuickInputSettings v-if="p.id === 'quick-input' && store.isPluginEnabled('quick-input')" />
+        <div v-if="p.id === 'file-explorer' && store.isPluginEnabled('file-explorer')" class="fe-settings">
+          <label>
+            <input type="checkbox" :checked="store.cfg?.fileExplorer.showHidden ?? false"
+                   @change="toggleHidden(($event.target as HTMLInputElement).checked)" />
+            Show hidden files
+          </label>
+          <p class="muted">Panel width and inner ratio are adjusted by dragging in the panel.</p>
+        </div>
       </li>
       <li v-if="PLUGINS.length === 0" class="empty">No plugins registered.</li>
     </ul>
@@ -80,4 +95,7 @@ async function toggle(id: "quick-input" | "file-explorer", enabled: boolean) {
   font-size: 12px;
   opacity: 0.5;
 }
+.fe-settings { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2d333b; font-size: 12px; }
+.fe-settings label { display: inline-flex; align-items: center; gap: 6px; }
+.fe-settings .muted { margin: 6px 0 0; opacity: 0.6; font-size: 11px; }
 </style>

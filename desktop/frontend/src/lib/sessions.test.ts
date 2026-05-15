@@ -80,4 +80,15 @@ describe("groupSessionsByHost", () => {
     expect(groups[0].key).toBe("__unknown__");
     expect(groups[0].sessions.map((s) => s.id)).toEqual(["u1", "u2"]);
   });
+
+  it("treats undefined host_id the same as an empty string", () => {
+    const sessions: SessionInfo[] = [
+      makeSession({ id: "u1", host_id: undefined }),
+      makeSession({ id: "u2", host_id: undefined }),
+    ];
+    const groups = groupSessionsByHost(sessions);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].key).toBe("__unknown__");
+    expect(groups[0].sessions.map((s) => s.id)).toEqual(["u1", "u2"]);
+  });
 });

@@ -28,6 +28,7 @@ export function groupSessionsByHost(sessions: SessionInfo[]): SessionGroup[] {
     let bestStartedAt = -Infinity;
     for (const s of bucket) {
       const h = s.host || "";
+      // >= so that when started_at values tie, the later-arriving entry wins.
       if (h && s.started_at >= bestStartedAt) {
         displayHost = h;
         bestStartedAt = s.started_at;

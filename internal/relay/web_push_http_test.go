@@ -214,14 +214,37 @@ func TestTestNotificationZeroWhenNoSubs(t *testing.T) {
 	}
 }
 
+// doRequestWithCookieAndCSRF creates a request with a session cookie and a
+// matching X-CSRF-Token header derived from the cookie value and csrf secret.
+func doRequestWithCookieAndCSRF(t *testing.T, srv *Server, method, path, cookieVal string, csrfSecret []byte, body string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if cookieVal != "" {
+		req.AddCookie(&http.Cookie{Name: "atterm_session", Value: cookieVal})
+	}
+	if len(csrfSecret) > 0 && cookieVal != "" {
+		req.Header.Set("X-CSRF-Token", CSRFToken(cookieVal, csrfSecret))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec.Result()
+}
+
 // TestWebPushHTTP_RequiresUserPrincipal verifies that /api/push/subscribe,
 // /api/push/unsubscribe, and /api/push/test require a User principal:
-//   - cookie session (PrincipalUser) → 200/OK
-//   - admin bearer token (PrincipalAdmin) → 403
+//   - cookie session with CSRF (PrincipalUser) → 200/OK
+//   - admin bearer token (PrincipalAdmin) → 401 (RequireCSRF rejects: no cookie)
 //   - no credentials (PrincipalNone) → 401
+//
+// Note: when cfg.Resolver is set, all three push routes are CSRF-gated.
+// Admin Bearer tokens carry no cookie so they fail at the CSRF layer with 401
+// (not 403 from requireUserPrincipal) — both are acceptable rejections.
 func TestWebPushHTTP_RequiresUserPrincipal(t *testing.T) {
+	csrfSecret := []byte("csrf-secret-for-push-test")
+	const cookieVal = "valid-cookie"
 	store := &pushFakeStore{
-		sessionMap:  map[string][2]string{"valid-cookie": {"user1", "csrf"}},
+		sessionMap:  map[string][2]string{cookieVal: {"user1", string(csrfSecret)}},
 		apiTokenMap: map[string][2]string{},
 	}
 	srv, _ := newWebPushTestServerWithResolver(t, store)
@@ -248,18 +271,20 @@ func TestWebPushHTTP_RequiresUserPrincipal(t *testing.T) {
 		t.Run(route.path, func(t *testing.T) {
 			cases := []tc{
 				{
+					// CSRF-gated: cookie + matching CSRF token required.
 					name: "cookie user → 200",
 					doReq: func() *http.Response {
-						return doRequestWithCookie(t, srv, route.method, route.path, "valid-cookie", route.body)
+						return doRequestWithCookieAndCSRF(t, srv, route.method, route.path, cookieVal, csrfSecret, route.body)
 					},
 					wantStatus: 200,
 				},
 				{
-					name: "admin token → 403",
+					// Admin uses Bearer token (no cookie) → RequireCSRF returns 401.
+					name: "admin token → 401",
 					doReq: func() *http.Response {
 						return doRequest(t, srv, route.method, route.path, "admin-token-for-push-test", route.body)
 					},
-					wantStatus: 403,
+					wantStatus: 401,
 				},
 				{
 					name: "no auth → 401",
@@ -292,14 +317,15 @@ func TestWebPushHTTP_KeysSubscriptionByUserID(t *testing.T) {
 		userBID     = "01HXBBBBBBBBBBBBBBBBBBBBBB"
 		cookieUserA = "cookie-for-userA"
 	)
+	csrfSecret := []byte("csrf-secret-for-userA")
 	store := &pushFakeStore{
-		sessionMap:  map[string][2]string{cookieUserA: {userAID, "csrf"}},
+		sessionMap:  map[string][2]string{cookieUserA: {userAID, string(csrfSecret)}},
 		apiTokenMap: map[string][2]string{},
 	}
 	srv, svc := newWebPushTestServerWithResolver(t, store)
 
 	body := `{"endpoint":"https://push.example/userA","keys":{"p256dh":"AAECAwQFBgcICQoLDA0ODw","auth":"AAECAwQFBgcICQoLDA0ODw"}}`
-	resp := doRequestWithCookie(t, srv, http.MethodPost, "/api/push/subscribe", cookieUserA, body)
+	resp := doRequestWithCookieAndCSRF(t, srv, http.MethodPost, "/api/push/subscribe", cookieUserA, csrfSecret, body)
 	if resp.StatusCode != 200 {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("subscribe status = %d; body=%s", resp.StatusCode, raw)

@@ -343,54 +343,90 @@ host pattern，这样桌面客户端和同源 web 客户端都能连接。
 
 ## 鉴权
 
+### 用户账号模式（生产推荐）
+
+`cmd/atterm-relay` 以用户账号模式启动时（默认），所有端点通过 `IdentityResolver`
+鉴权，支持以下三种凭证来源：
+
+**Browser（Web 客户端）**：HTTP-only cookie `atterm_session`，由
+`POST /api/auth/login` 或 `POST /api/auth/signup` 签发。变更状态的端点
+（logout、token 创建/撤销、push 订阅等）额外需要 `X-CSRF-Token` 请求头；
+token 由 `GET /api/me` 的 `csrf_token` 字段返回。
+
+**Desktop/CLI（API token）**：
+
 ```
-Authorization: Bearer <token>
+Authorization: Bearer atk_…
 ```
 
-或（仅浏览器 WS subprotocol；`/client` 和 `/client-sessions` 必须使用这种方式）：
+或（仅 WebSocket 升级，避免 token 进入 URL 日志）：
 
 ```
-Sec-WebSocket-Protocol: atterm-token.<token>
+Sec-WebSocket-Protocol: atterm-token.atk_…
 Sec-WebSocket-Protocol: atterm-token-b64.<base64url(utf8 token)>
 ```
 
-token 由部署方设置（环境变量 `ATTERM_TOKEN`）。`atterm-relay`
-启动时若未设置会自动生成高强度 token 并打印到日志；`internal/relay`
-作为库使用时 `Config.Token == ""` 仍表示无鉴权（仅用于本地/dev 嵌入场景）。
-服务端不接受 URL query token；手工打开 web 页面时只能使用 `/#token=<token>`
-fragment bootstrap。
+API token 由 `POST /api/me/tokens`（CSRF-gated）创建，前缀固定为 `atk_`。
+可连接 `/agent`、`/uplink`、`/client`、`/client-sessions`，可发送
+`IN`、`RESIZE`、`PASTE_IMAGE`。不携带 CSRF secret（无 cookie），故不能
+调用需要 CSRF 的端点（改用 cookie session 登录后操作）。
 
-scope 目前是 relay 内部鉴权结果，不改变 wire frame 格式：
+**Admin**：
 
-- write token：`ATTERM_TOKEN` / `Config.Token`。可连接 `/agent`、`/uplink`、`/client`、`/client-sessions`，可发送 `IN`、`RESIZE`、`PASTE_IMAGE`。
-- read token：`ATTERM_READ_ONLY_TOKENS` / `--read-only-tokens` / `Config.ReadOnlyTokens`。可调用 `/api/sessions`、`/api/version`，可连接 `/client`/`/client-sessions` 并 `LIST`/`ATTACH`/接收输出；relay 会丢弃 `IN`、`RESIZE`、`PASTE_IMAGE`，且拒绝 `/agent`/`/uplink`。
-- none：未命中任何 token 时返回 401；`Config.Token == "" && ReadOnlyTokens == nil` 的本地/dev 模式视为 write。
+```
+Authorization: Bearer <ATTERM_ADMIN_TOKEN>
+```
 
-有效远程权限 = token scope 与 session owner 发布的 `remote_permission` 取交集。
-read token 始终只有 `view`；write token 也不能超过 owner 发布的权限。relay
-先拦截越权帧，desktop uplink 在写入本机 PTY 前再做第二次拦截。
+仅在 `/admin/*` 路径有效（由 `ATTERM_ADMIN_TOKEN` 环境变量配置）。用户账号
+管理端点（`/admin/api/invitations`、`/admin/api/users`）使用此凭证。
 
-`cmd/atterm-relay` 的启动安全策略：
+### Principal 类型
 
-- 未设置 `ATTERM_TOKEN`：自动生成 32 字节随机 token（base64url）并打印访问 URL。
-- 公网监听（例如 `:8080` / `0.0.0.0:8080`）拒绝弱 token（`dev` 或长度 <16），除非显式传 `--dev-insecure`。
-- 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式传 `--dev-insecure`。
-- 公网监听启用 `/admin/` 时拒绝弱 `ATTERM_ADMIN_TOKEN`（`admin`、`dev` 或长度 <16），除非显式传 `--dev-insecure`。
+| Principal | 来源 | 可用路径 |
+|---|---|---|
+| `PrincipalUser` | cookie session 或 API token | `/agent` `/uplink` `/client` `/client-sessions` `/api/*` |
+| `PrincipalAdmin` | ATTERM_ADMIN_TOKEN Bearer | `/admin/*` |
+| `PrincipalNone` | 无效/过期凭证 | — (401) |
+
+每个用户只能看到自己注册的 session（`/api/sessions`、WebSocket LIST 帧、
+`/client` ATTACH 均按 ownerUserID 过滤）。
+
+### 用户账号 HTTP 端点
+
+| 路径 | 方法 | 鉴权 | 说明 |
+|------|------|------|------|
+| `/api/auth/signup` | POST | 公开（需邀请码） | 注册用户，签发 cookie session |
+| `/api/auth/login` | POST | 公开 | 登录，签发 cookie session |
+| `/api/auth/logout` | POST | Cookie + CSRF | 注销当前 session |
+| `/api/me` | GET | Cookie 或 API token | 返回用户信息和 csrf_token |
+| `/api/me/tokens` | GET/POST | Cookie (POST 需 CSRF) | 列出/创建 API token |
+| `/api/me/tokens/{id}` | DELETE | Cookie + CSRF | 撤销 API token |
+| `/api/me/password` | POST | Cookie + CSRF | 修改密码（清除所有 session） |
+| `/api/push/key` | GET | 任意已认证 Principal | 获取 VAPID 公钥 |
+| `/api/push/subscribe` | POST | Cookie + CSRF | 注册 push 订阅 |
+| `/api/push/unsubscribe` | POST | Cookie + CSRF | 取消 push 订阅 |
+| `/api/push/test` | POST | Cookie + CSRF | 发送测试 push 通知 |
+| `/admin/api/invitations` | GET/POST | Admin Bearer | 列出/创建邀请码 |
+| `/admin/api/users` | GET | Admin Bearer | 列出用户 |
+| `/admin/api/users/{id}/reset-password` | POST | Admin Bearer | 重置用户密码 |
+| `/admin/api/users/{id}/disable` | POST | Admin Bearer | 禁用用户 |
+
+### 启动安全策略
+
+- 公网监听时 `ATTERM_ADMIN_TOKEN` 必须非空且足够强（长度 ≥ 16，包含大小写+数字+特殊字符），除非显式 `--dev-insecure`。
+- 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`。
 - `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：HTTP 请求与 WS upgrade 先按远端 IP 限流；鉴权成功后再按远端 IP + token hash 限流。`0` 用默认值，负数禁用。
 - `--max-connections-per-key` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用。
-- `--config` / `ATTERM_RELAY_CONFIG`：持久化 relay admin JSON 配置路径。只保存运行参数和 hash 后的只读 token，不保存主 write token。
+- `--config` / `ATTERM_RELAY_CONFIG`：持久化 relay admin JSON 配置路径，仅保存运行参数；用户账号和 session 保存在 SQLite（users.db）。
 - `--admin-token` / `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 和 `/admin/api/*`。admin API 只接受 `Authorization: Bearer <admin-token>`，不支持 query token。
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输和弱鉴权风险警告。
 
-持久化 admin config 示例：
+持久化 admin config 示例（仅保存运行参数，不保存 token 明文）：
 
 ```json
 {
   "rate_limit_per_minute": 600,
-  "max_connections_per_key": 64,
-  "read_only_tokens": [
-    { "id": "mobile-view", "hash": "sha256:<base64url>", "created_at": 1770000000 }
-  ]
+  "max_connections_per_key": 64
 }
 ```
 

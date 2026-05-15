@@ -267,32 +267,30 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 
 `cmd/atterm-relay` 是生产入口，默认 fail-closed：
 
-- `ATTERM_TOKEN` 为空时自动生成 32 字节随机 token，并在日志打印一次访问 URL；
-- 公网监听时拒绝弱 token（`dev` 或长度 <16），除非显式 `--dev-insecure`；
+- 用户账号和身份信息存储在 SQLite（`users.db`，路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；
+- 公网监听时 `ATTERM_ADMIN_TOKEN` 必须非空且足够强（见协议规范 §鉴权），除非显式 `--dev-insecure`；
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`；
-- 公网监听启用 `/admin/` 时拒绝弱 admin token（`admin`、`dev` 或长度 <16）；
 - 默认返回 CSP/security headers，`web/` 只允许同源 script 和同源 stylesheet；CSP 额外允许 inline style 供 xterm.js 写运行时布局样式，xterm 静态资源放在 `web/vendor/`；
 - 对 HTTP 请求和 WS upgrade 先按远端 IP 限流，鉴权成功后再按远端 IP + token hash 限流，并限制同一 key 的活跃 WS 连接数；
-- 支持只读 token（`ATTERM_READ_ONLY_TOKENS` / `--read-only-tokens`）：可 list/attach/看输出，但不能输入、resize、粘贴图片，也不能注册 agent/uplink；
 - 支持 owner 发布的 `remote_permission`（view/control/full），relay 和 desktop uplink 双重强制执行；
-- 可选 `--config` + `--admin-token` 启用持久化 admin 配置和 `/admin/`，但主 write token 永远不写入该配置；
+- 可选 `--config` + `--admin-token` 启用持久化 runtime 配置（rate limit、连接数）和 `/admin/` API；
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
 
-`internal/relay.NewServer(relay.Config{Token:""})` 作为库仍保留“不鉴权”
-语义，供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
+鉴权详情见协议规范 §鉴权（browser cookie、desktop API token、admin Bearer token 三种来源）。
+
+`internal/relay.NewServer(relay.Config{})` 作为库仍保留”不鉴权”语义（当 Resolver 和
+Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
 的生产默认行为。
 
 ## 远程权限与 admin 配置
 
 远程权限由拥有 PTY 的 desktop app 决定。Settings 中的默认权限会写入
 `desktop/config.go`，`desktop/uplink.go` 在 `ANNOUNCE` 的每个 `SessionInfo`
-里发布 `remote_permission`。远端 relay 计算 token scope 与 owner 权限的交集：
-只读 token 始终只能 view；write token 也不能超过 owner 发布的 view/control/full。
+里发布 `remote_permission`。远端 relay 计算 principal scope 与 owner 权限的交集：
+用户 API token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
 
-relay admin 配置只服务运维场景：调整 rate limit、连接数和持久化只读 token。
-admin-created read-only token 只显示一次，配置文件中仅保存 `sha256:<base64url>`
-hash。主 write token 仍由 `ATTERM_TOKEN` / flag / 启动自动生成提供，不能通过
-admin 页面读取、写入或轮换。
+relay admin 配置只服务运维场景：调整 rate limit 和连接数。用户账号管理（邀请码、
+用户列表、密码重置）通过 `/admin/api/*` 端点操作，凭证为 `ATTERM_ADMIN_TOKEN`。
 
 ## 前端架构细节
 

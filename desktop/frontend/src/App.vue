@@ -10,6 +10,8 @@ import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
+import { useResizer } from "./plugins/useResizer";
+import { usePluginConfigStore } from "./plugins/configStore";
 import { sendInputToSession } from "./lib/sendInput";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
@@ -194,6 +196,26 @@ const pluginContext = createPluginContext({
   sessionInfoForPane: paneSessionInfo,
   sendToSession: (sessionId, endpoint, text) => sendInputToSession(endpoint, sessionId, text),
   showToast,
+});
+
+const pluginStore = usePluginConfigStore();
+
+const panelWidth = computed({
+  get: () => pluginStore.cfg?.fileExplorer.panelWidthPx ?? 380,
+  set: (v: number) => {
+    if (!pluginStore.cfg) return;
+    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
+    next.fileExplorer.panelWidthPx = Math.max(240, Math.min(v, window.innerWidth * 0.7));
+    void pluginStore.save(next);
+  },
+});
+
+const { onMouseDown: onPanelResizeDown } = useResizer({
+  onDrag: (deltaX) => {
+    if (!pluginStore.cfg) return;
+    const next = (pluginStore.cfg.fileExplorer.panelWidthPx ?? 380) - deltaX;
+    panelWidth.value = next;
+  },
 });
 
 // Sessions visible across all current tabs (drives sweep + remote-discover panel).
@@ -711,7 +733,9 @@ onUnmounted(() => {
         </template>
         <div v-if="toast" class="toast">{{ toast }}</div>
       </main>
-      <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel" />
+      <div class="right-resizer" @mousedown="onPanelResizeDown" />
+      <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel"
+                  :style="{ width: panelWidth + 'px', flex: '0 0 ' + panelWidth + 'px' }" />
     </div>
     <PluginHost slot-id="bottom-toolbar" :context="pluginContext" class="bottom-toolbar" />
 
@@ -788,12 +812,12 @@ onUnmounted(() => {
   min-height: 0;
 }
 .main { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; background: #000; overflow: hidden; min-width: 0; }
+.right-resizer { width: 4px; cursor: col-resize; background: transparent; flex: 0 0 4px; }
+.right-resizer:hover { background: #2d333b; }
 .right-panel:empty {
   display: none;
 }
 .right-panel {
-  width: 380px;
-  flex: 0 0 380px;
   border-left: 1px solid #2d333b;
   overflow: hidden;
 }

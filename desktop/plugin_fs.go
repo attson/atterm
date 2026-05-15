@@ -93,6 +93,25 @@ func (p *PluginFS) resolve(path string) (string, error) {
 	return "", fmt.Errorf("%w: %s", ErrPathForbidden, resolved)
 }
 
+const (
+	maxReadBytesHard = 5 * 1024 * 1024 // server-side hard cap (5 MB)
+	binaryProbeBytes = 4096            // bytes inspected for NUL → binary
+)
+
+type FileContent struct {
+	Path        string `json:"path"`
+	Data        []byte `json:"data"`
+	IsBinary    bool   `json:"isBinary"`
+	TruncatedAt int64  `json:"truncatedAt,omitempty"`
+}
+
+type FileMetaInfo struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	ModTime  int64  `json:"modTime"`
+	IsBinary bool   `json:"isBinary"`
+}
+
 var osReadDir = func(name string) ([]os.DirEntry, error) {
 	return os.ReadDir(name)
 }
@@ -130,4 +149,87 @@ func (p *PluginFS) ListDir(path string) ([]DirEntry, error) {
 		})
 	}
 	return out, nil
+}
+
+// ReadFile returns up to maxBytes from path. If the file is larger than
+// maxBytes, the returned Data is truncated and TruncatedAt reports the full
+// file size. Binary detection samples the first 4 KB.
+func (p *PluginFS) ReadFile(path string, maxBytes int64) (FileContent, error) {
+	if maxBytes > maxReadBytesHard {
+		return FileContent{}, fmt.Errorf("plugin_fs: maxBytes %d exceeds hard cap %d", maxBytes, maxReadBytesHard)
+	}
+	resolved, err := p.resolve(path)
+	if err != nil {
+		return FileContent{}, err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return FileContent{}, err
+	}
+	if info.IsDir() {
+		return FileContent{}, fmt.Errorf("plugin_fs: %s is a directory", resolved)
+	}
+	f, err := os.Open(resolved)
+	if err != nil {
+		return FileContent{}, err
+	}
+	defer f.Close()
+
+	size := info.Size()
+	readLen := size
+	truncated := int64(0)
+	if size > maxBytes {
+		readLen = maxBytes
+		truncated = size
+	}
+	data := make([]byte, readLen)
+	if _, err := f.Read(data); err != nil && err.Error() != "EOF" {
+		return FileContent{}, err
+	}
+	probe := data
+	if int64(len(probe)) > binaryProbeBytes {
+		probe = probe[:binaryProbeBytes]
+	}
+	isBin := false
+	for _, b := range probe {
+		if b == 0 {
+			isBin = true
+			break
+		}
+	}
+	return FileContent{Path: resolved, Data: data, IsBinary: isBin, TruncatedAt: truncated}, nil
+}
+
+// FileMeta returns size + modtime + binary-ness without reading the file body.
+// Used by the frontend's "should I open this in the editor?" pre-check.
+func (p *PluginFS) FileMeta(path string) (FileMetaInfo, error) {
+	resolved, err := p.resolve(path)
+	if err != nil {
+		return FileMetaInfo{}, err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return FileMetaInfo{}, err
+	}
+	isBin := false
+	if !info.IsDir() {
+		f, err := os.Open(resolved)
+		if err == nil {
+			probe := make([]byte, binaryProbeBytes)
+			n, _ := f.Read(probe)
+			f.Close()
+			for _, b := range probe[:n] {
+				if b == 0 {
+					isBin = true
+					break
+				}
+			}
+		}
+	}
+	return FileMetaInfo{
+		Path:     resolved,
+		Size:     info.Size(),
+		ModTime:  info.ModTime().UnixMilli(),
+		IsBinary: isBin,
+	}, nil
 }

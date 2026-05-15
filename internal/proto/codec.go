@@ -2,6 +2,7 @@ package proto
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -89,4 +90,33 @@ func DecodeResize(payload []byte) (uint16, uint16, error) {
 		return 0, 0, ErrShort
 	}
 	return binary.BigEndian.Uint16(payload[0:2]), binary.BigEndian.Uint16(payload[2:4]), nil
+}
+
+// CommandEventPayload is the JSON body of a TypeCommandEvent frame.
+// Direction: uplink -> relay. Not forwarded to clients.
+type CommandEventPayload struct {
+	ExitCode  int    `json:"exit_code"`
+	ElapsedMS int    `json:"elapsed_ms"`
+	Label     string `json:"label,omitempty"`
+}
+
+// EncodeCommandEvent builds a TypeCommandEvent frame.
+func EncodeCommandEvent(sessionID uuid.UUID, payload CommandEventPayload) (Frame, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return Frame{}, fmt.Errorf("marshal command event: %w", err)
+	}
+	return Frame{Type: TypeCommandEvent, SessionID: sessionID, Payload: body}, nil
+}
+
+// DecodeCommandEvent extracts the JSON payload from a TypeCommandEvent frame.
+func DecodeCommandEvent(f Frame) (CommandEventPayload, error) {
+	if f.Type != TypeCommandEvent {
+		return CommandEventPayload{}, fmt.Errorf("not a TypeCommandEvent frame: %v", f.Type)
+	}
+	var out CommandEventPayload
+	if err := json.Unmarshal(f.Payload, &out); err != nil {
+		return CommandEventPayload{}, fmt.Errorf("unmarshal command event: %w", err)
+	}
+	return out, nil
 }

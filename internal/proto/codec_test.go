@@ -191,3 +191,40 @@ func TestMarshalLargeButValidPayloadRoundtrips(t *testing.T) {
 		t.Fatalf("payload mismatch (len=%d)", len(out.Payload))
 	}
 }
+
+func TestCommandEventRoundTrip(t *testing.T) {
+	sid := uuid.New()
+	payload := CommandEventPayload{ExitCode: 0, ElapsedMS: 12500, Label: "atterm"}
+	frame, err := EncodeCommandEvent(sid, payload)
+	if err != nil {
+		t.Fatalf("EncodeCommandEvent: %v", err)
+	}
+	if frame.Type != TypeCommandEvent {
+		t.Fatalf("Type = %v; want %v", frame.Type, TypeCommandEvent)
+	}
+	if frame.SessionID != sid {
+		t.Fatalf("SessionID = %v; want %v", frame.SessionID, sid)
+	}
+	out, err := DecodeCommandEvent(frame)
+	if err != nil {
+		t.Fatalf("DecodeCommandEvent: %v", err)
+	}
+	if out.ExitCode != 0 || out.ElapsedMS != 12500 || out.Label != "atterm" {
+		t.Fatalf("decoded payload = %+v; want %+v", out, payload)
+	}
+}
+
+func TestCommandEventEmptyLabelAllowed(t *testing.T) {
+	sid := uuid.New()
+	frame, err := EncodeCommandEvent(sid, CommandEventPayload{ExitCode: 1, ElapsedMS: 0})
+	if err != nil {
+		t.Fatalf("EncodeCommandEvent: %v", err)
+	}
+	out, err := DecodeCommandEvent(frame)
+	if err != nil {
+		t.Fatalf("DecodeCommandEvent: %v", err)
+	}
+	if out.Label != "" {
+		t.Fatalf("Label = %q; want empty", out.Label)
+	}
+}

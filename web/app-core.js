@@ -205,6 +205,25 @@ export function detectClientMode({
   return "desktop-web";
 }
 
+// On mobile-web, focusing the terminal pops up the OS soft keyboard because
+// xterm.js routes input through a hidden <textarea>. The shortcut bar exists
+// precisely so users can send Esc/Tab/Ctrl-*/arrow keys without that keyboard,
+// so refocusing after every sendInput defeats the point. Desktop keeps focus
+// for seamless follow-up typing.
+export function shouldFocusTerminalAfterInput(mode) {
+  return mode !== "mobile-web";
+}
+
+// How many CSS pixels of the layout viewport's bottom are obscured by the
+// on-screen keyboard, derived from visualViewport. Used to lift #shortcut-bar
+// above the keyboard so quick keys stay reachable while typing on mobile.
+export function keyboardInsetFromViewport({ innerHeight = 0, viewport } = {}) {
+  if (!viewport) return 0;
+  const visible = (viewport.height || 0) + (viewport.offsetTop || 0);
+  const inset = Math.round(innerHeight - visible);
+  return inset > 1 ? inset : 0;
+}
+
 export function isIOSWebKit(userAgent = "") {
   const ua = userAgent.toLowerCase();
   const iOS = /\b(iphone|ipad|ipod)\b/.test(ua) || (/\bmacintosh\b/.test(ua) && /\bmobile\//.test(ua));

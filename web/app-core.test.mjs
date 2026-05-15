@@ -18,7 +18,9 @@ import {
   persistInsecureMode,
   normalizeRelayBaseURL,
   insecureModeFromStorage,
+  keyboardInsetFromViewport,
   shortcutInput,
+  shouldFocusTerminalAfterInput,
   tokenFromLocation,
   versionLabel,
   webSocketAuth,
@@ -180,6 +182,47 @@ test("parseSessionRoute accepts only session routes", () => {
   );
   assert.equal(parseSessionRoute("#/settings"), null);
   assert.equal(parseSessionRoute("#/s/not-a-uuid"), null);
+});
+
+test("shouldFocusTerminalAfterInput skips refocus on mobile-web to avoid soft keyboard", () => {
+  assert.equal(shouldFocusTerminalAfterInput("mobile-web"), false);
+  assert.equal(shouldFocusTerminalAfterInput("desktop-web"), true);
+  assert.equal(shouldFocusTerminalAfterInput(undefined), true);
+});
+
+test("keyboardInsetFromViewport returns 0 when no keyboard is up", () => {
+  assert.equal(
+    keyboardInsetFromViewport({ innerHeight: 800, viewport: { height: 800, offsetTop: 0 } }),
+    0,
+  );
+});
+
+test("keyboardInsetFromViewport returns the obscured height when keyboard is open", () => {
+  // 800-tall layout, 500-tall visible viewport pinned to top -> 300px keyboard.
+  assert.equal(
+    keyboardInsetFromViewport({ innerHeight: 800, viewport: { height: 500, offsetTop: 0 } }),
+    300,
+  );
+});
+
+test("keyboardInsetFromViewport accounts for viewport offsetTop (Android URL bar shifts)", () => {
+  // visible region starts 40px down and is 500 tall -> 260px keyboard.
+  assert.equal(
+    keyboardInsetFromViewport({ innerHeight: 800, viewport: { height: 500, offsetTop: 40 } }),
+    260,
+  );
+});
+
+test("keyboardInsetFromViewport ignores sub-pixel rounding noise", () => {
+  // height very close to innerHeight should not jitter into a 1px lift.
+  assert.equal(
+    keyboardInsetFromViewport({ innerHeight: 800, viewport: { height: 799.6, offsetTop: 0 } }),
+    0,
+  );
+});
+
+test("keyboardInsetFromViewport returns 0 without a visualViewport", () => {
+  assert.equal(keyboardInsetFromViewport({ innerHeight: 800 }), 0);
 });
 
 test("shortcutInput maps mobile terminal buttons to exact control sequences", () => {

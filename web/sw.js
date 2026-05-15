@@ -1,4 +1,4 @@
-const CACHE = "at-term-web-v4";
+const CACHE = "at-term-web-v5";
 const ASSETS = [
   "./",
   "./app-core.js",

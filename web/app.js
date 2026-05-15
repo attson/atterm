@@ -12,6 +12,7 @@ import {
   groupSessionsByHost,
   insecureModeFromStorage,
   isTerminalCopyShortcut,
+  keyboardInsetFromViewport,
   parseSessionRoute,
   persistInsecureMode,
   persistRelayBaseURL,
@@ -20,6 +21,7 @@ import {
   relayBaseURLFromLocation,
   replayProgressPercent,
   sessionTitle,
+  shouldFocusTerminalAfterInput,
   shouldShowInstallHint,
   shouldAutoScrollToBottom,
   shortSessionID,
@@ -133,21 +135,42 @@ const replayProgressFill = _el("replay-progress-fill");
 const installHint = _el("install-hint");
 const installDismiss = _el("install-dismiss");
 
-function applyClientModeClass() {
+function currentClientMode() {
   const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-  const mode = detectClientMode({
+  return detectClientMode({
     coarsePointer,
     maxTouchPoints: navigator.maxTouchPoints || 0,
     width: window.innerWidth,
   });
+}
+
+function applyClientModeClass() {
+  const mode = currentClientMode();
   document.body.classList.toggle("mobile-web", mode === "mobile-web");
   document.body.classList.toggle("desktop-web", mode === "desktop-web");
+}
+
+function focusTerminal() {
+  if (!term) return;
+  if (!shouldFocusTerminalAfterInput(currentClientMode())) return;
+  term.focus();
+}
+
+function applyKeyboardInset() {
+  const inset = keyboardInsetFromViewport({
+    innerHeight: window.innerHeight,
+    viewport: window.visualViewport,
+  });
+  document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`);
 }
 
 if (_isBrowser) {
   applyClientModeClass();
   window.addEventListener("resize", applyClientModeClass);
   window.matchMedia?.("(pointer: coarse)").addEventListener?.("change", applyClientModeClass);
+  applyKeyboardInset();
+  window.visualViewport?.addEventListener("resize", applyKeyboardInset);
+  window.visualViewport?.addEventListener("scroll", applyKeyboardInset);
 }
 
 function isStandaloneDisplay() {
@@ -477,7 +500,7 @@ function ensureTerm() {
 function sendInput(s) {
   if (!currentWS || currentWS.readyState !== 1 || !currentSID) return;
   currentWS.send(encodeFrame(TYPE.IN, currentSID, enc.encode(s)));
-  if (term) term.focus();
+  focusTerminal();
 }
 function sendResize(cols, rows) {
   if (!currentWS || currentWS.readyState !== 1 || !currentSID) return;
@@ -496,7 +519,7 @@ async function sendImagePaste(blob, filename = "clipboard-image") {
     data: arrayBufferToBase64(await blob.arrayBuffer()),
   };
   currentWS.send(encodeFrame(TYPE.PASTE_IMAGE, currentSID, enc.encode(JSON.stringify(payload))));
-  if (term) term.focus();
+  focusTerminal();
   return true;
 }
 
@@ -572,7 +595,7 @@ function openWS(sessionId) {
       scheduleFit();
       const { cols, rows } = term;
       sendResize(cols, rows);
-      term.focus();
+      focusTerminal();
     }
   };
 

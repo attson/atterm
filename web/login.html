@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AT Term · sign in</title>
+<link rel="stylesheet" href="style.css" />
+</head><body class="auth-page">
+<form id="login-form" class="auth-card" autocomplete="on">
+  <h1>AT Term</h1>
+  <label>Email <input id="email" type="email" required autocomplete="username" /></label>
+  <label>Password <input id="password" type="password" required autocomplete="current-password" /></label>
+  <button type="submit">Sign in</button>
+  <p id="error" hidden></p>
+  <p class="alt">No account? Ask your admin for an invite.</p>
+</form>
+<script type="module">
+import { login } from "./auth.js";
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("error");
+    err.hidden = true;
+    try {
+        await login(document.getElementById("email").value, document.getElementById("password").value);
+        location.assign("/");
+    } catch (e) {
+        err.textContent = "Invalid email or password.";
+        err.hidden = false;
+    }
+});
+</script></body></html>

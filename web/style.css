@@ -326,6 +326,52 @@ body.desktop-web #shortcut-bar {
 }
 .paste-image-pick:hover { border-color: var(--accent); color: var(--accent); }
 
+/* ── auth pages ─────────────────────────────────────────── */
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  background: radial-gradient(circle at top left, #172554 0, var(--bg) 42%);
+}
+.auth-card {
+  max-width: 360px;
+  width: 90%;
+  padding: 2rem;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.36);
+}
+.auth-card h1 { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; }
+.auth-card label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.875rem; color: var(--fg-dim); }
+.auth-card input {
+  padding: 0.5rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+.auth-card input:focus { outline: none; border-color: var(--accent); }
+.auth-card button {
+  padding: 0.5rem;
+  background: var(--accent);
+  color: #05070d;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.auth-card button:hover { opacity: 0.88; }
+.auth-card #error { color: var(--bad); font-size: 0.875rem; margin: 0; }
+.auth-card .alt { color: var(--fg-dim); font-size: 0.875rem; margin: 0; }
+.auth-card .alt a { color: var(--accent); }
+
 @media (min-width: 720px) {
   #main { padding: 24px; }
   .host-group > .grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }

@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	ErrEmailTaken   = errors.New("userstore: email already registered")
-	ErrUserNotFound = errors.New("userstore: user not found")
+	ErrEmailTaken        = errors.New("userstore: email already registered")
+	ErrUserNotFound      = errors.New("userstore: user not found")
+	ErrPasswordIncorrect = errors.New("userstore: current password incorrect")
 )
 
 // User is the row shape exposed to callers. password_hash and csrf_secret
@@ -231,6 +232,64 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// ChangePassword verifies currentPlaintext against userID's stored hash.
+// On success it hashes newPlaintext, rotates csrf_secret, deletes all web
+// sessions for the user (caller must issue a new session), and returns nil.
+// Returns ErrUserNotFound if the user ID is unknown, ErrPasswordIncorrect if
+// the current password does not match.
+func (s *SQLiteStore) ChangePassword(ctx context.Context, userID, currentPlaintext, newPlaintext string) error {
+	// Look up current password_hash.
+	var hash string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT password_hash FROM users WHERE id = ?`, userID,
+	).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrUserNotFound
+	} else if err != nil {
+		return fmt.Errorf("lookup user: %w", err)
+	}
+
+	// Verify current password.
+	if !verifyPassword(currentPlaintext, hash) {
+		return ErrPasswordIncorrect
+	}
+
+	// Hash the new password.
+	newHash, err := hashPassword(newPlaintext)
+	if err != nil {
+		return fmt.Errorf("hash: %w", err)
+	}
+
+	// Rotate csrf_secret.
+	newCSRF := make([]byte, 32)
+	if _, err := rand.Read(newCSRF); err != nil {
+		return fmt.Errorf("csrf rand: %w", err)
+	}
+
+	// Update in a transaction: new hash + rotated CSRF + delete all sessions.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET password_hash=?, csrf_secret=? WHERE id=?`,
+		newHash, newCSRF, userID); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM web_sessions WHERE user_id=?`, userID); err != nil {
+		return fmt.Errorf("delete sessions: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // ResetUserPassword generates a new temporary password (prefix "tmp_"), updates

@@ -286,6 +286,90 @@ func TestLogin_MissingEmail_TakesSimilarTime(t *testing.T) {
 	}
 }
 
+// ── change-password tests ────────────────────────────────────────────────────
+
+// TestChangePassword_HappyPath: change password → old password login fails, new works.
+func TestChangePassword_HappyPath(t *testing.T) {
+	srv, store := newTestAuthServer(t)
+	handler := srv.Routes()
+
+	cookie, _, _ := signupAndLogin(t, handler, store, "pw_change@example.com", "oldpassword12345")
+	csrf := csrfTokenFor(t, handler, cookie)
+
+	w := postJSONWithCSRF(handler, "/api/me/password", map[string]string{
+		"current_password": "oldpassword12345",
+		"new_password":     "newpassword99999",
+	}, cookie, csrf)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Old password must no longer work for login.
+	wOld := postJSON(handler, "/api/auth/login", map[string]string{
+		"email":    "pw_change@example.com",
+		"password": "oldpassword12345",
+	})
+	if wOld.Code != http.StatusUnauthorized {
+		t.Errorf("old password: expected 401, got %d", wOld.Code)
+	}
+
+	// New password must work.
+	wNew := postJSON(handler, "/api/auth/login", map[string]string{
+		"email":    "pw_change@example.com",
+		"password": "newpassword99999",
+	})
+	if wNew.Code != http.StatusOK {
+		t.Errorf("new password: expected 200, got %d: %s", wNew.Code, wNew.Body.String())
+	}
+}
+
+// TestChangePassword_WrongCurrent_401: wrong current password → 401 with error:"current_password_wrong".
+func TestChangePassword_WrongCurrent_401(t *testing.T) {
+	srv, store := newTestAuthServer(t)
+	handler := srv.Routes()
+
+	cookie, _, _ := signupAndLogin(t, handler, store, "pw_wrong@example.com", "correctpassword12")
+	csrf := csrfTokenFor(t, handler, cookie)
+
+	w := postJSONWithCSRF(handler, "/api/me/password", map[string]string{
+		"current_password": "wrongpassword123",
+		"new_password":     "newpassword99999",
+	}, cookie, csrf)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["error"] != "current_password_wrong" {
+		t.Errorf("error: got %q, want %q", resp["error"], "current_password_wrong")
+	}
+}
+
+// TestChangePassword_WeakNew_400: new password < 12 chars → 400 with error:"password_weak".
+func TestChangePassword_WeakNew_400(t *testing.T) {
+	srv, store := newTestAuthServer(t)
+	handler := srv.Routes()
+
+	cookie, _, _ := signupAndLogin(t, handler, store, "pw_weak@example.com", "correctpassword12")
+	csrf := csrfTokenFor(t, handler, cookie)
+
+	w := postJSONWithCSRF(handler, "/api/me/password", map[string]string{
+		"current_password": "correctpassword12",
+		"new_password":     "short",
+	}, cookie, csrf)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["error"] != "password_weak" {
+		t.Errorf("error: got %q, want %q", resp["error"], "password_weak")
+	}
+}
+
 // TestLogout_DeletesWebSession: login → logout with CSRF → session deleted, /api/me returns 401.
 func TestLogout_DeletesWebSession(t *testing.T) {
 	srv, store := newTestAuthServer(t)

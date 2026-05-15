@@ -66,6 +66,7 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("GET /api/me/tokens", http.HandlerFunc(a.handleListTokens))
 	mux.Handle("POST /api/me/tokens", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleCreateToken)))
 	mux.Handle("DELETE /api/me/tokens/{id}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleRevokeToken)))
+	mux.Handle("POST /api/me/password", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleChangePassword)))
 }
 
 // failureSleep sleeps the remaining time needed to reach FailureFloor (plus
@@ -434,6 +435,53 @@ func (a *AuthServer) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleChangePassword implements POST /api/me/password (CSRF-gated).
+//
+// Body: {"current_password": "...", "new_password": "..."}
+// On success: invalidates all web sessions for the user, issues a fresh
+// session cookie, and returns 204 No Content.
+// Error paths: 400 password_weak (new < 12 chars), 401 current_password_wrong,
+// 500 on store/session errors.
+func (a *AuthServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Current string `json:"current_password"`
+		New     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+
+	if len(body.New) < 12 {
+		writeError(w, http.StatusBadRequest, "password_weak")
+		return
+	}
+
+	err := a.Store.ChangePassword(r.Context(), p.UserID, body.Current, body.New)
+	if errors.Is(err, userstore.ErrPasswordIncorrect) {
+		writeError(w, http.StatusUnauthorized, "current_password_wrong")
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// All old sessions are now deleted. Issue a fresh session for the requester.
+	secret, err := a.Store.CreateWebSession(r.Context(), p.UserID, r.UserAgent(), ipPrefix(r))
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	setSessionCookie(w, r, secret.Expose(), int((30*24*time.Hour).Seconds()))
 	w.WriteHeader(http.StatusNoContent)
 }
 

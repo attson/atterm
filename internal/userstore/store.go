@@ -84,6 +84,12 @@ type Store interface {
 	DeleteWebSession(ctx context.Context, plaintext string) error
 	PurgeExpiredWebSessions(ctx context.Context) (int64, error)
 
+	// ChangePassword verifies currentPlaintext against the stored hash for
+	// userID, then updates to a new hash and rotates csrf_secret. All existing
+	// web sessions for the user are deleted (caller issues a fresh session).
+	// Returns ErrUserNotFound or ErrPasswordIncorrect on validation failure.
+	ChangePassword(ctx context.Context, userID, currentPlaintext, newPlaintext string) error
+
 	Close() error
 }
 

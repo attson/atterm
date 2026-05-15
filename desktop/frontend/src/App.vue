@@ -8,6 +8,9 @@ import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
+import PluginHost from "./plugins/PluginHost.vue";
+import { createPluginContext } from "./plugins/usePluginContext";
+import { sendInputToSession } from "./lib/sendInput";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
   closeSession,
@@ -173,6 +176,25 @@ const newId = () =>
 const currentTab = computed<Tab | null>(
   () => tabs.value.find((t) => t.id === currentTabId.value) ?? null,
 );
+
+// Keep a Ref (not ComputedRef) so it satisfies PluginContextInputs.activePane.
+const activePaneRef = ref<Pane | null>(null);
+watch(
+  [() => currentTab.value, () => currentTab.value?.activePaneIdx],
+  () => {
+    const t = currentTab.value;
+    activePaneRef.value = t ? t.panes[t.activePaneIdx] ?? null : null;
+  },
+  { immediate: true, deep: false },
+);
+
+const pluginContext = createPluginContext({
+  activePane: activePaneRef,
+  endpointForPane: endpointFor,
+  sessionInfoForPane: paneSessionInfo,
+  sendToSession: (sessionId, endpoint, text) => sendInputToSession(endpoint, sessionId, text),
+  showToast,
+});
 
 // Sessions visible across all current tabs (drives sweep + remote-discover panel).
 const allUsedSessionIds = computed(() => {
@@ -666,28 +688,32 @@ onUnmounted(() => {
       @new="startNewTab"
     />
 
-    <main class="main">
-      <template v-if="localEndpoint">
-        <div v-if="tabs.length === 0" class="empty">
-          starting first session…
-        </div>
-        <PaneGrid
-          v-for="t in tabs"
-          v-show="t.id === currentTabId"
-          :key="t.id"
-          :tab="t"
-          :endpoint-for="endpointFor"
-          :session-info-for="paneSessionInfo"
-          :active="t.id === currentTabId"
-          :terminal-theme="currentTerminalTheme.xtermTheme"
-          :command-notify-threshold-sec="commandNotifyThresholdSec"
-          @set-active-pane="(idx) => (t.activePaneIdx = idx)"
-          @close-pane="(idx) => closePaneAt(t, idx)"
-          @toast="showToast"
-        />
-      </template>
-      <div v-if="toast" class="toast">{{ toast }}</div>
-    </main>
+    <div class="main-row">
+      <main class="main">
+        <template v-if="localEndpoint">
+          <div v-if="tabs.length === 0" class="empty">
+            starting first session…
+          </div>
+          <PaneGrid
+            v-for="t in tabs"
+            v-show="t.id === currentTabId"
+            :key="t.id"
+            :tab="t"
+            :endpoint-for="endpointFor"
+            :session-info-for="paneSessionInfo"
+            :active="t.id === currentTabId"
+            :terminal-theme="currentTerminalTheme.xtermTheme"
+            :command-notify-threshold-sec="commandNotifyThresholdSec"
+            @set-active-pane="(idx) => (t.activePaneIdx = idx)"
+            @close-pane="(idx) => closePaneAt(t, idx)"
+            @toast="showToast"
+          />
+        </template>
+        <div v-if="toast" class="toast">{{ toast }}</div>
+      </main>
+      <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel" />
+    </div>
+    <PluginHost slot-id="bottom-toolbar" :context="pluginContext" class="bottom-toolbar" />
 
     <SettingsDialog
       v-if="showSettings"
@@ -756,7 +782,29 @@ onUnmounted(() => {
   border-radius: 50%;
 }
 
-.main { flex: 1 1 auto; position: relative; background: #000; overflow: hidden; }
+.main-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.main { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; background: #000; overflow: hidden; min-width: 0; }
+.right-panel:empty {
+  display: none;
+}
+.right-panel {
+  width: 380px;
+  flex: 0 0 380px;
+  border-left: 1px solid #2d333b;
+  overflow: hidden;
+}
+.bottom-toolbar:empty {
+  display: none;
+}
+.bottom-toolbar {
+  flex: 0 0 32px;
+  height: 32px;
+  border-top: 1px solid #2d333b;
+}
 .empty {
   position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: var(--fg-dim); font-size: 13px;

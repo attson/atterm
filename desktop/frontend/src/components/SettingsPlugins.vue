@@ -2,6 +2,7 @@
 import { onMounted } from "vue";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
+import QuickInputSettings from "../plugins/quickInput/QuickInputSettings.vue";
 
 const store = usePluginConfigStore();
 
@@ -36,6 +37,7 @@ async function toggle(id: "quick-input" | "file-explorer", enabled: boolean) {
           <span class="title">{{ p.title }}</span>
         </label>
         <p class="desc">{{ p.description }}</p>
+        <QuickInputSettings v-if="p.id === 'quick-input' && store.isPluginEnabled('quick-input')" />
       </li>
       <li v-if="PLUGINS.length === 0" class="empty">No plugins registered.</li>
     </ul>

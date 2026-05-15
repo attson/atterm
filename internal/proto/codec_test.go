@@ -228,3 +228,19 @@ func TestCommandEventEmptyLabelAllowed(t *testing.T) {
 		t.Fatalf("Label = %q; want empty", out.Label)
 	}
 }
+
+func TestAuthInfo_RoundTrip(t *testing.T) {
+	payload := []byte(`{"user_id":"01HXABCDEF"}`)
+	f := Frame{Type: TypeAuthInfo, Payload: payload}
+	enc := Marshal(f)
+	dec, err := Unmarshal(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Type != TypeAuthInfo {
+		t.Fatalf("type: got %x want %x", dec.Type, TypeAuthInfo)
+	}
+	if !bytes.Equal(dec.Payload, payload) {
+		t.Fatalf("payload mismatch: got %q want %q", dec.Payload, payload)
+	}
+}

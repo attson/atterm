@@ -39,6 +39,9 @@ const (
 	TypePasteImage    Type = 0x33 // client -> relay -> desktop PTY host
 	TypeClaimDriver   Type = 0x34 // client -> relay (viewer claims driver role)
 	TypeCommandEvent  Type = 0x35 // uplink -> relay (Web Push trigger)
+
+	// Auth frames (server → client).
+	TypeAuthInfo Type = 0x40 // relay -> uplink; UTF-8 JSON {user_id}
 )
 
 // Frame is a single protocol message.

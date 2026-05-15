@@ -40,6 +40,27 @@ type mirrorState struct {
 func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserID string) {
 	c.SetReadLimit(uplinkReadLimit)
 
+	// Send AUTH_INFO so the desktop client knows which user this connection
+	// is authenticated as. Only sent on the resolver (user-account) path;
+	// the legacy shared-token path leaves ownerUserID empty and gets no frame.
+	if ownerUserID != "" {
+		type authInfoPayload struct {
+			UserID string `json:"user_id"`
+		}
+		authPayload, _ := json.Marshal(authInfoPayload{UserID: ownerUserID})
+		wctx, wc := context.WithTimeout(ctx, uplinkWriteWait)
+		err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+			Type:    proto.TypeAuthInfo,
+			Payload: authPayload,
+		}))
+		wc()
+		if err != nil {
+			log.Printf("relay: uplink send AUTH_INFO failed: %v", err)
+			return
+		}
+		s.debugf("uplink auth_info_sent user_id=%s", ownerUserID)
+	}
+
 	first, err := readFrame(ctx, c)
 	if err != nil {
 		log.Printf("uplink: read ANNOUNCE: %v", err)

@@ -55,6 +55,9 @@ const (
     TypePasteImage      Type = 0x33  // client → relay → desktop PTY host
     TypeClaimDriver     Type = 0x34  // client → relay (viewer claims driver role)
     TypeCommandEvent    Type = 0x35  // uplink → relay (Web Push notification trigger)
+
+    // Auth frames (server → client).
+    TypeAuthInfo        Type = 0x40  // relay → uplink; UTF-8 JSON {user_id}
 )
 ```
 
@@ -285,6 +288,26 @@ Payload (JSON):
 - `host_id` is intentionally not in the payload. The relay reconstructs it from the sender's ANNOUNCE manifest at handler time, which makes cross-uplink spoofing impossible.
 - The relay drops the frame silently when `session_id` is not present in the sender's current manifest.
 - `label` is truncated to 256 bytes before being forwarded into a notification payload.
+
+### `AUTH_INFO` (0x40) — relay → uplink only
+
+Direction: relay → uplink only. Not sent on `/client` or `/agent` connections.
+
+Emitted immediately after successful auth on `/uplink`, **before** the relay reads the first `ANNOUNCE` frame from the client. Only sent on the user-account (resolver) path; the legacy shared-token path does not emit this frame.
+
+`internal/proto.Version` remains 1 — this is a new frame type only, no change to existing frame semantics.
+
+Payload (UTF-8 JSON):
+
+```json
+{
+  "user_id": "01HXABCDEF"
+}
+```
+
+- `user_id` is the ULID of the authenticated user.
+- Unknown JSON keys MUST be ignored by clients (forward-compat).
+- The desktop fetches the user's email separately via `/api/me` (see Task 8.1).
 
 ## Driver / Viewer 模型
 

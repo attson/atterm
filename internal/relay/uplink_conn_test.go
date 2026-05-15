@@ -260,6 +260,11 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 	}
 	// Don't defer a normal close — we expect the server to close it with 4002.
 
+	// Drain the AUTH_INFO frame the server sends immediately on connect.
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer drainCancel()
+	readAndDiscardAuthInfo(t, drainCtx, connB)
+
 	sendAnnounce(t, dialCtx, connB, sid)
 
 	// Wait for connB to be closed by the server.
@@ -297,6 +302,24 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 	}
 	if sessAAfter != sessA {
 		t.Error("alice's session object was replaced; want identity preserved")
+	}
+}
+
+// readAndDiscardAuthInfo reads the first frame from c and asserts it is a
+// TypeAuthInfo frame. Used in tests that connect with a valid API token and
+// need to drain the AUTH_INFO the server sends before sending their own frames.
+func readAndDiscardAuthInfo(t *testing.T, ctx context.Context, c *websocket.Conn) {
+	t.Helper()
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("readAndDiscardAuthInfo: read: %v", err)
+	}
+	f, err := proto.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("readAndDiscardAuthInfo: unmarshal: %v", err)
+	}
+	if f.Type != proto.TypeAuthInfo {
+		t.Fatalf("readAndDiscardAuthInfo: expected TypeAuthInfo (0x%02x), got 0x%02x", proto.TypeAuthInfo, f.Type)
 	}
 }
 

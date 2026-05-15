@@ -198,3 +198,17 @@ func TestFileMeta(t *testing.T) {
 		t.Fatalf("unexpected meta %+v", got)
 	}
 }
+
+func TestRevealInOSRefusesForbidden(t *testing.T) {
+	fs, _ := makeFS(t)
+	if err := fs.RevealInOS(t.TempDir()); err == nil {
+		t.Fatal("expected refusal")
+	}
+}
+
+func TestOpenExternalRefusesForbidden(t *testing.T) {
+	fs, _ := makeFS(t)
+	if err := fs.OpenExternal(t.TempDir()); err == nil {
+		t.Fatal("expected refusal")
+	}
+}

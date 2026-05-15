@@ -13,8 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	stdruntime "runtime"
 )
 
 type PluginFS struct {
@@ -232,4 +234,46 @@ func (p *PluginFS) FileMeta(path string) (FileMetaInfo, error) {
 		ModTime:  info.ModTime().UnixMilli(),
 		IsBinary: isBin,
 	}, nil
+}
+
+// RevealInOS asks the OS file manager to select the path. On macOS:
+//
+//	open -R <path>
+//
+// On Linux:
+//
+//	xdg-open <dir-of-path>      (no per-platform "reveal selecting" verb)
+//
+// On Windows:
+//
+//	explorer /select,<path>
+func (p *PluginFS) RevealInOS(path string) error {
+	resolved, err := p.resolve(path)
+	if err != nil {
+		return err
+	}
+	switch stdruntime.GOOS {
+	case "darwin":
+		return exec.Command("open", "-R", resolved).Start()
+	case "windows":
+		return exec.Command("explorer", "/select,"+resolved).Start()
+	default:
+		return exec.Command("xdg-open", filepath.Dir(resolved)).Start()
+	}
+}
+
+// OpenExternal launches the OS default application for the path.
+func (p *PluginFS) OpenExternal(path string) error {
+	resolved, err := p.resolve(path)
+	if err != nil {
+		return err
+	}
+	switch stdruntime.GOOS {
+	case "darwin":
+		return exec.Command("open", resolved).Start()
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", resolved).Start()
+	default:
+		return exec.Command("xdg-open", resolved).Start()
+	}
 }

@@ -25,7 +25,8 @@ var (
 // frames accepted are LIST. Once ATTACH locks onto a session, frames flow:
 // agent -> session -> sub.Out() -> client (writer goroutine), and client ->
 // IN/RESIZE -> session.SendInbound (reader loop).
-func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope) {
+// ownerUserID, when non-empty, restricts ATTACH to sessions owned by that user.
+func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string) {
 	c.SetReadLimit(clientReadLimit)
 
 	var (
@@ -138,6 +139,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			if !ok {
 				// session not (yet) live — close politely
 				_ = c.Close(websocket.StatusPolicyViolation, "no such session")
+				return
+			}
+			// Enforce owner isolation when resolver is wired in.
+			if ownerUserID != "" && target.OwnerUserID != ownerUserID {
+				s.debugf("client attach rejected session=%s reason=forbidden owner=%q principal=%q", id, target.OwnerUserID, ownerUserID)
+				_ = c.Close(websocket.StatusCode(CloseCodeForbidden), CloseReasonForbidden)
 				return
 			}
 			sess = target

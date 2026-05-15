@@ -280,11 +280,26 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClientWebSocketWithConfig(r, s.cfg)
-	if scope == authNone {
-		s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var (
+		scope       authScope
+		ownerUserID string
+	)
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser {
+			s.debugf("http reject path=/client remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		scope = authWrite
+		ownerUserID = p.UserID
+	} else {
+		scope = authorizeClientWebSocketWithConfig(r, s.cfg)
+		if scope == authNone {
+			s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -304,15 +319,26 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/client remote=%s origin=%q subprotocol=%q", r.RemoteAddr, r.Header.Get("Origin"), c.Subprotocol())
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClient(r.Context(), c, scope)
+	s.handleClient(r.Context(), c, scope, ownerUserID)
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClientWebSocketWithConfig(r, s.cfg)
-	if scope == authNone {
-		s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser {
+			s.debugf("http reject path=/client-sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		scope := authorizeClientWebSocketWithConfig(r, s.cfg)
+		if scope == authNone {
+			s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -330,19 +356,35 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 	}
 	s.debugf("ws accept path=/client-sessions remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClientSessions(r.Context(), c)
+	s.handleClientSessions(r.Context(), c, ownerUserID)
 }
 
 func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeClientWithConfig(r, s.cfg) == authNone {
-		s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser {
+			s.debugf("http reject path=/api/sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		if authorizeClientWithConfig(r, s.cfg) == authNone {
+			s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
-	infos := s.sessionInfoList()
+	var infos []proto.SessionInfo
+	if ownerUserID != "" {
+		infos = s.sessionInfoListForOwner(ownerUserID)
+	} else {
+		infos = s.sessionInfoList()
+	}
 	s.debugf("http api_sessions remote=%s sessions=%d", r.RemoteAddr, len(infos))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(infos)

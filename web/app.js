@@ -3,6 +3,8 @@
 import {
   apiURL as makeAPIURL,
   arrayBufferToBase64,
+  base64UrlToUint8Array,
+  canEnablePush,
   canRegisterServiceWorker,
   copyTerminalSelection,
   detectClientMode,
@@ -14,6 +16,7 @@ import {
   persistInsecureMode,
   persistRelayBaseURL,
   persistToken,
+  pushSupported,
   relayBaseURLFromLocation,
   replayProgressPercent,
   sessionTitle,
@@ -100,31 +103,35 @@ function encodeResize(cols, rows) {
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-const tokenInput = document.getElementById("token");
-const relayURLInput = document.getElementById("relay-url");
-const insecureModeInput = document.getElementById("insecure-mode");
-const tokenToggle = document.getElementById("token-toggle");
-const tokenPanel = document.getElementById("token-panel");
-const tokenSave = document.getElementById("token-save");
-const statusEl = document.getElementById("status");
-const sessionTitleEl = document.getElementById("session-title");
-const versionEl = document.getElementById("version");
-const listView = document.getElementById("list-view");
-const termView = document.getElementById("term-view");
-const listEl = document.getElementById("list");
-const emptyEl = document.getElementById("empty");
-const backBtn = document.getElementById("back");
-const refreshBtn = document.getElementById("refresh");
-const copyBtn = document.getElementById("copy");
-const pasteBtn = document.getElementById("paste");
-const pasteFallback = document.getElementById("paste-fallback");
-const pasteText = document.getElementById("paste-text");
-const pasteCancel = document.getElementById("paste-cancel");
-const replayProgress = document.getElementById("replay-progress");
-const replayProgressText = document.getElementById("replay-progress-text");
-const replayProgressFill = document.getElementById("replay-progress-fill");
-const installHint = document.getElementById("install-hint");
-const installDismiss = document.getElementById("install-dismiss");
+// _isBrowser is false when app.js is imported in a Node.js test environment.
+const _isBrowser = typeof document !== "undefined";
+const _el = (id) => _isBrowser ? document.getElementById(id) : null;
+
+const tokenInput = _el("token");
+const relayURLInput = _el("relay-url");
+const insecureModeInput = _el("insecure-mode");
+const tokenToggle = _el("token-toggle");
+const tokenPanel = _el("token-panel");
+const tokenSave = _el("token-save");
+const statusEl = _el("status");
+const sessionTitleEl = _el("session-title");
+const versionEl = _el("version");
+const listView = _el("list-view");
+const termView = _el("term-view");
+const listEl = _el("list");
+const emptyEl = _el("empty");
+const backBtn = _el("back");
+const refreshBtn = _el("refresh");
+const copyBtn = _el("copy");
+const pasteBtn = _el("paste");
+const pasteFallback = _el("paste-fallback");
+const pasteText = _el("paste-text");
+const pasteCancel = _el("paste-cancel");
+const replayProgress = _el("replay-progress");
+const replayProgressText = _el("replay-progress-text");
+const replayProgressFill = _el("replay-progress-fill");
+const installHint = _el("install-hint");
+const installDismiss = _el("install-dismiss");
 
 function applyClientModeClass() {
   const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -137,9 +144,11 @@ function applyClientModeClass() {
   document.body.classList.toggle("desktop-web", mode === "desktop-web");
 }
 
-applyClientModeClass();
-window.addEventListener("resize", applyClientModeClass);
-window.matchMedia?.("(pointer: coarse)").addEventListener?.("change", applyClientModeClass);
+if (_isBrowser) {
+  applyClientModeClass();
+  window.addEventListener("resize", applyClientModeClass);
+  window.matchMedia?.("(pointer: coarse)").addEventListener?.("change", applyClientModeClass);
+}
 
 function isStandaloneDisplay() {
   return window.matchMedia?.("(display-mode: standalone)").matches ||
@@ -167,30 +176,35 @@ function registerServiceWorker() {
   });
 }
 
-installDismiss?.addEventListener("click", () => {
-  localStorage.setItem("at-term-install-hint-dismissed", "1");
-  if (installHint) installHint.hidden = true;
-});
-maybeShowInstallHint();
-registerServiceWorker();
-
-let token = tokenFromLocation(location.href, localStorage);
-let insecureMode = insecureModeFromStorage(localStorage);
+let token = "";
+let insecureMode = false;
 let relayBaseURL = "";
-try {
-  relayBaseURL = relayBaseURLFromLocation(location.href, localStorage, { allowInsecure: insecureMode });
-} catch (err) {
-  setStatus(err instanceof Error ? err.message : "bad relay url", "err");
-  tokenPanel.hidden = false;
-  tokenToggle.setAttribute("aria-expanded", "true");
+
+if (_isBrowser) {
+  installDismiss?.addEventListener("click", () => {
+    localStorage.setItem("at-term-install-hint-dismissed", "1");
+    if (installHint) installHint.hidden = true;
+  });
+  maybeShowInstallHint();
+  registerServiceWorker();
+
+  token = tokenFromLocation(location.href, localStorage);
+  insecureMode = insecureModeFromStorage(localStorage);
+  try {
+    relayBaseURL = relayBaseURLFromLocation(location.href, localStorage, { allowInsecure: insecureMode });
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : "bad relay url", "err");
+    tokenPanel.hidden = false;
+    tokenToggle.setAttribute("aria-expanded", "true");
+  }
+  const cleanTokenURL = tokenURLWithoutSecret(location.href);
+  if (cleanTokenURL !== location.href) {
+    history.replaceState(null, "", cleanTokenURL);
+  }
+  tokenInput.value = token;
+  relayURLInput.value = relayBaseURL;
+  insecureModeInput.checked = insecureMode;
 }
-const cleanTokenURL = tokenURLWithoutSecret(location.href);
-if (cleanTokenURL !== location.href) {
-  history.replaceState(null, "", cleanTokenURL);
-}
-tokenInput.value = token;
-relayURLInput.value = relayBaseURL;
-insecureModeInput.checked = insecureMode;
 
 function getToken() {
   return token;
@@ -220,14 +234,16 @@ function saveConnectionSettings() {
   refreshList();
 }
 
-tokenInput.addEventListener("change", saveConnectionSettings);
-relayURLInput.addEventListener("change", saveConnectionSettings);
-insecureModeInput.addEventListener("change", saveConnectionSettings);
-tokenSave.addEventListener("click", saveConnectionSettings);
-tokenToggle.addEventListener("click", () => {
-  tokenPanel.hidden = !tokenPanel.hidden;
-  tokenToggle.setAttribute("aria-expanded", String(!tokenPanel.hidden));
-});
+if (_isBrowser) {
+  tokenInput.addEventListener("change", saveConnectionSettings);
+  relayURLInput.addEventListener("change", saveConnectionSettings);
+  insecureModeInput.addEventListener("change", saveConnectionSettings);
+  tokenSave.addEventListener("click", saveConnectionSettings);
+  tokenToggle.addEventListener("click", () => {
+    tokenPanel.hidden = !tokenPanel.hidden;
+    tokenToggle.setAttribute("aria-expanded", String(!tokenPanel.hidden));
+  });
+}
 
 function wsAuth(path) {
   return makeWebSocketAuth(location.protocol, location.host, path, getToken(), getRelayBaseURL());
@@ -241,10 +257,12 @@ function setStatus(text, kind) {
   statusEl.className = "status" + (kind ? " " + kind : "");
 }
 
-backBtn.addEventListener("click", () => {
-  location.hash = "";
-});
-refreshBtn.addEventListener("click", () => refreshList());
+if (_isBrowser) {
+  backBtn.addEventListener("click", () => {
+    location.hash = "";
+  });
+  refreshBtn.addEventListener("click", () => refreshList());
+}
 
 let listTimer = null;
 let lastSessions = [];
@@ -598,37 +616,39 @@ function closeWS() {
   setReplayProgress(null);
 }
 
-document.getElementById("shortcut-bar").addEventListener("click", (ev) => {
-  const btn = ev.target.closest("button[data-shortcut]");
-  if (!btn) return;
-  const input = shortcutInput(btn.dataset.shortcut);
-  if (input) sendInput(input);
-});
+if (_isBrowser) {
+  document.getElementById("shortcut-bar").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-shortcut]");
+    if (!btn) return;
+    const input = shortcutInput(btn.dataset.shortcut);
+    if (input) sendInput(input);
+  });
 
-pasteBtn.addEventListener("click", async () => {
-  try {
-    if (await pasteClipboardImage()) return;
-    const text = await navigator.clipboard.readText();
-    if (text) sendInput(text);
-  } catch {
-    pasteFallback.hidden = false;
-    pasteText.focus();
-  }
-});
+  pasteBtn.addEventListener("click", async () => {
+    try {
+      if (await pasteClipboardImage()) return;
+      const text = await navigator.clipboard.readText();
+      if (text) sendInput(text);
+    } catch {
+      pasteFallback.hidden = false;
+      pasteText.focus();
+    }
+  });
 
-copyBtn.addEventListener("click", copySelection);
+  copyBtn.addEventListener("click", copySelection);
 
-pasteCancel.addEventListener("click", () => {
-  pasteFallback.hidden = true;
-  pasteText.value = "";
-});
+  pasteCancel.addEventListener("click", () => {
+    pasteFallback.hidden = true;
+    pasteText.value = "";
+  });
 
-pasteFallback.addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  if (pasteText.value) sendInput(pasteText.value);
-  pasteText.value = "";
-  pasteFallback.hidden = true;
-});
+  pasteFallback.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (pasteText.value) sendInput(pasteText.value);
+    pasteText.value = "";
+    pasteFallback.hidden = true;
+  });
+}
 
 function route() {
   const sessionId = parseSessionRoute(location.hash);
@@ -656,6 +676,140 @@ function route() {
   }
 }
 
-window.addEventListener("hashchange", route);
-refreshVersion();
-route();
+if (_isBrowser) {
+  window.addEventListener("hashchange", route);
+  refreshVersion();
+  route();
+}
+
+/**
+ * Drives the "Enable notifications" click path. Returns an object so tests
+ * can assert the outcome without DOM coupling.
+ */
+export async function enablePushFlow(deps) {
+  const { notification, registration, fetch, token } = deps;
+  if (!canEnablePush(notification.permission)) {
+    return { ok: false, reason: "denied" };
+  }
+  const granted = await notification.requestPermission();
+  if (granted !== "granted") {
+    return { ok: false, reason: "denied" };
+  }
+  let keyResp;
+  try {
+    keyResp = await fetch("/api/push/key", {
+      headers: { Authorization: "Bearer " + token },
+    });
+  } catch (_err) {
+    return { ok: false, reason: "network" };
+  }
+  if (keyResp.status === 503) {
+    return { ok: false, reason: "disabled" };
+  }
+  if (!keyResp.ok) {
+    return { ok: false, reason: "key-failed" };
+  }
+  const { key } = await keyResp.json();
+  let sub;
+  try {
+    sub = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlToUint8Array(key),
+    });
+  } catch (_err) {
+    return { ok: false, reason: "subscribe-failed" };
+  }
+  const payload = sub.toJSON ? sub.toJSON() : sub;
+  let postResp;
+  try {
+    postResp = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        endpoint: payload.endpoint,
+        keys: { p256dh: payload.keys.p256dh, auth: payload.keys.auth },
+      }),
+    });
+  } catch (_err) {
+    return { ok: false, reason: "network" };
+  }
+  if (postResp.status === 503) {
+    return { ok: false, reason: "disabled" };
+  }
+  if (!postResp.ok) {
+    return { ok: false, reason: "subscribe-rejected" };
+  }
+  return { ok: true };
+}
+
+export async function disablePushFlow(deps) {
+  const { registration, fetch, token } = deps;
+  try {
+    const sub = await registration.pushManager.getSubscription();
+    if (sub) {
+      await sub.unsubscribe();
+      await fetch("/api/push/unsubscribe", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
+    }
+  } catch (err) {
+    console.warn("[AT Term] disablePushFlow error", err);
+  }
+  return { ok: true };
+}
+
+function renderPushButton(nav, win, getTokenFn) {
+  if (!pushSupported(nav, win)) return null;
+  const btn = document.createElement("button");
+  btn.className = "push-toggle";
+  const setLabel = () => {
+    const enabled = localStorage.getItem("push-enabled") === "1";
+    btn.textContent = enabled ? "🔔 ON" : "🔔 Enable notifications";
+  };
+  setLabel();
+  btn.addEventListener("click", async () => {
+    const enabled = localStorage.getItem("push-enabled") === "1";
+    if (enabled) {
+      await disablePushFlow({
+        registration: await nav.serviceWorker.ready,
+        fetch: win.fetch.bind(win),
+        token: getTokenFn(),
+      });
+      localStorage.removeItem("push-enabled");
+      setLabel();
+    } else {
+      const result = await enablePushFlow({
+        notification: win.Notification,
+        registration: await nav.serviceWorker.ready,
+        fetch: win.fetch.bind(win),
+        token: getTokenFn(),
+      });
+      if (result.ok) {
+        localStorage.setItem("push-enabled", "1");
+        setLabel();
+      } else {
+        const msg = ({
+          denied: "Notification permission denied.",
+          disabled: "Server has push disabled.",
+          network: "Could not reach server.",
+          "key-failed": "Could not fetch server key.",
+          "subscribe-failed": "Browser refused to subscribe.",
+          "subscribe-rejected": "Server rejected subscription.",
+        })[result.reason] || "Could not enable notifications.";
+        btn.textContent = "🔔 " + msg;
+      }
+    }
+  });
+  return btn;
+}
+
+// Attach the push toggle button to the status element if push is supported.
+if (_isBrowser) {
+  const pushBtn = renderPushButton(navigator, window, getToken);
+  if (pushBtn) statusEl.appendChild(pushBtn);
+}

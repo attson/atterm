@@ -2,12 +2,11 @@ import { describe, expect, test } from "vitest";
 import source from "./SettingsRelay.vue?raw";
 
 describe("SettingsRelay", () => {
-  test("loads relay config and exposes save/disconnect through defineExpose", () => {
+  test("loads relay config and exposes save through defineExpose", () => {
     expect(source).toContain("getRelayConfig");
     expect(source).toContain("setRelayConfig");
     expect(source).toContain("defineExpose");
     expect(source).toContain("save,");
-    expect(source).toContain("disconnect,");
   });
 
   test("renders url, token, permissions SelectDropdown, insecure toggle, and status pill", () => {
@@ -19,7 +18,6 @@ describe("SettingsRelay", () => {
     expect(source).toContain('v-model="remotePermission"');
     expect(source).toContain("enable insecure mode");
     expect(source).toContain("uplink running");
-    expect(source).toContain("uplink stopped");
   });
 
   test("emits dirty whenever a field diverges from the persisted snapshot", () => {
@@ -34,5 +32,39 @@ describe("SettingsRelay", () => {
 
   test("shows insecure warning paragraph when ws is allowed", () => {
     expect(source).toContain("ws:// sends the relay token");
+  });
+
+  // Task 7.1 new tests
+  test("renders API token label, not 'token'", () => {
+    expect(source).toContain(">API token<");
+    expect(source).not.toContain(">shared bearer token<");
+    expect(source).not.toContain(">token<");
+  });
+
+  test("renders Uplink ON/OFF toggle bound to RelayPaused", () => {
+    // source must have a toggle bound to `paused` ref
+    expect(source).toContain("paused");
+    // on-change handler calls setUplinkPaused
+    expect(source).toContain("setUplinkPaused");
+  });
+
+  test("does not have a 'disconnect' button", () => {
+    // The disconnect() function and its button must be removed
+    expect(source).not.toContain("disconnect()");
+    expect(source).not.toContain(">Disconnect<");
+    expect(source).not.toContain(">disconnect<");
+  });
+
+  test("paste of non-atk token surfaces a warning hint", () => {
+    // source must check if token starts with atk_
+    expect(source).toContain("atk_");
+    // and show a warning when it doesn't
+    expect(source).toContain("tokenWarning");
+    expect(source).toContain("API token");
+  });
+
+  test("Open in browser button calls BrowserOpenURL with relay URL + /settings.html", () => {
+    expect(source).toContain("BrowserOpenURL");
+    expect(source).toContain("/settings.html");
   });
 });

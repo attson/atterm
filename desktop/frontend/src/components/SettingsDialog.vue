@@ -133,10 +133,6 @@ async function onConfirmInstall() {
 function onSaveClick() {
   relayRef.value?.save();
 }
-
-function onDisconnectClick() {
-  relayRef.value?.disconnect();
-}
 </script>
 
 <template>
@@ -197,12 +193,6 @@ function onDisconnectClick() {
 
       <footer v-if="activeTab === 'relay'" class="settings-footer">
         <button @click="close" :disabled="relayRef?.saving">cancel</button>
-        <button
-          v-if="relayRef?.connected"
-          class="danger"
-          @click="onDisconnectClick"
-          :disabled="relayRef?.saving"
-        >disconnect</button>
         <button
           class="primary"
           :disabled="!relayRef?.canSave"

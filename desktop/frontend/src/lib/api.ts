@@ -84,6 +84,7 @@ interface AppBindings {
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
+  SetUplinkPaused(paused: boolean): Promise<void>;
   GetLoggingConfig(): Promise<LoggingConfig>;
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
   PickLogFilePath(): Promise<string>;
@@ -160,6 +161,10 @@ export function setRelayConfig(cfg: {
     remote_permission: cfg.remote_permission ?? "full",
     connected: false,
   });
+}
+
+export function setUplinkPaused(paused: boolean): Promise<void> {
+  return bindings().SetUplinkPaused(paused);
 }
 
 export function getLoggingConfig(): Promise<LoggingConfig> {

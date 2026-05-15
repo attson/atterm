@@ -49,6 +49,31 @@ func TestPrepareZshWritesWrapperAndReturnsPlan(t *testing.T) {
 		t.Fatalf("wrapper rc does not source atterm.zsh; got %q", got)
 	}
 
+	// Regression: macOS /etc/zshrc sets HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history
+	// before our wrapper runs. With ZDOTDIR pointed at our per-session shim
+	// dir, history gets anchored to a temp file that no other window can see
+	// and that Cleanup deletes on exit. The wrapper MUST repair HISTFILE when
+	// it still points inside the shim dir, and MUST restore ZDOTDIR so the
+	// user's .zshrc sees the original value.
+	if !strings.Contains(got, "HISTFILE") {
+		t.Fatalf("wrapper rc does not repair HISTFILE after ZDOTDIR shim; got %q", got)
+	}
+	// The wrapper should restore ZDOTDIR before sourcing the user rc, so any
+	// `${ZDOTDIR:-$HOME}/.zshrc`-style logic and user-side $ZDOTDIR references
+	// land on the original value rather than our temp dir.
+	zdotidx := strings.Index(got, "ZDOTDIR=\"$_atterm_orig\"")
+	if zdotidx < 0 {
+		// Accept any reassignment of ZDOTDIR from the original value.
+		if !(strings.Contains(got, "ZDOTDIR=$ATTERM_ORIG_ZDOTDIR") ||
+			strings.Contains(got, "ZDOTDIR=\"${ATTERM_ORIG_ZDOTDIR")) {
+			t.Fatalf("wrapper rc does not restore ZDOTDIR to the original; got %q", got)
+		}
+	}
+	srcidx := strings.Index(got, "source ")
+	if zdotidx >= 0 && srcidx >= 0 && zdotidx > srcidx {
+		t.Fatalf("wrapper rc restores ZDOTDIR after sourcing user rc; must restore first. got %q", got)
+	}
+
 	// The snippet itself must be copied alongside so the wrapper can source it
 	// without depending on file paths inside the binary.
 	if _, err := os.Stat(filepath.Join(zdir, "atterm.zsh")); err != nil {

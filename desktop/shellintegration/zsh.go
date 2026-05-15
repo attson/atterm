@@ -27,16 +27,35 @@ func prepareZsh(sessionID string) Plan {
 	}
 
 	wrapper := fmt.Sprintf(`# atterm zsh wrapper — sources user rc then injects OSC 133 hooks.
+_atterm_shim_dir=%q
 _atterm_orig="${ATTERM_ORIG_ZDOTDIR}"
-if [[ -z "$_atterm_orig" ]]; then
-  _atterm_orig="$HOME"
+
+# Restore ZDOTDIR before sourcing the user's rc so any `+"`${ZDOTDIR:-$HOME}`"+`
+# references (and the user's own $ZDOTDIR reads) land on the original value
+# rather than our per-session shim dir.
+if [[ -n "$_atterm_orig" ]]; then
+  ZDOTDIR="$_atterm_orig"
+else
+  unset ZDOTDIR
 fi
-if [[ -f "$_atterm_orig/.zshrc" ]]; then
-  source "$_atterm_orig/.zshrc" || true
+
+# macOS /etc/zshrc runs BEFORE this wrapper and anchors
+#   HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history
+# to our shim ZDOTDIR. That points HISTFILE at a per-session temp file no
+# other window can see and that Cleanup deletes on exit — history appears
+# isolated per window and is then lost. Repair HISTFILE when it still lives
+# under our shim dir; if the user set it to something else, leave it alone.
+if [[ "${HISTFILE:-}" == "$_atterm_shim_dir"/* ]]; then
+  HISTFILE="${ZDOTDIR:-$HOME}/.zsh_history"
 fi
-unset _atterm_orig
+
+_atterm_user_rc="${ZDOTDIR:-$HOME}/.zshrc"
+if [[ -f "$_atterm_user_rc" ]]; then
+  source "$_atterm_user_rc" || true
+fi
+unset _atterm_user_rc _atterm_orig _atterm_shim_dir
 source %q || true
-`, snippetPath)
+`, dir, snippetPath)
 
 	wrapperPath := filepath.Join(dir, ".zshrc")
 	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o600); err != nil {

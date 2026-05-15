@@ -4,8 +4,6 @@ import (
 	"log"
 	"net/http"
 	"sync"
-
-	"github.com/google/uuid"
 )
 
 // HTTPClient mirrors webpush-go's HTTPClient interface (single Do method)
@@ -31,9 +29,6 @@ type Service struct {
 
 	subStore *subStore
 	tr       *transport
-
-	resolverMu sync.RWMutex
-	resolver   func(uuid.UUID) []string
 }
 
 // Open initializes the service. Recoverable conditions (missing file,
@@ -101,21 +96,6 @@ func (s *Service) RemoveSubscription(userID, endpoint string) error {
 	s.subStore.Remove(userID, endpoint)
 	s.persistBestEffort()
 	return nil
-}
-
-// SetSessionResolver registers the function that maps a session id to the
-// user-ids allowed to view it. The resolver is called from the dispatch
-// goroutine; implementations must be cheap.
-func (s *Service) SetSessionResolver(f func(uuid.UUID) []string) {
-	s.resolverMu.Lock()
-	s.resolver = f
-	s.resolverMu.Unlock()
-}
-
-func (s *Service) lookupResolver() func(uuid.UUID) []string {
-	s.resolverMu.RLock()
-	defer s.resolverMu.RUnlock()
-	return s.resolver
 }
 
 // SubscriptionsForUser is a test-only helper. Returns subscriptions for the

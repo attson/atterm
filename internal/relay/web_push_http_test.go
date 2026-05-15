@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
 )
 
@@ -23,6 +25,58 @@ func newWebPushTestServer(t *testing.T) (*Server, *webpush.Service) {
 		WebPush:        svc,
 	})
 	return srv, svc
+}
+
+// newWebPushTestServerWithResolver creates a Server with an IdentityResolver
+// backed by the given fakeStore, plus a webpush.Service.
+func newWebPushTestServerWithResolver(t *testing.T, store userstore.Store) (*Server, *webpush.Service) {
+	t.Helper()
+	svc, err := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	if err != nil {
+		t.Fatalf("webpush.Open: %v", err)
+	}
+	resolver := NewIdentityResolver(store, "admin-token-for-push-test")
+	srv := NewServer(Config{
+		WebPush:  svc,
+		Resolver: resolver,
+	})
+	return srv, svc
+}
+
+// pushFakeStore is a fakeStore preset for the webpush HTTP tests.
+// sessionMap maps cookie plaintext -> (userID, csrfSecret).
+// apiTokenMap maps token plaintext -> (tokenID, userID).
+type pushFakeStore struct {
+	userstore.Store
+	sessionMap  map[string][2]string // plaintext -> {userID, csrfSecretStr}
+	apiTokenMap map[string][2]string // plaintext -> {tokenID, userID}
+}
+
+func (s *pushFakeStore) LookupWebSession(_ context.Context, plaintext string) (string, []byte, error) {
+	if v, ok := s.sessionMap[plaintext]; ok {
+		return v[0], []byte(v[1]), nil
+	}
+	return "", nil, userstore.ErrWebSessionInvalid
+}
+
+func (s *pushFakeStore) LookupAPIToken(_ context.Context, plaintext string) (string, string, error) {
+	if v, ok := s.apiTokenMap[plaintext]; ok {
+		return v[0], v[1], nil
+	}
+	return "", "", userstore.ErrTokenInvalid
+}
+
+// doRequestWithCookie creates a request with a session cookie (no bearer token).
+func doRequestWithCookie(t *testing.T, srv *Server, method, path, cookieVal, body string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if cookieVal != "" {
+		req.AddCookie(&http.Cookie{Name: "atterm_session", Value: cookieVal})
+	}
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec.Result()
 }
 
 func doRequest(t *testing.T, srv *Server, method, path, token, body string) *http.Response {
@@ -157,5 +211,109 @@ func TestTestNotificationZeroWhenNoSubs(t *testing.T) {
 	_ = json.Unmarshal(raw, &out)
 	if out.Sent != 0 {
 		t.Fatalf("sent = %d; want 0", out.Sent)
+	}
+}
+
+// TestWebPushHTTP_RequiresUserPrincipal verifies that /api/push/subscribe,
+// /api/push/unsubscribe, and /api/push/test require a User principal:
+//   - cookie session (PrincipalUser) → 200/OK
+//   - admin bearer token (PrincipalAdmin) → 403
+//   - no credentials (PrincipalNone) → 401
+func TestWebPushHTTP_RequiresUserPrincipal(t *testing.T) {
+	store := &pushFakeStore{
+		sessionMap:  map[string][2]string{"valid-cookie": {"user1", "csrf"}},
+		apiTokenMap: map[string][2]string{},
+	}
+	srv, _ := newWebPushTestServerWithResolver(t, store)
+
+	validSubBody := `{"endpoint":"https://push.example/abc","keys":{"p256dh":"AAECAwQFBgcICQoLDA0ODw","auth":"AAECAwQFBgcICQoLDA0ODw"}}`
+
+	type tc struct {
+		name       string
+		doReq      func() *http.Response
+		wantStatus int
+	}
+	routes := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodPost, "/api/push/subscribe", validSubBody},
+		{http.MethodPost, "/api/push/unsubscribe", `{"endpoint":"https://push.example/abc"}`},
+		{http.MethodPost, "/api/push/test", ""},
+	}
+
+	for _, route := range routes {
+		route := route
+		t.Run(route.path, func(t *testing.T) {
+			cases := []tc{
+				{
+					name: "cookie user → 200",
+					doReq: func() *http.Response {
+						return doRequestWithCookie(t, srv, route.method, route.path, "valid-cookie", route.body)
+					},
+					wantStatus: 200,
+				},
+				{
+					name: "admin token → 403",
+					doReq: func() *http.Response {
+						return doRequest(t, srv, route.method, route.path, "admin-token-for-push-test", route.body)
+					},
+					wantStatus: 403,
+				},
+				{
+					name: "no auth → 401",
+					doReq: func() *http.Response {
+						return doRequest(t, srv, route.method, route.path, "", route.body)
+					},
+					wantStatus: 401,
+				},
+			}
+			for _, c := range cases {
+				c := c
+				t.Run(c.name, func(t *testing.T) {
+					resp := c.doReq()
+					if resp.StatusCode != c.wantStatus {
+						raw, _ := io.ReadAll(resp.Body)
+						t.Fatalf("status = %d; want %d; body=%s", resp.StatusCode, c.wantStatus, raw)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestWebPushHTTP_KeysSubscriptionByUserID verifies that a successful subscribe
+// with user_A's cookie stores the subscription under user_A's ID, not under
+// any other user's ID.
+func TestWebPushHTTP_KeysSubscriptionByUserID(t *testing.T) {
+	const (
+		userAID     = "01HXAAAAAAAAAAAAAAAAAAAAAA"
+		userBID     = "01HXBBBBBBBBBBBBBBBBBBBBBB"
+		cookieUserA = "cookie-for-userA"
+	)
+	store := &pushFakeStore{
+		sessionMap:  map[string][2]string{cookieUserA: {userAID, "csrf"}},
+		apiTokenMap: map[string][2]string{},
+	}
+	srv, svc := newWebPushTestServerWithResolver(t, store)
+
+	body := `{"endpoint":"https://push.example/userA","keys":{"p256dh":"AAECAwQFBgcICQoLDA0ODw","auth":"AAECAwQFBgcICQoLDA0ODw"}}`
+	resp := doRequestWithCookie(t, srv, http.MethodPost, "/api/push/subscribe", cookieUserA, body)
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("subscribe status = %d; body=%s", resp.StatusCode, raw)
+	}
+
+	// Subscription must appear under userA.
+	subsA := svc.SubscriptionsForUser(userAID)
+	if len(subsA) != 1 || subsA[0].Endpoint != "https://push.example/userA" {
+		t.Fatalf("SubscriptionsForUser(userA) = %v; want 1 sub", subsA)
+	}
+
+	// Subscription must NOT appear under userB or any other key.
+	subsB := svc.SubscriptionsForUser(userBID)
+	if len(subsB) != 0 {
+		t.Fatalf("SubscriptionsForUser(userB) = %v; want empty", subsB)
 	}
 }

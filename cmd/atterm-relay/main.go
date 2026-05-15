@@ -130,7 +130,21 @@ func main() {
 	srv := relay.NewServer(cfg)
 
 	if wpSvc != nil {
-		wpSvc.SetSessionResolver(srv.WebPushSessionResolver)
+		// Schedule daily cleanup of legacy web-push subscription files.
+		go func() {
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					if err := webpush.CleanupLegacy(ctx, persistDir); err != nil {
+						log.Printf("webpush: CleanupLegacy: %v", err)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
 	}
 
 	httpSrv := &http.Server{

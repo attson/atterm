@@ -18,7 +18,6 @@ import (
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
-	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
 
@@ -408,38 +407,8 @@ func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(versionResponse{Version: version})
 }
 
-// WebPushSessionResolver returns the list of token-hashes authorized to
-// view a session at the given id. Empty when the session is unknown.
-// Used as the SessionResolver injected into webpush.Service at startup.
-func (s *Server) WebPushSessionResolver(sessionID uuid.UUID) []string {
-	sess, ok := s.registry.Get(sessionID)
-	if !ok {
-		return nil
-	}
-	info := sess.Info()
-	perm := info.RemotePermission
-	if perm == "" {
-		perm = proto.RemotePermissionFull
-	}
-	out := make([]string, 0, 1+len(s.cfg.ReadOnlyTokens))
-	if s.cfg.Token != "" {
-		out = append(out, tokenHash(s.cfg.Token))
-	}
-	// All read-only tokens can view at minimum, regardless of perm.
-	for _, t := range s.cfg.ReadOnlyTokens {
-		out = append(out, tokenHash(t))
-	}
-	// Admin-managed RO tokens are stored as "sha256:<base64url>"; strip the
-	// prefix to match the plain base64url form used by tokenHash.
-	for _, h := range s.cfg.ReadOnlyTokenHashes {
-		out = append(out, strings.TrimPrefix(h, "sha256:"))
-	}
-	_ = perm // perm is read for future per-permission filtering; v1 includes all tokens that can view.
-	return out
-}
-
 // tokenHash is the canonical sha256+base64url form used as a key in
-// webpush.Service subscription registry.
+// legacy webpush subscription registries (pre-userID schema).
 func tokenHash(token string) string {
 	if token == "" {
 		return ""

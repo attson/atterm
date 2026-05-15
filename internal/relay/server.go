@@ -9,8 +9,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -64,6 +66,10 @@ type Config struct {
 	// /agent. When nil, the legacy shared-token (Token field) path is used.
 	// Set this to enable per-user API-token gating (Task 4.1+).
 	Resolver *IdentityResolver
+	// Store, when non-nil alongside Resolver, mounts the user-account HTTP API
+	// (/api/auth/*, /api/me/*, /admin/api/invitations, /admin/api/users).
+	// If nil the new routes are not registered (legacy mode).
+	Store userstore.Store
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -128,9 +134,15 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/api/sessions", s.handleSessionsHTTP)
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
-	s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
-	s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
-	s.mux.HandleFunc("/api/push/test", s.handlePushTest)
+	if cfg.Resolver != nil {
+		s.mux.Handle("/api/push/subscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushSubscribe)))
+		s.mux.Handle("/api/push/unsubscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushUnsubscribe)))
+		s.mux.Handle("/api/push/test", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushTest)))
+	} else {
+		s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
+		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
+		s.mux.HandleFunc("/api/push/test", s.handlePushTest)
+	}
 	if cfg.WebDir != "" {
 		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebDir))
 	}
@@ -140,6 +152,50 @@ func NewServer(cfg Config) *Server {
 		s.mux.HandleFunc("/admin/api/read-only-tokens", s.handleAdminReadOnlyTokensHTTP)
 		s.mux.HandleFunc("/admin/api/read-only-tokens/", s.handleAdminReadOnlyTokenHTTP)
 	}
+
+	// Mount user-account HTTP API when both resolver and store are wired.
+	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed
+	// here so the same wiring runs in both the production binary and any test
+	// that calls NewServer with a non-nil Resolver+Store.
+	if cfg.Resolver != nil && cfg.Store != nil {
+		argon := NewArgon2Pool(runtime.NumCPU())
+		limits := NewLimitRegistry()
+		authSrv := &AuthServer{
+			Store:        cfg.Store,
+			Resolver:     cfg.Resolver,
+			Argon:        argon,
+			Limits:       limits,
+			FailureFloor: 200 * time.Millisecond,
+		}
+		adminSrv := &AdminServer{
+			Store:    cfg.Store,
+			Resolver: cfg.Resolver,
+		}
+		authSrv.RegisterInto(s.mux)
+		adminSrv.RegisterInto(s.mux)
+
+		// Background goroutine: purge expired web sessions hourly.
+		go func() {
+			t := time.NewTicker(time.Hour)
+			defer t.Stop()
+			// Derive a context tied to the server's lifecycle via a background ctx.
+			// We use context.Background() here because NewServer has no ctx parameter;
+			// the purge loop is best-effort and exits when the ticker fires after
+			// process shutdown (acceptable for cleanup routines).
+			ctx := context.Background()
+			for {
+				select {
+				case <-t.C:
+					if n, err := cfg.Store.PurgeExpiredWebSessions(ctx); err != nil {
+						log.Printf("relay: PurgeExpiredWebSessions: %v", err)
+					} else if n > 0 {
+						log.Printf("relay: purged %d expired web sessions", n)
+					}
+				}
+			}
+		}()
+	}
+
 	return s
 }
 

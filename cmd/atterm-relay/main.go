@@ -114,6 +114,7 @@ func main() {
 		AdminToken:           cleanAdminToken,
 		AdminConfigStore:     adminStore,
 		Resolver:             resolver,
+		Store:                store,
 	}
 
 	wpSvc, wpErr := webpush.Open(persistDir, *vapidSubject)

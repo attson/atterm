@@ -85,6 +85,17 @@ func verifyPassword(pw, encoded string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
+// HashPasswordForBootstrap is a public wrapper around the internal hashPassword
+// helper. It exists for callers in internal/relay that need to generate
+// argon2id hashes at process startup (e.g. the dummy hash for timing-safe
+// missing-email login). Application code should use CreateUser instead.
+func HashPasswordForBootstrap(pw string) (string, error) { return hashPassword(pw) }
+
+// VerifyPasswordForBootstrap is a public wrapper around verifyPassword.
+// Same caveat as HashPasswordForBootstrap: prefer VerifyPassword for the
+// application path. This is for low-level pool/argon2 plumbing only.
+func VerifyPasswordForBootstrap(pw, encoded string) bool { return verifyPassword(pw, encoded) }
+
 // CreateUser inserts a new user with the given email and password.
 // Email is lowercased for storage; uniqueness is case-insensitive via
 // COLLATE NOCASE on the column.

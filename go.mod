@@ -8,7 +8,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/wailsapp/wails/v2 v2.12.0
+	golang.org/x/crypto v0.33.0
 	golang.org/x/mod v0.24.0
+	golang.org/x/sync v0.14.0
 	golang.org/x/term v0.29.0
 	modernc.org/sqlite v1.37.1
 	nhooyr.io/websocket v1.8.17
@@ -42,7 +44,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect

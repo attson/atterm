@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { usePluginConfigStore } from "../configStore";
 import FileTree from "./FileTree.vue";
 import FileTabs from "./FileTabs.vue";
+import FileEditor from "./FileEditor.vue";
 import { openPath, closeTab, type TabsState } from "./tabsModel";
 import type { PluginContext } from "../types";
 
@@ -63,8 +64,8 @@ const showHidden = computed(() => store.cfg?.fileExplorer.showHidden ?? false);
       <div class="editor-pane">
         <FileTabs :tabs="tabsState.tabs" :active-idx="tabsState.activeIdx" @select="selectTab" @close="closeTabAt" />
         <div class="editor-area">
-          <div v-if="!activePath" class="placeholder">Select a file.</div>
-          <div v-else class="placeholder">Preview placeholder: {{ activePath }}</div>
+          <FileEditor v-if="activePath" :path="activePath" />
+          <div v-else class="placeholder">Select a file.</div>
         </div>
       </div>
     </div>

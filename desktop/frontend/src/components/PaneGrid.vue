@@ -152,14 +152,14 @@ function formatWho(info: SessionInfo | null): string {
   inset: 0;
 }
 .cell.has-bottom-toolbar .term-host {
-  bottom: 32px;
+  bottom: 24px;
 }
 .cell-bottom-slot {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 32px;
+  height: 24px;
   background: var(--ed-tab-bg, var(--terminal-bg));
   border-top: 1px solid var(--ed-border, rgba(255, 255, 255, 0.08));
   z-index: 2;

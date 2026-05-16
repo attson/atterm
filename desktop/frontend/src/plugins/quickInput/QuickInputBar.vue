@@ -44,8 +44,8 @@ useQuickInputHotkeys(buttons, fire);
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 4px;
-  padding: 0 8px;
+  gap: 3px;
+  padding: 0 6px;
   overflow-x: auto;
   white-space: nowrap;
   width: 100%;
@@ -53,12 +53,13 @@ useQuickInputHotkeys(buttons, fire);
   box-sizing: border-box;
 }
 .quick-input-btn {
-  padding: 2px 10px;
-  border-radius: 4px;
+  padding: 1px 8px;
+  border-radius: 3px;
   border: 1px solid var(--ed-border, #2d333b);
   background: var(--ed-shell-bg, #21262d);
   color: var(--ed-row-fg, #c9d1d9);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 16px;
   cursor: pointer;
 }
 .quick-input-btn:hover {

@@ -30,6 +30,7 @@ const emit = defineEmits<{
 }>();
 
 const rootNodes = ref<Node[]>([]);
+const selectedPath = ref<string | null>(null);
 const watchHandles = new Map<string, number>();
 
 async function loadDir(path: string): Promise<Node[]> {
@@ -65,6 +66,7 @@ onMounted(() => {
 
 async function toggle(n: Node) {
   if (!n.isDir) return;
+  selectedPath.value = n.path;
   if (!n.expanded) {
     if (n.children === null) n.children = await loadDir(n.path);
     n.expanded = true;
@@ -117,11 +119,13 @@ onBeforeUnmount(async () => {
 
 function clickFile(n: Node) {
   if (n.isDir) return;
+  selectedPath.value = n.path;
   emit("file-clicked", n.path);
 }
 
 function dblClickFile(n: Node) {
   if (n.isDir) return;
+  selectedPath.value = n.path;
   emit("file-double-clicked", n.path);
 }
 
@@ -134,6 +138,7 @@ defineExpose({ refresh: refreshRoot });
       <NodeRow
         :node="n"
         :level="0"
+        :selected-path="selectedPath"
         @toggle="toggle"
         @click-file="clickFile"
         @dblclick-file="dblClickFile"
@@ -144,27 +149,37 @@ defineExpose({ refresh: refreshRoot });
 
 <script lang="ts">
 import { defineComponent, h, PropType } from "vue";
+
+const INDENT_PX = 16;
+const ROW_HEIGHT = 22;
+
 export const NodeRow = defineComponent({
   name: "NodeRow",
   props: {
     node: { type: Object as PropType<any>, required: true },
     level: { type: Number, required: true },
+    selectedPath: { type: String as PropType<string | null>, default: null },
   },
   emits: ["toggle", "click-file", "dblclick-file"],
   setup(props, { emit }) {
-    return () =>
-      h("div", { class: "node-wrap" }, [
+    return () => {
+      const selected = props.selectedPath === props.node.path;
+      const twistyChar = props.node.isDir ? (props.node.expanded ? "▾" : "▸") : "";
+      const iconChar = props.node.isDir ? (props.node.expanded ? "📂" : "📁") : "📄";
+      return h("div", { class: "node-wrap" }, [
         h(
           "div",
           {
-            class: "node",
+            class: ["node", { selected, "is-dir": props.node.isDir, "is-file": !props.node.isDir }],
             "data-type": props.node.isDir ? "dir" : "file",
-            style: { paddingLeft: `${props.level * 12}px` },
+            style: { paddingLeft: `${props.level * INDENT_PX}px`, height: `${ROW_HEIGHT}px`, lineHeight: `${ROW_HEIGHT}px` },
+            title: props.node.path,
             onClick: () => (props.node.isDir ? emit("toggle", props.node) : emit("click-file", props.node)),
             onDblclick: () => (!props.node.isDir ? emit("dblclick-file", props.node) : null),
           },
           [
-            h("span", { class: "twisty" }, props.node.isDir ? (props.node.expanded ? "▾" : "▸") : ""),
+            h("span", { class: "twisty" }, twistyChar),
+            h("span", { class: "icon" }, iconChar),
             h("span", { class: "node-name" }, props.node.name),
           ],
         ),
@@ -179,6 +194,7 @@ export const NodeRow = defineComponent({
                   h(NodeRow, {
                     node: c,
                     level: props.level + 1,
+                    selectedPath: props.selectedPath,
                     onToggle: (n: any) => emit("toggle", n),
                     "onClick-file": (n: any) => emit("click-file", n),
                     "onDblclick-file": (n: any) => emit("dblclick-file", n),
@@ -188,14 +204,67 @@ export const NodeRow = defineComponent({
             )
           : null,
       ]);
+    };
   },
 });
 </script>
 
 <style scoped>
-.tree-list { list-style: none; margin: 0; padding: 0; }
-.node { display: flex; align-items: center; padding: 1px 4px; cursor: default; font-size: 12px; }
-.node:hover { background: #21262d; }
-.twisty { display: inline-block; width: 14px; color: #8b949e; }
-.node-name { flex: 1; color: #c9d1d9; user-select: none; }
+.tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tree-list > li {
+  display: block;
+}
+
+.node {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+  cursor: default;
+  font-size: 12px;
+  white-space: nowrap;
+  color: #bcc0c4;
+  user-select: none;
+}
+.node:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.node.selected {
+  background: #2b4769;
+  color: #f7f9fb;
+}
+.node.selected:hover {
+  background: #2b4769;
+}
+
+.twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 100%;
+  color: #8b949e;
+  font-size: 10px;
+}
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  margin-right: 4px;
+  font-size: 11px;
+  filter: grayscale(0.4);
+}
+.node-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>

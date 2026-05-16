@@ -8,6 +8,24 @@ import { languageForPath } from "./languageMap";
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
+// Wails serializes Go []byte as a base64 string over JSON. Older runtimes
+// may also pass through a Uint8Array or number[]. Decode all three to text.
+function decodeFileBytes(data: unknown): string {
+  let bytes: Uint8Array;
+  if (typeof data === "string") {
+    const bin = atob(data);
+    bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  } else if (data instanceof Uint8Array) {
+    bytes = data;
+  } else if (Array.isArray(data)) {
+    bytes = new Uint8Array(data as number[]);
+  } else {
+    throw new Error("Unexpected file content type");
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 const props = defineProps<{
   path: string;
 }>();
@@ -38,7 +56,7 @@ async function load() {
       return;
     }
     const result = (await ReadFile(props.path, MAX_BYTES_FRONTEND)) as any;
-    const text = new TextDecoder().decode(result.data);
+    const text = decodeFileBytes(result.data);
     state.value = "ok";
 
     const exts: Extension[] = [

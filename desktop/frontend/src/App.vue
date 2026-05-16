@@ -216,6 +216,10 @@ const panelCollapsed = computed({
 
 function togglePanel() { panelCollapsed.value = !panelCollapsed.value; }
 
+// True when at least one right-panel plugin is enabled. Suppresses the
+// collapse handle entirely when the slot has nothing to host.
+const rightPanelHasPlugin = computed(() => pluginStore.isPluginEnabled("file-explorer"));
+
 const { onMouseDown: onPanelResizeDown } = useResizer({
   onDrag: (deltaX) => {
     const current = dragPanelWidth.value ?? persistedPanelWidth.value;
@@ -749,13 +753,15 @@ onUnmounted(() => {
         </template>
         <div v-if="toast" class="toast">{{ toast }}</div>
       </main>
-      <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? 'Show panel' : 'Hide panel'">
-        {{ panelCollapsed ? '‹' : '›' }}
-      </button>
-      <template v-if="!panelCollapsed">
-        <div class="right-resizer" @mousedown="onPanelResizeDown" />
-        <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel"
-                    :style="{ flex: '0 0 ' + panelWidth + 'px' }" />
+      <template v-if="rightPanelHasPlugin">
+        <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? 'Show panel' : 'Hide panel'">
+          {{ panelCollapsed ? '‹' : '›' }}
+        </button>
+        <template v-if="!panelCollapsed">
+          <div class="right-resizer" @mousedown="onPanelResizeDown" />
+          <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel"
+                      :style="{ flex: '0 0 ' + panelWidth + 'px' }" />
+        </template>
       </template>
     </div>
     <PluginHost slot-id="bottom-toolbar" :context="pluginContext" class="bottom-toolbar" />

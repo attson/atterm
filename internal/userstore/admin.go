@@ -45,8 +45,16 @@ func (s *SQLiteStore) EnsureAdminUser(ctx context.Context, email, plaintext stri
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("lookup admin email: %w", err)
 	}
-	// Create branch — completed in Task 6. For now we return an error so
-	// the existing-user test passes and the missing-user path is wired
-	// for the next task.
-	return false, ErrEmptyBootstrapPassword
+	// User does not exist. Need a plaintext password to create.
+	if plaintext == "" {
+		return false, ErrEmptyBootstrapPassword
+	}
+	u, err := s.CreateUser(ctx, email, plaintext)
+	if err != nil {
+		return false, fmt.Errorf("create admin user: %w", err)
+	}
+	if err := s.SetUserAdmin(ctx, u.ID, true); err != nil {
+		return false, err
+	}
+	return true, nil
 }

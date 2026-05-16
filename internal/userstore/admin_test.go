@@ -2,6 +2,7 @@ package userstore
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -84,5 +85,45 @@ func TestEnsureAdminUser_ExistingUser_PromotesAndIgnoresPassword(t *testing.T) {
 	}
 	if v2, _ := s.VerifyPassword(ctx, "a@example.com", "this-should-be-ignored"); v2 != nil {
 		t.Error("EnsureAdminUser silently changed the password")
+	}
+}
+
+func TestEnsureAdminUser_NewUser_CreatedAndAdmin(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	created, err := s.EnsureAdminUser(ctx, "fresh@example.com", "bootstrap-passphrase-2026")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created=false for brand-new admin; want true")
+	}
+
+	v, _ := s.VerifyPassword(ctx, "fresh@example.com", "bootstrap-passphrase-2026")
+	if v == nil {
+		t.Fatal("new admin password does not verify")
+	}
+	if !v.IsAdmin {
+		t.Error("new admin user is_admin = false")
+	}
+}
+
+func TestEnsureAdminUser_NewUser_EmptyPassword_Errors(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if _, err := s.EnsureAdminUser(ctx, "x@example.com", ""); err == nil {
+		t.Error("EnsureAdminUser with empty password returned nil error")
+	} else if !errors.Is(err, ErrEmptyBootstrapPassword) {
+		t.Errorf("err = %v; want ErrEmptyBootstrapPassword", err)
 	}
 }

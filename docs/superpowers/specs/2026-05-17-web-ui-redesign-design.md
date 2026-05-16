@@ -140,12 +140,13 @@ SQLite has no BOOLEAN; INTEGER 0/1 is the convention. `DEFAULT 0` ensures existi
 
 ```go
 // EnsureAdminUser is idempotent: if a user with this email exists,
-// set is_admin=1 and return (password is ignored). Otherwise create
-// a new user with the given password and is_admin=1. The plaintext
-// password must satisfy the existing strength rule (≥12 chars); a
-// caller-supplied empty/weak password for the create path returns
-// ErrPasswordTooWeak.
-EnsureAdminUser(ctx, email, plaintext string) error
+// set is_admin=1 and return (created=false, nil) — password is ignored.
+// Otherwise create a new user with the given password and is_admin=1
+// (created=true). The create path requires the bootstrap password
+// strength rule (see "Bootstrap password strength rule"); empty / weak /
+// blacklisted plaintext returns ErrPasswordTooWeak. The created flag
+// lets the caller emit the right "you can unset the env now" warning.
+EnsureAdminUser(ctx, email, plaintext string) (created bool, err error)
 
 // SetUserAdmin flips the is_admin flag for promote/demote APIs.
 SetUserAdmin(ctx, userID string, admin bool) error
@@ -170,16 +171,38 @@ In `cmd/atterm-relay/main.go`, after `store.migrate` succeeds:
 email := strings.TrimSpace(os.Getenv("ATTERM_BOOTSTRAP_ADMIN_EMAIL"))
 pwd   := os.Getenv("ATTERM_BOOTSTRAP_ADMIN_PASSWORD")
 if email != "" {
-    if err := store.EnsureAdminUser(ctx, email, pwd); err != nil {
+    if _, err := mail.ParseAddress(email); err != nil {
+        log.Fatalf("ATTERM_BOOTSTRAP_ADMIN_EMAIL: %v", err)
+    }
+    created, err := store.EnsureAdminUser(ctx, email, pwd)
+    if err != nil {
         log.Fatalf("bootstrap admin user: %v", err)
+    }
+    if !created && pwd != "" {
+        log.Printf("WARN: ATTERM_BOOTSTRAP_ADMIN_PASSWORD set but %s already exists — password ignored. Unset the env to remove it from process state.", email)
+    }
+    if created {
+        log.Printf("WARN: bootstrap created admin user %s — unset ATTERM_BOOTSTRAP_ADMIN_PASSWORD and restart to remove the credential from process state.", email)
     }
 }
 ```
 
+- **Email format validated** via `net/mail.ParseAddress` before any DB work; a bad value fail-fasts at startup.
 - Unset email → no-op (relay still serves, but no admin role is provisioned).
-- Email set + user exists → mark admin, ignore password, log `"promoted existing user to admin: email=…"`.
-- Email set + user missing + password ≥12 chars → create user, mark admin, log `"created bootstrap admin user: email=…"`.
-- Email set + user missing + weak/empty password → `log.Fatalf` so the operator notices the misconfig at startup.
+- Email set + user exists → mark admin, ignore password, log "promoted existing user to admin"; if password was also set, emit a `WARN` line telling the operator to unset it (the env is now a long-lived residual secret).
+- Email set + user missing + password meets strength rule → create user, mark admin, emit a `WARN` line telling the operator to unset the password env now that the account exists.
+- Email set + user missing + weak / empty / blacklisted password → `log.Fatalf` so the operator notices the misconfig at startup.
+- `EnsureAdminUser` returns `(created bool, err error)` so the calling code can distinguish "promoted" from "created" without re-querying.
+
+### Bootstrap password strength rule
+
+`ATTERM_BOOTSTRAP_ADMIN_PASSWORD` (when used to create a new user) must satisfy a **stricter rule than the everyday `ChangePassword` ≥12-char minimum**, because it lives in an env file / systemd unit and is therefore long-lived plaintext on disk:
+
+- ≥16 characters
+- ≥3 distinct character classes (lower / upper / digit / symbol)
+- Not in `weakBootstrapPasswordBlacklist` — reuse the existing `weakAdminTokenBlacklist` content from `cmd/atterm-relay/token_strength.go`, renamed/moved; the rule file is salvaged from the otherwise-deleted token_strength.go rather than thrown away.
+
+If the env password fails any rule, `EnsureAdminUser` returns `ErrPasswordTooWeak`, which the bootstrap call upgrades to `log.Fatalf`. (When `EnsureAdminUser` is called for an existing user, the password is ignored entirely so the rule does not apply.)
 
 ### Public-listen safety requirement
 
@@ -194,7 +217,7 @@ Today the relay rejects public bind without a strong `ATTERM_ADMIN_TOKEN`. Repla
 - `GET    /api/me/sessions` → list current user's `web_sessions` rows. Response fields: `id_hash` (opaque identifier for revoke calls), `user_agent`, `ip_prefix`, `created_at`, `expires_at`, `is_current` (true for the row whose id_hash matches the request's cookie).
 - `DELETE /api/me/sessions/{id_hash}` → revoke a specific session. CSRF-gated. Refusing to revoke the current cookie's own session is fine; the UI just doesn't offer a Revoke button on that row.
 - `POST   /api/me/sessions/sign-out-others` → delete every `web_sessions` row for this user except the one whose id_hash matches the request's cookie. CSRF-gated.
-- `DELETE /api/me` → hard-delete the current user. Body: `{"email": "..."}` must match the user's email (typo-protection). CSRF-gated. `api_tokens` and `web_sessions` cascade via the existing FK. `invitations.consumed_by` is `REFERENCES users(id)` without cascade (history field), so the handler does `UPDATE invitations SET consumed_by = NULL WHERE consumed_by = ?` then `DELETE FROM users WHERE id = ?` inside one transaction. Session cookie cleared before responding 204.
+- `DELETE /api/me` → hard-delete the current user. Body: `{"email": "...", "password": "..."}`. CSRF-gated. **Both checks required:** `email` must equal the user's email (typo-protection); `password` is re-verified via the same `VerifyPassword` path used by `ChangePassword` (so a stolen cookie + CSRF token alone cannot wipe an account — attacker also needs the plaintext password). **Last-admin protection:** if `user.is_admin == true` and `SELECT count(*) FROM users WHERE is_admin=1` returns 1, refuse with 409 `last_admin`. `api_tokens` and `web_sessions` cascade via the existing FK. `invitations.consumed_by` is `REFERENCES users(id)` without cascade (history field), so the handler does `UPDATE invitations SET consumed_by = NULL WHERE consumed_by = ?` then `DELETE FROM users WHERE id = ?` inside one transaction. Server-side `web_sessions` rows for this user are deleted by the cascade; the session cookie is cleared before responding 204.
 
 ### Admin API additions
 
@@ -202,12 +225,14 @@ In `internal/relay/admin_http.go`:
 
 - `POST /admin/api/users/{id}/admin` → `SetUserAdmin(id, true)`
 - `DELETE /admin/api/users/{id}/admin` → `SetUserAdmin(id, false)`
-- Self-demote: if `id == principal.UserID` → 400 `cannot_demote_self`.
+- **Self-demote** rejected: if `id == principal.UserID` → 400 `cannot_demote_self`.
+- **Last-admin protection on demote**: before flipping `is_admin=0`, run `SELECT count(*) FROM users WHERE is_admin=1`; if the result is 1 and the target is that row → 409 `last_admin`. (Self-demote rule already covers the common case; this catches the case where another admin demotes the would-be-last admin who isn't themselves.)
+- **Audit log line** for every promote / demote: `log.Printf("admin role change: actor=%s target=%s op=%s", principal.UserID, id, op)`. No new schema; goes to the relay's normal stderr log so an operator grepping logs sees the trail.
 - `GET /admin/api/users` response gains `is_admin` field.
 
 ### Deletions
 
-- `cmd/atterm-relay/token_strength.go` (full file) and its 4 tests.
+- `cmd/atterm-relay/token_strength.go` is renamed to `bootstrap_password_strength.go` and downsized: keep the blacklist + character-class + run-limit helpers (now reused by the bootstrap password rule) and rename the entry point from `validateAdminToken` to `validateBootstrapPassword` with the new ≥16 minimum. The original 4 tests are rewritten against the new entry point and rule; coverage of the blacklist / class / run-limit branches stays intact.
 - `ATTERM_ADMIN_TOKEN` env / `--admin-token` CLI flag / `Config.AdminToken`.
 - `IdentityResolver.adminToken` field and the Bearer-admin branch in `Resolve`.
 - `Server.authorizeAdmin` legacy helper (already only referenced from the about-to-go-away admin page handler).
@@ -303,10 +328,12 @@ fs.ServeHTTP(w, r)
 
 ### Backend (Go)
 
-- `userstore/admin_test.go` (new) — `EnsureAdminUser` for: new user with strong password, existing user (password ignored), missing user with weak password (returns error), missing user with empty password (returns error).
-- `bootstrap_test.go` (new, in `cmd/atterm-relay/`) — env parsing dispatch: unset email → no call; email + missing user + ok password → EnsureAdminUser called; weak password fatals.
+- `userstore/admin_test.go` (new) — `EnsureAdminUser` for: new user with strong password (`created=true`), existing user (password ignored, `created=false`), missing user with weak / empty / blacklisted password (returns `ErrPasswordTooWeak`).
+- `bootstrap_test.go` (new, in `cmd/atterm-relay/`) — env parsing dispatch: unset email → no call; malformed email (no `@`) fatals; email + missing user + ok password → `EnsureAdminUser` called and `created=true` warn line emitted; email + existing user + password env still set → `created=false` warn line emitted; weak password fatals.
+- `bootstrap_password_strength_test.go` (renamed) — the 4 token_strength tests retargeted at `validateBootstrapPassword` with the ≥16 minimum.
 - `admin_http_test.go` rewrite — replace `testAdminToken` Bearer header with a `bootstrapAdminUser(t, store)` fixture that creates an admin user, a session cookie, and a CSRF token. All current admin tests retarget to cookie auth.
-- New tests for `POST /admin/api/users/{id}/admin`, `DELETE …`, including self-demote 400.
+- New tests for `POST /admin/api/users/{id}/admin`, `DELETE …`: success, self-demote 400, last-admin demote 409, audit log line emitted (capture via `log.SetOutput`).
+- New tests for `DELETE /api/me`: success path requires correct password and email; wrong password 401; wrong email 400; last-admin self-delete 409; cascade verified (api_tokens + web_sessions gone, invitations.consumed_by NULL).
 - `version_test.go::TestRateLimitBadTokensShareIPBucket` — already migrated to `/api/sessions` in PR #35; no change.
 
 ### Frontend (Node)
@@ -327,16 +354,17 @@ Operator-visible steps when upgrading the production relay:
    - Add `ATTERM_BOOTSTRAP_ADMIN_EMAIL=you@example.com`
    - If your email already has an account, you do NOT need to set `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`.
    - If creating a fresh admin account, also add `ATTERM_BOOTSTRAP_ADMIN_PASSWORD=<≥12-char password>`.
-3. Restart relay. `0002_admin_role.sql` auto-applies; bootstrap promotes / creates as appropriate.
+3. Restart relay. `0002_admin_role.sql` auto-applies; bootstrap promotes / creates as appropriate; a `WARN` line in the relay log tells you whether the password env can now be unset.
 4. Log in at `/login.html` with your user account. The topnav now shows "Admin". Open `/admin/` to confirm.
+5. **If you set `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`**: now unset it from your env file / systemd unit and restart the relay. The relay will continue to operate (the user already exists and stays an admin). Leaving the password in process state is the single largest residual risk introduced by this redesign.
 
 No grace period for the old `ATTERM_ADMIN_TOKEN` — relay code no longer reads it. Documented prominently in release notes.
 
 ## Docs
 
-- `README.md` — deploy section: replace every `ATTERM_ADMIN_TOKEN` example / env-table row with the bootstrap pair; add a "Bootstrap admin" subsection explaining the three cases (no env / existing user / new user).
-- `AGENTS.md` — security + deploy sections: same swap; remove the strength-check paragraph for admin token.
-- Remove inline references to `cmd/atterm-relay/token_strength.go`.
+- `README.md` — deploy section: replace every `ATTERM_ADMIN_TOKEN` example / env-table row with the bootstrap pair; add a "Bootstrap admin" subsection explaining the three cases (no env / existing user / new user). Add a **security note**: "After the bootstrap user is created, unset `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` from your env file / systemd unit and restart. Leaving the password in process state means anyone with read access to the env (other services on the host, backups, `/proc/self/environ`) can recover the initial admin credential."
+- `AGENTS.md` — security + deploy sections: same swap; replace the admin-token strength paragraph with the bootstrap-password strength rule (≥16 + ≥3 classes + blacklist) and the same "unset after first start" guidance.
+- Update inline references: `cmd/atterm-relay/token_strength.go` → `bootstrap_password_strength.go`.
 
 ## Roll-out Plan
 

@@ -103,27 +103,29 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 
 <template>
   <div class="file-explorer">
-    <header class="fe-header">
-      <span class="root-path" :title="root ?? ''">{{ root ?? "(no active pane)" }}</span>
-      <button
-        class="pin"
-        :class="{ pinned: pinned !== null }"
-        :title="pinned !== null ? 'Unpin (follow active pane)' : 'Pin current cwd'"
-        @click="togglePin"
-      >
-        <component :is="pinned !== null ? Pin : PinOff" :size="14" :stroke-width="1.5" />
-      </button>
-    </header>
     <div class="fe-body" ref="bodyRef">
       <div class="tree-pane" :style="{ width: (innerRatio * 100) + '%' }">
-        <FileTree
-          v-if="root"
-          :root="root"
-          :show-hidden="showHidden"
-          @file-clicked="onFileClick"
-          @file-double-clicked="onFileDoubleClick"
-        />
-        <div v-else class="placeholder">No active pane.</div>
+        <header class="fe-header">
+          <span class="root-path" :title="root ?? ''">{{ root ?? "(no active pane)" }}</span>
+          <button
+            class="pin"
+            :class="{ pinned: pinned !== null }"
+            :title="pinned !== null ? 'Unpin (follow active pane)' : 'Pin current cwd'"
+            @click="togglePin"
+          >
+            <component :is="pinned !== null ? Pin : PinOff" :size="14" :stroke-width="1.5" />
+          </button>
+        </header>
+        <div class="tree-scroll">
+          <FileTree
+            v-if="root"
+            :root="root"
+            :show-hidden="showHidden"
+            @file-clicked="onFileClick"
+            @file-double-clicked="onFileDoubleClick"
+          />
+          <div v-else class="placeholder">No active pane.</div>
+        </div>
       </div>
       <div class="divider" @mousedown="onDividerDown" />
       <div class="editor-pane">
@@ -184,19 +186,26 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 .fe-body { flex: 1 1 auto; display: flex; min-height: 0; }
 .tree-pane {
   min-width: 60px;
-  overflow: auto;
   background: var(--ed-tree-bg, #2d333b);
   border-right: 1px solid var(--ed-border, #444c56);
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.tree-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
   padding: 4px 0;
 }
-.tree-pane::-webkit-scrollbar { width: 10px; height: 10px; }
-.tree-pane::-webkit-scrollbar-track { background: transparent; }
-.tree-pane::-webkit-scrollbar-thumb {
+.tree-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.tree-scroll::-webkit-scrollbar-track { background: transparent; }
+.tree-scroll::-webkit-scrollbar-thumb {
   background: var(--ed-indent-guide, rgba(173, 186, 199, 0.18));
   border-radius: 5px;
+  border: 2px solid var(--ed-tree-bg, #2d333b);
 }
-.tree-pane::-webkit-scrollbar-thumb:hover { background: var(--ed-chevron, rgba(173, 186, 199, 0.3)); }
+.tree-scroll::-webkit-scrollbar-thumb:hover { background: var(--ed-chevron, rgba(173, 186, 199, 0.3)); }
 
 .divider {
   width: 4px;

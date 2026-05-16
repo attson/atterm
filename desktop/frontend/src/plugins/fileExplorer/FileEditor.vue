@@ -155,6 +155,32 @@ onBeforeUnmount(() => {
   background: var(--ed-editor-bg, #22272e);
 }
 .cm-host { flex: 1 1 auto; overflow: auto; }
+/* CodeMirror's internal scrollable element (.cm-scroller) and the host's own
+   scrollbar both need to track the theme — otherwise macOS paints a default
+   light bar on the dark editor (and vice versa). */
+.cm-host::-webkit-scrollbar,
+.cm-host :deep(.cm-scroller)::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.cm-host::-webkit-scrollbar-track,
+.cm-host :deep(.cm-scroller)::-webkit-scrollbar-track {
+  background: var(--ed-editor-bg, #22272e);
+}
+.cm-host::-webkit-scrollbar-thumb,
+.cm-host :deep(.cm-scroller)::-webkit-scrollbar-thumb {
+  background: var(--ed-row-hover, rgba(173, 186, 199, 0.2));
+  border-radius: 6px;
+  border: 3px solid var(--ed-editor-bg, #22272e);
+}
+.cm-host::-webkit-scrollbar-thumb:hover,
+.cm-host :deep(.cm-scroller)::-webkit-scrollbar-thumb:hover {
+  background: var(--ed-chevron, rgba(173, 186, 199, 0.4));
+}
+.cm-host::-webkit-scrollbar-corner,
+.cm-host :deep(.cm-scroller)::-webkit-scrollbar-corner {
+  background: var(--ed-editor-bg, #22272e);
+}
 .banner { padding: 18px 20px; font-size: 13px; }
 .muted { color: var(--ed-muted, rgba(173, 186, 199, 0.5)); }
 .err { color: var(--ed-error, #f47067); }

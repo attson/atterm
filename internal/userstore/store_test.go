@@ -30,15 +30,20 @@ func TestOpenInMemory_MigrationIdempotent(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer s.Close()
+	var nBefore int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM schema_migrations`).Scan(&nBefore); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.migrate(ctx); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
-	var n int
+	var nAfter int
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
+		`SELECT count(*) FROM schema_migrations`).Scan(&nAfter); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("expected 1 migration row after re-run, got %d", n)
+	if nBefore != nAfter {
+		t.Fatalf("expected same migration row count after re-run: before=%d, after=%d", nBefore, nAfter)
 	}
 }

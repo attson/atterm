@@ -142,11 +142,12 @@ func (s *SQLiteStore) VerifyPassword(ctx context.Context, email, password string
 		csrfSecret []byte
 		createdAt  int64
 		disabledAt sql.NullInt64
+		isAdmin    int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, password_hash, csrf_secret, created_at, disabled_at
+		`SELECT id, password_hash, csrf_secret, created_at, disabled_at, is_admin
 		 FROM users WHERE email = ?`, email,
-	).Scan(&id, &hash, &csrfSecret, &createdAt, &disabledAt)
+	).Scan(&id, &hash, &csrfSecret, &createdAt, &disabledAt, &isAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Constant-time dummy verify, ignore result.
 		_ = verifyPassword(password, dummyHash)
@@ -164,6 +165,7 @@ func (s *SQLiteStore) VerifyPassword(ctx context.Context, email, password string
 	}
 	u := &User{
 		ID: id, Email: email,
+		IsAdmin:    isAdmin != 0,
 		CreatedAt:  time.Unix(createdAt, 0),
 		csrfSecret: csrfSecret,
 	}
@@ -177,11 +179,12 @@ func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 		createdAt  int64
 		disabledAt sql.NullInt64
 		secret     []byte
+		isAdmin    int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT email, csrf_secret, created_at, disabled_at
+		`SELECT email, csrf_secret, created_at, disabled_at, is_admin
 		 FROM users WHERE id = ?`, id,
-	).Scan(&email, &secret, &createdAt, &disabledAt)
+	).Scan(&email, &secret, &createdAt, &disabledAt, &isAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
 	} else if err != nil {
@@ -189,6 +192,7 @@ func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 	}
 	u := &User{
 		ID: id, Email: email,
+		IsAdmin:    isAdmin != 0,
 		CreatedAt:  time.Unix(createdAt, 0),
 		csrfSecret: secret,
 	}
@@ -210,7 +214,7 @@ func (s *SQLiteStore) DisableUser(ctx context.Context, id string) error {
 // ListUsers returns all users ordered by created_at descending (newest first).
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, email, created_at, disabled_at FROM users ORDER BY created_at DESC`)
+		`SELECT id, email, created_at, disabled_at, is_admin FROM users ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -221,11 +225,12 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
 			id, email  string
 			createdAt  int64
 			disabledAt sql.NullInt64
+			isAdmin    int
 		)
-		if err := rows.Scan(&id, &email, &createdAt, &disabledAt); err != nil {
+		if err := rows.Scan(&id, &email, &createdAt, &disabledAt, &isAdmin); err != nil {
 			return nil, err
 		}
-		u := User{ID: id, Email: email, CreatedAt: time.Unix(createdAt, 0)}
+		u := User{ID: id, Email: email, IsAdmin: isAdmin != 0, CreatedAt: time.Unix(createdAt, 0)}
 		if disabledAt.Valid {
 			t := time.Unix(disabledAt.Int64, 0)
 			u.DisabledAt = &t

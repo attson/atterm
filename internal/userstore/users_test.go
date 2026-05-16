@@ -230,3 +230,55 @@ func TestResetUserPassword(t *testing.T) {
 		t.Fatalf("expected 0 sessions after reset, got %d", sessionsAfter)
 	}
 }
+
+func TestGetUser_DefaultsToNonAdmin(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	u, err := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetUser(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IsAdmin {
+		t.Errorf("freshly created user IsAdmin = true; want false (default)")
+	}
+}
+
+func TestSetIsAdminColumnRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	u, err := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Direct SQL to bypass not-yet-existing SetUserAdmin.
+	if _, err := s.DB().ExecContext(ctx,
+		`UPDATE users SET is_admin = 1 WHERE id = ?`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetUser(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IsAdmin {
+		t.Errorf("after UPDATE is_admin=1, GetUser returned IsAdmin=false")
+	}
+	v, err := s.VerifyPassword(ctx, "a@example.com", "passphrase-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v == nil || !v.IsAdmin {
+		t.Errorf("VerifyPassword returned IsAdmin=false after promotion")
+	}
+}

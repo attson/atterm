@@ -67,6 +67,13 @@ type Store interface {
 	ResetUserPassword(ctx context.Context, userID string) (Secret, error)
 	// SetUserAdmin sets the is_admin flag for userID. Idempotent.
 	SetUserAdmin(ctx context.Context, userID string, admin bool) error
+	// EnsureAdminUser is idempotent. If a user with this email exists, it
+	// is marked is_admin=1 and returns (created=false, nil); password is
+	// ignored. Otherwise a new user is created with the given plaintext
+	// password and is_admin=1, returning (created=true, nil). Empty
+	// plaintext for the create path returns ErrEmptyBootstrapPassword;
+	// strength enforcement is the caller's job.
+	EnsureAdminUser(ctx context.Context, email, plaintext string) (created bool, err error)
 
 	// Invitations
 	CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error)

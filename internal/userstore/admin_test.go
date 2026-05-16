@@ -47,3 +47,42 @@ func TestSetUserAdmin_UnknownUserIsNoop(t *testing.T) {
 		t.Fatalf("SetUserAdmin on missing id: %v", err)
 	}
 }
+
+func TestEnsureAdminUser_ExistingUser_PromotesAndIgnoresPassword(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	u, err := s.CreateUser(ctx, "a@example.com", "original-passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.IsAdmin {
+		t.Fatal("freshly created user already admin")
+	}
+
+	created, err := s.EnsureAdminUser(ctx, "a@example.com", "this-should-be-ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Error("created=true for existing user; want false")
+	}
+
+	got, _ := s.GetUser(ctx, u.ID)
+	if !got.IsAdmin {
+		t.Error("existing user not promoted after EnsureAdminUser")
+	}
+
+	// Original password still works (password arg was ignored).
+	v, _ := s.VerifyPassword(ctx, "a@example.com", "original-passphrase")
+	if v == nil {
+		t.Error("original password no longer verifies (EnsureAdminUser must not touch it)")
+	}
+	if v2, _ := s.VerifyPassword(ctx, "a@example.com", "this-should-be-ignored"); v2 != nil {
+		t.Error("EnsureAdminUser silently changed the password")
+	}
+}

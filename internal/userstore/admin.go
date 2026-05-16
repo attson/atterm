@@ -2,7 +2,10 @@ package userstore
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 // SetUserAdmin flips users.is_admin for the given userID. Idempotent;
@@ -18,4 +21,32 @@ func (s *SQLiteStore) SetUserAdmin(ctx context.Context, userID string, admin boo
 		return fmt.Errorf("set is_admin: %w", err)
 	}
 	return nil
+}
+
+// ErrEmptyBootstrapPassword is returned by EnsureAdminUser when creating
+// a brand-new user without a plaintext password to hash.
+var ErrEmptyBootstrapPassword = errors.New("userstore: empty plaintext for new admin user")
+
+// EnsureAdminUser is the bootstrap entry point — see the Store interface
+// docstring for semantics.
+func (s *SQLiteStore) EnsureAdminUser(ctx context.Context, email, plaintext string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	var existingID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE email = ?`, email,
+	).Scan(&existingID)
+	if err == nil {
+		// User exists: promote, ignore password.
+		if err := s.SetUserAdmin(ctx, existingID, true); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("lookup admin email: %w", err)
+	}
+	// Create branch — completed in Task 6. For now we return an error so
+	// the existing-user test passes and the missing-user path is wired
+	// for the next task.
+	return false, ErrEmptyBootstrapPassword
 }

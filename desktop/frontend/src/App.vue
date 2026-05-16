@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
@@ -190,11 +190,28 @@ watch(
   { immediate: true, deep: false },
 );
 
+// Each TerminalView registers a driver-side input sender keyed by sessionId.
+// Plugins (Quick Input) route their send() through this map so input rides
+// the existing driver SessionConnection — a freshly attached connection
+// would be a viewer and the relay would drop its IN frames.
+const pluginInputSenders = new Map<string, (text: string) => void>();
+provide("atterm:pluginInputSenders", pluginInputSenders);
+
 const pluginContext = createPluginContext({
   activePane: activePaneRef,
   endpointForPane: endpointFor,
   sessionInfoForPane: paneSessionInfo,
-  sendToSession: (sessionId, endpoint, text) => sendInputToSession(endpoint, sessionId, text),
+  sendToSession: (sessionId, endpoint, text) => {
+    const sender = pluginInputSenders.get(sessionId);
+    if (sender) {
+      sender(text);
+      return;
+    }
+    // Fallback for sessions without a mounted TerminalView. Will likely be
+    // a viewer-only connection; relay may drop the IN, but it's better than
+    // no attempt.
+    sendInputToSession(endpoint, sessionId, text);
+  },
   showToast,
 });
 

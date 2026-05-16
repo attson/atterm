@@ -38,9 +38,10 @@ test("web terminal uses a route class for full-height layout", () => {
   assert.match(styleBlockFor("body.terminal-active #term-view"), /flex\s*:\s*1 1 auto/);
 });
 
-test("service worker cache is bumped for web shell asset changes", () => {
-  assert.match(sw, /at-term-web-v7/);
-});
+// CACHE-name freshness is now enforced by sw-cache-bump.test.mjs: it
+// hashes ASSETS contents and asserts CACHE encodes the hash, so the old
+// "is the literal version string still vN" check would be redundant and
+// fight that test on every legitimate asset change.
 
 test("service worker precaches login/signup/settings js so split-out auth-page modules stay consistent", () => {
   // login.js / signup.js / settings.js are now the bootstraps for the

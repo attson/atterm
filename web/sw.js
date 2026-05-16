@@ -1,7 +1,9 @@
-// Bump CACHE whenever any cached asset changes shape. Without a bump the
-// install-event re-fetches the same names but cache-first wins, so clients
-// keep serving the old file. The activate handler below evicts older caches.
-const CACHE = "at-term-web-v7";
+// CACHE must contain the 8-hex prefix of sha256 over (path + content) for
+// every entry in ASSETS, in order. web/sw-cache-bump.test.mjs enforces this
+// and prints the expected hash on mismatch — paste it in. Without the bump
+// the install-event re-fetches the same names but cache-first wins, so
+// clients keep serving the old file (see PR #34 incident).
+const CACHE = "at-term-web-11f76f2f";
 const ASSETS = [
   "./",
   "./app-core.js",

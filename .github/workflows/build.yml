@@ -24,6 +24,20 @@ env:
   APP_ARTIFACT_NAME: 'AT-Term'
 
 jobs:
+  web-tests:
+    # Pure-Node test suite for web/* — invariants like sw cache name
+    # encoding ASSETS hash (see PR #34 outage) only catch regressions
+    # if CI actually runs them. No Go / Wails toolchain needed.
+    name: web tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: run web tests
+        run: node --test web/*.test.mjs
+
   build-linux:
     name: linux/${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -318,7 +332,7 @@ jobs:
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-darwin, build-windows]
+    needs: [web-tests, build-linux, build-darwin, build-windows]
     runs-on: ubuntu-latest
     environment: prod
     steps:

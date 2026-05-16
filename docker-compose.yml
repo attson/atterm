@@ -4,17 +4,22 @@ services:
     container_name: atterm-relay
     restart: unless-stopped
     environment:
-      # Optional: set in your shell or .env. If empty, relay generates a token
-      # at startup and prints it in `docker compose logs atterm-relay`.
-      ATTERM_TOKEN: ${ATTERM_TOKEN:-}
-      ATTERM_READ_ONLY_TOKENS: ${ATTERM_READ_ONLY_TOKENS:-}
+      # Required: strong admin token used to log into /admin/ and create
+      # invitations. On public listen the relay refuses to start unless
+      # this is ≥32 chars, contains ≥3 character classes, and is not in
+      # the dev blacklist (dev / changeme / 12345 / ...).
+      ATTERM_ADMIN_TOKEN: ${ATTERM_ADMIN_TOKEN:-}
       # Required for non-insecure public relay startup. Set this to the exact
       # browser origin, e.g. https://relay.example.com.
       ATTERM_ORIGINS: ${ATTERM_ORIGINS:-http://localhost:8080}
+      # Directory the relay uses for persistent state: users.db (SQLite),
+      # web-push.json, and the admin config JSON. Must match the volume
+      # bind mount below so data survives container restarts.
+      ATTERM_RELAY_CONFIG_DIR: /etc/atterm
+      ATTERM_RELAY_CONFIG: ${ATTERM_RELAY_CONFIG:-/etc/atterm/relay.json}
+      ATTERM_VAPID_SUBJECT: ${ATTERM_VAPID_SUBJECT:-mailto:noreply@atterm.local}
       ATTERM_RATE_LIMIT_PER_MINUTE: ${ATTERM_RATE_LIMIT_PER_MINUTE:-0}
       ATTERM_MAX_CONNECTIONS_PER_KEY: ${ATTERM_MAX_CONNECTIONS_PER_KEY:-0}
-      ATTERM_RELAY_CONFIG: ${ATTERM_RELAY_CONFIG:-/etc/atterm/relay.json}
-      ATTERM_ADMIN_TOKEN: ${ATTERM_ADMIN_TOKEN:-}
       ATTERM_RELAY_DEBUG: ${ATTERM_RELAY_DEBUG:-0}
       ATTERM_RELAY_DEBUG_PAYLOAD: ${ATTERM_RELAY_DEBUG_PAYLOAD:-0}
     ports:

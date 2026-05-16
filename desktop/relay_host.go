@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -303,7 +304,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		rows = 24
 	}
 
-	argv := append([]string{req.Command}, req.Args...)
+	argv := append([]string{req.Command}, defaultShellArgs(req.Command, req.Args)...)
 	env := terminalEnvForXterm(os.Environ())
 
 	enabled := true
@@ -437,6 +438,26 @@ func usernameOrUid() string {
 		return u.Username
 	}
 	return fmt.Sprintf("uid%d", os.Getuid())
+}
+
+// defaultShellArgs decides whether to start the user's shell as a login
+// shell when the frontend didn't specify any args. macOS GUI processes
+// inherit a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin); only login
+// shells run /etc/zprofile, where path_helper extends PATH with
+// /etc/paths and /etc/paths.d/* (where Docker Desktop and Homebrew
+// install their binaries). Without -l, "docker", "brew", etc. are
+// command-not-found inside atterm, even though they work in Terminal.app.
+// Match Terminal.app's default and pass -l for zsh/bash/fish. If the
+// caller already provided args, respect them — they know what they want.
+func defaultShellArgs(command string, args []string) []string {
+	if len(args) > 0 {
+		return args
+	}
+	switch filepath.Base(command) {
+	case "zsh", "bash", "fish":
+		return []string{"-l"}
+	}
+	return args
 }
 
 // mergeShellIntegrationPlan returns (argv', env') with the plan's args

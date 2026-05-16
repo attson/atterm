@@ -240,8 +240,11 @@ const rightPanelHasPlugin = computed(() => pluginStore.isPluginEnabled("file-exp
 
 const { onMouseDown: onPanelResizeDown } = useResizer({
   onDrag: (deltaX) => {
+    // useResizer reports deltaX = -mouseMovementX (right drag → negative).
+    // The resizer sits on the panel's left edge, so dragging right shrinks
+    // the panel: panelWidth + deltaX = panelWidth - movement.
     const current = dragPanelWidth.value ?? persistedPanelWidth.value;
-    const next = Math.max(240, Math.min(current - deltaX, window.innerWidth * 0.7));
+    const next = Math.max(240, Math.min(current + deltaX, window.innerWidth * 0.7));
     dragPanelWidth.value = next;
   },
   onEnd: () => {

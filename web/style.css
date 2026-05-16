@@ -73,6 +73,18 @@ body.terminal-active #app-shell {
   opacity: 0.55;
   pointer-events: none;
 }
+.topnav { display: flex; gap: 2px; flex-shrink: 0; }
+.topnav a {
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-decoration: none;
+  padding: 5px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  transition: color 120ms, background-color 120ms;
+}
+.topnav a:hover { color: var(--fg); background: rgba(148, 163, 184, 0.10); }
+.topnav a.active { color: var(--accent); background: rgba(88, 166, 255, 0.12); }
 .status { font-size: 12px; color: var(--fg-dim); margin-left: auto; white-space: nowrap; }
 .status.ok { color: var(--good); }
 .status.err { color: var(--bad); }

@@ -10,6 +10,8 @@ export function CloseSession(arg1:string):Promise<void>;
 
 export function ConfirmQuit():Promise<void>;
 
+export function FetchRelayMe():Promise<main.RelayMe>;
+
 export function GetAutoCheckUpdates():Promise<boolean>;
 
 export function GetClipboardPastePayload():Promise<main.ClipboardPastePayload>;
@@ -59,6 +61,8 @@ export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
 
 export function SetTerminalTheme(arg1:string):Promise<void>;
+
+export function SetUplinkPaused(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 

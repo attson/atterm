@@ -42,6 +42,27 @@ import {
   type TerminalThemeID,
 } from "./lib/terminalThemes";
 
+// Auth-error banner: set when the relay closes the uplink with a 4001-4003
+// close code. Cleared when the user dismisses or fixes config.
+const authError = ref<string | null>(null);
+const authErrorBanners: Record<string, string> = {
+  auth_invalid_token: "Invalid or revoked API token. Generate a new one in web settings.",
+  auth_user_disabled: "Account disabled. Contact your relay admin.",
+  session_id_owner_mismatch: "Session id collision. Restart the desktop app.",
+  forbidden: "Not authorized to connect to this relay.",
+};
+const authErrorMessage = computed(() =>
+  authError.value ? (authErrorBanners[authError.value] ?? authError.value) : "",
+);
+
+function openSettingsRelay() {
+  settingsInitialTab.value = "relay";
+  showSettings.value = true;
+}
+
+// Track which tab to open when Settings is opened programmatically.
+const settingsInitialTab = ref<"general" | "relay" | "logging" | "updates" | undefined>(undefined);
+
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
 const localHostID = ref<string>("");
@@ -644,6 +665,9 @@ watch([tabs, currentTabId], () => {
 
 onMounted(async () => {
   quitListenerOff = EventsOn("before-close", handleBeforeClose);
+  EventsOn("relay:auth-error", (data: { reason: string }) => {
+    authError.value = data?.reason ?? null;
+  });
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
   // Set up the size-prediction probe before anything spawns a PTY — the
@@ -754,6 +778,12 @@ onUnmounted(() => {
       </button>
     </header>
 
+    <div v-if="authError" class="auth-error-banner" role="alert">
+      <span class="auth-error-msg">{{ authErrorMessage }}</span>
+      <button class="auth-error-action" @click="openSettingsRelay">Open settings</button>
+      <button class="auth-error-dismiss" @click="authError = null" aria-label="Dismiss">×</button>
+    </div>
+
     <TabBar
       :tabs="tabSummaries"
       :current-id="currentTabId"
@@ -806,10 +836,11 @@ onUnmounted(() => {
       :local-session-count="localSessionCount"
       :remote-session-count="remoteSessionCount"
       :terminal-theme-id="currentTerminalThemeID"
+      :initial-tab="settingsInitialTab"
       @terminal-theme-changed="onTerminalThemeChanged"
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @relay-config-changed="refreshRelayConfig"
-      @close="showSettings = false; refreshRelayConfig()"
+      @close="showSettings = false; settingsInitialTab = undefined; refreshRelayConfig()"
     />
     <RemoteSessionsDialog
       v-if="showRemote"
@@ -867,6 +898,24 @@ onUnmounted(() => {
   background: #d29922;
   border-radius: 50%;
 }
+
+.auth-error-banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 16px; background: #5a1e1e; border-bottom: 1px solid #8b2e2e;
+  color: #ffb3b3; font-size: 12px; flex: 0 0 auto;
+}
+.auth-error-msg { flex: 1 1 auto; }
+.auth-error-action {
+  flex: 0 0 auto; border: 1px solid #8b2e2e; background: transparent;
+  color: #ffb3b3; border-radius: 4px; padding: 2px 8px; font-size: 12px;
+  cursor: pointer;
+}
+.auth-error-action:hover { background: rgba(255, 179, 179, 0.1); }
+.auth-error-dismiss {
+  flex: 0 0 auto; border: none; background: transparent;
+  color: #ffb3b3; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.auth-error-dismiss:hover { color: #fff; }
 
 .main-row {
   display: flex;

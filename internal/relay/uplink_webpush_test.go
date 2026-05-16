@@ -38,6 +38,7 @@ func (r *recordingHTTPClientForRelayTest) count() int {
 }
 
 func TestUplinkCommandEventTriggersDispatchWhenSessionInManifest(t *testing.T) {
+	const ownerUserID = "user_uplink_test"
 	svc, _ := webpush.Open(t.TempDir(), "mailto:test@example.com")
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
@@ -45,12 +46,11 @@ func TestUplinkCommandEventTriggersDispatchWhenSessionInManifest(t *testing.T) {
 		Token:   "write-token",
 		WebPush: svc,
 	})
-	svc.SetSessionResolver(srv.WebPushSessionResolver)
-	// Register a subscription that will be the fanout target.
+	// Register a subscription under the owner's user ID (not a token hash).
 	sub := webpush.Subscription{Endpoint: "https://push.example/abc"}
 	sub.Keys.P256dh = "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk"
 	sub.Keys.Auth = "zqbxT6JKstKSY9JKibZLSQ"
-	_ = svc.AddSubscription(tokenHash("write-token"), sub)
+	_ = svc.AddSubscription(ownerUserID, sub)
 	// Set up a synthetic mirrors map containing one session id; register a
 	// session in the registry so the resolver can find it.
 	sid := uuid.New()
@@ -61,7 +61,10 @@ func TestUplinkCommandEventTriggersDispatchWhenSessionInManifest(t *testing.T) {
 	}
 	srv.Registry().Add(session.New(sid, info))
 	defer srv.Registry().Remove(sid)
-	ms := &mirrorState{sess: session.New(sid, info)}
+	// The mirror session must carry the OwnerUserID so dispatch targets it.
+	mirrorSess := session.New(sid, info)
+	mirrorSess.OwnerUserID = ownerUserID
+	ms := &mirrorState{sess: mirrorSess}
 	mirrors := map[uuid.UUID]*mirrorState{sid: ms}
 	var mu sync.Mutex
 	// Encode the frame.
@@ -91,7 +94,7 @@ func TestUplinkCommandEventDropsUnknownSession(t *testing.T) {
 	sub := webpush.Subscription{Endpoint: "https://push.example/abc"}
 	sub.Keys.P256dh = "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk"
 	sub.Keys.Auth = "zqbxT6JKstKSY9JKibZLSQ"
-	_ = svc.AddSubscription(tokenHash("write-token"), sub)
+	_ = svc.AddSubscription("user_drop_test", sub)
 	// Mirrors map is empty (no sessions known to this uplink).
 	mirrors := map[uuid.UUID]*mirrorState{}
 	var mu sync.Mutex

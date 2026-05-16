@@ -20,11 +20,12 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 手机浏览器 / iOS App | 支持 PWA、Capacitor iOS WebView MVP、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
 | 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
-| 公网 relay 安全默认值 | 强 token、Origin 白名单、限流、安全响应头、只读 token |
+| 公网 relay 安全默认值 | 强 admin token、Origin 白名单、CSRF、限流、安全响应头 |
 | Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
 | Web Push 通知 | 浏览器和 PWA 订阅后，命令完成事件通过 self-hosted Web Push 推送，即使页面没打开也能收到（依赖 shell 集成 + 已连远端 relay） |
+| 用户系统 | ✓ 支持（v2+）：邀请码注册、per-user API token、用户独立的会话列表与 Web Push；admin 后台管理用户与邀请 |
 
-还在路线图中的能力：用户系统、TLS 自动化、移动端原生体验增强、shell 集成、主题/字体配置。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
+还在路线图中的能力：TLS 自动化、移动端原生体验增强、主题/字体配置。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
 
 ## 快速开始
 
@@ -41,60 +42,38 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | Linux arm64 | `AT-Term_*_arm64.deb` 或 `AT-Term-linux-arm64.tar.gz` | 适合 ARM Linux 桌面 |
 | Windows x64 | `AT-Term_*_amd64.exe` 或 `AT-Term-windows-amd64.zip` | Windows 11 自带 WebView2；Windows 10 可能需另装 |
 
-### 方式 B：桌面端 + 自托管 relay
+### 方式 B：桌面端 + 自托管 relay（用户账号制）
 
-这个模式适合“电脑上跑任务，手机/另一台机器接管”。
+这个模式适合「电脑上跑任务，手机/另一台机器接管」。
 
-1. 启动 relay：
+1. 启动 relay（设置强 admin token，最低 32 字符、含 3 类字符，不能是 dev/changeme 等）：
 
 ```bash
+ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
+ATTERM_ORIGINS='https://relay.example.com' \
 docker compose up -d atterm-relay
-docker compose logs atterm-relay
 ```
 
-2. 从日志里复制自动生成的 token。
-3. 在桌面端打开 Settings，填写 relay 地址和 token。
-   - 本机测试：`ws://localhost:8080`
-   - 公网部署：建议使用 `wss://relay.example.com`
-4. 在手机或另一台电脑打开：
-
-```text
-http://localhost:8080/#token=<token>
-```
-
-公网部署时把地址换成你的 HTTPS 域名，例如：
-
-```text
-https://relay.example.com/#token=<token>
-```
-
-> token 放在 `#fragment` 中，不会被浏览器发送给 HTTP 服务；WebSocket 鉴权走 `Sec-WebSocket-Protocol`。
+2. 在浏览器打开 `https://relay.example.com/admin/`，用 `ATTERM_ADMIN_TOKEN` 登录，进入 admin 后台。
+3. 在 “Invitations” 页面创建一个邀请码（`inv_…`），把它发给要使用的人（包括你自己）。
+4. 用户在 `https://relay.example.com/signup.html` 用邀请码 + 邮箱 + 密码完成注册。
+5. 登录后在 `/settings.html` 生成 API token（`atk_…`，**只显示一次**），复制后粘贴到桌面端 Settings → API token 字段。
+6. 桌面端连上 relay 后，会显示 `connected as <email>`。手机或另一台电脑用同一账号登录 `https://relay.example.com` 即可看到 session 列表。
 
 ### 方式 C：源码启动调试
 
 ```bash
 export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
-# 终端 1：启动 relay + web 客户端
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
+# 终端 1：启动 relay + web 客户端（--dev-insecure 放开本地强度校验）
+ATTERM_ADMIN_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
 
 # 终端 2：启动桌面端
 cd desktop
 wails dev -tags webkit2_41   # Linux 需要 tag；macOS/Windows 可省略
 ```
 
-桌面端 Settings 填：
-
-```text
-relay URL: ws://localhost:8080
-token: dev
-```
-
-浏览器访问：
-
-```text
-http://localhost:8080/#token=dev
-```
+浏览器访问 `http://127.0.0.1:8080/signup.html`，用邀请码注册账号；之后在 `/settings.html` 生成 API token，填入桌面端 Settings → API token 字段。
 
 ### 方式 D：iOS WebView MVP
 
@@ -107,18 +86,18 @@ npm run ios:add   # 首次创建 Xcode 工程；已存在时不用重复执行
 npm run ios:open  # 同步 web/ 静态资源并打开 Xcode
 ```
 
-iOS App 首次启动后，在 token 面板里填写：
+iOS App 首次启动后，在 Settings 里填写：
 
 ```text
 relay URL: https://relay.example.com
-token: <token>
+API token: atk_...（在 relay /settings.html 页面生成）
 ```
 
 如果只是用公网 IP:port 做内测，也可以在手机端勾选 `allow insecure HTTP relay` 后填写：
 
 ```text
 relay URL: http://121.43.40.128:23301
-token: <token>
+API token: atk_...
 ```
 
 这个 insecure mode 只适合可信测试环境；正式使用仍建议配置 HTTPS/WSS 域名。
@@ -126,8 +105,8 @@ token: <token>
 公网 relay 需要允许 Capacitor WebView 的 Origin：
 
 ```bash
+ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
 ATTERM_ORIGINS='https://relay.example.com,capacitor://localhost' \
-ATTERM_TOKEN='replace-with-a-long-random-token' \
 go run ./cmd/atterm-relay --addr :8080 --web web
 ```
 
@@ -142,19 +121,9 @@ go run ./cmd/atterm-relay --addr :8080 --web web
 3. 手机打开 relay web 地址。
 4. 点进对应 session，就能看历史输出；有权限时也能继续输入。
 
-### 只分享查看权限
+### 让同事查看会话
 
-relay 支持只读 token。只读用户可以查看 session 和历史输出，但不能输入、resize 或粘贴图片。
-
-```bash
-ATTERM_READ_ONLY_TOKENS=viewer-token docker compose up -d atterm-relay
-```
-
-分享给别人时使用：
-
-```text
-https://relay.example.com/#token=viewer-token
-```
+如需让同事 attach 查看，通过 admin 后台为其创建一个账号邀请（`inv_…`），对方注册后即可用自己的账号登录 relay 查看会话。relay 级别的共享只读 token 已在用户账号版本中移除；权限控制现在通过桌面端的 `remote_permission` 字段实现。
 
 ### 选择远程权限
 
@@ -166,7 +135,7 @@ https://relay.example.com/#token=viewer-token
 | `control` | 可以输入和 resize |
 | `full` | 保留完整远程控制能力 |
 
-最终权限由“桌面端设置”和“relay token 类型”取交集。也就是说，只读 token 永远不能获得输入权限。
+权限由桌面端 `remote_permission` 设置决定；relay 和 desktop host 都强制执行。`view` 用户即使有完整账号，也只能查看输出，不能输入 / resize / 粘贴图片。
 
 ## 部署 relay
 
@@ -183,19 +152,17 @@ docker compose logs atterm-relay
 
 | 变量 | 用途 |
 |------|------|
-| `ATTERM_TOKEN` | 主 token；留空时启动自动生成并打印到日志 |
+| `ATTERM_ADMIN_TOKEN` | admin 后台 token；公网部署必须设置，且须通过强度检查（≥32 字符、≥3 类字符、不在弱 token 黑名单内） |
 | `ATTERM_ORIGINS` | 浏览器 Origin 白名单；公网部署必须设成真实域名 |
-| `ATTERM_READ_ONLY_TOKENS` | 逗号分隔的只读 token |
-| `ATTERM_ADMIN_TOKEN` | 启用 `/admin/` 管理页和 admin API |
 | `ATTERM_RELAY_PORT` | 宿主机端口，默认 `8080` |
 | `ATTERM_RELAY_CONFIG_DIR` | relay 持久化配置目录，默认 `./data/atterm-relay` |
-| `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP/token 的请求与 WS upgrade 分钟限额 |
-| `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP/token 的活跃 WebSocket 连接上限 |
+| `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP 的请求与 WS upgrade 分钟限额 |
+| `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP 的活跃 WebSocket 连接上限 |
 
 公网示例：
 
 ```bash
-ATTERM_TOKEN='replace-with-a-long-random-token' \
+ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 docker compose up -d atterm-relay
 ```
@@ -211,27 +178,27 @@ docker compose --profile auto-update up -d
 ### Go 直接运行
 
 ```bash
-ATTERM_TOKEN='replace-with-a-long-random-token' \
+ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 go run ./cmd/atterm-relay --addr :8080 --web web
 ```
 
-本地开发可以临时使用弱 token：
+本地开发可以临时跳过强度检查：
 
 ```bash
-ATTERM_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web
+ATTERM_ADMIN_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
 ```
 
-公网监听默认拒绝弱 token、缺失 Origin 白名单、弱 admin token。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
+公网监听默认拒绝弱 admin token、缺失 Origin 白名单。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
 
 ## 安全模型
 
 AT Term 的默认策略是 fail-closed：
 
-- relay 未提供 `ATTERM_TOKEN` 时会生成高强度 token，并只打印在启动日志里。
-- 公网 relay 必须使用强 token 和明确的 `ATTERM_ORIGINS`。
-- 服务端鉴权不接受 `?token=`；浏览器入口只用 `#token=...` 做首次引导。
-- WebSocket token 通过 `Sec-WebSocket-Protocol` 传递，避免写进 URL。
+- 公网 relay 的 `ATTERM_ADMIN_TOKEN` 必须通过强度检查（≥32 字符、≥3 类字符、不在弱 token 黑名单内），否则启动拒绝。
+- 公网 relay 必须使用明确的 `ATTERM_ORIGINS`。
+- 服务端鉴权不接受 `?token=` 参数；API token 通过 `Authorization: Bearer` 或桌面端 WebSocket 的 `Sec-WebSocket-Protocol` 传递，避免写进 URL。
+- 用户 API token（`atk_…`）仅在创建时明文展示一次，此后 relay 只保存哈希。
 - web 客户端只加载同源静态资源，不依赖 CDN。
 - relay 默认启用 CSP、Referrer-Policy、nosniff、Permissions-Policy 等安全头。
 - relay 按远端 IP 和认证后的 token hash 做限流与连接数限制。

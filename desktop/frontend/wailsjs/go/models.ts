@@ -288,6 +288,7 @@ export namespace main {
 	    allow_insecure_relay: boolean;
 	    remote_permission: string;
 	    connected: boolean;
+	    paused: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RelayConfig(source);
@@ -300,6 +301,21 @@ export namespace main {
 	        this.allow_insecure_relay = source["allow_insecure_relay"];
 	        this.remote_permission = source["remote_permission"];
 	        this.connected = source["connected"];
+	        this.paused = source["paused"];
+	    }
+	}
+	export class RelayMe {
+	    user_id: string;
+	    email: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RelayMe(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.user_id = source["user_id"];
+	        this.email = source["email"];
 	    }
 	}
 	export class UpdateState {

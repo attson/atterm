@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AT Term · settings</title>
+<link rel="stylesheet" href="style.css" />
+<style>
+.settings-page {
+  min-height: 100vh;
+  background: radial-gradient(circle at top left, #172554 0, var(--bg) 42%);
+  padding: 2rem 1rem;
+}
+.settings-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.settings-card {
+  padding: 1.5rem 2rem;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.36);
+}
+.settings-card h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.settings-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--fg-dim);
+}
+.settings-card input[type="text"],
+.settings-card input[type="password"] {
+  padding: 0.5rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+.settings-card input:focus { outline: none; border-color: var(--accent); }
+.settings-card button[type="submit"],
+.settings-card .btn-primary {
+  padding: 0.5rem 1rem;
+  background: var(--accent);
+  color: #05070d;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  align-self: flex-start;
+}
+.settings-card button[type="submit"]:hover,
+.settings-card .btn-primary:hover { opacity: 0.88; }
+.btn-danger {
+  padding: 0.4rem 0.8rem;
+  background: transparent;
+  color: var(--bad);
+  border: 1px solid var(--bad);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+}
+.btn-danger:hover { background: rgba(251, 113, 133, 0.12); }
+.btn-ghost {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+#token-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+#token-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(2, 6, 23, 0.48);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#token-list .token-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#token-list-empty { color: var(--fg-dim); font-size: 0.875rem; }
+#plaintext-section {
+  padding: 0.75rem;
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+#plaintext-section p { margin: 0; font-size: 0.8rem; color: var(--fg-dim); }
+#plaintext-display {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--good);
+  word-break: break-all;
+}
+.form-row { display: flex; gap: 0.5rem; }
+.form-row input { flex: 1; }
+#password-error { color: var(--bad); font-size: 0.875rem; margin: 0; }
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.page-header h1 { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; }
+.page-header a { color: var(--accent); font-size: 0.875rem; text-decoration: none; }
+.page-header a:hover { text-decoration: underline; }
+</style>
+</head><body class="settings-page">
+<div class="settings-wrap">
+  <div class="page-header">
+    <h1>AT Term</h1>
+    <a href="/">← Back</a>
+  </div>
+
+  <!-- API Tokens -->
+  <div class="settings-card">
+    <h2>API Tokens</h2>
+    <ul id="token-list"><li id="token-list-empty">Loading…</li></ul>
+
+    <form id="create-token-form" autocomplete="off">
+      <label>Token name
+        <div class="form-row">
+          <input id="token-name" type="text" required placeholder="e.g. my-laptop" autocomplete="off" />
+          <button type="submit">Create</button>
+        </div>
+      </label>
+    </form>
+
+    <div id="plaintext-section" hidden>
+      <p>Copy this token now — it will not be shown again.</p>
+      <code id="plaintext-display"></code>
+      <button class="btn-ghost" id="copy-token-btn" type="button">Copy</button>
+    </div>
+  </div>
+
+  <!-- Change Password -->
+  <div class="settings-card">
+    <h2>Change Password</h2>
+    <form id="change-password-form" autocomplete="off">
+      <div style="display:flex;flex-direction:column;gap:0.75rem;">
+        <label>Current password
+          <input id="current-password" type="password" required autocomplete="current-password" />
+        </label>
+        <label>New password <small style="color:var(--fg-dim)">(min 12 characters)</small>
+          <input id="new-password" type="password" required autocomplete="new-password" minlength="12" />
+        </label>
+        <button type="submit">Update password</button>
+        <p id="password-error" hidden></p>
+      </div>
+    </form>
+  </div>
+
+  <!-- Sign out -->
+  <div class="settings-card">
+    <h2>Session</h2>
+    <button id="logout" class="btn-danger" type="button">Sign out</button>
+  </div>
+</div>
+<script type="module">
+import { authFetch, getMe, logout } from "./auth.js";
+
+async function loadTokens() {
+    const res = await authFetch("/api/me/tokens");
+    const tokens = await res.json();
+    const list = document.getElementById("token-list");
+    list.innerHTML = "";
+    if (!tokens || tokens.length === 0) {
+        const li = document.createElement("li");
+        li.id = "token-list-empty";
+        li.style.cssText = "color:var(--fg-dim);font-family:inherit;border:none;background:none;padding:0;";
+        li.textContent = "No tokens yet.";
+        list.appendChild(li);
+        return;
+    }
+    for (const t of tokens) {
+        if (t.revoked_at) continue; // skip revoked
+        const li = document.createElement("li");
+        const meta = document.createElement("span");
+        meta.className = "token-meta";
+        const created = new Date(t.created_at).toLocaleDateString();
+        meta.textContent = `${t.name} · ${t.prefix}… · ${created}`;
+        const btn = document.createElement("button");
+        btn.className = "btn-danger";
+        btn.textContent = "Revoke";
+        btn.onclick = async () => {
+            btn.disabled = true;
+            await authFetch(`/api/me/tokens/${t.id}`, { method: "DELETE" });
+            loadTokens();
+        };
+        li.appendChild(meta);
+        li.appendChild(btn);
+        list.appendChild(li);
+    }
+}
+
+document.getElementById("create-token-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = document.getElementById("token-name").value.trim();
+    if (!name) return;
+    const res = await authFetch("/api/me/tokens", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    document.getElementById("plaintext-display").textContent = data.plaintext;
+    document.getElementById("plaintext-section").hidden = false;
+    document.getElementById("token-name").value = "";
+    loadTokens();
+});
+
+document.getElementById("copy-token-btn").addEventListener("click", () => {
+    const text = document.getElementById("plaintext-display").textContent;
+    navigator.clipboard.writeText(text).catch(() => {});
+});
+
+document.getElementById("change-password-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const current = document.getElementById("current-password").value;
+    const next = document.getElementById("new-password").value;
+    const errEl = document.getElementById("password-error");
+    errEl.hidden = true;
+    const res = await authFetch("/api/me/password", {
+        method: "POST",
+        body: JSON.stringify({ current_password: current, new_password: next }),
+    });
+    if (res.ok) {
+        alert("Password changed. You are signed out of other devices.");
+        location.assign("/login.html");
+    } else {
+        let msg = "Failed (status " + res.status + ")";
+        try {
+            const body = await res.json();
+            if (body.error === "current_password_wrong") msg = "Current password is incorrect.";
+            else if (body.error === "password_weak") msg = "New password must be at least 12 characters.";
+        } catch (_) {}
+        errEl.textContent = msg;
+        errEl.hidden = false;
+    }
+});
+
+document.getElementById("logout").addEventListener("click", () => logout());
+
+// Guard: redirect to login if not authenticated, then load tokens.
+await getMe();
+await loadTokens();
+</script></body></html>

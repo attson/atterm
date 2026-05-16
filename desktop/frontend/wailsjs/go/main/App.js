@@ -18,6 +18,10 @@ export function ConfirmQuit() {
   return window['go']['main']['App']['ConfirmQuit']();
 }
 
+export function FetchRelayMe() {
+  return window['go']['main']['App']['FetchRelayMe']();
+}
+
 export function GetAutoCheckUpdates() {
   return window['go']['main']['App']['GetAutoCheckUpdates']();
 }
@@ -116,6 +120,10 @@ export function SetShellIntegrationEnabled(arg1) {
 
 export function SetTerminalTheme(arg1) {
   return window['go']['main']['App']['SetTerminalTheme'](arg1);
+}
+
+export function SetUplinkPaused(arg1) {
+  return window['go']['main']['App']['SetUplinkPaused'](arg1);
 }
 
 export function ShowNotification(arg1, arg2) {

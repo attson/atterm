@@ -24,46 +24,46 @@ type CommandFinished struct {
 	Label     string
 }
 
-// DispatchCommandFinished fans the event out to all subscriptions of every
-// token-hash returned by the session resolver. Always returns immediately;
-// fanout runs in goroutines. Failures with 404/410 status prune the
-// subscription; other errors are logged and the subscription is kept.
-func (s *Service) DispatchCommandFinished(ev CommandFinished) {
-	resolver := s.lookupResolver()
-	if resolver == nil {
+// DispatchCommandFinished fans the event out to all subscriptions registered
+// under ownerUserID. Always returns immediately; fanout runs in goroutines.
+// Failures with 404/410 status prune the subscription; other errors are
+// logged and the subscription is kept.
+//
+// If ownerUserID is empty (legacy / dev-mode paths where no user account is
+// associated), the function is a no-op: no subscribers are matched and no
+// pushes are sent.
+func (s *Service) DispatchCommandFinished(ownerUserID string, ev CommandFinished) {
+	if ownerUserID == "" {
 		return
 	}
 	if len(ev.Label) > maxLabelLen {
 		ev.Label = ev.Label[:maxLabelLen]
 	}
-	tokens := resolver(ev.SessionID)
-	if len(tokens) == 0 {
+	subs := s.subStore.ByUser(ownerUserID)
+	if len(subs) == 0 {
 		return
 	}
 	body := payloadJSON(ev)
-	for _, tokenHash := range tokens {
-		subs := s.subStore.ByToken(tokenHash)
-		for _, sub := range subs {
-			go s.sendOne(tokenHash, sub, body)
-		}
+	for _, sub := range subs {
+		go s.sendOne(ownerUserID, sub, body)
 	}
 }
 
 // SendTest dispatches a "test" notification to every subscription under
-// tokenHash. Returns the number of pushes dispatched (not delivered).
-func (s *Service) SendTest(tokenHash string) int {
-	subs := s.subStore.ByToken(tokenHash)
+// userID. Returns the number of pushes dispatched (not delivered).
+func (s *Service) SendTest(userID string) int {
+	subs := s.subStore.ByUser(userID)
 	body, _ := json.Marshal(map[string]interface{}{
 		"title": "AT Term test",
 		"body":  "It works.",
 	})
 	for _, sub := range subs {
-		go s.sendOne(tokenHash, sub, body)
+		go s.sendOne(userID, sub, body)
 	}
 	return len(subs)
 }
 
-func (s *Service) sendOne(tokenHash string, sub Subscription, body []byte) {
+func (s *Service) sendOne(userID string, sub Subscription, body []byte) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("webpush: panic in send: %v", r)
@@ -82,7 +82,7 @@ func (s *Service) sendOne(tokenHash string, sub Subscription, body []byte) {
 		return
 	case resp.StatusCode == 404 || resp.StatusCode == 410:
 		log.Printf("webpush: endpoint %s gone (status %d); pruning", sub.Endpoint, resp.StatusCode)
-		s.subStore.Remove(tokenHash, sub.Endpoint)
+		s.subStore.Remove(userID, sub.Endpoint)
 		s.persistBestEffort()
 	default:
 		log.Printf("webpush: send non-2xx endpoint=%s status=%d", sub.Endpoint, resp.StatusCode)

@@ -1,11 +1,13 @@
 package webpush
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadMissingFileGeneratesFresh(t *testing.T) {
@@ -107,5 +109,130 @@ func TestLoadEmptyDirIsAllowedWhenWritable(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := loadOrInitState(dir); err != nil {
 		t.Fatalf("loadOrInitState(writable empty dir): %v", err)
+	}
+}
+
+// TestPersist_RenamesLegacyTokenHashSchema verifies that when web-push.json
+// contains top-level keys that look like 64-char hex tokenHash values,
+// loadOrInitState renames the file to web-push.json.legacy-<ts> and returns
+// an empty (fresh) state.
+func TestPersist_RenamesLegacyTokenHashSchema(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "web-push.json")
+
+	// 64-char lowercase hex string — the shape of tokenHash output.
+	legacyKey := strings.Repeat("a", 64)
+	legacy := map[string]interface{}{
+		"private_key": "priv-legacy",
+		"public_key":  "pub-legacy",
+		"subscriptions": map[string]interface{}{
+			legacyKey: []map[string]interface{}{
+				{"endpoint": "https://push.example/legacy"},
+			},
+		},
+	}
+	data, _ := json.Marshal(legacy)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := loadOrInitState(dir)
+	if err != nil {
+		t.Fatalf("loadOrInitState: %v", err)
+	}
+
+	// A .legacy-* backup must exist.
+	entries, _ := os.ReadDir(dir)
+	hasLegacy := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "web-push.json.legacy-") {
+			hasLegacy = true
+		}
+	}
+	if !hasLegacy {
+		t.Fatalf("no .legacy-* file found; entries=%v", entries)
+	}
+
+	// The returned state must have an empty subscriptions map (legacy subs dropped).
+	if len(state.Subscriptions) != 0 {
+		t.Fatalf("subscriptions not empty after legacy rename; got %v", state.Subscriptions)
+	}
+}
+
+// TestPersist_AcceptsUserIDSchema verifies that when web-push.json contains
+// ULID-shaped keys (26-char Crockford base32), loadOrInitState loads them
+// normally without renaming the file.
+func TestPersist_AcceptsUserIDSchema(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "web-push.json")
+
+	// 26-char ULID-shaped key.
+	ulidKey := "01HXABC123456789ABCDEFGHIJ"
+	fresh := persistedState{
+		PrivateKey: "priv-fresh",
+		PublicKey:  "pub-fresh",
+		Subscriptions: map[string][]Subscription{
+			ulidKey: {{Endpoint: "https://push.example/ulid"}},
+		},
+	}
+	data, _ := json.Marshal(fresh)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := loadOrInitState(dir)
+	if err != nil {
+		t.Fatalf("loadOrInitState: %v", err)
+	}
+
+	// File must NOT be renamed.
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("web-push.json was renamed unexpectedly: %v", err)
+	}
+
+	// The subscription under the ULID key must be present.
+	subs, ok := state.Subscriptions[ulidKey]
+	if !ok || len(subs) != 1 || subs[0].Endpoint != "https://push.example/ulid" {
+		t.Fatalf("subscription not loaded; subscriptions=%v", state.Subscriptions)
+	}
+}
+
+// TestPersist_CleanupLegacyAfter30Days verifies that CleanupLegacy deletes
+// .legacy-* files older than 30 days and keeps newer ones.
+func TestPersist_CleanupLegacyAfter30Days(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a legacy file with mtime 31 days ago.
+	old := filepath.Join(dir, "web-push.json.legacy-1000")
+	if err := os.WriteFile(old, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-31 * 24 * time.Hour)
+	if err := os.Chtimes(old, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a legacy file with mtime 29 days ago.
+	recent := filepath.Join(dir, "web-push.json.legacy-2000")
+	if err := os.WriteFile(recent, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recentTime := time.Now().Add(-29 * 24 * time.Hour)
+	if err := os.Chtimes(recent, recentTime, recentTime); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CleanupLegacy(context.Background(), dir); err != nil {
+		t.Fatalf("CleanupLegacy: %v", err)
+	}
+
+	// 31-day-old file must be deleted.
+	if _, err := os.Stat(old); err == nil {
+		t.Fatal("31-day-old .legacy file was not deleted")
+	}
+
+	// 29-day-old file must remain.
+	if _, err := os.Stat(recent); err != nil {
+		t.Fatalf("29-day-old .legacy file was incorrectly deleted: %v", err)
 	}
 }

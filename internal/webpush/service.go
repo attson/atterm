@@ -4,8 +4,6 @@ import (
 	"log"
 	"net/http"
 	"sync"
-
-	"github.com/google/uuid"
 )
 
 // HTTPClient mirrors webpush-go's HTTPClient interface (single Do method)
@@ -31,9 +29,6 @@ type Service struct {
 
 	subStore *subStore
 	tr       *transport
-
-	resolverMu sync.RWMutex
-	resolver   func(uuid.UUID) []string
 }
 
 // Open initializes the service. Recoverable conditions (missing file,
@@ -88,8 +83,8 @@ func (s *Service) PublicKey() string {
 }
 
 // AddSubscription registers a subscription and persists state.
-func (s *Service) AddSubscription(tokenHash string, sub Subscription) error {
-	if err := s.subStore.Add(tokenHash, sub); err != nil {
+func (s *Service) AddSubscription(userID string, sub Subscription) error {
+	if err := s.subStore.Add(userID, sub); err != nil {
 		return err
 	}
 	s.persistBestEffort()
@@ -97,31 +92,16 @@ func (s *Service) AddSubscription(tokenHash string, sub Subscription) error {
 }
 
 // RemoveSubscription deregisters an endpoint and persists state.
-func (s *Service) RemoveSubscription(tokenHash, endpoint string) error {
-	s.subStore.Remove(tokenHash, endpoint)
+func (s *Service) RemoveSubscription(userID, endpoint string) error {
+	s.subStore.Remove(userID, endpoint)
 	s.persistBestEffort()
 	return nil
 }
 
-// SetSessionResolver registers the function that maps a session id to the
-// token-hashes allowed to view it. The resolver is called from the dispatch
-// goroutine; implementations must be cheap.
-func (s *Service) SetSessionResolver(f func(uuid.UUID) []string) {
-	s.resolverMu.Lock()
-	s.resolver = f
-	s.resolverMu.Unlock()
-}
-
-func (s *Service) lookupResolver() func(uuid.UUID) []string {
-	s.resolverMu.RLock()
-	defer s.resolverMu.RUnlock()
-	return s.resolver
-}
-
-// SubscriptionsForToken is a test-only helper. Returns subscriptions for the
-// given token hash without exposing internal types in production callers.
-func (s *Service) SubscriptionsForToken(tokenHash string) []Subscription {
-	return s.subStore.ByToken(tokenHash)
+// SubscriptionsForUser is a test-only helper. Returns subscriptions for the
+// given user ID without exposing internal types in production callers.
+func (s *Service) SubscriptionsForUser(userID string) []Subscription {
+	return s.subStore.ByUser(userID)
 }
 
 func (s *Service) persistBestEffort() {

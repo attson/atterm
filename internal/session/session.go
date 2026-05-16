@@ -29,8 +29,9 @@ const (
 
 // Session is the relay-side state for one PTY.
 type Session struct {
-	ID        uuid.UUID
-	StartedAt time.Time
+	ID           uuid.UUID
+	StartedAt    time.Time
+	OwnerUserID  string // ULID; empty for legacy/non-account paths
 
 	mu        sync.RWMutex
 	meta      proto.SessionInfo

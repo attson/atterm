@@ -18,11 +18,12 @@ const (
 // handleClientSessions streams full session-list snapshots. The first snapshot
 // is sent immediately; later snapshots are pushed only after registry/meta
 // changes, replacing the desktop frontend's old /api/sessions polling loop.
-func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn) {
+// ownerUserID, when non-empty, filters sessions to only those owned by that user.
+func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ownerUserID string) {
 	sub := s.registry.SubscribeChanges()
 	defer sub.Close()
 
-	if !s.writeSessionList(ctx, c) {
+	if !s.writeSessionList(ctx, c, ownerUserID) {
 		return
 	}
 
@@ -41,15 +42,21 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn) {
 				return
 			}
 		case <-sub.C():
-			if !s.writeSessionList(ctx, c) {
+			if !s.writeSessionList(ctx, c, ownerUserID) {
 				return
 			}
 		}
 	}
 }
 
-func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn) bool {
-	payload, err := json.Marshal(s.sessionInfoList())
+func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {
+	var infos []proto.SessionInfo
+	if ownerUserID != "" {
+		infos = s.sessionInfoListForOwner(ownerUserID)
+	} else {
+		infos = s.sessionInfoList()
+	}
+	payload, err := json.Marshal(infos)
 	if err != nil {
 		s.debugf("client-sessions marshal_failed error=%q", err)
 		return false
@@ -71,6 +78,19 @@ func (s *Server) sessionInfoList() []proto.SessionInfo {
 	infos := make([]proto.SessionInfo, 0, len(sessions))
 	for _, ss := range sessions {
 		infos = append(infos, ss.Info())
+	}
+	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
+	return infos
+}
+
+// sessionInfoListForOwner returns session infos filtered to those owned by ownerUserID.
+func (s *Server) sessionInfoListForOwner(ownerUserID string) []proto.SessionInfo {
+	sessions := s.registry.List()
+	infos := make([]proto.SessionInfo, 0)
+	for _, ss := range sessions {
+		if ss.OwnerUserID == ownerUserID {
+			infos = append(infos, ss.Info())
+		}
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,12 +52,15 @@ type HostInfo struct {
 // RelayConfig is the user-editable view of the persisted uplink configuration.
 // Connected reflects whether the uplink goroutine is currently running; it is
 // read-only from the frontend's perspective.
+// Paused reflects whether the user has toggled the uplink off without clearing
+// the URL/token (the "pause without erasing config" state).
 type RelayConfig struct {
 	URL                string `json:"url"`
 	Token              string `json:"token"`
 	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
 	RemotePermission   string `json:"remote_permission"`
 	Connected          bool   `json:"connected"`
+	Paused             bool   `json:"paused"`
 }
 
 type LoggingConfig struct {
@@ -174,8 +179,12 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 		a.uplinkCancel = nil
 		a.uplink = nil
 	}
-	if cfg.RelayURL == "" {
-		log.Printf("desktop: uplink disabled")
+	if cfg.RelayURL == "" || cfg.RelayPaused {
+		reason := "no URL"
+		if cfg.RelayPaused {
+			reason = "paused by user"
+		}
+		log.Printf("desktop: uplink disabled (%s)", reason)
 		return
 	}
 	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
@@ -224,6 +233,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		Connected:          connected,
+		Paused:             cfg.RelayPaused,
 	}
 }
 
@@ -248,6 +258,23 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
 		return err
 	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.applyRelayConfig(cfg)
+	return nil
+}
+
+// SetUplinkPaused toggles the user-controlled pause flag without touching the
+// relay URL, token, insecure flag, or remote permission. This fixes the
+// "disconnect erases config" UX bug: the URL and token survive across
+// pause/unpause cycles, and the relay reconnects immediately on unpause.
+func (a *App) SetUplinkPaused(paused bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.RelayPaused = paused
 	if err := a.cfgStore.Set(cfg); err != nil {
 		return err
 	}
@@ -631,4 +658,45 @@ func (a *App) BroadcastCommandFinished(sessionID string, exitCode, elapsedMS int
 		return
 	}
 	u.SendCommandEvent(sid, exitCode, elapsedMS, label)
+}
+
+// RelayMe is the response body from the relay's /api/me endpoint.
+// Email is never logged or persisted (SEC-1).
+type RelayMe struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+}
+
+// FetchRelayMe queries the configured relay's /api/me endpoint using the
+// stored API token and returns the user's identity. The desktop UI calls
+// this after receiving a relay:auth-info event to display the email in the
+// status row. Email is held in-memory only and is never written to disk.
+func (a *App) FetchRelayMe() (RelayMe, error) {
+	if a.cfgStore == nil {
+		return RelayMe{}, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+		return RelayMe{}, fmt.Errorf("no relay configured")
+	}
+	// Convert WS scheme to HTTP so we can use net/http.
+	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+	req, err := http.NewRequest("GET", baseHTTP+"/api/me", nil)
+	if err != nil {
+		return RelayMe{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return RelayMe{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return RelayMe{}, fmt.Errorf("relay /api/me returned status %d", resp.StatusCode)
+	}
+	var out RelayMe
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return RelayMe{}, err
+	}
+	return out, nil
 }

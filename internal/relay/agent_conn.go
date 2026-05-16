@@ -20,7 +20,8 @@ const (
 
 // handleAgent owns one agent's lifecycle: read the OPEN, register the session,
 // then pump frames in both directions until the connection drops or CLOSE arrives.
-func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn) {
+// ownerUserID is the authenticated user's ID (empty for legacy/dev-mode paths).
+func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID string) {
 	c.SetReadLimit(agentReadLimit)
 
 	// First frame must be OPEN.
@@ -51,7 +52,13 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn) {
 		User:    op.User,
 	}
 	sess := session.New(openFrame.SessionID, info)
-	s.registry.Add(sess)
+	sess.OwnerUserID = ownerUserID
+	if _, err := s.registry.Add(sess); err != nil {
+		// Owner mismatch: another user already holds this session ID.
+		s.debugf("agent session_add_rejected session=%s reason=owner_mismatch", openFrame.SessionID)
+		_ = c.Close(websocket.StatusCode(CloseCodeSessionIDOwnerMismatch), CloseReasonSessionIDOwnerMismatch)
+		return
+	}
 	log.Printf("agent: session %s opened (%q)", openFrame.SessionID, op.Command)
 	defer func() {
 		s.registry.Remove(openFrame.SessionID)

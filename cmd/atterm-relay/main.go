@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"flag"
-	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -20,6 +18,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/relay"
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
 )
 
@@ -36,54 +35,124 @@ func main() {
 	adminToken := flag.String("admin-token", os.Getenv("ATTERM_ADMIN_TOKEN"), "admin bearer token for /admin routes (or ATTERM_ADMIN_TOKEN; empty disables admin)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
-	readOnlyTokens := flag.String("read-only-tokens", os.Getenv("ATTERM_READ_ONLY_TOKENS"), "comma-separated read-only bearer tokens (or ATTERM_READ_ONLY_TOKENS)")
 	rateLimit := flag.Int("rate-limit-per-minute", envInt("ATTERM_RATE_LIMIT_PER_MINUTE", 0), "request/upgrade limit per remote IP/token per minute; 0=default, negative=disable")
 	maxConns := flag.Int("max-connections-per-key", envInt("ATTERM_MAX_CONNECTIONS_PER_KEY", 0), "active websocket limit per remote IP/token; 0=default, negative=disable")
 	debug := flag.Bool("debug", debugDefault, "enable verbose relay interaction logs (or ATTERM_RELAY_DEBUG=1)")
 	debugPayload := flag.Bool("debug-payload", debugPayloadDefault, "include IN/OUT byte contents in debug logs (or ATTERM_RELAY_DEBUG_PAYLOAD=1)")
-	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (weak token); development/private networks only")
+	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (weak admin token); development/private networks only")
 	flag.Parse()
 
-	cfg, _, err := buildRelayConfig(relayOptions{
-		addr:         *addr,
-		webDir:       *webDir,
-		version:      Version,
-		token:        os.Getenv("ATTERM_TOKEN"),
-		readOnly:     *readOnlyTokens,
-		origins:      *origins,
-		configPath:   *configPath,
-		adminToken:   *adminToken,
-		rateLimit:    *rateLimit,
-		maxConns:     *maxConns,
-		debug:        *debug || *debugPayload,
-		debugPayload: *debugPayload,
-		devInsecure:  *devInsecure,
-		log:          os.Stderr,
-	})
-	if err != nil {
-		log.Fatal(err)
+	publicListen := isPublicListenAddr(*addr)
+	cleanAdminToken := strings.TrimSpace(*adminToken)
+
+	// SEC-6: enforce admin-token strength on public listeners unless --dev-insecure.
+	if publicListen && !*devInsecure {
+		if cleanAdminToken == "" {
+			log.Fatal("ATTERM_ADMIN_TOKEN must be set for a public relay; pass --dev-insecure to skip (development only)")
+		}
+		if err := validateAdminToken(cleanAdminToken); err != nil {
+			log.Fatalf("%v; pass --dev-insecure to skip (development only)", err)
+		}
+	} else if !publicListen && cleanAdminToken == "" {
+		// Loopback: require non-empty token but skip strength check.
+		log.Fatal("ATTERM_ADMIN_TOKEN must be non-empty; use a strong token in production")
 	}
 
-	// Resolve persistence directory. If --config-dir not set, derive from
-	// --config file path or fall back to ./data/atterm-relay.
-	wpDir := *configDir
-	if wpDir == "" && *configPath != "" {
-		wpDir = filepath.Dir(*configPath)
+	allowedOrigins := allowedOriginHosts(*origins)
+	if publicListen && len(allowedOrigins) == 0 && !*devInsecure {
+		log.Fatal("refusing public relay without --origins; set --origins https://relay.example.com or pass --dev-insecure for development")
 	}
-	if wpDir == "" {
-		wpDir = "./data/atterm-relay"
+
+	// Resolve persistence directory.
+	persistDir := *configDir
+	if persistDir == "" && *configPath != "" {
+		persistDir = filepath.Dir(*configPath)
 	}
-	wpSvc, wpErr := webpush.Open(wpDir, *vapidSubject)
+	if persistDir == "" {
+		persistDir = "./data/atterm-relay"
+	}
+
+	// Open user store (SQLite). Create the persistence directory if it
+	// doesn't exist yet — first-run bootstrap should "just work" without
+	// requiring the operator to pre-create the directory. Without this
+	// SQLite fails with a misleading "out of memory (CANTOPEN)" error.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := os.MkdirAll(persistDir, 0o700); err != nil {
+		log.Fatalf("create persist dir %s: %v", persistDir, err)
+	}
+
+	dbPath := filepath.Join(persistDir, "users.db")
+	store, err := userstore.Open(ctx, dbPath)
+	if err != nil {
+		log.Fatalf("open userstore: %v", err)
+	}
+
+	adminCfg := relay.AdminConfig{}
+	var adminStore *relay.AdminConfigStore
+	if *configPath != "" {
+		var err error
+		adminCfg, err = relay.LoadAdminConfig(*configPath)
+		if err != nil {
+			log.Fatalf("load relay config: %v", err)
+		}
+		adminStore = relay.NewAdminConfigStore(*configPath, adminCfg)
+	}
+	rateVal := *rateLimit
+	if rateVal == 0 {
+		rateVal = adminCfg.RateLimitPerMinute
+	}
+	maxVal := *maxConns
+	if maxVal == 0 {
+		maxVal = adminCfg.MaxConnectionsPerKey
+	}
+
+	resolver := relay.NewIdentityResolver(store, cleanAdminToken)
+
+	cfg := relay.Config{
+		WebDir:               *webDir,
+		Version:              Version,
+		AllowedOrigins:       allowedOrigins,
+		Debug:                *debug || *debugPayload,
+		DebugPayload:         *debugPayload,
+		RateLimitPerMinute:   rateVal,
+		MaxConnectionsPerKey: maxVal,
+		AdminToken:           cleanAdminToken,
+		AdminConfigStore:     adminStore,
+		Resolver:             resolver,
+		Store:                store,
+	}
+
+	wpSvc, wpErr := webpush.Open(persistDir, *vapidSubject)
 	if wpErr != nil {
 		log.Printf("WARN: web-push disabled: %v", wpErr)
 		wpSvc = nil
 	}
 	cfg.WebPush = wpSvc
 
+	if *devInsecure {
+		log.Printf("WARNING: INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")
+	}
+
 	srv := relay.NewServer(cfg)
 
 	if wpSvc != nil {
-		wpSvc.SetSessionResolver(srv.WebPushSessionResolver)
+		// Schedule daily cleanup of legacy web-push subscription files.
+		go func() {
+			t := time.NewTicker(24 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					if err := webpush.CleanupLegacy(ctx, persistDir); err != nil {
+						log.Printf("webpush: CleanupLegacy: %v", err)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
 	}
 
 	httpSrv := &http.Server{
@@ -91,9 +160,6 @@ func main() {
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		log.Printf("atterm-relay listening on %s", *addr)
@@ -189,120 +255,12 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, value)
 }
 
-type relayOptions struct {
-	addr         string
-	webDir       string
-	version      string
-	token        string
-	readOnly     string
-	origins      string
-	configPath   string
-	adminToken   string
-	rateLimit    int
-	maxConns     int
-	debug        bool
-	debugPayload bool
-	devInsecure  bool
-	log          io.Writer
-}
-
-func buildRelayConfig(opts relayOptions) (relay.Config, string, error) {
-	token := strings.TrimSpace(opts.token)
-	generated := false
-	if token == "" {
-		var err error
-		token, err = generateRelayToken()
-		if err != nil {
-			return relay.Config{}, "", err
-		}
-		generated = true
-	}
-	publicListen := isPublicListenAddr(opts.addr)
-	weakToken := token == "dev" || len(token) < 16
-	if publicListen && weakToken && !opts.devInsecure {
-		return relay.Config{}, "", fmt.Errorf("refusing public relay with weak token; set a strong ATTERM_TOKEN or pass --dev-insecure for development")
-	}
-	allowedOrigins := allowedOriginHosts(opts.origins)
-	if publicListen && len(allowedOrigins) == 0 && !opts.devInsecure {
-		return relay.Config{}, "", fmt.Errorf("refusing public relay without --origins; set --origins https://relay.example.com or pass --dev-insecure for development")
-	}
-	adminToken := strings.TrimSpace(opts.adminToken)
-	if publicListen && adminToken != "" && isWeakAdminToken(adminToken) && !opts.devInsecure {
-		return relay.Config{}, "", fmt.Errorf("refusing public relay with weak admin token; set a strong ATTERM_ADMIN_TOKEN or pass --dev-insecure for development")
-	}
-	adminCfg := relay.AdminConfig{}
-	var adminStore *relay.AdminConfigStore
-	if opts.configPath != "" {
-		var err error
-		adminCfg, err = relay.LoadAdminConfig(opts.configPath)
-		if err != nil {
-			return relay.Config{}, "", fmt.Errorf("load relay config: %w", err)
-		}
-		adminStore = relay.NewAdminConfigStore(opts.configPath, adminCfg)
-	}
-	rateLimit := opts.rateLimit
-	if rateLimit == 0 {
-		rateLimit = adminCfg.RateLimitPerMinute
-	}
-	maxConns := opts.maxConns
-	if maxConns == 0 {
-		maxConns = adminCfg.MaxConnectionsPerKey
-	}
-	readOnlyHashes := make([]string, 0, len(adminCfg.ReadOnlyTokens))
-	for _, tok := range adminCfg.ReadOnlyTokens {
-		readOnlyHashes = append(readOnlyHashes, tok.Hash)
-	}
-
-	cfg := relay.Config{
-		Token:                token,
-		ReadOnlyTokens:       splitCSV(opts.readOnly),
-		ReadOnlyTokenHashes:  readOnlyHashes,
-		WebDir:               opts.webDir,
-		Version:              opts.version,
-		AllowedOrigins:       allowedOrigins,
-		Debug:                opts.debug || opts.debugPayload,
-		DebugPayload:         opts.debugPayload,
-		RateLimitPerMinute:   rateLimit,
-		MaxConnectionsPerKey: maxConns,
-		AdminToken:           adminToken,
-		AdminConfigStore:     adminStore,
-	}
-	logStartupSecurity(opts, token, generated, publicListen)
-	return cfg, token, nil
-}
-
-func logStartupSecurity(opts relayOptions, token string, generated, publicListen bool) {
-	w := opts.log
-	if w == nil {
-		w = os.Stderr
-	}
-	logger := log.New(w, "", log.LstdFlags)
-	if generated {
-		logger.Printf("generated relay token: %s", token)
-		logger.Printf("open %s/#token=%s", relayHTTPURL(opts.addr), token)
-	}
-	if opts.devInsecure {
-		logger.Printf("WARNING: INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")
-	}
-	if publicListen && !opts.devInsecure {
-		logger.Printf("relay security: public listen requires a strong token")
-		if strings.TrimSpace(opts.origins) == "" {
-			logger.Printf("WARNING: --origins not set; browser WebSocket upgrades from any Origin are allowed")
-		}
-	}
-}
-
 func generateRelayToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-func isWeakAdminToken(token string) bool {
-	token = strings.TrimSpace(token)
-	return token == "admin" || token == "dev" || len(token) < 16
 }
 
 func isPublicListenAddr(addr string) bool {

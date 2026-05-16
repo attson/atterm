@@ -53,19 +53,19 @@ func TestServiceAddAndRemoveSubscriptionRoundTrip(t *testing.T) {
 	sub := Subscription{Endpoint: "https://push.example/abc"}
 	sub.Keys.P256dh = "p"
 	sub.Keys.Auth = "a"
-	if err := svc.AddSubscription("tokhash", sub); err != nil {
+	if err := svc.AddSubscription("user1", sub); err != nil {
 		t.Fatalf("AddSubscription: %v", err)
 	}
 	// New Open should see the persisted subscription.
 	svc2, _ := Open(dir, "mailto:test@example.com")
-	if got := svc2.subStore.ByToken("tokhash"); len(got) != 1 || got[0].Endpoint != sub.Endpoint {
+	if got := svc2.SubscriptionsForUser("user1"); len(got) != 1 || got[0].Endpoint != sub.Endpoint {
 		t.Fatalf("persisted subs not loaded; got %v", got)
 	}
-	if err := svc.RemoveSubscription("tokhash", sub.Endpoint); err != nil {
+	if err := svc.RemoveSubscription("user1", sub.Endpoint); err != nil {
 		t.Fatalf("RemoveSubscription: %v", err)
 	}
 	svc3, _ := Open(dir, "mailto:test@example.com")
-	if got := svc3.subStore.ByToken("tokhash"); len(got) != 0 {
+	if got := svc3.SubscriptionsForUser("user1"); len(got) != 0 {
 		t.Fatalf("subs not removed after persist; got %v", got)
 	}
 }

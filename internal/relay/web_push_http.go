@@ -10,14 +10,62 @@ import (
 	"github.com/attson/atterm/internal/webpush"
 )
 
+// requireUserPrincipal resolves the identity for a web-push request and
+// enforces that the caller is an authenticated user (cookie or API token).
+//
+//   - PrincipalUser  → returns the userID, ok=true
+//   - PrincipalNone  → writes 401 and returns ok=false
+//   - PrincipalAdmin → writes 403 and returns ok=false
+//
+// When s.cfg.Resolver is nil the server is operating in legacy shared-token
+// mode; in that case the original authorizeClientWithConfig gate is applied
+// and the token hash is returned as the key.
+func (s *Server) requireUserPrincipal(w http.ResponseWriter, r *http.Request) (userID string, ok bool) {
+	if s.cfg.Resolver == nil {
+		// Legacy mode: fall back to shared-token gate.
+		if authorizeClientWithConfig(r, s.cfg) == authNone {
+			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
+			return "", false
+		}
+		token := tokenFromRequestNoQuery(r)
+		if token == "" {
+			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing token"})
+			return "", false
+		}
+		return tokenHash(token), true
+	}
+
+	p := s.cfg.Resolver.Resolve(r)
+	switch p.Kind {
+	case PrincipalUser:
+		return p.UserID, true
+	case PrincipalNone:
+		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return "", false
+	default: // PrincipalAdmin or any future kind
+		writePushJSON(w, http.StatusForbidden, map[string]string{"error": "user account required"})
+		return "", false
+	}
+}
+
 func (s *Server) handlePushKey(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.WebPush == nil {
 		writePushJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "web push disabled"})
 		return
 	}
-	if authorizeClientWithConfig(r, s.cfg) == authNone {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
-		return
+	// /api/push/key is read-only; allow any authenticated principal (including
+	// admin) so the browser can fetch the VAPID key before subscribing.
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind == PrincipalNone {
+			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
+			return
+		}
+	} else {
+		if authorizeClientWithConfig(r, s.cfg) == authNone {
+			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
+			return
+		}
 	}
 	writePushJSON(w, http.StatusOK, map[string]string{"key": s.cfg.WebPush.PublicKey()})
 }
@@ -27,13 +75,8 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		writePushJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "web push disabled"})
 		return
 	}
-	if authorizeClientWithConfig(r, s.cfg) == authNone {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
-		return
-	}
-	token := tokenFromRequestNoQuery(r)
-	if token == "" {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing token"})
+	userID, ok := s.requireUserPrincipal(w, r)
+	if !ok {
 		return
 	}
 	var sub webpush.Subscription
@@ -50,7 +93,7 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sub.CreatedAt = time.Now().Unix()
-	if err := s.cfg.WebPush.AddSubscription(tokenHash(token), sub); err != nil {
+	if err := s.cfg.WebPush.AddSubscription(userID, sub); err != nil {
 		writePushJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -62,13 +105,8 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		writePushJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "web push disabled"})
 		return
 	}
-	if authorizeClientWithConfig(r, s.cfg) == authNone {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
-		return
-	}
-	token := tokenFromRequestNoQuery(r)
-	if token == "" {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing token"})
+	userID, ok := s.requireUserPrincipal(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -78,7 +116,7 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		writePushJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	_ = s.cfg.WebPush.RemoveSubscription(tokenHash(token), body.Endpoint)
+	_ = s.cfg.WebPush.RemoveSubscription(userID, body.Endpoint)
 	writePushJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -87,16 +125,11 @@ func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 		writePushJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "web push disabled"})
 		return
 	}
-	if authorizeClientWithConfig(r, s.cfg) == authNone {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
+	userID, ok := s.requireUserPrincipal(w, r)
+	if !ok {
 		return
 	}
-	token := tokenFromRequestNoQuery(r)
-	if token == "" {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing token"})
-		return
-	}
-	n := s.cfg.WebPush.SendTest(tokenHash(token))
+	n := s.cfg.WebPush.SendTest(userID)
 	writePushJSON(w, http.StatusOK, map[string]int{"sent": n})
 }
 

@@ -109,8 +109,9 @@ if err != nil {
 - 测试名 `TestXxx` PascalCase
 - 用 `testing.Short()` 跳过慢测试
 - e2e 必须自包含：起 server、起 client、断言完整流程
-- 安全边界必须有测试：relay token/`--dev-insecure`/只读 token/限流行为在
-  `cmd/atterm-relay/main_test.go` 与 `internal/relay/*_test.go`；桌面 ws/wss 策略在
+- 安全边界必须有测试：admin token 强度 / `--dev-insecure` / CSRF / 限流 / owner-binding 在
+  `cmd/atterm-relay/main_test.go` 与 `internal/relay/*_test.go`；用户系统 CRUD 与
+  argon2 timing 在 `internal/userstore/*_test.go`；桌面 ws/wss 策略在
   `desktop/relay_security_test.go`；owner remote permission 要同时覆盖 relay 拦截
   与 desktop uplink 本机写 PTY 前拦截；自动更新签名/hash 校验在 `desktop/updater_test.go`
 
@@ -178,7 +179,7 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
 - ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用同源 vendored 资源，避免 CSP/PWA 回归
 - ❌ 服务端接受 `?token=` 鉴权，或让浏览器长期把 secret 留在地址栏、日志或可分享 URL 中；手工打开 web 页面只能用 `#token=...` fragment bootstrap，WS 鉴权必须用 `Sec-WebSocket-Protocol`
-- ❌ 让 relay admin config 持久化主 write token；只能保存 hash 后的只读 token
+- ❌ 把用户凭据明文（密码、邀请码、API token、cookie 值）写进数据库、日志或任何持久化路径——全部以 sha256/argon2id 散列存储，明文仅在签发时返回一次
 - ❌ 把远程权限只做成 UI 提示；relay 和 desktop host 都必须实际拦截越权帧
 
 ## Release 签名与发版

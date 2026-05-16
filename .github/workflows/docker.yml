@@ -2,9 +2,15 @@ name: docker
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
+
+# Cancel an in-progress run when a newer push lands on the same ref.
+# Each tag gets its own group, so a release in flight is never aborted
+# by an unrelated dispatch.
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -29,6 +35,10 @@ jobs:
       - name: docker tags
         id: docker-tags
         shell: bash
+        # Releases (tag push) get :latest + :vX.Y.Z + :X.Y.Z.
+        # Manual dispatch from a non-tag ref gets :dev only — never touches
+        # :latest, so production watchtower deployments are not surprised
+        # by a non-release build.
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME}"
@@ -41,7 +51,7 @@ jobs:
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
           else
-            echo "tags=${DOCKER_IMAGE}:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=${DOCKER_IMAGE}:dev" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: docker/setup-qemu-action@v3

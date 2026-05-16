@@ -47,7 +47,7 @@ func (c *PluginConfig) applyDefaults() {
 	}
 	if c.FileExplorer.PanelWidthPx == 0 {
 		c.FileExplorer.PanelWidthPx = 380
-		c.FileExplorer.PanelCollapsed = true
+		c.FileExplorer.PanelCollapsed = false
 		c.FileExplorer.InnerTreeRatio = 0.3
 		c.FileExplorer.ShowHidden = false
 	}

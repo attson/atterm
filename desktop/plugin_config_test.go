@@ -35,8 +35,8 @@ func TestPluginConfigDefaults(t *testing.T) {
 	if c.FileExplorer.PanelWidthPx != 380 {
 		t.Errorf("PanelWidthPx default = %d, want 380", c.FileExplorer.PanelWidthPx)
 	}
-	if !c.FileExplorer.PanelCollapsed {
-		t.Error("PanelCollapsed default should be true")
+	if c.FileExplorer.PanelCollapsed {
+		t.Error("PanelCollapsed default should be false (expanded on enable)")
 	}
 	if c.FileExplorer.InnerTreeRatio != 0.3 {
 		t.Errorf("InnerTreeRatio default = %v, want 0.3", c.FileExplorer.InnerTreeRatio)

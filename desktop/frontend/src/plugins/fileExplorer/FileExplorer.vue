@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Pin, PinOff } from "lucide-vue-next";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
@@ -44,7 +44,25 @@ const { onMouseDown: onDividerDown } = useResizer({
   },
 });
 
-const root = computed<string | null>(() => pinned.value ?? props.context.activeCwd.value);
+// lastCwd retains the last non-empty cwd we've seen so the panel keeps a
+// stable root during the brief window when a freshly-spawned session's
+// optimistic SessionInfo entry has been overwritten by a stale server
+// listing push, or when the active pane is empty (pre-fill split).
+const lastCwd = ref<string>("");
+watch(
+  () => props.context.activeCwd.value,
+  (val) => {
+    if (val) lastCwd.value = val;
+  },
+  { immediate: true },
+);
+
+const root = computed<string | null>(() => {
+  if (pinned.value) return pinned.value;
+  const cur = props.context.activeCwd.value;
+  if (cur) return cur;
+  return lastCwd.value || null;
+});
 
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
 

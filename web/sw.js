@@ -1,8 +1,14 @@
-const CACHE = "at-term-web-v6";
+// Bump CACHE whenever any cached asset changes shape. Without a bump the
+// install-event re-fetches the same names but cache-first wins, so clients
+// keep serving the old file. The activate handler below evicts older caches.
+const CACHE = "at-term-web-v7";
 const ASSETS = [
   "./",
   "./app-core.js",
   "./app.js",
+  "./login.js",
+  "./signup.js",
+  "./settings.js",
   "./style.css",
   "./vendor/xterm/xterm.css",
   "./vendor/xterm/xterm.js",

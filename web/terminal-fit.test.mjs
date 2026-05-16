@@ -39,5 +39,16 @@ test("web terminal uses a route class for full-height layout", () => {
 });
 
 test("service worker cache is bumped for web shell asset changes", () => {
-  assert.match(sw, /at-term-web-v6/);
+  assert.match(sw, /at-term-web-v7/);
+});
+
+test("service worker precaches login/signup/settings js so split-out auth-page modules stay consistent", () => {
+  // login.js / signup.js / settings.js are now the bootstraps for the
+  // auth pages. If sw caches a stale app-core.js without also pre-caching
+  // these, the page imports a fetchVersionLabel that doesn't exist and
+  // submit handlers never bind — exactly the v0.1.66 outage. Keep all of
+  // them in the cache list so a CACHE bump refreshes them atomically.
+  assert.match(sw, /\.\/login\.js/);
+  assert.match(sw, /\.\/signup\.js/);
+  assert.match(sw, /\.\/settings\.js/);
 });

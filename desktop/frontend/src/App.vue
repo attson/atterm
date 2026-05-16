@@ -779,6 +779,7 @@ onUnmounted(() => {
             :active="t.id === currentTabId"
             :terminal-theme="currentTerminalTheme.xtermTheme"
             :command-notify-threshold-sec="commandNotifyThresholdSec"
+            :plugin-context="pluginContext"
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
             @close-pane="(idx) => closePaneAt(t, idx)"
             @toast="showToast"
@@ -797,7 +798,8 @@ onUnmounted(() => {
         </template>
       </template>
     </div>
-    <PluginHost slot-id="bottom-toolbar" :context="pluginContext" class="bottom-toolbar" />
+    <!-- Bottom-toolbar plugins (Quick Input) live inside each active pane via
+         PaneGrid so they sit right next to the pane that receives their input. -->
 
     <SettingsDialog
       v-if="showSettings"

@@ -1,10 +1,12 @@
 <script lang="ts" setup>
 import { computed } from "vue";
 import TerminalView from "./TerminalView.vue";
+import PluginHost from "../plugins/PluginHost.vue";
 import type { Endpoint } from "../lib/api";
 import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab } from "../lib/types";
 import type { TerminalThemeDefinition } from "../lib/terminalThemes";
+import type { PluginContext } from "../plugins/types";
 import { extractSessionLabel } from "../lib/terminalBell";
 
 const props = defineProps<{
@@ -14,6 +16,7 @@ const props = defineProps<{
   active: boolean;
   terminalTheme: TerminalThemeDefinition["xtermTheme"];
   commandNotifyThresholdSec: number;
+  pluginContext: PluginContext;
 }>();
 
 const emit = defineEmits<{
@@ -50,26 +53,37 @@ function formatWho(info: SessionInfo | null): string {
       v-for="(pane, idx) in tab.panes"
       :key="idx"
       class="cell"
+      :class="{ 'has-bottom-toolbar': active && idx === tab.activePaneIdx }"
       :style="{ gridArea: areaFor[idx] }"
       @mousedown="onPaneClick(idx)"
     >
-      <TerminalView
-        v-if="pane.sessionId && endpointFor(pane)"
-        :endpoint="endpointFor(pane)!"
-        :session-id="pane.sessionId"
-        :active="active"
-        :focused="active && idx === tab.activePaneIdx"
-        :expected-cols="sessionInfoFor(pane)?.cols"
-        :expected-rows="sessionInfoFor(pane)?.rows"
-        :remote-permission="sessionInfoFor(pane)?.remote_permission"
-        :session-label="extractSessionLabel(sessionInfoFor(pane))"
-        :avoid-top-right-badge="pane.remote"
-        :theme="terminalTheme"
-        :is-local-session="!pane.remote"
-        :command-notify-threshold-sec="commandNotifyThresholdSec"
-        @toast="emit('toast', $event)"
+      <div class="term-host">
+        <TerminalView
+          v-if="pane.sessionId && endpointFor(pane)"
+          :endpoint="endpointFor(pane)!"
+          :session-id="pane.sessionId"
+          :active="active"
+          :focused="active && idx === tab.activePaneIdx"
+          :expected-cols="sessionInfoFor(pane)?.cols"
+          :expected-rows="sessionInfoFor(pane)?.rows"
+          :remote-permission="sessionInfoFor(pane)?.remote_permission"
+          :session-label="extractSessionLabel(sessionInfoFor(pane))"
+          :avoid-top-right-badge="pane.remote"
+          :theme="terminalTheme"
+          :is-local-session="!pane.remote"
+          :command-notify-threshold-sec="commandNotifyThresholdSec"
+          @toast="emit('toast', $event)"
+        />
+        <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
+      </div>
+
+      <!-- Bottom-toolbar plugin slot pinned to the active pane only. -->
+      <PluginHost
+        v-if="active && idx === tab.activePaneIdx"
+        slot-id="bottom-toolbar"
+        :context="pluginContext"
+        class="cell-bottom-slot"
       />
-      <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
 
       <div class="cell-controls">
         <div
@@ -132,6 +146,23 @@ function formatWho(info: SessionInfo | null): string {
   position: relative;
   background: var(--terminal-bg);
   overflow: hidden;
+}
+.term-host {
+  position: absolute;
+  inset: 0;
+}
+.cell.has-bottom-toolbar .term-host {
+  bottom: 32px;
+}
+.cell-bottom-slot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 32px;
+  background: var(--ed-tab-bg, var(--terminal-bg));
+  border-top: 1px solid var(--ed-border, rgba(255, 255, 255, 0.08));
+  z-index: 2;
 }
 .empty {
   position: absolute;

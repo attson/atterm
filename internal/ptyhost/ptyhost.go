@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 // Config configures a PTY child process.
@@ -57,6 +58,17 @@ func Open(ctx context.Context, cfg Config) (*Host, error) {
 	ptmx, err := pty.StartWithSize(cmd, ws)
 	if err != nil {
 		return nil, err
+	}
+	// Tell the kernel line discipline that input is UTF-8. Without this,
+	// echo + backspace handling on multi-byte characters whose continuation
+	// bytes fall in the C1 control range (0x80-0x9F) — e.g. "发布" → e5 8f
+	// 91 e5 b8 83 — gets each C1-range byte expanded into a literal "<00NN>"
+	// glyph by the kernel's control-character display path, which the client
+	// xterm then renders as garbled boxes. IUTF8 makes the kernel treat the
+	// continuation bytes as part of one character.
+	if t, terr := unix.IoctlGetTermios(int(ptmx.Fd()), termiosGetReq); terr == nil {
+		t.Iflag |= unix.IUTF8
+		_ = unix.IoctlSetTermios(int(ptmx.Fd()), termiosSetReq, t)
 	}
 	return &Host{cmd: cmd, ptmx: ptmx}, nil
 }

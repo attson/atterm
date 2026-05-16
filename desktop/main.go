@@ -48,6 +48,7 @@ func main() {
 		},
 		Bind: []interface{}{
 			app,
+			app.pluginFS,
 		},
 	}
 

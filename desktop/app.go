@@ -94,11 +94,13 @@ type App struct {
 	// via ConfirmQuit(), subsequent close attempts proceed without the
 	// before-close prompt round trip.
 	quitApproved atomic.Bool
+
+	pluginFS *PluginFS
 }
 
 // NewApp creates a new App application struct.
 func NewApp(cfgStore *configStore, logger *loggingManager) *App {
-	a := &App{cfgStore: cfgStore, logger: logger}
+	a := &App{cfgStore: cfgStore, logger: logger, pluginFS: NewPluginFS()}
 	a.updater = newUpdater(updaterConfig{
 		current:         Version,
 		repo:            "attson/atterm",
@@ -113,6 +115,7 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 // exists yet — they seed the first run.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.pluginFS.setupWatcher(ctx)
 	h, err := startRelayHost()
 	if err != nil {
 		log.Fatalf("desktop: start relay host: %v", err)

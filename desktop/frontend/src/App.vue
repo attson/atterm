@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
@@ -8,6 +8,16 @@ import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
+import PluginHost from "./plugins/PluginHost.vue";
+import { createPluginContext } from "./plugins/usePluginContext";
+import { useResizer } from "./plugins/useResizer";
+import { usePluginConfigStore } from "./plugins/configStore";
+import { sendInputToSession } from "./lib/sendInput";
+// Plugin theme palettes (CSS vars). Loaded in main bundle so the panel
+// toggle and Quick Input toolbar can read --ed-* vars even when the
+// file-explorer chunk is not yet loaded.
+import "./plugins/fileExplorer/theme.css";
+import { isLightTerminalTheme } from "./lib/terminalThemes";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
   closeSession,
@@ -194,6 +204,93 @@ const newId = () =>
 const currentTab = computed<Tab | null>(
   () => tabs.value.find((t) => t.id === currentTabId.value) ?? null,
 );
+
+// Keep a Ref (not ComputedRef) so it satisfies PluginContextInputs.activePane.
+const activePaneRef = ref<Pane | null>(null);
+watch(
+  [() => currentTab.value, () => currentTab.value?.activePaneIdx],
+  () => {
+    const t = currentTab.value;
+    activePaneRef.value = t ? t.panes[t.activePaneIdx] ?? null : null;
+  },
+  { immediate: true, deep: false },
+);
+
+// Each TerminalView registers a driver-side input sender keyed by sessionId.
+// Plugins (Quick Input) route their send() through this map so input rides
+// the existing driver SessionConnection — a freshly attached connection
+// would be a viewer and the relay would drop its IN frames.
+const pluginInputSenders = new Map<string, (text: string) => void>();
+provide("atterm:pluginInputSenders", pluginInputSenders);
+
+const pluginContext = createPluginContext({
+  activePane: activePaneRef,
+  endpointForPane: endpointFor,
+  sessionInfoForPane: paneSessionInfo,
+  sendToSession: (sessionId, endpoint, text) => {
+    const sender = pluginInputSenders.get(sessionId);
+    if (sender) {
+      sender(text);
+      return;
+    }
+    // Fallback for sessions without a mounted TerminalView. Will likely be
+    // a viewer-only connection; relay may drop the IN, but it's better than
+    // no attempt.
+    sendInputToSession(endpoint, sessionId, text);
+  },
+  showToast,
+  terminalThemeId: currentTerminalThemeID,
+});
+
+const pluginStore = usePluginConfigStore();
+
+const persistedPanelWidth = computed(() => pluginStore.cfg?.fileExplorer.panelWidthPx ?? 380);
+const dragPanelWidth = ref<number | null>(null);
+const panelWidth = computed(() => dragPanelWidth.value ?? persistedPanelWidth.value);
+
+const panelCollapsed = computed({
+  get: () => pluginStore.cfg?.fileExplorer.panelCollapsed ?? true,
+  set: (v: boolean) => {
+    if (!pluginStore.cfg) return;
+    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
+    next.fileExplorer.panelCollapsed = v;
+    void pluginStore.save(next);
+  },
+});
+
+function togglePanel() { panelCollapsed.value = !panelCollapsed.value; }
+
+// True when at least one right-panel plugin is enabled. Suppresses the
+// collapse handle entirely when the slot has nothing to host.
+const rightPanelHasPlugin = computed(() => pluginStore.isPluginEnabled("file-explorer"));
+
+// Derive a plugin-side theme name from the active terminal theme so the
+// global --ed-* CSS vars on .app can paint the panel toggle, Quick Input
+// bar, and the file explorer in matching dimmed/light skins.
+const fileExplorerTheme = computed<"dimmed" | "light">(() =>
+  isLightTerminalTheme(currentTerminalThemeID.value) ? "light" : "dimmed",
+);
+
+const { onMouseDown: onPanelResizeDown } = useResizer({
+  onDrag: (deltaX) => {
+    // useResizer reports deltaX = -mouseMovementX (right drag → negative).
+    // The resizer sits on the panel's left edge, so dragging right shrinks
+    // the panel: panelWidth + deltaX = panelWidth - movement.
+    const current = dragPanelWidth.value ?? persistedPanelWidth.value;
+    const next = Math.max(240, Math.min(current + deltaX, window.innerWidth * 0.7));
+    dragPanelWidth.value = next;
+  },
+  onEnd: () => {
+    if (dragPanelWidth.value === null || !pluginStore.cfg) {
+      dragPanelWidth.value = null;
+      return;
+    }
+    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
+    next.fileExplorer.panelWidthPx = dragPanelWidth.value;
+    void pluginStore.save(next);
+    dragPanelWidth.value = null;
+  },
+});
 
 // Sessions visible across all current tabs (drives sweep + remote-discover panel).
 const allUsedSessionIds = computed(() => {
@@ -625,7 +722,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" :style="themeStyle">
+  <div class="app" :class="`fe-theme-${fileExplorerTheme}`" :style="themeStyle">
     <header class="topbar">
       <div class="brand">AT Term</div>
       <div class="status">
@@ -696,28 +793,43 @@ onUnmounted(() => {
       @new="startNewTab"
     />
 
-    <main class="main">
-      <template v-if="localEndpoint">
-        <div v-if="tabs.length === 0" class="empty">
-          starting first session…
-        </div>
-        <PaneGrid
-          v-for="t in tabs"
-          v-show="t.id === currentTabId"
-          :key="t.id"
-          :tab="t"
-          :endpoint-for="endpointFor"
-          :session-info-for="paneSessionInfo"
-          :active="t.id === currentTabId"
-          :terminal-theme="currentTerminalTheme.xtermTheme"
-          :command-notify-threshold-sec="commandNotifyThresholdSec"
-          @set-active-pane="(idx) => (t.activePaneIdx = idx)"
-          @close-pane="(idx) => closePaneAt(t, idx)"
-          @toast="showToast"
-        />
+    <div class="main-row">
+      <main class="main">
+        <template v-if="localEndpoint">
+          <div v-if="tabs.length === 0" class="empty">
+            starting first session…
+          </div>
+          <PaneGrid
+            v-for="t in tabs"
+            v-show="t.id === currentTabId"
+            :key="t.id"
+            :tab="t"
+            :endpoint-for="endpointFor"
+            :session-info-for="paneSessionInfo"
+            :active="t.id === currentTabId"
+            :terminal-theme="currentTerminalTheme.xtermTheme"
+            :command-notify-threshold-sec="commandNotifyThresholdSec"
+            :plugin-context="pluginContext"
+            @set-active-pane="(idx) => (t.activePaneIdx = idx)"
+            @close-pane="(idx) => closePaneAt(t, idx)"
+            @toast="showToast"
+          />
+        </template>
+        <div v-if="toast" class="toast">{{ toast }}</div>
+      </main>
+      <template v-if="rightPanelHasPlugin">
+        <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? 'Show panel' : 'Hide panel'">
+          {{ panelCollapsed ? '‹' : '›' }}
+        </button>
+        <template v-if="!panelCollapsed">
+          <div class="right-resizer" @mousedown="onPanelResizeDown" />
+          <PluginHost slot-id="right-panel" :context="pluginContext" class="right-panel"
+                      :style="{ flex: '0 0 ' + panelWidth + 'px' }" />
+        </template>
       </template>
-      <div v-if="toast" class="toast">{{ toast }}</div>
-    </main>
+    </div>
+    <!-- Bottom-toolbar plugins (Quick Input) live inside each active pane via
+         PaneGrid so they sit right next to the pane that receives their input. -->
 
     <SettingsDialog
       v-if="showSettings"
@@ -805,7 +917,44 @@ onUnmounted(() => {
 }
 .auth-error-dismiss:hover { color: #fff; }
 
-.main { flex: 1 1 auto; position: relative; background: #000; overflow: hidden; }
+.main-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.main { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; background: #000; overflow: hidden; min-width: 0; }
+.right-resizer { width: 4px; cursor: col-resize; background: transparent; flex: 0 0 4px; }
+.right-resizer:hover { background: var(--ed-border, #2d333b); }
+.panel-toggle {
+  background: var(--ed-tab-bg, #21262d);
+  border: 1px solid var(--ed-border, #2d333b);
+  color: var(--ed-row-fg, #c9d1d9);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 11px;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+.panel-toggle:hover {
+  background: var(--ed-row-hover, #30363d);
+  color: var(--ed-tab-hover-fg, #ffffff);
+}
+.right-panel:empty {
+  display: none;
+}
+.right-panel {
+  border-left: 1px solid var(--ed-border, #2d333b);
+  overflow: hidden;
+}
+.bottom-toolbar:empty {
+  display: none;
+}
+.bottom-toolbar {
+  flex: 0 0 32px;
+  height: 32px;
+  background: var(--ed-tab-bg, transparent);
+  border-top: 1px solid var(--ed-border, #2d333b);
+}
 .empty {
   position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: var(--fg-dim); font-size: 13px;

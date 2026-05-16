@@ -1,0 +1,58 @@
+/*
+ * File Explorer theme palettes.
+ * Applied via class on FileExplorer.vue root. Two skins: dimmed (any dark
+ * terminal theme) and light (terminal "daylight").
+ * Custom properties read by FileTree / FileTabs / FileEditor.
+ */
+
+.fe-theme-dimmed {
+  --ed-shell-bg: #22272e;
+  --ed-tree-bg: #2d333b;
+  --ed-tree-header-bg: #22272e;
+  --ed-tree-header-fg: rgba(173, 186, 199, 0.7);
+  --ed-row-fg: #adbac7;
+  --ed-row-hover: #373e47;
+  --ed-row-selected: #444c56;
+  --ed-folder: #d4a14a;
+  --ed-chevron: rgba(173, 186, 199, 0.7);
+  --ed-indent-guide: rgba(173, 186, 199, 0.1);
+  --ed-tab-bg: #2d333b;
+  --ed-tab-fg: #768390;
+  --ed-tab-hover-fg: #adbac7;
+  --ed-tab-active-bg: #22272e;
+  --ed-tab-active-fg: #cdd9e5;
+  --ed-tab-active-bar: #539bf5;
+  --ed-border: #444c56;
+  --ed-editor-bg: #22272e;
+  --ed-editor-fg: #adbac7;
+  --ed-gutter-bg: #22272e;
+  --ed-gutter-fg: #545d68;
+  --ed-muted: rgba(173, 186, 199, 0.6);
+  --ed-error: #f47067;
+}
+
+.fe-theme-light {
+  --ed-shell-bg: #ffffff;
+  --ed-tree-bg: #f6f8fa;
+  --ed-tree-header-bg: #eef0f4;
+  --ed-tree-header-fg: rgba(36, 41, 47, 0.7);
+  --ed-row-fg: #24292f;
+  --ed-row-hover: rgba(36, 41, 47, 0.06);
+  --ed-row-selected: rgba(0, 92, 197, 0.13);
+  --ed-folder: #54aeff;
+  --ed-chevron: rgba(36, 41, 47, 0.55);
+  --ed-indent-guide: rgba(36, 41, 47, 0.08);
+  --ed-tab-bg: #eef0f4;
+  --ed-tab-fg: #57606a;
+  --ed-tab-hover-fg: #24292f;
+  --ed-tab-active-bg: #ffffff;
+  --ed-tab-active-fg: #24292f;
+  --ed-tab-active-bar: #fd8c73;
+  --ed-border: #d0d7de;
+  --ed-editor-bg: #ffffff;
+  --ed-editor-fg: #24292f;
+  --ed-gutter-bg: #f6f8fa;
+  --ed-gutter-fg: #6e7781;
+  --ed-muted: rgba(36, 41, 47, 0.6);
+  --ed-error: #cf222e;
+}

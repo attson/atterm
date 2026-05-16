@@ -70,6 +70,9 @@ type appConfig struct {
 	// commands shorter than this duration (start-to-finish) do not produce
 	// a notification. Nil → default 10. Clamped to [1, 600] at read time.
 	CommandNotifyThresholdSeconds *int `json:"command_notify_threshold_seconds,omitempty"`
+
+	// Plugins is the plugin-system block. Defaults filled in on first run.
+	Plugins PluginConfig `json:"plugins"`
 }
 
 // AutoCheckUpdatesOrDefault returns the user's preference, defaulting to
@@ -183,6 +186,7 @@ func loadConfig() *configStore {
 		return s
 	}
 	_ = json.Unmarshal(data, &s.cfg)
+	applyConfigDefaults(&s.cfg)
 	return s
 }
 
@@ -214,4 +218,10 @@ func (s *configStore) Set(c appConfig) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+// applyConfigDefaults fills nil/zero fields with their defaults. Called from
+// loadConfig() after JSON unmarshal. Idempotent.
+func applyConfigDefaults(c *appConfig) {
+	c.Plugins.applyDefaults()
 }

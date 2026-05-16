@@ -192,6 +192,9 @@ export class SessionConnection {
   // CONNECTING state). Flushed in ws.onopen right after the ATTACH frame.
   // Only the most recent request is kept; earlier ones are stale.
   private pendingResize: { cols: number; rows: number } | null = null;
+  // Inputs queued while WS was still CONNECTING (e.g. plugin send right after
+  // SessionConnection.attach). Flushed in ws.onopen after ATTACH+RESIZE.
+  private pendingInputs: string[] = [];
   // clientID identifies this SessionConnection end-to-end. Sent in ATTACH,
   // echoed back in META.driver_client_id when this connection is the driver.
   private clientID: string;
@@ -233,7 +236,12 @@ export class SessionConnection {
   }
 
   sendInput(s: string): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.ws || this.ws.readyState === WebSocket.CONNECTING) {
+      // Queue while the socket is opening; ws.onopen flushes after ATTACH.
+      this.pendingInputs.push(s);
+      return;
+    }
+    if (this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
   }
 
@@ -305,6 +313,13 @@ export class SessionConnection {
         const { cols, rows } = this.pendingResize;
         this.pendingResize = null;
         ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));
+      }
+      if (this.pendingInputs.length > 0) {
+        const queued = this.pendingInputs;
+        this.pendingInputs = [];
+        for (const s of queued) {
+          ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
+        }
       }
     };
 

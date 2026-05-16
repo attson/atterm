@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
@@ -72,6 +72,14 @@ const localHostname = ref("");
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
+
+// Map<sessionId, (text) => void> provided by App.vue. Plugins use it to
+// reuse the active driver SessionConnection for input. Absent (undefined)
+// when this TerminalView is rendered outside the plugin-aware App.
+const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
+  "atterm:pluginInputSenders",
+  null,
+);
 let resizeObserver: ResizeObserver | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
 
@@ -348,6 +356,11 @@ function startConnection() {
     { clientName: localHostname.value }
   );
   conn.attach();
+  // Register a driver-side input sender for this session so plugins
+  // (Quick Input) can pipe text through this same driver connection.
+  // A fresh SessionConnection would attach as a viewer and have its
+  // IN frames dropped by the relay.
+  pluginInputSenders?.set(props.sessionId, (text: string) => conn?.sendInput(text));
   // Skip the no-op RESIZE if our fit landed on the same size the relay
   // already knows about. Net effect: locally-spawned shells (PTY born at
   // predicted dims) and cross-attached shells whose owner happens to be
@@ -390,6 +403,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener("mousedown", onDocumentMouseDown);
   document.removeEventListener("keydown", onDocumentKeyDown);
+  pluginInputSenders?.delete(props.sessionId);
   conn?.detach();
   conn = null;
   resizeObserver?.disconnect();

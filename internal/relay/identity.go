@@ -51,8 +51,12 @@ func (r *IdentityResolver) Resolve(req *http.Request) Principal {
 	if c, err := req.Cookie("atterm_session"); err == nil && c.Value != "" {
 		userID, csrfSecret, err := r.store.LookupWebSession(req.Context(), c.Value)
 		if err == nil {
+			kind := PrincipalUser
+			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
+				kind = PrincipalAdmin
+			}
 			return Principal{
-				Kind:       PrincipalUser,
+				Kind:       kind,
 				UserID:     userID,
 				Scope:      authWrite,
 				CSRFSecret: csrfSecret,
@@ -67,8 +71,12 @@ func (r *IdentityResolver) Resolve(req *http.Request) Principal {
 	if tok := tokenFromIdentityRequest(req); tok != "" {
 		tokenID, userID, err := r.store.LookupAPIToken(req.Context(), tok)
 		if err == nil {
+			kind := PrincipalUser
+			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
+				kind = PrincipalAdmin
+			}
 			return Principal{
-				Kind:    PrincipalUser,
+				Kind:    kind,
 				UserID:  userID,
 				TokenID: tokenID,
 				Scope:   authWrite,

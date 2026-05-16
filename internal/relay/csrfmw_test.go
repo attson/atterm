@@ -25,6 +25,12 @@ func (s *csrfFakeStore) LookupWebSession(_ context.Context, plaintext string) (s
 	return s.userID, s.csrfSecret, nil
 }
 
+// GetUser returns a non-admin user — Resolve calls this after LookupWebSession
+// to decide PrincipalUser vs PrincipalAdmin. csrf tests don't need admin.
+func (s *csrfFakeStore) GetUser(_ context.Context, id string) (*userstore.User, error) {
+	return &userstore.User{ID: id, IsAdmin: false}, nil
+}
+
 // okHandler returns a handler that writes 200 OK.
 var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
@@ -118,6 +124,34 @@ func TestRequireCSRF_NoCookieReturns401(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestRequireCSRF_AdminCookieAccepted(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	u, _ := store.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, u.ID, true)
+	secret, _ := store.CreateWebSession(ctx, u.ID, "ua", "1.2.3.0/24")
+	resolver := NewIdentityResolver(store)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := RequireCSRF(resolver, inner)
+
+	req := httptest.NewRequest(http.MethodPost, "/anything", nil)
+	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
+	req.Header.Set("X-CSRF-Token", CSRFToken(secret.Expose(), u.CSRFSecret()))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin cookie + valid CSRF: status %d, want 200", rec.Code)
 	}
 }
 

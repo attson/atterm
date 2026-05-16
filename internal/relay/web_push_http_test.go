@@ -66,6 +66,13 @@ func (s *pushFakeStore) LookupAPIToken(_ context.Context, plaintext string) (str
 	return "", "", userstore.ErrTokenInvalid
 }
 
+// GetUser returns a non-admin user — Resolve calls this after a successful
+// LookupWebSession / LookupAPIToken to decide PrincipalUser vs PrincipalAdmin.
+// Webpush tests don't exercise admin promotion.
+func (s *pushFakeStore) GetUser(_ context.Context, id string) (*userstore.User, error) {
+	return &userstore.User{ID: id, IsAdmin: false}, nil
+}
+
 // doRequestWithCookie creates a request with a session cookie (no bearer token).
 func doRequestWithCookie(t *testing.T, srv *Server, method, path, cookieVal, body string) *http.Response {
 	t.Helper()

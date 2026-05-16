@@ -50,16 +50,43 @@ func (a *AdminServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("POST /admin/api/users/{id}/disable", a.requireAdmin(a.handleDisableUser))
 }
 
+// defaultInviteExpiry is the lifetime applied to invitations whose request
+// body omits expires_at. 7 days balances "convenient for share-with-a-colleague"
+// against "stale invite codes pile up" — bind-and-forget is a security smell.
+const defaultInviteExpiry = 7 * 24 * time.Hour
+
 // handleCreateInvite implements POST /admin/api/invitations.
-// Body (optional): {"expires_at": <RFC3339 or null>, "note": "<string>"}
-// Response 201: {"plaintext": "inv_…", "code_prefix": "inv_xxxx", "note": "…", "expires_at": null}
+// Body (optional):
+//
+//	{
+//	  "expires_at": <RFC3339 or null or "" → defaults to now + 7 days>,
+//	  "note":       "<string>",
+//	  "count":      <int, default 1, clamped to [1, 50]> — bulk-create N invites
+//	                with the same note/expiry; each gets a distinct plaintext.
+//	}
+//
+// Response 201:
+//
+//	count == 1: {"plaintext": "inv_…", "code_prefix": "...", "note": "...",
+//	             "expires_at": "...", "created_at": "..."}
+//	count >  1: {"invites": [<the same shape>, ...]}
 func (a *AdminServer) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ExpiresAt *string `json:"expires_at"`
 		Note      string  `json:"note"`
+		Count     int     `json:"count"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck — body is optional
+	}
+
+	count := body.Count
+	if count <= 0 {
+		count = 1
+	}
+	if count > 50 {
+		http.Error(w, "count exceeds maximum (50)", http.StatusBadRequest)
+		return
 	}
 
 	var expiresAt *time.Time
@@ -70,12 +97,9 @@ func (a *AdminServer) handleCreateInvite(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		expiresAt = &t
-	}
-
-	secret, inv, err := a.Store.CreateInvitation(r.Context(), expiresAt, body.Note)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+	} else {
+		t := time.Now().Add(defaultInviteExpiry)
+		expiresAt = &t
 	}
 
 	type invResp struct {
@@ -85,17 +109,34 @@ func (a *AdminServer) handleCreateInvite(w http.ResponseWriter, r *http.Request)
 		ExpiresAt  *string `json:"expires_at"`
 		CreatedAt  string  `json:"created_at"`
 	}
-	resp := invResp{
-		Plaintext:  secret.Expose(),
-		CodePrefix: inv.CodePrefix,
-		Note:       inv.Note,
-		CreatedAt:  inv.CreatedAt.UTC().Format(time.RFC3339),
+
+	invites := make([]invResp, 0, count)
+	for i := 0; i < count; i++ {
+		secret, inv, err := a.Store.CreateInvitation(r.Context(), expiresAt, body.Note)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		row := invResp{
+			Plaintext:  secret.Expose(),
+			CodePrefix: inv.CodePrefix,
+			Note:       inv.Note,
+			CreatedAt:  inv.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if inv.ExpiresAt != nil {
+			s := inv.ExpiresAt.UTC().Format(time.RFC3339)
+			row.ExpiresAt = &s
+		}
+		invites = append(invites, row)
 	}
-	if inv.ExpiresAt != nil {
-		s := inv.ExpiresAt.UTC().Format(time.RFC3339)
-		resp.ExpiresAt = &s
+
+	if count == 1 {
+		writeJSONStatus(w, http.StatusCreated, invites[0])
+		return
 	}
-	writeJSONStatus(w, http.StatusCreated, resp)
+	writeJSONStatus(w, http.StatusCreated, struct {
+		Invites []invResp `json:"invites"`
+	}{Invites: invites})
 }
 
 // handleListInvites implements GET /admin/api/invitations.
@@ -383,7 +424,8 @@ const adminPageHTML = `<!doctype html>
   <h2>Create invitation</h2>
   <div class="row">
     <input id="inv-note" placeholder="note (optional)" style="flex:1;min-width:180px">
-    <input id="inv-expires" type="datetime-local" title="expires at (optional)">
+    <input id="inv-count" type="number" min="1" max="50" value="1" title="how many invites to create (1-50)" style="width:80px">
+    <input id="inv-expires" type="datetime-local" title="expires at; defaults to 7 days from now">
     <button id="inv-create" class="primary">Create</button>
   </div>
   <div id="inv-secret"></div>
@@ -483,16 +525,86 @@ document.querySelectorAll(".tabs button").forEach(function(b) {
 });
 
 // Invitations
+function defaultExpiresLocal() {
+  // datetime-local input wants "YYYY-MM-DDTHH:MM" in LOCAL time (no tz suffix).
+  const d = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+  const pad = function(n) { return String(n).padStart(2, "0"); };
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+       + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+function resetInviteForm() {
+  $("inv-note").value = "";
+  $("inv-count").value = "1";
+  $("inv-expires").value = defaultExpiresLocal();
+}
+// Pre-fill expires on first paint so the default is visible.
+resetInviteForm();
+
+function showSecretList(containerID, label, plaintexts) {
+  const el = $(containerID);
+  el.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "secret";
+  const head = document.createElement("strong");
+  head.textContent = label + " (" + plaintexts.length + ")";
+  wrap.appendChild(head);
+  for (const p of plaintexts) {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.gap = "0.4rem";
+    row.style.alignItems = "center";
+    row.style.margin = "0.3rem 0";
+    const c = document.createElement("code");
+    c.textContent = p;
+    c.style.flex = "1";
+    c.style.background = "white";
+    c.style.padding = "0.3rem 0.5rem";
+    c.style.borderRadius = "3px";
+    c.style.userSelect = "all";
+    c.style.wordBreak = "break-all";
+    c.style.fontSize = "13px";
+    const b = document.createElement("button");
+    b.textContent = "Copy";
+    b.onclick = function() {
+      navigator.clipboard.writeText(p).then(function() { b.textContent = "Copied"; });
+    };
+    row.appendChild(c);
+    row.appendChild(b);
+    wrap.appendChild(row);
+  }
+  const warn = document.createElement("div");
+  warn.className = "warn";
+  warn.textContent = "Copy now — plaintexts are shown only once.";
+  wrap.appendChild(warn);
+  const copyAll = document.createElement("button");
+  copyAll.textContent = "Copy all";
+  copyAll.onclick = function() {
+    navigator.clipboard.writeText(plaintexts.join("\n")).then(function() { copyAll.textContent = "Copied"; });
+  };
+  const dismiss = document.createElement("button");
+  dismiss.textContent = "Dismiss";
+  dismiss.onclick = function() { el.innerHTML = ""; };
+  wrap.appendChild(copyAll);
+  wrap.appendChild(document.createTextNode(" "));
+  wrap.appendChild(dismiss);
+  el.appendChild(wrap);
+}
+
 async function createInvite() {
   setErr("inv-err", "");
   try {
-    const body = {note: $("inv-note").value.trim()};
+    const count = Math.max(1, Math.min(50, Number($("inv-count").value) || 1));
+    const body = {note: $("inv-note").value.trim(), count: count};
     const exp = $("inv-expires").value;
     if (exp) body.expires_at = new Date(exp).toISOString();
     const out = await api("/admin/api/invitations", {method: "POST", body: JSON.stringify(body)});
-    showSecret("inv-secret", "Invitation code", out.plaintext);
-    $("inv-note").value = "";
-    $("inv-expires").value = "";
+    if (count === 1) {
+      showSecret("inv-secret", "Invitation code", out.plaintext);
+    } else {
+      const list = (out.invites || []).map(function(r) { return r.plaintext; });
+      showSecretList("inv-secret", "Invitation codes", list);
+    }
+    resetInviteForm();
     loadInvites();
   } catch (e) { setErr("inv-err", e); }
 }

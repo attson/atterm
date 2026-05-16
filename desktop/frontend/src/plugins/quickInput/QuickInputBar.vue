@@ -55,13 +55,14 @@ useQuickInputHotkeys(buttons, fire);
 .quick-input-btn {
   padding: 2px 10px;
   border-radius: 4px;
-  border: 1px solid #2d333b;
-  background: #21262d;
-  color: #c9d1d9;
+  border: 1px solid var(--ed-border, #2d333b);
+  background: var(--ed-shell-bg, #21262d);
+  color: var(--ed-row-fg, #c9d1d9);
   font-size: 12px;
   cursor: pointer;
 }
 .quick-input-btn:hover {
-  background: #30363d;
+  background: var(--ed-row-hover, #30363d);
+  color: var(--ed-tab-hover-fg, var(--ed-row-fg, #ffffff));
 }
 </style>

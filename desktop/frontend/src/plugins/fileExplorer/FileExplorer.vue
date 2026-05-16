@@ -9,7 +9,8 @@ import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
 import { openPath, closeTab, type TabsState } from "./tabsModel";
 import type { PluginContext } from "../types";
-import "./theme.css";
+// theme.css is loaded once from App.vue so its --ed-* vars are available
+// even before this lazy chunk is fetched.
 
 const props = defineProps<{ context: PluginContext }>();
 const store = usePluginConfigStore();
@@ -101,7 +102,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 </script>
 
 <template>
-  <div class="file-explorer" :class="`fe-theme-${explorerTheme}`">
+  <div class="file-explorer">
     <header class="fe-header">
       <span class="root-path" :title="root ?? ''">{{ root ?? "(no active pane)" }}</span>
       <button

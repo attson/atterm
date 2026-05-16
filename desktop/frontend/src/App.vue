@@ -13,6 +13,11 @@ import { createPluginContext } from "./plugins/usePluginContext";
 import { useResizer } from "./plugins/useResizer";
 import { usePluginConfigStore } from "./plugins/configStore";
 import { sendInputToSession } from "./lib/sendInput";
+// Plugin theme palettes (CSS vars). Loaded in main bundle so the panel
+// toggle and Quick Input toolbar can read --ed-* vars even when the
+// file-explorer chunk is not yet loaded.
+import "./plugins/fileExplorer/theme.css";
+import { isLightTerminalTheme } from "./lib/terminalThemes";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import {
   closeSession,
@@ -237,6 +242,13 @@ function togglePanel() { panelCollapsed.value = !panelCollapsed.value; }
 // True when at least one right-panel plugin is enabled. Suppresses the
 // collapse handle entirely when the slot has nothing to host.
 const rightPanelHasPlugin = computed(() => pluginStore.isPluginEnabled("file-explorer"));
+
+// Derive a plugin-side theme name from the active terminal theme so the
+// global --ed-* CSS vars on .app can paint the panel toggle, Quick Input
+// bar, and the file explorer in matching dimmed/light skins.
+const fileExplorerTheme = computed<"dimmed" | "light">(() =>
+  isLightTerminalTheme(currentTerminalThemeID.value) ? "light" : "dimmed",
+);
 
 const { onMouseDown: onPanelResizeDown } = useResizer({
   onDrag: (deltaX) => {
@@ -686,7 +698,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" :style="themeStyle">
+  <div class="app" :class="`fe-theme-${fileExplorerTheme}`" :style="themeStyle">
     <header class="topbar">
       <div class="brand">AT Term</div>
       <div class="status">
@@ -861,14 +873,26 @@ onUnmounted(() => {
 }
 .main { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; background: #000; overflow: hidden; min-width: 0; }
 .right-resizer { width: 4px; cursor: col-resize; background: transparent; flex: 0 0 4px; }
-.right-resizer:hover { background: #2d333b; }
-.panel-toggle { background: #21262d; border: 1px solid #2d333b; color: #c9d1d9; cursor: pointer; padding: 0 4px; font-size: 11px; align-self: stretch; flex: 0 0 auto; }
-.panel-toggle:hover { background: #30363d; }
+.right-resizer:hover { background: var(--ed-border, #2d333b); }
+.panel-toggle {
+  background: var(--ed-tab-bg, #21262d);
+  border: 1px solid var(--ed-border, #2d333b);
+  color: var(--ed-row-fg, #c9d1d9);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 11px;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+.panel-toggle:hover {
+  background: var(--ed-row-hover, #30363d);
+  color: var(--ed-tab-hover-fg, #ffffff);
+}
 .right-panel:empty {
   display: none;
 }
 .right-panel {
-  border-left: 1px solid #2d333b;
+  border-left: 1px solid var(--ed-border, #2d333b);
   overflow: hidden;
 }
 .bottom-toolbar:empty {
@@ -877,7 +901,8 @@ onUnmounted(() => {
 .bottom-toolbar {
   flex: 0 0 32px;
   height: 32px;
-  border-top: 1px solid #2d333b;
+  background: var(--ed-tab-bg, transparent);
+  border-top: 1px solid var(--ed-border, #2d333b);
 }
 .empty {
   position: absolute; inset: 0; display: flex; align-items: center;

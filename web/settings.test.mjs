@@ -37,3 +37,8 @@ test("settings.js POSTs to /api/me/tokens", () => {
 test("settings.js references POST /api/me/password", () => {
     assert.ok(js.includes("/api/me/password"), "must reference /api/me/password");
 });
+
+test("settings.html shows version label so operators can verify deploys", () => {
+    assert.ok(html.includes('id="version"'), "settings.html should have #version element");
+    assert.ok(js.includes("fetchVersionLabel"), "settings.js should call fetchVersionLabel");
+});

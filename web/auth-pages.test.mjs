@@ -13,6 +13,14 @@ test("login.html loads login.js and has login form", () => {
     assert.ok(js.includes("./auth.js"), "login.js should import auth.js");
 });
 
+test("login.html shows version label so operators can verify deploys", () => {
+    const html = readFileSync("web/login.html", "utf8");
+    assert.ok(html.includes('id="version"'), "login.html should have #version element");
+
+    const js = readFileSync("web/login.js", "utf8");
+    assert.ok(js.includes("fetchVersionLabel"), "login.js should call fetchVersionLabel");
+});
+
 test("login.html links to /signup.html so invited users can find the signup page", () => {
     const src = readFileSync("web/login.html", "utf8");
     assert.ok(src.includes('href="/signup.html"'),
@@ -27,4 +35,12 @@ test("signup.html loads signup.js and has invite_code field", () => {
 
     const js = readFileSync("web/signup.js", "utf8");
     assert.ok(js.includes("./auth.js"), "signup.js should import auth.js");
+});
+
+test("signup.html shows version label so operators can verify deploys", () => {
+    const html = readFileSync("web/signup.html", "utf8");
+    assert.ok(html.includes('id="version"'), "signup.html should have #version element");
+
+    const js = readFileSync("web/signup.js", "utf8");
+    assert.ok(js.includes("fetchVersionLabel"), "signup.js should call fetchVersionLabel");
 });

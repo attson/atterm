@@ -21,6 +21,7 @@ import {
   keyboardInsetFromViewport,
   shortcutInput,
   shouldFocusTerminalAfterInput,
+  fetchVersionLabel,
   versionLabel,
   webSocketAuth,
 } from "./app-core.js";
@@ -259,6 +260,26 @@ test("versionLabel formats current app version", () => {
   assert.equal(versionLabel("v0.1.9"), "version v0.1.9");
   assert.equal(versionLabel(""), "version dev");
   assert.equal(versionLabel(undefined), "version dev");
+});
+
+test("fetchVersionLabel returns label from /api/version JSON", async () => {
+  let called = "";
+  const fakeFetch = async (url) => {
+    called = url;
+    return { ok: true, json: async () => ({ version: "v9.9.9" }) };
+  };
+  assert.equal(await fetchVersionLabel(fakeFetch), "version v9.9.9");
+  assert.equal(called, "/api/version");
+});
+
+test("fetchVersionLabel falls back to dev label on non-OK response", async () => {
+  const fakeFetch = async () => ({ ok: false, json: async () => ({}) });
+  assert.equal(await fetchVersionLabel(fakeFetch), "version dev");
+});
+
+test("fetchVersionLabel falls back to dev label when fetch throws", async () => {
+  const fakeFetch = async () => { throw new Error("network"); };
+  assert.equal(await fetchVersionLabel(fakeFetch), "version dev");
 });
 
 test("detectClientMode classifies touch/coarse pointer as mobile web", () => {

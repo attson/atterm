@@ -274,6 +274,20 @@ export function versionLabel(version) {
   return `version ${version || "dev"}`;
 }
 
+// Fetch /api/version (intentionally public on the relay) and return a label
+// ready to drop into a #version element. Pages call this from their init
+// modules; tests stub fetchImpl.
+export async function fetchVersionLabel(fetchImpl) {
+  try {
+    const res = await fetchImpl("/api/version");
+    if (!res.ok) return versionLabel(null);
+    const data = await res.json();
+    return versionLabel(data?.version);
+  } catch {
+    return versionLabel(null);
+  }
+}
+
 const HOST_GROUP_UNKNOWN_KEY = "__unknown__";
 const HOST_GROUP_UNKNOWN_HOSTNAME = "unknown host";
 

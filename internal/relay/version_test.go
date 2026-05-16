@@ -39,8 +39,9 @@ func newBearerRequest(method, target, token string) *http.Request {
 }
 
 func TestQueryTokenDoesNotAuthorizeREST(t *testing.T) {
-	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
-	req := httptest.NewRequest(http.MethodGet, "/api/version?token=rt", nil)
+	// /api/sessions still requires auth; ?token= must not satisfy it.
+	srv := NewServer(Config{Token: "rt"})
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions?token=rt", nil)
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -52,7 +53,7 @@ func TestQueryTokenDoesNotAuthorizeREST(t *testing.T) {
 
 func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
 	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
-	req := newBearerRequest(http.MethodGet, "/api/version", "rt")
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -71,15 +72,17 @@ func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
 	}
 }
 
-func TestVersionEndpointRequiresAuth(t *testing.T) {
+func TestVersionEndpointIsPublic(t *testing.T) {
+	// Anonymous web clients (login.html / signup.html) need to read the
+	// version before the user has credentials. Anonymous GET must succeed.
 	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
 	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d; want 401", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
 	}
 }
 
@@ -191,9 +194,12 @@ func TestRateLimitRejectsExcessRequests(t *testing.T) {
 }
 
 func TestRateLimitBadTokensShareIPBucket(t *testing.T) {
-	srv := NewServer(Config{Token: "real-token", Version: "v1.2.3", RateLimitPerMinute: 1})
+	// /api/sessions still requires auth, so two requests with different bad
+	// tokens from the same IP exercise the top-level per-IP rate limit:
+	// first 401 from auth, second 429 from the shared IP bucket.
+	srv := NewServer(Config{Token: "real-token", RateLimitPerMinute: 1})
 
-	req1 := newBearerRequest(http.MethodGet, "/api/version", "bad-a")
+	req1 := newBearerRequest(http.MethodGet, "/api/sessions", "bad-a")
 	req1.RemoteAddr = "203.0.113.10:10000"
 	rec1 := httptest.NewRecorder()
 	srv.ServeHTTP(rec1, req1)
@@ -201,7 +207,7 @@ func TestRateLimitBadTokensShareIPBucket(t *testing.T) {
 		t.Fatalf("first status = %d; want 401", rec1.Code)
 	}
 
-	req2 := newBearerRequest(http.MethodGet, "/api/version", "bad-b")
+	req2 := newBearerRequest(http.MethodGet, "/api/sessions", "bad-b")
 	req2.RemoteAddr = "203.0.113.10:10001"
 	rec2 := httptest.NewRecorder()
 	srv.ServeHTTP(rec2, req2)

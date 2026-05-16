@@ -9,15 +9,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
-	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
 
@@ -60,6 +62,14 @@ type Config struct {
 	// WebPush, when non-nil, enables the /api/push/* endpoints and the
 	// TypeCommandEvent uplink handler. May be nil to disable the feature.
 	WebPush *webpush.Service
+	// Resolver, when non-nil, enables Principal-based auth for /uplink and
+	// /agent. When nil, the legacy shared-token (Token field) path is used.
+	// Set this to enable per-user API-token gating (Task 4.1+).
+	Resolver *IdentityResolver
+	// Store, when non-nil alongside Resolver, mounts the user-account HTTP API
+	// (/api/auth/*, /api/me/*, /admin/api/invitations, /admin/api/users).
+	// If nil the new routes are not registered (legacy mode).
+	Store userstore.Store
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -69,6 +79,32 @@ type Server struct {
 	mux      *http.ServeMux
 	rate     *fixedWindowLimiter
 	conns    *connectionLimiter
+}
+
+// ServerDeps holds the constructed subsystems that BuildMux needs to wire
+// the production HTTP routes. Tests create this directly; the production
+// NewServer constructor builds it internally.
+type ServerDeps struct {
+	Store    userstore.Store
+	Resolver *IdentityResolver
+	Argon    *Argon2Pool
+	Limits   *LimitRegistry
+	Auth     *AuthServer
+	Admin    *AdminServer
+}
+
+// BuildMux constructs and returns the HTTP mux with all auth and admin routes
+// registered. It is exported so tests can build the full production mux for
+// route-enumeration checks (Task 3.4 mux-enumerator test).
+func BuildMux(d ServerDeps) *http.ServeMux {
+	mux := http.NewServeMux()
+	if d.Auth != nil {
+		d.Auth.RegisterInto(mux)
+	}
+	if d.Admin != nil {
+		d.Admin.RegisterInto(mux)
+	}
+	return mux
 }
 
 // NewServer builds a Server with its routes installed.
@@ -98,11 +134,17 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/api/sessions", s.handleSessionsHTTP)
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
-	s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
-	s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
-	s.mux.HandleFunc("/api/push/test", s.handlePushTest)
+	if cfg.Resolver != nil {
+		s.mux.Handle("/api/push/subscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushSubscribe)))
+		s.mux.Handle("/api/push/unsubscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushUnsubscribe)))
+		s.mux.Handle("/api/push/test", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushTest)))
+	} else {
+		s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
+		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
+		s.mux.HandleFunc("/api/push/test", s.handlePushTest)
+	}
 	if cfg.WebDir != "" {
-		s.mux.Handle("/", http.FileServer(http.Dir(cfg.WebDir)))
+		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebDir))
 	}
 	if cfg.AdminToken != "" {
 		s.mux.HandleFunc("/admin/", s.handleAdminPage)
@@ -110,6 +152,50 @@ func NewServer(cfg Config) *Server {
 		s.mux.HandleFunc("/admin/api/read-only-tokens", s.handleAdminReadOnlyTokensHTTP)
 		s.mux.HandleFunc("/admin/api/read-only-tokens/", s.handleAdminReadOnlyTokenHTTP)
 	}
+
+	// Mount user-account HTTP API when both resolver and store are wired.
+	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed
+	// here so the same wiring runs in both the production binary and any test
+	// that calls NewServer with a non-nil Resolver+Store.
+	if cfg.Resolver != nil && cfg.Store != nil {
+		argon := NewArgon2Pool(runtime.NumCPU())
+		limits := NewLimitRegistry()
+		authSrv := &AuthServer{
+			Store:        cfg.Store,
+			Resolver:     cfg.Resolver,
+			Argon:        argon,
+			Limits:       limits,
+			FailureFloor: 200 * time.Millisecond,
+		}
+		adminSrv := &AdminServer{
+			Store:    cfg.Store,
+			Resolver: cfg.Resolver,
+		}
+		authSrv.RegisterInto(s.mux)
+		adminSrv.RegisterInto(s.mux)
+
+		// Background goroutine: purge expired web sessions hourly.
+		go func() {
+			t := time.NewTicker(time.Hour)
+			defer t.Stop()
+			// Derive a context tied to the server's lifecycle via a background ctx.
+			// We use context.Background() here because NewServer has no ctx parameter;
+			// the purge loop is best-effort and exits when the ticker fires after
+			// process shutdown (acceptable for cleanup routines).
+			ctx := context.Background()
+			for {
+				select {
+				case <-t.C:
+					if n, err := cfg.Store.PurgeExpiredWebSessions(ctx); err != nil {
+						log.Printf("relay: PurgeExpiredWebSessions: %v", err)
+					} else if n > 0 {
+						log.Printf("relay: purged %d expired web sessions", n)
+					}
+				}
+			}
+		}()
+	}
+
 	return s
 }
 
@@ -177,10 +263,21 @@ func (s *Server) allowAuthenticatedRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
-		s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser || p.TokenID == "" {
+			s.debugf("http reject path=/agent remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
+			s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -198,14 +295,25 @@ func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/agent remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleAgent(r.Context(), c)
+	s.handleAgent(r.Context(), c, ownerUserID)
 }
 
 func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
-		s.debugf("http reject path=/uplink remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser || p.TokenID == "" {
+			s.debugf("http reject path=/uplink remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
+			s.debugf("http reject path=/uplink remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -223,15 +331,30 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/uplink remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleUplink(r.Context(), c)
+	s.handleUplink(r.Context(), c, ownerUserID)
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClientWebSocketWithConfig(r, s.cfg)
-	if scope == authNone {
-		s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var (
+		scope       authScope
+		ownerUserID string
+	)
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser {
+			s.debugf("http reject path=/client remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		scope = authWrite
+		ownerUserID = p.UserID
+	} else {
+		scope = authorizeClientWebSocketWithConfig(r, s.cfg)
+		if scope == authNone {
+			s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -251,15 +374,26 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/client remote=%s origin=%q subprotocol=%q", r.RemoteAddr, r.Header.Get("Origin"), c.Subprotocol())
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClient(r.Context(), c, scope)
+	s.handleClient(r.Context(), c, scope, ownerUserID)
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	scope := authorizeClientWebSocketWithConfig(r, s.cfg)
-	if scope == authNone {
-		s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser {
+			s.debugf("http reject path=/client-sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		scope := authorizeClientWebSocketWithConfig(r, s.cfg)
+		if scope == authNone {
+			s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -277,19 +411,35 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 	}
 	s.debugf("ws accept path=/client-sessions remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClientSessions(r.Context(), c)
+	s.handleClientSessions(r.Context(), c, ownerUserID)
 }
 
 func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeClientWithConfig(r, s.cfg) == authNone {
-		s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	var ownerUserID string
+	if s.cfg.Resolver != nil {
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalUser {
+			s.debugf("http reject path=/api/sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		ownerUserID = p.UserID
+	} else {
+		if authorizeClientWithConfig(r, s.cfg) == authNone {
+			s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
 	}
-	infos := s.sessionInfoList()
+	var infos []proto.SessionInfo
+	if ownerUserID != "" {
+		infos = s.sessionInfoListForOwner(ownerUserID)
+	} else {
+		infos = s.sessionInfoList()
+	}
 	s.debugf("http api_sessions remote=%s sessions=%d", r.RemoteAddr, len(infos))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(infos)
@@ -313,44 +463,34 @@ func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(versionResponse{Version: version})
 }
 
-// WebPushSessionResolver returns the list of token-hashes authorized to
-// view a session at the given id. Empty when the session is unknown.
-// Used as the SessionResolver injected into webpush.Service at startup.
-func (s *Server) WebPushSessionResolver(sessionID uuid.UUID) []string {
-	sess, ok := s.registry.Get(sessionID)
-	if !ok {
-		return nil
-	}
-	info := sess.Info()
-	perm := info.RemotePermission
-	if perm == "" {
-		perm = proto.RemotePermissionFull
-	}
-	out := make([]string, 0, 1+len(s.cfg.ReadOnlyTokens))
-	if s.cfg.Token != "" {
-		out = append(out, tokenHash(s.cfg.Token))
-	}
-	// All read-only tokens can view at minimum, regardless of perm.
-	for _, t := range s.cfg.ReadOnlyTokens {
-		out = append(out, tokenHash(t))
-	}
-	// Admin-managed RO tokens are stored as "sha256:<base64url>"; strip the
-	// prefix to match the plain base64url form used by tokenHash.
-	for _, h := range s.cfg.ReadOnlyTokenHashes {
-		out = append(out, strings.TrimPrefix(h, "sha256:"))
-	}
-	_ = perm // perm is read for future per-permission filtering; v1 includes all tokens that can view.
-	return out
-}
-
 // tokenHash is the canonical sha256+base64url form used as a key in
-// webpush.Service subscription registry.
+// legacy webpush subscription registries (pre-userID schema).
 func tokenHash(token string) string {
 	if token == "" {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(token))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// newStaticHandler wraps http.FileServer to enforce a login redirect for the
+// root path when the request carries no valid cookie session. Subresources
+// (*.js, *.css, *.html, etc.) are served unconditionally so that login.html
+// can load its own assets without authentication.
+func newStaticHandler(resolver *IdentityResolver, webDir string) http.Handler {
+	fs := http.FileServer(http.Dir(webDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			if resolver != nil {
+				p := resolver.Resolve(r)
+				if p.Kind != PrincipalUser {
+					http.Redirect(w, r, "/login.html", http.StatusFound)
+					return
+				}
+			}
+		}
+		fs.ServeHTTP(w, r)
+	})
 }
 
 // readFrame reads one WS binary message and decodes it as a Frame.

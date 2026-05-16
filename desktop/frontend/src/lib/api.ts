@@ -27,6 +27,11 @@ export interface RelayConfig {
   connected: boolean;
 }
 
+export interface RelayMe {
+  user_id: string;
+  email: string;
+}
+
 export interface HostInfo {
   host_id: string;
   host: string;
@@ -84,6 +89,8 @@ interface AppBindings {
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
+  SetUplinkPaused(paused: boolean): Promise<void>;
+  FetchRelayMe(): Promise<RelayMe>;
   GetLoggingConfig(): Promise<LoggingConfig>;
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
   PickLogFilePath(): Promise<string>;
@@ -160,6 +167,10 @@ export function setRelayConfig(cfg: {
     remote_permission: cfg.remote_permission ?? "full",
     connected: false,
   });
+}
+
+export function setUplinkPaused(paused: boolean): Promise<void> {
+  return bindings().SetUplinkPaused(paused);
 }
 
 export function getLoggingConfig(): Promise<LoggingConfig> {
@@ -261,4 +272,11 @@ export function broadcastCommandFinished(
   label: string,
 ): Promise<void> {
   return bindings().BroadcastCommandFinished(sessionId, exitCode, elapsedMs, label);
+}
+
+// fetchRelayMe calls the Go backend (FetchRelayMe Wails binding) which makes
+// an HTTP GET to the configured relay's /api/me endpoint using the stored API
+// token. The returned email is held in memory only (SEC-1 — not persisted).
+export function fetchRelayMe(): Promise<RelayMe> {
+  return bindings().FetchRelayMe();
 }

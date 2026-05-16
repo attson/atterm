@@ -15,6 +15,7 @@ import (
 	"nhooyr.io/websocket"
 )
 
+
 const (
 	uplinkReadLimit       = 17 * 1024 * 1024
 	uplinkWriteWait       = 10 * time.Second
@@ -35,8 +36,30 @@ type mirrorState struct {
 // must be ANNOUNCE; subsequent ANNOUNCEs are full-snapshot reconciliations.
 // OUT/META/CLOSE frames flow uplink→relay; STREAM_REQUEST/STOP and
 // IN/RESIZE/PASTE_IMAGE flow relay→uplink.
-func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
+// ownerUserID is the authenticated user's ID (empty for legacy/dev-mode paths).
+func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserID string) {
 	c.SetReadLimit(uplinkReadLimit)
+
+	// Send AUTH_INFO so the desktop client knows which user this connection
+	// is authenticated as. Only sent on the resolver (user-account) path;
+	// the legacy shared-token path leaves ownerUserID empty and gets no frame.
+	if ownerUserID != "" {
+		type authInfoPayload struct {
+			UserID string `json:"user_id"`
+		}
+		authPayload, _ := json.Marshal(authInfoPayload{UserID: ownerUserID})
+		wctx, wc := context.WithTimeout(ctx, uplinkWriteWait)
+		err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+			Type:    proto.TypeAuthInfo,
+			Payload: authPayload,
+		}))
+		wc()
+		if err != nil {
+			log.Printf("relay: uplink send AUTH_INFO failed: %v", err)
+			return
+		}
+		s.debugf("uplink auth_info_sent user_id=%s", ownerUserID)
+	}
 
 	first, err := readFrame(ctx, c)
 	if err != nil {
@@ -154,13 +177,21 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn) {
 			}
 
 			sess := session.New(id, info)
+			sess.OwnerUserID = ownerUserID
 			// snapshot capture: id is per-iteration, must capture by value
 			sid := id
 			sess.SetSubscriberLifecycle(
 				func() { startStream(sid) },
 				func() { stopStream(sid) },
 			)
-			s.registry.Add(sess)
+			if _, err := s.registry.Add(sess); err != nil {
+				// Owner mismatch: another user already holds this session ID.
+				// Close the WS with a well-known code so the desktop can display
+				// a localized error. Do not modify the existing session.
+				s.debugf("uplink mirror_add_rejected session=%s reason=owner_mismatch", id)
+				_ = c.Close(websocket.StatusCode(CloseCodeSessionIDOwnerMismatch), CloseReasonSessionIDOwnerMismatch)
+				return
+			}
 			mu.Lock()
 			mirrors[id] = &mirrorState{sess: sess}
 			mu.Unlock()
@@ -334,7 +365,7 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 	}
 	hostIDStr := ms.sess.Info().HostID
 	hostID, _ := uuid.Parse(hostIDStr) // ignore parse error — hostID is informational
-	s.cfg.WebPush.DispatchCommandFinished(webpush.CommandFinished{
+	s.cfg.WebPush.DispatchCommandFinished(ms.sess.OwnerUserID, webpush.CommandFinished{
 		SessionID: f.SessionID,
 		HostID:    hostID,
 		ExitCode:  payload.ExitCode,

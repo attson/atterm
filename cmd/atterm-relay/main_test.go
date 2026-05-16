@@ -1,192 +1,131 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/relay"
+	"github.com/attson/atterm/internal/userstore"
 	"nhooyr.io/websocket"
 )
 
-func TestRelaySecurityGeneratesTokenWhenUnset(t *testing.T) {
-	var log bytes.Buffer
-	cfg, token, err := buildRelayConfig(relayOptions{
-		addr:    "127.0.0.1:8080",
-		webDir:  "web",
-		version: "test",
-		log:     &log,
-	})
+// newTestServer builds a minimal relay Server backed by an in-memory userstore
+// for use in integration tests. adminToken must be non-empty.
+func newTestServer(t *testing.T, adminToken string, origins []string) (*relay.Server, userstore.Store) {
+	t.Helper()
+	store, err := userstore.Open(context.Background(), ":memory:")
 	if err != nil {
-		t.Fatalf("buildRelayConfig err: %v", err)
+		t.Fatalf("userstore.Open: %v", err)
 	}
-	if token == "" {
-		t.Fatal("generated token is empty")
+	t.Cleanup(func() { _ = store.Close() })
+
+	resolver := relay.NewIdentityResolver(store, adminToken)
+	cfg := relay.Config{
+		AdminToken:     adminToken,
+		AllowedOrigins: origins,
+		Resolver:       resolver,
 	}
-	if cfg.Token != token {
-		t.Fatalf("cfg.Token = %q; want generated token", cfg.Token)
+	return relay.NewServer(cfg), store
+}
+
+// TestStartup_RefusesWeakAdminTokenOnPublicListen verifies that validateAdminToken
+// rejects short/blacklisted tokens before a public relay starts.
+func TestStartup_RefusesWeakAdminTokenOnPublicListen(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+	}{
+		{"short dev token", "dev"},
+		{"short changeme123", "changeme123"},
+		{"only lowercase+digit 32 chars", strings.Repeat("a1b2c3d4", 4)},
 	}
-	if !strings.Contains(log.String(), token) {
-		t.Fatalf("startup log %q does not include generated token", log.String())
-	}
-	if strings.Contains(log.String(), "?token=") || !strings.Contains(log.String(), "#token=") {
-		t.Fatalf("startup log %q should print fragment token URL only", log.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateAdminToken(tc.token); err == nil {
+				t.Errorf("validateAdminToken(%q) = nil; want error for weak token", tc.token)
+			}
+		})
 	}
 }
 
-func TestRelaySecurityRejectsWeakTokenOnPublicListen(t *testing.T) {
-	_, _, err := buildRelayConfig(relayOptions{
-		addr:    ":8080",
-		token:   "dev",
-		origins: "https://relay.example.com",
-		version: "test",
-	})
-	if err == nil || !strings.Contains(err.Error(), "weak token") {
-		t.Fatalf("err = %v; want weak token rejection", err)
+// TestStartup_AcceptsStrongAdminTokenOnPublicListen verifies that a strong
+// token passes the strength check required for public listeners.
+func TestStartup_AcceptsStrongAdminTokenOnPublicListen(t *testing.T) {
+	strongTokens := []string{
+		"Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!", // 32 chars, 4 classes
+		strings.Repeat("xY9!", 8),            // 32 chars, 4 classes
 	}
-}
-
-func TestRelaySecurityRejectsPublicListenWithoutOrigins(t *testing.T) {
-	_, _, err := buildRelayConfig(relayOptions{
-		addr:    ":8080",
-		token:   "strong-random-token",
-		version: "test",
-	})
-	if err == nil || !strings.Contains(err.Error(), "origins") {
-		t.Fatalf("err = %v; want origins rejection", err)
-	}
-}
-
-func TestRelaySecurityDevInsecureAllowsWeakPublicConfig(t *testing.T) {
-	var log bytes.Buffer
-	cfg, token, err := buildRelayConfig(relayOptions{
-		addr:        ":8080",
-		token:       "dev",
-		webDir:      "web",
-		version:     "test",
-		devInsecure: true,
-		log:         &log,
-	})
-	if err != nil {
-		t.Fatalf("buildRelayConfig err: %v", err)
-	}
-	if token != "dev" || cfg.Token != "dev" {
-		t.Fatalf("token=%q cfg.Token=%q; want dev", token, cfg.Token)
-	}
-	if !strings.Contains(log.String(), "INSECURE") {
-		t.Fatalf("startup log %q does not warn about insecure mode", log.String())
-	}
-}
-
-func TestRelaySecurityConfiguresReadOnlyTokensAndLimits(t *testing.T) {
-	cfg, _, err := buildRelayConfig(relayOptions{
-		addr:      "127.0.0.1:8080",
-		token:     "strong-random-token",
-		readOnly:  "reader-a, reader-b",
-		rateLimit: 42,
-		maxConns:  7,
-		version:   "test",
-	})
-	if err != nil {
-		t.Fatalf("buildRelayConfig err: %v", err)
-	}
-	if len(cfg.ReadOnlyTokens) != 2 || cfg.ReadOnlyTokens[0] != "reader-a" || cfg.ReadOnlyTokens[1] != "reader-b" {
-		t.Fatalf("ReadOnlyTokens = %#v; want reader-a/reader-b", cfg.ReadOnlyTokens)
-	}
-	if cfg.RateLimitPerMinute != 42 {
-		t.Fatalf("RateLimitPerMinute = %d; want 42", cfg.RateLimitPerMinute)
-	}
-	if cfg.MaxConnectionsPerKey != 7 {
-		t.Fatalf("MaxConnectionsPerKey = %d; want 7", cfg.MaxConnectionsPerKey)
-	}
-}
-
-func TestRelaySecurityLoadsPersistentAdminConfig(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "relay.json")
-	if err := os.WriteFile(configPath, []byte(`{
-  "rate_limit_per_minute": 22,
-  "max_connections_per_key": 5,
-  "read_only_tokens": [{"id":"viewer","hash":"`+relay.HashBearerToken("secret")+`","created_at":123}]
-}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := buildRelayConfig(relayOptions{
-		addr:       "127.0.0.1:8080",
-		token:      "main-write-token",
-		configPath: configPath,
-		version:    "test",
-	})
-	if err != nil {
-		t.Fatalf("buildRelayConfig err: %v", err)
-	}
-	if cfg.Token != "main-write-token" {
-		t.Fatalf("Token = %q; want env/flag main token", cfg.Token)
-	}
-	if cfg.RateLimitPerMinute != 22 || cfg.MaxConnectionsPerKey != 5 {
-		t.Fatalf("limits = %d/%d; want 22/5", cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
-	}
-	if len(cfg.ReadOnlyTokenHashes) != 1 {
-		t.Fatalf("ReadOnlyTokenHashes = %#v; want one hash", cfg.ReadOnlyTokenHashes)
-	}
-}
-
-func TestRelaySecurityRejectsWeakAdminTokenOnPublicListen(t *testing.T) {
-	_, _, err := buildRelayConfig(relayOptions{
-		addr:       ":8080",
-		token:      "strong-random-token",
-		origins:    "https://relay.example.com",
-		adminToken: "admin",
-		version:    "test",
-	})
-	if err == nil || !strings.Contains(err.Error(), "weak admin token") {
-		t.Fatalf("err = %v; want weak admin token rejection", err)
-	}
-}
-
-func TestRelaySecurityNormalizesOriginsAndAllowsDesktopWebviews(t *testing.T) {
-	cfg, _, err := buildRelayConfig(relayOptions{
-		addr:    ":8080",
-		token:   "strong-random-token",
-		origins: "https://relay.example.com,*.trusted.example.com",
-		version: "test",
-	})
-	if err != nil {
-		t.Fatalf("buildRelayConfig err: %v", err)
-	}
-	want := []string{"relay.example.com", "*.trusted.example.com", "wails", "wails.localhost", "wails.localhost:*"}
-	for _, origin := range want {
-		if !containsString(cfg.AllowedOrigins, origin) {
-			t.Fatalf("AllowedOrigins = %#v; want %q", cfg.AllowedOrigins, origin)
+	for _, tok := range strongTokens {
+		if err := validateAdminToken(tok); err != nil {
+			t.Errorf("validateAdminToken(%q) = %v; want nil for strong token", tok, err)
 		}
 	}
 }
 
-func TestRelaySecurityAcceptsDesktopWebviewSessionListWS(t *testing.T) {
-	cfg, _, err := buildRelayConfig(relayOptions{
-		addr:    ":8080",
-		token:   "strong-random-token",
-		origins: "https://relay.example.com",
-		version: "test",
-	})
-	if err != nil {
-		t.Fatalf("buildRelayConfig err: %v", err)
+// TestStartup_LoopbackDevAcceptsAnyToken verifies that the loopback check
+// (isPublicListenAddr) returns false for 127.0.0.1 and ::1, so strength
+// check is skipped for local-only relays.
+func TestStartup_LoopbackDevAcceptsAnyToken(t *testing.T) {
+	if isPublicListenAddr("127.0.0.1:8080") {
+		t.Error("127.0.0.1:8080 reported as public; want loopback")
 	}
-	httpSrv := httptest.NewServer(relay.NewServer(cfg))
+	if isPublicListenAddr("[::1]:8080") {
+		t.Error("[::1]:8080 reported as public; want loopback")
+	}
+	if isPublicListenAddr("localhost:8080") {
+		t.Error("localhost:8080 reported as public; want loopback")
+	}
+	if !isPublicListenAddr(":8080") {
+		t.Error(":8080 reported as loopback; want public")
+	}
+}
+
+// TestRelaySecurityNormalizesOriginsAndAllowsDesktopWebviews verifies that the
+// origins helper appends Wails desktop webview hosts and normalizes https:// URLs.
+func TestRelaySecurityNormalizesOriginsAndAllowsDesktopWebviews(t *testing.T) {
+	origins := allowedOriginHosts("https://relay.example.com,*.trusted.example.com")
+	want := []string{"relay.example.com", "*.trusted.example.com", "wails", "wails.localhost", "wails.localhost:*"}
+	for _, origin := range want {
+		if !containsString(origins, origin) {
+			t.Fatalf("AllowedOrigins = %#v; want %q", origins, origin)
+		}
+	}
+}
+
+// TestRelaySecurityAcceptsDesktopWebviewSessionListWS verifies that the Wails
+// desktop webview origin is allowed and the /client-sessions WS handshake works.
+// It creates a user + API token so the IdentityResolver resolves PrincipalUser.
+func TestRelaySecurityAcceptsDesktopWebviewSessionListWS(t *testing.T) {
+	adminToken := "Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!"
+	srv, store := newTestServer(t, adminToken, allowedOriginHosts("https://relay.example.com"))
+	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+
+	// Create a user and issue an API token.
+	if _, err := store.CreateUser(ctx, "test@example.com", "password123!"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	user, err := store.VerifyPassword(ctx, "test@example.com", "password123!")
+	if err != nil {
+		t.Fatalf("VerifyPassword: %v", err)
+	}
+	apiSecret, _, err := store.CreateAPIToken(ctx, user.ID, "test-token")
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	apiToken := apiSecret.Expose()
+
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpSrv.URL, "http")+"/client-sessions", &websocket.DialOptions{
 		HTTPHeader:   http.Header{"Origin": []string{"wails://wails"}},
-		Subprotocols: []string{"atterm-token.strong-random-token"},
+		Subprotocols: []string{"atterm-token." + apiToken},
 	})
 	if err != nil {
 		t.Fatalf("desktop webview /client-sessions dial err: %v", err)

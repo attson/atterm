@@ -15,8 +15,6 @@ import {
   keyboardInsetFromViewport,
   parseSessionRoute,
   persistInsecureMode,
-  persistRelayBaseURL,
-  persistToken,
   pushSupported,
   relayBaseURLFromLocation,
   replayProgressPercent,
@@ -26,11 +24,11 @@ import {
   shouldAutoScrollToBottom,
   shortSessionID,
   shortcutInput,
-  tokenFromLocation,
-  tokenURLWithoutSecret,
   versionLabel,
   webSocketAuth as makeWebSocketAuth,
 } from "./app-core.js";
+
+import { authFetch, getMe, logout } from "./auth.js";
 
 const TYPE = {
   OPEN: 0x01,
@@ -109,12 +107,6 @@ const dec = new TextDecoder();
 const _isBrowser = typeof document !== "undefined";
 const _el = (id) => _isBrowser ? document.getElementById(id) : null;
 
-const tokenInput = _el("token");
-const relayURLInput = _el("relay-url");
-const insecureModeInput = _el("insecure-mode");
-const tokenToggle = _el("token-toggle");
-const tokenPanel = _el("token-panel");
-const tokenSave = _el("token-save");
 const statusEl = _el("status");
 const sessionTitleEl = _el("session-title");
 const versionEl = _el("version");
@@ -207,7 +199,6 @@ function registerServiceWorker() {
   });
 }
 
-let token = "";
 let insecureMode = false;
 let relayBaseURL = "";
 
@@ -219,65 +210,20 @@ if (_isBrowser) {
   maybeShowInstallHint();
   registerServiceWorker();
 
-  token = tokenFromLocation(location.href, localStorage);
   insecureMode = insecureModeFromStorage(localStorage);
   try {
     relayBaseURL = relayBaseURLFromLocation(location.href, localStorage, { allowInsecure: insecureMode });
   } catch (err) {
     setStatus(err instanceof Error ? err.message : "bad relay url", "err");
-    tokenPanel.hidden = false;
-    tokenToggle.setAttribute("aria-expanded", "true");
   }
-  const cleanTokenURL = tokenURLWithoutSecret(location.href);
-  if (cleanTokenURL !== location.href) {
-    history.replaceState(null, "", cleanTokenURL);
-  }
-  tokenInput.value = token;
-  relayURLInput.value = relayBaseURL;
-  insecureModeInput.checked = insecureMode;
-}
-
-function getToken() {
-  return token;
 }
 
 function getRelayBaseURL() {
   return relayBaseURL;
 }
 
-function saveConnectionSettings() {
-  token = tokenInput.value.trim();
-  insecureMode = insecureModeInput.checked;
-  persistToken(localStorage, token);
-  persistInsecureMode(localStorage, insecureMode);
-  try {
-    relayBaseURL = persistRelayBaseURL(localStorage, relayURLInput.value, { allowInsecure: insecureMode });
-  } catch (err) {
-    tokenPanel.hidden = false;
-    tokenToggle.setAttribute("aria-expanded", "true");
-    setStatus(err instanceof Error ? err.message : "bad relay url", "err");
-    relayURLInput.focus();
-    return;
-  }
-  tokenPanel.hidden = true;
-  tokenToggle.setAttribute("aria-expanded", "false");
-  refreshVersion();
-  refreshList();
-}
-
-if (_isBrowser) {
-  tokenInput.addEventListener("change", saveConnectionSettings);
-  relayURLInput.addEventListener("change", saveConnectionSettings);
-  insecureModeInput.addEventListener("change", saveConnectionSettings);
-  tokenSave.addEventListener("click", saveConnectionSettings);
-  tokenToggle.addEventListener("click", () => {
-    tokenPanel.hidden = !tokenPanel.hidden;
-    tokenToggle.setAttribute("aria-expanded", String(!tokenPanel.hidden));
-  });
-}
-
 function wsAuth(path) {
-  return makeWebSocketAuth(location.protocol, location.host, path, getToken(), getRelayBaseURL());
+  return makeWebSocketAuth(location.protocol, location.host, path, getRelayBaseURL());
 }
 function apiURL(path) {
   return makeAPIURL(path, "", getRelayBaseURL());
@@ -313,12 +259,9 @@ let lastSessions = [];
 
 async function refreshList() {
   try {
-    const res = await fetch(apiURL("/api/sessions"), {
-      headers: getToken() ? { Authorization: "Bearer " + getToken() } : {},
-    });
+    const res = await authFetch(apiURL("/api/sessions"));
     if (!res.ok) {
-      setStatus(res.status === 401 ? "unauthorized" : `http ${res.status}`, "err");
-      if (res.status === 401) tokenPanel.hidden = false;
+      setStatus(`http ${res.status}`, "err");
       return;
     }
     setStatus("connected", "ok");
@@ -332,9 +275,7 @@ async function refreshList() {
 
 async function refreshVersion() {
   try {
-    const res = await fetch(apiURL("/api/version"), {
-      headers: getToken() ? { Authorization: "Bearer " + getToken() } : {},
-    });
+    const res = await authFetch(apiURL("/api/version"));
     if (!res.ok) return;
     const info = await res.json();
     versionEl.textContent = versionLabel(info?.version);
@@ -585,6 +526,8 @@ function attachToSession(sessionId) {
 
 function openWS(sessionId) {
   const auth = wsAuth("/client");
+  // Cookies are sent automatically by the browser on same-origin WS upgrades;
+  // no subprotocol token needed.
   const ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
   ws.binaryType = "arraybuffer";
   currentWS = ws;
@@ -726,7 +669,6 @@ function route() {
     listView.hidden = true;
     termView.hidden = false;
     backBtn.hidden = false;
-    tokenToggle.hidden = true;
     if (listTimer) {
       clearInterval(listTimer);
       listTimer = null;
@@ -738,7 +680,6 @@ function route() {
     listView.hidden = false;
     termView.hidden = true;
     backBtn.hidden = true;
-    tokenToggle.hidden = false;
     sessionTitleEl.textContent = "mobile relay";
     refreshList();
     if (!listTimer) listTimer = setInterval(refreshList, 2000);
@@ -747,8 +688,14 @@ function route() {
 
 if (_isBrowser) {
   window.addEventListener("hashchange", route);
-  refreshVersion();
-  route();
+  // Call getMe() first to ensure auth and populate CSRF cache.
+  // authFetch will redirect to /login.html on 401.
+  getMe().then(() => {
+    refreshVersion();
+    route();
+  }).catch(() => {
+    // authFetch handles the redirect; nothing more to do here.
+  });
 }
 
 /**
@@ -756,7 +703,7 @@ if (_isBrowser) {
  * can assert the outcome without DOM coupling.
  */
 export async function enablePushFlow(deps) {
-  const { notification, registration, fetch, token } = deps;
+  const { notification, registration, fetch } = deps;
   if (!canEnablePush(notification.permission)) {
     return { ok: false, reason: "denied" };
   }
@@ -766,9 +713,7 @@ export async function enablePushFlow(deps) {
   }
   let keyResp;
   try {
-    keyResp = await fetch("/api/push/key", {
-      headers: { Authorization: "Bearer " + token },
-    });
+    keyResp = await fetch("/api/push/key");
   } catch (_err) {
     return { ok: false, reason: "network" };
   }
@@ -794,7 +739,6 @@ export async function enablePushFlow(deps) {
     postResp = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: {
-        Authorization: "Bearer " + token,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -815,14 +759,14 @@ export async function enablePushFlow(deps) {
 }
 
 export async function disablePushFlow(deps) {
-  const { registration, fetch, token } = deps;
+  const { registration, fetch } = deps;
   try {
     const sub = await registration.pushManager.getSubscription();
     if (sub) {
       await sub.unsubscribe();
       await fetch("/api/push/unsubscribe", {
         method: "POST",
-        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpoint: sub.endpoint }),
       });
     }
@@ -832,7 +776,7 @@ export async function disablePushFlow(deps) {
   return { ok: true };
 }
 
-function renderPushButton(nav, win, getTokenFn) {
+function renderPushButton(nav, win) {
   if (!pushSupported(nav, win)) return null;
   const btn = document.createElement("button");
   btn.className = "push-toggle";
@@ -847,7 +791,6 @@ function renderPushButton(nav, win, getTokenFn) {
       await disablePushFlow({
         registration: await nav.serviceWorker.ready,
         fetch: win.fetch.bind(win),
-        token: getTokenFn(),
       });
       localStorage.removeItem("push-enabled");
       setLabel();
@@ -856,7 +799,6 @@ function renderPushButton(nav, win, getTokenFn) {
         notification: win.Notification,
         registration: await nav.serviceWorker.ready,
         fetch: win.fetch.bind(win),
-        token: getTokenFn(),
       });
       if (result.ok) {
         localStorage.setItem("push-enabled", "1");
@@ -879,6 +821,6 @@ function renderPushButton(nav, win, getTokenFn) {
 
 // Attach the push toggle button to the status element if push is supported.
 if (_isBrowser) {
-  const pushBtn = renderPushButton(navigator, window, getToken);
+  const pushBtn = renderPushButton(navigator, window);
   if (pushBtn) statusEl.appendChild(pushBtn);
 }

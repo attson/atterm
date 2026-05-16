@@ -18,6 +18,7 @@ const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
+  initialTab?: "general" | "relay" | "logging" | "updates";
 }>();
 
 const emit = defineEmits<{
@@ -27,7 +28,7 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
-const activeTab = ref<"general" | "relay" | "logging" | "updates">("general");
+const activeTab = ref<"general" | "relay" | "logging" | "updates">(props.initialTab ?? "general");
 const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
@@ -133,10 +134,6 @@ async function onConfirmInstall() {
 function onSaveClick() {
   relayRef.value?.save();
 }
-
-function onDisconnectClick() {
-  relayRef.value?.disconnect();
-}
 </script>
 
 <template>
@@ -197,12 +194,6 @@ function onDisconnectClick() {
 
       <footer v-if="activeTab === 'relay'" class="settings-footer">
         <button @click="close" :disabled="relayRef?.saving">cancel</button>
-        <button
-          v-if="relayRef?.connected"
-          class="danger"
-          @click="onDisconnectClick"
-          :disabled="relayRef?.saving"
-        >disconnect</button>
         <button
           class="primary"
           :disabled="!relayRef?.canSave"

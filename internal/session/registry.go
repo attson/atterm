@@ -1,10 +1,18 @@
 package session
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/google/uuid"
 )
+
+// ErrSessionOwnerMismatch is returned by Registry.Add when a session with the
+// same ID already exists with a non-empty OwnerUserID that differs from the
+// OwnerUserID on the incoming session. This enforces the owner-binding
+// invariant: once a session is bound to a user, ownership is immutable for the
+// lifetime of the registry entry.
+var ErrSessionOwnerMismatch = errors.New("session: owner mismatch on duplicate id")
 
 // Registry holds all live sessions, keyed by id.
 type Registry struct {
@@ -75,17 +83,37 @@ func (r *Registry) NotifyChange() {
 	}
 }
 
-// Add registers a session. If one with the same id exists it is replaced
-// (and the old one closed) to support agent reconnect with the same id.
-func (r *Registry) Add(s *Session) {
+// Add registers a session. Three cases:
+//
+//  1. No existing entry: the session is stored and returned.
+//  2. Existing entry with the same (or empty) OwnerUserID: the existing
+//     session is returned unchanged (idempotent re-publish, preserving
+//     red-line #3 dedup-by-session-id behaviour).
+//  3. Existing entry with a non-empty OwnerUserID that differs from s's
+//     non-empty OwnerUserID: ErrSessionOwnerMismatch is returned and the
+//     registry is not modified.
+//
+// Legacy callers that do not set OwnerUserID (empty string) are always
+// accepted so that existing paths continue to work without modification.
+func (r *Registry) Add(s *Session) (*Session, error) {
 	r.mu.Lock()
-	old, ok := r.sessions[s.ID]
+	existing, ok := r.sessions[s.ID]
+	if ok {
+		// Owner-binding invariant: reject when both sides have distinct non-empty
+		// owner IDs. Empty on either side is treated as "legacy / unset".
+		if existing.OwnerUserID != "" && s.OwnerUserID != "" && existing.OwnerUserID != s.OwnerUserID {
+			r.mu.Unlock()
+			return nil, ErrSessionOwnerMismatch
+		}
+		// Same owner (or one side is empty): idempotent re-publish — return the
+		// existing session without replacing it.
+		r.mu.Unlock()
+		return existing, nil
+	}
 	r.sessions[s.ID] = s
 	r.mu.Unlock()
-	if ok && old != s {
-		old.Close()
-	}
 	r.NotifyChange()
+	return s, nil
 }
 
 // Get returns the session with the given id, or (nil, false).

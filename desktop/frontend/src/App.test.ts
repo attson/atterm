@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import source from "./App.vue?raw";
+import settingsSource from "./components/SettingsDialog.vue?raw";
 
 describe("tab activation", () => {
   test("gotoTab sets currentTabId before mutating the hash", () => {
@@ -15,6 +16,39 @@ describe("tab activation", () => {
 describe("terminal toasts", () => {
   test("wires pane-grid toast events to the existing toast surface", () => {
     expect(source).toContain('@toast="showToast"');
+  });
+});
+
+describe("auth-error banner", () => {
+  test("subscribes to relay:auth-error event on mount", () => {
+    expect(source).toContain('EventsOn("relay:auth-error"');
+  });
+
+  test("banner section is gated on authError being non-null", () => {
+    expect(source).toContain('v-if="authError"');
+    expect(source).toContain("auth-error-banner");
+  });
+
+  test("banner references auth_invalid_token reason string", () => {
+    expect(source).toContain("auth_invalid_token");
+  });
+
+  test("banner references auth_user_disabled reason string", () => {
+    expect(source).toContain("auth_user_disabled");
+  });
+
+  test("banner has an Open settings action", () => {
+    expect(source).toContain("Open settings");
+    expect(source).toContain("openSettingsRelay");
+  });
+
+  test("SettingsDialog receives initial-tab prop for relay navigation", () => {
+    expect(source).toContain(":initial-tab=");
+    expect(source).toContain("settingsInitialTab");
+  });
+
+  test("SettingsDialog supports initialTab prop", () => {
+    expect(settingsSource).toContain("initialTab");
   });
 });
 

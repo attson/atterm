@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -269,4 +270,193 @@ func TestUplinkE2E(t *testing.T) {
 		}
 	}
 	t.Fatalf("did not see expected echo in %q", seen.String())
+}
+
+// TestUplink_AuthInfo_EmitsUserID verifies that when the relay sends an AUTH_INFO
+// frame (TypeAuthInfo, 0x40) with payload {"user_id":"01HXABC"} after the WS
+// upgrade, the uplink emits a "relay:auth-info" Wails event carrying the same
+// data. The connection is then kept open so we can verify no double-emit.
+func TestUplink_AuthInfo_EmitsUserID(t *testing.T) {
+	const testUserID = "01HXABC"
+	payload, _ := json.Marshal(map[string]string{"user_id": testUserID})
+
+	// Fake relay: accept the /uplink connection, send one AUTH_INFO frame, then
+	// stay open (relay never closes — we let ctx cancel to end the test).
+	ready := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/uplink", func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close(websocket.StatusNormalClosure, "")
+		// Drain the ANNOUNCE the uplink sends immediately after connecting.
+		_, _, _ = c.Read(r.Context())
+		// Send AUTH_INFO frame.
+		frame := proto.Frame{Type: proto.TypeAuthInfo, Payload: payload}
+		_ = c.Write(r.Context(), websocket.MessageBinary, proto.Marshal(frame))
+		close(ready)
+		// Keep the connection alive until the test context closes.
+		<-r.Context().Done()
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	// Stub EventsEmit to capture calls.
+	type emitCall struct {
+		name string
+		data interface{}
+	}
+	var (
+		mu    sync.Mutex
+		calls []emitCall
+	)
+	stubEmit := func(_ context.Context, name string, data ...interface{}) {
+		mu.Lock()
+		defer mu.Unlock()
+		var d interface{}
+		if len(data) > 0 {
+			d = data[0]
+		}
+		calls = append(calls, emitCall{name: name, data: d})
+	}
+
+	host, err := startRelayHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host)
+	u.eventsEmit = stubEmit
+
+	// Run the uplink; cancel after the relay signals it sent the frame.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = u.runOnce(ctx)
+	}()
+
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for relay to send AUTH_INFO")
+	}
+	// Give the uplink a moment to process the frame.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	var found *emitCall
+	for i := range calls {
+		if calls[i].name == "relay:auth-info" {
+			found = &calls[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("relay:auth-info event not emitted; got calls: %+v", calls)
+	}
+	// The data should be a struct with UserID field; JSON round-trip via map is fine.
+	b, err := json.Marshal(found.data)
+	if err != nil {
+		t.Fatalf("cannot marshal emitted data: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("emitted data not JSON-able to map: %v", err)
+	}
+	if got["user_id"] != testUserID {
+		t.Errorf("relay:auth-info user_id = %q; want %q", got["user_id"], testUserID)
+	}
+}
+
+// TestUplink_AuthErrorClose_EmitsEvent verifies that when the relay closes the
+// uplink WS with code 4001 (auth_invalid_token), the uplink calls EventsEmit
+// with event "relay:auth-error" and payload {"reason":"auth_invalid_token"}.
+func TestUplink_AuthErrorClose_EmitsEvent(t *testing.T) {
+	// Spin up a fake relay that immediately closes the /uplink connection with
+	// WS close code 4001 and reason "auth_invalid_token".
+	mux := http.NewServeMux()
+	mux.HandleFunc("/uplink", func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		// Close immediately with auth error code.
+		_ = c.Close(websocket.StatusCode(4001), "auth_invalid_token")
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	// Stub EventsEmit to capture calls.
+	type emitCall struct {
+		name string
+		data interface{}
+	}
+	var (
+		mu    sync.Mutex
+		calls []emitCall
+	)
+	stubEmit := func(_ context.Context, name string, data ...interface{}) {
+		mu.Lock()
+		defer mu.Unlock()
+		var d interface{}
+		if len(data) > 0 {
+			d = data[0]
+		}
+		calls = append(calls, emitCall{name: name, data: d})
+	}
+
+	host, err := startRelayHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host)
+	u.eventsEmit = stubEmit
+
+	// Run returns after the connection is closed (no reconnect: ctx times out quickly).
+	// We run a single runOnce to avoid the retry loop.
+	_ = u.runOnce(ctx)
+
+	// Assert the stub was called with the expected event.
+	mu.Lock()
+	defer mu.Unlock()
+	var found *emitCall
+	for i := range calls {
+		if calls[i].name == "relay:auth-error" {
+			found = &calls[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("relay:auth-error event not emitted; got calls: %+v", calls)
+	}
+	m, ok := found.data.(map[string]string)
+	if !ok {
+		t.Fatalf("relay:auth-error data is %T, want map[string]string; value=%v", found.data, found.data)
+	}
+	if m["reason"] != "auth_invalid_token" {
+		t.Errorf("relay:auth-error reason = %q; want %q", m["reason"], "auth_invalid_token")
+	}
 }

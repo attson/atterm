@@ -1,12 +1,14 @@
 package webpush
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -47,6 +49,17 @@ func loadOrInitState(dir string) (persistedState, error) {
 		}
 		return regenerateAndPersist(dir)
 	}
+	// Legacy schema detection: tokenHash keys are 64-char lowercase hex;
+	// userID keys are 26-char ULIDs. If we detect any legacy key, rename the
+	// file and start fresh so the user re-subscribes with their account.
+	if isLegacySubscriptionSchema(state.Subscriptions) {
+		legacyPath := fmt.Sprintf("%s.legacy-%d", path, time.Now().Unix())
+		if renameErr := os.Rename(path, legacyPath); renameErr != nil {
+			return persistedState{}, fmt.Errorf("rename legacy schema: %w", renameErr)
+		}
+		log.Printf("webpush: legacy tokenHash schema detected; renamed to %s — users must re-enable notifications", legacyPath)
+		return regenerateAndPersist(dir)
+	}
 	if state.PrivateKey == "" || state.PublicKey == "" {
 		// Partial state (no keys); regenerate but keep loaded subs.
 		priv, pub, err := generateVAPIDKeypair()
@@ -79,6 +92,55 @@ func regenerateAndPersist(dir string) (persistedState, error) {
 		log.Printf("webpush: persist fresh state failed: %v", err)
 	}
 	return state, nil
+}
+
+// isLegacySubscriptionSchema returns true when the subscriptions map contains
+// at least one key that looks like a 64-char lowercase hex tokenHash (the old
+// schema) rather than a ULID-shaped user_id (26 chars, Crockford base32).
+func isLegacySubscriptionSchema(subs map[string][]Subscription) bool {
+	for key := range subs {
+		if len(key) == 64 && isAllHex(key) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAllHex returns true when every byte of s is a lowercase or uppercase hex digit.
+func isAllHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// CleanupLegacy removes web-push.json.legacy-* files in dir whose modification
+// time is older than 30 days. Intended to be called once per day.
+func CleanupLegacy(ctx context.Context, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "web-push.json.legacy-") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			full := filepath.Join(dir, e.Name())
+			if rmErr := os.Remove(full); rmErr != nil {
+				log.Printf("webpush: CleanupLegacy: remove %s: %v", full, rmErr)
+			}
+		}
+	}
+	return nil
 }
 
 // saveState writes state to <dir>/web-push.json atomically (write-temp-rename).

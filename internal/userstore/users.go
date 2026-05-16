@@ -25,6 +25,7 @@ var (
 type User struct {
 	ID         string
 	Email      string
+	IsAdmin    bool
 	CreatedAt  time.Time
 	DisabledAt *time.Time
 	csrfSecret []byte // populated by internal lookups; CSRFSecret() exposes

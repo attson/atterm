@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -104,6 +105,87 @@ func TestAdmin_CreateInvitation(t *testing.T) {
 	listJSON := wList.Body.String()
 	if strings.Contains(listJSON, plaintext) {
 		t.Error("list response leaks plaintext")
+	}
+}
+
+// TestAdmin_CreateInvitation_DefaultExpiry7Days: when the request body omits
+// expires_at, the relay defaults to 7 days from now. Operators don't have to
+// remember to set one, and stale codes don't accumulate forever.
+func TestAdmin_CreateInvitation_DefaultExpiry7Days(t *testing.T) {
+	srv, _ := newTestAdminServer(t)
+	handler := srv.AdminRoutes()
+
+	before := time.Now().Add(defaultInviteExpiry).Add(-2 * time.Second)
+	w := adminPost(handler, "/admin/api/invitations", map[string]interface{}{"note": ""})
+	after := time.Now().Add(defaultInviteExpiry).Add(2 * time.Second)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	expStr, _ := resp["expires_at"].(string)
+	if expStr == "" {
+		t.Fatalf("expected expires_at to be set by default, got empty/nil; resp=%v", resp)
+	}
+	got, err := time.Parse(time.RFC3339, expStr)
+	if err != nil {
+		t.Fatalf("parse expires_at %q: %v", expStr, err)
+	}
+	if got.Before(before) || got.After(after) {
+		t.Errorf("expires_at %v not within [%v, %v]", got, before, after)
+	}
+}
+
+// TestAdmin_CreateInvitation_Batch: count > 1 returns an invites array, each
+// invite gets its own plaintext + code_prefix; all share the same expires_at
+// and note. Verifies the bulk-create path.
+func TestAdmin_CreateInvitation_Batch(t *testing.T) {
+	srv, _ := newTestAdminServer(t)
+	handler := srv.AdminRoutes()
+
+	w := adminPost(handler, "/admin/api/invitations", map[string]interface{}{
+		"note":  "Q3 team",
+		"count": 5,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Invites []map[string]interface{} `json:"invites"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Invites) != 5 {
+		t.Fatalf("expected 5 invites, got %d", len(resp.Invites))
+	}
+	seen := make(map[string]bool, 5)
+	for i, inv := range resp.Invites {
+		pt, _ := inv["plaintext"].(string)
+		if !strings.HasPrefix(pt, "inv_") {
+			t.Errorf("invite %d plaintext bad prefix: %q", i, pt)
+		}
+		if seen[pt] {
+			t.Errorf("duplicate plaintext at index %d: %q", i, pt)
+		}
+		seen[pt] = true
+		if note, _ := inv["note"].(string); note != "Q3 team" {
+			t.Errorf("invite %d note=%q, want %q", i, note, "Q3 team")
+		}
+	}
+}
+
+// TestAdmin_CreateInvitation_CountTooLarge: counts > 50 are rejected to bound
+// per-request work.
+func TestAdmin_CreateInvitation_CountTooLarge(t *testing.T) {
+	srv, _ := newTestAdminServer(t)
+	handler := srv.AdminRoutes()
+
+	w := adminPost(handler, "/admin/api/invitations", map[string]interface{}{"count": 51})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for count=51, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

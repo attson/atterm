@@ -72,9 +72,16 @@ func main() {
 		persistDir = "./data/atterm-relay"
 	}
 
-	// Open user store (SQLite).
+	// Open user store (SQLite). Create the persistence directory if it
+	// doesn't exist yet — first-run bootstrap should "just work" without
+	// requiring the operator to pre-create the directory. Without this
+	// SQLite fails with a misleading "out of memory (CANTOPEN)" error.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if err := os.MkdirAll(persistDir, 0o700); err != nil {
+		log.Fatalf("create persist dir %s: %v", persistDir, err)
+	}
 
 	dbPath := filepath.Join(persistDir, "users.db")
 	store, err := userstore.Open(ctx, dbPath)

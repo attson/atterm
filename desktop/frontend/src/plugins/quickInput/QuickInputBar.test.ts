@@ -47,12 +47,12 @@ describe("QuickInputBar", () => {
     expect(w.findAll("button.quick-input-btn")).toHaveLength(2);
   });
 
-  it("clicking sends text with newline when appendNewline=true", async () => {
+  it("clicking sends text with carriage return (Enter) when appendNewline=true", async () => {
     const ctx = makeContext();
     const w = mount(QuickInputBar, { props: { context: ctx as any } });
     await flushPromises();
     await w.findAll("button.quick-input-btn")[0].trigger("click");
-    expect(ctx.send).toHaveBeenCalledWith("ok\n");
+    expect(ctx.send).toHaveBeenCalledWith("ok\r");
   });
 
   it("clicking sends raw text when appendNewline=false", async () => {

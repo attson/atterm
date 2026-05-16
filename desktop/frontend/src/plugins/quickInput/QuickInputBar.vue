@@ -15,12 +15,16 @@ onMounted(async () => {
 const buttons = computed<QuickInputButton[]>(() => store.cfg?.quickInput.buttons ?? []);
 
 function fire(b: QuickInputButton) {
-  const text = b.appendNewline ? b.send + "\n" : b.send;
+  // Send carriage return (\r), not LF. Raw-mode TUIs like Claude Code,
+  // vim, etc. distinguish CR (Enter / submit) from LF (Shift+Enter /
+  // insert newline). Cooked-mode programs (bash, cat) accept either via
+  // termios ICRNL, so \r is the strictly more compatible choice.
+  const text = b.appendNewline ? b.send + "\r" : b.send;
   props.context.send(text);
 }
 
 function tooltipFor(send: string, newline: boolean, hotkey?: string): string {
-  const shown = newline ? send + "\\n" : send;
+  const shown = newline ? send + " ⏎" : send;
   return hotkey ? `${shown} (${hotkey})` : shown;
 }
 

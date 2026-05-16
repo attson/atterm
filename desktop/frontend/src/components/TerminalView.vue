@@ -3,6 +3,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } fr
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import { WebglAddon } from "xterm-addon-webgl";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
@@ -257,6 +258,18 @@ function ensureTerm() {
   fit = new FitAddon();
   term.loadAddon(fit);
   term.open(termContainer.value!);
+  // GPU-rasterized renderer eliminates the cell-ghosting the DOM renderer
+  // shows on light terminal themes (most visible when remote TUIs like
+  // Claude Code repaint dense RGB diff blocks). Load after open() so the
+  // WebGL context attaches to the live <canvas>; fall back to DOM on
+  // construction failure or runtime context loss.
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
+  } catch (err) {
+    console.warn("[AT Term] WebGL renderer unavailable, falling back to DOM", err);
+  }
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });

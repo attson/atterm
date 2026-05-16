@@ -24,7 +24,7 @@ func newTestAdminServer(t *testing.T) (*AdminServer, *userstore.SQLiteStore) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	resolver := NewIdentityResolver(store, testAdminToken)
+	resolver := NewIdentityResolver(store)
 	srv := &AdminServer{
 		Store:    store,
 		Resolver: resolver,
@@ -292,7 +292,7 @@ func TestAdmin_ResetPassword(t *testing.T) {
 
 	// Also build an AuthServer so we can test login.
 	pool := NewArgon2Pool(1)
-	resolver := NewIdentityResolver(store, testAdminToken)
+	resolver := NewIdentityResolver(store)
 	authSrv := &AuthServer{
 		Store:        store,
 		Resolver:     resolver,
@@ -378,7 +378,7 @@ func TestAdmin_DisableUser(t *testing.T) {
 	adminHandler := adminSrv.AdminRoutes()
 
 	pool := NewArgon2Pool(1)
-	resolver := NewIdentityResolver(store, testAdminToken)
+	resolver := NewIdentityResolver(store)
 	authSrv := &AuthServer{
 		Store:        store,
 		Resolver:     resolver,

@@ -108,7 +108,7 @@ func main() {
 		maxVal = adminCfg.MaxConnectionsPerKey
 	}
 
-	resolver := relay.NewIdentityResolver(store, cleanAdminToken)
+	resolver := relay.NewIdentityResolver(store)
 
 	cfg := relay.Config{
 		WebDir:               *webDir,

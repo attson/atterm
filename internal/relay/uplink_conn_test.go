@@ -41,7 +41,7 @@ func newUplinkTestStore(t *testing.T) (*userstore.SQLiteStore, string, string) {
 // by the given store. adminToken is the fixed ATTERM_ADMIN_TOKEN value.
 func newUplinkTestServer(t *testing.T, store userstore.Store, adminToken string) *Server {
 	t.Helper()
-	resolver := NewIdentityResolver(store, adminToken)
+	resolver := NewIdentityResolver(store)
 	return NewServer(Config{
 		Resolver:   resolver,
 		AdminToken: adminToken,

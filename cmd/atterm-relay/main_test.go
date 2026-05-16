@@ -24,7 +24,7 @@ func newTestServer(t *testing.T, adminToken string, origins []string) (*relay.Se
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	resolver := relay.NewIdentityResolver(store, adminToken)
+	resolver := relay.NewIdentityResolver(store)
 	cfg := relay.Config{
 		AdminToken:     adminToken,
 		AllowedOrigins: origins,

@@ -156,7 +156,7 @@ func newClientTestStore(t *testing.T) (store *userstore.SQLiteStore, userAID, co
 // newClientTestServer builds a Server wired with a real IdentityResolver.
 func newClientTestServer(t *testing.T, store userstore.Store, adminToken string) *Server {
 	t.Helper()
-	resolver := NewIdentityResolver(store, adminToken)
+	resolver := NewIdentityResolver(store)
 	return NewServer(Config{
 		Resolver:   resolver,
 		AdminToken: adminToken,

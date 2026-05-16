@@ -34,7 +34,7 @@ var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 // secret and returns (resolver, cookieValue, expectedToken).
 func newCSRFSetup(csrfSecret []byte) (*IdentityResolver, string, string) {
 	store := &csrfFakeStore{csrfSecret: csrfSecret, userID: "u1"}
-	resolver := NewIdentityResolver(store, "")
+	resolver := NewIdentityResolver(store)
 	cookieValue := "test-cookie-session-value"
 	token := CSRFToken(cookieValue, csrfSecret)
 	return resolver, cookieValue, token
@@ -90,7 +90,7 @@ func TestRequireCSRF_WrongToken_403(t *testing.T) {
 
 func TestRequireCSRF_GETBypasses(t *testing.T) {
 	// Neither a cookie nor an X-CSRF-Token header — GET/HEAD must pass through.
-	resolver := NewIdentityResolver(&csrfFakeStore{csrfSecret: []byte("s"), userID: "u1"}, "")
+	resolver := NewIdentityResolver(&csrfFakeStore{csrfSecret: []byte("s"), userID: "u1"})
 	handler := RequireCSRF(resolver, okHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {

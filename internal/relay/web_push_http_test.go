@@ -35,7 +35,7 @@ func newWebPushTestServerWithResolver(t *testing.T, store userstore.Store) (*Ser
 	if err != nil {
 		t.Fatalf("webpush.Open: %v", err)
 	}
-	resolver := NewIdentityResolver(store, "admin-token-for-push-test")
+	resolver := NewIdentityResolver(store)
 	srv := NewServer(Config{
 		WebPush:  svc,
 		Resolver: resolver,

@@ -40,8 +40,6 @@ func req(headers ...string) *http.Request {
 }
 
 func TestResolveIdentity(t *testing.T) {
-	const adminToken = "super-secret-admin-token-abcdefghij"
-
 	const (
 		sessionCookie = "sess_plaintext_abc"
 		apiToken      = "atk_plaintexttoken123"
@@ -148,28 +146,6 @@ func TestResolveIdentity(t *testing.T) {
 			wantAPICallN: 1,
 		},
 		{
-			name: "admin token in Authorization",
-			store: &fakeStore{
-				onLookupWebSession: noWebSession,
-				onLookupAPIToken:   noAPIToken,
-			},
-			req:      req("Authorization", "Bearer "+adminToken),
-			wantKind: PrincipalAdmin,
-			wantScope: authWrite,
-		},
-		{
-			name: "admin token wrong case is rejected",
-			store: &fakeStore{
-				onLookupWebSession: noWebSession,
-				// admin check is first; if it fails it falls through to LookupAPIToken
-				onLookupAPIToken: revokedAPIToken,
-			},
-			// Perturb one char: lowercase 's' → uppercase 'S' in first char
-			req:          req("Authorization", "Bearer "+"Super-secret-admin-token-abcdefghij"),
-			wantKind:     PrincipalNone,
-			wantAPICallN: 1,
-		},
-		{
 			name: "Sec-WebSocket-Protocol atterm-token.",
 			store: &fakeStore{
 				onLookupWebSession: noWebSession,
@@ -214,7 +190,7 @@ func TestResolveIdentity(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resolver := NewIdentityResolver(tc.store, adminToken)
+			resolver := NewIdentityResolver(tc.store)
 			got := resolver.Resolve(tc.req)
 
 			if got.Kind != tc.wantKind {

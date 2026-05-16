@@ -13,18 +13,4 @@
   <p id="error" hidden></p>
   <p class="alt">Have an invite code? <a href="/signup.html">Sign up here</a>. Otherwise ask your admin.</p>
 </form>
-<script type="module">
-import { login } from "./auth.js";
-document.getElementById("login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const err = document.getElementById("error");
-    err.hidden = true;
-    try {
-        await login(document.getElementById("email").value, document.getElementById("password").value);
-        location.assign("/");
-    } catch (e) {
-        err.textContent = "Invalid email or password.";
-        err.hidden = false;
-    }
-});
-</script></body></html>
+<script type="module" src="./login.js"></script></body></html>

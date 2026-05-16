@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { X } from "lucide-vue-next";
-import type { Tab } from "./tabsModel";
+import type { Tab } from "../src/plugins/fileExplorer/tabsModel";
 
 const props = defineProps<{
   tabs: Tab[];
@@ -41,8 +41,8 @@ function basename(p: string): string {
   display: flex;
   flex-direction: row;
   overflow-x: auto;
-  background: var(--ed-tab-bg, #2d333b);
-  border-bottom: 1px solid var(--ed-border, #444c56);
+  border-bottom: 1px solid var(--ed-border, #1a1a1a);
+  background: var(--ed-tab-bg, #252526);
   flex: 0 0 auto;
 }
 .tab {
@@ -51,17 +51,17 @@ function basename(p: string): string {
   gap: 6px;
   padding: 6px 10px;
   font-size: 12px;
-  border-right: 1px solid var(--ed-border, #444c56);
+  border-right: 1px solid var(--ed-border, #1a1a1a);
   cursor: pointer;
-  color: var(--ed-tab-fg, #768390);
+  color: var(--ed-tab-fg, #969696);
   white-space: nowrap;
   position: relative;
   user-select: none;
 }
-.tab:hover { color: var(--ed-tab-hover-fg, #adbac7); }
+.tab:hover { color: var(--ed-tab-hover-fg, #cccccc); }
 .tab.active {
-  background: var(--ed-tab-active-bg, #22272e);
-  color: var(--ed-tab-active-fg, #cdd9e5);
+  background: var(--ed-tab-active-bg, #1e1e1e);
+  color: var(--ed-tab-active-fg, #ffffff);
 }
 .tab.active::after {
   content: "";
@@ -70,7 +70,7 @@ function basename(p: string): string {
   left: 0;
   right: 0;
   height: 1px;
-  background: var(--ed-tab-active-bar, #539bf5);
+  background: var(--ed-tab-active-bar, #1177bb);
 }
 .tab.preview .name { font-style: italic; }
 .close {

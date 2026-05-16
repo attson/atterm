@@ -24,6 +24,13 @@ async function toggleHidden(v: boolean) {
   next.fileExplorer.showHidden = v;
   try { await store.save(next); } catch (err) { console.error(err); }
 }
+
+async function toggleLineNumbers(v: boolean) {
+  if (!store.cfg) return;
+  const next = JSON.parse(JSON.stringify(store.cfg));
+  next.fileExplorer.showLineNumbers = v;
+  try { await store.save(next); } catch (err) { console.error(err); }
+}
 </script>
 
 <template>
@@ -50,6 +57,11 @@ async function toggleHidden(v: boolean) {
             <input type="checkbox" :checked="store.cfg?.fileExplorer.showHidden ?? false"
                    @change="toggleHidden(($event.target as HTMLInputElement).checked)" />
             Show hidden files
+          </label>
+          <label>
+            <input type="checkbox" :checked="store.cfg?.fileExplorer.showLineNumbers ?? false"
+                   @change="toggleLineNumbers(($event.target as HTMLInputElement).checked)" />
+            Show line numbers in editor
           </label>
           <p class="muted">Panel width and inner ratio are adjusted by dragging in the panel.</p>
         </div>
@@ -95,7 +107,7 @@ async function toggleHidden(v: boolean) {
   font-size: 12px;
   opacity: 0.5;
 }
-.fe-settings { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2d333b; font-size: 12px; }
+.fe-settings { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2d333b; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
 .fe-settings label { display: inline-flex; align-items: center; gap: 6px; }
 .fe-settings .muted { margin: 6px 0 0; opacity: 0.6; font-size: 11px; }
 </style>

@@ -78,6 +78,7 @@ export namespace main {
 	    panelCollapsed: boolean;
 	    innerTreeRatio: number;
 	    showHidden: boolean;
+	    showLineNumbers: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new FileExplorerConfig(source);
@@ -90,6 +91,7 @@ export namespace main {
 	        this.panelCollapsed = source["panelCollapsed"];
 	        this.innerTreeRatio = source["innerTreeRatio"];
 	        this.showHidden = source["showHidden"];
+	        this.showLineNumbers = source["showLineNumbers"];
 	    }
 	}
 	export class FileMetaInfo {

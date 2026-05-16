@@ -11,6 +11,9 @@ export interface PluginContext {
   activeSessionId: ComputedRef<string | null>;
   activeEndpoint: ComputedRef<Endpoint | null>;
   activeCwd: ComputedRef<string | null>;
+  // Current terminal theme id (e.g. "classic" / "daylight"). Plugins use it
+  // to pick a matching dark/light skin via isLightTerminalTheme().
+  terminalThemeId: ComputedRef<string>;
   send: (text: string) => void;
   showToast: (msg: string) => void;
 }

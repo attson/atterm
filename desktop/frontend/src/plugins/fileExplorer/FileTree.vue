@@ -10,12 +10,12 @@ interface DirEntry {
   modTime?: number;
 }
 
-interface Node {
+interface TreeNode {
   path: string;
   name: string;
   isDir: boolean;
   expanded: boolean;
-  children: Node[] | null; // null = not yet loaded
+  children: TreeNode[] | null;
 }
 
 const props = defineProps<{
@@ -29,13 +29,13 @@ const emit = defineEmits<{
   (e: "dir-toggled", path: string, expanded: boolean): void;
 }>();
 
-const rootNodes = ref<Node[]>([]);
-const selectedPath = ref<string | null>(null);
+const rootNodes = ref<TreeNode[]>([]);
+const selectedPath = ref<string>("");
 const watchHandles = new Map<string, number>();
 
-async function loadDir(path: string): Promise<Node[]> {
+async function loadDir(path: string): Promise<TreeNode[]> {
   const entries = (await ListDir(path)) as DirEntry[];
-  const nodes: Node[] = entries
+  return entries
     .filter((e) => props.showHidden || !e.name.startsWith("."))
     .map((e) => ({
       path: joinPath(path, e.name),
@@ -45,7 +45,6 @@ async function loadDir(path: string): Promise<Node[]> {
       children: null,
     }))
     .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
-  return nodes;
 }
 
 function joinPath(parent: string, name: string): string {
@@ -56,15 +55,18 @@ async function refreshRoot() {
   rootNodes.value = await loadDir(props.root);
 }
 
-watch(() => [props.root, props.showHidden], () => {
-  void refreshRoot();
-});
+watch(
+  () => [props.root, props.showHidden],
+  () => {
+    void refreshRoot();
+  },
+);
 
 onMounted(() => {
   void refreshRoot();
 });
 
-async function toggle(n: Node) {
+async function toggle(n: TreeNode) {
   if (!n.isDir) return;
   selectedPath.value = n.path;
   if (!n.expanded) {
@@ -87,7 +89,7 @@ async function toggle(n: Node) {
   emit("dir-toggled", n.path, n.expanded);
 }
 
-function findNode(nodes: Node[], path: string): Node | null {
+function findNode(nodes: TreeNode[], path: string): TreeNode | null {
   for (const n of nodes) {
     if (n.path === path) return n;
     if (n.children) {
@@ -117,13 +119,13 @@ onBeforeUnmount(async () => {
   off();
 });
 
-function clickFile(n: Node) {
+function clickFile(n: TreeNode) {
   if (n.isDir) return;
   selectedPath.value = n.path;
   emit("file-clicked", n.path);
 }
 
-function dblClickFile(n: Node) {
+function dblClickFile(n: TreeNode) {
   if (n.isDir) return;
   selectedPath.value = n.path;
   emit("file-double-clicked", n.path);
@@ -135,7 +137,7 @@ defineExpose({ refresh: refreshRoot });
 <template>
   <ul class="tree-list">
     <li v-for="n in rootNodes" :key="n.path">
-      <NodeRow
+      <FileTreeNode
         :node="n"
         :level="0"
         :selected-path="selectedPath"
@@ -148,50 +150,132 @@ defineExpose({ refresh: refreshRoot });
 </template>
 
 <script lang="ts">
-import { defineComponent, h, PropType } from "vue";
+import { defineComponent, h, computed, type PropType } from "vue";
+import {
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  File,
+  FileCode2,
+  FileText,
+  Braces,
+  Image,
+} from "lucide-vue-next";
 
 const INDENT_PX = 16;
 const ROW_HEIGHT = 22;
 
-export const NodeRow = defineComponent({
-  name: "NodeRow",
+const fileIconMap: Record<string, { comp: any; color: string }> = {
+  ts: { comp: FileCode2, color: "#3178c6" },
+  tsx: { comp: FileCode2, color: "#3178c6" },
+  js: { comp: FileCode2, color: "#f7df1e" },
+  jsx: { comp: FileCode2, color: "#f7df1e" },
+  go: { comp: FileCode2, color: "#00add8" },
+  py: { comp: FileCode2, color: "#3776ab" },
+  rs: { comp: FileCode2, color: "#dea584" },
+  sh: { comp: FileCode2, color: "#89e051" },
+  vue: { comp: FileCode2, color: "#41b883" },
+  json: { comp: Braces, color: "#cbcb41" },
+  md: { comp: FileText, color: "#519aba" },
+  markdown: { comp: FileText, color: "#519aba" },
+  txt: { comp: FileText, color: "#cccccc" },
+  yaml: { comp: FileCode2, color: "#cb171e" },
+  yml: { comp: FileCode2, color: "#cb171e" },
+  toml: { comp: FileCode2, color: "#9c4221" },
+  html: { comp: FileCode2, color: "#e44d26" },
+  htm: { comp: FileCode2, color: "#e44d26" },
+  css: { comp: FileCode2, color: "#264de4" },
+  scss: { comp: FileCode2, color: "#c6538c" },
+  sass: { comp: FileCode2, color: "#c6538c" },
+  png: { comp: Image, color: "#a074c4" },
+  jpg: { comp: Image, color: "#a074c4" },
+  jpeg: { comp: Image, color: "#a074c4" },
+  gif: { comp: Image, color: "#a074c4" },
+  svg: { comp: Image, color: "#ffb13b" },
+  ico: { comp: Image, color: "#a074c4" },
+};
+
+function fileIconFor(name: string) {
+  const m = /\.([A-Za-z0-9]+)$/.exec(name);
+  if (m) {
+    const entry = fileIconMap[m[1].toLowerCase()];
+    if (entry) return entry;
+  }
+  return { comp: File, color: "currentColor" };
+}
+
+function cssVar(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+export const FileTreeNode = defineComponent({
+  name: "FileTreeNode",
   props: {
     node: { type: Object as PropType<any>, required: true },
     level: { type: Number, required: true },
-    selectedPath: { type: String as PropType<string | null>, default: null },
+    selectedPath: { type: String, default: "" },
   },
   emits: ["toggle", "click-file", "dblclick-file"],
   setup(props, { emit }) {
+    const folderColor = computed(() => cssVar("--ed-folder", "#d4a14a"));
+    const chevronColor = computed(() => cssVar("--ed-chevron", "rgba(204,204,204,0.7)"));
+
     return () => {
       const selected = props.selectedPath === props.node.path;
-      const twistyChar = props.node.isDir ? (props.node.expanded ? "▾" : "▸") : "";
-      const iconChar = props.node.isDir ? (props.node.expanded ? "📂" : "📁") : "📄";
+      const isDir = props.node.isDir as boolean;
+      const expanded = props.node.expanded as boolean;
+      const chevronComp = isDir ? (expanded ? ChevronDown : ChevronRight) : null;
+      const dirComp = isDir ? (expanded ? FolderOpen : Folder) : null;
+      const file = !isDir ? fileIconFor(props.node.name) : null;
+
       return h("div", { class: "node-wrap" }, [
         h(
           "div",
           {
-            class: ["node", { selected, "is-dir": props.node.isDir, "is-file": !props.node.isDir }],
-            "data-type": props.node.isDir ? "dir" : "file",
-            style: { paddingLeft: `${props.level * INDENT_PX}px`, height: `${ROW_HEIGHT}px`, lineHeight: `${ROW_HEIGHT}px` },
+            class: ["node", { selected, "is-dir": isDir, "is-file": !isDir }],
+            "data-type": isDir ? "dir" : "file",
+            style: {
+              paddingLeft: `${props.level * INDENT_PX}px`,
+              height: `${ROW_HEIGHT}px`,
+              lineHeight: `${ROW_HEIGHT}px`,
+            },
             title: props.node.path,
-            onClick: () => (props.node.isDir ? emit("toggle", props.node) : emit("click-file", props.node)),
-            onDblclick: () => (!props.node.isDir ? emit("dblclick-file", props.node) : null),
+            onClick: () =>
+              isDir ? emit("toggle", props.node) : emit("click-file", props.node),
+            onDblclick: () => (!isDir ? emit("dblclick-file", props.node) : null),
           },
           [
-            h("span", { class: "twisty" }, twistyChar),
-            h("span", { class: "icon" }, iconChar),
+            h(
+              "span",
+              { class: "twisty" },
+              chevronComp
+                ? [h(chevronComp, { size: 14, color: chevronColor.value, strokeWidth: 2 })]
+                : [],
+            ),
+            h(
+              "span",
+              { class: "icon" },
+              isDir
+                ? [h(dirComp as any, { size: 16, color: folderColor.value, strokeWidth: 1.5 })]
+                : [h((file as any).comp, { size: 16, color: (file as any).color, strokeWidth: 1.5 })],
+            ),
             h("span", { class: "node-name" }, props.node.name),
           ],
         ),
-        props.node.expanded && props.node.children
+        isDir && expanded && props.node.children
           ? h(
               "ul",
-              { class: "tree-list" },
+              {
+                class: "tree-list",
+                style: { "--indent-base": `${props.level * INDENT_PX + 12}px` },
+              },
               props.node.children.map((c: any) =>
                 h(
                   "li",
                   { key: c.path },
-                  h(NodeRow, {
+                  h(FileTreeNode, {
                     node: c,
                     level: props.level + 1,
                     selectedPath: props.selectedPath,
@@ -207,6 +291,8 @@ export const NodeRow = defineComponent({
     };
   },
 });
+
+export default defineComponent({ name: "FileTree" });
 </script>
 
 <style scoped>
@@ -214,32 +300,37 @@ export const NodeRow = defineComponent({
   list-style: none;
   margin: 0;
   padding: 0;
+  position: relative;
+}
+.tree-list ul.tree-list::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--ed-indent-guide, rgba(204, 204, 204, 0.1));
+  left: var(--indent-base, 12px);
+  pointer-events: none;
 }
 .tree-list > li {
   display: block;
 }
-
 .node {
   display: flex;
   align-items: center;
   padding-right: 6px;
-  cursor: default;
-  font-size: 12px;
+  cursor: pointer;
+  font-size: 13px;
   white-space: nowrap;
-  color: #bcc0c4;
+  color: var(--ed-row-fg, #cccccc);
   user-select: none;
 }
 .node:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--ed-row-hover, rgba(255, 255, 255, 0.05));
 }
 .node.selected {
-  background: #2b4769;
-  color: #f7f9fb;
+  background: var(--ed-row-selected, #37373d);
 }
-.node.selected:hover {
-  background: #2b4769;
-}
-
 .twisty {
   display: inline-flex;
   align-items: center;
@@ -247,18 +338,16 @@ export const NodeRow = defineComponent({
   flex: 0 0 14px;
   width: 14px;
   height: 100%;
-  color: #8b949e;
+  color: var(--ed-chevron, rgba(204, 204, 204, 0.7));
   font-size: 10px;
 }
 .icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 18px;
-  width: 18px;
+  flex: 0 0 20px;
+  width: 20px;
   margin-right: 4px;
-  font-size: 11px;
-  filter: grayscale(0.4);
 }
 .node-name {
   flex: 1 1 auto;

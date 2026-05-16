@@ -186,3 +186,10 @@ export function isTerminalThemeID(id: string): id is TerminalThemeID {
 export function getTerminalTheme(id: string): TerminalThemeDefinition {
   return TERMINAL_THEMES.find((theme) => theme.id === id) ?? TERMINAL_THEMES[0];
 }
+
+// isLightTerminalTheme returns true when the active terminal palette has a
+// light background. Plugins (File Explorer) use this to pick a matching
+// light/dimmed shell.
+export function isLightTerminalTheme(id: string): boolean {
+  return id === "daylight";
+}

@@ -19,6 +19,7 @@ function makeContext() {
     activeSessionId: { value: null },
     activeEndpoint: { value: null },
     activeCwd: { value: null },
+    terminalThemeId: { value: "classic" },
     send: vi.fn(),
     showToast: vi.fn(),
   };

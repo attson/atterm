@@ -21,7 +21,7 @@ beforeEach(() => {
 describe("FileEditor", () => {
   it("shows placeholder for too-large file (size > 2 MB)", async () => {
     vi.mocked(FileMeta).mockResolvedValue({ path: "/a.txt", size: 3_000_000, modTime: 1, isBinary: false } as any);
-    const w = mount(FileEditor, { props: { path: "/a.txt" } });
+    const w = mount(FileEditor, { props: { path: "/a.txt", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("File too large");
     expect(ReadFile).not.toHaveBeenCalled();
@@ -29,7 +29,7 @@ describe("FileEditor", () => {
 
   it("shows binary placeholder when isBinary=true", async () => {
     vi.mocked(FileMeta).mockResolvedValue({ path: "/b.bin", size: 100, modTime: 1, isBinary: true } as any);
-    const w = mount(FileEditor, { props: { path: "/b.bin" } });
+    const w = mount(FileEditor, { props: { path: "/b.bin", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("Binary file");
     expect(ReadFile).not.toHaveBeenCalled();
@@ -38,7 +38,7 @@ describe("FileEditor", () => {
   it("loads file content for normal text file", async () => {
     vi.mocked(FileMeta).mockResolvedValue({ path: "/c.txt", size: 5, modTime: 1, isBinary: false } as any);
     vi.mocked(ReadFile).mockResolvedValue({ path: "/c.txt", data: new TextEncoder().encode("hello"), isBinary: false, truncatedAt: 0 } as any);
-    const w = mount(FileEditor, { props: { path: "/c.txt" } });
+    const w = mount(FileEditor, { props: { path: "/c.txt", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(ReadFile).toHaveBeenCalled();
     expect(w.text()).not.toContain("File too large");

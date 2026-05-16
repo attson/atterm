@@ -27,11 +27,12 @@ type QuickInputButton struct {
 }
 
 type FileExplorerConfig struct {
-	Enabled        bool    `json:"enabled"`
-	PanelWidthPx   int     `json:"panelWidthPx"`
-	PanelCollapsed bool    `json:"panelCollapsed"`
-	InnerTreeRatio float64 `json:"innerTreeRatio"`
-	ShowHidden     bool    `json:"showHidden"`
+	Enabled         bool    `json:"enabled"`
+	PanelWidthPx    int     `json:"panelWidthPx"`
+	PanelCollapsed  bool    `json:"panelCollapsed"`
+	InnerTreeRatio  float64 `json:"innerTreeRatio"`
+	ShowHidden      bool    `json:"showHidden"`
+	ShowLineNumbers bool    `json:"showLineNumbers"`
 }
 
 // applyDefaults fills empty-valued fields with their defaults. Safe to call

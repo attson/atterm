@@ -10,6 +10,7 @@ export interface PluginContextInputs {
   sessionInfoForPane: (pane: Pane) => SessionInfo | null;
   sendToSession: (sessionId: string, endpoint: Endpoint, text: string) => void;
   showToast: (msg: string) => void;
+  terminalThemeId: Ref<string> | ComputedRef<string>;
 }
 
 export function createPluginContext(inputs: PluginContextInputs): PluginContext {
@@ -41,11 +42,14 @@ export function createPluginContext(inputs: PluginContextInputs): PluginContext 
     inputs.sendToSession(p.sessionId, ep, text);
   }
 
+  const terminalThemeId = computed(() => inputs.terminalThemeId.value);
+
   return {
     activePane: inputs.activePane,
     activeSessionId,
     activeEndpoint,
     activeCwd,
+    terminalThemeId,
     send,
     showToast: inputs.showToast,
   };

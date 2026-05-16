@@ -213,6 +213,7 @@ const pluginContext = createPluginContext({
     sendInputToSession(endpoint, sessionId, text);
   },
   showToast,
+  terminalThemeId: currentTerminalThemeID,
 });
 
 const pluginStore = usePluginConfigStore();

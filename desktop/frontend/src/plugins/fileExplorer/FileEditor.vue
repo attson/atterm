@@ -8,6 +8,26 @@ import { languageForPath } from "./languageMap";
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
+const props = defineProps<{
+  path: string;
+  showLineNumbers: boolean;
+  theme: "dimmed" | "light";
+}>();
+
+const host = ref<HTMLDivElement | null>(null);
+const state = ref<"loading" | "tooLarge" | "binary" | "ok" | "error">("loading");
+const errorMsg = ref<string>("");
+const reloadPending = ref(false);
+const loadedAt = ref<number | null>(null);
+
+let view: EditorView | null = null;
+let off: (() => void) | null = null;
+
+function cssVar(name: string, fallback: string): string {
+  if (typeof window === "undefined" || !host.value) return fallback;
+  return getComputedStyle(host.value).getPropertyValue(name).trim() || fallback;
+}
+
 // Wails serializes Go []byte as a base64 string over JSON. Older runtimes
 // may also pass through a Uint8Array or number[]. Decode all three to text.
 function decodeFileBytes(data: unknown): string {
@@ -26,18 +46,31 @@ function decodeFileBytes(data: unknown): string {
   return new TextDecoder().decode(bytes);
 }
 
-const props = defineProps<{
-  path: string;
-}>();
-
-const host = ref<HTMLDivElement | null>(null);
-const state = ref<"loading" | "tooLarge" | "binary" | "ok" | "error">("loading");
-const errorMsg = ref<string>("");
-const reloadPending = ref(false);
-const loadedAt = ref<number | null>(null);
-
-let view: EditorView | null = null;
-let off: (() => void) | null = null;
+function makeThemeExt(): Extension {
+  return EditorView.theme(
+    {
+      "&": {
+        backgroundColor: cssVar("--ed-editor-bg", "#22272e"),
+        color: cssVar("--ed-editor-fg", "#adbac7"),
+        height: "100%",
+      },
+      ".cm-gutters": {
+        backgroundColor: cssVar("--ed-gutter-bg", "#22272e"),
+        color: cssVar("--ed-gutter-fg", "#545d68"),
+        border: "none",
+      },
+      ".cm-activeLine": { backgroundColor: "transparent" },
+      ".cm-activeLineGutter": { backgroundColor: "transparent" },
+      ".cm-content": {
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        fontSize: "13px",
+        padding: "8px 0",
+      },
+      ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px 0 14px" },
+    },
+    { dark: props.theme !== "light" },
+  );
+}
 
 async function load() {
   state.value = "loading";
@@ -47,29 +80,26 @@ async function load() {
     const meta = (await FileMeta(props.path)) as any;
     loadedAt.value = meta.modTime;
     reloadPending.value = false;
-    if (meta.isBinary) {
-      state.value = "binary";
-      return;
-    }
-    if (meta.size > MAX_BYTES_FRONTEND) {
-      state.value = "tooLarge";
-      return;
-    }
+    if (meta.isBinary) { state.value = "binary"; return; }
+    if (meta.size > MAX_BYTES_FRONTEND) { state.value = "tooLarge"; return; }
     const result = (await ReadFile(props.path, MAX_BYTES_FRONTEND)) as any;
     const text = decodeFileBytes(result.data);
     state.value = "ok";
 
     const exts: Extension[] = [
-      lineNumbers(),
       EditorView.editable.of(false),
       EditorState.readOnly.of(true),
+      makeThemeExt(),
     ];
+    if (props.showLineNumbers) exts.push(lineNumbers());
     const langExt = await languageForPath(props.path);
     if (langExt) exts.push(langExt);
 
-    const newState = EditorState.create({ doc: text, extensions: exts });
     if (!host.value) return;
-    view = new EditorView({ state: newState, parent: host.value });
+    view = new EditorView({
+      state: EditorState.create({ doc: text, extensions: exts }),
+      parent: host.value,
+    });
   } catch (err) {
     state.value = "error";
     errorMsg.value = (err as Error).message;
@@ -89,9 +119,10 @@ onMounted(() => {
   });
 });
 
-watch(() => props.path, () => {
-  void load();
-});
+watch(
+  () => [props.path, props.showLineNumbers, props.theme],
+  () => { void load(); },
+);
 
 onBeforeUnmount(() => {
   view?.destroy();
@@ -102,23 +133,45 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="file-editor">
-    <div v-if="state === 'tooLarge'" class="banner">File too large to preview. Open externally.</div>
-    <div v-if="state === 'binary'" class="banner">Binary file.</div>
-    <div v-if="state === 'error'" class="banner err">Error: {{ errorMsg }}</div>
     <div v-if="reloadPending" class="reload-badge">
       File changed on disk
       <button @click="load">Reload</button>
     </div>
+    <div v-if="state === 'tooLarge'" class="banner muted">File too large to preview. Open externally.</div>
+    <div v-else-if="state === 'binary'" class="banner muted">Binary file — no preview.</div>
+    <div v-else-if="state === 'error'" class="banner err">Error: {{ errorMsg }}</div>
+    <div v-else-if="state === 'loading'" class="banner muted">Loading…</div>
     <div v-show="state === 'ok'" ref="host" class="cm-host" />
-    <div v-if="state === 'loading'" class="banner">Loading…</div>
   </div>
 </template>
 
 <style scoped>
-.file-editor { height: 100%; display: flex; flex-direction: column; }
-.cm-host { flex: 1; overflow: auto; }
-.banner { padding: 10px 12px; font-size: 12px; opacity: 0.7; }
-.banner.err { color: #f85149; opacity: 1; }
-.reload-badge { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #1f2937; border-bottom: 1px solid #2d333b; font-size: 11px; }
-.reload-badge button { background: #21262d; border: 1px solid #2d333b; color: #c9d1d9; padding: 1px 8px; border-radius: 3px; cursor: pointer; }
+.file-editor {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--ed-editor-bg, #22272e);
+}
+.cm-host { flex: 1 1 auto; overflow: auto; }
+.banner { padding: 18px 20px; font-size: 13px; }
+.muted { color: var(--ed-muted, rgba(173, 186, 199, 0.5)); }
+.err { color: var(--ed-error, #f47067); }
+.reload-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--ed-tab-bg, #2d333b);
+  border-bottom: 1px solid var(--ed-border, #444c56);
+  font-size: 11px;
+  color: var(--ed-muted, rgba(173, 186, 199, 0.7));
+}
+.reload-badge button {
+  background: var(--ed-shell-bg, #22272e);
+  border: 1px solid var(--ed-border, #444c56);
+  color: var(--ed-row-fg, #adbac7);
+  padding: 1px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
 </style>

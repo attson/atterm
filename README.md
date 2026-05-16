@@ -20,7 +20,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 手机浏览器 / iOS App | 支持 PWA、Capacitor iOS WebView MVP、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
 | 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
-| 公网 relay 安全默认值 | 强 token、Origin 白名单、限流、安全响应头、只读 token |
+| 公网 relay 安全默认值 | 强 admin token、Origin 白名单、CSRF、限流、安全响应头 |
 | Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
 | Web Push 通知 | 浏览器和 PWA 订阅后，命令完成事件通过 self-hosted Web Push 推送，即使页面没打开也能收到（依赖 shell 集成 + 已连远端 relay） |
 | 用户系统 | ✓ 支持（v2+）：邀请码注册、per-user API token、用户独立的会话列表与 Web Push；admin 后台管理用户与邀请 |
@@ -135,7 +135,7 @@ go run ./cmd/atterm-relay --addr :8080 --web web
 | `control` | 可以输入和 resize |
 | `full` | 保留完整远程控制能力 |
 
-最终权限由“桌面端设置”和“relay token 类型”取交集。也就是说，只读 token 永远不能获得输入权限。
+权限由桌面端 `remote_permission` 设置决定；relay 和 desktop host 都强制执行。`view` 用户即使有完整账号，也只能查看输出，不能输入 / resize / 粘贴图片。
 
 ## 部署 relay
 

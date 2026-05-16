@@ -2,8 +2,13 @@ package ptyhost
 
 import "golang.org/x/sys/unix"
 
-// Linux uses TCGETS / TCSETS for termios.
-const (
-	termiosGetReq = unix.TCGETS
-	termiosSetReq = unix.TCSETS
-)
+// applyTermiosTweaks sets IUTF8 on the PTY so the kernel line discipline
+// treats multi-byte UTF-8 input as one character. Linux uses TCGETS / TCSETS.
+func applyTermiosTweaks(fd uintptr) {
+	t, err := unix.IoctlGetTermios(int(fd), unix.TCGETS)
+	if err != nil {
+		return
+	}
+	t.Iflag |= unix.IUTF8
+	_ = unix.IoctlSetTermios(int(fd), unix.TCSETS, t)
+}

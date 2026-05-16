@@ -444,14 +444,10 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
-	if authorizeClientWithConfig(r, s.cfg) == authNone {
-		s.debugf("http reject path=/api/version remote=%s reason=unauthorized", r.RemoteAddr)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if !s.allowAuthenticatedRequest(w, r) {
-		return
-	}
+	// /api/version is intentionally public: web clients (login.html,
+	// signup.html, etc.) need to display the running relay version before
+	// the user has any credentials. The top-level per-IP rate limit in
+	// ServeHTTP already bounds anonymous traffic.
 	version := s.cfg.Version
 	if version == "" {
 		version = "dev"

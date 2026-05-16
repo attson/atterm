@@ -1,4 +1,10 @@
 import { authFetch, getMe, logout } from "./auth.js";
+import { fetchVersionLabel } from "./app-core.js";
+
+fetchVersionLabel(fetch).then((label) => {
+    const el = document.getElementById("version");
+    if (el) el.textContent = label;
+});
 
 async function loadTokens() {
     const res = await authFetch("/api/me/tokens");

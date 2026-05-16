@@ -5,6 +5,7 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import { ReadFile, FileMeta } from "../../../wailsjs/go/main/PluginFS";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { languageForPath } from "./languageMap";
+import { highlightExtensionFor } from "./highlight";
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
@@ -90,6 +91,7 @@ async function load() {
       EditorView.editable.of(false),
       EditorState.readOnly.of(true),
       makeThemeExt(),
+      highlightExtensionFor(props.theme),
     ];
     if (props.showLineNumbers) exts.push(lineNumbers());
     const langExt = await languageForPath(props.path);

@@ -3,6 +3,7 @@ import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { languageForPath } from "../src/plugins/fileExplorer/languageMap";
+import { highlightExtensionFor } from "../src/plugins/fileExplorer/highlight";
 import type { MockEntry } from "./mockData";
 
 const props = defineProps<{
@@ -66,6 +67,7 @@ async function load() {
       EditorView.editable.of(false),
       EditorState.readOnly.of(true),
       makeThemeExt(),
+      highlightExtensionFor(props.theme),
     ];
     if (props.showLineNumbers) exts.push(lineNumbers());
     const langExt = await languageForPath(props.path);

@@ -1,8 +1,6 @@
 package relay
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -210,15 +208,18 @@ func (a *AdminServer) handleDisableUser(w http.ResponseWriter, r *http.Request) 
 }
 
 type adminConfigResponse struct {
-	RateLimitPerMinute   int                    `json:"rate_limit_per_minute"`
-	MaxConnectionsPerKey int                    `json:"max_connections_per_key"`
-	ReadOnlyTokens       []adminStoredTokenView `json:"read_only_tokens"`
-	Version              string                 `json:"version"`
-}
+	// Raw stored values. 0 means "use built-in default"; negative means
+	// "disable the limit entirely". UI clients must interpret 0 via the
+	// Default* fields below.
+	RateLimitPerMinute   int `json:"rate_limit_per_minute"`
+	MaxConnectionsPerKey int `json:"max_connections_per_key"`
 
-type adminStoredTokenView struct {
-	ID        string `json:"id"`
-	CreatedAt int64  `json:"created_at"`
+	// Built-in defaults, exposed so the UI can show "0 = use default (<N>)"
+	// instead of misleadingly displaying a literal 0.
+	DefaultRateLimitPerMinute   int `json:"default_rate_limit_per_minute"`
+	DefaultMaxConnectionsPerKey int `json:"default_max_connections_per_key"`
+
+	Version string `json:"version"`
 }
 
 func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
@@ -263,89 +264,6 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleAdminReadOnlyTokensHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeAdmin(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	id := strings.TrimSpace(req.ID)
-	if id == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return
-	}
-	token, err := generateBearerToken()
-	if err != nil {
-		http.Error(w, "generate token", http.StatusInternalServerError)
-		return
-	}
-	hash := HashBearerToken(token)
-	if err := s.updateAdminConfig(func(cfg AdminConfig) AdminConfig {
-		cfg.ReadOnlyTokens = append(cfg.ReadOnlyTokens, StoredToken{
-			ID:        id,
-			Hash:      hash,
-			CreatedAt: time.Now().Unix(),
-		})
-		return cfg
-	}); err != nil {
-		if strings.Contains(err.Error(), "duplicate") {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.cfg.ReadOnlyTokenHashes = append(s.cfg.ReadOnlyTokenHashes, hash)
-	writeJSON(w, struct {
-		ID    string `json:"id"`
-		Token string `json:"token"`
-	}{ID: id, Token: token})
-}
-
-func (s *Server) handleAdminReadOnlyTokenHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeAdmin(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/admin/api/read-only-tokens/")
-	if id == "" || strings.Contains(id, "/") {
-		http.Error(w, "bad token id", http.StatusBadRequest)
-		return
-	}
-	var nextHashes []string
-	if err := s.updateAdminConfig(func(cfg AdminConfig) AdminConfig {
-		out := cfg.ReadOnlyTokens[:0]
-		for _, tok := range cfg.ReadOnlyTokens {
-			if tok.ID == id {
-				continue
-			}
-			out = append(out, tok)
-			nextHashes = append(nextHashes, tok.Hash)
-		}
-		cfg.ReadOnlyTokens = out
-		return cfg
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.cfg.ReadOnlyTokenHashes = nextHashes
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (s *Server) authorizeAdmin(r *http.Request) bool {
 	if s.cfg.AdminToken == "" {
 		return false
@@ -362,22 +280,15 @@ func (s *Server) adminConfigResponse() adminConfigResponse {
 	if s.cfg.AdminConfigStore != nil {
 		cfg = s.cfg.AdminConfigStore.Snapshot()
 	}
-	if cfg.RateLimitPerMinute == 0 {
-		cfg.RateLimitPerMinute = s.cfg.RateLimitPerMinute
+	// Expose stored values as-is so the UI can distinguish "unset (= default)"
+	// from a literal numeric override. Defaults travel alongside for display.
+	return adminConfigResponse{
+		RateLimitPerMinute:          cfg.RateLimitPerMinute,
+		MaxConnectionsPerKey:        cfg.MaxConnectionsPerKey,
+		DefaultRateLimitPerMinute:   defaultRateLimitPerMinute,
+		DefaultMaxConnectionsPerKey: defaultMaxConnections,
+		Version:                     s.cfg.Version,
 	}
-	if cfg.MaxConnectionsPerKey == 0 {
-		cfg.MaxConnectionsPerKey = s.cfg.MaxConnectionsPerKey
-	}
-	out := adminConfigResponse{
-		RateLimitPerMinute:   cfg.RateLimitPerMinute,
-		MaxConnectionsPerKey: cfg.MaxConnectionsPerKey,
-		ReadOnlyTokens:       make([]adminStoredTokenView, 0, len(cfg.ReadOnlyTokens)),
-		Version:              s.cfg.Version,
-	}
-	for _, tok := range cfg.ReadOnlyTokens {
-		out.ReadOnlyTokens = append(out.ReadOnlyTokens, adminStoredTokenView{ID: tok.ID, CreatedAt: tok.CreatedAt})
-	}
-	return out
 }
 
 func (s *Server) updateAdminConfig(update func(AdminConfig) AdminConfig) error {
@@ -417,14 +328,6 @@ func (s *Server) applyRuntimeLimits(rateLimit, connLimit int) {
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
-}
-
-func generateBearerToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 const adminPageHTML = `<!doctype html>
@@ -497,8 +400,25 @@ const adminPageHTML = `<!doctype html>
 </div>
 
 <div id="config" class="panel">
-  <h2>Relay config <button id="config-load" class="primary">load</button></h2>
-  <pre id="config-out">(not loaded)</pre>
+  <h2>Runtime limits <button id="config-load">reload</button></h2>
+  <div id="config-form" style="display:none">
+    <div class="row" style="margin:0.5rem 0">
+      <label style="min-width:260px">Rate limit (requests/min per IP+token):</label>
+      <input id="cfg-rate" type="number" style="width:100px">
+      <span class="muted" id="cfg-rate-eff"></span>
+    </div>
+    <div class="row" style="margin:0.5rem 0">
+      <label style="min-width:260px">Max WS connections (per IP+token):</label>
+      <input id="cfg-conn" type="number" style="width:100px">
+      <span class="muted" id="cfg-conn-eff"></span>
+    </div>
+    <p class="muted"><strong>0</strong> = use built-in default; <strong>negative</strong> = disable the limit. Changes apply immediately and are persisted to the admin config file.</p>
+    <div class="row">
+      <button id="config-save" class="primary">Save</button>
+      <span class="muted">Version: <code id="cfg-version"></code></span>
+    </div>
+  </div>
+  <pre id="config-out" style="display:none"></pre>
   <div id="config-err" class="err"></div>
 </div>
 
@@ -558,6 +478,7 @@ document.querySelectorAll(".tabs button").forEach(function(b) {
     $(b.dataset.tab).classList.add("active");
     if (b.dataset.tab === "invites") loadInvites();
     else if (b.dataset.tab === "users") loadUsers();
+    else if (b.dataset.tab === "config") loadConfig();
   };
 });
 
@@ -666,10 +587,45 @@ async function disableUser(id, email) {
 $("users-refresh").onclick = loadUsers;
 
 // Config
-$("config-load").onclick = async function() {
+function effectiveLabel(raw, def) {
+  raw = Number(raw);
+  if (raw < 0) return "= disabled";
+  if (raw === 0) return "= " + def + " (default)";
+  return "= " + raw;
+}
+function updateEffectiveLabels() {
+  const def = (typeof window._cfgDefaults === "object") ? window._cfgDefaults : {rate: 0, conn: 0};
+  $("cfg-rate-eff").textContent = effectiveLabel($("cfg-rate").value, def.rate);
+  $("cfg-conn-eff").textContent = effectiveLabel($("cfg-conn").value, def.conn);
+}
+async function loadConfig() {
   setErr("config-err", "");
   try {
-    $("config-out").textContent = JSON.stringify(await api("/admin/api/config"), null, 2);
+    const c = await api("/admin/api/config");
+    $("config-form").style.display = "block";
+    $("cfg-rate").value = c.rate_limit_per_minute;
+    $("cfg-conn").value = c.max_connections_per_key;
+    $("cfg-version").textContent = c.version || "";
+    window._cfgDefaults = {rate: c.default_rate_limit_per_minute, conn: c.default_max_connections_per_key};
+    updateEffectiveLabels();
+    $("config-out").style.display = "none";
+  } catch (e) { setErr("config-err", e); }
+}
+$("config-load").onclick = loadConfig;
+$("cfg-rate").oninput = updateEffectiveLabels;
+$("cfg-conn").oninput = updateEffectiveLabels;
+$("config-save").onclick = async function() {
+  setErr("config-err", "");
+  try {
+    const body = {
+      rate_limit_per_minute: Number($("cfg-rate").value),
+      max_connections_per_key: Number($("cfg-conn").value),
+    };
+    if (!Number.isFinite(body.rate_limit_per_minute) || !Number.isFinite(body.max_connections_per_key)) {
+      throw new Error("rate/connection must be integers");
+    }
+    await api("/admin/api/config", {method: "PUT", body: JSON.stringify(body)});
+    loadConfig();
   } catch (e) { setErr("config-err", e); }
 };
 </script>

@@ -164,40 +164,11 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	}
 }
 
-func TestAdminCreateReadOnlyTokenStoresHashAndAuthenticates(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.json")
-	store := NewAdminConfigStore(path, AdminConfig{})
-	srv := NewServer(Config{Token: "rw", AdminToken: "admin", AdminConfigStore: store})
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/read-only-tokens", strings.NewReader(`{"id":"viewer"}`))
-	req.Header.Set("Authorization", "Bearer admin")
-	rec := httptest.NewRecorder()
-
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s; want 200", rec.Code, rec.Body.String())
-	}
-	var created struct {
-		ID    string `json:"id"`
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	if created.ID != "viewer" || created.Token == "" {
-		t.Fatalf("created = %+v; want id and one-time token", created)
-	}
-	data := mustReadFileString(t, path)
-	if strings.Contains(data, created.Token) {
-		t.Fatalf("config leaked created token: %s", data)
-	}
-	apiReq := newBearerRequest(http.MethodGet, "/api/version", created.Token)
-	apiRec := httptest.NewRecorder()
-	srv.ServeHTTP(apiRec, apiReq)
-	if apiRec.Code != http.StatusOK {
-		t.Fatalf("created read-only token status=%d; want 200", apiRec.Code)
-	}
-}
+// TestAdminCreateReadOnlyTokenStoresHashAndAuthenticates was removed when
+// the v2 user-accounts work deleted the /admin/api/read-only-tokens endpoint.
+// Per-user API tokens (PrincipalUser via cookie or atk_ token) replaced
+// admin-issued shared read-only tokens; the latter has no UI affordance and
+// no admin endpoint left to test. See PR that removed the response field.
 
 func TestRateLimitRejectsExcessRequests(t *testing.T) {
 	srv := NewServer(Config{Version: "v1.2.3", RateLimitPerMinute: 1})

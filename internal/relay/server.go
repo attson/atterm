@@ -149,8 +149,6 @@ func NewServer(cfg Config) *Server {
 	if cfg.AdminToken != "" {
 		s.mux.HandleFunc("/admin/", s.handleAdminPage)
 		s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
-		s.mux.HandleFunc("/admin/api/read-only-tokens", s.handleAdminReadOnlyTokensHTTP)
-		s.mux.HandleFunc("/admin/api/read-only-tokens/", s.handleAdminReadOnlyTokenHTTP)
 	}
 
 	// Mount user-account HTTP API when both resolver and store are wired.

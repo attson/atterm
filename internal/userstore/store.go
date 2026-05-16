@@ -65,6 +65,8 @@ type Store interface {
 	DisableUser(ctx context.Context, id string) error
 	ListUsers(ctx context.Context) ([]User, error)
 	ResetUserPassword(ctx context.Context, userID string) (Secret, error)
+	// SetUserAdmin sets the is_admin flag for userID. Idempotent.
+	SetUserAdmin(ctx context.Context, userID string, admin bool) error
 
 	// Invitations
 	CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error)

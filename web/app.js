@@ -604,6 +604,8 @@ function closeWS() {
 }
 
 if (_isBrowser) {
+  document.getElementById("logout").addEventListener("click", () => logout());
+
   document.getElementById("shortcut-bar").addEventListener("click", (ev) => {
     const btn = ev.target.closest("button[data-shortcut]");
     if (!btn) return;

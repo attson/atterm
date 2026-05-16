@@ -29,19 +29,15 @@ http://121.43.40.128:23301
 
 The iOS MVP includes an ATS exception so this explicit in-app opt-in can connect to plain HTTP relays. Do not use insecure mode for production or App Store builds; use HTTPS/WSS instead.
 
-The shared web client also supports browser/PWA bootstrap with a fragment that is never sent to the relay:
-
-```text
-https://relay.example.com/#relay=https%3A%2F%2Frelay.example.com&token=...
-```
-
-Native iOS deep-link bootstrap is intentionally out of scope for this MVP.
-
 For a public relay, allow the Capacitor WebView origin when starting the relay:
 
 ```bash
-ATTERM_ORIGINS=capacitor://localhost ATTERM_TOKEN=... atterm-relay --addr :8080 --web web
+ATTERM_ORIGINS=capacitor://localhost \
+ATTERM_ADMIN_TOKEN='replace-with-strong-32-plus-char-token' \
+atterm-relay --addr :8080 --web web
 ```
+
+Once running, sign in through the web UI as you would in a desktop browser (the Capacitor WebView shares the cookie store with the wrapped site).
 
 Use HTTPS/WSS for production devices. Plain `http://` relay URLs are for trusted simulator/local/IP testing only.
 

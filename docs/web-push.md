@@ -13,7 +13,7 @@ AT Term can deliver "command finished" notifications to a browser or PWA via the
 
 ## How to enable
 
-1. Open your relay URL in the browser, paste the relay token, connect.
+1. Open your relay URL in the browser, sign in with your account (cookie session).
 2. Click the "🔔 Enable notifications" button in the status row.
 3. The browser will prompt for permission. Click Allow.
 4. The button changes to "🔔 ON".
@@ -32,7 +32,7 @@ The same gate as the desktop-side OS notification (`Settings → General → Com
 - Command ran for at least the threshold (default 10s, configurable 1-600s).
 - The session is local to the desktop AT Term (not a cast-attached remote pane).
 
-When the gate passes, every browser that has subscribed under a relay token authorized to view that session receives a push.
+When the gate passes, only browsers signed in as the session's owner receive a push. Subscriptions from other users on the same relay are not touched.
 
 ## How to disable
 
@@ -44,7 +44,7 @@ To globally disable Web Push on a relay, stop the relay, delete `<RELAY_CONFIG_D
 
 `<RELAY_CONFIG_DIR>/web-push.json` holds:
 - the VAPID keypair (P-256 ECDSA, generated on first start)
-- per-token subscription records (endpoint + browser keys)
+- per-user subscription records (endpoint + browser keys), keyed by the user's ULID
 
 The file is rewritten on every subscription change via atomic write-temp-rename. Loss of the file means: regenerated VAPID keypair, all existing browser subscriptions invalidated — users need to re-enable. The previous corrupt file (if any) is preserved as `web-push.json.corrupt-<timestamp>` so you can inspect it.
 
@@ -58,7 +58,8 @@ The file is rewritten on every subscription change via atomic write-temp-rename.
 ## Limitations
 
 - iOS requires PWA install. Plain Safari tabs cannot receive Web Push on iOS.
-- Token rotation invalidates subscriptions tied to the old token. Browsers must re-enable.
+- Web Push subscriptions are tied to the user account. Admin password-reset clears all of that user's web sessions but preserves push subscriptions (they reattach on next login). Deleting a user cascades to their push subscriptions.
+- Upgrading from a pre-v2 deployment renames the legacy tokenHash-keyed `web-push.json` to `web-push.json.legacy-<ts>` on first start; users must re-enable notifications once. Legacy files are auto-deleted after 30 days.
 - VAPID key wipe is irreversible — old subscriptions become unusable.
 - No relay-side suppression for "user is actively watching this session". Both an in-page event and a Web Push may fire on a device that is also actively attached. The browser groups them by tag.
 - We currently push only command-finished events. BEL and session lifecycle events are deferred.

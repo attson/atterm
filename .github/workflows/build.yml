@@ -2,11 +2,17 @@ name: build
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+# Cancel an in-progress run when a newer push arrives on the same ref.
+# Tag and dispatch runs are kept separate per-ref so a release in flight
+# is not aborted by an unrelated PR update.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write # release upload needs this when a tag triggers the workflow

@@ -33,43 +33,9 @@ func newTestServer(t *testing.T, adminToken string, origins []string) (*relay.Se
 	return relay.NewServer(cfg), store
 }
 
-// TestStartup_RefusesWeakAdminTokenOnPublicListen verifies that validateAdminToken
-// rejects short/blacklisted tokens before a public relay starts.
-func TestStartup_RefusesWeakAdminTokenOnPublicListen(t *testing.T) {
-	cases := []struct {
-		name  string
-		token string
-	}{
-		{"short dev token", "dev"},
-		{"short changeme123", "changeme123"},
-		{"only lowercase+digit 32 chars", strings.Repeat("a1b2c3d4", 4)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := validateAdminToken(tc.token); err == nil {
-				t.Errorf("validateAdminToken(%q) = nil; want error for weak token", tc.token)
-			}
-		})
-	}
-}
-
-// TestStartup_AcceptsStrongAdminTokenOnPublicListen verifies that a strong
-// token passes the strength check required for public listeners.
-func TestStartup_AcceptsStrongAdminTokenOnPublicListen(t *testing.T) {
-	strongTokens := []string{
-		"Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!", // 32 chars, 4 classes
-		strings.Repeat("xY9!", 8),            // 32 chars, 4 classes
-	}
-	for _, tok := range strongTokens {
-		if err := validateAdminToken(tok); err != nil {
-			t.Errorf("validateAdminToken(%q) = %v; want nil for strong token", tok, err)
-		}
-	}
-}
-
 // TestStartup_LoopbackDevAcceptsAnyToken verifies that the loopback check
-// (isPublicListenAddr) returns false for 127.0.0.1 and ::1, so strength
-// check is skipped for local-only relays.
+// (isPublicListenAddr) returns false for 127.0.0.1 and ::1, so the
+// public-listen safety guard is skipped for local-only relays.
 func TestStartup_LoopbackDevAcceptsAnyToken(t *testing.T) {
 	if isPublicListenAddr("127.0.0.1:8080") {
 		t.Error("127.0.0.1:8080 reported as public; want loopback")

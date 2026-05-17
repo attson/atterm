@@ -66,11 +66,3 @@ func validateBootstrapPassword(pw string) error {
 	}
 	return nil
 }
-
-// validateAdminToken is a temporary stub that delegates to validateBootstrapPassword.
-// This allows main.go and main_test.go to continue building while Task 15 rewords the
-// calling code. This stub enforces the new ≥16 rule, so main.go's startup checks become stricter.
-// Task 15 will remove this stub and update the main.go callsites to use validateBootstrapPassword directly.
-func validateAdminToken(tok string) error {
-	return validateBootstrapPassword(tok)
-}

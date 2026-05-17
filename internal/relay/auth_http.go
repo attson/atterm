@@ -63,6 +63,7 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(a.handleLogin))
 	mux.Handle("POST /api/auth/logout", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleLogout)))
 	mux.Handle("GET /api/me", http.HandlerFunc(a.handleMe))
+	mux.Handle("DELETE /api/me", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleDeleteMe)))
 	mux.Handle("GET /api/me/sessions", http.HandlerFunc(a.handleListSessions))
 	mux.Handle("DELETE /api/me/sessions/{id_hash}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleDeleteSession)))
 	mux.Handle("POST /api/me/sessions/sign-out-others", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleSignOutOthers)))

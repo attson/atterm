@@ -28,6 +28,11 @@ func sessionHash(plaintext string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// SessionHash exposes the same hash used by CreateWebSession /
+// LookupWebSession so HTTP handlers can compute the id_hash of a
+// cookie they hold without round-tripping the store.
+func SessionHash(plaintext string) string { return sessionHash(plaintext) }
+
 // CreateWebSession generates a new cookie session for userID.
 // Returns a Secret whose Expose() value is the opaque cookie (32 bytes of
 // crypto/rand encoded as base64url, no padding, ~43 chars). The Secret has an

@@ -413,3 +413,73 @@ body.desktop-web #shortcut-bar {
   #main:has(#term-view:not([hidden])) { height: calc(100vh - var(--topbar-h)); }
   body.terminal-active #main { height: auto; }
 }
+
+/* Settings sub-tabs */
+.subtabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.subtab {
+  padding: 8px 14px;
+  color: var(--fg-mute, var(--fg-dim));
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+}
+.subtab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.subtab:hover {
+  color: var(--fg);
+}
+.subtab.danger-tab {
+  margin-left: auto;
+  color: var(--bad);
+}
+.subtab.danger-tab.active {
+  color: var(--bad);
+  border-bottom-color: var(--bad);
+}
+
+/* Danger zone visual treatment */
+.danger-zone {
+  border-color: var(--bad);
+}
+.btn-danger {
+  background: var(--bad);
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.btn-danger:hover {
+  opacity: 0.9;
+}
+
+/* Sessions list */
+#sessions-list {
+  list-style: none;
+  padding: 0;
+}
+#sessions-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-mute, var(--border));
+}
+#sessions-list .session-ua {
+  font-weight: 500;
+}
+#sessions-list .session-meta {
+  font-size: 11px;
+  color: var(--fg-mute, var(--fg-dim));
+}
+#sessions-list .session-current {
+  color: var(--good);
+  font-size: 11px;
+}

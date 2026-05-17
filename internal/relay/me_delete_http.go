@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // handleDeleteMe implements DELETE /api/me. Hard-deletes the calling user.
@@ -40,7 +41,7 @@ func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	if body.Email != user.Email {
+	if !strings.EqualFold(strings.TrimSpace(body.Email), user.Email) {
 		writeError(w, http.StatusBadRequest, "email_mismatch")
 		return
 	}

@@ -114,6 +114,23 @@ func TestDeleteMe_LastAdmin_409(t *testing.T) {
 	}
 }
 
+func TestDeleteMe_EmailCaseInsensitive(t *testing.T) {
+	srv, store := newTestAuthServer(t)
+	handler := srv.Routes()
+	cookie, userID, _ := signupAndLogin(t, handler, store, "mixedcase@example.com", "passphrase-1234")
+	csrf := csrfTokenFor(t, handler, cookie)
+
+	// Email typed with different case must still match.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, deleteMeReq(map[string]string{"email": "MixedCase@Example.com", "password": "passphrase-1234"}, cookie, csrf))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d; want 204 (case should not matter): %s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.GetUser(context.Background(), userID); err == nil {
+		t.Error("user still exists")
+	}
+}
+
 func TestDeleteMe_AdminButNotLast_Succeeds(t *testing.T) {
 	srv, store := newTestAuthServer(t)
 	handler := srv.Routes()

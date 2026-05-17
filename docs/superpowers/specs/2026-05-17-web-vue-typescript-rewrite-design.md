@@ -288,7 +288,7 @@ Naive UI uses `css-render` to inject `<style>` tags at component mount time. The
 
 - `style-src 'self' 'unsafe-inline'` — accepted weakening; rationale: Vue templates auto-escape interpolations and attribute bindings, business `.vue` files are banned from `v-html` (see Invariants), so no business path injects style-affecting strings. `style-src 'unsafe-inline'` only widens XSS-via-CSS-injection, and the business-layer prerequisite for that (uncontrolled HTML / attribute injection) is closed off.
 - `script-src` stays `'self'` (no `'unsafe-inline'`, no `'unsafe-eval'`); Vite emits hashed module scripts.
-- Phase A includes the server-side CSP change and an `internal/relay/server_test.go` assertion that the new header is what we intend.
+- **Status:** the relay already emits this header (`internal/relay/server.go:215`) and `version_test.go` asserts the shape. No CSP change is required by this spec; we are inheriting the existing configuration. Any future relaxation (e.g., adding `'unsafe-eval'`) is out of scope.
 
 Nonce-based `style-src` is rejected: it requires per-request HTML rewriting and breaks the `go:embed` static-FS model.
 

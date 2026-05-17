@@ -1,6 +1,5 @@
-// safeNext validates a post-login redirect target. The frontend never
-// follows ?next= verbatim — every consumer routes through this guard.
-// See spec Sec-2.
+// safeNext validates a post-login redirect target. Every consumer of
+// the ?next= query param routes through this guard. See spec Sec-2.
 export function safeNext(raw: string | null): string {
   if (!raw) return '/'
   if (!raw.startsWith('/')) return '/'
@@ -16,10 +15,89 @@ export function safeNext(raw: string | null): string {
   }
 }
 
+// CSRF cache: relay derives the token from the session secret and
+// returns it in /api/me's body. Frontend caches it here and adds it
+// to every non-GET request. See spec Sec-4.
+let cachedCsrf = ''
+export function setCsrfToken(token: string): void {
+  cachedCsrf = token
+}
+export function clearCsrfToken(): void {
+  cachedCsrf = ''
+}
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    public readonly response: Response | null,
+  ) {
+    super(`api error ${status} ${code}`)
+    this.name = 'ApiError'
+  }
+}
+
+export interface ApiResult<T> {
+  data: T
+  status: number
+  headers: Headers
+}
+
 // apiFetch is the single network entry point for the browser client.
-// PR-A only ships safeNext; the full implementation (401 redirect,
-// CSRF header injection, ApiError) lands in PR-B alongside the first
-// real consumer.
-export async function apiFetch<T = unknown>(_path: string, _init?: RequestInit): Promise<{ data: T; status: number; headers: Headers }> {
-  throw new Error('apiFetch not implemented yet; arrives in PR-B')
+// All non-GET methods get the cached CSRF token automatically; 401s on
+// non-auth pages redirect to /login.html?next=<safe>; non-2xx replies
+// throw ApiError carrying the error code from the JSON body.
+export async function apiFetch<T = unknown>(
+  path: string,
+  init: RequestInit = {},
+): Promise<ApiResult<T>> {
+  const method = (init.method || 'GET').toUpperCase()
+  const headers = new Headers(init.headers)
+
+  if (method !== 'GET' && method !== 'HEAD') {
+    if (cachedCsrf) headers.set('X-CSRF-Token', cachedCsrf)
+    if (!headers.has('Content-Type') && init.body !== undefined) {
+      headers.set('Content-Type', 'application/json')
+    }
+  }
+
+  let res: Response
+  try {
+    res = await fetch(path, { ...init, headers, credentials: 'same-origin' })
+  } catch {
+    throw new ApiError(0, 'network_error', null)
+  }
+
+  if (res.status === 401) {
+    const onAuthPage =
+      typeof location !== 'undefined' &&
+      (location.pathname === '/login.html' || location.pathname === '/signup.html')
+    if (!onAuthPage && typeof location !== 'undefined') {
+      const next = safeNext(location.pathname + location.search + location.hash)
+      location.assign('/login.html?next=' + encodeURIComponent(next))
+    }
+  }
+
+  if (!res.ok) {
+    let code = 'http_error'
+    const ct = res.headers.get('Content-Type') || ''
+    if (ct.includes('application/json')) {
+      try {
+        const j = (await res.clone().json()) as { error?: unknown }
+        if (j && typeof j.error === 'string') code = j.error
+      } catch {
+        /* malformed JSON, keep http_error */
+      }
+    }
+    throw new ApiError(res.status, code, res)
+  }
+
+  const ct = res.headers.get('Content-Type') || ''
+  let data: T
+  if (ct.includes('application/json')) {
+    data = (await res.json()) as T
+  } else {
+    data = undefined as unknown as T
+  }
+  return { data, status: res.status, headers: res.headers }
 }

@@ -78,3 +78,27 @@ func (a *AuthServer) handleDeleteSession(w http.ResponseWriter, r *http.Request)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// handleSignOutOthers deletes every web_session for the caller except
+// the one matching the current cookie. Returns 200 + {"deleted": N}.
+func (a *AuthServer) handleSignOutOthers(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	c, err := r.Cookie("atterm_session")
+	if err != nil || c.Value == "" {
+		// requireUser already authed via cookie OR api token; without a
+		// cookie we can't preserve "this device", so just error out.
+		http.Error(w, "current session not cookie-based", http.StatusBadRequest)
+		return
+	}
+	currentHash := userstore.SessionHash(c.Value)
+	n, err := a.Store.DeleteOtherWebSessionsForUser(r.Context(), p.UserID, currentHash)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{"deleted": n})
+}

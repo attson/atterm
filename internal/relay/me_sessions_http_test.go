@@ -110,3 +110,32 @@ func TestDeleteSession_OtherUserSession_404(t *testing.T) {
 		t.Errorf("B's session lost: %+v", afterB)
 	}
 }
+
+func TestSignOutOthers_DeletesAllButCurrent(t *testing.T) {
+	srv, store := newTestAuthServer(t)
+	handler := srv.Routes()
+	cookie, userID, _ := signupAndLogin(t, handler, store, "a@example.com", "passphrase-1234")
+	csrf := csrfTokenFor(t, handler, cookie)
+
+	_, _ = store.CreateWebSession(context.Background(), userID, "device-2", "")
+	_, _ = store.CreateWebSession(context.Background(), userID, "device-3", "")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/me/sessions/sign-out-others", nil)
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrf)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]int64
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["deleted"] != 2 {
+		t.Errorf("deleted=%d; want 2", resp["deleted"])
+	}
+
+	after, _ := store.ListUserWebSessions(context.Background(), userID)
+	if len(after) != 1 {
+		t.Errorf("expected 1 session left, got %d", len(after))
+	}
+}

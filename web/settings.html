@@ -141,8 +141,14 @@
 </head><body class="settings-page">
 <header id="topbar"></header>
 <div class="settings-wrap">
-  <!-- API Tokens -->
-  <div class="settings-card">
+  <nav class="subtabs" aria-label="Settings sections">
+    <a href="#api-tokens" data-tab="api-tokens" class="subtab active">API Tokens</a>
+    <a href="#change-password" data-tab="change-password" class="subtab">Change Password</a>
+    <a href="#sessions" data-tab="sessions" class="subtab">Signed-in devices</a>
+    <a href="#danger" data-tab="danger" class="subtab danger-tab">Danger zone</a>
+  </nav>
+
+  <section id="panel-api-tokens" class="settings-card" data-panel="api-tokens">
     <h2>API Tokens</h2>
     <ul id="token-list"><li id="token-list-empty">Loading…</li></ul>
 
@@ -160,10 +166,9 @@
       <code id="plaintext-display"></code>
       <button class="btn-ghost" id="copy-token-btn" type="button">Copy</button>
     </div>
-  </div>
+  </section>
 
-  <!-- Change Password -->
-  <div class="settings-card">
+  <section id="panel-change-password" class="settings-card" data-panel="change-password" hidden>
     <h2>Change Password</h2>
     <form id="change-password-form" autocomplete="off">
       <div style="display:flex;flex-direction:column;gap:0.75rem;">
@@ -177,8 +182,33 @@
         <p id="password-error" hidden></p>
       </div>
     </form>
-  </div>
+  </section>
+
+  <section id="panel-sessions" class="settings-card" data-panel="sessions" hidden>
+    <h2>Signed-in devices</h2>
+    <p class="muted">Each row is a browser or PWA where this account is signed in.</p>
+    <ul id="sessions-list"><li id="sessions-empty">Loading…</li></ul>
+    <button id="sign-out-others" class="btn-danger" type="button">Sign out everywhere except this device</button>
+    <p id="sessions-error" hidden></p>
+  </section>
+
+  <section id="panel-danger" class="settings-card danger-zone" data-panel="danger" hidden>
+    <h2>Danger zone</h2>
+    <p>Permanently delete this account. This cannot be undone. API tokens, web sessions, and account data are removed. Invitations you've consumed stay (their "consumed by" field is cleared).</p>
+    <form id="delete-account-form" autocomplete="off">
+      <label>Confirm by typing your full email
+        <input id="delete-email" type="email" required autocomplete="off" />
+      </label>
+      <label>Current password
+        <input id="delete-password" type="password" required autocomplete="current-password" />
+      </label>
+      <button type="submit" class="btn-danger">Delete my account</button>
+      <p id="delete-error" hidden></p>
+    </form>
+  </section>
 </div>
 <p class="page-version" id="version">version dev</p>
 <script type="module" src="./layout.js"></script>
-<script type="module" src="./settings.js"></script></body></html>
+<script type="module" src="./settings.js"></script>
+<script type="module" src="./settings-sessions.js"></script>
+<script type="module" src="./settings-danger.js"></script></body></html>

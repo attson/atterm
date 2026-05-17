@@ -43,13 +43,12 @@ test("web terminal uses a route class for full-height layout", () => {
 // "is the literal version string still vN" check would be redundant and
 // fight that test on every legitimate asset change.
 
-test("service worker precaches login/signup/settings js so split-out auth-page modules stay consistent", () => {
-  // login.js / signup.js / settings.js are now the bootstraps for the
-  // auth pages. If sw caches a stale app-core.js without also pre-caching
-  // these, the page imports a fetchVersionLabel that doesn't exist and
-  // submit handlers never bind — exactly the v0.1.66 outage. Keep all of
-  // them in the cache list so a CACHE bump refreshes them atomically.
-  assert.match(sw, /\.\/login\.js/);
-  assert.match(sw, /\.\/signup\.js/);
+test("service worker precaches settings js so the split-out settings module stays consistent", () => {
+  // settings.js is the bootstrap for the settings page. If sw caches a
+  // stale app-core.js without also pre-caching it, the page imports a
+  // fetchVersionLabel that doesn't exist and submit handlers never bind —
+  // exactly the v0.1.66 outage. Keep it in the cache list so a CACHE
+  // bump refreshes it atomically. (login/signup migrated to Vue and now
+  // overlay their built assets; they no longer live in legacy.)
   assert.match(sw, /\.\/settings\.js/);
 });

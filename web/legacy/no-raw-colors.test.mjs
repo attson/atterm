@@ -65,8 +65,6 @@ const ALLOWED = {
         "box-shadow",
         "rgba(0, 0, 0, 0.3)",         // code box backdrop
     ],
-    "web/legacy/login.html": [],
-    "web/legacy/signup.html": [],
 };
 
 function leakLines(path) {
@@ -99,9 +97,3 @@ test("web/legacy/admin/index.html inline <style> has no raw colors outside the a
     assert.equal(leaks.length, 0, "raw color literals found:\n" + leaks.join("\n"));
 });
 
-test("web/legacy/login.html + web/legacy/signup.html stay color-free (rely on style.css tokens)", () => {
-    for (const path of ["web/legacy/login.html", "web/legacy/signup.html"]) {
-        const leaks = leakLines(path);
-        assert.equal(leaks.length, 0, `${path}: ${leaks.join("\n")}`);
-    }
-});

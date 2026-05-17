@@ -60,6 +60,9 @@ jobs:
       - name: vitest
         working-directory: web
         run: npm test
+      - name: contract tests
+        working-directory: web
+        run: npm run test:contract
       - name: sync embed
         run: ./scripts/build-web.sh
       - name: verify embed has no drift

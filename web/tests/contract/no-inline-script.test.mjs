@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const distRoot = path.join("internal", "relay", "web-dist");
+const here = path.dirname(fileURLToPath(import.meta.url));
+const distRoot = path.resolve(here, "..", "..", "..", "internal", "relay", "web-dist");
 
 function walkHtml(dir, acc = []) {
   for (const name of readdirSync(dir)) {

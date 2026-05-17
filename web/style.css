@@ -397,10 +397,10 @@ body.desktop-web #shortcut-bar {
 .auth-card {
   max-width: 360px;
   width: 90%;
-  padding: 2rem;
+  padding: var(--space-6) var(--space-8);
   background: var(--panel);
   color: var(--fg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-mute);
   border-radius: 18px;
   display: flex;
   flex-direction: column;
@@ -417,11 +417,23 @@ body.desktop-web #shortcut-bar {
   border-radius: 4px;
   font: inherit;
 }
-.auth-card input:focus { outline: none; border-color: var(--accent); }
+.auth-card input:focus { outline: 2px solid var(--accent-bg); outline-offset: 1px; border-color: var(--accent); }
+.auth-card button[type="submit"] {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  margin-top: var(--space-2);
+}
 .auth-card button {
   padding: 0.5rem;
   background: var(--accent);
-  color: #05070d;
+  color: var(--bg);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -429,8 +441,15 @@ body.desktop-web #shortcut-bar {
   font-weight: 600;
 }
 .auth-card button:hover { opacity: 0.88; }
-.auth-card #error { color: var(--bad); font-size: 0.875rem; margin: 0; }
-.auth-card .alt { color: var(--fg-dim); font-size: 0.875rem; margin: 0; }
+.auth-card #error:not([hidden]) {
+  color: var(--bad);
+  background: var(--bad-bg);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  margin: 0;
+}
+.auth-card .alt { color: var(--fg-mute); font-size: 0.875rem; margin: 0; }
 .auth-card .alt a { color: var(--accent); }
 
 @media (min-width: 720px) {

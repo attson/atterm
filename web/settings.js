@@ -1,3 +1,40 @@
+// Tab switching: each anchor in .subtabs has data-tab matching a
+// data-panel on a <section>. URL hash sync makes deep links work
+// (#sessions opens directly to Signed-in devices).
+
+const TABS = ["api-tokens", "change-password", "sessions", "danger"];
+
+function showTab(name) {
+    if (!TABS.includes(name)) name = "api-tokens";
+    for (const t of TABS) {
+        const link = document.querySelector(`.subtab[data-tab="${t}"]`);
+        const panel = document.querySelector(`[data-panel="${t}"]`);
+        if (!link || !panel) continue;
+        if (t === name) {
+            link.classList.add("active");
+            panel.hidden = false;
+        } else {
+            link.classList.remove("active");
+            panel.hidden = true;
+        }
+    }
+}
+
+function activeFromHash() {
+    const h = (location.hash || "").replace(/^#/, "");
+    return TABS.includes(h) ? h : "api-tokens";
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    showTab(activeFromHash());
+});
+window.addEventListener("hashchange", () => {
+    showTab(activeFromHash());
+});
+
+// Click handlers: anchor's default behavior already updates the hash,
+// which triggers hashchange above. Nothing else needed here.
+
 import { authFetch, getMe } from "./auth.js";
 import { fetchVersionLabel } from "./app-core.js";
 

@@ -3,7 +3,7 @@
 // and prints the expected hash on mismatch — paste it in. Without the bump
 // the install-event re-fetches the same names but cache-first wins, so
 // clients keep serving the old file (see PR #34 incident).
-const CACHE = "at-term-web-32e03ec0";
+const CACHE = "at-term-web-aacf2dab";
 const ASSETS = [
   "./",
   "./app-core.js",
@@ -12,6 +12,8 @@ const ASSETS = [
   "./login.js",
   "./signup.js",
   "./settings.js",
+  "./settings-danger.js",
+  "./settings-sessions.js",
   "./style.css",
   "./vendor/xterm/xterm.css",
   "./vendor/xterm/xterm.js",

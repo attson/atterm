@@ -35,3 +35,36 @@ test("settings.js references POST /api/me/password", () => {
     assert.ok(js.includes("/api/me/password"), "must reference /api/me/password");
 });
 
+test("settings.html has all 4 sub-tab anchors with data-tab", () => {
+    for (const tab of ["api-tokens", "change-password", "sessions", "danger"]) {
+        const re = new RegExp(`<a [^>]*data-tab="${tab}"`);
+        assert.match(html, re, `must have data-tab="${tab}"`);
+    }
+});
+
+test("settings.html has all 4 panels with data-panel", () => {
+    for (const panel of ["api-tokens", "change-password", "sessions", "danger"]) {
+        const re = new RegExp(`<section [^>]*data-panel="${panel}"`);
+        assert.match(html, re, `must have section with data-panel="${panel}"`);
+    }
+});
+
+test("settings.html includes settings-sessions.js + settings-danger.js", () => {
+    assert.match(html, /src="\.\/?settings-sessions\.js"/, "must include settings-sessions.js");
+    assert.match(html, /src="\.\/?settings-danger\.js"/, "must include settings-danger.js");
+});
+
+test("settings-sessions.js calls /api/me/sessions", () => {
+    const sessionsJs = readFileSync("web/settings-sessions.js", "utf8");
+    assert.match(sessionsJs, /\/api\/me\/sessions/, "must reference /api/me/sessions");
+    assert.match(sessionsJs, /sign-out-others/, "must reference sign-out-others");
+});
+
+test("settings-danger.js sends DELETE /api/me with email + password", () => {
+    const dangerJs = readFileSync("web/settings-danger.js", "utf8");
+    assert.match(dangerJs, /authFetch\("\/api\/me"/, "must authFetch /api/me");
+    assert.match(dangerJs, /method:\s*"DELETE"/, "must use DELETE method");
+    assert.match(dangerJs, /\bemail\b/, "must reference email");
+    assert.match(dangerJs, /\bpassword\b/, "must reference password");
+});
+

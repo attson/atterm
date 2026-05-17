@@ -15,6 +15,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// UserWebSession is the public view of a row in web_sessions for the
+// owning user. id_hash is opaque (already hashed); plaintext cookies
+// are not stored or exposed.
+type UserWebSession struct {
+	IDHash    string
+	UserAgent string
+	IPPrefix  string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 // SQLiteStore is the production Store backed by a single SQLite file.
 type SQLiteStore struct {
 	db *sql.DB
@@ -74,6 +85,12 @@ type Store interface {
 	// plaintext for the create path returns ErrEmptyBootstrapPassword;
 	// strength enforcement is the caller's job.
 	EnsureAdminUser(ctx context.Context, email, plaintext string) (created bool, err error)
+	// DeleteUser hard-deletes userID. api_tokens and web_sessions cascade
+	// via the existing FK. invitations.consumed_by is REFERENCES users(id)
+	// without cascade (history field), so this method first sets that
+	// column to NULL for every invitation consumed by the user, then
+	// deletes the users row, in one transaction.
+	DeleteUser(ctx context.Context, userID string) error
 
 	// Invitations
 	CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error)
@@ -92,6 +109,22 @@ type Store interface {
 	LookupWebSession(ctx context.Context, plaintext string) (userID string, csrfSecret []byte, err error)
 	DeleteWebSession(ctx context.Context, plaintext string) error
 	PurgeExpiredWebSessions(ctx context.Context) (int64, error)
+	// ListUserWebSessions returns all non-expired sessions for userID,
+	// ordered by created_at DESC. Used by the Settings → Signed-in devices
+	// panel.
+	ListUserWebSessions(ctx context.Context, userID string) ([]UserWebSession, error)
+
+	// DeleteUserWebSessionByIDHash revokes the session with the given
+	// id_hash, ONLY IF it belongs to userID. Returns (false, nil) if no
+	// such session exists or it belongs to a different user — never
+	// reveal cross-user existence.
+	DeleteUserWebSessionByIDHash(ctx context.Context, userID, idHash string) (deleted bool, err error)
+
+	// DeleteOtherWebSessionsForUser deletes every session for userID
+	// except the one whose id_hash matches exceptIDHash. Returns the
+	// number of rows deleted. Used by Settings → Sign out everywhere
+	// except this device.
+	DeleteOtherWebSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error)
 
 	// ChangePassword verifies currentPlaintext against the stored hash for
 	// userID, then updates to a new hash and rotates csrf_secret. All existing

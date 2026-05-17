@@ -16,7 +16,7 @@ import (
 // (zero Principal, false).
 func (a *AuthServer) requireUser(w http.ResponseWriter, r *http.Request) (Principal, bool) {
 	p := a.Resolver.Resolve(r)
-	if p.Kind != PrincipalUser {
+	if !p.IsUser() {
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
 		return p, false
 	}
@@ -298,7 +298,7 @@ func (a *AuthServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 // Required by TestLogout_DeletesWebSession to fetch the CSRF token for logout.
 func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	p := a.Resolver.Resolve(r)
-	if p.Kind != PrincipalUser {
+	if !p.IsUser() {
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
 		return
 	}

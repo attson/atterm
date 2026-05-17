@@ -1,4 +1,4 @@
-import { authFetch, getMe, logout } from "./auth.js";
+import { authFetch, getMe } from "./auth.js";
 import { fetchVersionLabel } from "./app-core.js";
 
 fetchVersionLabel(fetch).then((label) => {
@@ -84,8 +84,6 @@ document.getElementById("change-password-form").addEventListener("submit", async
         errEl.hidden = false;
     }
 });
-
-document.getElementById("logout").addEventListener("click", () => logout());
 
 // Guard: redirect to login if not authenticated, then load tokens.
 await getMe();

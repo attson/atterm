@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"flag"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -27,7 +28,7 @@ var Version = "dev"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
-	webDir := flag.String("web", "web", "static web client directory (empty to disable)")
+	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
 	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for web-push.json etc. (or ATTERM_RELAY_CONFIG_DIR)")
@@ -105,8 +106,15 @@ func main() {
 
 	resolver := relay.NewIdentityResolver(store)
 
+	var webFS fs.FS
+	if *webDir == "" {
+		webFS = relay.EmbeddedWebFS()
+	} else {
+		webFS = os.DirFS(*webDir)
+	}
+
 	cfg := relay.Config{
-		WebDir:               *webDir,
+		WebFS:                webFS,
 		Version:              Version,
 		AllowedOrigins:       allowedOrigins,
 		Debug:                *debug || *debugPayload,

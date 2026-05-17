@@ -54,3 +54,59 @@ func TestListSessions_RequiresAuth(t *testing.T) {
 		t.Errorf("status=%d; want 401", rec.Code)
 	}
 }
+
+func TestDeleteSession_OwnerDeletes_204(t *testing.T) {
+	srv, store := newTestAuthServer(t)
+	handler := srv.Routes()
+	cookie, userID, _ := signupAndLogin(t, handler, store, "a@example.com", "passphrase-1234")
+	csrf := csrfTokenFor(t, handler, cookie)
+	_, _ = store.CreateWebSession(context.Background(), userID, "other-device", "")
+	list, _ := store.ListUserWebSessions(context.Background(), userID)
+	var target string
+	for _, s := range list {
+		if s.UserAgent == "other-device" {
+			target = s.IDHash
+		}
+	}
+	if target == "" {
+		t.Fatal("setup: other-device session missing")
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/me/sessions/"+target, nil)
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrf)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+	}
+	after, _ := store.ListUserWebSessions(context.Background(), userID)
+	if len(after) != 1 {
+		t.Errorf("expected 1 session left, got %d", len(after))
+	}
+}
+
+func TestDeleteSession_OtherUserSession_404(t *testing.T) {
+	srv, store := newTestAuthServer(t)
+	handler := srv.Routes()
+	cookieA, _, _ := signupAndLogin(t, handler, store, "a@example.com", "passphrase-1234")
+	csrfA := csrfTokenFor(t, handler, cookieA)
+
+	userB, _ := store.CreateUser(context.Background(), "b@example.com", "passphrase-1234")
+	_, _ = store.CreateWebSession(context.Background(), userB.ID, "ua-b", "")
+	listB, _ := store.ListUserWebSessions(context.Background(), userB.ID)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/me/sessions/"+listB[0].IDHash, nil)
+	req.AddCookie(cookieA)
+	req.Header.Set("X-CSRF-Token", csrfA)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status=%d; want 404 (cross-user)", rec.Code)
+	}
+	// B's session must still exist.
+	afterB, _ := store.ListUserWebSessions(context.Background(), userB.ID)
+	if len(afterB) != 1 {
+		t.Errorf("B's session lost: %+v", afterB)
+	}
+}

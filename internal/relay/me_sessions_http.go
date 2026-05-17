@@ -52,3 +52,29 @@ func (a *AuthServer) handleListSessions(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
+
+// handleDeleteSession revokes a single session owned by the caller.
+// Returns 204 if a row was deleted, 404 if no matching session
+// belonged to this user. Cross-user attempts are indistinguishable
+// from "doesn't exist".
+func (a *AuthServer) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	idHash := r.PathValue("id_hash")
+	if idHash == "" {
+		http.Error(w, "missing id_hash", http.StatusBadRequest)
+		return
+	}
+	deleted, err := a.Store.DeleteUserWebSessionByIDHash(r.Context(), p.UserID, idHash)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !deleted {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

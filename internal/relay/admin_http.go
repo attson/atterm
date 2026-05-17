@@ -180,7 +180,7 @@ func (a *AdminServer) handleListInvites(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleListUsers implements GET /admin/api/users.
-// Response 200: array of {id, email, created_at, disabled_at}.
+// Response 200: array of {id, email, created_at, disabled_at, is_admin}.
 func (a *AdminServer) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := a.Store.ListUsers(r.Context())
 	if err != nil {
@@ -193,6 +193,7 @@ func (a *AdminServer) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		Email      string  `json:"email"`
 		CreatedAt  string  `json:"created_at"`
 		DisabledAt *string `json:"disabled_at,omitempty"`
+		IsAdmin    bool    `json:"is_admin"`
 	}
 
 	out := make([]userRow, 0, len(users))
@@ -201,6 +202,7 @@ func (a *AdminServer) handleListUsers(w http.ResponseWriter, r *http.Request) {
 			ID:        u.ID,
 			Email:     u.Email,
 			CreatedAt: u.CreatedAt.UTC().Format(time.RFC3339),
+			IsAdmin:   u.IsAdmin,
 		}
 		if u.DisabledAt != nil {
 			s := u.DisabledAt.UTC().Format(time.RFC3339)

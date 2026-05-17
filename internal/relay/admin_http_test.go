@@ -632,3 +632,40 @@ func TestCountAdmins_OneTriggersLastAdminGuard(t *testing.T) {
 		t.Fatalf("countAdmins = %d; want 1", n)
 	}
 }
+
+// TestAdminListUsers_IncludesIsAdmin: GET /admin/api/users response includes
+// is_admin field for each user, correctly reflecting their admin status.
+func TestAdminListUsers_IncludesIsAdmin(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	_, adminCookie, _ := bootstrapAdminUser(t, store)
+
+	nonAdmin, _ := store.CreateUser(context.Background(), "u@example.com", "passphrase-1234")
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/users", nil)
+	req.AddCookie(adminCookie)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	var foundAdmin, foundNonAdmin bool
+	for _, r := range rows {
+		if r["email"] == "admin@example.com" && r["is_admin"] == true {
+			foundAdmin = true
+		}
+		if r["id"] == nonAdmin.ID && r["is_admin"] == false {
+			foundNonAdmin = true
+		}
+	}
+	if !foundAdmin {
+		t.Errorf("admin row missing or is_admin=false; rows=%v", rows)
+	}
+	if !foundNonAdmin {
+		t.Errorf("non-admin row missing or is_admin=true; rows=%v", rows)
+	}
+}

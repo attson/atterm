@@ -4,6 +4,14 @@ import { readFile } from "node:fs/promises";
 
 const css = await readFile(new URL("./style.css", import.meta.url), "utf8");
 
+test("style.css force-hides [hidden] over any explicit display rule (settings/admin tab switching depends on it)", () => {
+    // .settings-card / .admin-card use `display: flex`. The browser's
+    // user-agent style for [hidden] is `display: none` — but explicit
+    // display:flex on the same element wins, leaving hidden panels
+    // visible. We need a global !important rule. v0.1.78 regression.
+    assert.match(css, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+});
+
 test("css includes safe-area and mobile terminal controls", () => {
   assert.match(css, /env\(safe-area-inset-top\)/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);

@@ -37,9 +37,10 @@ function activeFromHash() {
     return TABS.includes(h) ? h : "invitations";
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-    showTab(activeFromHash());
-});
+// ES modules execute after DOM ready (defer semantics), so registering
+// a DOMContentLoaded listener here would attach AFTER the event already
+// fired. Call directly.
+showTab(activeFromHash());
 window.addEventListener("hashchange", () => {
     showTab(activeFromHash());
 });

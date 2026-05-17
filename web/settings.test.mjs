@@ -10,6 +10,15 @@ test("settings.html loads settings.js, which imports auth.js", () => {
     assert.ok(js.includes("./auth.js"), "settings.js must import auth.js");
 });
 
+test("settings.js does NOT wait on DOMContentLoaded (modules are deferred)", () => {
+    // ES modules execute after DOM ready, so registering a
+    // DOMContentLoaded listener at module top level attaches AFTER the
+    // event already fired and never runs. showTab must be invoked
+    // directly. See v0.1.78 fix.
+    assert.doesNotMatch(js, /addEventListener\(\s*["']DOMContentLoaded["']/,
+        "settings.js must NOT register a DOMContentLoaded listener — modules are deferred");
+});
+
 test("settings.html has create-token-form", () => {
     assert.ok(html.includes('id="create-token-form"'), "must have create-token-form");
 });

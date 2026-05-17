@@ -127,14 +127,14 @@ No Pinia. Each app has tightly-scoped state managed with `ref`/`reactive` + comp
 
 - `credentials: 'include'`; JSON content-type by default
 - Injects `X-Atterm-CSRF` header when the cookie has it
-- 401 + current page is not `/login.html` or `/signup.html` → `window.location.assign('/login.html?next=' + encodeURIComponent(location.pathname + location.search))`
+- 401 + current page is not `/login.html` or `/signup.html` → `window.location.assign('/login.html?next=' + encodeURIComponent(safeNext(location.pathname + location.search)))` (see Sec-2 for `safeNext`)
 - 403 → throws `ApiError`; component decides UI (admin tabs use this to hide controls)
 - 5xx / network → throws `ApiError`; component surfaces via Naive UI `useMessage()`
 - Returns `{ data, status, headers }` so callers can read response metadata when needed
 
 DTO types in `src/shared/api/types.ts` are hand-mirrored from `internal/relay/*_http.go`. No OpenAPI codegen — repo is small enough that drift is caught by integration usage and unit tests.
 
-Cookie + CSRF flow is unchanged: relay still issues the cookie and CSRF token. Frontend never reads or stores tokens — it only forwards what's in the cookie jar.
+Cookie + CSRF flow is unchanged: relay still issues the session cookie (HttpOnly) and a separate non-HttpOnly CSRF cookie. Frontend reads the CSRF cookie value into a header (double-submit pattern, Sec-4); never reads, stores, or transmits the session cookie itself.
 
 ### WebSocket / proto
 
@@ -278,6 +278,88 @@ Each Phase B PR is independently shippable and revertable.
 - **no CDN**: all bundled assets are same-origin; xterm stays under `src/vendor/`; Naive UI ships through npm into the Vite bundle, not a `<script>` tag (red-line 10)
 - **no token in URL**: `?token=` is never used for auth endpoints; cookie + CSRF only on browser; agent WS uses `Sec-WebSocket-Protocol` (red-line 9)
 - **`internal/relay/web-dist/` is generated**: never edit by hand; CI fails the build if it drifts from source
+- **no `v-html` in business code**: business `.vue` files never use `v-html`; if a future feature genuinely needs raw HTML rendering, it gets its own spec + sanitizer choice; lint rule enforces this (vite-plugin-eslint with `vue/no-v-html: error`)
+
+## Security considerations
+
+### Sec-1 — Naive UI runtime style injection and CSP `style-src`
+
+Naive UI uses `css-render` to inject `<style>` tags at component mount time. The relay's current CSP (set in `internal/relay/server.go`) must allow this. The chosen tradeoff:
+
+- `style-src 'self' 'unsafe-inline'` — accepted weakening; rationale: Vue templates auto-escape interpolations and attribute bindings, business `.vue` files are banned from `v-html` (see Invariants), so no business path injects style-affecting strings. `style-src 'unsafe-inline'` only widens XSS-via-CSS-injection, and the business-layer prerequisite for that (uncontrolled HTML / attribute injection) is closed off.
+- `script-src` stays `'self'` (no `'unsafe-inline'`, no `'unsafe-eval'`); Vite emits hashed module scripts.
+- Phase A includes the server-side CSP change and an `internal/relay/server_test.go` assertion that the new header is what we intend.
+
+Nonce-based `style-src` is rejected: it requires per-request HTML rewriting and breaks the `go:embed` static-FS model.
+
+### Sec-2 — `next=` post-login redirect must be same-origin and relative
+
+`/login.html` and `/signup.html` accept a `?next=` query param to bounce the user back after auth. The frontend must validate:
+
+```ts
+function safeNext(raw: string | null): string {
+  if (!raw) return '/';
+  if (!raw.startsWith('/')) return '/';        // must be relative
+  if (raw.startsWith('//')) return '/';        // protocol-relative escape
+  if (raw.startsWith('/\\')) return '/';       // legacy quirk
+  try {
+    const u = new URL(raw, location.origin);
+    if (u.origin !== location.origin) return '/';
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return '/';
+  }
+}
+```
+
+Both the `apiFetch` 401 handler that *sets* `next` and the post-login redirect that *consumes* `next` must pass through this function. Unit tests in `login/App.test.ts` cover `//evil`, `/\\evil`, `https://evil`, `javascript:`, and the happy path.
+
+### Sec-3 — WebSocket auth and CSWSH
+
+`/client` WS handshake authenticates via cookie. Cross-Site WebSocket Hijacking is closed off at the relay layer (`ATTERM_ORIGINS` enforcement, red-line 9). The web frontend does **not** implement additional Origin / referrer checks — server is authoritative. This is documented here so future readers don't double-implement or weaken the server check assuming the frontend covers it.
+
+### Sec-4 — CSRF: double-submit cookie
+
+Two cookies are involved (existing relay behaviour, made explicit here):
+
+- `atterm_session` (or current name): `HttpOnly; Secure; SameSite=Lax` — browser sends automatically; JS cannot read it.
+- `atterm_csrf`: **not** `HttpOnly`; `Secure; SameSite=Lax` — JS reads its value and copies it into the `X-Atterm-CSRF` header on every state-changing request.
+
+`apiFetch` performs that copy. Server compares header vs cookie. `client.test.ts` covers: header injected when cookie present; absent when cookie missing; never logs the token; never sends `?csrf=` in URL.
+
+### Sec-5 — Service worker precache scope
+
+`vite-plugin-pwa` config:
+
+- `workbox.globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}']` — static assets only
+- `workbox.runtimeCaching: []` — **no** runtime caching of `/me`, `/api/*`, `/admin/api/*`, `/auth/*`, or any other API response
+- `workbox.navigateFallback: null` — MPA, no SPA-style fallback (and no risk of the SW serving a stale shell for a path the server intends to redirect)
+- Acceptable: a logged-out user briefly seeing a cached `index.html` shell before the first API 401 redirects them. No sensitive data ships with the shell; all sensitive content arrives over network through `apiFetch`.
+
+Contract test `pwa-cache-scope.test.mjs` (new) parses the generated SW and fails if it precaches anything outside `globPatterns`, or if a `runtimeCaching` entry exists.
+
+### Sec-6 — Supply chain hygiene
+
+- `package-lock.json` committed; CI uses `npm ci`, never `npm install`
+- `.npmrc` sets `ignore-scripts=true` (Vue / Vite / Naive UI do not require postinstall scripts — verified during Phase A by running `npm ci --ignore-scripts && npm run build` and confirming a clean build)
+- CI step: `npm audit --omit=dev --audit-level=high` — blocks on high or critical advisories
+- Adding a new top-level dependency requires explicit justification in the commit message and is reviewed as a separate concern from feature code
+- Dependabot (or equivalent) opens PRs for updates; security-only updates auto-mergeable after CI
+
+### Sec-7 — Build determinism for the `git diff` integrity gate
+
+For `git diff --exit-code internal/relay/web-dist` to be a meaningful integrity check, the build output must be deterministic given the same source. Required:
+
+- `vite-plugin-pwa` configured to omit build timestamps from the generated SW (`workbox.cleanupOutdatedCaches: true`, no `injectManifest` timestamp variables; if the plugin emits a build-time string, pin it via `manifest.version` derived from `git rev-parse HEAD` instead of `Date.now()`)
+- `npm ci` (lockfile reproducible); no `latest`-style version ranges in `package.json`
+- CI builds on a fixed Node major version (pin in `.github/workflows/build.yml` — Node 20 LTS) so the toolchain hash matches between contributor and CI
+- One-time verification during Phase A: clean checkout → build → record `dist/` hash → reclone → build → assert same hashes
+
+If the diff step produces spurious failures, the build is not deterministic and **must** be fixed before relying on the check; do not paper over with `git diff --ignore-blank-lines` or similar.
+
+### Sec-8 — Paste image size limit
+
+`sendPasteImage` (web) and the corresponding relay handler must both enforce a size cap. Frontend rejects with a `useMessage()` error before sending; relay enforces a hard byte cap at the WS frame level (existing behaviour — verify in implementation plan). Proposed default cap: 8 MiB on the frontend (matches a typical screenshot upper bound; relay limit can be lower if it already is). The frontend cap is a UX courtesy; relay's cap is the authoritative defense.
 
 ## Risks & Mitigations
 
@@ -289,6 +371,11 @@ Each Phase B PR is independently shippable and revertable.
 | `internal/relay/web-dist/` falls out of sync with `web/` source | CI step: build + rsync + `git diff --exit-code internal/relay/web-dist` |
 | Bundle bloat from Naive UI + Vue per-entry | Vite's tree-shake + per-entry bundles; revisit only if `dist/` size measurably regresses (e.g. terminal entry > 500 KB gzip) |
 | Dev mode WS proxying breaks against `/client` | `vite.config.ts` `server.proxy` with `ws: true`; alternative `--web web/dist` flow always works as fallback |
+| Naive UI runtime `<style>` injection blocked by strict CSP | `style-src 'self' 'unsafe-inline'`; rationale and offsetting controls in Sec-1 |
+| Open redirect via `?next=` on login | `safeNext()` same-origin / relative validator at both producer and consumer sites; unit tests in Sec-2 |
+| Supply-chain compromise via npm transitive deps | Lockfile + `npm ci` + `ignore-scripts` + `npm audit` CI gate (Sec-6) |
+| Non-deterministic build breaks the `web-dist/` diff gate | Pinned Node, timestamp-free SW config, version derived from git rev (Sec-7) |
+| Cached SW shell shows post-logout | Static-only precache, no runtime API caching; no sensitive content in shell (Sec-5) |
 
 ## Open questions
 

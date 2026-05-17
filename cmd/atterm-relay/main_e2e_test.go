@@ -17,7 +17,6 @@ import (
 // that mounts /api/auth/*, /api/me/*, and /admin/api/* routes.
 func newTestServerWithStore(t *testing.T) (*relay.Server, userstore.Store) {
 	t.Helper()
-	adminToken := "Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!"
 	store, err := userstore.Open(context.Background(), ":memory:")
 	if err != nil {
 		t.Fatalf("userstore.Open: %v", err)
@@ -26,9 +25,8 @@ func newTestServerWithStore(t *testing.T) (*relay.Server, userstore.Store) {
 
 	resolver := relay.NewIdentityResolver(store)
 	cfg := relay.Config{
-		AdminToken: adminToken,
-		Resolver:   resolver,
-		Store:      store,
+		Resolver: resolver,
+		Store:    store,
 	}
 	return relay.NewServer(cfg), store
 }

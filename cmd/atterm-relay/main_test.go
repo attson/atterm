@@ -15,8 +15,8 @@ import (
 )
 
 // newTestServer builds a minimal relay Server backed by an in-memory userstore
-// for use in integration tests. adminToken must be non-empty.
-func newTestServer(t *testing.T, adminToken string, origins []string) (*relay.Server, userstore.Store) {
+// for use in integration tests.
+func newTestServer(t *testing.T, origins []string) (*relay.Server, userstore.Store) {
 	t.Helper()
 	store, err := userstore.Open(context.Background(), ":memory:")
 	if err != nil {
@@ -26,7 +26,6 @@ func newTestServer(t *testing.T, adminToken string, origins []string) (*relay.Se
 
 	resolver := relay.NewIdentityResolver(store)
 	cfg := relay.Config{
-		AdminToken:     adminToken,
 		AllowedOrigins: origins,
 		Resolver:       resolver,
 	}
@@ -67,8 +66,7 @@ func TestRelaySecurityNormalizesOriginsAndAllowsDesktopWebviews(t *testing.T) {
 // desktop webview origin is allowed and the /client-sessions WS handshake works.
 // It creates a user + API token so the IdentityResolver resolves PrincipalUser.
 func TestRelaySecurityAcceptsDesktopWebviewSessionListWS(t *testing.T) {
-	adminToken := "Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!"
-	srv, store := newTestServer(t, adminToken, allowedOriginHosts("https://relay.example.com"))
+	srv, store := newTestServer(t, allowedOriginHosts("https://relay.example.com"))
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 

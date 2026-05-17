@@ -54,9 +54,6 @@ type Config struct {
 	// MaxConnectionsPerKey limits active WS connections per remote IP/token
 	// pair. Zero uses a conservative default; negative disables.
 	MaxConnectionsPerKey int
-	// AdminToken enables /admin routes when non-empty. It is never accepted via
-	// query parameters.
-	AdminToken string
 	// AdminConfigStore persists admin API changes when configured.
 	AdminConfigStore *AdminConfigStore
 	// WebPush, when non-nil, enables the /api/push/* endpoints and the

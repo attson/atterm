@@ -538,3 +538,97 @@ func TestAdminPromoteUser_AuditLog(t *testing.T) {
 		t.Errorf("audit log line missing or malformed:\n%s", out)
 	}
 }
+
+// TestAdminDemoteUser_Success: DELETE /admin/api/users/{id}/admin demotes a user from admin.
+// Response 204 (No Content). Target user's is_admin flag is cleared.
+func TestAdminDemoteUser_Success(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	_, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	// Second admin so demoting other doesn't trip last-admin guard.
+	ctx := context.Background()
+	other, _ := store.CreateUser(ctx, "other@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, other.ID, true)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/"+other.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d; want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := store.GetUser(ctx, other.ID)
+	if got.IsAdmin {
+		t.Error("user still admin after DELETE .../admin")
+	}
+}
+
+// TestAdminDemoteUser_Self_400: DELETE /admin/api/users/{id}/admin on self returns 400
+// with error code "cannot_demote_self".
+func TestAdminDemoteUser_Self_400(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	actorID, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/"+actorID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (self-demote); body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot_demote_self") {
+		t.Errorf("body = %q; want error code cannot_demote_self", rec.Body.String())
+	}
+}
+
+// TestAdminDemoteUser_AuditLog: DELETE /admin/api/users/{id}/admin writes an audit log
+// with the format "admin role change: actor=<id> target=<id> op=demote".
+func TestAdminDemoteUser_AuditLog(t *testing.T) {
+	var buf bytes.Buffer
+	oldLogger := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldLogger) })
+
+	handler, store := newTestAdminServer(t)
+	actorID, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	ctx := context.Background()
+	other, _ := store.CreateUser(ctx, "other@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, other.ID, true)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/"+other.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	handler.AdminRoutes().ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	if !strings.Contains(out, "admin role change") ||
+		!strings.Contains(out, "actor="+actorID) ||
+		!strings.Contains(out, "target="+other.ID) ||
+		!strings.Contains(out, "op=demote") {
+		t.Errorf("audit log line missing or malformed:\n%s", out)
+	}
+}
+
+// TestCountAdmins_OneTriggersLastAdminGuard: countAdmins returns correct count.
+func TestCountAdmins_OneTriggersLastAdminGuard(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	u, _ := store.CreateUser(ctx, "only@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, u.ID, true)
+	n, err := countAdmins(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("countAdmins = %d; want 1", n)
+	}
+}

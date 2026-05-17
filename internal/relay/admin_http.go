@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -47,6 +48,7 @@ func (a *AdminServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("POST /admin/api/users/{id}/reset-password", a.requireAdmin(a.handleResetPassword))
 	mux.Handle("POST /admin/api/users/{id}/disable", a.requireAdmin(a.handleDisableUser))
 	mux.Handle("POST /admin/api/users/{id}/admin", RequireCSRF(a.Resolver, a.requireAdmin(a.handlePromoteUser)))
+	mux.Handle("DELETE /admin/api/users/{id}/admin", RequireCSRF(a.Resolver, a.requireAdmin(a.handleDemoteUser)))
 }
 
 // defaultInviteExpiry is the lifetime applied to invitations whose request
@@ -261,6 +263,60 @@ func (a *AdminServer) handlePromoteUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	log.Printf("admin role change: actor=%s target=%s op=promote", actor.UserID, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// countAdmins returns how many users currently have is_admin=1. Used to
+// prevent demoting / deleting the last admin and locking the deploy out.
+func countAdmins(ctx context.Context, store userstore.Store) (int, error) {
+	users, err := store.ListUsers(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, u := range users {
+		if u.IsAdmin {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// handleDemoteUser flips users.is_admin = false for {id}, with two
+// guardrails: self-demote (400 cannot_demote_self) and last-admin
+// (409 last_admin).
+func (a *AdminServer) handleDemoteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+	actor := a.Resolver.Resolve(r)
+	if id == actor.UserID {
+		writeError(w, http.StatusBadRequest, "cannot_demote_self")
+		return
+	}
+	target, err := a.Store.GetUser(r.Context(), id)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if target.IsAdmin {
+		n, err := countAdmins(r.Context(), a.Store)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if n <= 1 {
+			writeError(w, http.StatusConflict, "last_admin")
+			return
+		}
+	}
+	if err := a.Store.SetUserAdmin(r.Context(), id, false); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("admin role change: actor=%s target=%s op=demote", actor.UserID, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

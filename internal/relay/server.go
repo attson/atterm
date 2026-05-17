@@ -146,6 +146,16 @@ func NewServer(cfg Config) *Server {
 	if cfg.WebDir != "" {
 		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebDir))
 	}
+	// /admin/api/config is the runtime-limits endpoint used by the admin UI.
+	// Auth is PrincipalAdmin (cookie + user.is_admin), enforced inside the
+	// handler. Mutating methods are additionally wrapped in RequireCSRF when
+	// a resolver is present; without a resolver the handler returns 401 so
+	// the route is safe to register unconditionally.
+	if cfg.Resolver != nil {
+		s.mux.Handle("/admin/api/config", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleAdminConfigHTTP)))
+	} else {
+		s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
+	}
 
 	// Mount user-account HTTP API when both resolver and store are wired.
 	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed

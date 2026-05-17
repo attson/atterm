@@ -260,8 +260,50 @@ type adminConfigResponse struct {
 	Version string `json:"version"`
 }
 
-
-
+// handleAdminConfigHTTP serves GET/PUT /admin/api/config for the admin UI's
+// runtime-limits panel.
+//
+// Auth: requires PrincipalAdmin (cookie session on a user with is_admin=true,
+// or admin API token). When cfg.Resolver is nil (legacy/test setups with no
+// userstore) the endpoint returns 401 — there is no fallback to a shared
+// admin token. CSRF protection for PUT is layered on at the mux level via
+// RequireCSRF; this handler does not re-check CSRF.
+func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Resolver == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	p := s.cfg.Resolver.Resolve(r)
+	if p.Kind != PrincipalAdmin {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, s.adminConfigResponse())
+	case http.MethodPut:
+		var req struct {
+			RateLimitPerMinute   int `json:"rate_limit_per_minute"`
+			MaxConnectionsPerKey int `json:"max_connections_per_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if err := s.updateAdminConfig(func(cfg AdminConfig) AdminConfig {
+			cfg.RateLimitPerMinute = req.RateLimitPerMinute
+			cfg.MaxConnectionsPerKey = req.MaxConnectionsPerKey
+			return cfg
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.applyRuntimeLimits(req.RateLimitPerMinute, req.MaxConnectionsPerKey)
+		writeJSON(w, s.adminConfigResponse())
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
 
 func (s *Server) adminConfigResponse() adminConfigResponse {
 	cfg := AdminConfig{}

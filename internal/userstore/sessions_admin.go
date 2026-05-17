@@ -60,3 +60,21 @@ func (s *SQLiteStore) DeleteUserWebSessionByIDHash(ctx context.Context, userID, 
 	}
 	return n > 0, nil
 }
+
+// DeleteOtherWebSessionsForUser drops every row owned by userID except
+// the one matching exceptIDHash. The caller is expected to pass the
+// current request's session id_hash so the operator stays signed in.
+func (s *SQLiteStore) DeleteOtherWebSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM web_sessions WHERE user_id = ? AND id_hash != ?`,
+		userID, exceptIDHash,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete other web_sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return n, nil
+}

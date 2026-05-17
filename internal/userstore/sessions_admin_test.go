@@ -121,3 +121,49 @@ func TestDeleteUserWebSessionByIDHash_UnknownIDHashNoop(t *testing.T) {
 		t.Error("deleted=true for unknown id_hash; want false")
 	}
 }
+
+func TestDeleteOtherWebSessionsForUser_KeepsExceptOnly(t *testing.T) {
+	ctx := context.Background()
+	s, _ := Open(ctx, ":memory:")
+	defer s.Close()
+	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	_, _ = s.CreateWebSession(ctx, u.ID, "ua1", "")
+	_, _ = s.CreateWebSession(ctx, u.ID, "ua2", "")
+	_, _ = s.CreateWebSession(ctx, u.ID, "ua3", "")
+	list, _ := s.ListUserWebSessions(ctx, u.ID)
+	if len(list) != 3 {
+		t.Fatalf("setup: %d; want 3", len(list))
+	}
+	keep := list[1].IDHash // arbitrary middle row
+	n, err := s.DeleteOtherWebSessionsForUser(ctx, u.ID, keep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("deleted=%d; want 2", n)
+	}
+	after, _ := s.ListUserWebSessions(ctx, u.ID)
+	if len(after) != 1 || after[0].IDHash != keep {
+		t.Errorf("after: %+v; want only %q", after, keep)
+	}
+}
+
+func TestDeleteOtherWebSessionsForUser_ExceptUnknownDeletesAll(t *testing.T) {
+	ctx := context.Background()
+	s, _ := Open(ctx, ":memory:")
+	defer s.Close()
+	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	_, _ = s.CreateWebSession(ctx, u.ID, "ua1", "")
+	_, _ = s.CreateWebSession(ctx, u.ID, "ua2", "")
+	n, err := s.DeleteOtherWebSessionsForUser(ctx, u.ID, "no-such-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("deleted=%d; want 2 (unknown exceptIDHash drops nothing)", n)
+	}
+	after, _ := s.ListUserWebSessions(ctx, u.ID)
+	if len(after) != 0 {
+		t.Errorf("after: %+v; want empty", after)
+	}
+}

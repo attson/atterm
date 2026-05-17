@@ -114,6 +114,12 @@ type Store interface {
 	// reveal cross-user existence.
 	DeleteUserWebSessionByIDHash(ctx context.Context, userID, idHash string) (deleted bool, err error)
 
+	// DeleteOtherWebSessionsForUser deletes every session for userID
+	// except the one whose id_hash matches exceptIDHash. Returns the
+	// number of rows deleted. Used by Settings → Sign out everywhere
+	// except this device.
+	DeleteOtherWebSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error)
+
 	// ChangePassword verifies currentPlaintext against the stored hash for
 	// userID, then updates to a new hash and rotates csrf_secret. All existing
 	// web sessions for the user are deleted (caller issues a fresh session).

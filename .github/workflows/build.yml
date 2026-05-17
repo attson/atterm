@@ -35,8 +35,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: run web tests
-        run: node --test web/*.test.mjs
+      - name: run legacy web tests
+        run: node --test web/legacy/*.test.mjs
 
   build-linux:
     name: linux/${{ matrix.arch }}

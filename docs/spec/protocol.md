@@ -6,7 +6,7 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：三类 Principal（详见 §鉴权）：浏览器走 `atterm_session` HTTP-only cookie（mutating endpoint 额外要 `X-CSRF-Token`）；桌面 / CLI / 移动 web 走 `Authorization: Bearer atk_…`，WebSocket 升级也支持 `Sec-WebSocket-Protocol: atterm-token.atk_…` / `atterm-token-b64.<base64url(utf8 token)>` 以避免 token 进入 URL 日志；admin 用 `Authorization: Bearer <ATTERM_ADMIN_TOKEN>` 且只在 `/admin/*` 有效。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
+- 鉴权：三类 Principal（详见 §鉴权）：浏览器走 `atterm_session` HTTP-only cookie（mutating endpoint 额外要 `X-CSRF-Token`）；桌面 / CLI / 移动 web 走 `Authorization: Bearer atk_…`，WebSocket 升级也支持 `Sec-WebSocket-Protocol: atterm-token.atk_…` / `atterm-token-b64.<base64url(utf8 token)>` 以避免 token 进入 URL 日志；admin 用 `atterm_session` cookie 且 `is_admin=true`（仅在 `/admin/*` 有效）。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
 - CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。`--origins` 可写完整 URL 或 host pattern；relay 会按 WebSocket 库要求规范成 Origin host pattern，并在启用白名单时自动允许 Wails 桌面客户端的本地 asset hosts。
 - 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端必须只加载同源静态资源；xterm 资源 vendored 在 `web/vendor/`。CSP 允许 inline style 仅用于 xterm.js 运行时布局样式，脚本仍只允许同源且不允许 unsafe eval/inline script。
 
@@ -371,21 +371,21 @@ API token 由 `POST /api/me/tokens`（CSRF-gated）创建，前缀固定为 `atk
 `IN`、`RESIZE`、`PASTE_IMAGE`。不携带 CSRF secret（无 cookie），故不能
 调用需要 CSRF 的端点（改用 cookie session 登录后操作）。
 
-**Admin**：
+**Admin（Administrator）**：
 
 ```
-Authorization: Bearer <ATTERM_ADMIN_TOKEN>
+Cookie: atterm_session (with user.is_admin=true)
 ```
 
-仅在 `/admin/*` 路径有效（由 `ATTERM_ADMIN_TOKEN` 环境变量配置）。用户账号
-管理端点（`/admin/api/invitations`、`/admin/api/users`）使用此凭证。
+仅在 `/admin/*` 路径有效（由 `bootstrapAdmin` 在启动时配置，通过环境变量 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 初始化）。
+用户账号管理端点（`/admin/api/invitations`、`/admin/api/users`）使用此凭证。admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户。
 
 ### Principal 类型
 
 | Principal | 来源 | 可用路径 |
 |---|---|---|
 | `PrincipalUser` | cookie session 或 API token | `/agent` `/uplink` `/client` `/client-sessions` `/api/*` |
-| `PrincipalAdmin` | ATTERM_ADMIN_TOKEN Bearer | `/admin/*` |
+| `PrincipalAdmin` | `PrincipalUser` with `is_admin=true` | `/admin/*` |
 | `PrincipalNone` | 无效/过期凭证 | — (401) |
 
 每个用户只能看到自己注册的 session（`/api/sessions`、WebSocket LIST 帧、
@@ -413,12 +413,12 @@ Authorization: Bearer <ATTERM_ADMIN_TOKEN>
 
 ### 启动安全策略
 
-- 公网监听时 `ATTERM_ADMIN_TOKEN` 必须非空且足够强（长度 ≥ 16，包含大小写+数字+特殊字符），除非显式 `--dev-insecure`。
+- 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`；bootstrap password 必须非空且足够强（长度 ≥ 16，包含大小写+数字+特殊字符），除非显式 `--dev-insecure`。
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`。
 - `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：HTTP 请求与 WS upgrade 先按远端 IP 限流；鉴权成功后再按远端 IP + token hash 限流。`0` 用默认值，负数禁用。
 - `--max-connections-per-key` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用。
 - `--config` / `ATTERM_RELAY_CONFIG`：持久化 relay admin JSON 配置路径，仅保存运行参数；用户账号和 session 保存在 SQLite（users.db）。
-- `--admin-token` / `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 和 `/admin/api/*`。admin API 只接受 `Authorization: Bearer <admin-token>`，不支持 query token。
+- `ATTERM_BOOTSTRAP_ADMIN_EMAIL` / `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`：初始化 admin 用户。bootstrap 仅在启动时运行一次；现有 admin 用户无法通过重启改变密码，需改用 web UI `/settings`。
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输和弱鉴权风险警告。
 
 持久化 admin config 示例（仅保存运行参数，不保存 token 明文）：

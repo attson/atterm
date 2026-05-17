@@ -20,7 +20,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 手机浏览器 / iOS App | 支持 PWA、Capacitor iOS WebView MVP、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
 | 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
-| 公网 relay 安全默认值 | 强 admin token、Origin 白名单、CSRF、限流、安全响应头 |
+| 公网 relay 安全默认值 | 强 bootstrap 管理员密码、Origin 白名单、CSRF、限流、安全响应头 |
 | Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
 | Web Push 通知 | 浏览器和 PWA 订阅后，命令完成事件通过 self-hosted Web Push 推送，即使页面没打开也能收到（依赖 shell 集成 + 已连远端 relay） |
 | 用户系统 | ✓ 支持（v2+）：邀请码注册、per-user API token、用户独立的会话列表与 Web Push；admin 后台管理用户与邀请 |
@@ -46,15 +46,16 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 
 这个模式适合「电脑上跑任务，手机/另一台机器接管」。
 
-1. 启动 relay（设置强 admin token，最低 32 字符、含 3 类字符，不能是 dev/changeme 等）：
+1. 启动 relay（设置 bootstrap 管理员邮箱 + 密码，密码至少 16 字符、含 3 类字符，不能在弱密码黑名单内）：
 
 ```bash
-ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
+ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
+ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 docker compose up -d atterm-relay
 ```
 
-2. 在浏览器打开 `https://relay.example.com/admin/`，用 `ATTERM_ADMIN_TOKEN` 登录，进入 admin 后台。
+2. 在浏览器打开 `https://relay.example.com/login.html`，用 bootstrap 邮箱 + 密码登录；登录后顶部导航会出现 **Admin** 入口。登录成功后请把 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 从环境/systemd unit 中删除并重启，避免明文密码长期留在进程环境里。
 3. 在 “Invitations” 页面创建一个邀请码（`inv_…`），把它发给要使用的人（包括你自己）。
 4. 用户在 `https://relay.example.com/signup.html` 用邀请码 + 邮箱 + 密码完成注册。
 5. 登录后在 `/settings.html` 生成 API token（`atk_…`，**只显示一次**），复制后粘贴到桌面端 Settings → API token 字段。
@@ -65,8 +66,9 @@ docker compose up -d atterm-relay
 ```bash
 export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
-# 终端 1：启动 relay + web 客户端（--dev-insecure 放开本地强度校验）
-ATTERM_ADMIN_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
+# 终端 1：启动 relay + web 客户端（--dev-insecure 跳过 Origin/密码强度校验）
+# loopback 调试时 bootstrap envs 是可选的：不设就不会自动创建 admin 用户
+go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
 
 # 终端 2：启动桌面端
 cd desktop
@@ -105,7 +107,8 @@ API token: atk_...
 公网 relay 需要允许 Capacitor WebView 的 Origin：
 
 ```bash
-ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
+ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
+ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com,capacitor://localhost' \
 go run ./cmd/atterm-relay --addr :8080 --web web
 ```
@@ -152,7 +155,8 @@ docker compose logs atterm-relay
 
 | 变量 | 用途 |
 |------|------|
-| `ATTERM_ADMIN_TOKEN` | admin 后台 token；公网部署必须设置，且须通过强度检查（≥32 字符、≥3 类字符、不在弱 token 黑名单内） |
+| `ATTERM_BOOTSTRAP_ADMIN_EMAIL` | 启动时将该邮箱对应的用户标记为 admin；用户不存在时配合 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 创建新用户。公网监听必须设置（除非 `--dev-insecure`） |
+| `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` | 首次启动用来创建 admin 用户的明文密码；须满足 ≥16 字符、≥3 类字符、不在弱密码黑名单内。若用户已存在则忽略。**首次登录后请从环境中删除**，避免明文密码长期留在进程状态里 |
 | `ATTERM_ORIGINS` | 浏览器 Origin 白名单；公网部署必须设成真实域名 |
 | `ATTERM_RELAY_PORT` | 宿主机端口，默认 `8080` |
 | `ATTERM_RELAY_CONFIG_DIR` | relay 持久化配置目录，默认 `./data/atterm-relay` |
@@ -162,7 +166,8 @@ docker compose logs atterm-relay
 公网示例：
 
 ```bash
-ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
+ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
+ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 docker compose up -d atterm-relay
 ```
@@ -178,24 +183,37 @@ docker compose --profile auto-update up -d
 ### Go 直接运行
 
 ```bash
-ATTERM_ADMIN_TOKEN='replace-with-a-long-random-string-AaBb1234!' \
+ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
+ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 go run ./cmd/atterm-relay --addr :8080 --web web
 ```
 
-本地开发可以临时跳过强度检查：
+本地开发可以临时跳过强度与 Origin 校验（loopback 时 bootstrap envs 可省略，relay 不会自动创建 admin）：
 
 ```bash
-ATTERM_ADMIN_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
+go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
 ```
 
-公网监听默认拒绝弱 admin token、缺失 Origin 白名单。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
+公网监听默认拒绝缺失 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`、弱 bootstrap 密码、缺失 Origin 白名单。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
+
+### Bootstrap admin
+
+启动时 relay 读取 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`，分三种情况：
+
+- **两个 env 都未设置**：relay 正常启动，但不会自动创建 admin。admin 接口在没有任何 admin 用户之前会返回 401，需要手动把某个用户提升为 admin（例如 `UPDATE users SET is_admin=1 WHERE email='you@…';`）。
+- **email 已设置且用户已存在**：把该用户标记为 `is_admin=1`，忽略密码 env。日志会打一条 WARN，提示你登录后从环境中删除密码 env。
+- **email 已设置且用户不存在**：使用提供的密码创建新用户并标记为 admin。日志会打一条 WARN，提示登录后从环境中删除密码 env。
+
+**安全提醒**：bootstrap 用户创建/提权后，请把 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 从 env 文件 / systemd unit 删除并重启 relay。明文密码长期留在进程环境里（`/proc/self/environ`、备份、同宿主其他服务）都可能被读出来。
+
+公网监听场景下 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 是必需的（缺失时 relay 拒绝启动，除非 `--dev-insecure`）。
 
 ## 安全模型
 
 AT Term 的默认策略是 fail-closed：
 
-- 公网 relay 的 `ATTERM_ADMIN_TOKEN` 必须通过强度检查（≥32 字符、≥3 类字符、不在弱 token 黑名单内），否则启动拒绝。
+- 公网 relay 必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`；首次启动若要自动创建该 admin 用户，`ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 须满足 ≥16 字符、≥3 类字符、不在弱密码黑名单内，否则启动拒绝。Bootstrap 完成后应从环境中删除密码 env。
 - 公网 relay 必须使用明确的 `ATTERM_ORIGINS`。
 - 服务端鉴权不接受 `?token=` 参数；API token 通过 `Authorization: Bearer` 或桌面端 WebSocket 的 `Sec-WebSocket-Protocol` 传递，避免写进 URL。
 - 用户 API token（`atk_…`）仅在创建时明文展示一次，此后 relay 只保存哈希。

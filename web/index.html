@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="AT Term" />
+<meta name="page" content="home" />
 <title>AT Term</title>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" href="icon.png" />
@@ -16,20 +17,13 @@
 </head>
 <body>
 <div id="app-shell">
-  <header id="topbar">
+  <header id="topbar"></header>
+
+  <div id="page-bar">
     <button id="back" class="ghost-btn" hidden aria-label="Back to sessions">←</button>
-    <div class="brand-block">
-      <div class="brand">AT Term</div>
-      <div class="subtitle" id="session-title">mobile relay</div>
-      <div class="version" id="version">version dev</div>
-    </div>
-    <nav class="topnav" aria-label="Primary">
-      <a href="/" class="active" aria-current="page">Home</a>
-      <a href="/settings.html">Settings</a>
-    </nav>
+    <div class="subtitle" id="session-title">mobile relay</div>
     <div class="status" id="status">disconnected</div>
-    <button id="logout" class="ghost-btn" type="button">Sign out</button>
-  </header>
+  </div>
 
   <section id="install-hint" class="install-hint" hidden>
     <div>
@@ -85,5 +79,6 @@
 <script src="vendor/xterm/xterm.js"></script>
 <script src="vendor/xterm-addon-fit/xterm-addon-fit.js"></script>
 <script type="module" src="app.js"></script>
+<script type="module" src="layout.js"></script>
 </body>
 </html>

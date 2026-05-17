@@ -18,9 +18,6 @@ test("settings.html has change-password-form", () => {
     assert.ok(html.includes('id="change-password-form"'), "must have change-password-form");
 });
 
-test("settings.html has logout button", () => {
-    assert.ok(html.includes('id="logout"'), "must have logout button");
-});
 
 test("settings.html has token list container", () => {
     assert.ok(html.includes('id="token-list"'), "must have token-list element");
@@ -38,7 +35,3 @@ test("settings.js references POST /api/me/password", () => {
     assert.ok(js.includes("/api/me/password"), "must reference /api/me/password");
 });
 
-test("settings.html shows version label so operators can verify deploys", () => {
-    assert.ok(html.includes('id="version"'), "settings.html should have #version element");
-    assert.ok(js.includes("fetchVersionLabel"), "settings.js should call fetchVersionLabel");
-});

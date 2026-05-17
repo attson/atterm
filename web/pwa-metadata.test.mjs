@@ -15,12 +15,10 @@ test("index contains PWA and iOS metadata", () => {
   assert.match(html, /<section id="install-hint"/);
   assert.match(html, /Add to Home Screen/);
   assert.match(html, /<script type="module" src="app\.js"><\/script>/);
-  assert.match(html, /<div class="version" id="version">version dev<\/div>/);
   // Token panel and insecure-mode input removed; cookie auth is used instead.
   assert.doesNotMatch(html, /id="token-panel"/);
   assert.doesNotMatch(html, /id="token-toggle"/);
-  // Sign-out button must be present.
-  assert.match(html, /id="logout"/);
+  // Version div and sign-out button are now rendered by layout.js; asserts moved to nav.test.mjs.
 });
 
 test("index uses vendored terminal assets only", () => {

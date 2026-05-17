@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AT Term · sign in</title>
+<link rel="stylesheet" href="style.css" />
+</head><body class="auth-page">
+<form id="login-form" class="auth-card" autocomplete="on">
+  <h1>AT Term</h1>
+  <label>Email <input id="email" type="email" required autocomplete="username" /></label>
+  <label>Password <input id="password" type="password" required autocomplete="current-password" /></label>
+  <button type="submit">Sign in</button>
+  <p id="error" hidden></p>
+  <p class="alt">Have an invite code? <a href="/signup.html">Sign up here</a>. Otherwise ask your admin.</p>
+</form>
+<p class="page-version" id="version">version dev</p>
+<script type="module" src="./login.js"></script></body></html>

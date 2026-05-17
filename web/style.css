@@ -42,6 +42,11 @@
   --app-height: 100dvh;
 }
 * { box-sizing: border-box; }
+/* The HTML `hidden` attribute defaults to `display: none`, but elements
+   styled with explicit `display: flex` / `grid` / `block` win the cascade
+   and stay visible — that broke settings + admin tab switching when each
+   panel was a flex card. Force-hide so `[hidden]` always wins. */
+[hidden] { display: none !important; }
 html, body {
   margin: 0;
   padding: 0;

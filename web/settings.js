@@ -25,9 +25,11 @@ function activeFromHash() {
     return TABS.includes(h) ? h : "api-tokens";
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-    showTab(activeFromHash());
-});
+// ES modules execute after DOM ready (defer semantics), so registering
+// a DOMContentLoaded listener here would attach AFTER the event already
+// fired — the initial showTab call would silently never happen. Call
+// directly instead.
+showTab(activeFromHash());
 window.addEventListener("hashchange", () => {
     showTab(activeFromHash());
 });

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -479,5 +480,61 @@ func TestAdminAPI_NonAdminUser_Unauthorized(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusForbidden {
 		t.Errorf("non-admin user hitting /admin/api/invitations: status=%d, want 401 or 403", rec.Code)
+	}
+}
+
+// TestAdminPromoteUser_Success: POST /admin/api/users/{id}/admin promotes a user to admin.
+// Response 204 (No Content). Target user's is_admin flag is set.
+func TestAdminPromoteUser_Success(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	_, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	ctx := context.Background()
+	target, _ := store.CreateUser(ctx, "target@example.com", "passphrase-1234")
+	if target.IsAdmin {
+		t.Fatal("target already admin")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/"+target.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d; want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := store.GetUser(ctx, target.ID)
+	if !got.IsAdmin {
+		t.Error("target user not promoted after POST .../admin")
+	}
+}
+
+// TestAdminPromoteUser_AuditLog: POST /admin/api/users/{id}/admin writes an audit log
+// with the format "admin role change: actor=<id> target=<id> op=promote".
+func TestAdminPromoteUser_AuditLog(t *testing.T) {
+	// Capture log output
+	var buf bytes.Buffer
+	oldLogger := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldLogger) })
+
+	handler, store := newTestAdminServer(t)
+	actorID, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	ctx := context.Background()
+	target, _ := store.CreateUser(ctx, "t@example.com", "passphrase-1234")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/"+target.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	handler.AdminRoutes().ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	if !strings.Contains(out, "admin role change") ||
+		!strings.Contains(out, "actor="+actorID) ||
+		!strings.Contains(out, "target="+target.ID) ||
+		!strings.Contains(out, "op=promote") {
+		t.Errorf("audit log line missing or malformed:\n%s", out)
 	}
 }

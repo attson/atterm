@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -45,6 +46,7 @@ func (a *AdminServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("GET /admin/api/users", a.requireAdmin(a.handleListUsers))
 	mux.Handle("POST /admin/api/users/{id}/reset-password", a.requireAdmin(a.handleResetPassword))
 	mux.Handle("POST /admin/api/users/{id}/disable", a.requireAdmin(a.handleDisableUser))
+	mux.Handle("POST /admin/api/users/{id}/admin", RequireCSRF(a.Resolver, a.requireAdmin(a.handlePromoteUser)))
 }
 
 // defaultInviteExpiry is the lifetime applied to invitations whose request
@@ -243,6 +245,23 @@ func (a *AdminServer) handleDisableUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSONStatus(w, http.StatusOK, map[string]string{"status": "disabled"})
+}
+
+// handlePromoteUser flips users.is_admin = true for {id}. Idempotent.
+// Audit logged with actor (the requesting admin) and target.
+func (a *AdminServer) handlePromoteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+	actor := a.Resolver.Resolve(r)
+	if err := a.Store.SetUserAdmin(r.Context(), id, true); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("admin role change: actor=%s target=%s op=promote", actor.UserID, id)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type adminConfigResponse struct {

@@ -20,10 +20,17 @@ const (
 // authScope is declared in auth.go and reused here.
 type Principal struct {
 	Kind       PrincipalKind
-	UserID     string    // non-empty when Kind == PrincipalUser
+	UserID     string    // non-empty when authenticated as a user (PrincipalUser or PrincipalAdmin)
 	TokenID    string    // non-empty when source was an API token (not a cookie)
 	Scope      authScope // authWrite for all valid principals in this implementation
-	CSRFSecret []byte    // set when Kind == PrincipalUser and source was a cookie
+	CSRFSecret []byte    // set when authenticated via cookie (PrincipalUser or PrincipalAdmin)
+}
+
+// IsUser reports whether p is an authenticated user. Admin is a strict
+// superset of user, so every endpoint that accepts PrincipalUser must
+// also accept PrincipalAdmin — call this instead of `p.Kind == PrincipalUser`.
+func (p Principal) IsUser() bool {
+	return p.Kind == PrincipalUser || p.Kind == PrincipalAdmin
 }
 
 // IdentityResolver is constructed once at relay startup and reused across

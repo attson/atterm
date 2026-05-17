@@ -141,6 +141,33 @@ func TestMe_RequiresAuth_401(t *testing.T) {
 	}
 }
 
+// TestMe_AdminUser_OK regressing PR A: after admin sessions resolve to
+// PrincipalAdmin, handleMe's old `p.Kind != PrincipalUser` check rejected
+// admins with 401, breaking the entire post-login frontend flow.
+// PrincipalAdmin must be a strict superset of PrincipalUser everywhere.
+func TestMe_AdminUser_OK(t *testing.T) {
+    srv, store := newTestAuthServer(t)
+    handler := srv.Routes()
+
+    cookie, userID, _ := signupAndLogin(t, handler, store, "admin@example.com", "correcthorsebattery")
+    if err := store.SetUserAdmin(context.Background(), userID, true); err != nil {
+        t.Fatal(err)
+    }
+
+    w := getWithCookie(handler, "/api/me", cookie)
+    if w.Code != http.StatusOK {
+        t.Fatalf("admin /api/me: status %d, want 200; body=%s", w.Code, w.Body.String())
+    }
+    var resp map[string]interface{}
+    json.Unmarshal(w.Body.Bytes(), &resp)
+    if resp["user_id"] != userID {
+        t.Errorf("user_id: got %v, want %v", resp["user_id"], userID)
+    }
+    if _, ok := resp["csrf_token"].(string); !ok {
+        t.Error("csrf_token missing for admin cookie session")
+    }
+}
+
 // TestMe_ApiTokenSource_OK: API token (not cookie) → 200; csrf_token may be
 // empty because there is no cookie to derive it from.
 func TestMe_ApiTokenSource_OK(t *testing.T) {

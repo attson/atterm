@@ -267,7 +267,7 @@ func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	var ownerUserID string
 	if s.cfg.Resolver != nil {
 		p := s.cfg.Resolver.Resolve(r)
-		if p.Kind != PrincipalUser || p.TokenID == "" {
+		if !p.IsUser() || p.TokenID == "" {
 			s.debugf("http reject path=/agent remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -303,7 +303,7 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 	var ownerUserID string
 	if s.cfg.Resolver != nil {
 		p := s.cfg.Resolver.Resolve(r)
-		if p.Kind != PrincipalUser || p.TokenID == "" {
+		if !p.IsUser() || p.TokenID == "" {
 			s.debugf("http reject path=/uplink remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -342,7 +342,7 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	if s.cfg.Resolver != nil {
 		p := s.cfg.Resolver.Resolve(r)
-		if p.Kind != PrincipalUser {
+		if !p.IsUser() {
 			s.debugf("http reject path=/client remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -382,7 +382,7 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 	var ownerUserID string
 	if s.cfg.Resolver != nil {
 		p := s.cfg.Resolver.Resolve(r)
-		if p.Kind != PrincipalUser {
+		if !p.IsUser() {
 			s.debugf("http reject path=/client-sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -419,7 +419,7 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	var ownerUserID string
 	if s.cfg.Resolver != nil {
 		p := s.cfg.Resolver.Resolve(r)
-		if p.Kind != PrincipalUser {
+		if !p.IsUser() {
 			s.debugf("http reject path=/api/sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -480,7 +480,7 @@ func newStaticHandler(resolver *IdentityResolver, webDir string) http.Handler {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			if resolver != nil {
 				p := resolver.Resolve(r)
-				if p.Kind != PrincipalUser {
+				if !p.IsUser() {
 					http.Redirect(w, r, "/login.html", http.StatusFound)
 					return
 				}

@@ -486,6 +486,19 @@ func newStaticHandler(resolver *IdentityResolver, webDir string) http.Handler {
 				}
 			}
 		}
+		if r.URL.Path == "/admin/" || r.URL.Path == "/admin/index.html" {
+			if resolver != nil {
+				p := resolver.Resolve(r)
+				if p.Kind == PrincipalNone {
+					http.Redirect(w, r, "/login.html", http.StatusFound)
+					return
+				}
+				if p.Kind != PrincipalAdmin {
+					http.Redirect(w, r, "/", http.StatusFound)
+					return
+				}
+			}
+		}
 		fs.ServeHTTP(w, r)
 	})
 }

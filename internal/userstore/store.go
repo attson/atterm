@@ -85,6 +85,12 @@ type Store interface {
 	// plaintext for the create path returns ErrEmptyBootstrapPassword;
 	// strength enforcement is the caller's job.
 	EnsureAdminUser(ctx context.Context, email, plaintext string) (created bool, err error)
+	// DeleteUser hard-deletes userID. api_tokens and web_sessions cascade
+	// via the existing FK. invitations.consumed_by is REFERENCES users(id)
+	// without cascade (history field), so this method first sets that
+	// column to NULL for every invitation consumed by the user, then
+	// deletes the users row, in one transaction.
+	DeleteUser(ctx context.Context, userID string) error
 
 	// Invitations
 	CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error)

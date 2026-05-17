@@ -108,6 +108,12 @@ type Store interface {
 	// panel.
 	ListUserWebSessions(ctx context.Context, userID string) ([]UserWebSession, error)
 
+	// DeleteUserWebSessionByIDHash revokes the session with the given
+	// id_hash, ONLY IF it belongs to userID. Returns (false, nil) if no
+	// such session exists or it belongs to a different user — never
+	// reveal cross-user existence.
+	DeleteUserWebSessionByIDHash(ctx context.Context, userID, idHash string) (deleted bool, err error)
+
 	// ChangePassword verifies currentPlaintext against the stored hash for
 	// userID, then updates to a new hash and rotates csrf_secret. All existing
 	// web sessions for the user are deleted (caller issues a fresh session).

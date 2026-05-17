@@ -43,3 +43,20 @@ func (s *SQLiteStore) ListUserWebSessions(ctx context.Context, userID string) ([
 	}
 	return out, rows.Err()
 }
+
+// DeleteUserWebSessionByIDHash revokes the session ONLY IF owned by userID.
+// The (user_id, id_hash) WHERE clause is the security boundary.
+func (s *SQLiteStore) DeleteUserWebSessionByIDHash(ctx context.Context, userID, idHash string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM web_sessions WHERE user_id = ? AND id_hash = ?`,
+		userID, idHash,
+	)
+	if err != nil {
+		return false, fmt.Errorf("delete web_session by id_hash: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
+}

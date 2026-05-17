@@ -62,3 +62,62 @@ func TestListUserWebSessions_ScopedToUser(t *testing.T) {
 		t.Errorf("u1 list leaked u2 rows or missing own: %+v", list1)
 	}
 }
+
+func TestDeleteUserWebSessionByIDHash_Success(t *testing.T) {
+	ctx := context.Background()
+	s, _ := Open(ctx, ":memory:")
+	defer s.Close()
+	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	_, _ = s.CreateWebSession(ctx, u.ID, "ua1", "")
+	list, _ := s.ListUserWebSessions(ctx, u.ID)
+	if len(list) != 1 {
+		t.Fatalf("setup: list len %d; want 1", len(list))
+	}
+	deleted, err := s.DeleteUserWebSessionByIDHash(ctx, u.ID, list[0].IDHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Error("deleted=false; want true")
+	}
+	after, _ := s.ListUserWebSessions(ctx, u.ID)
+	if len(after) != 0 {
+		t.Errorf("session still listed after delete: %+v", after)
+	}
+}
+
+func TestDeleteUserWebSessionByIDHash_CrossUserIsNoop(t *testing.T) {
+	ctx := context.Background()
+	s, _ := Open(ctx, ":memory:")
+	defer s.Close()
+	u1, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	u2, _ := s.CreateUser(ctx, "b@example.com", "passphrase-1234")
+	_, _ = s.CreateWebSession(ctx, u2.ID, "ua-u2", "")
+	list2, _ := s.ListUserWebSessions(ctx, u2.ID)
+	// Attempt to delete u2's session as u1.
+	deleted, err := s.DeleteUserWebSessionByIDHash(ctx, u1.ID, list2[0].IDHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted {
+		t.Error("deleted=true for cross-user delete; want false")
+	}
+	after, _ := s.ListUserWebSessions(ctx, u2.ID)
+	if len(after) != 1 {
+		t.Errorf("u2's session was wrongly deleted: %+v", after)
+	}
+}
+
+func TestDeleteUserWebSessionByIDHash_UnknownIDHashNoop(t *testing.T) {
+	ctx := context.Background()
+	s, _ := Open(ctx, ":memory:")
+	defer s.Close()
+	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	deleted, err := s.DeleteUserWebSessionByIDHash(ctx, u.ID, "deadbeef00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted {
+		t.Error("deleted=true for unknown id_hash; want false")
+	}
+}

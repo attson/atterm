@@ -1,14 +1,42 @@
 :root {
+  /* surfaces (existing names kept; aliases for spec-aligned names) */
   --bg: #05070d;
   --panel: #0f172a;
   --panel-2: #111827;
+  --surface: var(--panel);
+  --surface-2: var(--panel-2);
+  --surface-hover: rgba(148, 163, 184, 0.10);
+  --surface-button: rgba(15, 23, 42, 0.9);
+  --topbar-bg: rgba(5, 7, 13, 0.86);
+
+  /* borders */
   --border: #263244;
+  --border-mute: rgba(148, 163, 184, 0.18);
+
+  /* text */
   --fg: #e5eefb;
   --fg-dim: #93a4ba;
+  --fg-mute: var(--fg-dim);
+
+  /* accent + status */
   --accent: #38bdf8;
   --accent-2: #facc15;
+  --accent-bg: rgba(56, 189, 248, 0.12);
   --good: #4ade80;
   --bad: #fb7185;
+  --bad-bg: rgba(251, 113, 133, 0.12);
+  --warn: #facc15;
+  --warn-bg: rgba(217, 153, 33, 0.12);
+
+  /* spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* layout dims (existing) */
   --topbar-h: 58px;
   --shortcut-h: 58px;
   --app-height: 100dvh;
@@ -18,7 +46,7 @@ html, body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background: radial-gradient(circle at top left, #172554 0, #05070d 42%);
+  background: radial-gradient(circle at top left, #172554 0, var(--bg) 42%);
   color: var(--fg);
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overscroll-behavior: none;
@@ -50,8 +78,8 @@ body.terminal-active #app-shell {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(5, 7, 13, 0.86);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--border-mute);
   backdrop-filter: blur(18px);
   position: sticky;
   top: 0;
@@ -83,22 +111,22 @@ body.terminal-active #app-shell {
   white-space: nowrap;
   transition: color 120ms, background-color 120ms;
 }
-.topnav a:hover { color: var(--fg); background: rgba(148, 163, 184, 0.10); }
-.topnav a.active { color: var(--accent); background: rgba(88, 166, 255, 0.12); }
+.topnav a:hover { color: var(--fg); background: var(--surface-hover); }
+.topnav a.active { color: var(--accent); background: var(--accent-bg); }
 #page-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 6px calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left));
-  background: rgba(5, 7, 13, 0.86);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--border-mute);
   backdrop-filter: blur(18px);
 }
 .status { font-size: 12px; color: var(--fg-dim); margin-left: auto; white-space: nowrap; }
 .status.ok { color: var(--good); }
 .status.err { color: var(--bad); }
 .ghost-btn, #refresh, #token-save, .paste-actions button {
-  background: rgba(15, 23, 42, 0.9);
+  background: var(--surface-button);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -369,10 +397,10 @@ body.desktop-web #shortcut-bar {
 .auth-card {
   max-width: 360px;
   width: 90%;
-  padding: 2rem;
+  padding: var(--space-6) var(--space-8);
   background: var(--panel);
   color: var(--fg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-mute);
   border-radius: 18px;
   display: flex;
   flex-direction: column;
@@ -389,11 +417,23 @@ body.desktop-web #shortcut-bar {
   border-radius: 4px;
   font: inherit;
 }
-.auth-card input:focus { outline: none; border-color: var(--accent); }
+.auth-card input:focus { outline: 2px solid var(--accent-bg); outline-offset: 1px; border-color: var(--accent); }
+.auth-card button[type="submit"] {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  margin-top: var(--space-2);
+}
 .auth-card button {
   padding: 0.5rem;
   background: var(--accent);
-  color: #05070d;
+  color: var(--bg);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -401,8 +441,15 @@ body.desktop-web #shortcut-bar {
   font-weight: 600;
 }
 .auth-card button:hover { opacity: 0.88; }
-.auth-card #error { color: var(--bad); font-size: 0.875rem; margin: 0; }
-.auth-card .alt { color: var(--fg-dim); font-size: 0.875rem; margin: 0; }
+.auth-card #error:not([hidden]) {
+  color: var(--bad);
+  background: var(--bad-bg);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  margin: 0;
+}
+.auth-card .alt { color: var(--fg-mute); font-size: 0.875rem; margin: 0; }
 .auth-card .alt a { color: var(--accent); }
 
 @media (min-width: 720px) {

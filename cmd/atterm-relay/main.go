@@ -32,30 +32,21 @@ func main() {
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
 	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for web-push.json etc. (or ATTERM_RELAY_CONFIG_DIR)")
 	vapidSubject := flag.String("vapid-subject", envOr("ATTERM_VAPID_SUBJECT", "mailto:noreply@atterm.local"), "VAPID subject (mailto: or https: URL; advertised to push services)")
-	adminToken := flag.String("admin-token", os.Getenv("ATTERM_ADMIN_TOKEN"), "admin bearer token for /admin routes (or ATTERM_ADMIN_TOKEN; empty disables admin)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
 	rateLimit := flag.Int("rate-limit-per-minute", envInt("ATTERM_RATE_LIMIT_PER_MINUTE", 0), "request/upgrade limit per remote IP/token per minute; 0=default, negative=disable")
 	maxConns := flag.Int("max-connections-per-key", envInt("ATTERM_MAX_CONNECTIONS_PER_KEY", 0), "active websocket limit per remote IP/token; 0=default, negative=disable")
 	debug := flag.Bool("debug", debugDefault, "enable verbose relay interaction logs (or ATTERM_RELAY_DEBUG=1)")
 	debugPayload := flag.Bool("debug-payload", debugPayloadDefault, "include IN/OUT byte contents in debug logs (or ATTERM_RELAY_DEBUG_PAYLOAD=1)")
-	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (weak admin token); development/private networks only")
+	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (unbootstrapped admin); development/private networks only")
 	flag.Parse()
 
 	publicListen := isPublicListenAddr(*addr)
-	cleanAdminToken := strings.TrimSpace(*adminToken)
+	bootstrapEmail := strings.TrimSpace(os.Getenv("ATTERM_BOOTSTRAP_ADMIN_EMAIL"))
+	bootstrapPassword := os.Getenv("ATTERM_BOOTSTRAP_ADMIN_PASSWORD") // no trim — password may legitimately have whitespace
 
-	// SEC-6: enforce admin-token strength on public listeners unless --dev-insecure.
-	if publicListen && !*devInsecure {
-		if cleanAdminToken == "" {
-			log.Fatal("ATTERM_ADMIN_TOKEN must be set for a public relay; pass --dev-insecure to skip (development only)")
-		}
-		if err := validateAdminToken(cleanAdminToken); err != nil {
-			log.Fatalf("%v; pass --dev-insecure to skip (development only)", err)
-		}
-	} else if !publicListen && cleanAdminToken == "" {
-		// Loopback: require non-empty token but skip strength check.
-		log.Fatal("ATTERM_ADMIN_TOKEN must be non-empty; use a strong token in production")
+	if publicListen && !*devInsecure && bootstrapEmail == "" {
+		log.Fatal("ATTERM_BOOTSTRAP_ADMIN_EMAIL must be set for a public relay; pass --dev-insecure to skip (development only)")
 	}
 
 	allowedOrigins := allowedOriginHosts(*origins)
@@ -89,6 +80,10 @@ func main() {
 		log.Fatalf("open userstore: %v", err)
 	}
 
+	if err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword); err != nil {
+		log.Fatalf("bootstrap admin: %v", err)
+	}
+
 	adminCfg := relay.AdminConfig{}
 	var adminStore *relay.AdminConfigStore
 	if *configPath != "" {
@@ -108,7 +103,7 @@ func main() {
 		maxVal = adminCfg.MaxConnectionsPerKey
 	}
 
-	resolver := relay.NewIdentityResolver(store, cleanAdminToken)
+	resolver := relay.NewIdentityResolver(store)
 
 	cfg := relay.Config{
 		WebDir:               *webDir,
@@ -118,7 +113,6 @@ func main() {
 		DebugPayload:         *debugPayload,
 		RateLimitPerMinute:   rateVal,
 		MaxConnectionsPerKey: maxVal,
-		AdminToken:           cleanAdminToken,
 		AdminConfigStore:     adminStore,
 		Resolver:             resolver,
 		Store:                store,

@@ -35,7 +35,7 @@ func newWebPushTestServerWithResolver(t *testing.T, store userstore.Store) (*Ser
 	if err != nil {
 		t.Fatalf("webpush.Open: %v", err)
 	}
-	resolver := NewIdentityResolver(store, "admin-token-for-push-test")
+	resolver := NewIdentityResolver(store)
 	srv := NewServer(Config{
 		WebPush:  svc,
 		Resolver: resolver,
@@ -64,6 +64,13 @@ func (s *pushFakeStore) LookupAPIToken(_ context.Context, plaintext string) (str
 		return v[0], v[1], nil
 	}
 	return "", "", userstore.ErrTokenInvalid
+}
+
+// GetUser returns a non-admin user — Resolve calls this after a successful
+// LookupWebSession / LookupAPIToken to decide PrincipalUser vs PrincipalAdmin.
+// Webpush tests don't exercise admin promotion.
+func (s *pushFakeStore) GetUser(_ context.Context, id string) (*userstore.User, error) {
+	return &userstore.User{ID: id, IsAdmin: false}, nil
 }
 
 // doRequestWithCookie creates a request with a session cookie (no bearer token).

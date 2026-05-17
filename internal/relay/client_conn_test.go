@@ -154,12 +154,11 @@ func newClientTestStore(t *testing.T) (store *userstore.SQLiteStore, userAID, co
 }
 
 // newClientTestServer builds a Server wired with a real IdentityResolver.
-func newClientTestServer(t *testing.T, store userstore.Store, adminToken string) *Server {
+func newClientTestServer(t *testing.T, store userstore.Store) *Server {
 	t.Helper()
-	resolver := NewIdentityResolver(store, adminToken)
+	resolver := NewIdentityResolver(store)
 	return NewServer(Config{
-		Resolver:   resolver,
-		AdminToken: adminToken,
+		Resolver: resolver,
 	})
 }
 
@@ -205,8 +204,8 @@ func getSessionsWithCookie(t *testing.T, srv *httptest.Server, cookie string) *h
 // With u_B's cookie, GET /api/sessions returns [].
 // With u_A's cookie, returns u_A's sessions.
 func TestClient_ListFilteredByOwner(t *testing.T) {
-	store, userAID, cookieA, _, cookieB, adminToken := newClientTestStore(t)
-	srv := newClientTestServer(t, store, adminToken)
+	store, userAID, cookieA, _, cookieB, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -251,8 +250,8 @@ func TestClient_ListFilteredByOwner(t *testing.T) {
 // TestClient_AttachOtherUsersSessionRejected: u_A owns sid=X; u_B connects
 // WS /client and tries to ATTACH to X → close with code 4003 and reason "forbidden".
 func TestClient_AttachOtherUsersSessionRejected(t *testing.T) {
-	store, userAID, _, _, cookieB, adminToken := newClientTestStore(t)
-	srv := newClientTestServer(t, store, adminToken)
+	store, userAID, _, _, cookieB, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -300,8 +299,8 @@ func TestClient_AttachOtherUsersSessionRejected(t *testing.T) {
 // sends a LIST frame, and must receive a LIST_RESP that does NOT include X.
 // u_A sends LIST and must receive X.
 func TestClient_ListFrameFilteredByOwner(t *testing.T) {
-	store, userAID, cookieA, _, cookieB, adminToken := newClientTestStore(t)
-	srv := newClientTestServer(t, store, adminToken)
+	store, userAID, cookieA, _, cookieB, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -363,18 +362,18 @@ func TestClient_ListFrameFilteredByOwner(t *testing.T) {
 	}
 }
 
-// TestClient_AttachAdminRejected: admin token at /client → 401.
+// TestClient_AttachAdminRejected: invalid bearer token at /client → 401.
 func TestClient_AttachAdminRejected(t *testing.T) {
-	store, _, _, _, _, adminToken := newClientTestStore(t)
-	srv := newClientTestServer(t, store, adminToken)
+	store, _, _, _, _, _ := newClientTestStore(t)
+	srv := newClientTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Dial with admin token.
-	_, resp, err := dialClientWSBearer(t, ctx, httpSrv, adminToken)
+	// Dial with an invalid bearer token.
+	_, resp, err := dialClientWSBearer(t, ctx, httpSrv, "invalid-token")
 	if err == nil {
 		t.Fatal("expected dial to fail; got nil error")
 	}

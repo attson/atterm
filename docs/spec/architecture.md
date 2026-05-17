@@ -94,7 +94,7 @@ request to a `Principal`:
 | Kind | Source | Use |
 |------|--------|-----|
 | User | `atterm_session` cookie OR `Authorization: Bearer atk_…` (or `Sec-WebSocket-Protocol: atterm-token.atk_…`) | All user-scoped routes |
-| Admin | `Authorization: Bearer <ATTERM_ADMIN_TOKEN>` | Only `/admin/*` |
+| Admin | `atterm_session` cookie where `user.is_admin=true` | Only `/admin/*` |
 | None | (no valid credential) | Public routes only |
 
 ### Entry-point gates
@@ -111,9 +111,9 @@ request to a `Principal`:
 
 ### Bootstrap path
 
-1. Operator starts relay with `ATTERM_ADMIN_TOKEN` (must satisfy the
-   strength check on public listen: ≥32 chars, ≥3 character classes,
-   not in dev blacklist).
+1. Operator starts relay with `ATTERM_BOOTSTRAP_ADMIN_EMAIL` and
+   `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` (password must satisfy the strength check
+   on public listen: ≥16 chars, ≥3 character classes, not in dev blacklist).
 2. Operator hits `/admin/` with the admin token → creates an invitation.
 3. End user signs up at `/signup.html?invite=inv_…`.
 4. User generates an API token at `/settings.html`.
@@ -268,12 +268,12 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 `cmd/atterm-relay` 是生产入口，默认 fail-closed：
 
 - 用户账号和身份信息存储在 SQLite（`users.db`，路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；
-- 公网监听时 `ATTERM_ADMIN_TOKEN` 必须非空且足够强（见协议规范 §鉴权），除非显式 `--dev-insecure`；
+- 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`（见协议规范 §鉴权），除非显式 `--dev-insecure`；
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`；
 - 默认返回 CSP/security headers，`web/` 只允许同源 script 和同源 stylesheet；CSP 额外允许 inline style 供 xterm.js 写运行时布局样式，xterm 静态资源放在 `web/vendor/`；
 - 对 HTTP 请求和 WS upgrade 先按远端 IP 限流，鉴权成功后再按远端 IP + token hash 限流，并限制同一 key 的活跃 WS 连接数；
 - 支持 owner 发布的 `remote_permission`（view/control/full），relay 和 desktop uplink 双重强制执行；
-- 可选 `--config` + `--admin-token` 启用持久化 runtime 配置（rate limit、连接数）和 `/admin/` API；
+- 可选 `--config` 启用持久化 runtime 配置（rate limit、连接数）；`/admin/` API 需 bootstrap admin 用户（通过 env vars 初始化）；
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
 
 鉴权详情见协议规范 §鉴权（browser cookie、desktop API token、admin Bearer token 三种来源）。
@@ -290,7 +290,7 @@ Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等
 用户 API token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
 
 relay admin 配置只服务运维场景：调整 rate limit 和连接数。用户账号管理（邀请码、
-用户列表、密码重置）通过 `/admin/api/*` 端点操作，凭证为 `ATTERM_ADMIN_TOKEN`。
+用户列表、密码重置）通过 `/admin/api/*` 端点操作，凭证为 admin session cookie（`user.is_admin=true`）。
 
 ## 前端架构细节
 

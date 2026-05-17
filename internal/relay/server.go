@@ -54,9 +54,6 @@ type Config struct {
 	// MaxConnectionsPerKey limits active WS connections per remote IP/token
 	// pair. Zero uses a conservative default; negative disables.
 	MaxConnectionsPerKey int
-	// AdminToken enables /admin routes when non-empty. It is never accepted via
-	// query parameters.
-	AdminToken string
 	// AdminConfigStore persists admin API changes when configured.
 	AdminConfigStore *AdminConfigStore
 	// WebPush, when non-nil, enables the /api/push/* endpoints and the
@@ -146,8 +143,14 @@ func NewServer(cfg Config) *Server {
 	if cfg.WebDir != "" {
 		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebDir))
 	}
-	if cfg.AdminToken != "" {
-		s.mux.HandleFunc("/admin/", s.handleAdminPage)
+	// /admin/api/config is the runtime-limits endpoint used by the admin UI.
+	// Auth is PrincipalAdmin (cookie + user.is_admin), enforced inside the
+	// handler. Mutating methods are additionally wrapped in RequireCSRF when
+	// a resolver is present; without a resolver the handler returns 401 so
+	// the route is safe to register unconditionally.
+	if cfg.Resolver != nil {
+		s.mux.Handle("/admin/api/config", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleAdminConfigHTTP)))
+	} else {
 		s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
 	}
 

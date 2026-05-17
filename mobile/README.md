@@ -33,7 +33,8 @@ For a public relay, allow the Capacitor WebView origin when starting the relay:
 
 ```bash
 ATTERM_ORIGINS=capacitor://localhost \
-ATTERM_ADMIN_TOKEN='replace-with-strong-32-plus-char-token' \
+ATTERM_BOOTSTRAP_ADMIN_EMAIL='admin@example.com' \
+ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Strong-Bootstrap-Pass-2026!' \
 atterm-relay --addr :8080 --web web
 ```
 

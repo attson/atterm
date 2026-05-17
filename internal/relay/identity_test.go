@@ -12,13 +12,17 @@ import (
 
 // fakeStore implements userstore.Store by embedding the interface (nil field),
 // so unimplemented methods panic on nil dereference — acceptable in unit tests.
-// Only LookupWebSession and LookupAPIToken are overridden.
+// Only LookupWebSession, LookupAPIToken, and GetUser are overridden.
 type fakeStore struct {
 	userstore.Store // nil — unimplemented methods panic
 
 	onLookupWebSession func(ctx context.Context, plaintext string) (string, []byte, error)
 	onLookupAPIToken   func(ctx context.Context, plaintext string) (string, string, error)
 	apiTokenCalled     int
+
+	// onGetUser, if nil, returns a non-admin user — sufficient for tests that
+	// only care about PrincipalUser vs PrincipalNone resolution.
+	onGetUser func(ctx context.Context, id string) (*userstore.User, error)
 }
 
 func (f *fakeStore) LookupWebSession(ctx context.Context, plaintext string) (string, []byte, error) {
@@ -28,6 +32,13 @@ func (f *fakeStore) LookupWebSession(ctx context.Context, plaintext string) (str
 func (f *fakeStore) LookupAPIToken(ctx context.Context, plaintext string) (string, string, error) {
 	f.apiTokenCalled++
 	return f.onLookupAPIToken(ctx, plaintext)
+}
+
+func (f *fakeStore) GetUser(ctx context.Context, id string) (*userstore.User, error) {
+	if f.onGetUser != nil {
+		return f.onGetUser(ctx, id)
+	}
+	return &userstore.User{ID: id, IsAdmin: false}, nil
 }
 
 // req builds an *http.Request with the given key/value header pairs.
@@ -40,8 +51,6 @@ func req(headers ...string) *http.Request {
 }
 
 func TestResolveIdentity(t *testing.T) {
-	const adminToken = "super-secret-admin-token-abcdefghij"
-
 	const (
 		sessionCookie = "sess_plaintext_abc"
 		apiToken      = "atk_plaintexttoken123"
@@ -148,28 +157,6 @@ func TestResolveIdentity(t *testing.T) {
 			wantAPICallN: 1,
 		},
 		{
-			name: "admin token in Authorization",
-			store: &fakeStore{
-				onLookupWebSession: noWebSession,
-				onLookupAPIToken:   noAPIToken,
-			},
-			req:      req("Authorization", "Bearer "+adminToken),
-			wantKind: PrincipalAdmin,
-			wantScope: authWrite,
-		},
-		{
-			name: "admin token wrong case is rejected",
-			store: &fakeStore{
-				onLookupWebSession: noWebSession,
-				// admin check is first; if it fails it falls through to LookupAPIToken
-				onLookupAPIToken: revokedAPIToken,
-			},
-			// Perturb one char: lowercase 's' → uppercase 'S' in first char
-			req:          req("Authorization", "Bearer "+"Super-secret-admin-token-abcdefghij"),
-			wantKind:     PrincipalNone,
-			wantAPICallN: 1,
-		},
-		{
 			name: "Sec-WebSocket-Protocol atterm-token.",
 			store: &fakeStore{
 				onLookupWebSession: noWebSession,
@@ -214,7 +201,7 @@ func TestResolveIdentity(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resolver := NewIdentityResolver(tc.store, adminToken)
+			resolver := NewIdentityResolver(tc.store)
 			got := resolver.Resolve(tc.req)
 
 			if got.Kind != tc.wantKind {
@@ -234,5 +221,49 @@ func TestResolveIdentity(t *testing.T) {
 					tc.store.apiTokenCalled, tc.wantAPICallN)
 			}
 		})
+	}
+}
+
+func TestResolve_CookieSession_AdminUser_BecomesPrincipalAdmin(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	u, _ := store.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, u.ID, true)
+	secret, _ := store.CreateWebSession(ctx, u.ID, "ua/test", "203.0.113.0/24")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	r.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
+
+	resolver := NewIdentityResolver(store)
+	p := resolver.Resolve(r)
+	if p.Kind != PrincipalAdmin {
+		t.Fatalf("Kind = %v; want PrincipalAdmin", p.Kind)
+	}
+	if p.UserID != u.ID {
+		t.Errorf("UserID = %q; want %q", p.UserID, u.ID)
+	}
+}
+
+func TestResolve_CookieSession_NonAdminUser_StaysPrincipalUser(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	u, _ := store.CreateUser(ctx, "b@example.com", "passphrase-1234")
+	secret, _ := store.CreateWebSession(ctx, u.ID, "ua/test", "203.0.113.0/24")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	r.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
+
+	resolver := NewIdentityResolver(store)
+	p := resolver.Resolve(r)
+	if p.Kind != PrincipalUser {
+		t.Fatalf("Kind = %v; want PrincipalUser", p.Kind)
 	}
 }

@@ -31,7 +31,7 @@ func RequireCSRF(resolver *IdentityResolver, inner http.Handler) http.Handler {
 			return
 		}
 		p := resolver.Resolve(r)
-		if p.Kind != PrincipalUser || len(p.CSRFSecret) == 0 {
+		if (p.Kind != PrincipalUser && p.Kind != PrincipalAdmin) || len(p.CSRFSecret) == 0 {
 			http.Error(w, "unauthenticated", http.StatusUnauthorized)
 			return
 		}

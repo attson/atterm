@@ -47,7 +47,7 @@ atterm/
 6. **PTY winsize 必须在 fork 时设好**：前端的 `predictCellDims`（FitAddon 探针）→ `NewSession(cols/rows)` → `pty.StartWithSize`。子进程从一开始就是终态尺寸，避免开局 SIGWINCH 触发某些 zsh 主题的 `PROMPT_EOL_MARK`。`SessionConnection.sendResize` 在 WS 还 CONNECTING 时排队，TerminalView 比对 expectedCols/Rows 跳过无意义 RESIZE。三件耦合，单独动一个会回归。
 7. **更新流程不打扰用户**：`updater.go` 永远手动触发——后台只检查、不静默重启。`InstallAndQuit` 必须由用户在 Settings 里点 "force install & restart" 走过 `ConfirmInstallDialog` 确认才执行。dev 构建（`Version == "dev"`）整个 update 子系统短路。
 8. **自动更新必须验签**：release 构建通过 ldflags 注入 `main.UpdateVerifyPublicKey`。下载 asset 后必须先用 Ed25519 验证 `SHA256SUMS.sig`，再校验 asset SHA256；缺公钥、缺 `SHA256SUMS`/`.sig`、签名或 hash 不匹配都必须 fail-closed，不允许 install。
-9. **公网 relay 默认安全**：`cmd/atterm-relay` 公网监听时必须提供通过强度检查的 `ATTERM_ADMIN_TOKEN`（≥32 字符、≥3 类字符、不在弱 token 黑名单），否则启动拒绝；缺失 `--origins`/`ATTERM_ORIGINS` 同样拒绝，除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP 做 HTTP/WS rate limit 与连接数限制。服务端所有鉴权接口都不接受 `?token=`；桌面端 API token（`atk_…`）通过 `Sec-WebSocket-Protocol` 传递。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
+9. **公网 relay 默认安全**：`cmd/atterm-relay` 公网监听时必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（启动时该 user 不存在则需同时提供 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` ≥16 字符 + ≥3 类字符 + 不在弱密码黑名单内），否则启动拒绝；缺失 `--origins`/`ATTERM_ORIGINS` 同样拒绝，除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP 做 HTTP/WS rate limit 与连接数限制。服务端所有鉴权接口都不接受 `?token=`；桌面端 API token（`atk_…`）通过 `Sec-WebSocket-Protocol` 传递。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
 10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源静态资源；xterm 资源放在 `web/vendor/` 并由 service worker 缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
 11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay 不再有共享只读 token；如需限制某用户只读，在桌面端将该 session 的 `remote_permission` 设为 `view`。
 12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
@@ -59,8 +59,10 @@ atterm/
 # 不一定加载你的 ~/.zshrc，所以本项目命令默认显式带上它。
 export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
-# 命令行 relay（本地调试；--dev-insecure 跳过强度校验）
-ATTERM_ADMIN_TOKEN=dev go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
+# 命令行 relay（本地调试；--dev-insecure 跳过强度与 Origin 校验，loopback 时 bootstrap envs 可省略）
+ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
+ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
+  go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
 
 # 命令行 agent（Phase 0 wrapper，调试用；需先在 relay 创建用户并生成 API token）
 go run ./cmd/atterm-agent --relay ws://localhost:8080 --token atk_... -- bash
@@ -81,7 +83,8 @@ gh run list --repo attson/atterm --limit 10
 ```
 
 环境变量：
-- `ATTERM_ADMIN_TOKEN`：启用 `/admin/` 与 `/admin/api/*`；公网监听时必须通过强度检查（≥32 字符、≥3 类字符、不在弱 token 黑名单内，否则启动拒绝）；本地 loopback 调试时加 `--dev-insecure` 可跳过；只接受 `Authorization: Bearer`，不要放 URL query
+- `ATTERM_BOOTSTRAP_ADMIN_EMAIL`：启动时把该邮箱对应的 user 标记为 admin；公网监听时必填（否则启动拒绝），除非 `--dev-insecure`。User 已存在则只提权、忽略密码 env
+- `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`：首次启动用来创建 admin 用户的明文密码；须满足 ≥16 字符、≥3 类字符、不在弱密码黑名单内（公网监听且 user 不存在时校验）。**首次登录后从 env / systemd unit 中删除并重启**，避免明文密码留在进程状态中
 - `ATTERM_ORIGINS`：逗号分隔的浏览器 WebSocket Origin 白名单；公网 relay 必须配置（除非 `--dev-insecure`）
 - `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用
 - `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP 的活跃 WS 连接上限；`0` 用默认值，负数禁用

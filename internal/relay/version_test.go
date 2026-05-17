@@ -13,6 +13,7 @@ import (
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
@@ -120,20 +121,11 @@ func TestSecurityHeadersAllowXtermRuntimeStylesWithoutUnsafeScript(t *testing.T)
 	}
 }
 
-func TestAdminRoutesHiddenWithoutAdminToken(t *testing.T) {
+// TestAdminConfigUnauthorizedWithoutResolver — when no IdentityResolver is
+// configured (legacy/standalone test setups), /admin/api/config is registered
+// but the handler returns 401. Anonymous callers cannot reach the config.
+func TestAdminConfigUnauthorizedWithoutResolver(t *testing.T) {
 	srv := NewServer(Config{})
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
-	rec := httptest.NewRecorder()
-
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status=%d; want 404", rec.Code)
-	}
-}
-
-func TestAdminConfigRequiresAdminToken(t *testing.T) {
-	srv := NewServer(Config{AdminToken: "admin"})
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
 	rec := httptest.NewRecorder()
 
@@ -144,15 +136,67 @@ func TestAdminConfigRequiresAdminToken(t *testing.T) {
 	}
 }
 
+// TestAdminConfigRequiresAdminPrincipal — an anonymous request (no cookie, no
+// token) to /admin/api/config must be rejected with 401, even when a resolver
+// is wired. Equivalent to the old token-based "wrong token" check.
+func TestAdminConfigRequiresAdminPrincipal(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{Resolver: resolver, Store: store})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s; want 401", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAdminConfigPersistsRuntimeLimits — an admin (cookie + CSRF) PUTs new
+// runtime limits; the response and the on-disk admin config file both reflect
+// the new values. Inline fixture: an in-memory userstore with one admin user
+// and an active web session (Task 10 will provide a shared fixture).
 func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	u, err := store.CreateUser(ctx, "admin@example.com", "passphrase-1234567890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetUserAdmin(ctx, u.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := store.CreateWebSession(ctx, u.ID, "ua", "1.2.3.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	path := filepath.Join(t.TempDir(), "relay.json")
-	store := NewAdminConfigStore(path, AdminConfig{})
-	srv := NewServer(Config{AdminToken: "admin", AdminConfigStore: store})
+	cfgStore := NewAdminConfigStore(path, AdminConfig{})
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{
+		Resolver:         resolver,
+		Store:            store,
+		AdminConfigStore: cfgStore,
+	})
+
 	body := strings.NewReader(`{"rate_limit_per_minute":33,"max_connections_per_key":4}`)
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", body)
-	req.Header.Set("Authorization", "Bearer admin")
+	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
+	req.Header.Set("X-CSRF-Token", CSRFToken(secret.Expose(), u.CSRFSecret()))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-
 	srv.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

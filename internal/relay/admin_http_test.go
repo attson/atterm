@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,8 +13,6 @@ import (
 
 	"github.com/attson/atterm/internal/userstore"
 )
-
-const testAdminToken = "admin-token-for-tests"
 
 // newTestAdminServer returns an AdminServer backed by a real in-memory SQLiteStore.
 func newTestAdminServer(t *testing.T) (*AdminServer, *userstore.SQLiteStore) {
@@ -24,7 +23,7 @@ func newTestAdminServer(t *testing.T) (*AdminServer, *userstore.SQLiteStore) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	resolver := NewIdentityResolver(store, testAdminToken)
+	resolver := NewIdentityResolver(store)
 	srv := &AdminServer{
 		Store:    store,
 		Resolver: resolver,
@@ -32,36 +31,69 @@ func newTestAdminServer(t *testing.T) (*AdminServer, *userstore.SQLiteStore) {
 	return srv, store
 }
 
-// adminPost sends a POST with Bearer admin token and JSON body.
-func adminPost(handler http.Handler, path string, body interface{}) *httptest.ResponseRecorder {
+// bootstrapAdminUser creates an admin user backed by the given store and returns
+// a valid session cookie + CSRF token for that user. Replaces the old Bearer
+// admin-token pattern: every admin test gets a fresh admin user whose cookie
+// the IdentityResolver promotes to PrincipalAdmin.
+func bootstrapAdminUser(t *testing.T, store userstore.Store) (userID string, cookie *http.Cookie, csrfToken string) {
+	t.Helper()
+	ctx := context.Background()
+	u, err := store.CreateUser(ctx, "admin@example.com", "passphrase-fixture-1234")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := store.SetUserAdmin(ctx, u.ID, true); err != nil {
+		t.Fatalf("SetUserAdmin: %v", err)
+	}
+	secret, err := store.CreateWebSession(ctx, u.ID, "ua/test", "203.0.113.0/24")
+	if err != nil {
+		t.Fatalf("CreateWebSession: %v", err)
+	}
+	cookieValue := secret.Expose()
+	cookie = &http.Cookie{Name: "atterm_session", Value: cookieValue}
+	csrfToken = CSRFToken(cookieValue, u.CSRFSecret())
+	return u.ID, cookie, csrfToken
+}
+
+// adminPostAs sends a POST with the supplied admin cookie + CSRF token.
+func adminPostAs(handler http.Handler, path string, body interface{}, cookie *http.Cookie, csrfToken string) *httptest.ResponseRecorder {
 	b, _ := json.Marshal(body)
 	r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+testAdminToken)
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	if csrfToken != "" {
+		r.Header.Set("X-CSRF-Token", csrfToken)
+	}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	return w
 }
 
-// adminGet sends a GET with Bearer admin token.
-func adminGet(handler http.Handler, path string) *httptest.ResponseRecorder {
+// adminGetAs sends a GET with the supplied admin cookie. CSRF header is not
+// required for GET (RequireCSRF bypasses GET/HEAD/OPTIONS).
+func adminGetAs(handler http.Handler, path string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodGet, path, nil)
-	r.Header.Set("Authorization", "Bearer "+testAdminToken)
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	return w
 }
 
-// TestAdmin_CreateInvitation: POST /admin/api/invitations with admin token → 201,
+// TestAdmin_CreateInvitation: POST /admin/api/invitations with admin cookie → 201,
 // body contains {plaintext, code_prefix, note}. The plaintext starts with "inv_".
 func TestAdmin_CreateInvitation(t *testing.T) {
-	srv, _ := newTestAdminServer(t)
+	srv, store := newTestAdminServer(t)
 	handler := srv.AdminRoutes()
+	_, cookie, csrf := bootstrapAdminUser(t, store)
 
-	w := adminPost(handler, "/admin/api/invitations", map[string]interface{}{
+	w := adminPostAs(handler, "/admin/api/invitations", map[string]interface{}{
 		"expires_at": nil,
 		"note":       "bob",
-	})
+	}, cookie, csrf)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -90,7 +122,7 @@ func TestAdmin_CreateInvitation(t *testing.T) {
 	}
 
 	// A subsequent GET /admin/api/invitations should list the invite but NOT expose plaintext.
-	wList := adminGet(handler, "/admin/api/invitations")
+	wList := adminGetAs(handler, "/admin/api/invitations", cookie)
 	if wList.Code != http.StatusOK {
 		t.Fatalf("list: expected 200, got %d: %s", wList.Code, wList.Body.String())
 	}
@@ -112,11 +144,12 @@ func TestAdmin_CreateInvitation(t *testing.T) {
 // expires_at, the relay defaults to 7 days from now. Operators don't have to
 // remember to set one, and stale codes don't accumulate forever.
 func TestAdmin_CreateInvitation_DefaultExpiry7Days(t *testing.T) {
-	srv, _ := newTestAdminServer(t)
+	srv, store := newTestAdminServer(t)
 	handler := srv.AdminRoutes()
+	_, cookie, csrf := bootstrapAdminUser(t, store)
 
 	before := time.Now().Add(defaultInviteExpiry).Add(-2 * time.Second)
-	w := adminPost(handler, "/admin/api/invitations", map[string]interface{}{"note": ""})
+	w := adminPostAs(handler, "/admin/api/invitations", map[string]interface{}{"note": ""}, cookie, csrf)
 	after := time.Now().Add(defaultInviteExpiry).Add(2 * time.Second)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -142,13 +175,14 @@ func TestAdmin_CreateInvitation_DefaultExpiry7Days(t *testing.T) {
 // invite gets its own plaintext + code_prefix; all share the same expires_at
 // and note. Verifies the bulk-create path.
 func TestAdmin_CreateInvitation_Batch(t *testing.T) {
-	srv, _ := newTestAdminServer(t)
+	srv, store := newTestAdminServer(t)
 	handler := srv.AdminRoutes()
+	_, cookie, csrf := bootstrapAdminUser(t, store)
 
-	w := adminPost(handler, "/admin/api/invitations", map[string]interface{}{
+	w := adminPostAs(handler, "/admin/api/invitations", map[string]interface{}{
 		"note":  "Q3 team",
 		"count": 5,
-	})
+	}, cookie, csrf)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -180,10 +214,11 @@ func TestAdmin_CreateInvitation_Batch(t *testing.T) {
 // TestAdmin_CreateInvitation_CountTooLarge: counts > 50 are rejected to bound
 // per-request work.
 func TestAdmin_CreateInvitation_CountTooLarge(t *testing.T) {
-	srv, _ := newTestAdminServer(t)
+	srv, store := newTestAdminServer(t)
 	handler := srv.AdminRoutes()
+	_, cookie, csrf := bootstrapAdminUser(t, store)
 
-	w := adminPost(handler, "/admin/api/invitations", map[string]interface{}{"count": 51})
+	w := adminPostAs(handler, "/admin/api/invitations", map[string]interface{}{"count": 51}, cookie, csrf)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for count=51, got %d: %s", w.Code, w.Body.String())
 	}
@@ -193,6 +228,7 @@ func TestAdmin_CreateInvitation_CountTooLarge(t *testing.T) {
 func TestAdmin_ListInvitations(t *testing.T) {
 	srv, store := newTestAdminServer(t)
 	handler := srv.AdminRoutes()
+	_, cookie, _ := bootstrapAdminUser(t, store)
 
 	// Create two invitations directly in the store.
 	ctx := context.Background()
@@ -202,7 +238,7 @@ func TestAdmin_ListInvitations(t *testing.T) {
 		}
 	}
 
-	w := adminGet(handler, "/admin/api/invitations")
+	w := adminGetAs(handler, "/admin/api/invitations", cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -216,7 +252,7 @@ func TestAdmin_ListInvitations(t *testing.T) {
 	}
 }
 
-// TestAdmin_CreateInvitation_RequiresAdmin: with a user cookie → 401/403.
+// TestAdmin_CreateInvitation_RequiresAdmin: with a non-admin user cookie → 401/403.
 func TestAdmin_CreateInvitation_RequiresAdmin(t *testing.T) {
 	srv, store := newTestAdminServer(t)
 	handler := srv.AdminRoutes()
@@ -248,6 +284,7 @@ func TestAdmin_CreateInvitation_RequiresAdmin(t *testing.T) {
 func TestAdmin_ListUsers(t *testing.T) {
 	srv, store := newTestAdminServer(t)
 	handler := srv.AdminRoutes()
+	_, cookie, _ := bootstrapAdminUser(t, store)
 
 	ctx := context.Background()
 	if _, err := store.CreateUser(ctx, "user1@example.com", "correcthorsebattery"); err != nil {
@@ -257,7 +294,7 @@ func TestAdmin_ListUsers(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	w := adminGet(handler, "/admin/api/users")
+	w := adminGetAs(handler, "/admin/api/users", cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -266,8 +303,9 @@ func TestAdmin_ListUsers(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp) != 2 {
-		t.Fatalf("expected 2 users, got %d", len(resp))
+	// 3 users: bootstrapAdminUser's admin + the two created above.
+	if len(resp) != 3 {
+		t.Fatalf("expected 3 users, got %d", len(resp))
 	}
 
 	// Each row must have id, email, created_at.
@@ -289,10 +327,11 @@ func TestAdmin_ListUsers(t *testing.T) {
 func TestAdmin_ResetPassword(t *testing.T) {
 	adminSrv, store := newTestAdminServer(t)
 	adminHandler := adminSrv.AdminRoutes()
+	_, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
 
 	// Also build an AuthServer so we can test login.
 	pool := NewArgon2Pool(1)
-	resolver := NewIdentityResolver(store, testAdminToken)
+	resolver := NewIdentityResolver(store)
 	authSrv := &AuthServer{
 		Store:        store,
 		Resolver:     resolver,
@@ -323,7 +362,7 @@ func TestAdmin_ResetPassword(t *testing.T) {
 	}
 
 	// POST /admin/api/users/{id}/reset-password.
-	w := adminPost(adminHandler, "/admin/api/users/"+u.ID+"/reset-password", nil)
+	w := adminPostAs(adminHandler, "/admin/api/users/"+u.ID+"/reset-password", nil, adminCookie, adminCSRF)
 	if w.Code != http.StatusOK {
 		t.Fatalf("reset-password: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -376,9 +415,10 @@ func TestAdmin_ResetPassword(t *testing.T) {
 func TestAdmin_DisableUser(t *testing.T) {
 	adminSrv, store := newTestAdminServer(t)
 	adminHandler := adminSrv.AdminRoutes()
+	_, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
 
 	pool := NewArgon2Pool(1)
-	resolver := NewIdentityResolver(store, testAdminToken)
+	resolver := NewIdentityResolver(store)
 	authSrv := &AuthServer{
 		Store:        store,
 		Resolver:     resolver,
@@ -402,7 +442,7 @@ func TestAdmin_DisableUser(t *testing.T) {
 	}
 
 	// Disable via admin endpoint.
-	w := adminPost(adminHandler, "/admin/api/users/"+u.ID+"/disable", nil)
+	w := adminPostAs(adminHandler, "/admin/api/users/"+u.ID+"/disable", nil, adminCookie, adminCSRF)
 	if w.Code != http.StatusOK {
 		t.Fatalf("disable: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -413,5 +453,219 @@ func TestAdmin_DisableUser(t *testing.T) {
 	})
 	if wAfter.Code != http.StatusUnauthorized {
 		t.Errorf("login after disable: expected 401, got %d: %s", wAfter.Code, wAfter.Body.String())
+	}
+}
+
+// TestAdminAPI_NonAdminUser_Unauthorized: a non-admin user's cookie session
+// hitting any /admin/api endpoint must be rejected. Verifies the requireAdmin
+// gate denies PrincipalUser even for read-only routes (GET, no CSRF needed).
+func TestAdminAPI_NonAdminUser_Unauthorized(t *testing.T) {
+	srv, store := newTestAdminServer(t)
+	handler := srv.AdminRoutes()
+
+	ctx := context.Background()
+	u, err := store.CreateUser(ctx, "user@example.com", "passphrase-1234")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	secret, err := store.CreateWebSession(ctx, u.ID, "ua/test", "203.0.113.0/24")
+	if err != nil {
+		t.Fatalf("CreateWebSession: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/invitations", nil)
+	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin user hitting /admin/api/invitations: status=%d, want 401 or 403", rec.Code)
+	}
+}
+
+// TestAdminPromoteUser_Success: POST /admin/api/users/{id}/admin promotes a user to admin.
+// Response 204 (No Content). Target user's is_admin flag is set.
+func TestAdminPromoteUser_Success(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	_, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	ctx := context.Background()
+	target, _ := store.CreateUser(ctx, "target@example.com", "passphrase-1234")
+	if target.IsAdmin {
+		t.Fatal("target already admin")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/"+target.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d; want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := store.GetUser(ctx, target.ID)
+	if !got.IsAdmin {
+		t.Error("target user not promoted after POST .../admin")
+	}
+}
+
+// TestAdminPromoteUser_AuditLog: POST /admin/api/users/{id}/admin writes an audit log
+// with the format "admin role change: actor=<id> target=<id> op=promote".
+func TestAdminPromoteUser_AuditLog(t *testing.T) {
+	// Capture log output
+	var buf bytes.Buffer
+	oldLogger := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldLogger) })
+
+	handler, store := newTestAdminServer(t)
+	actorID, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	ctx := context.Background()
+	target, _ := store.CreateUser(ctx, "t@example.com", "passphrase-1234")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/"+target.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	handler.AdminRoutes().ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	if !strings.Contains(out, "admin role change") ||
+		!strings.Contains(out, "actor="+actorID) ||
+		!strings.Contains(out, "target="+target.ID) ||
+		!strings.Contains(out, "op=promote") {
+		t.Errorf("audit log line missing or malformed:\n%s", out)
+	}
+}
+
+// TestAdminDemoteUser_Success: DELETE /admin/api/users/{id}/admin demotes a user from admin.
+// Response 204 (No Content). Target user's is_admin flag is cleared.
+func TestAdminDemoteUser_Success(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	_, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	// Second admin so demoting other doesn't trip last-admin guard.
+	ctx := context.Background()
+	other, _ := store.CreateUser(ctx, "other@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, other.ID, true)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/"+other.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d; want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := store.GetUser(ctx, other.ID)
+	if got.IsAdmin {
+		t.Error("user still admin after DELETE .../admin")
+	}
+}
+
+// TestAdminDemoteUser_Self_400: DELETE /admin/api/users/{id}/admin on self returns 400
+// with error code "cannot_demote_self".
+func TestAdminDemoteUser_Self_400(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	actorID, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/"+actorID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 (self-demote); body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot_demote_self") {
+		t.Errorf("body = %q; want error code cannot_demote_self", rec.Body.String())
+	}
+}
+
+// TestAdminDemoteUser_AuditLog: DELETE /admin/api/users/{id}/admin writes an audit log
+// with the format "admin role change: actor=<id> target=<id> op=demote".
+func TestAdminDemoteUser_AuditLog(t *testing.T) {
+	var buf bytes.Buffer
+	oldLogger := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldLogger) })
+
+	handler, store := newTestAdminServer(t)
+	actorID, adminCookie, adminCSRF := bootstrapAdminUser(t, store)
+
+	ctx := context.Background()
+	other, _ := store.CreateUser(ctx, "other@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, other.ID, true)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/"+other.ID+"/admin", nil)
+	req.AddCookie(adminCookie)
+	req.Header.Set("X-CSRF-Token", adminCSRF)
+	handler.AdminRoutes().ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	if !strings.Contains(out, "admin role change") ||
+		!strings.Contains(out, "actor="+actorID) ||
+		!strings.Contains(out, "target="+other.ID) ||
+		!strings.Contains(out, "op=demote") {
+		t.Errorf("audit log line missing or malformed:\n%s", out)
+	}
+}
+
+// TestCountAdmins_OneTriggersLastAdminGuard: countAdmins returns correct count.
+func TestCountAdmins_OneTriggersLastAdminGuard(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	u, _ := store.CreateUser(ctx, "only@example.com", "passphrase-1234")
+	_ = store.SetUserAdmin(ctx, u.ID, true)
+	n, err := countAdmins(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("countAdmins = %d; want 1", n)
+	}
+}
+
+// TestAdminListUsers_IncludesIsAdmin: GET /admin/api/users response includes
+// is_admin field for each user, correctly reflecting their admin status.
+func TestAdminListUsers_IncludesIsAdmin(t *testing.T) {
+	handler, store := newTestAdminServer(t)
+	_, adminCookie, _ := bootstrapAdminUser(t, store)
+
+	nonAdmin, _ := store.CreateUser(context.Background(), "u@example.com", "passphrase-1234")
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/users", nil)
+	req.AddCookie(adminCookie)
+	rec := httptest.NewRecorder()
+	handler.AdminRoutes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	var foundAdmin, foundNonAdmin bool
+	for _, r := range rows {
+		if r["email"] == "admin@example.com" && r["is_admin"] == true {
+			foundAdmin = true
+		}
+		if r["id"] == nonAdmin.ID && r["is_admin"] == false {
+			foundNonAdmin = true
+		}
+	}
+	if !foundAdmin {
+		t.Errorf("admin row missing or is_admin=false; rows=%v", rows)
+	}
+	if !foundNonAdmin {
+		t.Errorf("non-admin row missing or is_admin=true; rows=%v", rows)
 	}
 }

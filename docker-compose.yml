@@ -4,11 +4,17 @@ services:
     container_name: atterm-relay
     restart: unless-stopped
     environment:
-      # Required: strong admin token used to log into /admin/ and create
-      # invitations. On public listen the relay refuses to start unless
-      # this is ≥32 chars, contains ≥3 character classes, and is not in
-      # the dev blacklist (dev / changeme / 12345 / ...).
-      ATTERM_ADMIN_TOKEN: ${ATTERM_ADMIN_TOKEN:-}
+      # Required for public listen: email of the bootstrap admin user.
+      # On startup the relay marks this user as admin; if they don't
+      # exist yet, set ATTERM_BOOTSTRAP_ADMIN_PASSWORD below to provision
+      # a new account. After the user exists you can unset PASSWORD and
+      # restart (the email-only env stays idempotent).
+      ATTERM_BOOTSTRAP_ADMIN_EMAIL: ${ATTERM_BOOTSTRAP_ADMIN_EMAIL:-}
+      # Used only when creating a brand-new admin user. Must be ≥16 chars,
+      # ≥3 character classes (upper / lower / digit / symbol), not in the
+      # bootstrap blacklist (dev / changeme / 12345 / ...). UNSET this
+      # after the user is created — it's a long-lived disk secret.
+      ATTERM_BOOTSTRAP_ADMIN_PASSWORD: ${ATTERM_BOOTSTRAP_ADMIN_PASSWORD:-}
       # Required for non-insecure public relay startup. Set this to the exact
       # browser origin, e.g. https://relay.example.com.
       ATTERM_ORIGINS: ${ATTERM_ORIGINS:-http://localhost:8080}

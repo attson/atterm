@@ -108,7 +108,7 @@ func testServerDeps(t *testing.T) ServerDeps {
 	t.Cleanup(func() { store.Close() })
 
 	limits := NewLimitRegistry()
-	resolver := NewIdentityResolver(store, "admin-token-for-tests")
+	resolver := NewIdentityResolver(store)
 	pool := NewArgon2Pool(1)
 	auth := &AuthServer{
 		Store:    store,

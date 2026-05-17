@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -14,7 +13,7 @@ type PrincipalKind uint8
 const (
 	PrincipalNone  PrincipalKind = iota // unauthenticated / unknown
 	PrincipalUser                       // authenticated user (cookie or api token)
-	PrincipalAdmin                      // ATTERM_ADMIN_TOKEN holder
+	PrincipalAdmin                      // authenticated user with user.is_admin = true
 )
 
 // Principal is the resolved identity for a single HTTP request.
@@ -28,16 +27,14 @@ type Principal struct {
 }
 
 // IdentityResolver is constructed once at relay startup and reused across
-// every handler. adminToken is the fixed ATTERM_ADMIN_TOKEN value; an empty
-// string disables the admin path (loopback / dev-mode without user accounts).
+// every handler.
 type IdentityResolver struct {
-	store      userstore.Store
-	adminToken string
+	store userstore.Store
 }
 
 // NewIdentityResolver creates an IdentityResolver backed by store.
-func NewIdentityResolver(store userstore.Store, adminToken string) *IdentityResolver {
-	return &IdentityResolver{store: store, adminToken: adminToken}
+func NewIdentityResolver(store userstore.Store) *IdentityResolver {
+	return &IdentityResolver{store: store}
 }
 
 // Resolve returns the Principal for req. It never returns an error; all failure
@@ -54,8 +51,12 @@ func (r *IdentityResolver) Resolve(req *http.Request) Principal {
 	if c, err := req.Cookie("atterm_session"); err == nil && c.Value != "" {
 		userID, csrfSecret, err := r.store.LookupWebSession(req.Context(), c.Value)
 		if err == nil {
+			kind := PrincipalUser
+			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
+				kind = PrincipalAdmin
+			}
 			return Principal{
-				Kind:       PrincipalUser,
+				Kind:       kind,
 				UserID:     userID,
 				Scope:      authWrite,
 				CSRFSecret: csrfSecret,
@@ -68,15 +69,14 @@ func (r *IdentityResolver) Resolve(req *http.Request) Principal {
 
 	// 2. Bearer token or WebSocket subprotocol token.
 	if tok := tokenFromIdentityRequest(req); tok != "" {
-		// Admin check uses constant-time comparison (case-sensitive, exact match).
-		if r.adminToken != "" &&
-			subtle.ConstantTimeCompare([]byte(tok), []byte(r.adminToken)) == 1 {
-			return Principal{Kind: PrincipalAdmin, Scope: authWrite}
-		}
 		tokenID, userID, err := r.store.LookupAPIToken(req.Context(), tok)
 		if err == nil {
+			kind := PrincipalUser
+			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
+				kind = PrincipalAdmin
+			}
 			return Principal{
-				Kind:    PrincipalUser,
+				Kind:    kind,
 				UserID:  userID,
 				TokenID: tokenID,
 				Scope:   authWrite,

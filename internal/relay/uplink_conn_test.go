@@ -38,13 +38,12 @@ func newUplinkTestStore(t *testing.T) (*userstore.SQLiteStore, string, string) {
 }
 
 // newUplinkTestServer builds a *Server wired with a real IdentityResolver backed
-// by the given store. adminToken is the fixed ATTERM_ADMIN_TOKEN value.
-func newUplinkTestServer(t *testing.T, store userstore.Store, adminToken string) *Server {
+// by the given store.
+func newUplinkTestServer(t *testing.T, store userstore.Store) *Server {
 	t.Helper()
-	resolver := NewIdentityResolver(store, adminToken)
+	resolver := NewIdentityResolver(store)
 	return NewServer(Config{
-		Resolver:   resolver,
-		AdminToken: adminToken,
+		Resolver: resolver,
 	})
 }
 
@@ -93,7 +92,7 @@ func TestUplink_RejectsCookiePrincipal(t *testing.T) {
 		t.Fatalf("CreateWebSession: %v", err)
 	}
 
-	srv := newUplinkTestServer(t, store, "admin-token-xyz")
+	srv := newUplinkTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -121,19 +120,18 @@ func TestUplink_RejectsCookiePrincipal(t *testing.T) {
 	_ = userID
 }
 
-// TestUplink_RejectsAdminPrincipal: connect with admin token → 401 before upgrade.
-func TestUplink_RejectsAdminPrincipal(t *testing.T) {
+// TestUplink_RejectsInvalidPrincipal: connect with invalid bearer token → 401 before upgrade.
+func TestUplink_RejectsInvalidPrincipal(t *testing.T) {
 	store, _, _ := newUplinkTestStore(t)
-	const adminToken = "admin-token-xyz"
 
-	srv := newUplinkTestServer(t, store, adminToken)
+	srv := newUplinkTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
 	dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	_, resp, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+adminToken)
+	_, resp, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer invalid-token")
 	if err == nil {
 		t.Fatal("expected dial to fail; got nil error")
 	}
@@ -150,7 +148,7 @@ func TestUplink_RejectsAdminPrincipal(t *testing.T) {
 func TestUplink_AcceptsAPIToken_BindsOwner(t *testing.T) {
 	store, userID, apiToken := newUplinkTestStore(t)
 
-	srv := newUplinkTestServer(t, store, "admin-token-xyz")
+	srv := newUplinkTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -218,7 +216,7 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 		t.Fatalf("CreateAPIToken alice: %v", err)
 	}
 
-	srv := newUplinkTestServer(t, store, "admin-token-xyz")
+	srv := newUplinkTestServer(t, store)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 

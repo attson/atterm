@@ -25,7 +25,7 @@ func newTestAuthServer(t *testing.T) (*AuthServer, *userstore.SQLiteStore) {
 	t.Cleanup(func() { store.Close() })
 
 	pool := NewArgon2Pool(1)
-	resolver := NewIdentityResolver(store, "admin-token-for-tests")
+	resolver := NewIdentityResolver(store)
 	srv := &AuthServer{
 		Store:        store,
 		Resolver:     resolver,

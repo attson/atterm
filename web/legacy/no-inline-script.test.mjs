@@ -17,9 +17,9 @@ function isInlineScript(attrs) {
 
 test("no web/*.html contains an inline <script> block (CSP script-src 'self')", () => {
     const offenders = [];
-    for (const name of readdirSync("web")) {
+    for (const name of readdirSync("web/legacy")) {
         if (!name.endsWith(".html")) continue;
-        const src = readFileSync(path.join("web", name), "utf8");
+        const src = readFileSync(path.join("web", "legacy", name), "utf8");
         for (const m of src.matchAll(SCRIPT_TAG)) {
             if (isInlineScript(m[1])) {
                 offenders.push(`${name}: <script${m[1]}>`);

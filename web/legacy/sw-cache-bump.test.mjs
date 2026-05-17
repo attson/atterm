@@ -10,14 +10,14 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
-const sw = readFileSync("web/sw.js", "utf8");
+const sw = readFileSync("web/legacy/sw.js", "utf8");
 
 const cacheMatch = sw.match(/const CACHE = "([^"]+)"/);
-assert.ok(cacheMatch, "web/sw.js must declare `const CACHE = \"...\"`");
+assert.ok(cacheMatch, "web/legacy/sw.js must declare `const CACHE = \"...\"`");
 const cacheName = cacheMatch[1];
 
 const assetsMatch = sw.match(/const ASSETS = \[([\s\S]*?)\];/);
-assert.ok(assetsMatch, "web/sw.js must declare `const ASSETS = [...]`");
+assert.ok(assetsMatch, "web/legacy/sw.js must declare `const ASSETS = [...]`");
 const assets = [...assetsMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 
 // sw.js precaches "./" as a synonym for the root navigation document.
@@ -29,7 +29,7 @@ function resolveAssetPath(asset) {
 const hasher = createHash("sha256");
 for (const asset of assets) {
     const rel = resolveAssetPath(asset);
-    const filePath = path.join("web", rel);
+    const filePath = path.join("web", "legacy", rel);
     hasher.update(asset);
     hasher.update("\0");
     hasher.update(readFileSync(filePath));

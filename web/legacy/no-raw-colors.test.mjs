@@ -14,7 +14,7 @@ const HEX_RGBA = /#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g;
 // File → patterns it's allowed to keep raw. Matchers are substrings the
 // problematic value contains; if a hit matches any of these, it's OK.
 const ALLOWED = {
-    "web/style.css": [
+    "web/legacy/style.css": [
         // Token declarations themselves.
         "--",
         // Body / page background gradients use one-off accent dark stops.
@@ -52,21 +52,21 @@ const ALLOWED = {
         "replay-progress",
         "xterm",
     ],
-    "web/settings.html": [
+    "web/legacy/settings.html": [
         "--",
         "#172554", // shared gradient stop
         "box-shadow",
         "rgba(2, 6, 23, 0.48)",      // dialog backdrop
         "rgba(74, 222, 128",          // one-off good-toned alpha (plain rgba kept)
     ],
-    "web/admin/index.html": [
+    "web/legacy/admin/index.html": [
         "--",
         "#1e1b4b",                    // admin gradient violet stop
         "box-shadow",
         "rgba(0, 0, 0, 0.3)",         // code box backdrop
     ],
-    "web/login.html": [],
-    "web/signup.html": [],
+    "web/legacy/login.html": [],
+    "web/legacy/signup.html": [],
 };
 
 function leakLines(path) {
@@ -84,23 +84,23 @@ function leakLines(path) {
     return leaks;
 }
 
-test("web/style.css has no raw #hex / rgba() outside the allow-list", () => {
-    const leaks = leakLines("web/style.css");
+test("web/legacy/style.css has no raw #hex / rgba() outside the allow-list", () => {
+    const leaks = leakLines("web/legacy/style.css");
     assert.equal(leaks.length, 0, "raw color literals found:\n" + leaks.join("\n"));
 });
 
-test("web/settings.html inline <style> has no raw colors outside the allow-list", () => {
-    const leaks = leakLines("web/settings.html");
+test("web/legacy/settings.html inline <style> has no raw colors outside the allow-list", () => {
+    const leaks = leakLines("web/legacy/settings.html");
     assert.equal(leaks.length, 0, "raw color literals found:\n" + leaks.join("\n"));
 });
 
-test("web/admin/index.html inline <style> has no raw colors outside the allow-list", () => {
-    const leaks = leakLines("web/admin/index.html");
+test("web/legacy/admin/index.html inline <style> has no raw colors outside the allow-list", () => {
+    const leaks = leakLines("web/legacy/admin/index.html");
     assert.equal(leaks.length, 0, "raw color literals found:\n" + leaks.join("\n"));
 });
 
-test("web/login.html + web/signup.html stay color-free (rely on style.css tokens)", () => {
-    for (const path of ["web/login.html", "web/signup.html"]) {
+test("web/legacy/login.html + web/legacy/signup.html stay color-free (rely on style.css tokens)", () => {
+    for (const path of ["web/legacy/login.html", "web/legacy/signup.html"]) {
         const leaks = leakLines(path);
         assert.equal(leaks.length, 0, `${path}: ${leaks.join("\n")}`);
     }

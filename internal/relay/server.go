@@ -146,10 +146,6 @@ func NewServer(cfg Config) *Server {
 	if cfg.WebDir != "" {
 		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebDir))
 	}
-	if cfg.AdminToken != "" {
-		s.mux.HandleFunc("/admin/", s.handleAdminPage)
-		s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
-	}
 
 	// Mount user-account HTTP API when both resolver and store are wired.
 	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed

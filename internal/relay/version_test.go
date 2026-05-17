@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -129,41 +128,6 @@ func TestAdminRoutesHiddenWithoutAdminToken(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d; want 404", rec.Code)
-	}
-}
-
-func TestAdminConfigRequiresAdminToken(t *testing.T) {
-	srv := NewServer(Config{AdminToken: "admin"})
-	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
-	rec := httptest.NewRecorder()
-
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status=%d; want 401", rec.Code)
-	}
-}
-
-func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relay.json")
-	store := NewAdminConfigStore(path, AdminConfig{})
-	srv := NewServer(Config{AdminToken: "admin", AdminConfigStore: store})
-	body := strings.NewReader(`{"rate_limit_per_minute":33,"max_connections_per_key":4}`)
-	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", body)
-	req.Header.Set("Authorization", "Bearer admin")
-	rec := httptest.NewRecorder()
-
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s; want 200", rec.Code, rec.Body.String())
-	}
-	cfg, err := LoadAdminConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.RateLimitPerMinute != 33 || cfg.MaxConnectionsPerKey != 4 {
-		t.Fatalf("persisted limits=%d/%d; want 33/4", cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
 	}
 }
 

@@ -85,6 +85,15 @@ body.terminal-active #app-shell {
 }
 .topnav a:hover { color: var(--fg); background: rgba(148, 163, 184, 0.10); }
 .topnav a.active { color: var(--accent); background: rgba(88, 166, 255, 0.12); }
+#page-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left));
+  background: rgba(5, 7, 13, 0.86);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  backdrop-filter: blur(18px);
+}
 .status { font-size: 12px; color: var(--fg-dim); margin-left: auto; white-space: nowrap; }
 .status.ok { color: var(--good); }
 .status.err { color: var(--bad); }

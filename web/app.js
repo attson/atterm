@@ -28,7 +28,7 @@ import {
   webSocketAuth as makeWebSocketAuth,
 } from "./app-core.js";
 
-import { authFetch, getMe, logout } from "./auth.js";
+import { authFetch, getMe } from "./auth.js";
 
 const TYPE = {
   OPEN: 0x01,
@@ -604,8 +604,6 @@ function closeWS() {
 }
 
 if (_isBrowser) {
-  document.getElementById("logout").addEventListener("click", () => logout());
-
   document.getElementById("shortcut-bar").addEventListener("click", (ev) => {
     const btn = ev.target.closest("button[data-shortcut]");
     if (!btn) return;

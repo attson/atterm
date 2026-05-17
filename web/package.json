@@ -1,0 +1,32 @@
+{
+  "name": "atterm-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vue-tsc --noEmit && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:contract": "node --test tests/contract/*.mjs"
+  },
+  "dependencies": {
+    "naive-ui": "2.40.4",
+    "vfonts": "0.1.0",
+    "vue": "3.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.10",
+    "@vitejs/plugin-vue": "5.2.1",
+    "@vue/test-utils": "2.4.6",
+    "happy-dom": "15.11.7",
+    "typescript": "5.6.3",
+    "vite": "5.4.11",
+    "vite-plugin-pwa": "0.21.1",
+    "vitest": "2.1.8",
+    "vue-tsc": "2.1.10"
+  },
+  "engines": {
+    "node": ">=20.0.0 <21"
+  }
+}

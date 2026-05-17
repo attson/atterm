@@ -15,6 +15,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// UserWebSession is the public view of a row in web_sessions for the
+// owning user. id_hash is opaque (already hashed); plaintext cookies
+// are not stored or exposed.
+type UserWebSession struct {
+	IDHash    string
+	UserAgent string
+	IPPrefix  string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 // SQLiteStore is the production Store backed by a single SQLite file.
 type SQLiteStore struct {
 	db *sql.DB
@@ -92,6 +103,10 @@ type Store interface {
 	LookupWebSession(ctx context.Context, plaintext string) (userID string, csrfSecret []byte, err error)
 	DeleteWebSession(ctx context.Context, plaintext string) error
 	PurgeExpiredWebSessions(ctx context.Context) (int64, error)
+	// ListUserWebSessions returns all non-expired sessions for userID,
+	// ordered by created_at DESC. Used by the Settings → Signed-in devices
+	// panel.
+	ListUserWebSessions(ctx context.Context, userID string) ([]UserWebSession, error)
 
 	// ChangePassword verifies currentPlaintext against the stored hash for
 	// userID, then updates to a new hash and rotates csrf_secret. All existing

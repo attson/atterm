@@ -4,6 +4,8 @@ atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 
 
 阅读这份文件以快速上手；详细规范见 `docs/spec/`。
 
+- Web 客户端正在从 vanilla JS 迁移到 Vue 3 + TypeScript + Naive UI；spec 见 `docs/superpowers/specs/2026-05-17-web-vue-typescript-rewrite-design.md`，本 PR 是 PR-A（脚手架）。
+
 ## 仓库布局
 
 ```
@@ -62,7 +64,12 @@ export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 # 命令行 relay（本地调试；--dev-insecure 跳过强度与 Origin 校验，loopback 时 bootstrap envs 可省略）
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
 ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
-  go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
+  go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
+# --web flag omitted ⇒ uses the embedded FS at internal/relay/web-dist/.
+# For frontend dev: build once and serve from disk:
+#   cd web && npm run build && cd .. && go run ./cmd/atterm-relay --web web/dist ...
+# `npm run dev` (Vite at 5173) becomes useful once PR-B wires up the
+# `server.proxy` block; until then it can't reach the relay's API/WS.
 
 # 命令行 agent（Phase 0 wrapper，调试用；需先在 relay 创建用户并生成 API token）
 go run ./cmd/atterm-agent --relay ws://localhost:8080 --token atk_... -- bash
@@ -108,7 +115,7 @@ gh run list --repo attson/atterm --limit 10
 | 改 pane 布局 / 分屏键 | `desktop/frontend/src/lib/layout.ts`（纯函数 + 单测） + `composables/useTerminalShortcuts.ts`（document capture）+ `components/PaneGrid.vue` |
 | 改自动更新 | `desktop/updater.go`（state machine + Ed25519/SHA256 校验）+ `desktop/scripts/`（平台 helper）+ `.github/scripts/sign-release-checksums.go` + `.github/workflows/build.yml` + Settings UI |
 | 改 relay 启动安全策略 | `cmd/atterm-relay/main.go` + `cmd/atterm-relay/main_test.go` + `internal/relay/*_test.go` + `docs/spec/protocol.md` |
-| 改 web 安全头 / 静态资源 | `internal/relay/server.go` + `web/index.html` + `web/sw.js` + `web/*test.mjs` |
+| 改 web 安全头 / 静态资源 | `internal/relay/server.go` + `web/src/...` (Vue 3 + Naive UI, PR-B+) + `web/legacy/*.test.mjs` (until PR-C) + `web/tests/contract/*.mjs` (created in PR-B) |
 | 改桌面远程 relay 配置 | `desktop/app.go` + `desktop/config.go` + `desktop/relay_security.go` + `desktop/frontend/src/components/SettingsDialog.vue` |
 | 改远程权限模型 | `internal/proto/frame.go` + `internal/relay/permissions.go` + `desktop/uplink.go` + Settings UI + 协议规范 |
 | 改 relay admin 配置 | `internal/relay/admin_config.go` + `internal/relay/admin_http.go` + `cmd/atterm-relay/main.go` + README/spec |

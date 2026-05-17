@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -33,8 +34,9 @@ type Config struct {
 	// ReadOnlyTokenHashes are sha256:base64url token hashes from persistent
 	// admin config. They behave like ReadOnlyTokens without storing secrets.
 	ReadOnlyTokenHashes []string
-	// WebDir is the filesystem path to the static web client. Empty disables /.
-	WebDir string
+	// WebFS is the static web client filesystem. Nil disables /.
+	// Callers typically pass relay.EmbeddedWebFS() (prod) or os.DirFS(path) (dev).
+	WebFS fs.FS
 	// Version is the application version exposed to web clients.
 	Version string
 	// AllowedOrigins, when non-empty, gates browser WS upgrades by Origin host.
@@ -140,8 +142,8 @@ func NewServer(cfg Config) *Server {
 		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
 		s.mux.HandleFunc("/api/push/test", s.handlePushTest)
 	}
-	if cfg.WebDir != "" {
-		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebDir))
+	if cfg.WebFS != nil {
+		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebFS))
 	}
 	// /admin/api/config is the runtime-limits endpoint used by the admin UI.
 	// Auth is PrincipalAdmin (cookie + user.is_admin), enforced inside the
@@ -474,8 +476,8 @@ func tokenHash(token string) string {
 // root path when the request carries no valid cookie session. Subresources
 // (*.js, *.css, *.html, etc.) are served unconditionally so that login.html
 // can load its own assets without authentication.
-func newStaticHandler(resolver *IdentityResolver, webDir string) http.Handler {
-	fs := http.FileServer(http.Dir(webDir))
+func newStaticHandler(resolver *IdentityResolver, webFS fs.FS) http.Handler {
+	fileSrv := http.FileServer(http.FS(webFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			if resolver != nil {
@@ -499,7 +501,7 @@ func newStaticHandler(resolver *IdentityResolver, webDir string) http.Handler {
 				}
 			}
 		}
-		fs.ServeHTTP(w, r)
+		fileSrv.ServeHTTP(w, r)
 	})
 }
 

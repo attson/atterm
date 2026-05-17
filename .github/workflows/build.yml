@@ -35,8 +35,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: run web tests
-        run: node --test web/*.test.mjs
+      - name: run legacy web tests
+        run: node --test web/legacy/*.test.mjs
+
+  web-vue-tests:
+    # Vue 3 / TypeScript / Vitest suite for the new web/ project.
+    # Also rebuilds the embedded FS and fails on any uncommitted diff
+    # under internal/relay/web-dist/ (spec Sec-7: build determinism).
+    name: web vue tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: install web deps
+        working-directory: web
+        run: npm ci --ignore-scripts
+      - name: type check + build
+        working-directory: web
+        run: npm run build
+      - name: vitest
+        working-directory: web
+        run: npm test
+      - name: sync embed
+        run: ./scripts/build-web.sh
+      - name: verify embed has no drift
+        run: git diff --exit-code -- internal/relay/web-dist
 
   build-linux:
     name: linux/${{ matrix.arch }}

@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const html = readFileSync("web/settings.html", "utf8");
-const js = readFileSync("web/settings.js", "utf8");
+const html = readFileSync("web/legacy/settings.html", "utf8");
+const js = readFileSync("web/legacy/settings.js", "utf8");
 
 test("settings.html loads settings.js, which imports auth.js", () => {
     assert.ok(html.includes('src="./settings.js"'), "settings.html must load settings.js");
@@ -64,13 +64,13 @@ test("settings.html includes settings-sessions.js + settings-danger.js", () => {
 });
 
 test("settings-sessions.js calls /api/me/sessions", () => {
-    const sessionsJs = readFileSync("web/settings-sessions.js", "utf8");
+    const sessionsJs = readFileSync("web/legacy/settings-sessions.js", "utf8");
     assert.match(sessionsJs, /\/api\/me\/sessions/, "must reference /api/me/sessions");
     assert.match(sessionsJs, /sign-out-others/, "must reference sign-out-others");
 });
 
 test("settings-danger.js sends DELETE /api/me with email + password", () => {
-    const dangerJs = readFileSync("web/settings-danger.js", "utf8");
+    const dangerJs = readFileSync("web/legacy/settings-danger.js", "utf8");
     assert.match(dangerJs, /authFetch\("\/api\/me"/, "must authFetch /api/me");
     assert.match(dangerJs, /method:\s*"DELETE"/, "must use DELETE method");
     assert.match(dangerJs, /\bemail\b/, "must reference email");

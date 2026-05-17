@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="page" content="settings" />
+<title>AT Term · settings</title>
+<link rel="stylesheet" href="style.css" />
+<style>
+.settings-page {
+  min-height: 100vh;
+  background: radial-gradient(circle at top left, #172554 0, var(--bg) 42%);
+  padding: 2rem 1rem;
+}
+.settings-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.settings-card {
+  padding: 1.5rem 2rem;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.36);
+}
+.settings-card h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.settings-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--fg-dim);
+}
+.settings-card input[type="text"],
+.settings-card input[type="password"] {
+  padding: 0.5rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+.settings-card input:focus { outline: none; border-color: var(--accent); }
+.settings-card button[type="submit"],
+.settings-card .btn-primary {
+  padding: 0.5rem 1rem;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  align-self: flex-start;
+}
+.settings-card button[type="submit"]:hover,
+.settings-card .btn-primary:hover { opacity: 0.88; }
+.btn-danger {
+  padding: 0.4rem 0.8rem;
+  background: transparent;
+  color: var(--bad);
+  border: 1px solid var(--bad);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+}
+.btn-danger:hover { background: var(--bad-bg); }
+.btn-ghost {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+#token-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+#token-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(2, 6, 23, 0.48);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#token-list .token-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#token-list-empty { color: var(--fg-dim); font-size: 0.875rem; }
+#plaintext-section {
+  padding: 0.75rem;
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+#plaintext-section p { margin: 0; font-size: 0.8rem; color: var(--fg-dim); }
+#plaintext-display {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--good);
+  word-break: break-all;
+}
+.form-row { display: flex; gap: 0.5rem; }
+.form-row input { flex: 1; }
+#password-error { color: var(--bad); font-size: 0.875rem; margin: 0; }
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.page-header h1 { margin: 0; font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; }
+</style>
+</head><body class="settings-page">
+<header id="topbar"></header>
+<div class="settings-wrap">
+  <nav class="subtabs" aria-label="Settings sections">
+    <a href="#api-tokens" data-tab="api-tokens" class="subtab active">API Tokens</a>
+    <a href="#change-password" data-tab="change-password" class="subtab">Change Password</a>
+    <a href="#sessions" data-tab="sessions" class="subtab">Signed-in devices</a>
+    <a href="#danger" data-tab="danger" class="subtab danger-tab">Danger zone</a>
+  </nav>
+
+  <section id="panel-api-tokens" class="settings-card" data-panel="api-tokens">
+    <h2>API Tokens</h2>
+    <ul id="token-list"><li id="token-list-empty">Loading…</li></ul>
+
+    <form id="create-token-form" autocomplete="off">
+      <label>Token name
+        <div class="form-row">
+          <input id="token-name" type="text" required placeholder="e.g. my-laptop" autocomplete="off" />
+          <button type="submit">Create</button>
+        </div>
+      </label>
+    </form>
+
+    <div id="plaintext-section" hidden>
+      <p>Copy this token now — it will not be shown again.</p>
+      <code id="plaintext-display"></code>
+      <button class="btn-ghost" id="copy-token-btn" type="button">Copy</button>
+    </div>
+  </section>
+
+  <section id="panel-change-password" class="settings-card" data-panel="change-password" hidden>
+    <h2>Change Password</h2>
+    <form id="change-password-form" autocomplete="off">
+      <div style="display:flex;flex-direction:column;gap:0.75rem;">
+        <label>Current password
+          <input id="current-password" type="password" required autocomplete="current-password" />
+        </label>
+        <label>New password <small style="color:var(--fg-dim)">(min 12 characters)</small>
+          <input id="new-password" type="password" required autocomplete="new-password" minlength="12" />
+        </label>
+        <button type="submit">Update password</button>
+        <p id="password-error" hidden></p>
+      </div>
+    </form>
+  </section>
+
+  <section id="panel-sessions" class="settings-card" data-panel="sessions" hidden>
+    <h2>Signed-in devices</h2>
+    <p class="muted">Each row is a browser or PWA where this account is signed in.</p>
+    <ul id="sessions-list"><li id="sessions-empty">Loading…</li></ul>
+    <button id="sign-out-others" class="btn-danger" type="button">Sign out everywhere except this device</button>
+    <p id="sessions-error" hidden></p>
+  </section>
+
+  <section id="panel-danger" class="settings-card danger-zone" data-panel="danger" hidden>
+    <h2>Danger zone</h2>
+    <p>Permanently delete this account. This cannot be undone. API tokens, web sessions, and account data are removed. Invitations you've consumed stay (their "consumed by" field is cleared).</p>
+    <form id="delete-account-form" autocomplete="off">
+      <label>Confirm by typing your full email
+        <input id="delete-email" type="email" required autocomplete="off" />
+      </label>
+      <label>Current password
+        <input id="delete-password" type="password" required autocomplete="current-password" />
+      </label>
+      <button type="submit" class="btn-danger">Delete my account</button>
+      <p id="delete-error" hidden></p>
+    </form>
+  </section>
+</div>
+<p class="page-version" id="version">version dev</p>
+<script type="module" src="./layout.js"></script>
+<script type="module" src="./settings.js"></script>
+<script type="module" src="./settings-sessions.js"></script>
+<script type="module" src="./settings-danger.js"></script></body></html>

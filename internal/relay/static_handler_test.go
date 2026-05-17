@@ -2,44 +2,34 @@ package relay
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/attson/atterm/internal/userstore"
 )
 
-// fakeWebDir creates a temp directory with placeholder files for / and /admin/
-// so http.FileServer has something to serve. Returns the dir.
-func fakeWebDir(t *testing.T) string {
+// fakeWebFS returns an in-memory fs.FS that mimics what web-dist/
+// holds: an index.html, a login.html, an admin/index.html, plus one
+// admin subresource so the "ungated subresources" test has a target.
+func fakeWebFS(t *testing.T) fs.FS {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>home</html>"), 0o644); err != nil {
-		t.Fatal(err)
+	return fstest.MapFS{
+		"index.html":       {Data: []byte("<html>home</html>")},
+		"admin/index.html": {Data: []byte("<html>admin</html>")},
+		"admin/admin.js":   {Data: []byte("/* admin */")},
+		"login.html":       {Data: []byte("<html>login</html>")},
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "admin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "admin", "index.html"), []byte("<html>admin</html>"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "admin", "admin.js"), []byte("/* admin */"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "login.html"), []byte("<html>login</html>"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return dir
 }
 
 func TestStaticHandler_AdminGate_AnonymousRedirectsToLogin(t *testing.T) {
-	dir := fakeWebDir(t)
+	fsys := fakeWebFS(t)
 	store, _ := userstore.Open(context.Background(), ":memory:")
 	defer store.Close()
 	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, dir)
+	handler := newStaticHandler(resolver, fsys)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
 	rec := httptest.NewRecorder()
@@ -53,14 +43,14 @@ func TestStaticHandler_AdminGate_AnonymousRedirectsToLogin(t *testing.T) {
 }
 
 func TestStaticHandler_AdminGate_NonAdminRedirectsToHome(t *testing.T) {
-	dir := fakeWebDir(t)
+	fsys := fakeWebFS(t)
 	ctx := context.Background()
 	store, _ := userstore.Open(ctx, ":memory:")
 	defer store.Close()
 	u, _ := store.CreateUser(ctx, "u@example.com", "passphrase-1234")
 	secret, _ := store.CreateWebSession(ctx, u.ID, "ua", "")
 	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, dir)
+	handler := newStaticHandler(resolver, fsys)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
 	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
@@ -75,7 +65,7 @@ func TestStaticHandler_AdminGate_NonAdminRedirectsToHome(t *testing.T) {
 }
 
 func TestStaticHandler_AdminGate_AdminServesPage(t *testing.T) {
-	dir := fakeWebDir(t)
+	fsys := fakeWebFS(t)
 	ctx := context.Background()
 	store, _ := userstore.Open(ctx, ":memory:")
 	defer store.Close()
@@ -83,7 +73,7 @@ func TestStaticHandler_AdminGate_AdminServesPage(t *testing.T) {
 	_ = store.SetUserAdmin(ctx, u.ID, true)
 	secret, _ := store.CreateWebSession(ctx, u.ID, "ua", "")
 	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, dir)
+	handler := newStaticHandler(resolver, fsys)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
 	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
@@ -98,11 +88,11 @@ func TestStaticHandler_AdminGate_AdminServesPage(t *testing.T) {
 }
 
 func TestStaticHandler_AdminSubresources_NotGated(t *testing.T) {
-	dir := fakeWebDir(t)
+	fsys := fakeWebFS(t)
 	store, _ := userstore.Open(context.Background(), ":memory:")
 	defer store.Close()
 	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, dir)
+	handler := newStaticHandler(resolver, fsys)
 
 	// No cookie — anonymous request.
 	req := httptest.NewRequest(http.MethodGet, "/admin/admin.js", nil)

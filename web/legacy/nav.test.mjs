@@ -10,8 +10,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const PAGES = [
-    { path: "web/index.html", page: "home" },
-    { path: "web/settings.html", page: "settings" },
+    { path: "web/legacy/index.html", page: "home" },
+    { path: "web/legacy/settings.html", page: "settings" },
 ];
 
 for (const { path, page } of PAGES) {

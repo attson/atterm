@@ -1,151 +1,20 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="page" content="admin" />
-<title>AT Term · admin</title>
-<link rel="stylesheet" href="../style.css" />
-<style>
-.admin-page {
-  min-height: 100vh;
-  background: radial-gradient(circle at top left, #1e1b4b 0, var(--bg) 42%);
-  padding: 2rem 1rem;
-}
-.admin-wrap {
-  max-width: 980px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-.admin-card {
-  padding: 1.5rem 2rem;
-  background: var(--panel);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.36);
-}
-.admin-card h2 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
-}
-.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.admin-table th, .admin-table td {
-  text-align: left;
-  padding: 0.45rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-.admin-table th {
-  font-weight: 600;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--fg-dim);
-}
-.admin-table td code {
-  font-size: 11px;
-  color: var(--fg-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.admin-secret {
-  background: var(--warn-bg);
-  border: 1px solid var(--warn);
-  border-radius: 6px;
-  padding: 0.75rem;
-}
-.admin-secret code {
-  display: block;
-  padding: 0.4rem 0.5rem;
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 3px;
-  user-select: all;
-  word-break: break-all;
-  font-size: 13px;
-  margin: 0.4rem 0;
-}
-.admin-error { color: var(--bad); margin: 0.5rem 0; min-height: 1.2em; font-size: 13px; }
-.admin-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="page" content="admin" />
+  <meta name="theme-color" content="#0b1020" />
+  <title>AT Term · admin</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <script type="module" crossorigin src="/assets/admin-BXYUX13S.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/tokens-C8kiaNuv.js">
+  <link rel="modulepreload" crossorigin href="/assets/Topbar-C4DoMo2E.js">
+  <link rel="stylesheet" crossorigin href="/assets/tokens-BpLCEp12.css">
+  <link rel="stylesheet" crossorigin href="/assets/Topbar-WYJzjxIi.css">
+  <link rel="stylesheet" crossorigin href="/assets/admin-j4pg3ZYo.css">
 </head>
-<body class="admin-page">
-<header id="topbar"></header>
-
-<div class="admin-wrap">
-  <nav class="subtabs" aria-label="Admin sections">
-    <a href="#invitations" data-tab="invitations" class="subtab active">Invitations</a>
-    <a href="#users" data-tab="users" class="subtab">Users</a>
-    <a href="#config" data-tab="config" class="subtab">Config</a>
-  </nav>
-
-  <section id="panel-invitations" class="admin-card" data-panel="invitations">
-    <h2>Create invitation</h2>
-    <div class="admin-row">
-      <input id="inv-note" placeholder="note (optional)" style="flex:1;min-width:180px" />
-      <input id="inv-count" type="number" min="1" max="50" value="1" title="how many invites (1-50)" style="width:80px" />
-      <input id="inv-expires" type="datetime-local" title="expires at; defaults to now + 7 days" />
-      <button id="inv-create" type="button">Create</button>
-    </div>
-    <div id="inv-secret"></div>
-    <div id="inv-error" class="admin-error"></div>
-
-    <h2>All invitations <button id="inv-refresh" type="button">refresh</button></h2>
-    <table class="admin-table" id="inv-table">
-      <thead><tr><th>Prefix</th><th>Note</th><th>Created</th><th>Expires</th><th>Consumed</th><th>By</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </section>
-
-  <section id="panel-users" class="admin-card" data-panel="users" hidden>
-    <h2>All users <button id="users-refresh" type="button">refresh</button></h2>
-    <div id="users-secret"></div>
-    <table class="admin-table" id="users-table">
-      <thead><tr><th>Email</th><th>ID</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div id="users-error" class="admin-error"></div>
-  </section>
-
-  <section id="panel-config" class="admin-card" data-panel="config" hidden>
-    <h2>Runtime limits <button id="config-load" type="button">reload</button></h2>
-    <div id="config-form" hidden>
-      <div class="admin-row">
-        <label style="min-width:260px">Rate limit (requests/min per IP+token):</label>
-        <input id="cfg-rate" type="number" style="width:100px" />
-        <span class="muted" id="cfg-rate-eff"></span>
-      </div>
-      <div class="admin-row">
-        <label style="min-width:260px">Max WS connections (per IP+token):</label>
-        <input id="cfg-conn" type="number" style="width:100px" />
-        <span class="muted" id="cfg-conn-eff"></span>
-      </div>
-      <p class="muted">
-        <strong>0</strong> = use built-in default; <strong>negative</strong> = disable the limit.
-        Changes apply immediately and persist to the admin config file.
-      </p>
-      <div class="admin-row">
-        <button id="config-save" type="button">Save</button>
-        <span class="muted">Version: <code id="cfg-version"></code></span>
-      </div>
-    </div>
-    <pre id="config-out" style="display:none"></pre>
-    <div id="config-error" class="admin-error"></div>
-  </section>
-</div>
-
-<p class="page-version" id="version">version dev</p>
-<script type="module" src="../layout.js"></script>
-<script type="module" src="./admin.js"></script>
-<script type="module" src="./admin-invitations.js"></script>
-<script type="module" src="./admin-users.js"></script>
+<body>
+  <div id="app"></div>
 </body>
 </html>

@@ -8,6 +8,7 @@ export default defineConfig({
     alias: {
       '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      'virtual:pwa-register': fileURLToPath(new URL('./tests/__mocks__/pwa-register.ts', import.meta.url)),
     },
   },
   test: {

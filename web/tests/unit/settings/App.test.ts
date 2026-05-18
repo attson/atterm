@@ -37,13 +37,14 @@ describe('Settings App.vue', () => {
     Object.defineProperty(window, 'location', { value: originalLocation, writable: true })
   })
 
-  it('renders all four tab labels', async () => {
+  it('renders all five tab labels', async () => {
     const wrapper = mount(App, { attachTo: document.body })
     await flushPromises()
     const text = wrapper.text()
     expect(text).toContain('API Tokens')
     expect(text).toContain('Change Password')
     expect(text).toContain('Signed-in devices')
+    expect(text).toContain('Notifications')
     expect(text).toContain('Danger zone')
   })
 

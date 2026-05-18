@@ -14,7 +14,7 @@
     "verbatimModuleSyntax": true,
     "useDefineForClassFields": true,
     "jsx": "preserve",
-    "types": ["vite/client", "vitest/globals"],
+    "types": ["vite/client", "vitest/globals", "vite-plugin-pwa/client"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
     "paths": {

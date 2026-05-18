@@ -63,6 +63,8 @@ async function onDisable() {
     const reg = await navigator.serviceWorker.ready
     await disablePushFlow({ registration: reg })
     message.success('Notifications disabled.')
+  } catch (e) {
+    errorMsg.value = 'Failed to disable: ' + (e instanceof Error ? e.message : String(e))
   } finally {
     busy.value = false
     await refreshState()
@@ -76,7 +78,11 @@ async function onTest() {
     const sent = await testPush()
     message.success(`Test notification sent to ${sent} subscription(s).`)
   } catch (e) {
-    if (e instanceof ApiError) errorMsg.value = 'Test failed: ' + e.message
+    if (e instanceof ApiError) {
+      errorMsg.value = 'Test failed: ' + e.message
+    } else {
+      errorMsg.value = 'Test failed: ' + (e instanceof Error ? e.message : String(e))
+    }
   } finally {
     busy.value = false
   }

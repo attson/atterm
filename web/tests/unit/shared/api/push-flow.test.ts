@@ -82,6 +82,22 @@ describe('enablePushFlow', () => {
     })
     expect(result).toEqual({ ok: false, reason: 'subscribe-failed' })
   })
+
+  it('returns reason=subscribe-rejected when relay POST fails', async () => {
+    ;(getPushKey as ReturnType<typeof vi.fn>).mockResolvedValue('VAPID')
+    ;(subscribePush as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500'))
+    const sub = {
+      endpoint: 'https://example/abc',
+      toJSON: () => ({ endpoint: 'https://example/abc', keys: { p256dh: 'aaa', auth: 'bbb' } }),
+    }
+    const reg = makeRegistration({ subscribe: () => Promise.resolve(sub) })
+
+    const result = await enablePushFlow({
+      notification: makeNotification('granted'),
+      registration: reg,
+    })
+    expect(result).toEqual({ ok: false, reason: 'subscribe-rejected' })
+  })
 })
 
 describe('disablePushFlow', () => {

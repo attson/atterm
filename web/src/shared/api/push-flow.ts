@@ -5,7 +5,7 @@
 
 import { getPushKey, subscribePush, unsubscribePush, type PushSubscriptionPayload } from './push'
 
-export type EnableReason = 'denied' | 'disabled' | 'key-failed' | 'subscribe-failed' | 'subscribe-rejected' | 'network'
+export type EnableReason = 'denied' | 'disabled' | 'key-failed' | 'subscribe-failed' | 'subscribe-rejected'
 
 export interface EnableDeps {
   notification: { permission: NotificationPermission; requestPermission: () => Promise<NotificationPermission> }

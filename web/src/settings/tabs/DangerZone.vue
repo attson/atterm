@@ -42,7 +42,7 @@ function onSubmit(e: Event) {
 </script>
 
 <template>
-  <n-card title="Danger zone" :bordered="false" class="danger-card">
+  <n-card :bordered="false" class="danger-card">
     <p>
       Permanently delete this account. This cannot be undone. API tokens, web
       sessions, and account data are removed. Invitations you've consumed
@@ -86,6 +86,5 @@ function onSubmit(e: Event) {
 </template>
 
 <style scoped>
-.danger-card :deep(.n-card-header__main) { color: var(--bad); }
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
 </style>

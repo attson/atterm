@@ -74,7 +74,7 @@ onMounted(reload)
 </script>
 
 <template>
-  <n-card title="Signed-in devices" :bordered="false">
+  <n-card :bordered="false">
     <p class="muted">Each row is a browser or PWA where this account is signed in.</p>
     <n-list v-if="rows.length > 0" bordered>
       <n-list-item v-for="row in rows" :key="row.id_hash">

@@ -66,3 +66,24 @@ describe("SettingsGeneral notification toggle", () => {
     expect(source).toContain('"command-notify-threshold-changed"');
   });
 });
+
+describe("SettingsGeneral WebGL renderer toggle", () => {
+  test("imports WebGL getter and setter", () => {
+    expect(source).toContain("getWebglRendererEnabled");
+    expect(source).toContain("setWebglRendererEnabled");
+  });
+
+  test("renders the WebGL renderer toggle wired to setWebglRendererEnabled", () => {
+    expect(source).toContain("Use WebGL terminal renderer");
+    expect(source).toMatch(/onWebglRendererToggle/);
+    expect(source).toContain('@change="onWebglRendererToggle"');
+  });
+
+  test("hint mentions the typing-lag trade-off so Linux users can find it", () => {
+    expect(source).toContain("typing lag");
+  });
+
+  test("loads WebGL preference on mount", () => {
+    expect(source).toMatch(/getWebglRendererEnabled\(\)/);
+  });
+});

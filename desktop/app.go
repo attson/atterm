@@ -556,6 +556,29 @@ func (a *App) ConfirmQuit() {
 	wailsruntime.Quit(a.ctx)
 }
 
+// GetWebglRendererEnabled returns the user's preference for the xterm WebGL
+// renderer. Linux defaults to false (NVIDIA + X11 + WebKitGTK paints the
+// cursor / last cell on a delayed schedule that surfaces as typing lag —
+// #48); macOS/Windows default to true so the #33 ghosting fix stays active.
+func (a *App) GetWebglRendererEnabled() bool {
+	if a.cfgStore == nil {
+		return defaultWebglRendererEnabledFor(runtime.GOOS)
+	}
+	return a.cfgStore.Get().WebglRendererEnabledOrDefault()
+}
+
+// SetWebglRendererEnabled persists the user's WebGL toggle. The setting takes
+// effect for new terminal sessions; already-open xterms keep their current
+// renderer until they are recreated.
+func (a *App) SetWebglRendererEnabled(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.WebglRendererEnabled = &enabled
+	return a.cfgStore.Set(cfg)
+}
+
 // GetNotificationsEnabled returns the current persisted preference.
 // Defaults to true for fresh installs.
 func (a *App) GetNotificationsEnabled() bool {

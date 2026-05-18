@@ -74,6 +74,10 @@ export function GetUpdateState() {
   return window['go']['main']['App']['GetUpdateState']();
 }
 
+export function GetWebglRendererEnabled() {
+  return window['go']['main']['App']['GetWebglRendererEnabled']();
+}
+
 export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
@@ -124,6 +128,10 @@ export function SetTerminalTheme(arg1) {
 
 export function SetUplinkPaused(arg1) {
   return window['go']['main']['App']['SetUplinkPaused'](arg1);
+}
+
+export function SetWebglRendererEnabled(arg1) {
+  return window['go']['main']['App']['SetWebglRendererEnabled'](arg1);
 }
 
 export function ShowNotification(arg1, arg2) {

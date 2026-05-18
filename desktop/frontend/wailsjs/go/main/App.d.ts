@@ -38,6 +38,8 @@ export function GetTerminalTheme():Promise<string>;
 
 export function GetUpdateState():Promise<main.UpdateState>;
 
+export function GetWebglRendererEnabled():Promise<boolean>;
+
 export function InstallUpdate():Promise<void>;
 
 export function ListShells():Promise<Array<string>>;
@@ -63,6 +65,8 @@ export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
 export function SetTerminalTheme(arg1:string):Promise<void>;
 
 export function SetUplinkPaused(arg1:boolean):Promise<void>;
+
+export function SetWebglRendererEnabled(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 

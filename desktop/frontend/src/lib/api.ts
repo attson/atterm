@@ -109,6 +109,8 @@ interface AppBindings {
   ShowNotification(title: string, body: string): Promise<void>;
   GetShellIntegrationEnabled(): Promise<boolean>;
   SetShellIntegrationEnabled(enabled: boolean): Promise<void>;
+  GetWebglRendererEnabled(): Promise<boolean>;
+  SetWebglRendererEnabled(enabled: boolean): Promise<void>;
   GetCommandNotifyThresholdSeconds(): Promise<number>;
   SetCommandNotifyThresholdSeconds(seconds: number): Promise<void>;
   BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;
@@ -255,6 +257,14 @@ export function getShellIntegrationEnabled(): Promise<boolean> {
 
 export function setShellIntegrationEnabled(enabled: boolean): Promise<void> {
   return bindings().SetShellIntegrationEnabled(enabled);
+}
+
+export function getWebglRendererEnabled(): Promise<boolean> {
+  return bindings().GetWebglRendererEnabled();
+}
+
+export function setWebglRendererEnabled(enabled: boolean): Promise<void> {
+  return bindings().SetWebglRendererEnabled(enabled);
 }
 
 export function getCommandNotifyThresholdSeconds(): Promise<number> {

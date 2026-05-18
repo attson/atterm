@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/attson/atterm/internal/proto"
@@ -71,6 +72,14 @@ type appConfig struct {
 	// a notification. Nil → default 10. Clamped to [1, 600] at read time.
 	CommandNotifyThresholdSeconds *int `json:"command_notify_threshold_seconds,omitempty"`
 
+	// WebglRendererEnabled controls whether xterm loads xterm-addon-webgl
+	// for GPU-accelerated rendering. Nil means "never set" and resolves to
+	// the platform default: false on Linux (NVIDIA proprietary + X11 +
+	// WebKitGTK paint the cursor / last-cell on a delayed schedule that
+	// surfaces as visible typing lag even when CPU is idle — #48), true
+	// on macOS/Windows so the #33 light-theme ghosting fix stays active.
+	WebglRendererEnabled *bool `json:"webgl_renderer_enabled,omitempty"`
+
 	// Plugins is the plugin-system block. Defaults filled in on first run.
 	Plugins PluginConfig `json:"plugins"`
 }
@@ -126,6 +135,22 @@ func (c appConfig) ShellIntegrationEnabledOrDefault() bool {
 		return true
 	}
 	return *c.ShellIntegrationEnabled
+}
+
+// WebglRendererEnabledOrDefault returns the user's preference for the xterm
+// WebGL renderer. See the field comment for the rationale behind the
+// platform-specific default.
+func (c appConfig) WebglRendererEnabledOrDefault() bool {
+	if c.WebglRendererEnabled == nil {
+		return defaultWebglRendererEnabledFor(runtime.GOOS)
+	}
+	return *c.WebglRendererEnabled
+}
+
+// defaultWebglRendererEnabledFor is split out from WebglRendererEnabledOrDefault
+// so tests can exercise every platform branch without GOOS injection tricks.
+func defaultWebglRendererEnabledFor(goos string) bool {
+	return goos != "linux"
 }
 
 func (c appConfig) CommandNotifyThresholdSecondsOrDefault() int {

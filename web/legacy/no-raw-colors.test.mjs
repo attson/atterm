@@ -52,12 +52,6 @@ const ALLOWED = {
         "replay-progress",
         "xterm",
     ],
-    "web/legacy/admin/index.html": [
-        "--",
-        "#1e1b4b",                    // admin gradient violet stop
-        "box-shadow",
-        "rgba(0, 0, 0, 0.3)",         // code box backdrop
-    ],
 };
 
 function leakLines(path) {
@@ -77,11 +71,6 @@ function leakLines(path) {
 
 test("web/legacy/style.css has no raw #hex / rgba() outside the allow-list", () => {
     const leaks = leakLines("web/legacy/style.css");
-    assert.equal(leaks.length, 0, "raw color literals found:\n" + leaks.join("\n"));
-});
-
-test("web/legacy/admin/index.html inline <style> has no raw colors outside the allow-list", () => {
-    const leaks = leakLines("web/legacy/admin/index.html");
     assert.equal(leaks.length, 0, "raw color literals found:\n" + leaks.join("\n"));
 });
 

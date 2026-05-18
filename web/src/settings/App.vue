@@ -12,9 +12,10 @@ import Topbar from '@shared/components/Topbar.vue'
 import ApiTokens from './tabs/ApiTokens.vue'
 import ChangePassword from './tabs/ChangePassword.vue'
 import Sessions from './tabs/Sessions.vue'
+import Notifications from './tabs/Notifications.vue'
 import DangerZone from './tabs/DangerZone.vue'
 
-const TAB_NAMES = ['api-tokens', 'change-password', 'sessions', 'danger'] as const
+const TAB_NAMES = ['api-tokens', 'change-password', 'sessions', 'notifications', 'danger'] as const
 type TabName = (typeof TAB_NAMES)[number]
 
 function nameFromHash(): TabName {
@@ -60,6 +61,9 @@ const overrides = getNaiveOverrides()
           </n-tab-pane>
           <n-tab-pane name="sessions" tab="Signed-in devices">
             <Sessions />
+          </n-tab-pane>
+          <n-tab-pane name="notifications" tab="Notifications">
+            <Notifications />
           </n-tab-pane>
           <n-tab-pane name="danger" tab="Danger zone">
             <DangerZone />

@@ -34,8 +34,9 @@ export default defineConfig({
     assetsInlineLimit: 0,
     rollupOptions: {
       input: {
-        login:  fileURLToPath(new URL('./login.html',  import.meta.url)),
-        signup: fileURLToPath(new URL('./signup.html', import.meta.url)),
+        login:    fileURLToPath(new URL('./login.html',    import.meta.url)),
+        signup:   fileURLToPath(new URL('./signup.html',   import.meta.url)),
+        settings: fileURLToPath(new URL('./settings.html', import.meta.url)),
       },
     },
   },

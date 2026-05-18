@@ -11,7 +11,6 @@ import { readFileSync } from "node:fs";
 
 const PAGES = [
     { path: "web/legacy/index.html", page: "home" },
-    { path: "web/legacy/settings.html", page: "settings" },
 ];
 
 for (const { path, page } of PAGES) {

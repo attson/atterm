@@ -472,6 +472,36 @@ func tokenHash(token string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// allowedStaticPath reports whether p is a known production-asset path the
+// static handler is willing to serve. The whitelist is the exhaustive set of
+// files vite-plugin-pwa + the multi-entry MPA build emits at the embed root,
+// plus the single-segment wildcards content-hashed assets use.
+//
+// Anything else (source files like package.json when --web mistakenly points
+// at web/, dotfiles like .gitkeep / .npmrc, directory listings, nested
+// /assets/ paths, traversals normalised down to root, …) is rejected with
+// 404. The whitelist must be updated when build output gains a new
+// top-level artifact type.
+func allowedStaticPath(p string) bool {
+	switch p {
+	case "/", "/index.html",
+		"/login.html", "/signup.html", "/settings.html",
+		"/admin/", "/admin/index.html",
+		"/sw.js", "/manifest.webmanifest",
+		"/icon.svg", "/icon.png":
+		return true
+	}
+	if rest, ok := strings.CutPrefix(p, "/assets/"); ok {
+		// Exactly one path segment past /assets/.
+		return rest != "" && !strings.ContainsAny(rest, "/")
+	}
+	if strings.HasPrefix(p, "/workbox-") && strings.HasSuffix(p, ".js") {
+		// /workbox-<hash>.js at root, no nested directories.
+		return !strings.ContainsAny(strings.TrimPrefix(p, "/"), "/")
+	}
+	return false
+}
+
 // newStaticHandler wraps http.FileServer to enforce a login redirect for the
 // root path when the request carries no valid cookie session. Subresources
 // (*.js, *.css, *.html, etc.) are served unconditionally so that login.html
@@ -479,6 +509,10 @@ func tokenHash(token string) string {
 func newStaticHandler(resolver *IdentityResolver, webFS fs.FS) http.Handler {
 	fileSrv := http.FileServer(http.FS(webFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowedStaticPath(r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			if resolver != nil {
 				p := resolver.Resolve(r)

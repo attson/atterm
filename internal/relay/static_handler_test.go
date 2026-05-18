@@ -13,14 +13,14 @@ import (
 
 // fakeWebFS returns an in-memory fs.FS that mimics what web-dist/
 // holds: an index.html, a login.html, an admin/index.html, plus one
-// admin subresource so the "ungated subresources" test has a target.
+// /assets/ bundle so the "ungated bundle" test has a target.
 func fakeWebFS(t *testing.T) fs.FS {
 	t.Helper()
 	return fstest.MapFS{
-		"index.html":       {Data: []byte("<html>home</html>")},
-		"admin/index.html": {Data: []byte("<html>admin</html>")},
-		"admin/admin.js":   {Data: []byte("/* admin */")},
-		"login.html":       {Data: []byte("<html>login</html>")},
+		"index.html":         {Data: []byte("<html>home</html>")},
+		"admin/index.html":   {Data: []byte("<html>admin</html>")},
+		"assets/admin-fake.js": {Data: []byte("/* admin */")},
+		"login.html":         {Data: []byte("<html>login</html>")},
 	}
 }
 
@@ -87,19 +87,20 @@ func TestStaticHandler_AdminGate_AdminServesPage(t *testing.T) {
 	}
 }
 
-func TestStaticHandler_AdminSubresources_NotGated(t *testing.T) {
+func TestStaticHandler_AssetsBundle_NotGated(t *testing.T) {
 	fsys := fakeWebFS(t)
 	store, _ := userstore.Open(context.Background(), ":memory:")
 	defer store.Close()
 	resolver := NewIdentityResolver(store)
 	handler := newStaticHandler(resolver, fsys)
 
-	// No cookie — anonymous request.
-	req := httptest.NewRequest(http.MethodGet, "/admin/admin.js", nil)
+	// No cookie — anonymous request. Post-Vue-rewrite, admin code is part of
+	// the shared /assets/<hash>.js bundle, not under /admin/.
+	req := httptest.NewRequest(http.MethodGet, "/assets/admin-fake.js", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Errorf("admin subresource status=%d; want 200 (static skeleton is fine to serve to anyone; API endpoints are the real auth boundary)", rec.Code)
+		t.Errorf("assets bundle status=%d; want 200 (static skeleton is fine to serve to anyone; API endpoints are the real auth boundary)", rec.Code)
 	}
 }
 

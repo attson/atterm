@@ -91,3 +91,17 @@ export interface AdminConfigUpdate {
 export interface ResetPasswordResponse {
   plaintext: string
 }
+
+export interface SessionInfo {
+  id: string
+  command: string
+  cwd: string
+  title: string
+  cols: number
+  rows: number
+  started_at: number  // unix ms (Go side emits int64 ms)
+  host_id: string
+  host: string
+  user: string
+  remote_permission?: string  // "view" | "control" | "full" (server omits when "full")
+}

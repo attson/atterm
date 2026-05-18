@@ -1,0 +1,89 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { defineComponent, h } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
+import { NMessageProvider } from 'naive-ui'
+
+vi.mock('@shared/api/admin', () => ({
+  getAdminConfig: vi.fn(),
+  setAdminConfig: vi.fn(),
+}))
+
+import Config from '@/admin/tabs/Config.vue'
+import { getAdminConfig, setAdminConfig } from '@shared/api/admin'
+
+function mountWithProvider() {
+  const Wrapper = defineComponent({
+    render() {
+      return h(NMessageProvider, null, { default: () => h(Config) })
+    },
+  })
+  return mount(Wrapper, { attachTo: document.body })
+}
+
+describe('Config.vue', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    vi.clearAllMocks()
+  })
+
+  it('loads and shows the effective fallback when stored values are 0', async () => {
+    ;(getAdminConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rate_limit_per_minute: 0,
+      max_connections_per_key: 0,
+      default_rate_limit_per_minute: 120,
+      default_max_connections_per_key: 16,
+      version: 'v0.1.79',
+    })
+    const wrapper = mountWithProvider()
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('effective: 120')
+    expect(text).toContain('effective: 16')
+    expect(text).toContain('v0.1.79')
+  })
+
+  it('PUTs the new values on save', async () => {
+    ;(getAdminConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rate_limit_per_minute: 0,
+      max_connections_per_key: 0,
+      default_rate_limit_per_minute: 120,
+      default_max_connections_per_key: 16,
+      version: 'v0.1.79',
+    })
+    ;(setAdminConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rate_limit_per_minute: 240,
+      max_connections_per_key: 32,
+      default_rate_limit_per_minute: 120,
+      default_max_connections_per_key: 16,
+      version: 'v0.1.79',
+    })
+    const wrapper = mountWithProvider()
+    await flushPromises()
+
+    await wrapper.find('[data-testid="cfg-rate"]').setValue('240')
+    await wrapper.find('[data-testid="cfg-conn"]').setValue('32')
+    await wrapper.find('[data-testid="cfg-save"]').trigger('click')
+    await flushPromises()
+
+    expect(setAdminConfig).toHaveBeenCalledWith({
+      rate_limit_per_minute: 240,
+      max_connections_per_key: 32,
+    })
+  })
+
+  it('negative values disable the limit entirely (effective: disabled)', async () => {
+    ;(getAdminConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rate_limit_per_minute: -1,
+      max_connections_per_key: -1,
+      default_rate_limit_per_minute: 120,
+      default_max_connections_per_key: 16,
+      version: 'v0.1.79',
+    })
+    const wrapper = mountWithProvider()
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('effective: disabled')
+  })
+})

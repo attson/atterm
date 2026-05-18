@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { defineComponent, h } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NMessageProvider } from 'naive-ui'
 
 vi.mock('@shared/api/sessions', () => ({
   listSessions: vi.fn(),
@@ -9,18 +7,6 @@ vi.mock('@shared/api/sessions', () => ({
 
 import SessionList from '@/main/components/SessionList.vue'
 import { listSessions } from '@shared/api/sessions'
-
-// useMessage() inside SessionList.vue requires an outer <n-message-provider />.
-// Wrap each mount in a thin host that supplies one.
-function mountWithProvider() {
-  const Host = defineComponent({
-    name: 'TestHost',
-    setup() {
-      return () => h(NMessageProvider, null, { default: () => h(SessionList) })
-    },
-  })
-  return mount(Host, { attachTo: document.body })
-}
 
 describe('SessionList.vue', () => {
   beforeEach(() => {
@@ -35,7 +21,7 @@ describe('SessionList.vue', () => {
 
   it('shows empty-state when no sessions', async () => {
     ;(listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    const wrapper = mountWithProvider()
+    const wrapper = mount(SessionList, { attachTo: document.body })
     await flushPromises()
 
     expect(wrapper.text()).toMatch(/no live sessions/i)
@@ -47,7 +33,7 @@ describe('SessionList.vue', () => {
       { id: '22222222-3333-4444-5555-666666666666', command: 'zsh',  cwd: '/h/b', title: '', cols: 80, rows: 24, started_at: 0, host_id: 'h1', host: 'laptop', user: 'me' },
       { id: '33333333-4444-5555-6666-777777777777', command: 'fish', cwd: '/h/c', title: '', cols: 80, rows: 24, started_at: 0, host_id: 'h2', host: 'desktop', user: 'me' },
     ])
-    const wrapper = mountWithProvider()
+    const wrapper = mount(SessionList, { attachTo: document.body })
     await flushPromises()
 
     const text = wrapper.text()
@@ -62,20 +48,19 @@ describe('SessionList.vue', () => {
     ;(listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: '11111111-2222-3333-4444-555555555555', command: 'bash', cwd: '/h', title: '', cols: 80, rows: 24, started_at: 0, host_id: 'h1', host: 'laptop', user: 'me' },
     ])
-    const wrapper = mountWithProvider()
+    const wrapper = mount(SessionList, { attachTo: document.body })
     await flushPromises()
 
     await wrapper.find('[data-testid="session-card-11111111-2222-3333-4444-555555555555"]').trigger('click')
 
-    const list = wrapper.findComponent(SessionList)
-    const events = list.emitted('navigate')
+    const events = wrapper.emitted('navigate')
     expect(events).toBeTruthy()
     expect(events![0]).toEqual(['11111111-2222-3333-4444-555555555555'])
   })
 
   it('refreshes every 2 seconds while mounted', async () => {
     ;(listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    const wrapper = mountWithProvider()
+    const wrapper = mount(SessionList, { attachTo: document.body })
     await flushPromises()
     expect(listSessions).toHaveBeenCalledTimes(1)
 

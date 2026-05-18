@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { NCard, NButton, NTag, useMessage } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { listSessions } from '@shared/api/sessions'
 import type { SessionInfo } from '@shared/api/types'
@@ -15,7 +15,6 @@ const rows = ref<SessionInfo[]>([])
 const loading = ref(true)
 const errorMsg = ref('')
 let pollHandle: ReturnType<typeof setInterval> | null = null
-const message = useMessage()
 
 async function reload() {
   try {

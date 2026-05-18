@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { defineComponent, h } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
-import { NMessageProvider } from 'naive-ui'
 
 const sessionConnectionInstances: any[] = []
 
@@ -28,13 +26,8 @@ vi.mock('@shared/ws/client-conn', () => {
 
 import TerminalView from '@/main/components/TerminalView.vue'
 
-function mountWithProvider(props: Record<string, unknown>) {
-  const Wrapper = defineComponent({
-    setup() {
-      return () => h(NMessageProvider, null, { default: () => h(TerminalView as any, props) })
-    },
-  })
-  return mount(Wrapper, { attachTo: document.body })
+function mountView(props: Record<string, unknown>) {
+  return mount(TerminalView as any, { props, attachTo: document.body })
 }
 
 describe('TerminalView.vue', () => {
@@ -45,7 +38,7 @@ describe('TerminalView.vue', () => {
   })
 
   it('creates a SessionConnection for the sessionId prop and attaches', async () => {
-    const wrapper = mountWithProvider({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+    mountView({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
     await flushPromises()
 
     expect(sessionConnectionInstances.length).toBe(1)
@@ -54,7 +47,7 @@ describe('TerminalView.vue', () => {
   })
 
   it('reflects status changes from SessionConnection onStatus handler', async () => {
-    const wrapper = mountWithProvider({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+    const wrapper = mountView({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
     await flushPromises()
     const conn = sessionConnectionInstances[0]!
 
@@ -68,7 +61,7 @@ describe('TerminalView.vue', () => {
   })
 
   it('shows replay-progress overlay while replay is in flight, hides on end', async () => {
-    const wrapper = mountWithProvider({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+    const wrapper = mountView({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
     await flushPromises()
     const conn = sessionConnectionInstances[0]!
 
@@ -82,7 +75,7 @@ describe('TerminalView.vue', () => {
   })
 
   it('detaches on unmount', async () => {
-    const wrapper = mountWithProvider({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+    const wrapper = mountView({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
     await flushPromises()
     const conn = sessionConnectionInstances[0]!
 

@@ -5,9 +5,11 @@ import { fileURLToPath, URL } from 'node:url'
 const RELAY_HTTP = 'http://127.0.0.1:8080'
 const RELAY_WS = 'ws://127.0.0.1:8080'
 
-// PR-B introduces the first real entries (login + signup). Index,
-// settings, admin are still served from web/legacy/ via build-web.sh
-// layer 1; they migrate in PR-C, PR-D, PR-E.
+// PR-E introduces the terminal home (index) entry — the last entry to
+// migrate. All five MPA entries are now Vue 3 + Naive UI. Legacy admin
+// + settings + login/signup/index all served from web/legacy/ are
+// fully replaced; PR-F handles cutover (icons → public/, sw via
+// vite-plugin-pwa, legacy/ removal).
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -34,10 +36,11 @@ export default defineConfig({
     assetsInlineLimit: 0,
     rollupOptions: {
       input: {
-        login:    fileURLToPath(new URL('./login.html',        import.meta.url)),
-        signup:   fileURLToPath(new URL('./signup.html',       import.meta.url)),
-        settings: fileURLToPath(new URL('./settings.html',     import.meta.url)),
-        admin:    fileURLToPath(new URL('./admin/index.html',  import.meta.url)),
+        index:    fileURLToPath(new URL('./index.html',           import.meta.url)),
+        login:    fileURLToPath(new URL('./login.html',           import.meta.url)),
+        signup:   fileURLToPath(new URL('./signup.html',          import.meta.url)),
+        settings: fileURLToPath(new URL('./settings.html',        import.meta.url)),
+        admin:    fileURLToPath(new URL('./admin/index.html',     import.meta.url)),
       },
     },
   },

@@ -314,8 +314,9 @@ func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]interface{}{
-		"user_id": user.ID,
-		"email":   user.Email,
+		"user_id":  user.ID,
+		"email":    user.Email,
+		"is_admin": user.IsAdmin,
 	}
 
 	// Only derive CSRF token when user authenticated via cookie (CSRFSecret set).

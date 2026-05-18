@@ -94,7 +94,7 @@ onMounted(load)
           <span class="muted">{{ connEffective }}</span>
         </n-space>
       </n-form-item>
-      <n-space>
+      <n-space class="actions" align="center">
         <n-button
           type="primary"
           :loading="saving"
@@ -114,6 +114,7 @@ onMounted(load)
 <style scoped>
 .hint { color: var(--fg-dim); font-size: 0.875rem; margin: 0 0 1rem; }
 .muted { color: var(--fg-dim); font-size: 0.875rem; }
+.actions { margin-top: 1rem; }
 .version code { color: var(--fg); }
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
 </style>

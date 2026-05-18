@@ -71,7 +71,6 @@ const overrides = getNaiveOverrides()
   max-width: 980px;
   margin: 0 auto;
   padding: 2rem 1rem;
-  background: var(--bg);
   color: var(--fg);
   min-height: calc(100vh - 80px);
 }

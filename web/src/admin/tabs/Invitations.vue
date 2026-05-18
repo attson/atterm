@@ -6,6 +6,7 @@ import {
   NSpace,
   NInput,
   NInputNumber,
+  NDatePicker,
   NButton,
   NAlert,
   NTag,
@@ -21,7 +22,7 @@ const loading = ref(true)
 const submitting = ref(false)
 const noteInput = ref('')
 const countInput = ref<number>(1)
-const expiresInput = ref('')
+const expiresInput = ref<number | null>(null)
 const newSecrets = ref<InvitationCreated[]>([])
 const message = useMessage()
 
@@ -29,7 +30,7 @@ const message = useMessage()
 // for the test-only hooks. Keeps the markup identical at runtime.
 const noteInputProps = { 'data-testid': 'invite-note', autocomplete: 'off' } as any
 const countInputProps = { 'data-testid': 'invite-count' } as any
-const expiresInputProps = { type: 'datetime-local', 'data-testid': 'invite-expires' } as any
+const expiresPickerProps = { 'data-testid': 'invite-expires' } as any
 
 function fmt(iso: string | undefined): string {
   if (!iso) return ''
@@ -75,14 +76,14 @@ async function onCreate(e: Event) {
     const note = noteInput.value.trim()
     const req: { count: number; note?: string; expires_at?: string } = { count }
     if (note) req.note = note
-    if (expiresInput.value) {
-      // datetime-local control gives "YYYY-MM-DDTHH:mm"; pad to ISO with Z.
+    if (expiresInput.value != null) {
+      // n-date-picker (type=datetime) emits a unix ms timestamp.
       req.expires_at = new Date(expiresInput.value).toISOString()
     }
     const created = await createInvitation(req)
     newSecrets.value = created
     noteInput.value = ''
-    expiresInput.value = ''
+    expiresInput.value = null
     countInput.value = 1
     await reload()
   } catch (err) {
@@ -119,11 +120,12 @@ onMounted(reload)
         </div>
         <div class="field">
           <label class="field-label">Expires</label>
-          <n-input
+          <n-date-picker
             v-model:value="expiresInput"
-            type="text"
-            placeholder="YYYY-MM-DDTHH:mm"
-            :input-props="expiresInputProps"
+            type="datetime"
+            clearable
+            placeholder="optional"
+            :input-props="expiresPickerProps"
           />
         </div>
         <n-button type="primary" attr-type="submit" :loading="submitting" :disabled="submitting">

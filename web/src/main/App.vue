@@ -69,11 +69,11 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
       <Topbar active="home" />
       <InstallHint v-if="!inSession" />
 
-      <div class="page-bar">
-        <n-button v-if="inSession" size="small" tertiary aria-label="Back to sessions" @click="onBack">
+      <div v-if="inSession" class="page-bar">
+        <n-button size="small" tertiary aria-label="Back to sessions" @click="onBack">
           ← back
         </n-button>
-        <div class="subtitle">{{ inSession ? 'terminal' : 'active sessions' }}</div>
+        <div class="subtitle">terminal</div>
       </div>
 
       <main class="home-main">
@@ -102,12 +102,12 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
 
 <style scoped>
 .page-bar {
+  max-width: 980px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 0.5rem 1rem;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  padding: 1rem 1rem 0;
   color: var(--fg-dim);
   font-size: 0.875rem;
 }

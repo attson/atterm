@@ -17,7 +17,7 @@ import {
 import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
-import { broadcastCommandFinished, getHostInfo, showNotification } from "../lib/api";
+import { broadcastCommandFinished, getHostInfo, getWebglRendererEnabled, showNotification } from "../lib/api";
 
 const props = withDefaults(
   defineProps<{
@@ -244,7 +244,7 @@ function safeFit() {
   }
 }
 
-function ensureTerm() {
+async function ensureTerm() {
   if (term) return;
   term = new Terminal({
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
@@ -263,12 +263,29 @@ function ensureTerm() {
   // Claude Code repaint dense RGB diff blocks). Load after open() so the
   // WebGL context attaches to the live <canvas>; fall back to DOM on
   // construction failure or runtime context loss.
+  //
+  // Disabled by default on Linux because NVIDIA proprietary + X11 +
+  // WebKitGTK schedules the cursor / last-cell paint a frame or two late,
+  // which surfaces as visible typing lag even though CPU stays idle (#48).
+  // Users on AMD/Intel or who run light-themed dense-TUI workloads can
+  // re-enable WebGL from Settings.
+  let webglEnabled = true;
   try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
-    term.loadAddon(webgl);
-  } catch (err) {
-    console.warn("[AT Term] WebGL renderer unavailable, falling back to DOM", err);
+    webglEnabled = await getWebglRendererEnabled();
+  } catch {
+    // Wails binding unavailable (e.g. test or pre-init): keep WebGL off
+    // so the bug-affected platform stays smooth by default. The user can
+    // opt back in from Settings once the binding is reachable.
+    webglEnabled = false;
+  }
+  if (webglEnabled) {
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch (err) {
+      console.warn("[AT Term] WebGL renderer unavailable, falling back to DOM", err);
+    }
   }
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
@@ -389,7 +406,7 @@ function startConnection() {
 }
 
 onMounted(async () => {
-  ensureTerm();
+  await ensureTerm();
   // Resolve the local hostname before opening the WS so the very first ATTACH
   // carries the correct client_name. Failure (e.g. Wails not ready in tests
   // or a future browser-only build) falls back to the default in connection.ts.

@@ -4,9 +4,11 @@ import {
   getCommandNotifyThresholdSeconds,
   getNotificationsEnabled,
   getShellIntegrationEnabled,
+  getWebglRendererEnabled,
   setCommandNotifyThresholdSeconds,
   setNotificationsEnabled,
   setShellIntegrationEnabled,
+  setWebglRendererEnabled,
   setTerminalThemePreference,
 } from "../lib/api";
 import { TERMINAL_THEMES, getTerminalTheme } from "../lib/terminalThemes";
@@ -38,6 +40,8 @@ const notificationsEnabled = ref(true);
 const notificationsLoading = ref(true);
 const shellIntegrationEnabled = ref(true);
 const shellIntegrationLoading = ref(true);
+const webglRendererEnabled = ref(true);
+const webglRendererLoading = ref(true);
 const commandNotifyThresholdSec = ref(10);
 const commandNotifyThresholdLoading = ref(true);
 
@@ -55,6 +59,13 @@ onMounted(async () => {
     error.value = e?.message ?? String(e);
   } finally {
     shellIntegrationLoading.value = false;
+  }
+  try {
+    webglRendererEnabled.value = await getWebglRendererEnabled();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    webglRendererLoading.value = false;
   }
   try {
     commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
@@ -87,6 +98,19 @@ async function onShellIntegrationToggle(e: Event) {
     await setShellIntegrationEnabled(target.checked);
   } catch (e: any) {
     shellIntegrationEnabled.value = previous;
+    error.value = e?.message ?? String(e);
+  }
+}
+
+async function onWebglRendererToggle(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previous = webglRendererEnabled.value;
+  webglRendererEnabled.value = target.checked;
+  error.value = "";
+  try {
+    await setWebglRendererEnabled(target.checked);
+  } catch (e: any) {
+    webglRendererEnabled.value = previous;
     error.value = e?.message ?? String(e);
   }
 }
@@ -166,6 +190,21 @@ async function onChange() {
     <p class="hint" v-if="!shellIntegrationLoading">
       Injects OSC 133 hooks into zsh / bash / fish / pwsh at session start so we can
       detect when a command finishes. Only affects new sessions.
+    </p>
+
+    <label class="checkbox" v-if="!webglRendererLoading">
+      <input
+        type="checkbox"
+        :checked="webglRendererEnabled"
+        @change="onWebglRendererToggle"
+      />
+      Use WebGL terminal renderer
+    </label>
+    <p class="hint" v-if="!webglRendererLoading">
+      GPU-rasterized rendering keeps light themes free of cell ghosting on dense
+      TUI output. Off by default on Linux because NVIDIA proprietary + X11 +
+      WebKitGTK paint the cursor / last cell a frame late, which surfaces as
+      visible typing lag. Affects new terminal sessions only.
     </p>
 
     <label class="field-label" v-if="!commandNotifyThresholdLoading">

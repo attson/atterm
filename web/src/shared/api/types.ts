@@ -42,3 +42,52 @@ export interface SessionRow {
 export interface SignOutOthersResponse {
   deleted: number
 }
+
+export interface AdminUserRow {
+  id: string
+  email: string
+  created_at: string
+  disabled_at?: string
+  is_admin: boolean
+}
+
+export interface InvitationRow {
+  code_prefix: string
+  note: string
+  created_at: string
+  expires_at?: string
+  consumed_at?: string
+  consumed_by?: string
+}
+
+export interface InvitationCreated {
+  plaintext: string
+  code_prefix: string
+  note: string
+  expires_at?: string
+  created_at: string
+}
+
+// /admin/api/invitations returns InvitationCreated when count == 1 and
+// {invites: InvitationCreated[]} when count > 1. The helper normalises
+// both shapes into an InvitationCreated[].
+export interface InvitationCreateBatchResponse {
+  invites: InvitationCreated[]
+}
+
+export interface AdminConfig {
+  rate_limit_per_minute: number
+  max_connections_per_key: number
+  default_rate_limit_per_minute: number
+  default_max_connections_per_key: number
+  version: string
+}
+
+export interface AdminConfigUpdate {
+  rate_limit_per_minute: number
+  max_connections_per_key: number
+}
+
+export interface ResetPasswordResponse {
+  plaintext: string
+}

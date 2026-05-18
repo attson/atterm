@@ -38,7 +38,7 @@ async function onSubmit(e: Event) {
 </script>
 
 <template>
-  <n-card title="Change Password" :bordered="false">
+  <n-card :bordered="false">
     <form @submit="onSubmit" autocomplete="off" novalidate>
       <n-form label-placement="top" require-mark-placement="right-hanging">
         <n-form-item label="Current password" :show-feedback="false">

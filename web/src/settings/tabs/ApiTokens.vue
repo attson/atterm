@@ -89,7 +89,7 @@ onMounted(reload)
 </script>
 
 <template>
-  <n-card title="API Tokens" :bordered="false">
+  <n-card :bordered="false">
     <n-alert v-if="plaintext" type="success" :show-icon="false" class="plaintext-alert">
       <div class="plaintext-msg">Copy this token now — it will not be shown again.</div>
       <code class="plaintext-display">{{ plaintext }}</code>

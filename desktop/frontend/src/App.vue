@@ -809,7 +809,6 @@ onUnmounted(() => {
             :active="t.id === currentTabId"
             :terminal-theme="currentTerminalTheme.xtermTheme"
             :command-notify-threshold-sec="commandNotifyThresholdSec"
-            :plugin-context="pluginContext"
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
             @close-pane="(idx) => closePaneAt(t, idx)"
             @toast="showToast"
@@ -828,8 +827,14 @@ onUnmounted(() => {
         </template>
       </template>
     </div>
-    <!-- Bottom-toolbar plugins (Quick Input) live inside each active pane via
-         PaneGrid so they sit right next to the pane that receives their input. -->
+    <!-- Bottom-toolbar plugins (Quick Input) live at the app root so a single
+         instance persists across tab/pane switches. They target the active
+         pane via pluginContext.activePane (a reactive ref). -->
+    <PluginHost
+      slot-id="bottom-toolbar"
+      :context="pluginContext"
+      class="bottom-toolbar"
+    />
 
     <SettingsDialog
       v-if="showSettings"
@@ -950,10 +955,10 @@ onUnmounted(() => {
   display: none;
 }
 .bottom-toolbar {
-  flex: 0 0 32px;
-  height: 32px;
-  background: var(--ed-tab-bg, transparent);
-  border-top: 1px solid var(--ed-border, #2d333b);
+  flex: 0 0 24px;
+  height: 24px;
+  background: var(--ed-tab-bg, var(--terminal-bg));
+  border-top: 1px solid var(--ed-border, rgba(255, 255, 255, 0.08));
 }
 .empty {
   position: absolute; inset: 0; display: flex; align-items: center;

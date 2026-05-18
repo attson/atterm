@@ -93,7 +93,6 @@ onMounted(refreshState)
 
 <template>
   <section class="notifications-tab">
-    <h2>Push notifications</h2>
     <p v-if="!supported" class="hint">This browser does not support service workers; push notifications are unavailable.</p>
 
     <p v-else data-testid="push-status" class="status">
@@ -128,7 +127,6 @@ onMounted(refreshState)
 
 <style scoped>
 .notifications-tab { display: flex; flex-direction: column; gap: 1rem; color: var(--fg); }
-.notifications-tab h2 { margin: 0; font-size: 1.125rem; }
 .status { color: var(--fg-dim); margin: 0; }
 .status strong { color: var(--fg); }
 .actions { margin-top: 0.5rem; }

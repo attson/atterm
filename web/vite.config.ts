@@ -1,17 +1,48 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
 const RELAY_HTTP = 'http://127.0.0.1:8080'
 const RELAY_WS = 'ws://127.0.0.1:8080'
 
-// PR-E introduces the terminal home (index) entry — the last entry to
-// migrate. All five MPA entries are now Vue 3 + Naive UI. Legacy admin
-// + settings + login/signup/index all served from web/legacy/ are
-// fully replaced; PR-F handles cutover (icons → public/, sw via
-// vite-plugin-pwa, legacy/ removal).
+// All five MPA entries are Vue 3 + Naive UI. vite-plugin-pwa generates
+// the service worker and manifest; runtime caching is disabled per Sec-5
+// (static-only precache) and navigateFallback is null because this is an
+// MPA, not an SPA.
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    VitePWA({
+      strategies: 'generateSW',
+      registerType: 'autoUpdate',
+      injectRegister: null,
+      includeAssets: ['icon.svg', 'icon.png'],
+      manifest: {
+        name: 'AT Term',
+        short_name: 'AT Term',
+        description: 'Attach to AT Term sessions from your phone.',
+        start_url: '.',
+        scope: '.',
+        display: 'standalone',
+        background_color: '#05070d',
+        theme_color: '#0b1020',
+        icons: [
+          { src: 'icon.png', sizes: '1024x1024', type: 'image/png', purpose: 'any maskable' },
+          { src: 'icon.svg', sizes: 'any',       type: 'image/svg+xml', purpose: 'any' },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        runtimeCaching: [],
+        navigateFallback: null,
+        cleanupOutdatedCaches: true,
+      },
+      devOptions: {
+        enabled: false,
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),

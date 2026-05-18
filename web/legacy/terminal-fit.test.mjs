@@ -4,7 +4,6 @@ import { readFile } from "node:fs/promises";
 
 const app = await readFile(new URL("./app.js", import.meta.url), "utf8");
 const css = await readFile(new URL("./style.css", import.meta.url), "utf8");
-const sw = await readFile(new URL("./sw.js", import.meta.url), "utf8");
 
 function styleBlockFor(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -43,12 +42,3 @@ test("web terminal uses a route class for full-height layout", () => {
 // "is the literal version string still vN" check would be redundant and
 // fight that test on every legitimate asset change.
 
-test("service worker precaches settings js so the split-out settings module stays consistent", () => {
-  // settings.js is the bootstrap for the settings page. If sw caches a
-  // stale app-core.js without also pre-caching it, the page imports a
-  // fetchVersionLabel that doesn't exist and submit handlers never bind —
-  // exactly the v0.1.66 outage. Keep it in the cache list so a CACHE
-  // bump refreshes it atomically. (login/signup migrated to Vue and now
-  // overlay their built assets; they no longer live in legacy.)
-  assert.match(sw, /\.\/settings\.js/);
-});

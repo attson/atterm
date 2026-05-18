@@ -109,9 +109,11 @@ onUnmounted(() => {
 
 <style scoped>
 .session-list {
+  width: 100%;
   max-width: 980px;
   margin: 0 auto;
   padding: 2rem 1rem;
+  box-sizing: border-box;
   color: var(--fg);
 }
 .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
@@ -120,8 +122,13 @@ onUnmounted(() => {
 .host-group header { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
 .hostname { font-weight: 600; color: var(--fg); }
 .count { color: var(--fg-dim); font-size: 0.875rem; margin-left: auto; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.75rem; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
 .card {
+  min-width: 0;
   background: var(--panel);
   color: var(--fg);
   border: 1px solid var(--border);

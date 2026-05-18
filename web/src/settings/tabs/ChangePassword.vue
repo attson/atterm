@@ -39,8 +39,13 @@ async function onSubmit(e: Event) {
 
 <template>
   <n-card :bordered="false">
-    <form @submit="onSubmit" autocomplete="off" novalidate>
-      <n-form label-placement="top" require-mark-placement="right-hanging">
+    <n-form
+      label-placement="top"
+      require-mark-placement="right-hanging"
+      autocomplete="off"
+      novalidate
+      @submit="onSubmit"
+    >
         <n-form-item label="Current password" :show-feedback="false">
           <n-input
             v-model:value="current"
@@ -58,6 +63,7 @@ async function onSubmit(e: Event) {
           />
         </n-form-item>
         <n-button
+          class="submit-btn"
           type="primary"
           attr-type="submit"
           :loading="submitting"
@@ -66,11 +72,11 @@ async function onSubmit(e: Event) {
           Update password
         </n-button>
         <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>
-      </n-form>
-    </form>
+    </n-form>
   </n-card>
 </template>
 
 <style scoped>
+.submit-btn { margin-top: 1rem; }
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
 </style>

@@ -62,9 +62,14 @@ const overrides = getNaiveOverrides()
             <h1>AT Term</h1>
             <p class="auth-subtitle">sign in</p>
           </header>
-          <form @submit="onSubmit" autocomplete="on" novalidate>
-            <n-form label-placement="top" require-mark-placement="right-hanging">
-              <n-form-item label="Email" :show-feedback="false">
+          <n-form
+            label-placement="top"
+            require-mark-placement="right-hanging"
+            autocomplete="on"
+            novalidate
+            @submit="onSubmit"
+          >
+            <n-form-item label="Email" :show-feedback="false">
                 <n-input
                   v-model:value="email"
                   type="text"
@@ -81,6 +86,7 @@ const overrides = getNaiveOverrides()
                 />
               </n-form-item>
               <n-button
+                class="submit-btn"
                 type="primary"
                 attr-type="submit"
                 :loading="submitting"
@@ -94,8 +100,7 @@ const overrides = getNaiveOverrides()
                 Have an invite code?
                 <a href="/signup.html">Sign up here</a>.
               </p>
-            </n-form>
-          </form>
+          </n-form>
         </n-card>
         <p class="auth-version">{{ versionLabel }}</p>
       </main>
@@ -135,6 +140,7 @@ const overrides = getNaiveOverrides()
   text-transform: lowercase;
   letter-spacing: 0.1em;
 }
+.submit-btn { margin-top: 1rem; }
 .auth-error {
   color: var(--bad);
   margin: 0.75rem 0 0;

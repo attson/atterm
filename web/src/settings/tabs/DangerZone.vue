@@ -48,8 +48,13 @@ function onSubmit(e: Event) {
       sessions, and account data are removed. Invitations you've consumed
       stay (their "consumed by" field is cleared).
     </p>
-    <form @submit="onSubmit" autocomplete="off" novalidate>
-      <n-form label-placement="top" require-mark-placement="right-hanging">
+    <n-form
+      label-placement="top"
+      require-mark-placement="right-hanging"
+      autocomplete="off"
+      novalidate
+      @submit="onSubmit"
+    >
         <n-form-item label="Confirm by typing your full email" :show-feedback="false">
           <n-input
             v-model:value="email"
@@ -68,6 +73,7 @@ function onSubmit(e: Event) {
         <n-popconfirm @positive-click="performDelete">
           <template #trigger>
             <n-button
+              class="submit-btn"
               type="error"
               attr-type="button"
               :loading="submitting"
@@ -80,11 +86,11 @@ function onSubmit(e: Event) {
           Permanently delete this account? This cannot be undone.
         </n-popconfirm>
         <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>
-      </n-form>
-    </form>
+    </n-form>
   </n-card>
 </template>
 
 <style scoped>
+.submit-btn { margin-top: 1rem; }
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
 </style>

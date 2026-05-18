@@ -45,12 +45,12 @@
 
 /* Base html/body reset. Without this, the viewport gutters fall back to the
    browser default white because Vue components only paint --bg inside their
-   own scoped containers (e.g. .settings-page max-width 720px). */
+   own scoped containers (e.g. .settings-page max-width 980px). */
 html, body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background: radial-gradient(circle at top left, #172554 0, var(--bg) 42%);
+  background: var(--bg);
   color: var(--fg);
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overscroll-behavior: none;

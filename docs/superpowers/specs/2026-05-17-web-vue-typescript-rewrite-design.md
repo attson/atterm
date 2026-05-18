@@ -125,8 +125,8 @@ No Pinia. Each app has tightly-scoped state managed with `ref`/`reactive` + comp
 
 `apiFetch<T>(path, init)` in `src/shared/api/client.ts`:
 
-- `credentials: 'include'`; JSON content-type by default
-- Injects `X-Atterm-CSRF` header when the cookie has it
+- `credentials: 'same-origin'`; JSON content-type by default
+- Injects `X-CSRF-Token` header on non-GET/HEAD requests when the in-memory CSRF cache is populated (see Sec-4 for the cache lifecycle)
 - 401 + current page is not `/login.html` or `/signup.html` → `window.location.assign('/login.html?next=' + encodeURIComponent(safeNext(location.pathname + location.search)))` (see Sec-2 for `safeNext`)
 - 403 → throws `ApiError`; component decides UI (admin tabs use this to hide controls)
 - 5xx / network → throws `ApiError`; component surfaces via Naive UI `useMessage()`
@@ -134,7 +134,7 @@ No Pinia. Each app has tightly-scoped state managed with `ref`/`reactive` + comp
 
 DTO types in `src/shared/api/types.ts` are hand-mirrored from `internal/relay/*_http.go`. No OpenAPI codegen — repo is small enough that drift is caught by integration usage and unit tests.
 
-Cookie + CSRF flow is unchanged: relay still issues the session cookie (HttpOnly) and a separate non-HttpOnly CSRF cookie. Frontend reads the CSRF cookie value into a header (double-submit pattern, Sec-4); never reads, stores, or transmits the session cookie itself.
+CSRF flow inherits the existing relay design: server-issued `atterm_session` cookie is `HttpOnly` and never reachable from JS; the CSRF token is derived from the session and returned in the body of `GET /api/me`. Frontend reads `j.csrf_token` and caches it in a module-level singleton inside `client.ts`; every state-changing request (POST/PUT/PATCH/DELETE) sets `X-CSRF-Token: <cached>`. Login and signup endpoints are public (no CSRF) per `internal/relay/auth_http.go:51`; after a successful login the client immediately calls `getMe()` to populate the cache. Logout clears the cache.
 
 ### WebSocket / proto
 
@@ -318,14 +318,18 @@ Both the `apiFetch` 401 handler that *sets* `next` and the post-login redirect t
 
 `/client` WS handshake authenticates via cookie. Cross-Site WebSocket Hijacking is closed off at the relay layer (`ATTERM_ORIGINS` enforcement, red-line 9). The web frontend does **not** implement additional Origin / referrer checks — server is authoritative. This is documented here so future readers don't double-implement or weaken the server check assuming the frontend covers it.
 
-### Sec-4 — CSRF: double-submit cookie
+### Sec-4 — CSRF: session-bound token, in-memory cache
 
-Two cookies are involved (existing relay behaviour, made explicit here):
+The relay's existing CSRF design (`internal/relay/auth_http.go`):
 
-- `atterm_session` (or current name): `HttpOnly; Secure; SameSite=Lax` — browser sends automatically; JS cannot read it.
-- `atterm_csrf`: **not** `HttpOnly`; `Secure; SameSite=Lax` — JS reads its value and copies it into the `X-Atterm-CSRF` header on every state-changing request.
+- `atterm_session` cookie: `HttpOnly; Secure; SameSite=Lax`. Browser sends automatically; JS cannot read it.
+- CSRF token is **derived** from the session cookie value + a server-side secret (`CSRFToken(sessionValue, csrfSecret)` in `identity.go`). It is **not** stored in a separate cookie. It is returned in the response body of `GET /api/me` as `csrf_token`.
+- Frontend reads `j.csrf_token` from the `/api/me` response and caches it in a module-level singleton inside `src/shared/api/client.ts` (e.g. `let cachedCsrf = ''`).
+- On every state-changing request (any method other than GET/HEAD), `apiFetch` sets `X-CSRF-Token: <cachedCsrf>` if the cache is populated.
+- After login or signup, `apiFetch` immediately invokes `getMe()` so the cache is populated before the next mutating request fires. Logout clears the cache (`cachedCsrf = ''`).
+- `client.test.ts` covers: header injected on POST/PUT/PATCH/DELETE when cache populated; absent on GET; absent before first `getMe()`; cleared on logout; never logs the token; never sends `?csrf=` in URL.
 
-`apiFetch` performs that copy. Server compares header vs cookie. `client.test.ts` covers: header injected when cookie present; absent when cookie missing; never logs the token; never sends `?csrf=` in URL.
+This is a stronger guarantee than double-submit cookie because an attacker must authenticate (read `/api/me`) before learning the token; a cross-site request from a logged-in victim cannot read the response body across origins thanks to CORS.
 
 ### Sec-5 — Service worker precache scope
 

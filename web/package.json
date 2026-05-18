@@ -8,7 +8,7 @@
     "dev": "vite",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:contract": "node --test tests/contract/*.mjs"
+    "test:contract": "node --test tests/contract/*.test.mjs"
   },
   "dependencies": {
     "naive-ui": "2.40.4",

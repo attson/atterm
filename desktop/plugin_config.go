@@ -11,6 +11,7 @@ import (
 type PluginConfig struct {
 	QuickInput   QuickInputConfig   `json:"quickInput"`
 	FileExplorer FileExplorerConfig `json:"fileExplorer"`
+	Translate    TranslateConfig    `json:"translate"`
 }
 
 type QuickInputConfig struct {
@@ -35,6 +36,26 @@ type FileExplorerConfig struct {
 	ShowLineNumbers bool    `json:"showLineNumbers"`
 }
 
+type TranslateConfig struct {
+	Enabled           bool   `json:"enabled"`
+	Provider          string `json:"provider"`           // currently only "openai-compatible"
+	BaseURL           string `json:"baseUrl"`            // e.g. "https://api.openai.com"
+	APIKey            string `json:"apiKey"`             // plaintext; same trust as other plugin config
+	Model             string `json:"model"`              // free-text; user picks per their endpoint
+	DefaultTargetLang string `json:"defaultTargetLang"`  // one of allowedTranslateTargetLangs
+}
+
+// allowedTranslateTargetLangs matches the TARGETS arrays in
+// desktop/frontend/src/plugins/translate/{TranslatePanel.vue, TranslateSettings.vue}.
+var allowedTranslateTargetLangs = map[string]bool{
+	"zh-CN": true, "en": true, "ja": true, "ko": true,
+	"de": true, "fr": true, "es": true,
+}
+
+var allowedTranslateProviders = map[string]bool{
+	"openai-compatible": true,
+}
+
 // applyDefaults fills empty-valued fields with their defaults. Safe to call
 // repeatedly. Note: empty Buttons slice triggers the default 3 buttons; if a
 // user explicitly emptied the buttons in config.json, applyDefaults will
@@ -50,6 +71,13 @@ func (c *PluginConfig) applyDefaults() {
 		c.FileExplorer.PanelCollapsed = false
 		c.FileExplorer.InnerTreeRatio = 0.3
 		c.FileExplorer.ShowHidden = false
+	}
+	if c.Translate.Provider == "" {
+		c.Translate.Enabled = false
+		c.Translate.Provider = "openai-compatible"
+		c.Translate.BaseURL = "https://api.openai.com"
+		c.Translate.Model = "gpt-4o-mini"
+		c.Translate.DefaultTargetLang = "zh-CN"
 	}
 }
 
@@ -88,6 +116,12 @@ func ValidatePluginConfig(c PluginConfig) error {
 	}
 	if c.FileExplorer.InnerTreeRatio < 0.15 || c.FileExplorer.InnerTreeRatio > 0.5 {
 		return errors.New("fileExplorer.innerTreeRatio out of bounds [0.15, 0.5]")
+	}
+	if !allowedTranslateProviders[c.Translate.Provider] {
+		return fmt.Errorf("translate.provider %q not allowed", c.Translate.Provider)
+	}
+	if !allowedTranslateTargetLangs[c.Translate.DefaultTargetLang] {
+		return fmt.Errorf("translate.defaultTargetLang %q not allowed", c.Translate.DefaultTargetLang)
 	}
 	return nil
 }

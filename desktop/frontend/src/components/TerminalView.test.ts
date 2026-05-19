@@ -1,6 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import source from "./TerminalView.vue?raw";
 import paneSource from "./PaneGrid.vue?raw";
+import { collectContextMenuItems } from "../plugins/contextMenuItems";
+import type { ContextMenuPlugin } from "../plugins/types";
 
 function styleBlockFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -201,5 +203,25 @@ describe("TerminalView OSC 133 command notifications", () => {
     // Must be inside the same `if (passed)` block as showNotification.
     const passedBlock = source.match(/if\s*\(\s*!\s*passed\s*\)[\s\S]*?return[\s\S]*?showNotification[\s\S]*?broadcastCommandFinished/);
     expect(passedBlock).not.toBeNull();
+  });
+});
+
+// This is a wiring-level test, not a full TerminalView mount. It asserts
+// that TerminalView's menu builder uses collectContextMenuItems with all
+// registered + enabled context-menu plugins.
+
+describe("TerminalView context-menu plugin merge", () => {
+  it("merges plugin items after hardcoded copy/paste/clear", async () => {
+    const fakePlugin: ContextMenuPlugin = {
+      getMenuItems: () => [{ id: "fake-1", label: "Fake item", onClick: vi.fn() }],
+    };
+    const hardcoded = [
+      { id: "copy", label: "Copy", onClick: vi.fn() },
+      { id: "paste", label: "Paste", onClick: vi.fn() },
+      { id: "clear", label: "Clear buffer", onClick: vi.fn() },
+    ];
+    const pluginItems = await collectContextMenuItems([fakePlugin], {} as never, "selection");
+    const merged = [...hardcoded, ...pluginItems];
+    expect(merged.map((i) => i.id)).toEqual(["copy", "paste", "clear", "fake-1"]);
   });
 });

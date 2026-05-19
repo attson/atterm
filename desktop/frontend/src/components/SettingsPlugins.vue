@@ -2,7 +2,9 @@
 import { onMounted } from "vue";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
+import type { PluginID } from "../plugins/types";
 import QuickInputSettings from "../plugins/quickInput/QuickInputSettings.vue";
+import TranslateSettings from "../plugins/translate/TranslateSettings.vue";
 
 const store = usePluginConfigStore();
 
@@ -10,7 +12,7 @@ onMounted(async () => {
   if (!store.cfg) await store.load();
 });
 
-async function toggle(id: "quick-input" | "file-explorer", enabled: boolean) {
+async function toggle(id: PluginID, enabled: boolean) {
   try {
     await store.setEnabled(id, enabled);
   } catch (err) {
@@ -65,6 +67,7 @@ async function toggleLineNumbers(v: boolean) {
           </label>
           <p class="muted">Panel width and inner ratio are adjusted by dragging in the panel.</p>
         </div>
+        <TranslateSettings v-if="p.id === 'translate' && store.isPluginEnabled('translate')" />
       </li>
       <li v-if="PLUGINS.length === 0" class="empty">No plugins registered.</li>
     </ul>

@@ -9,6 +9,7 @@ import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import PluginHost from "./plugins/PluginHost.vue";
+import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
 import { useResizer } from "./plugins/useResizer";
 import { usePluginConfigStore } from "./plugins/configStore";
@@ -241,6 +242,7 @@ const pluginContext = createPluginContext({
   showToast,
   terminalThemeId: currentTerminalThemeID,
 });
+provide("atterm:pluginContext", pluginContext);
 
 const pluginStore = usePluginConfigStore();
 
@@ -835,6 +837,7 @@ onUnmounted(() => {
       :context="pluginContext"
       class="bottom-toolbar"
     />
+    <TranslatePanelHost />
 
     <SettingsDialog
       v-if="showSettings"

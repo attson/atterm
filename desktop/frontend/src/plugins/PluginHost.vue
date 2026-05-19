@@ -27,8 +27,11 @@ async function reconcile() {
     const slotPlugins = descriptorsForSlot(props.slotId).filter((d) =>
       store.isPluginEnabled(d.id),
     );
+    // Context-menu plugins are headless — they expose getMenuItems instead
+    // of a Vue component and must not be mounted by this host.
+    const componentPlugins = slotPlugins.filter((d) => d.slot !== "context-menu");
     const next: LoadedPlugin[] = [];
-    for (const d of slotPlugins) {
+    for (const d of componentPlugins) {
       try {
         const mod = await d.load();
         next.push({ descriptor: d, component: mod.default });

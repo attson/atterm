@@ -16,7 +16,7 @@ const mountOptions = {
 };
 
 describe("TranslatePanel", () => {
-  beforeEach(() => setActivePinia(createPinia()));
+  beforeEach(() => { setActivePinia(createPinia()); });
 
   it("renders nothing when store.visible is false", () => {
     const w = mount(TranslatePanel, mountOptions);

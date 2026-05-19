@@ -17,8 +17,8 @@ function fakeProvider(): { provider: TranslateProvider; calls: Array<{ text: str
 }
 
 describe("translatePanelStore", () => {
-  beforeEach(() => setActivePinia(createPinia()));
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => { setActivePinia(createPinia()); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it("openWithSource sets state and dispatches translate", async () => {
     const { provider, calls } = fakeProvider();
@@ -95,7 +95,7 @@ describe("translatePanelStore", () => {
     await Promise.resolve();  // let the inner promise hook up
     await store.openWithSource("second");  // triggers abort on first
     await expect(first).resolves.toBeUndefined();
-    expect(abortedSignal?.aborted).toBe(true);
+    expect((abortedSignal as AbortSignal | null)?.aborted).toBe(true);
     expect(store.source).toBe("second");
   });
 

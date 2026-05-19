@@ -45,8 +45,8 @@ type TranslateConfig struct {
 	DefaultTargetLang string `json:"defaultTargetLang"`  // one of allowedTranslateTargetLangs
 }
 
-// allowedTranslateTargetLangs matches the dropdown in TranslateSettings.vue.
-// Keep in sync with desktop/frontend/src/plugins/translate/index.ts SUPPORTED_TARGETS.
+// allowedTranslateTargetLangs matches the TARGETS arrays in
+// desktop/frontend/src/plugins/translate/{TranslatePanel.vue, TranslateSettings.vue}.
 var allowedTranslateTargetLangs = map[string]bool{
 	"zh-CN": true, "en": true, "ja": true, "ko": true,
 	"de": true, "fr": true, "es": true,

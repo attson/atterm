@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { nextTick, ref, watch } from "vue";
 import type { LogPreview } from "../lib/api";
 
 const props = defineProps<{
@@ -11,6 +12,18 @@ const emit = defineEmits<{
   (e: "close"): void;
   (e: "refresh"): void;
 }>();
+
+// Logs are append-only and the user almost always wants the latest tail.
+// Auto-scroll the <pre> to the bottom whenever new content lands (mount
+// and every refresh). Keep it simple: always jump to bottom; if the user
+// wanted to read an older section they can refresh to come back here.
+const contentEl = ref<HTMLPreElement | null>(null);
+async function scrollToBottom() {
+  await nextTick();
+  const el = contentEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+watch(() => props.preview.content, () => { void scrollToBottom(); }, { immediate: true });
 
 async function copyContent() {
   await navigator.clipboard.writeText(props.preview.content);
@@ -34,7 +47,7 @@ async function copyContent() {
         <div v-if="props.preview.truncated" class="hint">
           showing the most recent portion of the log file.
         </div>
-        <pre class="content">{{ props.preview.content }}</pre>
+        <pre ref="contentEl" class="content">{{ props.preview.content }}</pre>
       </div>
 
       <div class="row">

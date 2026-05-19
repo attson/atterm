@@ -4,6 +4,7 @@ import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
 import type { PluginID } from "../plugins/types";
 import QuickInputSettings from "../plugins/quickInput/QuickInputSettings.vue";
+import TranslateSettings from "../plugins/translate/TranslateSettings.vue";
 
 const store = usePluginConfigStore();
 
@@ -66,6 +67,7 @@ async function toggleLineNumbers(v: boolean) {
           </label>
           <p class="muted">Panel width and inner ratio are adjusted by dragging in the panel.</p>
         </div>
+        <TranslateSettings v-if="p.id === 'translate' && store.isPluginEnabled('translate')" />
       </li>
       <li v-if="PLUGINS.length === 0" class="empty">No plugins registered.</li>
     </ul>

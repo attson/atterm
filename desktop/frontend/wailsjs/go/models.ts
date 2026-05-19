@@ -196,6 +196,28 @@ export namespace main {
 	        this.session_id = source["session_id"];
 	    }
 	}
+	export class TranslateConfig {
+	    enabled: boolean;
+	    provider: string;
+	    baseUrl: string;
+	    apiKey: string;
+	    model: string;
+	    defaultTargetLang: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TranslateConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.provider = source["provider"];
+	        this.baseUrl = source["baseUrl"];
+	        this.apiKey = source["apiKey"];
+	        this.model = source["model"];
+	        this.defaultTargetLang = source["defaultTargetLang"];
+	    }
+	}
 	export class QuickInputButton {
 	    id: string;
 	    label: string;
@@ -251,6 +273,7 @@ export namespace main {
 	export class PluginConfig {
 	    quickInput: QuickInputConfig;
 	    fileExplorer: FileExplorerConfig;
+	    translate: TranslateConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
@@ -260,6 +283,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.quickInput = this.convertValues(source["quickInput"], QuickInputConfig);
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);
+	        this.translate = this.convertValues(source["translate"], TranslateConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -318,6 +342,7 @@ export namespace main {
 	        this.email = source["email"];
 	    }
 	}
+	
 	export class UpdateState {
 	    current: string;
 	    latest: string;

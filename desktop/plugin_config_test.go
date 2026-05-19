@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +96,48 @@ func TestAppConfigEmbedsPluginConfig(t *testing.T) {
 	applyConfigDefaults(&c)
 	if len(c.Plugins.QuickInput.Buttons) != 3 {
 		t.Fatalf("plugin defaults not injected, got %+v", c.Plugins)
+	}
+}
+
+func TestPluginConfig_TranslateDefaults(t *testing.T) {
+	var c PluginConfig
+	c.applyDefaults()
+	if c.Translate.Provider != "openai-compatible" {
+		t.Fatalf("Translate.Provider default: got %q want %q", c.Translate.Provider, "openai-compatible")
+	}
+	if c.Translate.BaseURL != "https://api.openai.com" {
+		t.Fatalf("Translate.BaseURL default: got %q", c.Translate.BaseURL)
+	}
+	if c.Translate.Model != "gpt-4o-mini" {
+		t.Fatalf("Translate.Model default: got %q", c.Translate.Model)
+	}
+	if c.Translate.DefaultTargetLang != "zh-CN" {
+		t.Fatalf("Translate.DefaultTargetLang default: got %q", c.Translate.DefaultTargetLang)
+	}
+	if c.Translate.APIKey != "" {
+		t.Fatalf("Translate.APIKey default: got %q want empty", c.Translate.APIKey)
+	}
+	if c.Translate.Enabled {
+		t.Fatalf("Translate.Enabled default: got true want false (opt-in)")
+	}
+}
+
+func TestValidatePluginConfig_TranslateProviderEnum(t *testing.T) {
+	var c PluginConfig
+	c.applyDefaults()
+	c.Translate.Provider = "deepl"
+	err := ValidatePluginConfig(c)
+	if err == nil || !strings.Contains(err.Error(), "translate.provider") {
+		t.Fatalf("want translate.provider validation error, got %v", err)
+	}
+}
+
+func TestValidatePluginConfig_TranslateTargetLangEnum(t *testing.T) {
+	var c PluginConfig
+	c.applyDefaults()
+	c.Translate.DefaultTargetLang = "xx-YY"
+	err := ValidatePluginConfig(c)
+	if err == nil || !strings.Contains(err.Error(), "translate.defaultTargetLang") {
+		t.Fatalf("want translate.defaultTargetLang validation error, got %v", err)
 	}
 }

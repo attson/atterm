@@ -160,7 +160,12 @@ defineExpose({
 .term-view {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* flex:1 + min-height:0 so we stretch inside our flex-column parent
+     (App.vue's .home-main uses min-height not height, which means a
+     child's height:100% degrades to content-auto and the xterm box
+     collapses). Stretch via flex instead. */
+  flex: 1;
+  min-height: 0;
   background: var(--bg);
   color: var(--fg);
 }

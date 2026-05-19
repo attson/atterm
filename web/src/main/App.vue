@@ -69,12 +69,16 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
       <Topbar active="home" />
       <InstallHint v-if="!inSession" />
 
-      <div v-if="inSession" class="page-bar">
-        <n-button size="small" tertiary aria-label="Back to sessions" @click="onBack">
-          ← back
-        </n-button>
-        <div class="subtitle">terminal</div>
-      </div>
+      <n-button
+        v-if="inSession"
+        class="back-floating"
+        size="small"
+        tertiary
+        aria-label="Back to sessions"
+        @click="onBack"
+      >
+        ← back
+      </n-button>
 
       <main class="home-main">
         <SessionList v-if="!inSession" @navigate="onNavigate" />
@@ -101,20 +105,22 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
 </template>
 
 <style scoped>
-.page-bar {
-  max-width: 980px;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem 1rem 0;
-  color: var(--fg-dim);
-  font-size: 0.875rem;
+/* Floating "back to sessions" button — sits at top-left under the topbar,
+   does not occupy layout flow, so xterm can use the full area. Half-faded
+   by default so it does not visually compete with terminal output; opaque
+   on hover. */
+.back-floating {
+  position: fixed;
+  top: 88px;
+  left: 0.75rem;
+  z-index: 5;
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
 }
-.subtitle { font-weight: 600; color: var(--fg); }
+.back-floating:hover { opacity: 1; }
 .home-main {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 140px);
+  min-height: calc(100vh - 80px);
 }
 </style>

@@ -18,6 +18,10 @@ import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContext
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { broadcastCommandFinished, getHostInfo, getWebglRendererEnabled, showNotification } from "../lib/api";
+import { collectContextMenuItems } from "../plugins/contextMenuItems";
+import { descriptorsForSlot } from "../plugins/registry";
+import { usePluginConfigStore } from "../plugins/configStore";
+import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/types";
 
 const props = withDefaults(
   defineProps<{
@@ -81,6 +85,14 @@ const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
   "atterm:pluginInputSenders",
   null,
 );
+
+// pluginContext is provided by App.vue (Task 14). Null when TerminalView is
+// rendered outside the plugin-aware App (e.g. tests, standalone embedding).
+const pluginContext = inject<PluginContext>("atterm:pluginContext", null as unknown as PluginContext);
+
+// Menu items contributed by context-menu plugins. Populated on each right-click.
+const pluginMenuItems = ref<MenuItem[]>([]);
+
 let resizeObserver: ResizeObserver | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
 
@@ -128,9 +140,10 @@ async function handleImagePaste(e: ClipboardEvent) {
 
 function closeContextMenu() {
   menuOpen.value = false;
+  pluginMenuItems.value = [];
 }
 
-function openContextMenu(e: MouseEvent) {
+async function openContextMenu(e: MouseEvent) {
   if (!term) return;
   const pos = clampContextMenuPosition(
     e.clientX,
@@ -140,10 +153,28 @@ function openContextMenu(e: MouseEvent) {
     window.innerWidth,
     window.innerHeight,
   );
-  menuHasSelection.value = !!term.getSelection();
+  const selection = term.getSelection();
+  menuHasSelection.value = !!selection;
   menuX.value = pos.left;
   menuY.value = pos.top;
+  pluginMenuItems.value = [];
   menuOpen.value = true;
+
+  // Collect context-menu plugin items and append after the menu is shown.
+  if (pluginContext) {
+    const cfgStore = usePluginConfigStore();
+    const enabledPlugins: ContextMenuPlugin[] = [];
+    for (const d of descriptorsForSlot("context-menu")) {
+      if (!cfgStore.isPluginEnabled(d.id)) continue;
+      try {
+        const mod = await d.load();
+        enabledPlugins.push((mod as { default: ContextMenuPlugin }).default);
+      } catch (err) {
+        console.error(`[AT Term] failed to load context-menu plugin ${d.id}`, err);
+      }
+    }
+    pluginMenuItems.value = await collectContextMenuItems(enabledPlugins, pluginContext, selection);
+  }
 }
 
 function onDocumentMouseDown(e: MouseEvent) {
@@ -513,6 +544,13 @@ watch(status, (nextStatus) => {
         <button class="term-context-item" :disabled="!menuHasSelection" @click="onMenuCopy">copy</button>
         <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">paste</button>
         <button class="term-context-item" @click="onMenuClear">clear buffer</button>
+        <button
+          v-for="item in pluginMenuItems"
+          :key="item.id"
+          class="term-context-item"
+          :disabled="item.disabled"
+          @click="item.onClick(); closeContextMenu()"
+        >{{ item.label }}</button>
       </div>
     </Teleport>
   </div>

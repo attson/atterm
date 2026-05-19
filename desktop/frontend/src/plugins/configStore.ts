@@ -9,6 +9,7 @@ import type { main } from "../../wailsjs/go/models";
 export type QuickInputButton = main.QuickInputButton;
 export type QuickInputConfig = main.QuickInputConfig;
 export type FileExplorerConfig = main.FileExplorerConfig;
+export type TranslateConfig = main.TranslateConfig;
 export type PluginConfig = main.PluginConfig;
 
 let unsubscribe: (() => void) | null = null;
@@ -34,6 +35,7 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
     if (!cfg.value) return false;
     if (id === "quick-input") return cfg.value.quickInput.enabled;
     if (id === "file-explorer") return cfg.value.fileExplorer.enabled;
+    if (id === "translate") return cfg.value.translate.enabled;
     return false;
   }
 
@@ -42,6 +44,7 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
     const next: PluginConfig = JSON.parse(JSON.stringify(cfg.value));
     if (id === "quick-input") next.quickInput.enabled = enabled;
     if (id === "file-explorer") next.fileExplorer.enabled = enabled;
+    if (id === "translate") next.translate.enabled = enabled;
     await save(next);
   }
 

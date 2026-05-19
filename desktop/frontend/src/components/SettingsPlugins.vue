@@ -2,6 +2,7 @@
 import { onMounted } from "vue";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
+import type { PluginID } from "../plugins/types";
 import QuickInputSettings from "../plugins/quickInput/QuickInputSettings.vue";
 
 const store = usePluginConfigStore();
@@ -10,7 +11,7 @@ onMounted(async () => {
   if (!store.cfg) await store.load();
 });
 
-async function toggle(id: "quick-input" | "file-explorer", enabled: boolean) {
+async function toggle(id: PluginID, enabled: boolean) {
   try {
     await store.setEnabled(id, enabled);
   } catch (err) {

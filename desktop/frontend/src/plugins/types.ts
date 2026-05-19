@@ -2,9 +2,20 @@ import type { Component, ComputedRef, Ref } from "vue";
 import type { Endpoint } from "../lib/api";
 import type { Pane } from "../lib/types";
 
-export type PluginSlot = "right-panel" | "bottom-toolbar";
+export type PluginSlot = "right-panel" | "bottom-toolbar" | "context-menu";
 
-export type PluginID = "quick-input" | "file-explorer";
+export type PluginID = "quick-input" | "file-explorer" | "translate";
+
+export interface MenuItem {
+  id: string;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+export interface ContextMenuPlugin {
+  getMenuItems(ctx: PluginContext, selection: string): MenuItem[];
+}
 
 export interface PluginContext {
   activePane: Ref<Pane | null>;
@@ -23,6 +34,9 @@ export interface PluginDescriptor {
   slot: PluginSlot;
   title: string;
   description: string;
-  load: () => Promise<{ default: Component }>;
-  defaultEnabled: boolean;
+  // Union return type so context-menu plugins can load a headless module.
+  load: () =>
+    | Promise<{ default: Component }>
+    | Promise<{ default: ContextMenuPlugin }>;
+  defaultEnabled?: boolean;
 }

@@ -112,7 +112,7 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
 .back-floating {
   position: fixed;
   top: 88px;
-  left: 0.75rem;
+  right: 0.75rem;
   z-index: 5;
   opacity: 0.45;
   transition: opacity 0.15s ease;

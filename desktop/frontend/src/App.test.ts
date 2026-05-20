@@ -72,3 +72,26 @@ describe("quit confirmation", () => {
     expect(source).toContain("quitDialogOpen.value = true");
   });
 });
+
+describe("merged title bar", () => {
+  test("uses TitleBar component instead of inline topbar markup", () => {
+    expect(source).toContain("<TitleBar");
+    expect(source).toContain('import TitleBar from "./components/TitleBar.vue"');
+    expect(source).not.toContain('class="topbar"');
+    expect(source).not.toContain('class="brand"');
+  });
+
+  test("passes status, errorMsg, sessionCount, remoteEndpoint, availableRemoteCount, updateBadge props", () => {
+    expect(source).toContain(':status="status"');
+    expect(source).toContain(':error-msg="errorMsg"');
+    expect(source).toContain(':session-count="sessionCount"');
+    expect(source).toContain(':remote-endpoint="remoteEndpoint"');
+    expect(source).toContain(':available-remote-count="availableRemote.length"');
+    expect(source).toContain(':update-badge="updateBadge"');
+  });
+
+  test("wires open-remote and open-settings events", () => {
+    expect(source).toContain('@open-remote="showRemote = true"');
+    expect(source).toContain('@open-settings="showSettings = true"');
+  });
+});

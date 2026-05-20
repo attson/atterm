@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import QuickInputBar from "./QuickInputBar.vue";
@@ -26,6 +26,7 @@ function makeContext() {
 }
 
 beforeEach(() => {
+  vi.useRealTimers();
   setActivePinia(createPinia());
   vi.mocked(GetPluginConfig).mockResolvedValue({
     quickInput: {
@@ -39,6 +40,10 @@ beforeEach(() => {
   } as any);
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("QuickInputBar", () => {
   it("renders one button per config entry", async () => {
     const ctx = makeContext();
@@ -47,12 +52,18 @@ describe("QuickInputBar", () => {
     expect(w.findAll("button.quick-input-btn")).toHaveLength(2);
   });
 
-  it("clicking sends text with carriage return (Enter) when appendNewline=true", async () => {
+  it("clicking sends text first, then a standalone Enter key when appendNewline=true", async () => {
+    vi.useFakeTimers();
     const ctx = makeContext();
     const w = mount(QuickInputBar, { props: { context: ctx as any } });
     await flushPromises();
     await w.findAll("button.quick-input-btn")[0].trigger("click");
-    expect(ctx.send).toHaveBeenCalledWith("ok\r");
+    expect(ctx.send).toHaveBeenCalledTimes(1);
+    expect(ctx.send).toHaveBeenLastCalledWith("ok");
+
+    vi.runOnlyPendingTimers();
+    expect(ctx.send).toHaveBeenCalledTimes(2);
+    expect(ctx.send).toHaveBeenLastCalledWith("\r");
   });
 
   it("clicking sends raw text when appendNewline=false", async () => {

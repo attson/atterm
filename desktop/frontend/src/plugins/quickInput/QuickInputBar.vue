@@ -15,12 +15,12 @@ onMounted(async () => {
 const buttons = computed<QuickInputButton[]>(() => store.cfg?.quickInput.buttons ?? []);
 
 function fire(b: QuickInputButton) {
-  // Send carriage return (\r), not LF. Raw-mode TUIs like Claude Code,
-  // vim, etc. distinguish CR (Enter / submit) from LF (Shift+Enter /
-  // insert newline). Cooked-mode programs (bash, cat) accept either via
-  // termios ICRNL, so \r is the strictly more compatible choice.
-  const text = b.appendNewline ? b.send + "\r" : b.send;
-  props.context.send(text);
+  props.context.send(b.send);
+  if (!b.appendNewline) return;
+
+  // Keep Enter as its own key event. Codex treats a bundled "text\r" payload
+  // like pasted multiline text, while a standalone CR matches the real key.
+  window.setTimeout(() => props.context.send("\r"), 16);
 }
 
 function tooltipFor(send: string, newline: boolean, hotkey?: string): string {

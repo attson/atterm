@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"embed"
-	stdruntime "runtime"
 
 	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -16,8 +14,7 @@ import (
 var assets embed.FS
 
 // Version is set at build time via -ldflags -X main.Version=<tag>.
-// Empty / "dev" disables the auto-update subsystem (the running build is
-// not from a tagged release, so there's no sensible base to compare).
+// Empty / "dev" disables the auto-update subsystem.
 var Version = "dev"
 
 func main() {
@@ -52,23 +49,33 @@ func main() {
 		},
 	}
 
-	// macOS only: install a custom menu that keeps native App + Edit
-	// submenus (Hide / Quit / Cut / Copy / Paste / Select All) but omits
-	// the Window submenu. The Window submenu is where Cocoa would bind
-	// ⌘W / ⌘M, and we need ⌘W for "close pane" and don't want to claim
-	// ⌘M either. Linux and Windows webviews don't have this problem.
-	if stdruntime.GOOS == "darwin" {
-		opts.Menu = darwinMenu()
-	}
+	mergePlatformOptions(opts, platformOptions())
 
 	if err := wails.Run(opts); err != nil {
 		println("Error:", err.Error())
 	}
 }
 
-func darwinMenu() *menu.Menu {
-	m := menu.NewMenu()
-	m.Append(menu.AppMenu())
-	m.Append(menu.EditMenu())
-	return m
+// mergePlatformOptions copies fields that are non-zero on `p` into `into`.
+// Only the fields actually set by any platform implementation need to be
+// listed here.
+func mergePlatformOptions(into *options.App, p *options.App) {
+	if p == nil {
+		return
+	}
+	if p.Menu != nil {
+		into.Menu = p.Menu
+	}
+	if p.Mac != nil {
+		into.Mac = p.Mac
+	}
+	if p.Windows != nil {
+		into.Windows = p.Windows
+	}
+	if p.Linux != nil {
+		into.Linux = p.Linux
+	}
+	if p.Frameless {
+		into.Frameless = p.Frameless
+	}
 }

@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
+import TitleBar from "./components/TitleBar.vue";
+import { useWindowMaximized } from "./composables/useWindowMaximized";
 import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
@@ -19,7 +21,7 @@ import { sendInputToSession } from "./lib/sendInput";
 // file-explorer chunk is not yet loaded.
 import "./plugins/fileExplorer/theme.css";
 import { isLightTerminalTheme } from "./lib/terminalThemes";
-import { EventsOn } from "../wailsjs/runtime/runtime";
+import { EventsOn, Environment } from "../wailsjs/runtime/runtime";
 import {
   closeSession,
   confirmQuit,
@@ -110,6 +112,10 @@ const currentTerminalTheme = computed(() => getTerminalTheme(currentTerminalThem
 const themeStyle = computed(() => currentTerminalTheme.value.appVars);
 
 const commandNotifyThresholdSec = ref<number>(10);
+
+const isMaximized = useWindowMaximized();
+const platform = ref<string>("");
+const showMaximizedInset = computed(() => isMaximized.value && platform.value !== "darwin");
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
@@ -667,6 +673,12 @@ watch([tabs, currentTabId], () => {
 
 onMounted(async () => {
   quitListenerOff = EventsOn("before-close", handleBeforeClose);
+  try {
+    const info = await Environment();
+    platform.value = (info?.platform ?? "").toLowerCase();
+  } catch {
+    /* keep default empty; .is-maximized stays off on darwin-bug-side */
+  }
   EventsOn("relay:auth-error", (data: { reason: string }) => {
     authError.value = data?.reason ?? null;
   });
@@ -724,61 +736,17 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" :class="`fe-theme-${fileExplorerTheme}`" :style="themeStyle">
-    <header class="topbar">
-      <div class="brand">AT Term</div>
-      <div class="status">
-        <template v-if="status === 'loading'">starting…</template>
-        <template v-else-if="status === 'error'">
-          <span class="bad">{{ errorMsg }}</span>
-        </template>
-        <template v-else>
-          {{ sessionCount }} session{{ sessionCount === 1 ? "" : "s" }}
-          <span v-if="remoteEndpoint" class="dim"> · uplink on</span>
-        </template>
-      </div>
-      <button
-        class="icon-btn"
-        :title="remoteEndpoint
-          ? `${availableRemote.length} remote session(s) available`
-          : 'connect to a relay to see remote sessions'"
-        :disabled="!remoteEndpoint"
-        @click="showRemote = true"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16" height="16"
-          viewBox="0 0 24 24"
-          fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M2 16.1A5 5 0 0 1 5.9 20" />
-          <path d="M2 12.05A9 9 0 0 1 9.95 20" />
-          <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
-          <line x1="2" y1="20" x2="2.01" y2="20" />
-        </svg>
-        <span v-if="availableRemote.length > 0" class="badge">{{ availableRemote.length }}</span>
-      </button>
-      <button
-        class="icon-btn"
-        title="relay settings"
-        @click="showSettings = true"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16" height="16"
-          viewBox="0 0 24 24"
-          fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-        <span v-if="updateBadge" class="dot"></span>
-      </button>
-    </header>
+  <div class="app" :class="[`fe-theme-${fileExplorerTheme}`, { 'is-maximized': showMaximizedInset }]" :style="themeStyle">
+    <TitleBar
+      :status="status"
+      :error-msg="errorMsg"
+      :session-count="sessionCount"
+      :remote-endpoint="remoteEndpoint"
+      :available-remote-count="availableRemote.length"
+      :update-badge="updateBadge"
+      @open-remote="showRemote = true"
+      @open-settings="showSettings = true"
+    />
 
     <div v-if="authError" class="auth-error-banner" role="alert">
       <span class="auth-error-msg">{{ authErrorMessage }}</span>
@@ -876,37 +844,7 @@ onUnmounted(() => {
 
 <style scoped>
 .app { display: flex; flex-direction: column; height: 100vh; }
-.topbar {
-  display: flex; align-items: center; gap: 12px; padding: 10px 16px;
-  background: var(--panel); border-bottom: 1px solid var(--border); flex: 0 0 auto;
-}
-.brand { font-weight: 600; letter-spacing: 0.06em; }
-.status { margin-left: auto; font-size: 12px; color: var(--fg-dim); }
-.status .bad { color: var(--bad); }
-.status .dim { color: var(--good); }
-
-.icon-btn {
-  position: relative; display: inline-flex; align-items: center; justify-content: center;
-  border: none; background: transparent; color: var(--fg-dim); line-height: 1;
-  padding: 6px 8px; border-radius: 6px; cursor: pointer;
-  transition: color 120ms, background 120ms;
-}
-.icon-btn svg { display: block; }
-.icon-btn:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
-.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.icon-btn .badge {
-  position: absolute; top: -2px; right: -2px;
-  background: #d29922; color: #0d1117; font-size: 9px; font-weight: 700;
-  border-radius: 10px; padding: 1px 5px; line-height: 1.3;
-  min-width: 16px; text-align: center;
-}
-.icon-btn .dot {
-  position: absolute; top: 2px; right: 2px;
-  width: 6px; height: 6px;
-  background: #d29922;
-  border-radius: 50%;
-}
-
+.app.is-maximized { padding: 8px; }
 .auth-error-banner {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 16px; background: #5a1e1e; border-bottom: 1px solid #8b2e2e;

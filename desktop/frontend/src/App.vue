@@ -4,6 +4,7 @@ import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
 import TitleBar from "./components/TitleBar.vue";
+import { useWindowMaximized } from "./composables/useWindowMaximized";
 import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
@@ -111,6 +112,8 @@ const currentTerminalTheme = computed(() => getTerminalTheme(currentTerminalThem
 const themeStyle = computed(() => currentTerminalTheme.value.appVars);
 
 const commandNotifyThresholdSec = ref<number>(10);
+
+const isMaximized = useWindowMaximized();
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
@@ -725,7 +728,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" :class="`fe-theme-${fileExplorerTheme}`" :style="themeStyle">
+  <div class="app" :class="[`fe-theme-${fileExplorerTheme}`, { 'is-maximized': isMaximized }]" :style="themeStyle">
     <TitleBar
       :status="status"
       :error-msg="errorMsg"
@@ -833,6 +836,7 @@ onUnmounted(() => {
 
 <style scoped>
 .app { display: flex; flex-direction: column; height: 100vh; }
+.app.is-maximized { padding: 8px; }
 .auth-error-banner {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 16px; background: #5a1e1e; border-bottom: 1px solid #8b2e2e;

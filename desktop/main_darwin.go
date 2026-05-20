@@ -5,20 +5,22 @@ package main
 import (
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 // platformOptions returns macOS-specific Wails options merged into the
-// shared options.App in main.go.
+// shared options.App in main.go. Mac.TitleBar = TitleBarHiddenInset gives
+// us a transparent title bar with full-size content under the traffic
+// lights so our TitleBar component can occupy that row.
 func platformOptions() *options.App {
 	return &options.App{
 		Menu: darwinMenu(),
+		Mac: &mac.Options{
+			TitleBar: mac.TitleBarHiddenInset(),
+		},
 	}
 }
 
-// darwinMenu installs a custom menu that keeps native App + Edit submenus
-// (Hide / Quit / Cut / Copy / Paste / Select All) but omits the Window
-// submenu, where Cocoa would bind ⌘W / ⌘M — we need ⌘W for "close pane"
-// and don't want to claim ⌘M either.
 func darwinMenu() *menu.Menu {
 	m := menu.NewMenu()
 	m.Append(menu.AppMenu())

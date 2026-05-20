@@ -21,7 +21,7 @@ import { sendInputToSession } from "./lib/sendInput";
 // file-explorer chunk is not yet loaded.
 import "./plugins/fileExplorer/theme.css";
 import { isLightTerminalTheme } from "./lib/terminalThemes";
-import { EventsOn } from "../wailsjs/runtime/runtime";
+import { EventsOn, Environment } from "../wailsjs/runtime/runtime";
 import {
   closeSession,
   confirmQuit,
@@ -114,6 +114,8 @@ const themeStyle = computed(() => currentTerminalTheme.value.appVars);
 const commandNotifyThresholdSec = ref<number>(10);
 
 const isMaximized = useWindowMaximized();
+const platform = ref<string>("");
+const showMaximizedInset = computed(() => isMaximized.value && platform.value !== "darwin");
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
@@ -671,6 +673,12 @@ watch([tabs, currentTabId], () => {
 
 onMounted(async () => {
   quitListenerOff = EventsOn("before-close", handleBeforeClose);
+  try {
+    const info = await Environment();
+    platform.value = (info?.platform ?? "").toLowerCase();
+  } catch {
+    /* keep default empty; .is-maximized stays off on darwin-bug-side */
+  }
   EventsOn("relay:auth-error", (data: { reason: string }) => {
     authError.value = data?.reason ?? null;
   });
@@ -728,7 +736,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" :class="[`fe-theme-${fileExplorerTheme}`, { 'is-maximized': isMaximized }]" :style="themeStyle">
+  <div class="app" :class="[`fe-theme-${fileExplorerTheme}`, { 'is-maximized': showMaximizedInset }]" :style="themeStyle">
     <TitleBar
       :status="status"
       :error-msg="errorMsg"

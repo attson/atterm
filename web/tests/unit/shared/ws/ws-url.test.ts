@@ -3,10 +3,17 @@ import { saveRelayConfig, clearRelayConfig, __resetMobileDetectionCache } from '
 import { wsUrl } from '@shared/ws/client-conn'
 
 describe('wsUrl browser mode', () => {
+  let originalLocation: Location
+
   beforeEach(() => {
     clearRelayConfig()
     __resetMobileDetectionCache()
     delete (globalThis as any).Capacitor
+    originalLocation = window.location
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true })
   })
 
   it('uses ws:// when location.protocol is http:', () => {
@@ -53,7 +60,9 @@ describe('wsUrl mobile mode', () => {
     expect(wsUrl('/client')).toBe('wss://r.example.com:8443/client')
   })
 
-  it('throws relay_not_configured when no config is stored', () => {
-    expect(() => wsUrl('/client')).toThrow(/relay_not_configured/)
+  it('throws ApiError with code relay_not_configured when no config is stored', () => {
+    let err: unknown
+    try { wsUrl('/client') } catch (e) { err = e }
+    expect(err).toMatchObject({ status: 0, code: 'relay_not_configured' })
   })
 })

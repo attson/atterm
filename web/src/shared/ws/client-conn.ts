@@ -17,6 +17,7 @@ import {
   uuidToBytes,
 } from './protocol'
 import { isMobileApp, loadRelayConfig } from '../api/relay-config'
+import { ApiError } from '../api/client'
 
 export type SessionStatus = 'connecting' | 'attached' | 'reconnecting' | 'ended'
 
@@ -199,7 +200,7 @@ export class SessionConnection {
 export function wsUrl(path: string): string {
   if (isMobileApp()) {
     const cfg = loadRelayConfig()
-    if (!cfg) throw new Error('relay_not_configured')
+    if (!cfg) throw new ApiError(0, 'relay_not_configured', null)
     const u = new URL(cfg.base)
     const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${u.host}${path}`

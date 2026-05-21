@@ -51,7 +51,13 @@ async function onSave(): Promise<void> {
       credentials: 'omit',
     })
     if (res.status === 401) {
-      error.value = 'API token is invalid.'
+      error.value =
+        'API token is invalid. Generate a new one from the relay web UI under Settings → API Tokens.'
+      return
+    }
+    if (res.status === 403) {
+      error.value =
+        'Relay rejected the origin. Make sure the relay was started with ATTERM_ORIGINS containing capacitor://localhost.'
       return
     }
     if (!res.ok) {

@@ -52,6 +52,62 @@ describe('settings/tabs/Relay.vue', () => {
     expect(loadRelayConfig()).toMatchObject({ base: 'https://other.example.com', token: 'atk_new' })
   })
 
+  it('shows 401 error and does not save', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeResponse(401, { error: 'unauthenticated' })))
+    const wrapper = mount(Relay)
+    await wrapper.find('input[name="relay-base"]').setValue('https://other.example.com')
+    await wrapper.find('input[name="relay-token"]').setValue('atk_bad')
+    await wrapper.find('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/token|invalid/i)
+    // The stored config from beforeEach is unchanged
+    expect(loadRelayConfig()).toMatchObject({ token: 'atk_existing' })
+  })
+
+  it('shows 403 origin-rejected error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeResponse(403, { error: 'origin_rejected' })))
+    const wrapper = mount(Relay)
+    await wrapper.find('input[name="relay-base"]').setValue('https://other.example.com')
+    await wrapper.find('input[name="relay-token"]').setValue('atk_new')
+    await wrapper.find('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/origin|ATTERM_ORIGINS|capacitor/i)
+  })
+
+  it('shows network error on fetch reject', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    const wrapper = mount(Relay)
+    await wrapper.find('input[name="relay-base"]').setValue('https://other.example.com')
+    await wrapper.find('input[name="relay-token"]').setValue('atk_new')
+    await wrapper.find('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/connect|network|relay/i)
+  })
+
+  it('shows inline error and skips probe when token is empty', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(Relay)
+    await wrapper.find('input[name="relay-base"]').setValue('https://other.example.com')
+    await wrapper.find('input[name="relay-token"]').setValue('')
+    await wrapper.find('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/token.*required|token is required/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('shows inline error and skips probe when base is invalid', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(Relay)
+    await wrapper.find('input[name="relay-base"]').setValue('not a url')
+    await wrapper.find('input[name="relay-token"]').setValue('atk_new')
+    await wrapper.find('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/invalid|malformed/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('disconnect clears config and redirects to setup', async () => {
     const wrapper = mount(Relay)
     await wrapper.find('[data-testid="disconnect"]').trigger('click')

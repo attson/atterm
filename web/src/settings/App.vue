@@ -9,18 +9,24 @@ import {
 } from 'naive-ui'
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import Topbar from '@shared/components/Topbar.vue'
+import { isMobileApp } from '@shared/api/relay-config'
 import ApiTokens from './tabs/ApiTokens.vue'
 import ChangePassword from './tabs/ChangePassword.vue'
 import Sessions from './tabs/Sessions.vue'
 import Notifications from './tabs/Notifications.vue'
 import DangerZone from './tabs/DangerZone.vue'
+import Relay from './tabs/Relay.vue'
 
-const TAB_NAMES = ['api-tokens', 'change-password', 'sessions', 'notifications', 'danger'] as const
+const mobile = isMobileApp()
+
+const TAB_NAMES = mobile
+  ? (['relay'] as const)
+  : (['api-tokens', 'change-password', 'sessions', 'notifications', 'danger'] as const)
 type TabName = (typeof TAB_NAMES)[number]
 
 function nameFromHash(): TabName {
   const h = location.hash.replace(/^#/, '')
-  return TAB_NAMES.includes(h as TabName) ? (h as TabName) : 'api-tokens'
+  return (TAB_NAMES as readonly string[]).includes(h) ? (h as TabName) : TAB_NAMES[0]
 }
 
 const activeTab = ref<TabName>(nameFromHash())
@@ -33,7 +39,7 @@ onMounted(() => window.addEventListener('hashchange', onHashChange))
 onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
 
 function onTabChange(name: string) {
-  if (!TAB_NAMES.includes(name as TabName)) return
+  if (!(TAB_NAMES as readonly string[]).includes(name)) return
   if (location.hash.replace(/^#/, '') !== name) {
     location.hash = '#' + name
   }
@@ -53,21 +59,28 @@ const overrides = getNaiveOverrides()
           animated
           @update:value="onTabChange"
         >
-          <n-tab-pane name="api-tokens" tab="API Tokens">
-            <ApiTokens />
-          </n-tab-pane>
-          <n-tab-pane name="change-password" tab="Change Password">
-            <ChangePassword />
-          </n-tab-pane>
-          <n-tab-pane name="sessions" tab="Signed-in devices">
-            <Sessions />
-          </n-tab-pane>
-          <n-tab-pane name="notifications" tab="Notifications">
-            <Notifications />
-          </n-tab-pane>
-          <n-tab-pane name="danger" tab="Danger zone">
-            <DangerZone />
-          </n-tab-pane>
+          <template v-if="mobile">
+            <n-tab-pane name="relay" tab="Relay">
+              <Relay />
+            </n-tab-pane>
+          </template>
+          <template v-else>
+            <n-tab-pane name="api-tokens" tab="API Tokens">
+              <ApiTokens />
+            </n-tab-pane>
+            <n-tab-pane name="change-password" tab="Change Password">
+              <ChangePassword />
+            </n-tab-pane>
+            <n-tab-pane name="sessions" tab="Signed-in devices">
+              <Sessions />
+            </n-tab-pane>
+            <n-tab-pane name="notifications" tab="Notifications">
+              <Notifications />
+            </n-tab-pane>
+            <n-tab-pane name="danger" tab="Danger zone">
+              <DangerZone />
+            </n-tab-pane>
+          </template>
         </n-tabs>
       </main>
     </n-message-provider>

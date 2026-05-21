@@ -61,11 +61,11 @@ export function validateRelayBase(base: string, allowInsecure: boolean): string 
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     return 'relay URL must start with http:// or https://'
   }
-  if (u.pathname !== '' && u.pathname !== '/') {
-    return 'relay URL must not contain a path segment'
+  if (u.pathname !== '/' || u.search !== '' || u.hash !== '') {
+    return 'relay URL must not contain a path, query, or fragment'
   }
   if (u.protocol === 'http:' && !isLoopbackHost(u.hostname) && !allowInsecure) {
-    return 'insecure http:// to non-loopback host requires the allowInsecure switch'
+    return 'enable "Allow insecure HTTP/WS" to use http:// with a non-loopback host'
   }
   return null
 }
@@ -73,6 +73,7 @@ export function validateRelayBase(base: string, allowInsecure: boolean): string 
 function isLoopbackHost(host: string): boolean {
   const h = host.toLowerCase()
   if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true
+  if (h.startsWith('127.')) return true
   // URL parses [::1] hostname as "[::1]"; strip brackets when present.
   if (h.startsWith('[') && h.endsWith(']')) {
     const inner = h.slice(1, -1)

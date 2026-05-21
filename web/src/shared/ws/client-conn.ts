@@ -16,6 +16,7 @@ import {
   encodeResize,
   uuidToBytes,
 } from './protocol'
+import { isMobileApp, loadRelayConfig } from '../api/relay-config'
 
 export type SessionStatus = 'connecting' | 'attached' | 'reconnecting' | 'ended'
 
@@ -110,7 +111,8 @@ export class SessionConnection {
   private openWS(): void {
     if (this.detached) return
     const url = wsUrl('/client')
-    const ws = new WebSocket(url)
+    const cfg = isMobileApp() ? loadRelayConfig() : null
+    const ws = cfg ? new WebSocket(url, [cfg.token]) : new WebSocket(url)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? 'connecting' : 'reconnecting')
@@ -194,7 +196,14 @@ export class SessionConnection {
   }
 }
 
-function wsUrl(path: string): string {
+export function wsUrl(path: string): string {
+  if (isMobileApp()) {
+    const cfg = loadRelayConfig()
+    if (!cfg) throw new Error('relay_not_configured')
+    const u = new URL(cfg.base)
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${u.host}${path}`
+  }
   if (typeof location === 'undefined') return `ws://localhost${path}`
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${proto}//${location.host}${path}`

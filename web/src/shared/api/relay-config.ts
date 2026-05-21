@@ -40,9 +40,11 @@ export function loadRelayConfig(): RelayConfig | null {
 }
 
 export function saveRelayConfig(cfg: RelayConfig): void {
+  if (typeof localStorage === 'undefined') return
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
 }
 
 export function clearRelayConfig(): void {
+  if (typeof localStorage === 'undefined') return
   localStorage.removeItem(STORAGE_KEY)
 }

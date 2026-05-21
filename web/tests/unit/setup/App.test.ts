@@ -62,6 +62,24 @@ describe('setup/App.vue', () => {
     expect(wrapper.text()).toMatch(/insecure/i)
   })
 
+  it('shows an inline error when token is empty', async () => {
+    const wrapper = mount(App)
+    await wrapper.find('input[name="relay-base"]').setValue('https://r.example.com')
+    // leave token blank
+    await wrapper.find('[data-testid="connect"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/token.*required|token is required/i)
+  })
+
+  it('shows an inline error when token is whitespace only', async () => {
+    const wrapper = mount(App)
+    await wrapper.find('input[name="relay-base"]').setValue('https://r.example.com')
+    await wrapper.find('input[name="relay-token"]').setValue('   ')
+    await wrapper.find('[data-testid="connect"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toMatch(/token.*required|token is required/i)
+  })
+
   it('on successful probe saves config and replaces location to /', async () => {
     const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { user_id: 'u1', email: 'e@x' }))
     vi.stubGlobal('fetch', fetchMock)

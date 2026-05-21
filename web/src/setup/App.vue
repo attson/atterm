@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import {
   NConfigProvider,
   NMessageProvider,
@@ -35,10 +35,6 @@ function getReasonBanner(): string | null {
 }
 
 const reasonBanner = ref<string | null>(getReasonBanner())
-
-onMounted(() => {
-  reasonBanner.value = getReasonBanner()
-})
 
 const baseError = computed(() => {
   if (!base.value || base.value === 'https://') return null

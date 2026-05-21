@@ -1,3 +1,5 @@
+import { isMobileApp, loadRelayConfig } from './relay-config'
+
 // safeNext validates a post-login redirect target. Every consumer of
 // the ?next= query param routes through this guard. See spec Sec-2.
 export function safeNext(raw: string | null): string {
@@ -43,10 +45,6 @@ export interface ApiResult<T> {
   headers: Headers
 }
 
-// apiFetch is the single network entry point for the browser client.
-// All non-GET methods get the cached CSRF token automatically; 401s on
-// non-auth pages redirect to /login.html?next=<safe>; non-2xx replies
-// throw ApiError carrying the error code from the JSON body.
 export async function apiFetch<T = unknown>(
   path: string,
   init: RequestInit = {},
@@ -54,27 +52,47 @@ export async function apiFetch<T = unknown>(
   const method = (init.method || 'GET').toUpperCase()
   const headers = new Headers(init.headers)
 
-  if (method !== 'GET' && method !== 'HEAD') {
-    if (cachedCsrf) headers.set('X-CSRF-Token', cachedCsrf)
-    if (!headers.has('Content-Type') && init.body !== undefined) {
+  let url = path
+  let credentials: RequestCredentials = 'same-origin'
+
+  if (isMobileApp()) {
+    const cfg = loadRelayConfig()
+    if (!cfg) throw new ApiError(0, 'relay_not_configured', null)
+    url = cfg.base.replace(/\/$/, '') + path
+    headers.set('Authorization', `Bearer ${cfg.token}`)
+    credentials = 'omit'
+    if (!headers.has('Content-Type') && init.body !== undefined && method !== 'GET' && method !== 'HEAD') {
       headers.set('Content-Type', 'application/json')
+    }
+  } else {
+    if (method !== 'GET' && method !== 'HEAD') {
+      if (cachedCsrf) headers.set('X-CSRF-Token', cachedCsrf)
+      if (!headers.has('Content-Type') && init.body !== undefined) {
+        headers.set('Content-Type', 'application/json')
+      }
     }
   }
 
   let res: Response
   try {
-    res = await fetch(path, { ...init, headers, credentials: 'same-origin' })
+    res = await fetch(url, { ...init, headers, credentials })
   } catch {
     throw new ApiError(0, 'network_error', null)
   }
 
   if (res.status === 401) {
-    const onAuthPage =
-      typeof location !== 'undefined' &&
-      (location.pathname === '/login.html' || location.pathname === '/signup.html')
-    if (!onAuthPage && typeof location !== 'undefined') {
-      const next = safeNext(location.pathname + location.search + location.hash)
-      location.assign('/login.html?next=' + encodeURIComponent(next))
+    if (isMobileApp()) {
+      if (typeof location !== 'undefined') {
+        location.replace('/setup.html?reason=token_invalid')
+      }
+    } else {
+      const onAuthPage =
+        typeof location !== 'undefined' &&
+        (location.pathname === '/login.html' || location.pathname === '/signup.html')
+      if (!onAuthPage && typeof location !== 'undefined') {
+        const next = safeNext(location.pathname + location.search + location.hash)
+        location.assign('/login.html?next=' + encodeURIComponent(next))
+      }
     }
   }
 

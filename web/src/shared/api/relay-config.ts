@@ -48,3 +48,35 @@ export function clearRelayConfig(): void {
   if (typeof localStorage === 'undefined') return
   localStorage.removeItem(STORAGE_KEY)
 }
+
+export function validateRelayBase(base: string, allowInsecure: boolean): string | null {
+  const trimmed = base.trim()
+  if (!trimmed) return 'relay URL is required'
+  let u: URL
+  try {
+    u = new URL(trimmed)
+  } catch {
+    return 'invalid or malformed relay URL'
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return 'relay URL must start with http:// or https://'
+  }
+  if (u.pathname !== '' && u.pathname !== '/') {
+    return 'relay URL must not contain a path segment'
+  }
+  if (u.protocol === 'http:' && !isLoopbackHost(u.hostname) && !allowInsecure) {
+    return 'insecure http:// to non-loopback host requires the allowInsecure switch'
+  }
+  return null
+}
+
+function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase()
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true
+  // URL parses [::1] hostname as "[::1]"; strip brackets when present.
+  if (h.startsWith('[') && h.endsWith(']')) {
+    const inner = h.slice(1, -1)
+    if (inner === '::1') return true
+  }
+  return false
+}

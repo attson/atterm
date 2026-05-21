@@ -76,3 +76,60 @@ describe('relay config storage', () => {
     expect(loadRelayConfig()).toBeNull()
   })
 })
+
+import { validateRelayBase } from '@shared/api/relay-config'
+
+describe('validateRelayBase', () => {
+  it('accepts https with hostname', () => {
+    expect(validateRelayBase('https://r.example.com', false)).toBeNull()
+  })
+
+  it('accepts https with port', () => {
+    expect(validateRelayBase('https://r.example.com:8443', false)).toBeNull()
+  })
+
+  it('rejects wss scheme (use http(s) for base, ws scheme derives)', () => {
+    expect(validateRelayBase('wss://r.example.com', false)).toMatch(/must start with http/i)
+  })
+
+  it('rejects ws scheme', () => {
+    expect(validateRelayBase('ws://localhost:8080', true)).toMatch(/must start with http/i)
+  })
+
+  it('accepts http://localhost without insecure flag', () => {
+    expect(validateRelayBase('http://localhost:8080', false)).toBeNull()
+  })
+
+  it('accepts http://127.0.0.1 without insecure flag', () => {
+    expect(validateRelayBase('http://127.0.0.1:8080', false)).toBeNull()
+  })
+
+  it('accepts http://[::1] (IPv6 loopback) without insecure flag', () => {
+    expect(validateRelayBase('http://[::1]:8080', false)).toBeNull()
+  })
+
+  it('rejects http to non-loopback host when allowInsecure is false', () => {
+    const err = validateRelayBase('http://relay.example.com', false)
+    expect(err).toMatch(/insecure/i)
+  })
+
+  it('accepts http to non-loopback host when allowInsecure is true', () => {
+    expect(validateRelayBase('http://relay.example.com', true)).toBeNull()
+  })
+
+  it('rejects empty string', () => {
+    expect(validateRelayBase('', false)).toMatch(/empty|required|missing/i)
+  })
+
+  it('rejects malformed URL', () => {
+    expect(validateRelayBase('not a url', false)).toMatch(/invalid|malformed/i)
+  })
+
+  it('rejects URL with trailing path segment', () => {
+    expect(validateRelayBase('https://r.example.com/api', false)).toMatch(/path/i)
+  })
+
+  it('accepts URL with trailing slash (treated as root path)', () => {
+    expect(validateRelayBase('https://r.example.com/', false)).toBeNull()
+  })
+})

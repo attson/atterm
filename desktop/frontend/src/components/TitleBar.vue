@@ -54,9 +54,9 @@ const remoteTitle = computed(() =>
 const isMaximized = useWindowMaximized();
 
 function onTitleDblClick() {
-  // macOS handles zoom natively in the TitleBarHiddenInset toolbar area;
-  // calling WindowToggleMaximise there would double-fire and interfere.
-  if (os.value === "darwin") return;
+  // macOS' system zoom-on-dblclick fires off NSWindow events that the
+  // WebKit view eats under TitleBarHiddenInset, so we drive maximize
+  // ourselves on all three platforms.
   try {
     WindowToggleMaximise();
     setMaximized(!isMaximized.value);

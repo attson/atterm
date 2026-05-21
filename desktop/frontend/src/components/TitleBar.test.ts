@@ -141,9 +141,9 @@ describe("TitleBar double-click maximize (Win/Linux only)", () => {
     expect(WindowToggleMaximise).toHaveBeenCalledTimes(1);
   });
 
-  it("on darwin, double-click on root does NOT call WindowToggleMaximise (system handles zoom)", async () => {
+  it("on darwin, double-click on root calls WindowToggleMaximise (system zoom doesn't fire under TitleBarHiddenInset)", async () => {
     const w = await mountForPlatform("darwin");
     await w.get('[data-testid="titlebar-root"]').trigger("dblclick");
-    expect(WindowToggleMaximise).not.toHaveBeenCalled();
+    expect(WindowToggleMaximise).toHaveBeenCalledTimes(1);
   });
 });

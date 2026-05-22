@@ -31,7 +31,7 @@ export const ACTIONS: readonly ShortcutAction[] = [
   { id: "tab.next",                   group: "tab",  label: "Next tab",                              defaultBinding: "Mod+Shift+BracketRight" },
 ] as const;
 
-export const ACTION_BY_ID: Record<string, ShortcutAction> = Object.fromEntries(
+export const ACTION_BY_ID: Record<string, ShortcutAction | undefined> = Object.fromEntries(
   ACTIONS.map((a) => [a.id, a]),
 );
 

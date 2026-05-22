@@ -10,6 +10,7 @@ import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
+import ShortcutHints from "./components/ShortcutHints.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
@@ -846,6 +847,7 @@ onUnmounted(() => {
       @confirm="onConfirmQuit"
       @cancel="onCancelQuit"
     />
+    <ShortcutHints />
   </div>
 </template>
 

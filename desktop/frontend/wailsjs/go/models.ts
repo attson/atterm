@@ -196,6 +196,18 @@ export namespace main {
 	        this.session_id = source["session_id"];
 	    }
 	}
+	export class ShortcutsConfig {
+	    bindings: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new ShortcutsConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bindings = source["bindings"];
+	    }
+	}
 	export class TranslateConfig {
 	    enabled: boolean;
 	    provider: string;
@@ -274,6 +286,7 @@ export namespace main {
 	    quickInput: QuickInputConfig;
 	    fileExplorer: FileExplorerConfig;
 	    translate: TranslateConfig;
+	    shortcuts: ShortcutsConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
@@ -284,6 +297,7 @@ export namespace main {
 	        this.quickInput = this.convertValues(source["quickInput"], QuickInputConfig);
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);
 	        this.translate = this.convertValues(source["translate"], TranslateConfig);
+	        this.shortcuts = this.convertValues(source["shortcuts"], ShortcutsConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -342,6 +356,7 @@ export namespace main {
 	        this.email = source["email"];
 	    }
 	}
+	
 	
 	export class UpdateState {
 	    current: string;

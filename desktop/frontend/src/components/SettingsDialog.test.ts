@@ -26,7 +26,7 @@ describe("SettingsDialog shell", () => {
   });
 
   test("tracks the active tab and switches via sidebar clicks", () => {
-    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']/);
+    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']\s*\|\s*["']shortcuts["']/);
     expect(source).toContain('@click="switchTab(\'general\')"');
     expect(source).toContain('@click="switchTab(\'relay\')"');
     expect(source).toContain('@click="switchTab(\'logging\')"');
@@ -61,5 +61,21 @@ describe("SettingsDialog shell", () => {
     expect(dialogStyle).toMatch(/height\s*:\s*540px/);
     const navStyle = styleBlockFor(".settings-nav");
     expect(navStyle).toMatch(/width\s*:\s*160px/);
+  });
+
+  test("imports the SettingsShortcuts subcomponent", () => {
+    expect(source).toContain('import SettingsShortcuts from "./SettingsShortcuts.vue"');
+  });
+
+  test("renders the Shortcuts label in the sidebar", () => {
+    expect(source).toContain(">Shortcuts<");
+  });
+
+  test("activeTab union includes 'shortcuts'", () => {
+    expect(source).toMatch(/activeTab[\s\S]*?["']shortcuts["']/);
+  });
+
+  test("clicking the Shortcuts nav switches to that tab", () => {
+    expect(source).toContain("@click=\"switchTab('shortcuts')\"");
   });
 });

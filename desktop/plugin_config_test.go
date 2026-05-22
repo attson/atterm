@@ -141,3 +141,52 @@ func TestValidatePluginConfig_TranslateTargetLangEnum(t *testing.T) {
 		t.Fatalf("want translate.defaultTargetLang validation error, got %v", err)
 	}
 }
+
+func TestPluginConfig_ShortcutsDefaults(t *testing.T) {
+	var c PluginConfig
+	c.applyDefaults()
+	if c.Shortcuts.Bindings == nil {
+		t.Fatal("Shortcuts.Bindings should be initialized to an empty map by applyDefaults")
+	}
+	if len(c.Shortcuts.Bindings) != 0 {
+		t.Fatalf("Shortcuts.Bindings should default to empty, got %d entries", len(c.Shortcuts.Bindings))
+	}
+}
+
+func TestValidatePluginConfig_ShortcutsAcceptsValid(t *testing.T) {
+	c := PluginConfig{}
+	c.applyDefaults()
+	c.Shortcuts.Bindings = map[string]string{
+		"pane.split-vertical-new":   "Mod+KeyN",
+		"pane.focus-left":           "Mod+Alt+ArrowLeft",
+		"pane.split-horizontal-new": "Mod+Alt+Shift+KeyJ",
+		"pane.close":                "", // disabled is valid
+	}
+	if err := ValidatePluginConfig(c); err != nil {
+		t.Fatalf("valid bindings should validate, got %v", err)
+	}
+}
+
+func TestValidatePluginConfig_ShortcutsRejectsMalformed(t *testing.T) {
+	cases := map[string]string{
+		"missing modifier":   "KeyN",
+		"missing code":       "Mod+Alt+",
+		"unknown token":      "Foo+KeyN",
+		"two codes":          "Mod+KeyN+KeyM",
+		"code only":          "ArrowLeft",
+		"only modifiers":     "Mod+Alt+Shift",
+		"wrong code name":    "Mod+keya",
+		"empty action id":    "Mod+KeyN", // checked via empty key below
+	}
+	for label, binding := range cases {
+		c := PluginConfig{}
+		c.applyDefaults()
+		c.Shortcuts.Bindings = map[string]string{"some.action": binding}
+		if label == "empty action id" {
+			c.Shortcuts.Bindings = map[string]string{"": binding}
+		}
+		if err := ValidatePluginConfig(c); err == nil {
+			t.Errorf("case %q: expected validation error for binding %q", label, binding)
+		}
+	}
+}

@@ -1,8 +1,13 @@
 // Document-level capture-phase keydown router. Listens before xterm.js so
-// Ctrl/Cmd combos we care about never reach the terminal. See spec §"Shortcuts".
+// Mod-combos we care about never reach the terminal.
+//
+// The composable accepts an optional `bindings` ref — a sparse map of
+// actionId -> binding string (see lib/shortcutBindings.ts). Defaults from
+// the action registry apply when the ref is omitted or an action is absent.
 
-import { onScopeDispose } from "vue";
+import { computed, onScopeDispose, type Ref } from "vue";
 import type { FocusDir } from "../lib/types";
+import { buildRoutingTable, serialize, type Mod } from "../lib/shortcutBindings";
 
 export type SplitMode = "new" | "pick";
 
@@ -18,74 +23,53 @@ export interface ShortcutHandlers {
 export interface ShortcutOptions {
   // Override the modifier-key detection. Default: "Meta" on Mac, "Control"
   // elsewhere. Tests use this to force "Control" for portability.
-  mod?: "Meta" | "Control";
+  mod?: Mod;
+  // Optional reactive bindings. Defaults are used for any unset action.
+  bindings?: Ref<Record<string, string>>;
 }
 
-function detectMod(): "Meta" | "Control" {
+function detectMod(): Mod {
   if (typeof navigator === "undefined") return "Control";
   return navigator.platform?.toLowerCase().includes("mac") ? "Meta" : "Control";
 }
 
-const ARROW_TO_DIR: Record<string, FocusDir> = {
-  ArrowLeft: "left",
-  ArrowRight: "right",
-  ArrowUp: "up",
-  ArrowDown: "down",
-};
+function dispatch(actionId: string, h: ShortcutHandlers): boolean {
+  switch (actionId) {
+    case "pane.split-vertical-new":    h.onSplitVertical("new"); return true;
+    case "pane.split-vertical-pick":   h.onSplitVertical("pick"); return true;
+    case "pane.split-horizontal-new":  h.onSplitHorizontal("new"); return true;
+    case "pane.split-horizontal-pick": h.onSplitHorizontal("pick"); return true;
+    case "pane.close":                 h.onClosePane(); return true;
+    case "pane.focus-left":            h.onFocusPane("left"); return true;
+    case "pane.focus-right":           h.onFocusPane("right"); return true;
+    case "pane.focus-up":              h.onFocusPane("up"); return true;
+    case "pane.focus-down":            h.onFocusPane("down"); return true;
+    case "tab.new":                    h.onNewTab(); return true;
+    case "tab.prev":                   h.onSwitchTab(-1); return true;
+    case "tab.next":                   h.onSwitchTab(1); return true;
+  }
+  return false;
+}
 
 export function useTerminalShortcuts(
-  h: ShortcutHandlers,
+  handlers: ShortcutHandlers,
   opts: ShortcutOptions = {},
 ): void {
   const mod = opts.mod ?? detectMod();
-  const isMod = (e: KeyboardEvent) => (mod === "Meta" ? e.metaKey : e.ctrlKey);
-  // Guard against the wrong modifier accidentally double-binding (Cmd on
-  // Linux/Win or Ctrl on Mac) — we only want exactly the platform's modifier.
-  const wrongMod = (e: KeyboardEvent) => (mod === "Meta" ? e.ctrlKey : e.metaKey);
+
+  const route = computed(() => {
+    const overrides = opts.bindings?.value ?? {};
+    return buildRoutingTable(overrides);
+  });
 
   function handler(e: KeyboardEvent) {
-    if (!isMod(e) || wrongMod(e)) return;
-    // Letter / bracket keys: match e.code (physical key, layout-independent).
-    // e.key is unreliable here on macOS — when Option is held it produces
-    // dead-key characters (⌥D → "∂"), and Shift turns "[" into "{". e.code
-    // stays "KeyD" / "BracketLeft" regardless.
-    const code = e.code;
-
-    if (code === "KeyN") {
-      // Split shortcut. ⌥⌘D was the original choice but macOS has hardcoded
-      // ⌥⌘D = "Toggle Dock auto-hide" at the OS level — WKWebView never sees
-      // the keydown. N (for "new pane") is unclaimed by any menu we register.
-      e.preventDefault();
-      e.stopPropagation();
-      const mode: SplitMode = e.altKey ? "pick" : "new";
-      if (e.shiftKey) h.onSplitHorizontal(mode);
-      else h.onSplitVertical(mode);
-      return;
-    }
-    if (code === "KeyW" && !e.altKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      h.onClosePane();
-      return;
-    }
-    if (code === "KeyT" && !e.altKey && !e.shiftKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      h.onNewTab();
-      return;
-    }
-    if (e.altKey && ARROW_TO_DIR[e.key]) {
-      e.preventDefault();
-      e.stopPropagation();
-      h.onFocusPane(ARROW_TO_DIR[e.key]);
-      return;
-    }
-    if (e.shiftKey && (code === "BracketLeft" || code === "BracketRight")) {
-      e.preventDefault();
-      e.stopPropagation();
-      h.onSwitchTab(code === "BracketRight" ? 1 : -1);
-      return;
-    }
+    const key = serialize(e, mod);
+    if (key === null) return;
+    const actionId = route.value[key];
+    if (!actionId) return;
+    if (!dispatch(actionId, handlers)) return;
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   document.addEventListener("keydown", handler, { capture: true });

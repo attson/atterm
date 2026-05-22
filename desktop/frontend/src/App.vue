@@ -10,6 +10,7 @@ import SettingsDialog from "./components/SettingsDialog.vue";
 import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
+import ShortcutHints from "./components/ShortcutHints.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
@@ -656,14 +657,21 @@ const remoteSessionCount = computed(() => {
   return n;
 });
 
-useTerminalShortcuts({
-  onSplitVertical: (mode) => onSplit("vertical", mode),
-  onSplitHorizontal: (mode) => onSplit("horizontal", mode),
-  onClosePane,
-  onFocusPane,
-  onNewTab: startNewTab,
-  onSwitchTab,
+const shortcutBindings = computed<Record<string, string>>(() => {
+  return pluginStore.cfg?.shortcuts?.bindings ?? {};
 });
+
+useTerminalShortcuts(
+  {
+    onSplitVertical: (mode) => onSplit("vertical", mode),
+    onSplitHorizontal: (mode) => onSplit("horizontal", mode),
+    onClosePane,
+    onFocusPane,
+    onNewTab: startNewTab,
+    onSwitchTab,
+  },
+  { bindings: shortcutBindings },
+);
 
 watch([tabs, currentTabId], () => {
   if (tabs.value.length === 0) return;
@@ -839,6 +847,7 @@ onUnmounted(() => {
       @confirm="onConfirmQuit"
       @cancel="onCancelQuit"
     />
+    <ShortcutHints />
   </div>
 </template>
 

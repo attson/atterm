@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 // PluginConfig is the persisted plugin-system configuration block.
@@ -12,6 +14,7 @@ type PluginConfig struct {
 	QuickInput   QuickInputConfig   `json:"quickInput"`
 	FileExplorer FileExplorerConfig `json:"fileExplorer"`
 	Translate    TranslateConfig    `json:"translate"`
+	Shortcuts    ShortcutsConfig    `json:"shortcuts"`
 }
 
 type QuickInputConfig struct {
@@ -43,6 +46,35 @@ type TranslateConfig struct {
 	APIKey            string `json:"apiKey"`             // plaintext; same trust as other plugin config
 	Model             string `json:"model"`              // free-text; user picks per their endpoint
 	DefaultTargetLang string `json:"defaultTargetLang"`  // one of allowedTranslateTargetLangs
+}
+
+// ShortcutsConfig is the persisted shortcut-binding overrides. The map is
+// sparse: only actions the user has explicitly changed appear here. Absent
+// keys mean "use the frontend registry default for this action"; an empty
+// value means "this action is disabled".
+type ShortcutsConfig struct {
+	Bindings map[string]string `json:"bindings"`
+}
+
+// shortcutBindingRe matches a serialized binding string. Tokens are in fixed
+// order: optional Mod, optional Alt, optional Shift (at least one modifier
+// required), then exactly one code token from the whitelist. The empty
+// string is also a valid binding (means "disabled") and is handled by the
+// caller before applying this regex.
+var shortcutBindingRe = regexp.MustCompile(
+	`^(?:Mod\+)?(?:Alt\+)?(?:Shift\+)?(?:KeyA|KeyB|KeyC|KeyD|KeyE|KeyF|KeyG|KeyH|KeyI|KeyJ|KeyK|KeyL|KeyM|KeyN|KeyO|KeyP|KeyQ|KeyR|KeyS|KeyT|KeyU|KeyV|KeyW|KeyX|KeyY|KeyZ|Digit0|Digit1|Digit2|Digit3|Digit4|Digit5|Digit6|Digit7|Digit8|Digit9|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|BracketLeft|BracketRight|Minus|Equal|Backquote|Comma|Period|Slash|Semicolon|Quote|Backslash)$`,
+)
+
+func isValidShortcutBinding(s string) bool {
+	if s == "" {
+		return true
+	}
+	// Regex permits "no modifier" because Go's RE2 doesn't have lookaheads;
+	// enforce the "at least one modifier" rule separately.
+	if !strings.HasPrefix(s, "Mod+") && !strings.HasPrefix(s, "Alt+") && !strings.HasPrefix(s, "Shift+") {
+		return false
+	}
+	return shortcutBindingRe.MatchString(s)
 }
 
 // allowedTranslateTargetLangs matches the TARGETS arrays in
@@ -78,6 +110,9 @@ func (c *PluginConfig) applyDefaults() {
 		c.Translate.BaseURL = "https://api.openai.com"
 		c.Translate.Model = "gpt-4o-mini"
 		c.Translate.DefaultTargetLang = "zh-CN"
+	}
+	if c.Shortcuts.Bindings == nil {
+		c.Shortcuts.Bindings = map[string]string{}
 	}
 }
 
@@ -122,6 +157,14 @@ func ValidatePluginConfig(c PluginConfig) error {
 	}
 	if !allowedTranslateTargetLangs[c.Translate.DefaultTargetLang] {
 		return fmt.Errorf("translate.defaultTargetLang %q not allowed", c.Translate.DefaultTargetLang)
+	}
+	for actionID, binding := range c.Shortcuts.Bindings {
+		if actionID == "" {
+			return errors.New("shortcuts.bindings: action id must be non-empty")
+		}
+		if !isValidShortcutBinding(binding) {
+			return fmt.Errorf("shortcuts.bindings[%q]: malformed binding %q", actionID, binding)
+		}
 	}
 	return nil
 }

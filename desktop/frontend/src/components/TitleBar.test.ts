@@ -11,6 +11,8 @@ vi.mock("../../wailsjs/runtime/runtime", () => ({
 
 import { Environment, WindowToggleMaximise } from "../../wailsjs/runtime/runtime";
 import TitleBar from "./TitleBar.vue";
+import titleBarSource from "./TitleBar.vue?raw";
+import windowControlsSource from "./WindowControls.vue?raw";
 
 const baseProps = {
   status: "ready" as const,
@@ -131,6 +133,32 @@ describe("TitleBar buttons", () => {
   it("renders update dot when updateBadge=true", async () => {
     const w = await mountForPlatform("darwin", { updateBadge: true });
     expect(w.find(".dot").exists()).toBe(true);
+  });
+});
+
+describe("TitleBar drag region (frameless windows)", () => {
+  // Wails v2 uses --wails-draggable on Linux/Windows frameless webviews
+  // (-webkit-app-region is the Electron/Chromium property; Wails' webkit2gtk
+  // and WebView2 do not honor it). Mac TitleBarHiddenInset has native drag
+  // and ignores both. These guards keep us from regressing back to the
+  // Electron-style property.
+  it("titlebar root uses --wails-draggable: drag", () => {
+    expect(titleBarSource).toContain("--wails-draggable: drag");
+  });
+
+  it("titlebar source has no -webkit-app-region CSS rule", () => {
+    // Match the CSS-rule form (property followed by colon), so the
+    // explanatory comment block above (which mentions the name without a
+    // colon) doesn't trip this guard.
+    expect(titleBarSource).not.toMatch(/-webkit-app-region\s*:/);
+  });
+
+  it("WindowControls uses --wails-draggable: no-drag", () => {
+    expect(windowControlsSource).toContain("--wails-draggable: no-drag");
+  });
+
+  it("WindowControls source has no -webkit-app-region CSS rule", () => {
+    expect(windowControlsSource).not.toMatch(/-webkit-app-region\s*:/);
   });
 });
 

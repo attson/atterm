@@ -36,7 +36,7 @@ function onClose() {
 </script>
 
 <template>
-  <div class="window-controls" style="-webkit-app-region: no-drag">
+  <div class="window-controls" style="--wails-draggable: no-drag">
     <button
       class="wc-btn"
       type="button"

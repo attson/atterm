@@ -10,6 +10,7 @@ export type QuickInputButton = main.QuickInputButton;
 export type QuickInputConfig = main.QuickInputConfig;
 export type FileExplorerConfig = main.FileExplorerConfig;
 export type TranslateConfig = main.TranslateConfig;
+export type ShortcutsConfig = main.ShortcutsConfig;
 export type PluginConfig = main.PluginConfig;
 
 let unsubscribe: (() => void) | null = null;

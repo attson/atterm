@@ -29,7 +29,6 @@ RUN apk add --no-cache su-exec \
 WORKDIR /app
 
 COPY --from=build /out/atterm-relay /usr/local/bin/atterm-relay
-COPY web ./web
 COPY cmd/atterm-relay/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
@@ -40,4 +39,4 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["--addr", ":8080", "--web", "/app/web"]
+CMD ["--addr", ":8080"]

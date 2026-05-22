@@ -32,7 +32,7 @@ services:
       - "${ATTERM_RELAY_PORT:-8080}:8080"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
-    command: ["--addr", ":8080", "--web", "/app/web"]
+    command: ["--addr", ":8080"]
     volumes:
       - ${ATTERM_RELAY_CONFIG_DIR:-./data/atterm-relay}:/etc/atterm
 

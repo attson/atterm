@@ -40,3 +40,66 @@ export const ACTION_BY_ID: Record<string, ShortcutAction | undefined> = Object.f
 export const DEFAULT_BINDINGS: Record<string, string> = Object.fromEntries(
   ACTIONS.map((a) => [a.defaultBinding, a.id]),
 );
+
+export type Mod = "Meta" | "Control";
+
+const CODE_WHITELIST: ReadonlySet<string> = new Set([
+  "KeyA","KeyB","KeyC","KeyD","KeyE","KeyF","KeyG","KeyH","KeyI","KeyJ","KeyK","KeyL","KeyM",
+  "KeyN","KeyO","KeyP","KeyQ","KeyR","KeyS","KeyT","KeyU","KeyV","KeyW","KeyX","KeyY","KeyZ",
+  "Digit0","Digit1","Digit2","Digit3","Digit4","Digit5","Digit6","Digit7","Digit8","Digit9",
+  "ArrowLeft","ArrowRight","ArrowUp","ArrowDown",
+  "BracketLeft","BracketRight",
+  "Minus","Equal","Backquote","Comma","Period","Slash","Semicolon","Quote","Backslash",
+]);
+
+export interface ParsedBinding {
+  mod: boolean;
+  alt: boolean;
+  shift: boolean;
+  code: string | null;
+}
+
+// serialize converts a KeyboardEvent into a binding string. Returns null if
+//   - the event's "wrong modifier" is pressed (Meta on Control platforms,
+//     Control on Meta platforms),
+//   - the code is not in the whitelist,
+//   - no modifier is held (we never bind a bare key — would intercept typing).
+export function serialize(e: KeyboardEvent, mod: Mod): string | null {
+  const isMod = mod === "Meta" ? e.metaKey : e.ctrlKey;
+  const wrongMod = mod === "Meta" ? e.ctrlKey : e.metaKey;
+  if (wrongMod) return null;
+  if (!CODE_WHITELIST.has(e.code)) return null;
+  if (!isMod && !e.altKey && !e.shiftKey) return null;
+  const parts: string[] = [];
+  if (isMod) parts.push("Mod");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  parts.push(e.code);
+  return parts.join("+");
+}
+
+// parse converts a binding string into a structured ParsedBinding, or returns
+// null for malformed input. The empty string is treated as the sentinel
+// "disabled" binding and parses successfully with all flags false and code=null.
+export function parse(s: string): ParsedBinding | null {
+  if (s === "") return { mod: false, alt: false, shift: false, code: null };
+  const tokens = s.split("+");
+  if (tokens.length < 2) return null;
+  const code = tokens[tokens.length - 1];
+  if (!CODE_WHITELIST.has(code)) return null;
+  const modifiers = tokens.slice(0, -1);
+  // Enforce fixed token order: Mod, Alt, Shift.
+  const expected = ["Mod", "Alt", "Shift"];
+  let i = 0;
+  const flags = { mod: false, alt: false, shift: false };
+  for (const tok of modifiers) {
+    while (i < expected.length && tok !== expected[i]) i++;
+    if (i === expected.length) return null;
+    if (tok === "Mod") flags.mod = true;
+    else if (tok === "Alt") flags.alt = true;
+    else if (tok === "Shift") flags.shift = true;
+    i++;
+  }
+  if (!flags.mod && !flags.alt && !flags.shift) return null;
+  return { ...flags, code };
+}

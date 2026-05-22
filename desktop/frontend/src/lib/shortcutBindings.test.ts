@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ACTIONS, ACTION_BY_ID, DEFAULT_BINDINGS } from "./shortcutBindings";
+import { serialize, parse, type Mod } from "./shortcutBindings";
 
 describe("shortcutBindings registry", () => {
   it("declares 12 actions", () => {
@@ -28,4 +29,90 @@ describe("shortcutBindings registry", () => {
     }
     expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(12);
   });
+});
+
+function ev(opts: KeyboardEventInit & { key: string; code: string }): KeyboardEvent {
+  return new KeyboardEvent("keydown", { ...opts, bubbles: true, cancelable: true });
+}
+
+describe("serialize", () => {
+  it("Ctrl+N (mod=Control) -> 'Mod+KeyN'", () => {
+    const e = ev({ key: "n", code: "KeyN", ctrlKey: true });
+    expect(serialize(e, "Control")).toBe("Mod+KeyN");
+  });
+
+  it("Meta+N (mod=Meta) -> 'Mod+KeyN'", () => {
+    const e = ev({ key: "n", code: "KeyN", metaKey: true });
+    expect(serialize(e, "Meta")).toBe("Mod+KeyN");
+  });
+
+  it("Ctrl+Alt+Shift+N preserves token order Mod,Alt,Shift,code", () => {
+    const e = ev({ key: "N", code: "KeyN", ctrlKey: true, altKey: true, shiftKey: true });
+    expect(serialize(e, "Control")).toBe("Mod+Alt+Shift+KeyN");
+  });
+
+  it("Alt+Shift+ArrowLeft (no Mod) -> 'Alt+Shift+ArrowLeft'", () => {
+    const e = ev({ key: "ArrowLeft", code: "ArrowLeft", altKey: true, shiftKey: true });
+    expect(serialize(e, "Control")).toBe("Alt+Shift+ArrowLeft");
+  });
+
+  it("wrong modifier (Meta on Control platform) returns null", () => {
+    const e = ev({ key: "n", code: "KeyN", metaKey: true });
+    expect(serialize(e, "Control")).toBeNull();
+  });
+
+  it("modifier-only keypress returns null", () => {
+    // Ctrl alone — code is ControlLeft (not in whitelist) and there's
+    // effectively no key. We model "modifier-only" by passing a code that
+    // is not in the whitelist.
+    const e = ev({ key: "Control", code: "ControlLeft", ctrlKey: true });
+    expect(serialize(e, "Control")).toBeNull();
+  });
+
+  it("bare letter (no modifier) returns null", () => {
+    const e = ev({ key: "n", code: "KeyN" });
+    expect(serialize(e, "Control")).toBeNull();
+  });
+
+  it("mac dead key (key='˜', code='KeyN') still produces 'Mod+Alt+KeyN'", () => {
+    const e = ev({ key: "˜", code: "KeyN", ctrlKey: true, altKey: true });
+    expect(serialize(e, "Control")).toBe("Mod+Alt+KeyN");
+  });
+
+  it("code outside the whitelist returns null", () => {
+    const e = ev({ key: "Tab", code: "Tab", ctrlKey: true });
+    expect(serialize(e, "Control")).toBeNull();
+  });
+});
+
+describe("parse", () => {
+  it("round-trips a normal binding", () => {
+    expect(parse("Mod+Alt+Shift+KeyN")).toEqual({
+      mod: true, alt: true, shift: true, code: "KeyN",
+    });
+  });
+
+  it("parses no-modifier-error correctly (returns null)", () => {
+    expect(parse("KeyN")).toBeNull();
+  });
+
+  it("parses empty as empty (sentinel for disabled)", () => {
+    expect(parse("")).toEqual({ mod: false, alt: false, shift: false, code: null });
+  });
+
+  it("rejects unknown tokens", () => {
+    expect(parse("Hyper+KeyN")).toBeNull();
+  });
+
+  it("rejects out-of-order tokens", () => {
+    expect(parse("Alt+Mod+KeyN")).toBeNull();
+  });
+
+  it("rejects two codes", () => {
+    expect(parse("Mod+KeyN+KeyM")).toBeNull();
+  });
+
+  // Mod type is exported for callers; this just ensures it compiles.
+  const _m: Mod = "Control";
+  void _m;
 });

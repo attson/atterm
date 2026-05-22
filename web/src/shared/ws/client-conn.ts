@@ -16,8 +16,10 @@ import {
   encodeResize,
   uuidToBytes,
 } from './protocol'
+import { isMobileApp, loadRelayConfig } from '../api/relay-config'
+import { ApiError } from '../api/client'
 
-export type SessionStatus = 'connecting' | 'attached' | 'reconnecting' | 'ended'
+export type SessionStatus = 'connecting' | 'attached' | 'reconnecting' | 'ended' | 'lost'
 
 export interface SessionConnectionHandlers {
   onOutput?: (data: Uint8Array, seq: number) => void
@@ -39,6 +41,8 @@ export class SessionConnection {
   private lastSeq = 0
   private detached = false
   private reconnectAttempts = 0
+  private consecutiveFailures = 0
+  private firstFailureAt: number | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private lastSentCols: number | null = null
   private lastSentRows: number | null = null
@@ -110,13 +114,16 @@ export class SessionConnection {
   private openWS(): void {
     if (this.detached) return
     const url = wsUrl('/client')
-    const ws = new WebSocket(url)
+    const cfg = isMobileApp() ? loadRelayConfig() : null
+    const ws = cfg ? new WebSocket(url, [cfg.token]) : new WebSocket(url)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? 'connecting' : 'reconnecting')
 
     ws.onopen = () => {
       this.reconnectAttempts = 0
+      this.consecutiveFailures = 0
+      this.firstFailureAt = null
       this.handlers.onStatus?.('attached')
       const attachPayload = new TextEncoder().encode(JSON.stringify({
         session_id: this.sessionId,
@@ -180,7 +187,14 @@ export class SessionConnection {
     ws.onclose = () => {
       this.ws = null
       if (this.detached) return
-      this.handlers.onStatus?.('reconnecting')
+      this.consecutiveFailures += 1
+      if (this.firstFailureAt === null) this.firstFailureAt = Date.now()
+      const lost = shouldShowReconnectBanner({
+        consecutiveFailures: this.consecutiveFailures,
+        firstFailureAt: this.firstFailureAt,
+        now: Date.now(),
+      })
+      this.handlers.onStatus?.(lost ? 'lost' : 'reconnecting')
       const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_INITIAL_MS * Math.pow(2, this.reconnectAttempts++))
       this.reconnectTimer = setTimeout(() => {
         this.reconnectTimer = null
@@ -194,7 +208,14 @@ export class SessionConnection {
   }
 }
 
-function wsUrl(path: string): string {
+export function wsUrl(path: string): string {
+  if (isMobileApp()) {
+    const cfg = loadRelayConfig()
+    if (!cfg) throw new ApiError(0, 'relay_not_configured', null)
+    const u = new URL(cfg.base)
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${u.host}${path}`
+  }
   if (typeof location === 'undefined') return `ws://localhost${path}`
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${proto}//${location.host}${path}`
@@ -204,4 +225,21 @@ function btoaBytes(bytes: Uint8Array): string {
   let s = ''
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!)
   return btoa(s)
+}
+
+export interface ReconnectStatus {
+  consecutiveFailures: number
+  firstFailureAt: number | null
+  now: number
+}
+
+const RECONNECT_BANNER_MIN_FAILURES = 5
+const RECONNECT_BANNER_MIN_ELAPSED_MS = 30_000
+
+export function shouldShowReconnectBanner(s: ReconnectStatus): boolean {
+  if (s.consecutiveFailures >= RECONNECT_BANNER_MIN_FAILURES) return true
+  if (s.firstFailureAt !== null && s.now - s.firstFailureAt >= RECONNECT_BANNER_MIN_ELAPSED_MS) {
+    return s.consecutiveFailures > 0
+  }
+  return false
 }

@@ -15,39 +15,30 @@ After `ios:add`, keep the generated `mobile/ios` project in git, but do not comm
 
 ## Relay configuration
 
-The bundled app cannot use same-origin `/api/sessions`, so the web client now has a `relay URL` field in the token panel. Enter an HTTPS relay URL such as:
+The bundled app cannot make same-origin `/api/sessions` calls. On first launch, the app opens a **setup screen** asking for:
 
-```text
-https://relay.example.com
-```
+- **Relay URL** — e.g. `https://relay.example.com` (or `http://1.2.3.4:8080` for IP testing)
+- **API token** — paste an `atk_…` token. Generate one on a desktop browser via the relay's `/settings.html#api-tokens` page (Settings → API Tokens → Create).
+- **Allow insecure HTTP/WS** — turn on only for IP/port testing against a plain HTTP relay. Production must use HTTPS.
 
-For trusted IP:port testing, enable `allow insecure HTTP relay` in the same panel and enter:
-
-```text
-http://121.43.40.128:23301
-```
-
-The iOS MVP includes an ATS exception so this explicit in-app opt-in can connect to plain HTTP relays. Do not use insecure mode for production or App Store builds; use HTTPS/WSS instead.
-
-For a public relay, allow the Capacitor WebView origin when starting the relay:
+The relay must allow the WebView origin. Start the relay with:
 
 ```bash
 ATTERM_ORIGINS=capacitor://localhost \
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='admin@example.com' \
 ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Strong-Bootstrap-Pass-2026!' \
-atterm-relay --addr :8080 --web web
+atterm-relay --addr :8080 --web web/dist
 ```
 
-Once running, sign in through the web UI as you would in a desktop browser (the Capacitor WebView shares the cookie store with the wrapped site).
+To change the relay later: in the app, Settings → Relay → edit fields or Disconnect.
 
-Use HTTPS/WSS for production devices. Plain `http://` relay URLs are for trusted simulator/local/IP testing only.
+## Mobile smoke checklist
 
-## Verify
+After any change to `web/src/setup/`, `web/src/shared/api/relay-config.ts`, `web/src/shared/mobile-guard.ts`, `web/src/shared/api/client.ts`, or `web/src/shared/ws/client-conn.ts`, run through this in the iOS simulator before merging:
 
-```bash
-npm test
-npm run sync-web
-node --test ../web/*.test.mjs scripts/*.test.mjs
-```
-
-The current Codex environment only has Command Line Tools, not full Xcode, so `xcodebuild` verification requires opening this project on a machine with Xcode installed.
+1. Cold start with no config → setup screen renders.
+2. Invalid token → inline "API token is invalid" error; not redirected away.
+3. Valid token → home screen renders; session list loads.
+4. Open session → WS connects; characters echo.
+5. Revoke token externally → next API call redirects to `/setup.html?reason=token_invalid`.
+6. Settings → Relay → Disconnect → setup screen with empty fields.

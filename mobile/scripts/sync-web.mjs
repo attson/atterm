@@ -1,4 +1,5 @@
-import { cp, mkdir, readdir, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,11 +49,33 @@ export async function syncWebAssets(src, dest) {
   return { src: srcDir, dest: destDir, copied };
 }
 
+function runNpmBuild(cwd) {
+  return new Promise((resolveSpawn, reject) => {
+    const child = spawn("npm", ["run", "build"], { cwd, stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolveSpawn();
+      else reject(new Error(`npm run build exited with code ${code} in ${cwd}`));
+    });
+  });
+}
+
 async function main() {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const mobileDir = dirname(scriptDir);
   const repoRoot = dirname(mobileDir);
-  const result = await syncWebAssets(resolve(repoRoot, "web"), resolve(mobileDir, "www"));
+  const webDir = resolve(repoRoot, "web");
+  const distDir = resolve(webDir, "dist");
+
+  console.log(`building web in ${webDir}`);
+  await runNpmBuild(webDir);
+
+  const distStat = await stat(distDir).catch(() => null);
+  if (!distStat || !distStat.isDirectory()) {
+    throw new Error(`expected build output at ${distDir}`);
+  }
+
+  const result = await syncWebAssets(distDir, resolve(mobileDir, "www"));
   console.log(`synced ${result.copied.length} web assets to ${result.dest}`);
 }
 

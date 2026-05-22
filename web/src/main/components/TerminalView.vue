@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Terminal, type ITheme } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
+import { NAlert } from 'naive-ui'
 import { SessionConnection, type SessionStatus } from '@shared/ws/client-conn'
 
 const props = defineProps<{
@@ -139,6 +140,16 @@ defineExpose({
 
 <template>
   <section class="term-view">
+    <n-alert
+      v-if="status === 'lost'"
+      type="warning"
+      :show-icon="true"
+      class="lost-banner"
+      data-testid="lost-banner"
+    >
+      Cannot reach relay.
+      <a href="/setup.html">Tap to change configuration.</a>
+    </n-alert>
     <div class="term-wrap">
       <div ref="termContainer" class="term"></div>
       <div
@@ -192,5 +203,9 @@ defineExpose({
   color: var(--fg-dim);
   padding: 0.25rem 0.5rem;
   margin: 0;
+}
+.lost-banner {
+  margin: 0;
+  border-radius: 0;
 }
 </style>

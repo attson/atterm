@@ -197,3 +197,123 @@ describe('apiFetch 401 redirect', () => {
     expect(assign).not.toHaveBeenCalled()
   })
 })
+
+import { saveRelayConfig, clearRelayConfig, __resetMobileDetectionCache } from '@shared/api/relay-config'
+
+describe('apiFetch mobile branch', () => {
+  beforeEach(() => {
+    clearCsrfToken()
+    clearRelayConfig()
+    __resetMobileDetectionCache()
+    ;(globalThis as any).Capacitor = { isNativePlatform: () => true }
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    delete (globalThis as any).Capacitor
+    __resetMobileDetectionCache()
+  })
+
+  it('prefixes path with configured base URL', async () => {
+    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_t', allowInsecure: false })
+    const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiFetch('/api/me')
+
+    const [url] = fetchMock.mock.calls[0]!
+    expect(url).toBe('https://r.example.com/api/me')
+  })
+
+  it('trims trailing slash from base when prefixing', async () => {
+    saveRelayConfig({ base: 'https://r.example.com/', token: 'atk_t', allowInsecure: false })
+    const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiFetch('/api/me')
+
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://r.example.com/api/me')
+  })
+
+  it('sends Authorization: Bearer <token>', async () => {
+    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_abc', allowInsecure: false })
+    const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiFetch('/api/me')
+
+    const [, init] = fetchMock.mock.calls[0]!
+    const headers = new Headers((init as RequestInit).headers)
+    expect(headers.get('Authorization')).toBe('Bearer atk_abc')
+  })
+
+  it('sets credentials: omit', async () => {
+    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_t', allowInsecure: false })
+    const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiFetch('/api/me')
+
+    const [, init] = fetchMock.mock.calls[0]!
+    expect((init as RequestInit).credentials).toBe('omit')
+  })
+
+  it('does not send X-CSRF-Token even on POST when CSRF cache is populated', async () => {
+    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_t', allowInsecure: false })
+    setCsrfToken('cached-csrf')
+    const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiFetch('/api/foo', { method: 'POST', body: JSON.stringify({}) })
+
+    const [, init] = fetchMock.mock.calls[0]!
+    const headers = new Headers((init as RequestInit).headers)
+    expect(headers.has('X-CSRF-Token')).toBe(false)
+  })
+
+  it('throws relay_not_configured when no config is stored', async () => {
+    // do NOT saveRelayConfig
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(apiFetch('/api/me')).rejects.toMatchObject({
+      status: 0,
+      code: 'relay_not_configured',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('apiFetch 401 mobile redirect', () => {
+  let originalLocation: Location
+  let replaceMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    clearCsrfToken()
+    clearRelayConfig()
+    __resetMobileDetectionCache()
+    ;(globalThis as any).Capacitor = { isNativePlatform: () => true }
+    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_t', allowInsecure: false })
+    vi.restoreAllMocks()
+    originalLocation = window.location
+    replaceMock = vi.fn()
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, replace: replaceMock, pathname: '/' },
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true })
+    delete (globalThis as any).Capacitor
+    __resetMobileDetectionCache()
+  })
+
+  it('redirects to /setup.html?reason=token_invalid on 401 in mobile mode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(makeResponse(401, { error: 'unauthenticated' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(apiFetch('/api/me')).rejects.toMatchObject({ status: 401 })
+    expect(replaceMock).toHaveBeenCalledWith('/setup.html?reason=token_invalid')
+  })
+})

@@ -165,3 +165,46 @@ describe("conflictsWith", () => {
     expect(c).toEqual(["pane.focus-left", "tab.new"]);
   });
 });
+
+import { buildRoutingTable } from "./shortcutBindings";
+
+describe("buildRoutingTable", () => {
+  it("with empty overrides returns the default 12-entry table", () => {
+    const t = buildRoutingTable({});
+    expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
+    expect(t["Mod+Alt+KeyN"]).toBe("pane.split-vertical-pick");
+    expect(t["Mod+KeyT"]).toBe("tab.new");
+    expect(Object.keys(t)).toHaveLength(12);
+  });
+
+  it("override removes the action's previous binding entry from the table", () => {
+    const t = buildRoutingTable({ "tab.new": "Mod+KeyL" });
+    expect(t["Mod+KeyT"]).toBeUndefined();
+    expect(t["Mod+KeyL"]).toBe("tab.new");
+  });
+
+  it("empty override removes the action from the table entirely", () => {
+    const t = buildRoutingTable({ "pane.close": "" });
+    expect(t["Mod+KeyW"]).toBeUndefined();
+    expect(Object.keys(t)).toHaveLength(11);
+  });
+
+  it("two actions colliding on the same binding: last one written wins", () => {
+    // This is degenerate config (the UI prevents it via conflicts), but the
+    // function should be deterministic. We don't promise order beyond "the
+    // override wins over the default", so just assert the override is present.
+    const t = buildRoutingTable({ "pane.close": "Mod+KeyT" });
+    // Mod+KeyT default was tab.new. Override puts pane.close on Mod+KeyT.
+    // Since defaults are seeded first, the override overwrites tab.new.
+    expect(t["Mod+KeyT"]).toBe("pane.close");
+    // tab.new now has no binding (its default slot was taken)
+    expect(Object.values(t)).not.toContain("tab.new");
+  });
+
+  it("unknown action IDs in overrides are dropped", () => {
+    const t = buildRoutingTable({ "ghost.action": "Mod+KeyN" });
+    // Defaults intact, override ignored
+    expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
+    expect(Object.keys(t)).toHaveLength(12);
+  });
+});

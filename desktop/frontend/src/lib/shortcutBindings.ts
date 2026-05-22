@@ -110,6 +110,30 @@ export function conflictsWith(
   return result;
 }
 
+// buildRoutingTable produces a binding-string -> actionId map used by the
+// runtime keydown router. It seeds with registry defaults, then applies user
+// overrides: each override first clears the action's previous slot, then
+// (if non-empty) installs the new binding. Unknown action IDs are dropped.
+export function buildRoutingTable(
+  overrides: Record<string, string>,
+): Record<string, string> {
+  const table: Record<string, string> = { ...DEFAULT_BINDINGS };
+  for (const [id, binding] of Object.entries(overrides)) {
+    if (!(id in ACTION_BY_ID)) continue;
+    // Find and remove the previous slot for this action (whether default or
+    // a prior override) — there is at most one because table values are
+    // unique per round of insertions.
+    for (const key of Object.keys(table)) {
+      if (table[key] === id) {
+        delete table[key];
+        break;
+      }
+    }
+    if (binding !== "") table[binding] = id;
+  }
+  return table;
+}
+
 // parse converts a binding string into a structured ParsedBinding, or returns
 // null for malformed input. The empty string is treated as the sentinel
 // "disabled" binding and parses successfully with all flags false and code=null.

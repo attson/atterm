@@ -78,6 +78,38 @@ export function serialize(e: KeyboardEvent, mod: Mod): string | null {
   return parts.join("+");
 }
 
+// resolvedBindings merges the user overrides with the registry defaults and
+// returns the resulting action -> binding map (containing all 12 actions).
+export function resolvedBindings(
+  overrides: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const a of ACTIONS) {
+    out[a.id] = a.defaultBinding;
+  }
+  for (const [id, binding] of Object.entries(overrides)) {
+    if (id in ACTION_BY_ID) out[id] = binding;
+    // Unknown action IDs are silently dropped (forward/backward compat).
+  }
+  return out;
+}
+
+// conflictsWith inspects a fully-resolved bindings map and returns the IDs
+// of other actions that share the same non-empty binding as `actionId`.
+export function conflictsWith(
+  bindings: Record<string, string>,
+  actionId: string,
+): string[] {
+  const target = bindings[actionId];
+  if (!target) return [];
+  const result: string[] = [];
+  for (const [id, b] of Object.entries(bindings)) {
+    if (id === actionId) continue;
+    if (b === target) result.push(id);
+  }
+  return result;
+}
+
 // parse converts a binding string into a structured ParsedBinding, or returns
 // null for malformed input. The empty string is treated as the sentinel
 // "disabled" binding and parses successfully with all flags false and code=null.

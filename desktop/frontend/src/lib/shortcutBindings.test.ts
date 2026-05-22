@@ -116,3 +116,52 @@ describe("parse", () => {
   const _m: Mod = "Control";
   void _m;
 });
+
+import { conflictsWith, resolvedBindings } from "./shortcutBindings";
+
+describe("resolvedBindings", () => {
+  it("returns defaults for unset actions", () => {
+    const r = resolvedBindings({});
+    expect(r["pane.split-vertical-new"]).toBe("Mod+KeyN");
+    expect(r["tab.next"]).toBe("Mod+Shift+BracketRight");
+  });
+
+  it("user overrides win", () => {
+    const r = resolvedBindings({ "tab.next": "Mod+KeyL" });
+    expect(r["tab.next"]).toBe("Mod+KeyL");
+    expect(r["tab.prev"]).toBe("Mod+Shift+BracketLeft"); // unchanged
+  });
+
+  it("user can disable an action with empty string", () => {
+    const r = resolvedBindings({ "pane.close": "" });
+    expect(r["pane.close"]).toBe("");
+  });
+});
+
+describe("conflictsWith", () => {
+  it("detects a conflict between two actions on the same binding", () => {
+    const bindings = resolvedBindings({ "pane.close": "Mod+KeyT" });
+    // pane.close now collides with tab.new (default Mod+KeyT)
+    const c = conflictsWith(bindings, "pane.close");
+    expect(c).toEqual(["tab.new"]);
+  });
+
+  it("excludes the action being checked", () => {
+    const bindings = resolvedBindings({});
+    expect(conflictsWith(bindings, "pane.close")).toEqual([]);
+  });
+
+  it("ignores empty bindings (disabled actions)", () => {
+    const bindings = resolvedBindings({ "pane.close": "", "tab.new": "" });
+    expect(conflictsWith(bindings, "pane.close")).toEqual([]);
+  });
+
+  it("returns multiple conflicting action ids if 3 collide", () => {
+    const bindings = resolvedBindings({
+      "pane.close": "Mod+KeyT",
+      "pane.focus-left": "Mod+KeyT",
+    });
+    const c = conflictsWith(bindings, "pane.close").sort();
+    expect(c).toEqual(["pane.focus-left", "tab.new"]);
+  });
+});

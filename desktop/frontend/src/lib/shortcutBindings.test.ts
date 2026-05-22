@@ -167,6 +167,7 @@ describe("conflictsWith", () => {
 });
 
 import { buildRoutingTable } from "./shortcutBindings";
+import { formatChord } from "./shortcutBindings";
 
 describe("buildRoutingTable", () => {
   it("with empty overrides returns the default 12-entry table", () => {
@@ -206,5 +207,46 @@ describe("buildRoutingTable", () => {
     // Defaults intact, override ignored
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
     expect(Object.keys(t)).toHaveLength(12);
+  });
+});
+
+describe("formatChord (Meta / mac)", () => {
+  it("Mod+KeyN -> ⌘N", () => {
+    expect(formatChord("Mod+KeyN", "Meta")).toBe("⌘N");
+  });
+  it("Mod+Alt+Shift+KeyN -> ⌘⌥⇧N", () => {
+    expect(formatChord("Mod+Alt+Shift+KeyN", "Meta")).toBe("⌘⌥⇧N");
+  });
+  it("Mod+Shift+BracketRight -> ⌘⇧]", () => {
+    expect(formatChord("Mod+Shift+BracketRight", "Meta")).toBe("⌘⇧]");
+  });
+  it("Mod+Alt+ArrowLeft -> ⌘⌥←", () => {
+    expect(formatChord("Mod+Alt+ArrowLeft", "Meta")).toBe("⌘⌥←");
+  });
+  it("empty string -> empty string", () => {
+    expect(formatChord("", "Meta")).toBe("");
+  });
+  it("malformed binding (no modifier) -> returns input unchanged", () => {
+    expect(formatChord("KeyN", "Meta")).toBe("KeyN");
+  });
+});
+
+describe("formatChord (Control / non-mac)", () => {
+  it("Mod+KeyN -> Ctrl+N", () => {
+    expect(formatChord("Mod+KeyN", "Control")).toBe("Ctrl+N");
+  });
+  it("Mod+Alt+Shift+KeyN -> Ctrl+Alt+Shift+N", () => {
+    expect(formatChord("Mod+Alt+Shift+KeyN", "Control")).toBe("Ctrl+Alt+Shift+N");
+  });
+  it("Mod+Shift+BracketRight -> Ctrl+Shift+]", () => {
+    expect(formatChord("Mod+Shift+BracketRight", "Control")).toBe("Ctrl+Shift+]");
+  });
+  it("Mod+Alt+ArrowLeft -> Ctrl+Alt+←", () => {
+    expect(formatChord("Mod+Alt+ArrowLeft", "Control")).toBe("Ctrl+Alt+←");
+  });
+  it("punctuation codes map to literal characters", () => {
+    expect(formatChord("Mod+Minus", "Control")).toBe("Ctrl+-");
+    expect(formatChord("Mod+Comma", "Control")).toBe("Ctrl+,");
+    expect(formatChord("Mod+Slash", "Control")).toBe("Ctrl+/");
   });
 });

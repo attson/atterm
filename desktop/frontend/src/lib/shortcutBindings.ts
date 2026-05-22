@@ -134,6 +134,49 @@ export function buildRoutingTable(
   return table;
 }
 
+// Maps KeyboardEvent.code values to display characters. Mirrors CODE_WHITELIST
+// (above). Keep the two in sync — adding a code to the whitelist requires
+// adding it here too.
+const CODE_DISPLAY: Record<string, string> = {
+  KeyA: "A", KeyB: "B", KeyC: "C", KeyD: "D", KeyE: "E", KeyF: "F", KeyG: "G",
+  KeyH: "H", KeyI: "I", KeyJ: "J", KeyK: "K", KeyL: "L", KeyM: "M", KeyN: "N",
+  KeyO: "O", KeyP: "P", KeyQ: "Q", KeyR: "R", KeyS: "S", KeyT: "T", KeyU: "U",
+  KeyV: "V", KeyW: "W", KeyX: "X", KeyY: "Y", KeyZ: "Z",
+  Digit0: "0", Digit1: "1", Digit2: "2", Digit3: "3", Digit4: "4",
+  Digit5: "5", Digit6: "6", Digit7: "7", Digit8: "8", Digit9: "9",
+  ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓",
+  BracketLeft: "[", BracketRight: "]",
+  Minus: "-", Equal: "=", Backquote: "`",
+  Comma: ",", Period: ".", Slash: "/",
+  Semicolon: ";", Quote: "'", Backslash: "\\",
+};
+
+// formatChord renders a binding string for human display. On mac (mod === "Meta")
+// modifiers use Unicode symbols concatenated with no separator (⌘⌥⇧N). On
+// other platforms (mod === "Control") modifiers are written as words joined
+// with "+" (Ctrl+Alt+Shift+N). Empty string maps to empty string (the caller
+// can render a disabled-state placeholder). Malformed bindings pass through
+// unchanged — formatChord is purely cosmetic and never throws.
+export function formatChord(binding: string, mod: Mod): string {
+  if (binding === "") return "";
+  const parsed = parse(binding);
+  if (parsed === null || parsed.code === null) return binding;
+  const display = CODE_DISPLAY[parsed.code] ?? parsed.code;
+  if (mod === "Meta") {
+    let out = "";
+    if (parsed.mod) out += "⌘";
+    if (parsed.alt) out += "⌥";
+    if (parsed.shift) out += "⇧";
+    return out + display;
+  }
+  const parts: string[] = [];
+  if (parsed.mod) parts.push("Ctrl");
+  if (parsed.alt) parts.push("Alt");
+  if (parsed.shift) parts.push("Shift");
+  parts.push(display);
+  return parts.join("+");
+}
+
 // parse converts a binding string into a structured ParsedBinding, or returns
 // null for malformed input. The empty string is treated as the sentinel
 // "disabled" binding and parses successfully with all flags false and code=null.

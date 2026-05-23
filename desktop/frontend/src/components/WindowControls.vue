@@ -1,37 +1,33 @@
 <script lang="ts" setup>
-import { computed } from "vue";
-import {
-  WindowMinimise,
-  WindowToggleMaximise,
-  Quit,
-} from "../../wailsjs/runtime/runtime";
-import { useWindowMaximized, setMaximized } from "../composables/useWindowMaximized";
+import { computed } from 'vue'
+import { usePlatform } from '../platform'
+import { useWindowMaximized, setMaximized } from '../composables/useWindowMaximized'
 
-const isMaximized = useWindowMaximized();
-
-const maxLabel = computed(() => (isMaximized.value ? "Restore" : "Maximize"));
+const platform = usePlatform()
+const isMaximized = useWindowMaximized()
+const maxLabel = computed(() => (isMaximized.value ? 'Restore' : 'Maximize'))
 
 function safe(fn: () => void) {
   try {
-    fn();
+    fn()
   } catch (e) {
-    console.warn("[WindowControls] runtime call failed", e);
+    console.warn('[WindowControls] runtime call failed', e)
   }
 }
 
 function onMin() {
-  safe(() => WindowMinimise());
+  safe(() => { void platform.system.windowMinimize?.() })
 }
 
 function onMax() {
   safe(() => {
-    WindowToggleMaximise();
-    setMaximized(!isMaximized.value);
-  });
+    void platform.system.windowToggleMaximize?.()
+    setMaximized(!isMaximized.value)
+  })
 }
 
 function onClose() {
-  safe(() => Quit());
+  safe(() => { void platform.system.quit?.() })
 }
 </script>
 

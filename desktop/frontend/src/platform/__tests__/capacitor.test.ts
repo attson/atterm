@@ -90,10 +90,9 @@ describe('createCapacitorPlatform', () => {
     await expect(p.relay.fetchMe()).rejects.toThrow(/relay_not_configured/i)
   })
 
-  it('sessions.listShells + listRemoteSessions return empty arrays', async () => {
+  it('sessions.listShells returns empty array', async () => {
     const p = createCapacitorPlatform()
     expect(await p.sessions.listShells()).toEqual([])
-    expect(await p.sessions.listRemoteSessions()).toEqual([])
   })
 
   it('sessions.closeSession is a no-op placeholder', async () => {
@@ -134,5 +133,36 @@ describe('createCapacitorPlatform', () => {
     off1()
     p.events.emit('x', { n: 2 })
     expect(calls).toEqual([['a', { n: 1 }], ['b', { n: 1 }], ['b', { n: 2 }]])
+  })
+
+  it('listRemoteSessions GETs base/api/sessions with Bearer and maps SessionInfo→RemoteSession', async () => {
+    const p = createCapacitorPlatform()
+    await p.relay.save({ url: 'https://r.example.com', token: 'atk_t', allow_insecure_relay: false, remote_permission: 'full', connected: false })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: 's1', command: 'bash', cwd: '/', title: '', cols: 80, rows: 24, started_at: 0, host_id: 'h1', host: 'box', user: 'me' },
+      { id: 's2', command: 'zsh', cwd: '/', title: 'claude', cols: 100, rows: 30, started_at: 0, host_id: 'h1', host: 'box', user: 'me' },
+    ]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const sessions = await p.sessions.listRemoteSessions()
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe('https://r.example.com/api/sessions')
+    expect(new Headers((init as RequestInit).headers).get('Authorization')).toBe('Bearer atk_t')
+    expect((init as RequestInit).credentials).toBe('omit')
+    expect(sessions).toEqual([
+      { session_id: 's1', host_id: 'h1', host: 'box', user: 'me', title: 'bash', cols: 80, rows: 24 },
+      { session_id: 's2', host_id: 'h1', host: 'box', user: 'me', title: 'claude', cols: 100, rows: 30 },
+    ])
+  })
+
+  it('listRemoteSessions returns [] when no config', async () => {
+    const p = createCapacitorPlatform()
+    expect(await p.sessions.listRemoteSessions()).toEqual([])
+  })
+
+  it('listRemoteSessions throws relay_unauthorized on 401', async () => {
+    const p = createCapacitorPlatform()
+    await p.relay.save({ url: 'https://r.example.com', token: 'atk_bad', allow_insecure_relay: false, remote_permission: 'full', connected: false })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
+    await expect(p.sessions.listRemoteSessions()).rejects.toThrow(/relay_unauthorized/)
   })
 })

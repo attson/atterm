@@ -122,7 +122,21 @@ export interface SystemBridge {
   getClipboardPaste(): Promise<ClipboardPastePayload>
   pickLogFilePath?(): Promise<string>
   openExternalURL(url: string): Promise<void>
+  getEnvironment(): Promise<Record<string, string>>
+  windowMinimize?(): Promise<void>
+  windowToggleMaximize?(): Promise<void>
+  windowIsMaximized?(): Promise<boolean>
+  quit?(): Promise<void>
 }
+
+// Implementation note (discovered during PR-A): window control methods
+// (windowMinimize, windowToggleMaximize, windowIsMaximized, quit) and
+// getEnvironment() were rolled into SystemBridge rather than a separate
+// WindowControlsBridge. They are optional so the Capacitor implementation
+// (PR-B onwards) can safely omit them; caps.windowControls gates all
+// window-control UI. getEnvironment() is non-optional because it is
+// needed by the Wails platform at init time to detect the runtime
+// environment.
 
 export interface EventBus {
   on(event: string, handler: (data: unknown) => void): () => void
@@ -140,11 +154,14 @@ export interface PluginHostBridge {
   getPluginConfig(): Promise<PluginConfig>
   setPluginConfig(cfg: PluginConfig): Promise<void>
   // PluginFS surface, 1:1 with wailsjs/go/main/PluginFS exports:
+  // Note (corrected during PR-A implementation): watchDir returns a numeric
+  // watcher ID (Promise<number>); unwatchDir takes that ID (Promise<void>).
+  // readFile accepts an optional maxBytes second argument to cap read size.
   fs: {
     listDir(path: string): Promise<DirEntry[]>
-    watchDir(path: string): Promise<void>
-    unwatchDir(path: string): Promise<void>
-    readFile(path: string): Promise<string>
+    watchDir(path: string): Promise<number>
+    unwatchDir(id: number): Promise<void>
+    readFile(path: string, maxBytes?: number): Promise<string>
     fileMeta(path: string): Promise<FileMeta>
   }
 }

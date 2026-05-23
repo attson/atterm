@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, it, vi, beforeEach, afterEach } from "vitest";
 import source from "./SettingsDialog.vue?raw";
 
 function styleBlockFor(selector: string): string {
@@ -77,5 +77,108 @@ describe("SettingsDialog shell", () => {
 
   test("clicking the Shortcuts nav switches to that tab", () => {
     expect(source).toContain("@click=\"switchTab('shortcuts')\"");
+  });
+});
+
+// ——— mount-based caps gating tests ———
+
+vi.mock("../lib/api", () => ({
+  getTerminalThemePreference: vi.fn().mockResolvedValue("default"),
+  getLogPreview: vi.fn().mockResolvedValue({ path: "", exists: false, truncated: false, content: "" }),
+  getLoggingConfig: vi.fn().mockResolvedValue({ enabled: false, path: "", effective_path: "" }),
+  getUpdateState: vi.fn().mockResolvedValue({
+    current: "0.0.0", latest: "0.0.0", available: false, notes: "",
+    checking: false, last_check_at: 0, downloading: false, download_pct: 0,
+    ready: false, error: "", asset_url: "", asset_size: 0, download_dir: "", download_path: "",
+  }),
+  getAutoCheckUpdates: vi.fn().mockResolvedValue(true),
+  getNotificationsEnabled: vi.fn().mockResolvedValue(true),
+  getShellIntegrationEnabled: vi.fn().mockResolvedValue(true),
+  getWebglRendererEnabled: vi.fn().mockResolvedValue(true),
+  getCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(10),
+  getRelayConfig: vi.fn().mockResolvedValue({
+    url: "", token: "", allow_insecure_relay: false, remote_permission: "full",
+  }),
+  fetchRelayMe: vi.fn().mockResolvedValue({ user_id: "u", email: "e" }),
+  setRelayConfig: vi.fn().mockResolvedValue(undefined),
+  setUplinkPaused: vi.fn().mockResolvedValue(undefined),
+  installUpdate: vi.fn().mockResolvedValue(undefined),
+  checkUpdate: vi.fn().mockResolvedValue(undefined),
+  startDownload: vi.fn().mockResolvedValue(undefined),
+  setAutoCheckUpdates: vi.fn().mockResolvedValue(undefined),
+  setNotificationsEnabled: vi.fn().mockResolvedValue(undefined),
+  setShellIntegrationEnabled: vi.fn().mockResolvedValue(undefined),
+  setWebglRendererEnabled: vi.fn().mockResolvedValue(undefined),
+  setTerminalThemePreference: vi.fn().mockResolvedValue(undefined),
+  setCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(undefined),
+  pickLogFilePath: vi.fn().mockResolvedValue("/tmp/log"),
+  setLoggingConfig: vi.fn().mockResolvedValue(undefined),
+  getHostInfo: vi.fn().mockResolvedValue({ platform: "darwin", arch: "arm64", buildType: "production" }),
+}));
+
+import { mount } from "@vue/test-utils";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
+import { createPinia } from "pinia";
+import SettingsDialog from "./SettingsDialog.vue";
+
+const baseProps: { localSessionCount: number; remoteSessionCount: number; terminalThemeId: string; initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" } = { localSessionCount: 0, remoteSessionCount: 0, terminalThemeId: "default" };
+let platform: ReturnType<typeof createFakePlatform>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
+});
+afterEach(() => { __setPlatformForTests(null); });
+
+function mountDialog(props: typeof baseProps = baseProps) {
+  return mount(SettingsDialog, {
+    props,
+    global: { plugins: [createPinia()] },
+  });
+}
+
+function navLabels(w: ReturnType<typeof mount>) {
+  return w.findAll(".settings-nav-item").map((b) => b.text());
+}
+
+describe("SettingsDialog caps gating", () => {
+  it("renders all 6 tabs with full desktop caps", () => {
+    const w = mountDialog();
+    expect(navLabels(w)).toEqual(["General", "Relay", "Logging", "Updates", "Plugins", "Shortcuts"]);
+  });
+
+  it("hides Updates when autoUpdate=false", () => {
+    platform.caps = { ...platform.caps, autoUpdate: false };
+    __setPlatformForTests(platform);
+    expect(navLabels(mountDialog())).not.toContain("Updates");
+  });
+
+  it("hides Plugins + Shortcuts when pluginHost=false", () => {
+    platform.caps = { ...platform.caps, pluginHost: false };
+    __setPlatformForTests(platform);
+    const labels = navLabels(mountDialog());
+    expect(labels).not.toContain("Plugins");
+    expect(labels).not.toContain("Shortcuts");
+  });
+
+  it("hides Logging when fileDialog=false", () => {
+    platform.caps = { ...platform.caps, fileDialog: false };
+    __setPlatformForTests(platform);
+    expect(navLabels(mountDialog())).not.toContain("Logging");
+  });
+
+  it("with capacitor-style caps only General + Relay show", () => {
+    platform.caps = { ...platform.caps, autoUpdate: false, pluginHost: false, fileDialog: false };
+    __setPlatformForTests(platform);
+    expect(navLabels(mountDialog())).toEqual(["General", "Relay"]);
+  });
+
+  it("falls back to general when initialTab is hidden under current caps", () => {
+    platform.caps = { ...platform.caps, autoUpdate: false };
+    __setPlatformForTests(platform);
+    const w = mountDialog({ ...baseProps, initialTab: "updates" });
+    expect(w.find(".settings-nav-item.active").text()).toBe("General");
   });
 });

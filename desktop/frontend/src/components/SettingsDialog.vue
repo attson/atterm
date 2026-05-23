@@ -7,6 +7,7 @@ import {
   type LogPreview,
 } from "../lib/api";
 import { getTerminalTheme } from "../lib/terminalThemes";
+import { usePlatform } from "../platform";
 import SettingsGeneral from "./SettingsGeneral.vue";
 import SettingsRelay from "./SettingsRelay.vue";
 import SettingsLogging from "./SettingsLogging.vue";
@@ -15,6 +16,8 @@ import SettingsPlugins from "./SettingsPlugins.vue";
 import SettingsShortcuts from "./SettingsShortcuts.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
+
+const caps = usePlatform().caps;
 
 const props = defineProps<{
   localSessionCount: number;
@@ -31,6 +34,13 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts">(props.initialTab ?? "general");
+
+const hiddenTabs = new Set<string>()
+if (!caps.autoUpdate) hiddenTabs.add('updates')
+if (!caps.pluginHost) { hiddenTabs.add('plugins'); hiddenTabs.add('shortcuts') }
+if (!caps.fileDialog) hiddenTabs.add('logging')
+if (hiddenTabs.has(activeTab.value)) activeTab.value = 'general'
+
 const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
@@ -159,21 +169,25 @@ function onSaveClick() {
             @click="switchTab('relay')"
           >Relay</button>
           <button
+            v-if="caps.fileDialog"
             class="settings-nav-item"
             :class="{ active: activeTab === 'logging' }"
             @click="switchTab('logging')"
           >Logging</button>
           <button
+            v-if="caps.autoUpdate"
             class="settings-nav-item"
             :class="{ active: activeTab === 'updates' }"
             @click="switchTab('updates')"
           >Updates</button>
           <button
+            v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'plugins' }"
             @click="switchTab('plugins')"
           >Plugins</button>
           <button
+            v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'shortcuts' }"
             @click="switchTab('shortcuts')"
@@ -194,15 +208,17 @@ function onSaveClick() {
             @relay-config-changed="onRelayConfigChanged"
           />
           <SettingsLogging
+            v-if="caps.fileDialog"
             v-show="activeTab === 'logging'"
             @open-log-viewer="openLogViewer"
           />
           <SettingsUpdates
+            v-if="caps.autoUpdate"
             v-show="activeTab === 'updates'"
             @request-install="onForceInstallClick"
           />
-          <SettingsPlugins v-show="activeTab === 'plugins'" />
-          <SettingsShortcuts v-show="activeTab === 'shortcuts'" />
+          <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
+          <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" />
         </section>
       </div>
 

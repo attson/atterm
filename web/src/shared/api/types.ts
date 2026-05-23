@@ -92,6 +92,14 @@ export interface ResetPasswordResponse {
   plaintext: string
 }
 
+export interface WebhookRow {
+  id: string
+  name: string
+  url: string
+  format: 'feishu' | 'generic'
+  created_at: string
+}
+
 export interface SessionInfo {
   id: string
   command: string

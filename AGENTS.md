@@ -122,6 +122,7 @@ gh run list --repo attson/atterm --limit 10
 | relay 注册表清理 | `internal/relay/uplink_conn.go`（writer ping fail 触发 cancelConn → cleanup mirror sessions） |
 | 改移动 app relay 配置 | `web/src/setup/` + `web/src/shared/api/relay-config.ts` + `web/src/shared/mobile-guard.ts` + `web/src/settings/tabs/Relay.vue`；`apiFetch`/`wsUrl` 的 mobile 分支在 `web/src/shared/api/client.ts` 和 `web/src/shared/ws/client-conn.ts` |
 | 改桌面前端 ↔ Go IPC | `desktop/frontend/src/platform/wails.ts`（适配器）；新方法先在 `desktop/app.go` 或 `desktop/plugin_*.go` 定义，让 Wails 重生成 `wailsjs/`，再在 `platform/wails.ts` 包一层。**不要**在 `src/platform/` 之外的文件直接 import `wailsjs/*`。 |
+| 改 relay 出站 webhook（命令结束通知） | `internal/webhook/`（render/transport/dispatch/service，**不依赖** userstore）+ `internal/userstore/webhooks.go`（+ migration `0003_webhooks.sql` + `Store` 接口）+ `internal/relay/auth_http.go`（`/api/me/webhooks`）+ `internal/relay/uplink_conn.go`（命令结束分发点，紧挨 WebPush）+ `cmd/atterm-relay/main.go`（构造 service + `webhookStoreAdapter` 映射）+ `web/src/settings/tabs/Webhooks.vue` |
 
 ## 风格摘要
 

@@ -21,6 +21,7 @@ import (
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
+	"github.com/attson/atterm/internal/webhook"
 	"nhooyr.io/websocket"
 )
 
@@ -58,9 +59,12 @@ type Config struct {
 	MaxConnectionsPerKey int
 	// AdminConfigStore persists admin API changes when configured.
 	AdminConfigStore *AdminConfigStore
-	// WebPush, when non-nil, enables the /api/push/* endpoints and the
-	// TypeCommandEvent uplink handler. May be nil to disable the feature.
+	// WebPush, when non-nil, enables the /api/push/* endpoints and web-push
+	// fan-out on command-finish. May be nil to disable web push; the
+	// TypeCommandEvent uplink handler still runs when Webhook is set.
 	WebPush *webpush.Service
+	// Webhook, when non-nil, fires per-user outbound webhooks on command-finish.
+	Webhook *webhook.Service
 	// Resolver, when non-nil, enables Principal-based auth for /uplink and
 	// /agent. When nil, the legacy shared-token (Token field) path is used.
 	// Set this to enable per-user API-token gating (Task 4.1+).

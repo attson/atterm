@@ -21,6 +21,7 @@ import (
 	"github.com/attson/atterm/internal/relay"
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
+	"github.com/attson/atterm/internal/webhook"
 )
 
 // Version is set at build time via -ldflags -X main.Version=<tag>.
@@ -132,6 +133,7 @@ func main() {
 		wpSvc = nil
 	}
 	cfg.WebPush = wpSvc
+	cfg.Webhook = webhook.New(webhookStoreAdapter{store})
 
 	if *devInsecure {
 		log.Printf("WARNING: INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")

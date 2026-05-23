@@ -71,7 +71,9 @@ export function createCapacitorPlatform(): Platform {
     sessions: {
       // newSession omitted — capacitor cannot fork local PTYs
       closeSession: async () => {
-        // PR-C wires real remote close via relay HTTP API
+        // Attach-only client: closing a tab detaches the local WS (handled in
+        // MobileApp by dropping it from the keepalive registry). It does NOT
+        // kill the remote PTY — that stays owned by the host that started it.
       },
       listShells: async () => [],
       listRemoteSessions: async (): Promise<RemoteSession[]> => {

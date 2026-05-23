@@ -16,27 +16,12 @@ export type {
 // PluginConfig + sub-types live in wailsjs/go/models, re-export here.
 export type { main as PluginModels } from '../../wailsjs/go/models'
 
-export interface DirEntry {
-  name: string
-  isDir: boolean
-  size?: number
-  modTime?: number
-}
-
-export interface FileMetaInfo {
-  path: string
-  size: number
-  modTime: number
-  isDir: boolean
-  exists: boolean
-}
-
-export interface FileContent {
-  path: string
-  data: number[]
-  isBinary: boolean
-  truncatedAt?: number
-}
+// File system types re-exported from wailsjs/go/models so there's one
+// source of truth — the Go side regenerates wailsjs/* on changes.
+import type { main as _Models } from '../../wailsjs/go/models'
+export type DirEntry = _Models.DirEntry
+export type FileContent = _Models.FileContent
+export type FileMetaInfo = _Models.FileMetaInfo
 
 export interface EnvironmentInfo {
   buildType: string
@@ -57,7 +42,6 @@ export interface Capabilities {
 
 // ----- Bridges -----
 import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState } from '../lib/api'
-import type { main as _Models } from '../../wailsjs/go/models'
 
 export interface RelayBridge {
   load(): Promise<_RelayConfig | null>

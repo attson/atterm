@@ -141,13 +141,16 @@ function onTitleDblClick() {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
-  -webkit-app-region: drag;
+  /* Wails uses --wails-draggable (not -webkit-app-region) under frameless
+     webviews on Linux/Windows; mac TitleBarHiddenInset has native drag, so
+     this is a no-op there. The property cascades to children. */
+  --wails-draggable: drag;
 }
 .status {
   margin-left: auto;
   font-size: 12px;
   color: var(--fg-dim);
-  -webkit-app-region: no-drag;
+  --wails-draggable: no-drag;
 }
 .status .bad { color: var(--bad); }
 .status .dim { color: var(--good); }
@@ -165,7 +168,7 @@ function onTitleDblClick() {
   border-radius: 6px;
   cursor: pointer;
   transition: color 120ms, background 120ms;
-  -webkit-app-region: no-drag;
+  --wails-draggable: no-drag;
 }
 .icon-btn svg { display: block; }
 .icon-btn:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }

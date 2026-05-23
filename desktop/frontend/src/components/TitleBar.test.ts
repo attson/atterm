@@ -1,16 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
-
-vi.mock("../../wailsjs/runtime/runtime", () => ({
-  Environment: vi.fn(),
-  WindowMinimise: vi.fn(),
-  WindowToggleMaximise: vi.fn(),
-  WindowIsMaximised: vi.fn().mockResolvedValue(false),
-  Quit: vi.fn(),
-}));
-
-import { Environment, WindowToggleMaximise } from "../../wailsjs/runtime/runtime";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import TitleBar from "./TitleBar.vue";
+
+let platform: ReturnType<typeof createFakePlatform>;
 
 const baseProps = {
   status: "ready" as const,
@@ -23,11 +17,17 @@ const baseProps = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
 });
 
-async function mountForPlatform(platform: string, props = {}) {
-  vi.mocked(Environment).mockResolvedValue({
-    platform,
+afterEach(() => {
+  __setPlatformForTests(null);
+});
+
+async function mountForPlatform(platformName: string, props = {}) {
+  (platform.system.getEnvironment as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    platform: platformName,
     arch: "x64",
     buildType: "dev",
   });
@@ -61,8 +61,10 @@ describe("TitleBar platform variants", () => {
     expect(w.find('[data-testid="window-min"]').exists()).toBe(true);
   });
 
-  it("falls back to linux rendering if Environment rejects", async () => {
-    vi.mocked(Environment).mockRejectedValue(new Error("no runtime"));
+  it("falls back to linux rendering if getEnvironment rejects", async () => {
+    (platform.system.getEnvironment as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("no runtime"),
+    );
     const w = mount(TitleBar, { props: baseProps });
     await flushPromises();
     expect(w.find('[data-testid="window-min"]').exists()).toBe(true);
@@ -135,15 +137,15 @@ describe("TitleBar buttons", () => {
 });
 
 describe("TitleBar double-click maximize (Win/Linux only)", () => {
-  it("on windows, double-click on root calls WindowToggleMaximise", async () => {
+  it("on windows, double-click on root calls windowToggleMaximize", async () => {
     const w = await mountForPlatform("windows");
     await w.get('[data-testid="titlebar-root"]').trigger("dblclick");
-    expect(WindowToggleMaximise).toHaveBeenCalledTimes(1);
+    expect(platform.system.windowToggleMaximize).toHaveBeenCalledTimes(1);
   });
 
-  it("on darwin, double-click on root calls WindowToggleMaximise (system zoom doesn't fire under TitleBarHiddenInset)", async () => {
+  it("on darwin, double-click on root calls windowToggleMaximize (system zoom doesn't fire under TitleBarHiddenInset)", async () => {
     const w = await mountForPlatform("darwin");
     await w.get('[data-testid="titlebar-root"]').trigger("dblclick");
-    expect(WindowToggleMaximise).toHaveBeenCalledTimes(1);
+    expect(platform.system.windowToggleMaximize).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,9 +1,11 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from "vue";
-import { Environment, WindowToggleMaximise } from "../../wailsjs/runtime/runtime";
+import { usePlatform } from "../platform";
 import WindowControls from "./WindowControls.vue";
 import { setMaximized, useWindowMaximized } from "../composables/useWindowMaximized";
 import type { Endpoint } from "../lib/api";
+
+const platform = usePlatform();
 
 type Status = "loading" | "ready" | "error";
 
@@ -27,15 +29,19 @@ const os = ref<"darwin" | "windows" | "linux">("linux");
 
 onMounted(async () => {
   try {
-    const info = await Environment();
-    const p = (info?.platform ?? "").toLowerCase();
+    const info = await platform.system.getEnvironment();
+    if (info == null) {
+      console.warn("[TitleBar] getEnvironment() returned null, falling back to linux");
+      return;
+    }
+    const p = (info.platform ?? "").toLowerCase();
     if (p === "darwin" || p === "windows" || p === "linux") {
       os.value = p;
     } else {
       console.warn("[TitleBar] unknown platform, falling back to linux:", p);
     }
   } catch (e) {
-    console.warn("[TitleBar] Environment() failed, falling back to linux", e);
+    console.warn("[TitleBar] getEnvironment() failed, falling back to linux", e);
   }
 });
 
@@ -57,12 +63,8 @@ function onTitleDblClick() {
   // macOS' system zoom-on-dblclick fires off NSWindow events that the
   // WebKit view eats under TitleBarHiddenInset, so we drive maximize
   // ourselves on all three platforms.
-  try {
-    WindowToggleMaximise();
-    setMaximized(!isMaximized.value);
-  } catch (e) {
-    console.warn("[TitleBar] WindowToggleMaximise failed", e);
-  }
+  void platform.system.windowToggleMaximize?.();
+  setMaximized(!isMaximized.value);
 }
 </script>
 

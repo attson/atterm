@@ -41,19 +41,22 @@ describe('platform singleton', () => {
     expect(() => usePlatform()).toThrow(/initPlatform/i)
   })
 
-  it('initPlatform() returns a Platform and usePlatform() returns the same instance', () => {
-    // Stub VITE_TARGET handling by pre-installing via the test helper instead
-    // of actually invoking createWailsPlatform here (kept separate).
+  it('initPlatform(factory) returns the factory result and usePlatform() returns the same instance', () => {
     const fake = fakePlatform()
-    __setPlatformForTests(fake)
+    const returned = initPlatform(() => fake)
+    expect(returned).toBe(fake)
     expect(usePlatform()).toBe(fake)
   })
 
-  it('initPlatform() is idempotent', () => {
-    const fake = fakePlatform()
-    __setPlatformForTests(fake)
-    // Idempotency property check via subsequent usePlatform calls.
-    expect(usePlatform()).toBe(usePlatform())
+  it('initPlatform(factory) is idempotent — subsequent calls return the first instance and do not re-invoke the factory', () => {
+    const fake1 = fakePlatform()
+    const fake2 = fakePlatform()
+    const factory1 = () => fake1
+    const factory2 = () => fake2
+    const first = initPlatform(factory1)
+    const second = initPlatform(factory2)
+    expect(first).toBe(fake1)
+    expect(second).toBe(fake1)  // not fake2 — factory not re-invoked
   })
 
   it('__setPlatformForTests(null) clears the singleton', () => {

@@ -132,6 +132,11 @@ type Store interface {
 	// Returns ErrUserNotFound or ErrPasswordIncorrect on validation failure.
 	ChangePassword(ctx context.Context, userID, currentPlaintext, newPlaintext string) error
 
+	// Webhooks
+	CreateWebhook(ctx context.Context, userID, url, format, name string, allowInsecure bool) (*Webhook, error)
+	ListWebhooks(ctx context.Context, userID string) ([]Webhook, error)
+	DeleteWebhook(ctx context.Context, webhookID, userID string) error
+
 	Close() error
 }
 

@@ -181,6 +181,8 @@ func TestMuxEnumerator_EveryMutatingRouteWrapped(t *testing.T) {
 		{"POST", "/api/auth/logout", false},
 		{"POST", "/api/me/tokens", false},
 		{"DELETE", "/api/me/tokens/testid", false},
+		{"POST", "/api/me/webhooks", false},
+		{"DELETE", "/api/me/webhooks/testid", false},
 		// Admin-token-gated endpoints — no cookie+CSRF, but admin Bearer token is required.
 		// Treated as public here because any protection (401 from requireAdmin) is fine.
 		{"POST", "/admin/api/invitations", true},

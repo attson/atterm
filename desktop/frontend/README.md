@@ -46,7 +46,13 @@ platform.events.on('before-close', handler)
 
 ## Build targets
 
-- `npm run build` — builds for the Wails desktop target (default, current behaviour).
-- `npm run build:capacitor` (added in PR-B) — builds for Capacitor mobile.
+The same source builds for two targets, selected by `VITE_TARGET`:
 
-PR-A only delivers the adapter layer + Wails implementation; Capacitor build lands in PR-B.
+- `npm run build:wails` (or the default `npm run build`) — `index.html` → `dist/`; consumed by `wails build`.
+- `npm run build:capacitor` — `VITE_TARGET=capacitor`, builds `index.capacitor.html` → `dist-capacitor/index.html` (a Vite `generateBundle` hook renames the entry to `index.html` for Capacitor). `mobile/scripts/sync-web.mjs` syncs this into `mobile/www/`.
+
+`src/main.ts` (Wails) mounts `App.vue` with `createWailsPlatform`. `src/main.capacitor.ts` (Capacitor) mounts `MobilePlaceholder.vue` with `createCapacitorPlatform`. The capacitor entry deliberately does NOT mount `App.vue` yet — `App.vue`'s `onMounted` calls Wails-only bindings; mounting the real mobile UI is PR-C. Vite tree-shakes the unused platform impl per target, so the capacitor bundle never pulls in `wailsjs/*`/`lib/api.ts`.
+
+## Mobile boot state (PR-B)
+
+The iOS Capacitor app boots into `MobilePlaceholder.vue`, confirming the bundle + `platform/` adapter load inside iOS WebView. Relay config + remote session UI land in PR-C.

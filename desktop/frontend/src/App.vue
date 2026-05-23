@@ -24,6 +24,7 @@ import "./plugins/fileExplorer/theme.css";
 import { isLightTerminalTheme } from "./lib/terminalThemes";
 import { usePlatform } from './platform'
 const $platform = usePlatform()
+const caps = $platform.caps
 import {
   closeSession,
   confirmQuit,
@@ -750,6 +751,7 @@ onUnmounted(() => {
 <template>
   <div class="app" :class="[`fe-theme-${fileExplorerTheme}`, { 'is-maximized': showMaximizedInset }]" :style="themeStyle">
     <TitleBar
+      v-if="caps.windowControls"
       :status="status"
       :error-msg="errorMsg"
       :session-count="sessionCount"

@@ -85,7 +85,7 @@ This is one spec with one writing-plans output, but the plan internally produces
 
 ### Per-PR scope is fixed in the writing-plans output, not negotiated in implementation.
 
-**Note for the writing-plans phase:** the natural output of this spec is **four implementation plans, one per PR** (PR-A through PR-D), rather than a single mega plan. Each plan should produce working, shippable software on its own. PR-A is the foundation; PR-B/C/D each consume PR-A's `platform/` interface unchanged.
+**Note for the writing-plans phase:** the natural output of this spec is **four implementation plans, one per PR** (PR-A through PR-D), rather than a single mega plan. Each plan should produce working, shippable software on its own. PR-A is the foundation; PR-B/C/D each consume PR-A's `platform/` interface unchanged. PR-A diverged from this spec on `initPlatform`: the implemented signature is `initPlatform(factory: () => Platform): Platform` (factory injection) rather than the original internal `VITE_TARGET` branch — this was the right call for tree-shaking per build target and is now reflected in all signatures above.
 
 ## Components & Interfaces
 
@@ -122,7 +122,7 @@ export interface SystemBridge {
   getClipboardPaste(): Promise<ClipboardPastePayload>
   pickLogFilePath?(): Promise<string>
   openExternalURL(url: string): Promise<void>
-  getEnvironment(): Promise<Record<string, string>>
+  getEnvironment(): Promise<EnvironmentInfo | null>
   windowMinimize?(): Promise<void>
   windowToggleMaximize?(): Promise<void>
   windowIsMaximized?(): Promise<boolean>
@@ -161,7 +161,7 @@ export interface PluginHostBridge {
     listDir(path: string): Promise<DirEntry[]>
     watchDir(path: string): Promise<number>
     unwatchDir(id: number): Promise<void>
-    readFile(path: string, maxBytes?: number): Promise<string>
+    readFile(path: string, maxBytes?: number): Promise<FileContent>
     fileMeta(path: string): Promise<FileMeta>
   }
 }
@@ -205,12 +205,11 @@ Same shape, different backends:
 ```ts
 let _platform: Platform | null = null
 
-export function initPlatform(): Platform {
+export function initPlatform(factory: () => Platform): Platform {
   if (_platform) return _platform
-  _platform = (import.meta.env.VITE_TARGET === 'capacitor')
-    ? createCapacitorPlatform()
-    : createWailsPlatform()
-  return _platform
+  const p = factory()
+  _platform = p
+  return p
 }
 
 export function usePlatform(): Platform {

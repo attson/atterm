@@ -54,7 +54,7 @@ describe('WindowControls', () => {
   })
 
   it('if a runtime call throws, the button does not propagate the error', async () => {
-    vi.mocked(platform.system.windowMinimize).mockImplementation(() => {
+    vi.mocked(platform.system.windowMinimize!).mockImplementation(() => {
       throw new Error('runtime gone')
     })
     const w = mount(WindowControls)

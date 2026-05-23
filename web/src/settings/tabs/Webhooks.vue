@@ -129,7 +129,7 @@ onMounted(reload)
         />
         <n-space align="center">
           <n-checkbox v-model:checked="newInsecure" data-testid="wh-insecure">
-            Allow insecure (skip TLS verification)
+            Allow plain http:// (no TLS)
           </n-checkbox>
           <n-button
             type="primary"

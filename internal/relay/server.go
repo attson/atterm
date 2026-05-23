@@ -59,8 +59,9 @@ type Config struct {
 	MaxConnectionsPerKey int
 	// AdminConfigStore persists admin API changes when configured.
 	AdminConfigStore *AdminConfigStore
-	// WebPush, when non-nil, enables the /api/push/* endpoints and the
-	// TypeCommandEvent uplink handler. May be nil to disable the feature.
+	// WebPush, when non-nil, enables the /api/push/* endpoints and web-push
+	// fan-out on command-finish. May be nil to disable web push; the
+	// TypeCommandEvent uplink handler still runs when Webhook is set.
 	WebPush *webpush.Service
 	// Webhook, when non-nil, fires per-user outbound webhooks on command-finish.
 	Webhook *webhook.Service

@@ -1,4 +1,27 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, it, beforeEach, afterEach, vi } from "vitest";
+import { mount, flushPromises } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import { __setPlatformForTests } from "./platform";
+import { createFakePlatform } from "./platform/__tests__/_fakePlatform";
+import App from "./App.vue";
+
+// jsdom does not implement matchMedia; stub it so xterm's ScreenDprMonitor
+// does not throw unhandled rejections when mounting App.
+if (typeof window !== "undefined" && !window.matchMedia) {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
 import source from "./App.vue?raw";
 import settingsSource from "./components/SettingsDialog.vue?raw";
 
@@ -95,3 +118,29 @@ describe("merged title bar", () => {
     expect(source).toContain('@open-settings="showSettings = true"');
   });
 });
+
+describe("TitleBar caps gate", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    __setPlatformForTests(createFakePlatform())
+  })
+
+  afterEach(() => {
+    __setPlatformForTests(null)
+  })
+
+  it('renders TitleBar by default (caps.windowControls=true)', async () => {
+    const w = mount(App)
+    await flushPromises()
+    expect(w.find('[data-testid="titlebar-root"]').exists()).toBe(true)
+  })
+
+  it('hides TitleBar when caps.windowControls is false', async () => {
+    const platform = createFakePlatform()
+    platform.caps = { ...platform.caps, windowControls: false }
+    __setPlatformForTests(platform)
+    const w = mount(App)
+    await flushPromises()
+    expect(w.find('[data-testid="titlebar-root"]').exists()).toBe(false)
+  })
+})

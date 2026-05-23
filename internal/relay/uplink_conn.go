@@ -11,6 +11,7 @@ import (
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/webpush"
+	"github.com/attson/atterm/internal/webhook"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
@@ -348,7 +349,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 // "command finished" events for another uplink's sessions. host_id is
 // pulled from the session's info, not the payload, for the same reason.
 func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*mirrorState, mu *sync.Mutex) {
-	if s.cfg.WebPush == nil {
+	if s.cfg.WebPush == nil && s.cfg.Webhook == nil {
 		return
 	}
 	payload, err := proto.DecodeCommandEvent(f)
@@ -365,11 +366,22 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 	}
 	hostIDStr := ms.sess.Info().HostID
 	hostID, _ := uuid.Parse(hostIDStr) // ignore parse error — hostID is informational
-	s.cfg.WebPush.DispatchCommandFinished(ms.sess.OwnerUserID, webpush.CommandFinished{
-		SessionID: f.SessionID,
-		HostID:    hostID,
-		ExitCode:  payload.ExitCode,
-		ElapsedMS: payload.ElapsedMS,
-		Label:     payload.Label,
-	})
+	if s.cfg.WebPush != nil {
+		s.cfg.WebPush.DispatchCommandFinished(ms.sess.OwnerUserID, webpush.CommandFinished{
+			SessionID: f.SessionID,
+			HostID:    hostID,
+			ExitCode:  payload.ExitCode,
+			ElapsedMS: payload.ElapsedMS,
+			Label:     payload.Label,
+		})
+	}
+	if s.cfg.Webhook != nil {
+		s.cfg.Webhook.DispatchCommandFinished(ms.sess.OwnerUserID, webhook.CommandFinished{
+			SessionID: f.SessionID,
+			HostID:    hostID,
+			ExitCode:  payload.ExitCode,
+			ElapsedMS: payload.ElapsedMS,
+			Label:     payload.Label,
+		})
+	}
 }

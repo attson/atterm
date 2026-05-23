@@ -46,6 +46,11 @@ onMounted(() => {
   conn = new SessionConnection(props.endpoint, props.sessionId, {
     onOutput: (data) => term?.write(decode(data)),
     onClose: () => emit('ended'),
+    // Defensive: route a hard 'error' status to setup. NOTE: SessionConnection
+    // reconnect-loops (status 'reconnecting') on a WS auth close rather than
+    // emitting 'error', so the *primary* token-invalid guard is the HTTP path
+    // (listRemoteSessions/fetchMe 401 → MobileApp.onTokenInvalid). Mapping the
+    // WS auth-close code to token-invalid is a PR-D follow-up.
     onStatus: (s) => { if (s === 'error') emit('tokenInvalid') },
   })
   conn.attach()

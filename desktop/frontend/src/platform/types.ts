@@ -98,8 +98,8 @@ export interface PluginHostBridge {
   setPluginConfig(cfg: _Models.PluginConfig): Promise<void>
   fs: {
     listDir(path: string): Promise<DirEntry[]>
-    watchDir(path: string): Promise<void>
-    unwatchDir(path: string): Promise<void>
+    watchDir(path: string): Promise<number>      // returns watch id
+    unwatchDir(id: number): Promise<void>         // takes watch id
     readFile(path: string): Promise<FileContent>
     fileMeta(path: string): Promise<FileMetaInfo>
   }

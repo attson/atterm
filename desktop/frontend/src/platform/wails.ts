@@ -100,13 +100,8 @@ export function createWailsPlatform(): Platform {
       setPluginConfig: SetPluginConfig as (cfg: import('../../wailsjs/go/models').main.PluginConfig) => Promise<void>,
       fs: {
         listDir: ListDir as (path: string) => Promise<import('./types').DirEntry[]>,
-        // WatchDir returns a numeric watch ID; the bridge interface declares
-        // void. Callers that need the ID should use PluginFS directly.
-        watchDir: async (path: string): Promise<void> => { await WatchDir(path) },
-        // UnwatchDir takes a numeric watch ID; bridge interface accepts a
-        // path for symmetry. Existing plugin callers pass the ID cast via
-        // unknown — this shim preserves that behaviour.
-        unwatchDir: async (path: string): Promise<void> => { await UnwatchDir(path as unknown as number) },
+        watchDir: WatchDir,
+        unwatchDir: UnwatchDir,
         readFile: ReadFile as (path: string) => Promise<import('./types').FileContent>,
         fileMeta: FileMeta as (path: string) => Promise<import('./types').FileMetaInfo>,
       },

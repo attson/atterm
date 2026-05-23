@@ -94,7 +94,7 @@ export function createFakePlatform(): Platform {
       setPluginConfig: vi.fn().mockResolvedValue(undefined),
       fs: {
         listDir: vi.fn().mockResolvedValue([]),
-        watchDir: vi.fn().mockResolvedValue(undefined),
+        watchDir: vi.fn().mockResolvedValue(1),     // returns a fake watch id
         unwatchDir: vi.fn().mockResolvedValue(undefined),
         readFile: vi.fn().mockResolvedValue({ path: '/x', data: [], isBinary: false }),
         fileMeta: vi.fn().mockResolvedValue({ path: '/x', size: 0, modTime: 0, isDir: false, exists: true }),

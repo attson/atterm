@@ -1,19 +1,13 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { defineComponent, h } from "vue";
 import PluginHost from "./PluginHost.vue";
 import { PLUGINS } from "./registry";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 
-vi.mock("../../wailsjs/go/main/App", () => ({
-  GetPluginConfig: vi.fn(),
-  SetPluginConfig: vi.fn(),
-}));
-vi.mock("../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => undefined),
-}));
-
-import { GetPluginConfig } from "../../wailsjs/go/main/App";
+let platform: ReturnType<typeof createFakePlatform>;
 
 const fakeContext = {
   activePane: { value: null },
@@ -34,6 +28,10 @@ const DummyPlugin = defineComponent({
 
 describe("PluginHost", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    platform = createFakePlatform();
+    __setPlatformForTests(platform);
+
     setActivePinia(createPinia());
     PLUGINS.length = 0;
     PLUGINS.push({
@@ -44,10 +42,14 @@ describe("PluginHost", () => {
       load: () => Promise.resolve({ default: DummyPlugin }),
       defaultEnabled: true,
     });
-    vi.mocked(GetPluginConfig).mockResolvedValue({
+    (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
       quickInput: { enabled: true, buttons: [] },
       fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: true, innerTreeRatio: 0.3, showHidden: false },
     } as any);
+  });
+
+  afterEach(() => {
+    __setPlatformForTests(null);
   });
 
   it("loads and mounts enabled plugin matching slot", async () => {
@@ -60,7 +62,7 @@ describe("PluginHost", () => {
   });
 
   it("does not load when plugin is disabled", async () => {
-    vi.mocked(GetPluginConfig).mockResolvedValue({
+    (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
       quickInput: { enabled: false, buttons: [] },
       fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: true, innerTreeRatio: 0.3, showHidden: false },
     } as any);

@@ -2,16 +2,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import QuickInputBar from "./QuickInputBar.vue";
+import { __setPlatformForTests } from "../../platform";
+import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
 
-vi.mock("../../../wailsjs/go/main/App", () => ({
-  GetPluginConfig: vi.fn(),
-  SetPluginConfig: vi.fn(),
-}));
-vi.mock("../../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => undefined),
-}));
-
-import { GetPluginConfig } from "../../../wailsjs/go/main/App";
+let platform: ReturnType<typeof createFakePlatform>;
 
 function makeContext() {
   return {
@@ -27,8 +21,12 @@ function makeContext() {
 
 beforeEach(() => {
   vi.useRealTimers();
+  vi.clearAllMocks();
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
+
   setActivePinia(createPinia());
-  vi.mocked(GetPluginConfig).mockResolvedValue({
+  (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
     quickInput: {
       enabled: true,
       buttons: [
@@ -42,6 +40,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  __setPlatformForTests(null);
 });
 
 describe("QuickInputBar", () => {

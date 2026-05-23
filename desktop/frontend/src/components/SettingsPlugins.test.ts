@@ -1,20 +1,18 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import SettingsPlugins from "./SettingsPlugins.vue";
 import { PLUGINS } from "../plugins/registry";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 
-vi.mock("../../wailsjs/go/main/App", () => ({
-  GetPluginConfig: vi.fn(),
-  SetPluginConfig: vi.fn(),
-}));
-vi.mock("../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => undefined),
-}));
-
-import { GetPluginConfig, SetPluginConfig } from "../../wailsjs/go/main/App";
+let platform: ReturnType<typeof createFakePlatform>;
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
+
   setActivePinia(createPinia());
   PLUGINS.length = 0;
   PLUGINS.push({
@@ -25,11 +23,15 @@ beforeEach(() => {
     load: () => Promise.reject(new Error("not used")),
     defaultEnabled: true,
   });
-  vi.mocked(GetPluginConfig).mockResolvedValue({
+  (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
     quickInput: { enabled: false, buttons: [] },
     fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: true, innerTreeRatio: 0.3, showHidden: false },
   } as any);
-  vi.mocked(SetPluginConfig).mockResolvedValue(undefined as unknown as any);
+  (platform.pluginHost!.setPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue(undefined as unknown as any);
+});
+
+afterEach(() => {
+  __setPlatformForTests(null);
 });
 
 describe("SettingsPlugins", () => {
@@ -40,11 +42,11 @@ describe("SettingsPlugins", () => {
     expect(cb.checked).toBe(false);
   });
 
-  it("calls SetPluginConfig on toggle", async () => {
+  it("calls setPluginConfig on toggle", async () => {
     const w = mount(SettingsPlugins);
     await flushPromises();
     await w.find("input[type=checkbox]").setValue(true);
     await flushPromises();
-    expect(SetPluginConfig).toHaveBeenCalled();
+    expect(platform.pluginHost!.setPluginConfig).toHaveBeenCalled();
   });
 });

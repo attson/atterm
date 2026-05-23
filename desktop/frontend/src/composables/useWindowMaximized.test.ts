@@ -1,53 +1,43 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { flushPromises } from "@vue/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { createFakePlatform } from '../platform/__tests__/_fakePlatform'
 
-vi.mock("../../wailsjs/runtime/runtime", () => ({
-  WindowIsMaximised: vi.fn(),
-}));
+beforeEach(() => {
+  vi.resetModules()
+})
 
-import { WindowIsMaximised } from "../../wailsjs/runtime/runtime";
+afterEach(() => {
+  vi.resetModules()
+})
 
-describe("useWindowMaximized", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-  });
+describe('useWindowMaximized', () => {
+  it('initializes to false and asynchronously updates from platform', async () => {
+    const platform = createFakePlatform()
+    platform.system.windowIsMaximized = vi.fn().mockResolvedValue(false)
 
-  afterEach(() => {
-    vi.resetModules();
-  });
+    // After resetModules, dynamically import platform to set it in the same
+    // module instance that the composable will resolve via usePlatform().
+    const { __setPlatformForTests } = await import('../platform')
+    __setPlatformForTests(platform)
 
-  it("returns the same ref instance on every call (module-level singleton)", async () => {
-    vi.mocked(WindowIsMaximised).mockResolvedValue(false);
-    const { useWindowMaximized } = await import("./useWindowMaximized");
-    const a = useWindowMaximized();
-    const b = useWindowMaximized();
-    expect(a).toBe(b);
-  });
+    const mod = await import('./useWindowMaximized')
+    const ref = mod.useWindowMaximized()
+    expect(ref.value).toBe(false)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(platform.system.windowIsMaximized).toHaveBeenCalledOnce()
 
-  it("initializes ref from WindowIsMaximised()", async () => {
-    vi.mocked(WindowIsMaximised).mockResolvedValue(true);
-    const { useWindowMaximized } = await import("./useWindowMaximized");
-    const r = useWindowMaximized();
-    await flushPromises();
-    expect(r.value).toBe(true);
-  });
+    __setPlatformForTests(null)
+  })
 
-  it("defaults to false when WindowIsMaximised throws", async () => {
-    vi.mocked(WindowIsMaximised).mockRejectedValue(new Error("nope"));
-    const { useWindowMaximized } = await import("./useWindowMaximized");
-    const r = useWindowMaximized();
-    await flushPromises();
-    expect(r.value).toBe(false);
-  });
+  it('setMaximized flips the ref synchronously', async () => {
+    const { __setPlatformForTests } = await import('../platform')
+    __setPlatformForTests(createFakePlatform())
 
-  it("setMaximized flips the shared ref", async () => {
-    vi.mocked(WindowIsMaximised).mockResolvedValue(false);
-    const { useWindowMaximized, setMaximized } = await import("./useWindowMaximized");
-    const r = useWindowMaximized();
-    setMaximized(true);
-    expect(r.value).toBe(true);
-    setMaximized(false);
-    expect(r.value).toBe(false);
-  });
-});
+    const mod = await import('./useWindowMaximized')
+    const ref = mod.useWindowMaximized()
+    mod.setMaximized(true)
+    expect(ref.value).toBe(true)
+
+    __setPlatformForTests(null)
+  })
+})

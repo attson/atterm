@@ -100,7 +100,7 @@ export interface PluginHostBridge {
     listDir(path: string): Promise<DirEntry[]>
     watchDir(path: string): Promise<number>      // returns watch id
     unwatchDir(id: number): Promise<void>         // takes watch id
-    readFile(path: string): Promise<FileContent>
+    readFile(path: string, maxBytes?: number): Promise<FileContent>
     fileMeta(path: string): Promise<FileMetaInfo>
   }
 }

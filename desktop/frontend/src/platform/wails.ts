@@ -102,7 +102,7 @@ export function createWailsPlatform(): Platform {
         listDir: ListDir as (path: string) => Promise<import('./types').DirEntry[]>,
         watchDir: WatchDir,
         unwatchDir: UnwatchDir,
-        readFile: ReadFile as (path: string) => Promise<import('./types').FileContent>,
+        readFile: ReadFile as (path: string, maxBytes?: number) => Promise<import('./types').FileContent>,
         fileMeta: FileMeta as (path: string) => Promise<import('./types').FileMetaInfo>,
       },
     },

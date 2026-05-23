@@ -21,3 +21,32 @@ manual `h(...)` calls), you can enable Volar's Take Over mode by following these
 2. Reload the VS Code window by running `Developer: Reload Window` from the command palette.
 
 You can learn more about Take Over mode [here](https://github.com/johnsoncodehk/volar/discussions/471).
+
+# desktop/frontend
+
+Vue 3 + TypeScript + Naive UI + xterm frontend for the Wails desktop app, and (via the `platform/` adapter) the mobile Capacitor shell.
+
+## Platform adapter
+
+All Go-bound calls and Wails runtime calls route through `src/platform/`. Components do:
+
+```ts
+import { usePlatform } from '@/platform'
+const platform = usePlatform()
+await platform.relay.fetchMe()
+platform.events.on('before-close', handler)
+```
+
+`platform/wails.ts` is the only file allowed to import from `../wailsjs/*` or `../lib/api`. To call a new Go method:
+
+1. Add the `App.go` method on the Go side; let Wails regenerate `wailsjs/go/main/App.{js,d.ts}`.
+2. Wrap it in `src/platform/wails.ts` on the appropriate `Bridge` (e.g. `RelayBridge`, `SessionBridge`).
+3. If it represents new functionality, add the method to `src/platform/types.ts` first.
+4. The Capacitor implementation (`platform/capacitor.ts`, PR-B onwards) decides whether to implement, no-op, or omit (optional method).
+
+## Build targets
+
+- `npm run build` — builds for the Wails desktop target (default, current behaviour).
+- `npm run build:capacitor` (added in PR-B) — builds for Capacitor mobile.
+
+PR-A only delivers the adapter layer + Wails implementation; Capacitor build lands in PR-B.

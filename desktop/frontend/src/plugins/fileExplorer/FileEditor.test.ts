@@ -1,46 +1,52 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import FileEditor from "./FileEditor.vue";
+import { __setPlatformForTests } from "../../platform";
+import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
 
-vi.mock("../../../wailsjs/go/main/PluginFS", () => ({
-  ReadFile: vi.fn(),
-  FileMeta: vi.fn(),
-}));
-
-vi.mock("../../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => undefined),
-}));
-
-import { ReadFile, FileMeta } from "../../../wailsjs/go/main/PluginFS";
+let platform: ReturnType<typeof createFakePlatform>;
 
 beforeEach(() => {
-  vi.mocked(FileMeta).mockReset();
-  vi.mocked(ReadFile).mockReset();
+  vi.clearAllMocks();
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
+});
+
+afterEach(() => {
+  __setPlatformForTests(null);
 });
 
 describe("FileEditor", () => {
   it("shows placeholder for too-large file (size > 2 MB)", async () => {
-    vi.mocked(FileMeta).mockResolvedValue({ path: "/a.txt", size: 3_000_000, modTime: 1, isBinary: false } as any);
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: "/a.txt", size: 3_000_000, modTime: 1, isBinary: false,
+    });
     const w = mount(FileEditor, { props: { path: "/a.txt", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("File too large");
-    expect(ReadFile).not.toHaveBeenCalled();
+    expect(platform.pluginHost!.fs.readFile).not.toHaveBeenCalled();
   });
 
   it("shows binary placeholder when isBinary=true", async () => {
-    vi.mocked(FileMeta).mockResolvedValue({ path: "/b.bin", size: 100, modTime: 1, isBinary: true } as any);
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: "/b.bin", size: 100, modTime: 1, isBinary: true,
+    });
     const w = mount(FileEditor, { props: { path: "/b.bin", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("Binary file");
-    expect(ReadFile).not.toHaveBeenCalled();
+    expect(platform.pluginHost!.fs.readFile).not.toHaveBeenCalled();
   });
 
   it("loads file content for normal text file", async () => {
-    vi.mocked(FileMeta).mockResolvedValue({ path: "/c.txt", size: 5, modTime: 1, isBinary: false } as any);
-    vi.mocked(ReadFile).mockResolvedValue({ path: "/c.txt", data: new TextEncoder().encode("hello"), isBinary: false, truncatedAt: 0 } as any);
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: "/c.txt", size: 5, modTime: 1, isBinary: false,
+    });
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: "/c.txt", data: new TextEncoder().encode("hello"), isBinary: false, truncatedAt: 0,
+    });
     const w = mount(FileEditor, { props: { path: "/c.txt", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
-    expect(ReadFile).toHaveBeenCalled();
+    expect(platform.pluginHost!.fs.readFile).toHaveBeenCalled();
     expect(w.text()).not.toContain("File too large");
     expect(w.text()).not.toContain("Binary file");
   });

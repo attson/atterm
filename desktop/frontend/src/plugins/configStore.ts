@@ -1,17 +1,15 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
-import { GetPluginConfig, SetPluginConfig } from "../../wailsjs/go/main/App";
+import { usePlatform, type PluginModels } from '../platform'
 import type { PluginID } from "./types";
-import type { main } from "../../wailsjs/go/models";
 
-// Re-export Wails types for convenience
-export type QuickInputButton = main.QuickInputButton;
-export type QuickInputConfig = main.QuickInputConfig;
-export type FileExplorerConfig = main.FileExplorerConfig;
-export type TranslateConfig = main.TranslateConfig;
-export type ShortcutsConfig = main.ShortcutsConfig;
-export type PluginConfig = main.PluginConfig;
+// Re-export types for convenience
+export type QuickInputButton = PluginModels.QuickInputButton;
+export type QuickInputConfig = PluginModels.QuickInputConfig;
+export type FileExplorerConfig = PluginModels.FileExplorerConfig;
+export type TranslateConfig = PluginModels.TranslateConfig;
+export type ShortcutsConfig = PluginModels.ShortcutsConfig;
+export type PluginConfig = PluginModels.PluginConfig;
 
 let unsubscribe: (() => void) | null = null;
 
@@ -19,16 +17,20 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
   const cfg = ref<PluginConfig | null>(null);
 
   async function load() {
-    cfg.value = (await GetPluginConfig()) as PluginConfig;
+    const platform = usePlatform();
+    if (!platform.pluginHost) throw new Error('plugin host unavailable');
+    cfg.value = await platform.pluginHost.getPluginConfig();
     if (!unsubscribe) {
-      unsubscribe = EventsOn("plugin-config-changed", (next: PluginConfig) => {
-        cfg.value = next;
+      unsubscribe = platform.events.on("plugin-config-changed", (data) => {
+        cfg.value = data as PluginConfig;
       });
     }
   }
 
   async function save(next: PluginConfig) {
-    await SetPluginConfig(next);
+    const platform = usePlatform();
+    if (!platform.pluginHost) throw new Error('plugin host unavailable');
+    await platform.pluginHost.setPluginConfig(next);
     cfg.value = next;
   }
 

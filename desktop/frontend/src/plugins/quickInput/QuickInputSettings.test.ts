@@ -1,17 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import QuickInputSettings from "./QuickInputSettings.vue";
+import { __setPlatformForTests } from "../../platform";
+import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
 
-vi.mock("../../../wailsjs/go/main/App", () => ({
-  GetPluginConfig: vi.fn(),
-  SetPluginConfig: vi.fn(),
-}));
-vi.mock("../../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => undefined),
-}));
-
-import { GetPluginConfig, SetPluginConfig } from "../../../wailsjs/go/main/App";
+let platform: ReturnType<typeof createFakePlatform>;
 
 const initial = () => ({
   quickInput: {
@@ -25,9 +19,16 @@ const initial = () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
+
   setActivePinia(createPinia());
-  vi.mocked(GetPluginConfig).mockResolvedValue(initial() as any);
-  vi.mocked(SetPluginConfig).mockResolvedValue(undefined as unknown as any);
+  (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue(initial() as any);
+  (platform.pluginHost!.setPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue(undefined as unknown as any);
+});
+
+afterEach(() => {
+  __setPlatformForTests(null);
 });
 
 describe("QuickInputSettings", () => {
@@ -59,14 +60,14 @@ describe("QuickInputSettings", () => {
     expect(w.findAll("tr.button-row")).toHaveLength(0);
   });
 
-  it("Save calls SetPluginConfig with edited buttons", async () => {
+  it("Save calls setPluginConfig with edited buttons", async () => {
     const w = mount(QuickInputSettings);
     await flushPromises();
     await w.find("input.label").setValue("yes");
     await w.find("button.save").trigger("click");
     await flushPromises();
-    expect(SetPluginConfig).toHaveBeenCalled();
-    const arg = vi.mocked(SetPluginConfig).mock.calls[0][0] as any;
+    expect(platform.pluginHost!.setPluginConfig).toHaveBeenCalled();
+    const arg = (platform.pluginHost!.setPluginConfig as ReturnType<typeof vi.fn>).mock.calls[0][0] as any;
     expect(arg.quickInput.buttons[0].label).toBe("yes");
   });
 
@@ -79,7 +80,7 @@ describe("QuickInputSettings", () => {
     await hotkeys[1].setValue("Alt+1");
     await w.find("button.save").trigger("click");
     await flushPromises();
-    expect(SetPluginConfig).not.toHaveBeenCalled();
+    expect(platform.pluginHost!.setPluginConfig).not.toHaveBeenCalled();
     expect(w.text()).toContain("conflict");
   });
 });

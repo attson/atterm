@@ -1,30 +1,29 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import FileTree from "./FileTree.vue";
+import { __setPlatformForTests } from '../../platform';
+import { createFakePlatform } from '../../platform/__tests__/_fakePlatform';
 
-vi.mock("../../../wailsjs/go/main/PluginFS", () => ({
-  ListDir: vi.fn(),
-  WatchDir: vi.fn(() => Promise.resolve(1)),
-  UnwatchDir: vi.fn(() => Promise.resolve()),
-}));
-
-vi.mock("../../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => undefined),
-}));
-
-import { ListDir } from "../../../wailsjs/go/main/PluginFS";
+let platform: ReturnType<typeof createFakePlatform>;
 
 beforeEach(() => {
-  vi.mocked(ListDir).mockImplementation(async (path: string) => {
+  vi.clearAllMocks();
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
+  (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
     if (path === "/proj") {
       return [
         { name: "src", isDir: true },
         { name: ".git", isDir: true },
         { name: "README.md", isDir: false, size: 100 },
-      ] as any;
+      ];
     }
-    return [] as any;
+    return [];
   });
+});
+
+afterEach(() => {
+  __setPlatformForTests(null);
 });
 
 describe("FileTree", () => {

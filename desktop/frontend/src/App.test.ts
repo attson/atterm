@@ -21,7 +21,7 @@ describe("terminal toasts", () => {
 
 describe("auth-error banner", () => {
   test("subscribes to relay:auth-error event on mount", () => {
-    expect(source).toContain('EventsOn("relay:auth-error"');
+    expect(source).toContain("platform.events.on('relay:auth-error'");
   });
 
   test("banner section is gated on authError being non-null", () => {
@@ -54,7 +54,7 @@ describe("auth-error banner", () => {
 
 describe("quit confirmation", () => {
   test("registers the before-close listener and imports confirmQuit", () => {
-    expect(source).toContain('EventsOn("before-close"');
+    expect(source).toContain("platform.events.on('before-close'");
     expect(source).toContain("confirmQuit");
     expect(source).toContain("ConfirmQuitDialog");
   });

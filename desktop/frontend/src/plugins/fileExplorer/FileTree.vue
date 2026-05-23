@@ -1,8 +1,10 @@
 <script lang="ts" setup>
 import { ref, watch, onMounted, onBeforeUnmount } from "vue";
-import { ListDir, WatchDir, UnwatchDir } from "../../../wailsjs/go/main/PluginFS";
-import { EventsOn } from "../../../wailsjs/runtime/runtime";
+import { usePlatform } from '../../platform';
 import FileTreeNode from "./FileTreeNode.vue";
+
+const platform = usePlatform();
+const fs = platform.pluginHost!.fs;  // file explorer requires pluginHost; guarded upstream by caps.pluginHost
 
 interface DirEntry {
   name: string;
@@ -35,7 +37,7 @@ const selectedPath = ref<string>("");
 const watchHandles = new Map<string, number>();
 
 async function loadDir(path: string): Promise<TreeNode[]> {
-  const entries = (await ListDir(path)) as DirEntry[];
+  const entries = (await fs.listDir(path)) as DirEntry[];
   return entries
     .filter((e) => props.showHidden || !e.name.startsWith("."))
     .map((e) => ({
@@ -74,7 +76,7 @@ async function toggle(n: TreeNode) {
     if (n.children === null) n.children = await loadDir(n.path);
     n.expanded = true;
     try {
-      const id = (await WatchDir(n.path)) as number;
+      const id = await fs.watchDir(n.path);
       watchHandles.set(n.path, id);
     } catch (err) {
       console.warn("plugin-fs: watcher unavailable or cap reached for", n.path, err);
@@ -82,7 +84,7 @@ async function toggle(n: TreeNode) {
   } else {
     const id = watchHandles.get(n.path);
     if (id) {
-      await UnwatchDir(id);
+      await fs.unwatchDir(id);
       watchHandles.delete(n.path);
     }
     n.expanded = false;
@@ -101,7 +103,8 @@ function findNode(nodes: TreeNode[], path: string): TreeNode | null {
   return null;
 }
 
-const off = EventsOn("plugin-fs:dir-changed", async (dir: string) => {
+const off = platform.events.on("plugin-fs:dir-changed", async (data) => {
+  const dir = data as string;
   if (dir === props.root) {
     rootNodes.value = await loadDir(props.root);
     return;
@@ -114,7 +117,7 @@ const off = EventsOn("plugin-fs:dir-changed", async (dir: string) => {
 
 onBeforeUnmount(async () => {
   for (const id of watchHandles.values()) {
-    try { await UnwatchDir(id); } catch { /* ignore */ }
+    try { await fs.unwatchDir(id); } catch { /* ignore */ }
   }
   watchHandles.clear();
   off();

@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from "vue";
 import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe } from "../lib/api";
-import { BrowserOpenURL, EventsOn } from "../../wailsjs/runtime/runtime";
+import { usePlatform } from '../platform'
+const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
 
 const emit = defineEmits<{
@@ -83,8 +84,9 @@ onMounted(async () => {
     loading.value = false;
   }
 
-  EventsOn("relay:auth-info", async (data: { user_id: string }) => {
-    connectedUserID.value = data.user_id || "";
+  platform.events.on('relay:auth-info', async (data) => {
+    const { user_id } = data as { user_id: string };
+    connectedUserID.value = user_id || "";
     try {
       const me = await fetchRelayMe();
       connectedEmail.value = me.email || "";
@@ -139,7 +141,7 @@ async function handleTogglePaused() {
 
 function openInBrowser() {
   if (!url.value) return;
-  BrowserOpenURL(`${url.value}/settings.html`);
+  void platform.system.openExternalURL(`${url.value}/settings.html`);
 }
 
 const canSave = computed(() => !saving.value && !!url.value.trim());

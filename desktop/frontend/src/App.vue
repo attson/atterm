@@ -22,7 +22,8 @@ import { sendInputToSession } from "./lib/sendInput";
 // file-explorer chunk is not yet loaded.
 import "./plugins/fileExplorer/theme.css";
 import { isLightTerminalTheme } from "./lib/terminalThemes";
-import { EventsOn, Environment } from "../wailsjs/runtime/runtime";
+import { usePlatform } from './platform'
+const $platform = usePlatform()
 import {
   closeSession,
   confirmQuit,
@@ -680,15 +681,18 @@ watch([tabs, currentTabId], () => {
 });
 
 onMounted(async () => {
-  quitListenerOff = EventsOn("before-close", handleBeforeClose);
+  quitListenerOff = $platform.events.on('before-close', handleBeforeClose);
   try {
-    const info = await Environment();
-    platform.value = (info?.platform ?? "").toLowerCase();
+    const info = await $platform.system.getEnvironment();
+    if (info !== null) {
+      platform.value = (info.platform ?? "").toLowerCase();
+    }
   } catch {
     /* keep default empty; .is-maximized stays off on darwin-bug-side */
   }
-  EventsOn("relay:auth-error", (data: { reason: string }) => {
-    authError.value = data?.reason ?? null;
+  $platform.events.on('relay:auth-error', (data) => {
+    const d = data as { reason: string };
+    authError.value = d?.reason ?? null;
   });
   syncRoute();
   window.addEventListener("hashchange", syncRoute);

@@ -1,5 +1,19 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, afterEach, describe, expect, test, vi } from "vitest";
+import { __setPlatformForTests } from '../platform'
+import { createFakePlatform } from '../platform/__tests__/_fakePlatform'
 import source from "./SettingsRelay.vue?raw";
+
+let platform: ReturnType<typeof createFakePlatform>
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  platform = createFakePlatform()
+  __setPlatformForTests(platform)
+})
+
+afterEach(() => {
+  __setPlatformForTests(null)
+})
 
 describe("SettingsRelay", () => {
   test("loads relay config and exposes save through defineExpose", () => {
@@ -63,15 +77,15 @@ describe("SettingsRelay", () => {
     expect(source).toContain("API token");
   });
 
-  test("Open in browser button calls BrowserOpenURL with relay URL + /settings.html", () => {
-    expect(source).toContain("BrowserOpenURL");
+  test("Open in browser button calls platform.system.openExternalURL with relay URL + /settings.html", () => {
+    expect(source).toContain("platform.system.openExternalURL");
     expect(source).toContain("/settings.html");
   });
 
   // Task 8.1 tests
   test("status row shows user_id_short when AUTH_INFO received but email not yet fetched", () => {
-    // Must listen for the relay:auth-info event
-    expect(source).toContain('EventsOn("relay:auth-info"');
+    // Must listen for the relay:auth-info event via platform.events.on
+    expect(source).toContain("platform.events.on('relay:auth-info'");
     // Must show "connected as <short id>" based on a slice of user_id
     expect(source).toContain("connected as");
     expect(source).toContain("connectedUserID");
@@ -86,5 +100,19 @@ describe("SettingsRelay", () => {
     expect(source).toContain("connectedEmail");
     // Status text should prefer email when available
     expect(source).toMatch(/connectedEmail.*connected as|connected as.*connectedEmail/);
+  });
+
+  test("does not import from wailsjs runtime", () => {
+    expect(source).not.toContain("wailsjs/runtime");
+    expect(source).not.toContain("BrowserOpenURL");
+    expect(source).not.toContain("EventsOn");
+  });
+
+  test("uses platform for openExternalURL", () => {
+    expect(platform.system.openExternalURL).toBeDefined();
+  });
+
+  test("uses platform.events.on for relay:auth-info", () => {
+    expect(platform.events.on).toBeDefined();
   });
 });

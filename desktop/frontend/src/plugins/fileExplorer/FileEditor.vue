@@ -2,10 +2,12 @@
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { ReadFile, FileMeta } from "../../../wailsjs/go/main/PluginFS";
-import { EventsOn } from "../../../wailsjs/runtime/runtime";
+import { usePlatform } from "../../platform";
 import { languageForPath } from "./languageMap";
 import { highlightExtensionFor } from "./highlight";
+
+const platform = usePlatform();
+const fs = platform.pluginHost!.fs;
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
@@ -78,12 +80,12 @@ async function load() {
   view?.destroy();
   view = null;
   try {
-    const meta = (await FileMeta(props.path)) as any;
+    const meta = (await fs.fileMeta(props.path)) as any;
     loadedAt.value = meta.modTime;
     reloadPending.value = false;
     if (meta.isBinary) { state.value = "binary"; return; }
     if (meta.size > MAX_BYTES_FRONTEND) { state.value = "tooLarge"; return; }
-    const result = (await ReadFile(props.path, MAX_BYTES_FRONTEND)) as any;
+    const result = (await fs.readFile(props.path, MAX_BYTES_FRONTEND)) as any;
     const text = decodeFileBytes(result.data);
     state.value = "ok";
 
@@ -110,10 +112,11 @@ async function load() {
 
 onMounted(() => {
   void load();
-  off = EventsOn("plugin-fs:dir-changed", async (dir: string) => {
+  off = platform.events.on("plugin-fs:dir-changed", async (data: unknown) => {
+    const dir = data as string;
     if (!props.path.startsWith(dir + "/") && props.path !== dir) return;
     try {
-      const meta = (await FileMeta(props.path)) as any;
+      const meta = (await fs.fileMeta(props.path)) as any;
       if (loadedAt.value && meta.modTime > loadedAt.value) {
         reloadPending.value = true;
       }

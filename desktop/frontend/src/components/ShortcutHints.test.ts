@@ -1,22 +1,29 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import ShortcutHints from "./ShortcutHints.vue";
 import { usePluginConfigStore } from "../plugins/configStore";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 
-vi.mock("../../wailsjs/go/main/App", () => ({
-  GetPluginConfig: vi.fn(async () => ({
+let platform: ReturnType<typeof createFakePlatform>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  platform = createFakePlatform();
+  // Override the default getPluginConfig with the test-specific shape.
+  (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
     quickInput: { enabled: true, buttons: [] },
     fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: false, innerTreeRatio: 0.3, showHidden: false, showLineNumbers: false },
     translate: { enabled: false, provider: "openai-compatible", baseUrl: "", apiKey: "", model: "gpt-4o-mini", defaultTargetLang: "zh-CN" },
     shortcuts: { bindings: {} },
-  })),
-  SetPluginConfig: vi.fn(async () => {}),
-}));
+  });
+  __setPlatformForTests(platform);
+});
 
-vi.mock("../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => {}),
-}));
+afterEach(() => {
+  __setPlatformForTests(null);
+});
 
 async function setupStore(initial: Record<string, string>) {
   setActivePinia(createPinia());

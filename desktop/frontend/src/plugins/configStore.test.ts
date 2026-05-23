@@ -1,18 +1,23 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { usePluginConfigStore } from "./configStore";
+import { __setPlatformForTests } from '../platform'
+import { createFakePlatform } from '../platform/__tests__/_fakePlatform'
 
-// Mock Wails bindings.
-vi.mock("../../wailsjs/go/main/App", () => ({
-  GetPluginConfig: vi.fn(),
-  SetPluginConfig: vi.fn(),
-}));
+let platform: ReturnType<typeof createFakePlatform>
 
-vi.mock("../../wailsjs/runtime/runtime", () => ({
-  EventsOn: vi.fn(() => () => {}),
-}));
+beforeEach(() => {
+  vi.clearAllMocks()
+  platform = createFakePlatform()
+  __setPlatformForTests(platform)
+  setActivePinia(createPinia());
+  (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue(sample as unknown as any);
+  (platform.pluginHost!.setPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+})
 
-import { GetPluginConfig, SetPluginConfig } from "../../wailsjs/go/main/App";
+afterEach(() => {
+  __setPlatformForTests(null)
+})
 
 const sample = {
   quickInput: {
@@ -31,25 +36,19 @@ const sample = {
 };
 
 describe("usePluginConfigStore", () => {
-  beforeEach(() => {
-    setActivePinia(createPinia());
-    vi.mocked(GetPluginConfig).mockResolvedValue(sample as unknown as any);
-    vi.mocked(SetPluginConfig).mockResolvedValue(undefined as unknown as any);
-  });
-
   it("load() populates cfg from binding", async () => {
     const s = usePluginConfigStore();
     await s.load();
     expect(s.cfg?.quickInput.buttons[0].label).toBe("ok");
   });
 
-  it("save(next) writes via SetPluginConfig and updates cfg", async () => {
+  it("save(next) writes via setPluginConfig and updates cfg", async () => {
     const s = usePluginConfigStore();
     await s.load();
     const next = JSON.parse(JSON.stringify(sample));
     next.quickInput.buttons[0].label = "yes";
     await s.save(next);
-    expect(SetPluginConfig).toHaveBeenCalledWith(next);
+    expect(platform.pluginHost!.setPluginConfig).toHaveBeenCalledWith(next);
     expect(s.cfg?.quickInput.buttons[0].label).toBe("yes");
   });
 

@@ -194,6 +194,13 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				func() { startStream(sid) },
 				func() { stopStream(sid) },
 			)
+			// Report the mirror's remote subscriber count down the uplink so
+			// the desktop owner can render a "N watching" badge. enqueue is
+			// non-blocking (drops if the downlink is saturated).
+			sess.SetSubscriberCountHook(func(n int) {
+				payload, _ := json.Marshal(proto.ViewersPayload{SessionID: sid.String(), Count: n})
+				enqueue(proto.Frame{Type: proto.TypeViewers, SessionID: sid, Payload: payload})
+			})
 			if _, err := s.registry.Add(sess); err != nil {
 				// Owner mismatch: another user already holds this session ID.
 				// Close the WS with a well-known code so the desktop can display

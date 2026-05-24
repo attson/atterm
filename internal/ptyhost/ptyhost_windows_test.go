@@ -5,12 +5,17 @@ package ptyhost
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestOpenConPTYWindowsEcho(t *testing.T) {
+	if os.Getenv("ATTERM_RUN_CONPTY_RUNTIME_TEST") != "1" {
+		t.Skip("set ATTERM_RUN_CONPTY_RUNTIME_TEST=1 to run the interactive ConPTY smoke test")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

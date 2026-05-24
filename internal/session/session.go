@@ -51,6 +51,12 @@ type Session struct {
 	driverClientID   string
 	driverClientName string
 
+	// driverFromUpstream marks a MIRROR session: its driver is dictated by the
+	// upstream META forwarded over the uplink (the real PTY driver on the host
+	// relay), not by its own first subscriber. Local sessions leave this false
+	// and keep first-subscriber-wins + commit #4's solo behavior.
+	driverFromUpstream bool
+
 	// Optional lifecycle hooks. Used by mirror sessions (Phase 1.5 lazy
 	// uplink) so the relay can ask the upstream host to start/stop a stream
 	// only when there's at least one local subscriber.
@@ -87,6 +93,14 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 		scroll:    ringbuf.New(scrollbackBytes),
 		inbound:   make(chan proto.Frame, inboundQueueDepth),
 	}
+}
+
+// SetDriverFromUpstream marks this session as a mirror whose driver is adopted
+// from upstream META rather than self-assigned. Call once right after New.
+func (s *Session) SetDriverFromUpstream(v bool) {
+	s.mu.Lock()
+	s.driverFromUpstream = v
+	s.mu.Unlock()
 }
 
 // Info returns a snapshot of current metadata.
@@ -126,6 +140,15 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	}
 	if m.Title != "" && s.meta.Title != m.Title {
 		s.meta.Title = m.Title
+		changed = true
+	}
+	// Mirror sessions adopt the upstream's authoritative driver. Local
+	// sessions never take driver fields from a META (preserves commit #4:
+	// a cwd-only update must not clobber driver state).
+	if s.driverFromUpstream &&
+		(s.driverClientID != m.DriverClientID || s.driverClientName != m.DriverClientName) {
+		s.driverClientID = m.DriverClientID
+		s.driverClientName = m.DriverClientName
 		changed = true
 	}
 	metaCopy := s.meta
@@ -294,7 +317,7 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string) (*Subs
 	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
 		s.subs[sub] = struct{}{}
 		added = true
-		if s.driverSubscriber == nil {
+		if !s.driverFromUpstream && s.driverSubscriber == nil {
 			s.driverSubscriber = sub
 			s.driverClientID = sub.clientID
 			s.driverClientName = sub.clientName

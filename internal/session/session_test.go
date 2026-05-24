@@ -409,3 +409,66 @@ func BenchmarkFanoutHotPath(b *testing.B) {
 		s.PushOut(uint64(i+1), payload)
 	}
 }
+
+func TestMirrorSessionDoesNotSelfPromoteDriver(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.SetDriverFromUpstream(true)
+
+	sub, _ := s.Subscribe(0, "client-remote", "remote-host")
+	defer s.Unsubscribe(sub)
+
+	if got := s.DriverClientID(); got != "" {
+		t.Fatalf("mirror DriverClientID after first subscribe = %q; want empty (no self-promote)", got)
+	}
+	if s.IsDriver(sub) {
+		t.Fatal("mirror must not auto-promote its first subscriber to driver")
+	}
+}
+
+func TestMirrorSessionAdoptsUpstreamDriverFromUpdateMeta(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.SetDriverFromUpstream(true)
+
+	sub, _ := s.Subscribe(0, "client-remote", "remote-host")
+	defer s.Unsubscribe(sub)
+	drainInitialFrames(t, sub)
+
+	// Upstream desktop reports its local driver "owner-A".
+	s.UpdateMeta(proto.MetaPayload{Cwd: "/work", DriverClientID: "owner-A", DriverClientName: "mac-mini"})
+
+	if got := s.DriverClientID(); got != "owner-A" {
+		t.Fatalf("mirror DriverClientID after UpdateMeta = %q; want owner-A", got)
+	}
+	f := readFrameForTest(t, sub)
+	if f.Type != proto.TypeMeta {
+		t.Fatalf("next frame type = 0x%02x; want META", f.Type)
+	}
+	var m proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &m); err != nil {
+		t.Fatalf("meta unmarshal: %v", err)
+	}
+	if m.DriverClientID != "owner-A" || m.DriverClientName != "mac-mini" {
+		t.Fatalf("broadcast META driver = %q/%q; want owner-A/mac-mini", m.DriverClientID, m.DriverClientName)
+	}
+}
+
+func TestMirrorLateSubscriberSeesAdoptedUpstreamDriver(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.SetDriverFromUpstream(true)
+	s.UpdateMeta(proto.MetaPayload{DriverClientID: "owner-A", DriverClientName: "mac-mini"})
+
+	sub, _ := s.Subscribe(0, "client-remote", "remote-host")
+	defer s.Unsubscribe(sub)
+
+	f := readFrameForTest(t, sub)
+	for f.Type != proto.TypeMeta {
+		f = readFrameForTest(t, sub)
+	}
+	var m proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &m); err != nil {
+		t.Fatalf("meta unmarshal: %v", err)
+	}
+	if m.DriverClientID != "owner-A" {
+		t.Fatalf("late subscriber snapshot driver = %q; want owner-A", m.DriverClientID)
+	}
+}

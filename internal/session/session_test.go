@@ -484,6 +484,43 @@ func TestMirrorSessionAdoptsUpstreamDriverFromUpdateMeta(t *testing.T) {
 	}
 }
 
+func TestMirrorUpdateCwdTitlePreservesAdoptedDriver(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.SetDriverFromUpstream(true)
+	sub, _ := s.Subscribe(0, "client-remote", "remote-host")
+	defer s.Unsubscribe(sub)
+	drainInitialFrames(t, sub)
+
+	// Streamed META adopts the upstream driver.
+	s.UpdateMeta(proto.MetaPayload{DriverClientID: "owner-A", DriverClientName: "mac-mini"})
+	if got := s.DriverClientID(); got != "owner-A" {
+		t.Fatalf("setup: driver after UpdateMeta = %q; want owner-A", got)
+	}
+	// drain the UpdateMeta broadcast
+	_ = readFrameForTest(t, sub)
+
+	// ANNOUNCE-driven cwd/title update (no driver) must NOT clobber the driver.
+	s.UpdateCwdTitle("/work", "/bin/zsh")
+
+	if got := s.DriverClientID(); got != "owner-A" {
+		t.Fatalf("UpdateCwdTitle clobbered driver: %q; want owner-A", got)
+	}
+	f := readFrameForTest(t, sub)
+	if f.Type != proto.TypeMeta {
+		t.Fatalf("next frame type = 0x%02x; want META", f.Type)
+	}
+	var m proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &m); err != nil {
+		t.Fatalf("meta unmarshal: %v", err)
+	}
+	if m.DriverClientID != "owner-A" {
+		t.Fatalf("UpdateCwdTitle broadcast driver = %q; want owner-A (preserved)", m.DriverClientID)
+	}
+	if m.Cwd != "/work" {
+		t.Fatalf("UpdateCwdTitle cwd = %q; want /work", m.Cwd)
+	}
+}
+
 func TestMirrorLateSubscriberSeesAdoptedUpstreamDriver(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 	s.SetDriverFromUpstream(true)

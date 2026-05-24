@@ -59,6 +59,7 @@ onMounted(refresh)
           <span class="dot"></span>
           <span class="col2">
             <span class="ttl">{{ s.title }}</span>
+            <span v-if="s.cwd" :data-testid="`session-cwd-${s.session_id}`" class="cwd">{{ s.cwd }}</span>
             <span class="meta">{{ s.cols }}×{{ s.rows }}</span>
           </span>
           <span v-if="openSessionIds.includes(s.session_id)" :data-testid="`open-badge-${s.session_id}`" class="open">open</span>
@@ -83,6 +84,7 @@ onMounted(refresh)
 .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex: 0 0 auto; }
 .col2 { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ttl { font-size: 0.9rem; font-weight: 600; }
+.cwd { font-size: 0.74rem; color: #9aa3b2; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .meta { font-size: 0.72rem; color: #8d93a3; font-family: ui-monospace, Menlo, monospace; }
 .open { font-size: 0.62rem; color: #9dc1ff; border: 1px solid rgba(59,130,246,.4); background: rgba(59,130,246,.12); border-radius: 5px; padding: 1px 6px; }
 .empty { color: #8d93a3; font-size: 0.85rem; text-align: center; padding: 40px 12px; line-height: 1.6; }

@@ -6,7 +6,7 @@ import MobileSessionList from '../MobileSessionList.vue'
 import type { RemoteSession } from '../../platform/types'
 
 const sessions: RemoteSession[] = [
-  { session_id: 'a', host_id: 'h1', host: 'box1', user: 'me', title: 'claude', cols: 80, rows: 24 },
+  { session_id: 'a', host_id: 'h1', host: 'box1', user: 'me', title: 'claude', cwd: '/Users/me/proj', cols: 80, rows: 24 },
   { session_id: 'b', host_id: 'h1', host: 'box1', user: 'me', title: 'zsh', cols: 100, rows: 30 },
   { session_id: 'c', host_id: 'h2', host: 'box2', user: 'me', title: 'codex', cols: 120, rows: 40 },
 ]
@@ -28,6 +28,14 @@ describe('MobileSessionList', () => {
     expect(headers.some((t) => t.includes('box1'))).toBe(true)
     expect(headers.some((t) => t.includes('box2'))).toBe(true)
     expect(w.findAll('[data-testid="session-row"]').length).toBe(3)
+  })
+
+  it('shows the working directory for sessions that report one', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    expect(w.find('[data-testid="session-cwd-a"]').text()).toBe('/Users/me/proj')
+    // session 'b' has no cwd → no cwd line rendered
+    expect(w.find('[data-testid="session-cwd-b"]').exists()).toBe(false)
   })
 
   it('marks open sessions with an open badge', async () => {

@@ -15,7 +15,8 @@ const platform = usePlatform()
 
 const view = ref<View>('setup')
 const reason = ref<'token_invalid' | null>(null)
-const openTerminals = ref<OpenTerminal[]>([])   // insertion order = LRU recency
+const openTerminals = ref<OpenTerminal[]>([])   // stable open order (tab strip order)
+const recency = ref<string[]>([])               // MRU order (last = most recent), for eviction
 const activeSessionId = ref<string>('')
 const endpoint = ref<Endpoint>({ url: '', token: '' })
 
@@ -37,12 +38,16 @@ async function onConnected(): Promise<void> {
   view.value = 'list'
 }
 
+function touchRecency(sessionId: string): void {
+  const i = recency.value.indexOf(sessionId)
+  if (i >= 0) recency.value.splice(i, 1)
+  recency.value.push(sessionId)
+}
+
+// activate switches the visible terminal WITHOUT reordering the tab strip —
+// tabs keep their open order, only recency (used for eviction) moves.
 function activate(sessionId: string): void {
-  const idx = openTerminals.value.findIndex((t) => t.sessionId === sessionId)
-  if (idx >= 0) {
-    const [t] = openTerminals.value.splice(idx, 1)
-    openTerminals.value.push(t!)
-  }
+  touchRecency(sessionId)
   activeSessionId.value = sessionId
   view.value = 'terminal'
 }
@@ -51,7 +56,8 @@ function onOpenSession(info: RemoteSession): void {
   const existing = openTerminals.value.find((t) => t.sessionId === info.session_id)
   if (existing) { activate(info.session_id); return }
   if (openTerminals.value.length >= MAX_OPEN_TERMINALS) {
-    openTerminals.value.shift()
+    const victim = recency.value.find((id) => id !== info.session_id) ?? openTerminals.value[0]?.sessionId
+    if (victim) removeTerminal(victim)
   }
   openTerminals.value.push({ sessionId: info.session_id, info })
   activate(info.session_id)
@@ -59,14 +65,23 @@ function onOpenSession(info: RemoteSession): void {
 
 function onSwitch(sessionId: string): void { activate(sessionId) }
 
+function onMeta(sessionId: string, meta: { cwd?: string; title?: string }): void {
+  const t = openTerminals.value.find((t) => t.sessionId === sessionId)
+  if (!t) return
+  if (meta.cwd !== undefined) t.info.cwd = meta.cwd
+  if (meta.title) t.info.title = meta.title
+}
+
 function removeTerminal(sessionId: string): void {
   const idx = openTerminals.value.findIndex((t) => t.sessionId === sessionId)
   if (idx < 0) return
   openTerminals.value.splice(idx, 1)
+  const r = recency.value.indexOf(sessionId)
+  if (r >= 0) recency.value.splice(r, 1)
   if (activeSessionId.value === sessionId) {
-    const next = openTerminals.value[openTerminals.value.length - 1]
-    if (next) { activeSessionId.value = next.sessionId; view.value = 'terminal' }
-    else { view.value = 'list' }
+    const next = recency.value[recency.value.length - 1]
+    if (next) { activeSessionId.value = next; view.value = 'terminal' }
+    else { activeSessionId.value = ''; view.value = 'list' }
   }
 }
 
@@ -77,6 +92,7 @@ function onEditRelay(): void { reason.value = null; view.value = 'setup' }
 
 function onTokenInvalid(): void {
   openTerminals.value = []
+  recency.value = []
   activeSessionId.value = ''
   reason.value = 'token_invalid'
   view.value = 'setup'
@@ -92,8 +108,13 @@ function onTokenInvalid(): void {
     @edit-relay="onEditRelay"
     @token-invalid="onTokenInvalid"
   />
+  <!-- Stay mounted whenever sessions are open so going back to the list does
+       NOT tear down the WS connections. A remount would mint a fresh clientID,
+       and since the upstream host keeps the old id as driver, the phone would
+       re-attach as a viewer and deadlock both ends on the viewer overlay. -->
   <MobileTerminalHost
-    v-else
+    v-if="openTerminals.length > 0"
+    v-show="view === 'terminal'"
     :endpoint="endpoint"
     :open-terminals="openTerminals"
     :active-session-id="activeSessionId"
@@ -101,6 +122,7 @@ function onTokenInvalid(): void {
     @close="onClose"
     @back="onBack"
     @ended="onEnded"
+    @meta="onMeta"
     @token-invalid="onTokenInvalid"
   />
 </template>

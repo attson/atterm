@@ -3,10 +3,17 @@ import { mount } from '@vue/test-utils'
 import MobileTerminalHost from '../MobileTerminalHost.vue'
 import type { RemoteSession } from '../../platform/types'
 
-const mk = (id: string, title: string): RemoteSession =>
-  ({ session_id: id, host_id: 'h', host: 'box', user: 'me', title, cols: 80, rows: 24 })
+const mk = (id: string, title: string, over: Partial<RemoteSession> = {}): RemoteSession =>
+  ({ session_id: id, host_id: 'h', host: 'box', user: 'me', title, cols: 80, rows: 24, ...over })
 
-const stubs = { MobileTerminal: { props: ['active', 'sessionId'], template: '<div class="mt" :data-active="active" :data-sid="sessionId"></div>' } }
+const stubs = {
+  MobileTerminal: {
+    name: 'MobileTerminal',
+    props: ['active', 'sessionId'],
+    emits: ['meta'],
+    template: '<div class="mt" :data-active="active" :data-sid="sessionId"></div>',
+  },
+}
 
 const baseProps = {
   endpoint: { url: 'wss://r', token: 'atk_t' },
@@ -47,5 +54,30 @@ describe('MobileTerminalHost', () => {
     const w = mount(MobileTerminalHost, { props: baseProps, global: { stubs } })
     await w.find('[data-testid="term-back"]').trigger('click')
     expect(w.emitted('back')).toBeTruthy()
+  })
+
+  it('labels tabs with the basename of the live cwd, falling back to the title', () => {
+    const props = {
+      ...baseProps,
+      openTerminals: [
+        { sessionId: 'a', info: mk('a', '/bin/zsh', { cwd: '/Users/me/proj' }) },
+        { sessionId: 'b', info: mk('b', '/bin/zsh') }, // no cwd → falls back to title
+      ],
+    }
+    const w = mount(MobileTerminalHost, { props, global: { stubs } })
+    const labels = w.findAll('[data-testid="term-tab"] .lbl').map((n) => n.text())
+    expect(labels).toEqual(['proj', 'zsh']) // basename of cwd, else basename of the shell command
+  })
+
+  it('shows user@host of the active session in the header', () => {
+    const w = mount(MobileTerminalHost, { props: baseProps, global: { stubs } })
+    expect(w.find('[data-testid="term-who"]').text()).toBe('me@box')
+  })
+
+  it('bubbles a terminal META update up as (sessionId, meta)', () => {
+    const w = mount(MobileTerminalHost, { props: baseProps, global: { stubs } })
+    const terms = w.findAllComponents({ name: 'MobileTerminal' })
+    terms[0]!.vm.$emit('meta', { cwd: '/x/y' })
+    expect(w.emitted('meta')![0]).toEqual(['a', { cwd: '/x/y' }])
   })
 })

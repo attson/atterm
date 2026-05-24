@@ -87,7 +87,7 @@ export function createCapacitorPlatform(): Platform {
         if (res.status === 401) throw new Error('relay_unauthorized')
         if (!res.ok) throw new Error(`list sessions: HTTP ${res.status}`)
         const raw = (await res.json()) as Array<{
-          id: string; command: string; title: string; cols: number; rows: number;
+          id: string; command: string; title: string; cwd: string; cols: number; rows: number;
           host_id: string; host: string; user: string
         }>
         return raw.map((s) => ({
@@ -96,6 +96,7 @@ export function createCapacitorPlatform(): Platform {
           host: s.host,
           user: s.user,
           title: s.title || s.command,
+          cwd: s.cwd,
           cols: s.cols,
           rows: s.rows,
         }))

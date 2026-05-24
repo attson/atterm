@@ -149,8 +149,8 @@ describe('createCapacitorPlatform', () => {
     expect(new Headers((init as RequestInit).headers).get('Authorization')).toBe('Bearer atk_t')
     expect((init as RequestInit).credentials).toBe('omit')
     expect(sessions).toEqual([
-      { session_id: 's1', host_id: 'h1', host: 'box', user: 'me', title: 'bash', cols: 80, rows: 24 },
-      { session_id: 's2', host_id: 'h1', host: 'box', user: 'me', title: 'claude', cols: 100, rows: 30 },
+      { session_id: 's1', host_id: 'h1', host: 'box', user: 'me', title: 'bash', cwd: '/', cols: 80, rows: 24 },
+      { session_id: 's2', host_id: 'h1', host: 'box', user: 'me', title: 'claude', cwd: '/', cols: 100, rows: 30 },
     ])
   })
 

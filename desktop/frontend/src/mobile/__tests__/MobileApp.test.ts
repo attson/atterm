@@ -80,6 +80,19 @@ describe('MobileApp navigation + keepalive', () => {
     expect(w.find('[data-testid="stub-list"]').attributes('data-open')).toBe('a')
   })
 
+  it('keeps the terminal host mounted on the list view so connections/clientID survive', async () => {
+    const w = await mountWith(true)
+    const list = () => w.findComponent({ name: 'MobileSessionList' }) as any
+    list().vm.$emit('open', mk('a'))
+    await flushPromises()
+    ;(w.findComponent({ name: 'MobileTerminalHost' }) as any).vm.$emit('back')
+    await flushPromises()
+    // Host is hidden (v-show) but NOT unmounted — its SessionConnection stays
+    // alive, so re-entering does not mint a new clientID and deadlock the driver.
+    expect(w.findComponent({ name: 'MobileTerminalHost' }).exists()).toBe(true)
+    expect(w.find('[data-testid="stub-host"]').attributes('data-count')).toBe('1')
+  })
+
   it('LRU caps at 4 open terminals — opening a 5th evicts the oldest', async () => {
     const w = await mountWith(true)
     const list = () => w.findComponent({ name: 'MobileSessionList' }) as any
@@ -93,6 +106,26 @@ describe('MobileApp navigation + keepalive', () => {
     list().vm.$emit('open', mk('e'))
     await flushPromises()
     expect(w.find('[data-testid="stub-host"]').attributes('data-count')).toBe('4')
+  })
+
+  it('switching tabs does not reorder the tab strip (active follows, order stays)', async () => {
+    const w = await mountWith(true)
+    const list = () => w.findComponent({ name: 'MobileSessionList' }) as any
+    const host = () => w.findComponent({ name: 'MobileTerminalHost' }) as any
+    for (const id of ['a', 'b', 'c']) {
+      list().vm.$emit('open', mk(id))
+      await flushPromises()
+      host().vm.$emit('back')
+      await flushPromises()
+    }
+    // open order is a,b,c; switch back to the first one
+    list().vm.$emit('open', mk('a'))           // re-opening an existing session = switch
+    await flushPromises()
+    expect(w.find('[data-testid="stub-host"]').attributes('data-active')).toBe('a')
+    host().vm.$emit('back')
+    await flushPromises()
+    // order must be preserved (old LRU code would have produced 'b,c,a')
+    expect(w.find('[data-testid="stub-list"]').attributes('data-open')).toBe('a,b,c')
   })
 
   it('tokenInvalid resets to setup and clears open terminals', async () => {

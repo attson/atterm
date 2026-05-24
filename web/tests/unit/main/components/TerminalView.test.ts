@@ -14,6 +14,7 @@ vi.mock('@shared/ws/client-conn', () => {
         sendInput: vi.fn(),
         sendResize: vi.fn(),
         sendPasteImage: vi.fn(),
+        claimDriver: vi.fn(),
         fire(name: string, ...args: any[]) {
           handlers[name]?.(...args)
         },
@@ -72,6 +73,25 @@ describe('TerminalView.vue', () => {
     conn.fire('onReplayProgress', { phase: 'end', bytes: 100, total_bytes: 100, seq: 0 })
     await flushPromises()
     expect(wrapper.find('[data-testid="replay-progress"]').exists()).toBe(false)
+  })
+
+  it('shows the viewer overlay when not driver; take-control calls claimDriver', async () => {
+    const wrapper = mountView({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+    await flushPromises()
+    const conn = sessionConnectionInstances[0]!
+
+    expect(wrapper.find('[data-testid="viewer-overlay"]').exists()).toBe(false)
+
+    conn.fire('onDriverChange', 'owner-A', false, 'mac-mini')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="viewer-overlay"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="take-control"]').trigger('click')
+    expect(conn.claimDriver).toHaveBeenCalled()
+
+    conn.fire('onDriverChange', 'me', true, 'web')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="viewer-overlay"]').exists()).toBe(false)
   })
 
   it('detaches on unmount', async () => {

@@ -11,11 +11,11 @@ import (
 )
 
 func TestOpenConPTYWindowsEcho(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	host, err := Open(ctx, Config{
-		Argv: []string{"cmd.exe"},
+		Argv: []string{"cmd.exe", "/d", "/q", "/k", "prompt $G"},
 		Cols: 80,
 		Rows: 24,
 	})
@@ -24,6 +24,9 @@ func TestOpenConPTYWindowsEcho(t *testing.T) {
 	}
 	defer host.Close()
 
+	if _, err := readUntilWindowsTestMarker(ctx, host, ">"); err != nil {
+		t.Fatalf("wait for cmd prompt: %v", err)
+	}
 	if _, err := host.Write([]byte("echo atterm-conpty-ok\r\n")); err != nil {
 		t.Fatalf("Write echo: %v", err)
 	}

@@ -15,11 +15,39 @@ const emit = defineEmits<{
   (e: 'close', sessionId: string): void
   (e: 'back'): void
   (e: 'ended', sessionId: string): void
+  (e: 'meta', sessionId: string, meta: { cwd?: string; title?: string }): void
   (e: 'tokenInvalid'): void
 }>()
 
-function activeTitle(): string {
-  return props.openTerminals.find((t) => t.sessionId === props.activeSessionId)?.info.title ?? ''
+function activeInfo(): RemoteSession | undefined {
+  return props.openTerminals.find((t) => t.sessionId === props.activeSessionId)?.info
+}
+
+// Tab label = basename of the live cwd (mirrors desktop TabBar), falling back
+// to the first word of the title/command when cwd is not known yet.
+function shortTitle(info: RemoteSession): string {
+  const stripped = (info.cwd ?? '').replace(/\/+$/, '')
+  if (info.cwd) {
+    if (stripped === '') return '/'
+    const base = stripped.split('/').pop()
+    if (base) return base
+  }
+  const first = (info.title || '').split(/\s+/)[0] || 'shell'
+  return first.split('/').pop() || first
+}
+
+function activeCwd(): string {
+  const info = activeInfo()
+  if (!info) return ''
+  return info.cwd || info.title || ''
+}
+
+function formatWho(info?: RemoteSession): string {
+  if (!info) return ''
+  const u = info.user || ''
+  const h = info.host || ''
+  if (u && h) return `${u}@${h}`
+  return h || u || ''
 }
 </script>
 
@@ -29,7 +57,10 @@ function activeTitle(): string {
       <button data-testid="term-back" class="back" @click="emit('back')" aria-label="Back">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
       </button>
-      <span class="title">{{ activeTitle() }}</span>
+      <div class="head-text">
+        <span class="title">{{ activeCwd() }}</span>
+        <span v-if="formatWho(activeInfo())" class="who" data-testid="term-who">{{ formatWho(activeInfo()) }}</span>
+      </div>
     </header>
     <div class="tabstrip">
       <div
@@ -40,7 +71,7 @@ function activeTitle(): string {
         :class="{ active: t.sessionId === activeSessionId }"
         @click="emit('switch', t.sessionId)"
       >
-        <span class="lbl">{{ t.info.title }}</span>
+        <span class="lbl">{{ shortTitle(t.info) }}</span>
         <span :data-testid="`tab-close-${t.sessionId}`" class="x" @click.stop="emit('close', t.sessionId)">×</span>
       </div>
     </div>
@@ -57,6 +88,7 @@ function activeTitle(): string {
           :info="t.info"
           :active="t.sessionId === activeSessionId"
           @ended="emit('ended', t.sessionId)"
+          @meta="(m) => emit('meta', t.sessionId, m)"
           @token-invalid="emit('tokenInvalid')"
         />
       </div>
@@ -68,7 +100,9 @@ function activeTitle(): string {
 .host { display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); background: #000; color: #e6e7ea; }
 .bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px; border-bottom: 1px solid #1e2638; background: #0b1020; }
 .back { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: #3b82f6; width: 28px; padding: 0; }
-.title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
+.head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; line-height: 1.2; }
+.title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
+.who { font-size: 0.72rem; color: #8d93a3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabstrip { display: flex; gap: 6px; padding: 7px 8px; background: #0b1020; border-bottom: 1px solid #1e2638; overflow-x: auto; }
 .tab { flex: 0 0 auto; height: 28px; padding: 0 8px; border-radius: 7px; display: flex; align-items: center; gap: 6px; background: #11182b; border: 1px solid #1e2638; color: #8d93a3; font-size: 0.75rem; }
 .tab.active { background: rgba(59,130,246,.16); border-color: rgba(59,130,246,.5); color: #cfe0ff; }

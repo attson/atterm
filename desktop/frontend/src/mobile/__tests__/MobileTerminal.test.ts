@@ -43,6 +43,9 @@ vi.mock('xterm', () => ({
 vi.mock('xterm-addon-fit', () => ({
   FitAddon: class { fit() { termFit() } activate() {} },
 }))
+vi.mock('xterm-addon-webgl', () => ({
+  WebglAddon: class { onContextLoss() {} dispose() {} activate() {} },
+}))
 
 import MobileTerminal from '../MobileTerminal.vue'
 import type { RemoteSession } from '../../platform/types'
@@ -74,6 +77,12 @@ describe('MobileTerminal', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onStatus?.('error')
     expect(w.emitted('tokenInvalid')).toBeTruthy()
+  })
+
+  it('forwards cwd/title META updates via the meta event', () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    lastHandlers.onMeta?.({ cwd: '/Users/me/proj', title: 'vim' })
+    expect(w.emitted('meta')![0]).toEqual([{ cwd: '/Users/me/proj', title: 'vim' }])
   })
 
   it('detaches + disposes on unmount', () => {

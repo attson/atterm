@@ -57,6 +57,7 @@ export interface RemoteSession {
   host: string
   user: string
   title: string
+  cwd?: string
   cols: number
   rows: number
 }

@@ -694,6 +694,30 @@ func TestInstallPathFromExecutable_Windows(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallHelperSelfElevatesBeforeReplacing(t *testing.T) {
+	body, err := os.ReadFile("scripts/install-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(body)
+	elevateAt := strings.Index(script, "-Verb RunAs")
+	if elevateAt < 0 {
+		t.Fatal("install-windows.ps1 does not relaunch itself with -Verb RunAs")
+	}
+	replaceAt := strings.Index(script, "Move-Item")
+	if replaceAt < 0 {
+		t.Fatal("install-windows.ps1 does not replace the downloaded executable")
+	}
+	if elevateAt > replaceAt {
+		t.Fatal("install-windows.ps1 elevates after replacement; want elevation before touching Program Files")
+	}
+	for _, arg := range []string{"-ProcessId", "-Src", "-Dst"} {
+		if !strings.Contains(script, arg) {
+			t.Fatalf("install-windows.ps1 elevated relaunch does not preserve %s", arg)
+		}
+	}
+}
+
 func TestLinuxInstallHelperFallsBackToPkexecWhenDirectReplaceFails(t *testing.T) {
 	if _, err := os.Stat("/bin/bash"); err != nil {
 		t.Skip("/bin/bash not available")

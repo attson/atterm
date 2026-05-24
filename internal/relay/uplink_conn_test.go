@@ -348,3 +348,24 @@ func isCloseError(err error, out *websocket.CloseError) bool {
 	_ = ce
 	return false
 }
+
+func TestNewMirrorSessionAdoptsUpstreamDriver(t *testing.T) {
+	id := uuid.New()
+	sess := newMirrorSession(id, proto.SessionInfo{Cols: 80, Rows: 24}, "owner-user")
+
+	// A mirror must not self-promote its first subscriber.
+	sub, _ := sess.Subscribe(0, "remote-client", "remote-host")
+	defer sess.Unsubscribe(sub)
+	if sess.DriverClientID() != "" {
+		t.Fatalf("mirror self-promoted a driver: %q", sess.DriverClientID())
+	}
+	if sess.OwnerUserID != "owner-user" {
+		t.Fatalf("OwnerUserID = %q; want owner-user", sess.OwnerUserID)
+	}
+
+	// Upstream META sets the real driver.
+	sess.UpdateMeta(proto.MetaPayload{DriverClientID: "owner-A", DriverClientName: "mac-mini"})
+	if got := sess.DriverClientID(); got != "owner-A" {
+		t.Fatalf("mirror driver after upstream META = %q; want owner-A", got)
+	}
+}

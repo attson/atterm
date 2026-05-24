@@ -33,6 +33,16 @@ type mirrorState struct {
 	fwdCancel context.CancelFunc // running inbound forwarder, nil when not streaming
 }
 
+// newMirrorSession builds a mirror Session: driver state is adopted from the
+// upstream host relay's META (driverFromUpstream), never self-assigned to a
+// local subscriber. OwnerUserID is stamped for the registry's owner check.
+func newMirrorSession(id uuid.UUID, info proto.SessionInfo, ownerUserID string) *session.Session {
+	sess := session.New(id, info)
+	sess.OwnerUserID = ownerUserID
+	sess.SetDriverFromUpstream(true)
+	return sess
+}
+
 // handleUplink services a desktop app's "control" connection. The first frame
 // must be ANNOUNCE; subsequent ANNOUNCEs are full-snapshot reconciliations.
 // OUT/META/CLOSE frames flow uplink→relay; STREAM_REQUEST/STOP and
@@ -177,8 +187,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				continue
 			}
 
-			sess := session.New(id, info)
-			sess.OwnerUserID = ownerUserID
+			sess := newMirrorSession(id, info, ownerUserID)
 			// snapshot capture: id is per-iteration, must capture by value
 			sid := id
 			sess.SetSubscriberLifecycle(
@@ -311,13 +320,11 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			ms := mirrors[f.SessionID]
 			mu.Unlock()
 			if ms != nil {
-				// UpdateMeta broadcasts the mirror's full META (with its own
-				// driver_client_id, not the upstream local relay's) so the
-				// public relay's subscribers see correct driver state for
-				// their layer. Don't re-broadcast the raw upstream frame
-				// here — it would carry the local relay's driver_client_id
-				// and confuse mobile/web clients into thinking someone else
-				// on the upstream desktop is driving.
+				// Mirror sessions adopt the upstream's driver_client_id from
+				// this META (SetDriverFromUpstream), so remote /client
+				// subscribers see the real PTY driver (the host desktop) and
+				// render the viewer overlay. UpdateMeta is the single broadcast
+				// point; the raw upstream frame is not re-broadcast separately.
 				ms.sess.UpdateMeta(m)
 				s.registry.NotifyChange()
 			}

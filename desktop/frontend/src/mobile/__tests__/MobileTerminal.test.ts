@@ -5,6 +5,7 @@ const attach = vi.fn()
 const detach = vi.fn()
 const sendInput = vi.fn()
 const sendResize = vi.fn()
+const claimDriver = vi.fn()
 let lastHandlers: any = null
 let lastArgs: any = null
 
@@ -18,6 +19,7 @@ vi.mock('../../lib/connection', () => ({
     detach() { detach() }
     sendInput(s: string) { sendInput(s) }
     sendResize(c: number, r: number) { sendResize(c, r) }
+    claimDriver() { claimDriver() }
   },
 }))
 
@@ -26,6 +28,7 @@ const termDispose = vi.fn()
 const termFit = vi.fn()
 vi.mock('xterm', () => ({
   Terminal: class {
+    options: Record<string, unknown> = {}
     onData(cb: (s: string) => void) { (this as any)._onData = cb }
     onResize() {}
     open() {}
@@ -76,5 +79,21 @@ describe('MobileTerminal', () => {
     w.unmount()
     expect(detach).toHaveBeenCalledOnce()
     expect(termDispose).toHaveBeenCalledOnce()
+  })
+
+  it('shows viewer overlay when not driver; take-control calls claimDriver', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    expect(w.find('[data-testid="mobile-take-control"]').exists()).toBe(false)
+
+    lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
+    await w.vm.$nextTick()
+    expect(w.find('[data-testid="mobile-take-control"]').exists()).toBe(true)
+
+    await w.find('[data-testid="mobile-take-control"]').trigger('click')
+    expect(claimDriver).toHaveBeenCalled()
+
+    lastHandlers.onDriverChange?.('me', true, '')
+    await w.vm.$nextTick()
+    expect(w.find('[data-testid="mobile-take-control"]').exists()).toBe(false)
   })
 })

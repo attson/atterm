@@ -27,6 +27,7 @@ export interface SessionConnectionHandlers {
   onClose?: (info: { exit_code: number; reason?: string }) => void
   onReplayProgress?: (p: Record<string, unknown>) => void
   onStatus?: (status: SessionStatus) => void
+  onDriverChange?: (driverClientID: string, isMe: boolean, driverName: string) => void
 }
 
 const RECONNECT_INITIAL_MS = 500
@@ -46,6 +47,9 @@ export class SessionConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private lastSentCols: number | null = null
   private lastSentRows: number | null = null
+  private readonly clientID = crypto.randomUUID()
+  private readonly clientName = 'web'
+  private currentDriverClientID = ''
 
   constructor(sessionId: string, handlers: SessionConnectionHandlers = {}) {
     this.sessionId = sessionId
@@ -96,6 +100,14 @@ export class SessionConnection {
     this.lastSentRows = rows
   }
 
+  claimDriver(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
+    const payload = new TextEncoder().encode(
+      JSON.stringify({ client_id: this.clientID, client_name: this.clientName }),
+    )
+    this.ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload))
+  }
+
   sendPasteImage(blob: Blob, filename = 'clipboard-image'): Promise<boolean> {
     return (async () => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false
@@ -128,6 +140,8 @@ export class SessionConnection {
       const attachPayload = new TextEncoder().encode(JSON.stringify({
         session_id: this.sessionId,
         since_seq: this.lastSeq,
+        client_id: this.clientID,
+        client_name: this.clientName,
       }))
       ws.send(encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload))
       if (this.pendingInputs.length > 0) {
@@ -157,6 +171,12 @@ export class SessionConnection {
           try {
             const meta = JSON.parse(new TextDecoder().decode(f.payload))
             this.handlers.onMeta?.(meta)
+            const newDriver = String((meta as { driver_client_id?: unknown }).driver_client_id ?? '')
+            const newDriverName = String((meta as { driver_client_name?: unknown }).driver_client_name ?? '')
+            if (newDriver !== this.currentDriverClientID) {
+              this.currentDriverClientID = newDriver
+              this.handlers.onDriverChange?.(newDriver, newDriver !== '' && newDriver === this.clientID, newDriverName)
+            }
           } catch {
             /* ignore malformed META */
           }

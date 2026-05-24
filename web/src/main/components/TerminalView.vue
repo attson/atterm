@@ -17,6 +17,7 @@ const emit = defineEmits<{
 
 const status = ref<SessionStatus>('connecting')
 const replay = ref<{ bytes: number; total_bytes: number } | null>(null)
+const isDriver = ref(true)
 const termContainer = ref<HTMLDivElement | null>(null)
 
 let term: Terminal | null = null
@@ -91,8 +92,16 @@ function buildConn() {
     onStatus: (s) => {
       status.value = s
     },
+    onDriverChange: (_id, isMe) => {
+      isDriver.value = isMe
+      if (term) term.options.disableStdin = !isMe
+    },
   })
   conn.attach()
+}
+
+function takeControl() {
+  conn?.claimDriver()
 }
 
 onMounted(() => {
@@ -162,6 +171,12 @@ defineExpose({
           <div class="replay-fill" :style="{ width: pct() + '%' }"></div>
         </div>
       </div>
+      <div v-if="!isDriver" class="viewer-overlay" data-testid="viewer-overlay">
+        <div class="viewer-card">
+          <div class="viewer-title">remote has taken control</div>
+          <button class="take-control" data-testid="take-control" @click="takeControl">Take control</button>
+        </div>
+      </div>
     </div>
     <p class="status-line" data-testid="status-line">{{ status }}</p>
   </section>
@@ -197,6 +212,16 @@ defineExpose({
 .replay-text { font-size: 0.875rem; }
 .replay-track { width: 200px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .replay-fill { height: 100%; background: var(--accent); transition: width 0.1s linear; }
+.viewer-overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.viewer-card { display: flex; flex-direction: column; gap: 0.75rem; align-items: center; }
+.viewer-title { font-size: 0.9rem; color: var(--fg); }
+.take-control {
+  padding: 0.5rem 1rem; border: none; border-radius: 8px;
+  background: var(--accent, #3b82f6); color: #fff; font-weight: 600; cursor: pointer;
+}
 .status-line {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.75rem;

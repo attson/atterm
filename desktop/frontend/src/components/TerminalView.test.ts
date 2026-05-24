@@ -225,3 +225,8 @@ describe("TerminalView context-menu plugin merge", () => {
     expect(merged.map((i) => i.id)).toEqual(["copy", "paste", "clear", "fake-1"]);
   });
 });
+
+test("viewer overlay has a take-control button wired to claimDriver", () => {
+  expect(source).toMatch(/data-testid="take-control"/);
+  expect(source).toMatch(/function takeControl[\s\S]*?claimDriver/);
+});

@@ -197,4 +197,50 @@ describe('SessionConnection', () => {
     vi.advanceTimersByTime(60_000)
     expect(createdSockets.length).toBe(1)  // no reconnects after detach
   })
+
+  it('includes client_id and client_name in ATTACH', () => {
+    const conn = new SessionConnection(SID)
+    conn.attach()
+    const ws = createdSockets[0]!
+    ws.fireOpen()
+    const body = JSON.parse(new TextDecoder().decode(decodeFrame(ws.sent[0]!).payload))
+    expect(typeof body.client_id).toBe('string')
+    expect(body.client_id.length).toBeGreaterThan(0)
+    expect(body.client_name).toBe('web')
+  })
+
+  it('claimDriver() sends a CLAIM_DRIVER frame carrying our client_id', () => {
+    const conn = new SessionConnection(SID)
+    conn.attach()
+    const ws = createdSockets[0]!
+    ws.fireOpen()
+    const attachBody = JSON.parse(new TextDecoder().decode(decodeFrame(ws.sent[0]!).payload))
+    const before = ws.sent.length
+
+    conn.claimDriver()
+
+    expect(ws.sent.length).toBe(before + 1)
+    const f = decodeFrame(ws.sent[before]!)
+    expect(f.type).toBe(TYPE.CLAIM_DRIVER)
+    const body = JSON.parse(new TextDecoder().decode(f.payload))
+    expect(body.client_id).toBe(attachBody.client_id)
+  })
+
+  it('fires onDriverChange with isMe reflecting our own client_id', () => {
+    const onDriverChange = vi.fn()
+    const conn = new SessionConnection(SID, { onDriverChange })
+    conn.attach()
+    const ws = createdSockets[0]!
+    ws.fireOpen()
+    const ourId = JSON.parse(new TextDecoder().decode(decodeFrame(ws.sent[0]!).payload)).client_id
+
+    const meta = (driver: string, name: string) =>
+      encodeFrame(TYPE.META, SID_BYTES, new TextEncoder().encode(JSON.stringify({ driver_client_id: driver, driver_client_name: name })))
+
+    ws.fireMessage(meta('owner-A', 'mac-mini'))
+    expect(onDriverChange).toHaveBeenLastCalledWith('owner-A', false, 'mac-mini')
+
+    ws.fireMessage(meta(ourId, 'web'))
+    expect(onDriverChange).toHaveBeenLastCalledWith(ourId, true, 'web')
+  })
 })

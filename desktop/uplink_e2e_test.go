@@ -104,9 +104,16 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 	defer cliConn.Close(websocket.StatusNormalClosure, "")
 	cliConn.SetReadLimit(2 * 1024 * 1024)
 
-	atp, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String()})
+	atp, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String(), ClientID: "host2-cli", ClientName: "host2"})
 	if err := cliConn.Write(cliCtx, websocket.MessageBinary, proto.Marshal(proto.Frame{
 		Type: proto.TypeAttach, SessionID: sid, Payload: atp,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	// Remote clients attach as viewers now; take control before typing.
+	cdp, _ := json.Marshal(proto.ClaimDriverPayload{ClientID: "host2-cli", ClientName: "host2"})
+	if err := cliConn.Write(cliCtx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+		Type: proto.TypeClaimDriver, SessionID: sid, Payload: cdp,
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -229,9 +236,17 @@ func TestUplinkE2E(t *testing.T) {
 	cliConn.SetReadLimit(2 * 1024 * 1024)
 
 	// send ATTACH(sid, since=0)
-	atp, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String()})
+	atp, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String(), ClientID: "remote-cli", ClientName: "remote"})
 	if err := cliConn.Write(cliCtx, websocket.MessageBinary, proto.Marshal(proto.Frame{
 		Type: proto.TypeAttach, SessionID: sid, Payload: atp,
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	// Remote clients attach as viewers now; take control before typing.
+	cdp, _ := json.Marshal(proto.ClaimDriverPayload{ClientID: "remote-cli", ClientName: "remote"})
+	if err := cliConn.Write(cliCtx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+		Type: proto.TypeClaimDriver, SessionID: sid, Payload: cdp,
 	})); err != nil {
 		t.Fatal(err)
 	}

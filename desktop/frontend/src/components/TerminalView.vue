@@ -113,6 +113,10 @@ function handleViewerKeydown(event: KeyboardEvent) {
   }
 }
 
+function takeControl() {
+  conn?.claimDriver();
+}
+
 async function handleCopyShortcut(e: KeyboardEvent) {
   if (!term || !isTerminalCopyShortcut(e)) return;
   e.preventDefault();
@@ -530,6 +534,7 @@ watch(status, (nextStatus) => {
         <div class="viewer-overlay-title">remote has taken control</div>
         <div v-if="driverHostname" class="viewer-overlay-host">by {{ driverHostname }}</div>
         <div class="viewer-overlay-hint">press space to take back</div>
+        <button class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">Take control</button>
       </div>
     </div>
     <Teleport to="body">
@@ -621,6 +626,16 @@ watch(status, (nextStatus) => {
   margin-top: 6px;
   font-size: 12px;
   color: var(--fg-dim);
+}
+.viewer-overlay-btn {
+  margin-top: 8px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
 }
 .overlay .warn { color: #d29922; }
 .overlay .bad { color: var(--bad); }

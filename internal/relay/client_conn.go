@@ -200,6 +200,17 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				continue
 			}
 			sess.ClaimDriver(sub, cp.ClientID, cp.ClientName)
+			// On a mirror session the authoritative PTY driver lives upstream
+			// (the host relay). Forward the claim up the uplink so the host's
+			// ClaimLocalDriver runs and the new driver is broadcast back as
+			// META — reconciling every layer and showing the previous driver
+			// (e.g. the desktop owner) the viewer overlay. Local sessions own
+			// the PTY directly, so the ClaimDriver above is sufficient there.
+			if sess.DriverFromUpstream() {
+				if !sess.SendInbound(f) {
+					log.Printf("client: inbound full, dropping CLAIM_DRIVER session=%s", sess.ID)
+				}
+			}
 			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
 
 		case proto.TypePong:

@@ -411,6 +411,14 @@ func (s *Session) DriverClientName() string {
 	return s.driverClientName
 }
 
+// DriverFromUpstream reports whether this is a mirror session whose driver is
+// dictated by upstream META (see SetDriverFromUpstream).
+func (s *Session) DriverFromUpstream() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.driverFromUpstream
+}
+
 func replayIsTruncated(oldestSeq, sinceSeq uint64, chunkCount int) bool {
 	if chunkCount == 0 {
 		return false

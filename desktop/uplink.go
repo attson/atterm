@@ -387,6 +387,14 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			} else {
 				log.Printf("desktop-uplink: inbound_forward_ok type=CLAIM_DRIVER session=%s client_id=%q client_name=%q", f.SessionID, cp.ClientID, cp.ClientName)
 			}
+		case proto.TypeViewers:
+			var p proto.ViewersPayload
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				continue
+			}
+			if u.eventsEmit != nil {
+				u.eventsEmit(ctx, "relay:viewers", map[string]any{"session_id": p.SessionID, "count": p.Count})
+			}
 		case proto.TypeAuthInfo:
 			var info struct {
 				UserID string `json:"user_id"`

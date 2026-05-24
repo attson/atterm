@@ -396,6 +396,99 @@ func TestUplink_AuthInfo_EmitsUserID(t *testing.T) {
 	}
 }
 
+// TestUplink_Viewers_EmitsCount verifies that a TypeViewers (0x36) frame from
+// the relay makes the uplink emit a "relay:viewers" event carrying the count.
+func TestUplink_Viewers_EmitsCount(t *testing.T) {
+	const sid = "11111111-2222-3333-4444-555555555555"
+	payload, _ := json.Marshal(proto.ViewersPayload{SessionID: sid, Count: 2})
+
+	ready := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/uplink", func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close(websocket.StatusNormalClosure, "")
+		_, _, _ = c.Read(r.Context()) // drain ANNOUNCE
+		_ = c.Write(r.Context(), websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeViewers, Payload: payload}))
+		close(ready)
+		<-r.Context().Done()
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	type emitCall struct {
+		name string
+		data interface{}
+	}
+	var (
+		mu    sync.Mutex
+		calls []emitCall
+	)
+	stubEmit := func(_ context.Context, name string, data ...interface{}) {
+		mu.Lock()
+		defer mu.Unlock()
+		var d interface{}
+		if len(data) > 0 {
+			d = data[0]
+		}
+		calls = append(calls, emitCall{name: name, data: d})
+	}
+
+	host, err := startRelayHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host)
+	u.eventsEmit = stubEmit
+
+	done := make(chan struct{})
+	go func() { defer close(done); _ = u.runOnce(ctx) }()
+
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		t.Fatal("relay never sent TypeViewers")
+	}
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	var found *emitCall
+	for i := range calls {
+		if calls[i].name == "relay:viewers" {
+			found = &calls[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("relay:viewers not emitted; got: %+v", calls)
+	}
+	m, ok := found.data.(map[string]any)
+	if !ok {
+		t.Fatalf("relay:viewers data = %T; want map[string]any", found.data)
+	}
+	if m["session_id"] != sid {
+		t.Errorf("session_id = %v; want %s", m["session_id"], sid)
+	}
+	if m["count"] != 2 {
+		t.Errorf("count = %v; want 2", m["count"])
+	}
+}
+
 // TestUplink_AuthErrorClose_EmitsEvent verifies that when the relay closes the
 // uplink WS with code 4001 (auth_invalid_token), the uplink calls EventsEmit
 // with event "relay:auth-error" and payload {"reason":"auth_invalid_token"}.

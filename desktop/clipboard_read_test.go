@@ -256,6 +256,36 @@ func TestResolveLinuxClipboardImageFromFileURINoMatchReturnsNoImage(t *testing.T
 	}
 }
 
+func TestResolveClipboardImageFromPathsReadsFirstImageFile(t *testing.T) {
+	dir := t.TempDir()
+	note := filepath.Join(dir, "note.txt")
+	shot := filepath.Join(dir, "shot.png")
+	body := []byte{0x89, 'P', 'N', 'G'}
+	if err := os.WriteFile(note, []byte("hi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shot, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveClipboardImageFromPaths([]string{note, shot})
+	if err != nil {
+		t.Fatalf("err = %v; want nil", err)
+	}
+	if got == nil {
+		t.Fatal("got = nil; want image data")
+	}
+	if got.Filename != "shot.png" {
+		t.Fatalf("Filename = %q; want shot.png", got.Filename)
+	}
+	if got.ContentType != "image/png" {
+		t.Fatalf("ContentType = %q; want image/png", got.ContentType)
+	}
+	if !bytes.Equal(got.Data, body) {
+		t.Fatalf("Data = %v; want %v", got.Data, body)
+	}
+}
+
 func TestLinuxClipboardImageReadSpecsPreferWaylandThenX11(t *testing.T) {
 	specs := linuxClipboardImageReadSpecs("image/png")
 

@@ -184,11 +184,15 @@ func writeMacClipboardImageToTemp(ctx context.Context) (string, func(), error) {
 
 func readWindowsClipboardImage(ctx context.Context) (*clipboardImageData, error) {
 	path, cleanup, err := writeWindowsClipboardImageToTemp(ctx)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		defer cleanup()
+		return readClipboardImageFile(path, "image/png", "clipboard-image.png")
 	}
-	defer cleanup()
-	return readClipboardImageFile(path, "image/png", "clipboard-image.png")
+	paths, err := readWindowsClipboardFileDropPaths(ctx)
+	if err != nil {
+		return nil, errClipboardNoImage
+	}
+	return resolveClipboardImageFromPaths(paths)
 }
 
 func writeWindowsClipboardImageToTemp(ctx context.Context) (string, func(), error) {
@@ -211,6 +215,35 @@ func writeWindowsClipboardImageToTemp(ctx context.Context) (string, func(), erro
 	return path, func() {
 		_ = os.Remove(path)
 	}, nil
+}
+
+func readWindowsClipboardFileDropPaths(ctx context.Context) ([]string, error) {
+	powershell, err := windowsPowerShell()
+	if err != nil {
+		return nil, err
+	}
+	script := strings.Join([]string{
+		"Add-Type -AssemblyName System.Windows.Forms",
+		"$files = [System.Windows.Forms.Clipboard]::GetFileDropList()",
+		"if ($null -eq $files -or $files.Count -eq 0) { exit 3 }",
+		"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+		"foreach ($file in $files) { [Console]::WriteLine($file) }",
+	}, "; ")
+	out, err := exec.CommandContext(ctx, powershell, "-NoProfile", "-STA", "-Command", script).Output()
+	if err != nil {
+		return nil, errClipboardNoImage
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line != "" {
+			paths = append(paths, line)
+		}
+	}
+	if len(paths) == 0 {
+		return nil, errClipboardNoImage
+	}
+	return paths, nil
 }
 
 func linuxClipboardImageReadSpecs(contentType string) []commandSpec {
@@ -280,24 +313,35 @@ func resolveLinuxClipboardImageFromFileURI(readMime func(string) []byte) (*clipb
 		if len(raw) == 0 {
 			continue
 		}
-		for _, path := range parseClipboardFileURIs(target, raw) {
-			contentType, ok := clipboardImagePathContentType(path)
-			if !ok {
-				continue
+		if img, err := resolveClipboardImageFromPaths(parseClipboardFileURIs(target, raw)); err != nil {
+			if errors.Is(err, errClipboardImageTooLarge) {
+				return nil, err
 			}
-			data, err := os.ReadFile(path)
-			if err != nil || len(data) == 0 {
-				continue
-			}
-			if len(data) > maxPasteImageBytes {
-				return nil, errClipboardImageTooLarge
-			}
-			return &clipboardImageData{
-				Filename:    filepath.Base(path),
-				ContentType: contentType,
-				Data:        data,
-			}, nil
+		} else if img != nil {
+			return img, nil
 		}
+	}
+	return nil, errClipboardNoImage
+}
+
+func resolveClipboardImageFromPaths(paths []string) (*clipboardImageData, error) {
+	for _, path := range paths {
+		contentType, ok := clipboardImagePathContentType(path)
+		if !ok {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		if len(data) > maxPasteImageBytes {
+			return nil, errClipboardImageTooLarge
+		}
+		return &clipboardImageData{
+			Filename:    filepath.Base(path),
+			ContentType: contentType,
+			Data:        data,
+		}, nil
 	}
 	return nil, errClipboardNoImage
 }

@@ -56,7 +56,16 @@ onMounted(() => {
     onStatus: (s) => { if (s === 'error') emit('tokenInvalid') },
     onDriverChange: (_id, isMe) => {
       isDriver.value = isMe
-      if (term) term.options.disableStdin = !isMe
+      if (term) {
+        term.options.disableStdin = !isMe
+        if (isMe && term.cols > 0 && term.rows > 0) {
+          // Became driver: push our (phone) size so the PTY — and every other
+          // viewer, e.g. the desktop owner — follows. Without this the PTY
+          // keeps the previous driver's (wider) dims and the desktop viewer
+          // never shrinks to match the phone.
+          conn?.sendResize(term.cols, term.rows)
+        }
+      }
     },
   })
   conn.attach()

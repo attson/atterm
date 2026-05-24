@@ -29,6 +29,8 @@ const termFit = vi.fn()
 vi.mock('xterm', () => ({
   Terminal: class {
     options: Record<string, unknown> = {}
+    cols = 80
+    rows = 24
     onData(cb: (s: string) => void) { (this as any)._onData = cb }
     onResize() {}
     open() {}
@@ -79,6 +81,13 @@ describe('MobileTerminal', () => {
     w.unmount()
     expect(detach).toHaveBeenCalledOnce()
     expect(termDispose).toHaveBeenCalledOnce()
+  })
+
+  it('pushes its size to the PTY when it becomes the driver', () => {
+    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    sendResize.mockClear() // ignore the mount-time fit resize
+    lastHandlers.onDriverChange?.('me', true, '')
+    expect(sendResize).toHaveBeenCalledWith(80, 24)
   })
 
   it('shows viewer overlay when not driver; take-control calls claimDriver', async () => {

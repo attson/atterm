@@ -34,6 +34,10 @@ export function GetCommandNotifyThresholdSeconds() {
   return window['go']['main']['App']['GetCommandNotifyThresholdSeconds']();
 }
 
+export function GetDefaultShell() {
+  return window['go']['main']['App']['GetDefaultShell']();
+}
+
 export function GetEndpoint() {
   return window['go']['main']['App']['GetEndpoint']();
 }
@@ -104,6 +108,10 @@ export function SetAutoCheckUpdates(arg1) {
 
 export function SetCommandNotifyThresholdSeconds(arg1) {
   return window['go']['main']['App']['SetCommandNotifyThresholdSeconds'](arg1);
+}
+
+export function SetDefaultShell(arg1) {
+  return window['go']['main']['App']['SetDefaultShell'](arg1);
 }
 
 export function SetLoggingConfig(arg1) {

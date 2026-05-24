@@ -97,6 +97,8 @@ interface AppBindings {
   GetLogPreview(): Promise<LogPreview>;
   GetTerminalTheme(): Promise<string>;
   SetTerminalTheme(themeID: string): Promise<void>;
+  GetDefaultShell(): Promise<string>;
+  SetDefaultShell(shell: string): Promise<void>;
   GetUpdateState(): Promise<UpdateState>;
   CheckUpdate(): Promise<void>;
   StartDownload(): Promise<void>;
@@ -207,6 +209,14 @@ export function getTerminalThemePreference(): Promise<string> {
 
 export function setTerminalThemePreference(themeID: string): Promise<void> {
   return bindings().SetTerminalTheme(themeID);
+}
+
+export function getDefaultShell(): Promise<string> {
+  return bindings().GetDefaultShell();
+}
+
+export function setDefaultShell(shell: string): Promise<void> {
+  return bindings().SetDefaultShell(shell);
 }
 
 export function getHostInfo(): Promise<HostInfo> {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/attson/atterm/internal/proto"
@@ -16,6 +17,7 @@ const (
 	terminalThemeNord          = "nord"
 	terminalThemeSolarizedDark = "solarized-dark"
 	terminalThemeDaylight      = "daylight"
+	defaultShellAuto           = "auto"
 )
 
 var terminalThemes = map[string]struct{}{
@@ -43,6 +45,9 @@ type appConfig struct {
 	// TerminalTheme is the user's global desktop terminal theme preference.
 	// Unknown values fall back to classic so older configs remain usable.
 	TerminalTheme string `json:"terminal_theme,omitempty"`
+	// DefaultShell selects the shell used for new local sessions. Empty or
+	// "auto" lets AT Term choose the first supported shell available locally.
+	DefaultShell string `json:"default_shell,omitempty"`
 	// LogToFileEnabled controls whether desktop logs are persisted to a file.
 	// Nil means "never set" and defaults to true for existing installs.
 	LogToFileEnabled *bool `json:"log_to_file_enabled,omitempty"`
@@ -115,6 +120,14 @@ func (c appConfig) TerminalThemeOrDefault() string {
 		return c.TerminalTheme
 	}
 	return terminalThemeClassic
+}
+
+func (c appConfig) DefaultShellOrDefault() string {
+	shell := strings.TrimSpace(c.DefaultShell)
+	if shell == "" || strings.EqualFold(shell, defaultShellAuto) {
+		return defaultShellAuto
+	}
+	return shell
 }
 
 func (c appConfig) LogToFileEnabledOrDefault() bool {

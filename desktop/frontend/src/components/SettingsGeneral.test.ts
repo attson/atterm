@@ -67,6 +67,22 @@ describe("SettingsGeneral notification toggle", () => {
   });
 });
 
+describe("SettingsGeneral default shell preference", () => {
+  test("imports default shell bindings and listShells", () => {
+    expect(source).toContain("getDefaultShell");
+    expect(source).toContain("setDefaultShell");
+    expect(source).toContain("listShells");
+  });
+
+  test("renders automatic and custom shell controls", () => {
+    expect(source).toContain("default shell");
+    expect(source).toContain('value="auto"');
+    expect(source).toContain("custom shell path");
+    expect(source).toMatch(/onDefaultShellChange/);
+    expect(source).toMatch(/onCustomShellSave/);
+  });
+});
+
 describe("SettingsGeneral WebGL renderer toggle", () => {
   test("imports WebGL getter and setter", () => {
     expect(source).toContain("getWebglRendererEnabled");

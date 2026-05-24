@@ -18,6 +18,8 @@ export function GetClipboardPastePayload():Promise<main.ClipboardPastePayload>;
 
 export function GetCommandNotifyThresholdSeconds():Promise<number>;
 
+export function GetDefaultShell():Promise<string>;
+
 export function GetEndpoint():Promise<main.Endpoint>;
 
 export function GetHostInfo():Promise<main.HostInfo>;
@@ -53,6 +55,8 @@ export function PickLogFilePath():Promise<string>;
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
 export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
+
+export function SetDefaultShell(arg1:string):Promise<void>;
 
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 

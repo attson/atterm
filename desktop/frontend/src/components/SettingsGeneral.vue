@@ -2,10 +2,13 @@
 import { computed, onMounted, ref } from "vue";
 import {
   getCommandNotifyThresholdSeconds,
+  getDefaultShell,
   getNotificationsEnabled,
   getShellIntegrationEnabled,
   getWebglRendererEnabled,
+  listShells,
   setCommandNotifyThresholdSeconds,
+  setDefaultShell,
   setNotificationsEnabled,
   setShellIntegrationEnabled,
   setWebglRendererEnabled,
@@ -40,6 +43,12 @@ const notificationsEnabled = ref(true);
 const notificationsLoading = ref(true);
 const shellIntegrationEnabled = ref(true);
 const shellIntegrationLoading = ref(true);
+const defaultShellLoading = ref(true);
+const defaultShellSaving = ref(false);
+const selectedDefaultShell = ref("auto");
+const persistedDefaultShell = ref("auto");
+const customShellPath = ref("");
+const availableShells = ref<string[]>([]);
 const webglRendererEnabled = ref(true);
 const webglRendererLoading = ref(true);
 const commandNotifyThresholdSec = ref(10);
@@ -59,6 +68,24 @@ onMounted(async () => {
     error.value = e?.message ?? String(e);
   } finally {
     shellIntegrationLoading.value = false;
+  }
+  try {
+    const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
+    availableShells.value = shells;
+    if (configured === "auto") {
+      selectedDefaultShell.value = "auto";
+    } else if (shells.includes(configured)) {
+      selectedDefaultShell.value = configured;
+      customShellPath.value = configured;
+    } else {
+      selectedDefaultShell.value = "__custom__";
+      customShellPath.value = configured;
+    }
+    persistedDefaultShell.value = selectedDefaultShell.value;
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    defaultShellLoading.value = false;
   }
   try {
     webglRendererEnabled.value = await getWebglRendererEnabled();
@@ -99,6 +126,44 @@ async function onShellIntegrationToggle(e: Event) {
   } catch (e: any) {
     shellIntegrationEnabled.value = previous;
     error.value = e?.message ?? String(e);
+  }
+}
+
+async function onDefaultShellChange() {
+  if (selectedDefaultShell.value === "__custom__") return;
+  const previous = persistedDefaultShell.value;
+  defaultShellSaving.value = true;
+  error.value = "";
+  try {
+    await setDefaultShell(selectedDefaultShell.value);
+    persistedDefaultShell.value = selectedDefaultShell.value;
+  } catch (e: any) {
+    selectedDefaultShell.value = previous;
+    error.value = e?.message ?? String(e);
+  } finally {
+    defaultShellSaving.value = false;
+  }
+}
+
+async function onCustomShellSave() {
+  const next = customShellPath.value.trim();
+  if (!next) {
+    error.value = "custom shell path is required";
+    return;
+  }
+  defaultShellSaving.value = true;
+  error.value = "";
+  try {
+    await setDefaultShell(next);
+    selectedDefaultShell.value = "__custom__";
+    persistedDefaultShell.value = "__custom__";
+    if (!availableShells.value.includes(next)) {
+      availableShells.value = [next, ...availableShells.value];
+    }
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    defaultShellSaving.value = false;
   }
 }
 
@@ -192,6 +257,37 @@ async function onChange() {
       detect when a command finishes. Only affects new sessions.
     </p>
 
+    <label class="field-label" v-if="!defaultShellLoading">default shell</label>
+    <select
+      v-if="!defaultShellLoading"
+      v-model="selectedDefaultShell"
+      class="select-input"
+      :disabled="defaultShellSaving"
+      aria-label="default shell"
+      @change="onDefaultShellChange"
+    >
+      <option value="auto">Auto</option>
+      <option v-for="shell in availableShells" :key="shell" :value="shell">
+        {{ shell }}
+      </option>
+      <option value="__custom__">Custom path...</option>
+    </select>
+    <p class="hint" v-if="!defaultShellLoading">
+      Auto chooses a platform default for new local sessions. Pick a detected
+      shell or save a custom shell path if you prefer Git Bash, PowerShell 7, or
+      another terminal program.
+    </p>
+    <div v-if="!defaultShellLoading && selectedDefaultShell === '__custom__'" class="custom-shell-row">
+      <input
+        class="text-input"
+        v-model="customShellPath"
+        placeholder="custom shell path"
+        aria-label="custom shell path"
+        :disabled="defaultShellSaving"
+      />
+      <button :disabled="defaultShellSaving" @click="onCustomShellSave">save custom</button>
+    </div>
+
     <label class="checkbox" v-if="!webglRendererLoading">
       <input
         type="checkbox"
@@ -262,6 +358,30 @@ async function onChange() {
   width: 80px;
   padding: 4px 8px;
   background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font: inherit;
+}
+.select-input,
+.text-input {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font: inherit;
+}
+.custom-shell-row {
+  display: flex;
+  gap: 8px;
+}
+.custom-shell-row .text-input {
+  flex: 1 1 auto;
+}
+.custom-shell-row button {
+  padding: 6px 10px;
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--fg);

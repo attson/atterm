@@ -94,6 +94,8 @@ vi.mock("../lib/api", () => ({
   getAutoCheckUpdates: vi.fn().mockResolvedValue(true),
   getNotificationsEnabled: vi.fn().mockResolvedValue(true),
   getShellIntegrationEnabled: vi.fn().mockResolvedValue(true),
+  getDefaultShell: vi.fn().mockResolvedValue("auto"),
+  listShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
   getWebglRendererEnabled: vi.fn().mockResolvedValue(true),
   getCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(10),
   getRelayConfig: vi.fn().mockResolvedValue({
@@ -108,6 +110,7 @@ vi.mock("../lib/api", () => ({
   setAutoCheckUpdates: vi.fn().mockResolvedValue(undefined),
   setNotificationsEnabled: vi.fn().mockResolvedValue(undefined),
   setShellIntegrationEnabled: vi.fn().mockResolvedValue(undefined),
+  setDefaultShell: vi.fn().mockResolvedValue(undefined),
   setWebglRendererEnabled: vi.fn().mockResolvedValue(undefined),
   setTerminalThemePreference: vi.fn().mockResolvedValue(undefined),
   setCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(undefined),

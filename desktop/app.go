@@ -409,6 +409,28 @@ func (a *App) SetTerminalTheme(theme string) error {
 	return a.cfgStore.Set(cfg)
 }
 
+func (a *App) GetDefaultShell() string {
+	if a.cfgStore == nil {
+		return defaultShellAuto
+	}
+	return a.cfgStore.Get().DefaultShellOrDefault()
+}
+
+func (a *App) SetDefaultShell(shell string) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	shell = strings.TrimSpace(shell)
+	if shell == "" || strings.EqualFold(shell, defaultShellAuto) {
+		shell = defaultShellAuto
+	} else if _, err := exec.LookPath(shell); err != nil {
+		return fmt.Errorf("default shell not found: %s", shell)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.DefaultShell = shell
+	return a.cfgStore.Set(cfg)
+}
+
 // NewSession spawns a local PTY child and adopts it as a relay session.
 // Returns the session id, which the frontend uses to ATTACH via WS.
 func (a *App) NewSession(req NewSessionReq) (NewSessionResp, error) {
@@ -440,24 +462,55 @@ func (a *App) CloseSession(sessionID string) error {
 func (a *App) ListShells() []string {
 	candidates := []string{"bash", "zsh", "fish", "sh"}
 	if runtime.GOOS == "windows" {
-		candidates = []string{"powershell.exe", "cmd.exe"}
+		candidates = windowsShellCandidates()
 	}
 	var out []string
 	seen := map[string]bool{}
-	if envShell := os.Getenv("SHELL"); envShell != "" {
-		out = append(out, envShell)
-		seen[filepath.Base(envShell)] = true
+	addShell := func(shell string) {
+		if shell == "" {
+			return
+		}
+		path, err := exec.LookPath(shell)
+		if err != nil {
+			return
+		}
+		key := strings.ToLower(filepath.Base(path))
+		if seen[key] {
+			return
+		}
+		out = append(out, path)
+		seen[key] = true
+	}
+	if a.cfgStore != nil {
+		if configured := a.cfgStore.Get().DefaultShellOrDefault(); configured != defaultShellAuto {
+			addShell(configured)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		envShell := os.Getenv("SHELL")
+		addShell(envShell)
 	}
 	for _, c := range candidates {
-		if seen[c] {
-			continue
-		}
-		if path, err := exec.LookPath(c); err == nil {
-			out = append(out, path)
-			seen[c] = true
-		}
+		addShell(c)
 	}
 	return out
+}
+
+func windowsShellCandidates() []string {
+	candidates := []string{
+		"powershell.exe",
+		"cmd.exe",
+	}
+	if root := os.Getenv("SystemRoot"); root != "" {
+		candidates = append(candidates,
+			filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+			filepath.Join(root, "System32", "cmd.exe"),
+		)
+	}
+	if comspec := os.Getenv("ComSpec"); comspec != "" {
+		candidates = append(candidates, comspec)
+	}
+	return candidates
 }
 
 // GetUpdateState returns the current updater state. The frontend polls

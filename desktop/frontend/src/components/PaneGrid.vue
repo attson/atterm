@@ -11,6 +11,7 @@ const props = defineProps<{
   tab: Tab;
   endpointFor: (pane: Pane) => Endpoint | null;
   sessionInfoFor: (pane: Pane) => SessionInfo | null;
+  viewerCountFor?: (sessionId: string) => number;
   active: boolean;
   terminalTheme: TerminalThemeDefinition["xtermTheme"];
   commandNotifyThresholdSec: number;
@@ -64,7 +65,7 @@ function formatWho(info: SessionInfo | null): string {
           :expected-rows="sessionInfoFor(pane)?.rows"
           :remote-permission="sessionInfoFor(pane)?.remote_permission"
           :session-label="extractSessionLabel(sessionInfoFor(pane))"
-          :avoid-top-right-badge="pane.remote"
+          :avoid-top-right-badge="pane.remote || (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
           :theme="terminalTheme"
           :is-local-session="!pane.remote"
           :command-notify-threshold-sec="commandNotifyThresholdSec"
@@ -74,6 +75,18 @@ function formatWho(info: SessionInfo | null): string {
       </div>
 
       <div class="cell-controls">
+        <div
+          v-if="pane.sessionId && !pane.remote && (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
+          class="viewers-badge"
+          :title="`${viewerCountFor!(pane.sessionId)} remote viewer(s) watching`"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          <span>{{ viewerCountFor!(pane.sessionId) }}</span>
+        </div>
+
         <div
           v-if="pane.sessionId && pane.remote"
           class="remote-badge"
@@ -177,6 +190,21 @@ function formatWho(info: SessionInfo | null): string {
   pointer-events: none;
 }
 .remote-badge svg { display: block; }
+.viewers-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--fg);
+  font-size: 11px;
+  pointer-events: none;
+}
+.viewers-badge svg { display: block; }
 .remote-badge .who { font-weight: 600; }
 .remote-badge .who.dim { color: var(--fg-dim); font-weight: 400; }
 .remote-badge .sid {

@@ -60,4 +60,16 @@ describe('MobileSetup', () => {
     const w = mount(MobileSetup, { props: { reason: 'token_invalid' } })
     expect(w.text()).toMatch(/token|expired|again/i)
   })
+
+  it('pre-fills url, token, and insecure from the saved config', async () => {
+    ;(platform.relay.load as ReturnType<typeof vi.fn>).mockResolvedValue({
+      url: 'http://localhost:8080', token: 'atk_saved',
+      allow_insecure_relay: true, remote_permission: 'full', connected: false,
+    })
+    const w = mount(MobileSetup)
+    await flushPromises()
+    expect((w.find('[data-testid="relay-url"]').element as HTMLInputElement).value).toBe('http://localhost:8080')
+    expect((w.find('[data-testid="relay-token"]').element as HTMLInputElement).value).toBe('atk_saved')
+    expect((w.find('[data-testid="allow-insecure"]').element as HTMLInputElement).checked).toBe(true)
+  })
 })

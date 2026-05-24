@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { usePlatform } from '../platform'
 import { validateRelayBase } from './relay'
 
@@ -18,6 +18,15 @@ const banner = computed(() =>
     ? 'Your API token is no longer valid. Paste a fresh token to reconnect.'
     : null,
 )
+
+onMounted(async () => {
+  const cfg = await platform.relay.load()
+  if (cfg) {
+    url.value = cfg.url || 'https://'
+    token.value = cfg.token || ''
+    allowInsecure.value = !!cfg.allow_insecure_relay
+  }
+})
 
 async function onConnect(): Promise<void> {
   error.value = null
@@ -51,7 +60,7 @@ async function onConnect(): Promise<void> {
 <template>
   <div class="setup">
     <h1>AT Term</h1>
-    <p class="sub">连接到 relay</p>
+    <p class="sub">Connect to your relay</p>
     <div v-if="banner" class="banner">{{ banner }}</div>
     <label class="field">
       <span>Relay URL</span>
@@ -62,7 +71,7 @@ async function onConnect(): Promise<void> {
       <input data-testid="relay-token" v-model="token" :disabled="submitting" type="password" placeholder="atk_…" autocomplete="off" />
     </label>
     <label class="row">
-      <span>允许 insecure HTTP/WS（非 loopback）</span>
+      <span>Allow insecure HTTP/WS (non-loopback)</span>
       <input data-testid="allow-insecure" v-model="allowInsecure" :disabled="submitting" type="checkbox" />
     </label>
     <p v-if="error" class="error">{{ error }}</p>
@@ -71,7 +80,7 @@ async function onConnect(): Promise<void> {
 </template>
 
 <style scoped>
-.setup { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 2rem 1.25rem; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.setup { min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; padding: calc(2rem + env(safe-area-inset-top)) 1.25rem calc(2rem + env(safe-area-inset-bottom)); background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 h1 { text-align: center; margin: 0 0 4px; font-size: 1.6rem; }
 .sub { text-align: center; color: #8d93a3; margin: 0 0 1.5rem; font-size: 0.9rem; }
 .banner { background: rgba(245,158,11,.13); border: 1px solid rgba(245,158,11,.4); color: #f5c451; padding: 9px 11px; border-radius: 9px; margin-bottom: 1rem; font-size: 0.8rem; }

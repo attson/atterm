@@ -26,7 +26,9 @@ function activeTitle(): string {
 <template>
   <div class="host">
     <header class="bar">
-      <button data-testid="term-back" class="back" @click="emit('back')">‹</button>
+      <button data-testid="term-back" class="back" @click="emit('back')" aria-label="Back">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+      </button>
       <span class="title">{{ activeTitle() }}</span>
     </header>
     <div class="tabstrip">
@@ -63,9 +65,9 @@ function activeTitle(): string {
 </template>
 
 <style scoped>
-.host { display: flex; flex-direction: column; height: 100vh; background: #000; color: #e6e7ea; }
+.host { display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); background: #000; color: #e6e7ea; }
 .bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px; border-bottom: 1px solid #1e2638; background: #0b1020; }
-.back { background: none; border: none; color: #3b82f6; font-size: 1.5rem; width: 28px; }
+.back { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: #3b82f6; width: 28px; padding: 0; }
 .title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
 .tabstrip { display: flex; gap: 6px; padding: 7px 8px; background: #0b1020; border-bottom: 1px solid #1e2638; overflow-x: auto; }
 .tab { flex: 0 0 auto; height: 28px; padding: 0 8px; border-radius: 7px; display: flex; align-items: center; gap: 6px; background: #11182b; border: 1px solid #1e2638; color: #8d93a3; font-size: 0.75rem; }

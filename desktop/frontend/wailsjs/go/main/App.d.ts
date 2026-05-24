@@ -36,6 +36,8 @@ export function GetShellIntegrationEnabled():Promise<boolean>;
 
 export function GetTerminalTheme():Promise<string>;
 
+export function GetUpdateGHProxyURL():Promise<string>;
+
 export function GetUpdateState():Promise<main.UpdateState>;
 
 export function GetWebglRendererEnabled():Promise<boolean>;
@@ -63,6 +65,8 @@ export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
 
 export function SetTerminalTheme(arg1:string):Promise<void>;
+
+export function SetUpdateGHProxyURL(arg1:string):Promise<void>;
 
 export function SetUplinkPaused(arg1:boolean):Promise<void>;
 

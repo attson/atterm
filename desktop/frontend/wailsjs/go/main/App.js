@@ -70,6 +70,10 @@ export function GetTerminalTheme() {
   return window['go']['main']['App']['GetTerminalTheme']();
 }
 
+export function GetUpdateGHProxyURL() {
+  return window['go']['main']['App']['GetUpdateGHProxyURL']();
+}
+
 export function GetUpdateState() {
   return window['go']['main']['App']['GetUpdateState']();
 }
@@ -124,6 +128,10 @@ export function SetShellIntegrationEnabled(arg1) {
 
 export function SetTerminalTheme(arg1) {
   return window['go']['main']['App']['SetTerminalTheme'](arg1);
+}
+
+export function SetUpdateGHProxyURL(arg1) {
+  return window['go']['main']['App']['SetUpdateGHProxyURL'](arg1);
 }
 
 export function SetUplinkPaused(arg1) {

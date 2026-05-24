@@ -56,14 +56,15 @@ type UpdateState struct {
 // substitutes the http.Client and now() to drive the cache + network paths
 // without hitting GitHub or wall-clock time.
 type updaterConfig struct {
-	current         string
-	repo            string // e.g. "attson/atterm"
-	releaseURL      string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
-	latestURL       string // override of https://github.com/<repo>/releases/latest, for tests
-	cacheDir        string // overrides os.UserCacheDir(); for tests
-	client          *http.Client
-	now             func() time.Time // optional; defaults to time.Now
-	verifyPublicKey ed25519.PublicKey
+	current          string
+	repo             string // e.g. "attson/atterm"
+	releaseURL       string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
+	latestURL        string // override of https://github.com/<repo>/releases/latest, for tests
+	cacheDir         string // overrides os.UserCacheDir(); for tests
+	client           *http.Client
+	now              func() time.Time // optional; defaults to time.Now
+	verifyPublicKey  ed25519.PublicKey
+	updateGHProxyURL string
 }
 
 // Updater owns state for the auto-update flow. All methods are goroutine-safe.
@@ -98,6 +99,12 @@ func (u *Updater) State() UpdateState {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.state
+}
+
+func (u *Updater) SetGHProxyURL(proxyURL string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.cfg.updateGHProxyURL = strings.TrimSpace(proxyURL)
 }
 
 // devOrEmpty reports whether we should short-circuit out of all update logic.
@@ -367,6 +374,25 @@ func assetDownloadURL(final *url.URL, tag, name string) string {
 	return out.String()
 }
 
+func proxiedGitHubReleaseURL(rawURL, proxyBase string) string {
+	proxyBase = strings.TrimSpace(proxyBase)
+	if proxyBase == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "https" || strings.ToLower(u.Host) != "github.com" || !strings.Contains(u.Path, "/releases/download/") {
+		return rawURL
+	}
+	return strings.TrimRight(proxyBase, "/") + "/" + rawURL
+}
+
+func (u *Updater) downloadURL(rawURL string) string {
+	u.mu.Lock()
+	proxyURL := u.cfg.updateGHProxyURL
+	u.mu.Unlock()
+	return proxiedGitHubReleaseURL(rawURL, proxyURL)
+}
+
 func (u *Updater) updatesDir() (string, error) {
 	base := u.cfg.cacheDir
 	if base == "" {
@@ -427,7 +453,7 @@ func (u *Updater) Download(ctx context.Context) error {
 		u.mu.Unlock()
 	}()
 
-	req, err := http.NewRequestWithContext(downloadCtx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(downloadCtx, "GET", u.downloadURL(url), nil)
 	if err != nil {
 		u.recordError(err)
 		return err
@@ -557,7 +583,7 @@ func (u *Updater) verifyDownloadedArchive(ctx context.Context, path, assetName s
 }
 
 func (u *Updater) fetchSmallFile(ctx context.Context, rawURL string, maxBytes int64) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", u.downloadURL(rawURL), nil)
 	if err != nil {
 		return nil, err
 	}

@@ -103,6 +103,8 @@ interface AppBindings {
   InstallUpdate(): Promise<void>;
   GetAutoCheckUpdates(): Promise<boolean>;
   SetAutoCheckUpdates(enabled: boolean): Promise<void>;
+  GetUpdateGHProxyURL(): Promise<string>;
+  SetUpdateGHProxyURL(proxyURL: string): Promise<void>;
   ConfirmQuit(): Promise<void>;
   GetNotificationsEnabled(): Promise<boolean>;
   SetNotificationsEnabled(enabled: boolean): Promise<void>;
@@ -233,6 +235,14 @@ export function getAutoCheckUpdates(): Promise<boolean> {
 
 export function setAutoCheckUpdates(enabled: boolean): Promise<void> {
   return bindings().SetAutoCheckUpdates(enabled);
+}
+
+export function getUpdateGHProxyURL(): Promise<string> {
+  return bindings().GetUpdateGHProxyURL();
+}
+
+export function setUpdateGHProxyURL(proxyURL: string): Promise<void> {
+  return bindings().SetUpdateGHProxyURL(proxyURL);
 }
 
 export function confirmQuit(): Promise<void> {

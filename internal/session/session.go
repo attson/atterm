@@ -175,6 +175,33 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	}
 }
 
+// UpdateCwdTitle updates cwd/title and rebroadcasts with the session's CURRENT
+// driver — it never adopts a driver from the caller. Used for ANNOUNCE-driven
+// cwd/title reconciliation on mirror sessions: the announce's SessionInfo
+// carries no driver_client_id, so routing it through UpdateMeta (which a
+// driverFromUpstream mirror treats as "adopt") would clobber the adopted
+// driver to empty and flip every client back to viewer. The authoritative
+// driver always arrives via the streamed META (UpdateMeta), not the announce.
+func (s *Session) UpdateCwdTitle(cwd, title string) {
+	s.mu.Lock()
+	changed := false
+	if cwd != "" && s.meta.Cwd != cwd {
+		s.meta.Cwd = cwd
+		changed = true
+	}
+	if title != "" && s.meta.Title != title {
+		s.meta.Title = title
+		changed = true
+	}
+	metaCopy := s.meta
+	driverID := s.driverClientID
+	driverName := s.driverClientName
+	s.mu.Unlock()
+	if changed {
+		s.broadcastDriverMeta(metaCopy, driverID, driverName)
+	}
+}
+
 // UpdateRemotePermission records the owner-published remote permission for
 // mirror sessions. Empty keeps the backwards-compatible full-control default.
 func (s *Session) UpdateRemotePermission(value string) {

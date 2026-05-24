@@ -1,4 +1,4 @@
-import type { Platform, RelayConfig, RelayMe } from './types'
+import type { Platform, RelayConfig, RelayMe, RemoteSession } from './types'
 
 const STORAGE_KEY = 'atterm.relay'
 
@@ -71,10 +71,35 @@ export function createCapacitorPlatform(): Platform {
     sessions: {
       // newSession omitted — capacitor cannot fork local PTYs
       closeSession: async () => {
-        // PR-C wires real remote close via relay HTTP API
+        // Attach-only client: closing a tab detaches the local WS (handled in
+        // MobileApp by dropping it from the keepalive registry). It does NOT
+        // kill the remote PTY — that stays owned by the host that started it.
       },
       listShells: async () => [],
-      listRemoteSessions: async () => [],
+      listRemoteSessions: async (): Promise<RemoteSession[]> => {
+        const cfg = loadCfg()
+        if (!cfg || !cfg.url || !cfg.token) return []
+        const base = cfg.url.replace(/\/$/, '')
+        const res = await fetch(base + '/api/sessions', {
+          headers: { Authorization: `Bearer ${cfg.token}` },
+          credentials: 'omit',
+        })
+        if (res.status === 401) throw new Error('relay_unauthorized')
+        if (!res.ok) throw new Error(`list sessions: HTTP ${res.status}`)
+        const raw = (await res.json()) as Array<{
+          id: string; command: string; title: string; cols: number; rows: number;
+          host_id: string; host: string; user: string
+        }>
+        return raw.map((s) => ({
+          session_id: s.id,
+          host_id: s.host_id,
+          host: s.host,
+          user: s.user,
+          title: s.title || s.command,
+          cols: s.cols,
+          rows: s.rows,
+        }))
+      },
     },
     system: {
       showNotification: async () => {

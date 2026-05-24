@@ -63,8 +63,12 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h1).Run(ctx)
-	go newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h2).Run(ctx)
+	u1 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h1)
+	u1.eventsEmit = func(context.Context, string, ...interface{}) {} // no Wails runtime in tests
+	go u1.Run(ctx)
+	u2 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h2)
+	u2.eventsEmit = func(context.Context, string, ...interface{}) {}
+	go u2.Run(ctx)
 
 	// host2 acts as a viewer: it should see h1's session via remote relay's
 	// /api/sessions and successfully attach.
@@ -196,6 +200,7 @@ func TestUplinkE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host)
+	u.eventsEmit = func(context.Context, string, ...interface{}) {} // no Wails runtime in tests
 	go u.Run(ctx)
 
 	// 4. wait for ANNOUNCE → fetch /api/sessions on remote

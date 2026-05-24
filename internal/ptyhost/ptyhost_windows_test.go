@@ -5,7 +5,6 @@ package ptyhost
 import (
 	"bytes"
 	"context"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -16,35 +15,69 @@ func TestOpenConPTYWindowsEcho(t *testing.T) {
 	defer cancel()
 
 	host, err := Open(ctx, Config{
-		Argv: []string{"cmd.exe", "/c", "echo atterm-conpty-ok"},
+		Argv: []string{"cmd.exe"},
 		Cols: 80,
 		Rows: 24,
 	})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	defer host.Close()
 
-	var out bytes.Buffer
-	readDone := make(chan error, 1)
-	go func() {
-		_, err := io.Copy(&out, host)
-		readDone <- err
-	}()
-
-	if err := host.Wait(); err != nil {
-		t.Fatalf("Wait: %v", err)
+	if _, err := host.Write([]byte("echo atterm-conpty-ok\r\n")); err != nil {
+		t.Fatalf("Write echo: %v", err)
 	}
-	_ = host.Close()
 
+	out, err := readUntilWindowsTestMarker(ctx, host, "atterm-conpty-ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "atterm-conpty-ok") {
+		t.Fatalf("output = %q; want echo text", out)
+	}
+	if _, err := host.Write([]byte("exit\r\n")); err != nil {
+		t.Fatalf("Write exit: %v", err)
+	}
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- host.Wait() }()
 	select {
 	case <-ctx.Done():
-		t.Fatalf("read timed out; output so far: %q", out.String())
-	case err := <-readDone:
-		if err != nil && !strings.Contains(strings.ToLower(err.Error()), "file already closed") {
-			t.Fatalf("Read: %v", err)
+		t.Fatalf("Wait timed out after echo output %q", out)
+	case err := <-waitDone:
+		if err != nil {
+			t.Fatalf("Wait: %v", err)
 		}
 	}
-	if !strings.Contains(out.String(), "atterm-conpty-ok") {
-		t.Fatalf("output = %q; want echo text", out.String())
+}
+
+func readUntilWindowsTestMarker(ctx context.Context, host *Host, marker string) (string, error) {
+	var out bytes.Buffer
+	buf := make([]byte, 1024)
+	for {
+		readDone := make(chan struct {
+			n   int
+			err error
+		}, 1)
+		go func() {
+			n, err := host.Read(buf)
+			readDone <- struct {
+				n   int
+				err error
+			}{n: n, err: err}
+		}()
+		select {
+		case <-ctx.Done():
+			return out.String(), ctx.Err()
+		case result := <-readDone:
+			if result.n > 0 {
+				out.Write(buf[:result.n])
+				if strings.Contains(out.String(), marker) {
+					return out.String(), nil
+				}
+			}
+			if result.err != nil {
+				return out.String(), result.err
+			}
+		}
 	}
 }

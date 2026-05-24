@@ -65,7 +65,8 @@ type Session struct {
 
 	// onSubscriberCount, if set, fires with the new subscriber count whenever
 	// a subscriber is added or removed. Used by mirror sessions to report the
-	// remote viewer count downstream. Fired async (lock released).
+	// remote viewer count downstream. Fired synchronously after the lock is
+	// released (to preserve count ordering); the hook must not block.
 	onSubscriberCount func(int)
 }
 
@@ -129,8 +130,9 @@ func (s *Session) SetSubscriberLifecycle(first, last func()) {
 	s.onLastUnsubscribe = last
 }
 
-// SetSubscriberCountHook registers a callback fired (async) with the new
-// subscriber count on every add/remove. Replaces any previous hook.
+// SetSubscriberCountHook registers a callback fired with the new subscriber
+// count on every add/remove (synchronously, lock released — must not block).
+// Replaces any previous hook.
 func (s *Session) SetSubscriberCountHook(fn func(int)) {
 	s.mu.Lock()
 	s.onSubscriberCount = fn
@@ -357,8 +359,11 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string) (*Subs
 	if wasEmpty && firstHook != nil {
 		go firstHook()
 	}
+	// Synchronous (not goroutine) so successive counts stay ordered — a stale
+	// count arriving after a newer one would mis-render the viewer badge. The
+	// hook must be non-blocking (the relay's is a non-blocking enqueue).
 	if countHook != nil {
-		go countHook(subCount)
+		countHook(subCount)
 	}
 	return sub, lastSeq
 }
@@ -641,7 +646,7 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 		go lastHook()
 	}
 	if was && countHook != nil {
-		go countHook(subCount)
+		countHook(subCount)
 	}
 }
 

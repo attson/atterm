@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'ended'): void; (e: 'tokenInvalid'): void }>()
 
 const container = ref<HTMLDivElement | null>(null)
+const isDriver = ref(true)
 let term: Terminal | null = null
 let fit: FitAddon | null = null
 let conn: SessionConnection | null = null
@@ -33,6 +34,7 @@ const AUX_KEYS: { label: string; seq: string }[] = [
   { label: '→', seq: '\x1b[C' },
 ]
 function sendAux(seq: string) { conn?.sendInput(seq) }
+function takeControl() { conn?.claimDriver() }
 
 onMounted(() => {
   term = new Terminal({ fontSize: 12, convertEol: false, cursorBlink: true })
@@ -52,6 +54,10 @@ onMounted(() => {
     // (listRemoteSessions/fetchMe 401 → MobileApp.onTokenInvalid). Mapping the
     // WS auth-close code to token-invalid is a PR-D follow-up.
     onStatus: (s) => { if (s === 'error') emit('tokenInvalid') },
+    onDriverChange: (_id, isMe) => {
+      isDriver.value = isMe
+      if (term) term.options.disableStdin = !isMe
+    },
   })
   conn.attach()
 })
@@ -75,6 +81,12 @@ onBeforeUnmount(() => {
 <template>
   <div class="mobile-term">
     <div ref="container" class="term"></div>
+    <div v-if="!isDriver" class="viewer-overlay">
+      <div class="viewer-card">
+        <div class="viewer-title">remote has control</div>
+        <button class="take-control" data-testid="mobile-take-control" @click="takeControl">Take control</button>
+      </div>
+    </div>
     <div class="kbbar">
       <button v-for="k in AUX_KEYS" :key="k.label" class="key" @click="sendAux(k.seq)">{{ k.label }}</button>
     </div>
@@ -82,7 +94,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.mobile-term { display: flex; flex-direction: column; height: 100%; background: #000; }
+.mobile-term { display: flex; flex-direction: column; height: 100%; background: #000; position: relative; }
+.viewer-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+.viewer-card { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.viewer-title { color: #e6e7ea; font-size: 0.9rem; }
+.take-control { padding: 8px 16px; border: none; border-radius: 8px; background: #3b82f6; color: #fff; font-weight: 600; }
 .term { flex: 1; min-height: 0; }
 .kbbar { height: 42px; border-top: 1px solid #1e2638; background: #0b1020; display: flex; align-items: center; gap: 6px; padding: 0 8px; overflow-x: auto; }
 .key { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #8d93a3; font-size: 0.75rem; font-family: ui-monospace, Menlo, monospace; }

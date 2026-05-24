@@ -55,6 +55,7 @@ const (
     TypePasteImage      Type = 0x33  // client → relay → desktop PTY host
     TypeClaimDriver     Type = 0x34  // client → relay (viewer claims driver role)
     TypeCommandEvent    Type = 0x35  // uplink → relay (Web Push notification trigger)
+    TypeViewers         Type = 0x36  // relay → uplink (mirror remote subscriber count)
 
     // Auth frames (server → client).
     TypeAuthInfo        Type = 0x40  // relay → uplink; UTF-8 JSON {user_id}
@@ -288,6 +289,24 @@ Payload (JSON):
 - `host_id` is intentionally not in the payload. The relay reconstructs it from the sender's ANNOUNCE manifest at handler time, which makes cross-uplink spoofing impossible.
 - The relay drops the frame silently when `session_id` is not present in the sender's current manifest.
 - `label` is truncated to 256 bytes before being forwarded into a notification payload.
+
+### `VIEWERS` (0x36) — relay → uplink only (remote viewer count)
+
+Direction: relay → uplink only. Not forwarded to clients.
+
+Payload (JSON):
+
+```json
+{
+  "session_id": "…",
+  "count": 2
+}
+```
+
+- Reports the number of remote `/client` subscribers currently attached to the session's **mirror** on the relay (web / mobile / other desktops). The driver is included — it is still a connected remote.
+- Sent on every attach/detach (the mirror `Session`'s subscriber-count hook), so the count is exact and live. Emission is synchronous-and-ordered on the relay side; the desktop must treat the latest frame as authoritative.
+- The desktop uplink surfaces it as a `relay:viewers` Wails event; the UI shows a per-session "👁 N" badge (owner-side awareness only).
+- The owner's own desktop attaches to its local mini-relay, not the central mirror, so it is never counted.
 
 ### `AUTH_INFO` (0x40) — relay → uplink only
 

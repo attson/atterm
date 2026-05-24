@@ -62,6 +62,12 @@ type Session struct {
 	// only when there's at least one local subscriber.
 	onFirstSubscribe  func()
 	onLastUnsubscribe func()
+
+	// onSubscriberCount, if set, fires with the new subscriber count whenever
+	// a subscriber is added or removed. Used by mirror sessions to report the
+	// remote viewer count downstream. Fired synchronously after the lock is
+	// released (to preserve count ordering); the hook must not block.
+	onSubscriberCount func(int)
 }
 
 // Subscriber is a client connection's outbox.
@@ -122,6 +128,15 @@ func (s *Session) SetSubscriberLifecycle(first, last func()) {
 	defer s.mu.Unlock()
 	s.onFirstSubscribe = first
 	s.onLastUnsubscribe = last
+}
+
+// SetSubscriberCountHook registers a callback fired with the new subscriber
+// count on every add/remove (synchronously, lock released — must not block).
+// Replaces any previous hook.
+func (s *Session) SetSubscriberCountHook(fn func(int)) {
+	s.mu.Lock()
+	s.onSubscriberCount = fn
+	s.mu.Unlock()
 }
 
 // UpdateMeta merges new cwd/title from a META frame and, on real change,
@@ -328,6 +343,8 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string) (*Subs
 		snapshotDriverName = s.driverClientName
 	}
 	firstHook := s.onFirstSubscribe
+	countHook := s.onSubscriberCount
+	subCount := len(s.subs)
 	s.mu.Unlock()
 
 	if closed || !added {
@@ -341,6 +358,12 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string) (*Subs
 	}
 	if wasEmpty && firstHook != nil {
 		go firstHook()
+	}
+	// Synchronous (not goroutine) so successive counts stay ordered — a stale
+	// count arriving after a newer one would mis-render the viewer badge. The
+	// hook must be non-blocking (the relay's is a non-blocking enqueue).
+	if countHook != nil {
+		countHook(subCount)
 	}
 	return sub, lastSeq
 }
@@ -611,6 +634,8 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	}
 	nowEmpty := len(s.subs) == 0
 	lastHook := s.onLastUnsubscribe
+	countHook := s.onSubscriberCount
+	subCount := len(s.subs)
 	metaCopy := s.meta
 	s.mu.Unlock()
 	sub.close()
@@ -619,6 +644,9 @@ func (s *Session) removeSubscriber(sub *Subscriber) {
 	}
 	if was && nowEmpty && lastHook != nil {
 		go lastHook()
+	}
+	if was && countHook != nil {
+		countHook(subCount)
 	}
 }
 

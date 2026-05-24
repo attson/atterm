@@ -39,6 +39,7 @@ const (
 	TypePasteImage    Type = 0x33 // client -> relay -> desktop PTY host
 	TypeClaimDriver   Type = 0x34 // client -> relay (viewer claims driver role)
 	TypeCommandEvent  Type = 0x35 // uplink -> relay (Web Push trigger)
+	TypeViewers       Type = 0x36 // relay -> uplink; mirror's remote subscriber count
 
 	// Auth frames (server → client).
 	TypeAuthInfo Type = 0x40 // relay -> uplink; UTF-8 JSON {user_id}
@@ -105,6 +106,13 @@ type AttachPayload struct {
 type ClaimDriverPayload struct {
 	ClientID   string `json:"client_id"`
 	ClientName string `json:"client_name,omitempty"`
+}
+
+// ViewersPayload is the JSON body of a TypeViewers frame: the count of remote
+// /client subscribers currently attached to a session's mirror on the relay.
+type ViewersPayload struct {
+	SessionID string `json:"session_id"`
+	Count     int    `json:"count"`
 }
 
 const (

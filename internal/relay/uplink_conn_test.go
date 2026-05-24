@@ -349,6 +349,29 @@ func isCloseError(err error, out *websocket.CloseError) bool {
 	return false
 }
 
+func TestMirrorSessionCountHookReportsViewers(t *testing.T) {
+	sess := newMirrorSession(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24}, "owner")
+	counts := make(chan int, 8)
+	sess.SetSubscriberCountHook(func(n int) { counts <- n })
+
+	a, _ := sess.Subscribe(0, "a", "ha")
+	if got := <-counts; got != 1 {
+		t.Fatalf("after 1 attach: count=%d; want 1", got)
+	}
+	b, _ := sess.Subscribe(0, "b", "hb")
+	if got := <-counts; got != 2 {
+		t.Fatalf("after 2 attach: count=%d; want 2", got)
+	}
+	sess.Unsubscribe(a)
+	if got := <-counts; got != 1 {
+		t.Fatalf("after 1 detach: count=%d; want 1", got)
+	}
+	sess.Unsubscribe(b)
+	if got := <-counts; got != 0 {
+		t.Fatalf("after all detach: count=%d; want 0", got)
+	}
+}
+
 func TestNewMirrorSessionAdoptsUpstreamDriver(t *testing.T) {
 	id := uuid.New()
 	sess := newMirrorSession(id, proto.SessionInfo{Cols: 80, Rows: 24}, "owner-user")

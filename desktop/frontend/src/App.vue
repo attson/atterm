@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
@@ -51,6 +51,11 @@ import {
 // Auth-error banner: set when the relay closes the uplink with a 4001-4003
 // close code. Cleared when the user dismisses or fixes config.
 const authError = ref<string | null>(null);
+// Per-session remote viewer count, fed by the "relay:viewers" event.
+const viewerCounts = reactive<Record<string, number>>({});
+function viewerCountFor(sessionId: string): number {
+  return viewerCounts[sessionId] ?? 0;
+}
 const authErrorBanners: Record<string, string> = {
   auth_invalid_token: "Invalid or revoked API token. Generate a new one in web settings.",
   auth_user_disabled: "Account disabled. Contact your relay admin.",
@@ -695,6 +700,12 @@ onMounted(async () => {
     const d = data as { reason: string };
     authError.value = d?.reason ?? null;
   });
+  $platform.events.on('relay:viewers', (data) => {
+    const d = data as { session_id: string; count: number };
+    if (d && typeof d.session_id === 'string') {
+      viewerCounts[d.session_id] = d.count ?? 0;
+    }
+  });
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
   // Set up the size-prediction probe before anything spawns a PTY — the
@@ -790,6 +801,7 @@ onUnmounted(() => {
             :tab="t"
             :endpoint-for="endpointFor"
             :session-info-for="paneSessionInfo"
+            :viewer-count-for="viewerCountFor"
             :active="t.id === currentTabId"
             :terminal-theme="currentTerminalTheme.xtermTheme"
             :command-notify-threshold-sec="commandNotifyThresholdSec"

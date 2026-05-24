@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -407,6 +408,37 @@ func BenchmarkFanoutHotPath(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.PushOut(uint64(i+1), payload)
+	}
+}
+
+func TestSubscriberCountHookFiresOnAttachAndDetach(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	var (
+		mu   sync.Mutex
+		seen []int
+	)
+	s.SetSubscriberCountHook(func(n int) {
+		mu.Lock()
+		seen = append(seen, n)
+		mu.Unlock()
+	})
+
+	a, _ := s.Subscribe(0, "a", "ha")
+	b, _ := s.Subscribe(0, "b", "hb")
+	s.Unsubscribe(a)
+	s.Unsubscribe(b)
+
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	want := []int{1, 2, 1, 0}
+	if len(seen) != len(want) {
+		t.Fatalf("counts = %v; want %v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("counts = %v; want %v", seen, want)
+		}
 	}
 }
 

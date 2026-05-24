@@ -14,7 +14,7 @@ describe("TerminalView overlay placement", () => {
   test("remote panes move attach progress below the remote badge", () => {
     expect(source).toContain("avoidTopRightBadge?: boolean");
     expect(source).toContain("avoidTopRightBadge");
-    expect(paneSource).toContain(":avoid-top-right-badge=\"pane.remote\"");
+    expect(paneSource).toContain(":avoid-top-right-badge=\"pane.remote ||");
 
     const offsetStyle = styleBlockFor(".overlay.avoid-top-right-badge");
     expect(offsetStyle).toMatch(/top\s*:\s*34px/);

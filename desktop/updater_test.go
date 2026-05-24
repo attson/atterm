@@ -116,6 +116,47 @@ func TestAssetNameForPlatform_Unsupported(t *testing.T) {
 	}
 }
 
+func TestProxiedGitHubReleaseURL(t *testing.T) {
+	original := "https://github.com/attson/atterm/releases/download/v0.2.13/AT-Term-windows-amd64.zip"
+	got := proxiedGitHubReleaseURL(original, "https://gh-proxy.example.com/")
+	want := "https://gh-proxy.example.com/" + original
+	if got != want {
+		t.Fatalf("proxied URL = %q; want %q", got, want)
+	}
+
+	if got := proxiedGitHubReleaseURL(original, ""); got != original {
+		t.Fatalf("empty proxy URL = %q; want original", got)
+	}
+	if got := proxiedGitHubReleaseURL(original, "https://gh-proxy.example.com"); got != want {
+		t.Fatalf("proxy without trailing slash = %q; want %q", got, want)
+	}
+	if got := proxiedGitHubReleaseURL("https://example.com/file.zip", "https://gh-proxy.example.com/"); got != "https://example.com/file.zip" {
+		t.Fatalf("non-github URL was proxied to %q", got)
+	}
+	if got := proxiedGitHubReleaseURL("https://github.com/attson/atterm/releases/latest", "https://gh-proxy.example.com/"); got != "https://github.com/attson/atterm/releases/latest" {
+		t.Fatalf("non-download GitHub URL was proxied to %q", got)
+	}
+}
+
+func TestNormalizeUpdateGHProxyURL(t *testing.T) {
+	got, err := normalizeUpdateGHProxyURL(" https://gh-proxy.example.com/ ")
+	if err != nil {
+		t.Fatalf("normalize err: %v", err)
+	}
+	if got != "https://gh-proxy.example.com/" {
+		t.Fatalf("normalized = %q; want trimmed https URL", got)
+	}
+	if got, err := normalizeUpdateGHProxyURL(" "); err != nil || got != "" {
+		t.Fatalf("empty normalize got (%q, %v); want empty nil", got, err)
+	}
+	if _, err := normalizeUpdateGHProxyURL("ftp://example.com/"); err == nil {
+		t.Fatal("ftp proxy URL accepted; want error")
+	}
+	if _, err := normalizeUpdateGHProxyURL("gh-proxy.example.com"); err == nil {
+		t.Fatal("relative proxy URL accepted; want error")
+	}
+}
+
 // helper: spin up a fake GitHub releases endpoint that returns the supplied
 // payload and counts requests.
 func fakeGitHub(t *testing.T, payload any) (string, *int) {
@@ -390,6 +431,92 @@ func TestUpdater_Download_WritesAtomicAsset(t *testing.T) {
 	got, _ := os.ReadFile(nonPartial[0])
 	if string(got) != string(body) {
 		t.Errorf("file content = %q; want %q", string(got), string(body))
+	}
+}
+
+func TestUpdater_Download_UsesGitHubProxyForArchive(t *testing.T) {
+	body := []byte("fake-archive-bytes")
+	pub, sums, sig := signedSumsForAsset(t, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH+assetExtForRuntime(t), body)
+	original := "https://github.com/attson/atterm/releases/download/v0.2.0/AT-Term-" + runtime.GOOS + "-" + runtime.GOARCH + assetExtForRuntime(t)
+	var gotPath string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		_, _ = w.Write(body)
+	}))
+	defer proxy.Close()
+
+	u := newUpdater(updaterConfig{
+		current:          "v0.1.0",
+		repo:             "attson/atterm",
+		cacheDir:         t.TempDir(),
+		verifyPublicKey:  pub,
+		updateGHProxyURL: proxy.URL,
+	})
+	u.state.AssetURL = original
+	u.state.AssetSize = int64(len(body))
+	u.state.Latest = "v0.2.0"
+	u.checksumURL = "mem://SHA256SUMS"
+	u.checksumSigURL = "mem://SHA256SUMS.sig"
+	u.fetchBytes = func(_ context.Context, url string, _ int64) ([]byte, error) {
+		switch url {
+		case "mem://SHA256SUMS":
+			return sums, nil
+		case "mem://SHA256SUMS.sig":
+			return sig, nil
+		default:
+			return nil, fmt.Errorf("unexpected url %s", url)
+		}
+	}
+
+	if err := u.Download(context.Background()); err != nil {
+		t.Fatalf("Download err: %v", err)
+	}
+	if !strings.Contains(gotPath, original) {
+		t.Fatalf("proxy request path = %q; want it to contain original URL %q", gotPath, original)
+	}
+}
+
+func TestUpdater_VerificationFetch_UsesGitHubProxyForChecksums(t *testing.T) {
+	body := []byte("fake-archive-bytes")
+	pub, sums, sig := signedSumsForAsset(t, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH+assetExtForRuntime(t), body)
+	var gotPaths []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch {
+		case strings.Contains(r.URL.Path, "SHA256SUMS.sig"):
+			_, _ = w.Write(sig)
+		case strings.Contains(r.URL.Path, "SHA256SUMS"):
+			_, _ = w.Write(sums)
+		default:
+			t.Fatalf("unexpected proxy request path %q", r.URL.Path)
+		}
+	}))
+	defer proxy.Close()
+
+	archive := filepath.Join(t.TempDir(), "archive")
+	if err := os.WriteFile(archive, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	u := newUpdater(updaterConfig{
+		current:          "v0.1.0",
+		repo:             "attson/atterm",
+		verifyPublicKey:  pub,
+		updateGHProxyURL: proxy.URL,
+	})
+	u.checksumURL = "https://github.com/attson/atterm/releases/download/v0.2.0/SHA256SUMS"
+	u.checksumSigURL = "https://github.com/attson/atterm/releases/download/v0.2.0/SHA256SUMS.sig"
+
+	if err := u.verifyDownloadedArchive(context.Background(), archive, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH+assetExtForRuntime(t)); err != nil {
+		t.Fatalf("verifyDownloadedArchive err: %v", err)
+	}
+	if len(gotPaths) != 2 {
+		t.Fatalf("proxy requests = %d; want 2", len(gotPaths))
+	}
+	for _, p := range gotPaths {
+		if !strings.Contains(p, "https://github.com/attson/atterm/releases/download/v0.2.0/") {
+			t.Fatalf("proxy request path = %q; want original GitHub release URL embedded", p)
+		}
 	}
 }
 

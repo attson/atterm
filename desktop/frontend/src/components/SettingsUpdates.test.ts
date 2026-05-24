@@ -12,11 +12,13 @@ describe("SettingsUpdates", () => {
     expect(source).toContain("checkUpdate");
     expect(source).toContain("startDownload");
     expect(source).toContain("setAutoCheckUpdates");
+    expect(source).toContain("setUpdateGHProxyURL");
     expect(source).toContain("setInterval");
   });
 
   test("renders auto-check toggle, release notes details, and primary actions", () => {
     expect(source).toContain("automatically check for updates");
+    expect(source).toContain("GitHub download proxy");
     expect(source).toContain("release notes");
     expect(source).toContain("check now");
   });

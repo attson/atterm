@@ -56,6 +56,7 @@ type appConfig struct {
 	AutoCheckUpdates *bool  `json:"auto_check_updates,omitempty"`
 	LastCheckAt      int64  `json:"last_check_at,omitempty"`
 	SkipVersion      string `json:"skip_version,omitempty"`
+	UpdateGHProxyURL string `json:"update_gh_proxy_url,omitempty"`
 
 	// NotificationsEnabled controls whether terminal BEL (\x07) triggers a
 	// native system notification when the window is unfocused. Nil means

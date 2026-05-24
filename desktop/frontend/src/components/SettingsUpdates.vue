@@ -3,8 +3,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   checkUpdate,
   getAutoCheckUpdates,
+  getUpdateGHProxyURL,
   getUpdateState,
   setAutoCheckUpdates,
+  setUpdateGHProxyURL,
   startDownload,
   type UpdateState,
 } from "../lib/api";
@@ -15,16 +17,23 @@ defineEmits<{
 
 const state = ref<UpdateState | null>(null);
 const autoCheck = ref(true);
+const ghProxyURL = ref("");
 const checkingNow = ref(false);
+const savingProxy = ref(false);
 const loading = ref(true);
 const error = ref("");
 let pollHandle: number | null = null;
 
 onMounted(async () => {
   try {
-    const [st, ac] = await Promise.all([getUpdateState(), getAutoCheckUpdates()]);
+    const [st, ac, proxyURL] = await Promise.all([
+      getUpdateState(),
+      getAutoCheckUpdates(),
+      getUpdateGHProxyURL(),
+    ]);
     state.value = st;
     autoCheck.value = ac;
+    ghProxyURL.value = proxyURL;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -66,6 +75,19 @@ async function onAutoCheckToggle(e: Event) {
   const target = e.target as HTMLInputElement;
   autoCheck.value = target.checked;
   await setAutoCheckUpdates(target.checked);
+}
+
+async function onSaveProxy() {
+  savingProxy.value = true;
+  error.value = "";
+  try {
+    await setUpdateGHProxyURL(ghProxyURL.value);
+    ghProxyURL.value = await getUpdateGHProxyURL();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    savingProxy.value = false;
+  }
 }
 
 const isDev = computed(
@@ -128,6 +150,25 @@ function formatAgo(unixSec: number) {
         />
         automatically check for updates
       </label>
+
+      <div v-if="!isDev" class="proxy-box">
+        <label class="field-label" for="update-gh-proxy">GitHub download proxy</label>
+        <div class="proxy-row">
+          <input
+            id="update-gh-proxy"
+            v-model.trim="ghProxyURL"
+            type="url"
+            placeholder="https://gh-proxy.example.com/"
+            spellcheck="false"
+          />
+          <button :disabled="savingProxy" @click="onSaveProxy">
+            {{ savingProxy ? "saving…" : "save" }}
+          </button>
+        </div>
+        <p class="hint">
+          Optional. Only GitHub Release file downloads use this proxy; update checks and signature verification stay unchanged.
+        </p>
+      </div>
 
       <details v-if="!isDev && state.notes" class="notes">
         <summary>release notes</summary>
@@ -199,6 +240,36 @@ function formatAgo(unixSec: number) {
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
+}
+.proxy-box {
+  display: grid;
+  gap: 6px;
+}
+.field-label {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.proxy-row {
+  display: flex;
+  gap: 8px;
+}
+.proxy-row input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 6px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+}
+.hint {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .notes {
   font-size: 12px;

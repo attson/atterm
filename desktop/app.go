@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,6 +141,9 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 	a.applyRelayConfig(cfg)
+	if a.updater != nil {
+		a.updater.SetGHProxyURL(cfg.UpdateGHProxyURL)
+	}
 
 	// Auto-update background loop, gated on the persisted preference.
 	// New installs default to enabled (AutoCheckUpdatesOrDefault returns true).
@@ -530,6 +534,50 @@ func (a *App) SetAutoCheckUpdates(enabled bool) error {
 		a.updater.Stop()
 	}
 	return nil
+}
+
+// GetUpdateGHProxyURL reports the optional GitHub release download proxy.
+func (a *App) GetUpdateGHProxyURL() string {
+	if a.cfgStore == nil {
+		return ""
+	}
+	return a.cfgStore.Get().UpdateGHProxyURL
+}
+
+// SetUpdateGHProxyURL persists the optional GitHub release download proxy.
+// Empty disables proxying. Non-empty values must be absolute http(s) URLs.
+func (a *App) SetUpdateGHProxyURL(proxyURL string) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	normalized, err := normalizeUpdateGHProxyURL(proxyURL)
+	if err != nil {
+		return err
+	}
+	cfg := a.cfgStore.Get()
+	cfg.UpdateGHProxyURL = normalized
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	if a.updater != nil {
+		a.updater.SetGHProxyURL(normalized)
+	}
+	return nil
+}
+
+func normalizeUpdateGHProxyURL(proxyURL string) (string, error) {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return "", nil
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("GitHub proxy URL must be an absolute http(s) URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("GitHub proxy URL must use http or https")
+	}
+	return proxyURL, nil
 }
 
 // beforeClose is wired to wails options.OnBeforeClose. If a previous

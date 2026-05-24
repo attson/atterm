@@ -129,9 +129,11 @@ func startConPtyProcess(cfg Config, hpc windows.Handle) (windows.Handle, uint32,
 		return 0, 0, err
 	}
 	defer attr.Delete()
+	// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE expects the HPCON handle value, not
+	// a pointer to a Go variable holding that value.
 	if err := attr.Update(
 		windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-		unsafe.Pointer(&hpc),
+		pseudoConsoleAttributeValue(hpc),
 		unsafe.Sizeof(hpc),
 	); err != nil {
 		return 0, 0, err
@@ -182,6 +184,10 @@ func startConPtyProcess(cfg Config, hpc windows.Handle) (windows.Handle, uint32,
 	}
 	_ = windows.CloseHandle(pi.Thread)
 	return pi.Process, pi.ProcessId, nil
+}
+
+func pseudoConsoleAttributeValue(hpc windows.Handle) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&hpc))
 }
 
 func makeWindowsEnvBlock(env []string) []uint16 {

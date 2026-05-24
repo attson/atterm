@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package ptyhost is a thin, side-effect-free wrapper around a child process
 // running under a pseudo-terminal. It does not touch os.Stdin / os.Stdout,
 // does not handle SIGWINCH, and does not put any local terminal into raw

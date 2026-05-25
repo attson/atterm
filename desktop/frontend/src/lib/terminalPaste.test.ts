@@ -59,7 +59,7 @@ describe("pasteFromClipboard", () => {
     expect(term.paste).not.toHaveBeenCalled();
   });
 
-  it("returns a stable i18n reason key when clipboard has no pasteable payload", async () => {
+  it("maps the backend empty clipboard reason to a stable i18n key", async () => {
     const term = { paste: vi.fn() };
     const conn = { sendPasteImage: vi.fn(async () => true) };
 
@@ -68,11 +68,51 @@ describe("pasteFromClipboard", () => {
       conn,
       status: "attached",
       remotePermission: "full",
-      getPayload: async () => ({ kind: "none" }),
+      getPayload: async () => ({ kind: "none", reason: "clipboard has no text or image" }),
     });
 
     expect(result).toEqual({ ok: false, reasonKey: "terminal.clipboardEmpty" });
     expect(term.paste).not.toHaveBeenCalled();
+  });
+
+  it("maps known backend clipboard image reasons to stable i18n keys", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    await expect(
+      pasteFromClipboard({
+        term,
+        conn,
+        status: "attached",
+        remotePermission: "full",
+        getPayload: async () => ({ kind: "none", reason: "clipboard image too large" }),
+      }),
+    ).resolves.toEqual({ ok: false, reasonKey: "terminal.clipboardImageTooLarge" });
+
+    await expect(
+      pasteFromClipboard({
+        term,
+        conn,
+        status: "attached",
+        remotePermission: "full",
+        getPayload: async () => ({ kind: "none", reason: "install xclip, wl-paste, or xsel to paste images" }),
+      }),
+    ).resolves.toEqual({ ok: false, reasonKey: "terminal.clipboardImageToolsMissing" });
+  });
+
+  it("keeps unknown backend clipboard reasons for actionable diagnostics", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({ kind: "none", reason: "pbpaste exited 1" }),
+    });
+
+    expect(result).toEqual({ ok: false, reason: "pbpaste exited 1" });
   });
 
   it("turns image payloads into blobs and reuses sendPasteImage", async () => {

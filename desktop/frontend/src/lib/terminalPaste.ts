@@ -22,6 +22,12 @@ export interface PasteResult {
   reason?: string;
 }
 
+const clipboardReasonKeys: Record<string, MessageKey> = {
+  "clipboard has no text or image": "terminal.clipboardEmpty",
+  "clipboard image too large": "terminal.clipboardImageTooLarge",
+  "install xclip, wl-paste, or xsel to paste images": "terminal.clipboardImageToolsMissing",
+};
+
 function base64ToBlob(dataBase64: string, contentType: string): Blob {
   const raw = atob(dataBase64);
   const bytes = Uint8Array.from(raw, (char) => char.charCodeAt(0));
@@ -50,6 +56,9 @@ export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promi
     return { ok: true, kind: "image" };
   }
 
-  if (payload.reason) return { ok: false, reason: payload.reason };
+  if (payload.reason) {
+    const reasonKey = clipboardReasonKeys[payload.reason];
+    return reasonKey ? { ok: false, reasonKey } : { ok: false, reason: payload.reason };
+  }
   return { ok: false, reasonKey: "terminal.clipboardEmpty" };
 }

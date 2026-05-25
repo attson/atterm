@@ -82,6 +82,8 @@ export const en = {
     imagePasteRequiresFull: "image paste requires full remote permission",
     pasteSessionNotWritable: "session is not writable right now",
     clipboardEmpty: "clipboard has no text or image",
+    clipboardImageTooLarge: "clipboard image is too large",
+    clipboardImageToolsMissing: "install xclip, wl-paste, or xsel to paste images",
     readOnlySession: "session is read-only",
     websocketNotOpen: "websocket is not open",
     imageTooLarge: "image too large: {size} bytes exceeds {limit}",

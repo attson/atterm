@@ -84,6 +84,8 @@ export const zhCN = {
     imagePasteRequiresFull: "粘贴图片需要 full 远端权限",
     pasteSessionNotWritable: "当前会话暂时不可写入",
     clipboardEmpty: "剪贴板没有可粘贴的文本或图片",
+    clipboardImageTooLarge: "剪贴板图片过大",
+    clipboardImageToolsMissing: "请安装 xclip、wl-paste 或 xsel 以粘贴图片",
     readOnlySession: "会话为只读",
     websocketNotOpen: "websocket 未打开",
     imageTooLarge: "图片过大：{size} 字节，超过 {limit}",

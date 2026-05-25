@@ -46,6 +46,15 @@ function layoutLabel(t: TabSummary): string {
   }
 }
 
+function layoutTitle(t: TabSummary): string {
+  switch (t.layout) {
+    case "single": return "";
+    case "vertical": return i18nT("terminal.layoutVertical");
+    case "horizontal": return i18nT("terminal.layoutHorizontal");
+    case "grid2x2": return i18nT("terminal.layoutGrid2x2");
+  }
+}
+
 function onClose(e: MouseEvent, id: string) {
   e.stopPropagation();
   emit("close", id);
@@ -64,7 +73,7 @@ function onClose(e: MouseEvent, id: string) {
         @click="emit('activate', t.id)"
       >
         <span class="num">{{ idx + 1 }}:</span>
-        <span v-if="t.layout !== 'single'" class="layout-icon" :title="t.layout">{{ layoutLabel(t) }}</span>
+        <span v-if="t.layout !== 'single'" class="layout-icon" :title="layoutTitle(t)">{{ layoutLabel(t) }}</span>
         <span v-else-if="t.activeRemote" class="dot remote-dot">●</span>
         <span v-else class="dot">●</span>
         <span class="title">{{ shortTitle(t.activeSession) }}</span>

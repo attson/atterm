@@ -103,3 +103,17 @@ describe("SettingsGeneral WebGL renderer toggle", () => {
     expect(source).toMatch(/getWebglRendererEnabled\(\)/);
   });
 });
+
+describe("SettingsGeneral language preference", () => {
+  test("imports i18n and locale preference bindings", () => {
+    expect(source).toContain("useI18n");
+    expect(source).toContain("getLocalePreference");
+    expect(source).toContain("setLocalePreference");
+  });
+
+  test("renders language selector with translated label and hint", () => {
+    expect(source).toContain("settings.general.languageLabel");
+    expect(source).toContain("settings.general.languageHint");
+    expect(source).toContain("languageOptions");
+  });
+});

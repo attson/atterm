@@ -3,17 +3,21 @@ import { computed, onMounted, ref } from "vue";
 import {
   getCommandNotifyThresholdSeconds,
   getDefaultShell,
+  getLocalePreference,
   getNotificationsEnabled,
   getShellIntegrationEnabled,
   getWebglRendererEnabled,
   listShells,
   setCommandNotifyThresholdSeconds,
   setDefaultShell,
+  setLocalePreference as saveLocalePreference,
   setNotificationsEnabled,
   setShellIntegrationEnabled,
   setWebglRendererEnabled,
   setTerminalThemePreference,
 } from "../lib/api";
+import { type LocalePreference } from "../i18n";
+import { useI18n } from "../i18n/useI18n";
 import { TERMINAL_THEMES, getTerminalTheme } from "../lib/terminalThemes";
 import SelectDropdown from "./SelectDropdown.vue";
 
@@ -30,6 +34,18 @@ const selected = ref(getTerminalTheme(props.terminalThemeId).id);
 const persisted = ref(selected.value);
 const saving = ref(false);
 const error = ref("");
+const { t, languageOptions, localePreference, setLocalePreference: setRuntimeLocalePreference } = useI18n();
+
+const selectedLocale = ref<LocalePreference>(localePreference.value);
+const persistedLocale = ref<LocalePreference>(localePreference.value);
+const localeSaving = ref(false);
+
+const localizedLanguageOptions = computed(() =>
+  languageOptions.map((option) => ({
+    value: option.value,
+    label: t(option.labelKey),
+  })),
+);
 
 const themeOptions = computed(() =>
   TERMINAL_THEMES.map((theme) => ({
@@ -55,6 +71,13 @@ const commandNotifyThresholdSec = ref(10);
 const commandNotifyThresholdLoading = ref(true);
 
 onMounted(async () => {
+  try {
+    const preference = await getLocalePreference();
+    selectedLocale.value = preference;
+    persistedLocale.value = preference;
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  }
   try {
     notificationsEnabled.value = await getNotificationsEnabled();
   } catch (e: any) {
@@ -198,6 +221,29 @@ async function onCommandNotifyThresholdChange(e: Event) {
   }
 }
 
+async function onLocaleChange() {
+  const next = selectedLocale.value;
+  const previous = persistedLocale.value;
+  const previousRuntime = localePreference.value;
+  localeSaving.value = true;
+  error.value = "";
+  try {
+    await Promise.all([setRuntimeLocalePreference(next), saveLocalePreference(next)]);
+    persistedLocale.value = next;
+  } catch (e: any) {
+    selectedLocale.value = previous;
+    persistedLocale.value = previous;
+    try {
+      await setRuntimeLocalePreference(previousRuntime);
+    } catch {
+      // Keep the original save error visible; runtime setter already rolls back on failure.
+    }
+    error.value = e?.message ?? String(e);
+  } finally {
+    localeSaving.value = false;
+  }
+}
+
 async function onChange() {
   const nextTheme = getTerminalTheme(selected.value).id;
   const previous = persisted.value;
@@ -220,6 +266,16 @@ async function onChange() {
 
 <template>
   <div class="tab-pane">
+    <label class="field-label">{{ t("settings.general.languageLabel") }}</label>
+    <SelectDropdown
+      v-model="selectedLocale"
+      :options="localizedLanguageOptions"
+      :disabled="localeSaving"
+      :aria-label="t('settings.general.languageLabel')"
+      @update:modelValue="onLocaleChange"
+    />
+    <p class="hint">{{ t("settings.general.languageHint") }}</p>
+
     <label class="field-label">terminal theme</label>
     <SelectDropdown
       v-model="selected"

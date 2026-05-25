@@ -1,6 +1,7 @@
 import { getClipboardPastePayload, type ClipboardPastePayload } from "./api";
 import type { SessionConnection, Status } from "./connection";
-import { imagePasteBlockedReason, isPasteAllowed } from "./terminalContextMenu";
+import type { MessageKey } from "../i18n";
+import { effectiveRemotePermission, isPasteAllowed } from "./terminalContextMenu";
 
 interface TerminalLike {
   paste: (text: string) => void;
@@ -17,6 +18,7 @@ export interface PasteFromClipboardOptions {
 export interface PasteResult {
   ok: boolean;
   kind?: "text" | "image";
+  reasonKey?: MessageKey;
   reason?: string;
 }
 
@@ -28,7 +30,7 @@ function base64ToBlob(dataBase64: string, contentType: string): Blob {
 
 export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promise<PasteResult> {
   if (!isPasteAllowed(opts.status, opts.remotePermission)) {
-    return { ok: false, reason: "session is not writable right now" };
+    return { ok: false, reasonKey: "terminal.pasteSessionNotWritable" };
   }
 
   const payload = await (opts.getPayload ? opts.getPayload() : getClipboardPastePayload());
@@ -38,8 +40,9 @@ export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promi
   }
 
   if (payload.kind === "image" && payload.content_type && payload.data_base64) {
-    const blocked = imagePasteBlockedReason(opts.remotePermission);
-    if (blocked) return { ok: false, reason: blocked };
+    if (effectiveRemotePermission(opts.remotePermission) === "control") {
+      return { ok: false, reasonKey: "terminal.imagePasteRequiresFull" };
+    }
     await opts.conn.sendPasteImage(
       base64ToBlob(payload.data_base64, payload.content_type),
       payload.filename || "clipboard-image",
@@ -47,5 +50,6 @@ export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promi
     return { ok: true, kind: "image" };
   }
 
-  return { ok: false, reason: payload.reason || "clipboard has no text or image" };
+  if (payload.reason) return { ok: false, reason: payload.reason };
+  return { ok: false, reasonKey: "terminal.clipboardEmpty" };
 }

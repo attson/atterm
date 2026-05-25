@@ -219,8 +219,8 @@ async function onMenuPaste() {
       status: status.value,
       remotePermission: props.remotePermission,
     });
-    if (!result.ok && result.reason) {
-      emit("toast", result.reason);
+    if (!result.ok && (result.reasonKey || result.reason)) {
+      emit("toast", result.reasonKey ? t(result.reasonKey) : result.reason!);
     }
   } catch (err: any) {
     console.warn("[AT Term] failed to paste from terminal menu", err);

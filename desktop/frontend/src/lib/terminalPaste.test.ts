@@ -37,8 +37,42 @@ describe("pasteFromClipboard", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/full remote permission/);
+    expect(result.reasonKey).toBe("terminal.imagePasteRequiresFull");
     expect(conn.sendPasteImage).not.toHaveBeenCalled();
+  });
+
+  it("returns a stable i18n reason key when paste is not writable", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+    const getPayload = vi.fn(async () => ({ kind: "text" as const, text: "echo hi\n" }));
+
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: "connecting",
+      remotePermission: "full",
+      getPayload,
+    });
+
+    expect(result).toEqual({ ok: false, reasonKey: "terminal.pasteSessionNotWritable" });
+    expect(getPayload).not.toHaveBeenCalled();
+    expect(term.paste).not.toHaveBeenCalled();
+  });
+
+  it("returns a stable i18n reason key when clipboard has no pasteable payload", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({ kind: "none" }),
+    });
+
+    expect(result).toEqual({ ok: false, reasonKey: "terminal.clipboardEmpty" });
+    expect(term.paste).not.toHaveBeenCalled();
   });
 
   it("turns image payloads into blobs and reuses sendPasteImage", async () => {

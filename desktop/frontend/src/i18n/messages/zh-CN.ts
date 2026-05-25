@@ -82,6 +82,8 @@ export const zhCN = {
     sessionStatusMany: "{count} 个会话",
     uplinkOn: "uplink 已开启",
     imagePasteRequiresFull: "粘贴图片需要 full 远端权限",
+    pasteSessionNotWritable: "当前会话暂时不可写入",
+    clipboardEmpty: "剪贴板没有可粘贴的文本或图片",
     readOnlySession: "会话为只读",
     websocketNotOpen: "websocket 未打开",
     imageTooLarge: "图片过大：{size} 字节，超过 {limit}",

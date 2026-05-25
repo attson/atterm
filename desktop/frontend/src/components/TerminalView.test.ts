@@ -53,7 +53,7 @@ describe("TerminalView right-click menu", () => {
     expect(source).toContain('@contextmenu.prevent="openContextMenu"');
     expect(source).toContain('Teleport to="body"');
     expect(source).toContain('class="term-context-menu"');
-    expect(source).toContain('emit("toast", result.reason');
+    expect(source).toContain('emit("toast", result.reasonKey ? t(result.reasonKey) : result.reason');
     expect(paneSource).toContain(':remote-permission="sessionInfoFor(pane)?.remote_permission"');
   });
 

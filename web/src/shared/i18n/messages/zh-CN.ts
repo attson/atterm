@@ -5,6 +5,7 @@ export const zhCN = {
     appName: 'AT Term',
     cancel: '取消',
     confirm: '确认',
+    language: '语言',
     loading: '正在加载...',
     save: '保存',
   },
@@ -43,6 +44,7 @@ export const zhCN = {
   settings: {
     title: '设置',
     language: '语言',
+    languageHint: '选择此浏览器使用的语言。',
     notifications: '通知',
   },
   admin: {

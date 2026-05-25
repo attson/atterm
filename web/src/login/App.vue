@@ -14,6 +14,7 @@ import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import { safeNext, ApiError } from '@shared/api/client'
 import { login } from '@shared/api/auth'
 import { fetchVersionLabel } from '@shared/api/version'
+import LanguageSelect from '@shared/components/LanguageSelect.vue'
 
 const email = ref('')
 const password = ref('')
@@ -57,6 +58,7 @@ const overrides = getNaiveOverrides()
   <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
     <n-message-provider>
       <main class="auth-page">
+        <LanguageSelect class="auth-language" />
         <n-card class="auth-card" :bordered="false">
           <header class="auth-title">
             <h1>AT Term</h1>
@@ -123,6 +125,11 @@ const overrides = getNaiveOverrides()
   max-width: 420px;
   width: 100%;
   background: var(--panel);
+}
+.auth-language {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
 }
 .auth-title {
   text-align: center;

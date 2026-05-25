@@ -19,6 +19,7 @@ import {
   validateRelayBase,
   type RelayConfig,
 } from '@shared/api/relay-config'
+import LanguageSelect from '@shared/components/LanguageSelect.vue'
 
 const base = ref('https://')
 const token = ref('')
@@ -94,6 +95,7 @@ const overrides = getNaiveOverrides()
   <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
     <n-message-provider>
       <main class="setup-page">
+        <LanguageSelect class="setup-language" />
         <n-card title="Connect to relay" class="setup-card">
           <n-alert
             v-if="reasonBanner"
@@ -163,5 +165,10 @@ const overrides = getNaiveOverrides()
 .setup-card {
   width: 100%;
   max-width: 480px;
+}
+.setup-language {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
 }
 </style>

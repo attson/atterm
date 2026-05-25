@@ -9,7 +9,9 @@ import {
 } from 'naive-ui'
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import Topbar from '@shared/components/Topbar.vue'
+import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { isMobileApp } from '@shared/api/relay-config'
+import { useI18n } from '@shared/i18n/useI18n'
 import ApiTokens from './tabs/ApiTokens.vue'
 import ChangePassword from './tabs/ChangePassword.vue'
 import Sessions from './tabs/Sessions.vue'
@@ -19,6 +21,7 @@ import Relay from './tabs/Relay.vue'
 import Webhooks from './tabs/Webhooks.vue'
 
 const mobile = isMobileApp()
+const { t } = useI18n()
 
 const TAB_NAMES = mobile
   ? (['relay'] as const)
@@ -54,6 +57,13 @@ const overrides = getNaiveOverrides()
     <n-message-provider>
       <Topbar active="settings" />
       <main class="settings-page">
+        <section class="language-settings" aria-labelledby="language-settings-title">
+          <div>
+            <h2 id="language-settings-title">{{ t('settings.language') }}</h2>
+            <p>{{ t('settings.languageHint') }}</p>
+          </div>
+          <LanguageSelect />
+        </section>
         <n-tabs
           :value="activeTab"
           type="line"
@@ -98,5 +108,24 @@ const overrides = getNaiveOverrides()
   padding: 2rem 1rem;
   color: var(--fg);
   min-height: calc(100vh - 80px);
+}
+.language-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--panel);
+}
+.language-settings h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.language-settings p {
+  margin: 0.25rem 0 0;
+  color: var(--fg-dim);
 }
 </style>

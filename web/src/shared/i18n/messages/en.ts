@@ -3,6 +3,7 @@ export const en = {
     appName: 'AT Term',
     cancel: 'Cancel',
     confirm: 'Confirm',
+    language: 'Language',
     loading: 'Loading...',
     save: 'Save',
   },
@@ -41,6 +42,7 @@ export const en = {
   settings: {
     title: 'Settings',
     language: 'Language',
+    languageHint: 'Choose the language used by this browser.',
     notifications: 'Notifications',
   },
   admin: {

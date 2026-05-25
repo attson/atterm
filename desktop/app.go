@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -406,6 +407,29 @@ func (a *App) SetTerminalTheme(theme string) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.TerminalTheme = theme
+	return a.cfgStore.Set(cfg)
+}
+
+// GetLocalePreference returns the user's persisted UI language preference.
+func (a *App) GetLocalePreference() string {
+	if a == nil || a.cfgStore == nil {
+		return localePreferenceSystem
+	}
+	return a.cfgStore.Get().LocalePreferenceOrDefault()
+}
+
+// SetLocalePreference persists the user's UI language preference.
+func (a *App) SetLocalePreference(preference string) error {
+	if a == nil || a.cfgStore == nil {
+		return errors.New("app not initialized")
+	}
+	cfg := a.cfgStore.Get()
+	switch preference {
+	case localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified:
+		cfg.LocalePreference = preference
+	default:
+		return errors.New("unsupported locale preference")
+	}
 	return a.cfgStore.Set(cfg)
 }
 

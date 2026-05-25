@@ -7,6 +7,8 @@ export interface Endpoint {
   token: string;
 }
 
+export type LocalePreference = "system" | "en" | "zh-CN";
+
 export interface NewSessionReq {
   command: string;
   args?: string[];
@@ -97,6 +99,8 @@ interface AppBindings {
   GetLogPreview(): Promise<LogPreview>;
   GetTerminalTheme(): Promise<string>;
   SetTerminalTheme(themeID: string): Promise<void>;
+  GetLocalePreference(): Promise<LocalePreference>;
+  SetLocalePreference(preference: LocalePreference): Promise<void>;
   GetDefaultShell(): Promise<string>;
   SetDefaultShell(shell: string): Promise<void>;
   GetUpdateState(): Promise<UpdateState>;
@@ -209,6 +213,14 @@ export function getTerminalThemePreference(): Promise<string> {
 
 export function setTerminalThemePreference(themeID: string): Promise<void> {
   return bindings().SetTerminalTheme(themeID);
+}
+
+export function getLocalePreference(): Promise<LocalePreference> {
+  return bindings().GetLocalePreference();
+}
+
+export function setLocalePreference(preference: LocalePreference): Promise<void> {
+  return bindings().SetLocalePreference(preference);
 }
 
 export function getDefaultShell(): Promise<string> {

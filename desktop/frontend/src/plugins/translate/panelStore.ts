@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, shallowRef } from "vue";
+import { t } from "../../i18n";
 import { computeAutoTargetLang } from "./detectLang";
 import { TranslateError, type TranslateProvider, type TranslateResult } from "./providers/types";
 
@@ -45,7 +46,7 @@ export const useTranslatePanelStore = defineStore("translatePanel", () => {
   async function openWithSource(text: string): Promise<void> {
     if (!cfg.value) {
       visible.value = true;
-      error.value = { code: "unknown", message: "Translate plugin not configured" };
+      error.value = { code: "unknown", message: t("plugins.translate.notConfigured") };
       return;
     }
     visible.value = true;

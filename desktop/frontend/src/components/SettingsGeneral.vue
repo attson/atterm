@@ -10,7 +10,6 @@ import {
   listShells,
   setCommandNotifyThresholdSeconds,
   setDefaultShell,
-  setLocalePreference as saveLocalePreference,
   setNotificationsEnabled,
   setShellIntegrationEnabled,
   setWebglRendererEnabled,
@@ -228,7 +227,7 @@ async function onLocaleChange() {
   localeSaving.value = true;
   error.value = "";
   try {
-    await Promise.all([setRuntimeLocalePreference(next), saveLocalePreference(next)]);
+    await setRuntimeLocalePreference(next);
     persistedLocale.value = next;
   } catch (e: any) {
     selectedLocale.value = previous;

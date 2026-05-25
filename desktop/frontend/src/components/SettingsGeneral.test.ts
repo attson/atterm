@@ -108,7 +108,8 @@ describe("SettingsGeneral language preference", () => {
   test("imports i18n and locale preference bindings", () => {
     expect(source).toContain("useI18n");
     expect(source).toContain("getLocalePreference");
-    expect(source).toContain("setLocalePreference");
+    expect(source).toContain("setRuntimeLocalePreference");
+    expect(source).not.toContain("setLocalePreference as saveLocalePreference");
   });
 
   test("renders language selector with translated label and hint", () => {

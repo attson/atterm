@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import type { MeResponse } from '@shared/api/types'
 import { getMe } from '@shared/api/me'
 import { logout } from '@shared/api/auth'
-import { fetchVersionLabel } from '@shared/api/version'
+import { fetchVersion, formatVersionLabel } from '@shared/api/version'
 import { useI18n } from '@shared/i18n/useI18n'
 
 defineProps<{ active: 'home' | 'settings' | 'admin' }>()
 
 const me = ref<MeResponse | null>(null)
-const versionLabel = ref('version dev')
+const version = ref('dev')
 const { t } = useI18n()
+const versionLabel = computed(() => formatVersionLabel(version.value, t))
 
 onMounted(async () => {
   try {
@@ -19,9 +20,9 @@ onMounted(async () => {
     // apiFetch handles 401 by redirecting; nothing else to do here.
   }
   try {
-    versionLabel.value = await fetchVersionLabel()
+    version.value = await fetchVersion()
   } catch {
-    // Keep the fallback label.
+    // Keep the translated fallback label.
   }
 })
 

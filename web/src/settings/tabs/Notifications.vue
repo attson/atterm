@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { NButton, NSpace, useMessage } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { enablePushFlow, disablePushFlow, type EnableReason } from '@shared/api/push-flow'
@@ -14,6 +14,7 @@ const subscribed = ref(false)
 const busy = ref(false)
 const supported = ref(true)
 const errorMsg = ref('')
+const permissionLabel = computed(() => t(`settings.notificationsTab.permissions.${permission.value}`))
 
 const REASON_KEY: Record<EnableReason, string> = {
   denied: 'settings.notificationsTab.errors.denied',
@@ -103,7 +104,7 @@ onMounted(refreshState)
 
     <p v-else data-testid="push-status" class="status">
       {{ t('settings.notificationsTab.browserPermission') }}:
-      <strong>{{ permission }}</strong>
+      <strong>{{ permissionLabel }}</strong>
       · {{ t('settings.notificationsTab.subscribed') }}:
       <strong>{{ subscribed ? t('common.yes') : t('common.no') }}</strong>
     </p>

@@ -16,6 +16,7 @@ vi.mock('@shared/api/push', () => ({
 }))
 
 import Notifications from '@/settings/tabs/Notifications.vue'
+import { setLocalePreference } from '@shared/i18n'
 import { installI18nTestHooks } from '../../i18n-test-helper'
 
 function mountWithProvider() {
@@ -55,7 +56,21 @@ describe('Notifications tab', () => {
   it('renders a permission status line', async () => {
     const wrapper = mountWithProvider()
     await flushPromises()
-    expect(wrapper.find('[data-testid="push-status"]').text()).toMatch(/default/i)
+    expect(wrapper.find('[data-testid="push-status"]').text()).toMatch(/Ask/i)
+  })
+
+  it('renders the permission label in zh-CN instead of the raw enum', async () => {
+    setLocalePreference('zh-CN')
+    Object.defineProperty(window, 'Notification', {
+      value: { permission: 'granted', requestPermission: () => Promise.resolve('granted') },
+      configurable: true,
+    })
+
+    const wrapper = mountWithProvider()
+    await flushPromises()
+    const status = wrapper.find('[data-testid="push-status"]').text()
+    expect(status).toContain('已允许')
+    expect(status).not.toContain('granted')
   })
 
   it('enables push when the Enable button is clicked', async () => {

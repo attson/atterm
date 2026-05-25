@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { en, type Messages } from './messages/en';
 import { zhCN } from './messages/zh-CN';
 
@@ -16,14 +16,13 @@ const dictionaries: Record<ResolvedLocale, Messages> = {
   'zh-CN': zhCN,
 };
 
-export const languageOptions = [
-  { label: 'System', value: 'system' },
-  { label: 'English', value: 'en' },
-  { label: '简体中文', value: 'zh-CN' },
-] satisfies Array<{ label: string; value: LocalePreference }>;
-
 export const localePreference = ref<LocalePreference>('system');
 export const resolvedLocale = ref<ResolvedLocale>('en');
+export const languageOptions = computed<Array<{ label: string; value: LocalePreference }>>(() => [
+  { label: t('common.system'), value: 'system' },
+  { label: t('common.english'), value: 'en' },
+  { label: t('common.simplifiedChinese'), value: 'zh-CN' },
+]);
 
 let getLanguages: () => readonly string[] = defaultGetLanguages;
 let unsubscribeLanguageChange: LanguageChangeUnsubscribe | undefined;

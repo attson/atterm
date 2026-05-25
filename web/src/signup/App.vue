@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import {
   NConfigProvider,
   NMessageProvider,
@@ -13,7 +13,7 @@ import {
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import { safeNext, ApiError } from '@shared/api/client'
 import { signup } from '@shared/api/auth'
-import { fetchVersionLabel } from '@shared/api/version'
+import { fetchVersion, formatVersionLabel } from '@shared/api/version'
 import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { useI18n } from '@shared/i18n/useI18n'
 
@@ -22,11 +22,12 @@ const password = ref('')
 const inviteCode = ref('')
 const submitting = ref(false)
 const errorMsg = ref('')
-const versionLabel = ref('version dev')
+const version = ref('dev')
 const { t } = useI18n()
+const versionLabel = computed(() => formatVersionLabel(version.value, t))
 
 onMounted(async () => {
-  versionLabel.value = await fetchVersionLabel()
+  version.value = await fetchVersion()
 })
 
 function mapError(e: unknown): string {

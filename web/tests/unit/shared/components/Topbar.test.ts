@@ -8,7 +8,8 @@ vi.mock('@shared/api/auth', () => ({
   logout: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@shared/api/version', () => ({
-  fetchVersionLabel: vi.fn().mockResolvedValue('version test'),
+  fetchVersion: vi.fn().mockResolvedValue('test'),
+  formatVersionLabel: (version: string) => `version ${version || 'dev'}`,
 }))
 
 import Topbar from '@shared/components/Topbar.vue'

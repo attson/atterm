@@ -11,6 +11,7 @@ import {
   NSpace,
   NCheckbox,
 } from 'naive-ui'
+import { ApiError } from '@shared/api/client'
 import { listWebhooks, createWebhook, deleteWebhook } from '@shared/api/webhooks'
 import type { WebhookRow } from '@shared/api/types'
 import { useI18n } from '@shared/i18n/useI18n'
@@ -33,6 +34,19 @@ const formatOptions = computed(() => [
 
 const nameInputProps = { 'data-testid': 'wh-name', autocomplete: 'off' } as Record<string, unknown>
 const urlInputProps = { 'data-testid': 'wh-url', autocomplete: 'off' } as Record<string, unknown>
+
+function formatLabel(webhook: WebhookRow): string {
+  if (webhook.format === 'feishu') return t('settings.webhooks.formats.feishu')
+  if (webhook.format === 'generic') return t('settings.webhooks.formats.generic')
+  return t('common.unknown')
+}
+
+function mapWebhookError(e: unknown, fallbackKey: string): string {
+  if (e instanceof ApiError || e instanceof Error) {
+    return t(fallbackKey)
+  }
+  return t(fallbackKey)
+}
 
 function shortDate(iso: string): string {
   try {
@@ -65,7 +79,7 @@ async function onAdd() {
     newInsecure.value = false
     await reload()
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : t('settings.webhooks.createFailed')
+    errorMsg.value = mapWebhookError(e, 'settings.webhooks.createFailed')
   } finally {
     saving.value = false
   }
@@ -76,7 +90,7 @@ async function onDelete(id: string) {
     await deleteWebhook(id)
     await reload()
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : t('settings.webhooks.deleteFailed')
+    errorMsg.value = mapWebhookError(e, 'settings.webhooks.deleteFailed')
   }
 }
 
@@ -90,7 +104,7 @@ onMounted(reload)
         <n-thing>
           <template #header>{{ wh.name }}</template>
           <template #description>
-            <span>{{ wh.url }}</span> · {{ wh.format }} · {{ t('settings.webhooks.created') }} {{ shortDate(wh.created_at) }}
+            <span>{{ wh.url }}</span> · {{ formatLabel(wh) }} · {{ t('settings.webhooks.created') }} {{ shortDate(wh.created_at) }}
           </template>
         </n-thing>
         <template #suffix>

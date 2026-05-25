@@ -5,7 +5,8 @@ vi.mock('@shared/api/auth', () => ({
   login: vi.fn(),
 }))
 vi.mock('@shared/api/version', () => ({
-  fetchVersionLabel: vi.fn().mockResolvedValue('version test'),
+  fetchVersion: vi.fn().mockResolvedValue('test'),
+  formatVersionLabel: (version: string) => `version ${version || 'dev'}`,
 }))
 
 import App from '@/login/App.vue'

@@ -573,3 +573,301 @@ func TestUplink_AuthErrorClose_EmitsEvent(t *testing.T) {
 		t.Errorf("relay:auth-error reason = %q; want %q", m["reason"], "auth_invalid_token")
 	}
 }
+
+// TestUplink_DriverHandoff_SecondClientSteals reproduces the reported bug:
+// once client A has taken control, client B's "take control" must steal the
+// driver and flip A to viewer. Reads are done by long-lived goroutines (a
+// timed-out websocket Read closes the conn in nhooyr, so we never cancel a
+// Read mid-flight); driver_client_id updates seen by A are pushed to a channel.
+func TestUplink_DriverHandoff_SecondClientSteals(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e test")
+	}
+	remoteSrv := relay.NewServer(relay.Config{Token: "rt"})
+	remoteLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteHTTP := &http.Server{Handler: remoteSrv}
+	go func() { _ = remoteHTTP.Serve(remoteLn) }()
+	defer remoteHTTP.Close()
+	remoteAddr := remoteLn.Addr().String()
+
+	host, err := startRelayHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Stop()
+	sid, err := host.NewSession(context.Background(), NewSessionReq{
+		Command: "bash",
+		Args:    []string{"-c", "while read line; do echo got=$line; done"},
+		Cols:    80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host)
+	u.eventsEmit = func(context.Context, string, ...interface{}) {}
+	go u.Run(ctx)
+
+	// wait for the mirror to appear on the remote relay
+	seen := false
+	for d := time.Now().Add(3 * time.Second); time.Now().Before(d) && !seen; {
+		res, e := getRemoteSessions(remoteAddr, "rt")
+		if e == nil {
+			body, _ := io.ReadAll(res.Body)
+			_ = res.Body.Close()
+			var infos []proto.SessionInfo
+			if json.Unmarshal(body, &infos) == nil {
+				for _, i := range infos {
+					if i.ID == sid.String() {
+						seen = true
+					}
+				}
+			}
+		}
+		if !seen {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	if !seen {
+		t.Fatal("mirror never appeared on remote relay")
+	}
+
+	dial := func(id string) *websocket.Conn {
+		c, _, e := websocket.Dial(ctx, fmt.Sprintf("ws://%s/client", remoteAddr), &websocket.DialOptions{
+			HTTPHeader: http.Header{"Authorization": []string{"Bearer rt"}},
+		})
+		if e != nil {
+			t.Fatal(e)
+		}
+		c.SetReadLimit(2 * 1024 * 1024)
+		atp, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String(), ClientID: id, ClientName: id})
+		if e := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeAttach, SessionID: sid, Payload: atp})); e != nil {
+			t.Fatal(e)
+		}
+		return c
+	}
+	claim := func(c *websocket.Conn, id string) {
+		cdp, _ := json.Marshal(proto.ClaimDriverPayload{ClientID: id, ClientName: id})
+		if e := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeClaimDriver, SessionID: sid, Payload: cdp})); e != nil {
+			t.Fatal(e)
+		}
+	}
+
+	connA := dial("cli-A")
+	defer connA.Close(websocket.StatusNormalClosure, "")
+	connB := dial("cli-B")
+	defer connB.Close(websocket.StatusNormalClosure, "")
+
+	driversA := make(chan string, 256)
+	go func() {
+		for {
+			mt, data, e := connA.Read(ctx)
+			if e != nil {
+				return
+			}
+			if mt != websocket.MessageBinary {
+				continue
+			}
+			f, e := proto.Unmarshal(data)
+			if e != nil || f.Type != proto.TypeMeta {
+				continue
+			}
+			var m proto.MetaPayload
+			if json.Unmarshal(f.Payload, &m) == nil {
+				select {
+				case driversA <- m.DriverClientID:
+				default:
+				}
+			}
+		}
+	}()
+	go func() { // keep B drained so its subscriber channel never backs up
+		for {
+			if _, _, e := connB.Read(ctx); e != nil {
+				return
+			}
+		}
+	}()
+
+	// collect driver_client_id updates seen by A over dur, return the last one
+	lastDriverOnA := func(dur time.Duration) string {
+		last := "<none>"
+		timeout := time.After(dur)
+		for {
+			select {
+			case d := <-driversA:
+				last = d
+			case <-timeout:
+				return last
+			}
+		}
+	}
+
+	claim(connA, "cli-A")
+	if got := lastDriverOnA(2 * time.Second); got != "cli-A" {
+		t.Fatalf("A failed to become driver: A sees driver=%q (want cli-A)", got)
+	}
+	t.Logf("✓ A is driver")
+
+	claim(connB, "cli-B")
+	if got := lastDriverOnA(3 * time.Second); got != "cli-B" {
+		t.Fatalf("B failed to steal driver from A: A still sees driver=%q (want cli-B)", got)
+	}
+	t.Logf("✓ B stole driver; A flipped to viewer")
+}
+
+// TestUplink_DriverHandoff_OwnerAndRemote covers the desktop-owner <-> phone
+// handoff: the owner attaches to its own in-process mini-relay, a remote phone
+// attaches via the central relay's mirror. Control must be stealable BOTH ways.
+func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e test")
+	}
+	remoteSrv := relay.NewServer(relay.Config{Token: "rt"})
+	remoteLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteHTTP := &http.Server{Handler: remoteSrv}
+	go func() { _ = remoteHTTP.Serve(remoteLn) }()
+	defer remoteHTTP.Close()
+	remoteAddr := remoteLn.Addr().String()
+
+	host, err := startRelayHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Stop()
+	sid, err := host.NewSession(context.Background(), NewSessionReq{
+		Command: "bash",
+		Args:    []string{"-c", "while read line; do echo got=$line; done"},
+		Cols:    80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host)
+	u.eventsEmit = func(context.Context, string, ...interface{}) {}
+	go u.Run(ctx)
+
+	dialAttach := func(baseWs, token, id string) *websocket.Conn {
+		c, _, e := websocket.Dial(ctx, baseWs+"/client", &websocket.DialOptions{
+			HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}},
+		})
+		if e != nil {
+			t.Fatal(e)
+		}
+		c.SetReadLimit(2 * 1024 * 1024)
+		atp, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String(), ClientID: id, ClientName: id})
+		if e := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeAttach, SessionID: sid, Payload: atp})); e != nil {
+			t.Fatal(e)
+		}
+		return c
+	}
+	claim := func(c *websocket.Conn, id string) {
+		cdp, _ := json.Marshal(proto.ClaimDriverPayload{ClientID: id, ClientName: id})
+		if e := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{Type: proto.TypeClaimDriver, SessionID: sid, Payload: cdp})); e != nil {
+			t.Fatal(e)
+		}
+	}
+	driverChan := func(c *websocket.Conn) chan string {
+		ch := make(chan string, 256)
+		go func() {
+			for {
+				mt, data, e := c.Read(ctx)
+				if e != nil {
+					return
+				}
+				if mt != websocket.MessageBinary {
+					continue
+				}
+				f, e := proto.Unmarshal(data)
+				if e != nil || f.Type != proto.TypeMeta {
+					continue
+				}
+				var m proto.MetaPayload
+				if json.Unmarshal(f.Payload, &m) == nil {
+					select {
+					case ch <- m.DriverClientID:
+					default:
+					}
+				}
+			}
+		}()
+		return ch
+	}
+	lastOn := func(ch chan string, dur time.Duration) string {
+		last := "<none>"
+		timeout := time.After(dur)
+		for {
+			select {
+			case d := <-ch:
+				last = d
+			case <-timeout:
+				return last
+			}
+		}
+	}
+
+	// owner attaches to its own mini-relay
+	ownerConn := dialAttach("ws://"+host.addr, host.token, "owner")
+	defer ownerConn.Close(websocket.StatusNormalClosure, "")
+	ownerDrv := driverChan(ownerConn)
+
+	// wait for the mirror to appear so the remote can attach
+	seen := false
+	for d := time.Now().Add(3 * time.Second); time.Now().Before(d) && !seen; {
+		res, e := getRemoteSessions(remoteAddr, "rt")
+		if e == nil {
+			body, _ := io.ReadAll(res.Body)
+			_ = res.Body.Close()
+			var infos []proto.SessionInfo
+			if json.Unmarshal(body, &infos) == nil {
+				for _, i := range infos {
+					if i.ID == sid.String() {
+						seen = true
+					}
+				}
+			}
+		}
+		if !seen {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	if !seen {
+		t.Fatal("mirror never appeared on remote relay")
+	}
+
+	remoteConn := dialAttach("ws://"+remoteAddr, "rt", "remote")
+	defer remoteConn.Close(websocket.StatusNormalClosure, "")
+	remoteDrv := driverChan(remoteConn)
+
+	// owner takes control
+	claim(ownerConn, "owner")
+	if got := lastOn(ownerDrv, 2*time.Second); got != "owner" {
+		t.Fatalf("owner failed to become driver: owner sees driver=%q (want owner)", got)
+	}
+	t.Logf("✓ owner is driver")
+
+	// remote (phone) steals control — owner must flip to viewer
+	claim(remoteConn, "remote")
+	if got := lastOn(ownerDrv, 3*time.Second); got != "remote" {
+		t.Fatalf("remote failed to steal from owner: owner still sees driver=%q (want remote)", got)
+	}
+	t.Logf("✓ remote stole driver; owner is viewer")
+
+	// owner takes control back — remote must flip to viewer
+	claim(ownerConn, "owner")
+	if got := lastOn(remoteDrv, 3*time.Second); got != "owner" {
+		t.Fatalf("owner failed to take back from remote: remote still sees driver=%q (want owner)", got)
+	}
+	t.Logf("✓ owner took control back; remote is viewer")
+}

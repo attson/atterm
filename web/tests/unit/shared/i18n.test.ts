@@ -28,6 +28,11 @@ describe('browser i18n runtime', () => {
     expect(resolveLocalePreference('en', ['zh-CN'])).toBe('en');
   });
 
+  test('uses only the first non-empty system language', () => {
+    expect(resolveLocalePreference('system', ['en-US', 'zh-CN'])).toBe('en');
+    expect(resolveLocalePreference('system', ['', 'zh-CN', 'en-US'])).toBe('zh-CN');
+  });
+
   test('loads and saves locale preference in localStorage', () => {
     localStorage.setItem('atterm.locale', 'zh-CN');
 
@@ -35,11 +40,13 @@ describe('browser i18n runtime', () => {
 
     expect(localePreference.value).toBe('zh-CN');
     expect(resolvedLocale.value).toBe('zh-CN');
+    expect(document.documentElement.lang).toBe('zh-CN');
 
     setLocalePreference('en');
 
     expect(localePreference.value).toBe('en');
     expect(resolvedLocale.value).toBe('en');
+    expect(document.documentElement.lang).toBe('en');
     expect(localStorage.getItem('atterm.locale')).toBe('en');
   });
 
@@ -50,6 +57,7 @@ describe('browser i18n runtime', () => {
 
     expect(localePreference.value).toBe('system');
     expect(resolvedLocale.value).toBe('zh-CN');
+    expect(document.documentElement.lang).toBe('zh-CN');
   });
 
   test('keeps in-memory preference when localStorage setItem fails', () => {
@@ -65,6 +73,7 @@ describe('browser i18n runtime', () => {
 
     expect(localePreference.value).toBe('zh-CN');
     expect(resolvedLocale.value).toBe('zh-CN');
+    expect(document.documentElement.lang).toBe('zh-CN');
   });
 
 
@@ -88,6 +97,7 @@ describe('browser i18n runtime', () => {
 
     expect(localePreference.value).toBe('system');
     expect(resolvedLocale.value).toBe('zh-CN');
+    expect(document.documentElement.lang).toBe('zh-CN');
   });
 
   test('translates starter dictionary keys with interpolation', () => {

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   loadRelayConfig,
   clearRelayConfig,
@@ -37,6 +39,17 @@ describe('setup/App.vue', () => {
     Object.defineProperty(window, 'location', { value: originalLocation, writable: true })
     delete (globalThis as any).Capacitor
     __resetMobileDetectionCache()
+  })
+
+  it('passes resolved Naive UI locale props from every web entrypoint', () => {
+    for (const entrypoint of ['admin', 'settings', 'setup', 'main', 'login', 'signup']) {
+      const source = readFileSync(
+        join(process.cwd(), 'src', entrypoint, 'App.vue'),
+        'utf8',
+      )
+      expect(source).toContain(':locale="naiveLocale.locale"')
+      expect(source).toContain(':date-locale="naiveLocale.dateLocale"')
+    }
   })
 
   it('renders the three required inputs', () => {

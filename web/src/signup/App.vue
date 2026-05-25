@@ -16,6 +16,7 @@ import { signup } from '@shared/api/auth'
 import { fetchVersion, formatVersionLabel } from '@shared/api/version'
 import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 
 const email = ref('')
 const password = ref('')
@@ -62,7 +63,12 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <main class="auth-page">
         <LanguageSelect class="auth-language" />

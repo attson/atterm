@@ -10,6 +10,7 @@ import {
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import Topbar from '@shared/components/Topbar.vue'
 import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 import Invitations from './tabs/Invitations.vue'
 import Users from './tabs/Users.vue'
 import Config from './tabs/Config.vue'
@@ -43,7 +44,12 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <Topbar active="admin" />
       <main class="admin-page">

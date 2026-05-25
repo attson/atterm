@@ -28,6 +28,11 @@ describe("desktop i18n locale resolution", () => {
     expect(resolveLocalePreference("system", [""])).toBe("en");
   });
 
+  test("only the first non-empty system language decides", () => {
+    expect(resolveLocalePreference("system", ["en-US", "zh-CN"])).toBe("en");
+    expect(resolveLocalePreference("system", ["", "zh-CN", "en-US"])).toBe("zh-CN");
+  });
+
   test("explicit preference overrides system languages", () => {
     expect(resolveLocalePreference("en", ["zh-CN"])).toBe("en");
     expect(resolveLocalePreference("zh-CN", ["en-US"])).toBe("zh-CN");
@@ -64,6 +69,7 @@ describe("desktop i18n runtime", () => {
 
     expect(localePreference.value).toBe("system");
     expect(resolvedLocale.value).toBe("zh-CN");
+    expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   test("rolls back when savePreference fails", async () => {
@@ -80,6 +86,7 @@ describe("desktop i18n runtime", () => {
 
     expect(localePreference.value).toBe("en");
     expect(resolvedLocale.value).toBe("en");
+    expect(document.documentElement.lang).toBe("en");
   });
 
   test("interpolates named parameters and leaves missing parameters visible", async () => {
@@ -132,6 +139,7 @@ describe("desktop i18n runtime", () => {
 
     expect(localePreference.value).toBe("system");
     expect(resolvedLocale.value).toBe("zh-CN");
+    expect(document.documentElement.lang).toBe("zh-CN");
   });
 
   test("useI18n exposes runtime state and actions", async () => {
@@ -151,5 +159,6 @@ describe("desktop i18n runtime", () => {
 
     expect(i18n.localePreference.value).toBe("zh-CN");
     expect(i18n.resolvedLocale.value).toBe("zh-CN");
+    expect(document.documentElement.lang).toBe("zh-CN");
   });
 });

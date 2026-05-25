@@ -59,12 +59,12 @@ export function resolveLocalePreference(
   if (preference === 'en' || preference === 'zh-CN') {
     return preference;
   }
-  return languages.some((language) => {
-    const normalized = language.toLowerCase();
-    return normalized === 'zh' || normalized.startsWith('zh-');
-  })
-    ? 'zh-CN'
-    : 'en';
+  const primaryLanguage = languages.find((language) => language.trim() !== '');
+  if (primaryLanguage === undefined) {
+    return 'en';
+  }
+  const normalized = primaryLanguage.trim().toLowerCase();
+  return normalized === 'zh' || normalized.startsWith('zh-') ? 'zh-CN' : 'en';
 }
 
 export function t(key: string, params: Record<string, string | number> = {}): string {
@@ -79,7 +79,7 @@ export function resetI18nForTest(): void {
   unsubscribeLanguageChange = undefined;
   getLanguages = defaultGetLanguages;
   localePreference.value = 'system';
-  resolvedLocale.value = 'en';
+  setResolvedLocale('en');
 }
 
 function readStoredPreference(): LocalePreference {
@@ -96,7 +96,19 @@ function isLocalePreference(value: unknown): value is LocalePreference {
 }
 
 function updateResolvedLocale(): void {
-  resolvedLocale.value = resolveLocalePreference(localePreference.value, getLanguages());
+  setResolvedLocale(resolveLocalePreference(localePreference.value, getLanguages()));
+}
+
+function setResolvedLocale(locale: ResolvedLocale): void {
+  resolvedLocale.value = locale;
+  syncDocumentLanguage(locale);
+}
+
+function syncDocumentLanguage(locale: ResolvedLocale): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  document.documentElement.lang = locale;
 }
 
 function lookupMessage(messages: Messages, key: string): string | undefined {

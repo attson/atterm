@@ -10,6 +10,7 @@ import PasteFallback from './components/PasteFallback.vue'
 import InstallHint from './components/InstallHint.vue'
 import { parseSessionRoute, formatSessionRoute } from './lib/sessionRoute'
 import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 
 const sessionId = ref<string | null>(parseSessionRoute(location.hash))
 const pasteOpen = ref(false)
@@ -66,7 +67,12 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <Topbar active="home" />
       <InstallHint v-if="!inSession" />

@@ -21,6 +21,7 @@ import {
 } from '@shared/api/relay-config'
 import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 
 const base = ref('https://')
 const token = ref('')
@@ -95,7 +96,12 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <main class="setup-page">
         <LanguageSelect class="setup-language" />

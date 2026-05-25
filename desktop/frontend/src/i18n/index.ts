@@ -53,12 +53,13 @@ export function resolveLocalePreference(
     return preference;
   }
 
-  return languages.some((language) => {
-    const normalized = language.toLowerCase();
-    return normalized === "zh" || normalized.startsWith("zh-");
-  })
-    ? "zh-CN"
-    : "en";
+  const primaryLanguage = languages.find((language) => language.trim() !== "");
+  if (primaryLanguage === undefined) {
+    return "en";
+  }
+
+  const normalized = primaryLanguage.trim().toLowerCase();
+  return normalized === "zh" || normalized.startsWith("zh-") ? "zh-CN" : "en";
 }
 
 export async function initI18n(options: InitI18nOptions = {}): Promise<void> {
@@ -89,7 +90,7 @@ export async function setLocalePreference(preference: LocalePreference): Promise
     await savePreference?.(preference);
   } catch (error) {
     localePreference.value = previousPreference;
-    resolvedLocale.value = previousResolvedLocale;
+    setResolvedLocale(previousResolvedLocale);
     throw error;
   }
 }
@@ -110,11 +111,23 @@ export function resetI18nForTest(): void {
   savePreference = undefined;
   getLanguages = defaultGetLanguages;
   localePreference.value = "system";
-  resolvedLocale.value = "en";
+  setResolvedLocale("en");
 }
 
 function updateResolvedLocale(): void {
-  resolvedLocale.value = resolveLocalePreference(localePreference.value, getLanguages());
+  setResolvedLocale(resolveLocalePreference(localePreference.value, getLanguages()));
+}
+
+function setResolvedLocale(locale: ResolvedLocale): void {
+  resolvedLocale.value = locale;
+  syncDocumentLanguage(locale);
+}
+
+function syncDocumentLanguage(locale: ResolvedLocale): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.documentElement.lang = locale;
 }
 
 function normalizeLocalePreference(value: unknown): LocalePreference {

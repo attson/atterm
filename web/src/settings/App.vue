@@ -12,6 +12,7 @@ import Topbar from '@shared/components/Topbar.vue'
 import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { isMobileApp } from '@shared/api/relay-config'
 import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 import ApiTokens from './tabs/ApiTokens.vue'
 import ChangePassword from './tabs/ChangePassword.vue'
 import Sessions from './tabs/Sessions.vue'
@@ -53,7 +54,12 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <Topbar active="settings" />
       <main class="settings-page">

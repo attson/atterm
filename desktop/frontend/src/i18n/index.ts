@@ -53,7 +53,12 @@ export function resolveLocalePreference(
     return preference;
   }
 
-  return languages.some((language) => language.toLowerCase().startsWith("zh")) ? "zh-CN" : "en";
+  return languages.some((language) => {
+    const normalized = language.toLowerCase();
+    return normalized === "zh" || normalized.startsWith("zh-");
+  })
+    ? "zh-CN"
+    : "en";
 }
 
 export async function initI18n(options: InitI18nOptions = {}): Promise<void> {

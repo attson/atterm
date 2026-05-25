@@ -22,6 +22,7 @@ describe("desktop i18n locale resolution", () => {
 
   test("resolves non-Chinese system tags to en", () => {
     expect(resolveLocalePreference("system", ["ja-JP", "en-US"])).toBe("en");
+    expect(resolveLocalePreference("system", ["zhx"])).toBe("en");
     expect(resolveLocalePreference("system", [])).toBe("en");
     expect(resolveLocalePreference("system", [""])).toBe("en");
   });

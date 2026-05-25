@@ -1,3 +1,32 @@
+export type MessageSchema = {
+  common: {
+    language: string;
+    system: string;
+    english: string;
+    simplifiedChinese: string;
+    save: string;
+    cancel: string;
+    close: string;
+    refresh: string;
+    copy: string;
+    paste: string;
+    send: string;
+    disconnect: string;
+    connect: string;
+    settings: string;
+  };
+  settings: {
+    general: {
+      languageLabel: string;
+      languageHint: string;
+    };
+  };
+  test: {
+    interpolated: string;
+    englishOnly: string;
+  };
+};
+
 export const en = {
   common: {
     language: "Language",
@@ -25,10 +54,6 @@ export const en = {
     interpolated: "{count} sessions",
     englishOnly: "English only",
   },
-} as const;
+} satisfies MessageSchema;
 
-type WidenMessageValues<T> = {
-  readonly [Key in keyof T]: T[Key] extends string ? string : WidenMessageValues<T[Key]>;
-};
-
-export type Messages = WidenMessageValues<typeof en>;
+export type Messages = typeof en;

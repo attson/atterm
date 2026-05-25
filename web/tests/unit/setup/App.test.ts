@@ -6,6 +6,7 @@ import {
   __resetMobileDetectionCache,
 } from '@shared/api/relay-config'
 import App from '@/setup/App.vue'
+import { installI18nTestHooks } from '../i18n-test-helper'
 
 function makeResponse(status: number, body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -14,6 +15,7 @@ function makeResponse(status: number, body: unknown = {}): Response {
   })
 }
 
+installI18nTestHooks()
 describe('setup/App.vue', () => {
   let originalLocation: Location
   let replaceMock: ReturnType<typeof vi.fn>

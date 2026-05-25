@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { computed, ref, onMounted, h } from 'vue'
 import {
   NCard,
   NDataTable,
@@ -20,12 +20,14 @@ import {
   disableUser,
 } from '@shared/api/admin'
 import type { AdminUserRow } from '@shared/api/types'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const rows = ref<AdminUserRow[]>([])
 const loading = ref(true)
 const errorMsg = ref('')
 const secrets = ref<{ label: string; plaintext: string }[]>([])
 const message = useMessage()
+const { t } = useI18n()
 
 function fmt(iso: string | undefined): string {
   if (!iso) return ''
@@ -38,10 +40,10 @@ function fmt(iso: string | undefined): string {
 
 function mapError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.code === 'last_admin') return "Can't demote the last admin — promote another user first."
-    if (e.code === 'cannot_demote_self') return "You can't demote yourself."
+    if (e.code === 'last_admin') return t('admin.errors.lastAdmin')
+    if (e.code === 'cannot_demote_self') return t('admin.errors.cannotDemoteSelf')
   }
-  return 'Action failed.'
+  return t('admin.errors.actionFailed')
 }
 
 async function reload() {
@@ -50,7 +52,7 @@ async function reload() {
   try {
     rows.value = await listUsers()
   } catch (e) {
-    if (e instanceof ApiError) errorMsg.value = 'Failed to load users.'
+    if (e instanceof ApiError) errorMsg.value = t('admin.loadUsersFailed')
   } finally {
     loading.value = false
   }
@@ -81,7 +83,7 @@ async function onResetPassword(id: string, email: string) {
   secrets.value = []
   try {
     const { plaintext } = await resetUserPassword(id)
-    secrets.value = [{ label: `Temporary password for ${email}`, plaintext }]
+    secrets.value = [{ label: t('admin.temporaryPasswordFor', { email }), plaintext }]
     await reload()
   } catch (e) {
     errorMsg.value = mapError(e)
@@ -100,12 +102,12 @@ async function onDisable(id: string) {
 
 function statusCell(row: AdminUserRow) {
   if (row.disabled_at) {
-    return h(NTag, { size: 'small', type: 'error' }, { default: () => `disabled ${fmt(row.disabled_at)}` })
+    return h(NTag, { size: 'small', type: 'error' }, { default: () => t('admin.disabled', { when: fmt(row.disabled_at) }) })
   }
   if (row.is_admin) {
-    return h(NTag, { size: 'small', type: 'success' }, { default: () => 'admin' })
+    return h(NTag, { size: 'small', type: 'success' }, { default: () => t('admin.userStatus.admin') })
   }
-  return h(NTag, { size: 'small', type: 'default' }, { default: () => 'active' })
+  return h(NTag, { size: 'small', type: 'default' }, { default: () => t('admin.userStatus.active') })
 }
 
 function actionsCell(row: AdminUserRow) {
@@ -119,9 +121,9 @@ function actionsCell(row: AdminUserRow) {
             h(
               NButton,
               { size: 'small', 'data-testid': `demote-${row.id}` } as Record<string, unknown>,
-              { default: () => 'Demote' },
+              { default: () => t('admin.demote') },
             ),
-          default: () => 'Demote this admin?',
+          default: () => t('admin.demoteConfirm'),
         },
       )
     : h(
@@ -132,9 +134,9 @@ function actionsCell(row: AdminUserRow) {
             h(
               NButton,
               { size: 'small', 'data-testid': `promote-${row.id}` } as Record<string, unknown>,
-              { default: () => 'Promote' },
+              { default: () => t('admin.promote') },
             ),
-          default: () => 'Promote this user to admin?',
+          default: () => t('admin.promoteConfirm'),
         },
       )
   const resetBtn = h(
@@ -145,9 +147,9 @@ function actionsCell(row: AdminUserRow) {
         h(
           NButton,
           { size: 'small', 'data-testid': `reset-${row.id}` } as Record<string, unknown>,
-          { default: () => 'Reset password' },
+          { default: () => t('admin.resetPassword') },
         ),
-      default: () => 'Reset password? A new temporary password is shown once.',
+      default: () => t('admin.resetPasswordConfirm'),
     },
   )
   const disableBtn = h(
@@ -158,27 +160,27 @@ function actionsCell(row: AdminUserRow) {
         h(
           NButton,
           { size: 'small', type: 'error', 'data-testid': `disable-${row.id}` } as Record<string, unknown>,
-          { default: () => 'Disable' },
+          { default: () => t('admin.disable') },
         ),
-      default: () => 'Disable this user? They are signed out and cannot log in.',
+      default: () => t('admin.disableConfirm'),
     },
   )
   return h(NSpace, {}, { default: () => [adminBtn, resetBtn, disableBtn] })
 }
 
-const columns: DataTableColumns<AdminUserRow> = [
-  { title: 'Email', key: 'email' },
-  { title: 'ID', key: 'id', render: (r) => h('code', {}, r.id) },
-  { title: 'Created', key: 'created_at', render: (r) => fmt(r.created_at) },
-  { title: 'Status', key: 'status', render: statusCell },
-  { title: 'Actions', key: 'actions', render: actionsCell },
-]
+const columns = computed<DataTableColumns<AdminUserRow>>(() => [
+  { title: t('admin.email'), key: 'email' },
+  { title: t('admin.id'), key: 'id', render: (r) => h('code', {}, r.id) },
+  { title: t('admin.created'), key: 'created_at', render: (r) => fmt(r.created_at) },
+  { title: t('admin.status'), key: 'status', render: statusCell },
+  { title: t('admin.actions'), key: 'actions', render: actionsCell },
+])
 
 onMounted(reload)
 </script>
 
 <template>
-  <n-card title="Users" :bordered="false">
+  <n-card :title="t('admin.users')" :bordered="false">
     <n-alert
       v-for="(s, i) in secrets"
       :key="i"
@@ -186,7 +188,7 @@ onMounted(reload)
       :show-icon="false"
       class="secret-alert"
     >
-      <div class="secret-msg">{{ s.label }} — copy it now, only shown once.</div>
+      <div class="secret-msg">{{ t('admin.secretCopyOnce', { label: s.label }) }}</div>
       <code class="secret-display">{{ s.plaintext }}</code>
     </n-alert>
     <n-data-table

@@ -11,7 +11,9 @@ vi.mock('@shared/api/webhooks', () => ({
 
 import Webhooks from '@/settings/tabs/Webhooks.vue'
 import { listWebhooks, createWebhook, deleteWebhook } from '@shared/api/webhooks'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Webhooks tab', () => {
   beforeEach(() => vi.clearAllMocks())
 

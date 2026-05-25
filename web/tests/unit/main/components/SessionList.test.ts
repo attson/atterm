@@ -7,7 +7,9 @@ vi.mock('@shared/api/sessions', () => ({
 
 import SessionList from '@/main/components/SessionList.vue'
 import { listSessions } from '@shared/api/sessions'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
+installI18nTestHooks()
 describe('SessionList.vue', () => {
   beforeEach(() => {
     document.body.innerHTML = ''

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { computed, ref, onMounted, h } from 'vue'
 import {
   NCard,
   NDataTable,
@@ -16,6 +16,7 @@ import {
 import { ApiError } from '@shared/api/client'
 import { listInvitations, createInvitation } from '@shared/api/admin'
 import type { InvitationCreated, InvitationRow } from '@shared/api/types'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const rows = ref<InvitationRow[]>([])
 const loading = ref(true)
@@ -25,6 +26,7 @@ const countInput = ref<number>(1)
 const expiresInput = ref<number | null>(null)
 const newSecrets = ref<InvitationCreated[]>([])
 const message = useMessage()
+const { t } = useI18n()
 
 // data-testid is not in Vue's stock InputHTMLAttributes, so cast through any
 // for the test-only hooks. Keeps the markup identical at runtime.
@@ -41,27 +43,27 @@ function fmt(iso: string | undefined): string {
   }
 }
 
-const columns: DataTableColumns<InvitationRow> = [
-  { title: 'Prefix', key: 'code_prefix', render: (r) => h('code', {}, r.code_prefix) },
-  { title: 'Note', key: 'note' },
-  { title: 'Created', key: 'created_at', render: (r) => fmt(r.created_at) },
-  { title: 'Expires', key: 'expires_at', render: (r) => fmt(r.expires_at) },
+const columns = computed<DataTableColumns<InvitationRow>>(() => [
+  { title: t('admin.invitationsTab.prefix'), key: 'code_prefix', render: (r) => h('code', {}, r.code_prefix) },
+  { title: t('admin.invitationsTab.note'), key: 'note' },
+  { title: t('admin.created'), key: 'created_at', render: (r) => fmt(r.created_at) },
+  { title: t('admin.invitationsTab.expires'), key: 'expires_at', render: (r) => fmt(r.expires_at) },
   {
-    title: 'Consumed',
+    title: t('admin.invitationsTab.consumed'),
     key: 'consumed_at',
     render: (r) =>
       r.consumed_at
         ? h('span', {}, `${fmt(r.consumed_at)}${r.consumed_by ? ' · ' + r.consumed_by : ''}`)
-        : h(NTag, { size: 'small', type: 'default' }, { default: () => 'unused' }),
+        : h(NTag, { size: 'small', type: 'default' }, { default: () => t('admin.invitationsTab.unused') }),
   },
-]
+])
 
 async function reload() {
   loading.value = true
   try {
     rows.value = await listInvitations()
   } catch (e) {
-    if (e instanceof ApiError) message.error('Failed to load invitations.')
+    if (e instanceof ApiError) message.error(t('admin.invitationsTab.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -87,7 +89,7 @@ async function onCreate(e: Event) {
     countInput.value = 1
     await reload()
   } catch (err) {
-    if (err instanceof ApiError) message.error('Create failed: ' + err.code)
+    if (err instanceof ApiError) message.error(t('admin.invitationsTab.createFailed', { code: err.code }))
   } finally {
     submitting.value = false
   }
@@ -97,20 +99,20 @@ onMounted(reload)
 </script>
 
 <template>
-  <n-card title="Invitations" :bordered="false">
+  <n-card :title="t('admin.invitations')" :bordered="false">
     <form @submit="onCreate" autocomplete="off" class="create-form">
       <n-space :wrap="false" align="end">
         <div class="field">
-          <label class="field-label">Note</label>
+          <label class="field-label">{{ t('admin.invitationsTab.note') }}</label>
           <n-input
             v-model:value="noteInput"
             type="text"
-            placeholder="optional"
+            :placeholder="t('common.optional')"
             :input-props="noteInputProps"
           />
         </div>
         <div class="field">
-          <label class="field-label">Count</label>
+          <label class="field-label">{{ t('admin.invitationsTab.count') }}</label>
           <n-input-number
             v-model:value="countInput"
             :min="1"
@@ -119,17 +121,17 @@ onMounted(reload)
           />
         </div>
         <div class="field">
-          <label class="field-label">Expires</label>
+          <label class="field-label">{{ t('admin.invitationsTab.expires') }}</label>
           <n-date-picker
             v-model:value="expiresInput"
             type="datetime"
             clearable
-            placeholder="optional"
+            :placeholder="t('common.optional')"
             :input-props="expiresPickerProps"
           />
         </div>
         <n-button type="primary" attr-type="submit" :loading="submitting" :disabled="submitting">
-          Create
+          {{ t('common.create') }}
         </n-button>
       </n-space>
     </form>
@@ -142,7 +144,7 @@ onMounted(reload)
       class="secret-alert"
     >
       <div class="secret-msg">
-        Copy this invitation now{{ s.note ? ` (${s.note})` : '' }} — it will not be shown again.
+        {{ t('admin.invitationsTab.copyNow', { note: s.note ? ` (${s.note})` : '' }) }}
       </div>
       <code class="secret-display">{{ s.plaintext }}</code>
     </n-alert>
@@ -155,7 +157,7 @@ onMounted(reload)
       :bordered="false"
       :pagination="false"
     />
-    <p v-if="!loading && rows.length === 0" class="empty">No invitations yet.</p>
+    <p v-if="!loading && rows.length === 0" class="empty">{{ t('admin.invitationsTab.empty') }}</p>
   </n-card>
 </template>
 

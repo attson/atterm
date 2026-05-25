@@ -29,7 +29,9 @@ vi.mock('@shared/api/admin', () => ({
 }))
 
 import App from '@/admin/App.vue'
+import { installI18nTestHooks } from '../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Admin App.vue', () => {
   let originalLocation: Location
 

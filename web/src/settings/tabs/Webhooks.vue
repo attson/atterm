@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import {
   NCard,
   NList,
@@ -13,6 +13,7 @@ import {
 } from 'naive-ui'
 import { listWebhooks, createWebhook, deleteWebhook } from '@shared/api/webhooks'
 import type { WebhookRow } from '@shared/api/types'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const webhooks = ref<WebhookRow[]>([])
 const loading = ref(true)
@@ -23,11 +24,12 @@ const newFormat = ref<'feishu' | 'generic'>('generic')
 const newInsecure = ref(false)
 const saving = ref(false)
 const errorMsg = ref('')
+const { t } = useI18n()
 
-const formatOptions = [
-  { label: 'Generic', value: 'generic' },
-  { label: 'Feishu', value: 'feishu' },
-]
+const formatOptions = computed(() => [
+  { label: t('settings.webhooks.formats.generic'), value: 'generic' },
+  { label: t('settings.webhooks.formats.feishu'), value: 'feishu' },
+])
 
 const nameInputProps = { 'data-testid': 'wh-name', autocomplete: 'off' } as Record<string, unknown>
 const urlInputProps = { 'data-testid': 'wh-url', autocomplete: 'off' } as Record<string, unknown>
@@ -63,7 +65,7 @@ async function onAdd() {
     newInsecure.value = false
     await reload()
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : 'Failed to create webhook.'
+    errorMsg.value = e instanceof Error ? e.message : t('settings.webhooks.createFailed')
   } finally {
     saving.value = false
   }
@@ -74,7 +76,7 @@ async function onDelete(id: string) {
     await deleteWebhook(id)
     await reload()
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : 'Failed to delete webhook.'
+    errorMsg.value = e instanceof Error ? e.message : t('settings.webhooks.deleteFailed')
   }
 }
 
@@ -88,7 +90,7 @@ onMounted(reload)
         <n-thing>
           <template #header>{{ wh.name }}</template>
           <template #description>
-            <span>{{ wh.url }}</span> · {{ wh.format }} · created {{ shortDate(wh.created_at) }}
+            <span>{{ wh.url }}</span> · {{ wh.format }} · {{ t('settings.webhooks.created') }} {{ shortDate(wh.created_at) }}
           </template>
         </n-thing>
         <template #suffix>
@@ -98,12 +100,12 @@ onMounted(reload)
             :data-testid="`wh-del-${wh.id}`"
             @click="onDelete(wh.id)"
           >
-            Delete
+            {{ t('common.delete') }}
           </n-button>
         </template>
       </n-list-item>
     </n-list>
-    <p v-else-if="!loading" class="empty">No webhooks yet.</p>
+    <p v-else-if="!loading" class="empty">{{ t('settings.webhooks.empty') }}</p>
 
     <div class="add-form">
       <n-space vertical>
@@ -111,7 +113,7 @@ onMounted(reload)
           <n-input
             v-model:value="newName"
             type="text"
-            placeholder="Name"
+            :placeholder="t('settings.webhooks.namePlaceholder')"
             :input-props="nameInputProps"
           />
           <n-select
@@ -124,12 +126,12 @@ onMounted(reload)
         <n-input
           v-model:value="newUrl"
           type="text"
-          placeholder="https://..."
+          :placeholder="t('settings.webhooks.urlPlaceholder')"
           :input-props="urlInputProps"
         />
         <n-space align="center">
           <n-checkbox v-model:checked="newInsecure" data-testid="wh-insecure">
-            Allow plain http:// (no TLS)
+            {{ t('settings.webhooks.allowPlainHttp') }}
           </n-checkbox>
           <n-button
             type="primary"
@@ -138,7 +140,7 @@ onMounted(reload)
             data-testid="wh-add"
             @click="onAdd"
           >
-            Add webhook
+            {{ t('settings.webhooks.add') }}
           </n-button>
         </n-space>
         <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>

@@ -11,6 +11,7 @@ vi.mock('@shared/api/me', () => ({
 
 import Sessions from '@/settings/tabs/Sessions.vue'
 import { listSessions, revokeSession, signOutOthers } from '@shared/api/me'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 const baseTime = Date.UTC(2026, 0, 1)
 
@@ -34,6 +35,7 @@ async function clickConfirm() {
   await flushPromises()
 }
 
+installI18nTestHooks()
 describe('Sessions.vue', () => {
   beforeEach(() => {
     vi.clearAllMocks()

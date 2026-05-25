@@ -16,6 +16,7 @@ import {
   clearRelayConfig,
   validateRelayBase,
 } from '@shared/api/relay-config'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const _cfg = loadRelayConfig()
 const base = ref(_cfg?.base ?? '')
@@ -24,6 +25,7 @@ const allowInsecure = ref(_cfg?.allowInsecure ?? false)
 const error = ref<string | null>(null)
 const ok = ref<string | null>(null)
 const submitting = ref(false)
+const { t } = useI18n()
 
 const baseError = computed(() => {
   if (!base.value) return null
@@ -39,7 +41,7 @@ async function onSave(): Promise<void> {
     return
   }
   if (!token.value.trim()) {
-    error.value = 'API token is required'
+    error.value = t('setup.errors.tokenRequired')
     return
   }
   submitting.value = true
@@ -51,17 +53,15 @@ async function onSave(): Promise<void> {
       credentials: 'omit',
     })
     if (res.status === 401) {
-      error.value =
-        'API token is invalid. Generate a new one from the relay web UI under Settings → API Tokens.'
+      error.value = t('setup.errors.tokenInvalidSettings')
       return
     }
     if (res.status === 403) {
-      error.value =
-        'Relay rejected the origin. Make sure the relay was started with ATTERM_ORIGINS containing capacitor://localhost.'
+      error.value = t('setup.errors.originRejected')
       return
     }
     if (!res.ok) {
-      error.value = `Relay returned HTTP ${res.status}.`
+      error.value = t('setup.errors.relayHttp', { status: res.status })
       return
     }
     saveRelayConfig({
@@ -69,9 +69,11 @@ async function onSave(): Promise<void> {
       token: token.value.trim(),
       allowInsecure: allowInsecure.value,
     })
-    ok.value = 'Saved.'
+    ok.value = t('setup.saved')
   } catch (e) {
-    error.value = `Cannot reach relay: ${e instanceof Error ? e.message : String(e)}`
+    error.value = t('setup.errors.cannotReachRelay', {
+      message: e instanceof Error ? e.message : String(e),
+    })
   } finally {
     submitting.value = false
   }
@@ -84,29 +86,29 @@ function onDisconnect(): void {
 </script>
 
 <template>
-  <n-card title="Relay">
+  <n-card :title="t('settings.relay')">
     <n-form @submit.prevent="onSave">
-      <n-form-item label="Relay URL" :feedback="baseError ?? ''" v-bind="baseError ? { 'validation-status': 'error' as const } : {}">
+      <n-form-item :label="t('setup.relayUrl')" :feedback="baseError ?? ''" v-bind="baseError ? { 'validation-status': 'error' as const } : {}">
         <n-input
           v-model:value="base"
-          placeholder="https://relay.example.com"
+          :placeholder="t('setup.relayUrlPlaceholder')"
           :input-props="{ name: 'relay-base', autocomplete: 'off' }"
           :disabled="submitting"
         />
       </n-form-item>
 
-      <n-form-item label="API token">
+      <n-form-item :label="t('setup.token')">
         <n-input
           v-model:value="token"
           type="password"
           show-password-on="click"
-          placeholder="atk_…"
+          :placeholder="t('setup.tokenPlaceholder')"
           :input-props="{ name: 'relay-token', autocomplete: 'off' }"
           :disabled="submitting"
         />
       </n-form-item>
 
-      <n-form-item label="Allow insecure HTTP/WS (non-loopback)">
+      <n-form-item :label="t('setup.allowInsecure')">
         <n-switch v-model:value="allowInsecure" :disabled="submitting" />
       </n-form-item>
 
@@ -114,8 +116,8 @@ function onDisconnect(): void {
       <n-alert v-if="ok" type="success" :show-icon="true" style="margin-bottom: 1rem;">{{ ok }}</n-alert>
 
       <n-space justify="space-between">
-        <n-button data-testid="disconnect" @click="onDisconnect">Disconnect</n-button>
-        <n-button type="primary" :loading="submitting" :disabled="submitting" data-testid="save" @click="onSave">Save</n-button>
+        <n-button data-testid="disconnect" @click="onDisconnect">{{ t('setup.disconnect') }}</n-button>
+        <n-button type="primary" :loading="submitting" :disabled="submitting" data-testid="save" @click="onSave">{{ t('common.save') }}</n-button>
       </n-space>
     </n-form>
   </n-card>

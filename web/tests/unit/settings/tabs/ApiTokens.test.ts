@@ -11,6 +11,7 @@ vi.mock('@shared/api/me', () => ({
 
 import ApiTokens from '@/settings/tabs/ApiTokens.vue'
 import { listTokens, createToken, revokeToken } from '@shared/api/me'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 // useMessage() inside ApiTokens.vue requires an outer <n-message-provider />.
 // Wrap each mount in a thin host that supplies one.
@@ -24,6 +25,7 @@ function mountWithProvider() {
   return mount(Host, { attachTo: document.body })
 }
 
+installI18nTestHooks()
 describe('ApiTokens.vue', () => {
   beforeEach(() => {
     vi.clearAllMocks()

@@ -8,7 +8,9 @@ vi.mock('@shared/api/me', () => ({
 import ChangePassword from '@/settings/tabs/ChangePassword.vue'
 import { changePassword } from '@shared/api/me'
 import { ApiError } from '@shared/api/client'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
+installI18nTestHooks()
 describe('ChangePassword.vue', () => {
   let originalLocation: Location
 

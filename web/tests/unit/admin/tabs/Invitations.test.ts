@@ -10,6 +10,7 @@ vi.mock('@shared/api/admin', () => ({
 
 import Invitations from '@/admin/tabs/Invitations.vue'
 import { listInvitations, createInvitation } from '@shared/api/admin'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 function mountWithProvider() {
   const Wrapper = defineComponent({
@@ -20,6 +21,7 @@ function mountWithProvider() {
   return mount(Wrapper, { attachTo: document.body })
 }
 
+installI18nTestHooks()
 describe('Invitations.vue', () => {
   beforeEach(() => {
     document.body.innerHTML = ''

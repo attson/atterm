@@ -20,6 +20,7 @@ import {
   disableUser,
 } from '@shared/api/admin'
 import { ApiError } from '@shared/api/client'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 function mountWithProvider() {
   const Wrapper = defineComponent({
@@ -38,6 +39,7 @@ async function clickConfirm() {
   await flushPromises()
 }
 
+installI18nTestHooks()
 describe('Users.vue', () => {
   beforeEach(() => {
     document.body.innerHTML = ''

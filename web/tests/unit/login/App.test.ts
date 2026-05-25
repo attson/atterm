@@ -11,7 +11,9 @@ vi.mock('@shared/api/version', () => ({
 import App from '@/login/App.vue'
 import { login } from '@shared/api/auth'
 import { ApiError } from '@shared/api/client'
+import { installI18nTestHooks } from '../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Login App.vue', () => {
   let originalLocation: Location
 

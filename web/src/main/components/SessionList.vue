@@ -4,6 +4,7 @@ import { NButton, NTag } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { listSessions } from '@shared/api/sessions'
 import type { SessionInfo } from '@shared/api/types'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const POLL_MS = 2000
 
@@ -14,6 +15,7 @@ const emit = defineEmits<{
 const rows = ref<SessionInfo[]>([])
 const loading = ref(true)
 const errorMsg = ref('')
+const { t } = useI18n()
 let pollHandle: ReturnType<typeof setInterval> | null = null
 
 async function reload() {
@@ -21,7 +23,7 @@ async function reload() {
     rows.value = await listSessions()
     errorMsg.value = ''
   } catch (e) {
-    if (e instanceof ApiError) errorMsg.value = 'Failed to load sessions.'
+    if (e instanceof ApiError) errorMsg.value = t('main.errors.loadSessions')
   } finally {
     loading.value = false
   }
@@ -41,7 +43,7 @@ const groups = computed<HostGroup[]>(() => {
     if (existing) {
       existing.sessions.push(s)
     } else {
-      byHost.set(key, { hostId: s.host_id, hostname: s.host || 'unknown host', sessions: [s] })
+      byHost.set(key, { hostId: s.host_id, hostname: s.host || t('main.unknownHost'), sessions: [s] })
     }
   }
   return Array.from(byHost.values())
@@ -53,6 +55,10 @@ function shortID(id: string): string {
 
 function onCardClick(id: string) {
   emit('navigate', id)
+}
+
+function sessionCount(count: number): string {
+  return t(count === 1 ? 'main.sessionCountOne' : 'main.sessionCount', { count })
 }
 
 onMounted(async () => {
@@ -69,12 +75,12 @@ onUnmounted(() => {
 <template>
   <section class="session-list">
     <div class="section-head">
-      <h1>active sessions</h1>
-      <n-button size="small" tertiary @click="reload">refresh</n-button>
+      <h1>{{ t('main.activeSessions') }}</h1>
+      <n-button size="small" tertiary @click="reload">{{ t('main.refresh') }}</n-button>
     </div>
 
     <p v-if="!loading && rows.length === 0" class="empty">
-      No live sessions. Start one from the desktop app or <code>atterm-agent</code>.
+      {{ t('main.empty') }} <code>atterm-agent</code>.
     </p>
 
     <div v-for="g in groups" :key="g.hostId || g.hostname" class="host-group">
@@ -83,7 +89,7 @@ onUnmounted(() => {
         <n-tag v-if="g.hostId" size="small" type="default">
           <code>{{ shortID(g.hostId) }}</code>
         </n-tag>
-        <span class="count">{{ g.sessions.length }} {{ g.sessions.length === 1 ? 'session' : 'sessions' }}</span>
+        <span class="count">{{ sessionCount(g.sessions.length) }}</span>
       </header>
       <div class="grid">
         <button
@@ -94,7 +100,7 @@ onUnmounted(() => {
           :data-testid="`session-card-${s.id}`"
           @click="onCardClick(s.id)"
         >
-          <div class="cmd">{{ s.command || '(unknown)' }}</div>
+          <div class="cmd">{{ s.command || t('main.unknownCommand') }}</div>
           <div class="meta">
             <span class="id"><code>{{ shortID(s.id) }}</code></span>
             <span class="size">{{ s.cols }}×{{ s.rows }}</span>

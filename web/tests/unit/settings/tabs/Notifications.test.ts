@@ -16,6 +16,7 @@ vi.mock('@shared/api/push', () => ({
 }))
 
 import Notifications from '@/settings/tabs/Notifications.vue'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 function mountWithProvider() {
   const Host = defineComponent({
@@ -49,6 +50,7 @@ beforeEach(() => {
   })
 })
 
+installI18nTestHooks()
 describe('Notifications tab', () => {
   it('renders a permission status line', async () => {
     const wrapper = mountWithProvider()

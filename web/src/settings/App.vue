@@ -71,27 +71,27 @@ const overrides = getNaiveOverrides()
           @update:value="onTabChange"
         >
           <template v-if="mobile">
-            <n-tab-pane name="relay" tab="Relay">
+            <n-tab-pane name="relay" :tab="t('settings.tabs.relay')">
               <Relay />
             </n-tab-pane>
           </template>
           <template v-else>
-            <n-tab-pane name="api-tokens" tab="API Tokens">
+            <n-tab-pane name="api-tokens" :tab="t('settings.tabs.apiTokens')">
               <ApiTokens />
             </n-tab-pane>
-            <n-tab-pane name="change-password" tab="Change Password">
+            <n-tab-pane name="change-password" :tab="t('settings.tabs.changePassword')">
               <ChangePassword />
             </n-tab-pane>
-            <n-tab-pane name="sessions" tab="Signed-in devices">
+            <n-tab-pane name="sessions" :tab="t('settings.tabs.sessions')">
               <Sessions />
             </n-tab-pane>
-            <n-tab-pane name="notifications" tab="Notifications">
+            <n-tab-pane name="notifications" :tab="t('settings.tabs.notifications')">
               <Notifications />
             </n-tab-pane>
-            <n-tab-pane name="webhooks" tab="Webhooks">
+            <n-tab-pane name="webhooks" :tab="t('settings.tabs.webhooks')">
               <Webhooks />
             </n-tab-pane>
-            <n-tab-pane name="danger" tab="Danger zone">
+            <n-tab-pane name="danger" :tab="t('settings.tabs.danger')">
               <DangerZone />
             </n-tab-pane>
           </template>

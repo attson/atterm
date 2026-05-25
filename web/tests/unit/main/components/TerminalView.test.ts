@@ -26,11 +26,13 @@ vi.mock('@shared/ws/client-conn', () => {
 })
 
 import TerminalView from '@/main/components/TerminalView.vue'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 function mountView(props: Record<string, unknown>) {
   return mount(TerminalView as any, { props, attachTo: document.body })
 }
 
+installI18nTestHooks()
 describe('TerminalView.vue', () => {
   beforeEach(() => {
     document.body.innerHTML = ''

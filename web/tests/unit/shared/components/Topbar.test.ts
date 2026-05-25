@@ -14,7 +14,9 @@ vi.mock('@shared/api/version', () => ({
 import Topbar from '@shared/components/Topbar.vue'
 import { getMe } from '@shared/api/me'
 import { logout } from '@shared/api/auth'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Topbar.vue', () => {
   let originalLocation: Location
 

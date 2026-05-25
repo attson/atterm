@@ -9,10 +9,12 @@ import ShortcutBar from './components/ShortcutBar.vue'
 import PasteFallback from './components/PasteFallback.vue'
 import InstallHint from './components/InstallHint.vue'
 import { parseSessionRoute, formatSessionRoute } from './lib/sessionRoute'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const sessionId = ref<string | null>(parseSessionRoute(location.hash))
 const pasteOpen = ref(false)
 const termRef = ref<InstanceType<typeof TerminalView> | null>(null)
+const { t } = useI18n()
 
 function onHashChange() {
   sessionId.value = parseSessionRoute(location.hash)
@@ -74,10 +76,10 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
         class="back-floating"
         size="small"
         tertiary
-        aria-label="Back to sessions"
+        :aria-label="t('main.backToSessions')"
         @click="onBack"
       >
-        ← back
+        ← {{ t('main.back') }}
       </n-button>
 
       <main class="home-main">

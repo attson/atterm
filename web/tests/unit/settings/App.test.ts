@@ -20,7 +20,9 @@ vi.mock('@shared/api/version', () => ({
 }))
 
 import App from '@/settings/App.vue'
+import { installI18nTestHooks } from '../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Settings App.vue', () => {
   let originalLocation: Location
 

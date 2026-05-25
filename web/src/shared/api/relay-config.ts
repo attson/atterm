@@ -1,3 +1,5 @@
+import { t } from '@shared/i18n'
+
 export interface RelayConfig {
   base: string
   token: string
@@ -51,21 +53,21 @@ export function clearRelayConfig(): void {
 
 export function validateRelayBase(base: string, allowInsecure: boolean): string | null {
   const trimmed = base.trim()
-  if (!trimmed) return 'relay URL is required'
+  if (!trimmed) return t('setup.errors.relayUrlRequired')
   let u: URL
   try {
     u = new URL(trimmed)
   } catch {
-    return 'invalid or malformed relay URL'
+    return t('setup.errors.invalidRelayUrl')
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-    return 'relay URL must start with http:// or https://'
+    return t('setup.errors.relayUrlMustBeHttp')
   }
   if (u.pathname !== '/' || u.search !== '' || u.hash !== '') {
-    return 'relay URL must not contain a path, query, or fragment'
+    return t('setup.errors.relayUrlNoPath')
   }
   if (u.protocol === 'http:' && !isLoopbackHost(u.hostname) && !allowInsecure) {
-    return 'enable "Allow insecure HTTP/WS" to use http:// with a non-loopback host'
+    return t('setup.errors.useInsecureForHttp')
   }
   return null
 }

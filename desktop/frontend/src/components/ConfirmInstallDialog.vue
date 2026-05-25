@@ -14,7 +14,11 @@ defineEmits<{
 
 const { t } = useI18n();
 
-const plural = (n: number) => (n === 1 ? "" : "s");
+const endLocalSessionKey = (count: number) =>
+  count === 1 ? "sessions.endLocalSessionOne" : "sessions.endLocalSessionMany";
+
+const detachRemoteSessionKey = (count: number) =>
+  count === 1 ? "sessions.detachRemoteSessionOne" : "sessions.detachRemoteSessionMany";
 </script>
 
 <template>
@@ -29,11 +33,11 @@ const plural = (n: number) => (n === 1 ? "" : "s");
 
       <ul v-if="localCount > 0 || remoteCount > 0">
         <li v-if="localCount > 0">
-          {{ t("sessions.endLocalSession", { count: localCount, plural: plural(localCount) }) }}
+          {{ t(endLocalSessionKey(localCount), { count: localCount }) }}
           <span class="dim">{{ t("sessions.runningProcessesTerminated") }}</span>
         </li>
         <li v-if="remoteCount > 0">
-          {{ t("sessions.detachRemoteSession", { count: remoteCount, plural: plural(remoteCount) }) }}
+          {{ t(detachRemoteSessionKey(remoteCount), { count: remoteCount }) }}
           <span class="dim">{{ t("sessions.remotePtyKeepsRunning") }}</span>
         </li>
       </ul>

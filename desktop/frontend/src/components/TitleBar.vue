@@ -61,6 +61,10 @@ const remoteTitle = computed(() =>
 
 const isMaximized = useWindowMaximized();
 
+const sessionStatusKey = computed(() =>
+  props.sessionCount === 1 ? "terminal.sessionStatusOne" : "terminal.sessionStatusMany",
+);
+
 function onTitleDblClick() {
   // macOS' system zoom-on-dblclick fires off NSWindow events that the
   // WebKit view eats under TitleBarHiddenInset, so we drive maximize
@@ -83,7 +87,7 @@ function onTitleDblClick() {
         <span class="bad">{{ errorMsg }}</span>
       </template>
       <template v-else>
-        {{ t("terminal.sessionStatus", { count: sessionCount, plural: sessionCount === 1 ? "" : "s" }) }}
+        {{ t(sessionStatusKey, { count: sessionCount }) }}
         <span v-if="remoteEndpoint" class="dim"> · {{ t("terminal.uplinkOn") }}</span>
       </template>
     </div>

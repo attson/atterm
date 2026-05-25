@@ -10,6 +10,7 @@ import {
   t,
 } from "./index";
 import { useI18n } from "./useI18n";
+import { zhCN } from "./messages/zh-CN";
 
 beforeEach(() => resetI18nForTest());
 
@@ -89,6 +90,18 @@ describe("desktop i18n runtime", () => {
 
     expect(t("common.countSessions", { count: 3 })).toBe("3 sessions");
     expect(t("common.countSessions")).toBe("{count} sessions");
+  });
+
+  test("Chinese count messages do not depend on English plural suffix interpolation", async () => {
+    await initI18n({
+      getLanguages: () => ["zh-CN"],
+      listenLanguageChange: () => () => undefined,
+    });
+
+    expect(t("terminal.sessionStatusMany", { count: 2 })).toBe("2 个会话");
+    expect(t("sessions.endLocalSessionMany", { count: 2 })).toBe("结束 2 个本地 shell 会话");
+    expect(t("sessions.detachRemoteSessionMany", { count: 2 })).toBe("从 2 个远端会话分离");
+    expect(JSON.stringify(zhCN)).not.toContain("{plural}");
   });
 
   test("returns the key when no locale contains a translation", async () => {

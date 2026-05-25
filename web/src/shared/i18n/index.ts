@@ -4,6 +4,11 @@ import { zhCN } from './messages/zh-CN';
 
 export type LocalePreference = 'system' | 'en' | 'zh-CN';
 export type ResolvedLocale = 'en' | 'zh-CN';
+type LanguageChangeUnsubscribe = () => void;
+type InitI18nOptions = {
+  getLanguages?: () => readonly string[];
+  listenLanguageChange?: (handler: () => void) => LanguageChangeUnsubscribe;
+};
 
 const storageKey = 'atterm.locale';
 const dictionaries: Record<ResolvedLocale, Messages> = {
@@ -18,17 +23,29 @@ export const languageOptions = [
 ] satisfies Array<{ label: string; value: LocalePreference }>;
 
 export const localePreference = ref<LocalePreference>('system');
-export const resolvedLocale = ref<ResolvedLocale>(resolveLocalePreference('system'));
+export const resolvedLocale = ref<ResolvedLocale>('en');
 
-export function initI18n(systemLanguage = readSystemLanguage()): void {
+let getLanguages: () => readonly string[] = defaultGetLanguages;
+let unsubscribeLanguageChange: LanguageChangeUnsubscribe | undefined;
+
+export function initI18n(options: InitI18nOptions = {}): void {
+  unsubscribeLanguageChange?.();
+  unsubscribeLanguageChange = undefined;
+  getLanguages = options.getLanguages ?? defaultGetLanguages;
+
   const storedPreference = readStoredPreference();
   localePreference.value = storedPreference;
-  resolvedLocale.value = resolveLocalePreference(storedPreference, systemLanguage);
+  updateResolvedLocale();
+
+  const listenLanguageChange = options.listenLanguageChange ?? defaultListenLanguageChange;
+  unsubscribeLanguageChange = listenLanguageChange(() => {
+    updateResolvedLocale();
+  });
 }
 
-export function setLocalePreference(preference: LocalePreference, systemLanguage = readSystemLanguage()): void {
+export function setLocalePreference(preference: LocalePreference): void {
   localePreference.value = preference;
-  resolvedLocale.value = resolveLocalePreference(preference, systemLanguage);
+  updateResolvedLocale();
   try {
     window.localStorage.setItem(storageKey, preference);
   } catch {
@@ -38,12 +55,17 @@ export function setLocalePreference(preference: LocalePreference, systemLanguage
 
 export function resolveLocalePreference(
   preference: LocalePreference,
-  systemLanguage = readSystemLanguage(),
+  languages: readonly string[] = defaultGetLanguages(),
 ): ResolvedLocale {
   if (preference === 'en' || preference === 'zh-CN') {
     return preference;
   }
-  return systemLanguage === 'zh' || systemLanguage.startsWith('zh-') ? 'zh-CN' : 'en';
+  return languages.some((language) => {
+    const normalized = language.toLowerCase();
+    return normalized === 'zh' || normalized.startsWith('zh-');
+  })
+    ? 'zh-CN'
+    : 'en';
 }
 
 export function t(key: string, params: Record<string, string | number> = {}): string {
@@ -54,8 +76,11 @@ export function t(key: string, params: Record<string, string | number> = {}): st
 }
 
 export function resetI18nForTest(): void {
+  unsubscribeLanguageChange?.();
+  unsubscribeLanguageChange = undefined;
+  getLanguages = defaultGetLanguages;
   localePreference.value = 'system';
-  resolvedLocale.value = resolveLocalePreference('system', 'en-US');
+  resolvedLocale.value = 'en';
 }
 
 function readStoredPreference(): LocalePreference {
@@ -67,12 +92,12 @@ function readStoredPreference(): LocalePreference {
   }
 }
 
-function readSystemLanguage(): string {
-  return typeof navigator === 'undefined' ? '' : navigator.language;
-}
-
 function isLocalePreference(value: unknown): value is LocalePreference {
   return value === 'system' || value === 'en' || value === 'zh-CN';
+}
+
+function updateResolvedLocale(): void {
+  resolvedLocale.value = resolveLocalePreference(localePreference.value, getLanguages());
 }
 
 function lookupMessage(messages: Messages, key: string): string | undefined {
@@ -97,3 +122,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function defaultGetLanguages(): readonly string[] {
+  if (typeof navigator === 'undefined') {
+    return [];
+  }
+  if (navigator.languages.length > 0) {
+    return navigator.languages;
+  }
+  return navigator.language ? [navigator.language] : [];
+}
+
+function defaultListenLanguageChange(handler: () => void): LanguageChangeUnsubscribe {
+  if (typeof window === 'undefined') {
+    return () => undefined;
+  }
+  window.addEventListener('languagechange', handler);
+  return () => window.removeEventListener('languagechange', handler);
+}

@@ -59,12 +59,19 @@ export function resolveLocalePreference(
   if (preference === 'en' || preference === 'zh-CN') {
     return preference;
   }
-  const primaryLanguage = languages.find((language) => language.trim() !== '');
-  if (primaryLanguage === undefined) {
-    return 'en';
+  for (const language of languages) {
+    const normalized = language.trim().toLowerCase();
+    if (normalized === '') {
+      continue;
+    }
+    if (normalized === 'zh' || normalized.startsWith('zh-')) {
+      return 'zh-CN';
+    }
+    if (normalized === 'en' || normalized.startsWith('en-')) {
+      return 'en';
+    }
   }
-  const normalized = primaryLanguage.trim().toLowerCase();
-  return normalized === 'zh' || normalized.startsWith('zh-') ? 'zh-CN' : 'en';
+  return 'en';
 }
 
 export function t(key: string, params: Record<string, string | number> = {}): string {
@@ -72,6 +79,14 @@ export function t(key: string, params: Record<string, string | number> = {}): st
     ?? lookupMessage(dictionaries.en, key)
     ?? key;
   return interpolate(message, params);
+}
+
+export function formatDateTime(value: string | number | Date | undefined): string {
+  return formatDate(value, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+export function formatShortDate(value: string | number | Date | undefined): string {
+  return formatDate(value, { dateStyle: 'medium' });
 }
 
 export function resetI18nForTest(): void {
@@ -127,6 +142,20 @@ function interpolate(template: string, params: Record<string, string | number>):
     const value = params[name];
     return value === undefined ? match : String(value);
   });
+}
+
+function formatDate(
+  value: string | number | Date | undefined,
+  options: Intl.DateTimeFormatOptions,
+): string {
+  if (value === undefined || value === '') {
+    return '';
+  }
+  try {
+    return new Intl.DateTimeFormat(resolvedLocale.value, options).format(new Date(value));
+  } catch {
+    return typeof value === 'string' ? value : '';
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

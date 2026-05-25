@@ -13,6 +13,7 @@ import {
 import { ApiError } from '@shared/api/client'
 import { listSessions, revokeSession, signOutOthers } from '@shared/api/me'
 import type { SessionRow } from '@shared/api/types'
+import { formatDateTime } from '@shared/i18n'
 import { useI18n } from '@shared/i18n/useI18n'
 
 const rows = ref<SessionRow[]>([])
@@ -31,11 +32,7 @@ function describeUA(ua: string): string {
 }
 
 function describeWhen(ms: number): string {
-  try {
-    return new Date(ms).toLocaleString()
-  } catch {
-    return ''
-  }
+  return formatDateTime(ms)
 }
 
 async function reload() {

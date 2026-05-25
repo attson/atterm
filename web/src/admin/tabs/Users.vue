@@ -20,6 +20,7 @@ import {
   disableUser,
 } from '@shared/api/admin'
 import type { AdminUserRow } from '@shared/api/types'
+import { formatDateTime } from '@shared/i18n'
 import { useI18n } from '@shared/i18n/useI18n'
 
 const rows = ref<AdminUserRow[]>([])
@@ -30,12 +31,7 @@ const message = useMessage()
 const { t } = useI18n()
 
 function fmt(iso: string | undefined): string {
-  if (!iso) return ''
-  try {
-    return new Date(iso).toLocaleString()
-  } catch {
-    return iso
-  }
+  return formatDateTime(iso)
 }
 
 function mapError(e: unknown): string {

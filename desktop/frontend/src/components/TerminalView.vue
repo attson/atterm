@@ -399,7 +399,7 @@ function startConnection() {
       onOutput: (data) => term?.write(data),
       onClose: (info) => {
         term?.write(
-          `\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`
+          `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`
         );
       },
       onStatus: (s) => {

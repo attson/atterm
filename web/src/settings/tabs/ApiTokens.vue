@@ -15,6 +15,7 @@ import {
 import { ApiError } from '@shared/api/client'
 import { listTokens, createToken, revokeToken } from '@shared/api/me'
 import type { ApiTokenRow } from '@shared/api/types'
+import { formatShortDate } from '@shared/i18n'
 import { useI18n } from '@shared/i18n/useI18n'
 
 const tokens = ref<ApiTokenRow[]>([])
@@ -24,14 +25,6 @@ const plaintext = ref('')
 const loading = ref(true)
 const message = useMessage()
 const { t } = useI18n()
-
-function shortDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString()
-  } catch {
-    return iso
-  }
-}
 
 function isActive(token: ApiTokenRow): boolean {
   return !token.revoked_at
@@ -103,7 +96,7 @@ onMounted(reload)
         <n-thing>
           <template #header>{{ token.name }}</template>
           <template #description>
-            <code>{{ token.prefix }}…</code> · {{ t('common.created') }} {{ shortDate(token.created_at) }}
+            <code>{{ token.prefix }}…</code> · {{ t('common.created') }} {{ formatShortDate(token.created_at) }}
           </template>
         </n-thing>
         <template #suffix>

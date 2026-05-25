@@ -9,6 +9,7 @@ vi.mock('@shared/api/admin', () => ({
 }))
 
 import Invitations from '@/admin/tabs/Invitations.vue'
+import source from '@/admin/tabs/Invitations.vue?raw'
 import { listInvitations, createInvitation } from '@shared/api/admin'
 import { installI18nTestHooks } from '../../i18n-test-helper'
 
@@ -37,6 +38,11 @@ describe('Invitations.vue', () => {
 
     expect(wrapper.text()).toContain('inv_abc')
     expect(wrapper.text()).toContain('colleague')
+  })
+
+  it('uses the shared locale-aware date formatter', () => {
+    expect(source).toContain('formatDateTime')
+    expect(source).not.toMatch(/toLocale(?:String|DateString)\(/)
   })
 
   it('shows an empty-state message when no invitations', async () => {

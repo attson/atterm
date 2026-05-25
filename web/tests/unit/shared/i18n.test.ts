@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   initI18n,
   localePreference,
+  formatDateTime,
+  formatShortDate,
   resetI18nForTest,
   resolveLocalePreference,
   resolvedLocale,
@@ -28,9 +30,15 @@ describe('browser i18n runtime', () => {
     expect(resolveLocalePreference('en', ['zh-CN'])).toBe('en');
   });
 
-  test('uses only the first non-empty system language', () => {
+  test('uses the first supported system language', () => {
     expect(resolveLocalePreference('system', ['en-US', 'zh-CN'])).toBe('en');
     expect(resolveLocalePreference('system', ['', 'zh-CN', 'en-US'])).toBe('zh-CN');
+  });
+
+  test('skips unsupported languages while preserving supported language order', () => {
+    expect(resolveLocalePreference('system', ['fr-FR', 'zh-CN', 'en-US'])).toBe('zh-CN');
+    expect(resolveLocalePreference('system', ['fr-FR', 'en-US', 'zh-CN'])).toBe('en');
+    expect(resolveLocalePreference('system', ['fr-FR', 'de-DE'])).toBe('en');
   });
 
   test('loads and saves locale preference in localStorage', () => {
@@ -108,5 +116,28 @@ describe('browser i18n runtime', () => {
     setLocalePreference('zh-CN');
     expect(t('common.loading')).toBe('正在加载...');
     expect(t('test.interpolation', { count: 3 })).toBe('3 个会话');
+  });
+
+  test('formats dates using the resolved locale', () => {
+    const iso = '2026-01-02T03:04:05Z';
+    const date = new Date(iso);
+
+    setLocalePreference('zh-CN');
+
+    expect(formatDateTime(iso)).toBe(
+      new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(date),
+    );
+    expect(formatShortDate(iso)).toBe(
+      new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium' }).format(date),
+    );
+
+    setLocalePreference('en');
+
+    expect(formatDateTime(iso)).toBe(
+      new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(date),
+    );
+    expect(formatShortDate(iso)).toBe(
+      new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(date),
+    );
   });
 });

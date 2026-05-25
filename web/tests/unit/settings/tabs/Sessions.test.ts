@@ -10,6 +10,7 @@ vi.mock('@shared/api/me', () => ({
 }))
 
 import Sessions from '@/settings/tabs/Sessions.vue'
+import source from '@/settings/tabs/Sessions.vue?raw'
 import { listSessions, revokeSession, signOutOthers } from '@shared/api/me'
 import { installI18nTestHooks } from '../../i18n-test-helper'
 
@@ -54,6 +55,11 @@ describe('Sessions.vue', () => {
     expect(wrapper.text()).toContain('this device')
     // Only the non-current row should have a Revoke button.
     expect(wrapper.findAll('[data-testid^="revoke-session-"]').length).toBe(1)
+  })
+
+  it('uses the shared locale-aware date formatter', () => {
+    expect(source).toContain('formatDateTime')
+    expect(source).not.toMatch(/toLocale(?:String|DateString)\(/)
   })
 
   it('revokes a single session and reloads the list', async () => {

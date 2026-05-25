@@ -207,6 +207,14 @@ describe("TerminalView OSC 133 command notifications", () => {
   });
 });
 
+describe("TerminalView close banner", () => {
+  test("uses an i18n message with exit-code interpolation", () => {
+    expect(source).toContain('t("terminal.sessionEndedBanner"');
+    expect(source).toContain("exitCode: info.exit_code");
+    expect(source).not.toContain("session ended (exit");
+  });
+});
+
 // This is a wiring-level test, not a full TerminalView mount. It asserts
 // that TerminalView's menu builder uses collectContextMenuItems with all
 // registered + enabled context-menu plugins.

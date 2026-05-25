@@ -28,9 +28,15 @@ describe("desktop i18n locale resolution", () => {
     expect(resolveLocalePreference("system", [""])).toBe("en");
   });
 
-  test("only the first non-empty system language decides", () => {
+  test("uses the first supported system language", () => {
     expect(resolveLocalePreference("system", ["en-US", "zh-CN"])).toBe("en");
     expect(resolveLocalePreference("system", ["", "zh-CN", "en-US"])).toBe("zh-CN");
+  });
+
+  test("skips unsupported languages while preserving supported language order", () => {
+    expect(resolveLocalePreference("system", ["fr-FR", "zh-CN", "en-US"])).toBe("zh-CN");
+    expect(resolveLocalePreference("system", ["fr-FR", "en-US", "zh-CN"])).toBe("en");
+    expect(resolveLocalePreference("system", ["fr-FR", "de-DE"])).toBe("en");
   });
 
   test("explicit preference overrides system languages", () => {

@@ -53,13 +53,20 @@ export function resolveLocalePreference(
     return preference;
   }
 
-  const primaryLanguage = languages.find((language) => language.trim() !== "");
-  if (primaryLanguage === undefined) {
-    return "en";
+  for (const language of languages) {
+    const normalized = language.trim().toLowerCase();
+    if (normalized === "") {
+      continue;
+    }
+    if (normalized === "zh" || normalized.startsWith("zh-")) {
+      return "zh-CN";
+    }
+    if (normalized === "en" || normalized.startsWith("en-")) {
+      return "en";
+    }
   }
 
-  const normalized = primaryLanguage.trim().toLowerCase();
-  return normalized === "zh" || normalized.startsWith("zh-") ? "zh-CN" : "en";
+  return "en";
 }
 
 export async function initI18n(options: InitI18nOptions = {}): Promise<void> {

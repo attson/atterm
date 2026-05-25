@@ -16,6 +16,7 @@ import {
 import { ApiError } from '@shared/api/client'
 import { listInvitations, createInvitation } from '@shared/api/admin'
 import type { InvitationCreated, InvitationRow } from '@shared/api/types'
+import { formatDateTime } from '@shared/i18n'
 import { useI18n } from '@shared/i18n/useI18n'
 
 const rows = ref<InvitationRow[]>([])
@@ -35,12 +36,7 @@ const countInputProps = { 'data-testid': 'invite-count' } as any
 const expiresPickerProps = { 'data-testid': 'invite-expires' } as any
 
 function fmt(iso: string | undefined): string {
-  if (!iso) return ''
-  try {
-    return new Date(iso).toLocaleString()
-  } catch {
-    return iso
-  }
+  return formatDateTime(iso)
 }
 
 const columns = computed<DataTableColumns<InvitationRow>>(() => [

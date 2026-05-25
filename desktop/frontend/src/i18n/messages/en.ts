@@ -53,6 +53,7 @@ export const en = {
     connecting: "connecting...",
     reconnecting: "reconnecting...",
     ended: "session ended",
+    sessionEndedBanner: "[AT Term] session ended (exit {exitCode})",
     connectionError: "connection error",
     remoteHasTakenControl: "remote has taken control",
     remoteHasControl: "remote has control",

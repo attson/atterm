@@ -14,6 +14,7 @@ import {
 import { ApiError } from '@shared/api/client'
 import { listWebhooks, createWebhook, deleteWebhook } from '@shared/api/webhooks'
 import type { WebhookRow } from '@shared/api/types'
+import { formatShortDate } from '@shared/i18n'
 import { useI18n } from '@shared/i18n/useI18n'
 
 const webhooks = ref<WebhookRow[]>([])
@@ -46,14 +47,6 @@ function mapWebhookError(e: unknown, fallbackKey: string): string {
     return t(fallbackKey)
   }
   return t(fallbackKey)
-}
-
-function shortDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString()
-  } catch {
-    return iso
-  }
 }
 
 async function reload() {
@@ -104,7 +97,7 @@ onMounted(reload)
         <n-thing>
           <template #header>{{ wh.name }}</template>
           <template #description>
-            <span>{{ wh.url }}</span> · {{ formatLabel(wh) }} · {{ t('settings.webhooks.created') }} {{ shortDate(wh.created_at) }}
+            <span>{{ wh.url }}</span> · {{ formatLabel(wh) }} · {{ t('settings.webhooks.created') }} {{ formatShortDate(wh.created_at) }}
           </template>
         </n-thing>
         <template #suffix>

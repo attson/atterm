@@ -55,6 +55,7 @@ export const zhCN = {
     connecting: "连接中...",
     reconnecting: "重新连接中...",
     ended: "会话已结束",
+    sessionEndedBanner: "[AT Term] 会话已结束（退出码 {exitCode}）",
     connectionError: "连接错误",
     remoteHasTakenControl: "远端已接管控制",
     remoteHasControl: "远端正在控制",

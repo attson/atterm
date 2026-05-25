@@ -16,6 +16,7 @@ vi.mock('@shared/api/push', () => ({
 }))
 
 import Notifications from '@/settings/tabs/Notifications.vue'
+import { ApiError } from '@shared/api/client'
 import { setLocalePreference } from '@shared/i18n'
 import { installI18nTestHooks } from '../../i18n-test-helper'
 
@@ -110,5 +111,29 @@ describe('Notifications tab', () => {
     await wrapper.find('[data-testid="push-test"]').trigger('click')
     await flushPromises()
     expect(testPush).toHaveBeenCalledTimes(1)
+  })
+
+  it('localizes ApiError failures for test notification in zh-CN', async () => {
+    setLocalePreference('zh-CN')
+    testPush.mockRejectedValue(new ApiError(500, 'http_error', null))
+    Object.defineProperty(navigator, 'serviceWorker', {
+      value: {
+        ready: Promise.resolve({
+          pushManager: {
+            subscribe: () => Promise.resolve(null),
+            getSubscription: () => Promise.resolve({ endpoint: 'https://example/abc' }),
+          },
+        }),
+      },
+      configurable: true,
+    })
+
+    const wrapper = mountWithProvider()
+    await flushPromises()
+    await wrapper.find('[data-testid="push-test"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('测试通知发送失败')
+    expect(wrapper.text()).not.toContain('api error')
   })
 })

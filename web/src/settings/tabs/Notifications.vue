@@ -84,11 +84,10 @@ async function onTest() {
     message.success(t('settings.notificationsTab.testSent', { count: sent }))
   } catch (e) {
     if (e instanceof ApiError) {
-      errorMsg.value = t('settings.notificationsTab.testFailed', { message: e.message })
+      const code = e.status > 0 ? `${e.status}/${e.code}` : e.code
+      errorMsg.value = t('settings.notificationsTab.testFailedWithCode', { code })
     } else {
-      errorMsg.value = t('settings.notificationsTab.testFailed', {
-        message: e instanceof Error ? e.message : String(e),
-      })
+      errorMsg.value = t('settings.notificationsTab.testFailed')
     }
   } finally {
     busy.value = false

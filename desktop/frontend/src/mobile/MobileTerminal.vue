@@ -6,6 +6,7 @@ import { WebglAddon } from 'xterm-addon-webgl'
 import 'xterm/css/xterm.css'
 import { SessionConnection, type Endpoint } from '../lib/connection'
 import type { RemoteSession } from '../platform/types'
+import { useI18n } from '../i18n/useI18n'
 
 const props = defineProps<{
   endpoint: Endpoint
@@ -14,6 +15,7 @@ const props = defineProps<{
   active: boolean
 }>()
 const emit = defineEmits<{ (e: 'ended'): void; (e: 'tokenInvalid'): void; (e: 'meta', m: { cwd?: string; title?: string }): void }>()
+const { t } = useI18n()
 
 const container = ref<HTMLDivElement | null>(null)
 const isDriver = ref(true)
@@ -112,8 +114,8 @@ onBeforeUnmount(() => {
     <div ref="container" class="term"></div>
     <div v-if="!isDriver" class="viewer-overlay">
       <div class="viewer-card">
-        <div class="viewer-title">remote has control</div>
-        <button class="take-control" data-testid="mobile-take-control" @click="takeControl">Take control</button>
+        <div class="viewer-title">{{ t('terminal.remoteHasControl') }}</div>
+        <button class="take-control" data-testid="mobile-take-control" @click="takeControl">{{ t('terminal.takeControl') }}</button>
       </div>
     </div>
     <div class="kbbar">

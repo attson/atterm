@@ -19,7 +19,7 @@ describe("SettingsGeneral", () => {
     expect(source).toContain("<SelectDropdown");
     expect(source).toContain('v-model="selected"');
     expect(source).toContain('@update:modelValue="onChange"');
-    expect(source).toContain("terminal theme");
+    expect(source).toContain("settings.general.terminalTheme");
   });
 
   test("reverts to previous theme on save error and surfaces it", () => {
@@ -36,8 +36,8 @@ describe("SettingsGeneral notification toggle", () => {
   });
 
   test("renders the checkbox with label and focus-only hint", () => {
-    expect(source).toContain("Show system notifications on terminal bell");
-    expect(source).toContain("Only fires when the AT Term window is not focused.");
+    expect(source).toContain("settings.general.notificationsBell");
+    expect(source).toContain("settings.general.notificationsHint");
   });
 
   test("wires checkbox change handler to setNotificationsEnabled", () => {
@@ -46,12 +46,12 @@ describe("SettingsGeneral notification toggle", () => {
   });
 
   test("renders shell integration toggle wired to setShellIntegrationEnabled", () => {
-    expect(source).toContain("Enable shell integration");
+    expect(source).toContain("settings.general.shellIntegration");
     expect(source).toMatch(/setShellIntegrationEnabled\(/);
   });
 
   test("renders command-notify threshold number input wired to setCommandNotifyThresholdSeconds", () => {
-    expect(source).toContain("Command-finished notification threshold");
+    expect(source).toContain("settings.general.commandNotifyThreshold");
     expect(source).toMatch(/setCommandNotifyThresholdSeconds\(/);
     expect(source).toContain('min="1"');
     expect(source).toContain('max="600"');
@@ -75,9 +75,9 @@ describe("SettingsGeneral default shell preference", () => {
   });
 
   test("renders automatic and custom shell controls", () => {
-    expect(source).toContain("default shell");
+    expect(source).toContain("settings.general.defaultShell");
     expect(source).toContain('value="auto"');
-    expect(source).toContain("custom shell path");
+    expect(source).toContain("settings.general.customShellPath");
     expect(source).toMatch(/onDefaultShellChange/);
     expect(source).toMatch(/onCustomShellSave/);
   });
@@ -90,13 +90,13 @@ describe("SettingsGeneral WebGL renderer toggle", () => {
   });
 
   test("renders the WebGL renderer toggle wired to setWebglRendererEnabled", () => {
-    expect(source).toContain("Use WebGL terminal renderer");
+    expect(source).toContain("settings.general.webglRenderer");
     expect(source).toMatch(/onWebglRendererToggle/);
     expect(source).toContain('@change="onWebglRendererToggle"');
   });
 
   test("hint mentions the typing-lag trade-off so Linux users can find it", () => {
-    expect(source).toContain("typing lag");
+    expect(source).toContain("settings.general.webglHint");
   });
 
   test("loads WebGL preference on mount", () => {

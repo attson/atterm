@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { translateDescriptor } from "./index";
+import { en } from "../../i18n/messages/en";
 
 describe("translateDescriptor", () => {
   it("declares id, slot, title, description, defaultEnabled=false", () => {
     expect(translateDescriptor.id).toBe("translate");
     expect(translateDescriptor.slot).toBe("context-menu");
-    expect(translateDescriptor.title).toMatch(/translate/i);
-    expect(translateDescriptor.description.length).toBeGreaterThan(0);
+    expect(translateDescriptor.titleKey).toBe("plugins.translate.title");
+    expect(en.plugins.translate.description.length).toBeGreaterThan(0);
     expect(translateDescriptor.defaultEnabled).toBe(false);
   });
 
@@ -28,7 +29,7 @@ describe("translateDescriptor", () => {
     const ctxMenu = (mod as { default: { getMenuItems: Function } }).default;
     const items = ctxMenu.getMenuItems({}, "hello");
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ id: "translate-selection", label: expect.stringMatching(/translate/i) });
+    expect(items[0]).toMatchObject({ id: "translate-selection", label: en.plugins.translate.selection });
     expect(typeof items[0].onClick).toBe("function");
   });
 });

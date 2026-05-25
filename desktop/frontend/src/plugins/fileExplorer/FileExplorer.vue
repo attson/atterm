@@ -9,11 +9,13 @@ import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
 import { openPath, closeTab, type TabsState } from "./tabsModel";
 import type { PluginContext } from "../types";
+import { useI18n } from "../../i18n/useI18n";
 // theme.css is loaded once from App.vue so its --ed-* vars are available
 // even before this lazy chunk is fetched.
 
 const props = defineProps<{ context: PluginContext }>();
 const store = usePluginConfigStore();
+const { t } = useI18n();
 
 // In-memory pinned root. Resets to "follow active pane" on app restart per spec.
 const pinned = ref<string | null>(null);
@@ -106,11 +108,11 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
     <div class="fe-body" ref="bodyRef">
       <div class="tree-pane" :style="{ width: (innerRatio * 100) + '%' }">
         <header class="fe-header">
-          <span class="root-path" :title="root ?? ''">{{ root ?? "(no active pane)" }}</span>
+          <span class="root-path" :title="root ?? ''">{{ root ?? t("plugins.fileExplorer.noActivePaneShort") }}</span>
           <button
             class="pin"
             :class="{ pinned: pinned !== null }"
-            :title="pinned !== null ? 'Unpin (follow active pane)' : 'Pin current cwd'"
+            :title="pinned !== null ? t('plugins.fileExplorer.unpinFollow') : t('plugins.fileExplorer.pinCurrentCwd')"
             @click="togglePin"
           >
             <component :is="pinned !== null ? Pin : PinOff" :size="14" :stroke-width="1.5" />
@@ -124,7 +126,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             @file-clicked="onFileClick"
             @file-double-clicked="onFileDoubleClick"
           />
-          <div v-else class="placeholder">No active pane.</div>
+          <div v-else class="placeholder">{{ t("plugins.fileExplorer.noActivePane") }}</div>
         </div>
       </div>
       <div class="divider" @mousedown="onDividerDown" />
@@ -142,7 +144,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :show-line-numbers="showLineNumbers"
             :theme="explorerTheme"
           />
-          <div v-else class="placeholder">Select a file.</div>
+          <div v-else class="placeholder">{{ t("plugins.fileExplorer.selectFile") }}</div>
         </div>
       </div>
     </div>

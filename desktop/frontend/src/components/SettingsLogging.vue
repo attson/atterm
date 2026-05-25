@@ -5,6 +5,7 @@ import {
   pickLogFilePath,
   setLoggingConfig,
 } from "../lib/api";
+import { useI18n } from "../i18n/useI18n";
 
 defineEmits<{
   (e: "open-log-viewer"): void;
@@ -15,6 +16,7 @@ const path = ref("");
 const effectivePath = ref("");
 const loading = ref(true);
 const error = ref("");
+const { t } = useI18n();
 
 onMounted(async () => {
   try {
@@ -77,7 +79,7 @@ async function onResetPath() {
 
 <template>
   <div class="tab-pane">
-    <div v-if="loading" class="dim">loading…</div>
+    <div v-if="loading" class="dim">{{ t("common.loading") }}</div>
     <template v-else>
       <label class="checkbox">
         <input
@@ -85,18 +87,18 @@ async function onResetPath() {
           :checked="enabled"
           @change="onToggle"
         />
-        write logs to file
+        {{ t("settings.logging.writeLogs") }}
       </label>
 
       <div class="kv">
-        <span class="k">current log file</span>
+        <span class="k">{{ t("settings.logging.currentFile") }}</span>
         <span class="v path" :title="effectivePath">{{ effectivePath }}</span>
       </div>
 
       <div class="actions">
-        <button @click="onPickPath">change location</button>
-        <button @click="onResetPath">reset default</button>
-        <button @click="$emit('open-log-viewer')">view logs</button>
+        <button @click="onPickPath">{{ t("settings.logging.changeLocation") }}</button>
+        <button @click="onResetPath">{{ t("settings.logging.resetDefault") }}</button>
+        <button @click="$emit('open-log-viewer')">{{ t("settings.logging.viewLogs") }}</button>
       </div>
 
       <p v-if="error" class="error">{{ error }}</p>

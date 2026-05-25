@@ -1,5 +1,6 @@
 import { describe, expect, test, it, vi, beforeEach, afterEach } from "vitest";
 import source from "./SettingsDialog.vue?raw";
+import { en } from "../i18n/messages/en";
 
 function styleBlockFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -18,11 +19,11 @@ describe("SettingsDialog shell", () => {
 
   test("renders sidebar nav with the five category labels", () => {
     expect(source).toContain('class="settings-nav"');
-    expect(source).toContain(">General<");
-    expect(source).toContain(">Relay<");
-    expect(source).toContain(">Logging<");
-    expect(source).toContain(">Updates<");
-    expect(source).toContain(">Plugins<");
+    expect(source).toContain('t("settings.tabs.general")');
+    expect(source).toContain('t("settings.tabs.relay")');
+    expect(source).toContain('t("settings.tabs.logging")');
+    expect(source).toContain('t("settings.tabs.updates")');
+    expect(source).toContain('t("settings.tabs.plugins")');
   });
 
   test("tracks the active tab and switches via sidebar clicks", () => {
@@ -37,7 +38,7 @@ describe("SettingsDialog shell", () => {
   test("renders the pinned footer only for the relay tab", () => {
     expect(source).toContain('v-if="activeTab === \'relay\'"');
     expect(source).toContain('class="settings-footer"');
-    expect(source).toContain(">cancel<");
+    expect(source).toContain('t("common.cancel")');
     expect(source).toContain("relayRef?.canSave");
     expect(source).toContain("relayRef?.saveLabel");
   });
@@ -68,7 +69,7 @@ describe("SettingsDialog shell", () => {
   });
 
   test("renders the Shortcuts label in the sidebar", () => {
-    expect(source).toContain(">Shortcuts<");
+    expect(source).toContain('t("settings.tabs.shortcuts")');
   });
 
   test("activeTab union includes 'shortcuts'", () => {
@@ -149,39 +150,46 @@ function navLabels(w: ReturnType<typeof mount>) {
 describe("SettingsDialog caps gating", () => {
   it("renders all 6 tabs with full desktop caps", () => {
     const w = mountDialog();
-    expect(navLabels(w)).toEqual(["General", "Relay", "Logging", "Updates", "Plugins", "Shortcuts"]);
+    expect(navLabels(w)).toEqual([
+      en.settings.tabs.general,
+      en.settings.tabs.relay,
+      en.settings.tabs.logging,
+      en.settings.tabs.updates,
+      en.settings.tabs.plugins,
+      en.settings.tabs.shortcuts,
+    ]);
   });
 
   it("hides Updates when autoUpdate=false", () => {
     platform.caps = { ...platform.caps, autoUpdate: false };
     __setPlatformForTests(platform);
-    expect(navLabels(mountDialog())).not.toContain("Updates");
+    expect(navLabels(mountDialog())).not.toContain(en.settings.tabs.updates);
   });
 
   it("hides Plugins + Shortcuts when pluginHost=false", () => {
     platform.caps = { ...platform.caps, pluginHost: false };
     __setPlatformForTests(platform);
     const labels = navLabels(mountDialog());
-    expect(labels).not.toContain("Plugins");
-    expect(labels).not.toContain("Shortcuts");
+    expect(labels).not.toContain(en.settings.tabs.plugins);
+    expect(labels).not.toContain(en.settings.tabs.shortcuts);
   });
 
   it("hides Logging when fileDialog=false", () => {
     platform.caps = { ...platform.caps, fileDialog: false };
     __setPlatformForTests(platform);
-    expect(navLabels(mountDialog())).not.toContain("Logging");
+    expect(navLabels(mountDialog())).not.toContain(en.settings.tabs.logging);
   });
 
   it("with capacitor-style caps only General + Relay show", () => {
     platform.caps = { ...platform.caps, autoUpdate: false, pluginHost: false, fileDialog: false };
     __setPlatformForTests(platform);
-    expect(navLabels(mountDialog())).toEqual(["General", "Relay"]);
+    expect(navLabels(mountDialog())).toEqual([en.settings.tabs.general, en.settings.tabs.relay]);
   });
 
   it("falls back to general when initialTab is hidden under current caps", () => {
     platform.caps = { ...platform.caps, autoUpdate: false };
     __setPlatformForTests(platform);
     const w = mountDialog({ ...baseProps, initialTab: "updates" });
-    expect(w.find(".settings-nav-item.active").text()).toBe("General");
+    expect(w.find(".settings-nav-item.active").text()).toBe(en.settings.tabs.general);
   });
 });

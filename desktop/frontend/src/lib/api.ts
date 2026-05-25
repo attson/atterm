@@ -2,6 +2,8 @@
 // at startup; we expose typed wrappers so the rest of the app doesn't have to
 // reach into globals directly.
 
+import { t } from "../i18n";
+
 export interface Endpoint {
   url: string;
   token: string;
@@ -136,7 +138,7 @@ declare global {
 
 function bindings(): AppBindings {
   const b = window.go?.main?.App;
-  if (!b) throw new Error("Wails bindings not ready");
+  if (!b) throw new Error(t("app.wailsBindingsNotReady"));
   return b;
 }
 

@@ -13,12 +13,10 @@ describe("ConfirmQuitDialog", () => {
   });
 
   test("renders count-driven copy and a quit button", () => {
-    expect(source).toContain("End ");
-    expect(source).toContain("local shell session");
-    expect(source).toContain("Detach from ");
-    expect(source).toContain("remote session");
-    expect(source).toMatch(/>\s*quit\s*</);
-    expect(source).toMatch(/>\s*cancel\s*</);
+    expect(source).toContain("sessions.endLocalSession");
+    expect(source).toContain("sessions.detachRemoteSession");
+    expect(source).toContain("sessions.quit");
+    expect(source).toContain("common.cancel");
   });
 
   test("applies primary.danger styling when local count > 0", () => {

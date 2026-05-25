@@ -49,8 +49,8 @@ const localizedLanguageOptions = computed(() =>
 const themeOptions = computed(() =>
   TERMINAL_THEMES.map((theme) => ({
     value: theme.id,
-    label: theme.label,
-    description: theme.description,
+    label: t(theme.labelKey),
+    description: t(theme.descriptionKey),
   })),
 );
 
@@ -170,7 +170,7 @@ async function onDefaultShellChange() {
 async function onCustomShellSave() {
   const next = customShellPath.value.trim();
   if (!next) {
-    error.value = "custom shell path is required";
+    error.value = t("settings.general.customShellRequired");
     return;
   }
   defaultShellSaving.value = true;
@@ -275,16 +275,16 @@ async function onChange() {
     />
     <p class="hint">{{ t("settings.general.languageHint") }}</p>
 
-    <label class="field-label">terminal theme</label>
+    <label class="field-label">{{ t("settings.general.terminalTheme") }}</label>
     <SelectDropdown
       v-model="selected"
       :options="themeOptions"
       :disabled="saving"
-      aria-label="terminal theme"
+      :aria-label="t('settings.general.terminalTheme')"
       @update:modelValue="onChange"
     />
     <p class="hint">
-      Applies to all terminal panes immediately and is saved as your local desktop preference.
+      {{ t("settings.general.terminalThemeHint") }}
     </p>
 
     <label class="checkbox" v-if="!notificationsLoading">
@@ -293,10 +293,10 @@ async function onChange() {
         :checked="notificationsEnabled"
         @change="onNotificationsToggle"
       />
-      Show system notifications on terminal bell
+      {{ t("settings.general.notificationsBell") }}
     </label>
     <p class="hint" v-if="!notificationsLoading">
-      Only fires when the AT Term window is not focused.
+      {{ t("settings.general.notificationsHint") }}
     </p>
 
     <label class="checkbox" v-if="!shellIntegrationLoading">
@@ -305,42 +305,39 @@ async function onChange() {
         :checked="shellIntegrationEnabled"
         @change="onShellIntegrationToggle"
       />
-      Enable shell integration
+      {{ t("settings.general.shellIntegration") }}
     </label>
     <p class="hint" v-if="!shellIntegrationLoading">
-      Injects OSC 133 hooks into zsh / bash / fish / pwsh at session start so we can
-      detect when a command finishes. Only affects new sessions.
+      {{ t("settings.general.shellIntegrationHint") }}
     </p>
 
-    <label class="field-label" v-if="!defaultShellLoading">default shell</label>
+    <label class="field-label" v-if="!defaultShellLoading">{{ t("settings.general.defaultShell") }}</label>
     <select
       v-if="!defaultShellLoading"
       v-model="selectedDefaultShell"
       class="select-input"
       :disabled="defaultShellSaving"
-      aria-label="default shell"
+      :aria-label="t('settings.general.defaultShell')"
       @change="onDefaultShellChange"
     >
-      <option value="auto">Auto</option>
+      <option value="auto">{{ t("settings.general.auto") }}</option>
       <option v-for="shell in availableShells" :key="shell" :value="shell">
         {{ shell }}
       </option>
-      <option value="__custom__">Custom path...</option>
+      <option value="__custom__">{{ t("settings.general.customPath") }}</option>
     </select>
     <p class="hint" v-if="!defaultShellLoading">
-      Auto chooses a platform default for new local sessions. Pick a detected
-      shell or save a custom shell path if you prefer Git Bash, PowerShell 7, or
-      another terminal program.
+      {{ t("settings.general.defaultShellHint") }}
     </p>
     <div v-if="!defaultShellLoading && selectedDefaultShell === '__custom__'" class="custom-shell-row">
       <input
         class="text-input"
         v-model="customShellPath"
-        placeholder="custom shell path"
-        aria-label="custom shell path"
+        :placeholder="t('settings.general.customShellPath')"
+        :aria-label="t('settings.general.customShellPath')"
         :disabled="defaultShellSaving"
       />
-      <button :disabled="defaultShellSaving" @click="onCustomShellSave">save custom</button>
+      <button :disabled="defaultShellSaving" @click="onCustomShellSave">{{ t("settings.general.saveCustom") }}</button>
     </div>
 
     <label class="checkbox" v-if="!webglRendererLoading">
@@ -349,17 +346,14 @@ async function onChange() {
         :checked="webglRendererEnabled"
         @change="onWebglRendererToggle"
       />
-      Use WebGL terminal renderer
+      {{ t("settings.general.webglRenderer") }}
     </label>
     <p class="hint" v-if="!webglRendererLoading">
-      GPU-rasterized rendering keeps light themes free of cell ghosting on dense
-      TUI output. Off by default on Linux because NVIDIA proprietary + X11 +
-      WebKitGTK paint the cursor / last cell a frame late, which surfaces as
-      visible typing lag. Affects new terminal sessions only.
+      {{ t("settings.general.webglHint") }}
     </p>
 
     <label class="field-label" v-if="!commandNotifyThresholdLoading">
-      Command-finished notification threshold (seconds)
+      {{ t("settings.general.commandNotifyThreshold") }}
     </label>
     <input
       v-if="!commandNotifyThresholdLoading"
@@ -371,8 +365,7 @@ async function onChange() {
       @change="onCommandNotifyThresholdChange"
     />
     <p class="hint" v-if="!commandNotifyThresholdLoading">
-      Commands shorter than this duration do not produce a notification. Requires
-      shell integration to be enabled.
+      {{ t("settings.general.commandNotifyHint") }}
     </p>
 
     <p v-if="error" class="error">{{ error }}</p>

@@ -59,8 +59,8 @@ describe("TerminalView right-click menu", () => {
 
   test("renders copy/paste buttons with disabled state bindings", () => {
     expect(source).toContain('class="term-context-item"');
-    expect(source).toContain(">copy<");
-    expect(source).toContain(">paste<");
+    expect(source).toContain('t("common.copy")');
+    expect(source).toContain('t("common.paste")');
     expect(source).toContain(':disabled="!menuHasSelection"');
     expect(source).toContain(':disabled="!menuCanPaste || pasteBusy"');
   });
@@ -72,7 +72,7 @@ describe("TerminalView right-click menu", () => {
   });
 
   test("renders a clear buffer menu item wired to onMenuClear", () => {
-    expect(source).toContain(">clear buffer<");
+    expect(source).toContain('t("terminal.clearBuffer")');
     expect(source).toContain('@click="onMenuClear"');
     expect(source).toMatch(/function\s+onMenuClear\s*\(\s*\)/);
     expect(source).toContain("term.clear()");
@@ -107,8 +107,8 @@ describe("TerminalView viewer overlay", () => {
   test("renders a prominent viewer overlay when not driver", () => {
     expect(source).toContain('class="viewer-overlay"');
     expect(source).toContain('class="viewer-overlay-card"');
-    expect(source).toContain('remote has taken control');
-    expect(source).toContain('press space to take back');
+    expect(source).toContain('t("terminal.remoteHasTakenControl")');
+    expect(source).toContain('t("terminal.pressSpaceToTakeBack")');
     expect(source).toMatch(/v-if=["']!isDriver["']/);
   });
 
@@ -140,7 +140,8 @@ describe("TerminalView bell notifications", () => {
   });
 
   test("passes the resolved sessionLabel into the notification body", () => {
-    expect(source).toMatch(/Bell in \$\{\s*props\.sessionLabel/);
+    expect(source).toContain('t("terminal.bellNotification"');
+    expect(source).toContain("props.sessionLabel");
   });
 });
 
@@ -165,7 +166,7 @@ describe("TerminalView driver hostname", () => {
   test("overlay renders driverHostname when present", () => {
     expect(source).toContain("v-if=\"driverHostname\"");
     expect(source).toContain('class="viewer-overlay-host"');
-    expect(source).toContain('by {{ driverHostname }}');
+    expect(source).toContain('t("terminal.byHost"');
   });
 });
 
@@ -186,7 +187,7 @@ describe("TerminalView OSC 133 command notifications", () => {
   });
 
   test("invokes showNotification with a Command-finished body when gate passes", () => {
-    expect(source).toContain("Command finished");
+    expect(source).toContain('t("terminal.commandFinishedNotification"');
     expect(source).toMatch(/showNotification\(/);
   });
 

@@ -13,6 +13,7 @@ import {
   uuidParse,
 } from "./proto";
 import type { ReplayProgress } from "./replayProgress";
+import { t } from "../i18n";
 
 export interface ClosePayload {
   exit_code: number;
@@ -57,9 +58,9 @@ const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {
-  if (wsReadyState !== WebSocket.OPEN) return "websocket is not open";
+  if (wsReadyState !== WebSocket.OPEN) return t("terminal.websocketNotOpen");
   if (blobSize > MAX_PASTE_IMAGE_BYTES) {
-    return `image too large: ${blobSize} bytes exceeds ${MAX_PASTE_IMAGE_BYTES}`;
+    return t("terminal.imageTooLarge", { size: blobSize, limit: MAX_PASTE_IMAGE_BYTES });
   }
   return null;
 }

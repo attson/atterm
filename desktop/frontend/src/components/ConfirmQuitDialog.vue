@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import { useI18n } from "../i18n/useI18n";
+
 const props = defineProps<{
   localCount: number;
   remoteCount: number;
@@ -9,39 +11,39 @@ defineEmits<{
   (e: "cancel"): void;
 }>();
 
-function plural(n: number, word: string) {
-  return n === 1 ? `1 ${word}` : `${n} ${word}s`;
-}
+const { t } = useI18n();
+
+const plural = (n: number) => (n === 1 ? "" : "s");
 </script>
 
 <template>
   <div class="backdrop" @click.self="$emit('cancel')">
     <div class="dialog">
-      <h2>quit AT Term</h2>
+      <h2>{{ t("sessions.quitTitle") }}</h2>
 
-      <p>Closing AT Term will:</p>
+      <p>{{ t("sessions.closingWill") }}</p>
 
       <ul>
         <li v-if="localCount > 0">
-          End {{ plural(localCount, "local shell session") }}
-          <span class="dim">(running processes will be terminated)</span>
+          {{ t("sessions.endLocalSession", { count: localCount, plural: plural(localCount) }) }}
+          <span class="dim">{{ t("sessions.runningProcessesTerminated") }}</span>
         </li>
         <li v-if="remoteCount > 0">
-          Detach from {{ plural(remoteCount, "remote session") }}
-          <span class="dim">(the remote PTY keeps running on its host)</span>
+          {{ t("sessions.detachRemoteSession", { count: remoteCount, plural: plural(remoteCount) }) }}
+          <span class="dim">{{ t("sessions.remotePtyKeepsRunning") }}</span>
         </li>
       </ul>
 
-      <p v-if="localCount > 0" class="warn">Save your work first.</p>
+      <p v-if="localCount > 0" class="warn">{{ t("sessions.saveWorkFirst") }}</p>
 
       <div class="row">
-        <button @click="$emit('cancel')">cancel</button>
+        <button @click="$emit('cancel')">{{ t("common.cancel") }}</button>
         <button
           class="primary"
           :class="{ danger: localCount > 0 }"
           @click="$emit('confirm')"
         >
-          quit
+          {{ t("sessions.quit") }}
         </button>
       </div>
     </div>

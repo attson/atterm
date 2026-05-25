@@ -61,7 +61,7 @@ describe("auth-error banner", () => {
   });
 
   test("banner has an Open settings action", () => {
-    expect(source).toContain("Open settings");
+    expect(source).toContain("app.openSettings");
     expect(source).toContain("openSettingsRelay");
   });
 

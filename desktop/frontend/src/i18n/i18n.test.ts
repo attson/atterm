@@ -87,8 +87,8 @@ describe("desktop i18n runtime", () => {
       listenLanguageChange: () => () => undefined,
     });
 
-    expect(t("test.interpolated", { count: 3 })).toBe("3 sessions");
-    expect(t("test.interpolated")).toBe("{count} sessions");
+    expect(t("common.countSessions", { count: 3 })).toBe("3 sessions");
+    expect(t("common.countSessions")).toBe("{count} sessions");
   });
 
   test("returns the key when no locale contains a translation", async () => {
@@ -97,7 +97,7 @@ describe("desktop i18n runtime", () => {
       listenLanguageChange: () => () => undefined,
     });
 
-    expect(t("test.missing" as never)).toBe("test.missing");
+    expect(t("missing.key" as never)).toBe("missing.key");
   });
 
   test("updates system locale when languagechange fires", async () => {

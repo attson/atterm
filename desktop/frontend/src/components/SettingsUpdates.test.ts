@@ -17,14 +17,14 @@ describe("SettingsUpdates", () => {
   });
 
   test("renders auto-check toggle, release notes details, and primary actions", () => {
-    expect(source).toContain("automatically check for updates");
-    expect(source).toContain("GitHub download proxy");
-    expect(source).toContain("release notes");
-    expect(source).toContain("check now");
+    expect(source).toContain("settings.updates.autoCheck");
+    expect(source).toContain("settings.updates.ghProxy");
+    expect(source).toContain("settings.updates.releaseNotes");
+    expect(source).toContain("settings.updates.checkNow");
   });
 
   test("force-install button is labeled force install", () => {
-    expect(source).toContain("force install");
+    expect(source).toContain("settings.updates.forceInstallRestart");
   });
 
   test("clears its poll interval on unmount", () => {

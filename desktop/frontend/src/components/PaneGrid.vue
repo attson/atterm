@@ -6,6 +6,7 @@ import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab } from "../lib/types";
 import type { TerminalThemeDefinition } from "../lib/terminalThemes";
 import { extractSessionLabel } from "../lib/terminalBell";
+import { useI18n } from "../i18n/useI18n";
 
 const props = defineProps<{
   tab: Tab;
@@ -22,6 +23,8 @@ const emit = defineEmits<{
   (e: "close-pane", paneIdx: number): void;
   (e: "toast", message: string): void;
 }>();
+
+const { t } = useI18n();
 
 const AREA_FOR_LAYOUT = {
   single:     ["a"],
@@ -71,14 +74,14 @@ function formatWho(info: SessionInfo | null): string {
           :command-notify-threshold-sec="commandNotifyThresholdSec"
           @toast="emit('toast', $event)"
         />
-        <div v-else class="empty">[empty pane — press ⌘N / Ctrl+N to fill]</div>
+        <div v-else class="empty">{{ t("terminal.emptyPaneHint") }}</div>
       </div>
 
       <div class="cell-controls">
         <div
           v-if="pane.sessionId && !pane.remote && (viewerCountFor?.(pane.sessionId) ?? 0) > 0"
           class="viewers-badge"
-          :title="`${viewerCountFor!(pane.sessionId)} remote viewer(s) watching`"
+          :title="t('terminal.remoteViewerWatching', { count: viewerCountFor!(pane.sessionId) })"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
@@ -92,8 +95,8 @@ function formatWho(info: SessionInfo | null): string {
           class="remote-badge"
           :title="
             (sessionInfoFor(pane)?.host_id
-              ? 'host_id ' + sessionInfoFor(pane)!.host_id + '\n'
-              : '') + 'session ' + pane.sessionId
+              ? t('sessions.hostIdTitle', { hostId: sessionInfoFor(pane)!.host_id ?? '' }) + '\n'
+              : '') + t('sessions.sessionTitle', { sessionId: pane.sessionId })
           "
         >
           <svg
@@ -115,14 +118,14 @@ function formatWho(info: SessionInfo | null): string {
           <span v-if="formatWho(sessionInfoFor(pane))" class="who">
             {{ formatWho(sessionInfoFor(pane)) }}
           </span>
-          <span v-else class="who dim">remote</span>
+          <span v-else class="who dim">{{ t("terminal.remote") }}</span>
           <span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>
         </div>
 
         <button
           v-if="tab.layout !== 'single'"
           class="close-pane"
-          title="close pane (⌘W / Ctrl+W)"
+          :title="t('terminal.closePaneTitle')"
           @click.stop="emit('close-pane', idx)"
         >×</button>
       </div>

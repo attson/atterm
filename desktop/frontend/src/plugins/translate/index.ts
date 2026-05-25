@@ -1,5 +1,6 @@
 import type { ContextMenuPlugin, MenuItem, PluginContext, PluginDescriptor } from "../types";
 import { useTranslatePanelStore } from "./panelStore";
+import { t } from "../../i18n";
 
 const contextMenuImpl: ContextMenuPlugin = {
   getMenuItems(_ctx: PluginContext, selection: string): MenuItem[] {
@@ -7,7 +8,7 @@ const contextMenuImpl: ContextMenuPlugin = {
     return [
       {
         id: "translate-selection",
-        label: "Translate selection",
+        label: t("plugins.translate.selection"),
         onClick: () => {
           const store = useTranslatePanelStore();
           void store.openWithSource(selection);
@@ -20,8 +21,8 @@ const contextMenuImpl: ContextMenuPlugin = {
 export const translateDescriptor: PluginDescriptor = {
   id: "translate",
   slot: "context-menu",
-  title: "Translate",
-  description: "Translate the selected text via an OpenAI-compatible API; result shown in a floating panel.",
+  titleKey: "plugins.translate.title",
+  descriptionKey: "plugins.translate.description",
   load: async () => ({ default: contextMenuImpl }),
   defaultEnabled: false,
 };

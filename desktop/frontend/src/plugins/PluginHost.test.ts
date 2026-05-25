@@ -37,8 +37,8 @@ describe("PluginHost", () => {
     PLUGINS.push({
       id: "quick-input",
       slot: "bottom-toolbar",
-      title: "Test",
-      description: "test",
+      titleKey: "plugins.quickInput.title",
+      descriptionKey: "plugins.quickInput.description",
       load: () => Promise.resolve({ default: DummyPlugin }),
       defaultEnabled: true,
     });

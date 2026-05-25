@@ -18,7 +18,7 @@ const submitting = ref(false)
 
 const banner = computed(() =>
   props.reason === 'token_invalid'
-    ? 'Your API token is no longer valid. Paste a fresh token to reconnect.'
+    ? t('mobile.tokenInvalidBanner')
     : null,
 )
 
@@ -42,7 +42,7 @@ async function onConnect(): Promise<void> {
   error.value = null
   const v = validateRelayBase(url.value, allowInsecure.value)
   if (v) { error.value = v; return }
-  if (!token.value.trim()) { error.value = 'API token is required'; return }
+  if (!token.value.trim()) { error.value = t('mobile.apiTokenRequired'); return }
   submitting.value = true
   try {
     await platform.relay.save({
@@ -57,10 +57,10 @@ async function onConnect(): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     error.value = /401/.test(msg)
-      ? 'API token is invalid. Generate a new one from the relay web UI.'
+      ? t('mobile.apiTokenInvalid')
       : /403|origin/i.test(msg)
-        ? 'Relay rejected the origin. Start the relay with ATTERM_ORIGINS containing capacitor://localhost.'
-        : `Cannot reach relay: ${msg}`
+        ? t('mobile.originRejected')
+        : t('mobile.cannotReachRelay', { message: msg })
   } finally {
     submitting.value = false
   }
@@ -75,7 +75,7 @@ async function onLanguageChange(e: Event): Promise<void> {
 <template>
   <div class="setup">
     <h1>AT Term</h1>
-    <p class="sub">Connect to your relay</p>
+    <p class="sub">{{ t('mobile.setupSubtitle') }}</p>
     <div v-if="banner" class="banner">{{ banner }}</div>
     <label class="field">
       <span>{{ t('settings.general.languageLabel') }}</span>
@@ -86,19 +86,19 @@ async function onLanguageChange(e: Event): Promise<void> {
       </select>
     </label>
     <label class="field">
-      <span>Relay URL</span>
+      <span>{{ t('mobile.relayUrl') }}</span>
       <input data-testid="relay-url" v-model="url" :disabled="submitting" placeholder="https://relay.example.com" autocomplete="off" autocapitalize="off" spellcheck="false" />
     </label>
     <label class="field">
-      <span>API token</span>
+      <span>{{ t('mobile.apiToken') }}</span>
       <input data-testid="relay-token" v-model="token" :disabled="submitting" type="password" placeholder="atk_…" autocomplete="off" />
     </label>
     <label class="row">
-      <span>Allow insecure HTTP/WS (non-loopback)</span>
+      <span>{{ t('mobile.allowInsecure') }}</span>
       <input data-testid="allow-insecure" v-model="allowInsecure" :disabled="submitting" type="checkbox" />
     </label>
     <p v-if="error" class="error">{{ error }}</p>
-    <button data-testid="connect" class="btn" :disabled="submitting" @click="onConnect">Connect</button>
+    <button data-testid="connect" class="btn" :disabled="submitting" @click="onConnect">{{ t('common.connect') }}</button>
   </div>
 </template>
 

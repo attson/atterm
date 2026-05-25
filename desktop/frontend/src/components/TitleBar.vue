@@ -4,8 +4,10 @@ import { usePlatform } from "../platform";
 import WindowControls from "./WindowControls.vue";
 import { setMaximized, useWindowMaximized } from "../composables/useWindowMaximized";
 import type { Endpoint } from "../lib/api";
+import { useI18n } from "../i18n/useI18n";
 
 const platform = usePlatform();
+const { t } = useI18n();
 
 type Status = "loading" | "ready" | "error";
 
@@ -53,8 +55,8 @@ const showWindowControls = computed(() => os.value !== "darwin");
 
 const remoteTitle = computed(() =>
   props.remoteEndpoint
-    ? `${props.availableRemoteCount} remote session(s) available`
-    : "connect to a relay to see remote sessions",
+    ? t("terminal.remoteSessionsAvailable", { count: props.availableRemoteCount })
+    : t("terminal.connectRelayForRemote"),
 );
 
 const isMaximized = useWindowMaximized();
@@ -76,13 +78,13 @@ function onTitleDblClick() {
     @dblclick.self="onTitleDblClick"
   >
     <div class="status">
-      <template v-if="status === 'loading'">starting…</template>
+      <template v-if="status === 'loading'">{{ t("terminal.starting") }}</template>
       <template v-else-if="status === 'error'">
         <span class="bad">{{ errorMsg }}</span>
       </template>
       <template v-else>
-        {{ sessionCount }} session{{ sessionCount === 1 ? "" : "s" }}
-        <span v-if="remoteEndpoint" class="dim"> · uplink on</span>
+        {{ t("terminal.sessionStatus", { count: sessionCount, plural: sessionCount === 1 ? "" : "s" }) }}
+        <span v-if="remoteEndpoint" class="dim"> · {{ t("terminal.uplinkOn") }}</span>
       </template>
     </div>
     <button
@@ -112,7 +114,7 @@ function onTitleDblClick() {
       class="icon-btn"
       type="button"
       data-testid="titlebar-settings"
-      title="relay settings"
+      :title="t('terminal.relaySettings')"
       @click="$emit('open-settings')"
     >
       <svg

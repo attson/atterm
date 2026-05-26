@@ -60,6 +60,14 @@ export interface RemoteSession {
   cwd?: string
   cols: number
   rows: number
+  remote_permission?: string
+  task_state?: 'idle' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'disconnected' | 'closed'
+  current_command?: string
+  command_started_at?: number
+  command_ended_at?: number
+  command_duration_ms?: number
+  command_exit_code?: number
+  last_output_at?: number
 }
 
 export interface SessionBridge {

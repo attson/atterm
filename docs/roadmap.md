@@ -15,15 +15,15 @@
 
 ### 2. 移动端任务首页
 
-- [ ] 将移动端优先会话列表改为任务卡片
-- [ ] 按状态分组任务：`needs_attention`、`running`、`completed`、`failed`、`disconnected`
-- [ ] 在任务卡片展示 session 标题、host、cwd、当前或最近命令、任务状态、运行时长、最近输出时间和权限模式
-- [ ] 支持从任务卡片进入终端 attach
-- [ ] 高亮需要输入的任务
-- [ ] 高亮失败任务
-- [ ] 增加无活跃任务空状态
-- [ ] 增加 relay disconnected 空状态
-- [ ] 增加移动端视口测试
+- [x] 将移动端优先会话列表改为任务卡片
+- [x] 按状态分组任务：`needs_attention`、`running`、`completed`、`failed`、`disconnected`
+- [x] 在任务卡片展示 session 标题、host、cwd、当前或最近命令、任务状态、运行时长、最近输出时间和权限模式
+- [x] 支持从任务卡片进入终端 attach
+- [x] 高亮需要输入的任务
+- [x] 高亮失败任务
+- [x] 增加无活跃任务空状态
+- [x] 增加 relay disconnected 空状态
+- [x] 增加移动端视口测试
 
 ### 3. 通知深链
 

@@ -124,8 +124,10 @@ function formatWho(info: SessionInfo | null): string {
 
         <button
           v-if="tab.layout !== 'single'"
+          type="button"
           class="close-pane"
           :title="t('terminal.closePaneTitle')"
+          @mousedown.stop
           @click.stop="emit('close-pane', idx)"
         >×</button>
       </div>

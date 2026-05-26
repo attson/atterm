@@ -4,6 +4,7 @@ import { NCard, NForm, NFormItem, NInputNumber, NButton, NSpace, useMessage } fr
 import { ApiError } from '@shared/api/client'
 import { getAdminConfig, setAdminConfig } from '@shared/api/admin'
 import type { AdminConfig } from '@shared/api/types'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const cfg = ref<AdminConfig | null>(null)
 const rateInput = ref<number>(0)
@@ -12,11 +13,12 @@ const loading = ref(true)
 const saving = ref(false)
 const errorMsg = ref('')
 const message = useMessage()
+const { t } = useI18n()
 
 function effectiveLabel(stored: number, fallback: number): string {
-  if (stored < 0) return 'effective: disabled'
-  if (stored === 0) return `effective: ${fallback}`
-  return `effective: ${stored}`
+  if (stored < 0) return t('admin.config.effectiveDisabled')
+  if (stored === 0) return t('admin.config.effective', { value: fallback })
+  return t('admin.config.effective', { value: stored })
 }
 
 const rateEffective = computed(() =>
@@ -35,7 +37,7 @@ async function load() {
     rateInput.value = c.rate_limit_per_minute
     connInput.value = c.max_connections_per_key
   } catch (e) {
-    if (e instanceof ApiError) errorMsg.value = 'Failed to load config.'
+    if (e instanceof ApiError) errorMsg.value = t('admin.config.loadFailed')
   } finally {
     loading.value = false
   }
@@ -53,9 +55,9 @@ async function onSave() {
     cfg.value = updated
     rateInput.value = updated.rate_limit_per_minute
     connInput.value = updated.max_connections_per_key
-    message.success('Saved.')
+    message.success(t('setup.saved'))
   } catch (e) {
-    if (e instanceof ApiError) errorMsg.value = 'Save failed.'
+    if (e instanceof ApiError) errorMsg.value = t('admin.config.saveFailed')
   } finally {
     saving.value = false
   }
@@ -68,13 +70,12 @@ onMounted(load)
 </script>
 
 <template>
-  <n-card title="Runtime limits" :bordered="false">
+  <n-card :title="t('admin.config.runtimeLimits')" :bordered="false">
     <p class="hint">
-      <strong>0</strong> means "use the built-in default"; <strong>negative</strong> disables
-      the limit entirely. Changes apply immediately and persist to the admin config file.
+      {{ t('admin.config.hint') }}
     </p>
     <n-form v-if="cfg" label-placement="top" require-mark-placement="right-hanging">
-      <n-form-item label="Rate limit (requests/min per IP+token)" :show-feedback="false">
+      <n-form-item :label="t('admin.config.rateLimit')" :show-feedback="false">
         <n-space :wrap="false" align="center">
           <n-input-number
             v-model:value="rateInput"
@@ -84,7 +85,7 @@ onMounted(load)
           <span class="muted">{{ rateEffective }}</span>
         </n-space>
       </n-form-item>
-      <n-form-item label="Max WS connections (per IP+token)" :show-feedback="false">
+      <n-form-item :label="t('admin.config.maxConnections')" :show-feedback="false">
         <n-space :wrap="false" align="center">
           <n-input-number
             v-model:value="connInput"
@@ -102,9 +103,9 @@ onMounted(load)
           data-testid="cfg-save"
           @click="onSave"
         >
-          Save
+          {{ t('common.save') }}
         </n-button>
-        <span class="muted version">Version: <code>{{ cfg.version }}</code></span>
+        <span class="muted version">{{ t('common.version') }}: <code>{{ cfg.version }}</code></span>
       </n-space>
     </n-form>
     <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ShortcutBar from '@/main/components/ShortcutBar.vue'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
+installI18nTestHooks()
 describe('ShortcutBar.vue', () => {
   it('emits input("\\x1b") on Esc click', async () => {
     const wrapper = mount(ShortcutBar)

@@ -2,6 +2,7 @@
 import MobileTerminal from './MobileTerminal.vue'
 import type { Endpoint } from '../lib/connection'
 import type { RemoteSession } from '../platform/types'
+import { useI18n } from '../i18n/useI18n'
 
 export interface OpenTerminal { sessionId: string; info: RemoteSession }
 
@@ -18,6 +19,7 @@ const emit = defineEmits<{
   (e: 'meta', sessionId: string, meta: { cwd?: string; title?: string }): void
   (e: 'tokenInvalid'): void
 }>()
+const { t } = useI18n()
 
 function activeInfo(): RemoteSession | undefined {
   return props.openTerminals.find((t) => t.sessionId === props.activeSessionId)?.info
@@ -32,7 +34,7 @@ function shortTitle(info: RemoteSession): string {
     const base = stripped.split('/').pop()
     if (base) return base
   }
-  const first = (info.title || '').split(/\s+/)[0] || 'shell'
+  const first = (info.title || '').split(/\s+/)[0] || t('terminal.shellFallback')
   return first.split('/').pop() || first
 }
 
@@ -54,7 +56,7 @@ function formatWho(info?: RemoteSession): string {
 <template>
   <div class="host">
     <header class="bar">
-      <button data-testid="term-back" class="back" @click="emit('back')" aria-label="Back">
+      <button data-testid="term-back" class="back" @click="emit('back')" :aria-label="t('mobile.back')">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
       </button>
       <div class="head-text">

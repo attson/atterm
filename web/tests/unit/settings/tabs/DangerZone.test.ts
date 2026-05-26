@@ -8,6 +8,7 @@ vi.mock('@shared/api/me', () => ({
 import DangerZone from '@/settings/tabs/DangerZone.vue'
 import { deleteMe } from '@shared/api/me'
 import { ApiError } from '@shared/api/client'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 async function clickConfirm() {
   // Naive UI's <n-popconfirm> teleports the popup to body; clicking
@@ -34,6 +35,7 @@ async function fillAndSubmit(wrapper: ReturnType<typeof mount>, email: string, p
   await clickConfirm()
 }
 
+installI18nTestHooks()
 describe('DangerZone.vue', () => {
   let originalLocation: Location
 

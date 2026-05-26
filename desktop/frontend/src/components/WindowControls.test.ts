@@ -4,6 +4,7 @@ import { __setPlatformForTests } from '../platform'
 import { createFakePlatform } from '../platform/__tests__/_fakePlatform'
 import { setMaximized } from '../composables/useWindowMaximized'
 import WindowControls from './WindowControls.vue'
+import { en } from '../i18n/messages/en'
 
 let platform: ReturnType<typeof createFakePlatform>
 
@@ -37,7 +38,7 @@ describe('WindowControls', () => {
     await w.get('[data-testid="window-max"]').trigger('click')
     expect(platform.system.windowToggleMaximize).toHaveBeenCalledTimes(1)
     await flushPromises()
-    expect(w.get('[data-testid="window-max"]').attributes('aria-label')).toBe('Restore')
+    expect(w.get('[data-testid="window-max"]').attributes('aria-label')).toBe(en.common.restore)
   })
 
   it('close button calls platform.system.quit', async () => {
@@ -50,7 +51,7 @@ describe('WindowControls', () => {
     setMaximized(true)
     const w = mount(WindowControls)
     await flushPromises()
-    expect(w.get('[data-testid="window-max"]').attributes('aria-label')).toBe('Restore')
+    expect(w.get('[data-testid="window-max"]').attributes('aria-label')).toBe(en.common.restore)
   })
 
   it('if a runtime call throws, the button does not propagate the error', async () => {

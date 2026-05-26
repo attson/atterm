@@ -1,11 +1,12 @@
 import type { ITheme } from "xterm";
+import type { MessageKey } from "../i18n";
 
 export type TerminalThemeID = "classic" | "nord" | "solarized-dark" | "daylight";
 
 export interface TerminalThemeDefinition {
   id: TerminalThemeID;
-  label: string;
-  description: string;
+  labelKey: MessageKey;
+  descriptionKey: MessageKey;
   xtermTheme: ITheme;
   appVars: Record<string, string>;
 }
@@ -15,8 +16,8 @@ export const DEFAULT_TERMINAL_THEME_ID: TerminalThemeID = "classic";
 export const TERMINAL_THEMES: TerminalThemeDefinition[] = [
   {
     id: "classic",
-    label: "AT Term Classic",
-    description: "Current black terminal look.",
+    labelKey: "settings.general.themes.classicLabel",
+    descriptionKey: "settings.general.themes.classicDescription",
     xtermTheme: {
       background: "#000000",
       foreground: "#c9d1d9",
@@ -56,8 +57,8 @@ export const TERMINAL_THEMES: TerminalThemeDefinition[] = [
   },
   {
     id: "nord",
-    label: "Nord / Arctic",
-    description: "Cool low-contrast dark palette.",
+    labelKey: "settings.general.themes.nordLabel",
+    descriptionKey: "settings.general.themes.nordDescription",
     xtermTheme: {
       background: "#2e3440",
       foreground: "#d8dee9",
@@ -97,8 +98,8 @@ export const TERMINAL_THEMES: TerminalThemeDefinition[] = [
   },
   {
     id: "solarized-dark",
-    label: "Solarized Dark",
-    description: "Classic warm low-contrast dark palette.",
+    labelKey: "settings.general.themes.solarizedDarkLabel",
+    descriptionKey: "settings.general.themes.solarizedDarkDescription",
     xtermTheme: {
       background: "#002b36",
       foreground: "#839496",
@@ -138,8 +139,8 @@ export const TERMINAL_THEMES: TerminalThemeDefinition[] = [
   },
   {
     id: "daylight",
-    label: "Daylight",
-    description: "Light palette for bright environments.",
+    labelKey: "settings.general.themes.daylightLabel",
+    descriptionKey: "settings.general.themes.daylightDescription",
     xtermTheme: {
       background: "#faf4e8",
       foreground: "#403832",

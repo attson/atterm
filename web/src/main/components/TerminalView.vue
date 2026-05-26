@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Terminal, type ITheme } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
 import { NAlert } from 'naive-ui'
 import { SessionConnection, type SessionStatus } from '@shared/ws/client-conn'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const props = defineProps<{
   sessionId: string
@@ -19,6 +20,7 @@ const status = ref<SessionStatus>('connecting')
 const replay = ref<{ bytes: number; total_bytes: number } | null>(null)
 const isDriver = ref(true)
 const termContainer = ref<HTMLDivElement | null>(null)
+const { t } = useI18n()
 
 let term: Terminal | null = null
 let fit: FitAddon | null = null
@@ -26,6 +28,7 @@ let conn: SessionConnection | null = null
 let resizeObserver: ResizeObserver | null = null
 
 const theme: ITheme = { background: '#000000' }
+const statusLabel = computed(() => t(`terminal.statuses.${status.value}`))
 
 function pct(): number {
   if (!replay.value || replay.value.total_bytes === 0) return 0
@@ -76,7 +79,7 @@ function buildConn() {
       // Future: surface PTY title / cwd in the page bar. PR-E keeps it simple.
     },
     onClose: (info) => {
-      term?.write(`\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`)
+      term?.write(`\r\n\x1b[33m[AT Term] ${t('terminal.ended', { code: info.exit_code })}\x1b[0m\r\n`)
     },
     onReplayProgress: (p) => {
       const phase = String((p as { phase?: unknown }).phase)
@@ -156,8 +159,8 @@ defineExpose({
       class="lost-banner"
       data-testid="lost-banner"
     >
-      Cannot reach relay.
-      <a href="/setup.html">Tap to change configuration.</a>
+      {{ t('terminal.cannotReachRelay') }}
+      <a href="/setup.html">{{ t('terminal.tapToChangeConfig') }}</a>
     </n-alert>
     <div class="term-wrap">
       <div ref="termContainer" class="term"></div>
@@ -166,19 +169,19 @@ defineExpose({
         class="replay-overlay"
         data-testid="replay-progress"
       >
-        <div class="replay-text">loading history… {{ pct() }}%</div>
+        <div class="replay-text">{{ t('terminal.loadingHistory', { percent: pct() }) }}</div>
         <div class="replay-track" aria-hidden="true">
           <div class="replay-fill" :style="{ width: pct() + '%' }"></div>
         </div>
       </div>
       <div v-if="!isDriver" class="viewer-overlay" data-testid="viewer-overlay">
         <div class="viewer-card">
-          <div class="viewer-title">remote has taken control</div>
-          <button class="take-control" data-testid="take-control" @click="takeControl">Take control</button>
+          <div class="viewer-title">{{ t('terminal.remoteControl') }}</div>
+          <button class="take-control" data-testid="take-control" @click="takeControl">{{ t('terminal.takeControl') }}</button>
         </div>
       </div>
     </div>
-    <p class="status-line" data-testid="status-line">{{ status }}</p>
+    <p class="status-line" data-testid="status-line">{{ statusLabel }}</p>
   </section>
 </template>
 

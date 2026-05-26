@@ -1,4 +1,5 @@
 import type { SessionInfo } from "./connection";
+import { t } from "../i18n";
 
 export type SessionGroup = {
   key: string;       // host_id, or "__unknown__"
@@ -8,7 +9,6 @@ export type SessionGroup = {
 };
 
 const UNKNOWN_KEY = "__unknown__";
-const UNKNOWN_HOSTNAME = "unknown host";
 
 export function groupSessionsByHost(sessions: SessionInfo[]): SessionGroup[] {
   const buckets = new Map<string, SessionInfo[]>();
@@ -36,7 +36,7 @@ export function groupSessionsByHost(sessions: SessionInfo[]): SessionGroup[] {
     }
     groups.push({
       key,
-      hostname: displayHost || UNKNOWN_HOSTNAME,
+      hostname: displayHost || t("sessions.unknownHost"),
       hostId: key === UNKNOWN_KEY ? "" : key,
       sessions: bucket,
     });

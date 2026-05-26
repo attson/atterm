@@ -4,6 +4,7 @@ import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe } from ".
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
+import { useI18n } from "../i18n/useI18n";
 
 const emit = defineEmits<{
   (e: "relay-config-changed"): void;
@@ -19,6 +20,7 @@ const loading = ref(true);
 const saving = ref(false);
 const togglingPause = ref(false);
 const error = ref("");
+const { t } = useI18n();
 
 // In-memory only (SEC-1): never persisted or logged.
 const connectedUserID = ref("");
@@ -29,11 +31,11 @@ const persistedToken = ref("");
 const persistedAllowInsecure = ref(false);
 const persistedPermission = ref("full");
 
-const permissionOptions = [
-  { value: "view", label: "view only", description: "remote clients can watch output" },
-  { value: "control", label: "control", description: "allow input and resize" },
-  { value: "full", label: "full", description: "allow input, resize, and image paste" },
-];
+const permissionOptions = computed(() => [
+  { value: "view", label: t("settings.relay.viewOnly"), description: t("settings.relay.viewOnlyDesc") },
+  { value: "control", label: t("settings.relay.control"), description: t("settings.relay.controlDesc") },
+  { value: "full", label: t("settings.relay.full"), description: t("settings.relay.fullDesc") },
+]);
 
 const dirty = computed(
   () =>
@@ -48,25 +50,25 @@ watch(dirty, (value) => emit("dirty", value));
 // Token format warning: tokens must start with atk_
 const tokenWarning = computed(() =>
   token.value && !token.value.startsWith("atk_")
-    ? "This doesn't look like an API token. Old shared tokens were removed in v2."
+    ? t("settings.relay.tokenWarning")
     : "",
 );
 
 // Status pill matrix per spec §8.2
 const statusPill = computed(() => {
   if (connectedEmail.value) {
-    return { text: `connected as ${connectedEmail.value}`, cls: "on" };
+    return { text: t("settings.relay.connectedAs", { identity: connectedEmail.value }), cls: "on" };
   }
   if (connectedUserID.value) {
-    return { text: `connected as ${connectedUserID.value.slice(0, 8)}`, cls: "on" };
+    return { text: t("settings.relay.connectedAs", { identity: connectedUserID.value.slice(0, 8) }), cls: "on" };
   }
   if (!url.value) {
-    return { text: "not configured", cls: "off" };
+    return { text: t("settings.relay.notConfigured"), cls: "off" };
   }
   if (paused.value) {
-    return { text: "paused (config kept)", cls: "off" };
+    return { text: t("settings.relay.paused"), cls: "off" };
   }
-  return { text: "uplink running", cls: "on" };
+  return { text: t("settings.relay.uplinkRunning"), cls: "on" };
 });
 
 onMounted(async () => {
@@ -145,7 +147,7 @@ function openInBrowser() {
 }
 
 const canSave = computed(() => !saving.value && !!url.value.trim());
-const saveLabel = computed(() => (saving.value ? "saving…" : "save & connect"));
+const saveLabel = computed(() => (saving.value ? t("settings.relay.saving") : t("settings.relay.saveConnect")));
 
 defineExpose({
   save,
@@ -158,10 +160,10 @@ defineExpose({
 
 <template>
   <div class="tab-pane">
-    <div v-if="loading" class="dim">loading…</div>
+    <div v-if="loading" class="dim">{{ t("common.loading") }}</div>
     <template v-else>
       <div class="uplink-toggle-row">
-        <span class="field-label">Uplink</span>
+        <span class="field-label">{{ t("settings.relay.uplink") }}</span>
         <label class="toggle-switch" :class="{ disabled: togglingPause }">
           <input
             v-model="paused"
@@ -174,7 +176,7 @@ defineExpose({
           <span class="toggle-track">
             <span class="toggle-thumb" />
           </span>
-          <span class="toggle-label">{{ paused ? "OFF" : "ON" }}</span>
+          <span class="toggle-label">{{ paused ? t("settings.relay.off") : t("settings.relay.on") }}</span>
         </label>
       </div>
 
@@ -184,12 +186,10 @@ defineExpose({
       </div>
 
       <p class="hint">
-        configure a remote atterm-relay so this machine's sessions can be
-        attached from other devices. when no one is attached, no bytes leave
-        this machine.
+        {{ t("settings.relay.hint") }}
       </p>
 
-      <label class="field-label">relay url</label>
+      <label class="field-label">{{ t("settings.relay.relayUrl") }}</label>
       <input
         v-model="url"
         type="text"
@@ -198,7 +198,7 @@ defineExpose({
         @keyup.enter="save"
       />
 
-      <label class="field-label">API token</label>
+      <label class="field-label">{{ t("settings.relay.apiToken") }}</label>
       <input
         v-model="token"
         type="password"
@@ -213,19 +213,18 @@ defineExpose({
           class="btn-link"
           type="button"
           @click="openInBrowser"
-        >Open in browser</button>
+        >{{ t("settings.relay.openInBrowser") }}</button>
       </div>
 
-      <label class="field-label">remote session permissions</label>
+      <label class="field-label">{{ t("settings.relay.remotePermissions") }}</label>
       <SelectDropdown
         v-model="remotePermission"
         :options="permissionOptions"
         :disabled="saving"
-        aria-label="remote session permissions"
+        :aria-label="t('settings.relay.remotePermissions')"
       />
       <p class="hint">
-        This is announced as the owner policy for sessions from this desktop.
-        Relay-side permissions can still reduce access to view only.
+        {{ t("settings.relay.permissionsHint") }}
       </p>
 
       <label class="checkbox">
@@ -234,11 +233,10 @@ defineExpose({
           type="checkbox"
           :disabled="saving"
         />
-        enable insecure mode (allow ws:// cleartext relay)
+        {{ t("settings.relay.insecureMode") }}
       </label>
       <p v-if="allowInsecureRelay" class="warning">
-        ws:// sends the relay token, terminal output, and your input in
-        clear text. Use this only on trusted private networks.
+        {{ t("settings.relay.insecureWarning") }}
       </p>
 
       <p v-if="error" class="error">{{ error }}</p>

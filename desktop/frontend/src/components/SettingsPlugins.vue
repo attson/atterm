@@ -5,8 +5,10 @@ import { PLUGINS } from "../plugins/registry";
 import type { PluginID } from "../plugins/types";
 import QuickInputSettings from "../plugins/quickInput/QuickInputSettings.vue";
 import TranslateSettings from "../plugins/translate/TranslateSettings.vue";
+import { useI18n } from "../i18n/useI18n";
 
 const store = usePluginConfigStore();
+const { t } = useI18n();
 
 onMounted(async () => {
   if (!store.cfg) await store.load();
@@ -38,10 +40,9 @@ async function toggleLineNumbers(v: boolean) {
 <template>
   <section class="settings-plugins">
     <p class="hint">
-      Plugins are loaded on demand. Disabled plugins do not affect startup
-      time or memory.
+      {{ t("settings.plugins.hint") }}
     </p>
-    <div v-if="!store.cfg" class="loading">Loading…</div>
+    <div v-if="!store.cfg" class="loading">{{ t("common.loading") }}</div>
     <ul v-else class="plugin-list">
       <li v-for="p in PLUGINS" :key="p.id" class="plugin-row">
         <label class="row-head">
@@ -50,26 +51,26 @@ async function toggleLineNumbers(v: boolean) {
             :checked="store.isPluginEnabled(p.id)"
             @change="toggle(p.id, ($event.target as HTMLInputElement).checked)"
           />
-          <span class="title">{{ p.title }}</span>
+          <span class="title">{{ t(p.titleKey) }}</span>
         </label>
-        <p class="desc">{{ p.description }}</p>
+        <p class="desc">{{ t(p.descriptionKey) }}</p>
         <QuickInputSettings v-if="p.id === 'quick-input' && store.isPluginEnabled('quick-input')" />
         <div v-if="p.id === 'file-explorer' && store.isPluginEnabled('file-explorer')" class="fe-settings">
           <label>
             <input type="checkbox" :checked="store.cfg?.fileExplorer.showHidden ?? false"
                    @change="toggleHidden(($event.target as HTMLInputElement).checked)" />
-            Show hidden files
+            {{ t("settings.plugins.showHidden") }}
           </label>
           <label>
             <input type="checkbox" :checked="store.cfg?.fileExplorer.showLineNumbers ?? false"
                    @change="toggleLineNumbers(($event.target as HTMLInputElement).checked)" />
-            Show line numbers in editor
+            {{ t("settings.plugins.showLineNumbers") }}
           </label>
-          <p class="muted">Panel width and inner ratio are adjusted by dragging in the panel.</p>
+          <p class="muted">{{ t("settings.plugins.panelDragHint") }}</p>
         </div>
         <TranslateSettings v-if="p.id === 'translate' && store.isPluginEnabled('translate')" />
       </li>
-      <li v-if="PLUGINS.length === 0" class="empty">No plugins registered.</li>
+      <li v-if="PLUGINS.length === 0" class="empty">{{ t("settings.plugins.noneRegistered") }}</li>
     </ul>
   </section>
 </template>

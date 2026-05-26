@@ -15,6 +15,8 @@ import {
 import { ApiError } from '@shared/api/client'
 import { listTokens, createToken, revokeToken } from '@shared/api/me'
 import type { ApiTokenRow } from '@shared/api/types'
+import { formatShortDate } from '@shared/i18n'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const tokens = ref<ApiTokenRow[]>([])
 const newName = ref('')
@@ -22,17 +24,10 @@ const creating = ref(false)
 const plaintext = ref('')
 const loading = ref(true)
 const message = useMessage()
+const { t } = useI18n()
 
-function shortDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString()
-  } catch {
-    return iso
-  }
-}
-
-function isActive(t: ApiTokenRow): boolean {
-  return !t.revoked_at
+function isActive(token: ApiTokenRow): boolean {
+  return !token.revoked_at
 }
 
 async function reload() {
@@ -40,7 +35,7 @@ async function reload() {
   try {
     tokens.value = await listTokens()
   } catch (e) {
-    if (e instanceof ApiError) message.error('Failed to load tokens.')
+    if (e instanceof ApiError) message.error(t('settings.apiTokens.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -58,9 +53,9 @@ async function onCreate(e: Event) {
     await reload()
   } catch (e) {
     if (e instanceof ApiError) {
-      if (e.code === 'name_required') message.error('Token name is required.')
-      else if (e.code === 'invalid_request') message.error('Please enter a valid name.')
-      else message.error('Failed to create token.')
+      if (e.code === 'name_required') message.error(t('settings.apiTokens.nameRequired'))
+      else if (e.code === 'invalid_request') message.error(t('settings.apiTokens.invalidName'))
+      else message.error(t('settings.apiTokens.createFailed'))
     }
   } finally {
     creating.value = false
@@ -72,16 +67,16 @@ async function onRevoke(id: string) {
     await revokeToken(id)
     await reload()
   } catch (e) {
-    if (e instanceof ApiError) message.error('Failed to revoke token.')
+    if (e instanceof ApiError) message.error(t('settings.apiTokens.revokeFailed'))
   }
 }
 
 async function copyPlaintext() {
   try {
     await navigator.clipboard.writeText(plaintext.value)
-    message.success('Token copied to clipboard.')
+    message.success(t('settings.apiTokens.copied'))
   } catch {
-    message.warning('Clipboard not available — select and copy manually.')
+    message.warning(t('settings.apiTokens.copyManually'))
   }
 }
 
@@ -91,43 +86,43 @@ onMounted(reload)
 <template>
   <n-card :bordered="false">
     <n-alert v-if="plaintext" type="success" :show-icon="false" class="plaintext-alert">
-      <div class="plaintext-msg">Copy this token now — it will not be shown again.</div>
+      <div class="plaintext-msg">{{ t('settings.apiTokens.copyNow') }}</div>
       <code class="plaintext-display">{{ plaintext }}</code>
-      <n-button size="small" tertiary class="plaintext-copy" @click="copyPlaintext">Copy</n-button>
+      <n-button size="small" tertiary class="plaintext-copy" @click="copyPlaintext">{{ t('common.copy') }}</n-button>
     </n-alert>
 
     <n-list v-if="tokens.filter(isActive).length > 0" bordered>
-      <n-list-item v-for="t in tokens.filter(isActive)" :key="t.id">
+      <n-list-item v-for="token in tokens.filter(isActive)" :key="token.id">
         <n-thing>
-          <template #header>{{ t.name }}</template>
+          <template #header>{{ token.name }}</template>
           <template #description>
-            <code>{{ t.prefix }}…</code> · created {{ shortDate(t.created_at) }}
+            <code>{{ token.prefix }}…</code> · {{ t('common.created') }} {{ formatShortDate(token.created_at) }}
           </template>
         </n-thing>
         <template #suffix>
-          <n-popconfirm @positive-click="onRevoke(t.id)">
+          <n-popconfirm @positive-click="onRevoke(token.id)">
             <template #trigger>
-              <n-button size="small" type="error" :data-testid="`revoke-${t.id}`">
-                Revoke
+              <n-button size="small" type="error" :data-testid="`revoke-${token.id}`">
+                {{ t('common.revoke') }}
               </n-button>
             </template>
-            Revoke this token? This cannot be undone.
+            {{ t('settings.apiTokens.revokeConfirm') }}
           </n-popconfirm>
         </template>
       </n-list-item>
     </n-list>
-    <p v-else-if="!loading" class="empty">No tokens yet.</p>
+    <p v-else-if="!loading" class="empty">{{ t('settings.apiTokens.empty') }}</p>
 
     <form class="create-form" @submit="onCreate" autocomplete="off">
       <n-space :wrap="false">
         <n-input
           v-model:value="newName"
           type="text"
-          placeholder="e.g. my-laptop"
+          :placeholder="t('settings.apiTokens.namePlaceholder')"
           :input-props="{ required: true, autocomplete: 'off' }"
         />
         <n-button type="primary" attr-type="submit" :loading="creating" :disabled="creating">
-          Create
+          {{ t('common.create') }}
         </n-button>
       </n-space>
     </form>

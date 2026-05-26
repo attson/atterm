@@ -10,6 +10,7 @@ import {
   startDownload,
   type UpdateState,
 } from "../lib/api";
+import { useI18n } from "../i18n/useI18n";
 
 defineEmits<{
   (e: "request-install", version: string): void;
@@ -23,6 +24,7 @@ const savingProxy = ref(false);
 const loading = ref(true);
 const error = ref("");
 let pollHandle: number | null = null;
+const { t } = useI18n();
 
 onMounted(async () => {
   try {
@@ -98,44 +100,44 @@ const statusLine = computed(() => {
   const st = state.value;
   if (!st) return "";
   if (st.current === "dev" || st.current === "") {
-    return "development build — auto-update disabled";
+    return t("settings.updates.devDisabled");
   }
   if (st.error) return st.error;
-  if (st.checking || checkingNow.value) return "checking…";
-  if (st.ready) return `${st.latest} downloaded — ready to install`;
-  if (st.downloading) return `downloading ${st.latest} (${st.download_pct}%)`;
-  if (st.available) return `${st.latest} available`;
-  if (st.last_check_at > 0) return `up to date · last checked ${formatAgo(st.last_check_at)}`;
-  return "not checked yet";
+  if (st.checking || checkingNow.value) return t("settings.updates.checking");
+  if (st.ready) return t("settings.updates.readyToInstall", { version: st.latest });
+  if (st.downloading) return t("settings.updates.downloadingStatus", { version: st.latest, pct: st.download_pct });
+  if (st.available) return t("settings.updates.available", { version: st.latest });
+  if (st.last_check_at > 0) return t("settings.updates.upToDate", { ago: formatAgo(st.last_check_at) });
+  return t("settings.updates.notChecked");
 });
 
 function formatAgo(unixSec: number) {
   const diffSec = Math.floor(Date.now() / 1000) - unixSec;
-  if (diffSec < 60) return "just now";
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} min ago`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} h ago`;
-  return `${Math.floor(diffSec / 86400)} d ago`;
+  if (diffSec < 60) return t("settings.updates.justNow");
+  if (diffSec < 3600) return t("settings.updates.minutesAgo", { count: Math.floor(diffSec / 60) });
+  if (diffSec < 86400) return t("settings.updates.hoursAgo", { count: Math.floor(diffSec / 3600) });
+  return t("settings.updates.daysAgo", { count: Math.floor(diffSec / 86400) });
 }
 </script>
 
 <template>
   <div class="tab-pane">
-    <div v-if="loading" class="dim">loading…</div>
+    <div v-if="loading" class="dim">{{ t("common.loading") }}</div>
     <template v-else-if="state">
       <div class="grid">
         <div class="kv">
-          <span class="k">current version</span>
-          <span class="v">{{ state.current || "(unknown)" }}</span>
+          <span class="k">{{ t("settings.updates.currentVersion") }}</span>
+          <span class="v">{{ state.current || t("common.unknown") }}</span>
         </div>
         <div class="kv">
-          <span class="k">status</span>
+          <span class="k">{{ t("settings.updates.status") }}</span>
           <span class="v">{{ statusLine }}</span>
         </div>
         <div
           v-if="state.download_path && (state.ready || state.downloading)"
           class="kv"
         >
-          <span class="k">download path</span>
+          <span class="k">{{ t("settings.updates.downloadPath") }}</span>
           <span class="v path" :title="state.download_path">
             {{ state.download_path }}
           </span>
@@ -148,11 +150,11 @@ function formatAgo(unixSec: number) {
           :checked="autoCheck"
           @change="onAutoCheckToggle"
         />
-        automatically check for updates
+        {{ t("settings.updates.autoCheck") }}
       </label>
 
       <div v-if="!isDev" class="proxy-box">
-        <label class="field-label" for="update-gh-proxy">GitHub download proxy</label>
+        <label class="field-label" for="update-gh-proxy">{{ t("settings.updates.ghProxy") }}</label>
         <div class="proxy-row">
           <input
             id="update-gh-proxy"
@@ -162,16 +164,16 @@ function formatAgo(unixSec: number) {
             spellcheck="false"
           />
           <button :disabled="savingProxy" @click="onSaveProxy">
-            {{ savingProxy ? "saving…" : "save" }}
+            {{ savingProxy ? t("settings.relay.saving") : t("common.save") }}
           </button>
         </div>
         <p class="hint">
-          Optional. Only GitHub Release file downloads use this proxy; update checks and signature verification stay unchanged.
+          {{ t("settings.updates.proxyHint") }}
         </p>
       </div>
 
       <details v-if="!isDev && state.notes" class="notes">
-        <summary>release notes</summary>
+        <summary>{{ t("settings.updates.releaseNotes") }}</summary>
         <pre>{{ state.notes }}</pre>
       </details>
 
@@ -179,22 +181,22 @@ function formatAgo(unixSec: number) {
         <button
           @click="onCheckNow"
           :disabled="checkingNow || state.checking"
-        >check now</button>
+        >{{ t("settings.updates.checkNow") }}</button>
         <button
           v-if="state.available && !state.ready && !state.downloading"
           class="primary"
           @click="onDownload"
-        >download {{ state.latest }}</button>
+        >{{ t("settings.updates.downloadVersion", { version: state.latest }) }}</button>
         <button
           v-if="state.downloading"
           class="primary"
           disabled
-        >downloading… {{ state.download_pct }}%</button>
+        >{{ t("settings.updates.downloadingButton", { pct: state.download_pct }) }}</button>
         <button
           v-if="state.ready"
           class="primary danger"
           @click="$emit('request-install', state.latest)"
-        >force install &amp; restart</button>
+        >{{ t("settings.updates.forceInstallRestart") }}</button>
       </div>
 
       <p v-if="error" class="error">{{ error }}</p>

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -80,6 +81,42 @@ func TestSetUplinkPaused_TogglesWithoutWipingConfig(t *testing.T) {
 	}
 	if rc.Paused {
 		t.Fatal("after unpause: Paused = true; want false")
+	}
+}
+
+func TestAppLocalePreference(t *testing.T) {
+	a := newRelayTestApp(t)
+	initial := appConfig{
+		RelayURL:         "wss://relay.example",
+		RelayToken:       "atk_locale_test",
+		RemotePermission: "control",
+		RelayPaused:      true,
+		TerminalTheme:    terminalThemeNord,
+	}
+	if err := a.cfgStore.Set(initial); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	for _, pref := range []string{localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified} {
+		if err := a.SetLocalePreference(pref); err != nil {
+			t.Fatalf("SetLocalePreference(%q): %v", pref, err)
+		}
+		if got := a.GetLocalePreference(); got != pref {
+			t.Fatalf("GetLocalePreference() = %q, want %q", got, pref)
+		}
+		cfg := a.cfgStore.Get()
+		if cfg.RelayURL != initial.RelayURL || cfg.RelayToken != initial.RelayToken || cfg.RemotePermission != initial.RemotePermission || cfg.RelayPaused != initial.RelayPaused || cfg.TerminalTheme != initial.TerminalTheme {
+			t.Fatalf("SetLocalePreference(%q) changed unrelated config: %+v", pref, cfg)
+		}
+	}
+
+	beforeInvalid := a.cfgStore.Get()
+	if err := a.SetLocalePreference("fr"); err == nil {
+		t.Fatal("SetLocalePreference(\"fr\") error = nil, want error")
+	}
+	afterInvalid := a.cfgStore.Get()
+	if !reflect.DeepEqual(afterInvalid, beforeInvalid) {
+		t.Fatalf("invalid locale preference changed config: got %+v, want %+v", afterInvalid, beforeInvalid)
 	}
 }
 

@@ -9,6 +9,8 @@ import {
 } from 'naive-ui'
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import Topbar from '@shared/components/Topbar.vue'
+import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 import Invitations from './tabs/Invitations.vue'
 import Users from './tabs/Users.vue'
 import Config from './tabs/Config.vue'
@@ -22,6 +24,7 @@ function nameFromHash(): TabName {
 }
 
 const activeTab = ref<TabName>(nameFromHash())
+const { t } = useI18n()
 
 function onHashChange() {
   activeTab.value = nameFromHash()
@@ -41,7 +44,12 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <Topbar active="admin" />
       <main class="admin-page">
@@ -51,13 +59,13 @@ const overrides = getNaiveOverrides()
           animated
           @update:value="onTabChange"
         >
-          <n-tab-pane name="invitations" tab="Invitations">
+          <n-tab-pane name="invitations" :tab="t('admin.invitations')">
             <Invitations />
           </n-tab-pane>
-          <n-tab-pane name="users" tab="Users">
+          <n-tab-pane name="users" :tab="t('admin.users')">
             <Users />
           </n-tab-pane>
-          <n-tab-pane name="config" tab="Config">
+          <n-tab-pane name="config" :tab="t('admin.configTab')">
             <Config />
           </n-tab-pane>
         </n-tabs>

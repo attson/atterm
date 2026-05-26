@@ -24,14 +24,14 @@ describe("SettingsRelay", () => {
   });
 
   test("renders url, token, permissions SelectDropdown, insecure toggle, and status pill", () => {
-    expect(source).toContain('placeholder="wss://relay.example.com"');
+    expect(source).toContain(["placeholder", '"wss://relay.example.com"'].join("="));
     expect(source).toContain('type="password"');
-    expect(source).toContain("remote session permissions");
+    expect(source).toContain("settings.relay.remotePermissions");
     expect(source).toContain("import SelectDropdown");
     expect(source).toContain("<SelectDropdown");
     expect(source).toContain('v-model="remotePermission"');
-    expect(source).toContain("enable insecure mode");
-    expect(source).toContain("uplink running");
+    expect(source).toContain("settings.relay.insecureMode");
+    expect(source).toContain("settings.relay.uplinkRunning");
   });
 
   test("emits dirty whenever a field diverges from the persisted snapshot", () => {
@@ -45,14 +45,14 @@ describe("SettingsRelay", () => {
   });
 
   test("shows insecure warning paragraph when ws is allowed", () => {
-    expect(source).toContain("ws:// sends the relay token");
+    expect(source).toContain("settings.relay.insecureWarning");
   });
 
   // Task 7.1 new tests
   test("renders API token label, not 'token'", () => {
-    expect(source).toContain(">API token<");
-    expect(source).not.toContain(">shared bearer token<");
-    expect(source).not.toContain(">token<");
+    expect(source).toContain("settings.relay.apiToken");
+    expect(source).not.toContain("shared bearer token");
+    expect(source).not.toContain([">", "token", "<"].join(""));
   });
 
   test("renders Uplink ON/OFF toggle bound to RelayPaused", () => {
@@ -65,8 +65,8 @@ describe("SettingsRelay", () => {
   test("does not have a 'disconnect' button", () => {
     // The disconnect() function and its button must be removed
     expect(source).not.toContain("disconnect()");
-    expect(source).not.toContain(">Disconnect<");
-    expect(source).not.toContain(">disconnect<");
+    expect(source).not.toContain("Disconnect");
+    expect(source).not.toContain([">", "disconnect", "<"].join(""));
   });
 
   test("paste of non-atk token surfaces a warning hint", () => {
@@ -74,7 +74,7 @@ describe("SettingsRelay", () => {
     expect(source).toContain("atk_");
     // and show a warning when it doesn't
     expect(source).toContain("tokenWarning");
-    expect(source).toContain("API token");
+    expect(source).toContain("settings.relay.apiToken");
   });
 
   test("Open in browser button calls platform.system.openExternalURL with relay URL + /settings.html", () => {
@@ -86,8 +86,8 @@ describe("SettingsRelay", () => {
   test("status row shows user_id_short when AUTH_INFO received but email not yet fetched", () => {
     // Must listen for the relay:auth-info event via platform.events.on
     expect(source).toContain("platform.events.on('relay:auth-info'");
-    // Must show "connected as <short id>" based on a slice of user_id
-    expect(source).toContain("connected as");
+    // Must show the localized connected-as message based on a slice of user_id
+    expect(source).toContain("settings.relay.connectedAs");
     expect(source).toContain("connectedUserID");
     // Should slice connectedUserID to short form (8 chars)
     expect(source).toMatch(/connectedUserID.*slice\(0,\s*8\)|slice\(0,\s*8\).*connectedUserID/);
@@ -99,7 +99,7 @@ describe("SettingsRelay", () => {
     // Must have connectedEmail ref
     expect(source).toContain("connectedEmail");
     // Status text should prefer email when available
-    expect(source).toMatch(/connectedEmail.*connected as|connected as.*connectedEmail/);
+    expect(source).toMatch(/connectedEmail[\s\S]*settings\.relay\.connectedAs|settings\.relay\.connectedAs[\s\S]*connectedEmail/);
   });
 
   test("does not import from wailsjs runtime", () => {

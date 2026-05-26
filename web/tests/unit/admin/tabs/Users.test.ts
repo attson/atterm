@@ -20,6 +20,8 @@ import {
   disableUser,
 } from '@shared/api/admin'
 import { ApiError } from '@shared/api/client'
+import { installI18nTestHooks } from '../../i18n-test-helper'
+import source from '@/admin/tabs/Users.vue?raw'
 
 function mountWithProvider() {
   const Wrapper = defineComponent({
@@ -38,6 +40,7 @@ async function clickConfirm() {
   await flushPromises()
 }
 
+installI18nTestHooks()
 describe('Users.vue', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
@@ -59,6 +62,11 @@ describe('Users.vue', () => {
     expect(text).toContain('gone@example')
     expect(text).toContain('admin')
     expect(text).toContain('disabled')
+  })
+
+  it('uses the shared locale-aware date formatter', () => {
+    expect(source).toContain('formatDateTime')
+    expect(source).not.toMatch(/toLocale(?:String|DateString)\(/)
   })
 
   it('promotes a user and reloads', async () => {

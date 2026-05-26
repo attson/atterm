@@ -2,10 +2,12 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { usePluginConfigStore, type QuickInputButton } from "../configStore";
 import { conflictsWith } from "./hotkeyConflict";
+import { useI18n } from "../../i18n/useI18n";
 
 const store = usePluginConfigStore();
 const draft = ref<QuickInputButton[]>([]);
 const error = ref<string>("");
+const { t } = useI18n();
 
 function loadDraft() {
   draft.value = JSON.parse(JSON.stringify(store.cfg?.quickInput.buttons ?? []));
@@ -31,7 +33,7 @@ function newID() {
 }
 
 function addButton() {
-  draft.value.push({ id: newID(), label: "new", send: "new", appendNewline: true });
+  draft.value.push({ id: newID(), label: t("plugins.quickInput.newButtonLabel"), send: "new", appendNewline: true });
 }
 
 function deleteAt(i: number) {
@@ -40,9 +42,9 @@ function deleteAt(i: number) {
 
 function validate(): string | null {
   for (const b of draft.value) {
-    if (!b.label.trim()) return "label cannot be empty";
+    if (!b.label.trim()) return t("plugins.quickInput.labelEmpty");
     if (b.hotkey && conflictsWith(draft.value, b.hotkey, b.id)) {
-      return `hotkey conflict on "${b.label}"`;
+      return t("plugins.quickInput.hotkeyConflict", { label: b.label });
     }
   }
   return null;
@@ -77,10 +79,10 @@ defineExpose({ dirty });
     <table>
       <thead>
         <tr>
-          <th>Label</th>
-          <th>Send</th>
-          <th>Newline</th>
-          <th>Hotkey</th>
+          <th>{{ t("plugins.quickInput.label") }}</th>
+          <th>{{ t("plugins.quickInput.send") }}</th>
+          <th>{{ t("plugins.quickInput.newline") }}</th>
+          <th>{{ t("plugins.quickInput.hotkey") }}</th>
           <th></th>
         </tr>
       </thead>
@@ -95,10 +97,10 @@ defineExpose({ dirty });
       </tbody>
     </table>
     <div class="row-actions">
-      <button class="add" @click="addButton">+ Add button</button>
+      <button class="add" @click="addButton">{{ t("plugins.quickInput.addButton") }}</button>
       <div class="spacer" />
-      <button class="discard" :disabled="!dirty" @click="discard">Discard</button>
-      <button class="save" :disabled="!dirty" @click="save">Save</button>
+      <button class="discard" :disabled="!dirty" @click="discard">{{ t("common.discard") }}</button>
+      <button class="save" :disabled="!dirty" @click="save">{{ t("common.save") }}</button>
     </div>
     <div v-if="error" class="error">{{ error }}</div>
   </div>

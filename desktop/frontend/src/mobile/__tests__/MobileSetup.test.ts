@@ -1,18 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { initI18n, resetI18nForTest } from '../../i18n'
 import { __setPlatformForTests } from '../../platform'
 import { createFakePlatform } from '../../platform/__tests__/_fakePlatform'
 import MobileSetup from '../MobileSetup.vue'
 
 let platform: ReturnType<typeof createFakePlatform>
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
+  resetI18nForTest()
+  await initI18n({
+    getLanguages: () => ['en-US'],
+    listenLanguageChange: () => () => undefined,
+  })
   platform = createFakePlatform()
   platform.caps = { ...platform.caps, localPty: false, windowControls: false, autoUpdate: false, pluginHost: false, fileDialog: false }
   __setPlatformForTests(platform)
 })
-afterEach(() => { __setPlatformForTests(null) })
+afterEach(() => {
+  __setPlatformForTests(null)
+  resetI18nForTest()
+})
 
 describe('MobileSetup', () => {
   it('renders url, token, insecure switch, connect', () => {
@@ -22,6 +31,12 @@ describe('MobileSetup', () => {
     expect(w.find('[data-testid="allow-insecure"]').exists()).toBe(true)
     expect(w.find('[data-testid="connect"]').exists()).toBe(true)
   })
+
+  it("renders a language selector before relay connection", () => {
+    const wrapper = mount(MobileSetup, { props: { reason: null } });
+    expect(wrapper.text()).toContain("Language");
+    expect(wrapper.find('[data-testid="mobile-language"]').exists()).toBe(true);
+  });
 
   it('shows validation error for malformed url', async () => {
     const w = mount(MobileSetup)

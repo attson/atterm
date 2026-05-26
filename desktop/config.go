@@ -20,6 +20,12 @@ const (
 	defaultShellAuto           = "auto"
 )
 
+const (
+	localePreferenceSystem            = "system"
+	localePreferenceEnglish           = "en"
+	localePreferenceChineseSimplified = "zh-CN"
+)
+
 var terminalThemes = map[string]struct{}{
 	terminalThemeClassic:       {},
 	terminalThemeNord:          {},
@@ -42,6 +48,9 @@ type appConfig struct {
 	// the existing "has URL → connect" behavior, so old config.json files
 	// deserialize correctly without any migration code.
 	RelayPaused bool `json:"relay_paused,omitempty"`
+	// LocalePreference controls UI language. Empty means "system" so older
+	// configs keep following the OS/browser language after upgrade.
+	LocalePreference string `json:"locale_preference,omitempty"`
 	// TerminalTheme is the user's global desktop terminal theme preference.
 	// Unknown values fall back to classic so older configs remain usable.
 	TerminalTheme string `json:"terminal_theme,omitempty"`
@@ -120,6 +129,15 @@ func (c appConfig) TerminalThemeOrDefault() string {
 		return c.TerminalTheme
 	}
 	return terminalThemeClassic
+}
+
+func (c appConfig) LocalePreferenceOrDefault() string {
+	switch c.LocalePreference {
+	case localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified:
+		return c.LocalePreference
+	default:
+		return localePreferenceSystem
+	}
 }
 
 func (c appConfig) DefaultShellOrDefault() string {

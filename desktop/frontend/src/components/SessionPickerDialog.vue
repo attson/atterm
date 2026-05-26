@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount } from "vue";
 
 import type { SessionInfo } from "../lib/connection";
 import { groupSessionsByHost } from "../lib/sessions";
+import { useI18n } from "../i18n/useI18n";
 
 const props = defineProps<{
   excludeSessionIds: string[];
@@ -23,6 +24,7 @@ const remoteOptions = computed(() =>
   props.remoteSessions.filter((s) => !exclude.value.has(s.id)),
 );
 const remoteGroups = computed(() => groupSessionsByHost(remoteOptions.value));
+const { t } = useI18n();
 
 function onEsc(e: KeyboardEvent) {
   if (e.key === "Escape") emit("close");
@@ -35,7 +37,7 @@ function shortTitle(s: SessionInfo): string {
     const stripped = s.cwd.replace(/\/+$/, "");
     if (stripped !== "") return stripped.split("/").pop() || stripped;
   }
-  const first = (s.command || "").split(/\s+/)[0] || "shell";
+  const first = (s.command || "").split(/\s+/)[0] || t("terminal.shellFallback");
   return first.split("/").pop() || first;
 }
 </script>
@@ -43,15 +45,15 @@ function shortTitle(s: SessionInfo): string {
 <template>
   <div class="backdrop" @click.self="emit('close')">
     <div class="dialog">
-      <h2>pick a session</h2>
+      <h2>{{ t("sessions.pickSession") }}</h2>
 
       <div v-if="localOptions.length + remoteOptions.length === 0" class="empty">
-        no sessions available — none running locally and no eligible remote.
+        {{ t("sessions.noSessionsAvailable") }}
       </div>
 
       <template v-else>
         <section v-if="localOptions.length > 0" class="local">
-          <h3>local</h3>
+          <h3>{{ t("sessions.local") }}</h3>
           <div class="grid">
             <button
               v-for="s in localOptions"
@@ -61,7 +63,7 @@ function shortTitle(s: SessionInfo): string {
             >
               <div class="title">{{ shortTitle(s) }}</div>
               <div class="meta">
-                <span class="cmd">{{ s.command || "(unknown)" }}</span>
+                <span class="cmd">{{ s.command || t("common.unknown") }}</span>
                 <span class="cwd">{{ s.cwd }}</span>
               </div>
             </button>
@@ -69,7 +71,7 @@ function shortTitle(s: SessionInfo): string {
         </section>
 
         <section v-if="remoteOptions.length > 0" class="remote">
-          <h3>remote</h3>
+          <h3>{{ t("sessions.remote") }}</h3>
           <div class="groups">
             <section
               v-for="g in remoteGroups"
@@ -81,9 +83,9 @@ function shortTitle(s: SessionInfo): string {
               <span
                 v-if="g.hostId"
                 class="hostid"
-                :title="'host_id ' + g.hostId"
+                :title="t('sessions.hostIdTitle', { hostId: g.hostId })"
               >{{ g.hostId.slice(0, 8) }}</span>
-              <span class="count">{{ g.sessions.length }} {{ g.sessions.length === 1 ? 'session' : 'sessions' }}</span>
+              <span class="count">{{ g.sessions.length === 1 ? t("common.countSessionsOne") : t("common.countSessions", { count: g.sessions.length }) }}</span>
             </header>
             <div class="grid">
               <button
@@ -94,7 +96,7 @@ function shortTitle(s: SessionInfo): string {
               >
                 <div class="title">{{ shortTitle(s) }}</div>
                 <div class="meta">
-                  <span class="cmd">{{ s.command || "(unknown)" }}</span>
+                  <span class="cmd">{{ s.command || t("common.unknown") }}</span>
                   <span class="cwd">{{ s.cwd }}</span>
                   <span v-if="s.user" class="who">{{ s.user }}</span>
                 </div>
@@ -106,7 +108,7 @@ function shortTitle(s: SessionInfo): string {
       </template>
 
       <div class="row">
-        <button class="cancel" @click="emit('close')">cancel (esc)</button>
+        <button class="cancel" @click="emit('close')">{{ t("sessions.cancelEsc") }}</button>
       </div>
     </div>
   </div>

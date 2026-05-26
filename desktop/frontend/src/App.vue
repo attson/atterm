@@ -47,6 +47,10 @@ import {
   getTerminalTheme,
   type TerminalThemeID,
 } from "./lib/terminalThemes";
+import { useI18n } from "./i18n/useI18n";
+import type { MessageKey } from "./i18n";
+
+const { t: i18nT } = useI18n();
 
 // Auth-error banner: set when the relay closes the uplink with a 4001-4003
 // close code. Cleared when the user dismisses or fixes config.
@@ -56,14 +60,14 @@ const viewerCounts = reactive<Record<string, number>>({});
 function viewerCountFor(sessionId: string): number {
   return viewerCounts[sessionId] ?? 0;
 }
-const authErrorBanners: Record<string, string> = {
-  auth_invalid_token: "Invalid or revoked API token. Generate a new one in web settings.",
-  auth_user_disabled: "Account disabled. Contact your relay admin.",
-  session_id_owner_mismatch: "Session id collision. Restart the desktop app.",
-  forbidden: "Not authorized to connect to this relay.",
+const authErrorBanners: Record<string, MessageKey> = {
+  auth_invalid_token: "app.authInvalidToken",
+  auth_user_disabled: "app.authUserDisabled",
+  session_id_owner_mismatch: "app.sessionIdOwnerMismatch",
+  forbidden: "app.forbidden",
 };
 const authErrorMessage = computed(() =>
-  authError.value ? (authErrorBanners[authError.value] ?? authError.value) : "",
+  authError.value ? (authErrorBanners[authError.value] ? i18nT(authErrorBanners[authError.value]) : authError.value) : "",
 );
 
 function openSettingsRelay() {
@@ -450,7 +454,7 @@ async function spawnLocalShell(
   dims: { cols: number; rows: number },
 ): Promise<string> {
   const shells = await listShells();
-  if (shells.length === 0) throw new Error("no shells found on this machine");
+  if (shells.length === 0) throw new Error(i18nT("app.noShellsFound"));
   const resp = await newSession({
     command: shells[0],
     cwd,
@@ -513,8 +517,8 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
     if (eligible === 0) {
       showToast(
         remoteEndpoint.value
-          ? "no other sessions to attach"
-          : "no other sessions — connect a relay or start one locally",
+          ? i18nT("app.noOtherSessions")
+          : i18nT("app.noOtherSessionsWithRelayHint"),
       );
       return;
     }
@@ -522,7 +526,7 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
 
   const result = transitionLayout(t.layout, t.panes, t.activePaneIdx, dir);
   if (result.noop) {
-    showToast("pane full — close one first");
+    showToast(i18nT("app.paneFull"));
     return;
   }
 
@@ -544,7 +548,7 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
     const sid = await spawnLocalShell("", predictCellDims(result.layout));
     t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
   } catch (e: any) {
-    showToast("split failed: " + (e?.message ?? e));
+    showToast(i18nT("app.splitFailed", { message: e?.message ?? String(e) }));
   }
 }
 
@@ -555,7 +559,7 @@ function onPickerPick(payload: { sessionId: string; remote: boolean }) {
   const t = tabs.value.find((tt) => tt.id === ctx.tabId);
   if (!t) return;
   if (t.panes.some((p, i) => i !== ctx.paneIdx && p.sessionId === payload.sessionId)) {
-    showToast("that session is already in this tab");
+    showToast(i18nT("app.sessionAlreadyInTab"));
     return;
   }
   t.panes[ctx.paneIdx] = { sessionId: payload.sessionId, remote: payload.remote };
@@ -725,7 +729,7 @@ onMounted(async () => {
     await refreshRelayConfig();
   } catch (e: any) {
     status.value = "error";
-    errorMsg.value = e?.message ?? "Wails bindings unavailable";
+    errorMsg.value = e?.message ?? i18nT("app.wailsBindingsUnavailable");
     return;
   }
 
@@ -775,8 +779,8 @@ onUnmounted(() => {
 
     <div v-if="authError" class="auth-error-banner" role="alert">
       <span class="auth-error-msg">{{ authErrorMessage }}</span>
-      <button class="auth-error-action" @click="openSettingsRelay">Open settings</button>
-      <button class="auth-error-dismiss" @click="authError = null" aria-label="Dismiss">×</button>
+      <button class="auth-error-action" @click="openSettingsRelay">{{ i18nT("app.openSettings") }}</button>
+      <button class="auth-error-dismiss" @click="authError = null" :aria-label="i18nT('app.dismiss')">×</button>
     </div>
 
     <TabBar
@@ -792,7 +796,7 @@ onUnmounted(() => {
       <main class="main">
         <template v-if="localEndpoint">
           <div v-if="tabs.length === 0" class="empty">
-            starting first session…
+            {{ i18nT("app.startingFirstSession") }}
           </div>
           <PaneGrid
             v-for="t in tabs"
@@ -813,7 +817,7 @@ onUnmounted(() => {
         <div v-if="toast" class="toast">{{ toast }}</div>
       </main>
       <template v-if="rightPanelHasPlugin">
-        <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? 'Show panel' : 'Hide panel'">
+        <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? i18nT('app.showPanel') : i18nT('app.hidePanel')">
           {{ panelCollapsed ? '‹' : '›' }}
         </button>
         <template v-if="!panelCollapsed">

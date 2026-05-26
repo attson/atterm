@@ -6,9 +6,9 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：三类 Principal（详见 §鉴权）：浏览器走 `atterm_session` HTTP-only cookie（mutating endpoint 额外要 `X-CSRF-Token`）；桌面 / CLI / 移动 web 走 `Authorization: Bearer atk_…`，WebSocket 升级也支持 `Sec-WebSocket-Protocol: atterm-token.atk_…` / `atterm-token-b64.<base64url(utf8 token)>` 以避免 token 进入 URL 日志；admin 用 `atterm_session` cookie 且 `is_admin=true`（仅在 `/admin/*` 有效）。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
+- 鉴权：三类 Principal（详见 §鉴权）：浏览器走 `atterm_session` HTTP-only cookie（mutating endpoint 额外要 `X-CSRF-Token`）；桌面 / CLI / 移动 web 走 `Authorization: Bearer atk_…`，WebSocket 升级也支持 `Sec-WebSocket-Protocol: atterm-token.atk_…` / `atterm-token-b64.<base64url(utf8 token)>` 以避免 token 进入 URL 日志；admin 是 `is_admin=true` 的用户 principal（浏览器 admin UI 用 cookie，自动化可用 admin 用户 API token；仅在 `/admin/*` 有效）。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
 - CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。`--origins` 可写完整 URL 或 host pattern；relay 会按 WebSocket 库要求规范成 Origin host pattern，并在启用白名单时自动允许 Wails 桌面客户端的本地 asset hosts。
-- 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端必须只加载同源静态资源；xterm 资源 vendored 在 `web/vendor/`。CSP 允许 inline style 仅用于 xterm.js 运行时布局样式，脚本仍只允许同源且不允许 unsafe eval/inline script。
+- 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端应用代码必须只加载同源静态资源；Vue/xterm/Naive UI 等 npm 依赖由 Vite 打包成同源 assets，PWA service worker 只预缓存这些静态产物。CSP 允许 inline style 仅用于 xterm.js 运行时布局样式；script-src 允许同源脚本，并预留 Cloudflare Web Analytics beacon 源，但不允许 unsafe eval/inline script 或应用代码引入 CDN 依赖。
 
 ## 帧格式
 
@@ -351,7 +351,7 @@ Payload (UTF-8 JSON):
 | `/client-sessions` | GET (Upgrade: websocket) | session 列表推送 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
 | `/api/version` | GET | JSON 版本信息 |
-| `/` (relay 自带) | GET | 静态 web 客户端（仅 `cmd/atterm-relay --web web`） |
+| `/`, `/login.html`, `/signup.html`, `/settings.html`, `/setup.html`, `/admin/` | GET | 静态 Vue MPA web/PWA 客户端（默认使用 embedded `internal/relay/web-dist/`；开发可用 `--web web/dist`） |
 
 CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直接 204。非 `OPTIONS`
 请求进入 mux 前会经过按远端 IP/token 计算的固定窗口 rate limit；WebSocket upgrade
@@ -396,8 +396,12 @@ API token 由 `POST /api/me/tokens`（CSRF-gated）创建，前缀固定为 `atk
 Cookie: atterm_session (with user.is_admin=true)
 ```
 
-仅在 `/admin/*` 路径有效（由 `bootstrapAdmin` 在启动时配置，通过环境变量 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 初始化）。
-用户账号管理端点（`/admin/api/invitations`、`/admin/api/users`）使用此凭证。admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户。
+或 admin 用户的 API token（`Authorization: Bearer atk_…`）。仅在 `/admin/*`
+路径有效（由 `bootstrapAdmin` 在启动时配置，通过环境变量
+`ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 初始化）。
+浏览器 admin UI 使用 cookie；需要 CSRF 的 mutating endpoint 只接受 cookie + CSRF。
+用户账号管理端点（`/admin/api/invitations`、`/admin/api/users`）使用此 principal。
+admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户。
 
 ### Principal 类型
 
@@ -425,19 +429,23 @@ Cookie: atterm_session (with user.is_admin=true)
 | `/api/push/subscribe` | POST | Cookie + CSRF | 注册 push 订阅 |
 | `/api/push/unsubscribe` | POST | Cookie + CSRF | 取消 push 订阅 |
 | `/api/push/test` | POST | Cookie + CSRF | 发送测试 push 通知 |
-| `/admin/api/invitations` | GET/POST | Admin Bearer | 列出/创建邀请码 |
-| `/admin/api/users` | GET | Admin Bearer | 列出用户 |
-| `/admin/api/users/{id}/reset-password` | POST | Admin Bearer | 重置用户密码 |
-| `/admin/api/users/{id}/disable` | POST | Admin Bearer | 禁用用户 |
+| `/api/me/webhooks` | GET/POST | Cookie (POST 需 CSRF) | 列出/创建 outbound webhook |
+| `/api/me/webhooks/{id}` | DELETE | Cookie + CSRF | 删除 outbound webhook |
+| `/admin/api/invitations` | GET/POST | Admin principal | 列出/创建邀请码 |
+| `/admin/api/users` | GET | Admin principal | 列出用户 |
+| `/admin/api/users/{id}/reset-password` | POST | Admin principal | 重置用户密码 |
+| `/admin/api/users/{id}/disable` | POST | Admin principal | 禁用用户 |
+| `/admin/api/users/{id}/admin` | POST/DELETE | Admin cookie + CSRF | 晋升 / 取消 admin |
+| `/admin/api/config` | GET/PUT | Admin principal（PUT 需 CSRF） | 查看 / 更新 relay 运行限流配置 |
 
 ### 启动安全策略
 
-- 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`；bootstrap password 必须非空且足够强（长度 ≥ 16，包含大小写+数字+特殊字符），除非显式 `--dev-insecure`。
+- 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`；如果该用户不存在并需要 bootstrap 创建，`ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 必须非空且足够强（长度 ≥ 16，至少 3 类字符，且不在弱密码黑名单内），除非显式 `--dev-insecure`。
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`。
 - `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：HTTP 请求与 WS upgrade 先按远端 IP 限流；鉴权成功后再按远端 IP + token hash 限流。`0` 用默认值，负数禁用。
 - `--max-connections-per-key` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用。
 - `--config` / `ATTERM_RELAY_CONFIG`：持久化 relay admin JSON 配置路径，仅保存运行参数；用户账号和 session 保存在 SQLite（users.db）。
-- `ATTERM_BOOTSTRAP_ADMIN_EMAIL` / `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`：初始化 admin 用户。bootstrap 仅在启动时运行一次；现有 admin 用户无法通过重启改变密码，需改用 web UI `/settings`。
+- `ATTERM_BOOTSTRAP_ADMIN_EMAIL` / `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`：初始化 admin 用户。bootstrap 每次启动都会确保该 email 是 admin；用户已存在时只提权并忽略 password env。现有用户无法通过重启改变密码，需改用 web UI `/settings.html`。
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输和弱鉴权风险警告。
 
 持久化 admin config 示例（仅保存运行参数，不保存 token 明文）：
@@ -514,4 +522,5 @@ const filteredRemote = remote.filter(s => !localIds.has(s.id));
 - relay 端处理 `/uplink`：`internal/relay/uplink_conn.go`
 - relay 端处理 `/client`：`internal/relay/client_conn.go`
 - 桌面 uplink 客户端：`desktop/uplink.go`
-- 浏览器协议层：`web/app.js` / `desktop/frontend/src/lib/proto.ts`（保持两份同步！TS 一份是手工移植）
+- 浏览器协议层：`web/src/shared/ws/protocol.ts` / `web/src/shared/ws/client-conn.ts`
+- 桌面前端协议层：`desktop/frontend/src/lib/proto.ts` / `desktop/frontend/src/lib/connection.ts`

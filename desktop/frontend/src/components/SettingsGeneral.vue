@@ -69,6 +69,12 @@ const webglRendererLoading = ref(true);
 const commandNotifyThresholdSec = ref(10);
 const commandNotifyThresholdLoading = ref(true);
 
+const defaultShellOptions = computed(() => [
+  { value: "auto", label: t("settings.general.auto") },
+  ...availableShells.value.map((shell) => ({ value: shell, label: shell })),
+  { value: "__custom__", label: t("settings.general.customPath") },
+]);
+
 onMounted(async () => {
   try {
     const preference = await getLocalePreference();
@@ -312,20 +318,14 @@ async function onChange() {
     </p>
 
     <label class="field-label" v-if="!defaultShellLoading">{{ t("settings.general.defaultShell") }}</label>
-    <select
+    <SelectDropdown
       v-if="!defaultShellLoading"
       v-model="selectedDefaultShell"
-      class="select-input"
-      :disabled="defaultShellSaving"
+      :options="defaultShellOptions"
       :aria-label="t('settings.general.defaultShell')"
-      @change="onDefaultShellChange"
-    >
-      <option value="auto">{{ t("settings.general.auto") }}</option>
-      <option v-for="shell in availableShells" :key="shell" :value="shell">
-        {{ shell }}
-      </option>
-      <option value="__custom__">{{ t("settings.general.customPath") }}</option>
-    </select>
+      :disabled="defaultShellSaving"
+      @update:modelValue="onDefaultShellChange"
+    />
     <p class="hint" v-if="!defaultShellLoading">
       {{ t("settings.general.defaultShellHint") }}
     </p>
@@ -411,7 +411,6 @@ async function onChange() {
   color: var(--fg);
   font: inherit;
 }
-.select-input,
 .text-input {
   padding: 6px 8px;
   background: var(--bg);

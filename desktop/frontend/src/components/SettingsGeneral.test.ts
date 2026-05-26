@@ -76,7 +76,9 @@ describe("SettingsGeneral default shell preference", () => {
 
   test("renders automatic and custom shell controls", () => {
     expect(source).toContain("settings.general.defaultShell");
-    expect(source).toContain('value="auto"');
+    expect(source).toContain("defaultShellOptions");
+    expect(source).toContain('v-model="selectedDefaultShell"');
+    expect(source).not.toContain("<select");
     expect(source).toContain("settings.general.customShellPath");
     expect(source).toMatch(/onDefaultShellChange/);
     expect(source).toMatch(/onCustomShellSave/);

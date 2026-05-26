@@ -29,16 +29,28 @@ desktop/frontend/src/
 ├── App.vue             根组件
 ├── components/         全部 *.vue，每个组件单文件
 ├── composables/        Vue 3 setup helpers (e.g. useTerminalShortcuts.ts)
+├── i18n/               desktop 前端中英 messages + useI18n()
 ├── lib/                pure TS 模块（无 Vue 依赖）
 │   ├── proto.ts        协议层
 │   ├── connection.ts   WS 连接 + 重连
 │   ├── types.ts        共享类型定义（LayoutKind / Pane / Tab 等）
 │   ├── layout.ts       纯函数（pane 布局 transition / close / focus 导航）
 │   └── api.ts          Wails bindings 包装
-└── store/              （未来）pinia / composables
+├── platform/           Wails / Capacitor / browser 适配层
+└── plugins/            右侧插件槽与内置插件（file explorer / quick input / translate）
 ```
 
 `lib/` 不依赖 Vue（便于单元测试、未来共享给 web/）。组件不直接 fetch / WebSocket，全走 `lib/`。`lib/layout.ts` 这种纯函数模块用 vitest 跑单测，TDD 增量覆盖。
+
+`web/src/` 是独立的 Vue 3 + TypeScript + Naive UI MPA：
+
+```
+web/src/
+├── main/ login/ signup/ setup/ settings/ admin/
+└── shared/              api、ws、i18n、theme、Topbar、mobile guard
+```
+
+Web 客户端协议层在 `web/src/shared/ws/`，不要再新增 legacy `web/app.js` 路径。
 
 ## 命名
 
@@ -119,7 +131,10 @@ if err != nil {
 
 ### TS / Vue
 
-- 暂未引入测试框架。Phase 2 加 vitest 时优先测 `lib/proto.ts` / `lib/connection.ts`（pure），组件测放后
+- `desktop/frontend` 使用 Vitest + jsdom；纯函数、composables、组件都放 `src/**/*.test.ts`
+- `web` 使用 Vitest + happy-dom，测试放 `web/tests/unit/**`；安全/PWA 合约测试放 `web/tests/contract/*.test.mjs`
+- `mobile` 的 Capacitor wrapper 脚本测试使用 Node test runner：`npm test`
+- 新增用户可见文案时必须同步 desktop/web 的中英 messages；测试尽量断言 i18n key 或渲染后的文本，不要重新引入硬编码英文
 
 ## 风格细则
 
@@ -143,7 +158,8 @@ if err != nil {
 
 - 用 CSS 变量（`--bg`、`--accent` 等，定义在 `style.css :root`）
 - scoped style 在每个 `.vue` 单文件里
-- 不引入 CSS 框架（Tailwind / Bootstrap）；现有几百行 CSS 手写够
+- desktop 前端不引入 CSS 框架（Tailwind / Bootstrap）；web 前端使用 Naive UI + `web/src/shared/tokens.css`
+- 组件视觉、控件复用、Settings 表单和浮层规范见 `docs/spec/component-style.md`
 
 ## Commit 风格
 
@@ -177,7 +193,7 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 把 `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 写进仓库、日志或 release artifact
 - ❌ 公网 relay 默认允许弱 token/空鉴权、缺失 `--origins` 或弱 admin token；需要 `--dev-insecure` 才能放开这些限制
 - ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
-- ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用同源 vendored 资源，避免 CSP/PWA 回归
+- ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用 Vite 打包出来的同源 assets，避免 CSP/PWA 回归
 - ❌ 服务端接受 `?token=` 鉴权，或让浏览器长期把 secret 留在地址栏、日志或可分享 URL 中；手工打开 web 页面只能用 `#token=...` fragment bootstrap，WS 鉴权必须用 `Sec-WebSocket-Protocol`
 - ❌ 把用户凭据明文（密码、邀请码、API token、cookie 值）写进数据库、日志或任何持久化路径——全部以 sha256/argon2id 散列存储，明文仅在签发时返回一次
 - ❌ 把远程权限只做成 UI 提示；relay 和 desktop host 都必须实际拦截越权帧
@@ -211,7 +227,7 @@ gh run list --repo attson/atterm --limit 10
 3. 加发送方实现（agent / uplink / relay 的某条路径）
 4. 加接收方分支（在 reader switch 里）
 5. 同步 TS 端 `desktop/frontend/src/lib/proto.ts` 的 `TYPE` 枚举（如果是 client 路径用到）
-6. 同步 `web/app.js` 的 `TYPE` 字典（如果浏览器需要）
+6. 同步 `web/src/shared/ws/protocol.ts` 的 `TYPE` 字典（如果浏览器需要）
 7. 更新 `docs/spec/protocol.md` 帧类型表
 8. 加 e2e 测试（`desktop/uplink_e2e_test.go` 或新文件）
 9. 提交：subject 用 `proto:` 前缀
@@ -231,3 +247,4 @@ gh run list --repo attson/atterm --limit 10
 3. props/emits 用 TypeScript defineProps/defineEmits 显式定义
 4. 不在组件里写 fetch/WS——通过 `lib/api` 或 `lib/connection`
 5. 样式用 `var(--xxx)` 主题变量，不写硬编码颜色（除特殊视觉如 `#d29922` 远程 amber）
+6. 表单控件优先复用现有组件（如 `SelectDropdown`），不要新增系统默认下拉；细则见 `component-style.md`

@@ -21,6 +21,103 @@ func TestUpdateSizeChangesSessionInfo(t *testing.T) {
 	}
 }
 
+func TestPushOutTracksTaskLifecycleFromOSC133(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	if changed := s.PushOut(1, []byte("\x1b]133;C;go test ./...\x07")); !changed {
+		t.Fatalf("PushOut(C) changed = false; want true")
+	}
+	info := s.Info()
+	if info.TaskState != proto.TaskStateRunning {
+		t.Fatalf("TaskState after C = %q; want running", info.TaskState)
+	}
+	if info.CurrentCommand != "go test ./..." {
+		t.Fatalf("CurrentCommand = %q; want go test ./...", info.CurrentCommand)
+	}
+	if info.CommandStartedAt == 0 {
+		t.Fatalf("CommandStartedAt = 0; want unix timestamp")
+	}
+	if info.CommandEndedAt != 0 {
+		t.Fatalf("CommandEndedAt = %d; want 0 while running", info.CommandEndedAt)
+	}
+	if info.CommandExitCode != nil {
+		t.Fatalf("CommandExitCode = %v; want nil while running", *info.CommandExitCode)
+	}
+
+	if changed := s.PushOut(2, []byte("ok\n\x1b]133;D;0\x07")); !changed {
+		t.Fatalf("PushOut(D) changed = false; want true")
+	}
+	info = s.Info()
+	if info.TaskState != proto.TaskStateCompleted {
+		t.Fatalf("TaskState after D;0 = %q; want completed", info.TaskState)
+	}
+	if info.CurrentCommand != "go test ./..." {
+		t.Fatalf("CurrentCommand after finish = %q; want go test ./...", info.CurrentCommand)
+	}
+	if info.CommandEndedAt == 0 {
+		t.Fatalf("CommandEndedAt = 0; want unix timestamp")
+	}
+	if info.CommandDurationMS < 0 {
+		t.Fatalf("CommandDurationMS = %d; want non-negative", info.CommandDurationMS)
+	}
+	if info.CommandExitCode == nil || *info.CommandExitCode != 0 {
+		t.Fatalf("CommandExitCode = %v; want 0", info.CommandExitCode)
+	}
+}
+
+func TestPushOutDetectsWaitingInputAndLastOutput(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	before := time.Now().Unix()
+	if changed := s.PushOut(1, []byte("Proceed? [y/N]")); !changed {
+		t.Fatalf("PushOut(waiting prompt) changed = false; want true")
+	}
+	info := s.Info()
+	if info.TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("TaskState = %q; want waiting_input", info.TaskState)
+	}
+	if info.LastOutputAt < before {
+		t.Fatalf("LastOutputAt = %d; want >= %d", info.LastOutputAt, before)
+	}
+
+	if changed := s.PushOut(2, []byte("\x1b]133;C;npm test\x07")); !changed {
+		t.Fatalf("PushOut(C) changed = false; want true")
+	}
+	info = s.Info()
+	if info.TaskState != proto.TaskStateRunning {
+		t.Fatalf("TaskState after C = %q; want running", info.TaskState)
+	}
+	if info.CurrentCommand != "npm test" {
+		t.Fatalf("CurrentCommand = %q; want npm test", info.CurrentCommand)
+	}
+}
+
+func TestSubscribeIncludesTaskStateInMeta(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.PushOut(1, []byte("\x1b]133;C;codex\x07"))
+
+	sub, _ := s.Subscribe(0, "", "")
+	defer s.Unsubscribe(sub)
+
+	f := readFrameForTest(t, sub)
+	for f.Type != proto.TypeMeta {
+		f = readFrameForTest(t, sub)
+	}
+	if f.Type != proto.TypeMeta {
+		t.Fatalf("frame type = 0x%02x; want META", f.Type)
+	}
+	var meta proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &meta); err != nil {
+		t.Fatalf("meta unmarshal: %v", err)
+	}
+	if meta.TaskState != proto.TaskStateRunning {
+		t.Fatalf("meta.TaskState = %q; want running", meta.TaskState)
+	}
+	if meta.CurrentCommand != "codex" {
+		t.Fatalf("meta.CurrentCommand = %q; want codex", meta.CurrentCommand)
+	}
+}
+
 func TestSubscribeEmitsReplayProgress(t *testing.T) {
 	id := uuid.New()
 	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})

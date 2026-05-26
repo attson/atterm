@@ -10,12 +10,11 @@ import (
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
-	"github.com/attson/atterm/internal/webpush"
 	"github.com/attson/atterm/internal/webhook"
+	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
-
 
 const (
 	uplinkReadLimit       = 17 * 1024 * 1024
@@ -180,11 +179,10 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			existing, ok := mirrors[id]
 			mu.Unlock()
 			if ok {
-				// ANNOUNCE carries no driver_client_id; use UpdateCwdTitle so a
-				// driverFromUpstream mirror doesn't adopt an empty driver and
-				// clobber the active driver (every client would flip to viewer).
-				existing.sess.UpdateCwdTitle(info.Cwd, info.Title)
-				existing.sess.UpdateRemotePermission(info.RemotePermission)
+				// ANNOUNCE carries no driver_client_id; reconcile advertised
+				// facts without adopting an empty driver and clobbering the
+				// active driver (every client would flip to viewer).
+				existing.sess.UpdateAdvertisedInfo(info)
 				s.registry.NotifyChange()
 				s.debugf("uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
 				continue
@@ -319,7 +317,9 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			ms := mirrors[f.SessionID]
 			mu.Unlock()
 			if ms != nil {
-				ms.sess.PushOut(seq, data)
+				if ms.sess.PushOut(seq, data) {
+					s.registry.NotifyChange()
+				}
 			}
 		case proto.TypeMeta:
 			var m proto.MetaPayload

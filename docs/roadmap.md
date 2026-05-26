@@ -4,14 +4,14 @@
 
 ### 1. 任务状态模型
 
-- [ ] 定义会话任务状态：`running`、`waiting_input`、`completed`、`failed`、`idle`、`disconnected`、`closed`
-- [ ] 基于 OSC 133 事件推导命令生命周期
-- [ ] 记录当前命令、开始时间、结束时间、运行时长和退出码
-- [ ] 记录最近输出时间
-- [ ] 增加等待输入识别规则：`[y/N]`、`[Y/n]`、`continue?`、`proceed?`、`confirm`、`press enter`、`password:`
-- [ ] 在 relay session metadata 中暴露任务状态
-- [ ] 将任务状态同步到 desktop、web 和 mobile 客户端
-- [ ] 增加任务状态流转测试
+- [x] 定义会话任务状态：`running`、`waiting_input`、`completed`、`failed`、`idle`、`disconnected`、`closed`
+- [x] 基于 OSC 133 事件推导命令生命周期
+- [x] 记录当前命令、开始时间、结束时间、运行时长和退出码
+- [x] 记录最近输出时间
+- [x] 增加等待输入识别规则：`[y/N]`、`[Y/n]`、`continue?`、`proceed?`、`confirm`、`press enter`、`password:`
+- [x] 在 relay session metadata 中暴露任务状态
+- [x] 将任务状态同步到 desktop、web 和 mobile 客户端
+- [x] 增加任务状态流转测试
 
 ### 2. 移动端任务首页
 

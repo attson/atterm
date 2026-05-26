@@ -37,6 +37,9 @@ func TestZshSnippetHasGuardAndHookRegistration(t *testing.T) {
 	if !strings.Contains(zshSnippet, `\033]133`) && !strings.Contains(zshSnippet, `\x1b]133`) {
 		t.Fatalf("zsh snippet does not emit OSC 133 sequences")
 	}
+	if !strings.Contains(zshSnippet, "133;C;%s") || !strings.Contains(zshSnippet, `"$1"`) {
+		t.Fatalf("zsh snippet does not include the preexec command in OSC 133;C")
+	}
 }
 
 func TestBashSnippetHasGuardAndHookRegistration(t *testing.T) {
@@ -49,6 +52,9 @@ func TestBashSnippetHasGuardAndHookRegistration(t *testing.T) {
 	if !strings.Contains(bashSnippet, "DEBUG") {
 		t.Fatalf("bash snippet does not trap DEBUG for preexec")
 	}
+	if !strings.Contains(bashSnippet, "133;C;%s") || !strings.Contains(bashSnippet, "BASH_COMMAND") {
+		t.Fatalf("bash snippet does not include BASH_COMMAND in OSC 133;C")
+	}
 }
 
 func TestFishSnippetHasGuardAndEventHooks(t *testing.T) {
@@ -60,6 +66,9 @@ func TestFishSnippetHasGuardAndEventHooks(t *testing.T) {
 	}
 	if !strings.Contains(fishSnippet, "fish_postexec") {
 		t.Fatalf("fish snippet missing fish_postexec hook")
+	}
+	if !strings.Contains(fishSnippet, "133;C;%s") || !strings.Contains(fishSnippet, "string join") {
+		t.Fatalf("fish snippet does not include the preexec command in OSC 133;C")
 	}
 }
 

@@ -73,7 +73,9 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 				nextSeq := seq.Add(1)
 				frame := proto.EncodeOut(id, nextSeq, buf[:n])
 				s.debugFrame("adopt", "recv", frame)
-				sess.PushOut(nextSeq, append([]byte(nil), buf[:n]...))
+				if sess.PushOut(nextSeq, append([]byte(nil), buf[:n]...)) {
+					s.registry.NotifyChange()
+				}
 			}
 			if err != nil {
 				if !errors.Is(err, io.EOF) && loopCtx.Err() == nil {

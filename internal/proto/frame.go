@@ -15,6 +15,16 @@ const (
 )
 
 const (
+	TaskStateIdle         = "idle"
+	TaskStateRunning      = "running"
+	TaskStateWaitingInput = "waiting_input"
+	TaskStateCompleted    = "completed"
+	TaskStateFailed       = "failed"
+	TaskStateDisconnected = "disconnected"
+	TaskStateClosed       = "closed"
+)
+
+const (
 	TypeOpen     Type = 0x01 // agent -> relay
 	TypeIn       Type = 0x02 // client -> relay -> agent
 	TypeOut      Type = 0x03 // agent -> relay -> client (8B seq prefix)
@@ -79,6 +89,15 @@ type MetaPayload struct {
 	// xterm.cols/rows to the PTY (they don't run FitAddon).
 	Cols uint16 `json:"cols,omitempty"`
 	Rows uint16 `json:"rows,omitempty"`
+	// Task fields describe the latest command lifecycle derived from OSC 133
+	// and lightweight output heuristics.
+	TaskState         string `json:"task_state,omitempty"`
+	CurrentCommand    string `json:"current_command,omitempty"`
+	CommandStartedAt  int64  `json:"command_started_at,omitempty"`
+	CommandEndedAt    int64  `json:"command_ended_at,omitempty"`
+	CommandDurationMS int    `json:"command_duration_ms,omitempty"`
+	CommandExitCode   *int   `json:"command_exit_code,omitempty"`
+	LastOutputAt      int64  `json:"last_output_at,omitempty"`
 }
 
 // ClosePayload is the JSON body of a TypeClose frame.
@@ -174,4 +193,13 @@ type SessionInfo struct {
 	// RemotePermission is owner-published permission for remote attachers.
 	// Empty means full for backwards compatibility with older ANNOUNCEs.
 	RemotePermission string `json:"remote_permission,omitempty"`
+	// Task fields are additive metadata for task-first clients. Empty
+	// TaskState means idle for older publishers that do not send it.
+	TaskState         string `json:"task_state,omitempty"`
+	CurrentCommand    string `json:"current_command,omitempty"`
+	CommandStartedAt  int64  `json:"command_started_at,omitempty"`
+	CommandEndedAt    int64  `json:"command_ended_at,omitempty"`
+	CommandDurationMS int    `json:"command_duration_ms,omitempty"`
+	CommandExitCode   *int   `json:"command_exit_code,omitempty"`
+	LastOutputAt      int64  `json:"last_output_at,omitempty"`
 }

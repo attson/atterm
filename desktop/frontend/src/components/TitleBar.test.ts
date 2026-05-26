@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { __setPlatformForTests } from "../platform";
+import { initI18n, resetI18nForTest } from "../i18n";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import TitleBar from "./TitleBar.vue";
 import titleBarSource from "./TitleBar.vue?raw";
@@ -25,6 +26,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __setPlatformForTests(null);
+  resetI18nForTest();
 });
 
 async function mountForPlatform(platformName: string, props = {}) {
@@ -93,6 +95,19 @@ describe("TitleBar status rendering", () => {
     const w = await mountForPlatform("darwin", { sessionCount: 1 });
     expect(w.text()).toContain("1 session");
     expect(w.text()).not.toContain("1 sessions");
+  });
+
+  it("renders Chinese session counts without an English plural suffix", async () => {
+    await initI18n({
+      loadPreference: async () => "zh-CN",
+      getLanguages: () => ["zh-CN"],
+      listenLanguageChange: () => () => undefined,
+    });
+
+    const w = await mountForPlatform("darwin", { sessionCount: 2 });
+
+    expect(w.text()).toContain("2 个会话");
+    expect(w.text()).not.toContain("会话s");
   });
 
   it("renders '· uplink on' when remoteEndpoint is truthy", async () => {

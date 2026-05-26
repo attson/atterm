@@ -5,13 +5,16 @@ vi.mock('@shared/api/auth', () => ({
   login: vi.fn(),
 }))
 vi.mock('@shared/api/version', () => ({
-  fetchVersionLabel: vi.fn().mockResolvedValue('version test'),
+  fetchVersion: vi.fn().mockResolvedValue('test'),
+  formatVersionLabel: (version: string) => `version ${version || 'dev'}`,
 }))
 
 import App from '@/login/App.vue'
 import { login } from '@shared/api/auth'
 import { ApiError } from '@shared/api/client'
+import { installI18nTestHooks } from '../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Login App.vue', () => {
   let originalLocation: Location
 

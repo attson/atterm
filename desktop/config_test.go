@@ -25,3 +25,24 @@ func TestAppConfig_DeserializeOldJSON_RelayPausedDefaultsFalse(t *testing.T) {
 		t.Fatal("RelayPaused = true; want false for old config.json without the key")
 	}
 }
+
+func TestLocalePreferenceOrDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  appConfig
+		want string
+	}{
+		{name: "empty defaults to system", cfg: appConfig{}, want: localePreferenceSystem},
+		{name: "system allowed", cfg: appConfig{LocalePreference: localePreferenceSystem}, want: localePreferenceSystem},
+		{name: "english allowed", cfg: appConfig{LocalePreference: localePreferenceEnglish}, want: localePreferenceEnglish},
+		{name: "simplified chinese allowed", cfg: appConfig{LocalePreference: localePreferenceChineseSimplified}, want: localePreferenceChineseSimplified},
+		{name: "unknown falls back to system", cfg: appConfig{LocalePreference: "fr"}, want: localePreferenceSystem},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.LocalePreferenceOrDefault(); got != tt.want {
+				t.Fatalf("LocalePreferenceOrDefault() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -8,7 +8,8 @@ vi.mock('@shared/api/auth', () => ({
   logout: vi.fn(),
 }))
 vi.mock('@shared/api/version', () => ({
-  fetchVersionLabel: vi.fn().mockResolvedValue('version test'),
+  fetchVersion: vi.fn().mockResolvedValue('test'),
+  formatVersionLabel: (version: string) => `version ${version || 'dev'}`,
 }))
 vi.mock('@shared/api/sessions', () => ({
   listSessions: vi.fn().mockResolvedValue([]),
@@ -24,7 +25,9 @@ vi.mock('@shared/ws/client-conn', () => ({
 }))
 
 import App from '@/main/App.vue'
+import { installI18nTestHooks } from '../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Main (home) App.vue', () => {
   let originalLocation: Location
 

@@ -2,10 +2,12 @@
 import { computed } from 'vue'
 import { usePlatform } from '../platform'
 import { useWindowMaximized, setMaximized } from '../composables/useWindowMaximized'
+import { useI18n } from '../i18n/useI18n'
 
 const platform = usePlatform()
+const { t } = useI18n()
 const isMaximized = useWindowMaximized()
-const maxLabel = computed(() => (isMaximized.value ? 'Restore' : 'Maximize'))
+const maxLabel = computed(() => (isMaximized.value ? t('common.restore') : t('common.maximize')))
 
 function safe(fn: () => void) {
   try {
@@ -37,7 +39,7 @@ function onClose() {
       class="wc-btn"
       type="button"
       data-testid="window-min"
-      aria-label="Minimize"
+      :aria-label="t('common.minimize')"
       @click="onMin"
     >
       <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
@@ -63,7 +65,7 @@ function onClose() {
       class="wc-btn wc-close"
       type="button"
       data-testid="window-close"
-      aria-label="Close"
+      :aria-label="t('common.close')"
       @click="onClose"
     >
       <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">

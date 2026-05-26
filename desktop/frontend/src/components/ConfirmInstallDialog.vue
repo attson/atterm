@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import { useI18n } from "../i18n/useI18n";
+
 const props = defineProps<{
   version: string;
   localCount: number;
@@ -10,42 +12,46 @@ defineEmits<{
   (e: "cancel"): void;
 }>();
 
-function plural(n: number, word: string) {
-  return n === 1 ? `1 ${word}` : `${n} ${word}s`;
-}
+const { t } = useI18n();
+
+const endLocalSessionKey = (count: number) =>
+  count === 1 ? "sessions.endLocalSessionOne" : "sessions.endLocalSessionMany";
+
+const detachRemoteSessionKey = (count: number) =>
+  count === 1 ? "sessions.detachRemoteSessionOne" : "sessions.detachRemoteSessionMany";
 </script>
 
 <template>
   <div class="backdrop" @click.self="$emit('cancel')">
     <div class="dialog">
-      <h2>install AT Term {{ version }}</h2>
+      <h2>{{ t("settings.updates.installTitle", { version }) }}</h2>
 
       <p>
-        AT Term will quit and relaunch on the new version.
-        <template v-if="localCount > 0 || remoteCount > 0"> This will:</template>
+        {{ t("settings.updates.installIntro") }}
+        <template v-if="localCount > 0 || remoteCount > 0">{{ t("settings.updates.installThisWill") }}</template>
       </p>
 
       <ul v-if="localCount > 0 || remoteCount > 0">
         <li v-if="localCount > 0">
-          End {{ plural(localCount, "local shell session") }}
-          <span class="dim">(running processes will be terminated)</span>
+          {{ t(endLocalSessionKey(localCount), { count: localCount }) }}
+          <span class="dim">{{ t("sessions.runningProcessesTerminated") }}</span>
         </li>
         <li v-if="remoteCount > 0">
-          Detach from {{ plural(remoteCount, "remote session") }}
-          <span class="dim">(the remote PTY keeps running on its host)</span>
+          {{ t(detachRemoteSessionKey(remoteCount), { count: remoteCount }) }}
+          <span class="dim">{{ t("sessions.remotePtyKeepsRunning") }}</span>
         </li>
       </ul>
 
-      <p v-if="localCount > 0" class="warn">Save your work first.</p>
+      <p v-if="localCount > 0" class="warn">{{ t("sessions.saveWorkFirst") }}</p>
 
       <div class="row">
-        <button @click="$emit('cancel')">cancel</button>
+        <button @click="$emit('cancel')">{{ t("common.cancel") }}</button>
         <button
           class="primary"
           :class="{ danger: localCount > 0 }"
           @click="$emit('confirm')"
         >
-          {{ localCount > 0 ? "force install" : "install & restart" }}
+          {{ localCount > 0 ? t("settings.updates.forceInstall") : t("settings.updates.installRestart") }}
         </button>
       </div>
     </div>

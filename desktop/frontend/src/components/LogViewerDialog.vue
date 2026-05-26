@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { nextTick, ref, watch } from "vue";
 import type { LogPreview } from "../lib/api";
+import { useI18n } from "../i18n/useI18n";
 
 const props = defineProps<{
   preview: LogPreview;
@@ -12,6 +13,8 @@ const emit = defineEmits<{
   (e: "close"): void;
   (e: "refresh"): void;
 }>();
+
+const { t } = useI18n();
 
 // Logs are append-only and the user almost always wants the latest tail.
 // Auto-scroll the <pre> to the bottom whenever new content lands (mount
@@ -34,26 +37,26 @@ async function copyContent() {
   <div class="backdrop" @click.self="emit('close')">
     <div class="dialog">
       <div class="header">
-        <h2>desktop logs</h2>
+        <h2>{{ t("settings.logging.title") }}</h2>
         <div class="path" :title="props.preview.path">{{ props.preview.path }}</div>
       </div>
 
       <div v-if="props.error" class="error">{{ props.error }}</div>
-      <div v-else-if="props.loading" class="empty">loading…</div>
+      <div v-else-if="props.loading" class="empty">{{ t("common.loading") }}</div>
       <div v-else-if="!props.preview.exists" class="empty">
-        no log file content is available yet.
+        {{ t("settings.logging.noContent") }}
       </div>
       <div v-else class="content-wrap">
         <div v-if="props.preview.truncated" class="hint">
-          showing the most recent portion of the log file.
+          {{ t("settings.logging.truncated") }}
         </div>
         <pre ref="contentEl" class="content">{{ props.preview.content }}</pre>
       </div>
 
       <div class="row">
-        <button @click="emit('refresh')">refresh</button>
-        <button @click="copyContent" :disabled="!props.preview.content">copy</button>
-        <button class="primary" @click="emit('close')">close</button>
+        <button @click="emit('refresh')">{{ t("common.refresh") }}</button>
+        <button @click="copyContent" :disabled="!props.preview.content">{{ t("common.copy") }}</button>
+        <button class="primary" @click="emit('close')">{{ t("common.close") }}</button>
       </div>
     </div>
   </div>

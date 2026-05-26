@@ -22,6 +22,7 @@ import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import { descriptorsForSlot } from "../plugins/registry";
 import { usePluginConfigStore } from "../plugins/configStore";
 import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/types";
+import { useI18n } from "../i18n/useI18n";
 
 const props = withDefaults(
   defineProps<{
@@ -50,6 +51,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: "toast", message: string): void;
 }>();
+const { t } = useI18n();
 
 const termContainer = ref<HTMLDivElement | null>(null);
 const status = ref<Status>("connecting");
@@ -199,7 +201,7 @@ async function onMenuCopy() {
     await copyTerminalSelection(term);
   } catch (err) {
     console.warn("[AT Term] failed to copy terminal selection", err);
-    emit("toast", "copy failed");
+    emit("toast", t("terminal.copyFailed"));
   }
 }
 
@@ -217,12 +219,12 @@ async function onMenuPaste() {
       status: status.value,
       remotePermission: props.remotePermission,
     });
-    if (!result.ok && result.reason) {
-      emit("toast", result.reason);
+    if (!result.ok && (result.reasonKey || result.reason)) {
+      emit("toast", result.reasonKey ? t(result.reasonKey) : result.reason!);
     }
   } catch (err: any) {
     console.warn("[AT Term] failed to paste from terminal menu", err);
-    emit("toast", err?.message ?? "paste failed");
+    emit("toast", err?.message ?? t("terminal.pasteFailed"));
   } finally {
     pasteBusy.value = false;
     closeContextMenu();
@@ -349,7 +351,7 @@ async function ensureTerm() {
     const focused = typeof document !== "undefined" && document.hasFocus();
     if (!shouldNotify(Date.now(), lastBellAt, focused)) return;
     lastBellAt = Date.now();
-    void showNotification("AT Term", `Bell in ${props.sessionLabel || "session"}`);
+    void showNotification("AT Term", t("terminal.bellNotification", { session: props.sessionLabel || "session" }));
   });
 
   const cmdTracker = new CommandTracker();
@@ -366,7 +368,11 @@ async function ensureTerm() {
       if (!passed) return false;
       void showNotification(
         "AT Term",
-        `Command finished · exit ${ev.exitCode} · ${formatElapsed(ev.elapsedMs)} · ${props.sessionLabel || "session"}`,
+        t("terminal.commandFinishedNotification", {
+          exitCode: ev.exitCode,
+          elapsed: formatElapsed(ev.elapsedMs),
+          session: props.sessionLabel || "session",
+        }),
       );
       void broadcastCommandFinished(
         props.sessionId,
@@ -393,7 +399,7 @@ function startConnection() {
       onOutput: (data) => term?.write(data),
       onClose: (info) => {
         term?.write(
-          `\r\n\x1b[33m[AT Term] session ended (exit ${info.exit_code})\x1b[0m\r\n`
+          `\r\n\x1b[33m${t("terminal.sessionEndedBanner", { exitCode: info.exit_code })}\x1b[0m\r\n`
         );
       },
       onStatus: (s) => {
@@ -414,7 +420,7 @@ function startConnection() {
         if (term) term.options.disableStdin = !isMe;
         applyViewerSize();
         if (wasDriver !== isMe) {
-          emit("toast", isMe ? "you are now the driver" : "you are now a viewer");
+          emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
         }
       },
     },
@@ -524,17 +530,17 @@ watch(status, (nextStatus) => {
           <div class="progress-fill" :style="{ width: `${progressPercent(replayProgress)}%` }"></div>
         </div>
       </template>
-      <span v-else-if="status === 'connecting'">connecting…</span>
-      <span v-else-if="status === 'reconnecting'" class="warn">reconnecting…</span>
-      <span v-else-if="status === 'ended'" class="dim">session ended</span>
-      <span v-else-if="status === 'error'" class="bad">connection error</span>
+      <span v-else-if="status === 'connecting'">{{ t("terminal.connecting") }}</span>
+      <span v-else-if="status === 'reconnecting'" class="warn">{{ t("terminal.reconnecting") }}</span>
+      <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
+      <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
     </div>
     <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
       <div class="viewer-overlay-card">
-        <div class="viewer-overlay-title">remote has taken control</div>
-        <div v-if="driverHostname" class="viewer-overlay-host">by {{ driverHostname }}</div>
-        <div class="viewer-overlay-hint">press space to take back</div>
-        <button class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">Take control</button>
+        <div class="viewer-overlay-title">{{ t("terminal.remoteHasTakenControl") }}</div>
+        <div v-if="driverHostname" class="viewer-overlay-host">{{ t("terminal.byHost", { host: driverHostname }) }}</div>
+        <div class="viewer-overlay-hint">{{ t("terminal.pressSpaceToTakeBack") }}</div>
+        <button class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">{{ t("terminal.takeControl") }}</button>
       </div>
     </div>
     <Teleport to="body">
@@ -546,9 +552,9 @@ watch(status, (nextStatus) => {
         @mousedown.stop
         @click.stop
       >
-        <button class="term-context-item" :disabled="!menuHasSelection" @click="onMenuCopy">copy</button>
-        <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">paste</button>
-        <button class="term-context-item" @click="onMenuClear">clear buffer</button>
+        <button class="term-context-item" :disabled="!menuHasSelection" @click="onMenuCopy">{{ t("common.copy") }}</button>
+        <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">{{ t("common.paste") }}</button>
+        <button class="term-context-item" @click="onMenuClear">{{ t("terminal.clearBuffer") }}</button>
         <button
           v-for="item in pluginMenuItems"
           :key="item.id"

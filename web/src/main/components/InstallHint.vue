@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const STORAGE_KEY = 'at-term-install-hint-dismissed'
 const visible = ref(false)
+const { t } = useI18n()
 
 function isIos(ua: string): boolean {
   return /iPad|iPhone|iPod/i.test(ua) && !/Macintosh|Windows|Android/i.test(ua)
@@ -31,10 +33,10 @@ onMounted(() => {
 <template>
   <section v-if="visible" class="install-hint">
     <div>
-      <strong>install AT Term</strong>
-      <span>on iPhone, open this site with HTTPS, then tap Share → Add to Home Screen.</span>
+      <strong>{{ t('main.install.title') }}</strong>
+      <span>{{ t('main.install.text') }}</span>
     </div>
-    <button type="button" aria-label="Dismiss install hint" @click="onDismiss">×</button>
+    <button type="button" :aria-label="t('main.install.dismiss')" @click="onDismiss">×</button>
   </section>
 </template>
 

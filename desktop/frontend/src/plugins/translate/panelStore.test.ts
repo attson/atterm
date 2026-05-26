@@ -1,5 +1,6 @@
 import { setActivePinia, createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetI18nForTest, setLocalePreference } from "../../i18n";
 import { useTranslatePanelStore } from "./panelStore";
 import { TranslateError, type TranslateProvider } from "./providers/types";
 
@@ -17,8 +18,14 @@ function fakeProvider(): { provider: TranslateProvider; calls: Array<{ text: str
 }
 
 describe("translatePanelStore", () => {
-  beforeEach(() => { setActivePinia(createPinia()); });
-  afterEach(() => { vi.restoreAllMocks(); });
+  beforeEach(() => {
+    resetI18nForTest();
+    setActivePinia(createPinia());
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetI18nForTest();
+  });
 
   it("openWithSource sets state and dispatches translate", async () => {
     const { provider, calls } = fakeProvider();
@@ -62,6 +69,14 @@ describe("translatePanelStore", () => {
     expect(store.error?.code).toBe("auth");
     expect(store.history.length).toBe(0);
     expect(store.result).toBeNull();
+  });
+
+  it("localizes the not configured fallback", async () => {
+    await setLocalePreference("zh-CN");
+    const store = useTranslatePanelStore();
+    await store.openWithSource("hello");
+    expect(store.visible).toBe(true);
+    expect(store.error).toEqual({ code: "unknown", message: "翻译插件尚未配置" });
   });
 
   it("changeTarget re-translates with new lang", async () => {

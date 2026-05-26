@@ -3,6 +3,7 @@ import type { Endpoint } from "../lib/api";
 import type { SessionInfo } from "../lib/connection";
 import type { Pane } from "../lib/types";
 import type { PluginContext } from "./types";
+import { t } from "../i18n";
 
 export interface PluginContextInputs {
   activePane: Ref<Pane | null>;
@@ -31,12 +32,12 @@ export function createPluginContext(inputs: PluginContextInputs): PluginContext 
   function send(text: string) {
     const p = inputs.activePane.value;
     if (!p || !p.sessionId) {
-      inputs.showToast("No active session");
+      inputs.showToast(t("app.noActiveSession"));
       return;
     }
     const ep = inputs.endpointForPane(p);
     if (!ep) {
-      inputs.showToast("No endpoint");
+      inputs.showToast(t("app.noEndpoint"));
       return;
     }
     inputs.sendToSession(p.sessionId, ep, text);

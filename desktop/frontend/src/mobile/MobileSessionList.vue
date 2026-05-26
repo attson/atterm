@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { usePlatform } from '../platform'
 import type { RemoteSession } from '../platform/types'
 import { groupByHost, type HostGroup } from './sessionGroups'
+import { useI18n } from '../i18n/useI18n'
 
 defineProps<{ openSessionIds: string[] }>()
 const emit = defineEmits<{
@@ -15,6 +16,7 @@ const platform = usePlatform()
 const groups = ref<HostGroup[]>([])
 const error = ref<string | null>(null)
 const loading = ref(false)
+const { t } = useI18n()
 
 async function refresh(): Promise<void> {
   loading.value = true
@@ -37,11 +39,11 @@ onMounted(refresh)
 <template>
   <div class="list">
     <header class="bar">
-      <span class="title">Sessions</span>
-      <button data-testid="refresh" class="icon" :disabled="loading" @click="refresh" aria-label="Refresh">
+      <span class="title">{{ t('mobile.sessionsTitle') }}</span>
+      <button data-testid="refresh" class="icon" :disabled="loading" @click="refresh" :aria-label="t('common.refresh')">
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
       </button>
-      <button data-testid="gear" class="icon" @click="emit('editRelay')" aria-label="Settings">
+      <button data-testid="gear" class="icon" @click="emit('editRelay')" :aria-label="t('common.settings')">
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
       </button>
     </header>
@@ -62,11 +64,11 @@ onMounted(refresh)
             <span v-if="s.cwd" :data-testid="`session-cwd-${s.session_id}`" class="cwd">{{ s.cwd }}</span>
             <span class="meta">{{ s.cols }}×{{ s.rows }}</span>
           </span>
-          <span v-if="openSessionIds.includes(s.session_id)" :data-testid="`open-badge-${s.session_id}`" class="open">open</span>
+          <span v-if="openSessionIds.includes(s.session_id)" :data-testid="`open-badge-${s.session_id}`" class="open">{{ t('mobile.openBadge') }}</span>
         </button>
       </div>
       <p v-if="!loading && !error && groups.length === 0" class="empty">
-        no remote sessions — start one from a desktop AT Term connected to this relay.
+        {{ t('mobile.noRemoteSessions') }}
       </p>
     </div>
   </div>

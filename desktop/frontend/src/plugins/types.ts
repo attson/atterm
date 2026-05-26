@@ -1,6 +1,7 @@
 import type { Component, ComputedRef, Ref } from "vue";
 import type { Endpoint } from "../lib/api";
 import type { Pane } from "../lib/types";
+import type { MessageKey } from "../i18n";
 
 export type PluginSlot = "right-panel" | "bottom-toolbar" | "context-menu";
 
@@ -32,8 +33,8 @@ export interface PluginContext {
 export interface PluginDescriptor {
   id: PluginID;
   slot: PluginSlot;
-  title: string;
-  description: string;
+  titleKey: MessageKey;
+  descriptionKey: MessageKey;
   // Union return type so context-menu plugins can load a headless module.
   load: () =>
     | Promise<{ default: Component }>

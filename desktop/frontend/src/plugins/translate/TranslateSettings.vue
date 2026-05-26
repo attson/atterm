@@ -1,18 +1,21 @@
 <script lang="ts" setup>
 import { computed } from "vue";
 import { usePluginConfigStore, type PluginConfig } from "../configStore";
+import { useI18n } from "../../i18n/useI18n";
+import type { MessageKey } from "../../i18n";
 
 const store = usePluginConfigStore();
+const { t: i18nT } = useI18n();
 
 const TARGETS = [
-  { code: "zh-CN", label: "中文 (Simplified)" },
-  { code: "en", label: "English" },
-  { code: "ja", label: "日本語" },
-  { code: "ko", label: "한국어" },
-  { code: "de", label: "Deutsch" },
-  { code: "fr", label: "Français" },
-  { code: "es", label: "Español" },
-];
+  { code: "zh-CN", labelKey: "plugins.translate.simplifiedChinese" },
+  { code: "en", labelKey: "plugins.translate.targetEnglish" },
+  { code: "ja", labelKey: "plugins.translate.targetJapanese" },
+  { code: "ko", labelKey: "plugins.translate.targetKorean" },
+  { code: "de", labelKey: "plugins.translate.targetGerman" },
+  { code: "fr", labelKey: "plugins.translate.targetFrench" },
+  { code: "es", labelKey: "plugins.translate.targetSpanish" },
+] satisfies { code: string; labelKey: MessageKey }[];
 
 const t = computed(() => store.cfg?.translate);
 
@@ -27,7 +30,7 @@ async function update(patch: Partial<PluginConfig["translate"]>) {
 <template>
   <div v-if="t" class="translate-settings">
     <label>
-      <span>Base URL</span>
+      <span>{{ i18nT("plugins.translate.baseUrl") }}</span>
       <input
         type="text"
         :value="t.baseUrl"
@@ -36,7 +39,7 @@ async function update(patch: Partial<PluginConfig["translate"]>) {
       />
     </label>
     <label>
-      <span>API Key</span>
+      <span>{{ i18nT("plugins.translate.apiKey") }}</span>
       <input
         type="password"
         :value="t.apiKey"
@@ -45,7 +48,7 @@ async function update(patch: Partial<PluginConfig["translate"]>) {
       />
     </label>
     <label>
-      <span>Model</span>
+      <span>{{ i18nT("plugins.translate.model") }}</span>
       <input
         type="text"
         :value="t.model"
@@ -54,15 +57,15 @@ async function update(patch: Partial<PluginConfig["translate"]>) {
       />
     </label>
     <label>
-      <span>Default target language</span>
+      <span>{{ i18nT("plugins.translate.defaultTargetLanguage") }}</span>
       <select
         :value="t.defaultTargetLang"
         @change="update({ defaultTargetLang: ($event.target as HTMLSelectElement).value })"
       >
-        <option v-for="opt in TARGETS" :key="opt.code" :value="opt.code">{{ opt.label }}</option>
+        <option v-for="opt in TARGETS" :key="opt.code" :value="opt.code">{{ i18nT(opt.labelKey) }}</option>
       </select>
     </label>
-    <p class="muted">API key is stored plaintext in <code>~/.config/atterm/config.json</code>.</p>
+    <p class="muted">{{ i18nT("plugins.translate.keyStoredPlaintext", { path: "~/.config/atterm/config.json" }) }}</p>
   </div>
 </template>
 

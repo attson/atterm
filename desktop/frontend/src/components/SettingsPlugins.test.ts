@@ -18,8 +18,8 @@ beforeEach(() => {
   PLUGINS.push({
     id: "quick-input",
     slot: "bottom-toolbar",
-    title: "Quick Input",
-    description: "x",
+    titleKey: "plugins.quickInput.title",
+    descriptionKey: "plugins.quickInput.description",
     load: () => Promise.reject(new Error("not used")),
     defaultEnabled: true,
   });

@@ -9,7 +9,10 @@ import {
 } from 'naive-ui'
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import Topbar from '@shared/components/Topbar.vue'
+import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { isMobileApp } from '@shared/api/relay-config'
+import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 import ApiTokens from './tabs/ApiTokens.vue'
 import ChangePassword from './tabs/ChangePassword.vue'
 import Sessions from './tabs/Sessions.vue'
@@ -19,6 +22,7 @@ import Relay from './tabs/Relay.vue'
 import Webhooks from './tabs/Webhooks.vue'
 
 const mobile = isMobileApp()
+const { t } = useI18n()
 
 const TAB_NAMES = mobile
   ? (['relay'] as const)
@@ -50,10 +54,22 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <Topbar active="settings" />
       <main class="settings-page">
+        <section class="language-settings" aria-labelledby="language-settings-title">
+          <div>
+            <h2 id="language-settings-title">{{ t('settings.language') }}</h2>
+            <p>{{ t('settings.languageHint') }}</p>
+          </div>
+          <LanguageSelect />
+        </section>
         <n-tabs
           :value="activeTab"
           type="line"
@@ -61,27 +77,27 @@ const overrides = getNaiveOverrides()
           @update:value="onTabChange"
         >
           <template v-if="mobile">
-            <n-tab-pane name="relay" tab="Relay">
+            <n-tab-pane name="relay" :tab="t('settings.tabs.relay')">
               <Relay />
             </n-tab-pane>
           </template>
           <template v-else>
-            <n-tab-pane name="api-tokens" tab="API Tokens">
+            <n-tab-pane name="api-tokens" :tab="t('settings.tabs.apiTokens')">
               <ApiTokens />
             </n-tab-pane>
-            <n-tab-pane name="change-password" tab="Change Password">
+            <n-tab-pane name="change-password" :tab="t('settings.tabs.changePassword')">
               <ChangePassword />
             </n-tab-pane>
-            <n-tab-pane name="sessions" tab="Signed-in devices">
+            <n-tab-pane name="sessions" :tab="t('settings.tabs.sessions')">
               <Sessions />
             </n-tab-pane>
-            <n-tab-pane name="notifications" tab="Notifications">
+            <n-tab-pane name="notifications" :tab="t('settings.tabs.notifications')">
               <Notifications />
             </n-tab-pane>
-            <n-tab-pane name="webhooks" tab="Webhooks">
+            <n-tab-pane name="webhooks" :tab="t('settings.tabs.webhooks')">
               <Webhooks />
             </n-tab-pane>
-            <n-tab-pane name="danger" tab="Danger zone">
+            <n-tab-pane name="danger" :tab="t('settings.tabs.danger')">
               <DangerZone />
             </n-tab-pane>
           </template>
@@ -98,5 +114,24 @@ const overrides = getNaiveOverrides()
   padding: 2rem 1rem;
   color: var(--fg);
   min-height: calc(100vh - 80px);
+}
+.language-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--panel);
+}
+.language-settings h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.language-settings p {
+  margin: 0.25rem 0 0;
+  color: var(--fg-dim);
 }
 </style>

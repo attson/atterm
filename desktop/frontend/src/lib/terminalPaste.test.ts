@@ -37,8 +37,82 @@ describe("pasteFromClipboard", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/full remote permission/);
+    expect(result.reasonKey).toBe("terminal.imagePasteRequiresFull");
     expect(conn.sendPasteImage).not.toHaveBeenCalled();
+  });
+
+  it("returns a stable i18n reason key when paste is not writable", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+    const getPayload = vi.fn(async () => ({ kind: "text" as const, text: "echo hi\n" }));
+
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: "connecting",
+      remotePermission: "full",
+      getPayload,
+    });
+
+    expect(result).toEqual({ ok: false, reasonKey: "terminal.pasteSessionNotWritable" });
+    expect(getPayload).not.toHaveBeenCalled();
+    expect(term.paste).not.toHaveBeenCalled();
+  });
+
+  it("maps the backend empty clipboard reason to a stable i18n key", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({ kind: "none", reason: "clipboard has no text or image" }),
+    });
+
+    expect(result).toEqual({ ok: false, reasonKey: "terminal.clipboardEmpty" });
+    expect(term.paste).not.toHaveBeenCalled();
+  });
+
+  it("maps known backend clipboard image reasons to stable i18n keys", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    await expect(
+      pasteFromClipboard({
+        term,
+        conn,
+        status: "attached",
+        remotePermission: "full",
+        getPayload: async () => ({ kind: "none", reason: "clipboard image too large" }),
+      }),
+    ).resolves.toEqual({ ok: false, reasonKey: "terminal.clipboardImageTooLarge" });
+
+    await expect(
+      pasteFromClipboard({
+        term,
+        conn,
+        status: "attached",
+        remotePermission: "full",
+        getPayload: async () => ({ kind: "none", reason: "install xclip, wl-paste, or xsel to paste images" }),
+      }),
+    ).resolves.toEqual({ ok: false, reasonKey: "terminal.clipboardImageToolsMissing" });
+  });
+
+  it("keeps unknown backend clipboard reasons for actionable diagnostics", async () => {
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({ kind: "none", reason: "pbpaste exited 1" }),
+    });
+
+    expect(result).toEqual({ ok: false, reason: "pbpaste exited 1" });
   });
 
   it("turns image payloads into blobs and reuses sendPasteImage", async () => {

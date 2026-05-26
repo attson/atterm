@@ -16,8 +16,10 @@ import SettingsPlugins from "./SettingsPlugins.vue";
 import SettingsShortcuts from "./SettingsShortcuts.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
+import { useI18n } from "../i18n/useI18n";
 
 const caps = usePlatform().caps;
+const { t } = useI18n();
 
 const props = defineProps<{
   localSessionCount: number;
@@ -152,7 +154,7 @@ function onSaveClick() {
   <div class="backdrop" @click.self="close">
     <div class="settings-dialog">
       <header class="settings-header">
-        <h2>Settings</h2>
+        <h2>{{ t("settings.title") }}</h2>
         <button class="close-btn" @click="close" :disabled="relayRef?.saving">×</button>
       </header>
 
@@ -162,36 +164,36 @@ function onSaveClick() {
             class="settings-nav-item"
             :class="{ active: activeTab === 'general' }"
             @click="switchTab('general')"
-          >General</button>
+          >{{ t("settings.tabs.general") }}</button>
           <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'relay' }"
             @click="switchTab('relay')"
-          >Relay</button>
+          >{{ t("settings.tabs.relay") }}</button>
           <button
             v-if="caps.fileDialog"
             class="settings-nav-item"
             :class="{ active: activeTab === 'logging' }"
             @click="switchTab('logging')"
-          >Logging</button>
+          >{{ t("settings.tabs.logging") }}</button>
           <button
             v-if="caps.autoUpdate"
             class="settings-nav-item"
             :class="{ active: activeTab === 'updates' }"
             @click="switchTab('updates')"
-          >Updates</button>
+          >{{ t("settings.tabs.updates") }}</button>
           <button
             v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'plugins' }"
             @click="switchTab('plugins')"
-          >Plugins</button>
+          >{{ t("settings.tabs.plugins") }}</button>
           <button
             v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'shortcuts' }"
             @click="switchTab('shortcuts')"
-          >Shortcuts</button>
+          >{{ t("settings.tabs.shortcuts") }}</button>
         </aside>
 
         <section class="settings-pane">
@@ -223,22 +225,22 @@ function onSaveClick() {
       </div>
 
       <footer v-if="activeTab === 'relay'" class="settings-footer">
-        <button @click="close" :disabled="relayRef?.saving">cancel</button>
+        <button @click="close" :disabled="relayRef?.saving">{{ t("common.cancel") }}</button>
         <button
           class="primary"
           :disabled="!relayRef?.canSave"
           @click="onSaveClick"
-        >{{ relayRef?.saveLabel ?? "save & connect" }}</button>
+        >{{ relayRef?.saveLabel ?? t("settings.relay.saveConnect") }}</button>
       </footer>
     </div>
 
     <div v-if="showDiscardConfirm" class="discard-backdrop" @click.self="onKeepEditing">
       <div class="discard-dialog">
-        <h3>Discard unsaved relay changes?</h3>
-        <p>Your edits to relay URL, token, permissions, or insecure mode are not saved yet.</p>
+        <h3>{{ t("settings.discardRelayTitle") }}</h3>
+        <p>{{ t("settings.discardRelayBody") }}</p>
         <div class="discard-row">
-          <button @click="onKeepEditing">stay</button>
-          <button class="danger" @click="onConfirmDiscard">discard</button>
+          <button @click="onKeepEditing">{{ t("common.stay") }}</button>
+          <button class="danger" @click="onConfirmDiscard">{{ t("common.discard") }}</button>
         </div>
       </div>
     </div>

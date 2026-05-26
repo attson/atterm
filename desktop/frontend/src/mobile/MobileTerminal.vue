@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { WebglAddon } from 'xterm-addon-webgl'
@@ -19,6 +19,9 @@ const { t } = useI18n()
 
 const container = ref<HTMLDivElement | null>(null)
 const isDriver = ref(true)
+const controlMode = ref(false)
+const pasteOpen = ref(false)
+const pasteText = ref('')
 let term: Terminal | null = null
 let fit: FitAddon | null = null
 let conn: SessionConnection | null = null
@@ -27,17 +30,53 @@ function decode(data: Uint8Array): string {
   return new TextDecoder().decode(data)
 }
 
-const AUX_KEYS: { label: string; seq: string }[] = [
-  { label: 'esc', seq: '\x1b' },
-  { label: 'tab', seq: '\t' },
-  { label: '⌃C', seq: '\x03' },
-  { label: '↑', seq: '\x1b[A' },
-  { label: '↓', seq: '\x1b[B' },
-  { label: '←', seq: '\x1b[D' },
-  { label: '→', seq: '\x1b[C' },
+const AUX_KEYS: { id: string; label: string; seq: string }[] = [
+  { id: 'enter', label: 'enter', seq: '\r' },
+  { id: 'esc', label: 'esc', seq: '\x1b' },
+  { id: 'tab', label: 'tab', seq: '\t' },
+  { id: 'ctrl-c', label: '⌃C', seq: '\x03' },
+  { id: 'ctrl-d', label: '⌃D', seq: '\x04' },
+  { id: 'arrow-up', label: '↑', seq: '\x1b[A' },
+  { id: 'arrow-down', label: '↓', seq: '\x1b[B' },
+  { id: 'arrow-left', label: '←', seq: '\x1b[D' },
+  { id: 'arrow-right', label: '→', seq: '\x1b[C' },
 ]
-function sendAux(seq: string) { conn?.sendInput(seq) }
-function takeControl() { conn?.claimDriver() }
+const QUICK_TEXTS = ['y', 'n', 'yes', 'no', 'continue']
+
+const canControl = computed(() => (props.info.remote_permission || 'full') !== 'view')
+const canSend = computed(() => canControl.value && controlMode.value && isDriver.value)
+
+function refreshInputMode() {
+  if (term) term.options.disableStdin = !canSend.value
+}
+
+function sendRaw(seq: string) {
+  if (!canSend.value) return
+  conn?.sendInput(seq)
+}
+
+function sendAux(seq: string) { sendRaw(seq) }
+function sendQuick(text: string) { sendRaw(`${text}\r`) }
+function takeControl() {
+  if (!canControl.value) return
+  conn?.claimDriver()
+}
+
+async function openPasteConfirm() {
+  if (!canSend.value) return
+  pasteText.value = ''
+  pasteOpen.value = true
+  try {
+    pasteText.value = await (navigator.clipboard?.readText?.() ?? Promise.resolve(''))
+  } catch {
+    pasteText.value = ''
+  }
+}
+
+function confirmPaste() {
+  if (pasteText.value) sendRaw(pasteText.value)
+  pasteOpen.value = false
+}
 
 onMounted(() => {
   term = new Terminal({ fontSize: 12, convertEol: false, cursorBlink: true })
@@ -63,7 +102,7 @@ onMounted(() => {
   container.value!.querySelector('.xterm-viewport')
     ?.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true })
   try { fit.fit() } catch { /* not laid out yet */ }
-  term.onData((s: string) => conn?.sendInput(s))
+  term.onData((s: string) => sendRaw(s))
   term.onResize(({ cols, rows }) => conn?.sendResize(cols, rows))
 
   conn = new SessionConnection(props.endpoint, props.sessionId, {
@@ -78,9 +117,9 @@ onMounted(() => {
     onStatus: (s) => { if (s === 'error') emit('tokenInvalid') },
     onDriverChange: (_id, isMe) => {
       isDriver.value = isMe
+      refreshInputMode()
       if (term) {
-        term.options.disableStdin = !isMe
-        if (isMe && term.cols > 0 && term.rows > 0) {
+        if (isMe && canControl.value && term.cols > 0 && term.rows > 0) {
           // Became driver: push our (phone) size so the PTY — and every other
           // viewer, e.g. the desktop owner — follows. Without this the PTY
           // keeps the previous driver's (wider) dims and the desktop viewer
@@ -91,7 +130,10 @@ onMounted(() => {
     },
   })
   conn.attach()
+  refreshInputMode()
 })
+
+watch(canSend, refreshInputMode)
 
 watch(() => props.active, (now) => {
   if (now) {
@@ -115,11 +157,47 @@ onBeforeUnmount(() => {
     <div v-if="!isDriver" class="viewer-overlay">
       <div class="viewer-card">
         <div class="viewer-title">{{ t('terminal.remoteHasControl') }}</div>
-        <button class="take-control" data-testid="mobile-take-control" @click="takeControl">{{ t('terminal.takeControl') }}</button>
+        <button v-if="canControl" class="take-control" data-testid="mobile-take-control" @click="takeControl">{{ t('terminal.takeControl') }}</button>
+        <div v-else class="view-only-copy" data-testid="mobile-view-only-overlay">{{ t('mobile.viewOnly') }}</div>
       </div>
     </div>
-    <div class="kbbar">
-      <button v-for="k in AUX_KEYS" :key="k.label" class="key" @click="sendAux(k.seq)">{{ k.label }}</button>
+    <div class="control-panel" data-testid="mobile-control-panel">
+      <div v-if="!canControl" class="view-only" data-testid="mobile-view-only">{{ t('mobile.viewOnly') }}</div>
+      <label class="control-toggle">
+        <input
+          v-model="controlMode"
+          data-testid="mobile-control-toggle"
+          type="checkbox"
+          :disabled="!canControl || !isDriver"
+        />
+        <span>{{ t('mobile.controlMode') }}</span>
+      </label>
+      <div class="kbbar">
+        <button
+          v-for="k in AUX_KEYS"
+          :key="k.id"
+          class="key"
+          :data-testid="`mobile-key-${k.id}`"
+          :disabled="!canSend"
+          @click="sendAux(k.seq)"
+        >{{ k.label }}</button>
+        <button class="key paste" data-testid="mobile-paste" :disabled="!canSend" @click="openPasteConfirm">{{ t('mobile.pasteClipboard') }}</button>
+      </div>
+      <div class="quickbar">
+        <button
+          v-for="text in QUICK_TEXTS"
+          :key="text"
+          class="quick"
+          :data-testid="`mobile-quick-${text}`"
+          :disabled="!canSend"
+          @click="sendQuick(text)"
+        >{{ text }}</button>
+      </div>
+      <div v-if="pasteOpen" class="paste-confirm" data-testid="mobile-paste-confirm-panel">
+        <textarea v-model="pasteText" :placeholder="t('mobile.pastePreview')" rows="2"></textarea>
+        <button type="button" data-testid="mobile-paste-cancel" @click="pasteOpen = false">{{ t('common.cancel') }}</button>
+        <button type="button" data-testid="mobile-paste-confirm" :disabled="!canSend || !pasteText" @click="confirmPaste">{{ t('mobile.pasteConfirm') }}</button>
+      </div>
     </div>
   </div>
 </template>
@@ -130,6 +208,7 @@ onBeforeUnmount(() => {
 .viewer-card { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .viewer-title { color: #e6e7ea; font-size: 0.9rem; }
 .take-control { padding: 8px 16px; border: none; border-radius: 8px; background: #3b82f6; color: #fff; font-weight: 600; }
+.view-only-copy { color: #fbbf24; font-size: 0.82rem; }
 .term { flex: 1; min-height: 0; }
 /* Smooth, inertial scrollback on iOS: pan-y keeps the fling momentum (and
    disables double-tap/pinch zoom over the terminal), -webkit-overflow-scrolling
@@ -144,6 +223,16 @@ onBeforeUnmount(() => {
    positioning); iOS draws the native blinking caret there, doubling up with
    xterm's own block cursor. Hide the native one. */
 .term :deep(.xterm-helper-textarea) { caret-color: transparent; }
-.kbbar { height: 42px; border-top: 1px solid #1e2638; background: #0b1020; display: flex; align-items: center; gap: 6px; padding: 0 8px; overflow-x: auto; }
-.key { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #8d93a3; font-size: 0.75rem; font-family: ui-monospace, Menlo, monospace; }
+.control-panel { border-top: 1px solid #1e2638; background: #0b1020; padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 7px; }
+.control-toggle { display: inline-flex; align-items: center; gap: 7px; color: #cbd5e1; font-size: 0.78rem; user-select: none; }
+.control-toggle input { accent-color: #3b82f6; }
+.view-only { border: 1px solid rgba(251,191,36,.34); border-radius: 8px; padding: 6px 8px; color: #fbbf24; background: rgba(251,191,36,.09); font-size: 0.75rem; }
+.kbbar, .quickbar { display: flex; align-items: center; gap: 6px; overflow-x: auto; }
+.key, .quick { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: ui-monospace, Menlo, monospace; }
+.quick { font-family: inherit; min-width: 42px; }
+.paste { font-family: inherit; min-width: 56px; }
+.key:disabled, .quick:disabled, .paste-confirm button:disabled { opacity: .45; color: #64748b; }
+.paste-confirm { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
+.paste-confirm textarea { min-width: 0; resize: vertical; border-radius: 8px; border: 1px solid #1e2638; background: #020617; color: #e2e8f0; padding: 6px 8px; font: 0.78rem ui-monospace, Menlo, monospace; }
+.paste-confirm button { height: 30px; border-radius: 7px; border: 1px solid #1e2638; background: #11182b; color: #cbd5e1; padding: 0 10px; }
 </style>

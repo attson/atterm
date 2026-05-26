@@ -115,4 +115,15 @@ describe("SettingsRelay", () => {
   test("uses platform.events.on for relay:auth-info", () => {
     expect(platform.events.on).toBeDefined();
   });
+
+  test("renders relay setup wizard with validation steps and recovery actions", () => {
+    expect(source).toContain('data-testid="relay-setup-wizard"');
+    expect(source).toContain("settings.relay.wizard.title");
+    expect(source).toContain("settings.relay.wizard.steps.reachability");
+    expect(source).toContain("settings.relay.wizard.steps.urlCompatibility");
+    expect(source).toContain("settings.relay.wizard.steps.apiToken");
+    expect(source).toContain("settings.relay.wizard.steps.identity");
+    expect(source).toContain("settings.relay.wizard.steps.uplink");
+    expect(source).toContain("wizardRecovery");
+  });
 });

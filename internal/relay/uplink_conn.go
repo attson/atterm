@@ -22,6 +22,7 @@ const (
 	uplinkPingPeriod      = 25 * time.Second
 	uplinkOutBuffer       = 256
 	uplinkInboundFwdDepth = 64
+	defaultWebPushIdle    = 10 * time.Minute
 )
 
 // mirrorState is one mirror session this uplink owns. Mirror sessions live
@@ -30,6 +31,10 @@ const (
 type mirrorState struct {
 	sess      *session.Session
 	fwdCancel context.CancelFunc // running inbound forwarder, nil when not streaming
+
+	idleCancel                 context.CancelFunc
+	idleNotifiedCommandStarted int64
+	waitingNotifiedKey         int64
 }
 
 // newMirrorSession builds a mirror Session: driver state is adopted from the
@@ -164,6 +169,105 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		enqueue(frame)
 	}
 
+	notifySession := func(ms *mirrorState, info proto.SessionInfo, notificationType string, idleForSeconds int) {
+		if s.cfg.WebPush == nil || ms == nil {
+			return
+		}
+		hostID, _ := uuid.Parse(info.HostID) // host id is informational in push payloads
+		s.cfg.WebPush.DispatchSessionNotification(ms.sess.OwnerUserID, webpush.SessionNotification{
+			SessionID:        ms.sess.ID,
+			HostID:           hostID,
+			NotificationType: notificationType,
+			Label:            webPushSessionLabel(info),
+			RemotePermission: info.RemotePermission,
+			IdleForSeconds:   idleForSeconds,
+		})
+	}
+
+	cancelIdleTimer := func(ms *mirrorState) {
+		if ms != nil && ms.idleCancel != nil {
+			ms.idleCancel()
+			ms.idleCancel = nil
+		}
+	}
+
+	scheduleIdleTimer := func(id uuid.UUID, ms *mirrorState, info proto.SessionInfo) {
+		idleTimeout := s.webPushIdleTimeout()
+		if s.cfg.WebPush == nil || idleTimeout <= 0 || ms == nil || info.TaskState != proto.TaskStateRunning {
+			cancelIdleTimer(ms)
+			return
+		}
+		idleKey := taskNotificationKey(info)
+		if ms.idleNotifiedCommandStarted == idleKey {
+			cancelIdleTimer(ms)
+			return
+		}
+		cancelIdleTimer(ms)
+		timerCtx, cancel := context.WithCancel(connCtx)
+		ms.idleCancel = cancel
+
+		wait := idleTimeout
+		if info.LastOutputAt > 0 {
+			if remaining := idleTimeout - time.Since(time.Unix(info.LastOutputAt, 0)); remaining > 0 {
+				wait = remaining
+			} else {
+				wait = 0
+			}
+		}
+		lastOutputAt := info.LastOutputAt
+		go func() {
+			timer := time.NewTimer(wait)
+			defer timer.Stop()
+			select {
+			case <-timerCtx.Done():
+				return
+			case <-timer.C:
+			}
+
+			mu.Lock()
+			current := mirrors[id]
+			if current != ms {
+				mu.Unlock()
+				return
+			}
+			currentInfo := ms.sess.Info()
+			currentIdleKey := taskNotificationKey(currentInfo)
+			if currentInfo.TaskState != proto.TaskStateRunning ||
+				currentInfo.LastOutputAt > lastOutputAt ||
+				ms.idleNotifiedCommandStarted == currentIdleKey {
+				mu.Unlock()
+				return
+			}
+			ms.idleCancel = nil
+			ms.idleNotifiedCommandStarted = currentIdleKey
+			mu.Unlock()
+
+			notifySession(ms, currentInfo, webpush.NotificationIdleTimeout, int(idleTimeout.Seconds()))
+		}()
+	}
+
+	handleTaskNotifications := func(id uuid.UUID, ms *mirrorState) {
+		if ms == nil {
+			return
+		}
+		info := ms.sess.Info()
+		if info.TaskState == proto.TaskStateWaitingInput {
+			key := taskNotificationKey(info)
+			mu.Lock()
+			shouldNotify := ms.waitingNotifiedKey != key
+			if shouldNotify {
+				ms.waitingNotifiedKey = key
+			}
+			mu.Unlock()
+			if shouldNotify {
+				notifySession(ms, info, webpush.NotificationWaitingInput, 0)
+			}
+		}
+		mu.Lock()
+		scheduleIdleTimer(id, ms, info)
+		mu.Unlock()
+	}
+
 	// reconcile applies a fresh ANNOUNCE: add new sessions, remove vanished
 	// ones. Updates metadata for existing sessions.
 	reconcile := func(sessions []proto.SessionInfo) {
@@ -184,6 +288,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				// active driver (every client would flip to viewer).
 				existing.sess.UpdateAdvertisedInfo(info)
 				s.registry.NotifyChange()
+				handleTaskNotifications(id, existing)
 				s.debugf("uplink mirror_update session=%s cwd=%q title=%q", id, info.Cwd, info.Title)
 				continue
 			}
@@ -211,8 +316,10 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				return
 			}
 			mu.Lock()
-			mirrors[id] = &mirrorState{sess: sess}
+			ms := &mirrorState{sess: sess}
+			mirrors[id] = ms
 			mu.Unlock()
+			handleTaskNotifications(id, ms)
 			s.debugf("uplink mirror_add session=%s command=%q host_id=%q host=%q user=%q", id, info.Command, info.HostID, info.Host, info.User)
 		}
 		// remove sessions no longer in the manifest
@@ -232,6 +339,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			if ms != nil && ms.fwdCancel != nil {
 				ms.fwdCancel()
 			}
+			cancelIdleTimer(ms)
 			s.registry.Remove(id)
 			s.debugf("uplink mirror_remove session=%s reason=missing_from_announce", id)
 		}
@@ -239,14 +347,18 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 
 	cleanup := func() {
 		mu.Lock()
-		ids := make([]uuid.UUID, 0, len(mirrors))
-		for id := range mirrors {
-			ids = append(ids, id)
+		gone := make(map[uuid.UUID]*mirrorState, len(mirrors))
+		for id, ms := range mirrors {
+			gone[id] = ms
 		}
 		mirrors = make(map[uuid.UUID]*mirrorState)
 		mu.Unlock()
-		for _, id := range ids {
+		for id, ms := range gone {
 			s.registry.Remove(id)
+			if ms != nil {
+				cancelIdleTimer(ms)
+				notifySession(ms, ms.sess.Info(), webpush.NotificationUplinkDisconnected, 0)
+			}
 			s.debugf("uplink mirror_remove session=%s reason=connection_cleanup", id)
 		}
 	}
@@ -319,6 +431,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			if ms != nil {
 				if ms.sess.PushOut(seq, data) {
 					s.registry.NotifyChange()
+					handleTaskNotifications(f.SessionID, ms)
 				}
 			}
 		case proto.TypeMeta:
@@ -337,6 +450,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				// point; the raw upstream frame is not re-broadcast separately.
 				ms.sess.UpdateMeta(m)
 				s.registry.NotifyChange()
+				handleTaskNotifications(f.SessionID, ms)
 			}
 		case proto.TypeClose:
 			mu.Lock()
@@ -348,6 +462,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				if ms.fwdCancel != nil {
 					ms.fwdCancel()
 				}
+				cancelIdleTimer(ms)
 				s.registry.Remove(f.SessionID)
 			}
 		case proto.TypeCommandEvent:
@@ -381,15 +496,17 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 		s.debugf("uplink command_event unknown_session session=%s", f.SessionID)
 		return
 	}
-	hostIDStr := ms.sess.Info().HostID
+	info := ms.sess.Info()
+	hostIDStr := info.HostID
 	hostID, _ := uuid.Parse(hostIDStr) // ignore parse error — hostID is informational
 	if s.cfg.WebPush != nil {
 		s.cfg.WebPush.DispatchCommandFinished(ms.sess.OwnerUserID, webpush.CommandFinished{
-			SessionID: f.SessionID,
-			HostID:    hostID,
-			ExitCode:  payload.ExitCode,
-			ElapsedMS: payload.ElapsedMS,
-			Label:     payload.Label,
+			SessionID:        f.SessionID,
+			HostID:           hostID,
+			ExitCode:         payload.ExitCode,
+			ElapsedMS:        payload.ElapsedMS,
+			Label:            payload.Label,
+			RemotePermission: info.RemotePermission,
 		})
 	}
 	if s.cfg.Webhook != nil {
@@ -401,4 +518,37 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 			Label:     payload.Label,
 		})
 	}
+}
+
+func (s *Server) webPushIdleTimeout() time.Duration {
+	if s.cfg.WebPushIdleTimeout < 0 {
+		return 0
+	}
+	if s.cfg.WebPushIdleTimeout == 0 {
+		return defaultWebPushIdle
+	}
+	return s.cfg.WebPushIdleTimeout
+}
+
+func webPushSessionLabel(info proto.SessionInfo) string {
+	if info.CurrentCommand != "" {
+		return info.CurrentCommand
+	}
+	if info.Title != "" {
+		return info.Title
+	}
+	if info.Command != "" {
+		return info.Command
+	}
+	return "session"
+}
+
+func taskNotificationKey(info proto.SessionInfo) int64 {
+	if info.CommandStartedAt != 0 {
+		return info.CommandStartedAt
+	}
+	if info.LastOutputAt != 0 {
+		return info.LastOutputAt
+	}
+	return 1
 }

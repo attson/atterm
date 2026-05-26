@@ -101,6 +101,7 @@ export const en = {
     title: 'Remote sessions',
     unknownCommand: '(unknown)',
     unknownHost: 'unknown host',
+    viewOnlyNotice: 'This session is view-only from this device. You can inspect output, but input is disabled.',
   },
   terminal: {
     cannotReachRelay: 'Cannot reach relay.',

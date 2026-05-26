@@ -103,6 +103,7 @@ export const zhCN = {
     title: '远程会话',
     unknownCommand: '（未知）',
     unknownHost: '未知主机',
+    viewOnlyNotice: '此设备只能查看该会话。你可以查看输出，但不能输入。',
   },
   terminal: {
     cannotReachRelay: '无法连接 relay。',

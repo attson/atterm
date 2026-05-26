@@ -20,8 +20,8 @@ import (
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
-	"github.com/attson/atterm/internal/webpush"
 	"github.com/attson/atterm/internal/webhook"
+	"github.com/attson/atterm/internal/webpush"
 	"nhooyr.io/websocket"
 )
 
@@ -63,6 +63,10 @@ type Config struct {
 	// fan-out on command-finish. May be nil to disable web push; the
 	// TypeCommandEvent uplink handler still runs when Webhook is set.
 	WebPush *webpush.Service
+	// WebPushIdleTimeout sends an idle-timeout push when a running mirrored
+	// session produces no output for this duration. Zero uses the default;
+	// negative disables idle-timeout pushes.
+	WebPushIdleTimeout time.Duration
 	// Webhook, when non-nil, fires per-user outbound webhooks on command-finish.
 	Webhook *webhook.Service
 	// Resolver, when non-nil, enables Principal-based auth for /uplink and

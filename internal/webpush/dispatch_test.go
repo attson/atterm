@@ -53,7 +53,7 @@ func newServiceWithFakeTransport(t *testing.T, statuses ...int) (*Service, *reco
 // subscription's p256dh value so webpush-go's encryption can succeed.
 const (
 	validP256SubKey = "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk"
-	validAuthKey   = "zqbxT6JKstKSY9JKibZLSQ"
+	validAuthKey    = "zqbxT6JKstKSY9JKibZLSQ"
 )
 
 func subWithEndpoint(endpoint string) Subscription {
@@ -133,17 +133,20 @@ func TestDispatchEmitsPayloadWithSessionTagAndExpectedFields(t *testing.T) {
 	sid := uuid.New()
 	hid := uuid.New()
 	body := payloadJSON(CommandFinished{
-		SessionID: sid, HostID: hid, ExitCode: 127, ElapsedMS: 65000, Label: "build",
+		SessionID: sid, HostID: hid, ExitCode: 127, ElapsedMS: 65000, Label: "build", RemotePermission: "view",
 	})
 	var payload struct {
 		Title string `json:"title"`
 		Body  string `json:"body"`
 		Tag   string `json:"tag"`
 		Data  struct {
-			ExitCode  int    `json:"exitCode"`
-			ElapsedMs int    `json:"elapsedMs"`
-			SessionID string `json:"sessionId"`
-			HostID    string `json:"hostId"`
+			NotificationType string `json:"notificationType"`
+			ClickURL         string `json:"clickUrl"`
+			RemotePermission string `json:"remotePermission"`
+			ExitCode         int    `json:"exitCode"`
+			ElapsedMs        int    `json:"elapsedMs"`
+			SessionID        string `json:"sessionId"`
+			HostID           string `json:"hostId"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -160,6 +163,126 @@ func TestDispatchEmitsPayloadWithSessionTagAndExpectedFields(t *testing.T) {
 	}
 	if payload.Data.SessionID != sid.String() || payload.Data.HostID != hid.String() {
 		t.Fatalf("data ids mismatch: %+v", payload.Data)
+	}
+	if payload.Data.NotificationType != NotificationCommandFailed {
+		t.Fatalf("notificationType = %q; want %q", payload.Data.NotificationType, NotificationCommandFailed)
+	}
+	if payload.Data.ClickURL != "/#/s/"+sid.String()+"?notification=command_failed&permission=view" {
+		t.Fatalf("clickUrl = %q", payload.Data.ClickURL)
+	}
+	if payload.Data.RemotePermission != "view" {
+		t.Fatalf("remotePermission = %q; want view", payload.Data.RemotePermission)
+	}
+}
+
+func TestDispatchCommandFinishedUsesCompletedTypeForZeroExit(t *testing.T) {
+	sid := uuid.New()
+	body := payloadJSON(CommandFinished{SessionID: sid, ExitCode: 0})
+	var payload struct {
+		Data struct {
+			NotificationType string `json:"notificationType"`
+			ClickURL         string `json:"clickUrl"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+	if payload.Data.NotificationType != NotificationCommandCompleted {
+		t.Fatalf("notificationType = %q; want %q", payload.Data.NotificationType, NotificationCommandCompleted)
+	}
+	if payload.Data.ClickURL != "/#/s/"+sid.String()+"?notification=command_completed" {
+		t.Fatalf("clickUrl = %q", payload.Data.ClickURL)
+	}
+}
+
+func TestDispatchSessionNotificationBuildsWaitingInputDeepLink(t *testing.T) {
+	sid := uuid.New()
+	body := sessionNotificationPayloadJSON(SessionNotification{
+		SessionID:        sid,
+		HostID:           uuid.New(),
+		NotificationType: NotificationWaitingInput,
+		Label:            "codex",
+		RemotePermission: "view",
+	})
+	var payload struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Tag   string `json:"tag"`
+		Data  struct {
+			NotificationType string `json:"notificationType"`
+			ClickURL         string `json:"clickUrl"`
+			RemotePermission string `json:"remotePermission"`
+			SessionID        string `json:"sessionId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+	if payload.Data.NotificationType != NotificationWaitingInput {
+		t.Fatalf("notificationType = %q; want %q", payload.Data.NotificationType, NotificationWaitingInput)
+	}
+	if payload.Data.ClickURL != "/#/s/"+sid.String()+"?notification=waiting_input&focus=input&permission=view" {
+		t.Fatalf("clickUrl = %q", payload.Data.ClickURL)
+	}
+	if payload.Data.RemotePermission != "view" {
+		t.Fatalf("remotePermission = %q; want view", payload.Data.RemotePermission)
+	}
+	if payload.Tag != sid.String() || payload.Data.SessionID != sid.String() {
+		t.Fatalf("session id not routed: tag=%q data=%q", payload.Tag, payload.Data.SessionID)
+	}
+	if !strings.Contains(payload.Title, "codex") || !strings.Contains(payload.Body, "waiting for input") {
+		t.Fatalf("unexpected copy: title=%q body=%q", payload.Title, payload.Body)
+	}
+}
+
+func TestDispatchSessionNotificationBuildsIdleAndDisconnectedTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		notificationType string
+		wantURL          string
+	}{
+		{
+			name:             "idle",
+			notificationType: NotificationIdleTimeout,
+			wantURL:          "?notification=idle_timeout",
+		},
+		{
+			name:             "uplink disconnected",
+			notificationType: NotificationUplinkDisconnected,
+			wantURL:          "?notification=uplink_disconnected",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sid := uuid.New()
+			body := sessionNotificationPayloadJSON(SessionNotification{
+				SessionID:        sid,
+				NotificationType: tc.notificationType,
+				IdleForSeconds:   90,
+			})
+			var payload struct {
+				Data struct {
+					NotificationType string `json:"notificationType"`
+					ClickURL         string `json:"clickUrl"`
+					SessionID        string `json:"sessionId"`
+					IdleForSeconds   int    `json:"idleForSeconds"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("payload not valid JSON: %v", err)
+			}
+			if payload.Data.NotificationType != tc.notificationType {
+				t.Fatalf("notificationType = %q; want %q", payload.Data.NotificationType, tc.notificationType)
+			}
+			if payload.Data.ClickURL != "/#/s/"+sid.String()+tc.wantURL {
+				t.Fatalf("clickUrl = %q", payload.Data.ClickURL)
+			}
+			if payload.Data.SessionID != sid.String() {
+				t.Fatalf("sessionId = %q; want %s", payload.Data.SessionID, sid)
+			}
+			if tc.notificationType == NotificationIdleTimeout && payload.Data.IdleForSeconds != 90 {
+				t.Fatalf("idleForSeconds = %d; want 90", payload.Data.IdleForSeconds)
+			}
+		})
 	}
 }
 

@@ -27,50 +27,50 @@
 
 ### 3. 通知深链
 
-- [ ] 在 Web Push payload 中包含 session id
-- [ ] 在 Web Push payload 中包含通知类型
-- [ ] 支持命令完成通知
-- [ ] 支持命令失败通知
-- [ ] 支持等待输入通知
-- [ ] 支持 idle timeout 通知
-- [ ] 支持 uplink disconnected 通知
-- [ ] 点击通知后打开目标 session
-- [ ] 等待输入通知打开后聚焦终端输入区
-- [ ] 打开 view-only session 时显示权限提示
-- [ ] 增加 push payload 路由测试
+- [x] 在 Web Push payload 中包含 session id
+- [x] 在 Web Push payload 中包含通知类型
+- [x] 支持命令完成通知
+- [x] 支持命令失败通知
+- [x] 支持等待输入通知
+- [x] 支持 idle timeout 通知
+- [x] 支持 uplink disconnected 通知
+- [x] 点击通知后打开目标 session
+- [x] 等待输入通知打开后聚焦终端输入区
+- [x] 打开 view-only session 时显示权限提示
+- [x] 增加 push payload 路由测试
 
 ### 4. 移动端快捷控制面板
 
-- [ ] 在移动端终端视图增加控制面板
-- [ ] 增加 Enter 快捷键
-- [ ] 增加 Esc 快捷键
-- [ ] 增加 Tab 快捷键
-- [ ] 增加 Ctrl-C 快捷键
-- [ ] 增加 Ctrl-D 快捷键
-- [ ] 增加方向键快捷键：Up、Down、Left、Right
-- [ ] 增加快捷文本：`y`、`n`、`yes`、`no`、`continue`
-- [ ] 增加粘贴确认
-- [ ] 增加显式控制模式开关
-- [ ] view-only session 禁用控制按钮
-- [ ] 增加权限控制测试
+- [x] 在移动端终端视图增加控制面板
+- [x] 增加 Enter 快捷键
+- [x] 增加 Esc 快捷键
+- [x] 增加 Tab 快捷键
+- [x] 增加 Ctrl-C 快捷键
+- [x] 增加 Ctrl-D 快捷键
+- [x] 增加方向键快捷键：Up、Down、Left、Right
+- [x] 增加快捷文本：`y`、`n`、`yes`、`no`、`continue`
+- [x] 增加粘贴确认
+- [x] 增加显式控制模式开关
+- [x] view-only session 禁用控制按钮
+- [x] 增加权限控制测试
 
 ### 5. Relay 连接向导
 
-- [ ] 在桌面端增加 relay setup wizard
-- [ ] 增加 relay URL 输入步骤
-- [ ] 校验 relay 可达性
-- [ ] 校验 HTTP/HTTPS 和 WS/WSS 兼容性
-- [ ] 校验 API token
-- [ ] 校验用户身份
-- [ ] 校验 uplink 连接状态
-- [ ] 识别 relay unreachable 错误
-- [ ] 识别 invalid token 错误
-- [ ] 识别 origin rejected 错误
-- [ ] 识别 insecure ws blocked 错误
-- [ ] 识别 incompatible relay version 错误
-- [ ] 识别 permission denied 错误
-- [ ] 为每类失败提供恢复操作
-- [ ] 增加连接向导状态测试
+- [x] 在桌面端增加 relay setup wizard
+- [x] 增加 relay URL 输入步骤
+- [x] 校验 relay 可达性
+- [x] 校验 HTTP/HTTPS 和 WS/WSS 兼容性
+- [x] 校验 API token
+- [x] 校验用户身份
+- [x] 校验 uplink 连接状态
+- [x] 识别 relay unreachable 错误
+- [x] 识别 invalid token 错误
+- [x] 识别 origin rejected 错误
+- [x] 识别 insecure ws blocked 错误
+- [x] 识别 incompatible relay version 错误
+- [x] 识别 permission denied 错误
+- [x] 为每类失败提供恢复操作
+- [x] 增加连接向导状态测试
 
 ## P1：v0.4 新用户引导与可信度
 

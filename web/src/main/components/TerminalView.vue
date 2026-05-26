@@ -9,6 +9,7 @@ import { useI18n } from '@shared/i18n/useI18n'
 
 const props = defineProps<{
   sessionId: string
+  focusInput?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -58,6 +59,9 @@ function buildTerm() {
   term.loadAddon(fit)
   term.open(termContainer.value!)
   safeFit()
+  if (props.focusInput) {
+    term.focus()
+  }
 
   term.onData((data) => {
     conn?.sendInput(data)
@@ -130,6 +134,13 @@ watch(
     term?.reset()
     replay.value = null
     buildConn()
+  },
+)
+
+watch(
+  () => props.focusInput,
+  (focus) => {
+    if (focus) term?.focus()
   },
 )
 

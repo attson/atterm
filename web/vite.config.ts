@@ -34,6 +34,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,webmanifest}'],
+        importScripts: ['notification-click.js'],
         runtimeCaching: [],
         navigateFallback: null,
         cleanupOutdatedCaches: true,

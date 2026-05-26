@@ -3,20 +3,22 @@ import { ref } from 'vue'
 import { NCard, NForm, NFormItem, NInput, NButton, NPopconfirm } from 'naive-ui'
 import { deleteMe } from '@shared/api/me'
 import { ApiError } from '@shared/api/client'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const email = ref('')
 const password = ref('')
 const submitting = ref(false)
 const errorMsg = ref('')
+const { t } = useI18n()
 
 function mapError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.code === 'email_mismatch') return "Email doesn't match — type your exact email."
-    if (e.code === 'password_incorrect') return 'Password is incorrect.'
-    if (e.code === 'last_admin') return "You're the last admin — promote another user first."
-    if (e.code === 'invalid_request') return 'Please check your input.'
+    if (e.code === 'email_mismatch') return t('settings.danger.emailMismatch')
+    if (e.code === 'password_incorrect') return t('settings.danger.passwordIncorrect')
+    if (e.code === 'last_admin') return t('settings.danger.lastAdmin')
+    if (e.code === 'invalid_request') return t('settings.danger.invalidRequest')
   }
-  return 'Delete failed. Please try again.'
+  return t('settings.danger.failed')
 }
 
 async function performDelete() {
@@ -44,9 +46,7 @@ function onSubmit(e: Event) {
 <template>
   <n-card :bordered="false" class="danger-card">
     <p>
-      Permanently delete this account. This cannot be undone. API tokens, web
-      sessions, and account data are removed. Invitations you've consumed
-      stay (their "consumed by" field is cleared).
+      {{ t('settings.danger.description') }}
     </p>
     <n-form
       label-placement="top"
@@ -55,14 +55,14 @@ function onSubmit(e: Event) {
       novalidate
       @submit="onSubmit"
     >
-        <n-form-item label="Confirm by typing your full email" :show-feedback="false">
+        <n-form-item :label="t('settings.danger.typeEmail')" :show-feedback="false">
           <n-input
             v-model:value="email"
             type="text"
             :input-props="{ type: 'email', required: true, autocomplete: 'off' }"
           />
         </n-form-item>
-        <n-form-item label="Current password" :show-feedback="false">
+        <n-form-item :label="t('settings.danger.currentPassword')" :show-feedback="false">
           <n-input
             v-model:value="password"
             type="password"
@@ -80,10 +80,10 @@ function onSubmit(e: Event) {
               :disabled="submitting"
               data-testid="delete-account-trigger"
             >
-              Delete my account
+              {{ t('settings.danger.deleteAccount') }}
             </n-button>
           </template>
-          Permanently delete this account? This cannot be undone.
+          {{ t('settings.danger.confirmDelete') }}
         </n-popconfirm>
         <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>
     </n-form>

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch, shallowRef, type Component } from "vue
 import { usePluginConfigStore } from "./configStore";
 import { descriptorsForSlot } from "./registry";
 import type { PluginContext, PluginDescriptor, PluginSlot } from "./types";
+import { useI18n } from "../i18n/useI18n";
 
 const props = defineProps<{
   slotId: PluginSlot;
@@ -10,6 +11,7 @@ const props = defineProps<{
 }>();
 
 const store = usePluginConfigStore();
+const { t } = useI18n();
 
 interface LoadedPlugin {
   descriptor: PluginDescriptor;
@@ -37,7 +39,7 @@ async function reconcile() {
         next.push({ descriptor: d, component: mod.default });
       } catch (err) {
         console.error(`plugin ${d.id} failed to load`, err);
-        props.context.showToast(`Plugin "${d.title}" failed to load`);
+        props.context.showToast(t("app.pluginFailedToLoad", { title: t(d.titleKey) }));
         // Disable so the user is not stuck retrying every reconcile.
         try {
           await store.setEnabled(d.id, false);

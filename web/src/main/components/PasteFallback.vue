@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{
@@ -9,6 +10,7 @@ const emit = defineEmits<{
 }>()
 
 const text = ref('')
+const { t } = useI18n()
 
 watch(
   () => props.open,
@@ -39,9 +41,9 @@ function onFileChange(e: Event) {
 
 <template>
   <form v-if="open" class="paste-fallback" @submit="onSubmit">
-    <textarea v-model="text" rows="3" placeholder="paste text here" data-testid="paste-text"></textarea>
+    <textarea v-model="text" rows="3" :placeholder="t('terminal.paste')" data-testid="paste-text"></textarea>
     <div class="actions">
-      <label class="paste-image-pick" for="paste-image-file">pick image</label>
+      <label class="paste-image-pick" for="paste-image-file">{{ t('terminal.pickImage') }}</label>
       <input
         id="paste-image-file"
         type="file"
@@ -50,8 +52,8 @@ function onFileChange(e: Event) {
         data-testid="paste-image-file"
         @change="onFileChange"
       />
-      <button type="button" data-testid="paste-cancel" @click="onCancel">cancel</button>
-      <button type="submit">send</button>
+      <button type="button" data-testid="paste-cancel" @click="onCancel">{{ t('common.cancel') }}</button>
+      <button type="submit">{{ t('common.send') }}</button>
     </div>
   </form>
 </template>

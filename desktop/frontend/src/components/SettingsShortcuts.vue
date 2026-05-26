@@ -10,6 +10,7 @@ import {
   type ShortcutAction,
 } from "../lib/shortcutBindings";
 import HotkeyCaptureCell from "./HotkeyCaptureCell.vue";
+import { useI18n } from "../i18n/useI18n";
 
 function detectMod(): Mod {
   if (typeof navigator === "undefined") return "Control";
@@ -25,6 +26,7 @@ const mod = computed<Mod>(() => props.mod ?? detectMod());
 
 const store = usePluginConfigStore();
 const draft = ref<Record<string, string>>({});
+const { t } = useI18n();
 
 function loadDraft() {
   draft.value = JSON.parse(JSON.stringify(store.cfg?.shortcuts?.bindings ?? {}));
@@ -111,42 +113,42 @@ defineExpose({ dirty });
 <template>
   <div class="shortcut-settings">
     <section class="shortcut-group">
-      <h3>Pane</h3>
+      <h3>{{ t("settings.shortcuts.pane") }}</h3>
       <div v-for="action in paneActions" :key="action.id" class="shortcut-row">
-        <div class="label">{{ action.label }}</div>
+        <div class="label">{{ t(action.labelKey) }}</div>
         <HotkeyCaptureCell
           :value="bindingFor(action)"
           :mod="mod"
           @update="(v) => onCellUpdate(action, v)"
         />
-        <button class="reset-row" :title="'Reset to ' + action.defaultBinding" @click="resetRow(action)">↺</button>
+        <button class="reset-row" :title="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
         <div class="conflict" v-if="conflictsFor(action).length">
-          Conflicts with: {{ conflictsFor(action).map((id) => ACTION_BY_ID[id]?.label ?? id).join(", ") }}
+          {{ t("settings.shortcuts.conflictsWith", { labels: conflictsFor(action).map((id) => ACTION_BY_ID[id] ? t(ACTION_BY_ID[id]!.labelKey) : id).join(", ") }) }}
         </div>
       </div>
     </section>
 
     <section class="shortcut-group">
-      <h3>Tab</h3>
+      <h3>{{ t("settings.shortcuts.tab") }}</h3>
       <div v-for="action in tabActions" :key="action.id" class="shortcut-row">
-        <div class="label">{{ action.label }}</div>
+        <div class="label">{{ t(action.labelKey) }}</div>
         <HotkeyCaptureCell
           :value="bindingFor(action)"
           :mod="mod"
           @update="(v) => onCellUpdate(action, v)"
         />
-        <button class="reset-row" :title="'Reset to ' + action.defaultBinding" @click="resetRow(action)">↺</button>
+        <button class="reset-row" :title="t('settings.shortcuts.resetTo', { binding: action.defaultBinding })" @click="resetRow(action)">↺</button>
         <div class="conflict" v-if="conflictsFor(action).length">
-          Conflicts with: {{ conflictsFor(action).map((id) => ACTION_BY_ID[id]?.label ?? id).join(", ") }}
+          {{ t("settings.shortcuts.conflictsWith", { labels: conflictsFor(action).map((id) => ACTION_BY_ID[id] ? t(ACTION_BY_ID[id]!.labelKey) : id).join(", ") }) }}
         </div>
       </div>
     </section>
 
     <div class="actions-row">
-      <button class="reset-all" @click="resetAll">Reset all to defaults</button>
+      <button class="reset-all" @click="resetAll">{{ t("settings.shortcuts.resetAll") }}</button>
       <div class="spacer" />
-      <button class="discard" :disabled="!dirty" @click="discard">Discard</button>
-      <button class="save" :disabled="!dirty || anyConflict" @click="save">Save</button>
+      <button class="discard" :disabled="!dirty" @click="discard">{{ t("common.discard") }}</button>
+      <button class="save" :disabled="!dirty || anyConflict" @click="save">{{ t("common.save") }}</button>
     </div>
   </div>
 </template>

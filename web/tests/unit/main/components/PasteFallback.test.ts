@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PasteFallback from '@/main/components/PasteFallback.vue'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
+installI18nTestHooks()
 describe('PasteFallback.vue', () => {
   it('emits paste-text and closes on submit', async () => {
     const wrapper = mount(PasteFallback, { props: { open: true } })

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import type { MeResponse } from '@shared/api/types'
 import { getMe } from '@shared/api/me'
 import { logout } from '@shared/api/auth'
-import { fetchVersionLabel } from '@shared/api/version'
+import { fetchVersion, formatVersionLabel } from '@shared/api/version'
+import { useI18n } from '@shared/i18n/useI18n'
 
 defineProps<{ active: 'home' | 'settings' | 'admin' }>()
 
 const me = ref<MeResponse | null>(null)
-const versionLabel = ref('version dev')
+const version = ref('dev')
+const { t } = useI18n()
+const versionLabel = computed(() => formatVersionLabel(version.value, t))
 
 onMounted(async () => {
   try {
@@ -17,9 +20,9 @@ onMounted(async () => {
     // apiFetch handles 401 by redirecting; nothing else to do here.
   }
   try {
-    versionLabel.value = await fetchVersionLabel()
+    version.value = await fetchVersion()
   } catch {
-    // Keep the fallback label.
+    // Keep the translated fallback label.
   }
 })
 
@@ -37,28 +40,28 @@ async function onLogout() {
 <template>
   <header class="topbar">
     <div class="brand-block">
-      <div class="brand">AT Term</div>
+      <div class="brand">{{ t('common.appName') }}</div>
       <div class="version">{{ versionLabel }}</div>
     </div>
-    <nav class="topnav" aria-label="Primary">
+    <nav class="topnav" :aria-label="t('topbar.primaryNav')">
       <a
         href="/"
         :class="{ active: active === 'home' }"
         :aria-current="active === 'home' ? 'page' : false"
-      >Home</a>
+      >{{ t('topbar.home') }}</a>
       <a
         href="/settings.html"
         :class="{ active: active === 'settings' }"
         :aria-current="active === 'settings' ? 'page' : false"
-      >Settings</a>
+      >{{ t('topbar.settings') }}</a>
       <a
         v-if="me?.is_admin"
         href="/admin/"
         :class="{ active: active === 'admin' }"
         :aria-current="active === 'admin' ? 'page' : false"
-      >Admin</a>
+      >{{ t('topbar.admin') }}</a>
     </nav>
-    <button type="button" class="ghost-btn" @click="onLogout">Sign out</button>
+    <button type="button" class="ghost-btn" @click="onLogout">{{ t('topbar.signOut') }}</button>
   </header>
 </template>
 

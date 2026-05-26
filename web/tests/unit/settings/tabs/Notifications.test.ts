@@ -16,6 +16,9 @@ vi.mock('@shared/api/push', () => ({
 }))
 
 import Notifications from '@/settings/tabs/Notifications.vue'
+import { ApiError } from '@shared/api/client'
+import { setLocalePreference } from '@shared/i18n'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
 function mountWithProvider() {
   const Host = defineComponent({
@@ -49,11 +52,26 @@ beforeEach(() => {
   })
 })
 
+installI18nTestHooks()
 describe('Notifications tab', () => {
   it('renders a permission status line', async () => {
     const wrapper = mountWithProvider()
     await flushPromises()
-    expect(wrapper.find('[data-testid="push-status"]').text()).toMatch(/default/i)
+    expect(wrapper.find('[data-testid="push-status"]').text()).toMatch(/Ask/i)
+  })
+
+  it('renders the permission label in zh-CN instead of the raw enum', async () => {
+    setLocalePreference('zh-CN')
+    Object.defineProperty(window, 'Notification', {
+      value: { permission: 'granted', requestPermission: () => Promise.resolve('granted') },
+      configurable: true,
+    })
+
+    const wrapper = mountWithProvider()
+    await flushPromises()
+    const status = wrapper.find('[data-testid="push-status"]').text()
+    expect(status).toContain('已允许')
+    expect(status).not.toContain('granted')
   })
 
   it('enables push when the Enable button is clicked', async () => {
@@ -93,5 +111,29 @@ describe('Notifications tab', () => {
     await wrapper.find('[data-testid="push-test"]').trigger('click')
     await flushPromises()
     expect(testPush).toHaveBeenCalledTimes(1)
+  })
+
+  it('localizes ApiError failures for test notification in zh-CN', async () => {
+    setLocalePreference('zh-CN')
+    testPush.mockRejectedValue(new ApiError(500, 'http_error', null))
+    Object.defineProperty(navigator, 'serviceWorker', {
+      value: {
+        ready: Promise.resolve({
+          pushManager: {
+            subscribe: () => Promise.resolve(null),
+            getSubscription: () => Promise.resolve({ endpoint: 'https://example/abc' }),
+          },
+        }),
+      },
+      configurable: true,
+    })
+
+    const wrapper = mountWithProvider()
+    await flushPromises()
+    await wrapper.find('[data-testid="push-test"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('测试通知发送失败')
+    expect(wrapper.text()).not.toContain('api error')
   })
 })

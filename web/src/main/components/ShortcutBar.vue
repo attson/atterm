@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { useI18n } from '@shared/i18n/useI18n'
+
 const emit = defineEmits<{
   (e: 'input', text: string): void
   (e: 'copy'): void
   (e: 'paste'): void
 }>()
+
+const { t } = useI18n()
 
 const SHORTCUTS: Record<string, string> = {
   esc: '\x1b',
@@ -26,7 +30,7 @@ function onShortcut(e: Event) {
 </script>
 
 <template>
-  <div class="shortcut-bar" aria-label="terminal shortcuts" @click="onShortcut">
+  <div class="shortcut-bar" :aria-label="t('terminal.shortcuts')" @click="onShortcut">
     <button data-shortcut="esc" type="button">Esc</button>
     <button data-shortcut="tab" type="button">Tab</button>
     <button data-shortcut="ctrl-c" type="button">Ctrl-C</button>
@@ -35,8 +39,8 @@ function onShortcut(e: Event) {
     <button data-shortcut="down" type="button">↓</button>
     <button data-shortcut="up" type="button">↑</button>
     <button data-shortcut="right" type="button">→</button>
-    <button type="button" data-testid="copy" @click.stop="emit('copy')">Copy</button>
-    <button type="button" data-testid="paste" @click.stop="emit('paste')">Paste</button>
+    <button type="button" data-testid="copy" @click.stop="emit('copy')">{{ t('common.copy') }}</button>
+    <button type="button" data-testid="paste" @click.stop="emit('paste')">{{ t('terminal.paste') }}</button>
   </div>
 </template>
 

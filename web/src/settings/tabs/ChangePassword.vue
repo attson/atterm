@@ -3,19 +3,21 @@ import { ref } from 'vue'
 import { NCard, NForm, NFormItem, NInput, NButton } from 'naive-ui'
 import { changePassword } from '@shared/api/me'
 import { ApiError } from '@shared/api/client'
+import { useI18n } from '@shared/i18n/useI18n'
 
 const current = ref('')
 const next = ref('')
 const submitting = ref(false)
 const errorMsg = ref('')
+const { t } = useI18n()
 
 function mapError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.code === 'current_password_wrong') return 'Current password is incorrect.'
-    if (e.code === 'password_weak') return 'New password must be at least 12 characters.'
-    if (e.code === 'invalid_request') return 'Please check your input.'
+    if (e.code === 'current_password_wrong') return t('settings.changePassword.currentWrong')
+    if (e.code === 'password_weak') return t('settings.changePassword.passwordWeak')
+    if (e.code === 'invalid_request') return t('settings.changePassword.invalidRequest')
   }
-  return 'Password change failed. Please try again.'
+  return t('settings.changePassword.failed')
 }
 
 async function onSubmit(e: Event) {
@@ -46,7 +48,7 @@ async function onSubmit(e: Event) {
       novalidate
       @submit="onSubmit"
     >
-        <n-form-item label="Current password" :show-feedback="false">
+        <n-form-item :label="t('settings.changePassword.current')" :show-feedback="false">
           <n-input
             v-model:value="current"
             type="password"
@@ -54,7 +56,7 @@ async function onSubmit(e: Event) {
             :input-props="{ required: true, autocomplete: 'current-password' }"
           />
         </n-form-item>
-        <n-form-item label="New password (min 12 characters)" :show-feedback="false">
+        <n-form-item :label="t('settings.changePassword.new')" :show-feedback="false">
           <n-input
             v-model:value="next"
             type="password"
@@ -69,7 +71,7 @@ async function onSubmit(e: Event) {
           :loading="submitting"
           :disabled="submitting"
         >
-          Update password
+          {{ t('settings.changePassword.update') }}
         </n-button>
         <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>
     </n-form>

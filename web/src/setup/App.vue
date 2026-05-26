@@ -19,17 +19,21 @@ import {
   validateRelayBase,
   type RelayConfig,
 } from '@shared/api/relay-config'
+import LanguageSelect from '@shared/components/LanguageSelect.vue'
+import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 
 const base = ref('https://')
 const token = ref('')
 const allowInsecure = ref(false)
 const error = ref<string | null>(null)
 const submitting = ref(false)
+const { t } = useI18n()
 
 function getReasonBanner(): string | null {
   const params = new URLSearchParams(location.search)
   if (params.get('reason') === 'token_invalid') {
-    return 'Your API token is no longer valid. Please paste a fresh token to sign in again.'
+    return t('setup.reasonTokenInvalid')
   }
   return null
 }
@@ -49,7 +53,7 @@ async function onConnect(): Promise<void> {
     return
   }
   if (!token.value.trim()) {
-    error.value = 'API token is required'
+    error.value = t('setup.errors.tokenRequired')
     return
   }
   submitting.value = true
@@ -61,16 +65,15 @@ async function onConnect(): Promise<void> {
       credentials: 'omit',
     })
     if (res.status === 401) {
-      error.value = 'API token is invalid. Generate a new one from Settings → API Tokens on the relay web UI.'
+      error.value = t('setup.errors.tokenInvalid')
       return
     }
     if (res.status === 403) {
-      error.value =
-        'Relay rejected the origin. Make sure the relay was started with ATTERM_ORIGINS containing capacitor://localhost.'
+      error.value = t('setup.errors.originRejected')
       return
     }
     if (!res.ok) {
-      error.value = `Relay returned HTTP ${res.status}. Check the URL and try again.`
+      error.value = t('setup.errors.relayHttpCheckUrl', { status: res.status })
       return
     }
     const cfg: RelayConfig = {
@@ -81,7 +84,9 @@ async function onConnect(): Promise<void> {
     saveRelayConfig(cfg)
     location.replace('/')
   } catch (e) {
-    error.value = `Cannot reach relay: ${e instanceof Error ? e.message : String(e)}`
+    error.value = t('setup.errors.cannotReachRelay', {
+      message: e instanceof Error ? e.message : String(e),
+    })
   } finally {
     submitting.value = false
   }
@@ -91,10 +96,16 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <main class="setup-page">
-        <n-card title="Connect to relay" class="setup-card">
+        <LanguageSelect class="setup-language" />
+        <n-card :title="t('setup.connectToRelay')" class="setup-card">
           <n-alert
             v-if="reasonBanner"
             type="warning"
@@ -103,27 +114,27 @@ const overrides = getNaiveOverrides()
           >{{ reasonBanner }}</n-alert>
 
           <n-form @submit.prevent="onConnect">
-            <n-form-item label="Relay URL" :feedback="baseError ?? ''" v-bind="baseError ? { 'validation-status': 'error' } : {}">
+            <n-form-item :label="t('setup.relayUrl')" :feedback="baseError ?? ''" v-bind="baseError ? { 'validation-status': 'error' } : {}">
               <n-input
                 v-model:value="base"
-                placeholder="https://relay.example.com"
+                :placeholder="t('setup.relayUrlPlaceholder')"
                 :input-props="{ name: 'relay-base', autocomplete: 'off' }"
                 :disabled="submitting"
               />
             </n-form-item>
 
-            <n-form-item label="API token">
+            <n-form-item :label="t('setup.token')">
               <n-input
                 v-model:value="token"
                 type="password"
                 show-password-on="click"
-                placeholder="atk_…"
+                :placeholder="t('setup.tokenPlaceholder')"
                 :input-props="{ name: 'relay-token', autocomplete: 'off' }"
                 :disabled="submitting"
               />
             </n-form-item>
 
-            <n-form-item label="Allow insecure HTTP/WS (non-loopback)">
+            <n-form-item :label="t('setup.allowInsecure')">
               <n-switch
                 v-model:value="allowInsecure"
                 :disabled="submitting"
@@ -141,7 +152,7 @@ const overrides = getNaiveOverrides()
                 :disabled="submitting"
                 data-testid="connect"
                 @click="onConnect"
-              >Connect</n-button>
+              >{{ t('setup.connect') }}</n-button>
             </n-space>
           </n-form>
         </n-card>
@@ -163,5 +174,10 @@ const overrides = getNaiveOverrides()
 .setup-card {
   width: 100%;
   max-width: 480px;
+}
+.setup-language {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
 }
 </style>

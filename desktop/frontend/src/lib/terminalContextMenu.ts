@@ -1,4 +1,5 @@
 import type { Status } from "./connection";
+import { t } from "../i18n";
 
 export type EffectiveRemotePermission = "view" | "control" | "full";
 
@@ -20,8 +21,8 @@ export function isPasteAllowed(status: Status, permission?: string): boolean {
 export function imagePasteBlockedReason(permission?: string): string | null {
   const effective = effectiveRemotePermission(permission);
   if (effective === "full") return null;
-  if (effective === "control") return "image paste requires full remote permission";
-  return "session is read-only";
+  if (effective === "control") return t("terminal.imagePasteRequiresFull");
+  return t("terminal.readOnlySession");
 }
 
 export function clampContextMenuPosition(

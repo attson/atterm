@@ -3,6 +3,7 @@ import { computed } from "vue";
 
 import type { SessionInfo } from "../lib/connection";
 import { groupSessionsByHost } from "../lib/sessions";
+import { useI18n } from "../i18n/useI18n";
 
 const props = defineProps<{
   sessions: SessionInfo[];
@@ -14,16 +15,16 @@ const emit = defineEmits<{
 }>();
 
 const groups = computed(() => groupSessionsByHost(props.sessions));
+const { t } = useI18n();
 </script>
 
 <template>
   <div class="backdrop" @click.self="emit('close')">
     <div class="dialog">
-      <h2>remote sessions</h2>
+      <h2>{{ t("sessions.remoteSessions") }}</h2>
 
       <div v-if="sessions.length === 0" class="empty">
-        no remote sessions visible. start one in another AT Term app connected
-        to the same relay.
+        {{ t("sessions.noRemoteSessions") }}
       </div>
 
       <div v-else class="groups">
@@ -33,9 +34,9 @@ const groups = computed(() => groupSessionsByHost(props.sessions));
             <span
               v-if="g.hostId"
               class="hostid"
-              :title="'host_id ' + g.hostId"
+              :title="t('sessions.hostIdTitle', { hostId: g.hostId })"
             >{{ g.hostId.slice(0, 8) }}</span>
-            <span class="count">{{ g.sessions.length }} {{ g.sessions.length === 1 ? 'session' : 'sessions' }}</span>
+            <span class="count">{{ g.sessions.length === 1 ? t("common.countSessionsOne") : t("common.countSessions", { count: g.sessions.length }) }}</span>
           </header>
           <div class="grid">
             <div
@@ -44,7 +45,7 @@ const groups = computed(() => groupSessionsByHost(props.sessions));
               class="card"
               @click="emit('open', s.id)"
             >
-              <div class="cmd">{{ s.command || "(unknown)" }}</div>
+              <div class="cmd">{{ s.command || t("common.unknown") }}</div>
               <div class="meta">
                 <span class="id">{{ s.id.slice(0, 8) }}</span>
                 <span class="size">{{ s.cols }}×{{ s.rows }}</span>
@@ -56,7 +57,7 @@ const groups = computed(() => groupSessionsByHost(props.sessions));
       </div>
 
       <div class="row">
-        <button @click="emit('close')">close</button>
+        <button @click="emit('close')">{{ t("common.close") }}</button>
       </div>
     </div>
   </div>

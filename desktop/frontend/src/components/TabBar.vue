@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
+import { useI18n } from "../i18n/useI18n";
 
 interface TabSummary {
   id: string;
@@ -22,15 +23,17 @@ const emit = defineEmits<{
   (e: "new"): void;
 }>();
 
+const { t: i18nT } = useI18n();
+
 function shortTitle(s: SessionInfo | null): string {
-  if (!s) return "(empty)";
+  if (!s) return i18nT("terminal.emptyTab");
   if (s.cwd) {
     const stripped = s.cwd.replace(/\/+$/, "");
     if (stripped === "") return "/";
     const base = stripped.split("/").pop();
     if (base) return base;
   }
-  const first = (s.command || "").split(/\s+/)[0] || "shell";
+  const first = (s.command || "").split(/\s+/)[0] || i18nT("terminal.shellFallback");
   return first.split("/").pop() || first;
 }
 
@@ -40,6 +43,15 @@ function layoutLabel(t: TabSummary): string {
     case "vertical": return "▮▮";
     case "horizontal": return "▬\n▬";
     case "grid2x2": return "▦";
+  }
+}
+
+function layoutTitle(t: TabSummary): string {
+  switch (t.layout) {
+    case "single": return "";
+    case "vertical": return i18nT("terminal.layoutVertical");
+    case "horizontal": return i18nT("terminal.layoutHorizontal");
+    case "grid2x2": return i18nT("terminal.layoutGrid2x2");
   }
 }
 
@@ -57,11 +69,11 @@ function onClose(e: MouseEvent, id: string) {
         :key="t.id"
         class="tab"
         :class="{ active: t.id === currentId, remote: t.activeRemote }"
-        :title="(t.activeRemote ? '[remote] ' : '') + (t.activeSession?.command ?? '')"
+        :title="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.activeSession?.command ?? '')"
         @click="emit('activate', t.id)"
       >
         <span class="num">{{ idx + 1 }}:</span>
-        <span v-if="t.layout !== 'single'" class="layout-icon" :title="t.layout">{{ layoutLabel(t) }}</span>
+        <span v-if="t.layout !== 'single'" class="layout-icon" :title="layoutTitle(t)">{{ layoutLabel(t) }}</span>
         <span v-else-if="t.activeRemote" class="dot remote-dot">●</span>
         <span v-else class="dot">●</span>
         <span class="title">{{ shortTitle(t.activeSession) }}</span>
@@ -71,7 +83,7 @@ function onClose(e: MouseEvent, id: string) {
     <button
       class="plus"
       :disabled="starting"
-      :title="starting ? 'starting…' : 'new tab'"
+      :title="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
       @click="emit('new')"
     >+</button>
   </div>

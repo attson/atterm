@@ -5,9 +5,11 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import { usePlatform } from "../../platform";
 import { languageForPath } from "./languageMap";
 import { highlightExtensionFor } from "./highlight";
+import { useI18n } from "../../i18n/useI18n";
 
 const platform = usePlatform();
 const fs = platform.pluginHost!.fs;
+const { t } = useI18n();
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
@@ -44,7 +46,7 @@ function decodeFileBytes(data: unknown): string {
   } else if (Array.isArray(data)) {
     bytes = new Uint8Array(data as number[]);
   } else {
-    throw new Error("Unexpected file content type");
+    throw new Error(t("plugins.fileExplorer.unexpectedContentType"));
   }
   return new TextDecoder().decode(bytes);
 }
@@ -139,13 +141,13 @@ onBeforeUnmount(() => {
 <template>
   <div class="file-editor">
     <div v-if="reloadPending" class="reload-badge">
-      File changed on disk
-      <button @click="load">Reload</button>
+      {{ t("plugins.fileExplorer.fileChanged") }}
+      <button @click="load">{{ t("plugins.fileExplorer.reload") }}</button>
     </div>
-    <div v-if="state === 'tooLarge'" class="banner muted">File too large to preview. Open externally.</div>
-    <div v-else-if="state === 'binary'" class="banner muted">Binary file — no preview.</div>
-    <div v-else-if="state === 'error'" class="banner err">Error: {{ errorMsg }}</div>
-    <div v-else-if="state === 'loading'" class="banner muted">Loading…</div>
+    <div v-if="state === 'tooLarge'" class="banner muted">{{ t("plugins.fileExplorer.tooLarge") }}</div>
+    <div v-else-if="state === 'binary'" class="banner muted">{{ t("plugins.fileExplorer.binary") }}</div>
+    <div v-else-if="state === 'error'" class="banner err">{{ t("plugins.fileExplorer.errorPrefix", { message: errorMsg }) }}</div>
+    <div v-else-if="state === 'loading'" class="banner muted">{{ t("common.loading") }}</div>
     <div v-show="state === 'ok'" ref="host" class="cm-host" />
   </div>
 </template>

@@ -2,10 +2,14 @@
 // at startup; we expose typed wrappers so the rest of the app doesn't have to
 // reach into globals directly.
 
+import { t } from "../i18n";
+
 export interface Endpoint {
   url: string;
   token: string;
 }
+
+export type LocalePreference = "system" | "en" | "zh-CN";
 
 export interface NewSessionReq {
   command: string;
@@ -97,6 +101,8 @@ interface AppBindings {
   GetLogPreview(): Promise<LogPreview>;
   GetTerminalTheme(): Promise<string>;
   SetTerminalTheme(themeID: string): Promise<void>;
+  GetLocalePreference(): Promise<LocalePreference>;
+  SetLocalePreference(preference: LocalePreference): Promise<void>;
   GetDefaultShell(): Promise<string>;
   SetDefaultShell(shell: string): Promise<void>;
   GetUpdateState(): Promise<UpdateState>;
@@ -132,7 +138,7 @@ declare global {
 
 function bindings(): AppBindings {
   const b = window.go?.main?.App;
-  if (!b) throw new Error("Wails bindings not ready");
+  if (!b) throw new Error(t("app.wailsBindingsNotReady"));
   return b;
 }
 
@@ -209,6 +215,14 @@ export function getTerminalThemePreference(): Promise<string> {
 
 export function setTerminalThemePreference(themeID: string): Promise<void> {
   return bindings().SetTerminalTheme(themeID);
+}
+
+export function getLocalePreference(): Promise<LocalePreference> {
+  return bindings().GetLocalePreference();
+}
+
+export function setLocalePreference(preference: LocalePreference): Promise<void> {
+  return bindings().SetLocalePreference(preference);
 }
 
 export function getDefaultShell(): Promise<string> {

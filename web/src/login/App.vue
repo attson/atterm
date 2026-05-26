@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import {
   NConfigProvider,
   NMessageProvider,
@@ -13,25 +13,30 @@ import {
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import { safeNext, ApiError } from '@shared/api/client'
 import { login } from '@shared/api/auth'
-import { fetchVersionLabel } from '@shared/api/version'
+import { fetchVersion, formatVersionLabel } from '@shared/api/version'
+import LanguageSelect from '@shared/components/LanguageSelect.vue'
+import { useI18n } from '@shared/i18n/useI18n'
+import { naiveLocale } from '@shared/i18n/naive-locale'
 
 const email = ref('')
 const password = ref('')
 const submitting = ref(false)
 const errorMsg = ref('')
-const versionLabel = ref('version dev')
+const version = ref('dev')
+const { t } = useI18n()
+const versionLabel = computed(() => formatVersionLabel(version.value, t))
 
 onMounted(async () => {
-  versionLabel.value = await fetchVersionLabel()
+  version.value = await fetchVersion()
 })
 
 function mapError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.code === 'invalid_credentials') return 'Invalid email or password.'
-    if (e.code === 'rate_limited') return 'Too many attempts. Please wait a few minutes.'
-    if (e.code === 'invalid_request') return 'Please check your input.'
+    if (e.code === 'invalid_credentials') return t('auth.errors.invalidCredentials')
+    if (e.code === 'rate_limited') return t('auth.errors.rateLimited')
+    if (e.code === 'invalid_request') return t('auth.errors.invalidRequest')
   }
-  return 'Sign-in failed. Please try again.'
+  return t('auth.errors.signInFailed')
 }
 
 async function onSubmit(e: Event) {
@@ -54,13 +59,19 @@ const overrides = getNaiveOverrides()
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="overrides">
+  <n-config-provider
+    :theme="darkTheme"
+    :theme-overrides="overrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+  >
     <n-message-provider>
       <main class="auth-page">
+        <LanguageSelect class="auth-language" />
         <n-card class="auth-card" :bordered="false">
           <header class="auth-title">
-            <h1>AT Term</h1>
-            <p class="auth-subtitle">sign in</p>
+            <h1>{{ t('common.appName') }}</h1>
+            <p class="auth-subtitle">{{ t('auth.signIn') }}</p>
           </header>
           <n-form
             label-placement="top"
@@ -69,15 +80,15 @@ const overrides = getNaiveOverrides()
             novalidate
             @submit="onSubmit"
           >
-            <n-form-item label="Email" :show-feedback="false">
+            <n-form-item :label="t('auth.email')" :show-feedback="false">
                 <n-input
                   v-model:value="email"
                   type="text"
-                  placeholder="you@example.com"
+                  :placeholder="t('auth.emailPlaceholder')"
                   :input-props="{ type: 'email', required: true, autocomplete: 'username' }"
                 />
               </n-form-item>
-              <n-form-item label="Password" :show-feedback="false">
+              <n-form-item :label="t('auth.password')" :show-feedback="false">
                 <n-input
                   v-model:value="password"
                   type="password"
@@ -93,12 +104,12 @@ const overrides = getNaiveOverrides()
                 :disabled="submitting"
                 block
               >
-                Sign in
+                {{ t('auth.signIn') }}
               </n-button>
               <p v-if="errorMsg" class="auth-error" role="alert">{{ errorMsg }}</p>
               <p class="auth-alt">
-                Have an invite code?
-                <a href="/signup.html">Sign up here</a>.
+                {{ t('auth.haveInviteCode') }}
+                <a href="/signup.html">{{ t('auth.signUpHere') }}</a>.
               </p>
           </n-form>
         </n-card>
@@ -123,6 +134,11 @@ const overrides = getNaiveOverrides()
   max-width: 420px;
   width: 100%;
   background: var(--panel);
+}
+.auth-language {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
 }
 .auth-title {
   text-align: center;

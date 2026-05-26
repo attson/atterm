@@ -1,15 +1,24 @@
 import { apiFetch, ApiError } from './client'
 import type { VersionResponse } from './types'
+import { t } from '@shared/i18n'
 
-// fetchVersionLabel returns the display string for the page footer.
-// Falls back to "version dev" on any failure — version display is
-// best-effort UI, not security-critical.
-export async function fetchVersionLabel(): Promise<string> {
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
+export function formatVersionLabel(version: string, translate: Translate = t): string {
+  return translate('common.versionLabel', { version: version || 'dev' })
+}
+
+// Version display is best-effort UI, not security-critical.
+export async function fetchVersion(): Promise<string> {
   try {
     const { data } = await apiFetch<VersionResponse>('/api/version')
-    return `version ${data.version}`
+    return data.version
   } catch (e) {
     if (!(e instanceof ApiError)) throw e
-    return 'version dev'
+    return 'dev'
   }
+}
+
+export async function fetchVersionLabel(translate: Translate = t): Promise<string> {
+  return formatVersionLabel(await fetchVersion(), translate)
 }

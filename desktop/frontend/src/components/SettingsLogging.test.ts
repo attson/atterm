@@ -13,10 +13,10 @@ describe("SettingsLogging", () => {
   });
 
   test("renders logging toggle, current path, and action buttons", () => {
-    expect(source).toContain("write logs to file");
-    expect(source).toContain("change location");
-    expect(source).toContain("reset default");
-    expect(source).toContain("view logs");
+    expect(source).toContain("settings.logging.writeLogs");
+    expect(source).toContain("settings.logging.changeLocation");
+    expect(source).toContain("settings.logging.resetDefault");
+    expect(source).toContain("settings.logging.viewLogs");
   });
 
   test('view-logs button emits open-log-viewer', () => {

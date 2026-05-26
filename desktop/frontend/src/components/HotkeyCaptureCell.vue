@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { onBeforeUnmount, ref } from "vue";
 import { serialize, type Mod } from "../lib/shortcutBindings";
+import { useI18n } from "../i18n/useI18n";
 
 const props = defineProps<{
   value: string;
@@ -13,6 +14,7 @@ const emit = defineEmits<{
 }>();
 
 const capturing = ref(false);
+const { t } = useI18n();
 let listener: ((e: KeyboardEvent) => void) | null = null;
 
 function startCapture() {
@@ -68,8 +70,8 @@ onBeforeUnmount(stopCapture);
     :class="{ capturing, empty: !capturing && value === '' }"
     @click="startCapture"
   >
-    <template v-if="capturing">Press a key…</template>
-    <template v-else-if="value === ''">disabled</template>
+    <template v-if="capturing">{{ t("settings.shortcuts.pressKey") }}</template>
+    <template v-else-if="value === ''">{{ t("common.disabled") }}</template>
     <template v-else>{{ value }}</template>
   </button>
 </template>

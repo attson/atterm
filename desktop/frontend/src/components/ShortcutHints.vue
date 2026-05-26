@@ -9,6 +9,7 @@ import {
   type ShortcutAction,
 } from "../lib/shortcutBindings";
 import { useLongPressModifier } from "../composables/useLongPressModifier";
+import { useI18n } from "../i18n/useI18n";
 
 function detectMod(): Mod {
   if (typeof navigator === "undefined") return "Control";
@@ -23,6 +24,7 @@ const props = defineProps<{
 const mod: Mod = props.mod ?? detectMod();
 const store = usePluginConfigStore();
 const visible = ref(false);
+const { t } = useI18n();
 
 useLongPressModifier({
   mod,
@@ -47,11 +49,11 @@ function isDisabled(action: ShortcutAction): boolean {
 <template>
   <Transition name="fade">
     <div v-if="visible" class="hints-backdrop">
-      <div class="hints-panel" role="dialog" aria-label="Keyboard Shortcuts">
-        <div class="hints-header">Keyboard Shortcuts</div>
+      <div class="hints-panel" role="dialog" :aria-label="t('settings.shortcuts.keyboardShortcuts')">
+        <div class="hints-header">{{ t("settings.shortcuts.keyboardShortcuts") }}</div>
 
         <section class="hints-group">
-          <h3>Pane</h3>
+          <h3>{{ t("settings.shortcuts.pane") }}</h3>
           <div
             v-for="action in paneActions"
             :key="action.id"
@@ -59,12 +61,12 @@ function isDisabled(action: ShortcutAction): boolean {
             :class="{ disabled: isDisabled(action) }"
           >
             <div class="chord">{{ isDisabled(action) ? "—" : chordFor(action) }}</div>
-            <div class="label">{{ action.label }}</div>
+            <div class="label">{{ t(action.labelKey) }}</div>
           </div>
         </section>
 
         <section class="hints-group">
-          <h3>Tab</h3>
+          <h3>{{ t("settings.shortcuts.tab") }}</h3>
           <div
             v-for="action in tabActions"
             :key="action.id"
@@ -72,7 +74,7 @@ function isDisabled(action: ShortcutAction): boolean {
             :class="{ disabled: isDisabled(action) }"
           >
             <div class="chord">{{ isDisabled(action) ? "—" : chordFor(action) }}</div>
-            <div class="label">{{ action.label }}</div>
+            <div class="label">{{ t(action.labelKey) }}</div>
           </div>
         </section>
       </div>

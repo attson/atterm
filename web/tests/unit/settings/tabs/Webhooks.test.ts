@@ -10,8 +10,11 @@ vi.mock('@shared/api/webhooks', () => ({
 }))
 
 import Webhooks from '@/settings/tabs/Webhooks.vue'
+import source from '@/settings/tabs/Webhooks.vue?raw'
 import { listWebhooks, createWebhook, deleteWebhook } from '@shared/api/webhooks'
+import { installI18nTestHooks } from '../../i18n-test-helper'
 
+installI18nTestHooks()
 describe('Webhooks tab', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -21,6 +24,11 @@ describe('Webhooks tab', () => {
     expect(listWebhooks).toHaveBeenCalled()
     expect(w.text()).toContain('phone')
     expect(w.text()).toContain('open.feishu.cn')
+  })
+
+  it('uses the shared locale-aware short date formatter', () => {
+    expect(source).toContain('formatShortDate')
+    expect(source).not.toMatch(/toLocale(?:String|DateString)\(/)
   })
 
   it('creates a webhook from the form', async () => {

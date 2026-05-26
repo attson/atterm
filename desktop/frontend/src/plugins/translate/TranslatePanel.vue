@@ -1,18 +1,21 @@
 <script lang="ts" setup>
 import { computed, ref, onUnmounted } from "vue";
 import { useTranslatePanelStore } from "./panelStore";
+import { useI18n } from "../../i18n/useI18n";
+import type { MessageKey } from "../../i18n";
 
 const store = useTranslatePanelStore();
+const { t: i18nT } = useI18n();
 
 const TARGETS = [
-  { code: "zh-CN", label: "中文 (Simplified)" },
-  { code: "en", label: "English" },
-  { code: "ja", label: "日本語" },
-  { code: "ko", label: "한국어" },
-  { code: "de", label: "Deutsch" },
-  { code: "fr", label: "Français" },
-  { code: "es", label: "Español" },
-];
+  { code: "zh-CN", labelKey: "plugins.translate.simplifiedChinese" },
+  { code: "en", labelKey: "plugins.translate.targetEnglish" },
+  { code: "ja", labelKey: "plugins.translate.targetJapanese" },
+  { code: "ko", labelKey: "plugins.translate.targetKorean" },
+  { code: "de", labelKey: "plugins.translate.targetGerman" },
+  { code: "fr", labelKey: "plugins.translate.targetFrench" },
+  { code: "es", labelKey: "plugins.translate.targetSpanish" },
+] satisfies { code: string; labelKey: MessageKey }[];
 
 // Dragging: panel top-left position relative to viewport.
 const pos = ref({ x: -1, y: 80 });  // -1 = "not placed yet, center on first mount"
@@ -78,47 +81,47 @@ function onRetry() { void store.retry(); }
       @mousedown="onMouseDown"
     >
       <header class="translate-panel__handle">
-        <span class="translate-panel__title">Translate</span>
+        <span class="translate-panel__title">{{ i18nT("plugins.translate.title") }}</span>
         <button
           type="button"
           class="translate-panel__close"
           data-testid="translate-close"
-          aria-label="Close translate panel"
+          :aria-label="i18nT('plugins.translate.closePanel')"
           @click="store.close"
         >×</button>
       </header>
 
       <section class="translate-panel__source">
         <div class="translate-panel__label">
-          Source <span v-if="store.result?.detectedSrcLang && store.result.detectedSrcLang !== 'unknown'" class="translate-panel__detected">· detected {{ store.result.detectedSrcLang }}</span>
+          {{ i18nT("plugins.translate.source") }} <span v-if="store.result?.detectedSrcLang && store.result.detectedSrcLang !== 'unknown'" class="translate-panel__detected">· {{ i18nT("plugins.translate.detected", { lang: store.result.detectedSrcLang }) }}</span>
         </div>
         <pre class="translate-panel__pre">{{ store.source }}</pre>
       </section>
 
       <section class="translate-panel__target-row">
-        <label class="translate-panel__label" for="translate-target">Target</label>
+        <label class="translate-panel__label" for="translate-target">{{ i18nT("plugins.translate.target") }}</label>
         <select
           id="translate-target"
           data-testid="translate-target"
           :value="store.targetLang"
           @change="onTargetChange"
         >
-          <option v-for="t in TARGETS" :key="t.code" :value="t.code">{{ t.label }}</option>
+          <option v-for="target in TARGETS" :key="target.code" :value="target.code">{{ i18nT(target.labelKey) }}</option>
         </select>
       </section>
 
       <section class="translate-panel__result">
-        <div v-if="store.loading" class="translate-panel__loading">Translating…</div>
+        <div v-if="store.loading" class="translate-panel__loading">{{ i18nT("plugins.translate.translating") }}</div>
         <div v-else-if="store.error" class="translate-panel__error" role="alert">
           <div>{{ store.error.message }}</div>
-          <button type="button" @click="onRetry">Retry</button>
+          <button type="button" @click="onRetry">{{ i18nT("common.retry") }}</button>
         </div>
         <div v-else-if="store.result" class="translate-panel__text">{{ store.result.translated }}</div>
-        <div v-else class="translate-panel__placeholder">No result yet.</div>
+        <div v-else class="translate-panel__placeholder">{{ i18nT("plugins.translate.noResult") }}</div>
       </section>
 
       <details v-if="store.history.length > 0" class="translate-panel__history">
-        <summary>Recent ({{ store.history.length }})</summary>
+        <summary>{{ i18nT("plugins.translate.recent", { count: store.history.length }) }}</summary>
         <ul>
           <li v-for="(h, i) in store.history" :key="i">
             <button type="button" class="translate-panel__history-row" @click="store.restoreFromHistory(h)">

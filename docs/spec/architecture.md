@@ -69,13 +69,13 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update) | 不实现协议 |
-| `web/` | web | vanilla 浏览器/PWA client，使用同源 vendored xterm 资源直连 relay | 不从 CDN 加载 script/style，不持久化除 token 以外的会话状态 |
+| `web/` | web | Vue 3 + TypeScript + Naive UI 多页浏览器/PWA client（login/signup/main/settings/admin/setup），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style，不持久化除 cookie/session/token bootstrap 以外的会话状态 |
 
 ## User accounts and identity
 
-Since v2, atterm-relay supports per-user accounts in addition to the
-operator-side admin token. All session data, web push subscriptions, and
-API tokens are scoped to a user.
+当前 atterm-relay 以 per-user accounts 为生产默认。All session data,
+web push subscriptions, outbound webhooks, and API tokens are scoped to a
+user.
 
 ### Storage
 
@@ -114,7 +114,7 @@ request to a `Principal`:
 1. Operator starts relay with `ATTERM_BOOTSTRAP_ADMIN_EMAIL` and
    `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` (password must satisfy the strength check
    on public listen: ≥16 chars, ≥3 character classes, not in dev blacklist).
-2. Operator hits `/admin/` with the admin token → creates an invitation.
+2. Operator logs in as the bootstrap admin and opens `/admin/` → creates an invitation.
 3. End user signs up at `/signup.html?invite=inv_…`.
 4. User generates an API token at `/settings.html`.
 5. User pastes the API token into desktop client → uplink connects.
@@ -208,12 +208,13 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 
 ## phase 完成度（截至当前）
 
-- ✅ Phase 0：协议骨架，命令行 wrapper + relay + vanilla web
+- ✅ Phase 0：协议骨架，命令行 wrapper + relay + 浏览器 attach
 - ✅ Phase 1：Wails 桌面壳，多 tab，自动建会话，cwd-driven 标题
 - ✅ Phase 1.5：lazy 远程镜像（ANNOUNCE/STREAM_REQUEST/STOP），GUI 设置入口，cast 面板
 - ✅ Phase 2：每 tab 1/2/4 pane 分屏（layout pure fns + iTerm-style ⌘N/⌘⇧N 快捷键）；自动更新（GitHub Releases，Ed25519/SHA256 验签，dev 短路，用户手动 force install）
-- ⬜ Phase 3：web 端 UI 升级（按 host 分组、host alias、active 指示）；主题、字体、配置 DSL
-- ⬜ Phase 4：用户系统、TLS 自动化、平台 codesign/notarization、PWA 移动端
+- ✅ Phase 3：用户账号、邀请码、per-user API token、admin UI、Web Push、outbound webhook、Vue 3 + TypeScript + Naive UI Web/PWA、多语言
+- ✅ Phase 4a：Capacitor iOS WebView MVP、移动 relay setup、host-grouped mobile session list、touch terminal
+- ⬜ Phase 4b：TLS 自动化、平台 codesign/notarization、移动端原生体验增强、字体与配置 DSL
 
 ## 桌面端架构细节
 
@@ -270,7 +271,7 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 - 用户账号和身份信息存储在 SQLite（`users.db`，路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；
 - 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`（见协议规范 §鉴权），除非显式 `--dev-insecure`；
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`；
-- 默认返回 CSP/security headers，`web/` 只允许同源 script 和同源 stylesheet；CSP 额外允许 inline style 供 xterm.js 写运行时布局样式，xterm 静态资源放在 `web/vendor/`；
+- 默认返回 CSP/security headers，`web/` 项目代码只允许同源 script 和同源 stylesheet；CSP 额外允许 inline style 供 xterm.js 运行时布局样式，并预留 Cloudflare Web Analytics beacon 源（不允许应用代码引入 CDN 依赖）；Vue/xterm/Naive UI 等依赖由 Vite 打包为同源 assets，并由 PWA service worker 预缓存；
 - 对 HTTP 请求和 WS upgrade 先按远端 IP 限流，鉴权成功后再按远端 IP + token hash 限流，并限制同一 key 的活跃 WS 连接数；
 - 支持 owner 发布的 `remote_permission`（view/control/full），relay 和 desktop uplink 双重强制执行；
 - 可选 `--config` 启用持久化 runtime 配置（rate limit、连接数）；`/admin/` API 需 bootstrap admin 用户（通过 env vars 初始化）；
@@ -309,7 +310,8 @@ desktop/frontend/src/
 │                          expectedCols/Rows = SessionInfo.cols/rows，相同时跳过
 │                          初始 RESIZE（远端 attach 不打扰）
 │   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge
-│                          + close-pane × 同行 flex 布局
+│                          + close-pane × 同行 flex 布局；close 按钮 mousedown
+│                          不冒泡，避免先激活其它 pane 再关错目标
 │   ├── SessionPickerDialog.vue ⌘⌥N 触发：local + remote 已有 session 选一个进 pane
 │   ├── SettingsDialog.vue relay 配置 + Updates 区（current / latest / 进度 /
 │                          autocheck toggle / release notes / 三个按钮）
@@ -320,16 +322,31 @@ desktop/frontend/src/
 │   └── useTerminalShortcuts.ts document 级 capture-phase keydown router
 │                                匹配 e.code（KeyN/KeyW/KeyT/Bracket{Left,Right}）
 │                                避开 macOS Option-letter dead key 的 e.key 陷阱
-└── lib/
-    ├── types.ts           LayoutKind/Pane/Tab/SplitDir/FocusDir
-    ├── layout.ts          transitionLayout / closePane / focusNeighbor 纯函数
-                           （27 单测，TDD）
-    ├── proto.ts           帧编解码（移植自 web/app.js）
-    ├── connection.ts      SessionConnection：WS attach + 重连 + 续传 +
-                           sendResize 队列（WS 还在 CONNECTING 时缓存，ws.onopen
-                           跟在 ATTACH 帧后 flush）
-    └── api.ts             Wails bindings 包装（不依赖 generated 文件，走
-                           window.go.main.App.*；含 UpdateState 镜像）
+├── lib/
+│   ├── types.ts           LayoutKind/Pane/Tab/SplitDir/FocusDir
+│   ├── layout.ts          transitionLayout / closePane / focusNeighbor 纯函数
+│                          （27 单测，TDD）
+│   ├── proto.ts           帧编解码（与 web/src/shared/ws/protocol.ts 保持协议常量同步）
+│   ├── connection.ts      SessionConnection：WS attach + 重连 + 续传 +
+│                          sendResize 队列（WS 还在 CONNECTING 时缓存，ws.onopen
+│                          跟在 ATTACH 帧后 flush）
+│   └── api.ts             Wails bindings 包装（不依赖 generated 文件，走
+│                          window.go.main.App.*；含 UpdateState 镜像）
+├── platform/              Wails / Capacitor / browser adapter；App 只依赖
+│                          `usePlatform()`，不要在其它目录直接 import wailsjs
+├── plugins/               右侧插件槽：file explorer / quick input / translate
+└── i18n/                  desktop 前端中英 messages + useI18n()
+```
+
+`web/` 前端同样是 Vue 3 + TypeScript，但按浏览器页面拆成 MPA：
+
+```
+web/src/
+├── main/                  session list + xterm attach + PWA install hint
+├── login/ signup/ setup/  auth 与移动 relay bootstrap
+├── settings/              tokens / sessions / push / webhooks / relay config
+├── admin/                 users / invitations / relay config
+└── shared/                api clients、ws protocol、i18n、Naive theme、Topbar
 ```
 
 ## 跨进程时序细节

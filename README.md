@@ -17,15 +17,17 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 桌面终端 | 支持 macOS / Linux / Windows，多 tab、本地 PTY、cwd 跟踪 |
 | 分屏 | 每个 tab 支持 1 / 2 / 4 pane，macOS 用 `⌘N` / `⌘⇧N`，Linux/Windows 用 `Ctrl` |
 | 远程接管 | 桌面端连上 relay 后，其他浏览器或桌面端可 attach 同一会话 |
-| 手机浏览器 / iOS App | 支持 PWA、Capacitor iOS WebView MVP、会话列表、触控终端、常用快捷键 |
+| Web / PWA 客户端 | Vue 3 + TypeScript + Naive UI 多页应用，支持登录、注册、会话、设置、admin、setup 与中英双语 |
+| 手机浏览器 / iOS App | 支持 PWA、Capacitor iOS WebView MVP、relay setup、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
 | 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
 | 公网 relay 安全默认值 | 强 bootstrap 管理员密码、Origin 白名单、CSRF、限流、安全响应头 |
 | Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
-| Web Push 通知 | 浏览器和 PWA 订阅后，命令完成事件通过 self-hosted Web Push 推送，即使页面没打开也能收到（依赖 shell 集成 + 已连远端 relay） |
-| 用户系统 | ✓ 支持（v2+）：邀请码注册、per-user API token、用户独立的会话列表与 Web Push；admin 后台管理用户与邀请 |
+| 通知 | 支持本机系统通知、Web Push，以及命令完成 outbound webhook（飞书 / generic JSON） |
+| 用户系统 | 邀请码注册、per-user API token、用户独立的会话列表 / Web Push / webhooks；admin 后台管理用户与邀请 |
+| 桌面体验 | 主题、快捷键设置、右侧插件面板、Quick Input、文件浏览器、翻译插件 |
 
-还在路线图中的能力：TLS 自动化、移动端原生体验增强、主题/字体配置。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
+还在路线图中的能力：TLS 自动化、平台 codesign/notarization、移动端原生体验增强、字体与配置 DSL。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
 
 ## 快速开始
 
@@ -66,16 +68,21 @@ docker compose up -d atterm-relay
 ```bash
 export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
-# 终端 1：启动 relay + web 客户端（--dev-insecure 跳过 Origin/密码强度校验）
-# loopback 调试时 bootstrap envs 是可选的：不设就不会自动创建 admin 用户
-go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
+# 终端 1：启动 relay（--dev-insecure 跳过 Origin/密码强度校验）
+# --web 省略时使用 internal/relay/web-dist/ 的内嵌 web 构建产物。
+go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
 
-# 终端 2：启动桌面端
+# 终端 2（可选）：调试 web 前端。Vite dev server 会把 /api、/client 等代理到 127.0.0.1:8080。
+cd web
+npm ci
+npm run dev
+
+# 终端 3：启动桌面端
 cd desktop
 wails dev -tags webkit2_41   # Linux 需要 tag；macOS/Windows 可省略
 ```
 
-浏览器访问 `http://127.0.0.1:8080/signup.html`，用邀请码注册账号；之后在 `/settings.html` 生成 API token，填入桌面端 Settings → API token 字段。
+浏览器访问 `http://127.0.0.1:8080/signup.html`（或 Vite 的 `http://127.0.0.1:5173/signup.html`），用邀请码注册账号；之后在 `/settings.html` 生成 API token，填入桌面端 Settings → API token 字段。
 
 ### 方式 D：iOS WebView MVP
 
@@ -110,7 +117,7 @@ API token: atk_...
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
 ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com,capacitor://localhost' \
-go run ./cmd/atterm-relay --addr :8080 --web web
+go run ./cmd/atterm-relay --addr :8080
 ```
 
 详见 [`mobile/README.md`](mobile/README.md)。
@@ -186,14 +193,16 @@ docker compose --profile auto-update up -d
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
 ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com' \
-go run ./cmd/atterm-relay --addr :8080 --web web
+go run ./cmd/atterm-relay --addr :8080
 ```
 
 本地开发可以临时跳过强度与 Origin 校验（loopback 时 bootstrap envs 可省略，relay 不会自动创建 admin）：
 
 ```bash
-go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --web web --dev-insecure
+go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
 ```
+
+`--web` 省略时使用 `internal/relay/web-dist/` 的内嵌 web 构建产物；需要测试当前工作区的 web 改动时，先 `cd web && npm run build`，再从仓库根目录传 `--web web/dist`。
 
 公网监听默认拒绝缺失 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`、弱 bootstrap 密码、缺失 Origin 白名单。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
 
@@ -271,13 +280,24 @@ sudo apt install -y libwebkit2gtk-4.1-dev
 go vet -tags webkit2_41 ./...
 go test -tags webkit2_41 -timeout 60s ./desktop/
 go build ./...
-node --test web/*.test.mjs
 
 # 桌面前端
 cd desktop/frontend
 npm ci
+npm test
 npm run build
 npm run dev
+
+# Web / PWA 前端
+cd web
+npm ci
+npm run build
+npm test
+npm run test:contract
+
+# Capacitor mobile wrapper
+cd mobile
+npm test
 
 # 桌面 app
 cd desktop
@@ -299,7 +319,8 @@ macOS 上 Homebrew 的 `gh` 通常在 `/opt/homebrew/bin/gh`。非交互 shell �
 cmd/          atterm-relay 和 atterm-agent 入口
 internal/     proto、session、relay、ptyhost、agent、hostid、ringbuf 等复用包
 desktop/      Wails 桌面 app：Go 后端 + Vue 3 + xterm.js 前端
-web/          vanilla 浏览器/PWA 客户端
+web/          Vue 3 + TypeScript + Naive UI 浏览器/PWA 客户端（MPA）
+mobile/       Capacitor iOS WebView wrapper，打包 web/ 静态资源
 docs/spec/    架构、协议、工程约定
 .github/      CI、release、打包脚本
 ```
@@ -322,8 +343,9 @@ docs/spec/    架构、协议、工程约定
 ```bash
 go vet -tags webkit2_41 ./...
 go test -tags webkit2_41 ./...
-node --test web/*.test.mjs
 cd desktop/frontend && npm run build
+cd web && npm run build && npm test && npm run test:contract
+cd mobile && npm test
 ```
 
 如果改了协议或权限模型，请同步更新 [`docs/spec/protocol.md`](docs/spec/protocol.md) 和相关客户端实现。

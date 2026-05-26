@@ -4,7 +4,7 @@ atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 
 
 阅读这份文件以快速上手；详细规范见 `docs/spec/`。
 
-- Web 客户端正在从 vanilla JS 迁移到 Vue 3 + TypeScript + Naive UI；spec 见 `docs/superpowers/specs/2026-05-17-web-vue-typescript-rewrite-design.md`，本 PR 是 PR-A（脚手架）。
+- 当前 release：`v0.2.25`。Web 客户端已迁移为 Vue 3 + TypeScript + Naive UI 多页应用（login/signup/main/settings/admin/setup），并支持中英双语；spec 见 `docs/superpowers/specs/2026-05-17-web-vue-typescript-rewrite-design.md` 和 `docs/superpowers/specs/2026-05-26-i18n-english-chinese-design.md`。
 
 ## 仓库布局
 
@@ -31,8 +31,9 @@ atterm/
 │   ├── config.go           ~/.config/atterm/config.json 持久化
 │   ├── uplink_e2e_test.go  端到端协议测试（不依赖 webview）
 │   ├── updater_test.go     updater 单测（semver / asset / cache / dev short-circuit）
-│   └── frontend/           Vue 3 + Vite + TS（含 PaneGrid + ConfirmInstallDialog）
-├── web/                    极简 vanilla 浏览器客户端（直连 atterm-relay）
+│   └── frontend/           Vue 3 + Vite + TS（PaneGrid / Settings / plugins / i18n）
+├── web/                    Vue 3 + TS + Naive UI 浏览器/PWA 客户端（MPA）
+├── mobile/                 Capacitor iOS WebView wrapper（同步 web/ 静态资源）
 ├── docs/spec/               规范文档（细节见此目录）
 └── .github/
     ├── workflows/          CI/release（desktop 多平台构建 + relay docker）
@@ -50,7 +51,7 @@ atterm/
 7. **更新流程不打扰用户**：`updater.go` 永远手动触发——后台只检查、不静默重启。`InstallAndQuit` 必须由用户在 Settings 里点 "force install & restart" 走过 `ConfirmInstallDialog` 确认才执行。dev 构建（`Version == "dev"`）整个 update 子系统短路。
 8. **自动更新必须验签**：release 构建通过 ldflags 注入 `main.UpdateVerifyPublicKey`。下载 asset 后必须先用 Ed25519 验证 `SHA256SUMS.sig`，再校验 asset SHA256；缺公钥、缺 `SHA256SUMS`/`.sig`、签名或 hash 不匹配都必须 fail-closed，不允许 install。
 9. **公网 relay 默认安全**：`cmd/atterm-relay` 公网监听时必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（启动时该 user 不存在则需同时提供 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` ≥16 字符 + ≥3 类字符 + 不在弱密码黑名单内），否则启动拒绝；缺失 `--origins`/`ATTERM_ORIGINS` 同样拒绝，除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP 做 HTTP/WS rate limit 与连接数限制。服务端所有鉴权接口都不接受 `?token=`；桌面端 API token（`atk_…`）通过 `Sec-WebSocket-Protocol` 传递。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
-10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源静态资源；xterm 资源放在 `web/vendor/` 并由 service worker 缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
+10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源构建产物；Vue/xterm/Naive UI 等 npm 依赖由 Vite 打包进同源 assets，并由 service worker 预缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
 11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay 不再有共享只读 token；如需限制某用户只读，在桌面端将该 session 的 `remote_permission` 设为 `view`。
 12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
 
@@ -66,10 +67,10 @@ ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
 ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
   go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
 # --web flag omitted ⇒ uses the embedded FS at internal/relay/web-dist/.
-# For frontend dev: build once and serve from disk:
+# For production-like frontend dev: build once and serve from disk:
 #   cd web && npm run build && cd .. && go run ./cmd/atterm-relay --web web/dist ...
-# `npm run dev` (Vite at 5173) becomes useful once PR-B wires up the
-# `server.proxy` block; until then it can't reach the relay's API/WS.
+# For live web frontend dev: run `cd web && npm run dev`; Vite at 5173 proxies
+# /api, /admin/api, /agent, /uplink and /client to 127.0.0.1:8080.
 
 # 命令行 agent（Phase 0 wrapper，调试用；需先在 relay 创建用户并生成 API token）
 go run ./cmd/atterm-agent --relay ws://localhost:8080 --token atk_... -- bash
@@ -83,7 +84,9 @@ wails build -tags webkit2_41             # 出 desktop/build/bin/AT Term
 go vet -tags webkit2_41 ./...
 go test -tags webkit2_41 -timeout 60s ./desktop/   # 跑 lazy uplink e2e 协议测试
 cd desktop/frontend && npm run build               # 前端 type-check + build
-node --test web/*.test.mjs                         # vanilla web/PWA 安全与 helper 测试
+cd desktop/frontend && npm test                    # 桌面 Vue/Vitest 单测
+cd web && npm run build && npm test && npm run test:contract
+cd mobile && npm test                              # Capacitor wrapper sync 脚本测试
 
 # 查看 GitHub Actions / release 状态（如 PATH 未加载，可直接用 /opt/homebrew/bin/gh）
 gh run list --repo attson/atterm --limit 10
@@ -116,6 +119,7 @@ gh run list --repo attson/atterm --limit 10
 | 改自动更新 | `desktop/updater.go`（state machine + Ed25519/SHA256 校验）+ `desktop/scripts/`（平台 helper）+ `.github/scripts/sign-release-checksums.go` + `.github/workflows/build.yml` + Settings UI |
 | 改 relay 启动安全策略 | `cmd/atterm-relay/main.go` + `cmd/atterm-relay/main_test.go` + `internal/relay/*_test.go` + `docs/spec/protocol.md` |
 | 改 web 安全头 / 静态资源 | `internal/relay/server.go` + `web/src/...` (Vue 3 + Naive UI) + `web/tests/contract/*.mjs` |
+| 改 web 文案 / 多语言 | `web/src/shared/i18n/messages/*.ts` + `desktop/frontend/src/i18n/messages/*.ts`；新增用户可见文案时同步中英两套 |
 | 改桌面远程 relay 配置 | `desktop/app.go` + `desktop/config.go` + `desktop/relay_security.go` + `desktop/frontend/src/components/SettingsDialog.vue` |
 | 改远程权限模型 | `internal/proto/frame.go` + `internal/relay/permissions.go` + `desktop/uplink.go` + Settings UI + 协议规范 |
 | 改 relay admin 配置 | `internal/relay/admin_config.go` + `internal/relay/admin_http.go` + `cmd/atterm-relay/main.go` + README/spec |
@@ -127,7 +131,7 @@ gh run list --repo attson/atterm --limit 10
 ## 风格摘要
 
 - Go：`gofmt`，包注释 + 公共 API 注释（说"为什么"）；errors `%w` wrap；不引入日志框架，用标准库 `log`
-- TS：strict mode；不写 `any` 除非 wails generated；不加新前端依赖（除 xterm/Vue 已有）
+- TS：strict mode；不写 `any` 除非 wails generated；不加新前端依赖（现有栈含 Vue / xterm / Naive UI / Pinia / lucide / CodeMirror）
 - 注释：写 *why* 不写 *what*；commit-specific / "added for X" / "see ticket Y" 不要写进代码注释（应该在 commit msg 或 PR）
 - 不要在 main 直接 push：CI 会跑，commit 要先在本地 `go vet -tags webkit2_41 ./...` + `npm run build` 全过
 - commit msg 用小写动词起头，subject ≤ 72 字符（参考 git log 现有风格）
@@ -146,6 +150,7 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 公网 relay 使用弱 token/空鉴权，除非用户显式 `--dev-insecure`
 - ❌ 桌面端默认允许非 loopback `ws://`；必须由用户打开 insecure mode
 - ❌ `web/` 重新引入外部 CDN script/style，或让 token 长期留在浏览器地址栏
+- ❌ 新增用户可见文案只改一种语言；desktop 和 web 的 i18n messages 必须保持中英覆盖
 - ❌ 把主 write token 持久化到 relay admin config；只能来自 env/flag/启动自动生成
 - ❌ 只在访问者客户端 UI 隐藏输入按钮而不在 relay/desktop host 强制拦截
 
@@ -154,3 +159,4 @@ gh run list --repo attson/atterm --limit 10
 - `docs/spec/architecture.md` — 整体架构、组件职责、数据流、phase 路线
 - `docs/spec/protocol.md` — wire 协议完整规范（所有帧类型、重连续传语义）
 - `docs/spec/conventions.md` — Go/TS 代码约定、commit 风格、测试组织
+- `docs/spec/component-style.md` — 前端组件视觉、控件复用、Settings / dialog / pane 样式规范

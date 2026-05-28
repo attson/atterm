@@ -9,7 +9,7 @@ ATTERM_SHELL_INTEGRATION_LOADED=1
 
 __atterm_prompt_start() { printf '\033]133;A\007'; }
 __atterm_prompt_end()   { printf '\033]133;B\007'; }
-__atterm_preexec()      { printf '\033]133;C\007'; }
+__atterm_preexec()      { printf '\033]133;C;%s\007' "$1"; }
 __atterm_precmd()       { printf '\033]133;D;%s\007' "$?"; }
 
 # Use additive hook arrays so frameworks (oh-my-zsh, powerlevel10k, starship)

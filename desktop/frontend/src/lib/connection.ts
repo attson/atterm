@@ -30,7 +30,21 @@ export interface Endpoint {
 export interface ConnectionHandlers {
   onOutput?: (data: Uint8Array) => void;
   onClose?: (info: ClosePayload) => void;
-  onMeta?: (meta: { cwd?: string; title?: string; cols?: number; rows?: number; driver_client_id?: string; driver_client_name?: string }) => void;
+  onMeta?: (meta: {
+    cwd?: string;
+    title?: string;
+    cols?: number;
+    rows?: number;
+    driver_client_id?: string;
+    driver_client_name?: string;
+    task_state?: TaskState;
+    current_command?: string;
+    command_started_at?: number;
+    command_ended_at?: number;
+    command_duration_ms?: number;
+    command_exit_code?: number;
+    last_output_at?: number;
+  }) => void;
   onStatus?: (s: Status) => void;
   onReplayProgress?: (progress: ReplayProgress) => void;
   // onDriverChange fires whenever this connection's driver-or-viewer role
@@ -406,4 +420,20 @@ export interface SessionInfo {
   host?: string;
   user?: string;
   remote_permission?: string;
+  task_state?: TaskState;
+  current_command?: string;
+  command_started_at?: number;
+  command_ended_at?: number;
+  command_duration_ms?: number;
+  command_exit_code?: number;
+  last_output_at?: number;
 }
+
+export type TaskState =
+  | "idle"
+  | "running"
+  | "waiting_input"
+  | "completed"
+  | "failed"
+  | "disconnected"
+  | "closed";

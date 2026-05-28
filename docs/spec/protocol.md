@@ -107,7 +107,13 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
   "driver_client_id": "<uuid>",
   "driver_client_name": "Alice's MacBook",
   "cols": 132,
-  "rows": 39
+  "rows": 39,
+  "task_state": "running",
+  "current_command": "go test ./...",
+  "command_started_at": 1715234567,
+  "command_ended_at": 0,
+  "command_duration_ms": 0,
+  "last_output_at": 1715234568
 }
 ```
 
@@ -116,8 +122,11 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
 - `driver_client_id` 与本地生成的 `ATTACH.client_id` 比对，决定自己是 driver 还是 viewer
 - `driver_client_name` 是 driver 当前 attach 时报上来的 `ATTACH.client_name`（典型是其 hostname），viewer 端用它在遮罩里显示 "by &lt;hostname&gt;"
 - `cols` / `rows` 是 PTY 当前真实尺寸；viewer 把自己的 xterm `term.resize(cols, rows)` 锁到这个值（不跑 FitAddon）
+- `task_state` 是任务状态：`idle` / `running` / `waiting_input` / `completed` / `failed` / `disconnected` / `closed`
+- `current_command` / `command_started_at` / `command_ended_at` / `command_duration_ms` / `command_exit_code` 来自 OSC 133 命令生命周期；`command_exit_code` 只在命令结束后出现，`0` 表示 completed，非 0 表示 failed
+- `last_output_at` 是 relay 最近看到该 session OUT 字节的 unix 秒时间戳
 
-每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id / driver_client_name / cols / rows，作为初始状态。
+每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id / driver_client_name / cols / rows / task metadata，作为初始状态。
 
 ### `CLOSE` (0x06) — 会话结束
 
@@ -159,11 +168,20 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
   "host_id": "<uuid>",
   "host": "myhost",
   "user": "alice",
-  "remote_permission": "full"
+  "remote_permission": "full",
+  "task_state": "completed",
+  "current_command": "go test ./...",
+  "command_started_at": 1715234567,
+  "command_ended_at": 1715234579,
+  "command_duration_ms": 12500,
+  "command_exit_code": 0,
+  "last_output_at": 1715234579
 }]
 ```
 
 `remote_permission` 是 owner desktop 发布的可选字段；缺省表示 `full`，保持旧客户端兼容。
+
+任务字段均为可选 additive metadata。缺失 `task_state` 的旧 publisher 按 `idle` 处理。
 
 | 值 | 远程允许 | relay/host 拦截 |
 |----|----------|-----------------|

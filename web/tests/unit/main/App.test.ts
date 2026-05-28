@@ -60,6 +60,18 @@ describe('Main (home) App.vue', () => {
     expect(wrapper.find('[data-testid="status-line"]').exists()).toBe(true)
   })
 
+  it('shows a view-only warning and passes focus input for notification deep links', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, hash: '#/s/11111111-2222-3333-4444-555555555555?notification=waiting_input&focus=input&permission=view' },
+      writable: true,
+    })
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="view-only-notice"]').exists()).toBe(true)
+    const term = wrapper.findComponent({ name: 'TerminalView' })
+    expect(term.props('focusInput')).toBe(true)
+  })
+
   it('reacts to hashchange events to switch views', async () => {
     const wrapper = mount(App, { attachTo: document.body })
     await flushPromises()

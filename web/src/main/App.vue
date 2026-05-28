@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { NConfigProvider, NMessageProvider, NButton, darkTheme } from 'naive-ui'
+import { NConfigProvider, NMessageProvider, NButton, NAlert, darkTheme } from 'naive-ui'
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
 import Topbar from '@shared/components/Topbar.vue'
 import SessionList from './components/SessionList.vue'
@@ -8,17 +8,19 @@ import TerminalView from './components/TerminalView.vue'
 import ShortcutBar from './components/ShortcutBar.vue'
 import PasteFallback from './components/PasteFallback.vue'
 import InstallHint from './components/InstallHint.vue'
-import { parseSessionRoute, formatSessionRoute } from './lib/sessionRoute'
+import { parseSessionRoute, parseSessionRouteAction, formatSessionRoute } from './lib/sessionRoute'
 import { useI18n } from '@shared/i18n/useI18n'
 import { naiveLocale } from '@shared/i18n/naive-locale'
 
 const sessionId = ref<string | null>(parseSessionRoute(location.hash))
+const routeAction = ref(parseSessionRouteAction(location.hash))
 const pasteOpen = ref(false)
 const termRef = ref<InstanceType<typeof TerminalView> | null>(null)
 const { t } = useI18n()
 
 function onHashChange() {
   sessionId.value = parseSessionRoute(location.hash)
+  routeAction.value = parseSessionRouteAction(location.hash)
 }
 
 function onNavigate(id: string) {
@@ -61,6 +63,8 @@ function onPasteImage(file: File) {
 const overrides = getNaiveOverrides()
 
 const inSession = computed(() => Boolean(sessionId.value))
+const focusInput = computed(() => routeAction.value.focus === 'input')
+const viewOnlyNotice = computed(() => routeAction.value.permission === 'view')
 
 onMounted(() => window.addEventListener('hashchange', onHashChange))
 onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
@@ -91,9 +95,18 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
       <main class="home-main">
         <SessionList v-if="!inSession" @navigate="onNavigate" />
         <template v-else>
+          <n-alert
+            v-if="viewOnlyNotice"
+            type="info"
+            class="permission-notice"
+            data-testid="view-only-notice"
+          >
+            {{ t('main.viewOnlyNotice') }}
+          </n-alert>
           <TerminalView
             ref="termRef"
             :session-id="sessionId!"
+            :focus-input="focusInput"
           />
           <ShortcutBar
             @input="onShortcutInput"
@@ -130,5 +143,9 @@ onUnmounted(() => window.removeEventListener('hashchange', onHashChange))
   display: flex;
   flex-direction: column;
   min-height: calc(100vh - 80px);
+}
+.permission-notice {
+  margin: 0.75rem 0.75rem 0;
+  z-index: 2;
 }
 </style>

@@ -14,7 +14,7 @@ __atterm_preexec() {
   # interactive command starts. BASH_COMMAND holds the about-to-run command.
   [[ -n "$COMP_LINE" ]] && return
   [[ "$BASH_COMMAND" == "$PROMPT_COMMAND" ]] && return
-  printf '\033]133;C\007'
+  printf '\033]133;C;%s\007' "$BASH_COMMAND"
 }
 
 __atterm_precmd() {

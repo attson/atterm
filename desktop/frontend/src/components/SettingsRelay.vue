@@ -5,6 +5,8 @@ import { usePlatform } from '../platform'
 const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
 import { useI18n } from "../i18n/useI18n";
+import type { MessageKey } from "../i18n";
+import { classifyRelaySetupError, relayHttpToWsURL, validateRelaySetupInputs, type RelaySetupIssue } from "../lib/relaySetupWizard";
 
 const emit = defineEmits<{
   (e: "relay-config-changed"): void;
@@ -19,6 +21,10 @@ const paused = ref(false);
 const loading = ref(true);
 const saving = ref(false);
 const togglingPause = ref(false);
+const wizardRunning = ref(false);
+const wizardDone = ref(false);
+const wizardIssue = ref<RelaySetupIssue | null>(null);
+const wizardIdentity = ref("");
 const error = ref("");
 const { t } = useI18n();
 
@@ -148,6 +154,57 @@ function openInBrowser() {
 
 const canSave = computed(() => !saving.value && !!url.value.trim());
 const saveLabel = computed(() => (saving.value ? t("settings.relay.saving") : t("settings.relay.saveConnect")));
+const wizardWsUrl = computed(() => {
+  try {
+    return url.value.trim() ? relayHttpToWsURL(url.value.trim()) : "";
+  } catch {
+    return "";
+  }
+});
+const wizardRecovery = computed(() => wizardIssue.value ? t(wizardIssue.value.recoveryKey as MessageKey) : "");
+const wizardChecks = computed(() => [
+  { key: "reachability", label: t("settings.relay.wizard.steps.reachability") },
+  { key: "urlCompatibility", label: t("settings.relay.wizard.steps.urlCompatibility") },
+  { key: "apiToken", label: t("settings.relay.wizard.steps.apiToken") },
+  { key: "identity", label: t("settings.relay.wizard.steps.identity") },
+  { key: "uplink", label: t("settings.relay.wizard.steps.uplink") },
+]);
+
+async function runWizardValidation() {
+  wizardRunning.value = true;
+  wizardDone.value = false;
+  wizardIssue.value = null;
+  wizardIdentity.value = "";
+  error.value = "";
+  const localIssue = validateRelaySetupInputs(url.value, token.value, allowInsecureRelay.value);
+  if (localIssue) {
+    wizardIssue.value = localIssue;
+    wizardRunning.value = false;
+    return;
+  }
+  try {
+    await setRelayConfig({
+      url: url.value.trim(),
+      token: token.value.trim(),
+      allow_insecure_relay: allowInsecureRelay.value,
+      remote_permission: remotePermission.value,
+    });
+    const me = await fetchRelayMe();
+    wizardIdentity.value = me.email || me.user_id || "";
+    const cfg = await getRelayConfig();
+    paused.value = (cfg as any).paused ?? false;
+    if (!(cfg as any).connected) {
+      throw new Error("uplink not connected");
+    }
+    snapshotPersisted();
+    wizardDone.value = true;
+    emit("relay-config-changed");
+  } catch (e: any) {
+    wizardIssue.value = classifyRelaySetupError(e);
+  } finally {
+    wizardRunning.value = false;
+  }
+}
 
 defineExpose({
   save,
@@ -188,6 +245,28 @@ defineExpose({
       <p class="hint">
         {{ t("settings.relay.hint") }}
       </p>
+
+      <section class="relay-wizard" data-testid="relay-setup-wizard">
+        <div class="wizard-head">
+          <div>
+            <div class="wizard-title">{{ t("settings.relay.wizard.title") }}</div>
+            <div class="wizard-sub">{{ wizardWsUrl || t("settings.relay.wizard.noWsUrl") }}</div>
+          </div>
+          <button type="button" :disabled="wizardRunning || saving" @click="runWizardValidation">
+            {{ wizardRunning ? t("settings.relay.wizard.checking") : t("settings.relay.wizard.run") }}
+          </button>
+        </div>
+        <div class="wizard-steps">
+          <span v-for="step in wizardChecks" :key="step.key" class="wizard-step">{{ step.label }}</span>
+        </div>
+        <p v-if="wizardDone" class="wizard-ok">
+          {{ t("settings.relay.wizard.ok", { identity: wizardIdentity }) }}
+        </p>
+        <p v-if="wizardIssue" class="wizard-error">
+          {{ t(`settings.relay.wizard.errors.${wizardIssue.code}` as MessageKey) }}
+          <span class="wizard-recovery">{{ wizardRecovery }}</span>
+        </p>
+      </section>
 
       <label class="field-label">{{ t("settings.relay.relayUrl") }}</label>
       <input
@@ -375,6 +454,46 @@ defineExpose({
   line-height: 1.45;
   margin: 0;
 }
+.relay-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+}
+.wizard-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.wizard-head button {
+  height: 30px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--bg);
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.wizard-head button:disabled { opacity: .55; }
+.wizard-title { font-size: 13px; font-weight: 700; color: var(--fg); }
+.wizard-sub { font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+.wizard-steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.wizard-step {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.wizard-ok, .wizard-error { margin: 0; font-size: 12px; line-height: 1.45; }
+.wizard-ok { color: var(--good); }
+.wizard-error { color: var(--bad); }
+.wizard-recovery { display: block; color: var(--fg-dim); margin-top: 3px; }
 input[type="text"],
 input[type="password"] {
   height: 32px;

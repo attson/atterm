@@ -88,18 +88,31 @@ export function createCapacitorPlatform(): Platform {
         if (!res.ok) throw new Error(`list sessions: HTTP ${res.status}`)
         const raw = (await res.json()) as Array<{
           id: string; command: string; title: string; cwd: string; cols: number; rows: number;
-          host_id: string; host: string; user: string
+          host_id: string; host: string; user: string; remote_permission?: string; task_state?: RemoteSession['task_state'];
+          current_command?: string; command_started_at?: number; command_ended_at?: number; command_duration_ms?: number;
+          command_exit_code?: number; last_output_at?: number
         }>
-        return raw.map((s) => ({
-          session_id: s.id,
-          host_id: s.host_id,
-          host: s.host,
-          user: s.user,
-          title: s.title || s.command,
-          cwd: s.cwd,
-          cols: s.cols,
-          rows: s.rows,
-        }))
+        return raw.map((s) => {
+          const out: RemoteSession = {
+            session_id: s.id,
+            host_id: s.host_id,
+            host: s.host,
+            user: s.user,
+            title: s.title || s.command,
+            cwd: s.cwd,
+            cols: s.cols,
+            rows: s.rows,
+          }
+          if (s.remote_permission !== undefined) out.remote_permission = s.remote_permission
+          if (s.task_state !== undefined) out.task_state = s.task_state
+          if (s.current_command !== undefined) out.current_command = s.current_command
+          if (s.command_started_at !== undefined) out.command_started_at = s.command_started_at
+          if (s.command_ended_at !== undefined) out.command_ended_at = s.command_ended_at
+          if (s.command_duration_ms !== undefined) out.command_duration_ms = s.command_duration_ms
+          if (s.command_exit_code !== undefined) out.command_exit_code = s.command_exit_code
+          if (s.last_output_at !== undefined) out.last_output_at = s.last_output_at
+          return out
+        })
       },
     },
     system: {

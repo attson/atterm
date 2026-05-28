@@ -10,12 +10,19 @@ vi.mock('@shared/api/version', () => ({
 }))
 
 import App from '@/login/App.vue'
+import AppSource from '@/login/App.vue?raw'
 import { login } from '@shared/api/auth'
 import { ApiError } from '@shared/api/client'
 import { installI18nTestHooks } from '../i18n-test-helper'
 
 installI18nTestHooks()
 describe('Login App.vue', () => {
+  it('overrides Chrome autofill background on login inputs', () => {
+    expect(AppSource).toContain(':-webkit-autofill')
+    expect(AppSource).toContain('-webkit-text-fill-color')
+    expect(AppSource).toContain('-webkit-box-shadow')
+  })
+
   let originalLocation: Location
 
   beforeEach(() => {

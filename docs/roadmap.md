@@ -4,73 +4,73 @@
 
 ### 1. 任务状态模型
 
-- [ ] 定义会话任务状态：`running`、`waiting_input`、`completed`、`failed`、`idle`、`disconnected`、`closed`
-- [ ] 基于 OSC 133 事件推导命令生命周期
-- [ ] 记录当前命令、开始时间、结束时间、运行时长和退出码
-- [ ] 记录最近输出时间
-- [ ] 增加等待输入识别规则：`[y/N]`、`[Y/n]`、`continue?`、`proceed?`、`confirm`、`press enter`、`password:`
-- [ ] 在 relay session metadata 中暴露任务状态
-- [ ] 将任务状态同步到 desktop、web 和 mobile 客户端
-- [ ] 增加任务状态流转测试
+- [x] 定义会话任务状态：`running`、`waiting_input`、`completed`、`failed`、`idle`、`disconnected`、`closed`
+- [x] 基于 OSC 133 事件推导命令生命周期
+- [x] 记录当前命令、开始时间、结束时间、运行时长和退出码
+- [x] 记录最近输出时间
+- [x] 增加等待输入识别规则：`[y/N]`、`[Y/n]`、`continue?`、`proceed?`、`confirm`、`press enter`、`password:`
+- [x] 在 relay session metadata 中暴露任务状态
+- [x] 将任务状态同步到 desktop、web 和 mobile 客户端
+- [x] 增加任务状态流转测试
 
 ### 2. 移动端任务首页
 
-- [ ] 将移动端优先会话列表改为任务卡片
-- [ ] 按状态分组任务：`needs_attention`、`running`、`completed`、`failed`、`disconnected`
-- [ ] 在任务卡片展示 session 标题、host、cwd、当前或最近命令、任务状态、运行时长、最近输出时间和权限模式
-- [ ] 支持从任务卡片进入终端 attach
-- [ ] 高亮需要输入的任务
-- [ ] 高亮失败任务
-- [ ] 增加无活跃任务空状态
-- [ ] 增加 relay disconnected 空状态
-- [ ] 增加移动端视口测试
+- [x] 将移动端优先会话列表改为任务卡片
+- [x] 按状态分组任务：`needs_attention`、`running`、`completed`、`failed`、`disconnected`
+- [x] 在任务卡片展示 session 标题、host、cwd、当前或最近命令、任务状态、运行时长、最近输出时间和权限模式
+- [x] 支持从任务卡片进入终端 attach
+- [x] 高亮需要输入的任务
+- [x] 高亮失败任务
+- [x] 增加无活跃任务空状态
+- [x] 增加 relay disconnected 空状态
+- [x] 增加移动端视口测试
 
 ### 3. 通知深链
 
-- [ ] 在 Web Push payload 中包含 session id
-- [ ] 在 Web Push payload 中包含通知类型
-- [ ] 支持命令完成通知
-- [ ] 支持命令失败通知
-- [ ] 支持等待输入通知
-- [ ] 支持 idle timeout 通知
-- [ ] 支持 uplink disconnected 通知
-- [ ] 点击通知后打开目标 session
-- [ ] 等待输入通知打开后聚焦终端输入区
-- [ ] 打开 view-only session 时显示权限提示
-- [ ] 增加 push payload 路由测试
+- [x] 在 Web Push payload 中包含 session id
+- [x] 在 Web Push payload 中包含通知类型
+- [x] 支持命令完成通知
+- [x] 支持命令失败通知
+- [x] 支持等待输入通知
+- [x] 支持 idle timeout 通知
+- [x] 支持 uplink disconnected 通知
+- [x] 点击通知后打开目标 session
+- [x] 等待输入通知打开后聚焦终端输入区
+- [x] 打开 view-only session 时显示权限提示
+- [x] 增加 push payload 路由测试
 
 ### 4. 移动端快捷控制面板
 
-- [ ] 在移动端终端视图增加控制面板
-- [ ] 增加 Enter 快捷键
-- [ ] 增加 Esc 快捷键
-- [ ] 增加 Tab 快捷键
-- [ ] 增加 Ctrl-C 快捷键
-- [ ] 增加 Ctrl-D 快捷键
-- [ ] 增加方向键快捷键：Up、Down、Left、Right
-- [ ] 增加快捷文本：`y`、`n`、`yes`、`no`、`continue`
-- [ ] 增加粘贴确认
-- [ ] 增加显式控制模式开关
-- [ ] view-only session 禁用控制按钮
-- [ ] 增加权限控制测试
+- [x] 在移动端终端视图增加控制面板
+- [x] 增加 Enter 快捷键
+- [x] 增加 Esc 快捷键
+- [x] 增加 Tab 快捷键
+- [x] 增加 Ctrl-C 快捷键
+- [x] 增加 Ctrl-D 快捷键
+- [x] 增加方向键快捷键：Up、Down、Left、Right
+- [x] 增加快捷文本：`y`、`n`、`yes`、`no`、`continue`
+- [x] 增加粘贴确认
+- [x] 增加显式控制模式开关
+- [x] view-only session 禁用控制按钮
+- [x] 增加权限控制测试
 
 ### 5. Relay 连接向导
 
-- [ ] 在桌面端增加 relay setup wizard
-- [ ] 增加 relay URL 输入步骤
-- [ ] 校验 relay 可达性
-- [ ] 校验 HTTP/HTTPS 和 WS/WSS 兼容性
-- [ ] 校验 API token
-- [ ] 校验用户身份
-- [ ] 校验 uplink 连接状态
-- [ ] 识别 relay unreachable 错误
-- [ ] 识别 invalid token 错误
-- [ ] 识别 origin rejected 错误
-- [ ] 识别 insecure ws blocked 错误
-- [ ] 识别 incompatible relay version 错误
-- [ ] 识别 permission denied 错误
-- [ ] 为每类失败提供恢复操作
-- [ ] 增加连接向导状态测试
+- [x] 在桌面端增加 relay setup wizard
+- [x] 增加 relay URL 输入步骤
+- [x] 校验 relay 可达性
+- [x] 校验 HTTP/HTTPS 和 WS/WSS 兼容性
+- [x] 校验 API token
+- [x] 校验用户身份
+- [x] 校验 uplink 连接状态
+- [x] 识别 relay unreachable 错误
+- [x] 识别 invalid token 错误
+- [x] 识别 origin rejected 错误
+- [x] 识别 insecure ws blocked 错误
+- [x] 识别 incompatible relay version 错误
+- [x] 识别 permission denied 错误
+- [x] 为每类失败提供恢复操作
+- [x] 增加连接向导状态测试
 
 ## P1：v0.4 新用户引导与可信度
 

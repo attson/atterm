@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { usePlatform } from '../platform'
 import type { RemoteSession } from '../platform/types'
-import { groupByHost, type HostGroup } from './sessionGroups'
 import { useI18n } from '../i18n/useI18n'
 
 defineProps<{ openSessionIds: string[] }>()
@@ -13,27 +12,92 @@ const emit = defineEmits<{
 }>()
 
 const platform = usePlatform()
-const groups = ref<HostGroup[]>([])
+const sessions = ref<RemoteSession[]>([])
 const error = ref<string | null>(null)
 const loading = ref(false)
 const { t } = useI18n()
+
+type TaskBucket = 'needs_attention' | 'running' | 'completed' | 'failed' | 'disconnected'
+
+const bucketOrder: TaskBucket[] = ['needs_attention', 'running', 'failed', 'completed', 'disconnected']
+
+const taskGroups = computed(() => {
+  return bucketOrder
+    .map((bucket) => ({
+      bucket,
+      sessions: sessions.value.filter((session) => bucketFor(session) === bucket),
+    }))
+    .filter((group) => group.sessions.length > 0)
+})
 
 async function refresh(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const sessions = await platform.sessions.listRemoteSessions()
-    groups.value = groupByHost(sessions)
+    sessions.value = await platform.sessions.listRemoteSessions()
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     if (msg === 'relay_unauthorized') { emit('tokenInvalid'); return }
     error.value = msg
+    sessions.value = []
   } finally {
     loading.value = false
   }
 }
 
 onMounted(refresh)
+
+function bucketFor(session: RemoteSession): TaskBucket {
+  switch (session.task_state) {
+    case 'waiting_input':
+      return 'needs_attention'
+    case 'failed':
+      return 'failed'
+    case 'completed':
+      return 'completed'
+    case 'disconnected':
+    case 'closed':
+      return 'disconnected'
+    case 'running':
+    case 'idle':
+    default:
+      return 'running'
+  }
+}
+
+function taskTitle(session: RemoteSession): string {
+  return session.current_command || session.title || 'shell'
+}
+
+function taskMeta(session: RemoteSession): string {
+  const parts = [
+    `${session.host} · ${session.user}`,
+    taskStateLabel(session),
+    `${session.cols}×${session.rows}`,
+    session.remote_permission || 'full',
+  ]
+  const elapsed = formatDuration(session.command_duration_ms)
+  if (elapsed) parts.push(elapsed)
+  else if (session.command_started_at) parts.push(`${t('mobile.started')} ${formatClock(session.command_started_at)}`)
+  if (session.command_exit_code !== undefined) parts.push(`exit ${session.command_exit_code}`)
+  if (session.last_output_at) parts.push(`${t('mobile.lastOutput')} ${formatClock(session.last_output_at)}`)
+  return parts.join(' · ')
+}
+
+function taskStateLabel(session: RemoteSession): string {
+  return t(`mobile.taskStates.${session.task_state || 'idle'}`)
+}
+
+function formatDuration(ms?: number): string {
+  if (ms === undefined || ms < 0) return ''
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) return `${sec}s`
+  return `${Math.floor(sec / 60)}m${sec % 60}s`
+}
+
+function formatClock(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
 </script>
 
 <template>
@@ -48,26 +112,29 @@ onMounted(refresh)
       </button>
     </header>
     <div class="body">
-      <p v-if="error" class="error">{{ error }}</p>
-      <div v-for="g in groups" :key="g.host" class="group">
-        <div data-testid="host-group" class="grouphdr">{{ g.host }} · {{ g.user }} · {{ g.sessions.length }}</div>
+      <p v-if="error" data-testid="relay-disconnected" class="empty disconnected">
+        {{ t('mobile.relayDisconnected') }} · {{ error }}
+      </p>
+      <div v-for="g in taskGroups" :key="g.bucket" class="group" :data-testid="`task-section-${g.bucket}`">
+        <div class="grouphdr">{{ t(`mobile.taskSections.${g.bucket}`) }} · {{ g.sessions.length }}</div>
         <button
           v-for="s in g.sessions"
           :key="s.session_id"
-          data-testid="session-row"
-          class="sess"
+          data-testid="task-card"
+          class="task"
+          :class="[`state-${bucketFor(s)}`]"
           @click="emit('open', s)"
         >
           <span class="dot"></span>
-          <span class="col2">
-            <span class="ttl">{{ s.title }}</span>
+          <span :data-testid="`task-card-${s.session_id}`" class="col2">
+            <span class="ttl">{{ taskTitle(s) }}</span>
             <span v-if="s.cwd" :data-testid="`session-cwd-${s.session_id}`" class="cwd">{{ s.cwd }}</span>
-            <span class="meta">{{ s.cols }}×{{ s.rows }}</span>
+            <span class="meta">{{ taskMeta(s) }}</span>
           </span>
           <span v-if="openSessionIds.includes(s.session_id)" :data-testid="`open-badge-${s.session_id}`" class="open">{{ t('mobile.openBadge') }}</span>
         </button>
       </div>
-      <p v-if="!loading && !error && groups.length === 0" class="empty">
+      <p v-if="!loading && !error && taskGroups.length === 0" class="empty">
         {{ t('mobile.noRemoteSessions') }}
       </p>
     </div>
@@ -82,13 +149,17 @@ onMounted(refresh)
 .body { flex: 1; overflow: auto; padding: 12px; }
 .group { margin-bottom: 14px; }
 .grouphdr { font-size: 0.72rem; color: #8d93a3; font-family: ui-monospace, Menlo, monospace; margin: 4px 2px 8px; }
-.sess { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; margin-bottom: 8px; border-radius: 11px; background: #11182b; border: 1px solid #1e2638; color: inherit; text-align: left; }
+.task { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; margin-bottom: 8px; border-radius: 11px; background: #11182b; border: 1px solid #1e2638; color: inherit; text-align: left; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex: 0 0 auto; }
+.state-needs_attention .dot { background: #f59e0b; box-shadow: 0 0 14px rgba(245, 158, 11, .55); }
+.state-failed .dot { background: #ef4444; box-shadow: 0 0 14px rgba(239, 68, 68, .45); }
+.state-completed .dot { background: #60a5fa; }
+.state-disconnected .dot { background: #64748b; }
 .col2 { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ttl { font-size: 0.9rem; font-weight: 600; }
 .cwd { font-size: 0.74rem; color: #9aa3b2; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .meta { font-size: 0.72rem; color: #8d93a3; font-family: ui-monospace, Menlo, monospace; }
 .open { font-size: 0.62rem; color: #9dc1ff; border: 1px solid rgba(59,130,246,.4); background: rgba(59,130,246,.12); border-radius: 5px; padding: 1px 6px; }
 .empty { color: #8d93a3; font-size: 0.85rem; text-align: center; padding: 40px 12px; line-height: 1.6; }
-.error { color: #f87171; font-size: 0.8rem; }
+.disconnected { color: #f87171; }
 </style>

@@ -6,7 +6,10 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,18 +32,20 @@ const (
 
 // Session is the relay-side state for one PTY.
 type Session struct {
-	ID           uuid.UUID
-	StartedAt    time.Time
-	OwnerUserID  string // ULID; empty for legacy/non-account paths
+	ID          uuid.UUID
+	StartedAt   time.Time
+	OwnerUserID string // ULID; empty for legacy/non-account paths
 
-	mu        sync.RWMutex
-	meta      proto.SessionInfo
-	closed    bool
-	subs      map[*Subscriber]struct{}
-	scroll    *ringbuf.Buffer
-	inbound   chan proto.Frame // bounded; client -> agent
-	altScreen bool
-	termTail  []byte
+	mu         sync.RWMutex
+	meta       proto.SessionInfo
+	closed     bool
+	subs       map[*Subscriber]struct{}
+	scroll     *ringbuf.Buffer
+	inbound    chan proto.Frame // bounded; client -> agent
+	altScreen  bool
+	termTail   []byte
+	osc133Buf  []byte
+	cmdStarted time.Time
 
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
 	// frames are forwarded to the PTY. Nil means no driver is currently
@@ -91,6 +96,9 @@ func (s *Subscriber) close() {
 
 // New creates a Session with the given id and initial OPEN metadata.
 func New(id uuid.UUID, meta proto.SessionInfo) *Session {
+	if meta.TaskState == "" {
+		meta.TaskState = proto.TaskStateIdle
+	}
 	return &Session{
 		ID:        id,
 		StartedAt: time.Now(),
@@ -157,6 +165,9 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 		s.meta.Title = m.Title
 		changed = true
 	}
+	if mergeTaskMeta(&s.meta, m) {
+		changed = true
+	}
 	// Mirror sessions adopt the upstream's authoritative driver. Local
 	// sessions never take driver fields from a META (preserves commit #4:
 	// a cwd-only update must not clobber driver state).
@@ -202,6 +213,36 @@ func (s *Session) UpdateCwdTitle(cwd, title string) {
 	}
 }
 
+// UpdateAdvertisedInfo reconciles metadata from an ANNOUNCE snapshot without
+// adopting driver state. ANNOUNCEs are owner-published session facts, not
+// subscriber-control facts.
+func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
+	s.mu.Lock()
+	changed := false
+	if info.Cwd != "" && s.meta.Cwd != info.Cwd {
+		s.meta.Cwd = info.Cwd
+		changed = true
+	}
+	if info.Title != "" && s.meta.Title != info.Title {
+		s.meta.Title = info.Title
+		changed = true
+	}
+	if info.RemotePermission != s.meta.RemotePermission {
+		s.meta.RemotePermission = info.RemotePermission
+		changed = true
+	}
+	if mergeTaskInfo(&s.meta, info) {
+		changed = true
+	}
+	metaCopy := s.meta
+	driverID := s.driverClientID
+	driverName := s.driverClientName
+	s.mu.Unlock()
+	if changed {
+		s.broadcastDriverMeta(metaCopy, driverID, driverName)
+	}
+}
+
 // UpdateRemotePermission records the owner-published remote permission for
 // mirror sessions. Empty keeps the backwards-compatible full-control default.
 func (s *Session) UpdateRemotePermission(value string) {
@@ -236,11 +277,16 @@ func (s *Session) UpdateSize(cols, rows uint16) {
 // PushOut is called by the agent reader loop for each TypeOut frame.
 // It records the chunk to scrollback and fans out to current subscribers.
 // Slow subscribers are dropped (their channels are closed) so they reconnect.
-func (s *Session) PushOut(seq uint64, data []byte) {
-	s.updateTerminalState(data)
+// It returns true when advertised task metadata changed.
+func (s *Session) PushOut(seq uint64, data []byte) bool {
+	metaChanged := s.updateTerminalState(data)
+	if metaChanged {
+		s.broadcastCurrentMeta()
+	}
 	s.scroll.Push(ringbuf.Chunk{Seq: seq, Data: append([]byte(nil), data...)})
 	frame := proto.EncodeOut(s.ID, seq, data)
 	s.fanout(frame)
+	return metaChanged
 }
 
 // Broadcast sends a frame (META/CLOSE) to all subscribers.
@@ -434,14 +480,30 @@ func (s *Session) sendSnapshotMeta(sub *Subscriber, meta proto.SessionInfo, driv
 	}
 }
 
+func (s *Session) broadcastCurrentMeta() {
+	s.mu.RLock()
+	metaCopy := s.meta
+	driverID := s.driverClientID
+	driverName := s.driverClientName
+	s.mu.RUnlock()
+	s.broadcastDriverMeta(metaCopy, driverID, driverName)
+}
+
 func encodeMetaPayload(meta proto.SessionInfo, driverClientID, driverClientName string) ([]byte, error) {
 	return json.Marshal(proto.MetaPayload{
-		Cwd:              meta.Cwd,
-		Title:            meta.Title,
-		DriverClientID:   driverClientID,
-		DriverClientName: driverClientName,
-		Cols:             meta.Cols,
-		Rows:             meta.Rows,
+		Cwd:               meta.Cwd,
+		Title:             meta.Title,
+		DriverClientID:    driverClientID,
+		DriverClientName:  driverClientName,
+		Cols:              meta.Cols,
+		Rows:              meta.Rows,
+		TaskState:         meta.TaskState,
+		CurrentCommand:    meta.CurrentCommand,
+		CommandStartedAt:  meta.CommandStartedAt,
+		CommandEndedAt:    meta.CommandEndedAt,
+		CommandDurationMS: meta.CommandDurationMS,
+		CommandExitCode:   meta.CommandExitCode,
+		LastOutputAt:      meta.LastOutputAt,
 	})
 }
 
@@ -486,12 +548,25 @@ func replayResetMarker(altScreen bool) []byte {
 	return []byte("\x1b[2J\x1b[H")
 }
 
-func (s *Session) updateTerminalState(data []byte) {
+func (s *Session) updateTerminalState(data []byte) bool {
 	if len(data) == 0 {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	changed := false
+	now := time.Now()
+	if s.meta.TaskState == "" {
+		s.meta.TaskState = proto.TaskStateIdle
+		changed = true
+	}
+	s.meta.LastOutputAt = now.Unix()
+	if s.applyOSC133Locked(data, now) {
+		changed = true
+	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
+		s.meta.TaskState = proto.TaskStateWaitingInput
+		changed = true
+	}
 	const tailLen = 32
 	prevTail := s.termTail
 	if len(prevTail) > 0 {
@@ -504,6 +579,241 @@ func (s *Session) updateTerminalState(data []byte) {
 	}
 	s.altScreen = scanAltScreenMode(s.altScreen, data)
 	s.termTail = appendTrailingBytes(s.termTail[:0], prevTail, data, tailLen)
+	return changed
+}
+
+func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
+	events := s.consumeOSC133Locked(data)
+	changed := false
+	for _, payload := range events {
+		if payload == "" {
+			continue
+		}
+		switch payload[0] {
+		case 'C':
+			command := strings.TrimSpace(strings.TrimPrefix(payload, "C;"))
+			exitNil := (*int)(nil)
+			if s.meta.TaskState != proto.TaskStateRunning {
+				s.meta.TaskState = proto.TaskStateRunning
+				changed = true
+			}
+			if s.meta.CurrentCommand != command {
+				s.meta.CurrentCommand = command
+				changed = true
+			}
+			started := now.Unix()
+			s.cmdStarted = now
+			if s.meta.CommandStartedAt != started {
+				s.meta.CommandStartedAt = started
+				changed = true
+			}
+			if s.meta.CommandEndedAt != 0 {
+				s.meta.CommandEndedAt = 0
+				changed = true
+			}
+			if s.meta.CommandDurationMS != 0 {
+				s.meta.CommandDurationMS = 0
+				changed = true
+			}
+			if s.meta.CommandExitCode != nil {
+				s.meta.CommandExitCode = exitNil
+				changed = true
+			}
+		case 'D':
+			if s.meta.TaskState != proto.TaskStateRunning && s.meta.CommandStartedAt == 0 {
+				continue
+			}
+			exitCode := parseOSC133Exit(payload)
+			state := proto.TaskStateCompleted
+			if exitCode != 0 {
+				state = proto.TaskStateFailed
+			}
+			if s.meta.TaskState != state {
+				s.meta.TaskState = state
+				changed = true
+			}
+			ended := now.Unix()
+			if s.meta.CommandEndedAt != ended {
+				s.meta.CommandEndedAt = ended
+				changed = true
+			}
+			startedAt := s.cmdStarted
+			if startedAt.IsZero() {
+				startedAt = time.Unix(s.meta.CommandStartedAt, 0)
+			}
+			duration := int(now.Sub(startedAt).Milliseconds())
+			if duration < 0 {
+				duration = 0
+			}
+			if s.meta.CommandDurationMS != duration {
+				s.meta.CommandDurationMS = duration
+				changed = true
+			}
+			if s.meta.CommandExitCode == nil || *s.meta.CommandExitCode != exitCode {
+				v := exitCode
+				s.meta.CommandExitCode = &v
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func (s *Session) consumeOSC133Locked(data []byte) []string {
+	buf := append(append([]byte(nil), s.osc133Buf...), data...)
+	s.osc133Buf = s.osc133Buf[:0]
+	var out []string
+	prefix := []byte("\x1b]133;")
+	for {
+		idx := bytes.Index(buf, prefix)
+		if idx < 0 {
+			s.osc133Buf = keepOSC133Tail(s.osc133Buf, buf)
+			return out
+		}
+		buf = buf[idx+len(prefix):]
+		termStart, termLen := oscTerminator(buf)
+		if termStart < 0 {
+			// Keep the incomplete OSC so a split BEL/ST terminator can finish it
+			// on the next chunk. Cap the buffer to avoid unbounded growth on
+			// malformed terminal output.
+			incomplete := append(prefix, buf...)
+			const maxOSC = 4096
+			if len(incomplete) > maxOSC {
+				incomplete = incomplete[len(incomplete)-maxOSC:]
+			}
+			s.osc133Buf = append(s.osc133Buf, incomplete...)
+			return out
+		}
+		out = append(out, string(buf[:termStart]))
+		buf = buf[termStart+termLen:]
+	}
+}
+
+func keepOSC133Tail(dst, buf []byte) []byte {
+	const keep = len("\x1b]133;") - 1
+	if len(buf) > keep {
+		buf = buf[len(buf)-keep:]
+	}
+	return append(dst, buf...)
+}
+
+func oscTerminator(buf []byte) (int, int) {
+	for i, b := range buf {
+		if b == 0x07 {
+			return i, 1
+		}
+		if b == 0x1b && i+1 < len(buf) && buf[i+1] == '\\' {
+			return i, 2
+		}
+	}
+	return -1, 0
+}
+
+func parseOSC133Exit(payload string) int {
+	idx := strings.IndexByte(payload, ';')
+	if idx < 0 {
+		return 0
+	}
+	raw := strings.TrimSpace(payload[idx+1:])
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+func looksLikeWaitingInput(data []byte) bool {
+	text := strings.ToLower(string(data))
+	for _, pattern := range []string{
+		"[y/n]",
+		"continue?",
+		"proceed?",
+		"confirm",
+		"press enter",
+		"password:",
+	} {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeTaskMeta(meta *proto.SessionInfo, m proto.MetaPayload) bool {
+	info := proto.SessionInfo{
+		TaskState:         m.TaskState,
+		CurrentCommand:    m.CurrentCommand,
+		CommandStartedAt:  m.CommandStartedAt,
+		CommandEndedAt:    m.CommandEndedAt,
+		CommandDurationMS: m.CommandDurationMS,
+		CommandExitCode:   m.CommandExitCode,
+		LastOutputAt:      m.LastOutputAt,
+	}
+	return mergeTaskInfo(meta, info)
+}
+
+func mergeTaskInfo(meta *proto.SessionInfo, info proto.SessionInfo) bool {
+	if !hasTaskInfo(info) {
+		return false
+	}
+	changed := false
+	if info.TaskState != "" && meta.TaskState != info.TaskState {
+		meta.TaskState = info.TaskState
+		changed = true
+	}
+	if info.CurrentCommand != meta.CurrentCommand {
+		meta.CurrentCommand = info.CurrentCommand
+		changed = true
+	}
+	if info.CommandStartedAt != 0 && meta.CommandStartedAt != info.CommandStartedAt {
+		meta.CommandStartedAt = info.CommandStartedAt
+		changed = true
+	}
+	if info.CommandEndedAt != meta.CommandEndedAt {
+		meta.CommandEndedAt = info.CommandEndedAt
+		changed = true
+	}
+	if info.CommandDurationMS != meta.CommandDurationMS {
+		meta.CommandDurationMS = info.CommandDurationMS
+		changed = true
+	}
+	if !sameOptionalInt(meta.CommandExitCode, info.CommandExitCode) {
+		meta.CommandExitCode = cloneOptionalInt(info.CommandExitCode)
+		changed = true
+	}
+	if info.LastOutputAt != 0 && meta.LastOutputAt != info.LastOutputAt {
+		meta.LastOutputAt = info.LastOutputAt
+		changed = true
+	}
+	return changed
+}
+
+func hasTaskInfo(info proto.SessionInfo) bool {
+	return info.TaskState != "" ||
+		info.CurrentCommand != "" ||
+		info.CommandStartedAt != 0 ||
+		info.CommandEndedAt != 0 ||
+		info.CommandDurationMS != 0 ||
+		info.CommandExitCode != nil ||
+		info.LastOutputAt != 0
+}
+
+func sameOptionalInt(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func cloneOptionalInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	out := *v
+	return &out
 }
 
 func scanAltScreenMode(alt bool, data []byte) bool {

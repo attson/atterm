@@ -176,4 +176,13 @@ const overrides = getNaiveOverrides()
   font-size: 0.75rem;
   margin: 0;
 }
+.auth-card :deep(.n-input .n-input__input-el:-webkit-autofill),
+.auth-card :deep(.n-input .n-input__input-el:-webkit-autofill:hover),
+.auth-card :deep(.n-input .n-input__input-el:-webkit-autofill:focus) {
+  -webkit-text-fill-color: var(--fg);
+  caret-color: var(--fg);
+  -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset;
+  box-shadow: 0 0 0 1000px var(--panel-2) inset;
+  transition: background-color 9999s ease-out;
+}
 </style>

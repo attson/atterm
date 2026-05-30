@@ -76,7 +76,7 @@ describe("TerminalView right-click menu", () => {
     expect(source).toContain('@click="onMenuClear"');
     expect(source).toMatch(/function\s+onMenuClear\s*\(\s*\)/);
     expect(source).toContain("term.clear()");
-    expect(source).toMatch(/const\s+MENU_HEIGHT\s*=\s*110/);
+    expect(source).toMatch(/const\s+MENU_HEIGHT\s*=\s*150/);
   });
 });
 
@@ -238,4 +238,41 @@ describe("TerminalView context-menu plugin merge", () => {
 test("viewer overlay has a take-control button wired to claimDriver", () => {
   expect(source).toMatch(/data-testid="take-control"/);
   expect(source).toMatch(/function takeControl[\s\S]*?claimDriver/);
+});
+
+describe("TerminalView right-click send", () => {
+  test("imports the send predicate and payload helper", () => {
+    expect(source).toMatch(/canSendSelection[\s\S]*from\s+["']\.\.\/lib\/terminalContextMenu["']/);
+    expect(source).toMatch(/prepareSendPayload[\s\S]*from\s+["']\.\.\/lib\/terminalContextMenu["']/);
+  });
+
+  test("renders a send menu item between paste and clear", () => {
+    const pasteIdx = source.indexOf('t("common.paste")');
+    const sendIdx = source.indexOf('t("terminal.sendSelection")');
+    const clearIdx = source.indexOf('t("terminal.clearBuffer")');
+    expect(pasteIdx).toBeGreaterThan(-1);
+    expect(sendIdx).toBeGreaterThan(pasteIdx);
+    expect(clearIdx).toBeGreaterThan(sendIdx);
+  });
+
+  test("binds the send button's disabled state to menuCanSend", () => {
+    expect(source).toContain('@click="onMenuSend"');
+    expect(source).toContain(':disabled="!menuCanSend"');
+    expect(source).toMatch(/const\s+menuCanSend\s*=\s*computed/);
+  });
+
+  test("menuCanSend feeds canSendSelection with selection + status + permission + isDriver", () => {
+    expect(source).toMatch(
+      /canSendSelection\(\s*\{[^}]*hasSelection[^}]*status[^}]*permission[^}]*isDriver[^}]*\}\s*\)/,
+    );
+  });
+
+  test("onMenuSend writes through SessionConnection.sendInput, not term.paste", () => {
+    expect(source).toMatch(/function\s+onMenuSend\s*\(\s*\)/);
+    expect(source).toMatch(/prepareSendPayload\s*\(/);
+    expect(source).toMatch(/conn\??\.sendInput\s*\(/);
+    const sendBody = source.match(/function\s+onMenuSend\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(sendBody).not.toBeNull();
+    expect(sendBody![0]).not.toMatch(/term\.paste\b/);
+  });
 });

@@ -14,7 +14,12 @@ import {
   shouldNotifyCommand,
   formatElapsed,
 } from "../lib/commandFinish";
-import { clampContextMenuPosition, isPasteAllowed } from "../lib/terminalContextMenu";
+import {
+  canSendSelection,
+  clampContextMenuPosition,
+  isPasteAllowed,
+  prepareSendPayload,
+} from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { broadcastCommandFinished, getHostInfo, getWebglRendererEnabled, showNotification } from "../lib/api";
@@ -99,9 +104,17 @@ let resizeObserver: ResizeObserver | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
 
 const MENU_WIDTH = 150;
-const MENU_HEIGHT = 110;
+const MENU_HEIGHT = 150;
 
 const menuCanPaste = computed(() => isPasteAllowed(status.value, props.remotePermission));
+const menuCanSend = computed(() =>
+  canSendSelection({
+    hasSelection: menuHasSelection.value,
+    status: status.value,
+    permission: props.remotePermission,
+    isDriver: isDriver.value,
+  }),
+);
 
 function handleViewerKeydown(event: KeyboardEvent) {
   if (isDriver.value) return; // driver mode passes through
@@ -245,6 +258,14 @@ function applyViewerSize() {
       term.resize(cols, rows);
     }
   }
+}
+
+function onMenuSend() {
+  closeContextMenu();
+  if (!term || !conn) return;
+  const payload = prepareSendPayload(term.getSelection());
+  if (payload === null) return;
+  conn.sendInput(payload);
 }
 
 function onMenuClear() {
@@ -554,6 +575,7 @@ watch(status, (nextStatus) => {
       >
         <button class="term-context-item" :disabled="!menuHasSelection" @click="onMenuCopy">{{ t("common.copy") }}</button>
         <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">{{ t("common.paste") }}</button>
+        <button class="term-context-item" :disabled="!menuCanSend" @click="onMenuSend">{{ t("terminal.sendSelection") }}</button>
         <button class="term-context-item" @click="onMenuClear">{{ t("terminal.clearBuffer") }}</button>
         <button
           v-for="item in pluginMenuItems"

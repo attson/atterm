@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  canSendSelection,
   clampContextMenuPosition,
   effectiveRemotePermission,
   imagePasteBlockedReason,
   isPasteAllowed,
+  prepareSendPayload,
 } from "./terminalContextMenu";
 
 describe("terminal context menu helpers", () => {
@@ -28,5 +30,56 @@ describe("terminal context menu helpers", () => {
       left: 632,
       top: 512,
     });
+  });
+
+  it("allows send only when selection + writeable + driver", () => {
+    expect(
+      canSendSelection({ hasSelection: true, status: "attached", permission: "full", isDriver: true }),
+    ).toBe(true);
+  });
+
+  it("blocks send with no selection", () => {
+    expect(
+      canSendSelection({ hasSelection: false, status: "attached", permission: "full", isDriver: true }),
+    ).toBe(false);
+  });
+
+  it("blocks send for read-only or detached sessions", () => {
+    expect(
+      canSendSelection({ hasSelection: true, status: "attached", permission: "view", isDriver: true }),
+    ).toBe(false);
+    expect(
+      canSendSelection({ hasSelection: true, status: "connecting", permission: "full", isDriver: true }),
+    ).toBe(false);
+  });
+
+  it("blocks send for non-driver clients even when permission allows writes", () => {
+    expect(
+      canSendSelection({ hasSelection: true, status: "attached", permission: "control", isDriver: false }),
+    ).toBe(false);
+  });
+
+  it("appends a single CR to a one-line selection", () => {
+    expect(prepareSendPayload("ls -la")).toBe("ls -la\r");
+  });
+
+  it("converts internal LF and CRLF newlines to CR", () => {
+    expect(prepareSendPayload("a\nb\r\nc")).toBe("a\rb\rc\r");
+  });
+
+  it("collapses trailing newlines to a single CR", () => {
+    expect(prepareSendPayload("ls -la\n")).toBe("ls -la\r");
+    expect(prepareSendPayload("ls -la\r\n\n")).toBe("ls -la\r");
+  });
+
+  it("strips C1 controls before normalizing", () => {
+    // U+0093 = Ctrl-S | 0x80 — see stripC1Controls.ts.
+    expect(prepareSendPayload("ls -la")).toBe("ls -la\r");
+  });
+
+  it("returns null for empty or whitespace-only-after-strip input", () => {
+    expect(prepareSendPayload("")).toBeNull();
+    expect(prepareSendPayload("\n\n")).toBeNull();
+    expect(prepareSendPayload("")).toBeNull();
   });
 });

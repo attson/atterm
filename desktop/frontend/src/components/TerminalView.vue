@@ -104,7 +104,7 @@ let resizeObserver: ResizeObserver | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
 
 const MENU_WIDTH = 150;
-const MENU_HEIGHT = 140;
+const MENU_HEIGHT = 150;
 
 const menuCanPaste = computed(() => isPasteAllowed(status.value, props.remotePermission));
 const menuCanSend = computed(() =>

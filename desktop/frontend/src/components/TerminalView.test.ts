@@ -76,7 +76,7 @@ describe("TerminalView right-click menu", () => {
     expect(source).toContain('@click="onMenuClear"');
     expect(source).toMatch(/function\s+onMenuClear\s*\(\s*\)/);
     expect(source).toContain("term.clear()");
-    expect(source).toMatch(/const\s+MENU_HEIGHT\s*=\s*140/);
+    expect(source).toMatch(/const\s+MENU_HEIGHT\s*=\s*150/);
   });
 });
 

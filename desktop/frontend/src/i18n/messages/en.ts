@@ -61,6 +61,7 @@ export const en = {
     pressSpaceToTakeBack: "press space to take back",
     takeControl: "Take control",
     clearBuffer: "clear buffer",
+    sendSelection: "send",
     emptyPaneHint: "[empty pane - press Cmd+N / Ctrl+N to fill]",
     remote: "remote",
     remotePrefix: "[remote] ",

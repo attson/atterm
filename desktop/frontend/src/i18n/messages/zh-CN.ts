@@ -63,6 +63,7 @@ export const zhCN = {
     pressSpaceToTakeBack: "按空格取回控制",
     takeControl: "接管控制",
     clearBuffer: "清空缓冲区",
+    sendSelection: "发送",
     emptyPaneHint: "[空面板 - 按 Cmd+N / Ctrl+N 填充]",
     remote: "远端",
     remotePrefix: "[远端] ",

@@ -5,6 +5,7 @@ import {
   effectiveRemotePermission,
   imagePasteBlockedReason,
   isPasteAllowed,
+  prepareSendPayload,
 } from "./terminalContextMenu";
 
 describe("terminal context menu helpers", () => {
@@ -56,5 +57,29 @@ describe("terminal context menu helpers", () => {
     expect(
       canSendSelection({ hasSelection: true, status: "attached", permission: "control", isDriver: false }),
     ).toBe(false);
+  });
+
+  it("appends a single CR to a one-line selection", () => {
+    expect(prepareSendPayload("ls -la")).toBe("ls -la\r");
+  });
+
+  it("converts internal LF and CRLF newlines to CR", () => {
+    expect(prepareSendPayload("a\nb\r\nc")).toBe("a\rb\rc\r");
+  });
+
+  it("collapses trailing newlines to a single CR", () => {
+    expect(prepareSendPayload("ls -la\n")).toBe("ls -la\r");
+    expect(prepareSendPayload("ls -la\r\n\n")).toBe("ls -la\r");
+  });
+
+  it("strips C1 controls before normalizing", () => {
+    // U+0093 = Ctrl-S | 0x80 — see stripC1Controls.ts.
+    expect(prepareSendPayload("ls -la")).toBe("ls -la\r");
+  });
+
+  it("returns null for empty or whitespace-only-after-strip input", () => {
+    expect(prepareSendPayload("")).toBeNull();
+    expect(prepareSendPayload("\n\n")).toBeNull();
+    expect(prepareSendPayload("")).toBeNull();
   });
 });

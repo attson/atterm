@@ -18,6 +18,19 @@ export function isPasteAllowed(status: Status, permission?: string): boolean {
   return status === "attached" && effectiveRemotePermission(permission) !== "view";
 }
 
+export interface CanSendSelectionInput {
+  hasSelection: boolean;
+  status: Status;
+  permission?: string;
+  isDriver: boolean;
+}
+
+export function canSendSelection(input: CanSendSelectionInput): boolean {
+  if (!input.hasSelection) return false;
+  if (!input.isDriver) return false;
+  return isPasteAllowed(input.status, input.permission);
+}
+
 export function imagePasteBlockedReason(permission?: string): string | null {
   const effective = effectiveRemotePermission(permission);
   if (effective === "full") return null;

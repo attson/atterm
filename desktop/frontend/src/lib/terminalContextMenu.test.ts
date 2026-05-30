@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canSendSelection,
   clampContextMenuPosition,
   effectiveRemotePermission,
   imagePasteBlockedReason,
@@ -28,5 +29,32 @@ describe("terminal context menu helpers", () => {
       left: 632,
       top: 512,
     });
+  });
+
+  it("allows send only when selection + writeable + driver", () => {
+    expect(
+      canSendSelection({ hasSelection: true, status: "attached", permission: "full", isDriver: true }),
+    ).toBe(true);
+  });
+
+  it("blocks send with no selection", () => {
+    expect(
+      canSendSelection({ hasSelection: false, status: "attached", permission: "full", isDriver: true }),
+    ).toBe(false);
+  });
+
+  it("blocks send for read-only or detached sessions", () => {
+    expect(
+      canSendSelection({ hasSelection: true, status: "attached", permission: "view", isDriver: true }),
+    ).toBe(false);
+    expect(
+      canSendSelection({ hasSelection: true, status: "connecting", permission: "full", isDriver: true }),
+    ).toBe(false);
+  });
+
+  it("blocks send for non-driver clients even when permission allows writes", () => {
+    expect(
+      canSendSelection({ hasSelection: true, status: "attached", permission: "control", isDriver: false }),
+    ).toBe(false);
   });
 });

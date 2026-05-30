@@ -74,7 +74,7 @@ describe("terminal context menu helpers", () => {
 
   it("strips C1 controls before normalizing", () => {
     // U+0093 = Ctrl-S | 0x80 — see stripC1Controls.ts.
-    expect(prepareSendPayload("ls -la")).toBe("ls -la\r");
+    expect(prepareSendPayload("ls -la")).toBe("ls -la\r");
   });
 
   it("returns null for empty or whitespace-only-after-strip input", () => {

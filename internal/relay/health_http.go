@@ -5,6 +5,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -108,4 +109,15 @@ func collectHealth(ctx context.Context, s *Server, r *http.Request) HealthPayloa
 	}
 
 	return payload
+}
+
+// handleHealthz returns a minimal liveness response for load balancers
+// and probes. Public, no auth, no cache.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"version": s.cfg.Version,
+	})
 }

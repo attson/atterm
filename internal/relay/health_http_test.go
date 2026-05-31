@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,5 +103,53 @@ func TestCollectHealth_PopulatesAllFields(t *testing.T) {
 	// it must be false.
 	if payload.BootstrapAdminConfigured {
 		t.Errorf("BootstrapAdminConfigured: got true on empty store")
+	}
+}
+
+func TestHealthz_Public_ReturnsOKAndVersion(t *testing.T) {
+	store := newTestStoreForRelay(t)
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{
+		Version:  "v0.3.99",
+		Resolver: resolver,
+		Store:    store,
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control: got %q want %q", got, "no-store")
+	}
+
+	var body struct {
+		OK      bool   `json:"ok"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !body.OK || body.Version != "v0.3.99" {
+		t.Fatalf("body: %+v", body)
+	}
+}
+
+func TestHealthz_Public_NoAuthRequired(t *testing.T) {
+	// Even when Resolver is configured, /healthz must not require auth.
+	store := newTestStoreForRelay(t)
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{Resolver: resolver, Store: store})
+
+	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	// no Authorization header, no cookies
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }

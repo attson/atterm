@@ -115,6 +115,22 @@ describe('MobileTerminal', () => {
     expect(w.find('[data-testid="mobile-take-control"]').exists()).toBe(false)
   })
 
+  it('blocks pointer events on .term while viewing so iOS taps cannot fall through to xterm', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    // Driver by default → no blocking.
+    expect(w.find('.term').classes()).not.toContain('inert')
+
+    lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
+    await w.vm.$nextTick()
+    // Viewing now → .term must be pointer-inert so taps land on the overlay button.
+    expect(w.find('.term').classes()).toContain('inert')
+
+    lastHandlers.onDriverChange?.('me', true, '')
+    await w.vm.$nextTick()
+    // Back to driver → interactive again.
+    expect(w.find('.term').classes()).not.toContain('inert')
+  })
+
   it('renders a mobile control panel with required keys and quick text buttons', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     expect(w.find('[data-testid="mobile-control-panel"]').exists()).toBe(true)

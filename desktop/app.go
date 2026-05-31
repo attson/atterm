@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -102,6 +103,9 @@ type App struct {
 	// recent relay errors — bounded ring, newest-first.
 	relayErrMu  sync.Mutex
 	relayErrors []RelayErrorEntry
+
+	// writeFile is os.WriteFile in production; tests substitute a stub.
+	writeFile writeFileFunc
 }
 
 // NewApp creates a new App application struct.
@@ -923,4 +927,41 @@ func (a *App) snapshotRelayErrors() []RelayErrorEntry {
 	out := make([]RelayErrorEntry, len(a.relayErrors))
 	copy(out, a.relayErrors)
 	return out
+}
+
+// writeFileFunc is the function `ExportDiagnostics` uses to persist content.
+// Held as a field on App so tests can substitute a capturing stub instead of
+// touching disk. Defaults to os.WriteFile in production.
+type writeFileFunc func(path string, data []byte, perm fs.FileMode) error
+
+// GetDiagnostics is the Wails-exposed binding that returns the current
+// diagnostics payload. userAgent should be the renderer's navigator.userAgent.
+func (a *App) GetDiagnostics(userAgent string) DiagnosticsPayload {
+	return collectDiagnostics(a, userAgent)
+}
+
+// ExportDiagnostics opens a native save dialog (default filename
+// "atterm-diagnostics-<ts>.txt") and writes content to the chosen path.
+// Returns "" when the user cancelled. Returns ("", err) only on actual
+// I/O failure after the user picked a path.
+func (a *App) ExportDiagnostics(content string) (string, error) {
+	defaultName := "atterm-diagnostics-" + time.Now().UTC().Format("2006-01-02T15-04-05Z") + ".txt"
+	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		Title:           "Export diagnostics",
+		DefaultFilename: defaultName,
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
+		},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	wf := a.writeFile
+	if wf == nil {
+		wf = os.WriteFile
+	}
+	if err := wf(path, []byte(content), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
 }

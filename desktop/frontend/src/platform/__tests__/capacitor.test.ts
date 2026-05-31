@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createCapacitorPlatform } from '../capacitor'
+import { secureStorage } from '../secureStorage'
 
 describe('createCapacitorPlatform', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear()
+    await secureStorage.remove('atterm.relay')
     vi.restoreAllMocks()
   })
 
@@ -46,28 +48,29 @@ describe('createCapacitorPlatform', () => {
     expect(await p.relay.load()).toBeNull()
   })
 
-  it('relay.save persists to localStorage under atterm.relay and load reads it back', async () => {
+  it('relay.save persists to secureStorage under atterm.relay and load reads it back', async () => {
     const p = createCapacitorPlatform()
     const cfg = {
       url: 'https://relay.example.com', token: 'atk_xyz',
       allow_insecure_relay: false, remote_permission: 'full', connected: false,
     }
     await p.relay.save(cfg)
-    expect(JSON.parse(localStorage.getItem('atterm.relay')!)).toMatchObject({ url: cfg.url, token: cfg.token })
+    expect(JSON.parse((await secureStorage.get('atterm.relay'))!)).toMatchObject({ url: cfg.url, token: cfg.token })
     expect(await p.relay.load()).toMatchObject({ url: cfg.url, token: cfg.token })
   })
 
-  it('relay.load returns null on malformed JSON', async () => {
-    localStorage.setItem('atterm.relay', '{not json')
+  it('relay.load returns null on malformed JSON in secureStorage', async () => {
+    await secureStorage.set('atterm.relay', '{not json')
     const p = createCapacitorPlatform()
     expect(await p.relay.load()).toBeNull()
   })
 
-  it('relay.clear removes the localStorage entry', async () => {
+  it('relay.clear removes both storage backends', async () => {
     const p = createCapacitorPlatform()
     await p.relay.save({ url: 'https://r', token: 'atk_x', allow_insecure_relay: false, remote_permission: 'full', connected: false })
     await p.relay.clear()
     expect(localStorage.getItem('atterm.relay')).toBeNull()
+    expect(await secureStorage.get('atterm.relay')).toBeNull()
   })
 
   it('relay.fetchMe GETs base/api/me with Bearer + credentials omit', async () => {
@@ -164,5 +167,79 @@ describe('createCapacitorPlatform', () => {
     await p.relay.save({ url: 'https://r.example.com', token: 'atk_bad', allow_insecure_relay: false, remote_permission: 'full', connected: false })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
     await expect(p.sessions.listRemoteSessions()).rejects.toThrow(/relay_unauthorized/)
+  })
+})
+
+describe('createCapacitorPlatform — secure storage migration', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    await secureStorage.remove('atterm.relay')
+  })
+
+  it('migrates from localStorage to secureStorage on first load, then clears localStorage', async () => {
+    const cfg = {
+      url: 'https://r.example.com', token: 'atk_legacy',
+      allow_insecure_relay: false, remote_permission: 'full', connected: false,
+    }
+    localStorage.setItem('atterm.relay', JSON.stringify(cfg))
+    expect(await secureStorage.get('atterm.relay')).toBeNull()
+
+    const p = createCapacitorPlatform()
+    const loaded = await p.relay.load()
+
+    expect(loaded).toMatchObject({ url: cfg.url, token: cfg.token })
+    expect(await secureStorage.get('atterm.relay')).not.toBeNull()
+    expect(localStorage.getItem('atterm.relay')).toBeNull()
+  })
+
+  it('prefers secureStorage over localStorage when both are present', async () => {
+    const fromSecure = {
+      url: 'https://secure.example.com', token: 'atk_secure',
+      allow_insecure_relay: false, remote_permission: 'full', connected: false,
+    }
+    const fromLocal = {
+      url: 'https://local.example.com', token: 'atk_local',
+      allow_insecure_relay: false, remote_permission: 'full', connected: false,
+    }
+    await secureStorage.set('atterm.relay', JSON.stringify(fromSecure))
+    localStorage.setItem('atterm.relay', JSON.stringify(fromLocal))
+
+    const p = createCapacitorPlatform()
+    const loaded = await p.relay.load()
+
+    expect(loaded).toMatchObject({ url: fromSecure.url, token: fromSecure.token })
+    // localStorage was not the source; we don't touch it on this path.
+    expect(localStorage.getItem('atterm.relay')).not.toBeNull()
+  })
+
+  it('returns null when both stores are empty', async () => {
+    const p = createCapacitorPlatform()
+    expect(await p.relay.load()).toBeNull()
+  })
+
+  it('save writes only to secureStorage, not localStorage', async () => {
+    const cfg = {
+      url: 'https://r.example.com', token: 'atk_x',
+      allow_insecure_relay: false, remote_permission: 'full', connected: false,
+    }
+    const p = createCapacitorPlatform()
+    await p.relay.save(cfg)
+    expect(await secureStorage.get('atterm.relay')).not.toBeNull()
+    expect(localStorage.getItem('atterm.relay')).toBeNull()
+  })
+
+  it('clear wipes both stores (defensive)', async () => {
+    const cfg = {
+      url: 'https://r', token: 'atk_x',
+      allow_insecure_relay: false, remote_permission: 'full', connected: false,
+    }
+    await secureStorage.set('atterm.relay', JSON.stringify(cfg))
+    localStorage.setItem('atterm.relay', JSON.stringify(cfg))
+
+    const p = createCapacitorPlatform()
+    await p.relay.clear()
+
+    expect(await secureStorage.get('atterm.relay')).toBeNull()
+    expect(localStorage.getItem('atterm.relay')).toBeNull()
   })
 })

@@ -1,10 +1,24 @@
 import type { Platform, RelayConfig, RelayMe, RemoteSession } from './types'
+import { secureStorage } from './secureStorage'
 
 const STORAGE_KEY = 'atterm.relay'
 
-function loadCfg(): RelayConfig | null {
+// loadLegacyFromLocalStorage reads (but does not clear) the legacy
+// localStorage blob. Returned as parsed RelayConfig or null. Malformed JSON
+// returns null. Only used by the migration branch in relay.load().
+function loadLegacyFromLocalStorage(): RelayConfig | null {
   if (typeof localStorage === 'undefined') return null
   const raw = localStorage.getItem(STORAGE_KEY)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as RelayConfig
+  } catch {
+    return null
+  }
+}
+
+// parseRelayJSON is a tolerant parser shared by both storage paths.
+function parseRelayJSON(raw: string | null): RelayConfig | null {
   if (!raw) return null
   try {
     return JSON.parse(raw) as RelayConfig
@@ -45,17 +59,32 @@ export function createCapacitorPlatform(): Platform {
       fileDialog: false,
     },
     relay: {
-      load: async () => loadCfg(),
-      save: async (cfg) => {
-        if (typeof localStorage === 'undefined') return
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
+      // load: prefer Keychain; if empty AND localStorage has a legacy blob,
+      // migrate it (write to Keychain, clear localStorage), then return.
+      load: async () => {
+        const fromSecure = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+        if (fromSecure) return fromSecure
+
+        const legacy = loadLegacyFromLocalStorage()
+        if (!legacy) return null
+        await secureStorage.set(STORAGE_KEY, JSON.stringify(legacy))
+        if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY)
+        return legacy
       },
+      // save: write only to Keychain. localStorage is never written.
+      save: async (cfg) => {
+        await secureStorage.set(STORAGE_KEY, JSON.stringify(cfg))
+      },
+      // clear: wipe both stores. localStorage clear is belt-and-braces in case
+      // a previous migration was interrupted between the Keychain write and
+      // the localStorage remove.
       clear: async () => {
-        if (typeof localStorage === 'undefined') return
-        localStorage.removeItem(STORAGE_KEY)
+        await secureStorage.remove(STORAGE_KEY)
+        if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY)
       },
       fetchMe: async (): Promise<RelayMe> => {
-        const cfg = loadCfg()
+        const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                  ?? loadLegacyFromLocalStorage()
         if (!cfg || !cfg.url || !cfg.token) throw new Error('relay_not_configured')
         const base = cfg.url.replace(/\/$/, '')
         const res = await fetch(base + '/api/me', {
@@ -92,7 +121,8 @@ export function createCapacitorPlatform(): Platform {
       },
       listShells: async () => [],
       listRemoteSessions: async (): Promise<RemoteSession[]> => {
-        const cfg = loadCfg()
+        const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                  ?? loadLegacyFromLocalStorage()
         if (!cfg || !cfg.url || !cfg.token) return []
         const base = cfg.url.replace(/\/$/, '')
         const res = await fetch(base + '/api/sessions', {

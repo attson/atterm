@@ -153,3 +153,105 @@ func TestHealthz_Public_NoAuthRequired(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
+
+// findUserByEmail iterates ListUsers to find a user by email; used in
+// place of a dedicated GetUserByEmail (which the userstore does not expose).
+func findUserByEmail(t *testing.T, store *userstore.SQLiteStore, email string) *userstore.User {
+	t.Helper()
+	users, err := store.ListUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	for i := range users {
+		if users[i].Email == email {
+			return &users[i]
+		}
+	}
+	t.Fatalf("user %q not found", email)
+	return nil
+}
+
+func TestAdminHealthAPI_Unauthenticated_401(t *testing.T) {
+	store := newTestStoreForRelay(t)
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{Resolver: resolver, Store: store})
+
+	r := httptest.NewRequest(http.MethodGet, "/admin/api/health", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAdminHealthAPI_RegularUser_401(t *testing.T) {
+	store := newTestStoreForRelay(t)
+	ctx := context.Background()
+	u, err := store.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test")
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{Resolver: resolver, Store: store})
+
+	r := httptest.NewRequest(http.MethodGet, "/admin/api/health", nil)
+	r.Header.Set("Authorization", "Bearer "+secret.Expose())
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 (not admin), got %d", w.Code)
+	}
+}
+
+func TestAdminHealthAPI_Admin_200_AllFieldsPresent(t *testing.T) {
+	store := newTestStoreForRelay(t)
+	ctx := context.Background()
+	if _, err := store.EnsureAdminUser(ctx, "admin@example.com", "correcthorsebatterystaple"); err != nil {
+		t.Fatalf("EnsureAdminUser: %v", err)
+	}
+	u := findUserByEmail(t, store, "admin@example.com")
+	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test-admin")
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{
+		Version:        "v0.3.99",
+		AllowedOrigins: []string{"capacitor://localhost"},
+		Resolver:       resolver,
+		Store:          store,
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/admin/api/health", nil)
+	r.Header.Set("Authorization", "Bearer "+secret.Expose())
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var got HealthPayload
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Version != "v0.3.99" {
+		t.Errorf("Version: got %q", got.Version)
+	}
+	if !got.BootstrapAdminConfigured {
+		t.Errorf("BootstrapAdminConfigured: got false")
+	}
+	if !got.MobileOriginCompatible {
+		t.Errorf("MobileOriginCompatible: got false")
+	}
+	if got.GeneratedAt == "" {
+		t.Errorf("GeneratedAt empty")
+	}
+}

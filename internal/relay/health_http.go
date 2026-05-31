@@ -121,3 +121,28 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		"version": s.cfg.Version,
 	})
 }
+
+// requireAdminAccess is a thin wrapper that gates inner on PrincipalAdmin
+// via the same Resolver-based auth as AdminServer. Returns 401 on failure.
+func (s *Server) requireAdminAccess(inner http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.Resolver == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		p := s.cfg.Resolver.Resolve(r)
+		if p.Kind != PrincipalAdmin {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		inner(w, r)
+	}
+}
+
+// handleAdminHealthAPI returns the JSON HealthPayload. Admin-gated.
+func (s *Server) handleAdminHealthAPI(w http.ResponseWriter, r *http.Request) {
+	payload := collectHealth(r.Context(), s, r)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(payload)
+}

@@ -342,6 +342,11 @@ export const zhCN = {
     pasteConfirm: "确认粘贴",
     pastePreview: "剪贴板文本",
     viewOnly: "只读会话，控制按钮已禁用。",
+    pairing: {
+      connecting: "配对中…",
+      failed: "配对失败",
+      back: "重试",
+    },
   },
   plugins: {
     quickInput: {

@@ -340,6 +340,11 @@ export const en = {
     pasteConfirm: "Paste",
     pastePreview: "Clipboard text",
     viewOnly: "View-only session. Controls are disabled.",
+    pairing: {
+      connecting: 'Pairing…',
+      failed: 'Pairing failed.',
+      back: 'Try again',
+    },
   },
   plugins: {
     quickInput: {

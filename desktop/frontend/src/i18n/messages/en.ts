@@ -219,6 +219,15 @@ export const en = {
           uplink_not_connected: "Keep this window open briefly, then retry or inspect relay logs.",
         },
       },
+      pairing: {
+        title: "Mobile pairing",
+        hint: "Generate a single-use QR code so a phone can attach to this relay without copy-pasting tokens.",
+        generate: "Generate QR",
+        generating: "generating...",
+        regenerate: "Regenerate",
+        expiresIn: "expires in",
+        expired: "expired - generate a new code",
+      },
     },
     logging: {
       title: "desktop logs",

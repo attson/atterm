@@ -221,6 +221,15 @@ export const zhCN = {
           uplink_not_connected: "保持窗口打开片刻后重试，或检查 relay 日志。",
         },
       },
+      pairing: {
+        title: "移动端配对",
+        hint: "生成一次性二维码，让手机无需复制 token 即可接入此 relay。",
+        generate: "生成二维码",
+        generating: "生成中...",
+        regenerate: "重新生成",
+        expiresIn: "剩余",
+        expired: "已过期 - 请重新生成",
+      },
     },
     logging: {
       title: "桌面日志",

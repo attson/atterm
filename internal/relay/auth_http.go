@@ -75,6 +75,8 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("POST /api/me/webhooks", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleCreateWebhook)))
 	mux.Handle("DELETE /api/me/webhooks/{id}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleDeleteWebhook)))
 	mux.Handle("POST /api/me/password", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleChangePassword)))
+	mux.Handle("POST /api/pair/create", http.HandlerFunc(a.handlePairCreate))
+	mux.Handle("POST /api/pair/consume", http.HandlerFunc(a.handlePairConsume))
 }
 
 // failureSleep sleeps the remaining time needed to reach FailureFloor (plus

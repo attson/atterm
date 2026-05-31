@@ -66,6 +66,21 @@ export function createCapacitorPlatform(): Platform {
         if (!res.ok) throw new Error(`relay fetchMe failed: HTTP ${res.status}`)
         return (await res.json()) as RelayMe
       },
+      consumePairing: async (relayBase, token) => {
+        const base = relayBase.replace(/\/$/, '')
+        const res = await fetch(base + '/api/pair/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+          credentials: 'omit',
+        })
+        if (res.status === 404) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body.code || 'pair_invalid')
+        }
+        if (!res.ok) throw new Error(`pair_consume_http_${res.status}`)
+        return (await res.json()) as { relay_url: string; api_token: string; user: { id: string; email: string } }
+      },
       // setUplinkPaused omitted — desktop-only
     },
     sessions: {

@@ -219,6 +219,15 @@ export const en = {
           uplink_not_connected: "Keep this window open briefly, then retry or inspect relay logs.",
         },
       },
+      pairing: {
+        title: "Mobile pairing",
+        hint: "Generate a single-use QR code so a phone can attach to this relay without copy-pasting tokens.",
+        generate: "Generate QR",
+        generating: "generating...",
+        regenerate: "Regenerate",
+        expiresIn: "expires in",
+        expired: "expired - generate a new code",
+      },
     },
     logging: {
       title: "desktop logs",
@@ -331,6 +340,15 @@ export const en = {
     pasteConfirm: "Paste",
     pastePreview: "Clipboard text",
     viewOnly: "View-only session. Controls are disabled.",
+    pairing: {
+      connecting: 'Pairing…',
+      failed: 'Pairing failed.',
+      back: 'Try again',
+      scan: 'Scan QR code',
+      orManual: '— or enter manually —',
+      cameraDenied: 'Camera permission required to scan the QR code.',
+      noQrDetected: 'No QR code detected — try again.',
+    },
   },
   plugins: {
     quickInput: {

@@ -4,6 +4,8 @@ import { type LocalePreference } from '../i18n'
 import { useI18n } from '../i18n/useI18n'
 import { usePlatform } from '../platform'
 import { validateRelayBase } from './relay'
+import PairingConsume from './PairingConsume.vue'
+import { BarcodeScanner } from '@capacitor-mlkit/barcode-scanning'
 
 const props = defineProps<{ reason?: 'token_invalid' | null }>()
 const emit = defineEmits<{ (e: 'connected'): void }>()
@@ -15,6 +17,7 @@ const token = ref('')
 const allowInsecure = ref(false)
 const error = ref<string | null>(null)
 const submitting = ref(false)
+const scannedUrl = ref<string | null>(null)
 
 const banner = computed(() =>
   props.reason === 'token_invalid'
@@ -37,6 +40,30 @@ onMounted(async () => {
     allowInsecure.value = !!cfg.allow_insecure_relay
   }
 })
+
+async function onScanQR(): Promise<void> {
+  error.value = null
+  try {
+    const { camera } = await BarcodeScanner.requestPermissions()
+    if (camera !== 'granted' && camera !== 'limited') {
+      error.value = t('mobile.pairing.cameraDenied')
+      return
+    }
+    const { barcodes } = await BarcodeScanner.scan({ formats: ['QR_CODE' as any] })
+    const first = barcodes[0]
+    if (!first?.rawValue) {
+      error.value = t('mobile.pairing.noQrDetected')
+      return
+    }
+    scannedUrl.value = first.rawValue
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function onConsumeCancelled(): void {
+  scannedUrl.value = null
+}
 
 async function onConnect(): Promise<void> {
   error.value = null
@@ -74,31 +101,46 @@ async function onLanguageChange(e: Event): Promise<void> {
 
 <template>
   <div class="setup">
-    <h1>AT Term</h1>
-    <p class="sub">{{ t('mobile.setupSubtitle') }}</p>
-    <div v-if="banner" class="banner">{{ banner }}</div>
-    <label class="field">
-      <span>{{ t('settings.general.languageLabel') }}</span>
-      <select data-testid="mobile-language" :value="localePreference" :disabled="submitting" @change="onLanguageChange">
-        <option v-for="option in localizedLanguageOptions" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
-    </label>
-    <label class="field">
-      <span>{{ t('mobile.relayUrl') }}</span>
-      <input data-testid="relay-url" v-model="url" :disabled="submitting" placeholder="https://relay.example.com" autocomplete="off" autocapitalize="off" spellcheck="false" />
-    </label>
-    <label class="field">
-      <span>{{ t('mobile.apiToken') }}</span>
-      <input data-testid="relay-token" v-model="token" :disabled="submitting" type="password" placeholder="atk_…" autocomplete="off" />
-    </label>
-    <label class="row">
-      <span>{{ t('mobile.allowInsecure') }}</span>
-      <input data-testid="allow-insecure" v-model="allowInsecure" :disabled="submitting" type="checkbox" />
-    </label>
-    <p v-if="error" class="error">{{ error }}</p>
-    <button data-testid="connect" class="btn" :disabled="submitting" @click="onConnect">{{ t('common.connect') }}</button>
+    <PairingConsume
+      v-if="scannedUrl"
+      :scanned-url="scannedUrl"
+      :allow-insecure="allowInsecure"
+      @connected="emit('connected')"
+      @cancel="onConsumeCancelled"
+    />
+    <template v-else>
+      <h1>AT Term</h1>
+      <p class="sub">{{ t('mobile.setupSubtitle') }}</p>
+      <div v-if="banner" class="banner">{{ banner }}</div>
+
+      <button data-testid="scan-qr" class="btn btn-primary" :disabled="submitting" @click="onScanQR">
+        {{ t('mobile.pairing.scan') }}
+      </button>
+      <p class="or">{{ t('mobile.pairing.orManual') }}</p>
+
+      <label class="field">
+        <span>{{ t('settings.general.languageLabel') }}</span>
+        <select data-testid="mobile-language" :value="localePreference" :disabled="submitting" @change="onLanguageChange">
+          <option v-for="option in localizedLanguageOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+      <label class="field">
+        <span>{{ t('mobile.relayUrl') }}</span>
+        <input data-testid="relay-url" v-model="url" :disabled="submitting" placeholder="https://relay.example.com" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>{{ t('mobile.apiToken') }}</span>
+        <input data-testid="relay-token" v-model="token" :disabled="submitting" type="password" placeholder="atk_…" autocomplete="off" />
+      </label>
+      <label class="row">
+        <span>{{ t('mobile.allowInsecure') }}</span>
+        <input data-testid="allow-insecure" v-model="allowInsecure" :disabled="submitting" type="checkbox" />
+      </label>
+      <p v-if="error" class="error">{{ error }}</p>
+      <button data-testid="connect" class="btn" :disabled="submitting" @click="onConnect">{{ t('common.connect') }}</button>
+    </template>
   </div>
 </template>
 
@@ -114,4 +156,6 @@ h1 { text-align: center; margin: 0 0 4px; font-size: 1.6rem; }
 .error { color: #f87171; font-size: 0.8rem; margin: 0 0 0.75rem; }
 .btn { width: 100%; height: 46px; border: none; border-radius: 10px; background: #3b82f6; color: #fff; font-size: 1rem; font-weight: 600; }
 .btn:disabled { opacity: 0.6; }
+.btn-primary { background: #2563eb; margin-bottom: 0.75rem; }
+.or { text-align: center; color: #8d93a3; font-size: 0.8rem; margin: 0 0 1rem; }
 </style>

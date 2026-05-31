@@ -142,17 +142,21 @@ func requestIPLimitKey(r *http.Request) string {
 // All limiters use fixed windows. Create a new registry per server instance
 // (or per test) to avoid bucket leakage.
 type LimitRegistry struct {
-	loginFail  *fixedWindowLimiter // 10 / 5min keyed by "ip\x00sha256hex(email)"
-	signup     *fixedWindowLimiter // 5 / hour keyed by IP
-	inviteFail *fixedWindowLimiter // 10 / hour keyed by IP
+	loginFail   *fixedWindowLimiter // 10 / 5min keyed by "ip\x00sha256hex(email)"
+	signup      *fixedWindowLimiter // 5 / hour keyed by IP
+	inviteFail  *fixedWindowLimiter // 10 / hour keyed by IP
+	pairCreate  *fixedWindowLimiter // 10 / minute keyed by userID
+	pairConsume *fixedWindowLimiter // 10 / minute keyed by IP
 }
 
 // NewLimitRegistry returns a LimitRegistry with the SEC-5 rate limits configured.
 func NewLimitRegistry() *LimitRegistry {
 	return &LimitRegistry{
-		loginFail:  newFixedWindowLimiter(10, 5*time.Minute),
-		signup:     newFixedWindowLimiter(5, time.Hour),
-		inviteFail: newFixedWindowLimiter(10, time.Hour),
+		loginFail:   newFixedWindowLimiter(10, 5*time.Minute),
+		signup:      newFixedWindowLimiter(5, time.Hour),
+		inviteFail:  newFixedWindowLimiter(10, time.Hour),
+		pairCreate:  newFixedWindowLimiter(10, time.Minute),
+		pairConsume: newFixedWindowLimiter(10, time.Minute),
 	}
 }
 
@@ -161,9 +165,11 @@ func NewLimitRegistry() *LimitRegistry {
 // to isolate one limiter without another interfering.
 func newLimitRegistryForTest(loginFailLimit, signupLimit, inviteFailLimit int) *LimitRegistry {
 	return &LimitRegistry{
-		loginFail:  newFixedWindowLimiter(loginFailLimit, 5*time.Minute),
-		signup:     newFixedWindowLimiter(signupLimit, time.Hour),
-		inviteFail: newFixedWindowLimiter(inviteFailLimit, time.Hour),
+		loginFail:   newFixedWindowLimiter(loginFailLimit, 5*time.Minute),
+		signup:      newFixedWindowLimiter(signupLimit, time.Hour),
+		inviteFail:  newFixedWindowLimiter(inviteFailLimit, time.Hour),
+		pairCreate:  newFixedWindowLimiter(1000, time.Minute),
+		pairConsume: newFixedWindowLimiter(1000, time.Minute),
 	}
 }
 
@@ -184,6 +190,19 @@ func (r *LimitRegistry) AllowSignup(ip string) bool {
 // rate limit (10 failures per hour).
 func (r *LimitRegistry) AllowInviteFail(ip string) bool {
 	return r.inviteFail.allow(ip)
+}
+
+// AllowPairCreate returns true if userID has not exceeded the pairing-token
+// mint rate limit (10 / minute).
+func (r *LimitRegistry) AllowPairCreate(userID string) bool {
+	return r.pairCreate.allow(userID)
+}
+
+// AllowPairConsume returns true if ip has not exceeded the consume rate limit
+// (10 / minute). Defense in depth — the 256-bit token entropy alone already
+// makes brute force impractical.
+func (r *LimitRegistry) AllowPairConsume(ip string) bool {
+	return r.pairConsume.allow(ip)
 }
 
 // sha256Hex returns the lowercase hex-encoded SHA-256 digest of s.

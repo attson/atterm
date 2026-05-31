@@ -36,6 +36,12 @@ export interface RelayMe {
   email: string;
 }
 
+export interface PairingToken {
+  token: string;
+  expires_at: number;
+  qr_url: string;
+}
+
 export interface HostInfo {
   host_id: string;
   host: string;
@@ -95,6 +101,7 @@ interface AppBindings {
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
+  CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
   PickLogFilePath(): Promise<string>;
@@ -323,4 +330,11 @@ export function broadcastCommandFinished(
 // token. The returned email is held in memory only (SEC-1 — not persisted).
 export function fetchRelayMe(): Promise<RelayMe> {
   return bindings().FetchRelayMe();
+}
+
+// createPairingToken asks the relay to mint a 5-minute single-use pairing
+// token via the desktop's existing API-token-authenticated channel. The
+// returned qr_url is the value to encode into the QR image.
+export function createPairingToken(): Promise<PairingToken> {
+  return bindings().CreatePairingToken();
 }

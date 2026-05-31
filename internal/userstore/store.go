@@ -104,6 +104,10 @@ type Store interface {
 	ListAPITokens(ctx context.Context, userID string) ([]APIToken, error)
 	TouchAPIToken(ctx context.Context, tokenID string) error
 
+	// Pairing tokens (mobile QR code)
+	CreatePairingToken(ctx context.Context, userID string, ttl time.Duration) (Secret, *PairingToken, error)
+	ConsumePairingToken(ctx context.Context, plaintext string) (apiToken Secret, userID string, err error)
+
 	// Web sessions (cookie)
 	CreateWebSession(ctx context.Context, userID, userAgent, ipPrefix string) (Secret, error)
 	LookupWebSession(ctx context.Context, plaintext string) (userID string, csrfSecret []byte, err error)

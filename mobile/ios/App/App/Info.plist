@@ -52,5 +52,7 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>atterm uses the camera to scan a pairing QR code from your desktop.</string>
 </dict>
 </plist>

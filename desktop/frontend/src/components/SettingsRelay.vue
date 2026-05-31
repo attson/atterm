@@ -4,6 +4,7 @@ import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe } from ".
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
+import PairingPanel from "./PairingPanel.vue";
 import { useI18n } from "../i18n/useI18n";
 import type { MessageKey } from "../i18n";
 import { classifyRelaySetupError, relayHttpToWsURL, validateRelaySetupInputs, type RelaySetupIssue } from "../lib/relaySetupWizard";
@@ -319,6 +320,8 @@ defineExpose({
       </p>
 
       <p v-if="error" class="error">{{ error }}</p>
+
+      <PairingPanel />
     </template>
   </div>
 </template>

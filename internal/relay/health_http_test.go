@@ -328,3 +328,38 @@ func TestAdminHealth_HTML_Unauthenticated_401(t *testing.T) {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }
+
+func TestHealthPayload_JSONFieldsStable(t *testing.T) {
+	// Pin the JSON shape so a future rename breaks this test loudly.
+	// The list below is the SOURCE OF TRUTH for consumers of /healthz
+	// and /admin/api/health (the Copy Diagnostics button formats from it).
+	want := []string{
+		"version",
+		"uptime_seconds",
+		"https",
+		"configured_origins",
+		"origins_open",
+		"bootstrap_admin_configured",
+		"rate_limit_per_minute",
+		"max_connections_per_key",
+		"active_uplinks",
+		"mobile_origin_compatible",
+		"generated_at",
+	}
+
+	// Marshal a zero value and pull the keys out as a set.
+	b, err := json.Marshal(HealthPayload{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	for _, k := range want {
+		if _, ok := got[k]; !ok {
+			t.Errorf("missing JSON key %q in HealthPayload", k)
+		}
+	}
+}

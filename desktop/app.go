@@ -848,3 +848,44 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 	}
 	return out, nil
 }
+
+// PairingTokenResponse is what the renderer receives when generating a QR code.
+// Mirrors the relay's /api/pair/create response body.
+type PairingTokenResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt int64  `json:"expires_at"`
+	QRURL     string `json:"qr_url"`
+}
+
+// CreatePairingToken asks the configured relay to mint a 5-minute single-use
+// pairing token for the desktop's current user and returns the response,
+// including the qr_url to encode into a QR code.
+func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
+	if a.cfgStore == nil {
+		return PairingTokenResponse{}, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+		return PairingTokenResponse{}, fmt.Errorf("no relay configured")
+	}
+	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+	req, err := http.NewRequest("POST", baseHTTP+"/api/pair/create", strings.NewReader("{}"))
+	if err != nil {
+		return PairingTokenResponse{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return PairingTokenResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return PairingTokenResponse{}, fmt.Errorf("relay /api/pair/create returned status %d", resp.StatusCode)
+	}
+	var out PairingTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return PairingTokenResponse{}, err
+	}
+	return out, nil
+}

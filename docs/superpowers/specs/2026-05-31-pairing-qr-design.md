@@ -206,17 +206,17 @@ discarded when the settings panel closes — no persistence.
 In `desktop/frontend/src/lib/api.ts`:
 
 ```ts
-export async function createPairingToken(): Promise<{
+export function createPairingToken(): Promise<{
   token: string;
   expires_at: number;
   qr_url: string;
 }> {
-  // Calls POST <relayBase>/api/pair/create via existing fetchWithAuth helper.
+  // Wails binding (App.CreatePairingToken in desktop/app.go) — the Go side
+  // holds the relay URL and API token in cfgStore and signs the request,
+  // mirroring the existing FetchRelayMe pattern.
+  return bindings().CreatePairingToken();
 }
 ```
-
-Uses the same `Bearer atk_…` injection the existing relay calls use;
-no new auth path.
 
 ### 5.3 QR rendering
 
@@ -228,10 +228,13 @@ import QRCode from 'qrcode';
 const dataUrl = await QRCode.toDataURL(qr_url, { width: 240, margin: 1 });
 ```
 
-### 5.4 No Wails / Go changes
+### 5.4 Wails binding
 
-The entire desktop side of pairing is HTTP-from-the-renderer; Go
-backend is untouched.
+A new Wails binding `App.CreatePairingToken` is added to
+`desktop/app.go`, following the pattern set by `App.FetchRelayMe`. It
+reads the relay URL and API token from the existing config store,
+calls `POST /api/pair/create` with a Bearer header, and returns the
+JSON response to the renderer. No other Go code is changed.
 
 ## 6. Mobile changes (`desktop/frontend/src/mobile/`)
 

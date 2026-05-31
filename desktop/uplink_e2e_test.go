@@ -63,10 +63,10 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u1 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h1)
+	u1 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h1, nil)
 	u1.eventsEmit = func(context.Context, string, ...interface{}) {} // no Wails runtime in tests
 	go u1.Run(ctx)
-	u2 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h2)
+	u2 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h2, nil)
 	u2.eventsEmit = func(context.Context, string, ...interface{}) {}
 	go u2.Run(ctx)
 
@@ -199,7 +199,7 @@ func TestUplinkE2E(t *testing.T) {
 	// 3. uplink
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host)
+	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {} // no Wails runtime in tests
 	go u.Run(ctx)
 
@@ -355,7 +355,7 @@ func TestUplink_AuthInfo_EmitsUserID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host)
+	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = stubEmit
 
 	// Run the uplink; cancel after the relay signals it sent the frame.
@@ -455,7 +455,7 @@ func TestUplink_Viewers_EmitsCount(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host)
+	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = stubEmit
 
 	done := make(chan struct{})
@@ -545,7 +545,7 @@ func TestUplink_AuthErrorClose_EmitsEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host)
+	u := newUplink("ws://"+ln.Addr().String(), "tok", proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = stubEmit
 
 	// Run returns after the connection is closed (no reconnect: ctx times out quickly).
@@ -609,7 +609,7 @@ func TestUplink_DriverHandoff_SecondClientSteals(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host)
+	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {}
 	go u.Run(ctx)
 
@@ -754,7 +754,7 @@ func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host)
+	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {}
 	go u.Run(ctx)
 

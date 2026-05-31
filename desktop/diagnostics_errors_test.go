@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+
+	"nhooyr.io/websocket"
 )
 
 func TestRecordRelayError_RingBufferKeeps5Newest(t *testing.T) {
@@ -52,5 +55,24 @@ func TestSnapshotRelayErrors_ReturnsCopy(t *testing.T) {
 	again := a.snapshotRelayErrors()
 	if again[0].Message != "e" {
 		t.Fatalf("internal state was mutated by caller: %q", again[0].Message)
+	}
+}
+
+func TestUplink_HandleCloseError_RecordsAuthFailure(t *testing.T) {
+	a := newRelayTestApp(t)
+	u := newUplink("ws://test", "atk_test", "full", a.host, a.recordRelayError)
+	// Stub eventsEmit so we don't hit wailsruntime in tests.
+	u.eventsEmit = func(ctx context.Context, name string, data ...interface{}) {}
+	// Pretend a 4001 close from the relay.
+	u.handleCloseError(context.Background(), websocket.CloseError{
+		Code:   4001,
+		Reason: "",
+	})
+	got := a.snapshotRelayErrors()
+	if len(got) != 1 {
+		t.Fatalf("want 1 error recorded, got %d", len(got))
+	}
+	if got[0].Message != "auth_invalid_token" {
+		t.Fatalf("expected reason mapping, got %q", got[0].Message)
 	}
 }

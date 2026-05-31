@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
+	"nhooyr.io/websocket"
 )
 
 func TestIsMobileOriginCompatible(t *testing.T) {
@@ -361,5 +363,72 @@ func TestHealthPayload_JSONFieldsStable(t *testing.T) {
 		if _, ok := got[k]; !ok {
 			t.Errorf("missing JSON key %q in HealthPayload", k)
 		}
+	}
+}
+
+func TestUplinkCount_IncrementsOnConnectDecrementsOnClose(t *testing.T) {
+	store := newTestStoreForRelay(t)
+	ctx := context.Background()
+	u, err := store.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test-uplink")
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{
+		Resolver: resolver,
+		Store:    store,
+		// AllowedOrigins empty → any origin accepted (test path).
+	})
+
+	httpSrv := httptest.NewServer(srv)
+	t.Cleanup(httpSrv.Close)
+
+	// Sanity: starting count is 0.
+	if got := srv.UplinkCount(); got != 0 {
+		t.Fatalf("initial UplinkCount: got %d want 0", got)
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/uplink"
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: map[string][]string{
+			"Authorization": {"Bearer " + secret.Expose()},
+		},
+	})
+	if err != nil {
+		t.Fatalf("websocket.Dial: %v", err)
+	}
+
+	// Give the handler a moment to atomic.AddInt64(+1) on the server side.
+	// Poll up to 1s for UplinkCount == 1, sampling every 10ms.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if srv.UplinkCount() == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := srv.UplinkCount(); got != 1 {
+		t.Fatalf("after dial: UplinkCount got %d want 1", got)
+	}
+
+	// Close the client side; the server defer should drop the count.
+	if err := c.Close(websocket.StatusNormalClosure, "test done"); err != nil {
+		t.Fatalf("c.Close: %v", err)
+	}
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if srv.UplinkCount() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := srv.UplinkCount(); got != 0 {
+		t.Fatalf("after close: UplinkCount got %d want 0", got)
 	}
 }

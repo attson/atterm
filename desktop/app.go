@@ -98,6 +98,10 @@ type App struct {
 	quitApproved atomic.Bool
 
 	pluginFS *PluginFS
+
+	// recent relay errors — bounded ring, newest-first.
+	relayErrMu  sync.Mutex
+	relayErrors []RelayErrorEntry
 }
 
 // NewApp creates a new App application struct.
@@ -888,4 +892,35 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 		return PairingTokenResponse{}, err
 	}
 	return out, nil
+}
+
+// recordRelayError appends an error entry to the recent-errors ring buffer.
+// Nil errors are dropped. Messages are passed through redactErrorLine so
+// tokens / Authorization / Cookie values are masked. Newest-first ordering;
+// when the buffer is full the oldest entry falls off.
+func (a *App) recordRelayError(err error) {
+	if err == nil {
+		return
+	}
+	entry := RelayErrorEntry{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Message:   redactErrorLine(err.Error()),
+	}
+	a.relayErrMu.Lock()
+	defer a.relayErrMu.Unlock()
+	a.relayErrors = append([]RelayErrorEntry{entry}, a.relayErrors...)
+	if len(a.relayErrors) > maxRelayErrors {
+		a.relayErrors = a.relayErrors[:maxRelayErrors]
+	}
+}
+
+// snapshotRelayErrors returns a copy of the recent-errors ring buffer.
+// Callers receive a fresh slice safe to mutate; the underlying buffer is
+// unaffected.
+func (a *App) snapshotRelayErrors() []RelayErrorEntry {
+	a.relayErrMu.Lock()
+	defer a.relayErrMu.Unlock()
+	out := make([]RelayErrorEntry, len(a.relayErrors))
+	copy(out, a.relayErrors)
+	return out
 }

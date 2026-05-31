@@ -52,6 +52,15 @@ var (
 	webkitGTKRE = regexp.MustCompile(`(?:^|[^e])WebKit/(\S+)`)
 )
 
+// RelayErrorEntry is a single relay-error history record. Timestamps are
+// RFC3339 UTC; messages have already been passed through redactErrorLine.
+type RelayErrorEntry struct {
+	Timestamp string `json:"timestamp"`
+	Message   string `json:"message"`
+}
+
+const maxRelayErrors = 5
+
 // parseWebViewSummary extracts a WebView identifier + version from a user
 // agent string. Returns the raw UA when no known pattern matches; returns
 // empty string for empty input.

@@ -43,12 +43,19 @@ export interface Capabilities {
 // ----- Bridges -----
 import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState } from '../lib/api'
 
+export interface PairingConsumeResult {
+  relay_url: string
+  api_token: string
+  user: { id: string; email: string }
+}
+
 export interface RelayBridge {
   load(): Promise<_RelayConfig | null>
   save(cfg: _RelayConfig): Promise<void>
   clear(): Promise<void>
   fetchMe(): Promise<_RelayMe>
   setUplinkPaused?(paused: boolean): Promise<void>
+  consumePairing?(relayBase: string, token: string): Promise<PairingConsumeResult>
 }
 
 export interface RemoteSession {

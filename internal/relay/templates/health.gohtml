@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>atterm-relay — health</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #1c1f24; }
+    h1 { font-size: 1.2rem; margin: 0 0 1rem; }
+    dl.row { display: grid; grid-template-columns: 11rem 1fr; gap: 4px 12px; margin: 0 0 6px; padding: 8px 12px; border-radius: 8px; background: #f5f6f8; }
+    dl.row[data-state="warn"] { background: #fff7e0; border-left: 3px solid #d59300; }
+    dt { color: #5c6470; font-weight: 500; }
+    dd { margin: 0; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+    .actions { display: flex; align-items: center; gap: 12px; margin-top: 1rem; }
+    button { padding: 8px 14px; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 6px; cursor: pointer; font: inherit; }
+    button.copied { background: #15803d; border-color: #15803d; }
+    .gen { color: #5c6470; font-size: 12px; }
+    textarea.fallback { position: absolute; left: -9999px; }
+  </style>
+</head>
+<body>
+  <h1>atterm-relay — health</h1>
+
+  <dl class="row"><dt>Version</dt><dd>{{ .Version }}</dd></dl>
+  <dl class="row"><dt>Uptime</dt><dd>{{ .UptimeSeconds }}s</dd></dl>
+  <dl class="row"><dt>HTTPS</dt><dd>{{ if .HTTPS }}yes{{ else }}no{{ end }}</dd></dl>
+  <dl class="row{{ if .OriginsOpen }} warn{{ end }}"{{ if .OriginsOpen }} data-state="warn"{{ end }}>
+    <dt>Configured origins</dt>
+    <dd>{{ if .OriginsOpen }}(open — any origin allowed){{ else }}{{ range $i, $o := .ConfiguredOrigins }}{{ if $i }}, {{ end }}{{ $o }}{{ end }}{{ end }}</dd>
+  </dl>
+  <dl class="row"><dt>Bootstrap admin</dt><dd>{{ if .BootstrapAdminConfigured }}configured{{ else }}not configured{{ end }}</dd></dl>
+  <dl class="row"><dt>Rate limit / min</dt><dd>{{ .RateLimitPerMinute }}</dd></dl>
+  <dl class="row"><dt>Max conn / key</dt><dd>{{ .MaxConnectionsPerKey }}</dd></dl>
+  <dl class="row"><dt>Active uplinks</dt><dd>{{ .ActiveUplinks }}</dd></dl>
+  <dl class="row{{ if not .MobileOriginCompatible }} warn{{ end }}"{{ if not .MobileOriginCompatible }} data-state="warn"{{ end }}>
+    <dt>Mobile compat</dt><dd>{{ if .MobileOriginCompatible }}yes{{ else }}no (add a capacitor:// origin){{ end }}</dd>
+  </dl>
+
+  <div class="actions">
+    <button id="copy">Copy diagnostics</button>
+    <span class="gen">generated {{ .GeneratedAt }}</span>
+  </div>
+  <textarea class="fallback" id="fallback"></textarea>
+
+  <script>
+    window.__HEALTH__ = {{ .JSON }};
+    (function () {
+      var btn = document.getElementById('copy');
+      var fallback = document.getElementById('fallback');
+      function format(h) {
+        var pad = function (k) { while (k.length < 23) k += ' '; return k; };
+        var lines = [
+          'atterm-relay diagnostics — ' + h.generated_at,
+          '-----------------------------------------------',
+          pad('Version:') + h.version,
+          pad('Uptime:') + h.uptime_seconds + 's',
+          pad('HTTPS:') + (h.https ? 'yes' : 'no'),
+          pad('Origins:') + (h.origins_open ? '(open)' : (h.configured_origins || []).join(', ')),
+          pad('Origins open:') + (h.origins_open ? 'yes' : 'no'),
+          pad('Bootstrap admin:') + (h.bootstrap_admin_configured ? 'configured' : 'not configured'),
+          pad('Rate limit / min:') + h.rate_limit_per_minute,
+          pad('Max conn / key:') + h.max_connections_per_key,
+          pad('Active uplinks:') + h.active_uplinks,
+          pad('Mobile compat:') + (h.mobile_origin_compatible ? 'yes' : 'no')
+        ];
+        return lines.join('\n');
+      }
+      btn.addEventListener('click', function () {
+        var text = format(window.__HEALTH__);
+        function done() {
+          btn.textContent = 'Copied';
+          btn.classList.add('copied');
+          setTimeout(function () { btn.textContent = 'Copy diagnostics'; btn.classList.remove('copied'); }, 1500);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () {
+            fallback.value = text; fallback.select(); document.execCommand('copy'); done();
+          });
+        } else {
+          fallback.value = text; fallback.select(); document.execCommand('copy'); done();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

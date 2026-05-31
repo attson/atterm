@@ -15,6 +15,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
@@ -81,11 +82,13 @@ type Config struct {
 
 // Server bundles the registry and HTTP handlers.
 type Server struct {
-	cfg      Config
-	registry *session.Registry
-	mux      *http.ServeMux
-	rate     *fixedWindowLimiter
-	conns    *connectionLimiter
+	cfg         Config
+	registry    *session.Registry
+	mux         *http.ServeMux
+	rate        *fixedWindowLimiter
+	conns       *connectionLimiter
+	startTime   time.Time
+	uplinkCount int64 // atomic; read via UplinkCount()
 }
 
 // ServerDeps holds the constructed subsystems that BuildMux needs to wire
@@ -128,11 +131,12 @@ func NewServer(cfg Config) *Server {
 		connLimit = defaultMaxConnections
 	}
 	s := &Server{
-		cfg:      cfg,
-		registry: session.NewRegistry(),
-		mux:      http.NewServeMux(),
-		rate:     newFixedWindowLimiter(rateLimit, time.Minute),
-		conns:    newConnectionLimiter(connLimit),
+		cfg:       cfg,
+		registry:  session.NewRegistry(),
+		mux:       http.NewServeMux(),
+		rate:      newFixedWindowLimiter(rateLimit, time.Minute),
+		conns:     newConnectionLimiter(connLimit),
+		startTime: time.Now(),
 	}
 	s.mux.HandleFunc("/agent", s.handleAgentHTTP)
 	s.mux.HandleFunc("/uplink", s.handleUplinkHTTP)
@@ -140,6 +144,9 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/client-sessions", s.handleClientSessionsHTTP)
 	s.mux.HandleFunc("/api/sessions", s.handleSessionsHTTP)
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
+	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("/admin/api/health", s.requireAdminAccess(s.handleAdminHealthAPI))
+	s.mux.HandleFunc("/admin/health", s.requireAdminAccess(s.handleAdminHealth))
 	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
 	if cfg.Resolver != nil {
 		s.mux.Handle("/api/push/subscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushSubscribe)))
@@ -312,6 +319,18 @@ func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handleAgent(r.Context(), c, ownerUserID)
 }
 
+// UplinkCount returns the current number of in-progress uplink WebSocket
+// connections. Read via atomic load — safe to call from any goroutine.
+func (s *Server) UplinkCount() int64 {
+	return atomic.LoadInt64(&s.uplinkCount)
+}
+
+// StartTime returns the moment NewServer was called. Used by /admin/health
+// to expose uptime without exposing a mutable clock to consumers.
+func (s *Server) StartTime() time.Time {
+	return s.startTime
+}
+
 func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 	var ownerUserID string
 	if s.cfg.Resolver != nil {
@@ -344,6 +363,8 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.debugf("ws accept path=/uplink remote=%s origin=%q", r.RemoteAddr, r.Header.Get("Origin"))
+	atomic.AddInt64(&s.uplinkCount, 1)
+	defer atomic.AddInt64(&s.uplinkCount, -1)
 	defer c.Close(websocket.StatusInternalError, "")
 	s.handleUplink(r.Context(), c, ownerUserID)
 }

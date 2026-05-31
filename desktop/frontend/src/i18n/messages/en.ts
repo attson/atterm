@@ -344,6 +344,10 @@ export const en = {
       connecting: 'Pairing…',
       failed: 'Pairing failed.',
       back: 'Try again',
+      scan: 'Scan QR code',
+      orManual: '— or enter manually —',
+      cameraDenied: 'Camera permission required to scan the QR code.',
+      noQrDetected: 'No QR code detected — try again.',
     },
   },
   plugins: {

@@ -346,6 +346,10 @@ export const zhCN = {
       connecting: "配对中…",
       failed: "配对失败",
       back: "重试",
+      scan: "扫描二维码",
+      orManual: "— 或手动输入 —",
+      cameraDenied: "需要相机权限才能扫描二维码",
+      noQrDetected: "未识别到二维码，请重试",
     },
   },
   plugins: {

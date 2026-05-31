@@ -349,6 +349,14 @@ export const en = {
       cameraDenied: 'Camera permission required to scan the QR code.',
       noQrDetected: 'No QR code detected — try again.',
     },
+    insecure: {
+      warning: {
+        title: 'Insecure relay (HTTP)',
+        body: 'API tokens and terminal output are transmitted unencrypted. Use HTTPS in production.',
+        dismiss: 'Dismiss',
+      },
+      setupHint: 'Your API token will be sent in cleartext over Wi-Fi. Only enable for local-network testing.',
+    },
   },
   plugins: {
     quickInput: {

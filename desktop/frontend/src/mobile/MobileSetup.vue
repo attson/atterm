@@ -138,6 +138,10 @@ async function onLanguageChange(e: Event): Promise<void> {
         <span>{{ t('mobile.allowInsecure') }}</span>
         <input data-testid="allow-insecure" v-model="allowInsecure" :disabled="submitting" type="checkbox" />
       </label>
+      <aside class="warn-hint" data-state="warn" data-testid="insecure-hint">
+        <span class="warn-icon">⚠</span>
+        <span>{{ t('mobile.insecure.setupHint') }}</span>
+      </aside>
       <p v-if="error" class="error">{{ error }}</p>
       <button data-testid="connect" class="btn" :disabled="submitting" @click="onConnect">{{ t('common.connect') }}</button>
     </template>
@@ -158,4 +162,6 @@ h1 { text-align: center; margin: 0 0 4px; font-size: 1.6rem; }
 .btn:disabled { opacity: 0.6; }
 .btn-primary { background: #2563eb; margin-bottom: 0.75rem; }
 .or { text-align: center; color: #8d93a3; font-size: 0.8rem; margin: 0 0 1rem; }
+.warn-hint { display: flex; gap: 8px; padding: 9px 11px; margin: 0 0 1rem; border: 1px solid rgba(245,158,11,.4); border-left-width: 3px; border-radius: 9px; background: rgba(245,158,11,.13); color: #f5c451; font-size: 0.78rem; line-height: 1.4; }
+.warn-icon { font-size: 0.95rem; }
 </style>

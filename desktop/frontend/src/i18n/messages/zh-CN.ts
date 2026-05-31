@@ -351,6 +351,14 @@ export const zhCN = {
       cameraDenied: "需要相机权限才能扫描二维码",
       noQrDetected: "未识别到二维码，请重试",
     },
+    insecure: {
+      warning: {
+        title: "不安全的 relay (HTTP)",
+        body: "API token 和终端输出会以明文方式传输。生产环境请使用 HTTPS。",
+        dismiss: "知道了",
+      },
+      setupHint: "你的 API token 会以明文方式经过 Wi-Fi 传输。仅建议在本地测试时启用。",
+    },
   },
   plugins: {
     quickInput: {

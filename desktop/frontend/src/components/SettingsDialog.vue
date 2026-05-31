@@ -14,6 +14,7 @@ import SettingsLogging from "./SettingsLogging.vue";
 import SettingsUpdates from "./SettingsUpdates.vue";
 import SettingsPlugins from "./SettingsPlugins.vue";
 import SettingsShortcuts from "./SettingsShortcuts.vue";
+import SettingsDiagnostics from "./SettingsDiagnostics.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 import { useI18n } from "../i18n/useI18n";
@@ -25,7 +26,7 @@ const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
-  initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts";
+  initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" | "diagnostics";
 }>();
 
 const emit = defineEmits<{
@@ -35,7 +36,7 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
-const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts">(props.initialTab ?? "general");
+const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics">(props.initialTab ?? "general");
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
@@ -47,7 +48,7 @@ const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | null>(null);
+const pendingTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -67,7 +68,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts") {
+function switchTab(next: "general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -194,6 +195,11 @@ function onSaveClick() {
             :class="{ active: activeTab === 'shortcuts' }"
             @click="switchTab('shortcuts')"
           >{{ t("settings.tabs.shortcuts") }}</button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'diagnostics' }"
+            @click="switchTab('diagnostics')"
+          >{{ t("settings.diagnostics.tab") }}</button>
         </aside>
 
         <section class="settings-pane">
@@ -221,6 +227,7 @@ function onSaveClick() {
           />
           <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" />
+          <SettingsDiagnostics v-if="activeTab === 'diagnostics'" />
         </section>
       </div>
 

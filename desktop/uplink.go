@@ -52,15 +52,20 @@ type uplink struct {
 	// eventsEmit is the Wails EventsEmit function used to push events to the
 	// frontend. Defaults to wailsruntime.EventsEmit; overridden in tests.
 	eventsEmit func(ctx context.Context, name string, data ...interface{})
+
+	// recordError is called once per relay error so the App can keep a
+	// recent-errors ring buffer for diagnostics export. Nil-safe.
+	recordError func(err error)
 }
 
-func newUplink(relayURL, token, remotePermission string, host *relayHost) *uplink {
+func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error)) *uplink {
 	return &uplink{
 		relayURL:         strings.TrimRight(relayURL, "/"),
 		token:            token,
 		remotePermission: normalizeRemotePermission(remotePermission),
 		host:             host,
 		eventsEmit:       wailsruntime.EventsEmit,
+		recordError:      recordError,
 	}
 }
 
@@ -73,6 +78,9 @@ func (u *uplink) Run(ctx context.Context) {
 			return
 		}
 		if err != nil {
+			if u.recordError != nil {
+				u.recordError(err)
+			}
 			log.Printf("uplink: %v (retry in %s)", err, backoff)
 		}
 		select {
@@ -431,6 +439,9 @@ func (u *uplink) handleCloseError(ctx context.Context, ce websocket.CloseError) 
 	case 4001, 4002, 4003:
 		if u.eventsEmit != nil {
 			u.eventsEmit(ctx, "relay:auth-error", map[string]string{"reason": reason})
+		}
+		if u.recordError != nil {
+			u.recordError(fmt.Errorf("%s", reason))
 		}
 	}
 }

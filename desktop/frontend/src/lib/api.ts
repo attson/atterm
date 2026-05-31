@@ -36,6 +36,35 @@ export interface RelayMe {
   email: string;
 }
 
+export interface DiagnosticsPayload {
+  generated_at: string;
+  app_version: string;
+  os: string;
+  arch: string;
+  os_version: string;
+  webview_summary: string;
+  user_agent: string;
+  relay_url: string;
+  relay_status: string;
+  relay_token_redacted: string;
+  allow_insecure_relay: boolean;
+  remote_permission: string;
+  uplink_paused: boolean;
+  recent_relay_errors: { timestamp: string; message: string }[];
+  config: {
+    default_shell: string;
+    locale: string;
+    terminal_theme: string;
+    notifications_enabled: boolean;
+    shell_integration_enabled: boolean;
+    webgl_renderer_enabled: boolean;
+    logging_enabled: boolean;
+    log_file_path: string;
+    auto_check_updates: boolean;
+    command_notify_threshold_seconds: number;
+  };
+}
+
 export interface PairingToken {
   token: string;
   expires_at: number;
@@ -131,6 +160,8 @@ interface AppBindings {
   GetCommandNotifyThresholdSeconds(): Promise<number>;
   SetCommandNotifyThresholdSeconds(seconds: number): Promise<void>;
   BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;
+  GetDiagnostics(userAgent: string): Promise<DiagnosticsPayload>;
+  ExportDiagnostics(content: string): Promise<string>;
 }
 
 declare global {
@@ -337,4 +368,12 @@ export function fetchRelayMe(): Promise<RelayMe> {
 // returned qr_url is the value to encode into the QR image.
 export function createPairingToken(): Promise<PairingToken> {
   return bindings().CreatePairingToken();
+}
+
+export function getDiagnostics(userAgent: string): Promise<DiagnosticsPayload> {
+  return bindings().GetDiagnostics(userAgent);
+}
+
+export function exportDiagnostics(content: string): Promise<string> {
+  return bindings().ExportDiagnostics(content);
 }

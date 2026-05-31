@@ -298,6 +298,16 @@ export const zhCN = {
       previousTab: "上一个标签页",
       nextTab: "下一个标签页",
     },
+    diagnostics: {
+      tab: "诊断",
+      hint: "桌面端运行时快照，API token 和请求头已脱敏。适合反馈问题时附上。",
+      copy: "复制",
+      export: "导出…",
+      refresh: "刷新",
+      copied: "已复制到剪贴板",
+      copyFailed: "复制失败",
+      exported: "已保存到 {path}",
+    },
   },
   mobile: {
     setupSubtitle: "连接到你的 relay",

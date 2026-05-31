@@ -153,11 +153,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="mobile-term">
-    <div ref="container" class="term"></div>
+    <div ref="container" class="term" :class="{ inert: !isDriver }"></div>
     <div v-if="!isDriver" class="viewer-overlay">
       <div class="viewer-card">
         <div class="viewer-title">{{ t('terminal.remoteHasControl') }}</div>
-        <button v-if="canControl" class="take-control" data-testid="mobile-take-control" @click="takeControl">{{ t('terminal.takeControl') }}</button>
+        <button v-if="canControl" type="button" class="take-control" data-testid="mobile-take-control" @click.stop="takeControl">{{ t('terminal.takeControl') }}</button>
         <div v-else class="view-only-copy" data-testid="mobile-view-only-overlay">{{ t('mobile.viewOnly') }}</div>
       </div>
     </div>
@@ -210,6 +210,11 @@ onBeforeUnmount(() => {
 .take-control { padding: 8px 16px; border: none; border-radius: 8px; background: #3b82f6; color: #fff; font-weight: 600; }
 .view-only-copy { color: #fbbf24; font-size: 0.82rem; }
 .term { flex: 1; min-height: 0; }
+/* While the viewer overlay is up, swallow pointer events on the terminal so an
+   iOS tap on the "Take control" button can't fall through to xterm's hidden
+   <textarea> and open the on-screen keyboard. The button itself sits on the
+   overlay (a sibling) and stays interactive. */
+.term.inert { pointer-events: none; }
 /* Smooth, inertial scrollback on iOS: pan-y keeps the fling momentum (and
    disables double-tap/pinch zoom over the terminal), -webkit-overflow-scrolling
    is the legacy momentum flag, and overscroll-behavior stops the scroll from

@@ -48,6 +48,18 @@ func tokenHash(plaintext string) string {
 // token_prefix = first 12 chars of plaintext ("atk_" + first 8 body chars).
 // token_hash   = hex(sha256(plaintext)).
 func (s *SQLiteStore) CreateAPIToken(ctx context.Context, userID, name string) (Secret, *APIToken, error) {
+	return s.createAPIToken(ctx, userID, name, "manual")
+}
+
+// CreateAPITokenWithSource mints an API token with an explicit source label.
+// 'pairing' is used by the mobile pairing flow; all other callers should use
+// CreateAPIToken which defaults to 'manual'.
+func (s *SQLiteStore) CreateAPITokenWithSource(ctx context.Context, userID, name, source string) (Secret, *APIToken, error) {
+	return s.createAPIToken(ctx, userID, name, source)
+}
+
+// createAPIToken is the shared implementation. Source is one of 'manual' or 'pairing'.
+func (s *SQLiteStore) createAPIToken(ctx context.Context, userID, name, source string) (Secret, *APIToken, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return Secret{}, nil, fmt.Errorf("rand: %w", err)
@@ -63,9 +75,9 @@ func (s *SQLiteStore) CreateAPIToken(ctx context.Context, userID, name string) (
 	nowUnix := now.Unix()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_tokens(id, user_id, name, token_hash, token_prefix, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
-		id, userID, name, hash, prefix, nowUnix,
+		`INSERT INTO api_tokens(id, user_id, name, token_hash, token_prefix, created_at, source)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		id, userID, name, hash, prefix, nowUnix, source,
 	)
 	if err != nil {
 		return Secret{}, nil, fmt.Errorf("insert api_token: %w", err)

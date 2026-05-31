@@ -72,7 +72,48 @@ func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl
 	}, nil
 }
 
-// ConsumePairingToken stub — real implementation lands in Task B3.
+// ConsumePairingToken atomically marks the token consumed, mints a new API
+// token for the same user (source='pairing'), and returns it. The three
+// failure conditions (unknown, expired, consumed) collapse into a single
+// ErrPairingInvalid so callers cannot distinguish them (anti-oracle).
+//
+// Concurrency: the atomic UPDATE with the consumed_at IS NULL guard makes
+// "exactly one consumer wins"; the rest get ErrPairingInvalid even if they
+// pass the validity check on the read row.
 func (s *SQLiteStore) ConsumePairingToken(ctx context.Context, plaintext string) (Secret, string, error) {
-	return Secret{}, "", ErrPairingInvalid
+	hash := pairingHash(plaintext)
+	now := time.Now().Unix()
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE pairing_tokens
+		 SET consumed_at = ?
+		 WHERE token_hash = ?
+		   AND consumed_at IS NULL
+		   AND expires_at > ?`,
+		now, hash, now,
+	)
+	if err != nil {
+		return Secret{}, "", fmt.Errorf("consume pairing: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return Secret{}, "", fmt.Errorf("rows affected: %w", err)
+	}
+	if affected == 0 {
+		return Secret{}, "", ErrPairingInvalid
+	}
+
+	// We won the race. Look up the owning user_id and mint a fresh API token.
+	var userID string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT user_id FROM pairing_tokens WHERE token_hash = ?`, hash,
+	).Scan(&userID); err != nil {
+		return Secret{}, "", fmt.Errorf("lookup user_id: %w", err)
+	}
+
+	secret, _, err := s.CreateAPITokenWithSource(ctx, userID, "mobile (paired)", "pairing")
+	if err != nil {
+		return Secret{}, "", fmt.Errorf("mint api_token: %w", err)
+	}
+	return secret, userID, nil
 }

@@ -296,6 +296,16 @@ export const en = {
       previousTab: "Previous tab",
       nextTab: "Next tab",
     },
+    diagnostics: {
+      tab: "Diagnostics",
+      hint: "Snapshot of the desktop runtime, with API tokens and headers redacted. Useful for bug reports.",
+      copy: "Copy",
+      export: "Export…",
+      refresh: "Refresh",
+      copied: "Copied to clipboard.",
+      copyFailed: "Copy failed.",
+      exported: "Saved to {path}",
+    },
   },
   mobile: {
     setupSubtitle: "Connect to your relay",

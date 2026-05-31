@@ -148,7 +148,7 @@ function navLabels(w: ReturnType<typeof mount>) {
 }
 
 describe("SettingsDialog caps gating", () => {
-  it("renders all 6 tabs with full desktop caps", () => {
+  it("renders all 7 tabs with full desktop caps", () => {
     const w = mountDialog();
     expect(navLabels(w)).toEqual([
       en.settings.tabs.general,
@@ -157,6 +157,7 @@ describe("SettingsDialog caps gating", () => {
       en.settings.tabs.updates,
       en.settings.tabs.plugins,
       en.settings.tabs.shortcuts,
+      en.settings.diagnostics.tab,
     ]);
   });
 
@@ -180,10 +181,14 @@ describe("SettingsDialog caps gating", () => {
     expect(navLabels(mountDialog())).not.toContain(en.settings.tabs.logging);
   });
 
-  it("with capacitor-style caps only General + Relay show", () => {
+  it("with capacitor-style caps shows General + Relay + Diagnostics", () => {
     platform.caps = { ...platform.caps, autoUpdate: false, pluginHost: false, fileDialog: false };
     __setPlatformForTests(platform);
-    expect(navLabels(mountDialog())).toEqual([en.settings.tabs.general, en.settings.tabs.relay]);
+    expect(navLabels(mountDialog())).toEqual([
+      en.settings.tabs.general,
+      en.settings.tabs.relay,
+      en.settings.diagnostics.tab,
+    ]);
   });
 
   it("falls back to general when initialTab is hidden under current caps", () => {

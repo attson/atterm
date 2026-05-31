@@ -146,6 +146,7 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/admin/api/health", s.requireAdminAccess(s.handleAdminHealthAPI))
+	s.mux.HandleFunc("/admin/health", s.requireAdminAccess(s.handleAdminHealth))
 	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
 	if cfg.Resolver != nil {
 		s.mux.Handle("/api/push/subscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushSubscribe)))

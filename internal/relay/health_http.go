@@ -4,12 +4,20 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
 )
+
+//go:embed templates/health.gohtml
+var healthTemplateSource string
+
+var healthTemplate = template.Must(template.New("health").Parse(healthTemplateSource))
 
 // HealthPayload is the contract returned by /admin/api/health and rendered
 // into /admin/health. Every field is either an operator-configured value
@@ -145,4 +153,35 @@ func (s *Server) handleAdminHealthAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// handleAdminHealth renders the operator HTML diagnostics page.
+// Admin-gated. Injects HealthPayload both as template data (for static
+// rendering) and as JSON in window.__HEALTH__ (for the Copy button).
+func (s *Server) handleAdminHealth(w http.ResponseWriter, r *http.Request) {
+	payload := collectHealth(r.Context(), s, r)
+
+	// Marshal the same payload as JSON for the embedded copy-diagnostics script.
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	data := struct {
+		HealthPayload
+		JSON template.JS
+	}{
+		HealthPayload: payload,
+		JSON:          template.JS(jsonBytes),
+	}
+
+	var buf bytes.Buffer
+	if err := healthTemplate.Execute(&buf, data); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(buf.Bytes())
 }

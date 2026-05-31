@@ -255,3 +255,76 @@ func TestAdminHealthAPI_Admin_200_AllFieldsPresent(t *testing.T) {
 		t.Errorf("GeneratedAt empty")
 	}
 }
+
+func TestAdminHealth_HTML_Admin_200_AllLabelsPresent(t *testing.T) {
+	store := newTestStoreForRelay(t)
+	ctx := context.Background()
+	if _, err := store.EnsureAdminUser(ctx, "admin@example.com", "correcthorsebatterystaple"); err != nil {
+		t.Fatalf("EnsureAdminUser: %v", err)
+	}
+	u := findUserByEmail(t, store, "admin@example.com")
+	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test-admin")
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{
+		Version:              "v0.3.99",
+		AllowedOrigins:       []string{"capacitor://localhost"},
+		RateLimitPerMinute:   600,
+		MaxConnectionsPerKey: 64,
+		Resolver:             resolver,
+		Store:                store,
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	r.Header.Set("Authorization", "Bearer "+secret.Expose())
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Errorf("Content-Type: got %q", got)
+	}
+	body := w.Body.String()
+	for _, label := range []string{
+		"Version",
+		"Uptime",
+		"HTTPS",
+		"Configured origins",
+		"Bootstrap admin",
+		"Rate limit",
+		"Max conn",
+		"Active uplinks",
+		"Mobile compat",
+		"Copy diagnostics",
+	} {
+		if !strings.Contains(body, label) {
+			t.Errorf("HTML missing label %q", label)
+		}
+	}
+	if !strings.Contains(body, "v0.3.99") {
+		t.Errorf("HTML missing version value")
+	}
+	// __HEALTH__ JSON should be injected so the copy button has data.
+	if !strings.Contains(body, "window.__HEALTH__") {
+		t.Errorf("HTML missing window.__HEALTH__ injection")
+	}
+}
+
+func TestAdminHealth_HTML_Unauthenticated_401(t *testing.T) {
+	store := newTestStoreForRelay(t)
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{Resolver: resolver, Store: store})
+
+	r := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}

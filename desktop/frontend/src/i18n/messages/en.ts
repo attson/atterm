@@ -347,6 +347,7 @@ export const en = {
     back: "Back",
     controlMode: "Control mode",
     pasteClipboard: "Paste",
+    pasteImage: "Image",
     pasteConfirm: "Paste",
     pastePreview: "Clipboard text",
     viewOnly: "View-only session. Controls are disabled.",

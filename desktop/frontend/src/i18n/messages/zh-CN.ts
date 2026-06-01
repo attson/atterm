@@ -349,6 +349,7 @@ export const zhCN = {
     back: "返回",
     controlMode: "控制模式",
     pasteClipboard: "粘贴",
+    pasteImage: "图片",
     pasteConfirm: "确认粘贴",
     pastePreview: "剪贴板文本",
     viewOnly: "只读会话，控制按钮已禁用。",

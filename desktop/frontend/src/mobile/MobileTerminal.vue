@@ -18,6 +18,7 @@ const emit = defineEmits<{ (e: 'ended'): void; (e: 'tokenInvalid'): void; (e: 'm
 const { t } = useI18n()
 
 const container = ref<HTMLDivElement | null>(null)
+const imageInput = ref<HTMLInputElement | null>(null)
 const isDriver = ref(true)
 const controlMode = ref(false)
 const pasteOpen = ref(false)
@@ -76,6 +77,26 @@ async function openPasteConfirm() {
 function confirmPaste() {
   if (pasteText.value) sendRaw(pasteText.value)
   pasteOpen.value = false
+}
+
+function openImagePicker() {
+  if (!canSend.value) return
+  imageInput.value?.click()
+}
+
+async function onImagePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  // Reset the input synchronously so picking the same file twice still fires
+  // a 'change' event next time.
+  input.value = ''
+  if (!file || !canSend.value) return
+  try {
+    await conn?.sendPasteImage(file, file.name || 'mobile-image')
+  } catch {
+    // sendPasteImage already routes status='error' to MobileApp via onStatus;
+    // a separate toast here would be redundant.
+  }
 }
 
 onMounted(() => {
@@ -182,6 +203,15 @@ onBeforeUnmount(() => {
           @click="sendAux(k.seq)"
         >{{ k.label }}</button>
         <button class="key paste" data-testid="mobile-paste" :disabled="!canSend" @click="openPasteConfirm">{{ t('mobile.pasteClipboard') }}</button>
+        <button class="key paste" data-testid="mobile-image" :disabled="!canSend" @click="openImagePicker">{{ t('mobile.pasteImage') }}</button>
+        <input
+          ref="imageInput"
+          data-testid="mobile-image-input"
+          type="file"
+          accept="image/*"
+          class="hidden-file"
+          @change="onImagePicked"
+        />
       </div>
       <div class="quickbar">
         <button
@@ -240,4 +270,5 @@ onBeforeUnmount(() => {
 .paste-confirm { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
 .paste-confirm textarea { min-width: 0; resize: vertical; border-radius: 8px; border: 1px solid #1e2638; background: #020617; color: #e2e8f0; padding: 6px 8px; font: 0.78rem ui-monospace, Menlo, monospace; }
 .paste-confirm button { height: 30px; border-radius: 7px; border: 1px solid #1e2638; background: #11182b; color: #cbd5e1; padding: 0 10px; }
+.hidden-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; left: -9999px; }
 </style>

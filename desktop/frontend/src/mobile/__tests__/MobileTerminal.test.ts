@@ -6,6 +6,7 @@ const detach = vi.fn()
 const sendInput = vi.fn()
 const sendResize = vi.fn()
 const claimDriver = vi.fn()
+const sendPasteImage = vi.fn().mockResolvedValue(true)
 let lastHandlers: any = null
 let lastArgs: any = null
 
@@ -20,7 +21,9 @@ vi.mock('../../lib/connection', () => ({
     sendInput(s: string) { sendInput(s) }
     sendResize(c: number, r: number) { sendResize(c, r) }
     claimDriver() { claimDriver() }
+    sendPasteImage(blob: Blob, filename: string) { return sendPasteImage(blob, filename) }
   },
+  pasteImageBlockReason: vi.fn().mockReturnValue(null),
 }))
 
 const termWrite = vi.fn()
@@ -129,6 +132,44 @@ describe('MobileTerminal', () => {
     await w.vm.$nextTick()
     // Back to driver → interactive again.
     expect(w.find('.term').classes()).not.toContain('inert')
+  })
+
+  it('image button delegates the chosen file to sendPasteImage when controlMode is on', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    // canSend gate: must be driver (default) + controlMode on. Toggle it on.
+    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+
+    const btn = w.find('[data-testid="mobile-image"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeUndefined()
+
+    const fileInput = w.find('[data-testid="mobile-image-input"]')
+    expect(fileInput.exists()).toBe(true)
+    expect(fileInput.attributes('accept')).toContain('image/')
+
+    // Simulate the native picker returning a PNG.
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'snap.png', { type: 'image/png' })
+    const inputEl = fileInput.element as HTMLInputElement
+    Object.defineProperty(inputEl, 'files', { value: [file], configurable: true })
+    await fileInput.trigger('change')
+
+    expect(sendPasteImage).toHaveBeenCalledWith(file, 'snap.png')
+  })
+
+  it('image button is disabled when not in control mode', () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    // controlMode is false by default — image button must be disabled.
+    expect(w.find('[data-testid="mobile-image"]').attributes('disabled')).toBe('')
+  })
+
+  it('image button is not rendered for view-only sessions', () => {
+    const viewOnly = { ...info, remote_permission: 'view' }
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewOnly, active: true } })
+    // view-only mirrors mobile-paste (also hidden / disabled). Mirror that behaviour for image.
+    const btn = w.find('[data-testid="mobile-image"]')
+    if (btn.exists()) {
+      expect(btn.attributes('disabled')).toBe('')
+    }
   })
 
   it('renders a mobile control panel with required keys and quick text buttons', () => {

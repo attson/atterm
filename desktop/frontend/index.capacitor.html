@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hans">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
@@ -8,6 +8,17 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="AT Term"/>
   <title>AT Term</title>
+  <!-- iOS 26 WebKit regression: `-apple-system` declares CJK coverage but
+       doesn't actually render it, AND WebKit won't fall through to later
+       families in the list. PingFang SC MUST come first or every CJK glyph
+       renders as a missing-character box. See tmp-font-probe results. -->
+  <style>
+    html, body {
+      font-family: "PingFang SC", "Hiragino Sans GB", "Heiti SC",
+                   "Microsoft YaHei", "Noto Sans CJK SC", "Helvetica Neue",
+                   Helvetica, Arial, sans-serif;
+    }
+  </style>
 </head>
 <body>
 <div id="app"></div>

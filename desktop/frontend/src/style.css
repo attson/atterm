@@ -12,6 +12,30 @@
   --terminal-bg: #000000;
   --terminal-grid: #11161d;
   --terminal-overlay: rgba(13, 17, 23, 0.85);
+  /* Global font stacks.
+   *
+   * iOS 26 WebKit regression: `-apple-system` (and `system-ui`) declares full
+   * Unicode coverage but doesn't actually render CJK, AND WebKit refuses to
+   * fall through to later families. A stack that starts with `-apple-system`
+   * shows Chinese as missing-glyph boxes even when PingFang SC is later in
+   * the list. Verified with the tmp-font-probe page: `-apple-system` alone
+   * fails CJK, `"PingFang SC"` direct works fine, mixed stacks with
+   * `-apple-system` first ALSO fail.
+   *
+   * Workaround: put the CJK family FIRST. PingFang SC's Latin glyphs are
+   * acceptable (the same font Apple uses on Chinese-locale iOS by default).
+   * Latin-specific families remain in the stack for desktop OSes that don't
+   * have PingFang SC. Skip `-apple-system` / `system-ui` entirely — too risky
+   * given the iOS 26 bug, and Helvetica Neue is iOS's native fallback anyway.
+   *
+   * Component-level styles MUST reference these vars instead of repeating an
+   * OS stack — otherwise the override drops CJK fallback.
+   */
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Heiti SC", "Microsoft YaHei",
+               "Noto Sans CJK SC", "Helvetica Neue", Helvetica, Arial,
+               "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, "Roboto Mono",
+               "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", monospace;
 }
 
 * { box-sizing: border-box; }
@@ -20,7 +44,7 @@ html, body {
   margin: 0; padding: 0; height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
 }
 

@@ -263,7 +263,7 @@ onBeforeUnmount(() => {
 .control-toggle input { accent-color: #3b82f6; }
 .view-only { border: 1px solid rgba(251,191,36,.34); border-radius: 8px; padding: 6px 8px; color: #fbbf24; background: rgba(251,191,36,.09); font-size: 0.75rem; }
 .kbbar, .quickbar { display: flex; align-items: center; gap: 6px; overflow-x: auto; }
-.key, .quick { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: ui-monospace, Menlo, monospace; }
+.key, .quick { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: var(--font-mono); }
 .quick { font-family: inherit; min-width: 42px; }
 .paste { font-family: inherit; min-width: 56px; }
 .key:disabled, .quick:disabled, .paste-confirm button:disabled { opacity: .45; color: #64748b; }

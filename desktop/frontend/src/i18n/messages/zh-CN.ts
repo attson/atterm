@@ -69,6 +69,7 @@ export const zhCN = {
     remotePrefix: "[远端] ",
     shellFallback: "shell",
     emptyTab: "(空)",
+    tabDisconnectedSuffix: "(已断开)",
     closePaneTitle: "关闭面板 (Cmd+W / Ctrl+W)",
     remoteViewerWatching: "{count} 个远端查看者正在观看",
     remoteSessionsAvailable: "{count} 个远端会话可用",

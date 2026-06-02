@@ -116,6 +116,10 @@ describe('MobileTerminal', () => {
     lastHandlers.onDriverChange?.('me', true, '')
     await w.vm.$nextTick()
     expect(w.find('[data-testid="mobile-take-control"]').exists()).toBe(false)
+
+    // Taking control auto-enables control mode so the next tap is usable.
+    const toggle = w.find('[data-testid="mobile-control-toggle"]').element as HTMLInputElement
+    expect(toggle.checked).toBe(true)
   })
 
   it('blocks pointer events on .term while viewing so iOS taps cannot fall through to xterm', async () => {

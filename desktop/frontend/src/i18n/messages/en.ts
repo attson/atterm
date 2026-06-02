@@ -67,6 +67,7 @@ export const en = {
     remotePrefix: "[remote] ",
     shellFallback: "shell",
     emptyTab: "(empty)",
+    tabDisconnectedSuffix: "(disconnected)",
     closePaneTitle: "close pane (Cmd+W / Ctrl+W)",
     remoteViewerWatching: "{count} remote viewer(s) watching",
     remoteSessionsAvailable: "{count} remote session(s) available",

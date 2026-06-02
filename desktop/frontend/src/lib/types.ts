@@ -1,6 +1,8 @@
 // Shared types for the per-tab pane-split layout model. See
 // docs/superpowers/specs/2026-05-10-pane-split-layouts-design.md.
 
+import type { SessionInfo } from "./connection";
+
 export type LayoutKind = "single" | "vertical" | "horizontal" | "grid2x2";
 
 // Direction the user requests when invoking a split shortcut. Only meaningful
@@ -17,6 +19,12 @@ export interface Pane {
   // after a close).
   sessionId: string | null;
   remote: boolean;
+  // lastSeenInfo carries the most recent SessionInfo we saw for this pane
+  // before sweepMissingSessions nulled sessionId. Used so the TabBar can
+  // still show a meaningful title ("C:\\Users\\xianj — disconnected")
+  // instead of "(空)" when a remote host briefly drops, and so the user
+  // can tell which tab was which.
+  lastSeenInfo?: SessionInfo;
 }
 
 export interface Tab {

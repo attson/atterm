@@ -9,6 +9,7 @@ interface TabSummary {
   activeSession: SessionInfo | null;
   activeRemote: boolean;
   paneCount: number;
+  disconnected?: boolean;
 }
 
 defineProps<{
@@ -68,13 +69,13 @@ function onClose(e: MouseEvent, id: string) {
         v-for="(t, idx) in tabs"
         :key="t.id"
         class="tab"
-        :class="{ active: t.id === currentId, remote: t.activeRemote }"
-        :title="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.activeSession?.command ?? '')"
+        :class="{ active: t.id === currentId, remote: t.activeRemote, disconnected: t.disconnected }"
+        :title="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.disconnected ? i18nT('terminal.tabDisconnectedSuffix') + ' ' : '') + (t.activeSession?.command ?? '')"
         @click="emit('activate', t.id)"
       >
         <span class="num">{{ idx + 1 }}:</span>
         <span v-if="t.layout !== 'single'" class="layout-icon" :title="layoutTitle(t)">{{ layoutLabel(t) }}</span>
-        <span v-else-if="t.activeRemote" class="dot remote-dot">●</span>
+        <span v-else-if="t.activeRemote" class="dot remote-dot" :class="{ disconnected: t.disconnected }">●</span>
         <span v-else class="dot">●</span>
         <span class="title">{{ shortTitle(t.activeSession) }}</span>
         <button class="close" @click="onClose($event, t.id)">×</button>
@@ -121,6 +122,8 @@ function onClose(e: MouseEvent, id: string) {
 .tab.active .num { color: var(--accent); }
 .tab .dot { font-size: 9px; color: var(--good); }
 .tab .remote-dot { color: #d29922; }
+.tab .remote-dot.disconnected { color: var(--fg-dim); }
+.tab.disconnected .title { color: var(--fg-dim); font-style: italic; }
 .tab .layout-icon {
   font-size: 11px; color: var(--fg-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

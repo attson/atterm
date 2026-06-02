@@ -60,6 +60,12 @@ function sendAux(seq: string) { sendRaw(seq) }
 function sendQuick(text: string) { sendRaw(`${text}\r`) }
 function takeControl() {
   if (!canControl.value) return
+  // Flip controlMode on at the same time — tapping "Take control" is a
+  // clear intent to actually drive the session; making the user toggle a
+  // second checkbox in the panel below before any key works is confusing.
+  // The toggle stays visible so users who want to lock input mid-session
+  // (e.g. to scroll back without firing keystrokes) can disable it again.
+  controlMode.value = true
   conn?.claimDriver()
 }
 

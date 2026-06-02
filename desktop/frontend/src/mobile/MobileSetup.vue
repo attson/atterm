@@ -149,13 +149,13 @@ async function onLanguageChange(e: Event): Promise<void> {
 </template>
 
 <style scoped>
-.setup { min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; padding: calc(2rem + env(safe-area-inset-top)) 1.25rem calc(2rem + env(safe-area-inset-bottom)); background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.setup { min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; padding: calc(2rem + env(safe-area-inset-top)) 1.25rem calc(2rem + env(safe-area-inset-bottom)); background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: var(--font-sans); }
 h1 { text-align: center; margin: 0 0 4px; font-size: 1.6rem; }
 .sub { text-align: center; color: #8d93a3; margin: 0 0 1.5rem; font-size: 0.9rem; }
 .banner { background: rgba(245,158,11,.13); border: 1px solid rgba(245,158,11,.4); color: #f5c451; padding: 9px 11px; border-radius: 9px; margin-bottom: 1rem; font-size: 0.8rem; }
 .field { display: block; margin-bottom: 0.9rem; }
 .field span { display: block; font-size: 0.75rem; color: #8d93a3; margin-bottom: 0.35rem; }
-.field input, .field select { width: 100%; height: 42px; border-radius: 9px; border: 1px solid #1e2638; background: #11182b; color: #e6e7ea; padding: 0 12px; font-size: 0.95rem; font-family: ui-monospace, Menlo, monospace; }
+.field input, .field select { width: 100%; height: 42px; border-radius: 9px; border: 1px solid #1e2638; background: #11182b; color: #e6e7ea; padding: 0 12px; font-size: 0.95rem; font-family: var(--font-mono); }
 .row { display: flex; align-items: center; justify-content: space-between; margin: 1rem 0; font-size: 0.85rem; }
 .error { color: #f87171; font-size: 0.8rem; margin: 0 0 0.75rem; }
 .btn { width: 100%; height: 46px; border: none; border-radius: 10px; background: #3b82f6; color: #fff; font-size: 1rem; font-weight: 600; }

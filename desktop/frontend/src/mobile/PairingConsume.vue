@@ -71,6 +71,6 @@ onMounted(run)
 .pair-consume { min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; padding: 1.5rem; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); }
 .pending { font-size: 0.95rem; color: #8d93a3; }
 .error p { margin: 0; }
-.error .code { font-family: ui-monospace, Menlo, monospace; color: #f87171; font-size: 0.8rem; }
+.error .code { font-family: var(--font-mono); color: #f87171; font-size: 0.8rem; }
 .error button { margin-top: 12px; height: 42px; padding: 0 18px; border: none; border-radius: 9px; background: #3b82f6; color: #fff; font-weight: 600; }
 </style>

@@ -142,13 +142,13 @@ function formatClock(unixSeconds: number): string {
 </template>
 
 <style scoped>
-.list { min-height: 100vh; box-sizing: border-box; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); display: flex; flex-direction: column; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.list { min-height: 100vh; box-sizing: border-box; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); display: flex; flex-direction: column; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: var(--font-sans); }
 .bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px; border-bottom: 1px solid #1e2638; background: #0b1020; }
 .bar .title { flex: 1; font-weight: 600; }
 .icon { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: #8d93a3; padding: 4px; }
 .body { flex: 1; overflow: auto; padding: 12px; }
 .group { margin-bottom: 14px; }
-.grouphdr { font-size: 0.72rem; color: #8d93a3; font-family: ui-monospace, Menlo, monospace; margin: 4px 2px 8px; }
+.grouphdr { font-size: 0.72rem; color: #8d93a3; font-family: var(--font-mono); margin: 4px 2px 8px; }
 .task { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; margin-bottom: 8px; border-radius: 11px; background: #11182b; border: 1px solid #1e2638; color: inherit; text-align: left; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex: 0 0 auto; }
 .state-needs_attention .dot { background: #f59e0b; box-shadow: 0 0 14px rgba(245, 158, 11, .55); }
@@ -157,8 +157,8 @@ function formatClock(unixSeconds: number): string {
 .state-disconnected .dot { background: #64748b; }
 .col2 { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ttl { font-size: 0.9rem; font-weight: 600; }
-.cwd { font-size: 0.74rem; color: #9aa3b2; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.meta { font-size: 0.72rem; color: #8d93a3; font-family: ui-monospace, Menlo, monospace; }
+.cwd { font-size: 0.74rem; color: #9aa3b2; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.meta { font-size: 0.72rem; color: #8d93a3; font-family: var(--font-mono); }
 .open { font-size: 0.62rem; color: #9dc1ff; border: 1px solid rgba(59,130,246,.4); background: rgba(59,130,246,.12); border-radius: 5px; padding: 1px 6px; }
 .empty { color: #8d93a3; font-size: 0.85rem; text-align: center; padding: 40px 12px; line-height: 1.6; }
 .disconnected { color: #f87171; }

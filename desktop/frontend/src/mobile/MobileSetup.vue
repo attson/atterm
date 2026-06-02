@@ -139,7 +139,11 @@ async function onLanguageChange(e: Event): Promise<void> {
         <input data-testid="allow-insecure" v-model="allowInsecure" :disabled="submitting" type="checkbox" />
       </label>
       <aside class="warn-hint" data-state="warn" data-testid="insecure-hint">
-        <span class="warn-icon">⚠</span>
+        <svg class="warn-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
         <span>{{ t('mobile.insecure.setupHint') }}</span>
       </aside>
       <p v-if="error" class="error">{{ error }}</p>
@@ -155,7 +159,8 @@ h1 { text-align: center; margin: 0 0 4px; font-size: 1.6rem; }
 .banner { background: rgba(245,158,11,.13); border: 1px solid rgba(245,158,11,.4); color: #f5c451; padding: 9px 11px; border-radius: 9px; margin-bottom: 1rem; font-size: 0.8rem; }
 .field { display: block; margin-bottom: 0.9rem; }
 .field span { display: block; font-size: 0.75rem; color: #8d93a3; margin-bottom: 0.35rem; }
-.field input, .field select { width: 100%; height: 42px; border-radius: 9px; border: 1px solid #1e2638; background: #11182b; color: #e6e7ea; padding: 0 12px; font-size: 0.95rem; font-family: var(--font-mono); }
+.field input { width: 100%; height: 42px; border-radius: 9px; border: 1px solid #1e2638; background: #11182b; color: #e6e7ea; padding: 0 12px; font-size: 0.95rem; font-family: var(--font-mono-strict); }
+.field select { width: 100%; height: 42px; border-radius: 9px; border: 1px solid #1e2638; background: #11182b; color: #e6e7ea; padding: 0 12px; font-size: 0.95rem; font-family: var(--font-sans); }
 .row { display: flex; align-items: center; justify-content: space-between; margin: 1rem 0; font-size: 0.85rem; }
 .error { color: #f87171; font-size: 0.8rem; margin: 0 0 0.75rem; }
 .btn { width: 100%; height: 46px; border: none; border-radius: 10px; background: #3b82f6; color: #fff; font-size: 1rem; font-weight: 600; }
@@ -163,5 +168,5 @@ h1 { text-align: center; margin: 0 0 4px; font-size: 1.6rem; }
 .btn-primary { background: #2563eb; margin-bottom: 0.75rem; }
 .or { text-align: center; color: #8d93a3; font-size: 0.8rem; margin: 0 0 1rem; }
 .warn-hint { display: flex; gap: 8px; padding: 9px 11px; margin: 0 0 1rem; border: 1px solid rgba(245,158,11,.4); border-left-width: 3px; border-radius: 9px; background: rgba(245,158,11,.13); color: #f5c451; font-size: 0.78rem; line-height: 1.4; }
-.warn-icon { font-size: 0.95rem; }
+.warn-icon { flex: 0 0 auto; margin-top: 1px; }
 </style>

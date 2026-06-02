@@ -33,9 +33,16 @@
    */
   --font-sans: "PingFang SC", "Hiragino Sans GB", "Heiti SC", "Microsoft YaHei",
                "Noto Sans CJK SC", "Helvetica Neue", Helvetica, Arial,
-               "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, Menlo, Consolas, "Roboto Mono",
-               "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", monospace;
+               "Segoe UI", Roboto, "Apple Color Emoji", "Segoe UI Emoji",
+               sans-serif;
+  /* --font-mono puts CJK first so `<select>` and other form controls (which
+     hit the same iOS 26 -apple-system blocker as the body stack) still pick
+     up PingFang SC for CJK glyphs. ASCII renders proportionally instead of
+     mono — acceptable for select dropdowns; use a dedicated --font-mono-strict
+     for pure-ASCII fields (URLs, tokens) where mono visuals matter. */
+  --font-mono: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+               ui-monospace, Menlo, Consolas, "Roboto Mono", monospace;
+  --font-mono-strict: ui-monospace, Menlo, Consolas, "Roboto Mono", monospace;
 }
 
 * { box-sizing: border-box; }

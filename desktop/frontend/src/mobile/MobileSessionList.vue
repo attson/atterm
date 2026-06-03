@@ -3,6 +3,7 @@ import { computed, ref, onMounted } from 'vue'
 import { usePlatform } from '../platform'
 import type { RemoteSession } from '../platform/types'
 import { useI18n } from '../i18n/useI18n'
+import { displayForType } from '../lib/sessionType'
 
 defineProps<{ openSessionIds: string[] }>()
 const emit = defineEmits<{
@@ -69,6 +70,10 @@ function taskTitle(session: RemoteSession): string {
   return session.current_command || session.title || 'shell'
 }
 
+function typeForSession(s: RemoteSession) {
+  return displayForType(s.type)
+}
+
 function taskMeta(session: RemoteSession): string {
   const parts = [
     `${session.host} · ${session.user}`,
@@ -127,7 +132,12 @@ function formatClock(unixSeconds: number): string {
         >
           <span class="dot"></span>
           <span :data-testid="`task-card-${s.session_id}`" class="col2">
-            <span class="ttl">{{ taskTitle(s) }}</span>
+            <span class="title-row">
+              <span v-if="typeForSession(s)" class="type-chip" :style="{ '--chip': typeForSession(s)!.color }">
+                {{ t(`mobile.taskTypes.${typeForSession(s)!.key}`) }}
+              </span>
+              <span class="ttl">{{ taskTitle(s) }}</span>
+            </span>
             <span v-if="s.cwd" :data-testid="`session-cwd-${s.session_id}`" class="cwd">{{ s.cwd }}</span>
             <span class="meta">{{ taskMeta(s) }}</span>
           </span>
@@ -156,6 +166,16 @@ function formatClock(unixSeconds: number): string {
 .state-completed .dot { background: #60a5fa; }
 .state-disconnected .dot { background: #64748b; }
 .col2 { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.type-chip {
+  font-size: 0.66rem; line-height: 1;
+  padding: 2px 6px; border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--chip) 60%, transparent);
+  color: var(--chip);
+  background: color-mix(in srgb, var(--chip) 12%, transparent);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  flex: 0 0 auto;
+}
 .ttl { font-size: 0.9rem; font-weight: 600; }
 .cwd { font-size: 0.74rem; color: #9aa3b2; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .meta { font-size: 0.72rem; color: #8d93a3; font-family: var(--font-mono); }

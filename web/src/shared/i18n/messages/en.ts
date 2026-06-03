@@ -102,6 +102,12 @@ export const en = {
     unknownCommand: '(unknown)',
     unknownHost: 'unknown host',
     viewOnlyNotice: 'This session is view-only from this device. You can inspect output, but input is disabled.',
+    taskTypes: {
+      ai: 'AI',
+      test: 'Test',
+      build: 'Build',
+      deploy: 'Deploy',
+    },
   },
   terminal: {
     cannotReachRelay: 'Cannot reach relay.',

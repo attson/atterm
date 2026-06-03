@@ -5,6 +5,7 @@ import { FitAddon } from 'xterm-addon-fit'
 import { WebglAddon } from 'xterm-addon-webgl'
 import 'xterm/css/xterm.css'
 import { SessionConnection, type Endpoint } from '../lib/connection'
+import { TERMINAL_FONT_FAMILY } from '../lib/terminalFont'
 import type { RemoteSession } from '../platform/types'
 import { useI18n } from '../i18n/useI18n'
 
@@ -106,7 +107,7 @@ async function onImagePicked(e: Event) {
 }
 
 onMounted(() => {
-  term = new Terminal({ fontSize: 12, convertEol: false, cursorBlink: true })
+  term = new Terminal({ fontFamily: TERMINAL_FONT_FAMILY, fontSize: 12, convertEol: false, cursorBlink: true })
   fit = new FitAddon()
   term.loadAddon(fit)
   term.open(container.value!)

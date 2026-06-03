@@ -8,6 +8,7 @@ import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
+import { TERMINAL_FONT_FAMILY } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
 import {
   CommandTracker,
@@ -305,7 +306,7 @@ function safeFit() {
 async function ensureTerm() {
   if (term) return;
   term = new Terminal({
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 13,
     cursorBlink: true,
     scrollback: 20000,

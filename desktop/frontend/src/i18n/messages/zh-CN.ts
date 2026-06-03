@@ -343,6 +343,12 @@ export const zhCN = {
       disconnected: "已断开",
       closed: "已关闭",
     },
+    taskTypes: {
+      ai: 'AI',
+      test: '测试',
+      build: '构建',
+      deploy: '部署',
+    },
     started: "开始于",
     lastOutput: "最近输出",
     openBadge: "已打开",

@@ -99,6 +99,9 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 	if meta.TaskState == "" {
 		meta.TaskState = proto.TaskStateIdle
 	}
+	if meta.Type == "" {
+		meta.Type = SessionTypeShell
+	}
 	return &Session{
 		ID:        id,
 		StartedAt: time.Now(),
@@ -599,6 +602,14 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.meta.CurrentCommand != command {
 				s.meta.CurrentCommand = command
+				changed = true
+			}
+			// Sticky non-shell classification: shell never overwrites an
+			// already-set non-shell tag (so opening `claude`, exiting back
+			// to the shell prompt, and running `ls` keeps the session
+			// flagged as ai). See spec §4.
+			if newType := ClassifyCommand(command); newType != SessionTypeShell && s.meta.Type != newType {
+				s.meta.Type = newType
 				changed = true
 			}
 			started := now.Unix()

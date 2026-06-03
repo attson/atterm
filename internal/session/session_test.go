@@ -638,3 +638,39 @@ func TestMirrorLateSubscriberSeesAdoptedUpstreamDriver(t *testing.T) {
 		t.Fatalf("late subscriber snapshot driver = %q; want owner-A", m.DriverClientID)
 	}
 }
+
+func TestPushOut_AssignsTypeOnNonShellCommand(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	if got := s.Info().Type; got != SessionTypeShell {
+		t.Fatalf("initial Type: got %q want %q", got, SessionTypeShell)
+	}
+	// OSC 133 C; claude --help
+	s.PushOut(1, []byte("\x1b]133;C;claude --help\x07"))
+	if got := s.Info().Type; got != SessionTypeAI {
+		t.Fatalf("after claude: Type got %q want %q", got, SessionTypeAI)
+	}
+}
+
+func TestPushOut_TypeStickyAfterShellCommand(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	s.PushOut(1, []byte("\x1b]133;C;claude\x07"))
+	if got := s.Info().Type; got != SessionTypeAI {
+		t.Fatalf("post-claude: %q", got)
+	}
+	// "D;0" closes the running command, then a new C runs "ls".
+	s.PushOut(2, []byte("\x1b]133;D;0\x07"))
+	s.PushOut(3, []byte("\x1b]133;C;ls -la\x07"))
+	if got := s.Info().Type; got != SessionTypeAI {
+		t.Fatalf("after ls: Type got %q want %q (sticky non-shell)", got, SessionTypeAI)
+	}
+}
+
+func TestPushOut_TypeChangesBetweenTwoNonShells(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	s.PushOut(1, []byte("\x1b]133;C;claude\x07"))
+	s.PushOut(2, []byte("\x1b]133;D;0\x07"))
+	s.PushOut(3, []byte("\x1b]133;C;npm test\x07"))
+	if got := s.Info().Type; got != SessionTypeTest {
+		t.Fatalf("after npm test: Type got %q want %q", got, SessionTypeTest)
+	}
+}

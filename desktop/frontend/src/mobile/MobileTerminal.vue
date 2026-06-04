@@ -5,8 +5,11 @@ import { FitAddon } from 'xterm-addon-fit'
 import { WebglAddon } from 'xterm-addon-webgl'
 import 'xterm/css/xterm.css'
 import { SessionConnection, type Endpoint } from '../lib/connection'
+import { effectiveTemplates, type QuickTemplate } from '../lib/templates'
+import TemplatePreviewDialog from '../components/TemplatePreviewDialog.vue'
 import { TERMINAL_FONT_FAMILY } from '../lib/terminalFont'
 import type { RemoteSession } from '../platform/types'
+import { usePlatform } from '../platform'
 import { useI18n } from '../i18n/useI18n'
 
 const props = defineProps<{
@@ -24,6 +27,9 @@ const isDriver = ref(true)
 const controlMode = ref(false)
 const pasteOpen = ref(false)
 const pasteText = ref('')
+const templates = ref<readonly QuickTemplate[]>([])
+const pendingTemplate = ref<QuickTemplate | null>(null)
+const platform = usePlatform()
 let term: Terminal | null = null
 let fit: FitAddon | null = null
 let conn: SessionConnection | null = null
@@ -43,7 +49,6 @@ const AUX_KEYS: { id: string; label: string; seq: string }[] = [
   { id: 'arrow-left', label: '←', seq: '\x1b[D' },
   { id: 'arrow-right', label: '→', seq: '\x1b[C' },
 ]
-const QUICK_TEXTS = ['y', 'n', 'yes', 'no', 'continue']
 
 const canControl = computed(() => (props.info.remote_permission || 'full') !== 'view')
 const canSend = computed(() => canControl.value && controlMode.value && isDriver.value)
@@ -58,7 +63,15 @@ function sendRaw(seq: string) {
 }
 
 function sendAux(seq: string) { sendRaw(seq) }
-function sendQuick(text: string) { sendRaw(`${text}\r`) }
+function onTemplateClick(tpl: QuickTemplate) {
+  if (!canSend.value) return
+  pendingTemplate.value = tpl
+}
+function confirmTemplate(tpl: QuickTemplate) {
+  pendingTemplate.value = null
+  sendRaw(`${tpl.text}\r`)
+}
+function cancelTemplate() { pendingTemplate.value = null }
 function takeControl() {
   if (!canControl.value) return
   // Flip controlMode on at the same time — tapping "Take control" is a
@@ -159,6 +172,7 @@ onMounted(() => {
   })
   conn.attach()
   refreshInputMode()
+  effectiveTemplates(platform.templates).then((list) => { templates.value = list })
 })
 
 watch(canSend, refreshInputMode)
@@ -200,6 +214,16 @@ onBeforeUnmount(() => {
         />
         <span>{{ t('mobile.controlMode') }}</span>
       </label>
+      <div class="template-bar" data-testid="template-bar">
+        <button
+          v-for="tpl in templates"
+          :key="tpl.id"
+          class="template-btn"
+          :data-testid="`template-btn-${tpl.id}`"
+          :disabled="!canSend"
+          @click="onTemplateClick(tpl)"
+        >{{ tpl.label }}</button>
+      </div>
       <div class="kbbar">
         <button
           v-for="k in AUX_KEYS"
@@ -220,22 +244,17 @@ onBeforeUnmount(() => {
           @change="onImagePicked"
         />
       </div>
-      <div class="quickbar">
-        <button
-          v-for="text in QUICK_TEXTS"
-          :key="text"
-          class="quick"
-          :data-testid="`mobile-quick-${text}`"
-          :disabled="!canSend"
-          @click="sendQuick(text)"
-        >{{ text }}</button>
-      </div>
       <div v-if="pasteOpen" class="paste-confirm" data-testid="mobile-paste-confirm-panel">
         <textarea v-model="pasteText" :placeholder="t('mobile.pastePreview')" rows="2"></textarea>
         <button type="button" data-testid="mobile-paste-cancel" @click="pasteOpen = false">{{ t('common.cancel') }}</button>
         <button type="button" data-testid="mobile-paste-confirm" :disabled="!canSend || !pasteText" @click="confirmPaste">{{ t('mobile.pasteConfirm') }}</button>
       </div>
     </div>
+    <TemplatePreviewDialog
+      :template="pendingTemplate"
+      @confirm="confirmTemplate"
+      @cancel="cancelTemplate"
+    />
   </div>
 </template>
 
@@ -269,11 +288,13 @@ onBeforeUnmount(() => {
 .control-toggle { display: inline-flex; align-items: center; gap: 7px; color: #cbd5e1; font-size: 0.78rem; user-select: none; }
 .control-toggle input { accent-color: #3b82f6; }
 .view-only { border: 1px solid rgba(251,191,36,.34); border-radius: 8px; padding: 6px 8px; color: #fbbf24; background: rgba(251,191,36,.09); font-size: 0.75rem; }
-.kbbar, .quickbar { display: flex; align-items: center; gap: 6px; overflow-x: auto; }
-.key, .quick { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: var(--font-mono); }
-.quick { font-family: inherit; min-width: 42px; }
+.kbbar { display: flex; align-items: center; gap: 6px; overflow-x: auto; }
+.key { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: var(--font-mono); }
 .paste { font-family: inherit; min-width: 56px; }
-.key:disabled, .quick:disabled, .paste-confirm button:disabled { opacity: .45; color: #64748b; }
+.key:disabled, .paste-confirm button:disabled { opacity: .45; color: #64748b; }
+.template-bar { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 0; border-top: 1px solid #1e2638; }
+.template-btn { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: var(--font-mono); }
+.template-btn:disabled { opacity: .45; color: #64748b; }
 .paste-confirm { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
 .paste-confirm textarea { min-width: 0; resize: vertical; border-radius: 8px; border: 1px solid #1e2638; background: #020617; color: #e2e8f0; padding: 6px 8px; font: 0.78rem ui-monospace, Menlo, monospace; }
 .paste-confirm button { height: 30px; border-radius: 7px; border: 1px solid #1e2638; background: #11182b; color: #cbd5e1; padding: 0 10px; }

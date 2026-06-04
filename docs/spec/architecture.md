@@ -41,6 +41,8 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 │  /uplink — 桌面 app 控制连，收 ANNOUNCE 维护 mirror sessions  │
 │  /client — web/桌面 客户端 attach（ATTACH/IN/RESIZE/收 OUT）  │
 │  /api/sessions / /api/version — JSON API                      │
+│  /api/pair/{create,consume} — QR 配对：一次性 5min token       │
+│  /healthz (public) + /admin/health (HTML/JSON) — 健康检查      │
 │  CSP/security headers + IP/token rate/connection limits        │
 │                                                                │
 │  SessionRegistry：                                             │
@@ -60,7 +62,8 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `proto` | `internal/proto/` | 帧协议常量 + 编解码 | 任何业务逻辑 |
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子 | 不开 WS 不读 PTY |
-| `relay` | `internal/relay/` | HTTP/WS 服务，处理 4 种连接（agent/uplink/client/sessions） | 不写 PTY、不持久化 |
+| `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
+| `userstore` | `internal/userstore/` | SQLite 持久化：users / invitations / api_tokens / web_sessions / pairing_tokens / webhooks | 不知道 HTTP / 不依赖 relay |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
 | `agent` | `internal/agent/` | CLI wrapper：`ptyhost` + 本地 stdin/stdout 桥接 + `relay` 客户端 | 不被桌面端用 |
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
@@ -68,7 +71,8 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/uplink.go` | desktop | 远程 relay 客户端（lazy 协议） | 不直接拥有 PTY |
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
-| `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update) | 不实现协议 |
+| `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
+| `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update / Pairing / Diagnostics / QuickTemplates) | 不实现协议 |
 | `web/` | web | Vue 3 + TypeScript + Naive UI 多页浏览器/PWA client（login/signup/main/settings/admin/setup），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style，不持久化除 cookie/session/token bootstrap 以外的会话状态 |
 
 ## User accounts and identity
@@ -214,7 +218,10 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 - ✅ Phase 2：每 tab 1/2/4 pane 分屏（layout pure fns + iTerm-style ⌘N/⌘⇧N 快捷键）；自动更新（GitHub Releases，Ed25519/SHA256 验签，dev 短路，用户手动 force install）
 - ✅ Phase 3：用户账号、邀请码、per-user API token、admin UI、Web Push、outbound webhook、Vue 3 + TypeScript + Naive UI Web/PWA、多语言
 - ✅ Phase 4a：Capacitor iOS WebView MVP、移动 relay setup、host-grouped mobile session list、touch terminal
-- ⬜ Phase 4b：TLS 自动化、平台 codesign/notarization、移动端原生体验增强、字体与配置 DSL
+- ✅ Phase 4b：P0 任务状态模型 / 移动任务首页 / 通知深链 / 移动快捷控制 / relay setup wizard
+- ✅ Phase 4c（v0.4 引导可信度）：P1.6 桌面端 QR 配对 + 移动端扫码消费 token（`/api/pair/*`）；P1.7 relay `/healthz` + admin `/admin/health` 健康检查页；P1.9 iOS Keychain 安全存储 + ATS；P1.10 桌面诊断信息导出 + 脱敏
+- ✅ Phase 4d（v0.5 AI 任务控制台）：P2.11 session 类型分类（shell / ai / test / build / deploy，sticky non-shell）；P2.12 OSC 133 D 事件触发的 SessionSummary（ANSI-stripped tail + error lines），MetaPayload 携带 type + summary；P2.13 AI 快捷模板（QuickTemplate model + preview dialog + desktop Settings editor）
+- ⬜ Phase 4e（未完成）：P1.8 桌面安装包 codesign + notarization；P3+ 单 session 分享 / presence / 审计日志 / 持久化历史 / 命令级回放
 
 ## 桌面端架构细节
 
@@ -224,9 +231,16 @@ desktop/main.go            创建 *App，wails.Run；OnStartup→app.startup，O
                            submenu，让 ⌘W 留给前端）
                            var Version / UpdateVerifyPublicKey (ldflags 注入)
 desktop/app.go             A 持有 *relayHost、*uplink、*configStore、*Updater
-                           暴露 13 个 binding：6 session/relay + 6 update +
+                           暴露 ~48 个 binding，按用途分组：session/relay/update/
+                           pairing/diagnostics/quicktemplates/plugin-fs；
                            CloseSession sync 注销（cleanup() 同步调，notifyChange 立即
-                           推 ANNOUNCE，不等 pty.Wait）
+                           推 ANNOUNCE，不等 pty.Wait）；
+                           CreatePairingToken 用当前 RelayURL + API token 调
+                           `/api/pair/create`，前端拿到 token 渲染 QR；
+                           GetQuickTemplates / SetQuickTemplates 读写
+                           appConfig.QuickTemplates；
+                           GetDiagnostics / ExportDiagnostics 走 desktop/diagnostics.go
+                           组装脱敏 payload + 平台 save dialog
 desktop/relay_host.go      启动 relay.NewServer + net.Listen("tcp","127.0.0.1:0")
                            NewSession 起 ptyhost、AdoptSession 到本地 server
                            watchCwd goroutine 每秒 readlink /proc/<pid>/cwd

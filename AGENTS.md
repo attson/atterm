@@ -4,7 +4,7 @@ atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 
 
 阅读这份文件以快速上手；详细规范见 `docs/spec/`。
 
-- 当前 release：`v0.2.25`。Web 客户端已迁移为 Vue 3 + TypeScript + Naive UI 多页应用（login/signup/main/settings/admin/setup），并支持中英双语；spec 见 `docs/superpowers/specs/2026-05-17-web-vue-typescript-rewrite-design.md` 和 `docs/superpowers/specs/2026-05-26-i18n-english-chinese-design.md`。
+- 当前 release：`v0.2.33`。在 v0.2.25 之后陆续合入：P0 任务状态闭环 + 中英 i18n（#84）；终端选中右键发送（#85）；P1.6 移动端 QR 配对（#86）；P1.7 relay 健康检查页（#87）；P1.9 iOS Keychain 安全存储（#88）；P1.10 桌面诊断导出（#89）；多项 iOS 26 字体 / 控件回归修复（#90、#92–#96）；P2.11 session 类型分类（#97）；P2.12 OSC 133 D 触发的任务摘要（#98）；P2.13 AI 快捷模板（in flight）。相关 spec/plan 在 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`，按日期排序。Roadmap 完成度见 `docs/roadmap.md` 与 `docs/spec/architecture.md` §phase 完成度。
 
 ## 仓库布局
 
@@ -54,6 +54,8 @@ atterm/
 10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源构建产物；Vue/xterm/Naive UI 等 npm 依赖由 Vite 打包进同源 assets，并由 service worker 预缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
 11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay 不再有共享只读 token；如需限制某用户只读，在桌面端将该 session 的 `remote_permission` 设为 `view`。
 12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
+13. **iOS 26 字体栈三件套**：(a) 终端 / UI 字体栈把 `PingFang SC` 等 CJK family 放在 `-apple-system` 之前——iOS 26 WebKit 把 `-apple-system` 声明为含 CJK 覆盖但实际不渲染，导致 `[?]` 方框；(b) 终端字体常量统一在 `desktop/frontend/src/lib/terminalFont.ts`，desktop 与 mobile 共用；(c) UI emoji（⚠ 等）用内联 lucide SVG，不要依赖 U+FE0F 变体选择器。改其中一个就回归，详见 `docs/spec/conventions.md` §移动端字体栈。
+14. **OSC 133 D 事件单点抓 summary，sticky non-shell**：`internal/session/applyOSC133Locked` 是 type 分类 + summary 抓取的唯一入口；C 事件按 `ClassifyCommand` 算 type，sticky 规则保证返回 `shell` 时不覆盖已有 non-shell；D 事件 `computeSummary(scroll, now, exitCode != 0)` 生成 `SessionSummary` 并写进 `s.meta`。MetaPayload 必须同时携带 `type` 和 `summary` 字段（前者是 P2.11 漏配的 carry-over）。前端不要再做"sticky type" patch；只在一处实现。
 
 ## 开发命令
 
@@ -108,7 +110,7 @@ gh run list --repo attson/atterm --limit 10
 
 | 修改场景 | 触动文件 |
 |---------|----------|
-| account / token / invitation 数据库操作 | `internal/userstore/`（users / apitokens / invitations / websessions）；Store 接口变更需同步更新所有实现和 `store_iface_test.go` |
+| account / token / invitation / pairing 数据库操作 | `internal/userstore/`（users / apitokens / invitations / websessions / pairing_tokens / webhooks）；Store 接口变更需同步更新所有实现和 `store_iface_test.go` |
 | 新协议帧类型 | `internal/proto/frame.go` + 协议规范 + 接收方 |
 | 改 relay session 行为 | `internal/session/`（local + mirror 都用同一个 Session） |
 | 桌面新 binding | `desktop/app.go`（手写 + Wails 自动生成 `frontend/wailsjs/go/main/App.*`） |
@@ -127,12 +129,19 @@ gh run list --repo attson/atterm --limit 10
 | 改移动 app relay 配置 | `web/src/setup/` + `web/src/shared/api/relay-config.ts` + `web/src/shared/mobile-guard.ts` + `web/src/settings/tabs/Relay.vue`；`apiFetch`/`wsUrl` 的 mobile 分支在 `web/src/shared/api/client.ts` 和 `web/src/shared/ws/client-conn.ts` |
 | 改桌面前端 ↔ Go IPC | `desktop/frontend/src/platform/wails.ts`（适配器）；新方法先在 `desktop/app.go` 或 `desktop/plugin_*.go` 定义，让 Wails 重生成 `wailsjs/`，再在 `platform/wails.ts` 包一层。**不要**在 `src/platform/` 之外的文件直接 import `wailsjs/*`。 |
 | 改 relay 出站 webhook（命令结束通知） | `internal/webhook/`（render/transport/dispatch/service，**不依赖** userstore）+ `internal/userstore/webhooks.go`（+ migration `0003_webhooks.sql` + `Store` 接口）+ `internal/relay/auth_http.go`（`/api/me/webhooks`）+ `internal/relay/uplink_conn.go`（命令结束分发点，紧挨 WebPush）+ `cmd/atterm-relay/main.go`（构造 service + `webhookStoreAdapter` 映射）+ `web/src/settings/tabs/Webhooks.vue` |
+| 改 pairing QR 流程 | `internal/userstore/pairing.go`（+ `Store` 接口 + migration）+ `internal/relay/pair_http.go`（`/api/pair/create` + `/api/pair/consume`）+ `internal/relay/auth_http.go`（路由注册 + Limits 钩子）+ `desktop/app.go::CreatePairingToken` + `desktop/frontend/src/components/PairingPanel.vue` + `web/src/setup/`（移动端 consume + 写 secure storage） |
+| 改 relay 健康检查 | `internal/relay/health_http.go`（`HealthPayload` + `/healthz` + `/admin/health` + `/admin/api/health`）+ `internal/relay/templates/health.gohtml` + `internal/relay/server.go`（路由注册）+ contract test |
+| 改桌面诊断导出 | `desktop/diagnostics.go`（payload collector + redaction）+ `desktop/app.go::GetDiagnostics/ExportDiagnostics` + `desktop/frontend/src/components/SettingsDiagnostics.vue` |
+| 改移动端安全存储 | `mobile/ios/App/App/plugins/SecureStorage/AttermSecureStorage.swift`（CAP_PLUGIN，SecItemAdd/CopyMatching/Delete + `kSecAttrAccessibleAfterFirstUnlock`）+ `web/src/shared/secure-storage.ts`（Capacitor bridge + localStorage 降级）+ `web/src/shared/api/relay-config.ts`（迁移路径）；改完一定要在 iOS simulator 验证 keychain 写入 |
+| 改 session 类型分类 / 摘要 | `internal/session/classify.go`（关键字 + wrapper 剥离 + sticky）+ `internal/session/summary.go` + `internal/session/ansistrip.go` + `internal/ringbuf/ringbuf.go::TailBytes` + `internal/proto/frame.go`（`SessionInfo.Type` / `SessionSummary` / `MetaPayload.Type` / `MetaPayload.Summary`）+ `internal/session/session.go::applyOSC133Locked`（唯一调用点）+ TS 侧 `desktop/frontend/src/lib/connection.ts` + `web/src/shared/api/types.ts`（mirror SessionSummary）+ 前端任务卡片渲染 |
+| 改 AI 快捷模板 | `desktop/frontend/src/lib/templates.ts`（`QuickTemplate` + `DEFAULT_TEMPLATES` + `effectiveTemplates`）+ `desktop/frontend/src/platform/types.ts`（`TemplateBridge`）+ `wails.ts` / `capacitor.ts`（bridge 实现，desktop 走 config.json，mobile/web 走 localStorage `atterm.templates`）+ `desktop/app.go::GetQuickTemplates/SetQuickTemplates` + `desktop/config.go` 加 `QuickTemplates []proto.QuickTemplate` + `internal/proto/quicktemplate.go` + `desktop/frontend/src/components/TemplatePreviewDialog.vue` + `SettingsTemplates.vue`（desktop only 编辑器）+ desktop TerminalView / mobile MobileTerminal / web TerminalView 三端 mount template bar |
 
 ## 风格摘要
 
 - Go：`gofmt`，包注释 + 公共 API 注释（说"为什么"）；errors `%w` wrap；不引入日志框架，用标准库 `log`
-- TS：strict mode；不写 `any` 除非 wails generated；不加新前端依赖（现有栈含 Vue / xterm / Naive UI / Pinia / lucide / CodeMirror）
+- TS：strict mode；不写 `any` 除非 wails generated；不加新前端依赖（现有栈含 Vue / xterm / Naive UI / Pinia / lucide / CodeMirror / qrcode-svg）
 - 注释：写 *why* 不写 *what*；commit-specific / "added for X" / "see ticket Y" 不要写进代码注释（应该在 commit msg 或 PR）
+- 移动端 / 共享字体栈：CJK family（`PingFang SC` 等）放在 `-apple-system` 之前；终端字体常量统一 import `desktop/frontend/src/lib/terminalFont.ts::TERMINAL_FONT_FAMILY`，desktop / mobile 共用
 - 不要在 main 直接 push：CI 会跑，commit 要先在本地 `go vet -tags webkit2_41 ./...` + `npm run build` 全过
 - commit msg 用小写动词起头，subject ≤ 72 字符（参考 git log 现有风格）
 
@@ -153,6 +162,10 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 新增用户可见文案只改一种语言；desktop 和 web 的 i18n messages 必须保持中英覆盖
 - ❌ 把主 write token 持久化到 relay admin config；只能来自 env/flag/启动自动生成
 - ❌ 只在访问者客户端 UI 隐藏输入按钮而不在 relay/desktop host 强制拦截
+- ❌ 把 `-apple-system` / `system-ui` 放在 CJK family 之前——iOS 26 WebKit 会触发 `[?]` 方框回归
+- ❌ 把 pairing token 明文写进日志、URL query 或长期存储（只在 `qr_url` 与 owner 单次返回里出现，consumer 调用时通过 POST body 传输）
+- ❌ 在 `/api/pair/consume` 路径上加任何鉴权头校验——pairing token 本身即凭据，加上 token-on-token 会把流程改回 OAuth code+secret 模式
+- ❌ 在多处实现 session type sticky；只在 `internal/session/applyOSC133Locked` 一个入口写规则
 
 ## 文档导引
 

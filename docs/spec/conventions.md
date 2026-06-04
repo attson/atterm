@@ -126,6 +126,21 @@ if err != nil {
   argon2 timing 在 `internal/userstore/*_test.go`；桌面 ws/wss 策略在
   `desktop/relay_security_test.go`；owner remote permission 要同时覆盖 relay 拦截
   与 desktop uplink 本机写 PTY 前拦截；自动更新签名/hash 校验在 `desktop/updater_test.go`
+- session 行为分类与摘要必须有测试：`internal/session/classify_test.go` 锁住
+  ai/test/build/deploy 关键字识别 + wrapper 剥离 + sticky-non-shell；
+  `internal/session/summary_test.go` 覆盖 success/failure 抽取、ANSI 清洗、字节
+  上限；`internal/session/ansistrip_test.go` 覆盖 CSI/OSC/ESC X 三种 escape
+  shape 与截断输入；`internal/session/session_test.go` 集成测试断言 OSC 133 D
+  事件之后 SessionInfo.Summary 已填充且最近一帧 META 携带相同 payload
+- pairing token 必须有测试：`internal/userstore/pairing_test.go` 覆盖
+  CreatePairingToken / ConsumePairingToken 的 atomic `used_at` 和过期分支；
+  `internal/relay/pair_http_test.go` 覆盖 owner 鉴权、consumer 无鉴权、
+  rate-limit 返回 429、invalid/expired/used 统一 404；
+  `desktop/app_pairing_test.go` 验证桌面 CreatePairingToken binding 携带 Bearer
+  并解析响应
+- health endpoint 必须有契约测试：`internal/relay/health_http_test.go` 覆盖
+  `/healthz` 字段、`/admin/health` 鉴权、HealthPayload 的 mobile origin 兼容性
+  逻辑和 warning 列表
 
 例：`desktop/uplink_e2e_test.go::TestUplinkE2E` / `TestTwoHostsCrossAttach` 是模板。
 
@@ -135,6 +150,14 @@ if err != nil {
 - `web` 使用 Vitest + happy-dom，测试放 `web/tests/unit/**`；安全/PWA 合约测试放 `web/tests/contract/*.test.mjs`
 - `mobile` 的 Capacitor wrapper 脚本测试使用 Node test runner：`npm test`
 - 新增用户可见文案时必须同步 desktop/web 的中英 messages；测试尽量断言 i18n key 或渲染后的文本，不要重新引入硬编码英文
+- AI quick templates 测试：`desktop/frontend/src/lib/__tests__/templates.test.ts`
+  覆盖 `effectiveTemplates` + 默认列表稳定性；
+  `desktop/frontend/src/components/__tests__/TemplatePreviewDialog.test.ts` 覆盖
+  Enter/Esc/backdrop 行为；`SettingsTemplates.test.ts` 锁住增删改 + reset；
+  mobile / desktop TerminalView 测试断言点击模板按钮触发 `sendInput(text + '\r')`
+- Pairing UI 测试：`desktop/frontend/src/components/__tests__/PairingPanel.test.ts`
+  覆盖生成 / 二维码渲染 / 过期倒计时；`mobile` 端 setup 流程的扫码 → consume
+  → 写入 secure storage 的 happy path 覆盖在 `web/tests/unit/setup-pair-*.ts`
 
 ## 风格细则
 
@@ -160,6 +183,43 @@ if err != nil {
 - scoped style 在每个 `.vue` 单文件里
 - desktop 前端不引入 CSS 框架（Tailwind / Bootstrap）；web 前端使用 Naive UI + `web/src/shared/tokens.css`
 - 组件视觉、控件复用、Settings 表单和浮层规范见 `docs/spec/component-style.md`
+
+### 移动端字体栈（iOS 26 兼容）
+
+iOS 26 WebKit 把 `-apple-system` / `system-ui` 声明为含 CJK 覆盖、但实际渲染
+时不 fall through 到后续 family，结果 CJK 字符显示成 `[?]` 方框。修复模式：
+
+1. **ASCII mono 在前，CJK fallback 在后**：终端字体栈用 `'SF Mono', 'JetBrains
+   Mono', Consolas, 'Liberation Mono', monospace, 'PingFang SC', 'Hiragino Sans
+   GB'`。共享常量在 `desktop/frontend/src/lib/terminalFont.ts` 的
+   `TERMINAL_FONT_FAMILY`，desktop TerminalView 和 mobile MobileTerminal 都
+   import 它，避免两端漂移。
+2. **UI 字体栈：`PingFang SC` 必须在 `-apple-system` 之前**（或干脆删掉
+   `-apple-system`）；iOS 26 上把 `-apple-system` 放在 CJK 之前就会触发回
+   归。`mobile/.../style.css` / `web/src/shared/tokens.css` 都受此约束。
+3. **Emoji 用内联 SVG，不要依赖 U+FE0F 变体选择器**：iOS 26 `Apple Color
+   Emoji` 对 U+26A0 (⚠) 等 BMP 字符的 emoji presentation 不可靠。涉及
+   emoji 的 UI 元素（PWA install 提示、警告徽章）改为 lucide-style 内联
+   SVG。
+
+回归验证：在 iOS 26 simulator Safari 上手工跑一份 CJK + emoji 字体探针页（最小
+的一组 `<span style="font-family: …">` 测试），别只看桌面浏览器；这条规则的来
+源就是桌面看着没问题、iOS 26 上变 `[?]` 的真实回归。
+
+### Sticky non-shell session type
+
+`internal/session/applyOSC133Locked` 在收到 OSC 133 `C`（命令开始）时调
+`ClassifyCommand(cmd)`：返回 `shell` 时**不**覆盖 `s.meta.Type`，返回
+non-shell 时才覆盖。这条 sticky 规则保证：
+
+- `go test` → `code editor`（shell）的切换不会把 type 从 `test` 退回
+  `shell`，否则任务卡片的类型 chip 会闪烁。
+- 一旦升过 `ai` / `test` / `build` / `deploy`，整个 session 生命周期都会保
+  持那个类型直到 session 关闭。
+
+只在 `applyOSC133Locked` 一处实现这个语义；不要在 frontend 端再做一层
+"sticky" 补丁，否则两层规则会互相打架。`type` 同样需要走 MetaPayload 广播
+路径（P2.12 之前漏了这点，导致已连接的 subscriber 拿不到实时类型变化）。
 
 ## Commit 风格
 

@@ -107,6 +107,109 @@ Settings 是最容易跑偏的区域，新增 tab 或字段时遵守以下结构
 - Pane 关闭按钮、remote badge、viewer overlay 要使用轻量 overlay，不改变 xterm cell 尺寸。
 - Pane 内点击目标必须以事件归属 pane 为准，不能隐式作用于当前 active pane；此类交互需要布局/组件测试覆盖。
 
+## 任务卡片：session type chip 与 error line
+
+mobile / web 的 session 列表是 P2 阶段最容易跑偏的视图，新增信息时遵守以下结构：
+
+### Type chip
+
+`type ∈ {shell, ai, test, build, deploy}`（来自 `MetaPayload.type`，详见
+`docs/spec/protocol.md` §META）。卡片头部右上角渲染一颗 6-8px 高的椭圆 chip：
+
+| type | 调色 | 语义 |
+|------|------|------|
+| `ai` | `--accent` 变体（紫蓝） | 长任务、最有可能需要远程接管 |
+| `test` | 青绿（如 `#34d399`） | 短任务、失败时关心 error_lines |
+| `build` | 橙（如 `#f59e0b`） | 中等任务 |
+| `deploy` | 红（如 `#f87171`） | 高风险任务 |
+| `shell` | 不渲染 chip | 普通 shell 不打扰 |
+
+- chip 用 CSS variable 派生颜色，**不要**为每种 type 单独硬编码；统一通过
+  `--type-{ai,test,build,deploy}` 在 `style.css` / `tokens.css` 注册。
+- chip 文本 11px、letter-spacing `0.04em`、uppercase；padding `1px 6px`；
+  圆角 `999px`（pill）。
+- chip 不要替代 `task_state`（running / failed / …）的状态视觉，那是另一层；
+  二者并排。
+
+### Error line
+
+`summary.error_lines` 仅在 `task_state == 'failed'` 时渲染，且只显示第一条
+（`error_lines[0]`）。结构：
+
+```vue
+<span class="err-line" :data-testid="`task-err-${session_id}`">
+  {{ summary.error_lines[0] }}
+</span>
+```
+
+约束：
+
+- 颜色 `#f87171`（red-400），mono 字体 (`var(--font-mono)`)，12px。
+- 单行省略：`white-space: nowrap; overflow: hidden; text-overflow: ellipsis`。
+- 与卡片其它行 `gap: 2-4px`，不要单独占大块空间——这是「一行错误摘要」，
+  不是错误详情视图。
+- 不带 i18n key——内容是 PTY 原始输出，按字面渲染。
+
+`summary.recent_output` 不在卡片上渲染（会撑爆列表），留给未来的 session
+detail 视图。
+
+## 快捷模板：bar + preview dialog
+
+桌面 / web / mobile 三端共用 `QuickTemplate { id, label, text }` 模型
+（`desktop/frontend/src/lib/templates.ts`），UI 也保持一致：
+
+### Template bar
+
+横向滚动按钮条，渲染在 desktop TerminalView / web TerminalView 的 status
+bar 上方，以及 mobile MobileTerminal 替换原 `quickbar`。
+
+- 高度 28px、最小宽度 34px、padding `0 9px`、圆角 7px、字体 `var(--font-mono)`
+  12px。
+- 颜色：背景 `#11182b` / 边框 `#1e2638` / 文字 `#cbd5e1`；disabled 时
+  `opacity: .45` + `color: #64748b`。
+- `:disabled` 直接绑 `canSend`（driver + controlMode + 非 view-only），与
+  paste 按钮同一 gate；**不要**为模板单独写权限分支。
+- 横向溢出 `overflow-x: auto`，按钮 `flex: 0 0 auto`；不要换行。
+
+### Preview dialog
+
+`TemplatePreviewDialog.vue`（桌面 / 移动共享）。点击模板按钮 → 弹出预览 →
+Enter / 点击 Send 触发 `sendInput(text + '\r')`。
+
+约束：
+
+- backdrop 用 dialog overlay 规则（fixed inset 0、黑色透明度 0.5-0.6）；
+  z-index 高于 settings dialog，避免 settings 打开时模板预览被盖。
+- 卡片宽度约 280px（mobile）/ 360px（desktop）；`max-width: calc(100vw - 32px)`。
+- `<pre class="preview">` 渲染待发送文本，禁止 word wrap（mono 字体，预览
+  内容应当与实际发到 PTY 的字节一致；wrap 会误导）。
+- footer 两个 button：Cancel（次要）+ Send（primary `--accent`），后者 `autofocus`。
+- 键盘：Enter = confirm，Escape = cancel；点击 backdrop = cancel。
+- testid 契约（用于自动测试，**不要**改）：`template-preview` /
+  `template-preview-confirm` / `template-preview-cancel` / `template-btn-${id}`。
+
+### Settings → Templates tab（desktop only）
+
+桌面端 Settings 增加 Templates tab（紧跟 Diagnostics 之后），遵循 Settings
+组件规范的 label/hint/error/button 样式。增删改行 inline 编辑（替换为两个文
+本输入 + Save/Cancel），重置走二级确认对话框。debounce 保存 300ms，避免
+快速键入触发频繁 disk write。
+
+mobile / web 仅渲染默认 10 项 + 用户自己 desktop 编辑过的列表（各端
+localStorage / config 独立），不提供编辑界面。
+
+## Pairing UI
+
+Settings → Pairing 是桌面端为移动端引导的入口：
+
+- 主区块 `<PairingPanel>` 一个按钮 `Generate QR code`，旁边显示剩余有效时间
+  （倒计时到 0 自动隐藏 QR + 重新启用按钮）。
+- QR canvas 用 `qrcode-svg`（已在依赖里）；不要再引入 raster QR 库。
+- 二维码下方一行小字显示 `pair_…` token 的人类可读前缀，方便手动粘贴
+  fallback；完整 token 在 copy 按钮里。
+- 失败统一文案 "pairing failed, please try again"（不区分 4xx / 5xx）；
+  rate-limited (429) 单独显示 "too many requests, wait a minute"。
+
 ## 插件与扩展面板
 
 - 插件 UI 放在 `desktop/frontend/src/plugins/<plugin>/`，可以有 plugin-local token（例如 file explorer 的 `--ed-*`），但必须从全局 token 派生。

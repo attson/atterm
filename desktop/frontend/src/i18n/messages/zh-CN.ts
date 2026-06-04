@@ -309,6 +309,22 @@ export const zhCN = {
       copyFailed: "复制失败",
       exported: "已保存到 {path}",
     },
+    templates: {
+      tab: "快捷模板",
+      intro: "每个模板被点击时会把它的文本发到当前会话。",
+      add: "新增模板",
+      label: "标签",
+      text: "发送文本",
+      save: "保存",
+      edit: "编辑",
+      delete: "删除",
+      reset: "恢复默认",
+      resetConfirm: "用默认列表覆盖当前模板？",
+      preview: {
+        title: "发送预览",
+        send: "发送",
+      },
+    },
   },
   mobile: {
     setupSubtitle: "连接到你的 relay",

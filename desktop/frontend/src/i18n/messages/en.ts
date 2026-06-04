@@ -307,6 +307,22 @@ export const en = {
       copyFailed: "Copy failed.",
       exported: "Saved to {path}",
     },
+    templates: {
+      tab: "Templates",
+      intro: "Each template sends its text to the active session when clicked.",
+      add: "Add template",
+      label: "Label",
+      text: "Send text",
+      save: "Save",
+      edit: "Edit",
+      delete: "Delete",
+      reset: "Reset to defaults",
+      resetConfirm: "Replace your list with the defaults?",
+      preview: {
+        title: "Send preview",
+        send: "Send",
+      },
+    },
   },
   mobile: {
     setupSubtitle: "Connect to your relay",

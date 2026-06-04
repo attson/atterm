@@ -130,6 +130,8 @@ export const zhCN = {
     shortcuts: '终端快捷键',
     takeControl: '接管控制',
     tapToChangeConfig: '点击修改配置。',
+    templatePreviewTitle: '发送预览',
+    templatePreviewSend: '发送',
   },
   sessions: {
     attach: '接管',

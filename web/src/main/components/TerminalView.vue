@@ -6,6 +6,11 @@ import 'xterm/css/xterm.css'
 import { NAlert } from 'naive-ui'
 import { SessionConnection, type SessionStatus } from '@shared/ws/client-conn'
 import { useI18n } from '@shared/i18n/useI18n'
+import {
+  effectiveTemplates,
+  webTemplateStorage,
+  type QuickTemplate,
+} from '@shared/templates'
 
 const props = defineProps<{
   sessionId: string
@@ -21,6 +26,8 @@ const status = ref<SessionStatus>('connecting')
 const replay = ref<{ bytes: number; total_bytes: number } | null>(null)
 const isDriver = ref(true)
 const termContainer = ref<HTMLDivElement | null>(null)
+const templates = ref<readonly QuickTemplate[]>([])
+const pendingTemplate = ref<QuickTemplate | null>(null)
 const { t } = useI18n()
 
 let term: Terminal | null = null
@@ -111,9 +118,21 @@ function takeControl() {
   conn?.claimDriver()
 }
 
+function onTemplateClick(tpl: QuickTemplate) {
+  pendingTemplate.value = tpl
+}
+function confirmTemplate(tpl: QuickTemplate) {
+  pendingTemplate.value = null
+  conn?.sendInput(`${tpl.text}\r`)
+}
+function cancelTemplate() {
+  pendingTemplate.value = null
+}
+
 onMounted(() => {
   buildTerm()
   buildConn()
+  effectiveTemplates(webTemplateStorage).then((list) => { templates.value = list })
 })
 
 onBeforeUnmount(() => {
@@ -192,7 +211,35 @@ defineExpose({
         </div>
       </div>
     </div>
+    <div class="template-bar" data-testid="template-bar">
+      <button
+        v-for="tpl in templates"
+        :key="tpl.id"
+        class="template-btn"
+        :data-testid="`template-btn-${tpl.id}`"
+        @click="onTemplateClick(tpl)"
+      >{{ tpl.label }}</button>
+    </div>
     <p class="status-line" data-testid="status-line">{{ statusLabel }}</p>
+    <div
+      v-if="pendingTemplate"
+      class="template-dialog-backdrop"
+      data-testid="template-preview-backdrop"
+      @click="cancelTemplate"
+    >
+      <div class="template-dialog" data-testid="template-preview" @click.stop>
+        <h3>{{ t('terminal.templatePreviewTitle') }}</h3>
+        <pre class="template-preview-text">{{ pendingTemplate.text }}</pre>
+        <div class="template-actions">
+          <button type="button" data-testid="template-preview-cancel" @click="cancelTemplate">{{ t('common.cancel') }}</button>
+          <button
+            type="button"
+            data-testid="template-preview-confirm"
+            @click="confirmTemplate(pendingTemplate)"
+          >{{ t('terminal.templatePreviewSend') }}</button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -246,5 +293,62 @@ defineExpose({
 .lost-banner {
   margin: 0;
   border-radius: 0;
+}
+.template-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.template-btn {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 0.76rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+.template-btn:hover {
+  border-color: var(--accent, #3b82f6);
+  color: var(--accent, #3b82f6);
+}
+.template-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.template-dialog {
+  width: 100%; max-width: 320px;
+  background: #11182b; color: #e6e7ea;
+  border: 1px solid #1e2638; border-radius: 11px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.template-dialog h3 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.template-preview-text {
+  margin: 0; padding: 8px 10px;
+  background: #020617; color: #e2e8f0;
+  border: 1px solid #1e2638; border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem; line-height: 1.4;
+  white-space: pre-wrap; word-break: break-all;
+  max-height: 30vh; overflow-y: auto;
+}
+.template-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.template-actions button {
+  height: 32px; padding: 0 14px;
+  border: 1px solid #1e2638; border-radius: 7px;
+  background: #11182b; color: #cbd5e1; font-size: 0.82rem;
+}
+.template-actions button:last-child {
+  background: #2563eb; border-color: #2563eb; color: #ffffff; font-weight: 600;
 }
 </style>

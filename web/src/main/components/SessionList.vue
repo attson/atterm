@@ -116,6 +116,11 @@ onUnmounted(() => {
             <span class="size">{{ s.cols }}×{{ s.rows }}</span>
             <span class="cwd">{{ s.cwd }}</span>
           </div>
+          <span
+            v-if="s.task_state === 'failed' && s.summary?.error_lines?.length"
+            class="err-line"
+            :data-testid="`task-err-${s.id}`"
+          >{{ s.summary.error_lines[0] }}</span>
         </button>
       </div>
     </div>
@@ -168,6 +173,16 @@ onUnmounted(() => {
 .meta { display: flex; gap: 0.75rem; color: var(--fg-dim); font-size: 0.75rem; flex-wrap: wrap; }
 .meta .size { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .meta .cwd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.err-line {
+  display: block;
+  color: #f87171;
+  font-size: 0.72rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .empty { color: var(--fg-dim); font-size: 0.875rem; }
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
 </style>

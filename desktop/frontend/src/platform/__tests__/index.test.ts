@@ -29,6 +29,11 @@ function fakePlatform(): Platform {
       on: () => () => {},
       emit: () => {},
     },
+    templates: {
+      load: async () => [],
+      save: async () => {},
+      clear: async () => {},
+    },
   }
 }
 

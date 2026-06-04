@@ -89,6 +89,18 @@ export function createWailsPlatform(): Platform {
       on: (event, handler) => EventsOn(event, handler as (...data: unknown[]) => void),
       emit: (event, data) => EventsEmit(event, data),
     },
+    templates: {
+      load: async () => {
+        const raw = await api.getQuickTemplates()
+        return Array.isArray(raw) ? raw : []
+      },
+      save: async (list) => {
+        await api.setQuickTemplates(list)
+      },
+      clear: async () => {
+        await api.setQuickTemplates([])
+      },
+    },
     updater: {
       getState: api.getUpdateState,
       checkUpdate: api.checkUpdate,

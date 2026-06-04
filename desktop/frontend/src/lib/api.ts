@@ -162,6 +162,8 @@ interface AppBindings {
   BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;
   GetDiagnostics(userAgent: string): Promise<DiagnosticsPayload>;
   ExportDiagnostics(content: string): Promise<string>;
+  GetQuickTemplates(): Promise<import('./templates').QuickTemplate[]>;
+  SetQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void>;
 }
 
 declare global {
@@ -376,4 +378,12 @@ export function getDiagnostics(userAgent: string): Promise<DiagnosticsPayload> {
 
 export function exportDiagnostics(content: string): Promise<string> {
   return bindings().ExportDiagnostics(content);
+}
+
+export function getQuickTemplates(): Promise<import('./templates').QuickTemplate[]> {
+  return bindings().GetQuickTemplates();
+}
+
+export function setQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void> {
+  return bindings().SetQuickTemplates(list);
 }

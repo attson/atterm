@@ -113,7 +113,13 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
   "command_started_at": 1715234567,
   "command_ended_at": 0,
   "command_duration_ms": 0,
-  "last_output_at": 1715234568
+  "last_output_at": 1715234568,
+  "type": "test",
+  "summary": {
+    "recent_output": "FAIL  ./internal/foo  0.123s\n",
+    "error_lines": ["FAIL  ./internal/foo  0.123s"],
+    "captured_at": 1715234580
+  }
 }
 ```
 
@@ -125,8 +131,10 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
 - `task_state` 是任务状态：`idle` / `running` / `waiting_input` / `completed` / `failed` / `disconnected` / `closed`
 - `current_command` / `command_started_at` / `command_ended_at` / `command_duration_ms` / `command_exit_code` 来自 OSC 133 命令生命周期；`command_exit_code` 只在命令结束后出现，`0` 表示 completed，非 0 表示 failed
 - `last_output_at` 是 relay 最近看到该 session OUT 字节的 unix 秒时间戳
+- `type` 是 session workload 分类：`shell` / `ai` / `test` / `build` / `deploy`；relay 在 OSC 133 `C` 时按命令 base name 计算（详见 `internal/session/classify.go`），并应用 sticky-non-shell 语义——一旦升过 non-shell 就不会再退回 `shell`
+- `summary` 是上一条命令的 ANSI-stripped 尾部输出 + 抽取的错误行；只在 OSC 133 `D` 事件触发时刷新（recent_output ≤ 4 KiB；error_lines 仅在 `command_exit_code != 0` 时填充，最多 5 行）。subscriber 应当显示 `summary.error_lines[0]` 作为失败任务一行错误摘要。详细生成规则见 `internal/session/summary.go`
 
-每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id / driver_client_name / cols / rows / task metadata，作为初始状态。
+每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id / driver_client_name / cols / rows / task metadata + type + summary，作为初始状态。
 
 ### `CLOSE` (0x06) — 会话结束
 
@@ -175,13 +183,18 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
   "command_ended_at": 1715234579,
   "command_duration_ms": 12500,
   "command_exit_code": 0,
-  "last_output_at": 1715234579
+  "last_output_at": 1715234579,
+  "type": "test",
+  "summary": {
+    "recent_output": "PASS\nok  ./internal/foo  0.123s\n",
+    "captured_at": 1715234579
+  }
 }]
 ```
 
 `remote_permission` 是 owner desktop 发布的可选字段；缺省表示 `full`，保持旧客户端兼容。
 
-任务字段均为可选 additive metadata。缺失 `task_state` 的旧 publisher 按 `idle` 处理。
+任务字段均为可选 additive metadata。缺失 `task_state` 的旧 publisher 按 `idle` 处理。`type` / `summary` 字段与 META 帧同语义（详见 §`META`），新增于 P2.11 / P2.12。
 
 | 值 | 远程允许 | relay/host 拦截 |
 |----|----------|-----------------|
@@ -369,7 +382,12 @@ Payload (UTF-8 JSON):
 | `/client-sessions` | GET (Upgrade: websocket) | session 列表推送 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
 | `/api/version` | GET | JSON 版本信息 |
-| `/`, `/login.html`, `/signup.html`, `/settings.html`, `/setup.html`, `/admin/` | GET | 静态 Vue MPA web/PWA 客户端（默认使用 embedded `internal/relay/web-dist/`；开发可用 `--web web/dist`） |
+| `/api/pair/create` | POST | 桌面端用 owner 凭据签发一次性 pairing token（详见 §pairing tokens） |
+| `/api/pair/consume` | POST | 移动端用 pairing token 换取 relay URL + 新 API token（无需鉴权头） |
+| `/healthz` | GET | 公开 liveness 探测；返回 `{ok, version}`，无鉴权 |
+| `/admin/health` | GET | admin-only 运维健康检查页（HTML） |
+| `/admin/api/health` | GET | admin-only HealthPayload JSON（详见 §health endpoint） |
+| `/`, `/login.html`, `/signup.html`, `/settings.html`, `/setup.html`, `/admin/`, `/pair` | GET | 静态 Vue MPA web/PWA 客户端（默认使用 embedded `internal/relay/web-dist/`；开发可用 `--web web/dist`） |
 
 CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直接 204。非 `OPTIONS`
 请求进入 mux 前会经过按远端 IP/token 计算的固定窗口 rate limit；WebSocket upgrade
@@ -449,6 +467,8 @@ admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户�
 | `/api/push/test` | POST | Cookie + CSRF | 发送测试 push 通知 |
 | `/api/me/webhooks` | GET/POST | Cookie (POST 需 CSRF) | 列出/创建 outbound webhook |
 | `/api/me/webhooks/{id}` | DELETE | Cookie + CSRF | 删除 outbound webhook |
+| `/api/pair/create` | POST | Cookie 或 API token | 签发 5 分钟一次性 pairing token（详见 §pairing tokens） |
+| `/api/pair/consume` | POST | 公开（pairing token 即凭据） | 用 pairing token 换 relay URL + 新 API token + user info |
 | `/admin/api/invitations` | GET/POST | Admin principal | 列出/创建邀请码 |
 | `/admin/api/users` | GET | Admin principal | 列出用户 |
 | `/admin/api/users/{id}/reset-password` | POST | Admin principal | 重置用户密码 |
@@ -474,6 +494,81 @@ admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户�
   "max_connections_per_key": 64
 }
 ```
+
+## Pairing tokens
+
+桌面端的 owner 在 Settings → Pairing 里点 "Generate QR code"，desktop app 走当前
+配置的 relay 调 `POST /api/pair/create`（带 owner 的 API token），relay 用
+`internal/userstore.Store.CreatePairingToken` 生成一条仅哈希存储的 token
+记录，明文只在签发时返回一次。Owner 拿到 `{token, expires_at, qr_url}` 后渲
+染二维码；移动端用相机扫码或粘贴 token 后调 `POST /api/pair/consume`：
+
+```
+POST /api/pair/consume
+Content-Type: application/json
+
+{ "token": "<pair_…>" }
+```
+
+成功返回 `{relay_url, api_token, user: {id, email}}`，relay 同时 atomically
+mark pairing token used（同条记录二次 consume 必失败）。失败统一返回 404 +
+`{"code": "pair_invalid"}`，不区分 not-found / expired / already-used，避免
+oracle attack。
+
+约束：
+
+- TTL: 5 分钟（`internal/relay.pairingTTL`）。
+- 一次性：`ConsumePairingToken` 在 SQL 层做 atomic `used_at` 写入；竞争消费
+  只有一个成功，其它落到 `ErrPairingInvalid`。
+- Rate limit: owner 端 `Limits.AllowPairCreate(userID)`，consumer 端
+  `Limits.AllowPairConsume(ipPrefix)`，命中限流返回 `429 rate_limited`。
+- 鉴权：`/api/pair/create` 需要已登录 user principal（cookie session 或 API
+  token），`/api/pair/consume` **不需要任何鉴权头**——pairing token 本身
+  即凭据，trust model 与 OAuth Device Code Flow 一致。
+- `qr_url` 拼自 `publicBaseURL(r) + "/pair?t=" + token`；relay 自动按
+  `X-Forwarded-Proto` 推断 https。
+
+存储：见 `internal/userstore/pairing.go`（`pairing_tokens` 表，sha256 + atomic
+`used_at`）；HTTP 处理在 `internal/relay/pair_http.go`。
+
+## Health endpoint
+
+公开 liveness：`GET /healthz` 始终公开、无鉴权，返回最小 JSON `{ok: true,
+version: "<v>"}`，专供 LB / k8s probe。
+
+管理员健康检查页：`GET /admin/health` (HTML) 和 `GET /admin/api/health` (JSON)
+都需要 admin principal。JSON 契约 (`HealthPayload`)：
+
+```json
+{
+  "version": "v0.2.33",
+  "uptime_seconds": 12345,
+  "https": true,
+  "configured_origins": ["https://relay.example.com", "capacitor://localhost"],
+  "origins_open": false,
+  "bootstrap_admin_configured": true,
+  "rate_limit_per_minute": 600,
+  "max_connections_per_key": 64,
+  "active_uplinks": 3,
+  "mobile_origin_compatible": true,
+  "generated_at": "2026-06-05T03:14:15Z",
+  "health_check_warnings": []
+}
+```
+
+约束：
+
+- 没有 PII / token 明文 / 文件路径 / 客户端 IP——每个字段是 operator-
+  configured 值或聚合计数，可以安全粘贴进 issue。
+- `https` 来自 `r.TLS != nil || X-Forwarded-Proto == "https"`，所以 reverse
+  proxy 必须正确传递这个头才能显示 true。
+- `mobile_origin_compatible` 检查 `configured_origins` 是否包含
+  `capacitor://*` / `ionic://*` / `https://localhost*` / `null` 之一，或
+  origin 白名单为空（"open"，会另外触发一条 warning）。
+- HTML 页面用 `internal/relay/templates/health.gohtml` 内嵌模板渲染；前端
+  无额外 JS，所以即使 webview / web build 损坏也能看到诊断信息。
+
+实现：`internal/relay/health_http.go`。
 
 ## 重连与续传
 

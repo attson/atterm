@@ -16,18 +16,28 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 |------|------|
 | 桌面终端 | 支持 macOS / Linux / Windows，多 tab、本地 PTY、cwd 跟踪 |
 | 分屏 | 每个 tab 支持 1 / 2 / 4 pane，macOS 用 `⌘N` / `⌘⇧N`，Linux/Windows 用 `Ctrl` |
-| 远程接管 | 桌面端连上 relay 后，其他浏览器或桌面端可 attach 同一会话 |
+| 远程接管 | 桌面端连上 relay 后，其他浏览器或桌面端可 attach 同一会话；远程默认是 viewer，需要按空格 take over 才能输入 |
+| 任务状态闭环 | 基于 OSC 133 推导运行 / 等待输入 / 完成 / 失败 / 断连状态，同步到桌面、web、mobile 与 push 通知 |
+| 移动端任务首页 | 任务卡片按状态分组（需关注 / 运行中 / 完成 / 失败 / 断连），高亮等待输入与失败任务 |
+| 通知深链 | Web Push payload 携带 session id 与通知类型；点击后直接打开目标 session，等待输入通知会聚焦输入区 |
+| 移动快捷控制面板 | Enter / Esc / Tab / Ctrl-C / Ctrl-D / 方向键 / 粘贴 / 图片上传；view-only 会话禁用 |
+| Relay 连接向导 | 桌面端 setup wizard 逐项校验 URL / HTTP-WS 兼容 / token / 身份 / uplink，按错误给出恢复操作 |
+| QR 配对（P1.6） | 桌面端 Settings → Pairing 生成 5 分钟一次性 token 与二维码，移动端扫码即可换取 relay URL + API token，无需手动复制 |
+| Relay 健康检查（P1.7） | 公开 `/healthz`；admin `/admin/health` 显示 version / uptime / HTTPS / origins / bootstrap admin / 限流 / 活跃 uplinks，并标注移动端 origin 兼容性 |
+| 移动端安全存储（P1.9） | iOS Keychain 保存 relay URL / API token；旧 localStorage 凭据自动迁移并清理；非 HTTPS relay 需用户在 Settings 显式开启 |
+| 桌面诊断导出（P1.10） | Settings → Diagnostics 一键生成脱敏后的 app / OS / WebView / uplink / 配置摘要文本，方便贴 issue |
+| AI 任务控制台（P2.11–P2.13） | 自动识别 `codex` / `claude` / `gemini` / `aider` / `go test` / `docker build` / `kubectl` 等命令并打 type chip；失败任务卡片显示一行 error line；终端上方 Quick Templates bar 内置 approve / deny / continue / retry / `/test` / `/diff` 等模板，可在 Settings 增删改 |
 | Web / PWA 客户端 | Vue 3 + TypeScript + Naive UI 多页应用，支持登录、注册、会话、设置、admin、setup 与中英双语 |
-| 手机浏览器 / iOS App | 支持 PWA、Capacitor iOS WebView MVP、relay setup、会话列表、触控终端、常用快捷键 |
+| 手机浏览器 / iOS App | PWA、Capacitor iOS WebView、relay setup（含 QR 扫码 + 手动 token）、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
-| 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验签再安装 |
+| 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验 Ed25519 + SHA256 再安装 |
 | 公网 relay 安全默认值 | 强 bootstrap 管理员密码、Origin 白名单、CSRF、限流、安全响应头 |
 | Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
-| 通知 | 支持本机系统通知、Web Push，以及命令完成 outbound webhook（飞书 / generic JSON） |
+| 通知 | 系统通知、Web Push、命令完成 outbound webhook（飞书 / generic JSON），并把状态 / type / summary 一并带过去 |
 | 用户系统 | 邀请码注册、per-user API token、用户独立的会话列表 / Web Push / webhooks；admin 后台管理用户与邀请 |
 | 桌面体验 | 主题、快捷键设置、右侧插件面板、Quick Input、文件浏览器、翻译插件 |
 
-还在路线图中的能力：TLS 自动化、平台 codesign/notarization、移动端原生体验增强、字体与配置 DSL。详见 [`docs/spec/architecture.md`](docs/spec/architecture.md)。
+还在路线图中的能力：桌面安装包 codesign / notarization（P1.8）、单 session 分享 + presence + 审计日志（P3）、可选持久化历史 + 命令级回放（P4）。详见 [`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/spec/architecture.md`](docs/spec/architecture.md) §phase 完成度。
 
 ## 快速开始
 
@@ -95,21 +105,30 @@ npm run ios:add   # 首次创建 Xcode 工程；已存在时不用重复执行
 npm run ios:open  # 同步 web/ 静态资源并打开 Xcode
 ```
 
-iOS App 首次启动后，在 Settings 里填写：
+iOS App 首次启动后有两种配置方式：
+
+**首选：QR 配对**
+
+1. 桌面端连接好 relay 后，打开 Settings → Pairing，点 `Generate QR code`。
+2. iOS App 点 Settings → Pair with desktop（或首次 setup 直接扫码），用相机扫码即可。
+3. 移动端会自动调 `/api/pair/consume` 拿到 relay URL + 一份独立的 API token，并写入 iOS Keychain。
+4. token 5 分钟内一次性有效；扫成功一次后立刻失效，没扫到自然过期，不需要手动撤销。
+
+**fallback：手动填写**
 
 ```text
 relay URL: https://relay.example.com
 API token: atk_...（在 relay /settings.html 页面生成）
 ```
 
-如果只是用公网 IP:port 做内测，也可以在手机端勾选 `allow insecure HTTP relay` 后填写：
+如果只是用公网 IP:port 做内测，可以在手机端勾选 `allow insecure HTTP relay` 后填写：
 
 ```text
 relay URL: http://121.43.40.128:23301
 API token: atk_...
 ```
 
-这个 insecure mode 只适合可信测试环境；正式使用仍建议配置 HTTPS/WSS 域名。
+insecure mode 只适合可信测试环境；正式使用建议配置 HTTPS/WSS 域名，iOS App Transport Security 默认禁止明文 HTTP。
 
 公网 relay 需要允许 Capacitor WebView 的 Origin：
 
@@ -352,4 +371,4 @@ cd mobile && npm test
 
 ## 许可证
 
-暂未指定 license，默认 All Rights Reserved。
+本项目以 [Apache License 2.0](LICENSE) 发布。贡献代码即表示同意把贡献以同一协议授权出去。

@@ -97,6 +97,11 @@ type appConfig struct {
 
 	// Plugins is the plugin-system block. Defaults filled in on first run.
 	Plugins PluginConfig `json:"plugins"`
+
+	// QuickTemplates persists the user's quick-action button list. Empty
+	// or absent means "use defaults" — the renderer seeds DEFAULT_TEMPLATES
+	// in that case. See docs/superpowers/specs/2026-06-04-quick-templates-design.md.
+	QuickTemplates []QuickTemplate `json:"quick_templates,omitempty"`
 }
 
 // AutoCheckUpdatesOrDefault returns the user's preference, defaulting to

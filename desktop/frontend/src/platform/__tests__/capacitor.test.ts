@@ -243,3 +243,33 @@ describe('createCapacitorPlatform — secure storage migration', () => {
     expect(localStorage.getItem('atterm.relay')).toBeNull()
   })
 })
+
+describe('createCapacitorPlatform — templates', () => {
+  beforeEach(() => { localStorage.clear() })
+
+  it('templates.load returns [] when localStorage is empty', async () => {
+    const p = createCapacitorPlatform()
+    expect(await p.templates.load()).toEqual([])
+  })
+
+  it('templates.save then load round-trips a list', async () => {
+    const p = createCapacitorPlatform()
+    const list = [{ id: 'a', label: 'A', text: 'a-text' }]
+    await p.templates.save(list)
+    expect(await p.templates.load()).toEqual(list)
+  })
+
+  it('templates.clear removes the key', async () => {
+    const p = createCapacitorPlatform()
+    await p.templates.save([{ id: 'x', label: 'x', text: 'x' }])
+    await p.templates.clear()
+    expect(localStorage.getItem('atterm.templates')).toBeNull()
+    expect(await p.templates.load()).toEqual([])
+  })
+
+  it('templates.load returns [] on malformed JSON', async () => {
+    localStorage.setItem('atterm.templates', '{not json')
+    const p = createCapacitorPlatform()
+    expect(await p.templates.load()).toEqual([])
+  })
+})

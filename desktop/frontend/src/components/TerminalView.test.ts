@@ -276,3 +276,11 @@ describe("TerminalView right-click send", () => {
     expect(sendBody![0]).not.toMatch(/term\.paste\b/);
   });
 });
+
+describe("TerminalView template bar", () => {
+  test("includes the template bar markup and preview dialog", () => {
+    expect(source).toContain('data-testid="template-bar"');
+    expect(source).toContain("TemplatePreviewDialog");
+    expect(source).toMatch(/effectiveTemplates\s*\(/);
+  });
+});

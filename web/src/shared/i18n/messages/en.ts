@@ -128,6 +128,8 @@ export const en = {
     shortcuts: 'terminal shortcuts',
     takeControl: 'Take control',
     tapToChangeConfig: 'Tap to change configuration.',
+    templatePreviewTitle: 'Send preview',
+    templatePreviewSend: 'Send',
   },
   sessions: {
     attach: 'Attach',

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 
 const attach = vi.fn()
 const detach = vi.fn()
@@ -24,6 +24,16 @@ vi.mock('../../lib/connection', () => ({
     sendPasteImage(blob: Blob, filename: string) { return sendPasteImage(blob, filename) }
   },
   pasteImageBlockReason: vi.fn().mockReturnValue(null),
+}))
+
+vi.mock('../../platform', () => ({
+  usePlatform: () => ({
+    templates: {
+      load: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    },
+  }),
 }))
 
 const termWrite = vi.fn()
@@ -176,14 +186,11 @@ describe('MobileTerminal', () => {
     }
   })
 
-  it('renders a mobile control panel with required keys and quick text buttons', () => {
+  it('renders a mobile control panel with required keys', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     expect(w.find('[data-testid="mobile-control-panel"]').exists()).toBe(true)
     for (const id of ['enter', 'esc', 'tab', 'ctrl-c', 'ctrl-d', 'arrow-up', 'arrow-down', 'arrow-left', 'arrow-right']) {
       expect(w.find(`[data-testid="mobile-key-${id}"]`).exists()).toBe(true)
-    }
-    for (const text of ['y', 'n', 'yes', 'no', 'continue']) {
-      expect(w.find(`[data-testid="mobile-quick-${text}"]`).exists()).toBe(true)
     }
   })
 
@@ -197,13 +204,11 @@ describe('MobileTerminal', () => {
     expect(sendInput).toHaveBeenCalledWith('\r')
   })
 
-  it('sends Ctrl-D and quick text through the control panel', async () => {
+  it('sends Ctrl-D through the control panel', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     await w.find('[data-testid="mobile-key-ctrl-d"]').trigger('click')
-    await w.find('[data-testid="mobile-quick-continue"]').trigger('click')
     expect(sendInput).toHaveBeenCalledWith('\x04')
-    expect(sendInput).toHaveBeenCalledWith('continue\r')
   })
 
   it('asks for paste confirmation before sending clipboard text', async () => {
@@ -228,5 +233,37 @@ describe('MobileTerminal', () => {
     lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
     await w.vm.$nextTick()
     expect(w.find('[data-testid="mobile-take-control"]').exists()).toBe(false)
+  })
+
+  it('mounts the template bar with templates loaded from platform.templates', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
+    // The defaults seed includes default-y; mock platform returns [] which falls back to DEFAULT_TEMPLATES.
+    expect(w.find('[data-testid="template-bar"]').exists()).toBe(true)
+    expect(w.find('[data-testid="template-btn-default-y"]').exists()).toBe(true)
+  })
+
+  it('opens the preview dialog when a template button is clicked', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+    await flushPromises()
+    await w.find('[data-testid="template-btn-default-y"]').trigger('click')
+    expect(w.find('[data-testid="template-preview"]').exists()).toBe(true)
+    expect(w.find('[data-testid="template-preview"]').text()).toContain('y')
+  })
+
+  it('sends template text plus CR when the preview Send button is clicked', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+    await flushPromises()
+    await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
+    await w.find('[data-testid="template-preview-confirm"]').trigger('click')
+    expect(sendInput).toHaveBeenCalledWith('yes\r')
+  })
+
+  it('does not render the legacy QUICK_TEXTS row', () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    expect(w.find('[data-testid="mobile-quick-y"]').exists()).toBe(false)
+    expect(w.find('[data-testid="mobile-quick-continue"]').exists()).toBe(false)
   })
 })

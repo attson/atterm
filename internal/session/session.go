@@ -507,6 +507,8 @@ func encodeMetaPayload(meta proto.SessionInfo, driverClientID, driverClientName 
 		CommandDurationMS: meta.CommandDurationMS,
 		CommandExitCode:   meta.CommandExitCode,
 		LastOutputAt:      meta.LastOutputAt,
+		Type:              meta.Type,
+		Summary:           meta.Summary,
 	})
 }
 
@@ -665,6 +667,12 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.meta.CommandExitCode = &v
 				changed = true
 			}
+			// Capture a structured summary of this command's tail output.
+			// Always populate Summary on D so clients can show the most
+			// recent context; ErrorLines is filled only when the command
+			// failed (extractErrorLines on lines we already split).
+			s.meta.Summary = computeSummary(s.scroll, now, exitCode != 0)
+			changed = true
 		}
 	}
 	return changed

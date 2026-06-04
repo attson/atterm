@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -672,5 +673,58 @@ func TestPushOut_TypeChangesBetweenTwoNonShells(t *testing.T) {
 	s.PushOut(3, []byte("\x1b]133;C;npm test\x07"))
 	if got := s.Info().Type; got != SessionTypeTest {
 		t.Fatalf("after npm test: Type got %q want %q", got, SessionTypeTest)
+	}
+}
+
+func TestPushOut_DEventCapturesSummary(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+
+	// 1. Start a command.
+	if !s.PushOut(1, []byte("\x1b]133;C;go test ./...\x07")) {
+		t.Fatal("first PushOut returned false")
+	}
+	// 2. Stream some output including a line that should match the error regex.
+	// Plain output doesn't change advertised meta, so the return value isn't
+	// asserted here — we only need the bytes recorded in scrollback.
+	s.PushOut(2, []byte("=== RUN   TestX\nerror: bad thing\nFAIL\n"))
+	// 3. End with a non-zero exit code.
+	if !s.PushOut(3, []byte("\x1b]133;D;1\x07")) {
+		t.Fatal("D PushOut returned false")
+	}
+
+	info := s.Info()
+	if info.Summary == nil {
+		t.Fatal("expected non-nil Summary after D event")
+	}
+	if info.Summary.CapturedAt == 0 {
+		t.Errorf("CapturedAt is zero")
+	}
+	if len(info.Summary.ErrorLines) == 0 {
+		t.Fatalf("expected ErrorLines, got %#v", info.Summary)
+	}
+	joined := strings.Join(info.Summary.ErrorLines, "|")
+	if !strings.Contains(joined, "error: bad thing") {
+		t.Errorf("ErrorLines missing entry: %v", info.Summary.ErrorLines)
+	}
+	if !strings.Contains(joined, "FAIL") {
+		t.Errorf("ErrorLines missing FAIL: %v", info.Summary.ErrorLines)
+	}
+	if !strings.Contains(info.Summary.RecentOutput, "error: bad thing") {
+		t.Errorf("RecentOutput missing line: %q", info.Summary.RecentOutput)
+	}
+}
+
+func TestPushOut_DEventOnSuccess_NoErrorLines(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	s.PushOut(1, []byte("\x1b]133;C;echo ok\x07"))
+	s.PushOut(2, []byte("ok\nerror: this should NOT be extracted on success\n"))
+	s.PushOut(3, []byte("\x1b]133;D;0\x07"))
+
+	info := s.Info()
+	if info.Summary == nil {
+		t.Fatal("expected non-nil Summary even on success")
+	}
+	if len(info.Summary.ErrorLines) != 0 {
+		t.Fatalf("ErrorLines should be empty on success, got %v", info.Summary.ErrorLines)
 	}
 }

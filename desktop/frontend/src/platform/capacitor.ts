@@ -1,4 +1,4 @@
-import type { Platform, RelayConfig, RelayMe, RemoteSession } from './types'
+import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } from './types'
 import { secureStorage } from './secureStorage'
 
 const STORAGE_KEY = 'atterm.relay'
@@ -135,7 +135,7 @@ export function createCapacitorPlatform(): Platform {
           id: string; command: string; title: string; cwd: string; cols: number; rows: number;
           host_id: string; host: string; user: string; remote_permission?: string; task_state?: RemoteSession['task_state'];
           current_command?: string; command_started_at?: number; command_ended_at?: number; command_duration_ms?: number;
-          command_exit_code?: number; last_output_at?: number; type?: string
+          command_exit_code?: number; last_output_at?: number; type?: string; summary?: SessionSummary
         }>
         return raw.map((s) => {
           const out: RemoteSession = {
@@ -157,6 +157,7 @@ export function createCapacitorPlatform(): Platform {
           if (s.command_exit_code !== undefined) out.command_exit_code = s.command_exit_code
           if (s.last_output_at !== undefined) out.last_output_at = s.last_output_at
           if (s.type !== undefined) out.type = s.type
+          if (s.summary !== undefined) out.summary = s.summary
           return out
         })
       },

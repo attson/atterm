@@ -29,6 +29,9 @@ import { descriptorsForSlot } from "../plugins/registry";
 import { usePluginConfigStore } from "../plugins/configStore";
 import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/types";
 import { useI18n } from "../i18n/useI18n";
+import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
+import TemplatePreviewDialog from "./TemplatePreviewDialog.vue";
+import { usePlatform } from "../platform";
 
 const props = withDefaults(
   defineProps<{
@@ -81,6 +84,13 @@ const driverHostname = ref("");
 // localHostname is this machine's hostname (from getHostInfo). Sent as
 // client_name in ATTACH and CLAIM_DRIVER so other clients can label us.
 const localHostname = ref("");
+
+// Quick-action templates rendered as a row of buttons above the status bar.
+// effectiveTemplates falls back to DEFAULT_TEMPLATES when persisted list
+// is empty so the bar is never empty on a fresh install.
+const templates = ref<readonly QuickTemplate[]>([]);
+const pendingTemplate = ref<QuickTemplate | null>(null);
+const platform = usePlatform();
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -468,6 +478,17 @@ function startConnection() {
   }
 }
 
+function onTemplateClick(tpl: QuickTemplate) {
+  pendingTemplate.value = tpl;
+}
+function confirmTemplate(tpl: QuickTemplate) {
+  pendingTemplate.value = null;
+  conn?.sendInput(`${tpl.text}\r`);
+}
+function cancelTemplate() {
+  pendingTemplate.value = null;
+}
+
 onMounted(async () => {
   await ensureTerm();
   // Resolve the local hostname before opening the WS so the very first ATTACH
@@ -480,6 +501,7 @@ onMounted(async () => {
     /* fall back to default */
   }
   startConnection();
+  effectiveTemplates(platform.templates).then((list) => { templates.value = list });
   document.addEventListener("mousedown", onDocumentMouseDown);
   document.addEventListener("keydown", onDocumentKeyDown);
   // Re-fit on the next two animation frames. Layout for the cell may not
@@ -587,6 +609,20 @@ watch(status, (nextStatus) => {
         >{{ item.label }}</button>
       </div>
     </Teleport>
+    <div class="template-bar" data-testid="template-bar">
+      <button
+        v-for="tpl in templates"
+        :key="tpl.id"
+        class="template-btn"
+        :data-testid="`template-btn-${tpl.id}`"
+        @click="onTemplateClick(tpl)"
+      >{{ tpl.label }}</button>
+    </div>
+    <TemplatePreviewDialog
+      :template="pendingTemplate"
+      @confirm="confirmTemplate"
+      @cancel="cancelTemplate"
+    />
   </div>
 </template>
 
@@ -599,7 +635,41 @@ watch(status, (nextStatus) => {
 }
 .term {
   position: absolute;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 30px;
+}
+.template-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  z-index: 4;
+}
+.template-btn {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 0.76rem;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.template-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .term :deep(.xterm) {
   /* FitAddon subtracts padding from the xterm element, not this host. */

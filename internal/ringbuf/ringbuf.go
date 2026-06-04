@@ -80,3 +80,44 @@ func (b *Buffer) LatestSeq() uint64 {
 	}
 	return b.chunks[len(b.chunks)-1].Seq
 }
+
+// TailBytes returns the last n bytes of the buffer's content as a fresh
+// slice. Returns nil for n <= 0 or an empty buffer. If the buffer has
+// fewer than n bytes total, returns everything. The returned slice is a
+// copy, safe to retain across mutations.
+//
+// Walks chunks from the tail accumulating lengths until >= n, then
+// copies the suffix into a fresh slice — O(chunks) time, O(n) memory.
+func (b *Buffer) TailBytes(n int) []byte {
+	if n <= 0 {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if len(b.chunks) == 0 {
+		return nil
+	}
+	// Find the first chunk we have to include (walking from the tail).
+	startIdx := len(b.chunks)
+	collected := 0
+	for i := len(b.chunks) - 1; i >= 0; i-- {
+		startIdx = i
+		collected += len(b.chunks[i].Data)
+		if collected >= n {
+			break
+		}
+	}
+	// Total bytes in chunks[startIdx:] is `collected`. Crop the front of
+	// the first chunk if we have more than n.
+	out := make([]byte, 0, min(collected, n))
+	if collected > n {
+		skip := collected - n
+		first := b.chunks[startIdx].Data
+		out = append(out, first[skip:]...)
+		startIdx++
+	}
+	for i := startIdx; i < len(b.chunks); i++ {
+		out = append(out, b.chunks[i].Data...)
+	}
+	return out
+}

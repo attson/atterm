@@ -1,7 +1,9 @@
 import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } from './types'
+import type { QuickTemplate } from '../lib/templates'
 import { secureStorage } from './secureStorage'
 
 const STORAGE_KEY = 'atterm.relay'
+const TEMPLATES_KEY = 'atterm.templates'
 
 // loadLegacyFromLocalStorage reads (but does not clear) the legacy
 // localStorage blob. Returned as parsed RelayConfig or null. Malformed JSON
@@ -176,6 +178,27 @@ export function createCapacitorPlatform(): Platform {
       // window* + pickLogFilePath omitted — desktop-only
     },
     events: createEventBus(),
+    templates: {
+      load: async () => {
+        if (typeof localStorage === 'undefined') return []
+        const raw = localStorage.getItem(TEMPLATES_KEY)
+        if (!raw) return []
+        try {
+          const parsed = JSON.parse(raw)
+          return Array.isArray(parsed) ? (parsed as QuickTemplate[]) : []
+        } catch {
+          return []
+        }
+      },
+      save: async (list) => {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list))
+      },
+      clear: async () => {
+        if (typeof localStorage === 'undefined') return
+        localStorage.removeItem(TEMPLATES_KEY)
+      },
+    },
     // updater + pluginHost omitted — desktop-only
   }
 }

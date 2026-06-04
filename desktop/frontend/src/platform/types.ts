@@ -125,12 +125,21 @@ export interface PluginHostBridge {
   }
 }
 
+import type { QuickTemplate } from '../lib/templates'
+
+export interface TemplateBridge {
+  load(): Promise<QuickTemplate[]>
+  save(list: QuickTemplate[]): Promise<void>
+  clear(): Promise<void>
+}
+
 export interface Platform {
   caps: Capabilities
   relay: RelayBridge
   sessions: SessionBridge
   system: SystemBridge
   events: EventBus
+  templates: TemplateBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
 }

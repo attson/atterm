@@ -64,6 +64,11 @@ export function createFakePlatform(): Platform {
       on: vi.fn(() => () => {}),
       emit: vi.fn(),
     },
+    templates: {
+      load: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    },
     updater: {
       getState: vi.fn().mockResolvedValue(fakeUpdateState),
       checkUpdate: vi.fn().mockResolvedValue(undefined),

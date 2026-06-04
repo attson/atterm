@@ -19,6 +19,8 @@ export type { main as PluginModels } from '../../wailsjs/go/models'
 // File system types re-exported from wailsjs/go/models so there's one
 // source of truth — the Go side regenerates wailsjs/* on changes.
 import type { main as _Models } from '../../wailsjs/go/models'
+import type { SessionSummary } from '../lib/connection'
+export type { SessionSummary } from '../lib/connection'
 export type DirEntry = _Models.DirEntry
 export type FileContent = _Models.FileContent
 export type FileMetaInfo = _Models.FileMetaInfo
@@ -76,6 +78,7 @@ export interface RemoteSession {
   command_exit_code?: number
   last_output_at?: number
   type?: string
+  summary?: SessionSummary
 }
 
 export interface SessionBridge {

@@ -140,6 +140,11 @@ function formatClock(unixSeconds: number): string {
             </span>
             <span v-if="s.cwd" :data-testid="`session-cwd-${s.session_id}`" class="cwd">{{ s.cwd }}</span>
             <span class="meta">{{ taskMeta(s) }}</span>
+            <span
+              v-if="s.task_state === 'failed' && s.summary?.error_lines?.length"
+              class="err-line"
+              :data-testid="`task-err-${s.session_id}`"
+            >{{ s.summary.error_lines[0] }}</span>
           </span>
           <span v-if="openSessionIds.includes(s.session_id)" :data-testid="`open-badge-${s.session_id}`" class="open">{{ t('mobile.openBadge') }}</span>
         </button>
@@ -179,6 +184,16 @@ function formatClock(unixSeconds: number): string {
 .ttl { font-size: 0.9rem; font-weight: 600; }
 .cwd { font-size: 0.74rem; color: #9aa3b2; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .meta { font-size: 0.72rem; color: #8d93a3; font-family: var(--font-mono); }
+.err-line {
+  display: block;
+  color: #f87171;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .open { font-size: 0.62rem; color: #9dc1ff; border: 1px solid rgba(59,130,246,.4); background: rgba(59,130,246,.12); border-radius: 5px; padding: 1px 6px; }
 .empty { color: #8d93a3; font-size: 0.85rem; text-align: center; padding: 40px 12px; line-height: 1.6; }
 .disconnected { color: #f87171; }

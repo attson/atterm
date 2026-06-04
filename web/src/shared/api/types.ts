@@ -100,6 +100,12 @@ export interface WebhookRow {
   created_at: string
 }
 
+export interface SessionSummary {
+  recent_output?: string
+  error_lines?: string[]
+  captured_at?: number
+}
+
 export interface SessionInfo {
   id: string
   command: string
@@ -120,6 +126,7 @@ export interface SessionInfo {
   command_exit_code?: number
   last_output_at?: number
   type?: string
+  summary?: SessionSummary
 }
 
 export type TaskState =

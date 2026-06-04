@@ -113,4 +113,49 @@ describe('MobileSessionList', () => {
     const shellCard = w.get('[data-testid="task-card-b"]')
     expect(shellCard.find('.type-chip').exists()).toBe(false)
   })
+
+  it('renders the first error line under failed cards that carry a summary', async () => {
+    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        session_id: 'a', host_id: 'h', host: 'box', user: 'me',
+        title: 'go test', cwd: '/', cols: 80, rows: 24,
+        task_state: 'failed',
+        summary: { recent_output: 'FAIL\nerror: boom\n', error_lines: ['FAIL', 'error: boom'], captured_at: 1 },
+      },
+    ])
+
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+
+    const errLine = w.find('[data-testid="task-err-a"]')
+    expect(errLine.exists()).toBe(true)
+    expect(errLine.text()).toBe('FAIL')
+  })
+
+  it('does not render the error line when a failed session has no summary', async () => {
+    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { session_id: 'b', host_id: 'h', host: 'box', user: 'me', title: 'go test', cwd: '/', cols: 80, rows: 24, task_state: 'failed' },
+    ])
+
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+
+    expect(w.find('[data-testid="task-err-b"]').exists()).toBe(false)
+  })
+
+  it('does not render the error line when a session is not in failed state', async () => {
+    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        session_id: 'c', host_id: 'h', host: 'box', user: 'me',
+        title: 'go test', cwd: '/', cols: 80, rows: 24,
+        task_state: 'completed',
+        summary: { error_lines: ['error: should be ignored on completed'], captured_at: 1 },
+      },
+    ])
+
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+
+    expect(w.find('[data-testid="task-err-c"]').exists()).toBe(false)
+  })
 })

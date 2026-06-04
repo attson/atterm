@@ -74,6 +74,16 @@ type OpenPayload struct {
 	User    string `json:"user"`    // OS username (uid resolved if possible)
 }
 
+// SessionSummary is the post-D snapshot of a command's tail output and
+// (when the captured exit code was non-zero) the extracted error lines.
+// Nil before the first D event on a session; overwritten on each
+// subsequent D. RecentOutput is ANSI-stripped UTF-8 text.
+type SessionSummary struct {
+	RecentOutput string   `json:"recent_output,omitempty"`
+	ErrorLines   []string `json:"error_lines,omitempty"`
+	CapturedAt   int64    `json:"captured_at,omitempty"`
+}
+
 // MetaPayload is the JSON body of a TypeMeta frame.
 type MetaPayload struct {
 	Cwd   string `json:"cwd,omitempty"`
@@ -98,6 +108,12 @@ type MetaPayload struct {
 	CommandDurationMS int    `json:"command_duration_ms,omitempty"`
 	CommandExitCode   *int   `json:"command_exit_code,omitempty"`
 	LastOutputAt      int64  `json:"last_output_at,omitempty"`
+	// Type is the session workload tag (carried-over from P2.11 which only
+	// added Type to SessionInfo, never to MetaPayload — meant real-time
+	// type changes didn't reach subscribers until they refreshed the list).
+	Type string `json:"type,omitempty"`
+	// Summary carries the most recent SessionSummary for the session.
+	Summary *SessionSummary `json:"summary,omitempty"`
 }
 
 // ClosePayload is the JSON body of a TypeClose frame.
@@ -207,4 +223,7 @@ type SessionInfo struct {
 	// current command. Older publishers omit it; clients treat empty as
 	// equivalent to "shell". See spec §3.
 	Type string `json:"type,omitempty"`
+	// Summary is the most recent OSC 133 'D' summary for the session.
+	// Nil before the first command finishes; overwritten on each D event.
+	Summary *SessionSummary `json:"summary,omitempty"`
 }

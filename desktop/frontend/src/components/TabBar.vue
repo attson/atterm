@@ -2,6 +2,7 @@
 import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
+import { displayForType } from "../lib/sessionType";
 
 interface TabSummary {
   id: string;
@@ -56,6 +57,10 @@ function layoutTitle(t: TabSummary): string {
   }
 }
 
+function typeForTab(t: TabSummary) {
+  return displayForType(t.activeSession?.type);
+}
+
 function onClose(e: MouseEvent, id: string) {
   e.stopPropagation();
   emit("close", id);
@@ -68,6 +73,7 @@ function onClose(e: MouseEvent, id: string) {
       <div
         v-for="(t, idx) in tabs"
         :key="t.id"
+        :data-tab-id="t.id"
         class="tab"
         :class="{ active: t.id === currentId, remote: t.activeRemote, disconnected: t.disconnected }"
         :title="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.disconnected ? i18nT('terminal.tabDisconnectedSuffix') + ' ' : '') + (t.activeSession?.command ?? '')"
@@ -77,6 +83,11 @@ function onClose(e: MouseEvent, id: string) {
         <span v-if="t.layout !== 'single'" class="layout-icon" :title="layoutTitle(t)">{{ layoutLabel(t) }}</span>
         <span v-else-if="t.activeRemote" class="dot remote-dot" :class="{ disconnected: t.disconnected }">●</span>
         <span v-else class="dot">●</span>
+        <span v-if="typeForTab(t)" class="type-icon" :title="typeForTab(t)!.key" :style="{ color: typeForTab(t)!.color }">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path :d="typeForTab(t)!.iconPath" />
+          </svg>
+        </span>
         <span class="title">{{ shortTitle(t.activeSession) }}</span>
         <button class="close" @click="onClose($event, t.id)">×</button>
       </div>
@@ -129,6 +140,7 @@ function onClose(e: MouseEvent, id: string) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: -1px;
 }
+.tab .type-icon { display: inline-flex; align-items: center; margin: 0 4px 0 2px; }
 .tab .title {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;

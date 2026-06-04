@@ -135,7 +135,7 @@ export function createCapacitorPlatform(): Platform {
           id: string; command: string; title: string; cwd: string; cols: number; rows: number;
           host_id: string; host: string; user: string; remote_permission?: string; task_state?: RemoteSession['task_state'];
           current_command?: string; command_started_at?: number; command_ended_at?: number; command_duration_ms?: number;
-          command_exit_code?: number; last_output_at?: number
+          command_exit_code?: number; last_output_at?: number; type?: string
         }>
         return raw.map((s) => {
           const out: RemoteSession = {
@@ -156,6 +156,7 @@ export function createCapacitorPlatform(): Platform {
           if (s.command_duration_ms !== undefined) out.command_duration_ms = s.command_duration_ms
           if (s.command_exit_code !== undefined) out.command_exit_code = s.command_exit_code
           if (s.last_output_at !== undefined) out.last_output_at = s.last_output_at
+          if (s.type !== undefined) out.type = s.type
           return out
         })
       },

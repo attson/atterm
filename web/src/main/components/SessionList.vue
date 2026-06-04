@@ -5,6 +5,7 @@ import { ApiError } from '@shared/api/client'
 import { listSessions } from '@shared/api/sessions'
 import type { SessionInfo } from '@shared/api/types'
 import { useI18n } from '@shared/i18n/useI18n'
+import { displayForType } from '@shared/sessionType'
 
 const POLL_MS = 2000
 
@@ -61,6 +62,10 @@ function sessionCount(count: number): string {
   return t(count === 1 ? 'main.sessionCountOne' : 'main.sessionCount', { count })
 }
 
+function typeForSession(s: SessionInfo) {
+  return displayForType(s.type)
+}
+
 onMounted(async () => {
   await reload()
   pollHandle = setInterval(reload, POLL_MS)
@@ -100,7 +105,12 @@ onUnmounted(() => {
           :data-testid="`session-card-${s.id}`"
           @click="onCardClick(s.id)"
         >
-          <div class="cmd">{{ s.command || t('main.unknownCommand') }}</div>
+          <div class="cmd">
+            <span v-if="typeForSession(s)" class="type-chip" :style="{ '--chip': typeForSession(s)!.color }">
+              {{ t(`main.taskTypes.${typeForSession(s)!.key}`) }}
+            </span>
+            {{ s.command || t('main.unknownCommand') }}
+          </div>
           <div class="meta">
             <span class="id"><code>{{ shortID(s.id) }}</code></span>
             <span class="size">{{ s.cols }}×{{ s.rows }}</span>
@@ -146,6 +156,15 @@ onUnmounted(() => {
 }
 .card:hover { border-color: var(--accent); }
 .cmd { font-weight: 600; margin-bottom: 0.5rem; }
+.type-chip {
+  font-size: 0.66rem; line-height: 1;
+  padding: 2px 6px; border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--chip) 60%, transparent);
+  color: var(--chip);
+  background: color-mix(in srgb, var(--chip) 12%, transparent);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-right: 6px;
+}
 .meta { display: flex; gap: 0.75rem; color: var(--fg-dim); font-size: 0.75rem; flex-wrap: wrap; }
 .meta .size { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .meta .cwd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }

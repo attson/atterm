@@ -104,6 +104,12 @@ export const zhCN = {
     unknownCommand: '（未知）',
     unknownHost: '未知主机',
     viewOnlyNotice: '此设备只能查看该会话。你可以查看输出，但不能输入。',
+    taskTypes: {
+      ai: 'AI',
+      test: '测试',
+      build: '构建',
+      deploy: '部署',
+    },
   },
   terminal: {
     cannotReachRelay: '无法连接 relay。',

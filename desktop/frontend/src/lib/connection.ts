@@ -427,6 +427,7 @@ export interface SessionInfo {
   command_duration_ms?: number;
   command_exit_code?: number;
   last_output_at?: number;
+  type?: string; // "shell" | "ai" | "test" | "build" | "deploy" — absent on older publishers
 }
 
 export type TaskState =

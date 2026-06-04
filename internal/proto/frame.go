@@ -202,4 +202,9 @@ type SessionInfo struct {
 	CommandDurationMS int    `json:"command_duration_ms,omitempty"`
 	CommandExitCode   *int   `json:"command_exit_code,omitempty"`
 	LastOutputAt      int64  `json:"last_output_at,omitempty"`
+	// Type is the workload classification ("shell" | "ai" | "test" |
+	// "build" | "deploy"), derived by session.ClassifyCommand from the
+	// current command. Older publishers omit it; clients treat empty as
+	// equivalent to "shell". See spec §3.
+	Type string `json:"type,omitempty"`
 }

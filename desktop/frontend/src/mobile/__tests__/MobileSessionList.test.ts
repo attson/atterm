@@ -96,4 +96,21 @@ describe('MobileSessionList', () => {
     await flushPromises()
     expect(w.emitted('tokenInvalid')).toBeTruthy()
   })
+
+  it('shows the localised type chip for non-shell sessions', async () => {
+    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { session_id: 'a', host_id: 'h', host: 'box', user: 'me', title: 'claude', cwd: '/', cols: 80, rows: 24, type: 'ai' },
+      { session_id: 'b', host_id: 'h', host: 'box', user: 'me', title: 'bash', cwd: '/', cols: 80, rows: 24, type: 'shell' },
+    ])
+
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+
+    const aiCard = w.get('[data-testid="task-card-a"]')
+    expect(aiCard.find('.type-chip').exists()).toBe(true)
+    expect(aiCard.find('.type-chip').text()).toBe('AI')
+
+    const shellCard = w.get('[data-testid="task-card-b"]')
+    expect(shellCard.find('.type-chip').exists()).toBe(false)
+  })
 })

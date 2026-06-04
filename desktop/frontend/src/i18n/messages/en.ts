@@ -341,6 +341,12 @@ export const en = {
       disconnected: "disconnected",
       closed: "closed",
     },
+    taskTypes: {
+      ai: 'AI',
+      test: 'Test',
+      build: 'Build',
+      deploy: 'Deploy',
+    },
     started: "started",
     lastOutput: "last output",
     openBadge: "open",

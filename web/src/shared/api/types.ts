@@ -119,6 +119,7 @@ export interface SessionInfo {
   command_duration_ms?: number
   command_exit_code?: number
   last_output_at?: number
+  type?: string
 }
 
 export type TaskState =

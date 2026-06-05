@@ -1,9 +1,11 @@
 import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } from './types'
 import type { QuickTemplate } from '../lib/templates'
+import type { AuxKey } from '../lib/auxKeys'
 import { secureStorage } from './secureStorage'
 
 const STORAGE_KEY = 'atterm.relay'
 const TEMPLATES_KEY = 'atterm.templates'
+const AUXKEYS_KEY = 'atterm.auxkeys'
 
 // loadLegacyFromLocalStorage reads (but does not clear) the legacy
 // localStorage blob. Returned as parsed RelayConfig or null. Malformed JSON
@@ -197,6 +199,27 @@ export function createCapacitorPlatform(): Platform {
       clear: async () => {
         if (typeof localStorage === 'undefined') return
         localStorage.removeItem(TEMPLATES_KEY)
+      },
+    },
+    auxKeys: {
+      load: async () => {
+        if (typeof localStorage === 'undefined') return []
+        const raw = localStorage.getItem(AUXKEYS_KEY)
+        if (!raw) return []
+        try {
+          const parsed = JSON.parse(raw)
+          return Array.isArray(parsed) ? (parsed as AuxKey[]) : []
+        } catch {
+          return []
+        }
+      },
+      save: async (list) => {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(AUXKEYS_KEY, JSON.stringify(list))
+      },
+      clear: async () => {
+        if (typeof localStorage === 'undefined') return
+        localStorage.removeItem(AUXKEYS_KEY)
       },
     },
     // updater + pluginHost omitted — desktop-only

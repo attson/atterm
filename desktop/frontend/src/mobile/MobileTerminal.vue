@@ -6,6 +6,8 @@ import { WebglAddon } from 'xterm-addon-webgl'
 import 'xterm/css/xterm.css'
 import { SessionConnection, type Endpoint } from '../lib/connection'
 import { effectiveTemplates, type QuickTemplate } from '../lib/templates'
+import { effectiveAuxKeys, type AuxKey } from '../lib/auxKeys'
+import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import TemplatePreviewDialog from '../components/TemplatePreviewDialog.vue'
 import { TERMINAL_FONT_FAMILY } from '../lib/terminalFont'
 import type { RemoteSession } from '../platform/types'
@@ -22,7 +24,6 @@ const emit = defineEmits<{ (e: 'ended'): void; (e: 'tokenInvalid'): void; (e: 'm
 const { t } = useI18n()
 
 const container = ref<HTMLDivElement | null>(null)
-const imageInput = ref<HTMLInputElement | null>(null)
 const isDriver = ref(true)
 const controlMode = ref(false)
 const pasteOpen = ref(false)
@@ -43,17 +44,7 @@ function decode(data: Uint8Array): string {
   return new TextDecoder().decode(data)
 }
 
-const AUX_KEYS: { id: string; label: string; seq: string }[] = [
-  { id: 'enter', label: 'enter', seq: '\r' },
-  { id: 'esc', label: 'esc', seq: '\x1b' },
-  { id: 'tab', label: 'tab', seq: '\t' },
-  { id: 'ctrl-c', label: '⌃C', seq: '\x03' },
-  { id: 'ctrl-d', label: '⌃D', seq: '\x04' },
-  { id: 'arrow-up', label: '↑', seq: '\x1b[A' },
-  { id: 'arrow-down', label: '↓', seq: '\x1b[B' },
-  { id: 'arrow-left', label: '←', seq: '\x1b[D' },
-  { id: 'arrow-right', label: '→', seq: '\x1b[C' },
-]
+const auxKeys = ref<readonly AuxKey[]>([])
 
 const canControl = computed(() => (props.info.remote_permission || 'full') !== 'view')
 const canSend = computed(() => canControl.value && controlMode.value && isDriver.value)
@@ -112,23 +103,37 @@ function confirmPaste() {
   pasteOpen.value = false
 }
 
-function openImagePicker() {
-  if (!canSend.value) { nudgeProtect(); return }
-  imageInput.value?.click()
+// base64ToFile decodes a Camera base64 result into a File so it rides the
+// existing sendPasteImage path unchanged.
+function base64ToFile(b64: string, mime: string, name: string): File {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new File([bytes], name, { type: mime })
 }
 
-async function onImagePicked(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  // Reset the input synchronously so picking the same file twice still fires
-  // a 'change' event next time.
-  input.value = ''
-  if (!file || !canSend.value) return
+async function openImagePicker() {
+  if (!canSend.value) { nudgeProtect(); return }
   try {
-    await conn?.sendPasteImage(file, file.name || 'mobile-image')
+    // Camera.getPhoto's Prompt sheet labels are localizable, unlike the
+    // native <input type=file> sheet (whose text follows the iOS system
+    // language, not the app). source=Prompt offers library + camera.
+    const photo = await Camera.getPhoto({
+      source: CameraSource.Prompt,
+      resultType: CameraResultType.Base64,
+      quality: 90,
+      promptLabelHeader: t('mobile.image.prompt'),
+      promptLabelPhoto: t('mobile.image.fromLibrary'),
+      promptLabelPicture: t('mobile.image.takePhoto'),
+      promptLabelCancel: t('common.cancel'),
+    })
+    if (!photo.base64String || !canSend.value) return
+    const ext = photo.format || 'jpeg'
+    const file = base64ToFile(photo.base64String, `image/${ext}`, `mobile-image.${ext}`)
+    await conn?.sendPasteImage(file, file.name)
   } catch {
-    // sendPasteImage already routes status='error' to MobileApp via onStatus;
-    // a separate toast here would be redundant.
+    // User cancelled the picker, or sendPasteImage failed (which already
+    // routes status='error' to MobileApp). Either way, nothing to add here.
   }
 }
 
@@ -186,12 +191,17 @@ onMounted(() => {
   conn.attach()
   refreshInputMode()
   effectiveTemplates(platform.templates).then((list) => { templates.value = list })
+  effectiveAuxKeys(platform.auxKeys).then((list) => { auxKeys.value = list })
 })
 
 watch(canSend, refreshInputMode)
 
 watch(() => props.active, (now) => {
   if (now) {
+    // Reload bars so edits made on the settings page (which the user reaches
+    // and returns from without remounting this v-show'd terminal) show up.
+    effectiveTemplates(platform.templates).then((list) => { templates.value = list })
+    effectiveAuxKeys(platform.auxKeys).then((list) => { auxKeys.value = list })
     // xterm could not measure while hidden (v-show); re-fit + focus on activate.
     requestAnimationFrame(() => { try { fit?.fit() } catch { /* */ } ; term?.focus() })
   }
@@ -259,7 +269,7 @@ function onTermPointerDown() {
       </div>
       <div class="kbbar">
         <button
-          v-for="k in AUX_KEYS"
+          v-for="k in auxKeys"
           :key="k.id"
           class="key"
           :class="{ inert: !canSend }"
@@ -268,14 +278,6 @@ function onTermPointerDown() {
         >{{ k.label }}</button>
         <button class="key paste" :class="{ inert: !canSend }" data-testid="mobile-paste" @click="openPasteConfirm">{{ t('mobile.pasteClipboard') }}</button>
         <button class="key paste" :class="{ inert: !canSend }" data-testid="mobile-image" @click="openImagePicker">{{ t('mobile.pasteImage') }}</button>
-        <input
-          ref="imageInput"
-          data-testid="mobile-image-input"
-          type="file"
-          accept="image/*"
-          class="hidden-file"
-          @change="onImagePicked"
-        />
       </div>
       <div v-if="pasteOpen" class="paste-confirm" data-testid="mobile-paste-confirm-panel">
         <textarea v-model="pasteText" :placeholder="t('mobile.pastePreview')" rows="2"></textarea>
@@ -347,5 +349,4 @@ function onTermPointerDown() {
 .paste-confirm { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
 .paste-confirm textarea { min-width: 0; resize: vertical; border-radius: 8px; border: 1px solid #1e2638; background: #020617; color: #e2e8f0; padding: 6px 8px; font: 0.78rem ui-monospace, Menlo, monospace; }
 .paste-confirm button { height: 30px; border-radius: 7px; border: 1px solid #1e2638; background: #11182b; color: #cbd5e1; padding: 0 10px; }
-.hidden-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; left: -9999px; }
 </style>

@@ -53,6 +53,8 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>atterm uses the camera to scan a pairing QR code from your desktop.</string>
+	<string>atterm uses the camera to scan a pairing QR code and to attach photos to a remote session.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>atterm uses your photo library to attach an image to a remote session.</string>
 </dict>
 </plist>

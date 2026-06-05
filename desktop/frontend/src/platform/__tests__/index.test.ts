@@ -34,6 +34,11 @@ function fakePlatform(): Platform {
       save: async () => {},
       clear: async () => {},
     },
+    auxKeys: {
+      load: async () => [],
+      save: async () => {},
+      clear: async () => {},
+    },
   }
 }
 

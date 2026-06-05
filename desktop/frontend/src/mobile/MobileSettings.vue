@@ -30,24 +30,35 @@ async function loadAux() {
 
 onMounted(async () => { await loadTemplates(); await loadAux() })
 
+// Tell every open terminal to reload its bars immediately — they stay mounted
+// behind the v-show'd host while the user is on this page, so a prop/lifecycle
+// change won't reach them.
+function notifyShortcutsChanged() {
+  platform.events.emit('mobile:shortcutsChanged', null)
+}
+
 async function onTemplatesChange(rows: EditorRow[]) {
   templateRows.value = rows
   const list: QuickTemplate[] = rows.map((r) => ({ id: r.id, label: r.label, text: r.value }))
   await platform.templates.save(list)
+  notifyShortcutsChanged()
 }
 async function onTemplatesReset() {
   await platform.templates.clear()
   await loadTemplates()
+  notifyShortcutsChanged()
 }
 
 async function onAuxChange(rows: EditorRow[]) {
   auxRows.value = rows
   const list: AuxKey[] = rows.map((r) => ({ id: r.id, label: r.label, seq: r.value }))
   await platform.auxKeys.save(list)
+  notifyShortcutsChanged()
 }
 async function onAuxReset() {
   await platform.auxKeys.clear()
   await loadAux()
+  notifyShortcutsChanged()
 }
 
 async function onLanguageChange(e: Event) {

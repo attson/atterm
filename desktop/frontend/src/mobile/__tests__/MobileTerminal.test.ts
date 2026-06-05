@@ -26,6 +26,11 @@ vi.mock('../../lib/connection', () => ({
   pasteImageBlockReason: vi.fn().mockReturnValue(null),
 }))
 
+const eventHandlers = new Map<string, (data: unknown) => void>()
+const eventsOn = vi.fn((evt: string, h: (data: unknown) => void) => {
+  eventHandlers.set(evt, h)
+  return () => eventHandlers.delete(evt)
+})
 vi.mock('../../platform', () => ({
   usePlatform: () => ({
     templates: {
@@ -37,6 +42,10 @@ vi.mock('../../platform', () => ({
       load: vi.fn().mockResolvedValue([]),
       save: vi.fn().mockResolvedValue(undefined),
       clear: vi.fn().mockResolvedValue(undefined),
+    },
+    events: {
+      on: (evt: string, h: (data: unknown) => void) => eventsOn(evt, h),
+      emit: vi.fn(),
     },
   }),
 }))
@@ -89,7 +98,7 @@ import type { RemoteSession } from '../../platform/types'
 
 const info: RemoteSession = { session_id: 's1', host_id: 'h', host: 'box', user: 'me', title: 't', cols: 80, rows: 24 }
 
-beforeEach(() => { vi.clearAllMocks(); lastHandlers = null; lastArgs = null })
+beforeEach(() => { vi.clearAllMocks(); lastHandlers = null; lastArgs = null; eventHandlers.clear() })
 
 describe('MobileTerminal', () => {
   it('creates SessionConnection with endpoint+sessionId and attaches on mount', () => {
@@ -329,6 +338,18 @@ describe('MobileTerminal', () => {
     await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
     await w.find('[data-testid="template-preview-confirm"]').trigger('click')
     expect(sendInput).toHaveBeenCalledWith('yes\r')
+  })
+
+  it('subscribes to shortcutsChanged to live-reload bars, and unsubscribes on unmount', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
+    expect(eventsOn).toHaveBeenCalledWith('mobile:shortcutsChanged', expect.any(Function))
+    // Firing the event reloads bars without a tab close/reopen.
+    eventHandlers.get('mobile:shortcutsChanged')?.(null)
+    await flushPromises()
+    expect(w.find('[data-testid="template-bar"]').exists()).toBe(true)
+    w.unmount()
+    expect(eventHandlers.has('mobile:shortcutsChanged')).toBe(false)
   })
 
   it('does not render the legacy QUICK_TEXTS row', () => {

@@ -40,6 +40,17 @@ let term: Terminal | null = null
 let fit: FitAddon | null = null
 let conn: SessionConnection | null = null
 let ro: ResizeObserver | null = null
+let shortcutsOff: (() => void) | null = null
+
+// reloadBars re-reads the persisted template + aux-key lists. Called on mount,
+// on tab activation, and on the 'mobile:shortcutsChanged' event the settings
+// page emits after an edit — the last one matters because opening settings
+// does NOT change this terminal's `active` prop (the whole host is v-show'd),
+// so an active-watch alone would leave an open tab showing the old bars.
+function reloadBars() {
+  effectiveTemplates(platform.templates).then((list) => { templates.value = list })
+  effectiveAuxKeys(platform.auxKeys).then((list) => { auxKeys.value = list })
+}
 
 function decode(data: Uint8Array): string {
   return new TextDecoder().decode(data)
@@ -242,24 +253,25 @@ onMounted(() => {
   })
   conn.attach()
   refreshInputMode()
-  effectiveTemplates(platform.templates).then((list) => { templates.value = list })
-  effectiveAuxKeys(platform.auxKeys).then((list) => { auxKeys.value = list })
+  reloadBars()
+  // Live-refresh the bars when the settings page reports an edit, even though
+  // this terminal stays mounted+active behind the v-show'd host the whole time.
+  shortcutsOff = platform.events.on('mobile:shortcutsChanged', reloadBars)
 })
 
 watch(canSend, refreshInputMode)
 
 watch(() => props.active, (now) => {
   if (now) {
-    // Reload bars so edits made on the settings page (which the user reaches
-    // and returns from without remounting this v-show'd terminal) show up.
-    effectiveTemplates(platform.templates).then((list) => { templates.value = list })
-    effectiveAuxKeys(platform.auxKeys).then((list) => { auxKeys.value = list })
+    reloadBars()
     // xterm could not measure while hidden (v-show); re-fit + focus on activate.
     requestAnimationFrame(() => { fitIfDriver(); term?.focus() })
   }
 })
 
 onBeforeUnmount(() => {
+  shortcutsOff?.()
+  shortcutsOff = null
   ro?.disconnect()
   ro = null
   conn?.detach()

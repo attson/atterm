@@ -33,6 +33,11 @@ vi.mock('../../platform', () => ({
       save: vi.fn().mockResolvedValue(undefined),
       clear: vi.fn().mockResolvedValue(undefined),
     },
+    auxKeys: {
+      load: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    },
   }),
 }))
 
@@ -58,6 +63,13 @@ vi.mock('xterm-addon-fit', () => ({
 }))
 vi.mock('xterm-addon-webgl', () => ({
   WebglAddon: class { onContextLoss() {} dispose() {} activate() {} },
+}))
+
+const getPhoto = vi.fn()
+vi.mock('@capacitor/camera', () => ({
+  Camera: { getPhoto: (...a: unknown[]) => getPhoto(...a) },
+  CameraSource: { Prompt: 'PROMPT' },
+  CameraResultType: { Base64: 'base64' },
 }))
 
 import MobileTerminal from '../MobileTerminal.vue'
@@ -148,66 +160,71 @@ describe('MobileTerminal', () => {
     expect(w.find('.term').classes()).not.toContain('inert')
   })
 
-  it('image button delegates the chosen file to sendPasteImage when controlMode is on', async () => {
+  it('image button sends the picked photo via sendPasteImage when in control mode', async () => {
+    getPhoto.mockResolvedValue({ base64String: btoa('PNGDATA'), format: 'png' })
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
-    // canSend gate: must be driver (default) + controlMode on. Toggle it on.
+    await flushPromises()
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
 
     const btn = w.find('[data-testid="mobile-image"]')
     expect(btn.exists()).toBe(true)
     expect(btn.classes()).not.toContain('inert')
 
-    const fileInput = w.find('[data-testid="mobile-image-input"]')
-    expect(fileInput.exists()).toBe(true)
-    expect(fileInput.attributes('accept')).toContain('image/')
+    await btn.trigger('click')
+    await flushPromises()
 
-    // Simulate the native picker returning a PNG.
-    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'snap.png', { type: 'image/png' })
-    const inputEl = fileInput.element as HTMLInputElement
-    Object.defineProperty(inputEl, 'files', { value: [file], configurable: true })
-    await fileInput.trigger('change')
-
-    expect(sendPasteImage).toHaveBeenCalledWith(file, 'snap.png')
+    expect(getPhoto).toHaveBeenCalled()
+    expect(sendPasteImage).toHaveBeenCalled()
+    const [file, name] = (sendPasteImage as ReturnType<typeof vi.fn>).mock.calls.at(-1)!
+    expect(name).toBe('mobile-image.png')
+    expect(file).toBeInstanceOf(File)
   })
 
-  it('image button is inert when not in control mode', () => {
+  it('image button does not invoke the camera when not in control mode', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
-    // controlMode is false by default — image button must be inert (still
-    // rendered + tap-able so we can flash the protect banner).
+    await flushPromises()
+    // controlMode is false by default — button is inert and tapping it only
+    // flashes the protect banner, never opens the camera.
     expect(w.find('[data-testid="mobile-image"]').classes()).toContain('inert')
+    await w.find('[data-testid="mobile-image"]').trigger('click')
+    expect(getPhoto).not.toHaveBeenCalled()
   })
 
-  it('image button is inert for view-only sessions', () => {
+  it('image button is inert for view-only sessions', async () => {
     const viewOnly = { ...info, remote_permission: 'view' }
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewOnly, active: true } })
+    await flushPromises()
     const btn = w.find('[data-testid="mobile-image"]')
     if (btn.exists()) {
       expect(btn.classes()).toContain('inert')
     }
   })
 
-  it('renders a mobile control panel with required keys', () => {
+  it('renders a mobile control panel with the default aux keys', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
     expect(w.find('[data-testid="mobile-control-panel"]').exists()).toBe(true)
-    for (const id of ['enter', 'esc', 'tab', 'ctrl-c', 'ctrl-d', 'arrow-up', 'arrow-down', 'arrow-left', 'arrow-right']) {
+    for (const id of ['aux-enter', 'aux-esc', 'aux-tab', 'aux-ctrl-c', 'aux-ctrl-d', 'aux-up', 'aux-down', 'aux-left', 'aux-right']) {
       expect(w.find(`[data-testid="mobile-key-${id}"]`).exists()).toBe(true)
     }
   })
 
   it('requires explicit control mode before shortcut buttons send input', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
-    await w.find('[data-testid="mobile-key-enter"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
     expect(sendInput).not.toHaveBeenCalled()
 
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
-    await w.find('[data-testid="mobile-key-enter"]').trigger('click')
+    await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
     expect(sendInput).toHaveBeenCalledWith('\r')
   })
 
   it('sends Ctrl-D through the control panel', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
-    await w.find('[data-testid="mobile-key-ctrl-d"]').trigger('click')
+    await w.find('[data-testid="mobile-key-aux-ctrl-d"]').trigger('click')
     expect(sendInput).toHaveBeenCalledWith('\x04')
   })
 
@@ -224,10 +241,11 @@ describe('MobileTerminal', () => {
   it('marks control buttons inert and hides take-control for view-only sessions', async () => {
     const viewInfo = { ...info, remote_permission: 'view' as const }
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewInfo, active: true } })
+    await flushPromises()
     expect(w.find('[data-testid="mobile-view-only"]').exists()).toBe(true)
-    expect(w.find('[data-testid="mobile-key-enter"]').classes()).toContain('inert')
+    expect(w.find('[data-testid="mobile-key-aux-enter"]').classes()).toContain('inert')
     expect((w.find('[data-testid="mobile-control-toggle"]').element as HTMLInputElement).disabled).toBe(true)
-    await w.find('[data-testid="mobile-key-enter"]').trigger('click')
+    await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
     expect(sendInput).not.toHaveBeenCalled()
 
     lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
@@ -295,8 +313,9 @@ describe('MobileTerminal', () => {
 
   it('shakes the protect-mode banner when an inert aux key is tapped', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
     expect(w.find('[data-testid="mobile-protect-banner"]').classes()).not.toContain('shaking')
-    await w.find('[data-testid="mobile-key-enter"]').trigger('click')
+    await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
     expect(sendInput).not.toHaveBeenCalled()
     expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
   })

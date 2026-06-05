@@ -272,4 +272,30 @@ describe('createCapacitorPlatform — templates', () => {
     const p = createCapacitorPlatform()
     expect(await p.templates.load()).toEqual([])
   })
+
+  it('auxKeys.load returns [] when localStorage is empty', async () => {
+    const p = createCapacitorPlatform()
+    expect(await p.auxKeys.load()).toEqual([])
+  })
+
+  it('auxKeys.save then load round-trips a list', async () => {
+    const p = createCapacitorPlatform()
+    const list = [{ id: 'aux-esc', label: 'esc', seq: '\x1b' }]
+    await p.auxKeys.save(list)
+    expect(await p.auxKeys.load()).toEqual(list)
+  })
+
+  it('auxKeys.clear removes the key', async () => {
+    const p = createCapacitorPlatform()
+    await p.auxKeys.save([{ id: 'aux-tab', label: 'tab', seq: '\t' }])
+    await p.auxKeys.clear()
+    expect(localStorage.getItem('atterm.auxkeys')).toBeNull()
+    expect(await p.auxKeys.load()).toEqual([])
+  })
+
+  it('auxKeys.load returns [] on malformed JSON', async () => {
+    localStorage.setItem('atterm.auxkeys', '{not json')
+    const p = createCapacitorPlatform()
+    expect(await p.auxKeys.load()).toEqual([])
+  })
 })

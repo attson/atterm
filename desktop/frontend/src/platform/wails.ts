@@ -101,6 +101,14 @@ export function createWailsPlatform(): Platform {
         await api.setQuickTemplates([])
       },
     },
+    // Desktop has a real keyboard and never renders the mobile aux-key bar,
+    // so there is nothing to persist — a no-op bridge satisfies the Platform
+    // type without a Go binding.
+    auxKeys: {
+      load: async () => [],
+      save: async () => {},
+      clear: async () => {},
+    },
     updater: {
       getState: api.getUpdateState,
       checkUpdate: api.checkUpdate,

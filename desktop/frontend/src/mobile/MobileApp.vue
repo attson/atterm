@@ -6,11 +6,12 @@ import type { Endpoint } from '../lib/connection'
 import { relayBaseToWsUrl } from './relay'
 import MobileSetup from './MobileSetup.vue'
 import MobileSessionList from './MobileSessionList.vue'
+import MobileSettings from './MobileSettings.vue'
 import MobileTerminalHost, { type OpenTerminal } from './MobileTerminalHost.vue'
 
 const MAX_OPEN_TERMINALS = 4
 
-type View = 'setup' | 'list' | 'terminal'
+type View = 'setup' | 'list' | 'terminal' | 'settings'
 const platform = usePlatform()
 
 const view = ref<View>('setup')
@@ -88,7 +89,21 @@ function removeTerminal(sessionId: string): void {
 function onClose(sessionId: string): void { removeTerminal(sessionId) }
 function onEnded(sessionId: string): void { removeTerminal(sessionId) }
 function onBack(): void { view.value = 'list' }
-function onEditRelay(): void { reason.value = null; view.value = 'setup' }
+function onOpenSettings(): void { view.value = 'settings' }
+function onSettingsBack(): void { view.value = 'list' }
+
+// Logout returns to the connect screen but deliberately preserves the saved
+// config (no relay.clear()): MobileSetup re-fills url + token from Keychain so
+// the user can reconnect or tweak without re-entering credentials. Open
+// terminals are torn down so we don't leave WS connections behind a screen the
+// user logically left (same teardown as onTokenInvalid).
+function onLogout(): void {
+  openTerminals.value = []
+  recency.value = []
+  activeSessionId.value = ''
+  reason.value = null
+  view.value = 'setup'
+}
 
 function onTokenInvalid(): void {
   openTerminals.value = []
@@ -105,8 +120,13 @@ function onTokenInvalid(): void {
     v-else-if="view === 'list'"
     :open-session-ids="openSessionIds"
     @open="onOpenSession"
-    @edit-relay="onEditRelay"
+    @open-settings="onOpenSettings"
     @token-invalid="onTokenInvalid"
+  />
+  <MobileSettings
+    v-else-if="view === 'settings'"
+    @back="onSettingsBack"
+    @logout="onLogout"
   />
   <!-- Stay mounted whenever sessions are open so going back to the list does
        NOT tear down the WS connections. A remount would mint a fresh clientID,

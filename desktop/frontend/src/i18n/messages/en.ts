@@ -377,6 +377,28 @@ export const en = {
     protectMode: {
       banner: "Tap-protect mode · enable Control mode below to type",
     },
+    settings: {
+      title: "Settings",
+      back: "Back",
+      language: "Language",
+      templates: "Quick templates",
+      auxKeys: "Shortcut keys",
+      logout: "Log out",
+      add: "Add",
+      edit: "Edit",
+      delete: "Delete",
+      reset: "Reset to defaults",
+      resetConfirm: "Replace your list with the defaults?",
+      label: "Label",
+      text: "Send text",
+      seq: "Send bytes (\\r \\n \\t \\e \\xNN ^X)",
+      save: "Save",
+    },
+    image: {
+      prompt: "Add image",
+      fromLibrary: "Photo Library",
+      takePhoto: "Take Photo",
+    },
     pairing: {
       connecting: 'Pairing…',
       failed: 'Pairing failed.',

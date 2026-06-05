@@ -133,6 +133,14 @@ export interface TemplateBridge {
   clear(): Promise<void>
 }
 
+import type { AuxKey } from '../lib/auxKeys'
+
+export interface AuxKeyBridge {
+  load(): Promise<AuxKey[]>
+  save(list: AuxKey[]): Promise<void>
+  clear(): Promise<void>
+}
+
 export interface Platform {
   caps: Capabilities
   relay: RelayBridge
@@ -140,6 +148,7 @@ export interface Platform {
   system: SystemBridge
   events: EventBus
   templates: TemplateBridge
+  auxKeys: AuxKeyBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
 }

@@ -379,6 +379,28 @@ export const zhCN = {
     protectMode: {
       banner: "防误触模式 · 打开下方控制模式可输入",
     },
+    settings: {
+      title: "设置",
+      back: "返回",
+      language: "语言",
+      templates: "快捷模板",
+      auxKeys: "快捷按键",
+      logout: "退出登录",
+      add: "新增",
+      edit: "编辑",
+      delete: "删除",
+      reset: "恢复默认",
+      resetConfirm: "用默认列表覆盖当前设置？",
+      label: "标签",
+      text: "发送文本",
+      seq: "发送字节（\\r \\n \\t \\e \\xNN ^X）",
+      save: "保存",
+    },
+    image: {
+      prompt: "添加图片",
+      fromLibrary: "从相册选择",
+      takePhoto: "拍照",
+    },
     pairing: {
       connecting: "配对中…",
       failed: "配对失败",

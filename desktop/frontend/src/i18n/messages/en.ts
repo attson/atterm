@@ -374,6 +374,9 @@ export const en = {
     pasteConfirm: "Paste",
     pastePreview: "Clipboard text",
     viewOnly: "View-only session. Controls are disabled.",
+    protectMode: {
+      banner: "Tap-protect mode · enable Control mode below to type",
+    },
     pairing: {
       connecting: 'Pairing…',
       failed: 'Pairing failed.',

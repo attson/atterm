@@ -29,6 +29,11 @@ const pasteOpen = ref(false)
 const pasteText = ref('')
 const templates = ref<readonly QuickTemplate[]>([])
 const pendingTemplate = ref<QuickTemplate | null>(null)
+// Increments every time the user tries to input while tap-protect is on
+// (controlMode off but otherwise eligible). The banner uses the value as a
+// :key so each bump restarts its shake animation.
+const protectBump = ref(0)
+let protectClearTimer: ReturnType<typeof setTimeout> | null = null
 const platform = usePlatform()
 let term: Terminal | null = null
 let fit: FitAddon | null = null
@@ -52,19 +57,27 @@ const AUX_KEYS: { id: string; label: string; seq: string }[] = [
 
 const canControl = computed(() => (props.info.remote_permission || 'full') !== 'view')
 const canSend = computed(() => canControl.value && controlMode.value && isDriver.value)
+const protectActive = computed(() => canControl.value && isDriver.value && !controlMode.value)
+
+function nudgeProtect() {
+  if (!protectActive.value) return
+  protectBump.value++
+  if (protectClearTimer) clearTimeout(protectClearTimer)
+  protectClearTimer = setTimeout(() => { protectClearTimer = null }, 500)
+}
 
 function refreshInputMode() {
   if (term) term.options.disableStdin = !canSend.value
 }
 
 function sendRaw(seq: string) {
-  if (!canSend.value) return
+  if (!canSend.value) { nudgeProtect(); return }
   conn?.sendInput(seq)
 }
 
 function sendAux(seq: string) { sendRaw(seq) }
 function onTemplateClick(tpl: QuickTemplate) {
-  if (!canSend.value) return
+  if (!canSend.value) { nudgeProtect(); return }
   pendingTemplate.value = tpl
 }
 function confirmTemplate(tpl: QuickTemplate) {
@@ -84,7 +97,7 @@ function takeControl() {
 }
 
 async function openPasteConfirm() {
-  if (!canSend.value) return
+  if (!canSend.value) { nudgeProtect(); return }
   pasteText.value = ''
   pasteOpen.value = true
   try {
@@ -100,7 +113,7 @@ function confirmPaste() {
 }
 
 function openImagePicker() {
-  if (!canSend.value) return
+  if (!canSend.value) { nudgeProtect(); return }
   imageInput.value?.click()
 }
 
@@ -190,12 +203,25 @@ onBeforeUnmount(() => {
   term?.dispose()
   term = null
   fit = null
+  if (protectClearTimer) { clearTimeout(protectClearTimer); protectClearTimer = null }
 })
+
+function onTermPointerDown() {
+  // xterm swallows keystrokes when disableStdin === true, so a tap on the
+  // terminal area with controlMode off would produce no visible feedback.
+  // Bumping the protect banner gives the user a clear reason.
+  if (!canSend.value) nudgeProtect()
+}
 </script>
 
 <template>
   <div class="mobile-term">
-    <div ref="container" class="term" :class="{ inert: !isDriver }"></div>
+    <div
+      ref="container"
+      class="term"
+      :class="{ inert: !isDriver }"
+      @pointerdown="onTermPointerDown"
+    ></div>
     <div v-if="!isDriver" class="viewer-overlay">
       <div class="viewer-card">
         <div class="viewer-title">{{ t('terminal.remoteHasControl') }}</div>
@@ -205,6 +231,13 @@ onBeforeUnmount(() => {
     </div>
     <div class="control-panel" data-testid="mobile-control-panel">
       <div v-if="!canControl" class="view-only" data-testid="mobile-view-only">{{ t('mobile.viewOnly') }}</div>
+      <div
+        v-if="protectActive"
+        :key="protectBump"
+        class="protect-banner"
+        :class="{ shaking: protectBump > 0 }"
+        data-testid="mobile-protect-banner"
+      >{{ t('mobile.protectMode.banner') }}</div>
       <label class="control-toggle">
         <input
           v-model="controlMode"
@@ -219,8 +252,8 @@ onBeforeUnmount(() => {
           v-for="tpl in templates"
           :key="tpl.id"
           class="template-btn"
+          :class="{ inert: !canSend }"
           :data-testid="`template-btn-${tpl.id}`"
-          :disabled="!canSend"
           @click="onTemplateClick(tpl)"
         >{{ tpl.label }}</button>
       </div>
@@ -229,12 +262,12 @@ onBeforeUnmount(() => {
           v-for="k in AUX_KEYS"
           :key="k.id"
           class="key"
+          :class="{ inert: !canSend }"
           :data-testid="`mobile-key-${k.id}`"
-          :disabled="!canSend"
           @click="sendAux(k.seq)"
         >{{ k.label }}</button>
-        <button class="key paste" data-testid="mobile-paste" :disabled="!canSend" @click="openPasteConfirm">{{ t('mobile.pasteClipboard') }}</button>
-        <button class="key paste" data-testid="mobile-image" :disabled="!canSend" @click="openImagePicker">{{ t('mobile.pasteImage') }}</button>
+        <button class="key paste" :class="{ inert: !canSend }" data-testid="mobile-paste" @click="openPasteConfirm">{{ t('mobile.pasteClipboard') }}</button>
+        <button class="key paste" :class="{ inert: !canSend }" data-testid="mobile-image" @click="openImagePicker">{{ t('mobile.pasteImage') }}</button>
         <input
           ref="imageInput"
           data-testid="mobile-image-input"
@@ -288,13 +321,23 @@ onBeforeUnmount(() => {
 .control-toggle { display: inline-flex; align-items: center; gap: 7px; color: #cbd5e1; font-size: 0.78rem; user-select: none; }
 .control-toggle input { accent-color: #3b82f6; }
 .view-only { border: 1px solid rgba(251,191,36,.34); border-radius: 8px; padding: 6px 8px; color: #fbbf24; background: rgba(251,191,36,.09); font-size: 0.75rem; }
+.protect-banner { border: 1px solid rgba(251,191,36,.34); border-radius: 8px; padding: 6px 8px; color: #fbbf24; background: rgba(251,191,36,.09); font-size: 0.75rem; line-height: 1.35; transition: border-color .2s, background .2s; }
+.protect-banner.shaking { animation: protect-shake 0.4s ease-in-out; border-color: #fbbf24; background: rgba(251,191,36,.18); }
+@keyframes protect-shake {
+  0%   { transform: translateX(0); }
+  20%  { transform: translateX(-4px); }
+  40%  { transform: translateX(4px); }
+  60%  { transform: translateX(-3px); }
+  80%  { transform: translateX(2px); }
+  100% { transform: translateX(0); }
+}
 .kbbar { display: flex; align-items: center; gap: 6px; overflow-x: auto; }
 .key { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: var(--font-mono); }
 .paste { font-family: inherit; min-width: 56px; }
-.key:disabled, .paste-confirm button:disabled { opacity: .45; color: #64748b; }
+.key.inert, .template-btn.inert { opacity: .45; color: #64748b; cursor: not-allowed; }
+.paste-confirm button:disabled { opacity: .45; color: #64748b; }
 .template-bar { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 0; border-top: 1px solid #1e2638; }
 .template-btn { flex: 0 0 auto; height: 28px; min-width: 34px; padding: 0 9px; border-radius: 7px; background: #11182b; border: 1px solid #1e2638; color: #cbd5e1; font-size: 0.75rem; font-family: var(--font-mono); }
-.template-btn:disabled { opacity: .45; color: #64748b; }
 .paste-confirm { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
 .paste-confirm textarea { min-width: 0; resize: vertical; border-radius: 8px; border: 1px solid #1e2638; background: #020617; color: #e2e8f0; padding: 6px 8px; font: 0.78rem ui-monospace, Menlo, monospace; }
 .paste-confirm button { height: 30px; border-radius: 7px; border: 1px solid #1e2638; background: #11182b; color: #cbd5e1; padding: 0 10px; }

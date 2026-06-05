@@ -155,7 +155,7 @@ describe('MobileTerminal', () => {
 
     const btn = w.find('[data-testid="mobile-image"]')
     expect(btn.exists()).toBe(true)
-    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.classes()).not.toContain('inert')
 
     const fileInput = w.find('[data-testid="mobile-image-input"]')
     expect(fileInput.exists()).toBe(true)
@@ -170,19 +170,19 @@ describe('MobileTerminal', () => {
     expect(sendPasteImage).toHaveBeenCalledWith(file, 'snap.png')
   })
 
-  it('image button is disabled when not in control mode', () => {
+  it('image button is inert when not in control mode', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
-    // controlMode is false by default — image button must be disabled.
-    expect(w.find('[data-testid="mobile-image"]').attributes('disabled')).toBe('')
+    // controlMode is false by default — image button must be inert (still
+    // rendered + tap-able so we can flash the protect banner).
+    expect(w.find('[data-testid="mobile-image"]').classes()).toContain('inert')
   })
 
-  it('image button is not rendered for view-only sessions', () => {
+  it('image button is inert for view-only sessions', () => {
     const viewOnly = { ...info, remote_permission: 'view' }
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewOnly, active: true } })
-    // view-only mirrors mobile-paste (also hidden / disabled). Mirror that behaviour for image.
     const btn = w.find('[data-testid="mobile-image"]')
     if (btn.exists()) {
-      expect(btn.attributes('disabled')).toBe('')
+      expect(btn.classes()).toContain('inert')
     }
   })
 
@@ -221,12 +221,12 @@ describe('MobileTerminal', () => {
     expect(sendInput).toHaveBeenCalledWith('paste me')
   })
 
-  it('disables control buttons and take-control for view-only sessions', async () => {
+  it('marks control buttons inert and hides take-control for view-only sessions', async () => {
     const viewInfo = { ...info, remote_permission: 'view' as const }
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewInfo, active: true } })
     expect(w.find('[data-testid="mobile-view-only"]').exists()).toBe(true)
-    expect(w.find('[data-testid="mobile-key-enter"]').attributes('disabled')).toBeDefined()
-    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+    expect(w.find('[data-testid="mobile-key-enter"]').classes()).toContain('inert')
+    expect((w.find('[data-testid="mobile-control-toggle"]').element as HTMLInputElement).disabled).toBe(true)
     await w.find('[data-testid="mobile-key-enter"]').trigger('click')
     expect(sendInput).not.toHaveBeenCalled()
 
@@ -265,5 +265,54 @@ describe('MobileTerminal', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     expect(w.find('[data-testid="mobile-quick-y"]').exists()).toBe(false)
     expect(w.find('[data-testid="mobile-quick-continue"]').exists()).toBe(false)
+  })
+
+  it('renders the protect-mode banner when controlMode is off and the user is an eligible driver', () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    // Default: driver + canControl + controlMode === false → banner shown.
+    expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(true)
+  })
+
+  it('hides the protect-mode banner once controlMode is enabled', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+    expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(false)
+  })
+
+  it('does not render the protect-mode banner for view-only sessions (view-only banner covers it)', () => {
+    const viewInfo = { ...info, remote_permission: 'view' as const }
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewInfo, active: true } })
+    expect(w.find('[data-testid="mobile-view-only"]').exists()).toBe(true)
+    expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(false)
+  })
+
+  it('does not render the protect-mode banner while the user is a viewer (viewer overlay covers it)', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
+    await w.vm.$nextTick()
+    expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(false)
+  })
+
+  it('shakes the protect-mode banner when an inert aux key is tapped', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    expect(w.find('[data-testid="mobile-protect-banner"]').classes()).not.toContain('shaking')
+    await w.find('[data-testid="mobile-key-enter"]').trigger('click')
+    expect(sendInput).not.toHaveBeenCalled()
+    expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
+  })
+
+  it('shakes the protect-mode banner when an inert template button is tapped', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
+    await w.find('[data-testid="template-btn-default-y"]').trigger('click')
+    // Preview dialog must NOT open while protect mode blocks input.
+    expect(w.find('[data-testid="template-preview"]').exists()).toBe(false)
+    expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
+  })
+
+  it('shakes the protect-mode banner when the user taps the terminal area', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await w.find('.term').trigger('pointerdown')
+    expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
   })
 })

@@ -376,6 +376,9 @@ export const zhCN = {
     pasteConfirm: "确认粘贴",
     pastePreview: "剪贴板文本",
     viewOnly: "只读会话，控制按钮已禁用。",
+    protectMode: {
+      banner: "防误触模式 · 打开下方控制模式可输入",
+    },
     pairing: {
       connecting: "配对中…",
       failed: "配对失败",

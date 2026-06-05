@@ -66,6 +66,13 @@ describe('MobileSettings', () => {
     expect(platform.templates.clear).toHaveBeenCalled()
   })
 
+  it('emits mobile:shortcutsChanged after an edit so open terminals live-reload', async () => {
+    const w = mount(MobileSettings)
+    await flushPromises()
+    await w.find('[data-testid="settings-templates-delete-default-y"]').trigger('click')
+    expect(platform.events.emit).toHaveBeenCalledWith('mobile:shortcutsChanged', null)
+  })
+
   it('adding an aux key parses escape notation into raw bytes before saving', async () => {
     const w = mount(MobileSettings)
     await flushPromises()

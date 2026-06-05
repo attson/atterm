@@ -24,12 +24,27 @@ afterEach(() => {
 })
 
 describe('MobileSetup', () => {
-  it('renders url, token, insecure switch, connect', () => {
+  it('renders url, scheme dropdown, token, insecure switch, connect', () => {
     const w = mount(MobileSetup)
     expect(w.find('[data-testid="relay-url"]').exists()).toBe(true)
+    expect(w.find('[data-testid="relay-scheme"]').exists()).toBe(true)
     expect(w.find('[data-testid="relay-token"]').exists()).toBe(true)
     expect(w.find('[data-testid="allow-insecure"]').exists()).toBe(true)
     expect(w.find('[data-testid="connect"]').exists()).toBe(true)
+  })
+
+  it('hides the insecure plaintext warning until the insecure switch is on', async () => {
+    const w = mount(MobileSetup)
+    expect(w.find('[data-testid="insecure-hint"]').exists()).toBe(false)
+    await w.find('[data-testid="allow-insecure"]').setValue(true)
+    expect(w.find('[data-testid="insecure-hint"]').exists()).toBe(true)
+  })
+
+  it('splits a full URL pasted into the host field into scheme + host', async () => {
+    const w = mount(MobileSetup)
+    await w.find('[data-testid="relay-url"]').setValue('http://121.43.40.128:23301')
+    expect((w.find('[data-testid="relay-scheme"]').element as HTMLSelectElement).value).toBe('http://')
+    expect((w.find('[data-testid="relay-url"]').element as HTMLInputElement).value).toBe('121.43.40.128:23301')
   })
 
   it("renders a language selector before relay connection", () => {
@@ -83,7 +98,8 @@ describe('MobileSetup', () => {
     })
     const w = mount(MobileSetup)
     await flushPromises()
-    expect((w.find('[data-testid="relay-url"]').element as HTMLInputElement).value).toBe('http://localhost:8080')
+    expect((w.find('[data-testid="relay-scheme"]').element as HTMLSelectElement).value).toBe('http://')
+    expect((w.find('[data-testid="relay-url"]').element as HTMLInputElement).value).toBe('localhost:8080')
     expect((w.find('[data-testid="relay-token"]').element as HTMLInputElement).value).toBe('atk_saved')
     expect((w.find('[data-testid="allow-insecure"]').element as HTMLInputElement).checked).toBe(true)
   })

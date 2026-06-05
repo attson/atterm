@@ -298,7 +298,10 @@ function onTermPointerDown() {
 .viewer-title { color: #e6e7ea; font-size: 0.9rem; }
 .take-control { padding: 8px 16px; border: none; border-radius: 8px; background: #3b82f6; color: #fff; font-weight: 600; }
 .view-only-copy { color: #fbbf24; font-size: 0.82rem; }
-.term { flex: 1; min-height: 0; }
+/* Clip the xterm WebGL <canvas> to the terminal box. On iOS the GPU canvas
+   has its own compositing layer that otherwise paints over the control panel
+   below it, hiding the protect-mode banner. */
+.term { flex: 1; min-height: 0; overflow: hidden; position: relative; z-index: 0; }
 /* While the viewer overlay is up, swallow pointer events on the terminal so an
    iOS tap on the "Take control" button can't fall through to xterm's hidden
    <textarea> and open the on-screen keyboard. The button itself sits on the
@@ -317,7 +320,10 @@ function onTermPointerDown() {
    positioning); iOS draws the native blinking caret there, doubling up with
    xterm's own block cursor. Hide the native one. */
 .term :deep(.xterm-helper-textarea) { caret-color: transparent; }
-.control-panel { border-top: 1px solid #1e2638; background: #0b1020; padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 7px; }
+/* position+z-index keeps the whole panel (incl. the protect banner) above the
+   terminal's GPU canvas layer; flex-shrink:0 stops it being squeezed to zero
+   when the keyboard resizes the viewport. */
+.control-panel { position: relative; z-index: 1; flex: 0 0 auto; border-top: 1px solid #1e2638; background: #0b1020; padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 7px; }
 .control-toggle { display: inline-flex; align-items: center; gap: 7px; color: #cbd5e1; font-size: 0.78rem; user-select: none; }
 .control-toggle input { accent-color: #3b82f6; }
 .view-only { border: 1px solid rgba(251,191,36,.34); border-radius: 8px; padding: 6px 8px; color: #fbbf24; background: rgba(251,191,36,.09); font-size: 0.75rem; }

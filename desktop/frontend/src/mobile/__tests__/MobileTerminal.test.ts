@@ -41,9 +41,17 @@ vi.mock('../../platform', () => ({
   }),
 }))
 
+// jsdom has no ResizeObserver; MobileTerminal registers one to re-fit.
+vi.stubGlobal('ResizeObserver', class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+})
+
 const termWrite = vi.fn()
 const termDispose = vi.fn()
 const termFit = vi.fn()
+const termResize = vi.fn()
 vi.mock('xterm', () => ({
   Terminal: class {
     options: Record<string, unknown> = {}
@@ -56,6 +64,7 @@ vi.mock('xterm', () => ({
     dispose() { termDispose() }
     focus() {}
     loadAddon() {}
+    resize(c: number, r: number) { termResize(c, r) }
   },
 }))
 vi.mock('xterm-addon-fit', () => ({
@@ -108,6 +117,24 @@ describe('MobileTerminal', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onMeta?.({ cwd: '/Users/me/proj', title: 'vim' })
     expect(w.emitted('meta')![0]).toEqual([{ cwd: '/Users/me/proj', title: 'vim' }])
+  })
+
+  it('viewer locks the grid to the PTY cols/rows from META (avoids overflow)', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    // Become a viewer (not driver), then receive a wide PTY size.
+    lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
+    await w.vm.$nextTick()
+    termResize.mockClear()
+    lastHandlers.onMeta?.({ cols: 213, rows: 50 })
+    expect(termResize).toHaveBeenCalledWith(213, 50)
+  })
+
+  it('driver does NOT lock to META cols/rows (it fits its own viewport)', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    // Driver by default; a META with a wide size must not resize our grid.
+    termResize.mockClear()
+    lastHandlers.onMeta?.({ cols: 213, rows: 50 })
+    expect(termResize).not.toHaveBeenCalled()
   })
 
   it('detaches + disposes on unmount', () => {

@@ -52,11 +52,14 @@ const termWrite = vi.fn()
 const termDispose = vi.fn()
 const termFit = vi.fn()
 const termResize = vi.fn()
+let lastTerm: any = null
 vi.mock('xterm', () => ({
   Terminal: class {
     options: Record<string, unknown> = {}
     cols = 80
     rows = 24
+    textarea = document.createElement('textarea')
+    constructor() { lastTerm = this }
     onData(cb: (s: string) => void) { (this as any)._onData = cb }
     onResize() {}
     open() {}
@@ -245,6 +248,28 @@ describe('MobileTerminal', () => {
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
     expect(sendInput).toHaveBeenCalledWith('\r')
+  })
+
+  it('forwards non-composition IME insertText (punctuation/space/digit) xterm drops', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
+    await w.find('[data-testid="mobile-control-toggle"]').setValue(true) // canSend
+    sendInput.mockClear()
+    for (const ch of ['，', ' ', '1']) {
+      lastTerm.textarea.dispatchEvent(new InputEvent('input', { data: ch, inputType: 'insertText', isComposing: false } as any))
+    }
+    expect(sendInput.mock.calls.map((c: unknown[]) => c[0])).toEqual(['，', ' ', '1'])
+  })
+
+  it('does NOT hijack composition input (pinyin→Hanzi stays with xterm)', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    await flushPromises()
+    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+    sendInput.mockClear()
+    // composition-in-progress + the committed-composition input must be ignored
+    lastTerm.textarea.dispatchEvent(new InputEvent('input', { data: 'ni', inputType: 'insertCompositionText', isComposing: true } as any))
+    lastTerm.textarea.dispatchEvent(new InputEvent('input', { data: '你', inputType: 'insertCompositionText', isComposing: false } as any))
+    expect(sendInput).not.toHaveBeenCalled()
   })
 
   it('sends Ctrl-D through the control panel', async () => {

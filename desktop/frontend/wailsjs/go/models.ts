@@ -230,71 +230,17 @@ export namespace main {
 	        this.defaultTargetLang = source["defaultTargetLang"];
 	    }
 	}
-	export class QuickInputButton {
-	    id: string;
-	    label: string;
-	    send: string;
-	    appendNewline: boolean;
-	    hotkey?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new QuickInputButton(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.label = source["label"];
-	        this.send = source["send"];
-	        this.appendNewline = source["appendNewline"];
-	        this.hotkey = source["hotkey"];
-	    }
-	}
-	export class QuickInputConfig {
-	    enabled: boolean;
-	    buttons: QuickInputButton[];
-	
-	    static createFrom(source: any = {}) {
-	        return new QuickInputConfig(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.enabled = source["enabled"];
-	        this.buttons = this.convertValues(source["buttons"], QuickInputButton);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
 	export class PluginConfig {
-	    quickInput: QuickInputConfig;
 	    fileExplorer: FileExplorerConfig;
 	    translate: TranslateConfig;
 	    shortcuts: ShortcutsConfig;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.quickInput = this.convertValues(source["quickInput"], QuickInputConfig);
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);
 	        this.translate = this.convertValues(source["translate"], TranslateConfig);
 	        this.shortcuts = this.convertValues(source["shortcuts"], ShortcutsConfig);

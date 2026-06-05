@@ -3,7 +3,6 @@ import { onMounted } from "vue";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
 import type { PluginID } from "../plugins/types";
-import QuickInputSettings from "../plugins/quickInput/QuickInputSettings.vue";
 import TranslateSettings from "../plugins/translate/TranslateSettings.vue";
 import { useI18n } from "../i18n/useI18n";
 
@@ -54,7 +53,6 @@ async function toggleLineNumbers(v: boolean) {
           <span class="title">{{ t(p.titleKey) }}</span>
         </label>
         <p class="desc">{{ t(p.descriptionKey) }}</p>
-        <QuickInputSettings v-if="p.id === 'quick-input' && store.isPluginEnabled('quick-input')" />
         <div v-if="p.id === 'file-explorer' && store.isPluginEnabled('file-explorer')" class="fe-settings">
           <label>
             <input type="checkbox" :checked="store.cfg?.fileExplorer.showHidden ?? false"

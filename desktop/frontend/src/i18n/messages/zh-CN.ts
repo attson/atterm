@@ -420,18 +420,6 @@ export const zhCN = {
     },
   },
   plugins: {
-    quickInput: {
-      title: "快速输入",
-      description: "底部工具栏中的自定义按钮，可向当前面板发送文本。",
-      label: "标签",
-      send: "发送",
-      newline: "换行",
-      hotkey: "热键",
-      addButton: "+ 添加按钮",
-      newButtonLabel: "新建",
-      labelEmpty: "标签不能为空",
-      hotkeyConflict: "\"{label}\" 的热键冲突",
-    },
     fileExplorer: {
       title: "文件浏览器",
       description: "侧边面板，包含文件树和只读语法高亮预览。跟随当前面板的 cwd。",

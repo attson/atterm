@@ -16,15 +16,14 @@ beforeEach(() => {
   setActivePinia(createPinia());
   PLUGINS.length = 0;
   PLUGINS.push({
-    id: "quick-input",
+    id: "file-explorer",
     slot: "bottom-toolbar",
-    titleKey: "plugins.quickInput.title",
-    descriptionKey: "plugins.quickInput.description",
+    titleKey: "plugins.fileExplorer.title",
+    descriptionKey: "plugins.fileExplorer.description",
     load: () => Promise.reject(new Error("not used")),
     defaultEnabled: true,
   });
   (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-    quickInput: { enabled: false, buttons: [] },
     fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: true, innerTreeRatio: 0.3, showHidden: false },
   } as any);
   (platform.pluginHost!.setPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue(undefined as unknown as any);

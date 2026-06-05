@@ -418,18 +418,6 @@ export const en = {
     },
   },
   plugins: {
-    quickInput: {
-      title: "Quick Input",
-      description: "Bottom toolbar of user-defined buttons that send text to the active pane.",
-      label: "Label",
-      send: "Send",
-      newline: "Newline",
-      hotkey: "Hotkey",
-      addButton: "+ Add button",
-      newButtonLabel: "new",
-      labelEmpty: "label cannot be empty",
-      hotkeyConflict: "hotkey conflict on \"{label}\"",
-    },
     fileExplorer: {
       title: "File Explorer",
       description: "Side panel with file tree and read-only syntax-highlighted preview. Follows the active pane's cwd.",

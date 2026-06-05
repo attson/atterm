@@ -4,8 +4,6 @@ import { usePlatform, type PluginModels } from '../platform'
 import type { PluginID } from "./types";
 
 // Re-export types for convenience
-export type QuickInputButton = PluginModels.QuickInputButton;
-export type QuickInputConfig = PluginModels.QuickInputConfig;
 export type FileExplorerConfig = PluginModels.FileExplorerConfig;
 export type TranslateConfig = PluginModels.TranslateConfig;
 export type ShortcutsConfig = PluginModels.ShortcutsConfig;
@@ -36,7 +34,6 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
 
   function isPluginEnabled(id: PluginID): boolean {
     if (!cfg.value) return false;
-    if (id === "quick-input") return cfg.value.quickInput.enabled;
     if (id === "file-explorer") return cfg.value.fileExplorer.enabled;
     if (id === "translate") return cfg.value.translate.enabled;
     return false;
@@ -45,7 +42,6 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
   async function setEnabled(id: PluginID, enabled: boolean) {
     if (!cfg.value) return;
     const next: PluginConfig = JSON.parse(JSON.stringify(cfg.value));
-    if (id === "quick-input") next.quickInput.enabled = enabled;
     if (id === "file-explorer") next.fileExplorer.enabled = enabled;
     if (id === "translate") next.translate.enabled = enabled;
     await save(next);

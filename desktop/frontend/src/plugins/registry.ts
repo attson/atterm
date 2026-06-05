@@ -1,5 +1,4 @@
 import type { PluginDescriptor } from "./types";
-import { quickInputDescriptor } from "./quickInput";
 import { fileExplorerDescriptor } from "./fileExplorer";
 import { translateDescriptor } from "./translate";
 
@@ -8,7 +7,6 @@ import { translateDescriptor } from "./translate";
 // analysis of import() arguments performs the chunk split — keep the path
 // literal (no dynamic strings).
 export const PLUGINS: PluginDescriptor[] = [
-  quickInputDescriptor,
   fileExplorerDescriptor,
   translateDescriptor,
 ];

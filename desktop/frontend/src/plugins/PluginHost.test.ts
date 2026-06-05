@@ -35,16 +35,15 @@ describe("PluginHost", () => {
     setActivePinia(createPinia());
     PLUGINS.length = 0;
     PLUGINS.push({
-      id: "quick-input",
+      id: "file-explorer",
       slot: "bottom-toolbar",
-      titleKey: "plugins.quickInput.title",
-      descriptionKey: "plugins.quickInput.description",
+      titleKey: "plugins.fileExplorer.title",
+      descriptionKey: "plugins.fileExplorer.description",
       load: () => Promise.resolve({ default: DummyPlugin }),
       defaultEnabled: true,
     });
     (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-      quickInput: { enabled: true, buttons: [] },
-      fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: true, innerTreeRatio: 0.3, showHidden: false },
+      fileExplorer: { enabled: true, panelWidthPx: 380, panelCollapsed: true, innerTreeRatio: 0.3, showHidden: false },
     } as any);
   });
 
@@ -63,7 +62,6 @@ describe("PluginHost", () => {
 
   it("does not load when plugin is disabled", async () => {
     (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-      quickInput: { enabled: false, buttons: [] },
       fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: true, innerTreeRatio: 0.3, showHidden: false },
     } as any);
     const w = mount(PluginHost, {

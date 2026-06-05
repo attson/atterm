@@ -76,6 +76,20 @@ function sendRaw(seq: string) {
   conn?.sendInput(seq)
 }
 
+// onImeInput handles direct (non-composition) on-screen-keyboard input that
+// xterm drops on iOS — see the registration site in onMounted for the why.
+function onImeInput(ev: Event) {
+  const e = ev as InputEvent
+  if (e.isComposing) return
+  if (e.inputType === 'insertText' && e.data) {
+    // Take ownership: stop xterm's bubble-phase handler so the character is
+    // sent exactly once (by us), never zero or twice.
+    e.stopImmediatePropagation()
+    sendRaw(e.data)
+    if (term?.textarea) term.textarea.value = ''
+  }
+}
+
 function sendAux(seq: string) { sendRaw(seq) }
 function onTemplateClick(tpl: QuickTemplate) {
   if (!canSend.value) { nudgeProtect(); return }
@@ -172,6 +186,17 @@ onMounted(() => {
     ?.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true })
   term.onData((s: string) => sendRaw(s))
   term.onResize(({ cols, rows }) => conn?.sendResize(cols, rows))
+
+  // Mobile IME fallback. On iOS, characters typed through the on-screen
+  // keyboard that are NOT part of a composition — Chinese full-width
+  // punctuation (，。？！), digits, and space from the 9-key layout — arrive
+  // as `input` events with inputType 'insertText' and isComposing=false, but
+  // xterm's own handler drops them (only pinyin→Hanzi via insertCompositionText
+  // gets forwarded). Capture the event before xterm's bubble-phase listener,
+  // send the data ourselves, and stop propagation so xterm can't double-send.
+  // Composition input (insertCompositionText) is left to xterm untouched.
+  const ta = term.textarea
+  if (ta) ta.addEventListener('input', onImeInput, { capture: true })
 
   // The first fit() on iOS often runs before the WebView has settled the
   // .term box (safe-area + keyboard layout land a frame or two later), which

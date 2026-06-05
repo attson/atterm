@@ -6,8 +6,23 @@ import Capacitor
 /// access groups, no biometric prompt. AccessibleAfterFirstUnlock so
 /// background reconnect works after the phone is unlocked at least once
 /// per boot.
+///
+/// Capacitor 8 discovers plugins via CAPBridgedPlugin conformance, not the
+/// legacy CAP_PLUGIN Objective-C macro. The identifier/jsName/pluginMethods
+/// below replace what the old .m file declared. jsName MUST match the name
+/// passed to registerPlugin('AttermSecureStorage') on the JS side. Because
+/// this is an app-local plugin (not a distributed package), it is also
+/// registered explicitly in MainViewController.capacitorDidLoad().
 @objc(AttermSecureStoragePlugin)
-public class AttermSecureStoragePlugin: CAPPlugin {
+public class AttermSecureStoragePlugin: CAPPlugin, CAPBridgedPlugin {
+
+    public let identifier = "AttermSecureStoragePlugin"
+    public let jsName = "AttermSecureStorage"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "set", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "get", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "remove", returnType: CAPPluginReturnPromise),
+    ]
 
     private let service = "com.attson.atterm"
 

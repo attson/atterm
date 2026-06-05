@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { type LocalePreference } from '../i18n'
 import { useI18n } from '../i18n/useI18n'
 import { usePlatform } from '../platform'
@@ -37,6 +37,12 @@ function applyUrl(raw: string): void {
 function normalizeHost(): void {
   applyUrl(host.value)
 }
+
+// The insecure-transport opt-in only applies to http:// relays; over https the
+// transport is already encrypted, so the toggle is hidden and force-cleared.
+watch(scheme, (s) => {
+  if (s === 'https://') allowInsecure.value = false
+})
 
 const banner = computed(() =>
   props.reason === 'token_invalid'
@@ -159,11 +165,11 @@ async function onLanguageChange(e: Event): Promise<void> {
         <span>{{ t('mobile.apiToken') }}</span>
         <input data-testid="relay-token" v-model="token" :disabled="submitting" type="password" placeholder="atk_…" autocomplete="off" />
       </label>
-      <label class="row">
+      <label v-if="scheme === 'http://'" class="row">
         <span>{{ t('mobile.allowInsecure') }}</span>
         <input data-testid="allow-insecure" v-model="allowInsecure" :disabled="submitting" type="checkbox" />
       </label>
-      <aside v-if="allowInsecure" class="warn-hint" data-state="warn" data-testid="insecure-hint">
+      <aside v-if="scheme === 'http://' && allowInsecure" class="warn-hint" data-state="warn" data-testid="insecure-hint">
         <svg class="warn-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/>
           <line x1="12" y1="9" x2="12" y2="13"/>

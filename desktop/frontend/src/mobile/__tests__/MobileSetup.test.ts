@@ -24,20 +24,39 @@ afterEach(() => {
 })
 
 describe('MobileSetup', () => {
-  it('renders url, scheme dropdown, token, insecure switch, connect', () => {
+  it('renders url, scheme dropdown, token, connect', () => {
     const w = mount(MobileSetup)
     expect(w.find('[data-testid="relay-url"]').exists()).toBe(true)
     expect(w.find('[data-testid="relay-scheme"]').exists()).toBe(true)
     expect(w.find('[data-testid="relay-token"]').exists()).toBe(true)
-    expect(w.find('[data-testid="allow-insecure"]').exists()).toBe(true)
     expect(w.find('[data-testid="connect"]').exists()).toBe(true)
   })
 
-  it('hides the insecure plaintext warning until the insecure switch is on', async () => {
+  it('hides the insecure switch entirely when scheme is https', () => {
     const w = mount(MobileSetup)
+    // default scheme is https:// → insecure opt-in is irrelevant and hidden
+    expect(w.find('[data-testid="allow-insecure"]').exists()).toBe(false)
+    expect(w.find('[data-testid="insecure-hint"]').exists()).toBe(false)
+  })
+
+  it('shows the insecure switch only after selecting http, and warns once enabled', async () => {
+    const w = mount(MobileSetup)
+    await w.find('[data-testid="relay-scheme"]').setValue('http://')
+    expect(w.find('[data-testid="allow-insecure"]').exists()).toBe(true)
     expect(w.find('[data-testid="insecure-hint"]').exists()).toBe(false)
     await w.find('[data-testid="allow-insecure"]').setValue(true)
     expect(w.find('[data-testid="insecure-hint"]').exists()).toBe(true)
+  })
+
+  it('clears allowInsecure when the scheme switches back to https', async () => {
+    const w = mount(MobileSetup)
+    await w.find('[data-testid="relay-scheme"]').setValue('http://')
+    await w.find('[data-testid="allow-insecure"]').setValue(true)
+    expect(w.find('[data-testid="insecure-hint"]').exists()).toBe(true)
+    await w.find('[data-testid="relay-scheme"]').setValue('https://')
+    // toggle + hint both gone, and the flag is reset so it won't be saved
+    expect(w.find('[data-testid="allow-insecure"]').exists()).toBe(false)
+    expect(w.find('[data-testid="insecure-hint"]').exists()).toBe(false)
   })
 
   it('splits a full URL pasted into the host field into scheme + host', async () => {

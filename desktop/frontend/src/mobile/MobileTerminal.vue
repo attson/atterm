@@ -39,9 +39,19 @@ const platform = usePlatform()
 let term: Terminal | null = null
 let fit: FitAddon | null = null
 let conn: SessionConnection | null = null
+let ro: ResizeObserver | null = null
 
 function decode(data: Uint8Array): string {
   return new TextDecoder().decode(data)
+}
+
+// fitIfDriver re-fits the terminal to its container, but only when we own the
+// PTY (driver). Viewers lock to the PTY's advertised cols/rows instead (see
+// onMeta) so they mirror the driver exactly. fit() fires term.onResize, which
+// forwards a RESIZE to the PTY — correct for the driver, wrong for a viewer.
+function fitIfDriver() {
+  if (!term || !fit || !isDriver.value) return
+  try { fit.fit() } catch { /* container not laid out yet */ }
 }
 
 const auxKeys = ref<readonly AuxKey[]>([])
@@ -160,13 +170,31 @@ onMounted(() => {
   // from the resulting 'scroll' events.
   container.value!.querySelector('.xterm-viewport')
     ?.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true })
-  try { fit.fit() } catch { /* not laid out yet */ }
   term.onData((s: string) => sendRaw(s))
   term.onResize(({ cols, rows }) => conn?.sendResize(cols, rows))
 
+  // The first fit() on iOS often runs before the WebView has settled the
+  // .term box (safe-area + keyboard layout land a frame or two later), which
+  // produced the "half-height until you switch tabs" bug. A ResizeObserver
+  // re-fits on every container size change — initial layout, rotation,
+  // keyboard show/hide — so the grid always matches the real viewport. Only
+  // the driver fits; viewers are locked to the PTY size in onMeta.
+  ro = new ResizeObserver(() => fitIfDriver())
+  ro.observe(container.value!)
+  fitIfDriver()
+
   conn = new SessionConnection(props.endpoint, props.sessionId, {
     onOutput: (data) => term?.write(decode(data)),
-    onMeta: (meta) => emit('meta', { cwd: meta.cwd, title: meta.title }),
+    onMeta: (meta) => {
+      emit('meta', { cwd: meta.cwd, title: meta.title })
+      // Viewer: lock our grid to the PTY's real cols/rows so we mirror the
+      // driver instead of letting fit pick a narrower width that reflows the
+      // output and overflows the screen.
+      if (!isDriver.value && term && meta.cols && meta.rows
+          && (term.cols !== meta.cols || term.rows !== meta.rows)) {
+        try { term.resize(meta.cols, meta.rows) } catch { /* ignore bad dims */ }
+      }
+    },
     onClose: () => emit('ended'),
     // Defensive: route a hard 'error' status to setup. NOTE: SessionConnection
     // reconnect-loops (status 'reconnecting') on a WS auth close rather than
@@ -177,14 +205,13 @@ onMounted(() => {
     onDriverChange: (_id, isMe) => {
       isDriver.value = isMe
       refreshInputMode()
-      if (term) {
-        if (isMe && canControl.value && term.cols > 0 && term.rows > 0) {
-          // Became driver: push our (phone) size so the PTY — and every other
-          // viewer, e.g. the desktop owner — follows. Without this the PTY
-          // keeps the previous driver's (wider) dims and the desktop viewer
-          // never shrinks to match the phone.
-          conn?.sendResize(term.cols, term.rows)
-        }
+      // Became driver: fit to OUR (phone) viewport first so cols/rows match
+      // the narrow screen, then push that size to the PTY — every other viewer
+      // (e.g. the desktop owner) reflows to match. Without the fit the PTY
+      // could keep the previous driver's wide cols and overflow the phone.
+      if (isMe && canControl.value && term) {
+        fitIfDriver()
+        if (term.cols > 0 && term.rows > 0) conn?.sendResize(term.cols, term.rows)
       }
     },
   })
@@ -203,11 +230,13 @@ watch(() => props.active, (now) => {
     effectiveTemplates(platform.templates).then((list) => { templates.value = list })
     effectiveAuxKeys(platform.auxKeys).then((list) => { auxKeys.value = list })
     // xterm could not measure while hidden (v-show); re-fit + focus on activate.
-    requestAnimationFrame(() => { try { fit?.fit() } catch { /* */ } ; term?.focus() })
+    requestAnimationFrame(() => { fitIfDriver(); term?.focus() })
   }
 })
 
 onBeforeUnmount(() => {
+  ro?.disconnect()
+  ro = null
   conn?.detach()
   conn = null
   term?.dispose()

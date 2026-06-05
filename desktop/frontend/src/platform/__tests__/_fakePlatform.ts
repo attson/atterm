@@ -82,7 +82,6 @@ export function createFakePlatform(): Platform {
     },
     pluginHost: {
       getPluginConfig: vi.fn().mockResolvedValue({
-        quickInput: { enabled: false, buttons: [] },
         fileExplorer: {
           enabled: false,
           panelWidthPx: 0,

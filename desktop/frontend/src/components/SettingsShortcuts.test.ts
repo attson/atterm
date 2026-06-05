@@ -13,7 +13,6 @@ beforeEach(() => {
   platform = createFakePlatform();
   // Override the default getPluginConfig with the test-specific shape.
   (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-    quickInput: { enabled: true, buttons: [] },
     fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: false, innerTreeRatio: 0.3, showHidden: false, showLineNumbers: false },
     translate: { enabled: false, provider: "openai-compatible", baseUrl: "", apiKey: "", model: "gpt-4o-mini", defaultTargetLang: "zh-CN" },
     shortcuts: { bindings: {} },

@@ -8,18 +8,18 @@ func TestGetSetPluginConfigRoundtrip(t *testing.T) {
 	app := newPluginTestApp(t)
 
 	got := app.GetPluginConfig()
-	if len(got.QuickInput.Buttons) != 3 {
-		t.Fatalf("expected default buttons populated, got %d", len(got.QuickInput.Buttons))
+	if got.FileExplorer.PanelWidthPx != 380 {
+		t.Fatalf("expected defaults populated, got %+v", got.FileExplorer)
 	}
 
-	got.QuickInput.Buttons[0].Label = "yes"
+	got.FileExplorer.PanelWidthPx = 500
 	if err := app.SetPluginConfig(got); err != nil {
 		t.Fatal(err)
 	}
 
 	again := app.GetPluginConfig()
-	if again.QuickInput.Buttons[0].Label != "yes" {
-		t.Fatalf("write did not persist, got label %q", again.QuickInput.Buttons[0].Label)
+	if again.FileExplorer.PanelWidthPx != 500 {
+		t.Fatalf("write did not persist, got PanelWidthPx %d", again.FileExplorer.PanelWidthPx)
 	}
 }
 
@@ -27,7 +27,7 @@ func TestSetPluginConfigRejectsInvalid(t *testing.T) {
 	app := newPluginTestApp(t)
 
 	bad := app.GetPluginConfig()
-	bad.QuickInput.Buttons[0].ID = "" // forbidden by ValidatePluginConfig
+	bad.FileExplorer.PanelWidthPx = 100 // below 240 min, rejected by ValidatePluginConfig
 	if err := app.SetPluginConfig(bad); err == nil {
 		t.Fatal("expected validation error")
 	}

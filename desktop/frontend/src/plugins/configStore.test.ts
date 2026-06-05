@@ -20,14 +20,8 @@ afterEach(() => {
 })
 
 const sample = {
-  quickInput: {
-    enabled: true,
-    buttons: [
-      { id: "b1", label: "ok", send: "ok", appendNewline: true },
-    ],
-  },
   fileExplorer: {
-    enabled: false,
+    enabled: true,
     panelWidthPx: 380,
     panelCollapsed: true,
     innerTreeRatio: 0.3,
@@ -39,23 +33,22 @@ describe("usePluginConfigStore", () => {
   it("load() populates cfg from binding", async () => {
     const s = usePluginConfigStore();
     await s.load();
-    expect(s.cfg?.quickInput.buttons[0].label).toBe("ok");
+    expect(s.cfg?.fileExplorer.panelWidthPx).toBe(380);
   });
 
   it("save(next) writes via setPluginConfig and updates cfg", async () => {
     const s = usePluginConfigStore();
     await s.load();
     const next = JSON.parse(JSON.stringify(sample));
-    next.quickInput.buttons[0].label = "yes";
+    next.fileExplorer.panelWidthPx = 500;
     await s.save(next);
     expect(platform.pluginHost!.setPluginConfig).toHaveBeenCalledWith(next);
-    expect(s.cfg?.quickInput.buttons[0].label).toBe("yes");
+    expect(s.cfg?.fileExplorer.panelWidthPx).toBe(500);
   });
 
   it("isPluginEnabled returns the live enable flag", async () => {
     const s = usePluginConfigStore();
     await s.load();
-    expect(s.isPluginEnabled("quick-input")).toBe(true);
-    expect(s.isPluginEnabled("file-explorer")).toBe(false);
+    expect(s.isPluginEnabled("file-explorer")).toBe(true);
   });
 });

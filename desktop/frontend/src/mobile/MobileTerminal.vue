@@ -166,9 +166,13 @@ async function openImagePicker() {
     const ext = photo.format || 'jpeg'
     const file = base64ToFile(photo.base64String, `image/${ext}`, `mobile-image.${ext}`)
     await conn?.sendPasteImage(file, file.name)
-  } catch {
-    // User cancelled the picker, or sendPasteImage failed (which already
-    // routes status='error' to MobileApp). Either way, nothing to add here.
+  } catch (e) {
+    // Dismissing the picker rejects with a "cancel" message — not an error.
+    // Anything else (e.g. PLUGIN_NOT_AVAILABLE when the native Camera plugin
+    // isn't registered, or a sendPasteImage failure) is logged so it is never
+    // a silent no-op that looks like a dead button.
+    const msg = String((e as { message?: string })?.message ?? e)
+    if (!/cancel/i.test(msg)) console.warn('[AT Term] image picker failed:', msg)
   }
 }
 

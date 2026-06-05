@@ -47,8 +47,6 @@ function createNativeSecureStorage(): SecureStorage {
 
 // Detect whether the native plugin is reachable. Capacitor throws
 // PLUGIN_NOT_AVAILABLE on web; treat anything else as "plugin is there".
-let detected: Promise<SecureStorage> | null = null
-
 async function selectBackend(): Promise<SecureStorage> {
   try {
     await native.get({ key: '__atterm_probe__' })
@@ -64,8 +62,19 @@ async function selectBackend(): Promise<SecureStorage> {
   }
 }
 
-export const secureStorage: SecureStorage = {
-  async set(key, value) { (await (detected ??= selectBackend())).set(key, value) },
-  async get(key) { return (await (detected ??= selectBackend())).get(key) },
-  async remove(key) { return (await (detected ??= selectBackend())).remove(key) },
+// wrapLazyBackend resolves the backend once (memoized) and forwards each call
+// to it. Every method MUST return the backend's promise so callers can await
+// the real Keychain write/read/delete and observe failures. An earlier version
+// dropped the inner promise on set(), so a failed Keychain write resolved as
+// success and the relay config silently never persisted — the app then booted
+// with an empty config and asked for the relay URL again.
+export function wrapLazyBackend(select: () => Promise<SecureStorage>): SecureStorage {
+  let detected: Promise<SecureStorage> | null = null
+  return {
+    async set(key, value) { return (await (detected ??= select())).set(key, value) },
+    async get(key) { return (await (detected ??= select())).get(key) },
+    async remove(key) { return (await (detected ??= select())).remove(key) },
+  }
 }
+
+export const secureStorage: SecureStorage = wrapLazyBackend(selectBackend)

@@ -56,6 +56,7 @@ const typeDisplay = computed(() =>
     <span
       v-else
       class="task-glyph"
+      aria-hidden="true"
       :style="{ fontSize: size + 'px', lineHeight: 1 }"
     >
       {{ glyph }}
@@ -83,7 +84,8 @@ const typeDisplay = computed(() =>
   animation: task-pulse 1.2s ease-in-out infinite alternate;
 }
 .task-spinner {
-  animation: task-spin 1.5s linear infinite;
+  /* duration is set via inline style based on preset.spinnerDurationMs */
+  animation: task-spin 1s linear infinite;
 }
 @keyframes task-pulse {
   from { opacity: 0.5; }

@@ -16,7 +16,7 @@ func (s *SQLiteStore) SetSeen(ctx context.Context, userID string, sessionIDs []s
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO session_seen(user_id, session_id, seen_at)
 		 VALUES(?,?,?)
-		 ON CONFLICT(user_id, session_id) DO UPDATE SET seen_at=excluded.seen_at`)
+		 ON CONFLICT(user_id, session_id) DO UPDATE SET seen_at=excluded.seen_at WHERE excluded.seen_at > session_seen.seen_at`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("prepare SetSeen: %w", err)
@@ -54,7 +54,9 @@ func (s *SQLiteStore) SeenAt(ctx context.Context, userID string) (map[string]int
 }
 
 func (s *SQLiteStore) PruneSeenSession(ctx context.Context, sessionID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM session_seen WHERE session_id=?`, sessionID)
-	return err
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM session_seen WHERE session_id=?`, sessionID); err != nil {
+		return fmt.Errorf("prune session_seen: %w", err)
+	}
+	return nil
 }

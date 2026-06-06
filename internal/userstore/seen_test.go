@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestSetSeenIsMonotonic(t *testing.T) {
+	ctx := context.Background()
+	s, _ := Open(ctx, ":memory:")
+	defer s.Close()
+	_ = s.SetSeen(ctx, "u", []string{"x"}, 200)
+	_ = s.SetSeen(ctx, "u", []string{"x"}, 100) // older — must be ignored
+	got, _ := s.SeenAt(ctx, "u")
+	if got["x"] != 200 {
+		t.Fatalf("seen_at rolled backwards: got %d, want 200", got["x"])
+	}
+}
+
 func TestSessionSeen(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, ":memory:")

@@ -416,6 +416,33 @@ export const en = {
       setupHint: 'Your API token will be sent in cleartext over Wi-Fi. Only enable for local-network testing.',
     },
   },
+  tasks: {
+    sidebar: {
+      title: "Tasks",
+      collapse: "Collapse sidebar (Cmd/Ctrl+B)",
+      expand: "Expand sidebar (Cmd/Ctrl+B)",
+    },
+    preset: {
+      vivid: {
+        name: "Vivid",
+        description: "Colorful, animated, with type icons. Quick to spot what's happening.",
+      },
+      quiet: {
+        name: "Quiet",
+        description: "Muted palette, only the running spinner animates, no type icons. For focused work.",
+      },
+    },
+    markAllRead: "Mark all read",
+    markRead: "Mark read",
+    completedFold: "Completed",
+    unreadBadge: "{count} unread",
+    settings: {
+      section: "Task display",
+      preset: "Visual preset",
+      expandByDefault: "Expand task sidebar by default",
+    },
+    unavailableToast: "Mark-read unavailable — please update the relay.",
+  },
   plugins: {
     fileExplorer: {
       title: "File Explorer",

@@ -418,6 +418,33 @@ export const zhCN = {
       setupHint: "你的 API token 会以明文方式经过 Wi-Fi 传输。仅建议在本地测试时启用。",
     },
   },
+  tasks: {
+    sidebar: {
+      title: "任务",
+      collapse: "折叠侧栏 (Cmd/Ctrl+B)",
+      expand: "展开侧栏 (Cmd/Ctrl+B)",
+    },
+    preset: {
+      vivid: {
+        name: "鲜明",
+        description: "色彩鲜明 + 动画 + 类型图标。一眼看到正在发生什么。",
+      },
+      quiet: {
+        name: "柔和",
+        description: "柔和色调,仅运行中带动画,无类型图标。专注时使用。",
+      },
+    },
+    markAllRead: "全部标已读",
+    markRead: "标已读",
+    completedFold: "已完成",
+    unreadBadge: "{count} 条未读",
+    settings: {
+      section: "任务状态显示",
+      preset: "视觉预设",
+      expandByDefault: "默认展开任务侧栏",
+    },
+    unavailableToast: "标已读不可用 — 请升级 relay。",
+  },
   plugins: {
     fileExplorer: {
       title: "文件浏览器",

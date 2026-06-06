@@ -4,6 +4,8 @@ import { initI18n, type LocalePreference } from './i18n'
 import MobileApp from './mobile/MobileApp.vue'
 import { initPlatform } from './platform'
 import { createCapacitorPlatform } from './platform/capacitor'
+import { Capacitor } from '@capacitor/core'
+import { Keyboard } from '@capacitor/keyboard'
 import './style.css'
 
 const LOCALE_STORAGE_KEY = 'atterm.locale'
@@ -26,6 +28,13 @@ async function saveLocalePreference(preference: LocalePreference): Promise<void>
 
 async function bootstrap() {
   await initI18n({ loadPreference: loadLocalePreference, savePreference: saveLocalePreference })
+
+  // iOS only: hide WKWebView's input accessory bar (the floating ✓ ↑ ↓ strip
+  // that lands above the on-screen keyboard) so it doesn't overlap our own
+  // control panel (template + aux keys + paste/image).
+  if (Capacitor.getPlatform() === 'ios') {
+    Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => { /* no-op */ })
+  }
 
   const platform = initPlatform(createCapacitorPlatform)
 

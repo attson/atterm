@@ -13,7 +13,8 @@
   "dependencies": {
     "@capacitor-mlkit/barcode-scanning": "^7.5.0",
     "@capacitor/camera": "8.2.0",
-    "@capacitor/core": "8.3.3"
+    "@capacitor/core": "8.3.3",
+    "@capacitor/keyboard": "^8.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "8.3.3",

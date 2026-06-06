@@ -156,6 +156,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			sess = target
 			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID, ap.ClientName)
 			s.debugf("client attached session=%s since_seq=%d client_id=%q client_name=%q", id, ap.SinceSeq, ap.ClientID, ap.ClientName)
+			if ownerUserID != "" && s.cfg.Store != nil {
+				// Attaching == viewing == read. Best-effort; a failed write
+				// just leaves the item unread, which is safe.
+				_ = s.cfg.Store.SetSeen(context.Background(), ownerUserID,
+					[]string{sess.ID.String()}, time.Now().Unix())
+			}
 			startWriter()
 
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:

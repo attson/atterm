@@ -362,6 +362,66 @@ func TestClient_ListFrameFilteredByOwner(t *testing.T) {
 	}
 }
 
+// TestAttachMarksSeen: when user A attaches to their own session, the relay
+// must call SetSeen so the session appears as read in the store.
+func TestAttachMarksSeen(t *testing.T) {
+	store, userAID, cookieA, _, _, _ := newClientTestStore(t)
+
+	// Build a server that has both Resolver and Store wired in (so the
+	// auto-mark-seen path is active).
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{
+		Resolver: resolver,
+		Store:    store,
+	})
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	// Create a session owned by user A with AttentionAt > 0 so it would
+	// normally appear as unread.
+	sid := uuid.New()
+	sess := session.New(sid, proto.SessionInfo{
+		Type:        session.SessionTypeAI,
+		TaskState:   proto.TaskStateCompleted,
+		AttentionAt: 1000,
+	})
+	sess.OwnerUserID = userAID
+	srv.registry.Add(sess)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Connect as user A and send ATTACH.
+	conn, _, err := dialClientWS(t, ctx, httpSrv, cookieA)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	payload, _ := json.Marshal(proto.AttachPayload{SessionID: sid.String(), ClientID: "client-a"})
+	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+		Type: proto.TypeAttach, SessionID: sid, Payload: payload,
+	})); err != nil {
+		t.Fatalf("write ATTACH: %v", err)
+	}
+
+	// Consume the attach intro frames so the server has time to process.
+	drainAttachIntro(t, ctx, conn)
+
+	// Allow a brief moment for the SetSeen call (it is async-ish but
+	// happens synchronously in the attach handler before startWriter).
+	time.Sleep(50 * time.Millisecond)
+
+	// Assert that the session now has a seen_at > 0 for user A.
+	seen, err := store.SeenAt(ctx, userAID)
+	if err != nil {
+		t.Fatalf("SeenAt: %v", err)
+	}
+	if seen[sid.String()] <= 0 {
+		t.Errorf("SeenAt[%s] = %d; want > 0 (session should be marked seen after attach)", sid, seen[sid.String()])
+	}
+}
+
 // TestClient_AttachAdminRejected: invalid bearer token at /client → 401.
 func TestClient_AttachAdminRejected(t *testing.T) {
 	store, _, _, _, _, _ := newClientTestStore(t)

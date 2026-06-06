@@ -67,6 +67,10 @@ atterm/
 # 不一定加载你的 ~/.zshrc，所以本项目命令默认显式带上它。
 export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
+# 一次性：启用仓库内 git hooks（含 web-dist drift 守护，避免 web/ 改动
+# 漏掉 internal/relay/web-dist/ 重建后被 CI 兜底打回）。
+git config core.hooksPath .githooks
+
 # 命令行 relay（本地调试；--dev-insecure 跳过强度与 Origin 校验，loopback 时 bootstrap envs 可省略）
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
 ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \

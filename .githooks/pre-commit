@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# pre-commit hook: detect web/ source changes without a matching rebuild
+# of internal/relay/web-dist/, so the CI "verify embed has no drift" job
+# doesn't catch us late.
+#
+# Activate per-clone with:
+#   git config core.hooksPath .githooks
+#
+# Bypass for WIP commits with: git commit --no-verify
+
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# Anything in web/ that contributes to the built bundle is in scope.
+# This intentionally excludes web/tests/ (test-only) and web/dist/ (build
+# output, not committed).
+staged=$(git diff --cached --name-only --diff-filter=ACMR | \
+  grep -E '^web/(src/|index\.html|package(-lock)?\.json|vite\.config\.|tsconfig)' \
+  || true)
+
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# Try to use Node 20 (CI pin; build-web.sh enforces it). If nvm is
+# available source it and switch. If no Node 20 is reachable we degrade
+# to a warning — CI still has the authoritative check.
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  set +u
+  . "$HOME/.nvm/nvm.sh"
+  nvm use 20 >/dev/null 2>&1 || true
+  set -u
+fi
+
+node_major=$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || echo "")
+expected_major=$(cat .nvmrc 2>/dev/null | tr -d '[:space:]')
+if [ "$node_major" != "$expected_major" ]; then
+  cat >&2 <<EOF
+[pre-commit] web/ source changes staged but Node v${expected_major:-20} is not
+active (current: $(node -v 2>/dev/null || echo 'not installed')).
+Skipping local web-dist drift check — CI will still verify on push.
+EOF
+  exit 0
+fi
+
+# Rebuild the embedded dist into a temp dir; compare against the current
+# committed dist. We rebuild rather than only checking "was internal/relay
+# /web-dist/ also staged?" because trivial web/ edits (comment-only) won't
+# always change the hashed bundles, and CI compares the *built* output.
+tmpdir=$(mktemp -d -t atterm-webdist-XXXX)
+trap 'rm -rf "$tmpdir"' EXIT
+
+# build-web.sh writes to internal/relay/web-dist directly. To check
+# without disturbing the working tree, copy the current dist, run the
+# build, then diff.
+current_dist="$tmpdir/current"
+fresh_dist="$tmpdir/fresh"
+cp -R internal/relay/web-dist "$current_dist"
+
+if ! ./scripts/build-web.sh >/dev/null 2>&1; then
+  echo "[pre-commit] ./scripts/build-web.sh failed; cannot verify drift." >&2
+  # Restore so the failed build doesn't leave the tree in a half state.
+  rm -rf internal/relay/web-dist
+  cp -R "$current_dist" internal/relay/web-dist
+  exit 1
+fi
+
+cp -R internal/relay/web-dist "$fresh_dist"
+
+# Compare current (committed) with fresh (just built). If they differ, the
+# committed dist is stale relative to the web/ source.
+if diff -qr "$current_dist" "$fresh_dist" >/dev/null 2>&1; then
+  # No drift; the fresh build matches what's committed. Nothing to do.
+  exit 0
+fi
+
+# Drift detected. The working tree now holds the fresh build. Tell the
+# user how to land it.
+cat >&2 <<EOF
+[pre-commit] web-dist drift detected.
+
+You staged changes under web/ but internal/relay/web-dist/ is stale.
+The hook just rebuilt the embedded bundle into your working tree — to
+include it in this commit:
+
+  git add internal/relay/web-dist/
+  git commit                # (or: git commit --amend --no-edit)
+
+Bypass for WIP / docs-only commits with: git commit --no-verify
+EOF
+exit 1

@@ -79,6 +79,12 @@ export interface RemoteSession {
   last_output_at?: number
   type?: string
   summary?: SessionSummary
+  /** Per-user unread flag — computed by the relay from attention_at vs seen_at vs
+   *  subscriberCount. Local-only sessions (not uplinked) leave this undefined. */
+  unread?: boolean
+  /** Unix seconds of the session's last attention-worthy transition
+   *  (waiting_input, or non-shell completed/failed). 0/undefined = none pending. */
+  attention_at?: number
 }
 
 export interface SessionBridge {

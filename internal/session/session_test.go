@@ -714,6 +714,24 @@ func TestPushOut_DEventCapturesSummary(t *testing.T) {
 	}
 }
 
+func TestSubscriberCount(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	if got := s.SubscriberCount(); got != 0 {
+		t.Fatalf("SubscriberCount() = %d; want 0 initially", got)
+	}
+
+	sub, _ := s.Subscribe(0, "", "")
+	if got := s.SubscriberCount(); got != 1 {
+		t.Fatalf("SubscriberCount() = %d; want 1 after subscribe", got)
+	}
+
+	s.Unsubscribe(sub)
+	if got := s.SubscriberCount(); got != 0 {
+		t.Fatalf("SubscriberCount() = %d; want 0 after unsubscribe", got)
+	}
+}
+
 func TestPushOut_DEventOnSuccess_NoErrorLines(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{})
 	s.PushOut(1, []byte("\x1b]133;C;echo ok\x07"))

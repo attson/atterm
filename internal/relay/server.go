@@ -23,6 +23,7 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webhook"
 	"github.com/attson/atterm/internal/webpush"
+	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
 
@@ -191,6 +192,8 @@ func NewServer(cfg Config) *Server {
 		}
 		authSrv.RegisterInto(s.mux)
 		adminSrv.RegisterInto(s.mux)
+		s.mux.Handle("POST /api/sessions/seen",
+			RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleSessionsSeenHTTP)))
 
 		// Background goroutine: purge expired web sessions hourly.
 		go func() {
@@ -250,6 +253,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Registry exposes the underlying session registry. The desktop app needs
 // this so its uplink can subscribe to local mini-relay sessions by id.
 func (s *Server) Registry() *session.Registry { return s.registry }
+
+// removeSession removes a session from the registry and prunes any per-user
+// seen rows for it. All session teardown paths funnel through here so the
+// session_seen table does not accumulate rows for dead sessions.
+func (s *Server) removeSession(id uuid.UUID) {
+	s.registry.Remove(id)
+	if s.cfg.Store != nil {
+		_ = s.cfg.Store.PruneSeenSession(context.Background(), id.String())
+	}
+}
 
 func (s *Server) acceptOptions() *websocket.AcceptOptions {
 	return &websocket.AcceptOptions{
@@ -471,7 +484,7 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var infos []proto.SessionInfo
 	if ownerUserID != "" {
-		infos = s.sessionInfoListForOwner(ownerUserID)
+		infos = s.sessionInfoListForOwner(ownerUserID, s.seenForOwner(r.Context(), ownerUserID))
 	} else {
 		infos = s.sessionInfoList()
 	}

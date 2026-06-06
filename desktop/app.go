@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -461,6 +462,81 @@ func (a *App) SetDefaultShell(shell string) error {
 	cfg := a.cfgStore.Get()
 	cfg.DefaultShell = shell
 	return a.cfgStore.Set(cfg)
+}
+
+// GetTaskPreset returns the user's persisted task state display preset.
+func (a *App) GetTaskPreset() string {
+	if a.cfgStore == nil {
+		return taskPresetDefault
+	}
+	return a.cfgStore.Get().TaskPresetOrDefault()
+}
+
+// SetTaskPreset persists the user's task state display preset.
+func (a *App) SetTaskPreset(preset string) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	preset = strings.TrimSpace(preset)
+	if !isSupportedTaskPreset(preset) {
+		return fmt.Errorf("unknown task preset %q", preset)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.TaskPreset = preset
+	return a.cfgStore.Set(cfg)
+}
+
+// GetTaskSidebarCollapsed returns whether the task sidebar panel is collapsed.
+func (a *App) GetTaskSidebarCollapsed() bool {
+	if a.cfgStore == nil {
+		return false
+	}
+	return a.cfgStore.Get().TaskSidebarCollapsed
+}
+
+// SetTaskSidebarCollapsed persists the task sidebar collapsed state.
+func (a *App) SetTaskSidebarCollapsed(collapsed bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.TaskSidebarCollapsed = collapsed
+	return a.cfgStore.Set(cfg)
+}
+
+// MarkSessionsSeen marks sessions as seen on the relay. If all is true, all
+// sessions are marked seen regardless of the ids slice.
+func (a *App) MarkSessionsSeen(ids []string, all bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+		return fmt.Errorf("no relay configured")
+	}
+	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+	body, err := json.Marshal(map[string]any{
+		"session_ids": ids,
+		"all":         all,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", baseHTTP+"/api/sessions/seen", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("relay /api/sessions/seen returned status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // NewSession spawns a local PTY child and adopts it as a relay session.

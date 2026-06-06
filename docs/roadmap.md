@@ -76,33 +76,35 @@
 
 ### 6. 手机二维码配对
 
-- [ ] 在桌面端生成配对二维码
-- [ ] 在配对流程中包含 relay URL
-- [ ] 增加短期一次性 pairing token
-- [ ] 增加移动端 pairing setup route
-- [ ] 支持用 pairing token 交换移动端凭据
-- [ ] pairing token 首次使用后失效
-- [ ] pairing token 超时后失效
-- [ ] 显示 token 过期错误
-- [ ] 显示 token 无效错误
-- [ ] 增加 pairing token 生命周期测试
+- [x] 在桌面端生成配对二维码
+- [x] 在配对流程中包含 relay URL
+- [x] 增加短期一次性 pairing token
+- [x] 增加移动端 pairing setup route
+- [x] 支持用 pairing token 交换移动端凭据
+- [x] pairing token 首次使用后失效
+- [x] pairing token 超时后失效
+- [x] 显示 token 过期错误
+- [x] 显示 token 无效错误
+- [x] 增加 pairing token 生命周期测试
 
 ### 7. Relay 健康检查页
 
-- [ ] 增加 relay health page
-- [ ] 显示 relay version
-- [ ] 显示 web build version
-- [ ] 显示 HTTPS/WSS 状态
-- [ ] 显示已配置 origins
-- [ ] 显示 bootstrap admin 状态
-- [ ] 显示 rate limit 设置
-- [ ] 显示 active uplink 数量
-- [ ] 显示 mobile origin 兼容状态
-- [ ] 增加复制诊断信息按钮
-- [ ] 诊断信息脱敏
-- [ ] 增加 health payload contract tests
+- [x] 增加 relay health page
+- [x] 显示 relay version
+- [x] 显示 web build version
+- [x] 显示 HTTPS/WSS 状态
+- [x] 显示已配置 origins
+- [x] 显示 bootstrap admin 状态
+- [x] 显示 rate limit 设置
+- [x] 显示 active uplink 数量
+- [x] 显示 mobile origin 兼容状态
+- [x] 增加复制诊断信息按钮
+- [x] 诊断信息脱敏
+- [x] 增加 health payload contract tests
 
 ### 8. 桌面安装包签名
+
+> 进度：已有 `.github/scripts/sign-release-checksums.go`（校验和签名），尚缺真正的 macOS codesign/notarize 与 Windows 代码签名（需 Apple Developer 证书 + Windows 签名证书等外部凭据）。
 
 - [ ] 增加 macOS codesign workflow
 - [ ] 增加 macOS notarization workflow
@@ -113,66 +115,68 @@
 
 ### 9. 移动端安全存储
 
-- [ ] 将移动端 token 从 localStorage 迁出
-- [ ] 使用 Keychain 或原生安全存储保存移动端 token
-- [ ] 尽可能迁移已有 localStorage token
-- [ ] 迁移后删除 localStorage token
-- [ ] 收紧 iOS ATS 默认配置
-- [ ] 将 insecure HTTP mode 保留在显式用户设置后
-- [ ] 增加 insecure HTTP relay 风险提示
-- [ ] 增加 token 存储迁移测试
+- [x] 将移动端 token 从 localStorage 迁出
+- [x] 使用 Keychain 或原生安全存储保存移动端 token
+- [x] 尽可能迁移已有 localStorage token
+- [x] 迁移后删除 localStorage token
+- [x] 收紧 iOS ATS 默认配置
+- [x] 将 insecure HTTP mode 保留在显式用户设置后
+- [x] 增加 insecure HTTP relay 风险提示
+- [x] 增加 token 存储迁移测试
 
 ### 10. 诊断信息导出
 
-- [ ] 增加桌面端诊断信息导出
-- [ ] 导出 app version
-- [ ] 导出 OS version
-- [ ] 导出脱敏后的 relay URL
-- [ ] 导出 uplink 状态
-- [ ] 导出最近 relay 连接错误
-- [ ] 导出 WebView runtime version
-- [ ] 导出配置摘要
-- [ ] 默认不包含终端输出
-- [ ] 脱敏 API token、cookie 和 authorization headers
-- [ ] 增加脱敏测试
+- [x] 增加桌面端诊断信息导出
+- [x] 导出 app version
+- [x] 导出 OS version
+- [x] 导出脱敏后的 relay URL
+- [x] 导出 uplink 状态
+- [x] 导出最近 relay 连接错误
+- [x] 导出 WebView runtime version
+- [x] 导出配置摘要
+- [x] 默认不包含终端输出
+- [x] 脱敏 API token、cookie 和 authorization headers
+- [x] 增加脱敏测试
 
 ## P2：v0.5 AI 任务控制台
 
 ### 11. AI 与工作流命令识别
 
-- [ ] 识别 AI CLI 命令：`codex`、`claude`、`gemini`、`aider`
-- [ ] 识别测试命令：`go test`、`npm test`、`pnpm test`、`yarn test`、`cargo test`
-- [ ] 识别构建和部署命令：`docker build`、`docker compose`、`kubectl`、`terraform`
-- [ ] 增加 session 类型标签：`ai`、`test`、`build`、`deploy`、`shell`
-- [ ] 在 desktop、web 和 mobile 任务卡片展示类型标签
-- [ ] 增加命令识别测试
+- [x] 识别 AI CLI 命令：`codex`、`claude`、`gemini`、`aider`
+- [x] 识别测试命令：`go test`、`npm test`、`pnpm test`、`yarn test`、`cargo test`
+- [x] 识别构建和部署命令：`docker build`、`docker compose`、`kubectl`、`terraform`
+- [x] 增加 session 类型标签：`ai`、`test`、`build`、`deploy`、`shell`
+- [x] 在 desktop、web 和 mobile 任务卡片展示类型标签
+- [x] 增加命令识别测试
 
 ### 12. 结构化任务摘要
 
-- [ ] 保存当前命令摘要
-- [ ] 保存最近命令结果
-- [ ] 保存退出码
-- [ ] 保存运行时长
-- [ ] 保存最近 N 行输出
-- [ ] 提取最近错误行
-- [ ] 在移动端任务卡片展示摘要
-- [ ] 在 web session detail 展示摘要
-- [ ] 增加摘要提取测试
+- [x] 保存当前命令摘要
+- [x] 保存最近命令结果
+- [x] 保存退出码
+- [x] 保存运行时长
+- [x] 保存最近 N 行输出
+- [x] 提取最近错误行
+- [x] 在移动端任务卡片展示摘要
+- [x] 在 web session detail 展示摘要
+- [x] 增加摘要提取测试
 
 ### 13. AI 快捷操作模板
 
-- [ ] 增加快捷操作模板模型
-- [ ] 增加 approve 内置模板
-- [ ] 增加 deny 内置模板
-- [ ] 增加 continue 内置模板
-- [ ] 增加 run tests 内置模板
-- [ ] 增加 show diff 内置模板
-- [ ] 增加 retry 内置模板
-- [ ] 在 AI session 中展示模板
-- [ ] 支持用户自定义模板
-- [ ] 发送前预览模板文本
-- [ ] 复用现有远程权限校验
-- [ ] 增加模板发送行为测试
+> 已发：#99 `feat(p2.13)`（编辑器 + 预览 + 跨平台模板栏），#110 移除旧 quickInput，#111 增加热键/直接发送/隐藏开关/刷新默认值。
+
+- [x] 增加快捷操作模板模型
+- [x] 增加 approve 内置模板
+- [x] 增加 deny 内置模板
+- [x] 增加 continue 内置模板
+- [x] 增加 run tests 内置模板
+- [x] 增加 show diff 内置模板
+- [x] 增加 retry 内置模板
+- [x] 在 AI session 中展示模板
+- [x] 支持用户自定义模板
+- [x] 发送前预览模板文本
+- [x] 复用现有远程权限校验
+- [x] 增加模板发送行为测试
 
 ## P3：v0.6 协作能力
 
@@ -194,6 +198,8 @@
 - [ ] 增加分享权限测试
 
 ### 15. Presence 与控制权
+
+> 进度：driver/viewer 模式已奠基（#2/#3 driver/viewer 模式 + driver hostname，#76 镜像 session 反映上游 driver，#77 👁 N viewer 计数，#90 overlay 不漏点击）。已覆盖 viewer 跟踪/展示、controller 展示、控制权冲突防护；缺正式的 request-control / owner approve / owner revoke 授权流（当前是 claim 式抢占而非 owner 审批）。
 
 - [ ] 跟踪每个 session 的活跃 viewer
 - [ ] 在 desktop、web 和 mobile 客户端展示活跃 viewer

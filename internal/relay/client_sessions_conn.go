@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"sort"
 	"time"
 
@@ -52,7 +53,7 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {
 	var infos []proto.SessionInfo
 	if ownerUserID != "" {
-		infos = s.sessionInfoListForOwner(ownerUserID)
+		infos = s.sessionInfoListForOwner(ownerUserID, s.seenForOwner(ctx, ownerUserID))
 	} else {
 		infos = s.sessionInfoList()
 	}
@@ -83,14 +84,36 @@ func (s *Server) sessionInfoList() []proto.SessionInfo {
 	return infos
 }
 
-// sessionInfoListForOwner returns session infos filtered to those owned by ownerUserID.
-func (s *Server) sessionInfoListForOwner(ownerUserID string) []proto.SessionInfo {
+// seenForOwner returns the per-session seen timestamps for ownerUserID, or
+// nil if no store is configured. A query error degrades to nil (all items
+// surface as unread) and is logged.
+func (s *Server) seenForOwner(ctx context.Context, ownerUserID string) map[string]int64 {
+	if s.cfg.Store == nil || ownerUserID == "" {
+		return nil
+	}
+	seen, err := s.cfg.Store.SeenAt(ctx, ownerUserID)
+	if err != nil {
+		log.Printf("relay: SeenAt owner=%s: %v", ownerUserID, err)
+		return nil
+	}
+	return seen
+}
+
+// sessionInfoListForOwner returns session infos filtered to those owned by
+// ownerUserID, with Unread set when the session has attention that the user
+// has not yet seen. A nil seen map treats every session as never-seen.
+func (s *Server) sessionInfoListForOwner(ownerUserID string, seen map[string]int64) []proto.SessionInfo {
 	sessions := s.registry.List()
 	infos := make([]proto.SessionInfo, 0)
 	for _, ss := range sessions {
-		if ss.OwnerUserID == ownerUserID {
-			infos = append(infos, ss.Info())
+		if ss.OwnerUserID != ownerUserID {
+			continue
 		}
+		info := ss.Info()
+		if info.AttentionAt > 0 && info.AttentionAt > seen[info.ID] && ss.SubscriberCount() == 0 {
+			info.Unread = true
+		}
+		infos = append(infos, info)
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos

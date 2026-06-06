@@ -55,7 +55,7 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 	cleanup := func() {
 		closeOnce.Do(func() {
 			cancel()
-			s.registry.Remove(id)
+			s.removeSession(id)
 			s.debugf("adopt cleanup session=%s", id)
 		})
 	}

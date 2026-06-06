@@ -141,6 +141,11 @@ type Store interface {
 	ListWebhooks(ctx context.Context, userID string) ([]Webhook, error)
 	DeleteWebhook(ctx context.Context, webhookID, userID string) error
 
+	// Session seen/unread inbox
+	SetSeen(ctx context.Context, userID string, sessionIDs []string, at int64) error
+	SeenAt(ctx context.Context, userID string) (map[string]int64, error)
+	PruneSeenSession(ctx context.Context, sessionID string) error
+
 	Close() error
 }
 

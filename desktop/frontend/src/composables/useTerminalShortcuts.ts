@@ -18,6 +18,7 @@ export interface ShortcutHandlers {
   onFocusPane: (dir: FocusDir) => void;
   onNewTab: () => void;
   onSwitchTab: (delta: number) => void;
+  onToggleTaskSidebar?: () => void;
 }
 
 export interface ShortcutOptions {
@@ -47,6 +48,7 @@ function dispatch(actionId: string, h: ShortcutHandlers): boolean {
     case "tab.new":                    h.onNewTab(); return true;
     case "tab.prev":                   h.onSwitchTab(-1); return true;
     case "tab.next":                   h.onSwitchTab(1); return true;
+    case "toggleTaskSidebar":          h.onToggleTaskSidebar?.(); return true;
   }
   return false;
 }

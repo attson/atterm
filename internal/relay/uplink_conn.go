@@ -173,6 +173,9 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		if s.cfg.WebPush == nil || ms == nil {
 			return
 		}
+		if ms.sess.SubscriberCount() > 0 { // watching == read == no push
+			return
+		}
 		hostID, _ := uuid.Parse(info.HostID) // host id is informational in push payloads
 		s.cfg.WebPush.DispatchSessionNotification(ms.sess.OwnerUserID, webpush.SessionNotification{
 			SessionID:        ms.sess.ID,
@@ -340,7 +343,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				ms.fwdCancel()
 			}
 			cancelIdleTimer(ms)
-			s.registry.Remove(id)
+			s.removeSession(id)
 			s.debugf("uplink mirror_remove session=%s reason=missing_from_announce", id)
 		}
 	}
@@ -354,7 +357,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		mirrors = make(map[uuid.UUID]*mirrorState)
 		mu.Unlock()
 		for id, ms := range gone {
-			s.registry.Remove(id)
+			s.removeSession(id)
 			if ms != nil {
 				cancelIdleTimer(ms)
 				notifySession(ms, ms.sess.Info(), webpush.NotificationUplinkDisconnected, 0)
@@ -463,7 +466,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 					ms.fwdCancel()
 				}
 				cancelIdleTimer(ms)
-				s.registry.Remove(f.SessionID)
+				s.removeSession(f.SessionID)
 			}
 		case proto.TypeCommandEvent:
 			s.handleUplinkCommandEvent(f, mirrors, &mu)
@@ -499,7 +502,7 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 	info := ms.sess.Info()
 	hostIDStr := info.HostID
 	hostID, _ := uuid.Parse(hostIDStr) // ignore parse error — hostID is informational
-	if s.cfg.WebPush != nil {
+	if s.cfg.WebPush != nil && ms.sess.SubscriberCount() == 0 {
 		s.cfg.WebPush.DispatchCommandFinished(ms.sess.OwnerUserID, webpush.CommandFinished{
 			SessionID:        f.SessionID,
 			HostID:           hostID,

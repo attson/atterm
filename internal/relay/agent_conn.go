@@ -61,7 +61,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 	}
 	log.Printf("agent: session %s opened (%q)", openFrame.SessionID, op.Command)
 	defer func() {
-		s.registry.Remove(openFrame.SessionID)
+		s.removeSession(openFrame.SessionID)
 		log.Printf("agent: session %s closed", openFrame.SessionID)
 	}()
 

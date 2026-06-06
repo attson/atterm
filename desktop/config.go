@@ -102,6 +102,13 @@ type appConfig struct {
 	// or absent means "use defaults" — the renderer seeds DEFAULT_TEMPLATES
 	// in that case. See docs/superpowers/specs/2026-06-04-quick-templates-design.md.
 	QuickTemplates []QuickTemplate `json:"quick_templates,omitempty"`
+
+	// TaskPreset is the user's chosen task state display preset (e.g. "vivid"
+	// or "quiet"). Empty falls back to "vivid" at read time.
+	TaskPreset string `json:"task_preset,omitempty"`
+	// TaskSidebarCollapsed records whether the task sidebar panel is collapsed.
+	// Zero value (false) means expanded, which is the default.
+	TaskSidebarCollapsed bool `json:"task_sidebar_collapsed,omitempty"`
 }
 
 // AutoCheckUpdatesOrDefault returns the user's preference, defaulting to
@@ -134,6 +141,16 @@ func (c appConfig) TerminalThemeOrDefault() string {
 		return c.TerminalTheme
 	}
 	return terminalThemeClassic
+}
+
+// taskPresetDefault is the preset used when TaskPreset has never been set.
+const taskPresetDefault = "vivid"
+
+func (c appConfig) TaskPresetOrDefault() string {
+	if c.TaskPreset != "" {
+		return c.TaskPreset
+	}
+	return taskPresetDefault
 }
 
 func (c appConfig) LocalePreferenceOrDefault() string {
@@ -212,6 +229,14 @@ func (c appConfig) CommandNotifyThresholdSecondsOrDefault() int {
 func isSupportedTerminalTheme(theme string) bool {
 	_, ok := terminalThemes[theme]
 	return ok
+}
+
+func isSupportedTaskPreset(p string) bool {
+	switch p {
+	case "vivid", "quiet":
+		return true
+	}
+	return false
 }
 
 func supportedTerminalThemes() []string {

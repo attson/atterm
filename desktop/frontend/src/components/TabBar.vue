@@ -3,6 +3,8 @@ import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
 import { displayForType } from "../lib/sessionType";
+import TaskStateIcon from "./TaskStateIcon.vue";
+import type { TaskState } from "../lib/taskState";
 
 interface TabSummary {
   id: string;
@@ -81,14 +83,32 @@ function onClose(e: MouseEvent, id: string) {
       >
         <span class="num">{{ idx + 1 }}:</span>
         <span v-if="t.layout !== 'single'" class="layout-icon" :title="layoutTitle(t)">{{ layoutLabel(t) }}</span>
-        <span v-else-if="t.activeRemote" class="dot remote-dot" :class="{ disconnected: t.disconnected }">●</span>
-        <span v-else class="dot">●</span>
+        <span
+          v-else-if="t.activeRemote"
+          class="dot remote-dot"
+          :class="{ disconnected: t.disconnected }"
+        >
+          <TaskStateIcon
+            :state="(t.activeSession?.task_state as TaskState | undefined) ?? 'idle'"
+            :size="10"
+          />
+        </span>
+        <TaskStateIcon
+          v-else
+          :state="(t.activeSession?.task_state as TaskState | undefined) ?? 'idle'"
+          :size="10"
+        />
         <span v-if="typeForTab(t)" class="type-icon" :title="typeForTab(t)!.key" :style="{ color: typeForTab(t)!.color }">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path :d="typeForTab(t)!.iconPath" />
           </svg>
         </span>
         <span class="title">{{ shortTitle(t.activeSession) }}</span>
+        <span
+          v-if="t.activeSession?.unread"
+          class="tab-unread-dot"
+          data-test="tab-unread-dot"
+        >●</span>
         <button class="close" @click="onClose($event, t.id)">×</button>
       </div>
     </div>
@@ -159,4 +179,9 @@ function onClose(e: MouseEvent, id: string) {
 }
 .plus:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 .plus:disabled { opacity: 0.4; cursor: not-allowed; }
+.tab .tab-unread-dot {
+  font-size: 8px;
+  margin-left: 4px;
+  color: currentColor;
+}
 </style>

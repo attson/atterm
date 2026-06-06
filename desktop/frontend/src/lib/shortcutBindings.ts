@@ -9,7 +9,7 @@
 
 import type { MessageKey } from "../i18n";
 
-export type ShortcutGroup = "pane" | "tab";
+export type ShortcutGroup = "pane" | "tab" | "sidebar";
 
 export interface ShortcutAction {
   id: string;
@@ -31,6 +31,7 @@ export const ACTIONS: readonly ShortcutAction[] = [
   { id: "tab.new",                    group: "tab",  labelKey: "settings.shortcuts.newTab",                               defaultBinding: "Mod+KeyT" },
   { id: "tab.prev",                   group: "tab",  labelKey: "settings.shortcuts.previousTab",                          defaultBinding: "Mod+Shift+BracketLeft" },
   { id: "tab.next",                   group: "tab",  labelKey: "settings.shortcuts.nextTab",                              defaultBinding: "Mod+Shift+BracketRight" },
+  { id: "toggleTaskSidebar",          group: "sidebar", labelKey: "tasks.sidebar.collapse",                               defaultBinding: "Mod+KeyB" },
 ] as const;
 
 export const ACTION_BY_ID: Record<string, ShortcutAction | undefined> = Object.fromEntries(

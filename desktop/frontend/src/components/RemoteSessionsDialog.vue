@@ -1,59 +1,75 @@
 <script lang="ts" setup>
-import { computed } from "vue";
+import { ref, computed } from "vue";
 
 import type { SessionInfo } from "../lib/connection";
-import { groupSessionsByHost } from "../lib/sessions";
+import type { RemoteSession } from "../platform/types";
+import TaskGroupedList from "./TaskGroupedList.vue";
+import { useSessions } from "../composables/useSessions";
 import { useI18n } from "../i18n/useI18n";
 
 const props = defineProps<{
   sessions: SessionInfo[];
+  open?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "open", sessionId: string): void;
+  (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
   (e: "close"): void;
 }>();
 
-const groups = computed(() => groupSessionsByHost(props.sessions));
 const { t } = useI18n();
+
+// Adapt SessionInfo (lib/connection.ts uses `id`) → RemoteSession (platform/types.ts uses `session_id`).
+// All other field names already match between the two types.
+function adapt(s: SessionInfo): RemoteSession {
+  return {
+    ...s,
+    session_id: s.id,
+  } as unknown as RemoteSession;
+}
+
+const remoteList = computed<RemoteSession[]>(() => props.sessions.map(adapt));
+const emptyLocal = ref<RemoteSession[]>([]);
+const { byHost, unreadByHost, primaryStateForHost, completedSeen, totalUnread } =
+  useSessions(emptyLocal, remoteList);
+
+function onListOpen(s: RemoteSession) {
+  emit("open", s.session_id);
+}
+function onListMarkSeen(payload: { ids: string[] } | { all: true }) {
+  emit("markSeen", payload);
+}
 </script>
 
 <template>
   <div class="backdrop" @click.self="emit('close')">
     <div class="dialog">
-      <h2>{{ t("sessions.remoteSessions") }}</h2>
+      <header class="dialog-head">
+        <h2>{{ t("sessions.remoteSessions") }}</h2>
+        <button
+          v-if="totalUnread > 0"
+          class="mark-all"
+          data-test="dialog-mark-all"
+          @click="emit('markSeen', { all: true })"
+        >
+          {{ t("tasks.markAllRead") }}
+        </button>
+      </header>
 
       <div v-if="sessions.length === 0" class="empty">
         {{ t("sessions.noRemoteSessions") }}
       </div>
 
       <div v-else class="groups">
-        <section v-for="g in groups" :key="g.key" class="host-group">
-          <header>
-            <span class="hostname">{{ g.hostname }}</span>
-            <span
-              v-if="g.hostId"
-              class="hostid"
-              :title="t('sessions.hostIdTitle', { hostId: g.hostId })"
-            >{{ g.hostId.slice(0, 8) }}</span>
-            <span class="count">{{ g.sessions.length === 1 ? t("common.countSessionsOne") : t("common.countSessions", { count: g.sessions.length }) }}</span>
-          </header>
-          <div class="grid">
-            <div
-              v-for="s in g.sessions"
-              :key="s.id"
-              class="card"
-              @click="emit('open', s.id)"
-            >
-              <div class="cmd">{{ s.command || t("common.unknown") }}</div>
-              <div class="meta">
-                <span class="id">{{ s.id.slice(0, 8) }}</span>
-                <span class="size">{{ s.cols }}×{{ s.rows }}</span>
-                <span class="cwd">{{ s.cwd }}</span>
-              </div>
-            </div>
-          </div>
-        </section>
+        <TaskGroupedList
+          :by-host="byHost"
+          :unread-by-host="unreadByHost"
+          :primary-state-for-host="primaryStateForHost"
+          :completed-seen="completedSeen"
+          @open="onListOpen"
+          @markSeen="onListMarkSeen"
+        />
       </div>
 
       <div class="row">
@@ -85,13 +101,28 @@ const { t } = useI18n();
   flex-direction: column;
   gap: 12px;
 }
-.dialog h2 {
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dialog-head h2 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--fg-dim);
+  flex: 1;
+}
+.mark-all {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  padding: 2px 8px;
+  color: inherit;
+  font-size: 12px;
+  border-radius: 3px;
 }
 .empty {
   color: var(--fg-dim);
@@ -106,47 +137,6 @@ const { t } = useI18n();
   overflow-y: auto;
   max-height: 50vh;
 }
-.host-group > header {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  padding: 4px 0 6px;
-}
-.host-group > header .hostname { color: var(--fg); }
-.host-group > header .hostid { color: var(--fg-dim); font-size: 11px; cursor: help; }
-.host-group > header .count { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
-.host-group > .grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
-}
-.card {
-  background: #0d1117;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: border-color 120ms;
-}
-.card:hover { border-color: var(--accent); }
-.card .cmd {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  color: var(--fg);
-  margin-bottom: 4px;
-  word-break: break-all;
-}
-.card .meta {
-  font-size: 11px;
-  color: var(--fg-dim);
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.card .meta .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.card .meta .cwd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .row {
   display: flex;
   justify-content: flex-end;

@@ -33,14 +33,15 @@ async function setupStore(initial: Record<string, string>) {
 }
 
 describe("SettingsShortcuts", () => {
-  it("renders 12 rows grouped under 'pane' and 'tab'", async () => {
+  it("renders 13 rows grouped under 'pane', 'tab', and 'sidebar'", async () => {
     await setupStore({});
     const wrapper = mount(SettingsShortcuts, { props: { mod: "Control" } });
     await flushPromises();
     const rows = wrapper.findAll(".shortcut-row");
-    expect(rows).toHaveLength(12);
+    expect(rows).toHaveLength(13);
     expect(wrapper.text()).toContain("Pane");
     expect(wrapper.text()).toContain("Tab");
+    expect(wrapper.text()).toContain("Sidebar");
   });
 
   it("each row's hotkey cell shows the current binding (default when not overridden)", async () => {

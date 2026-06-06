@@ -459,6 +459,11 @@ export const en = {
       binary: "Binary file - no preview.",
       errorPrefix: "Error: {message}",
       unexpectedContentType: "Unexpected file content type",
+      openInSystem: "Open in System App",
+      previewError: "Preview unavailable: {message}",
+      unsupportedPreview: "Inline preview unavailable for this file type.",
+      showAsCode: "View as code",
+      showAsRender: "View as image",
     },
     translate: {
       title: "Translate",

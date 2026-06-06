@@ -461,6 +461,11 @@ export const zhCN = {
       binary: "二进制文件 - 无法预览。",
       errorPrefix: "错误：{message}",
       unexpectedContentType: "文件内容类型异常",
+      openInSystem: "用系统应用打开",
+      previewError: "预览失败：{message}",
+      unsupportedPreview: "此文件类型暂不支持内嵌预览。",
+      showAsCode: "看源码",
+      showAsRender: "看渲染",
     },
     translate: {
       title: "翻译",

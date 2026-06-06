@@ -192,6 +192,8 @@ func NewServer(cfg Config) *Server {
 		}
 		authSrv.RegisterInto(s.mux)
 		adminSrv.RegisterInto(s.mux)
+		s.mux.Handle("POST /api/sessions/seen",
+			RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleSessionsSeenHTTP)))
 
 		// Background goroutine: purge expired web sessions hourly.
 		go func() {

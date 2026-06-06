@@ -4,7 +4,7 @@ atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 
 
 阅读这份文件以快速上手；详细规范见 `docs/spec/`。
 
-- 当前 release：`v0.2.33`。在 v0.2.25 之后陆续合入：P0 任务状态闭环 + 中英 i18n（#84）；终端选中右键发送（#85）；P1.6 移动端 QR 配对（#86）；P1.7 relay 健康检查页（#87）；P1.9 iOS Keychain 安全存储（#88）；P1.10 桌面诊断导出（#89）；多项 iOS 26 字体 / 控件回归修复（#90、#92–#96）；P2.11 session 类型分类（#97）；P2.12 OSC 133 D 触发的任务摘要（#98）；P2.13 AI 快捷模板（in flight）。相关 spec/plan 在 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`，按日期排序。Roadmap 完成度见 `docs/roadmap.md` 与 `docs/spec/architecture.md` §phase 完成度。
+- 当前 release：`v0.2.39`。v0.2.33 之后的关键合入：P2.13 AI 快捷模板（#99）；移动端防误触模式 banner（#100、v0.2.35）；移动端 setup UX（#102、v0.2.37）；**P1.9 iOS Keychain 真正落地**（#104、v0.2.38，靠 `CAPBridgedPlugin` + `registerPluginInstance` 修正 Capacitor 8 注册）；移动端独立设置页 + 模板/快捷键自定义 + 图片菜单 i18n（#105、v0.2.39 批）；终端首屏全屏 + viewer 锁尺寸（#106）；中文输入法标点/数字/空格补获（#107）；设置改动通过事件总线实时同步到已开 tab（#108）；mobile/package.json 注册 Camera + barcode plugin（#109）；删除 legacy quickInput 插件（#110）；QuickTemplate 加 hotkey + 删预览 + 隐藏开关 + 默认值变为 `yes/ok/continue/commit/push/release/1/2/3`（#111）；`NSPhotoLibraryAddUsageDescription`（#112）；`@capacitor/keyboard` 隐藏 WKWebView 键盘辅助条（#113）；`ios:sync` 自动跑 `npm install`（#114）。spec/plan 在 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`。Roadmap 完成度见 `docs/roadmap.md` 与 `docs/spec/architecture.md` §phase 完成度。
 
 ## 仓库布局
 
@@ -56,6 +56,9 @@ atterm/
 12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
 13. **iOS 26 字体栈三件套**：(a) 终端 / UI 字体栈把 `PingFang SC` 等 CJK family 放在 `-apple-system` 之前——iOS 26 WebKit 把 `-apple-system` 声明为含 CJK 覆盖但实际不渲染，导致 `[?]` 方框；(b) 终端字体常量统一在 `desktop/frontend/src/lib/terminalFont.ts`，desktop 与 mobile 共用；(c) UI emoji（⚠ 等）用内联 lucide SVG，不要依赖 U+FE0F 变体选择器。改其中一个就回归，详见 `docs/spec/conventions.md` §移动端字体栈。
 14. **OSC 133 D 事件单点抓 summary，sticky non-shell**：`internal/session/applyOSC133Locked` 是 type 分类 + summary 抓取的唯一入口；C 事件按 `ClassifyCommand` 算 type，sticky 规则保证返回 `shell` 时不覆盖已有 non-shell；D 事件 `computeSummary(scroll, now, exitCode != 0)` 生成 `SessionSummary` 并写进 `s.meta`。MetaPayload 必须同时携带 `type` 和 `summary` 字段（前者是 P2.11 漏配的 carry-over）。前端不要再做"sticky type" patch；只在一处实现。
+15. **Capacitor 8 plugin 注册三件套**：(a) 自定义 plugin 的 Swift 类必须 conform `CAPBridgedPlugin`（`identifier` / `jsName` / `pluginMethods`）；旧式 `.m` 文件里的 `CAP_PLUGIN` 宏在 Capacitor 8 是 no-op；(b) app-local 自定义 plugin 不走 auto-discovery，要在 `MainViewController.capacitorDidLoad()` 里 `bridge?.registerPluginInstance(...)`，并把 `Main.storyboard` 根 VC 指到 `MainViewController`；(c) 第三方 plugin（`@capacitor/camera` / `@capacitor-mlkit/barcode-scanning` / `@capacitor/keyboard` 等）**必须装到 `mobile/package.json`** —— `cap sync` 只扫 mobile/ 的依赖。装在 `desktop/frontend/` 一边的 JS 能 import 但 native 不会注册，跑起来 `PLUGIN_NOT_AVAILABLE`。验证步骤详见 `docs/spec/conventions.md` §Capacitor 8 plugin 注册。
+16. **移动端 IME 标点/数字/空格 capture-phase 接管**：iOS 中文九宫格的 `，。？！` / 数字 / 空格走 `input` 事件（`inputType='insertText'`、`isComposing=false`），xterm 自己的 handler 不 forward。MobileTerminal 在 `term.textarea` 的 capture 阶段监听 `input`，对 `insertText && !isComposing` 自己 `sendInput(data)` 并 `stopImmediatePropagation`。**不要碰 composition 路径**（pinyin→Hanzi 走 `insertCompositionText`），那是 xterm 的领地，碰了会让中文字双发。
+17. **移动端 fit 走 ResizeObserver + viewer 锁尺寸**：MobileTerminal 首屏半屏的根因是 `fit.fit()` 跑在 `.term` 容器还没 settle 之前。改用 `ResizeObserver` 监听容器尺寸变化、driver 才 fit；viewer 模式下 `onMeta` 收到 `meta.cols/rows` 时 `term.resize(meta.cols, meta.rows)` 锁到 PTY 尺寸（不跑 FitAddon，匹配 protocol.md §Driver/Viewer）。两条都不要再去掉。
 
 ## 开发命令
 
@@ -134,7 +137,12 @@ gh run list --repo attson/atterm --limit 10
 | 改桌面诊断导出 | `desktop/diagnostics.go`（payload collector + redaction）+ `desktop/app.go::GetDiagnostics/ExportDiagnostics` + `desktop/frontend/src/components/SettingsDiagnostics.vue` |
 | 改移动端安全存储 | `mobile/ios/App/App/plugins/SecureStorage/AttermSecureStorage.swift`（CAP_PLUGIN，SecItemAdd/CopyMatching/Delete + `kSecAttrAccessibleAfterFirstUnlock`）+ `web/src/shared/secure-storage.ts`（Capacitor bridge + localStorage 降级）+ `web/src/shared/api/relay-config.ts`（迁移路径）；改完一定要在 iOS simulator 验证 keychain 写入 |
 | 改 session 类型分类 / 摘要 | `internal/session/classify.go`（关键字 + wrapper 剥离 + sticky）+ `internal/session/summary.go` + `internal/session/ansistrip.go` + `internal/ringbuf/ringbuf.go::TailBytes` + `internal/proto/frame.go`（`SessionInfo.Type` / `SessionSummary` / `MetaPayload.Type` / `MetaPayload.Summary`）+ `internal/session/session.go::applyOSC133Locked`（唯一调用点）+ TS 侧 `desktop/frontend/src/lib/connection.ts` + `web/src/shared/api/types.ts`（mirror SessionSummary）+ 前端任务卡片渲染 |
-| 改 AI 快捷模板 | `desktop/frontend/src/lib/templates.ts`（`QuickTemplate` + `DEFAULT_TEMPLATES` + `effectiveTemplates`）+ `desktop/frontend/src/platform/types.ts`（`TemplateBridge`）+ `wails.ts` / `capacitor.ts`（bridge 实现，desktop 走 config.json，mobile/web 走 localStorage `atterm.templates`）+ `desktop/app.go::GetQuickTemplates/SetQuickTemplates` + `desktop/config.go` 加 `QuickTemplates []proto.QuickTemplate` + `internal/proto/quicktemplate.go` + `desktop/frontend/src/components/TemplatePreviewDialog.vue` + `SettingsTemplates.vue`（desktop only 编辑器）+ desktop TerminalView / mobile MobileTerminal / web TerminalView 三端 mount template bar |
+| 改 AI 快捷模板（含 hotkey / hide bar / 默认值） | `desktop/frontend/src/lib/templates.ts`（`QuickTemplate { id, label, text, hotkey? }` + `DEFAULT_TEMPLATES`：`yes / ok / continue / commit / push / release / 1 / 2 / 3` + `effectiveTemplates`）+ `web/src/shared/templates.ts`（镜像）+ `platform/types.ts`（`TemplateBridge` 含 `loadHidden/saveHidden`）+ `wails.ts` / `capacitor.ts`（hidden 都走 localStorage `atterm.templates.hidden`，desktop 模板列表走 `appConfig.QuickTemplates`，mobile/web 走 localStorage `atterm.templates`）+ `desktop/quick_templates.go`（含 `Hotkey` 字段）+ `wailsjs/go/models.ts`（同步）+ `SettingsTemplates.vue`（含 hotkey 列 + show-bar 开关，emit `quickTemplates:changed`）+ `MobileSettings.vue`（show-bar 开关 emit `mobile:shortcutsChanged`）+ desktop TerminalView / web TerminalView / MobileTerminal 三端 template-bar + 直接发送（无预览） + desktop TerminalView document-capture keydown 匹配 `hotkey` 触发 |
+| 改移动端 AUX 键 / 设置页 | `desktop/frontend/src/lib/auxKeys.ts`（`AuxKey { id, label, seq }` + `DEFAULT_AUX_KEYS` + `parseSeq/displaySeq` 转义解析）+ `platform/types.ts AuxKeyBridge`（capacitor localStorage `atterm.auxkeys`、wails no-op、fake 内存）+ `MobileSettings.vue`（语言 / 模板编辑器 / aux 键编辑器 / 退出登录）+ `MobileListEditor.vue`（通用增删改/重排/重置）+ `MobileApp.vue`（'settings' view + `onLogout` 保留 relay 配置）+ `MobileSessionList.vue`（gear emit `openSettings`） |
+| 改移动端 Capacitor plugin（Camera/Barcode/Keyboard 等） | **必须**装到 `mobile/package.json` 让 `cap sync` 发现；同时装到 `desktop/frontend/package.json` 让 TS import 解析。装完 `cd mobile && npm run ios:open`（已自动跑 `npm install` + `cap sync`）。验证 `mobile/ios/App/App/capacitor.config.json` 的 `packageClassList` 包含新 plugin 名、`mobile/ios/App/CapApp-SPM/Package.swift` 有对应 SPM 依赖。权限串（如 `NSPhotoLibraryAddUsageDescription`）加在 `mobile/ios/App/App/Info.plist`。`@capacitor/keyboard` 的 `setAccessoryBarVisible(false)` 在 `desktop/frontend/src/main.capacitor.ts` 启动时调一次 |
+| 改移动端 IME / xterm 文本接管 | `desktop/frontend/src/mobile/MobileTerminal.vue`：`onImeInput` 函数 + `term.textarea` capture-phase 监听。**只**处理 `inputType === 'insertText' && !isComposing && data`，sendRaw + `stopImmediatePropagation`，清空 textarea。composition 路径（`insertCompositionText`）一律不碰 |
+| 改移动端 fit / viewer 锁尺寸 | `desktop/frontend/src/mobile/MobileTerminal.vue`：`ro = new ResizeObserver(fitIfDriver)` + `fitIfDriver()`（仅 isDriver 时 fit）+ `onMeta` viewer 锁 `term.resize(meta.cols, meta.rows)`。`onBeforeUnmount` `ro?.disconnect()` |
+| 改防误触模式 banner | `desktop/frontend/src/mobile/MobileTerminal.vue`：`protectActive = canControl && isDriver && !controlMode` + `protectBump` 计数器 + `nudgeProtect()`。banner 用 `:key="protectBump"` 触发 shake 动画。`.term` 加 `pointerdown` listener 也 nudge |
 
 ## 风格摘要
 
@@ -166,6 +174,9 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 把 pairing token 明文写进日志、URL query 或长期存储（只在 `qr_url` 与 owner 单次返回里出现，consumer 调用时通过 POST body 传输）
 - ❌ 在 `/api/pair/consume` 路径上加任何鉴权头校验——pairing token 本身即凭据，加上 token-on-token 会把流程改回 OAuth code+secret 模式
 - ❌ 在多处实现 session type sticky；只在 `internal/session/applyOSC133Locked` 一个入口写规则
+- ❌ 自定义 Capacitor plugin 只写 `.m` 的 `CAP_PLUGIN` 宏 / 只在 `desktop/frontend` 装 plugin —— 必须走红线 #15 的三件套
+- ❌ 让 MobileTerminal IME 接管去碰 composition 路径（中文字会双发）
+- ❌ 给已删的 `quickInput` 插件加 backward-compat shim；它已被 QuickTemplate 取代，旧 config.json 字段直接忽略（single-user project）
 
 ## 文档导引
 

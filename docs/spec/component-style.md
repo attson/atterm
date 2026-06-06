@@ -153,10 +153,25 @@ mobile / web 的 session 列表是 P2 阶段最容易跑偏的视图，新增信
 `summary.recent_output` 不在卡片上渲染（会撑爆列表），留给未来的 session
 detail 视图。
 
-## 快捷模板：bar + preview dialog
+## 快捷模板：bar + hotkey + 隐藏开关
 
-桌面 / web / mobile 三端共用 `QuickTemplate { id, label, text }` 模型
-（`desktop/frontend/src/lib/templates.ts`），UI 也保持一致：
+桌面 / web / mobile 三端共用 `QuickTemplate { id, label, text, hotkey? }` 模型
+（`desktop/frontend/src/lib/templates.ts`，`hotkey` 仅桌面用），UI 也保持一致：
+
+**核心约束**：
+
+- **点击模板按钮 = 直接发送**（`sendInput(text + '\r')`），不弹预览对话框。
+  mobile 上靠"防误触模式" banner + `canSend` gate 防止误触发，不需要预览。
+- **桌面端 hotkey**：每个模板可配 `Mod+1` / `Alt+Shift+P` 之类字符串。
+  `desktop TerminalView` 在 `document` 的 capture 阶段注册 keydown listener，
+  解析 hotkey + 判断 `props.focused` 后触发 `sendTemplate(tpl)`。
+  只有 focused pane 响应，避免多个 mount 的 TerminalView 同时触发。
+- **隐藏 bar**：用户可在设置页关掉整个 template-bar。bridge 加
+  `loadHidden / saveHidden`，三端都走 localStorage `atterm.templates.hidden`。
+  bar 用 `v-if="!templatesHidden"` 渲染。
+- **默认 9 项**：`yes / ok / continue / commit / push / release / 1 / 2 / 3`。
+
+
 
 ### Template bar
 
@@ -171,32 +186,105 @@ bar 上方，以及 mobile MobileTerminal 替换原 `quickbar`。
   paste 按钮同一 gate；**不要**为模板单独写权限分支。
 - 横向溢出 `overflow-x: auto`，按钮 `flex: 0 0 auto`；不要换行。
 
-### Preview dialog
+### Settings → Templates tab（desktop）
 
-`TemplatePreviewDialog.vue`（桌面 / 移动共享）。点击模板按钮 → 弹出预览 →
-Enter / 点击 Send 触发 `sendInput(text + '\r')`。
+桌面端 Settings 的 Templates tab 容器结构：
+
+1. 顶部一个 `<label class="show-toggle">`：「显示快捷模板栏」复选框，绑
+   `platform.templates.loadHidden/saveHidden`，改后 emit
+   `quickTemplates:changed` 让所有打开的 TerminalView 立即同步。
+2. 列表 `<ul class="list">`：每行 grid `7rem 1fr 5rem auto`
+   = 标签 / 发送文本 / **hotkey** / actions（↑↓编辑删除）。hotkey 列空时
+   显示 `—`。
+3. 内联编辑行 `<div class="edit-row">`：三个输入（label / text / hotkey）+
+   Save / Cancel。hotkey 输入框 placeholder `Mod+1` 之类。
+4. 底部 footer：「新增」+「恢复默认」，reset 走二级确认 dialog（同 reset 模式）。
+
+testid 契约（**不要**改，自动测试依赖）：
+
+- `template-show-toggle`（顶部开关）
+- `template-row-${id}` / `template-edit-${id}` / `template-delete-${id}`
+- `template-edit-label` / `template-edit-text` / `template-edit-hotkey` / `template-edit-save`
+- `template-add` / `template-reset` / `template-reset-confirm`
+
+mobile 设置页有独立的模板编辑器（见下方 §移动端设置页），逻辑相同，但
+样式适配触屏（行高更高、按钮更大）。web 没有编辑器，只渲染 bar，
+读 localStorage `atterm.templates.hidden` 决定是否显示。
+
+## 移动端设置页
+
+`MobileSettings.vue` 是从 `MobileSessionList` 的 ⚙ 按钮进入的独立 view。
+**不再退回连接页**（旧版 gear 直接进 setup 是 regression）。结构：
+
+```
+┌─ ← 返回      设置                              ─┐
+│                                                  │
+│  语言          [ 跟随系统 ▾ ]                    │
+│                                                  │
+│  快捷模板                                        │
+│   ☑ 在终端上方显示快捷模板栏                     │
+│   ┌─────────────────────────────────────────┐   │
+│   │ yes   │ yes        │ ↑ ↓ 编辑 删除 │   │     │
+│   │ ok    │ ok         │ ↑ ↓ 编辑 删除 │   │     │
+│   │ ...                                     │   │
+│   └─────────────────────────────────────────┘   │
+│   [ + 新增 ]            [ 恢复默认 ]             │
+│                                                  │
+│  快捷按键（控制键）                              │
+│   ┌─────────────────────────────────────────┐   │
+│   │ esc   │ \e         │ ↑ ↓ 编辑 删除 │   │     │
+│   │ ⌃C    │ \x03       │ ↑ ↓ 编辑 删除 │   │     │
+│   │ ...                                     │   │
+│   └─────────────────────────────────────────┘   │
+│   [ + 新增 ]            [ 恢复默认 ]             │
+│                                                  │
+│  [ 退出登录 ]                                    │
+└──────────────────────────────────────────────────┘
+```
 
 约束：
 
-- backdrop 用 dialog overlay 规则（fixed inset 0、黑色透明度 0.5-0.6）；
-  z-index 高于 settings dialog，避免 settings 打开时模板预览被盖。
-- 卡片宽度约 280px（mobile）/ 360px（desktop）；`max-width: calc(100vw - 32px)`。
-- `<pre class="preview">` 渲染待发送文本，禁止 word wrap（mono 字体，预览
-  内容应当与实际发到 PTY 的字节一致；wrap 会误导）。
-- footer 两个 button：Cancel（次要）+ Send（primary `--accent`），后者 `autofocus`。
-- 键盘：Enter = confirm，Escape = cancel；点击 backdrop = cancel。
-- testid 契约（用于自动测试，**不要**改）：`template-preview` /
-  `template-preview-confirm` / `template-preview-cancel` / `template-btn-${id}`。
+- 两个编辑器（模板 / aux 键）共用 `MobileListEditor.vue`，通过
+  `displayValue` / `parseValue` 钩子让 aux 编辑器把 `\xNN` 等转义字符
+  显示 + 解码成原始字节。
+- 「退出登录」按钮**只**回到连接页（`view = 'setup'`），**不调**
+  `platform.relay.clear()`，配置保留预填。如果要真清，是另一个动作。
+- 任何模板 / aux 键改动后 emit `mobile:shortcutsChanged`，已开的
+  `MobileTerminal` 订阅事件 reload 两个 bar + 隐藏开关。
+- show-bar checkbox 用 `:checked="!hidden"`（label 是"显示"），
+  saveHidden 取反传 `!show`，避免双否定的 UX 困惑。
 
-### Settings → Templates tab（desktop only）
+## 移动端防误触模式 banner
 
-桌面端 Settings 增加 Templates tab（紧跟 Diagnostics 之后），遵循 Settings
-组件规范的 label/hint/error/button 样式。增删改行 inline 编辑（替换为两个文
-本输入 + Save/Cancel），重置走二级确认对话框。debounce 保存 300ms，避免
-快速键入触发频繁 disk write。
+`MobileTerminal` 在控制模式关闭时显示一条黄色横幅
+（`.protect-banner` 在 control-panel 顶部）：
 
-mobile / web 仅渲染默认 10 项 + 用户自己 desktop 编辑过的列表（各端
-localStorage / config 独立），不提供编辑界面。
+- `v-if="canControl && isDriver && !controlMode"` —— 只在
+  "本可输入但用户没开控制模式" 时显示，view-only / viewer
+  自己有别的覆盖层。
+- `<div :key="protectBump" :class="{ shaking: protectBump > 0 }">`：
+  每次用户点击 inert 按钮 / 触摸终端区，`nudgeProtect()` 递增
+  `protectBump`，banner 用它做 `:key` 触发 0.4s shake 动画 + 高亮。
+- 文案：`"防误触模式 · 打开下方控制模式可输入"`（zh）/
+  `"Tap-protect mode · enable Control mode below to type"`（en）。
+- AUX 键 / 模板按钮 / paste / image 全部用 `:class="{ inert: !canSend }"`
+  **而不是** `:disabled`，iOS 上 disabled button 不触发任何 pointer 事件，
+  banner 抖动捕获不到。
+
+## 移动端键盘可见
+
+iOS WKWebView 默认弹键盘时会在键盘上方画一条 `✓ ↑ ↓` 辅助条
+（input accessory view），会把控制面板挡掉。在 `main.capacitor.ts`
+启动时调一次：
+
+```ts
+if (Capacitor.getPlatform() === 'ios') {
+  Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => {})
+}
+```
+
+要求 `@capacitor/keyboard` 装到 `mobile/package.json`（见
+conventions.md §Capacitor 8 plugin 注册）。
 
 ## Pairing UI
 

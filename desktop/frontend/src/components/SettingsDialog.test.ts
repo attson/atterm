@@ -148,10 +148,11 @@ function navLabels(w: ReturnType<typeof mount>) {
 }
 
 describe("SettingsDialog caps gating", () => {
-  it("renders all 8 tabs with full desktop caps", () => {
+  it("renders all 9 tabs with full desktop caps", () => {
     const w = mountDialog();
     expect(navLabels(w)).toEqual([
       en.settings.tabs.general,
+      en.tasks.settings.section,
       en.settings.tabs.relay,
       en.settings.tabs.logging,
       en.settings.tabs.updates,
@@ -182,11 +183,12 @@ describe("SettingsDialog caps gating", () => {
     expect(navLabels(mountDialog())).not.toContain(en.settings.tabs.logging);
   });
 
-  it("with capacitor-style caps shows General + Relay + Templates + Diagnostics", () => {
+  it("with capacitor-style caps shows General + Task display + Relay + Templates + Diagnostics", () => {
     platform.caps = { ...platform.caps, autoUpdate: false, pluginHost: false, fileDialog: false };
     __setPlatformForTests(platform);
     expect(navLabels(mountDialog())).toEqual([
       en.settings.tabs.general,
+      en.tasks.settings.section,
       en.settings.tabs.relay,
       en.settings.templates.tab,
       en.settings.diagnostics.tab,

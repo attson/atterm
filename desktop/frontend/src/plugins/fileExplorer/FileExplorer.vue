@@ -143,6 +143,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :path="activePath"
             :show-line-numbers="showLineNumbers"
             :theme="explorerTheme"
+            :view-mode="'code'"
           />
           <div v-else class="placeholder">{{ t("plugins.fileExplorer.selectFile") }}</div>
         </div>

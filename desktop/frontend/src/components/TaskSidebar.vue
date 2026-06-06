@@ -64,7 +64,12 @@ const railIcons = computed(() => {
         :key="s.session_id"
         class="rail-icon"
         data-test="sidebar-rail-icon"
+        role="button"
+        tabindex="0"
+        :aria-label="s.current_command || s.title || s.session_id.slice(0, 8)"
         @click="emit('open', s)"
+        @keydown.enter.prevent="emit('open', s)"
+        @keydown.space.prevent="emit('open', s)"
       >
         <TaskStateIcon
           :state="(s.task_state as TaskState | undefined) ?? 'idle'"

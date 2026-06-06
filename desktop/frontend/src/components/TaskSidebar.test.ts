@@ -53,6 +53,31 @@ describe("TaskSidebar", () => {
     expect(w.findAll('[data-test="sidebar-rail-icon"]').length).toBe(2);
   });
 
+  test("collapsed rail orders icons by urgency", () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: true,
+        byHost: {
+          h: [
+            mk({ session_id: "running1", task_state: "running" }),
+            mk({ session_id: "waiting", task_state: "waiting_input", attention_at: 1 }),
+            mk({ session_id: "failed1", task_state: "failed" }),
+          ],
+        },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "waiting_input",
+        completedSeen: [],
+        totalUnread: 0,
+      },
+    });
+    const icons = w.findAll('[data-test="sidebar-rail-icon"]');
+    expect(icons.length).toBe(3);
+    // Order: waiting_input → failed → running
+    expect(icons[0].attributes("aria-label")).toContain("waiting");
+    expect(icons[1].attributes("aria-label")).toContain("failed1");
+    expect(icons[2].attributes("aria-label")).toContain("running1");
+  });
+
   test("collapse button emits update:collapsed=true", async () => {
     const w = mount(TaskSidebar, {
       props: {

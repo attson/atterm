@@ -14,16 +14,16 @@ describe("tasks i18n namespace", () => {
     expect(en.tasks.completedFold).toBeTypeOf("string");
     expect(en.tasks.unreadBadge).toBeTypeOf("string");
     expect(en.tasks.settings.section).toBeTypeOf("string");
+    expect(en.tasks.settings.preset).toBeTypeOf("string");
     expect(en.tasks.settings.expandByDefault).toBeTypeOf("string");
     expect(en.tasks.unavailableToast).toBeTypeOf("string");
   });
   test("zh-CN matches en shape", () => {
     expect(Object.keys(zhCN.tasks)).toEqual(Object.keys(en.tasks));
-    expect(Object.keys(zhCN.tasks.preset.vivid)).toEqual(
-      Object.keys(en.tasks.preset.vivid),
-    );
-    expect(Object.keys(zhCN.tasks.settings)).toEqual(
-      Object.keys(en.tasks.settings),
-    );
+    expect(Object.keys(zhCN.tasks.sidebar)).toEqual(Object.keys(en.tasks.sidebar));
+    expect(Object.keys(zhCN.tasks.preset)).toEqual(Object.keys(en.tasks.preset));
+    expect(Object.keys(zhCN.tasks.preset.vivid)).toEqual(Object.keys(en.tasks.preset.vivid));
+    expect(Object.keys(zhCN.tasks.preset.quiet)).toEqual(Object.keys(en.tasks.preset.quiet));
+    expect(Object.keys(zhCN.tasks.settings)).toEqual(Object.keys(en.tasks.settings));
   });
 });

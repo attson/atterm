@@ -340,7 +340,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				ms.fwdCancel()
 			}
 			cancelIdleTimer(ms)
-			s.registry.Remove(id)
+			s.removeSession(id)
 			s.debugf("uplink mirror_remove session=%s reason=missing_from_announce", id)
 		}
 	}
@@ -354,7 +354,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		mirrors = make(map[uuid.UUID]*mirrorState)
 		mu.Unlock()
 		for id, ms := range gone {
-			s.registry.Remove(id)
+			s.removeSession(id)
 			if ms != nil {
 				cancelIdleTimer(ms)
 				notifySession(ms, ms.sess.Info(), webpush.NotificationUplinkDisconnected, 0)
@@ -463,7 +463,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 					ms.fwdCancel()
 				}
 				cancelIdleTimer(ms)
-				s.registry.Remove(f.SessionID)
+				s.removeSession(f.SessionID)
 			}
 		case proto.TypeCommandEvent:
 			s.handleUplinkCommandEvent(f, mirrors, &mu)

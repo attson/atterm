@@ -128,6 +128,11 @@ export interface PluginHostBridge {
     unwatchDir(id: number): Promise<void>         // takes watch id
     readFile(path: string, maxBytes?: number): Promise<FileContent>
     fileMeta(path: string): Promise<FileMetaInfo>
+    openExternal(path: string): Promise<void>
+    /** Returns a same-origin URL that resolves to the file via the Wails
+     *  AssetServer.Handler at /pluginfs/<base64.URLEncoding(path)>. The URL
+     *  is stable for the lifetime of the file path; no expiry. */
+    assetUrlFor(path: string): string
   }
 }
 

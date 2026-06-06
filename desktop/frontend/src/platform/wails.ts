@@ -16,6 +16,7 @@ import {
   UnwatchDir,
   ReadFile,
   FileMeta,
+  OpenExternal,
 } from '../../wailsjs/go/main/PluginFS'
 import type { Platform, EnvironmentInfo, RemoteSession } from './types'
 
@@ -134,6 +135,15 @@ export function createWailsPlatform(): Platform {
         unwatchDir: UnwatchDir,
         readFile: ReadFile as (path: string, maxBytes?: number) => Promise<import('./types').FileContent>,
         fileMeta: FileMeta as (path: string) => Promise<import('./types').FileMetaInfo>,
+        openExternal: (path: string) => OpenExternal(path),
+        assetUrlFor: (path: string) => {
+          // base64 URL encoding (RFC 4648 §5), matches Go's base64.URLEncoding.
+          const bytes = new TextEncoder().encode(path);
+          let bin = "";
+          for (const b of bytes) bin += String.fromCharCode(b);
+          const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_");
+          return "/pluginfs/" + b64;
+        },
       },
     },
   }

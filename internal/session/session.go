@@ -516,7 +516,14 @@ func encodeMetaPayload(meta proto.SessionInfo, driverClientID, driverClientName 
 		LastOutputAt:      meta.LastOutputAt,
 		Type:              meta.Type,
 		Summary:           meta.Summary,
+		AttentionAt:       meta.AttentionAt,
 	})
+}
+
+// isAttentionType reports whether a session whose workload Type is t should
+// generate an inbox entry when it finishes. Empty Type means shell.
+func isAttentionType(t string) bool {
+	return t != "" && t != SessionTypeShell
 }
 
 // DriverClientID returns the end-to-end client_id of the current driver, or
@@ -577,6 +584,7 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		changed = true
 	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.meta.TaskState = proto.TaskStateWaitingInput
+		s.meta.AttentionAt = now.Unix()
 		changed = true
 	}
 	const tailLen = 32
@@ -679,6 +687,9 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			// recent context; ErrorLines is filled only when the command
 			// failed (extractErrorLines on lines we already split).
 			s.meta.Summary = computeSummary(s.scroll, now, exitCode != 0)
+			if isAttentionType(s.meta.Type) {
+				s.meta.AttentionAt = now.Unix()
+			}
 			changed = true
 		}
 	}

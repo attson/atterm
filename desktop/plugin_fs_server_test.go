@@ -112,6 +112,7 @@ func TestServeHTTP_RejectsDenyPattern(t *testing.T) {
 
 func TestServeHTTP_RejectsMissingFile(t *testing.T) {
 	fs, home := makeFS(t)
+	home, _ = filepath.EvalSymlinks(home)
 	missing := filepath.Join(home, "nope.txt")
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(missing), nil)
 	rr := httptest.NewRecorder()

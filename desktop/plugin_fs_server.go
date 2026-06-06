@@ -43,18 +43,7 @@ func (p *PluginFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stat the raw path before resolve so we can distinguish "not found"
-	// (404) from "forbidden" (403). resolve() uses a lexical fallback for
-	// non-existent paths which can mismatch allowRoots after symlink
-	// expansion (e.g. /var vs /private/var on macOS); checking existence
-	// first keeps the response code semantically correct.
-	rawPath := string(raw)
-	if _, statErr := os.Stat(rawPath); os.IsNotExist(statErr) {
-		http.NotFound(w, r)
-		return
-	}
-
-	resolved, err := p.resolve(rawPath)
+	resolved, err := p.resolve(string(raw))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrPathRelative), errors.Is(err, ErrPathForbidden), errors.Is(err, ErrPathDenied):

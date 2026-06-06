@@ -31,6 +31,9 @@ export interface UseSessionsReturn {
   unreadByHost: ComputedRef<Record<string, number>>;
   totalUnread: ComputedRef<number>;
   completedSeen: ComputedRef<RemoteSession[]>;
+  /** Plain function (not a ComputedRef). Reads byHost.value when invoked.
+   *  In Vue templates the call site re-evaluates on byHost change automatically.
+   *  In <script setup> reactive contexts, wrap in `computed(() => primaryStateForHost(id))`. */
   primaryStateForHost(hostId: string): TaskState;
 }
 

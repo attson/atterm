@@ -3,6 +3,7 @@
 // reach into globals directly.
 
 import { t } from "../i18n";
+import type { PresetId } from "./taskState";
 
 export interface Endpoint {
   url: string;
@@ -165,7 +166,7 @@ interface AppBindings {
   GetQuickTemplates(): Promise<import('./templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void>;
   GetTaskPreset(): Promise<string>;
-  SetTaskPreset(preset: string): Promise<void>;
+  SetTaskPreset(preset: PresetId): Promise<void>;
   GetTaskSidebarCollapsed(): Promise<boolean>;
   SetTaskSidebarCollapsed(collapsed: boolean): Promise<void>;
   MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
@@ -404,7 +405,7 @@ export function getTaskPreset(): Promise<string> {
   return bindings().GetTaskPreset();
 }
 
-export function setTaskPreset(preset: import('./taskState').PresetId): Promise<void> {
+export function setTaskPreset(preset: PresetId): Promise<void> {
   return bindings().SetTaskPreset(preset);
 }
 

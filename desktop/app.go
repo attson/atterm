@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -477,6 +478,9 @@ func (a *App) SetTaskPreset(preset string) error {
 		return fmt.Errorf("config store unavailable")
 	}
 	preset = strings.TrimSpace(preset)
+	if !isSupportedTaskPreset(preset) {
+		return fmt.Errorf("unknown task preset %q", preset)
+	}
 	cfg := a.cfgStore.Get()
 	cfg.TaskPreset = preset
 	return a.cfgStore.Set(cfg)
@@ -518,7 +522,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest("POST", baseHTTP+"/api/sessions/seen", strings.NewReader(string(body)))
+	req, err := http.NewRequest("POST", baseHTTP+"/api/sessions/seen", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

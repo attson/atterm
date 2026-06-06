@@ -231,6 +231,14 @@ func isSupportedTerminalTheme(theme string) bool {
 	return ok
 }
 
+func isSupportedTaskPreset(p string) bool {
+	switch p {
+	case "vivid", "quiet":
+		return true
+	}
+	return false
+}
+
 func supportedTerminalThemes() []string {
 	return []string{
 		terminalThemeClassic,

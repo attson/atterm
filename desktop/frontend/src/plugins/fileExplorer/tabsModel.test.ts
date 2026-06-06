@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openPath, closeTab, type TabsState } from "./tabsModel";
+import { openPath, closeTab, setViewMode, type TabsState } from "./tabsModel";
 
 function empty(): TabsState {
   return { tabs: [], activeIdx: -1 };
@@ -56,5 +56,19 @@ describe("tabsModel.closeTab", () => {
     expect(s.tabs).toHaveLength(1);
     expect(s.tabs[0].path).toBe("/b.txt");
     expect(s.activeIdx).toBe(0);
+  });
+});
+
+describe("tabsModel.setViewMode", () => {
+  it("updates the active tab's viewMode", () => {
+    const s = openPath({ tabs: [], activeIdx: -1 }, "/x/logo.svg", "persistent");
+    expect(s.tabs[0].viewMode).toBe("code");
+    const next = setViewMode(s, "render");
+    expect(next.tabs[0].viewMode).toBe("render");
+  });
+
+  it("is a no-op when there's no active tab", () => {
+    const s: TabsState = { tabs: [], activeIdx: -1 };
+    expect(setViewMode(s, "render")).toBe(s);
   });
 });

@@ -1,21 +1,33 @@
 <script lang="ts" setup>
+import { computed } from "vue";
 import { X } from "lucide-vue-next";
 import type { Tab } from "./tabsModel";
+import { useI18n } from "../../i18n/useI18n";
 
 const props = defineProps<{
   tabs: Tab[];
   activeIdx: number;
+  viewMode: "code" | "render";
 }>();
 
 const emit = defineEmits<{
   (e: "select", idx: number): void;
   (e: "close", idx: number): void;
+  (e: "toggle-view-mode"): void;
 }>();
+
+const { t } = useI18n();
 
 function basename(p: string): string {
   const i = p.lastIndexOf("/");
   return i === -1 ? p : p.slice(i + 1);
 }
+
+const activeIsSvg = computed(() => {
+  const i = props.activeIdx;
+  if (i < 0 || i >= props.tabs.length) return false;
+  return /\.svg$/i.test(props.tabs[i].path);
+});
 </script>
 
 <template>
@@ -33,6 +45,18 @@ function basename(p: string): string {
         <X :size="12" :stroke-width="2" />
       </span>
     </div>
+    <button
+      v-if="activeIsSvg"
+      class="view-toggle"
+      :title="viewMode === 'code'
+        ? t('plugins.fileExplorer.showAsRender')
+        : t('plugins.fileExplorer.showAsCode')"
+      @click="emit('toggle-view-mode')"
+    >
+      {{ viewMode === 'code'
+        ? t('plugins.fileExplorer.showAsRender')
+        : t('plugins.fileExplorer.showAsCode') }}
+    </button>
   </div>
 </template>
 
@@ -86,4 +110,15 @@ function basename(p: string): string {
   opacity: 1;
   background: var(--ed-row-hover, rgba(255, 255, 255, 0.1));
 }
+.view-toggle {
+  background: none;
+  border: 1px solid var(--ed-border, #444c56);
+  color: var(--ed-row-fg, #adbac7);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 3px;
+  margin-left: auto;
+  cursor: pointer;
+}
+.view-toggle:hover { background: var(--ed-row-hover, rgba(173, 186, 199, 0.1)); }
 </style>

@@ -1,8 +1,12 @@
+export type ViewMode = "code" | "render";
+
 export interface Tab {
   path: string;
   persistent: boolean;
   // Activation order ts, larger = more recent. Used for LRU eviction.
   lastActiveAt: number;
+  /** Code-vs-render toggle. Only meaningful for SVG today; harmless on others. */
+  viewMode: ViewMode;
 }
 
 export interface TabsState {
@@ -30,7 +34,7 @@ export function openPath(state: TabsState, path: string, kind: OpenKind): TabsSt
     const previewIdx = state.tabs.findIndex((t) => !t.persistent);
     if (previewIdx >= 0) {
       const next = clone(state);
-      next.tabs[previewIdx] = { path, persistent: false, lastActiveAt: now };
+      next.tabs[previewIdx] = { path, persistent: false, lastActiveAt: now, viewMode: "code" };
       next.activeIdx = previewIdx;
       return next;
     }
@@ -38,7 +42,7 @@ export function openPath(state: TabsState, path: string, kind: OpenKind): TabsSt
 
   // Append; may need eviction.
   let next = clone(state);
-  next.tabs.push({ path, persistent: kind === "persistent", lastActiveAt: now });
+  next.tabs.push({ path, persistent: kind === "persistent", lastActiveAt: now, viewMode: "code" });
   next.activeIdx = next.tabs.length - 1;
   if (next.tabs.length > MAX_TABS) {
     next = evictOldest(next);
@@ -90,6 +94,13 @@ function evictOldest(state: TabsState): TabsState {
     next.activeIdx = -1;
   }
 
+  return next;
+}
+
+export function setViewMode(state: TabsState, mode: ViewMode): TabsState {
+  if (state.activeIdx < 0) return state;
+  const next = clone(state);
+  next.tabs[state.activeIdx].viewMode = mode;
   return next;
 }
 

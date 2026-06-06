@@ -114,6 +114,10 @@ type MetaPayload struct {
 	Type string `json:"type,omitempty"`
 	// Summary carries the most recent SessionSummary for the session.
 	Summary *SessionSummary `json:"summary,omitempty"`
+	// AttentionAt mirrors SessionInfo.AttentionAt so attached clients learn
+	// the latest attention timestamp in real time. Unread is intentionally
+	// NOT carried in META: an attached client is watching ⇒ read.
+	AttentionAt int64 `json:"attention_at,omitempty"`
 }
 
 // ClosePayload is the JSON body of a TypeClose frame.
@@ -226,4 +230,12 @@ type SessionInfo struct {
 	// Summary is the most recent OSC 133 'D' summary for the session.
 	// Nil before the first command finishes; overwritten on each D event.
 	Summary *SessionSummary `json:"summary,omitempty"`
+	// AttentionAt is the unix time (seconds) the session last entered an
+	// attention-worthy state (waiting_input, or a non-shell completed/failed).
+	// Zero means nothing is pending. See spec §4.
+	AttentionAt int64 `json:"attention_at,omitempty"`
+	// Unread is computed per authenticated user by the relay when building the
+	// session list: attention_at > seen_at AND no client is attached. Always
+	// zero in session-local copies; the relay sets it. See spec §2.
+	Unread bool `json:"unread,omitempty"`
 }

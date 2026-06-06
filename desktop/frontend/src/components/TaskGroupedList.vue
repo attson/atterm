@@ -89,8 +89,13 @@ function onMarkFold() {
           v-if="s.unread"
           class="row-mark-read"
           data-test="row-mark-read"
+          role="button"
+          tabindex="0"
           :title="t('tasks.markRead')"
+          :aria-label="t('tasks.markRead')"
           @click.stop="onMarkRead(s)"
+          @keydown.enter.stop.prevent="onMarkRead(s)"
+          @keydown.space.stop.prevent="onMarkRead(s)"
         >
           ✓
         </span>
@@ -118,7 +123,7 @@ function onMarkFold() {
             {{ s.current_command || s.title || s.session_id.slice(0, 8) }}
           </span>
         </div>
-        <button class="fold-mark-all" @click="onMarkFold">
+        <button class="fold-mark-all" data-test="fold-mark-all" @click="onMarkFold">
           {{ t("tasks.markAllRead") }}
         </button>
       </template>

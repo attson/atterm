@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"sort"
 	"time"
 
@@ -52,11 +53,7 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {
 	var infos []proto.SessionInfo
 	if ownerUserID != "" {
-		var seen map[string]int64
-		if s.cfg.Store != nil {
-			seen, _ = s.cfg.Store.SeenAt(ctx, ownerUserID)
-		}
-		infos = s.sessionInfoListForOwner(ownerUserID, seen)
+		infos = s.sessionInfoListForOwner(ownerUserID, s.seenForOwner(ctx, ownerUserID))
 	} else {
 		infos = s.sessionInfoList()
 	}
@@ -85,6 +82,21 @@ func (s *Server) sessionInfoList() []proto.SessionInfo {
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos
+}
+
+// seenForOwner returns the per-session seen timestamps for ownerUserID, or
+// nil if no store is configured. A query error degrades to nil (all items
+// surface as unread) and is logged.
+func (s *Server) seenForOwner(ctx context.Context, ownerUserID string) map[string]int64 {
+	if s.cfg.Store == nil || ownerUserID == "" {
+		return nil
+	}
+	seen, err := s.cfg.Store.SeenAt(ctx, ownerUserID)
+	if err != nil {
+		log.Printf("relay: SeenAt owner=%s: %v", ownerUserID, err)
+		return nil
+	}
+	return seen
 }
 
 // sessionInfoListForOwner returns session infos filtered to those owned by

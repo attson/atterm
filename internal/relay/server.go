@@ -471,11 +471,7 @@ func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var infos []proto.SessionInfo
 	if ownerUserID != "" {
-		var seen map[string]int64
-		if s.cfg.Store != nil {
-			seen, _ = s.cfg.Store.SeenAt(r.Context(), ownerUserID)
-		}
-		infos = s.sessionInfoListForOwner(ownerUserID, seen)
+		infos = s.sessionInfoListForOwner(ownerUserID, s.seenForOwner(r.Context(), ownerUserID))
 	} else {
 		infos = s.sessionInfoList()
 	}

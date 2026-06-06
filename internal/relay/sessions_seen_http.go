@@ -23,7 +23,7 @@ func (s *Server) handleSessionsSeenHTTP(w http.ResponseWriter, r *http.Request) 
 		All        bool     `json:"all"`
 		SessionIDs []string `json:"session_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

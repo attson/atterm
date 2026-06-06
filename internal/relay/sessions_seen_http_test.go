@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -136,5 +137,29 @@ func TestSessionsSeen_NoCSRF(t *testing.T) {
 	w := postJSONWithCSRF(handler, "/api/sessions/seen", map[string]interface{}{"all": true}, cookieA, "")
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("no CSRF: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestSessionsSeen_BodyTooLarge: a body exceeding 64 KB → 400.
+func TestSessionsSeen_BodyTooLarge(t *testing.T) {
+	srv, store := newTestSeenServer(t)
+	handler := http.Handler(srv)
+
+	cookieA, _, _ := signupAndLogin(t, handler, store, "seenlarge@example.com", "correcthorsebattery")
+	csrfA := csrfTokenFor(t, handler, cookieA)
+
+	// 5000 padded UUIDs in a JSON array far exceeds 64 KB.
+	huge := make([]string, 5000)
+	for i := range huge {
+		huge[i] = "00000000-0000-0000-0000-000000000000"
+	}
+	rawBody, err := json.Marshal(map[string]any{"session_ids": huge})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	w := postJSONWithCSRF(handler, "/api/sessions/seen", json.RawMessage(rawBody), cookieA, csrfA)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("oversized body: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }

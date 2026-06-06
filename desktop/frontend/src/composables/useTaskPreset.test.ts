@@ -8,7 +8,6 @@ describe("useTaskPreset", () => {
   let scope: ReturnType<typeof effectScope>;
   beforeEach(() => {
     __resetForTests();
-    document.documentElement.dataset.taskPreset = undefined;
     vi.restoreAllMocks();
     scope = effectScope();
   });

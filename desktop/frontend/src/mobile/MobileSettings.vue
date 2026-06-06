@@ -14,6 +14,7 @@ const { t, languageOptions, localePreference, setLocalePreference } = useI18n()
 
 const templateRows = ref<EditorRow[]>([])
 const auxRows = ref<EditorRow[]>([])
+const templatesHidden = ref(false)
 
 const localizedLanguageOptions = computed(() =>
   languageOptions.map((o) => ({ value: o.value, label: t(o.labelKey) })),
@@ -28,11 +29,21 @@ async function loadAux() {
   auxRows.value = list.map((x) => ({ id: x.id, label: x.label, value: x.seq }))
 }
 
-onMounted(async () => { await loadTemplates(); await loadAux() })
+async function loadHidden() {
+  templatesHidden.value = await platform.templates.loadHidden()
+}
+
+onMounted(async () => { await loadTemplates(); await loadAux(); await loadHidden() })
 
 // Tell every open terminal to reload its bars immediately — they stay mounted
 // behind the v-show'd host while the user is on this page, so a prop/lifecycle
 // change won't reach them.
+async function onShowBarToggle(show: boolean) {
+  templatesHidden.value = !show
+  await platform.templates.saveHidden(!show)
+  notifyShortcutsChanged()
+}
+
 function notifyShortcutsChanged() {
   platform.events.emit('mobile:shortcutsChanged', null)
 }
@@ -85,6 +96,15 @@ async function onLanguageChange(e: Event) {
 
     <section class="block">
       <h2>{{ t('mobile.settings.templates') }}</h2>
+      <label class="show-toggle">
+        <input
+          type="checkbox"
+          data-testid="settings-templates-show-toggle"
+          :checked="!templatesHidden"
+          @change="onShowBarToggle(($event.target as HTMLInputElement).checked)"
+        />
+        <span>{{ t('mobile.settings.showBar') }}</span>
+      </label>
       <MobileListEditor
         :rows="templateRows"
         testid="settings-templates"
@@ -139,6 +159,7 @@ async function onLanguageChange(e: Event) {
 .spacer { width: 56px; }
 .block { margin-bottom: 1.5rem; }
 .block h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8d93a3; margin: 0 0 0.6rem; }
+.show-toggle { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #e6e7ea; margin: 0 0 0.6rem; }
 .field { display: block; }
 .ftitle { display: block; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8d93a3; margin-bottom: 0.6rem; }
 .field select { width: 100%; height: 42px; border-radius: 9px; border: 1px solid #1e2638; background: #11182b; color: #e6e7ea; padding: 0 12px; font-size: 0.95rem; font-family: var(--font-sans); }

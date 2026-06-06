@@ -8,47 +8,68 @@ const { t } = useI18n()
 const platform = usePlatform()
 
 const items = ref<QuickTemplate[]>([])
-const editing = ref<{ id: string; label: string; text: string; isNew: boolean } | null>(null)
+const editing = ref<{ id: string; label: string; text: string; hotkey: string; isNew: boolean } | null>(null)
 const resetOpen = ref(false)
+const hidden = ref(false)
 const error = ref('')
 
 // Editor shows the raw stored list verbatim (no defaults injection). An empty
 // stored list shows an empty editor — the "Reset to defaults" button is the
-// explicit way to seed the 10 starters. This keeps the editor and the
-// runtime bar/dialog in sync: bar/dialog falls back to defaults via
-// effectiveTemplates when the stored list is empty.
+// explicit way to seed the starters. This keeps editor and runtime bar in
+// sync: bar falls back to defaults via effectiveTemplates when stored is empty.
 async function reload() {
   const list = await platform.templates.load()
   items.value = [...list]
+  hidden.value = await platform.templates.loadHidden()
 }
 
 onMounted(reload)
+
+// notifyChanged tells any open terminal to live-reload its template bar +
+// hidden flag, instead of waiting for a remount. Mirrors the mobile
+// settings-page event from PR #108.
+function notifyChanged() {
+  platform.events.emit('quickTemplates:changed', null)
+}
 
 async function persist() {
   error.value = ''
   try {
     await platform.templates.save(items.value)
+    notifyChanged()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function onHiddenToggle(v: boolean) {
+  hidden.value = v
+  try {
+    await platform.templates.saveHidden(v)
+    notifyChanged()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
 function startAdd() {
-  editing.value = { id: crypto.randomUUID(), label: '', text: '', isNew: true }
+  editing.value = { id: crypto.randomUUID(), label: '', text: '', hotkey: '', isNew: true }
 }
 function startEdit(tpl: QuickTemplate) {
-  editing.value = { id: tpl.id, label: tpl.label, text: tpl.text, isNew: false }
+  editing.value = { id: tpl.id, label: tpl.label, text: tpl.text, hotkey: tpl.hotkey || '', isNew: false }
 }
 function cancelEdit() { editing.value = null }
 async function saveEdit() {
   if (!editing.value) return
   const e = editing.value
   if (!e.label.trim() || !e.text) return
+  const next: QuickTemplate = { id: e.id, label: e.label.trim(), text: e.text }
+  if (e.hotkey.trim()) next.hotkey = e.hotkey.trim()
   if (e.isNew) {
-    items.value.push({ id: e.id, label: e.label.trim(), text: e.text })
+    items.value.push(next)
   } else {
     const idx = items.value.findIndex((x) => x.id === e.id)
-    if (idx >= 0) items.value[idx] = { id: e.id, label: e.label.trim(), text: e.text }
+    if (idx >= 0) items.value[idx] = next
   }
   editing.value = null
   await persist()
@@ -74,6 +95,7 @@ async function confirmReset() {
   resetOpen.value = false
   await platform.templates.clear()
   items.value = [...DEFAULT_TEMPLATES]
+  notifyChanged()
 }
 function cancelReset() { resetOpen.value = false }
 </script>
@@ -81,6 +103,16 @@ function cancelReset() { resetOpen.value = false }
 <template>
   <div class="tab-pane">
     <p class="hint">{{ t('settings.templates.intro') }}</p>
+
+    <label class="show-toggle">
+      <input
+        type="checkbox"
+        data-testid="template-show-toggle"
+        :checked="!hidden"
+        @change="onHiddenToggle(!($event.target as HTMLInputElement).checked)"
+      />
+      <span>{{ t('settings.templates.showBar') }}</span>
+    </label>
 
     <ul class="list">
       <li
@@ -91,6 +123,7 @@ function cancelReset() { resetOpen.value = false }
       >
         <span class="label">{{ it.label }}</span>
         <code class="text">{{ it.text }}</code>
+        <code class="hotkey">{{ it.hotkey || '—' }}</code>
         <div class="actions">
           <button :disabled="idx === 0" @click="moveUp(it.id)">↑</button>
           <button :disabled="idx === items.length - 1" @click="moveDown(it.id)">↓</button>
@@ -105,6 +138,7 @@ function cancelReset() { resetOpen.value = false }
     <div v-if="editing" class="edit-row">
       <input v-model="editing.label" :placeholder="t('settings.templates.label')" data-testid="template-edit-label" />
       <input v-model="editing.text" :placeholder="t('settings.templates.text')" data-testid="template-edit-text" />
+      <input v-model="editing.hotkey" :placeholder="t('settings.templates.hotkey')" data-testid="template-edit-hotkey" />
       <button data-testid="template-edit-save" @click="saveEdit">{{ t('settings.templates.save') }}</button>
       <button @click="cancelEdit">{{ t('common.cancel') }}</button>
     </div>
@@ -130,14 +164,16 @@ function cancelReset() { resetOpen.value = false }
 <style scoped>
 .tab-pane { display: flex; flex-direction: column; gap: 10px; }
 .hint { font-size: 12px; color: var(--fg-dim); margin: 0; line-height: 1.5; }
+.show-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); }
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.row { display: grid; grid-template-columns: 8rem 1fr auto; gap: 8px; align-items: center; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.row { display: grid; grid-template-columns: 7rem 1fr 5rem auto; gap: 8px; align-items: center; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
 .label { font-weight: 600; font-family: var(--font-mono); font-size: 0.85rem; }
 .text { font-family: var(--font-mono); font-size: 0.78rem; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hotkey { font-family: var(--font-mono); font-size: 0.74rem; color: var(--fg-dim); text-align: center; }
 .actions { display: flex; gap: 4px; }
 .actions button { height: 24px; padding: 0 8px; font-size: 0.74rem; }
 .actions .del { color: var(--bad); border-color: rgba(248, 81, 73, 0.4); }
-.edit-row { display: grid; grid-template-columns: 8rem 1fr auto auto; gap: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
+.edit-row { display: grid; grid-template-columns: 7rem 1fr 5rem auto auto; gap: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
 .edit-row input { height: 28px; padding: 0 8px; }
 .footer { display: flex; gap: 8px; align-items: center; }
 .error { color: var(--bad); font-size: 0.75rem; }

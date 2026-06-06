@@ -8,7 +8,6 @@ import { SessionConnection, type Endpoint } from '../lib/connection'
 import { effectiveTemplates, type QuickTemplate } from '../lib/templates'
 import { effectiveAuxKeys, type AuxKey } from '../lib/auxKeys'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
-import TemplatePreviewDialog from '../components/TemplatePreviewDialog.vue'
 import { TERMINAL_FONT_FAMILY } from '../lib/terminalFont'
 import type { RemoteSession } from '../platform/types'
 import { usePlatform } from '../platform'
@@ -29,7 +28,7 @@ const controlMode = ref(false)
 const pasteOpen = ref(false)
 const pasteText = ref('')
 const templates = ref<readonly QuickTemplate[]>([])
-const pendingTemplate = ref<QuickTemplate | null>(null)
+const templatesHidden = ref(false)
 // Increments every time the user tries to input while tap-protect is on
 // (controlMode off but otherwise eligible). The banner uses the value as a
 // :key so each bump restarts its shake animation.
@@ -50,6 +49,7 @@ let shortcutsOff: (() => void) | null = null
 function reloadBars() {
   effectiveTemplates(platform.templates).then((list) => { templates.value = list })
   effectiveAuxKeys(platform.auxKeys).then((list) => { auxKeys.value = list })
+  platform.templates.loadHidden().then((h) => { templatesHidden.value = h })
 }
 
 function decode(data: Uint8Array): string {
@@ -103,14 +103,8 @@ function onImeInput(ev: Event) {
 
 function sendAux(seq: string) { sendRaw(seq) }
 function onTemplateClick(tpl: QuickTemplate) {
-  if (!canSend.value) { nudgeProtect(); return }
-  pendingTemplate.value = tpl
-}
-function confirmTemplate(tpl: QuickTemplate) {
-  pendingTemplate.value = null
   sendRaw(`${tpl.text}\r`)
 }
-function cancelTemplate() { pendingTemplate.value = null }
 function takeControl() {
   if (!canControl.value) return
   // Flip controlMode on at the same time — tapping "Take control" is a
@@ -327,7 +321,7 @@ function onTermPointerDown() {
         />
         <span>{{ t('mobile.controlMode') }}</span>
       </label>
-      <div class="template-bar" data-testid="template-bar">
+      <div v-if="!templatesHidden" class="template-bar" data-testid="template-bar">
         <button
           v-for="tpl in templates"
           :key="tpl.id"
@@ -355,11 +349,6 @@ function onTermPointerDown() {
         <button type="button" data-testid="mobile-paste-confirm" :disabled="!canSend || !pasteText" @click="confirmPaste">{{ t('mobile.pasteConfirm') }}</button>
       </div>
     </div>
-    <TemplatePreviewDialog
-      :template="pendingTemplate"
-      @confirm="confirmTemplate"
-      @cancel="cancelTemplate"
-    />
   </div>
 </template>
 

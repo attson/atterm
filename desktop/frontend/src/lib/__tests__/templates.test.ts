@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { DEFAULT_TEMPLATES, effectiveTemplates } from '../templates'
 
 describe('DEFAULT_TEMPLATES', () => {
-  it('exposes the 10 starter entries', () => {
-    expect(DEFAULT_TEMPLATES).toHaveLength(10)
+  it('exposes the 9 starter entries', () => {
+    expect(DEFAULT_TEMPLATES).toHaveLength(9)
   })
 
   it('has stable default- IDs', () => {
@@ -17,9 +17,9 @@ describe('DEFAULT_TEMPLATES', () => {
     expect(ids.size).toBe(DEFAULT_TEMPLATES.length)
   })
 
-  it('includes the canonical AI tokens', () => {
+  it('includes the canonical tokens', () => {
     const texts = DEFAULT_TEMPLATES.map(t => t.text)
-    for (const expected of ['y', 'n', 'yes', 'no', 'continue', 'approve', 'deny', 'retry', '/test', '/diff']) {
+    for (const expected of ['yes', 'ok', 'continue', 'commit', 'push', 'release', '1', '2', '3']) {
       expect(texts).toContain(expected)
     }
   })

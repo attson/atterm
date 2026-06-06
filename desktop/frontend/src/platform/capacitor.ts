@@ -200,6 +200,15 @@ export function createCapacitorPlatform(): Platform {
         if (typeof localStorage === 'undefined') return
         localStorage.removeItem(TEMPLATES_KEY)
       },
+      loadHidden: async () => {
+        if (typeof localStorage === 'undefined') return false
+        return localStorage.getItem(TEMPLATES_KEY + '.hidden') === '1'
+      },
+      saveHidden: async (hidden: boolean) => {
+        if (typeof localStorage === 'undefined') return
+        if (hidden) localStorage.setItem(TEMPLATES_KEY + '.hidden', '1')
+        else localStorage.removeItem(TEMPLATES_KEY + '.hidden')
+      },
     },
     auxKeys: {
       load: async () => {

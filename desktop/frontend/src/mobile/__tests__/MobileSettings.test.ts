@@ -30,7 +30,7 @@ describe('MobileSettings', () => {
     const w = mount(MobileSettings)
     await flushPromises()
     // effectiveTemplates / effectiveAuxKeys fall back to defaults on empty load
-    expect(w.find('[data-testid="settings-templates-row-default-y"]').exists()).toBe(true)
+    expect(w.find('[data-testid="settings-templates-row-default-yes"]').exists()).toBe(true)
     expect(w.find('[data-testid="settings-auxkeys-row-aux-enter"]').exists()).toBe(true)
   })
 
@@ -52,10 +52,10 @@ describe('MobileSettings', () => {
   it('deleting a template row persists the shortened list', async () => {
     const w = mount(MobileSettings)
     await flushPromises()
-    await w.find('[data-testid="settings-templates-delete-default-y"]').trigger('click')
+    await w.find('[data-testid="settings-templates-delete-default-yes"]').trigger('click')
     expect(platform.templates.save).toHaveBeenCalled()
     const saved = (platform.templates.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0]
-    expect(saved.find((t: { id: string }) => t.id === 'default-y')).toBeUndefined()
+    expect(saved.find((t: { id: string }) => t.id === 'default-yes')).toBeUndefined()
   })
 
   it('reset templates clears storage', async () => {
@@ -69,7 +69,7 @@ describe('MobileSettings', () => {
   it('emits mobile:shortcutsChanged after an edit so open terminals live-reload', async () => {
     const w = mount(MobileSettings)
     await flushPromises()
-    await w.find('[data-testid="settings-templates-delete-default-y"]').trigger('click')
+    await w.find('[data-testid="settings-templates-delete-default-yes"]').trigger('click')
     expect(platform.events.emit).toHaveBeenCalledWith('mobile:shortcutsChanged', null)
   })
 

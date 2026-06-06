@@ -10,6 +10,10 @@ export function CloseSession(arg1:string):Promise<void>;
 
 export function ConfirmQuit():Promise<void>;
 
+export function CreatePairingToken():Promise<main.PairingTokenResponse>;
+
+export function ExportDiagnostics(arg1:string):Promise<string>;
+
 export function FetchRelayMe():Promise<main.RelayMe>;
 
 export function GetAutoCheckUpdates():Promise<boolean>;
@@ -20,19 +24,23 @@ export function GetCommandNotifyThresholdSeconds():Promise<number>;
 
 export function GetDefaultShell():Promise<string>;
 
+export function GetDiagnostics(arg1:string):Promise<main.DiagnosticsPayload>;
+
 export function GetEndpoint():Promise<main.Endpoint>;
 
 export function GetHostInfo():Promise<main.HostInfo>;
+
+export function GetLocalePreference():Promise<string>;
 
 export function GetLogPreview():Promise<main.LogPreview>;
 
 export function GetLoggingConfig():Promise<main.LoggingConfig>;
 
-export function GetLocalePreference():Promise<string>;
-
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;
+
+export function GetQuickTemplates():Promise<Array<main.QuickTemplate>>;
 
 export function GetRelayConfig():Promise<main.RelayConfig>;
 
@@ -60,13 +68,15 @@ export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
 
 export function SetDefaultShell(arg1:string):Promise<void>;
 
-export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
-
 export function SetLocalePreference(arg1:string):Promise<void>;
+
+export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 
 export function SetPluginConfig(arg1:main.PluginConfig):Promise<void>;
+
+export function SetQuickTemplates(arg1:Array<main.QuickTemplate>):Promise<void>;
 
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 

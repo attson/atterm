@@ -100,6 +100,16 @@ export function createWailsPlatform(): Platform {
       clear: async () => {
         await api.setQuickTemplates([])
       },
+      // Hidden flag is a per-device UI preference, not a session secret —
+      // localStorage in the WebView is fine and avoids a new Wails binding.
+      loadHidden: async () => {
+        return typeof localStorage !== 'undefined' && localStorage.getItem('atterm.templates.hidden') === '1'
+      },
+      saveHidden: async (hidden: boolean) => {
+        if (typeof localStorage === 'undefined') return
+        if (hidden) localStorage.setItem('atterm.templates.hidden', '1')
+        else localStorage.removeItem('atterm.templates.hidden')
+      },
     },
     // Desktop has a real keyboard and never renders the mobile aux-key bar,
     // so there is nothing to persist — a no-op bridge satisfies the Platform

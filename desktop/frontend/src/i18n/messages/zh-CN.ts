@@ -315,15 +315,13 @@ export const zhCN = {
       add: "新增模板",
       label: "标签",
       text: "发送文本",
+      hotkey: "快捷键（如 Alt+1）",
+      showBar: "在终端上方显示快捷模板栏",
       save: "保存",
       edit: "编辑",
       delete: "删除",
       reset: "恢复默认",
       resetConfirm: "用默认列表覆盖当前模板？",
-      preview: {
-        title: "发送预览",
-        send: "发送",
-      },
     },
   },
   mobile: {
@@ -394,6 +392,7 @@ export const zhCN = {
       label: "标签",
       text: "发送文本",
       seq: "发送字节（\\r \\n \\t \\e \\xNN ^X）",
+      showBar: "在终端上方显示快捷模板栏",
       save: "保存",
     },
     image: {

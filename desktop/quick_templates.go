@@ -4,9 +4,10 @@ package main
 // Mirrors the TS interface in desktop/frontend/src/lib/templates.ts —
 // changes here MUST be reflected there (and in web/src/shared/templates.ts).
 type QuickTemplate struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Text  string `json:"text"`
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Text   string `json:"text"`
+	Hotkey string `json:"hotkey,omitempty"`
 }
 
 // GetQuickTemplates returns the user's persisted templates. Always

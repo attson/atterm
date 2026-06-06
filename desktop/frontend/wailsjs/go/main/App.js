@@ -18,6 +18,14 @@ export function ConfirmQuit() {
   return window['go']['main']['App']['ConfirmQuit']();
 }
 
+export function CreatePairingToken() {
+  return window['go']['main']['App']['CreatePairingToken']();
+}
+
+export function ExportDiagnostics(arg1) {
+  return window['go']['main']['App']['ExportDiagnostics'](arg1);
+}
+
 export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
 }
@@ -38,12 +46,20 @@ export function GetDefaultShell() {
   return window['go']['main']['App']['GetDefaultShell']();
 }
 
+export function GetDiagnostics(arg1) {
+  return window['go']['main']['App']['GetDiagnostics'](arg1);
+}
+
 export function GetEndpoint() {
   return window['go']['main']['App']['GetEndpoint']();
 }
 
 export function GetHostInfo() {
   return window['go']['main']['App']['GetHostInfo']();
+}
+
+export function GetLocalePreference() {
+  return window['go']['main']['App']['GetLocalePreference']();
 }
 
 export function GetLogPreview() {
@@ -54,16 +70,16 @@ export function GetLoggingConfig() {
   return window['go']['main']['App']['GetLoggingConfig']();
 }
 
-export function GetLocalePreference() {
-  return window['go']['main']['App']['GetLocalePreference']();
-}
-
 export function GetNotificationsEnabled() {
   return window['go']['main']['App']['GetNotificationsEnabled']();
 }
 
 export function GetPluginConfig() {
   return window['go']['main']['App']['GetPluginConfig']();
+}
+
+export function GetQuickTemplates() {
+  return window['go']['main']['App']['GetQuickTemplates']();
 }
 
 export function GetRelayConfig() {
@@ -118,12 +134,12 @@ export function SetDefaultShell(arg1) {
   return window['go']['main']['App']['SetDefaultShell'](arg1);
 }
 
-export function SetLoggingConfig(arg1) {
-  return window['go']['main']['App']['SetLoggingConfig'](arg1);
-}
-
 export function SetLocalePreference(arg1) {
   return window['go']['main']['App']['SetLocalePreference'](arg1);
+}
+
+export function SetLoggingConfig(arg1) {
+  return window['go']['main']['App']['SetLoggingConfig'](arg1);
 }
 
 export function SetNotificationsEnabled(arg1) {
@@ -132,6 +148,10 @@ export function SetNotificationsEnabled(arg1) {
 
 export function SetPluginConfig(arg1) {
   return window['go']['main']['App']['SetPluginConfig'](arg1);
+}
+
+export function SetQuickTemplates(arg1) {
+  return window['go']['main']['App']['SetQuickTemplates'](arg1);
 }
 
 export function SetRelayConfig(arg1) {

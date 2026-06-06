@@ -37,6 +37,8 @@ vi.mock('../../platform', () => ({
       load: vi.fn().mockResolvedValue([]),
       save: vi.fn().mockResolvedValue(undefined),
       clear: vi.fn().mockResolvedValue(undefined),
+      loadHidden: vi.fn().mockResolvedValue(false),
+      saveHidden: vi.fn().mockResolvedValue(undefined),
     },
     auxKeys: {
       load: vi.fn().mockResolvedValue([]),
@@ -317,26 +319,17 @@ describe('MobileTerminal', () => {
   it('mounts the template bar with templates loaded from platform.templates', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
-    // The defaults seed includes default-y; mock platform returns [] which falls back to DEFAULT_TEMPLATES.
+    // The defaults seed includes default-yes; mock platform returns [] which falls back to DEFAULT_TEMPLATES.
     expect(w.find('[data-testid="template-bar"]').exists()).toBe(true)
-    expect(w.find('[data-testid="template-btn-default-y"]').exists()).toBe(true)
+    expect(w.find('[data-testid="template-btn-default-yes"]').exists()).toBe(true)
   })
 
-  it('opens the preview dialog when a template button is clicked', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
-    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
-    await flushPromises()
-    await w.find('[data-testid="template-btn-default-y"]').trigger('click')
-    expect(w.find('[data-testid="template-preview"]').exists()).toBe(true)
-    expect(w.find('[data-testid="template-preview"]').text()).toContain('y')
-  })
-
-  it('sends template text plus CR when the preview Send button is clicked', async () => {
+  it('clicking a template button sends its text + CR immediately (no preview)', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     await flushPromises()
     await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
-    await w.find('[data-testid="template-preview-confirm"]').trigger('click')
+    expect(w.find('[data-testid="template-preview"]').exists()).toBe(false)
     expect(sendInput).toHaveBeenCalledWith('yes\r')
   })
 
@@ -396,9 +389,8 @@ describe('MobileTerminal', () => {
   it('shakes the protect-mode banner when an inert template button is tapped', async () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
-    await w.find('[data-testid="template-btn-default-y"]').trigger('click')
-    // Preview dialog must NOT open while protect mode blocks input.
-    expect(w.find('[data-testid="template-preview"]').exists()).toBe(false)
+    await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
+    expect(sendInput).not.toHaveBeenCalled()
     expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
   })
 

@@ -173,6 +173,9 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		if s.cfg.WebPush == nil || ms == nil {
 			return
 		}
+		if ms.sess.SubscriberCount() > 0 { // watching == read == no push
+			return
+		}
 		hostID, _ := uuid.Parse(info.HostID) // host id is informational in push payloads
 		s.cfg.WebPush.DispatchSessionNotification(ms.sess.OwnerUserID, webpush.SessionNotification{
 			SessionID:        ms.sess.ID,
@@ -499,7 +502,7 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 	info := ms.sess.Info()
 	hostIDStr := info.HostID
 	hostID, _ := uuid.Parse(hostIDStr) // ignore parse error — hostID is informational
-	if s.cfg.WebPush != nil {
+	if s.cfg.WebPush != nil && ms.sess.SubscriberCount() == 0 {
 		s.cfg.WebPush.DispatchCommandFinished(ms.sess.OwnerUserID, webpush.CommandFinished{
 			SessionID:        f.SessionID,
 			HostID:           hostID,

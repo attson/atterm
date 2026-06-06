@@ -90,6 +90,14 @@ export function GetShellIntegrationEnabled() {
   return window['go']['main']['App']['GetShellIntegrationEnabled']();
 }
 
+export function GetTaskPreset() {
+  return window['go']['main']['App']['GetTaskPreset']();
+}
+
+export function GetTaskSidebarCollapsed() {
+  return window['go']['main']['App']['GetTaskSidebarCollapsed']();
+}
+
 export function GetTerminalTheme() {
   return window['go']['main']['App']['GetTerminalTheme']();
 }
@@ -160,6 +168,18 @@ export function SetRelayConfig(arg1) {
 
 export function SetShellIntegrationEnabled(arg1) {
   return window['go']['main']['App']['SetShellIntegrationEnabled'](arg1);
+}
+
+export function MarkSessionsSeen(arg1, arg2) {
+  return window['go']['main']['App']['MarkSessionsSeen'](arg1, arg2);
+}
+
+export function SetTaskPreset(arg1) {
+  return window['go']['main']['App']['SetTaskPreset'](arg1);
+}
+
+export function SetTaskSidebarCollapsed(arg1) {
+  return window['go']['main']['App']['SetTaskSidebarCollapsed'](arg1);
 }
 
 export function SetTerminalTheme(arg1) {

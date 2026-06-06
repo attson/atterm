@@ -164,6 +164,11 @@ interface AppBindings {
   ExportDiagnostics(content: string): Promise<string>;
   GetQuickTemplates(): Promise<import('./templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void>;
+  GetTaskPreset(): Promise<string>;
+  SetTaskPreset(preset: string): Promise<void>;
+  GetTaskSidebarCollapsed(): Promise<boolean>;
+  SetTaskSidebarCollapsed(collapsed: boolean): Promise<void>;
+  MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
 }
 
 declare global {
@@ -176,7 +181,14 @@ declare global {
   }
 }
 
+let _bindingsOverride: AppBindings | undefined;
+
+export function __setBindingsForTest(b: AppBindings | undefined): void {
+  _bindingsOverride = b;
+}
+
 function bindings(): AppBindings {
+  if (_bindingsOverride) return _bindingsOverride;
   const b = window.go?.main?.App;
   if (!b) throw new Error(t("app.wailsBindingsNotReady"));
   return b;
@@ -386,4 +398,29 @@ export function getQuickTemplates(): Promise<import('./templates').QuickTemplate
 
 export function setQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void> {
   return bindings().SetQuickTemplates(list);
+}
+
+export function getTaskPreset(): Promise<string> {
+  return bindings().GetTaskPreset();
+}
+
+export function setTaskPreset(preset: import('./taskState').PresetId): Promise<void> {
+  return bindings().SetTaskPreset(preset);
+}
+
+export function getTaskSidebarCollapsed(): Promise<boolean> {
+  return bindings().GetTaskSidebarCollapsed();
+}
+
+export function setTaskSidebarCollapsed(collapsed: boolean): Promise<void> {
+  return bindings().SetTaskSidebarCollapsed(collapsed);
+}
+
+export type MarkSessionsSeenOpts = { ids: string[] } | { all: true };
+
+export function markSessionsSeen(opts: MarkSessionsSeenOpts): Promise<void> {
+  if ("all" in opts && opts.all) {
+    return bindings().MarkSessionsSeen([], true);
+  }
+  return bindings().MarkSessionsSeen((opts as { ids: string[] }).ids, false);
 }

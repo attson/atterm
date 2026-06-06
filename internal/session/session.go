@@ -150,6 +150,13 @@ func (s *Session) SetSubscriberCountHook(fn func(int)) {
 	s.mu.Unlock()
 }
 
+// SubscriberCount returns the number of currently-attached subscribers.
+func (s *Session) SubscriberCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.subs)
+}
+
 // UpdateMeta merges new cwd/title from a META frame and, on real change,
 // broadcasts a META frame that reflects the full current session state
 // (driver_client_id/name + cols/rows + cwd/title). The driver fields are

@@ -1,4 +1,4 @@
-import { computed, type ComputedRef, ref, watch } from "vue";
+import { computed, type ComputedRef, ref } from "vue";
 import { getTaskPreset, setTaskPreset } from "../lib/api";
 import { presets, type PresetId, type TaskStatePreset } from "../lib/taskState";
 
@@ -12,16 +12,11 @@ function isPresetId(s: string | null | undefined): s is PresetId {
 const activeId = ref<PresetId>("vivid");
 let initialized = false;
 
-function applyDataset(id: PresetId) {
-  document.documentElement.dataset.taskPreset = id;
-}
-
 async function loadInitial() {
   try {
     const v = await getTaskPreset();
     if (isPresetId(v)) {
       activeId.value = v;
-      applyDataset(v);
       return;
     }
   } catch {
@@ -31,11 +26,9 @@ async function loadInitial() {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (isPresetId(stored)) {
       activeId.value = stored;
-      applyDataset(stored);
       return;
     }
   }
-  applyDataset("vivid");
 }
 
 export interface UseTaskPreset {
@@ -48,12 +41,10 @@ export function useTaskPreset(): UseTaskPreset {
   if (!initialized) {
     initialized = true;
     void loadInitial();
-    watch(activeId, (v) => applyDataset(v));
   }
   const active = computed(() => presets[activeId.value]);
   async function setPreset(id: PresetId) {
     activeId.value = id;
-    applyDataset(id);
     try {
       await setTaskPreset(id);
     } catch {
@@ -69,7 +60,4 @@ export function useTaskPreset(): UseTaskPreset {
 export function __resetForTests(): void {
   initialized = false;
   activeId.value = "vivid";
-  if (typeof document !== "undefined") {
-    delete document.documentElement.dataset.taskPreset;
-  }
 }

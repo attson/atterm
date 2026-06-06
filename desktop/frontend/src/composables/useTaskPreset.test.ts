@@ -13,7 +13,7 @@ describe("useTaskPreset", () => {
   });
   afterEach(() => scope.stop());
 
-  test("loads preset from Wails and writes html dataset", async () => {
+  test("loads preset from Wails", async () => {
     vi.spyOn(api, "getTaskPreset").mockResolvedValue("quiet");
     let preset: ReturnType<typeof useTaskPreset> | undefined;
     scope.run(() => {
@@ -22,10 +22,9 @@ describe("useTaskPreset", () => {
     await flushPromises();
     await nextTick();
     expect(preset!.activeId.value).toBe("quiet");
-    expect(document.documentElement.dataset.taskPreset).toBe("quiet");
   });
 
-  test("setPreset writes through Wails and updates dataset", async () => {
+  test("setPreset writes through Wails and updates activeId", async () => {
     vi.spyOn(api, "getTaskPreset").mockResolvedValue("vivid");
     const setSpy = vi.spyOn(api, "setTaskPreset").mockResolvedValue(undefined);
     let preset: ReturnType<typeof useTaskPreset> | undefined;
@@ -34,7 +33,6 @@ describe("useTaskPreset", () => {
     await preset!.setPreset("quiet");
     expect(setSpy).toHaveBeenCalledWith("quiet");
     expect(preset!.activeId.value).toBe("quiet");
-    expect(document.documentElement.dataset.taskPreset).toBe("quiet");
   });
 
   test("falls back to localStorage when bindings missing", async () => {

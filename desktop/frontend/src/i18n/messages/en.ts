@@ -313,15 +313,13 @@ export const en = {
       add: "Add template",
       label: "Label",
       text: "Send text",
+      hotkey: "Hotkey (e.g. Alt+1)",
+      showBar: "Show template bar above the terminal",
       save: "Save",
       edit: "Edit",
       delete: "Delete",
       reset: "Reset to defaults",
       resetConfirm: "Replace your list with the defaults?",
-      preview: {
-        title: "Send preview",
-        send: "Send",
-      },
     },
   },
   mobile: {
@@ -392,6 +390,7 @@ export const en = {
       label: "Label",
       text: "Send text",
       seq: "Send bytes (\\r \\n \\t \\e \\xNN ^X)",
+      showBar: "Show template bar above the terminal",
       save: "Save",
     },
     image: {

@@ -131,6 +131,11 @@ export interface TemplateBridge {
   load(): Promise<QuickTemplate[]>
   save(list: QuickTemplate[]): Promise<void>
   clear(): Promise<void>
+  // The user can hide the whole template bar in Settings → Templates. Each
+  // platform persists the flag in whatever store fits (capacitor uses
+  // localStorage, wails uses appConfig).
+  loadHidden(): Promise<boolean>
+  saveHidden(hidden: boolean): Promise<void>
 }
 
 import type { AuxKey } from '../lib/auxKeys'

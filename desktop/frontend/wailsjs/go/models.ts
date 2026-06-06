@@ -22,6 +22,108 @@ export namespace main {
 	        this.reason = source["reason"];
 	    }
 	}
+	export class ConfigSummary {
+	    default_shell: string;
+	    locale: string;
+	    terminal_theme: string;
+	    notifications_enabled: boolean;
+	    shell_integration_enabled: boolean;
+	    webgl_renderer_enabled: boolean;
+	    logging_enabled: boolean;
+	    log_file_path: string;
+	    auto_check_updates: boolean;
+	    command_notify_threshold_seconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConfigSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.default_shell = source["default_shell"];
+	        this.locale = source["locale"];
+	        this.terminal_theme = source["terminal_theme"];
+	        this.notifications_enabled = source["notifications_enabled"];
+	        this.shell_integration_enabled = source["shell_integration_enabled"];
+	        this.webgl_renderer_enabled = source["webgl_renderer_enabled"];
+	        this.logging_enabled = source["logging_enabled"];
+	        this.log_file_path = source["log_file_path"];
+	        this.auto_check_updates = source["auto_check_updates"];
+	        this.command_notify_threshold_seconds = source["command_notify_threshold_seconds"];
+	    }
+	}
+	export class RelayErrorEntry {
+	    timestamp: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RelayErrorEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.timestamp = source["timestamp"];
+	        this.message = source["message"];
+	    }
+	}
+	export class DiagnosticsPayload {
+	    generated_at: string;
+	    app_version: string;
+	    os: string;
+	    arch: string;
+	    os_version: string;
+	    webview_summary: string;
+	    user_agent: string;
+	    relay_url: string;
+	    relay_status: string;
+	    relay_token_redacted: string;
+	    allow_insecure_relay: boolean;
+	    remote_permission: string;
+	    uplink_paused: boolean;
+	    recent_relay_errors: RelayErrorEntry[];
+	    config: ConfigSummary;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiagnosticsPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.generated_at = source["generated_at"];
+	        this.app_version = source["app_version"];
+	        this.os = source["os"];
+	        this.arch = source["arch"];
+	        this.os_version = source["os_version"];
+	        this.webview_summary = source["webview_summary"];
+	        this.user_agent = source["user_agent"];
+	        this.relay_url = source["relay_url"];
+	        this.relay_status = source["relay_status"];
+	        this.relay_token_redacted = source["relay_token_redacted"];
+	        this.allow_insecure_relay = source["allow_insecure_relay"];
+	        this.remote_permission = source["remote_permission"];
+	        this.uplink_paused = source["uplink_paused"];
+	        this.recent_relay_errors = this.convertValues(source["recent_relay_errors"], RelayErrorEntry);
+	        this.config = this.convertValues(source["config"], ConfigSummary);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class DirEntry {
 	    name: string;
 	    isDir: boolean;
@@ -196,6 +298,22 @@ export namespace main {
 	        this.session_id = source["session_id"];
 	    }
 	}
+	export class PairingTokenResponse {
+	    token: string;
+	    expires_at: number;
+	    qr_url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PairingTokenResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	        this.expires_at = source["expires_at"];
+	        this.qr_url = source["qr_url"];
+	    }
+	}
 	export class ShortcutsConfig {
 	    bindings: Record<string, string>;
 	
@@ -234,11 +352,11 @@ export namespace main {
 	    fileExplorer: FileExplorerConfig;
 	    translate: TranslateConfig;
 	    shortcuts: ShortcutsConfig;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);
@@ -264,8 +382,24 @@ export namespace main {
 		    return a;
 		}
 	}
-	
-	
+	export class QuickTemplate {
+	    id: string;
+	    label: string;
+	    text: string;
+	    hotkey?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new QuickTemplate(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.text = source["text"];
+	        this.hotkey = source["hotkey"];
+	    }
+	}
 	export class RelayConfig {
 	    url: string;
 	    token: string;
@@ -288,6 +422,7 @@ export namespace main {
 	        this.paused = source["paused"];
 	    }
 	}
+	
 	export class RelayMe {
 	    user_id: string;
 	    email: string;

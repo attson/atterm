@@ -30,7 +30,6 @@ import { usePluginConfigStore } from "../plugins/configStore";
 import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/types";
 import { useI18n } from "../i18n/useI18n";
 import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
-import TemplatePreviewDialog from "./TemplatePreviewDialog.vue";
 import { usePlatform } from "../platform";
 
 const props = withDefaults(
@@ -89,7 +88,7 @@ const localHostname = ref("");
 // effectiveTemplates falls back to DEFAULT_TEMPLATES when persisted list
 // is empty so the bar is never empty on a fresh install.
 const templates = ref<readonly QuickTemplate[]>([]);
-const pendingTemplate = ref<QuickTemplate | null>(null);
+const templatesHidden = ref(false);
 const platform = usePlatform();
 
 let term: Terminal | null = null;
@@ -478,16 +477,62 @@ function startConnection() {
   }
 }
 
-function onTemplateClick(tpl: QuickTemplate) {
-  pendingTemplate.value = tpl;
-}
-function confirmTemplate(tpl: QuickTemplate) {
-  pendingTemplate.value = null;
+function sendTemplate(tpl: QuickTemplate) {
   conn?.sendInput(`${tpl.text}\r`);
 }
-function cancelTemplate() {
-  pendingTemplate.value = null;
+
+// Re-read the persisted template list + hidden flag. Wired to the
+// 'quickTemplates:changed' event the Settings page emits so an open
+// terminal updates immediately, without a remount.
+async function reloadTemplates() {
+  templates.value = await effectiveTemplates(platform.templates);
+  templatesHidden.value = await platform.templates.loadHidden();
 }
+
+// parseHotkey turns a user-typed string like "Mod+1", "Alt+Shift+P", "Mod+/"
+// into modifier flags + a single key. "Mod" maps to ⌘ on macOS, Ctrl elsewhere
+// (matches the shortcuts system convention). Returns null for unparseable input.
+function parseHotkey(s: string): { mod: boolean; alt: boolean; shift: boolean; key: string } | null {
+  if (!s) return null;
+  const parts = s.split("+").map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  let mod = false, alt = false, shift = false, key = "";
+  for (const p of parts) {
+    const pl = p.toLowerCase();
+    if (pl === "mod" || pl === "cmd" || pl === "meta" || pl === "ctrl" || pl === "control") mod = true;
+    else if (pl === "alt" || pl === "option") alt = true;
+    else if (pl === "shift") shift = true;
+    else key = p.toLowerCase();
+  }
+  return key ? { mod, alt, shift, key } : null;
+}
+
+const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+
+function hotkeyMatches(e: KeyboardEvent, h: { mod: boolean; alt: boolean; shift: boolean; key: string }): boolean {
+  const modPressed = isMac ? e.metaKey : e.ctrlKey;
+  if (h.mod !== modPressed) return false;
+  if (h.alt !== e.altKey) return false;
+  if (h.shift !== e.shiftKey) return false;
+  return e.key.toLowerCase() === h.key;
+}
+
+function onTemplateHotkey(e: KeyboardEvent) {
+  // Only the focused pane responds, so multiple mounted TerminalViews don't
+  // all fire on the same key press.
+  if (!props.focused) return;
+  for (const tpl of templates.value) {
+    const h = parseHotkey(tpl.hotkey || "");
+    if (h && hotkeyMatches(e, h)) {
+      e.preventDefault();
+      e.stopPropagation();
+      sendTemplate(tpl);
+      return;
+    }
+  }
+}
+
+let templatesOff: (() => void) | null = null;
 
 onMounted(async () => {
   await ensureTerm();
@@ -501,9 +546,13 @@ onMounted(async () => {
     /* fall back to default */
   }
   startConnection();
-  effectiveTemplates(platform.templates).then((list) => { templates.value = list });
+  reloadTemplates();
+  templatesOff = platform.events.on("quickTemplates:changed", reloadTemplates);
   document.addEventListener("mousedown", onDocumentMouseDown);
   document.addEventListener("keydown", onDocumentKeyDown);
+  // Hotkey handler is a capture-phase listener so it preempts xterm's own
+  // keyboard input — the user expects Alt+1 to fire the template, not type "1".
+  document.addEventListener("keydown", onTemplateHotkey, true);
   // Re-fit on the next two animation frames. Layout for the cell may not
   // be fully resolved at term.open() time — getComputedStyle('height') on
   // the absolute+inset:0 .term sometimes still reads "auto" right after
@@ -516,8 +565,11 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  templatesOff?.();
+  templatesOff = null;
   document.removeEventListener("mousedown", onDocumentMouseDown);
   document.removeEventListener("keydown", onDocumentKeyDown);
+  document.removeEventListener("keydown", onTemplateHotkey, true);
   pluginInputSenders?.delete(props.sessionId);
   conn?.detach();
   conn = null;
@@ -609,20 +661,16 @@ watch(status, (nextStatus) => {
         >{{ item.label }}</button>
       </div>
     </Teleport>
-    <div class="template-bar" data-testid="template-bar">
+    <div v-if="!templatesHidden" class="template-bar" data-testid="template-bar">
       <button
         v-for="tpl in templates"
         :key="tpl.id"
         class="template-btn"
         :data-testid="`template-btn-${tpl.id}`"
-        @click="onTemplateClick(tpl)"
+        :title="tpl.hotkey || ''"
+        @click="sendTemplate(tpl)"
       >{{ tpl.label }}</button>
     </div>
-    <TemplatePreviewDialog
-      :template="pendingTemplate"
-      @confirm="confirmTemplate"
-      @cancel="cancelTemplate"
-    />
   </div>
 </template>
 

@@ -278,9 +278,10 @@ describe("TerminalView right-click send", () => {
 });
 
 describe("TerminalView template bar", () => {
-  test("includes the template bar markup and preview dialog", () => {
+  test("includes the template bar markup and click sends directly (no preview)", () => {
     expect(source).toContain('data-testid="template-bar"');
-    expect(source).toContain("TemplatePreviewDialog");
+    expect(source).not.toContain("TemplatePreviewDialog");
+    expect(source).toContain("sendTemplate(tpl)");
     expect(source).toMatch(/effectiveTemplates\s*\(/);
   });
 });

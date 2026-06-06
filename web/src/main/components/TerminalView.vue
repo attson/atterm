@@ -27,7 +27,9 @@ const replay = ref<{ bytes: number; total_bytes: number } | null>(null)
 const isDriver = ref(true)
 const termContainer = ref<HTMLDivElement | null>(null)
 const templates = ref<readonly QuickTemplate[]>([])
-const pendingTemplate = ref<QuickTemplate | null>(null)
+// Web reads the hidden flag from the same localStorage key the desktop/mobile
+// platforms persist into; web has no settings UI to toggle it (yet).
+const templatesHidden = ref(typeof localStorage !== 'undefined' && localStorage.getItem('atterm.templates.hidden') === '1')
 const { t } = useI18n()
 
 let term: Terminal | null = null
@@ -118,15 +120,8 @@ function takeControl() {
   conn?.claimDriver()
 }
 
-function onTemplateClick(tpl: QuickTemplate) {
-  pendingTemplate.value = tpl
-}
-function confirmTemplate(tpl: QuickTemplate) {
-  pendingTemplate.value = null
+function sendTemplate(tpl: QuickTemplate) {
   conn?.sendInput(`${tpl.text}\r`)
-}
-function cancelTemplate() {
-  pendingTemplate.value = null
 }
 
 onMounted(() => {
@@ -211,35 +206,16 @@ defineExpose({
         </div>
       </div>
     </div>
-    <div class="template-bar" data-testid="template-bar">
+    <div v-if="!templatesHidden" class="template-bar" data-testid="template-bar">
       <button
         v-for="tpl in templates"
         :key="tpl.id"
         class="template-btn"
         :data-testid="`template-btn-${tpl.id}`"
-        @click="onTemplateClick(tpl)"
+        @click="sendTemplate(tpl)"
       >{{ tpl.label }}</button>
     </div>
     <p class="status-line" data-testid="status-line">{{ statusLabel }}</p>
-    <div
-      v-if="pendingTemplate"
-      class="template-dialog-backdrop"
-      data-testid="template-preview-backdrop"
-      @click="cancelTemplate"
-    >
-      <div class="template-dialog" data-testid="template-preview" @click.stop>
-        <h3>{{ t('terminal.templatePreviewTitle') }}</h3>
-        <pre class="template-preview-text">{{ pendingTemplate.text }}</pre>
-        <div class="template-actions">
-          <button type="button" data-testid="template-preview-cancel" @click="cancelTemplate">{{ t('common.cancel') }}</button>
-          <button
-            type="button"
-            data-testid="template-preview-confirm"
-            @click="confirmTemplate(pendingTemplate)"
-          >{{ t('terminal.templatePreviewSend') }}</button>
-        </div>
-      </div>
-    </div>
   </section>
 </template>
 

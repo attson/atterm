@@ -4,6 +4,7 @@ import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
 import TitleBar from "./components/TitleBar.vue";
+import TaskSidebar from "./components/TaskSidebar.vue";
 import { useWindowMaximized } from "./composables/useWindowMaximized";
 import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
@@ -36,12 +37,18 @@ import {
   getUpdateState,
   listShells,
   newSession,
+  markSessionsSeen,
+  getTaskSidebarCollapsed,
+  setTaskSidebarCollapsed,
+  type MarkSessionsSeenOpts,
 } from "./lib/api";
 import type { Endpoint, UpdateState } from "./lib/api";
+import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionInfo } from "./lib/connection";
 import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
 import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
+import { useSessions } from "./composables/useSessions";
 import {
   DEFAULT_TERMINAL_THEME_ID,
   getTerminalTheme,
@@ -85,6 +92,38 @@ const localHostID = ref<string>("");
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
 const remoteRawList = ref<SessionInfo[]>([]);
+
+// Adapt SessionInfo (uses `id`) → RemoteSession (uses `session_id`) for useSessions.
+function adaptSession(s: SessionInfo): RemoteSession {
+  return { ...s, session_id: s.id } as unknown as RemoteSession;
+}
+const localListAdapted = computed<RemoteSession[]>(() => localList.value.map(adaptSession));
+const remoteListAdapted = computed<RemoteSession[]>(() => remoteList.value.map(adaptSession));
+
+const sessions = useSessions(localListAdapted, remoteListAdapted);
+
+const sidebarCollapsed = ref(false);
+
+async function setSidebarCollapsedAndPersist(v: boolean) {
+  sidebarCollapsed.value = v;
+  try {
+    await setTaskSidebarCollapsed(v);
+  } catch {
+    /* persistence best-effort */
+  }
+}
+
+function onSidebarOpen(s: RemoteSession) {
+  openRemoteAsTab(s.session_id);
+}
+
+async function onMarkSeen(payload: MarkSessionsSeenOpts) {
+  try {
+    await markSessionsSeen(payload);
+  } catch {
+    console.warn("markSessionsSeen failed", payload);
+  }
+}
 
 const tabs = ref<Tab[]>([]);
 const currentTabId = ref<string | null>(null);
@@ -704,6 +743,7 @@ useTerminalShortcuts(
     onFocusPane,
     onNewTab: startNewTab,
     onSwitchTab,
+    onToggleTaskSidebar: () => setSidebarCollapsedAndPersist(!sidebarCollapsed.value),
   },
   { bindings: shortcutBindings },
 );
@@ -715,6 +755,11 @@ watch([tabs, currentTabId], () => {
 });
 
 onMounted(async () => {
+  try {
+    sidebarCollapsed.value = await getTaskSidebarCollapsed();
+  } catch {
+    /* default = expanded (false) */
+  }
   quitListenerOff = $platform.events.on('before-close', handleBeforeClose);
   try {
     const info = await $platform.system.getEnvironment();
@@ -817,6 +862,17 @@ onUnmounted(() => {
     />
 
     <div class="main-row">
+      <TaskSidebar
+        :collapsed="sidebarCollapsed"
+        :by-host="sessions.byHost.value"
+        :unread-by-host="sessions.unreadByHost.value"
+        :primary-state-for-host="sessions.primaryStateForHost"
+        :completed-seen="sessions.completedSeen.value"
+        :total-unread="sessions.totalUnread.value"
+        @update:collapsed="setSidebarCollapsedAndPersist"
+        @open="onSidebarOpen"
+        @markSeen="onMarkSeen"
+      />
       <main class="main">
         <template v-if="localEndpoint">
           <div v-if="tabs.length === 0" class="empty">
@@ -876,6 +932,7 @@ onUnmounted(() => {
       v-if="showRemote"
       :sessions="availableRemote"
       @open="openRemoteAsTab"
+      @markSeen="onMarkSeen"
       @close="showRemote = false"
     />
     <SessionPickerDialog

@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -92,9 +91,6 @@ func TestNotifSuppressWebPushWhenWatched(t *testing.T) {
 
 	srv.handleUplinkCommandEvent(frame, mirrors, &mu)
 
-	// Give async dispatches a moment to settle.
-	time.Sleep(200 * time.Millisecond)
-
 	if got := pushRec.count(); got != 0 {
 		t.Fatalf("Phase 1: expected 0 WebPush calls with subscriber attached; got %d", got)
 	}
@@ -146,5 +142,4 @@ func TestNotifSuppressWebPushWhenWatched(t *testing.T) {
 		t.Fatalf("Phase 2: expected ≥%d total webhook calls; got %d", webhookBefore+1, got)
 	}
 
-	_ = context.Background // suppress unused import lint
 }

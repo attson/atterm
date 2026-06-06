@@ -176,13 +176,25 @@ const overrides = getNaiveOverrides()
   font-size: 0.75rem;
   margin: 0;
 }
-.auth-card :deep(.n-input .n-input__input-el:-webkit-autofill),
-.auth-card :deep(.n-input .n-input__input-el:-webkit-autofill:hover),
-.auth-card :deep(.n-input .n-input__input-el:-webkit-autofill:focus) {
-  -webkit-text-fill-color: var(--fg);
+
+</style>
+
+<style>
+/* Autofill background override — unscoped on purpose. Chrome sets
+   background-color via UA stylesheet with !important, and the standard
+   workaround is an inset box-shadow that masks the yellow tint. The
+   previous attempt lived inside <style scoped> + :deep(), but the
+   data-v hash didn't propagate past naive-ui's NCard wrapper, so the
+   selector never matched. Target the bare <input> so we don't depend
+   on naive-ui's internal class names either. */
+.auth-page input:-webkit-autofill,
+.auth-page input:-webkit-autofill:hover,
+.auth-page input:-webkit-autofill:focus,
+.auth-page input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--fg) !important;
   caret-color: var(--fg);
-  -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset;
-  box-shadow: 0 0 0 1000px var(--panel-2) inset;
+  -webkit-box-shadow: 0 0 0 1000px var(--panel) inset !important;
+  box-shadow: 0 0 0 1000px var(--panel) inset !important;
   transition: background-color 9999s ease-out;
 }
 </style>

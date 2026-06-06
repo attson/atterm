@@ -188,3 +188,17 @@ const overrides = getNaiveOverrides()
   margin: 0;
 }
 </style>
+
+<style>
+/* Autofill background override — unscoped (see web/src/login/App.vue). */
+.auth-page input:-webkit-autofill,
+.auth-page input:-webkit-autofill:hover,
+.auth-page input:-webkit-autofill:focus,
+.auth-page input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--fg) !important;
+  caret-color: var(--fg);
+  -webkit-box-shadow: 0 0 0 1000px var(--panel) inset !important;
+  box-shadow: 0 0 0 1000px var(--panel) inset !important;
+  transition: background-color 9999s ease-out;
+}
+</style>

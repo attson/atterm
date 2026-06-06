@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { ref, watch } from "vue";
 import { usePlatform } from "../../platform";
 import { previewKind, type PreviewKind } from "./previewKind";
 import CodeViewer from "./CodeViewer.vue";
@@ -24,8 +24,6 @@ const { t } = useI18n();
 const kind = ref<PreviewKind | null>(null);
 const error = ref<string>("");
 
-let off: (() => void) | null = null;
-
 async function resolveKind() {
   kind.value = null;
   error.value = "";
@@ -37,18 +35,7 @@ async function resolveKind() {
   }
 }
 
-onMounted(() => {
-  void resolveKind();
-  off = platform.events.on("plugin-fs:dir-changed", () => {
-    // The dispatch decision depends only on the file path + binary-ness, both
-    // of which are recomputed by CodeViewer on the dir-changed event already.
-    // No re-dispatch is needed here.
-  });
-});
-
-watch(() => props.path, () => { void resolveKind(); });
-
-onBeforeUnmount(() => { if (off) off(); });
+watch(() => props.path, () => { void resolveKind(); }, { immediate: true });
 </script>
 
 <template>

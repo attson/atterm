@@ -6,8 +6,8 @@
   "scripts": {
     "test": "node --test scripts/*.test.mjs",
     "sync-web": "node scripts/sync-web.mjs",
-    "ios:add": "npm run sync-web && cap add ios",
-    "ios:sync": "npm run sync-web && cap sync ios",
+    "ios:add": "npm install && npm run sync-web && cap add ios",
+    "ios:sync": "npm install && npm run sync-web && cap sync ios",
     "ios:open": "npm run ios:sync && cap open ios"
   },
   "dependencies": {

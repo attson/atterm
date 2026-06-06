@@ -24,7 +24,7 @@ func TestServeHTTP_ReturnsFileBytes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(resolved), nil)
 	rr := httptest.NewRecorder()
 	fs.ServeHTTP(rr, req)
-	if rr.Code != 200 {
+	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
 	}
 	if rr.Body.String() != "hello world" {
@@ -55,7 +55,7 @@ func TestServeHTTP_HeadIsAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodHead, "/pluginfs/"+encodePath(resolved), nil)
 	rr := httptest.NewRecorder()
 	fs.ServeHTTP(rr, req)
-	if rr.Code != 200 {
+	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
 	if rr.Body.Len() != 0 {

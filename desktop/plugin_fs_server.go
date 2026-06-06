@@ -15,7 +15,6 @@ package main
 
 import (
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -45,12 +44,10 @@ func (p *PluginFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resolved, err := p.resolve(string(raw))
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrPathRelative), errors.Is(err, ErrPathForbidden), errors.Is(err, ErrPathDenied):
-			http.Error(w, "forbidden", http.StatusForbidden)
-		default:
-			http.Error(w, "forbidden", http.StatusForbidden)
-		}
+		// resolve() only returns security errors (ErrPathRelative /
+		// ErrPathForbidden / ErrPathDenied); all map to 403 so a probe
+		// cannot distinguish "outside root" from "denied basename".
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 

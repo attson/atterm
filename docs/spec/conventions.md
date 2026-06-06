@@ -151,10 +151,16 @@ if err != nil {
 - `mobile` 的 Capacitor wrapper 脚本测试使用 Node test runner：`npm test`
 - 新增用户可见文案时必须同步 desktop/web 的中英 messages；测试尽量断言 i18n key 或渲染后的文本，不要重新引入硬编码英文
 - AI quick templates 测试：`desktop/frontend/src/lib/__tests__/templates.test.ts`
-  覆盖 `effectiveTemplates` + 默认列表稳定性；
-  `desktop/frontend/src/components/__tests__/TemplatePreviewDialog.test.ts` 覆盖
-  Enter/Esc/backdrop 行为；`SettingsTemplates.test.ts` 锁住增删改 + reset；
-  mobile / desktop TerminalView 测试断言点击模板按钮触发 `sendInput(text + '\r')`
+  覆盖 `effectiveTemplates` + 9 项默认列表的 id 稳定性；
+  `SettingsTemplates.test.ts` 锁住增删改 + reset + hotkey 字段 + show-bar 开关；
+  mobile / desktop / web TerminalView 测试断言点击模板按钮**直接** `sendInput(text + '\r')`，
+  无预览对话框；desktop 还要覆盖 hotkey 解析（`Mod`/`Alt`/`Shift`+key）+ 仅 focused pane 响应
+- 移动端模板/快捷键事件总线测试：`MobileSettings.test.ts` 验证保存模板/aux 键后
+  emit `mobile:shortcutsChanged`；`MobileTerminal.test.ts` 验证订阅事件 → reload bar
+- 移动端 IME 测试：`MobileTerminal.test.ts` 用 jsdom InputEvent 验证
+  `insertText && !isComposing` 触发 `sendInput`，`insertCompositionText` 不被劫持
+- 移动端 fit / viewer 锁尺寸测试：mock `ResizeObserver` + xterm `resize` 验证
+  viewer 收到 `meta.cols/rows` 时 `term.resize(cols, rows)`、driver 不锁
 - Pairing UI 测试：`desktop/frontend/src/components/__tests__/PairingPanel.test.ts`
   覆盖生成 / 二维码渲染 / 过期倒计时；`mobile` 端 setup 流程的扫码 → consume
   → 写入 secure storage 的 happy path 覆盖在 `web/tests/unit/setup-pair-*.ts`
@@ -205,6 +211,89 @@ iOS 26 WebKit 把 `-apple-system` / `system-ui` 声明为含 CJK 覆盖、但实
 回归验证：在 iOS 26 simulator Safari 上手工跑一份 CJK + emoji 字体探针页（最小
 的一组 `<span style="font-family: …">` 测试），别只看桌面浏览器；这条规则的来
 源就是桌面看着没问题、iOS 26 上变 `[?]` 的真实回归。
+
+### Capacitor 8 plugin 注册
+
+Capacitor 8 把 plugin 发现从 ObjC runtime 改成了 SwiftPM + `CAPBridgedPlugin` 协议。
+旧式的 `.m` + `CAP_PLUGIN` 宏在 Capacitor 8 **是 no-op**，不要再写。
+
+**自定义 plugin（写在 `mobile/ios/App/App/Plugins/` 下的）**：
+
+1. Swift 类 conform `CAPBridgedPlugin`：
+
+   ```swift
+   @objc(AttermSecureStoragePlugin)
+   public class AttermSecureStoragePlugin: CAPPlugin, CAPBridgedPlugin {
+       public let identifier = "AttermSecureStoragePlugin"
+       public let jsName = "AttermSecureStorage"
+       public let pluginMethods: [CAPPluginMethod] = [
+           CAPPluginMethod(name: "set", returnType: CAPPluginReturnPromise),
+           // ...
+       ]
+       @objc func set(_ call: CAPPluginCall) { ... }
+   }
+   ```
+
+2. App-local plugin **不走 auto-discovery**，必须在
+   `MainViewController.swift` 的 `capacitorDidLoad()` 里显式注册：
+
+   ```swift
+   class MainViewController: CAPBridgeViewController {
+       override open func capacitorDidLoad() {
+           bridge?.registerPluginInstance(AttermSecureStoragePlugin())
+       }
+   }
+   ```
+
+   `Main.storyboard` 的根 VC 要指到 `MainViewController`（`customModule="App"`）。
+
+3. Xcode 工程的 Sources build phase 要包含 `.swift` 文件
+   （`project.pbxproj` 手改：PBXBuildFile + PBXFileReference + PBXGroup +
+   PBXSourcesBuildPhase）。`cap sync` 不处理 App target 的 Sources。
+
+**第三方 plugin（`@capacitor/camera` / `@capacitor/keyboard` / `@capacitor-mlkit/barcode-scanning`）**：
+
+1. 同时装到两个地方：
+   - `desktop/frontend/package.json`（让 TypeScript `import` 解析）
+   - `mobile/package.json`（让 `cap sync` 注册 native）
+2. `cd mobile && npm run ios:open`（已串好 `npm install` + `cap sync` + 打开 Xcode）。
+3. Xcode 里 `File → Packages → Resolve Package Versions`（首次拉新 plugin）。
+4. 验证：
+   - `mobile/ios/App/App/capacitor.config.json` 的 `packageClassList` 包含新 plugin
+     （如 `CAPCameraPlugin` / `KeyboardPlugin` / `BarcodeScannerPlugin`）。
+   - `mobile/ios/App/CapApp-SPM/Package.swift` 有对应 SPM 依赖。
+   - JS 端 `Capacitor.isPluginAvailable('<jsName>')` 返回 `true`。
+5. 需要权限的，在 `mobile/ios/App/App/Info.plist` 加 usage description string
+   （如 `NSCameraUsageDescription` / `NSPhotoLibraryUsageDescription` /
+   `NSPhotoLibraryAddUsageDescription`）。
+
+**CI 不 build iOS**，这些改动必须真机验证。
+
+### 移动端 IME insertText 接管
+
+iOS 中文九宫格的 `，。？！` / 数字 / 空格走 `input` 事件
+（`inputType='insertText'`、`isComposing=false`），xterm 的 handler 不 forward。
+`MobileTerminal` 在 `term.textarea` 的 **capture 阶段**监听 `input`：
+
+```ts
+const ta = term.textarea
+ta?.addEventListener('input', (ev) => {
+  const e = ev as InputEvent
+  if (e.isComposing) return                       // composition 路径留给 xterm
+  if (e.inputType === 'insertText' && e.data) {
+    e.stopImmediatePropagation()                  // 阻止 xterm 二次处理
+    sendRaw(e.data)
+    if (term?.textarea) term.textarea.value = ''
+  }
+}, { capture: true })
+```
+
+**铁规**：
+
+- 只处理 `insertText`（直接输入）。`insertCompositionText`（拼音→汉字 composition
+  结果）一律不碰，让 xterm 自己处理。否则中文字会双发。
+- `stopImmediatePropagation` 必须有，否则 xterm 的 bubble-phase handler 也会发一次。
+- capture 阶段必须在 xterm 注册的 input handler 之前生效，所以 capture=true。
 
 ### Sticky non-shell session type
 

@@ -220,8 +220,9 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 - ✅ Phase 4a：Capacitor iOS WebView MVP、移动 relay setup、host-grouped mobile session list、touch terminal
 - ✅ Phase 4b：P0 任务状态模型 / 移动任务首页 / 通知深链 / 移动快捷控制 / relay setup wizard
 - ✅ Phase 4c（v0.4 引导可信度）：P1.6 桌面端 QR 配对 + 移动端扫码消费 token（`/api/pair/*`）；P1.7 relay `/healthz` + admin `/admin/health` 健康检查页；P1.9 iOS Keychain 安全存储 + ATS；P1.10 桌面诊断信息导出 + 脱敏
-- ✅ Phase 4d（v0.5 AI 任务控制台）：P2.11 session 类型分类（shell / ai / test / build / deploy，sticky non-shell）；P2.12 OSC 133 D 事件触发的 SessionSummary（ANSI-stripped tail + error lines），MetaPayload 携带 type + summary；P2.13 AI 快捷模板（QuickTemplate model + preview dialog + desktop Settings editor）
-- ⬜ Phase 4e（未完成）：P1.8 桌面安装包 codesign + notarization；P3+ 单 session 分享 / presence / 审计日志 / 持久化历史 / 命令级回放
+- ✅ Phase 4d（v0.5 AI 任务控制台）：P2.11 session 类型分类（shell / ai / test / build / deploy，sticky non-shell）；P2.12 OSC 133 D 事件触发的 SessionSummary（ANSI-stripped tail + error lines），MetaPayload 携带 type + summary；P2.13 AI 快捷模板（QuickTemplate model + desktop Settings editor + 三端 bar）
+- ✅ Phase 4e（v0.6 mobile UX 收口，至 v0.2.39 全部落地）：移动端独立设置页 + 模板/aux 键编辑器 + 退出登录保留配置（#105）；终端首屏全屏（ResizeObserver 替换一次性 fit）+ viewer 锁尺寸（onMeta term.resize）（#106）；中文输入法 capture-phase 补获 `insertText`（#107）；设置改动通过事件总线（`mobile:shortcutsChanged` / `quickTemplates:changed`）实时同步到已开 tab（#108）；Capacitor 8 plugin 正式落地（#104 Keychain + #109 Camera/barcode 注册到 mobile/package.json + #113 keyboard accessory bar 隐藏）；QuickTemplate v2（hotkey + 直接发送 + 显示/隐藏开关 + 新默认值）+ 删 legacy quickInput 插件（#110 + #111）；防误触模式 banner（#100）
+- ⬜ Phase 5（未完成）：P1.8 桌面安装包 codesign + notarization；P3+ 单 session 分享 / presence / 审计日志 / 持久化历史 / 命令级回放
 
 ## 桌面端架构细节
 
@@ -348,7 +349,7 @@ desktop/frontend/src/
 │                          window.go.main.App.*；含 UpdateState 镜像）
 ├── platform/              Wails / Capacitor / browser adapter；App 只依赖
 │                          `usePlatform()`，不要在其它目录直接 import wailsjs
-├── plugins/               右侧插件槽：file explorer / quick input / translate
+├── plugins/               右侧插件槽：file explorer / translate（legacy quickInput 已删，由 QuickTemplate 取代）
 └── i18n/                  desktop 前端中英 messages + useI18n()
 ```
 
@@ -362,6 +363,63 @@ web/src/
 ├── admin/                 users / invitations / relay config
 └── shared/                api clients、ws protocol、i18n、Naive theme、Topbar
 ```
+
+## 移动端架构（Capacitor）
+
+```
+mobile/                                   Capacitor 壳（capacitor.config.json + Xcode 工程）
+├── package.json                          Capacitor plugin 依赖（cap sync 扫这里！）
+├── capacitor.config.json                 appId / webDir = www
+├── scripts/sync-web.mjs                  build desktop/frontend:capacitor + 复制到 www
+└── ios/App/                              Xcode 工程
+    ├── App/MainViewController.swift      CAPBridgeViewController 子类，
+    │                                     capacitorDidLoad() 里
+    │                                     bridge?.registerPluginInstance(...)
+    ├── App/Plugins/AttermSecureStorage/  自定义 plugin（Keychain）
+    │                                     CAPBridgedPlugin conformance
+    ├── App/Info.plist                    NSCameraUsageDescription /
+    │                                     NSPhotoLibraryUsageDescription /
+    │                                     NSPhotoLibraryAddUsageDescription
+    ├── App/capacitor.config.json         cap sync 生成的 packageClassList
+    └── CapApp-SPM/Package.swift          cap sync 生成的 SPM 依赖列表
+
+desktop/frontend/src/
+├── main.capacitor.ts                     Capacitor 入口；启动调
+│                                          Keyboard.setAccessoryBarVisible(false)
+└── mobile/                               所有移动专属组件
+    ├── MobileApp.vue                     view: 'setup' | 'list' | 'terminal' | 'settings'
+    ├── MobileSetup.vue                   scheme dropdown + host input + token
+    │                                     + 仅 http 时显示 insecure 开关
+    ├── MobileSessionList.vue             gear emit openSettings（不再 editRelay）
+    ├── MobileSettings.vue                语言 / 模板编辑器 / aux 键编辑器 / 退出登录
+    │                                     emit 'mobile:shortcutsChanged' 同步开终端
+    ├── MobileListEditor.vue              通用增删改/重排/重置组件
+    └── MobileTerminal.vue                xterm + 防误触 banner + AUX bar + template bar
+                                          + ResizeObserver（driver fit）
+                                          + onMeta viewer 锁尺寸
+                                          + onImeInput capture 阶段补获 insertText
+                                          + Camera.getPhoto 图片上传
+```
+
+**Plugin 注册三件套（红线 #15）**：
+
+1. **TS 端 import**：装到 `desktop/frontend/package.json`，import 解析。
+2. **Native 端注册**：**同时**装到 `mobile/package.json`，`cap sync` 才扫得到，
+   写进 `mobile/ios/App/App/capacitor.config.json` 的 `packageClassList` 与
+   `mobile/ios/App/CapApp-SPM/Package.swift` 的 dependencies。
+3. **自定义 plugin 还要**：Swift 类 conform `CAPBridgedPlugin`（设
+   `identifier` / `jsName` / `pluginMethods`），并在 `MainViewController.capacitorDidLoad()`
+   里 `bridge?.registerPluginInstance(...)`。
+
+`mobile/package.json` 的 `ios:open` script 已自动串 `npm install + cap sync`。
+
+**事件总线（同进程 pub/sub，platform.events）**：
+
+- `mobile:shortcutsChanged`（mobile）：MobileSettings 改完后 emit，
+  MobileTerminal 订阅重新 `effectiveTemplates / effectiveAuxKeys / loadHidden`。
+  绕过 `active` prop 不变的死角（进设置页时 activeSessionId 不变）。
+- `quickTemplates:changed`（desktop）：SettingsTemplates 改完后 emit，
+  desktop TerminalView 订阅重新 reload。
 
 ## 跨进程时序细节
 

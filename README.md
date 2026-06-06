@@ -26,7 +26,14 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | Relay 健康检查（P1.7） | 公开 `/healthz`；admin `/admin/health` 显示 version / uptime / HTTPS / origins / bootstrap admin / 限流 / 活跃 uplinks，并标注移动端 origin 兼容性 |
 | 移动端安全存储（P1.9） | iOS Keychain 保存 relay URL / API token；旧 localStorage 凭据自动迁移并清理；非 HTTPS relay 需用户在 Settings 显式开启 |
 | 桌面诊断导出（P1.10） | Settings → Diagnostics 一键生成脱敏后的 app / OS / WebView / uplink / 配置摘要文本，方便贴 issue |
-| AI 任务控制台（P2.11–P2.13） | 自动识别 `codex` / `claude` / `gemini` / `aider` / `go test` / `docker build` / `kubectl` 等命令并打 type chip；失败任务卡片显示一行 error line；终端上方 Quick Templates bar 内置 approve / deny / continue / retry / `/test` / `/diff` 等模板，可在 Settings 增删改 |
+| AI 任务控制台（P2.11–P2.13） | 自动识别 `codex` / `claude` / `gemini` / `aider` / `go test` / `docker build` / `kubectl` 等命令并打 type chip；失败任务卡片显示一行 error line；终端上方 Quick Templates bar 内置 `yes / ok / continue / commit / push / release / 1 / 2 / 3` 默认模板，可在 Settings 增删改、配置 hotkey、关掉 bar |
+| 快捷模板 hotkey | 桌面端每个模板可配快捷键（如 `Mod+1`、`Alt+Shift+P`），按下直接发送，无预览对话框 |
+| 移动端独立设置页 | iOS / PWA 进设置页（不再退到连接页）：语言切换 / 模板编辑器 / 快捷按键（aux）编辑器 / 退出登录（保留 relay 配置）。aux 键支持 `\r \n \t \e \xNN ^X` 转义输入 |
+| 移动端防误触模式 | 没开"控制模式"时点击键 / 终端会闪一条黄色横幅说明，避免误触发输入 |
+| 移动端中文输入法补获 | 中文九宫格的 `，。？！` / 数字 / 空格 在 capture 阶段接管 `input` 事件，xterm 漏 forward 的也能送到 PTY，且中文字不会双发 |
+| 移动端图片菜单本地化 | 用 `@capacitor/camera` 替代原生 file input，"从相册选择 / 拍照 / 取消" 跟随 app 语言 |
+| 移动端键盘可见 | 用 `@capacitor/keyboard.setAccessoryBarVisible(false)` 隐藏 WKWebView 上的 `✓ ↑ ↓` 辅助条，控制面板不再被遮 |
+| 移动端 viewer 锁尺寸 | viewer 模式 `term.resize(meta.cols, meta.rows)` 锁到 PTY 真实尺寸，镜像 driver 画面，不再因 fit 错乱横向溢出 |
 | Web / PWA 客户端 | Vue 3 + TypeScript + Naive UI 多页应用，支持登录、注册、会话、设置、admin、setup 与中英双语 |
 | 手机浏览器 / iOS App | PWA、Capacitor iOS WebView、relay setup（含 QR 扫码 + 手动 token）、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
@@ -102,7 +109,7 @@ wails dev -tags webkit2_41   # Linux 需要 tag；macOS/Windows 可省略
 cd mobile
 npm install
 npm run ios:add   # 首次创建 Xcode 工程；已存在时不用重复执行
-npm run ios:open  # 同步 web/ 静态资源并打开 Xcode
+npm run ios:open  # 自动 npm install + 重新 build web 产物 + cap sync + 打开 Xcode
 ```
 
 iOS App 首次启动后有两种配置方式：

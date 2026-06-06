@@ -435,6 +435,7 @@ export interface SessionInfo {
   last_output_at?: number;
   type?: string; // "shell" | "ai" | "test" | "build" | "deploy" — absent on older publishers
   summary?: SessionSummary;
+  unread?: boolean;
 }
 
 export type TaskState =

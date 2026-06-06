@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, test } from "vitest";
 import { mount } from "@vue/test-utils";
 import { initI18n, resetI18nForTest } from "../i18n";
 import TabBar from "./TabBar.vue";
@@ -110,5 +110,57 @@ describe("TabBar", () => {
 
     const shellTab = wrapper.get('[data-tab-id="tab-shell"]');
     expect(shellTab.find('.type-icon').exists()).toBe(false);
+  });
+});
+
+const baseTab = {
+  id: "t1",
+  layout: "single" as const,
+  activeRemote: false,
+  paneCount: 1,
+  disconnected: false,
+};
+
+describe("TabBar state icon + unread", () => {
+  test("uses TaskStateIcon for the active session's task_state", () => {
+    const tab = {
+      ...baseTab,
+      activeSession: {
+        id: "s1",
+        command: "claude",
+        cwd: "/",
+        title: "",
+        cols: 80,
+        rows: 24,
+        started_at: 0,
+        task_state: "waiting_input" as const,
+      },
+    };
+    const w = mount(TabBar, {
+      props: { tabs: [tab], currentId: "t1", starting: false },
+    });
+    expect(w.find(".task-state-icon").exists()).toBe(true);
+    expect(w.find(".task-state-icon").text()).toContain("◐");
+  });
+
+  test("renders unread dot when activeSession.unread is true", () => {
+    const tab = {
+      ...baseTab,
+      activeSession: {
+        id: "s1",
+        command: "claude",
+        cwd: "/",
+        title: "",
+        cols: 80,
+        rows: 24,
+        started_at: 0,
+        task_state: "completed" as const,
+        unread: true,
+      },
+    };
+    const w = mount(TabBar, {
+      props: { tabs: [tab], currentId: "t1", starting: false },
+    });
+    expect(w.find('[data-test="tab-unread-dot"]').exists()).toBe(true);
   });
 });

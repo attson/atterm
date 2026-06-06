@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from '../i18n/useI18n'
 import { usePlatform } from '../platform'
-import { DEFAULT_TEMPLATES, type QuickTemplate } from '../lib/templates'
+import { effectiveTemplates, type QuickTemplate } from '../lib/templates'
 
 const { t } = useI18n()
 const platform = usePlatform()
@@ -13,12 +13,13 @@ const resetOpen = ref(false)
 const hidden = ref(false)
 const error = ref('')
 
-// Editor shows the raw stored list verbatim (no defaults injection). An empty
-// stored list shows an empty editor — the "Reset to defaults" button is the
-// explicit way to seed the starters. This keeps editor and runtime bar in
-// sync: bar falls back to defaults via effectiveTemplates when stored is empty.
+// Editor mirrors what the runtime template bar shows: the stored list if
+// non-empty, otherwise the bundled DEFAULT_TEMPLATES (via effectiveTemplates).
+// What you see in Settings = what you see in the bar. The first customization
+// (edit / add / reorder / delete) calls persist() which writes the visible
+// list, naturally locking the defaults into the user's stored set.
 async function reload() {
-  const list = await platform.templates.load()
+  const list = await effectiveTemplates(platform.templates)
   items.value = [...list]
   hidden.value = await platform.templates.loadHidden()
 }
@@ -94,7 +95,7 @@ function startReset() { resetOpen.value = true }
 async function confirmReset() {
   resetOpen.value = false
   await platform.templates.clear()
-  items.value = [...DEFAULT_TEMPLATES]
+  await reload()
   notifyChanged()
 }
 function cancelReset() { resetOpen.value = false }

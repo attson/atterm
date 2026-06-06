@@ -8,6 +8,12 @@ const { fake } = vi.hoisted(() => {
         load: vi.fn().mockResolvedValue([]),
         save: vi.fn().mockResolvedValue(undefined),
         clear: vi.fn().mockResolvedValue(undefined),
+        loadHidden: vi.fn().mockResolvedValue(false),
+        saveHidden: vi.fn().mockResolvedValue(undefined),
+      },
+      events: {
+        emit: vi.fn(),
+        on: vi.fn().mockReturnValue(() => {}),
       },
     },
   }
@@ -36,7 +42,40 @@ describe('SettingsTemplates', () => {
     expect(w.findAll('[data-testid^="template-row-"]')).toHaveLength(2)
   })
 
-  it('calls save when a new template is added', async () => {
+  it('calls save when a new template is added to an existing list', async () => {
+    const { __fake } = await import('../../platform') as any
+    const save = vi.fn().mockResolvedValue(undefined)
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'existing', label: 'existing', text: 'existing-text' },
+    ])
+    __fake.templates.save = save
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+
+    await w.find('[data-testid="template-add"]').trigger('click')
+    await w.find('[data-testid="template-edit-label"]').setValue('approve')
+    await w.find('[data-testid="template-edit-text"]').setValue('approve')
+    await w.find('[data-testid="template-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(save).toHaveBeenCalled()
+    const list = save.mock.calls[save.mock.calls.length - 1][0]
+    expect(list).toHaveLength(2)
+    expect(list[1]).toMatchObject({ label: 'approve', text: 'approve' })
+    expect(list[1].id).toBeTruthy()
+  })
+
+  it('renders bundled DEFAULT_TEMPLATES when stored list is empty', async () => {
+    const { __fake } = await import('../../platform') as any
+    __fake.templates.load = vi.fn().mockResolvedValue([])
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+    // DEFAULT_TEMPLATES bundles 9 entries (yes / ok / continue / commit /
+    // push / release / 1 / 2 / 3). Editor mirrors them when storage is empty.
+    expect(w.findAll('[data-testid^="template-row-"]').length).toBeGreaterThanOrEqual(9)
+  })
+
+  it('persists the visible default set on first add from empty storage', async () => {
     const { __fake } = await import('../../platform') as any
     const save = vi.fn().mockResolvedValue(undefined)
     __fake.templates.load = vi.fn().mockResolvedValue([])
@@ -52,9 +91,9 @@ describe('SettingsTemplates', () => {
 
     expect(save).toHaveBeenCalled()
     const list = save.mock.calls[save.mock.calls.length - 1][0]
-    expect(list).toHaveLength(1)
-    expect(list[0]).toMatchObject({ label: 'approve', text: 'approve' })
-    expect(list[0].id).toBeTruthy()
+    // First customization locks in the defaults + the new entry.
+    expect(list.length).toBeGreaterThanOrEqual(10)
+    expect(list[list.length - 1]).toMatchObject({ label: 'approve', text: 'approve' })
   })
 
   it('clears storage on Reset to defaults', async () => {

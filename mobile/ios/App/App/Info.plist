@@ -56,5 +56,7 @@
 	<string>atterm uses the camera to scan a pairing QR code and to attach photos to a remote session.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>atterm uses your photo library to attach an image to a remote session.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>atterm saves photos you take into your library so you can re-attach them later.</string>
 </dict>
 </plist>

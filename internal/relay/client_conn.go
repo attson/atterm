@@ -111,7 +111,11 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		case proto.TypeList:
 			var infos []proto.SessionInfo
 			if ownerUserID != "" {
-				infos = s.sessionInfoListForOwner(ownerUserID)
+				var seen map[string]int64
+				if s.cfg.Store != nil {
+					seen, _ = s.cfg.Store.SeenAt(ctx, ownerUserID)
+				}
+				infos = s.sessionInfoListForOwner(ownerUserID, seen)
 			} else {
 				infos = s.sessionInfoList()
 			}

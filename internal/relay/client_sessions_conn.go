@@ -52,7 +52,11 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {
 	var infos []proto.SessionInfo
 	if ownerUserID != "" {
-		infos = s.sessionInfoListForOwner(ownerUserID)
+		var seen map[string]int64
+		if s.cfg.Store != nil {
+			seen, _ = s.cfg.Store.SeenAt(ctx, ownerUserID)
+		}
+		infos = s.sessionInfoListForOwner(ownerUserID, seen)
 	} else {
 		infos = s.sessionInfoList()
 	}
@@ -83,14 +87,21 @@ func (s *Server) sessionInfoList() []proto.SessionInfo {
 	return infos
 }
 
-// sessionInfoListForOwner returns session infos filtered to those owned by ownerUserID.
-func (s *Server) sessionInfoListForOwner(ownerUserID string) []proto.SessionInfo {
+// sessionInfoListForOwner returns session infos filtered to those owned by
+// ownerUserID, with Unread set when the session has attention that the user
+// has not yet seen. A nil seen map treats every session as never-seen.
+func (s *Server) sessionInfoListForOwner(ownerUserID string, seen map[string]int64) []proto.SessionInfo {
 	sessions := s.registry.List()
 	infos := make([]proto.SessionInfo, 0)
 	for _, ss := range sessions {
-		if ss.OwnerUserID == ownerUserID {
-			infos = append(infos, ss.Info())
+		if ss.OwnerUserID != ownerUserID {
+			continue
 		}
+		info := ss.Info()
+		if info.AttentionAt > 0 && info.AttentionAt > seen[info.ID] && ss.SubscriberCount() == 0 {
+			info.Unread = true
+		}
+		infos = append(infos, info)
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
 	return infos

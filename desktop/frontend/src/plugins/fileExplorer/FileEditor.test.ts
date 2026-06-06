@@ -73,4 +73,46 @@ describe("FileEditor (dispatcher)", () => {
     await flushPromises();
     expect(w.find('[data-test="kind-code"]').exists()).toBe(true);
   });
+
+  it("routes svg to ImagePreview when viewMode=render", async () => {
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: "/x/logo.svg", size: 200, modTime: 1, isBinary: false,
+    });
+    const w = mount(FileEditor, {
+      props: { path: "/x/logo.svg", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
+      global: {
+        stubs: {
+          CodeViewer: { template: '<div data-test="kind-code" />' },
+          ImagePreview: { template: '<div data-test="kind-image" />' },
+          MediaPreview: { template: '<div data-test="kind-media" />' },
+          PdfPreview: { template: '<div data-test="kind-pdf" />' },
+          BinaryBanner: { template: '<div data-test="kind-banner" />' },
+        },
+      },
+    });
+    await flushPromises();
+    expect(w.find('[data-test="kind-image"]').exists()).toBe(true);
+  });
+
+  it("shows error banner when fileMeta rejects", async () => {
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("fs broken"),
+    );
+    const w = mount(FileEditor, {
+      props: { path: "/x/main.go", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+      global: {
+        stubs: {
+          CodeViewer: { template: '<div data-test="kind-code" />' },
+          ImagePreview: { template: '<div data-test="kind-image" />' },
+          MediaPreview: { template: '<div data-test="kind-media" />' },
+          PdfPreview: { template: '<div data-test="kind-pdf" />' },
+          BinaryBanner: { template: '<div data-test="kind-banner" />' },
+        },
+      },
+    });
+    await flushPromises();
+    expect(w.find(".err").exists()).toBe(true);
+    expect(w.text()).toContain("fs broken");
+    expect(w.find('[data-test="kind-code"]').exists()).toBe(false);
+  });
 });

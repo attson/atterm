@@ -280,6 +280,7 @@ export const en = {
       keyboardShortcuts: "Keyboard Shortcuts",
       pane: "Pane",
       tab: "Tab",
+      sidebar: "Sidebar",
       pressKey: "Press a key...",
       resetTo: "Reset to {binding}",
       conflictsWith: "Conflicts with: {labels}",

@@ -282,6 +282,7 @@ export const zhCN = {
       keyboardShortcuts: "键盘快捷键",
       pane: "面板",
       tab: "标签页",
+      sidebar: "侧栏",
       pressKey: "按一个键...",
       resetTo: "重置为 {binding}",
       conflictsWith: "冲突：{labels}",

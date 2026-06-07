@@ -478,7 +478,14 @@ function startConnection() {
 }
 
 function sendTemplate(tpl: QuickTemplate) {
-  conn?.sendInput(`${tpl.text}\r`);
+  // Send the text and Enter as two separate writes one tick apart. Codex (and
+  // other raw-mode TUIs) treats a bundled "text\r" payload as a paste — the
+  // trailing CR becomes a literal newline in the prompt instead of submitting.
+  // Same fix landed on the legacy quickInput plugin in #63 before it was
+  // removed; the regression slipped in with the QuickTemplate rewrite.
+  conn?.sendInput(tpl.text);
+  const c = conn;
+  window.setTimeout(() => c?.sendInput("\r"), 16);
 }
 
 // Re-read the persisted template list + hidden flag. Wired to the

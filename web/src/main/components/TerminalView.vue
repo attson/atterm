@@ -121,7 +121,12 @@ function takeControl() {
 }
 
 function sendTemplate(tpl: QuickTemplate) {
-  conn?.sendInput(`${tpl.text}\r`)
+  // Two-step send: text first, Enter on the next tick. Codex treats a single
+  // "text\r" payload as a paste, so the CR would land inside the prompt as a
+  // literal newline instead of submitting. See desktop lib/templates.ts header.
+  conn?.sendInput(tpl.text)
+  const c = conn
+  window.setTimeout(() => c?.sendInput("\r"), 16)
 }
 
 onMounted(() => {

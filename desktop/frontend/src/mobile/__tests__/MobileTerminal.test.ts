@@ -324,13 +324,24 @@ describe('MobileTerminal', () => {
     expect(w.find('[data-testid="template-btn-default-yes"]').exists()).toBe(true)
   })
 
-  it('clicking a template button sends its text + CR immediately (no preview)', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
-    await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
-    await flushPromises()
-    await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
-    expect(w.find('[data-testid="template-preview"]').exists()).toBe(false)
-    expect(sendInput).toHaveBeenCalledWith('yes\r')
+  it('clicking a template button sends the text and a standalone Enter one tick later (no preview)', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      await flushPromises()
+      await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
+      expect(w.find('[data-testid="template-preview"]').exists()).toBe(false)
+      // Text first, no trailing CR — bundling them would make Codex read the
+      // payload as a paste and the CR would become a literal newline.
+      expect(sendInput).toHaveBeenCalledTimes(1)
+      expect(sendInput).toHaveBeenLastCalledWith('yes')
+      vi.runOnlyPendingTimers()
+      expect(sendInput).toHaveBeenCalledTimes(2)
+      expect(sendInput).toHaveBeenLastCalledWith('\r')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('subscribes to shortcutsChanged to live-reload bars, and unsubscribes on unmount', async () => {

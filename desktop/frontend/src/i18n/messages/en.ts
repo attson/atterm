@@ -426,11 +426,11 @@ export const en = {
     preset: {
       vivid: {
         name: "Vivid",
-        description: "Colorful, animated, with type icons. Quick to spot what's happening.",
+        description: "Colorful and animated. Quick to spot what's happening.",
       },
       quiet: {
         name: "Quiet",
-        description: "Muted palette, only the running spinner animates, no type icons. For focused work.",
+        description: "Muted palette, only the running spinner animates. For focused work.",
       },
     },
     markAllRead: "Mark all read",

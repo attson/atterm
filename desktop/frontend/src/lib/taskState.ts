@@ -7,7 +7,7 @@ export type TaskState =
   | "disconnected"
   | "closed";
 
-export type PresetId = "vivid" | "quiet";
+export type PresetId = "iconOnly" | "iconLabel";
 
 export const ALL_TASK_STATES: readonly TaskState[] = [
   "idle",
@@ -27,24 +27,19 @@ export interface TaskStatePreset {
   spinnerDurationMs(state: TaskState): number;
   animatePulse(state: TaskState): boolean;
   textOpacity: number;
+  // When true, the sidebar row renders a short status-text label next to
+  // the icon (Running / 等待输入 …). When false, only the colored glyph
+  // shows. The two predefined presets differ only on this knob — they
+  // share the same vivid palette and animation budget.
+  showLabel: boolean;
 }
 
-const VIVID_COLORS: Record<TaskState, string> = {
+const COLORS: Record<TaskState, string> = {
   idle: "#6b7280",
   running: "#06b6d4",
   waiting_input: "#f59e0b",
   completed: "#22c55e",
   failed: "#ef4444",
-  disconnected: "#6b7280",
-  closed: "#6b7280",
-};
-
-const QUIET_COLORS: Record<TaskState, string> = {
-  idle: "#6b7280",
-  running: "#4b8a93",
-  waiting_input: "#b88239",
-  completed: "#4a8b6a",
-  failed: "#a04b4b",
   disconnected: "#6b7280",
   closed: "#6b7280",
 };
@@ -59,25 +54,20 @@ const GLYPHS: Record<TaskState, "spinner" | string> = {
   closed: "·",
 };
 
-function makePreset(
-  id: PresetId,
-  colors: Record<TaskState, string>,
-  spinDuration: number,
-  pulseWaiting: boolean,
-  textOpacity: number,
-): TaskStatePreset {
+function makePreset(id: PresetId, showLabel: boolean): TaskStatePreset {
   return {
     id,
     i18nKey: `tasks.preset.${id}`,
-    colorOf: (s) => colors[s],
+    colorOf: (s) => COLORS[s],
     glyphOf: (s) => GLYPHS[s],
-    spinnerDurationMs: (s) => (s === "running" ? spinDuration : 0),
-    animatePulse: (s) => pulseWaiting && s === "waiting_input",
-    textOpacity,
+    spinnerDurationMs: (s) => (s === "running" ? 1500 : 0),
+    animatePulse: (s) => s === "waiting_input",
+    textOpacity: 1.0,
+    showLabel,
   };
 }
 
 export const presets: Record<PresetId, TaskStatePreset> = {
-  vivid: makePreset("vivid", VIVID_COLORS, 1500, true, 1.0),
-  quiet: makePreset("quiet", QUIET_COLORS, 2500, false, 0.75),
+  iconOnly: makePreset("iconOnly", false),
+  iconLabel: makePreset("iconLabel", true),
 };

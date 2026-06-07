@@ -6,13 +6,24 @@ import TaskStateIcon from "./TaskStateIcon.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
+import { useTaskPreset } from "../composables/useTaskPreset";
 
-const props = defineProps<{
+const preset = useTaskPreset();
+const showStateLabel = computed(() => preset.active.value.showLabel);
+
+const props = withDefaults(defineProps<{
   byHost: Record<string, RemoteSession[]>;
   unreadByHost: Record<string, number>;
   primaryStateForHost: (hostId: string) => TaskState;
   completedSeen: RemoteSession[];
-}>();
+  groupBy?: "host" | "state";
+  byState?: Record<string, RemoteSession[]>;
+  unreadByState?: Record<string, number>;
+}>(), {
+  groupBy: "host",
+  byState: () => ({}),
+  unreadByState: () => ({}),
+});
 
 const emit = defineEmits<{
   (e: "open", session: RemoteSession): void;
@@ -21,7 +32,29 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const hostKeys = computed(() => Object.keys(props.byHost).sort());
+// STATE_ORDER controls the visual order of state groups: most-urgent first.
+const STATE_ORDER: TaskState[] = [
+  "waiting_input",
+  "failed",
+  "running",
+  "completed",
+  "idle",
+  "disconnected",
+  "closed",
+];
+
+const groups = computed<Record<string, RemoteSession[]>>(() =>
+  props.groupBy === "state" ? props.byState : props.byHost,
+);
+const unreadByGroup = computed<Record<string, number>>(() =>
+  props.groupBy === "state" ? props.unreadByState : props.unreadByHost,
+);
+const groupKeys = computed<string[]>(() => {
+  if (props.groupBy === "state") {
+    return STATE_ORDER.filter((s) => (groups.value[s] ?? []).length > 0);
+  }
+  return Object.keys(groups.value).sort();
+});
 const foldOpen = ref(false);
 const home = ref("");
 
@@ -32,19 +65,29 @@ onMounted(async () => {
 });
 
 function hostName(hostId: string): string {
-  const first = props.byHost[hostId]?.[0];
+  const first = groups.value[hostId]?.[0];
   return first?.host || hostId || t("sessions.unknownHost");
 }
 
-function unreadIdsFor(hostId: string): string[] {
-  return (props.byHost[hostId] ?? []).filter((s) => s.unread).map((s) => s.session_id);
+function groupHeader(key: string): string {
+  if (props.groupBy === "state") return stateLabel(key);
+  return hostName(key);
+}
+
+function groupPrimaryState(key: string): TaskState {
+  if (props.groupBy === "state") return (key as TaskState);
+  return props.primaryStateForHost(key);
+}
+
+function unreadIdsForGroup(key: string): string[] {
+  return (groups.value[key] ?? []).filter((s) => s.unread).map((s) => s.session_id);
 }
 
 function onMarkRead(s: RemoteSession) {
   emit("markSeen", { ids: [s.session_id] });
 }
-function onMarkHost(hostId: string) {
-  emit("markSeen", { ids: unreadIdsFor(hostId) });
+function onMarkGroup(key: string) {
+  emit("markSeen", { ids: unreadIdsForGroup(key) });
 }
 function onMarkFold() {
   emit("markSeen", { ids: props.completedSeen.map((s) => s.session_id) });
@@ -69,38 +112,53 @@ function rowTitle(s: { cwd?: string; current_command?: string; title?: string; s
   const cmd = fullCommand(s);
   return s.cwd ? `${cmd}\n${s.cwd}` : cmd;
 }
+
+// stateLabel returns the localized chip text for a TaskState. Switch (not
+// dynamic key) so the i18n MessageKey union stays exhaustive — vue-tsc
+// rejects `t(\`mobile.taskStates.${s}\`)`.
+function stateLabel(state: string | undefined): string {
+  switch (state) {
+    case "running": return t("mobile.taskStates.running");
+    case "waiting_input": return t("mobile.taskStates.waiting_input");
+    case "completed": return t("mobile.taskStates.completed");
+    case "failed": return t("mobile.taskStates.failed");
+    case "disconnected": return t("mobile.taskStates.disconnected");
+    case "closed": return t("mobile.taskStates.closed");
+    default: return t("mobile.taskStates.idle");
+  }
+}
 </script>
 
 <template>
   <div class="task-grouped-list">
     <section
-      v-for="hostId in hostKeys"
-      :key="hostId"
+      v-for="key in groupKeys"
+      :key="key"
       class="host-group"
-      :data-test="`host-group-${hostId}`"
+      :data-test="`host-group-${key}`"
     >
       <header class="host-header" data-test="host-header">
         <span class="caret">▼</span>
-        <span class="host-name">{{ hostName(hostId) }}</span>
+        <span class="host-name">{{ groupHeader(key) }}</span>
         <span class="counts">
-          <TaskStateIcon :state="primaryStateForHost(hostId)" :size="10" />
-          <span class="count">{{ byHost[hostId].length }}</span>
+          <TaskStateIcon :state="groupPrimaryState(key)" :size="10" />
+          <span class="count">{{ (groups[key] ?? []).length }}</span>
         </span>
-        <span v-if="unreadByHost[hostId] > 0" class="unread-badge">
-          {{ t("tasks.unreadBadge", { count: unreadByHost[hostId] }) }}
+        <span v-if="unreadByGroup[key] > 0" class="unread-badge">
+          {{ t("tasks.unreadBadge", { count: unreadByGroup[key] }) }}
         </span>
         <button
-          v-if="unreadByHost[hostId] > 0"
+          v-if="unreadByGroup[key] > 0"
           class="mark-all"
           data-test="host-mark-all"
           :title="t('tasks.markAllRead')"
-          @click="onMarkHost(hostId)"
+          @click="onMarkGroup(key)"
         >
           ✓
         </button>
       </header>
       <button
-        v-for="s in byHost[hostId]"
+        v-for="s in groups[key]"
         :key="s.session_id"
         class="task-row"
         data-test="task-row"
@@ -109,6 +167,11 @@ function rowTitle(s: { cwd?: string; current_command?: string; title?: string; s
         <TaskStateIcon
           :state="(s.task_state as TaskState | undefined) ?? 'idle'"
         />
+        <span
+          v-if="showStateLabel"
+          class="state-label"
+          data-test="state-label"
+        >{{ stateLabel(s.task_state) }}</span>
         <span class="cmd-and-cwd" :title="rowTitle(s)">
           <span class="cmd">{{ commandLabel(s) }}</span>
           <span v-if="shortenCwd(s.cwd, home)" class="cwd">·&nbsp;{{ shortenCwd(s.cwd, home) }}</span>
@@ -148,6 +211,11 @@ function rowTitle(s: { cwd?: string; current_command?: string; title?: string; s
           @click="emit('open', s)"
         >
           <TaskStateIcon :state="(s.task_state as TaskState | undefined) ?? 'idle'" />
+          <span
+            v-if="showStateLabel"
+            class="state-label"
+            data-test="state-label"
+          >{{ stateLabel(s.task_state) }}</span>
           <span class="cmd-and-cwd" :title="rowTitle(s)">
             <span class="cmd">{{ commandLabel(s) }}</span>
             <span v-if="shortenCwd(s.cwd, home)" class="cwd">·&nbsp;{{ shortenCwd(s.cwd, home) }}</span>
@@ -171,6 +239,7 @@ function rowTitle(s: { cwd?: string; current_command?: string; title?: string; s
 .task-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border: none; background: none; width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 3px; }
 .task-row:hover { background: rgba(255, 255, 255, 0.05); }
 .task-row.dim { opacity: 0.6; }
+.state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); }
 .cwd { color: var(--fg-dim); white-space: nowrap; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; }

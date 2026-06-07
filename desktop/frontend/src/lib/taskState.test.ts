@@ -21,7 +21,7 @@ describe("taskState presets", () => {
     expect([...ALL_TASK_STATES].sort()).toEqual([...STATES].sort());
   });
 
-  for (const id of ["vivid", "quiet"] as PresetId[]) {
+  for (const id of ["iconOnly", "iconLabel"] as PresetId[]) {
     describe(id, () => {
       const p = presets[id];
       test("has id + i18nKey", () => {
@@ -47,33 +47,24 @@ describe("taskState presets", () => {
           expect(p.spinnerDurationMs(s)).toBe(0);
         }
       });
-      test("colors match spec exactly", () => {
-        if (id === "vivid") {
-          expect(p.colorOf("idle")).toBe("#6b7280");
-          expect(p.colorOf("running")).toBe("#06b6d4");
-          expect(p.colorOf("waiting_input")).toBe("#f59e0b");
-          expect(p.colorOf("completed")).toBe("#22c55e");
-          expect(p.colorOf("failed")).toBe("#ef4444");
-          expect(p.colorOf("disconnected")).toBe("#6b7280");
-          expect(p.colorOf("closed")).toBe("#6b7280");
-        } else {
-          expect(p.colorOf("idle")).toBe("#6b7280");
-          expect(p.colorOf("running")).toBe("#4b8a93");
-          expect(p.colorOf("waiting_input")).toBe("#b88239");
-          expect(p.colorOf("completed")).toBe("#4a8b6a");
-          expect(p.colorOf("failed")).toBe("#a04b4b");
-          expect(p.colorOf("disconnected")).toBe("#6b7280");
-          expect(p.colorOf("closed")).toBe("#6b7280");
-        }
+      test("colors match the shared vivid palette", () => {
+        expect(p.colorOf("idle")).toBe("#6b7280");
+        expect(p.colorOf("running")).toBe("#06b6d4");
+        expect(p.colorOf("waiting_input")).toBe("#f59e0b");
+        expect(p.colorOf("completed")).toBe("#22c55e");
+        expect(p.colorOf("failed")).toBe("#ef4444");
+        expect(p.colorOf("disconnected")).toBe("#6b7280");
+        expect(p.colorOf("closed")).toBe("#6b7280");
       });
     });
   }
 
-  test("vivid pulses waiting_input; quiet does not", () => {
-    expect(presets.vivid.animatePulse("waiting_input")).toBe(true);
-    expect(presets.quiet.animatePulse("waiting_input")).toBe(false);
+  test("iconOnly hides label, iconLabel shows it", () => {
+    expect(presets.iconOnly.showLabel).toBe(false);
+    expect(presets.iconLabel.showLabel).toBe(true);
   });
-  test("quiet text opacity is lower than vivid", () => {
-    expect(presets.quiet.textOpacity).toBeLessThan(presets.vivid.textOpacity);
+  test("both presets pulse waiting_input (shared animation budget)", () => {
+    expect(presets.iconOnly.animatePulse("waiting_input")).toBe(true);
+    expect(presets.iconLabel.animatePulse("waiting_input")).toBe(true);
   });
 });

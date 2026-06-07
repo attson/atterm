@@ -46,6 +46,8 @@ export function GetRelayConfig():Promise<main.RelayConfig>;
 
 export function GetShellIntegrationEnabled():Promise<boolean>;
 
+export function GetTaskGroupBy():Promise<string>;
+
 export function GetTaskPreset():Promise<string>;
 
 export function GetTaskSidebarCollapsed():Promise<boolean>;
@@ -91,6 +93,8 @@ export function SetQuickTemplates(arg1:Array<main.QuickTemplate>):Promise<void>;
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
+
+export function SetTaskGroupBy(arg1:string):Promise<void>;
 
 export function SetTaskPreset(arg1:string):Promise<void>;
 

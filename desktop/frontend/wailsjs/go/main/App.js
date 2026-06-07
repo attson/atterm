@@ -90,6 +90,10 @@ export function GetShellIntegrationEnabled() {
   return window['go']['main']['App']['GetShellIntegrationEnabled']();
 }
 
+export function GetTaskGroupBy() {
+  return window['go']['main']['App']['GetTaskGroupBy']();
+}
+
 export function GetTaskPreset() {
   return window['go']['main']['App']['GetTaskPreset']();
 }
@@ -180,6 +184,10 @@ export function SetRelayConfig(arg1) {
 
 export function SetShellIntegrationEnabled(arg1) {
   return window['go']['main']['App']['SetShellIntegrationEnabled'](arg1);
+}
+
+export function SetTaskGroupBy(arg1) {
+  return window['go']['main']['App']['SetTaskGroupBy'](arg1);
 }
 
 export function SetTaskPreset(arg1) {

@@ -426,13 +426,13 @@ export const zhCN = {
       expand: "展开侧栏 (Cmd/Ctrl+B)",
     },
     preset: {
-      vivid: {
-        name: "鲜明",
-        description: "色彩鲜明 + 动画。一眼看到正在发生什么。",
+      iconOnly: {
+        name: "仅图标",
+        description: "用颜色 + 图标传达状态。最紧凑。",
       },
-      quiet: {
-        name: "柔和",
-        description: "柔和色调,仅运行中带动画。专注时使用。",
+      iconLabel: {
+        name: "图标 + 文案",
+        description: "图标旁加一段「运行中 / 等待输入 / 已完成」文字。更直观。",
       },
     },
     markAllRead: "全部标已读",
@@ -440,9 +440,12 @@ export const zhCN = {
     completedFold: "已完成",
     unreadBadge: "{count} 条未读",
     settings: {
-      section: "会话状态显示",
-      preset: "视觉预设",
-      expandByDefault: "默认展开会话侧栏",
+      section: "会话栏",
+      preset: "显示样式",
+      expandByDefault: "默认展开会话栏",
+      groupBy: "分组方式",
+      groupByHost: "按主机",
+      groupByState: "按状态",
     },
     unavailableToast: "标已读不可用 — 请升级 relay。",
   },

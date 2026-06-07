@@ -424,13 +424,13 @@ export const en = {
       expand: "Expand sidebar (Cmd/Ctrl+B)",
     },
     preset: {
-      vivid: {
-        name: "Vivid",
-        description: "Colorful and animated. Quick to spot what's happening.",
+      iconOnly: {
+        name: "Icon only",
+        description: "Color + glyph carry the state. Most compact.",
       },
-      quiet: {
-        name: "Quiet",
-        description: "Muted palette, only the running spinner animates. For focused work.",
+      iconLabel: {
+        name: "Icon + label",
+        description: "Adds a short status label (Running / Waiting / Done) next to the icon. More explicit.",
       },
     },
     markAllRead: "Mark all read",
@@ -438,9 +438,12 @@ export const en = {
     completedFold: "Completed",
     unreadBadge: "{count} unread",
     settings: {
-      section: "Session display",
-      preset: "Visual preset",
-      expandByDefault: "Expand session sidebar by default",
+      section: "Session bar",
+      preset: "Display style",
+      expandByDefault: "Expand session bar by default",
+      groupBy: "Group by",
+      groupByHost: "Host",
+      groupByState: "State",
     },
     unavailableToast: "Mark-read unavailable — please update the relay.",
   },

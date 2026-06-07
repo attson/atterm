@@ -486,6 +486,29 @@ func (a *App) SetTaskPreset(preset string) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetTaskGroupBy returns "host" or "state". Default "host".
+func (a *App) GetTaskGroupBy() string {
+	if a.cfgStore == nil {
+		return taskGroupByDefault
+	}
+	return a.cfgStore.Get().TaskGroupByOrDefault()
+}
+
+// SetTaskGroupBy persists the user's session-bar grouping choice. Rejects
+// unknown values so a typo can't leave the sidebar without a renderer.
+func (a *App) SetTaskGroupBy(groupBy string) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	groupBy = strings.TrimSpace(groupBy)
+	if !isSupportedTaskGroupBy(groupBy) {
+		return fmt.Errorf("unknown task group-by %q", groupBy)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.TaskGroupBy = groupBy
+	return a.cfgStore.Set(cfg)
+}
+
 // GetUserHomeDir returns the OS-reported user home directory, so the
 // frontend can collapse paths starting with HOME to "~" for display.
 // Returns empty string on failure (the frontend already treats empty

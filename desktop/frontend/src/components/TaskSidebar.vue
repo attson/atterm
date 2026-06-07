@@ -6,17 +6,24 @@ import TaskGroupedList from "./TaskGroupedList.vue";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import { useI18n } from "../i18n/useI18n";
 import { getTaskSidebarWidth, setTaskSidebarWidth } from "../lib/api";
+import { useTaskGroupBy } from "../composables/useTaskGroupBy";
 
 const { t } = useI18n();
+const groupByState = useTaskGroupBy();
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   collapsed: boolean;
   byHost: Record<string, RemoteSession[]>;
   unreadByHost: Record<string, number>;
   primaryStateForHost: (hostId: string) => TaskState;
   completedSeen: RemoteSession[];
   totalUnread: number;
-}>();
+  byStateGroups?: Record<string, RemoteSession[]>;
+  unreadByStateGroups?: Record<string, number>;
+}>(), {
+  byStateGroups: () => ({}),
+  unreadByStateGroups: () => ({}),
+});
 
 const emit = defineEmits<{
   (e: "update:collapsed", v: boolean): void;
@@ -91,6 +98,11 @@ function urgencyIndex(s?: TaskState | string): number {
   return i === -1 ? URGENCY.length : i;
 }
 
+function onToggleGroupBy() {
+  const next = groupByState.activeId.value === "state" ? "host" : "state";
+  void groupByState.setGroupBy(next);
+}
+
 const railIcons = computed(() => {
   const all: RemoteSession[] = [];
   for (const list of Object.values(props.byHost)) all.push(...list);
@@ -147,6 +159,16 @@ const railIcons = computed(() => {
       <header class="sidebar-header">
         <span class="title">{{ t("tasks.sidebar.title") }}</span>
         <button
+          class="group-toggle"
+          data-test="group-toggle"
+          :title="t('tasks.settings.groupBy')"
+          @click="onToggleGroupBy"
+        >
+          {{ groupByState.activeId.value === 'state'
+            ? t('tasks.settings.groupByState')
+            : t('tasks.settings.groupByHost') }}
+        </button>
+        <button
           class="collapse-button"
           data-test="collapse-button"
           :title="t('tasks.sidebar.collapse')"
@@ -161,6 +183,9 @@ const railIcons = computed(() => {
           :unread-by-host="unreadByHost"
           :primary-state-for-host="primaryStateForHost"
           :completed-seen="completedSeen"
+          :group-by="groupByState.activeId.value"
+          :by-state="byStateGroups"
+          :unread-by-state="unreadByStateGroups"
           @open="(s) => emit('open', s)"
           @markSeen="(p) => emit('markSeen', p)"
         />
@@ -215,6 +240,18 @@ const railIcons = computed(() => {
   color: inherit;
   font-size: 14px;
 }
+.group-toggle {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 1px 6px;
+  margin-right: 6px;
+  opacity: 0.8;
+}
+.group-toggle:hover { opacity: 1; background: rgba(255, 255, 255, 0.05); }
 .list-wrap { flex: 1 1 auto; overflow: auto; padding: 4px; }
 footer { padding: 8px; border-top: 1px solid rgba(255, 255, 255, 0.05); }
 .mark-all {

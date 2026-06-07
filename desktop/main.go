@@ -18,6 +18,8 @@ var assets embed.FS
 var Version = "dev"
 
 func main() {
+	configurePlatformEnvironment()
+
 	cfgStore := loadConfig()
 	logger, err := newDesktopLoggingManager(cfgStore.Get(), Version)
 	if err != nil {

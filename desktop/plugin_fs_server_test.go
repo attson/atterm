@@ -23,7 +23,7 @@ func TestServeHTTP_ReturnsFileBytes(t *testing.T) {
 	resolved, _ := filepath.EvalSymlinks(path)
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(resolved), nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
 	}
@@ -40,7 +40,7 @@ func TestServeHTTP_RejectsNonGet(t *testing.T) {
 	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		req := httptest.NewRequest(m, "/pluginfs/"+encodePath("/whatever"), nil)
 		rr := httptest.NewRecorder()
-		fs.ServeHTTP(rr, req)
+		newPluginFSHandler(fs).ServeHTTP(rr, req)
 		if rr.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s: status=%d want 405", m, rr.Code)
 		}
@@ -54,7 +54,7 @@ func TestServeHTTP_HeadIsAllowed(t *testing.T) {
 	resolved, _ := filepath.EvalSymlinks(path)
 	req := httptest.NewRequest(http.MethodHead, "/pluginfs/"+encodePath(resolved), nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d", rr.Code)
 	}
@@ -67,7 +67,7 @@ func TestServeHTTP_RejectsBadPrefix(t *testing.T) {
 	fs, _ := makeFS(t)
 	req := httptest.NewRequest(http.MethodGet, "/anything-else", nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status=%d want 404", rr.Code)
 	}
@@ -77,7 +77,7 @@ func TestServeHTTP_RejectsBadBase64(t *testing.T) {
 	fs, _ := makeFS(t)
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/!!!not-base64!!!", nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status=%d want 400", rr.Code)
 	}
@@ -90,7 +90,7 @@ func TestServeHTTP_RejectsOutsideRoot(t *testing.T) {
 	_ = os.WriteFile(path, []byte("nope"), 0o644)
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(path), nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("status=%d want 403", rr.Code)
 	}
@@ -104,7 +104,7 @@ func TestServeHTTP_RejectsDenyPattern(t *testing.T) {
 	_ = os.WriteFile(keyPath, []byte("secret"), 0o600)
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(keyPath), nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("status=%d want 403", rr.Code)
 	}
@@ -116,7 +116,7 @@ func TestServeHTTP_RejectsMissingFile(t *testing.T) {
 	missing := filepath.Join(home, "nope.txt")
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(missing), nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status=%d want 404", rr.Code)
 	}
@@ -131,7 +131,7 @@ func TestServeHTTP_SupportsRange(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(resolved), nil)
 	req.Header.Set("Range", "bytes=10-19")
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusPartialContent {
 		t.Fatalf("status=%d want 206", rr.Code)
 	}
@@ -144,7 +144,7 @@ func TestServeHTTP_RejectsDirectory(t *testing.T) {
 	fs, home := makeFS(t)
 	req := httptest.NewRequest(http.MethodGet, "/pluginfs/"+encodePath(home), nil)
 	rr := httptest.NewRecorder()
-	fs.ServeHTTP(rr, req)
+	newPluginFSHandler(fs).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("status=%d want 403", rr.Code)
 	}

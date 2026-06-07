@@ -34,7 +34,7 @@ func main() {
 		Height: 720,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
-			Handler: app.pluginFS,
+			Handler: newPluginFSHandler(app.pluginFS),
 		},
 		BackgroundColour: &options.RGBA{R: 13, G: 17, B: 23, A: 1},
 		OnStartup:        app.startup,

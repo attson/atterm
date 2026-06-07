@@ -7,6 +7,16 @@ package main
 // URL form:   /pluginfs/<base64.URLEncoding(absolute-path)>
 // Allowed methods: GET, HEAD.
 //
+// The handler is its own type rather than a method on *PluginFS. PluginFS is
+// passed to wails.Run's Bind list so its exported methods are callable from
+// the webview, and wails binds every exported method including those that
+// only happen to satisfy a stdlib interface. A ServeHTTP on PluginFS would
+// drag http.Request / http.Response / tls.ConnectionState / x509.Certificate
+// and the rest of the net/http type graph into the auto-generated TS — and
+// expose a frontend-callable PluginFS.ServeHTTP entry point that no caller
+// has a legitimate use for. Keeping ServeHTTP on a separate, unbound type
+// avoids both.
+//
 // SECURITY (red-line #11): every request runs through PluginFS.resolve()
 // which enforces the same allowRoots + denylist as ReadFile. This file is part
 // of the same package so the existing CI isolation check
@@ -22,9 +32,18 @@ import (
 
 const pluginFSURLPrefix = "/pluginfs/"
 
-// ServeHTTP implements http.Handler. Wails routes any asset request that
-// doesn't match the embedded SPA to this handler.
-func (p *PluginFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// pluginFSHandler is the http.Handler half of the PluginFS surface, kept off
+// the wails-bound *PluginFS for the reasons in the file header. Wire it via
+// AssetServer.Handler in main.go.
+type pluginFSHandler struct {
+	fs *PluginFS
+}
+
+func newPluginFSHandler(fs *PluginFS) *pluginFSHandler {
+	return &pluginFSHandler{fs: fs}
+}
+
+func (h *pluginFSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.URL.Path, pluginFSURLPrefix) {
 		http.NotFound(w, r)
 		return
@@ -42,7 +61,7 @@ func (p *PluginFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved, err := p.resolve(string(raw))
+	resolved, err := h.fs.resolve(string(raw))
 	if err != nil {
 		// resolve() only returns security errors (ErrPathRelative /
 		// ErrPathForbidden / ErrPathDenied); all map to 403 so a probe

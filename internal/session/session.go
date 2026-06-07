@@ -858,11 +858,23 @@ func looksLikeWaitingInput(data []byte) bool {
 	return false
 }
 
+// silenceAppliesToLocked decides whether the silence heuristic should apply
+// to this session in its current state. The alt-screen guard catches classic
+// TUIs (vim, fzf, older Claude Code), but Claude Code v2.x — and similar
+// inline-rendering AI clients — render their prompt directly into the normal
+// screen, never flipping alt-screen on. For those we relax the requirement:
+// any session classified as ai is treated as a candidate regardless of
+// alt-screen state. test/build/deploy types are deliberately NOT included
+// because they routinely run silently while genuinely working; flipping to
+// waiting_input there would create false unread badges.
+func (s *Session) silenceAppliesToLocked() bool {
+	return s.altScreen || s.meta.Type == SessionTypeAI
+}
+
 // rescheduleSilenceTimerLocked arms (or re-arms) the per-session silence
 // timer. Caller must hold s.mu.Lock(). Stops any existing timer first; only
-// arms a new one when the session is currently running, in alt-screen, not
-// closed, and detection is enabled. Callers reach here after every output
-// chunk, after applyOSC133Locked, and from updateTerminalState's tail.
+// arms a new one when detection is enabled, the session is running and not
+// closed, and silenceAppliesToLocked() says the heuristic is in scope.
 func (s *Session) rescheduleSilenceTimerLocked() {
 	if s.silenceTimer != nil {
 		s.silenceTimer.Stop()
@@ -877,7 +889,7 @@ func (s *Session) rescheduleSilenceTimerLocked() {
 	if s.meta.TaskState != proto.TaskStateRunning {
 		return
 	}
-	if !s.altScreen {
+	if !s.silenceAppliesToLocked() {
 		return
 	}
 	d := time.Duration(s.silenceThresholdMS) * time.Millisecond
@@ -911,7 +923,7 @@ func (s *Session) onSilenceFired() {
 		s.mu.Unlock()
 		return
 	}
-	if !s.altScreen {
+	if !s.silenceAppliesToLocked() {
 		s.mu.Unlock()
 		return
 	}

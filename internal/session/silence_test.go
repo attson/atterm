@@ -84,7 +84,10 @@ func TestSilence_TimerFlipsRunningToWaiting(t *testing.T) {
 	}
 }
 
-func TestSilence_TimerNoopWhenNotAltScreen(t *testing.T) {
+func TestSilence_TimerNoopWhenNotAltScreenAndNotAI(t *testing.T) {
+	// Default Type is shell (set by New). Not in alt-screen + not AI →
+	// silence heuristic does NOT fire (e.g. tail -f, sleep 30 — silent
+	// shell commands legitimately doing work).
 	s := directFireSilenceTimer(t, func(s *Session) {
 		s.meta.TaskState = proto.TaskStateRunning
 		s.altScreen = false
@@ -92,7 +95,45 @@ func TestSilence_TimerNoopWhenNotAltScreen(t *testing.T) {
 		s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	})
 	if s.Info().TaskState == proto.TaskStateWaitingInput {
-		t.Fatalf("silence timer must not fire outside alt-screen")
+		t.Fatalf("silence timer must not fire outside alt-screen for shell-type sessions")
+	}
+}
+
+func TestSilence_TimerFiresForAITypeWithoutAltScreen(t *testing.T) {
+	// Claude Code v2.x (and similar inline-rendering AI clients) never
+	// flip alt-screen on, so the heuristic must apply on Type=ai even
+	// when altScreen is false. This is the canonical "claude waiting for
+	// my next message" case the inbox model targets.
+	s := directFireSilenceTimer(t, func(s *Session) {
+		s.meta.TaskState = proto.TaskStateRunning
+		s.altScreen = false
+		s.meta.Type = SessionTypeAI
+		s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+		s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	})
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("silence timer must fire for AI type without alt-screen; got %q",
+			s.Info().TaskState)
+	}
+	if !s.waitingFromSilence {
+		t.Fatalf("waitingFromSilence flag should be set")
+	}
+}
+
+func TestSilence_TimerNoopForTestTypeWithoutAltScreen(t *testing.T) {
+	// Test/build/deploy types routinely run silently while genuinely
+	// working. The relaxation is intentionally AI-only.
+	s := directFireSilenceTimer(t, func(s *Session) {
+		s.meta.TaskState = proto.TaskStateRunning
+		s.altScreen = false
+		s.meta.Type = SessionTypeTest
+		s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+		s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	})
+	if s.Info().TaskState == proto.TaskStateWaitingInput {
+		t.Fatalf("silence timer must NOT fire for test type without alt-screen "+
+			"(test/build/deploy routinely work silently); got %q",
+			s.Info().TaskState)
 	}
 }
 

@@ -6,21 +6,25 @@ import {
   setTaskPreset,
   getTaskSidebarCollapsed,
   setTaskSidebarCollapsed,
+  type TaskGroupBy,
 } from "../lib/api";
 import { useTaskPreset } from "../composables/useTaskPreset";
+import { useTaskGroupBy } from "../composables/useTaskGroupBy";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import { useI18n } from "../i18n/useI18n";
 
 const { t } = useI18n();
 
 const expandByDefault = ref(true);
-const presetIds: PresetId[] = ["vivid", "quiet"];
+const presetIds: PresetId[] = ["iconOnly", "iconLabel"];
+const groupByIds: TaskGroupBy[] = ["host", "state"];
 const preset = useTaskPreset();
+const groupBy = useTaskGroupBy();
 
 onMounted(async () => {
   try {
     const v = await getTaskPreset();
-    if (v === "vivid" || v === "quiet") preset.activeId.value = v;
+    if (v === "iconOnly" || v === "iconLabel") preset.activeId.value = v;
   } catch {
     /* fallback already applied */
   }
@@ -40,6 +44,13 @@ async function onToggleExpand(e: Event) {
   const checked = (e.target as HTMLInputElement).checked;
   expandByDefault.value = checked;
   await setTaskSidebarCollapsed(!checked);
+}
+async function onGroupByChange(e: Event) {
+  const id = (e.target as HTMLInputElement).value as TaskGroupBy;
+  await groupBy.setGroupBy(id);
+}
+function groupByLabel(id: TaskGroupBy): string {
+  return id === "host" ? t("tasks.settings.groupByHost") : t("tasks.settings.groupByState");
 }
 </script>
 
@@ -67,6 +78,19 @@ async function onToggleExpand(e: Event) {
         </div>
       </label>
     </div>
+    <div class="group-by-row" data-test="settings-group-by">
+      <span class="group-by-label">{{ t("tasks.settings.groupBy") }}</span>
+      <label v-for="id in groupByIds" :key="id" class="group-by-option">
+        <input
+          type="radio"
+          name="taskGroupBy"
+          :value="id"
+          :checked="groupBy.activeId.value === id"
+          @change="onGroupByChange"
+        />
+        {{ groupByLabel(id) }}
+      </label>
+    </div>
     <label class="expand-toggle">
       <input
         type="checkbox"
@@ -87,4 +111,7 @@ async function onToggleExpand(e: Event) {
 .preset-desc { font-size: 12px; opacity: 0.7; margin: 4px 0; }
 .preset-preview { display: flex; gap: 10px; margin-top: 6px; }
 .expand-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.group-by-row { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; flex-wrap: wrap; }
+.group-by-label { font-size: 13px; }
+.group-by-option { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
 </style>

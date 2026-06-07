@@ -103,9 +103,13 @@ type appConfig struct {
 	// in that case. See docs/superpowers/specs/2026-06-04-quick-templates-design.md.
 	QuickTemplates []QuickTemplate `json:"quick_templates,omitempty"`
 
-	// TaskPreset is the user's chosen task state display preset (e.g. "vivid"
-	// or "quiet"). Empty falls back to "vivid" at read time.
+	// TaskPreset is the user's chosen session-bar display style.
+	// Empty falls back to "iconOnly" at read time.
 	TaskPreset string `json:"task_preset,omitempty"`
+	// TaskGroupBy controls how the session bar groups rows: "host" (per
+	// machine, default) or "state" (per task_state). Empty falls back to
+	// "host" at read time.
+	TaskGroupBy string `json:"task_group_by,omitempty"`
 	// TaskSidebarCollapsed records whether the task sidebar panel is collapsed.
 	// Zero value (false) means expanded, which is the default.
 	TaskSidebarCollapsed bool `json:"task_sidebar_collapsed,omitempty"`
@@ -148,13 +152,27 @@ func (c appConfig) TerminalThemeOrDefault() string {
 }
 
 // taskPresetDefault is the preset used when TaskPreset has never been set.
-const taskPresetDefault = "vivid"
+const taskPresetDefault = "iconOnly"
 
 func (c appConfig) TaskPresetOrDefault() string {
-	if c.TaskPreset != "" {
+	switch c.TaskPreset {
+	case "iconOnly", "iconLabel":
 		return c.TaskPreset
+	default:
+		return taskPresetDefault
 	}
-	return taskPresetDefault
+}
+
+// taskGroupByDefault is what the session bar uses when TaskGroupBy is unset.
+const taskGroupByDefault = "host"
+
+func (c appConfig) TaskGroupByOrDefault() string {
+	switch c.TaskGroupBy {
+	case "host", "state":
+		return c.TaskGroupBy
+	default:
+		return taskGroupByDefault
+	}
 }
 
 const defaultTaskSidebarWidth = 240
@@ -246,7 +264,15 @@ func isSupportedTerminalTheme(theme string) bool {
 
 func isSupportedTaskPreset(p string) bool {
 	switch p {
-	case "vivid", "quiet":
+	case "iconOnly", "iconLabel":
+		return true
+	}
+	return false
+}
+
+func isSupportedTaskGroupBy(p string) bool {
+	switch p {
+	case "host", "state":
 		return true
 	}
 	return false

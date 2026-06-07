@@ -5,11 +5,11 @@ import { presets, type PresetId, type TaskStatePreset } from "../lib/taskState";
 const STORAGE_KEY = "taskPreset";
 
 function isPresetId(s: string | null | undefined): s is PresetId {
-  return s === "vivid" || s === "quiet";
+  return s === "iconOnly" || s === "iconLabel";
 }
 
 // Module-level singleton — multiple call sites share one source of truth.
-const activeId = ref<PresetId>("vivid");
+const activeId = ref<PresetId>("iconOnly");
 let initialized = false;
 
 async function loadInitial() {
@@ -59,5 +59,5 @@ export function useTaskPreset(): UseTaskPreset {
 // Test-only reset for the singleton.
 export function __resetForTests(): void {
   initialized = false;
-  activeId.value = "vivid";
+  activeId.value = "iconOnly";
 }

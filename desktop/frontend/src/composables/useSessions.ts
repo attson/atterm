@@ -31,6 +31,15 @@ export interface UseSessionsReturn {
   unreadByHost: ComputedRef<Record<string, number>>;
   totalUnread: ComputedRef<number>;
   completedSeen: ComputedRef<RemoteSession[]>;
+  /** byState groups sessions by their task_state. Keys are TaskState values
+   *  in URGENCY order — waiting_input first, closed last. Empty groups are
+   *  omitted so the sidebar doesn't render dead headers. Unread is NOT
+   *  promoted here (unlike byHost's per-group sort), because the user
+   *  asked to see "all running together", not "all attention-worthy
+   *  together". */
+  byState: ComputedRef<Record<string, RemoteSession[]>>;
+  /** unreadByState mirrors unreadByHost but keyed by task_state. */
+  unreadByState: ComputedRef<Record<string, number>>;
   /** Plain function (not a ComputedRef). Reads byHost.value when invoked.
    *  In Vue templates the call site re-evaluates on byHost change automatically.
    *  In <script setup> reactive contexts, wrap in `computed(() => primaryStateForHost(id))`. */
@@ -102,6 +111,32 @@ export function useSessions(
     ),
   );
 
+  const byState = computed<Record<string, RemoteSession[]>>(() => {
+    const out: Record<string, RemoteSession[]> = {};
+    for (const s of all.value) {
+      const k = (s.task_state as TaskState | undefined) ?? "idle";
+      (out[k] ||= []).push(s);
+    }
+    // Sort within each state group: unread first, then most-recent activity.
+    for (const k of Object.keys(out)) {
+      out[k].sort((a, b) => {
+        const au = a.unread ? 0 : 1;
+        const bu = b.unread ? 0 : 1;
+        if (au !== bu) return au - bu;
+        return (b.last_output_at ?? 0) - (a.last_output_at ?? 0);
+      });
+    }
+    return out;
+  });
+
+  const unreadByState = computed<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    for (const [k, list] of Object.entries(byState.value)) {
+      out[k] = list.filter((s) => s.unread === true).length;
+    }
+    return out;
+  });
+
   function primaryStateForHost(hostId: string): TaskState {
     const list = byHost.value[hostId] ?? [];
     let best: TaskState = "idle";
@@ -124,6 +159,8 @@ export function useSessions(
     unreadByHost,
     totalUnread,
     completedSeen,
+    byState,
+    unreadByState,
     primaryStateForHost,
   };
 }

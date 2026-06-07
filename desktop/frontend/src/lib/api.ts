@@ -5,6 +5,8 @@
 import { t } from "../i18n";
 import type { PresetId } from "./taskState";
 
+export type TaskGroupBy = "host" | "state";
+
 export interface Endpoint {
   url: string;
   token: string;
@@ -167,6 +169,8 @@ interface AppBindings {
   SetQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void>;
   GetTaskPreset(): Promise<string>;
   SetTaskPreset(preset: PresetId): Promise<void>;
+  GetTaskGroupBy(): Promise<string>;
+  SetTaskGroupBy(groupBy: TaskGroupBy): Promise<void>;
   GetTaskSidebarCollapsed(): Promise<boolean>;
   SetTaskSidebarCollapsed(collapsed: boolean): Promise<void>;
   GetTaskSidebarWidth(): Promise<number>;
@@ -410,6 +414,14 @@ export function getTaskPreset(): Promise<string> {
 
 export function setTaskPreset(preset: PresetId): Promise<void> {
   return bindings().SetTaskPreset(preset);
+}
+
+export function getTaskGroupBy(): Promise<string> {
+  return bindings().GetTaskGroupBy();
+}
+
+export function setTaskGroupBy(groupBy: TaskGroupBy): Promise<void> {
+  return bindings().SetTaskGroupBy(groupBy);
 }
 
 export function getTaskSidebarCollapsed(): Promise<boolean> {

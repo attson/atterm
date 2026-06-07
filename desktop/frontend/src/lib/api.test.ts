@@ -17,16 +17,16 @@ afterEach(() => {
 
 describe("task display api wrappers", () => {
   test("getTaskPreset delegates to bindings", async () => {
-    const fn = vi.fn().mockResolvedValue("vivid");
+    const fn = vi.fn().mockResolvedValue("iconOnly");
     __setBindingsForTest({ GetTaskPreset: fn } as any);
-    await expect(getTaskPreset()).resolves.toBe("vivid");
+    await expect(getTaskPreset()).resolves.toBe("iconOnly");
     expect(fn).toHaveBeenCalledOnce();
   });
   test("setTaskPreset passes the preset string", async () => {
     const fn = vi.fn().mockResolvedValue(undefined);
     __setBindingsForTest({ SetTaskPreset: fn } as any);
-    await setTaskPreset("quiet");
-    expect(fn).toHaveBeenCalledWith("quiet");
+    await setTaskPreset("iconLabel");
+    expect(fn).toHaveBeenCalledWith("iconLabel");
   });
   test("getTaskSidebarCollapsed returns boolean", async () => {
     const fn = vi.fn().mockResolvedValue(true);

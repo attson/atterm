@@ -74,6 +74,18 @@ type Session struct {
 	silenceRestoreBytes         int64
 	silenceRestoreByteThreshold int64
 
+	// lastResizeMono stamps the monotonic time of the last UpdateSize call
+	// that actually changed cols/rows. PTY resize → SIGWINCH → TUIs
+	// (claude, codex, vim, htop, …) repaint the entire screen, which can
+	// be several KB of OUT in the next instant. Without a grace window
+	// those repaint bytes blow past silenceRestoreByteThreshold and
+	// (incorrectly) restore running — so collapsing/expanding the desktop
+	// sidebar visibly knocks idle AI sessions back to the running spinner.
+	// Output arriving within silenceResizeGraceMS of a size change does
+	// not count toward the restore accumulator.
+	lastResizeMono       time.Time
+	silenceResizeGraceMS int64
+
 	// lastOutputMono is a monotonic wall-clock stamp of the last byte we
 	// processed in updateTerminalState. Used by the silence heuristic
 	// because LastOutputAt is unix-seconds, which silently rounds
@@ -137,6 +149,7 @@ func (s *Subscriber) close() {
 
 const defaultSilenceThresholdMS int64 = 5000
 const defaultSilenceRestoreByteThreshold int64 = 256
+const defaultSilenceResizeGraceMS int64 = 1500
 
 func envSilenceDetectEnabled() bool {
 	v := os.Getenv("ATTERM_TASK_SILENCE_DETECT")
@@ -176,6 +189,21 @@ func envSilenceRestoreByteThreshold() int64 {
 	return n
 }
 
+// envSilenceResizeGraceMS reads the grace window (ms) during which output
+// arriving after a PTY resize is treated as SIGWINCH-driven repaint, not
+// real activity, so it does not push the silence-restore accumulator.
+func envSilenceResizeGraceMS() int64 {
+	v := os.Getenv("ATTERM_TASK_SILENCE_RESIZE_GRACE_MS")
+	if v == "" {
+		return defaultSilenceResizeGraceMS
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		return defaultSilenceResizeGraceMS
+	}
+	return n
+}
+
 // New creates a Session with the given id and initial OPEN metadata.
 func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 	if meta.TaskState == "" {
@@ -194,6 +222,7 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 		silenceThresholdMS:          envSilenceThresholdMS(),
 		silenceDetectEnabled:        envSilenceDetectEnabled(),
 		silenceRestoreByteThreshold: envSilenceRestoreByteThreshold(),
+		silenceResizeGraceMS:        envSilenceResizeGraceMS(),
 	}
 }
 
@@ -379,6 +408,11 @@ func (s *Session) UpdateSize(cols, rows uint16) {
 	if rows > 0 && s.meta.Rows != rows {
 		s.meta.Rows = rows
 		changed = true
+	}
+	if changed {
+		// SIGWINCH will follow; record the moment so updateTerminalState
+		// can discount the repaint bytes in its silence-restore accumulator.
+		s.lastResizeMono = time.Now()
 	}
 	metaCopy := s.meta
 	driverID := s.driverClientID
@@ -713,18 +747,30 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	// waitingFromSilence == false.
 	restoredFromSilence := false
 	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
-		s.silenceRestoreBytes += int64(len(data))
-		if s.silenceRestoreBytes >= s.silenceRestoreByteThreshold {
-			silenceDebugLocked(s, fmt.Sprintf("restore: state waiting_input -> running (bytes=%d >= threshold=%d)",
-				s.silenceRestoreBytes, s.silenceRestoreByteThreshold))
-			s.meta.TaskState = proto.TaskStateRunning
-			s.waitingFromSilence = false
+		inResizeGrace := !s.lastResizeMono.IsZero() &&
+			now.Sub(s.lastResizeMono) < time.Duration(s.silenceResizeGraceMS)*time.Millisecond
+		switch {
+		case inResizeGrace:
+			// SIGWINCH-driven repaint after a sidebar collapse / window
+			// resize / font change. Don't count these bytes; reset the
+			// accumulator so we start fresh once the grace window closes.
 			s.silenceRestoreBytes = 0
-			changed = true
-			restoredFromSilence = true
-		} else {
-			silenceDebugLocked(s, fmt.Sprintf("restore-defer: bytes=%d < threshold=%d (chunk=%d)",
-				s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
+			silenceDebugLocked(s, fmt.Sprintf("restore-skip-resize-grace: chunk=%d age=%v",
+				len(data), now.Sub(s.lastResizeMono)))
+		default:
+			s.silenceRestoreBytes += int64(len(data))
+			if s.silenceRestoreBytes >= s.silenceRestoreByteThreshold {
+				silenceDebugLocked(s, fmt.Sprintf("restore: state waiting_input -> running (bytes=%d >= threshold=%d)",
+					s.silenceRestoreBytes, s.silenceRestoreByteThreshold))
+				s.meta.TaskState = proto.TaskStateRunning
+				s.waitingFromSilence = false
+				s.silenceRestoreBytes = 0
+				changed = true
+				restoredFromSilence = true
+			} else {
+				silenceDebugLocked(s, fmt.Sprintf("restore-defer: bytes=%d < threshold=%d (chunk=%d)",
+					s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
+			}
 		}
 	}
 	// Always reschedule at the tail. The helper itself decides whether to

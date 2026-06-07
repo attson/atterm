@@ -421,7 +421,7 @@ export const zhCN = {
   },
   tasks: {
     sidebar: {
-      title: "任务",
+      title: "会话",
       collapse: "折叠侧栏 (Cmd/Ctrl+B)",
       expand: "展开侧栏 (Cmd/Ctrl+B)",
     },
@@ -440,9 +440,9 @@ export const zhCN = {
     completedFold: "已完成",
     unreadBadge: "{count} 条未读",
     settings: {
-      section: "任务状态显示",
+      section: "会话状态显示",
       preset: "视觉预设",
-      expandByDefault: "默认展开任务侧栏",
+      expandByDefault: "默认展开会话侧栏",
     },
     unavailableToast: "标已读不可用 — 请升级 relay。",
   },

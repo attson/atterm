@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openPath, closeTab, setViewMode, type TabsState } from "./tabsModel";
+import { openPath, closeTab, setViewMode, defaultViewMode, type TabsState } from "./tabsModel";
 
 function empty(): TabsState {
   return { tabs: [], activeIdx: -1 };
@@ -70,5 +70,35 @@ describe("tabsModel.setViewMode", () => {
   it("is a no-op when there's no active tab", () => {
     const s: TabsState = { tabs: [], activeIdx: -1 };
     expect(setViewMode(s, "render")).toBe(s);
+  });
+});
+
+describe("tabsModel.defaultViewMode", () => {
+  it("returns render for .md", () => {
+    expect(defaultViewMode("/x/README.md")).toBe("render");
+  });
+  it("returns render for .markdown", () => {
+    expect(defaultViewMode("/x/notes.markdown")).toBe("render");
+  });
+  it("returns render for .MD (case insensitive)", () => {
+    expect(defaultViewMode("/x/CHANGELOG.MD")).toBe("render");
+  });
+  it("returns code for .svg (svg defaults to source view)", () => {
+    expect(defaultViewMode("/x/icon.svg")).toBe("code");
+  });
+  it("returns code for plain .txt", () => {
+    expect(defaultViewMode("/x/a.txt")).toBe("code");
+  });
+});
+
+describe("tabsModel.openPath × defaultViewMode", () => {
+  it("a new markdown tab opens in render mode", () => {
+    const s = openPath({ tabs: [], activeIdx: -1 }, "/x/README.md", "persistent");
+    expect(s.tabs[0].viewMode).toBe("render");
+  });
+
+  it("a new svg tab opens in code mode", () => {
+    const s = openPath({ tabs: [], activeIdx: -1 }, "/x/logo.svg", "persistent");
+    expect(s.tabs[0].viewMode).toBe("code");
   });
 });

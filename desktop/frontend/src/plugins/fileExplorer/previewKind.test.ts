@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { previewKind } from "./previewKind";
+import { previewKind, isDualMode } from "./previewKind";
 
 describe("previewKind", () => {
   const cases: Array<[string, string]> = [
@@ -20,6 +20,9 @@ describe("previewKind", () => {
     ["/p/track.flac", "audio"],
     ["/p/track.m4a", "audio"],
     ["/p/doc.pdf", "pdf"],
+    ["/p/readme.md", "markdown"],
+    ["/p/CHANGELOG.MD", "markdown"],
+    ["/p/notes.markdown", "markdown"],
     ["/p/main.go", "code"],
     ["/p/script.sh", "code"],
     ["/p/Dockerfile", "code"],
@@ -44,4 +47,12 @@ describe("previewKind", () => {
   it("text + unknown ext defaults to code (let CodeViewer show its binary banner)", () => {
     expect(previewKind("/p/blob.dat", false)).toBe("code");
   });
+});
+
+describe("isDualMode", () => {
+  it("svg has dual mode", () => { expect(isDualMode("svg")).toBe(true); });
+  it("markdown has dual mode", () => { expect(isDualMode("markdown")).toBe(true); });
+  it("code does not", () => { expect(isDualMode("code")).toBe(false); });
+  it("image does not", () => { expect(isDualMode("image")).toBe(false); });
+  it("pdf does not", () => { expect(isDualMode("pdf")).toBe(false); });
 });

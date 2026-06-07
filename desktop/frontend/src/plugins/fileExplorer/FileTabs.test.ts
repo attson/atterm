@@ -39,8 +39,20 @@ describe("FileTabs", () => {
     expect(w.emitted("toggle-view-mode")?.length).toBe(1);
   });
 
-  it("hides the toggle for non-svg active tab", () => {
+  it("hides the toggle for non-dual-mode active tab", () => {
     const w = mount(FileTabs, { props: { tabs, activeIdx: 0, viewMode: "code" } });
     expect(w.find(".view-toggle").exists()).toBe(false);
+  });
+
+  it("shows the view toggle when the active tab is a .md", () => {
+    const mdTabs = [{ path: "/x/README.md", persistent: true, lastActiveAt: 1, viewMode: "render" as const }];
+    const w = mount(FileTabs, { props: { tabs: mdTabs, activeIdx: 0, viewMode: "render" } });
+    expect(w.find(".view-toggle").exists()).toBe(true);
+  });
+
+  it("shows the view toggle when the active tab is a .markdown", () => {
+    const mdTabs = [{ path: "/x/notes.markdown", persistent: true, lastActiveAt: 1, viewMode: "render" as const }];
+    const w = mount(FileTabs, { props: { tabs: mdTabs, activeIdx: 0, viewMode: "render" } });
+    expect(w.find(".view-toggle").exists()).toBe(true);
   });
 });

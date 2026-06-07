@@ -23,10 +23,10 @@ function basename(p: string): string {
   return i === -1 ? p : p.slice(i + 1);
 }
 
-const activeIsSvg = computed(() => {
+const activeHasDualMode = computed(() => {
   const i = props.activeIdx;
   if (i < 0 || i >= props.tabs.length) return false;
-  return /\.svg$/i.test(props.tabs[i].path);
+  return /\.(svg|md|markdown)$/i.test(props.tabs[i].path);
 });
 </script>
 
@@ -46,7 +46,7 @@ const activeIsSvg = computed(() => {
       </span>
     </div>
     <button
-      v-if="activeIsSvg"
+      v-if="activeHasDualMode"
       class="view-toggle"
       :title="viewMode === 'code'
         ? t('plugins.fileExplorer.showAsRender')

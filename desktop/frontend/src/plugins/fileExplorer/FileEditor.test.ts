@@ -25,6 +25,7 @@ function mountFE(path: string, meta: { size: number; isBinary: boolean }) {
         ImagePreview: { template: '<div data-test="kind-image" />' },
         MediaPreview: { template: '<div data-test="kind-media" />' },
         PdfPreview: { template: '<div data-test="kind-pdf" />' },
+        MarkdownPreview: { template: '<div data-test="kind-markdown" />' },
         BinaryBanner: { template: '<div data-test="kind-banner" />' },
       },
     },
@@ -70,6 +71,48 @@ describe("FileEditor (dispatcher)", () => {
 
   it("routes svg to CodeViewer when viewMode=code", async () => {
     const w = mountFE("/x/logo.svg", { size: 200, isBinary: false });
+    await flushPromises();
+    expect(w.find('[data-test="kind-code"]').exists()).toBe(true);
+  });
+
+  it("routes .md to MarkdownPreview when viewMode=render", async () => {
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: "/x/README.md", size: 500, modTime: 1, isBinary: false,
+    });
+    const w = mount(FileEditor, {
+      props: { path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
+      global: {
+        stubs: {
+          CodeViewer: { template: '<div data-test="kind-code" />' },
+          ImagePreview: { template: '<div data-test="kind-image" />' },
+          MediaPreview: { template: '<div data-test="kind-media" />' },
+          PdfPreview: { template: '<div data-test="kind-pdf" />' },
+          MarkdownPreview: { template: '<div data-test="kind-markdown" />' },
+          BinaryBanner: { template: '<div data-test="kind-banner" />' },
+        },
+      },
+    });
+    await flushPromises();
+    expect(w.find('[data-test="kind-markdown"]').exists()).toBe(true);
+  });
+
+  it("routes .md to CodeViewer when viewMode=code", async () => {
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      path: "/x/README.md", size: 500, modTime: 1, isBinary: false,
+    });
+    const w = mount(FileEditor, {
+      props: { path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+      global: {
+        stubs: {
+          CodeViewer: { template: '<div data-test="kind-code" />' },
+          ImagePreview: { template: '<div data-test="kind-image" />' },
+          MediaPreview: { template: '<div data-test="kind-media" />' },
+          PdfPreview: { template: '<div data-test="kind-pdf" />' },
+          MarkdownPreview: { template: '<div data-test="kind-markdown" />' },
+          BinaryBanner: { template: '<div data-test="kind-banner" />' },
+        },
+      },
+    });
     await flushPromises();
     expect(w.find('[data-test="kind-code"]').exists()).toBe(true);
   });

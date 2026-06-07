@@ -1,4 +1,4 @@
-export type PreviewKind = "code" | "image" | "svg" | "video" | "audio" | "pdf" | "binary-unknown";
+export type PreviewKind = "code" | "image" | "svg" | "video" | "audio" | "pdf" | "markdown" | "binary-unknown";
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"]);
 const VIDEO_EXTS = new Set(["mp4", "webm", "mkv", "mov"]);
@@ -27,10 +27,18 @@ export function previewKind(path: string, isBinary: boolean): PreviewKind {
   const name = basename(path);
   const ext = extOf(name);
   if (ext === "svg") return "svg";
+  if (ext === "md" || ext === "markdown") return "markdown";
   if (ext && IMAGE_EXTS.has(ext)) return "image";
   if (ext && VIDEO_EXTS.has(ext)) return "video";
   if (ext && AUDIO_EXTS.has(ext)) return "audio";
   if (ext === "pdf") return "pdf";
   if (isBinary) return "binary-unknown";
   return "code";
+}
+
+/** Files whose preview component has both a "code" (source) and a "render"
+ *  (rendered) view. Used by FileTabs to show the view-mode toggle button and
+ *  by tabsModel to pick the right default viewMode for a new tab. */
+export function isDualMode(kind: PreviewKind): boolean {
+  return kind === "svg" || kind === "markdown";
 }

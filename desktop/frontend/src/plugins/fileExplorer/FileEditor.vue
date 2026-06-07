@@ -6,6 +6,7 @@ import CodeViewer from "./CodeViewer.vue";
 import ImagePreview from "./ImagePreview.vue";
 import MediaPreview from "./MediaPreview.vue";
 import PdfPreview from "./PdfPreview.vue";
+import MarkdownPreview from "./MarkdownPreview.vue";
 import BinaryBanner from "./BinaryBanner.vue";
 import { useI18n } from "../../i18n/useI18n";
 
@@ -13,7 +14,9 @@ const props = defineProps<{
   path: string;
   showLineNumbers: boolean;
   theme: "dimmed" | "light";
-  /** SVG dual-mode toggle: "code" → highlight, "render" → ImagePreview. */
+  /** Dual-mode toggle for kinds with both source and rendered views
+   *  (SVG: code↔image; markdown: code↔rendered HTML). Ignored for
+   *  single-view kinds. */
   viewMode: "code" | "render";
 }>();
 
@@ -43,7 +46,7 @@ watch(() => props.path, () => { void resolveKind(); }, { immediate: true });
     <div v-if="error" class="banner err">
       {{ t("plugins.fileExplorer.errorPrefix", { message: error }) }}
     </div>
-    <template v-else-if="kind === 'code' || (kind === 'svg' && viewMode === 'code')">
+    <template v-else-if="kind === 'code' || ((kind === 'svg' || kind === 'markdown') && viewMode === 'code')">
       <CodeViewer
         :path="path"
         :show-line-numbers="showLineNumbers"
@@ -52,6 +55,9 @@ watch(() => props.path, () => { void resolveKind(); }, { immediate: true });
     </template>
     <template v-else-if="kind === 'image' || (kind === 'svg' && viewMode === 'render')">
       <ImagePreview :path="path" :theme="theme" />
+    </template>
+    <template v-else-if="kind === 'markdown' && viewMode === 'render'">
+      <MarkdownPreview :path="path" :theme="theme" />
     </template>
     <template v-else-if="kind === 'video' || kind === 'audio'">
       <MediaPreview :path="path" :kind="kind" />

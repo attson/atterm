@@ -187,3 +187,51 @@ func TestSilence_KeywordWaitingNotRestoredByOutput(t *testing.T) {
 		t.Fatalf("keyword waiting_input must persist across output; got %q", s.Info().TaskState)
 	}
 }
+
+func TestSilence_OSC133DOverridesSilenceWaiting(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.meta.CommandStartedAt = time.Now().Unix() // satisfy 'D' early-return guard
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		state := s.meta.TaskState
+		s.mu.RUnlock()
+		if state == proto.TaskStateWaitingInput {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup: expected silence flip; got %q", s.Info().TaskState)
+	}
+	s.updateTerminalState(osc("D;0"))
+	if s.Info().TaskState != proto.TaskStateCompleted {
+		t.Fatalf("expected D to flip to completed; got %q", s.Info().TaskState)
+	}
+	if s.waitingFromSilence {
+		t.Fatalf("waitingFromSilence should be cleared after D")
+	}
+}
+
+func TestSilence_CloseStopsTimer(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	s.Close()
+	time.Sleep(200 * time.Millisecond)
+	if s.Info().TaskState == proto.TaskStateWaitingInput {
+		t.Fatalf("Close() should have stopped the silence timer")
+	}
+}

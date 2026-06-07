@@ -742,6 +742,14 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			if isAttentionType(s.meta.Type) {
 				s.meta.AttentionAt = now.Unix()
 			}
+			if s.waitingFromSilence {
+				s.waitingFromSilence = false
+				changed = true
+			}
+			if s.silenceTimer != nil {
+				s.silenceTimer.Stop()
+				s.silenceTimer = nil
+			}
 			changed = true
 		}
 	}
@@ -1170,6 +1178,10 @@ func (s *Session) Close() {
 		return
 	}
 	s.closed = true
+	if s.silenceTimer != nil {
+		s.silenceTimer.Stop()
+		s.silenceTimer = nil
+	}
 	subs := s.subs
 	s.subs = nil
 	close(s.inbound)

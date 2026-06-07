@@ -56,11 +56,15 @@ export function GetUpdateGHProxyURL():Promise<string>;
 
 export function GetUpdateState():Promise<main.UpdateState>;
 
+export function GetUserHomeDir():Promise<string>;
+
 export function GetWebglRendererEnabled():Promise<boolean>;
 
 export function InstallUpdate():Promise<void>;
 
 export function ListShells():Promise<Array<string>>;
+
+export function MarkSessionsSeen(arg1:Array<string>,arg2:boolean):Promise<void>;
 
 export function NewSession(arg1:main.NewSessionReq):Promise<main.NewSessionResp>;
 
@@ -85,8 +89,6 @@ export function SetQuickTemplates(arg1:Array<main.QuickTemplate>):Promise<void>;
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
-
-export function MarkSessionsSeen(arg1:Array<string>,arg2:boolean):Promise<void>;
 
 export function SetTaskPreset(arg1:string):Promise<void>;
 

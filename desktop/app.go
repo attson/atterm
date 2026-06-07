@@ -486,6 +486,18 @@ func (a *App) SetTaskPreset(preset string) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetUserHomeDir returns the OS-reported user home directory, so the
+// frontend can collapse paths starting with HOME to "~" for display.
+// Returns empty string on failure (the frontend already treats empty
+// HOME as "don't substitute").
+func (a *App) GetUserHomeDir() string {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
 // GetTaskSidebarCollapsed returns whether the task sidebar panel is collapsed.
 func (a *App) GetTaskSidebarCollapsed() bool {
 	if a.cfgStore == nil {

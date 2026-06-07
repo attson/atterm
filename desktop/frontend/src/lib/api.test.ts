@@ -5,6 +5,7 @@ import {
   getTaskSidebarCollapsed,
   setTaskSidebarCollapsed,
   markSessionsSeen,
+  getUserHomeDir,
   __setBindingsForTest,
 } from "./api";
 
@@ -47,5 +48,11 @@ describe("task display api wrappers", () => {
     __setBindingsForTest({ MarkSessionsSeen: fn } as any);
     await markSessionsSeen({ all: true });
     expect(fn).toHaveBeenCalledWith([], true);
+  });
+  test("getUserHomeDir delegates to bindings", async () => {
+    const fn = vi.fn().mockResolvedValue("/Users/attson");
+    __setBindingsForTest({ GetUserHomeDir: fn } as any);
+    await expect(getUserHomeDir()).resolves.toBe("/Users/attson");
+    expect(fn).toHaveBeenCalledOnce();
   });
 });

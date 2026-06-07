@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import { useI18n } from "../i18n/useI18n";
+import { shortenCwd } from "../lib/shortenCwd";
+import { getUserHomeDir } from "../lib/api";
 
 const props = defineProps<{
   byHost: Record<string, RemoteSession[]>;
@@ -21,6 +23,13 @@ const { t } = useI18n();
 
 const hostKeys = computed(() => Object.keys(props.byHost).sort());
 const foldOpen = ref(false);
+const home = ref("");
+
+onMounted(async () => {
+  try {
+    home.value = await getUserHomeDir();
+  } catch { /* leave empty — helper still truncates */ }
+});
 
 function hostName(hostId: string): string {
   const first = props.byHost[hostId]?.[0];
@@ -39,6 +48,15 @@ function onMarkHost(hostId: string) {
 }
 function onMarkFold() {
   emit("markSeen", { ids: props.completedSeen.map((s) => s.session_id) });
+}
+
+function commandLabel(s: { current_command?: string; title?: string; session_id: string }): string {
+  return s.current_command || s.title || s.session_id.slice(0, 8);
+}
+
+function rowTitle(s: { cwd?: string; current_command?: string; title?: string; session_id: string }): string {
+  const cmd = commandLabel(s);
+  return s.cwd ? `${cmd}\n${s.cwd}` : cmd;
 }
 </script>
 
@@ -80,8 +98,9 @@ function onMarkFold() {
         <TaskStateIcon
           :state="(s.task_state as TaskState | undefined) ?? 'idle'"
         />
-        <span class="cmd">
-          {{ s.current_command || s.title || s.session_id.slice(0, 8) }}
+        <span class="cmd-and-cwd" :title="rowTitle(s)">
+          <span class="cmd">{{ commandLabel(s) }}</span>
+          <span v-if="shortenCwd(s.cwd, home)" class="cwd">·&nbsp;{{ shortenCwd(s.cwd, home) }}</span>
         </span>
         <span v-if="s.unread" class="unread-dot" data-test="unread-dot">●</span>
         <span
@@ -118,8 +137,9 @@ function onMarkFold() {
           @click="emit('open', s)"
         >
           <TaskStateIcon :state="(s.task_state as TaskState | undefined) ?? 'idle'" />
-          <span class="cmd">
-            {{ s.current_command || s.title || s.session_id.slice(0, 8) }}
+          <span class="cmd-and-cwd" :title="rowTitle(s)">
+            <span class="cmd">{{ commandLabel(s) }}</span>
+            <span v-if="shortenCwd(s.cwd, home)" class="cwd">·&nbsp;{{ shortenCwd(s.cwd, home) }}</span>
           </span>
         </div>
         <button class="fold-mark-all" data-test="fold-mark-all" @click="onMarkFold">
@@ -140,7 +160,9 @@ function onMarkFold() {
 .task-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border: none; background: none; width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 3px; }
 .task-row:hover { background: rgba(255, 255, 255, 0.05); }
 .task-row.dim { opacity: 0.6; }
-.cmd { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
+.cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); }
+.cwd { color: var(--fg-dim); white-space: nowrap; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; }
 .unread-dot { font-size: 9px; color: currentColor; }
 .row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
 .completed-fold { border-top: 1px solid rgba(255, 255, 255, 0.06); margin-top: 6px; padding-top: 4px; }

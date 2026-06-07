@@ -188,7 +188,7 @@ const railIcons = computed(() => {
   height: 100%;
 }
 .task-sidebar.collapsed { width: 32px; }
-.task-sidebar:not(.collapsed) { width: 240px; }
+/* expanded width comes from inline :style="{ width: widthPx + 'px' }" */
 .resize-handle {
   position: absolute;
   top: 0;

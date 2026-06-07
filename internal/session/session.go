@@ -818,6 +818,77 @@ func looksLikeWaitingInput(data []byte) bool {
 	return false
 }
 
+// rescheduleSilenceTimerLocked arms (or re-arms) the per-session silence
+// timer. Caller must hold s.mu.Lock(). Stops any existing timer first; only
+// arms a new one when the session is currently running, in alt-screen, not
+// closed, and detection is enabled. Callers reach here after every output
+// chunk, after applyOSC133Locked, and from updateTerminalState's tail.
+func (s *Session) rescheduleSilenceTimerLocked() {
+	if s.silenceTimer != nil {
+		s.silenceTimer.Stop()
+		s.silenceTimer = nil
+	}
+	if !s.silenceDetectEnabled {
+		return
+	}
+	if s.closed {
+		return
+	}
+	if s.meta.TaskState != proto.TaskStateRunning {
+		return
+	}
+	if !s.altScreen {
+		return
+	}
+	d := time.Duration(s.silenceThresholdMS) * time.Millisecond
+	if d <= 0 {
+		return
+	}
+	s.silenceTimer = time.AfterFunc(d, s.onSilenceFired)
+}
+
+// onSilenceFired runs in the timer's own goroutine after the configured
+// silence threshold has elapsed since the last output. It takes the lock
+// and re-checks every guard — state, altScreen, closed, and the actual
+// silence duration — because anything could have changed between arming
+// and firing. If the session is still genuinely silent in an alt-screen
+// running task, flip to waiting_input, bump AttentionAt, mark the
+// transition as "from silence", and broadcast META. If it isn't silent
+// long enough yet (e.g. output arrived after the timer was scheduled but
+// before LastOutputAt updates raced), simply re-arm and let the next fire
+// settle it.
+func (s *Session) onSilenceFired() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	if !s.silenceDetectEnabled {
+		s.mu.Unlock()
+		return
+	}
+	if s.meta.TaskState != proto.TaskStateRunning {
+		s.mu.Unlock()
+		return
+	}
+	if !s.altScreen {
+		s.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	idleSec := now.Unix() - s.meta.LastOutputAt
+	if idleSec*1000 < s.silenceThresholdMS {
+		s.rescheduleSilenceTimerLocked()
+		s.mu.Unlock()
+		return
+	}
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.AttentionAt = now.Unix()
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+	s.broadcastCurrentMeta()
+}
+
 func mergeTaskMeta(meta *proto.SessionInfo, m proto.MetaPayload) bool {
 	info := proto.SessionInfo{
 		TaskState:         m.TaskState,

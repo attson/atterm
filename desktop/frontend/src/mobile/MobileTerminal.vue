@@ -103,7 +103,11 @@ function onImeInput(ev: Event) {
 
 function sendAux(seq: string) { sendRaw(seq) }
 function onTemplateClick(tpl: QuickTemplate) {
-  sendRaw(`${tpl.text}\r`)
+  // Two-step send: text first, Enter on the next tick. Codex treats a single
+  // "text\r" payload as a paste, so the CR would land inside the prompt as a
+  // literal newline instead of submitting. See lib/templates.ts header.
+  sendRaw(tpl.text)
+  window.setTimeout(() => sendRaw("\r"), 16)
 }
 function takeControl() {
   if (!canControl.value) return

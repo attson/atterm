@@ -1,8 +1,11 @@
 // QuickTemplate is one row of the user's quick-template list. A click on the
-// rendered button sends `text` + '\r' through SessionConnection.sendInput
-// immediately (no preview dialog). On desktop, an optional hotkey string
-// (e.g. "Alt+1", "Mod+Shift+P") triggers the same send when the active pane
-// is focused; mobile/web ignore the field.
+// rendered button sends `text` first, then a standalone '\r' one tick later,
+// through SessionConnection.sendInput (no preview dialog). The two-step send
+// matters for raw-mode TUIs like Codex that treat a single "text\r" payload
+// as a paste — the trailing CR would land inside the paste body as a literal
+// newline instead of being read as Enter. On desktop, an optional hotkey
+// string (e.g. "Alt+1", "Mod+Shift+P") triggers the same send when the
+// active pane is focused; mobile/web ignore the field.
 export interface QuickTemplate {
   id: string     // crypto.randomUUID() at first creation; stable thereafter
   label: string  // button text, ≤ 24 chars recommended

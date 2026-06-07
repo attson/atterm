@@ -123,4 +123,34 @@ describe("TaskGroupedList", () => {
     expect(text).toContain("claude");
     expect(text).toMatch(/atterm/); // last segment always present after shortenCwd
   });
+
+  test("row shows only the executable basename, full command lives in title", () => {
+    const byHost = {
+      h: [
+        mk({
+          session_id: "s1",
+          host: "mac",
+          task_state: "running",
+          current_command: "/usr/local/bin/claude --permission-mode bypassPermissions",
+          cwd: "/tmp",
+        }),
+      ],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+      },
+    });
+    // Visible cmd span shows only "claude" — no flags, no leading path.
+    const cmd = w.find('[data-test="task-row"] .cmd');
+    expect(cmd.text()).toBe("claude");
+    // Full command + cwd live in the row's title attribute (hover tooltip).
+    const wrap = w.find('[data-test="task-row"] .cmd-and-cwd');
+    const title = wrap.attributes("title") || "";
+    expect(title).toContain("/usr/local/bin/claude --permission-mode bypassPermissions");
+    expect(title).toContain("/tmp");
+  });
 });

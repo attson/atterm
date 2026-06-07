@@ -50,12 +50,23 @@ function onMarkFold() {
   emit("markSeen", { ids: props.completedSeen.map((s) => s.session_id) });
 }
 
-function commandLabel(s: { current_command?: string; title?: string; session_id: string }): string {
+function fullCommand(s: { current_command?: string; title?: string; session_id: string }): string {
   return s.current_command || s.title || s.session_id.slice(0, 8);
 }
 
+// commandLabel is the SHORT row display: only the executable name
+// (first whitespace-separated token, with any leading path stripped).
+// `/usr/local/bin/claude --permission-mode bypassPermissions` → `claude`.
+// The full string with args (and cwd) is exposed via the row's title
+// tooltip so nothing is lost.
+function commandLabel(s: { current_command?: string; title?: string; session_id: string }): string {
+  const raw = fullCommand(s);
+  const firstToken = raw.split(/\s+/)[0] || raw;
+  return firstToken.split("/").pop() || firstToken;
+}
+
 function rowTitle(s: { cwd?: string; current_command?: string; title?: string; session_id: string }): string {
-  const cmd = commandLabel(s);
+  const cmd = fullCommand(s);
   return s.cwd ? `${cmd}\n${s.cwd}` : cmd;
 }
 </script>

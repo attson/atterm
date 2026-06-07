@@ -8,6 +8,7 @@ import { SessionConnection, type Endpoint } from '../lib/connection'
 import { effectiveTemplates, type QuickTemplate } from '../lib/templates'
 import { effectiveAuxKeys, type AuxKey } from '../lib/auxKeys'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
+import { Keyboard } from '@capacitor/keyboard'
 import { TERMINAL_FONT_FAMILY } from '../lib/terminalFont'
 import type { RemoteSession } from '../platform/types'
 import { usePlatform } from '../platform'
@@ -118,6 +119,16 @@ function takeControl() {
   // (e.g. to scroll back without firing keystrokes) can disable it again.
   controlMode.value = true
   conn?.claimDriver()
+}
+
+function collapseKeyboardIfOpen(ev?: Event): boolean {
+  const ta = term?.textarea
+  if (!ta || document.activeElement !== ta) return false
+  ev?.preventDefault()
+  ev?.stopPropagation()
+  ta.blur()
+  Keyboard.hide().catch(() => { /* non-Capacitor preview/test env */ })
+  return true
 }
 
 async function openPasteConfirm() {
@@ -284,7 +295,8 @@ onBeforeUnmount(() => {
   if (protectClearTimer) { clearTimeout(protectClearTimer); protectClearTimer = null }
 })
 
-function onTermPointerDown() {
+function onTermPointerDown(ev: PointerEvent) {
+  if (collapseKeyboardIfOpen(ev)) return
   // xterm swallows keystrokes when disableStdin === true, so a tap on the
   // terminal area with controlMode off would produce no visible feedback.
   // Bumping the protect banner gives the user a clear reason.

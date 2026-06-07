@@ -95,6 +95,11 @@ vi.mock('@capacitor/camera', () => ({
   CameraResultType: { Base64: 'base64' },
 }))
 
+const hideKeyboard = vi.fn().mockResolvedValue(undefined)
+vi.mock('@capacitor/keyboard', () => ({
+  Keyboard: { hide: (...a: unknown[]) => hideKeyboard(...a) },
+}))
+
 import MobileTerminal from '../MobileTerminal.vue'
 import type { RemoteSession } from '../../platform/types'
 
@@ -259,6 +264,30 @@ describe('MobileTerminal', () => {
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
     expect(sendInput).toHaveBeenCalledWith('\r')
+  })
+
+  it('clicking the terminal area blurs the focused xterm textarea and hides the iOS keyboard', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    document.body.appendChild(lastTerm.textarea)
+    const blur = vi.spyOn(lastTerm.textarea, 'blur')
+    lastTerm.textarea.focus()
+    expect(document.activeElement).toBe(lastTerm.textarea)
+
+    await w.find('.term').trigger('pointerdown')
+
+    expect(blur).toHaveBeenCalledOnce()
+    expect(hideKeyboard).toHaveBeenCalledOnce()
+    expect(sendInput).not.toHaveBeenCalled()
+    lastTerm.textarea.remove()
+  })
+
+  it('does not hide the keyboard when the xterm textarea is not focused', async () => {
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+
+    await w.find('.term').trigger('pointerdown')
+
+    expect(hideKeyboard).not.toHaveBeenCalled()
+    expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
   })
 
   it('forwards non-composition IME insertText (punctuation/space/digit) xterm drops', async () => {

@@ -310,6 +310,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				payload, _ := json.Marshal(proto.ViewersPayload{SessionID: sid.String(), Count: n})
 				enqueue(proto.Frame{Type: proto.TypeViewers, SessionID: sid, Payload: payload})
 			})
+			sess.SetMetaChangedHook(s.registry.NotifyChange)
 			if _, err := s.registry.Add(sess); err != nil {
 				// Owner mismatch: another user already holds this session ID.
 				// Close the WS with a well-known code so the desktop can display

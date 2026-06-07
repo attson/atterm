@@ -8,6 +8,8 @@ package session
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -62,6 +64,16 @@ type Session struct {
 	silenceThresholdMS   int64
 	silenceDetectEnabled bool
 
+	// silenceRestoreBytes accumulates len(data) seen on OUT while we are
+	// in heuristic waiting_input. Restoring to running only triggers once
+	// the accumulator passes silenceRestoreByteThreshold — without this,
+	// tiny cursor-blink / spinner redraws emitted by TUIs (claude, codex,
+	// etc.) keep flipping waiting_input back to running every few seconds
+	// and the sidebar visibly oscillates. Reset on any non-restore state
+	// transition (Close, OSC 133, external UpdateMeta).
+	silenceRestoreBytes         int64
+	silenceRestoreByteThreshold int64
+
 	// lastOutputMono is a monotonic wall-clock stamp of the last byte we
 	// processed in updateTerminalState. Used by the silence heuristic
 	// because LastOutputAt is unix-seconds, which silently rounds
@@ -95,6 +107,13 @@ type Session struct {
 	// remote viewer count downstream. Fired synchronously after the lock is
 	// released (to preserve count ordering); the hook must not block.
 	onSubscriberCount func(int)
+
+	// onMetaChanged, if set, fires after any spontaneous state change that
+	// originates inside Session (not in response to an inbound frame the
+	// caller already follows up with NotifyChange). The silence heuristic
+	// uses this so its async timer-driven waiting_input transitions reach
+	// the session-list subscribers. The hook runs OUTSIDE the lock.
+	onMetaChanged func()
 }
 
 // Subscriber is a client connection's outbox.
@@ -117,6 +136,7 @@ func (s *Subscriber) close() {
 }
 
 const defaultSilenceThresholdMS int64 = 5000
+const defaultSilenceRestoreByteThreshold int64 = 256
 
 func envSilenceDetectEnabled() bool {
 	v := os.Getenv("ATTERM_TASK_SILENCE_DETECT")
@@ -138,6 +158,24 @@ func envSilenceThresholdMS() int64 {
 	return n
 }
 
+// envSilenceRestoreByteThreshold reads the byte-accumulator threshold for
+// restoring running from heuristic waiting_input. A single cursor blink is
+// typically a handful of bytes (`\x1b[?25l\x1b[?25h`); meaningful AI output
+// is hundreds. The default (256) keeps the sidebar in waiting_input through
+// claude's idle spinner/cursor redraws but flips back to running as soon as
+// real content streams.
+func envSilenceRestoreByteThreshold() int64 {
+	v := os.Getenv("ATTERM_TASK_SILENCE_RESTORE_BYTES")
+	if v == "" {
+		return defaultSilenceRestoreByteThreshold
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return defaultSilenceRestoreByteThreshold
+	}
+	return n
+}
+
 // New creates a Session with the given id and initial OPEN metadata.
 func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 	if meta.TaskState == "" {
@@ -153,8 +191,9 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 		subs:                 make(map[*Subscriber]struct{}),
 		scroll:               ringbuf.New(scrollbackBytes),
 		inbound:              make(chan proto.Frame, inboundQueueDepth),
-		silenceThresholdMS:   envSilenceThresholdMS(),
-		silenceDetectEnabled: envSilenceDetectEnabled(),
+		silenceThresholdMS:          envSilenceThresholdMS(),
+		silenceDetectEnabled:        envSilenceDetectEnabled(),
+		silenceRestoreByteThreshold: envSilenceRestoreByteThreshold(),
 	}
 }
 
@@ -196,6 +235,16 @@ func (s *Session) SetSubscriberCountHook(fn func(int)) {
 	s.mu.Unlock()
 }
 
+// SetMetaChangedHook registers a callback fired after Session-driven async
+// state transitions (currently: silence-heuristic flips). The hook runs
+// outside the lock. Typical use: have the registry owner pass
+// `registry.NotifyChange` so the session list view picks up the new state.
+func (s *Session) SetMetaChangedHook(fn func()) {
+	s.mu.Lock()
+	s.onMetaChanged = fn
+	s.mu.Unlock()
+}
+
 // SubscriberCount returns the number of currently-attached subscribers.
 func (s *Session) SubscriberCount() int {
 	s.mu.RLock()
@@ -226,6 +275,7 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
+		s.silenceRestoreBytes = 0
 	}
 	s.rescheduleSilenceTimerLocked()
 	// Mirror sessions adopt the upstream's authoritative driver. Local
@@ -296,6 +346,7 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
+		s.silenceRestoreBytes = 0
 	}
 	s.rescheduleSilenceTimerLocked()
 	metaCopy := s.meta
@@ -626,7 +677,6 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		return false
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	changed := false
 	now := time.Now()
 	if s.meta.TaskState == "" {
@@ -656,17 +706,42 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	s.termTail = appendTrailingBytes(s.termTail[:0], prevTail, data, tailLen)
 
 	// Silence heuristic: output arriving while we were heuristic-waiting
-	// restores running. AttentionAt is intentionally NOT rolled back
-	// (2026-06-07 spec §6). Existing keyword-based waiting_input is left
-	// alone because waitingFromSilence == false.
+	// restores running, BUT only once we've accumulated enough output to
+	// be confident this isn't just a TUI cursor blink / spinner redraw.
+	// AttentionAt is intentionally NOT rolled back (2026-06-07 spec §6).
+	// Existing keyword-based waiting_input is left alone because
+	// waitingFromSilence == false.
+	restoredFromSilence := false
 	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
-		s.meta.TaskState = proto.TaskStateRunning
-		s.waitingFromSilence = false
-		changed = true
+		s.silenceRestoreBytes += int64(len(data))
+		if s.silenceRestoreBytes >= s.silenceRestoreByteThreshold {
+			silenceDebugLocked(s, fmt.Sprintf("restore: state waiting_input -> running (bytes=%d >= threshold=%d)",
+				s.silenceRestoreBytes, s.silenceRestoreByteThreshold))
+			s.meta.TaskState = proto.TaskStateRunning
+			s.waitingFromSilence = false
+			s.silenceRestoreBytes = 0
+			changed = true
+			restoredFromSilence = true
+		} else {
+			silenceDebugLocked(s, fmt.Sprintf("restore-defer: bytes=%d < threshold=%d (chunk=%d)",
+				s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
+		}
 	}
 	// Always reschedule at the tail. The helper itself decides whether to
 	// arm based on the post-update state + altScreen + detect-enabled flag.
 	s.rescheduleSilenceTimerLocked()
+	var metaHook func()
+	if restoredFromSilence {
+		metaHook = s.onMetaChanged
+	}
+	s.mu.Unlock()
+	if metaHook != nil {
+		// Fire OUT-OF-BAND so the session list view picks up running again
+		// after silence restored. The caller (PushOut) will also broadcast
+		// the OUT bytes, but the registry NotifyChange path is what kicks
+		// list-only subscribers (e.g. the desktop sidebar).
+		metaHook()
+	}
 	return changed
 }
 
@@ -687,6 +762,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
+				s.silenceRestoreBytes = 0
 				changed = true
 			}
 			if s.meta.CurrentCommand != command {
@@ -764,6 +840,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
+				s.silenceRestoreBytes = 0
 			}
 			if s.silenceTimer != nil {
 				s.silenceTimer.Stop()
@@ -858,32 +935,49 @@ func looksLikeWaitingInput(data []byte) bool {
 	return false
 }
 
+// silenceAppliesToLocked decides whether the silence heuristic should apply
+// to this session in its current state. The alt-screen guard catches classic
+// TUIs (vim, fzf, older Claude Code), but Claude Code v2.x — and similar
+// inline-rendering AI clients — render their prompt directly into the normal
+// screen, never flipping alt-screen on. For those we relax the requirement:
+// any session classified as ai is treated as a candidate regardless of
+// alt-screen state. test/build/deploy types are deliberately NOT included
+// because they routinely run silently while genuinely working; flipping to
+// waiting_input there would create false unread badges.
+func (s *Session) silenceAppliesToLocked() bool {
+	return s.altScreen || s.meta.Type == SessionTypeAI
+}
+
 // rescheduleSilenceTimerLocked arms (or re-arms) the per-session silence
 // timer. Caller must hold s.mu.Lock(). Stops any existing timer first; only
-// arms a new one when the session is currently running, in alt-screen, not
-// closed, and detection is enabled. Callers reach here after every output
-// chunk, after applyOSC133Locked, and from updateTerminalState's tail.
+// arms a new one when detection is enabled, the session is running and not
+// closed, and silenceAppliesToLocked() says the heuristic is in scope.
 func (s *Session) rescheduleSilenceTimerLocked() {
 	if s.silenceTimer != nil {
 		s.silenceTimer.Stop()
 		s.silenceTimer = nil
 	}
 	if !s.silenceDetectEnabled {
+		silenceDebugLocked(s, "arm-skip: detect-disabled")
 		return
 	}
 	if s.closed {
 		return
 	}
 	if s.meta.TaskState != proto.TaskStateRunning {
+		silenceDebugLocked(s, fmt.Sprintf("arm-skip: state=%q (not running)", s.meta.TaskState))
 		return
 	}
-	if !s.altScreen {
+	if !s.silenceAppliesToLocked() {
+		silenceDebugLocked(s, fmt.Sprintf("arm-skip: not applicable (alt=%v type=%q)",
+			s.altScreen, s.meta.Type))
 		return
 	}
 	d := time.Duration(s.silenceThresholdMS) * time.Millisecond
 	if d <= 0 {
 		return
 	}
+	silenceDebugLocked(s, fmt.Sprintf("arm: in %v (type=%q alt=%v)", d, s.meta.Type, s.altScreen))
 	s.silenceTimer = time.AfterFunc(d, s.onSilenceFired)
 }
 
@@ -900,33 +994,59 @@ func (s *Session) rescheduleSilenceTimerLocked() {
 func (s *Session) onSilenceFired() {
 	s.mu.Lock()
 	if s.closed {
+		silenceDebugLocked(s, "fire-skip: closed")
 		s.mu.Unlock()
 		return
 	}
 	if !s.silenceDetectEnabled {
+		silenceDebugLocked(s, "fire-skip: detect-disabled")
 		s.mu.Unlock()
 		return
 	}
 	if s.meta.TaskState != proto.TaskStateRunning {
+		silenceDebugLocked(s, fmt.Sprintf("fire-skip: state=%q (not running)", s.meta.TaskState))
 		s.mu.Unlock()
 		return
 	}
-	if !s.altScreen {
+	if !s.silenceAppliesToLocked() {
+		silenceDebugLocked(s, fmt.Sprintf("fire-skip: not applicable (alt=%v type=%q)",
+			s.altScreen, s.meta.Type))
 		s.mu.Unlock()
 		return
 	}
 	now := time.Now()
 	threshold := time.Duration(s.silenceThresholdMS) * time.Millisecond
 	if s.lastOutputMono.IsZero() || now.Sub(s.lastOutputMono) < threshold {
+		silenceDebugLocked(s, fmt.Sprintf("fire-rearm: idle=%v < threshold=%v (mono-zero=%v)",
+			now.Sub(s.lastOutputMono), threshold, s.lastOutputMono.IsZero()))
 		s.rescheduleSilenceTimerLocked()
 		s.mu.Unlock()
 		return
 	}
+	silenceDebugLocked(s, fmt.Sprintf("fire-flip: state running -> waiting_input (idle=%v, type=%q, alt=%v)",
+		now.Sub(s.lastOutputMono), s.meta.Type, s.altScreen))
 	s.meta.TaskState = proto.TaskStateWaitingInput
 	s.meta.AttentionAt = now.Unix()
 	s.waitingFromSilence = true
+	s.silenceRestoreBytes = 0
+	metaHook := s.onMetaChanged
 	s.mu.Unlock()
 	s.broadcastCurrentMeta()
+	if metaHook != nil {
+		metaHook()
+	}
+}
+
+var silenceDebugEnabled = os.Getenv("ATTERM_DEBUG_SILENCE") == "1"
+
+// silenceDebugLocked emits a one-line trace when ATTERM_DEBUG_SILENCE=1
+// is set in the environment. Cheap (literally one bool check) when off.
+// Caller must hold s.mu so it can safely read meta fields.
+func silenceDebugLocked(s *Session, msg string) {
+	if !silenceDebugEnabled {
+		return
+	}
+	log.Printf("[silence] sid=%s cmd=%q %s", s.ID.String()[:8], s.meta.CurrentCommand, msg)
 }
 
 func mergeTaskMeta(meta *proto.SessionInfo, m proto.MetaPayload) bool {

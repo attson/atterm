@@ -84,7 +84,10 @@ func TestSilence_TimerFlipsRunningToWaiting(t *testing.T) {
 	}
 }
 
-func TestSilence_TimerNoopWhenNotAltScreen(t *testing.T) {
+func TestSilence_TimerNoopWhenNotAltScreenAndNotAI(t *testing.T) {
+	// Default Type is shell (set by New). Not in alt-screen + not AI →
+	// silence heuristic does NOT fire (e.g. tail -f, sleep 30 — silent
+	// shell commands legitimately doing work).
 	s := directFireSilenceTimer(t, func(s *Session) {
 		s.meta.TaskState = proto.TaskStateRunning
 		s.altScreen = false
@@ -92,7 +95,45 @@ func TestSilence_TimerNoopWhenNotAltScreen(t *testing.T) {
 		s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	})
 	if s.Info().TaskState == proto.TaskStateWaitingInput {
-		t.Fatalf("silence timer must not fire outside alt-screen")
+		t.Fatalf("silence timer must not fire outside alt-screen for shell-type sessions")
+	}
+}
+
+func TestSilence_TimerFiresForAITypeWithoutAltScreen(t *testing.T) {
+	// Claude Code v2.x (and similar inline-rendering AI clients) never
+	// flip alt-screen on, so the heuristic must apply on Type=ai even
+	// when altScreen is false. This is the canonical "claude waiting for
+	// my next message" case the inbox model targets.
+	s := directFireSilenceTimer(t, func(s *Session) {
+		s.meta.TaskState = proto.TaskStateRunning
+		s.altScreen = false
+		s.meta.Type = SessionTypeAI
+		s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+		s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	})
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("silence timer must fire for AI type without alt-screen; got %q",
+			s.Info().TaskState)
+	}
+	if !s.waitingFromSilence {
+		t.Fatalf("waitingFromSilence flag should be set")
+	}
+}
+
+func TestSilence_TimerNoopForTestTypeWithoutAltScreen(t *testing.T) {
+	// Test/build/deploy types routinely run silently while genuinely
+	// working. The relaxation is intentionally AI-only.
+	s := directFireSilenceTimer(t, func(s *Session) {
+		s.meta.TaskState = proto.TaskStateRunning
+		s.altScreen = false
+		s.meta.Type = SessionTypeTest
+		s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+		s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	})
+	if s.Info().TaskState == proto.TaskStateWaitingInput {
+		t.Fatalf("silence timer must NOT fire for test type without alt-screen "+
+			"(test/build/deploy routinely work silently); got %q",
+			s.Info().TaskState)
 	}
 }
 
@@ -142,6 +183,9 @@ func TestSilence_TimerReschedulesWhenOutputTooRecent(t *testing.T) {
 
 func TestSilence_OutputRestoresRunningFromSilenceWaiting(t *testing.T) {
 	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	// Use a small restore threshold so we can exercise it with a short buffer
+	// without simulating hundreds of bytes of claude output.
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "5")
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 	s.mu.Lock()
 	s.meta.TaskState = proto.TaskStateRunning
@@ -181,6 +225,75 @@ func TestSilence_OutputRestoresRunningFromSilenceWaiting(t *testing.T) {
 	}
 	if s.Info().AttentionAt != att {
 		t.Fatalf("AttentionAt should not roll back on restore; was %d, now %d", att, s.Info().AttentionAt)
+	}
+}
+
+// Cursor-blink / spinner redraws (a handful of bytes) MUST NOT restore
+// running once the silence heuristic has flipped to waiting_input —
+// otherwise TUI sessions (claude code v2.x etc.) ping-pong continuously
+// and the sidebar visibly oscillates.
+func TestSilence_TinyOutputDoesNotRestoreFromSilence(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	// Default ATTERM_TASK_SILENCE_RESTORE_BYTES (256).
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup: expected silence flip; got %q", s.Info().TaskState)
+	}
+	// Cursor-blink-sized output arrives twice — well under 256B total.
+	s.updateTerminalState([]byte("\x1b[?25l"))
+	s.updateTerminalState([]byte("\x1b[?25h"))
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("small redraws must NOT restore running from silence; got %q", s.Info().TaskState)
+	}
+	s.mu.RLock()
+	wfs := s.waitingFromSilence
+	bytes := s.silenceRestoreBytes
+	s.mu.RUnlock()
+	if !wfs {
+		t.Fatalf("waitingFromSilence should still be set")
+	}
+	if bytes == 0 {
+		t.Fatalf("silenceRestoreBytes should have accumulated; got 0")
+	}
+}
+
+// Larger sustained output — once the accumulator passes the threshold —
+// DOES restore to running. Sanity check that the gate isn't permanent.
+func TestSilence_LargeOutputRestoresFromSilence(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "32")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup: expected silence flip; got %q", s.Info().TaskState)
+	}
+	// Several small chunks summing past 32 bytes.
+	for i := 0; i < 4; i++ {
+		s.updateTerminalState([]byte("0123456789"))
+	}
+	if s.Info().TaskState != proto.TaskStateRunning {
+		t.Fatalf("sustained output should restore running; got %q", s.Info().TaskState)
 	}
 }
 
@@ -258,6 +371,7 @@ func TestSilence_CloseStopsTimer(t *testing.T) {
 
 func TestSilence_RepeatSilenceIsMonotone(t *testing.T) {
 	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "40")
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "1")
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 	s.mu.Lock()
 	s.meta.TaskState = proto.TaskStateRunning

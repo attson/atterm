@@ -32,7 +32,7 @@ describe("shortenCwd", () => {
     expect(shortenCwd("/Users/attson/a/b/c/d", HOME)).toBe("…/c/d");
   });
 
-  test("empty HOME falls back to no substitution", () => {
-    expect(shortenCwd("/Users/attson/code/atterm", "")).toBe("/Users/attson/code/atterm");
+  test("empty HOME skips ~ substitution but still truncates long paths", () => {
+    expect(shortenCwd("/Users/attson/code/atterm", "")).toBe("…/code/atterm");
   });
 });

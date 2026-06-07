@@ -235,3 +235,64 @@ func TestSilence_CloseStopsTimer(t *testing.T) {
 		t.Fatalf("Close() should have stopped the silence timer")
 	}
 }
+
+func TestSilence_RepeatSilenceIsMonotone(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "40")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	firstAtt := s.Info().AttentionAt
+	if firstAtt == 0 {
+		t.Fatalf("setup: expected silence flip to bump AttentionAt")
+	}
+	// Wait at least 1 second so that AttentionAt (unix seconds) can be strictly greater.
+	time.Sleep(1100 * time.Millisecond)
+	// Output arrives → restore to running.
+	s.updateTerminalState([]byte("x"))
+	if s.Info().TaskState != proto.TaskStateRunning {
+		t.Fatalf("expected restore to running; got %q", s.Info().TaskState)
+	}
+	// Re-prime silence: back-date LastOutputAt and let the timer fire again.
+	s.mu.Lock()
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline = time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	secondAtt := s.Info().AttentionAt
+	if secondAtt <= firstAtt {
+		t.Fatalf("second silence AttentionAt must be > first; %d vs %d", secondAtt, firstAtt)
+	}
+}
+
+func TestSilence_NoRaceUnderConcurrentOutput(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "20")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.mu.Unlock()
+	done := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for j := 0; j < 200; j++ {
+				s.updateTerminalState([]byte("x"))
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		<-done
+	}
+	s.Close()
+}

@@ -79,11 +79,21 @@ describe("TabBar", () => {
     const aiTab = {
       ...baseTab,
       activeSession: {
-        session_id: "s1", host_id: "h", host: "mac", user: "u", title: "claude",
-        cols: 80, rows: 24, task_state: "running", type: "ai",
+        id: "s1",
+        command: "claude",
+        cwd: "/tmp",
+        title: "claude",
+        cols: 80,
+        rows: 24,
+        started_at: 0,
+        host_id: "h",
+        host: "mac",
+        user: "u",
+        task_state: "running",
+        type: "ai",
       },
     };
-    const w = mount(TabBar, { props: { tabs: [aiTab], currentId: "t1" } });
+    const w = mount(TabBar, { props: { tabs: [aiTab], currentId: "t1", starting: false } });
     expect(w.find(".type-icon").exists()).toBe(false);
   });
 });

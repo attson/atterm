@@ -131,3 +131,59 @@ func TestSilence_TimerReschedulesWhenOutputTooRecent(t *testing.T) {
 		t.Fatalf("after delay + back-dated LastOutputAt, silence timer should flip; got %q", s.Info().TaskState)
 	}
 }
+
+func TestSilence_OutputRestoresRunningFromSilenceWaiting(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		state := s.meta.TaskState
+		s.mu.RUnlock()
+		if state == proto.TaskStateWaitingInput {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup precondition: expected waiting_input, got %q", s.Info().TaskState)
+	}
+	att := s.Info().AttentionAt
+	if att == 0 {
+		t.Fatalf("setup precondition: expected AttentionAt to be bumped")
+	}
+	// Now output arrives. State should flip back to running; AttentionAt MUST
+	// remain at the bumped value (spec §6 is explicit on this).
+	s.updateTerminalState([]byte("hello"))
+	if s.Info().TaskState != proto.TaskStateRunning {
+		t.Fatalf("expected output to restore running; got %q", s.Info().TaskState)
+	}
+	if s.waitingFromSilence {
+		t.Fatalf("waitingFromSilence should be cleared after restore")
+	}
+	if s.Info().AttentionAt != att {
+		t.Fatalf("AttentionAt should not roll back on restore; was %d, now %d", att, s.Info().AttentionAt)
+	}
+}
+
+func TestSilence_KeywordWaitingNotRestoredByOutput(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_DETECT", "0") // isolate the keyword path
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.updateTerminalState([]byte("Continue? [y/N] "))
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup: expected keyword to flip to waiting_input")
+	}
+	if s.waitingFromSilence {
+		t.Fatalf("keyword path must not set waitingFromSilence")
+	}
+	s.updateTerminalState([]byte("more text"))
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("keyword waiting_input must persist across output; got %q", s.Info().TaskState)
+	}
+}

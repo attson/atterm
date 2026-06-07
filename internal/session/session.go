@@ -638,6 +638,19 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	}
 	s.altScreen = scanAltScreenMode(s.altScreen, data)
 	s.termTail = appendTrailingBytes(s.termTail[:0], prevTail, data, tailLen)
+
+	// Silence heuristic: output arriving while we were heuristic-waiting
+	// restores running. AttentionAt is intentionally NOT rolled back
+	// (2026-06-07 spec §6). Existing keyword-based waiting_input is left
+	// alone because waitingFromSilence == false.
+	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
+		s.meta.TaskState = proto.TaskStateRunning
+		s.waitingFromSilence = false
+		changed = true
+	}
+	// Always reschedule at the tail. The helper itself decides whether to
+	// arm based on the post-update state + altScreen + detect-enabled flag.
+	s.rescheduleSilenceTimerLocked()
 	return changed
 }
 

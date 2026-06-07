@@ -98,6 +98,10 @@ export function GetTaskSidebarCollapsed() {
   return window['go']['main']['App']['GetTaskSidebarCollapsed']();
 }
 
+export function GetTaskSidebarWidth() {
+  return window['go']['main']['App']['GetTaskSidebarWidth']();
+}
+
 export function GetTerminalTheme() {
   return window['go']['main']['App']['GetTerminalTheme']();
 }
@@ -184,6 +188,10 @@ export function SetTaskPreset(arg1) {
 
 export function SetTaskSidebarCollapsed(arg1) {
   return window['go']['main']['App']['SetTaskSidebarCollapsed'](arg1);
+}
+
+export function SetTaskSidebarWidth(arg1) {
+  return window['go']['main']['App']['SetTaskSidebarWidth'](arg1);
 }
 
 export function SetTerminalTheme(arg1) {

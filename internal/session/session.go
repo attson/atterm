@@ -8,6 +8,7 @@ package session
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,20 @@ type Session struct {
 	termTail   []byte
 	osc133Buf  []byte
 	cmdStarted time.Time
+
+	// Silence-detection heuristic state. silenceTimer is armed by
+	// rescheduleSilenceTimerLocked whenever the session is in running + alt
+	// screen; on fire onSilenceFired re-checks guards and flips to
+	// waiting_input. waitingFromSilence remembers that the current
+	// waiting_input came from this heuristic (so output arriving while in
+	// waiting_input restores running only for us, never undoing a
+	// looksLikeWaitingInput match). silenceThresholdMS and silenceDetectEnabled
+	// are populated from env at New() and cached per session so tests can
+	// inject short thresholds via t.Setenv.
+	silenceTimer         *time.Timer
+	waitingFromSilence   bool
+	silenceThresholdMS   int64
+	silenceDetectEnabled bool
 
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
 	// frames are forwarded to the PTY. Nil means no driver is currently
@@ -94,6 +109,28 @@ func (s *Subscriber) close() {
 	s.once.Do(func() { close(s.closed) })
 }
 
+const defaultSilenceThresholdMS int64 = 5000
+
+func envSilenceDetectEnabled() bool {
+	v := os.Getenv("ATTERM_TASK_SILENCE_DETECT")
+	if v == "" {
+		return true
+	}
+	return v != "0" && !strings.EqualFold(v, "false")
+}
+
+func envSilenceThresholdMS() int64 {
+	v := os.Getenv("ATTERM_TASK_SILENCE_THRESHOLD_MS")
+	if v == "" {
+		return defaultSilenceThresholdMS
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return defaultSilenceThresholdMS
+	}
+	return n
+}
+
 // New creates a Session with the given id and initial OPEN metadata.
 func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 	if meta.TaskState == "" {
@@ -103,12 +140,14 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 		meta.Type = SessionTypeShell
 	}
 	return &Session{
-		ID:        id,
-		StartedAt: time.Now(),
-		meta:      meta,
-		subs:      make(map[*Subscriber]struct{}),
-		scroll:    ringbuf.New(scrollbackBytes),
-		inbound:   make(chan proto.Frame, inboundQueueDepth),
+		ID:                   id,
+		StartedAt:            time.Now(),
+		meta:                 meta,
+		subs:                 make(map[*Subscriber]struct{}),
+		scroll:               ringbuf.New(scrollbackBytes),
+		inbound:              make(chan proto.Frame, inboundQueueDepth),
+		silenceThresholdMS:   envSilenceThresholdMS(),
+		silenceDetectEnabled: envSilenceDetectEnabled(),
 	}
 }
 

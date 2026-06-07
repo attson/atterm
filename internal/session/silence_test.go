@@ -68,11 +68,15 @@ func TestSilence_TimerFlipsRunningToWaiting(t *testing.T) {
 		s.meta.TaskState = proto.TaskStateRunning
 		s.altScreen = true
 		s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+		s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	})
 	if s.Info().TaskState != proto.TaskStateWaitingInput {
 		t.Fatalf("silence timer should have flipped state to waiting_input; got %q", s.Info().TaskState)
 	}
-	if !s.waitingFromSilence {
+	s.mu.RLock()
+	wfs := s.waitingFromSilence
+	s.mu.RUnlock()
+	if !wfs {
 		t.Fatalf("waitingFromSilence should be true after silence flip")
 	}
 	if s.Info().AttentionAt == 0 {
@@ -85,6 +89,7 @@ func TestSilence_TimerNoopWhenNotAltScreen(t *testing.T) {
 		s.meta.TaskState = proto.TaskStateRunning
 		s.altScreen = false
 		s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+		s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	})
 	if s.Info().TaskState == proto.TaskStateWaitingInput {
 		t.Fatalf("silence timer must not fire outside alt-screen")
@@ -97,6 +102,7 @@ func TestSilence_TimerNoopWhenDetectDisabled(t *testing.T) {
 		s.meta.TaskState = proto.TaskStateRunning
 		s.altScreen = true
 		s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+		s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	})
 	if s.Info().TaskState == proto.TaskStateWaitingInput {
 		t.Fatalf("silence timer must not fire when detection is disabled")
@@ -110,12 +116,14 @@ func TestSilence_TimerReschedulesWhenOutputTooRecent(t *testing.T) {
 	s.meta.TaskState = proto.TaskStateRunning
 	s.altScreen = true
 	s.meta.LastOutputAt = time.Now().Unix() // not silent
+	s.lastOutputMono = time.Now()           // not silent
 	s.rescheduleSilenceTimerLocked()
 	s.mu.Unlock()
 	time.Sleep(120 * time.Millisecond)
-	// Push LastOutputAt back in time so the NEXT check will see "silent"
+	// Push both timestamps back in time so the NEXT check will see "silent"
 	s.mu.Lock()
 	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	s.mu.Unlock()
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
@@ -139,6 +147,7 @@ func TestSilence_OutputRestoresRunningFromSilenceWaiting(t *testing.T) {
 	s.meta.TaskState = proto.TaskStateRunning
 	s.altScreen = true
 	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	s.rescheduleSilenceTimerLocked()
 	s.mu.Unlock()
 	deadline := time.Now().Add(300 * time.Millisecond)
@@ -164,7 +173,10 @@ func TestSilence_OutputRestoresRunningFromSilenceWaiting(t *testing.T) {
 	if s.Info().TaskState != proto.TaskStateRunning {
 		t.Fatalf("expected output to restore running; got %q", s.Info().TaskState)
 	}
-	if s.waitingFromSilence {
+	s.mu.RLock()
+	wfs := s.waitingFromSilence
+	s.mu.RUnlock()
+	if wfs {
 		t.Fatalf("waitingFromSilence should be cleared after restore")
 	}
 	if s.Info().AttentionAt != att {
@@ -179,7 +191,10 @@ func TestSilence_KeywordWaitingNotRestoredByOutput(t *testing.T) {
 	if s.Info().TaskState != proto.TaskStateWaitingInput {
 		t.Fatalf("setup: expected keyword to flip to waiting_input")
 	}
-	if s.waitingFromSilence {
+	s.mu.RLock()
+	wfs := s.waitingFromSilence
+	s.mu.RUnlock()
+	if wfs {
 		t.Fatalf("keyword path must not set waitingFromSilence")
 	}
 	s.updateTerminalState([]byte("more text"))
@@ -196,6 +211,7 @@ func TestSilence_OSC133DOverridesSilenceWaiting(t *testing.T) {
 	s.meta.CommandStartedAt = time.Now().Unix() // satisfy 'D' early-return guard
 	s.altScreen = true
 	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	s.rescheduleSilenceTimerLocked()
 	s.mu.Unlock()
 	deadline := time.Now().Add(300 * time.Millisecond)
@@ -215,7 +231,10 @@ func TestSilence_OSC133DOverridesSilenceWaiting(t *testing.T) {
 	if s.Info().TaskState != proto.TaskStateCompleted {
 		t.Fatalf("expected D to flip to completed; got %q", s.Info().TaskState)
 	}
-	if s.waitingFromSilence {
+	s.mu.RLock()
+	wfs := s.waitingFromSilence
+	s.mu.RUnlock()
+	if wfs {
 		t.Fatalf("waitingFromSilence should be cleared after D")
 	}
 }
@@ -227,6 +246,7 @@ func TestSilence_CloseStopsTimer(t *testing.T) {
 	s.meta.TaskState = proto.TaskStateRunning
 	s.altScreen = true
 	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	s.rescheduleSilenceTimerLocked()
 	s.mu.Unlock()
 	s.Close()
@@ -243,6 +263,7 @@ func TestSilence_RepeatSilenceIsMonotone(t *testing.T) {
 	s.meta.TaskState = proto.TaskStateRunning
 	s.altScreen = true
 	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	s.rescheduleSilenceTimerLocked()
 	s.mu.Unlock()
 	deadline := time.Now().Add(200 * time.Millisecond)
@@ -260,9 +281,10 @@ func TestSilence_RepeatSilenceIsMonotone(t *testing.T) {
 	if s.Info().TaskState != proto.TaskStateRunning {
 		t.Fatalf("expected restore to running; got %q", s.Info().TaskState)
 	}
-	// Re-prime silence: back-date LastOutputAt and let the timer fire again.
+	// Re-prime silence: back-date both timestamps and let the timer fire again.
 	s.mu.Lock()
 	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
 	s.rescheduleSilenceTimerLocked()
 	s.mu.Unlock()
 	deadline = time.Now().Add(200 * time.Millisecond)
@@ -272,6 +294,96 @@ func TestSilence_RepeatSilenceIsMonotone(t *testing.T) {
 	secondAtt := s.Info().AttentionAt
 	if secondAtt <= firstAtt {
 		t.Fatalf("second silence AttentionAt must be > first; %d vs %d", secondAtt, firstAtt)
+	}
+}
+
+func TestSilence_SubSecondThresholdActuallyFires(t *testing.T) {
+	// Force a 300ms threshold and verify the flip happens within ~700ms
+	// (would be ~1100ms with the old seconds-precision math).
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "300")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	// Pretend we just received output 1ms ago at monotonic resolution.
+	s.lastOutputMono = time.Now().Add(-1 * time.Millisecond)
+	s.meta.LastOutputAt = time.Now().Unix() // align unix-seconds source
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	// Wait < 1s; flip MUST have happened.
+	deadline := time.Now().Add(700 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		state := s.meta.TaskState
+		s.mu.RUnlock()
+		if state == proto.TaskStateWaitingInput {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("300ms threshold should fire within 700ms; state=%q after deadline", s.Info().TaskState)
+	}
+}
+
+func TestSilence_OSC133CClearsWaitingFromSilenceFlag(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	s.mu.RLock()
+	wfs := s.waitingFromSilence
+	s.mu.RUnlock()
+	if !wfs {
+		t.Fatalf("setup: expected waitingFromSilence == true")
+	}
+	// Now a new OSC C arrives (e.g. previous tool exited, shell starts new command).
+	s.updateTerminalState(osc("C;make"))
+	s.mu.RLock()
+	wfs = s.waitingFromSilence
+	s.mu.RUnlock()
+	if wfs {
+		t.Fatalf("OSC C must clear waitingFromSilence")
+	}
+}
+
+func TestSilence_UpdateMetaRescheduleAndClearFlag(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	// Drive into heuristic waiting_input.
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	s.mu.RLock()
+	wfs := s.waitingFromSilence
+	s.mu.RUnlock()
+	if !wfs {
+		t.Fatalf("setup: expected waitingFromSilence == true")
+	}
+	// External META pushes the session back to running (mirror scenario).
+	s.UpdateMeta(proto.MetaPayload{TaskState: proto.TaskStateRunning})
+	s.mu.RLock()
+	wfs = s.waitingFromSilence
+	s.mu.RUnlock()
+	if wfs {
+		t.Fatalf("UpdateMeta to running must clear waitingFromSilence")
 	}
 }
 

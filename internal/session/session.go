@@ -62,6 +62,13 @@ type Session struct {
 	silenceThresholdMS   int64
 	silenceDetectEnabled bool
 
+	// lastOutputMono is a monotonic wall-clock stamp of the last byte we
+	// processed in updateTerminalState. Used by the silence heuristic
+	// because LastOutputAt is unix-seconds, which silently rounds
+	// sub-second silenceThresholdMS values up to the next integer-second
+	// boundary.
+	lastOutputMono time.Time
+
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
 	// frames are forwarded to the PTY. Nil means no driver is currently
 	// assigned. driverClientID is the end-to-end client_id broadcast in META
@@ -217,6 +224,10 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	if mergeTaskMeta(&s.meta, m) {
 		changed = true
 	}
+	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
+		s.waitingFromSilence = false
+	}
+	s.rescheduleSilenceTimerLocked()
 	// Mirror sessions adopt the upstream's authoritative driver. Local
 	// sessions never take driver fields from a META (preserves commit #4:
 	// a cwd-only update must not clobber driver state).
@@ -283,6 +294,10 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	if mergeTaskInfo(&s.meta, info) {
 		changed = true
 	}
+	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
+		s.waitingFromSilence = false
+	}
+	s.rescheduleSilenceTimerLocked()
 	metaCopy := s.meta
 	driverID := s.driverClientID
 	driverName := s.driverClientName
@@ -619,6 +634,7 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		changed = true
 	}
 	s.meta.LastOutputAt = now.Unix()
+	s.lastOutputMono = now
 	if s.applyOSC133Locked(data, now) {
 		changed = true
 	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
@@ -667,6 +683,10 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			exitNil := (*int)(nil)
 			if s.meta.TaskState != proto.TaskStateRunning {
 				s.meta.TaskState = proto.TaskStateRunning
+				changed = true
+			}
+			if s.waitingFromSilence {
+				s.waitingFromSilence = false
 				changed = true
 			}
 			if s.meta.CurrentCommand != command {
@@ -744,7 +764,6 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
-				changed = true
 			}
 			if s.silenceTimer != nil {
 				s.silenceTimer.Stop()
@@ -897,8 +916,8 @@ func (s *Session) onSilenceFired() {
 		return
 	}
 	now := time.Now()
-	idleSec := now.Unix() - s.meta.LastOutputAt
-	if idleSec*1000 < s.silenceThresholdMS {
+	threshold := time.Duration(s.silenceThresholdMS) * time.Millisecond
+	if s.lastOutputMono.IsZero() || now.Sub(s.lastOutputMono) < threshold {
 		s.rescheduleSilenceTimerLocked()
 		s.mu.Unlock()
 		return

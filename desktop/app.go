@@ -486,6 +486,18 @@ func (a *App) SetTaskPreset(preset string) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetUserHomeDir returns the OS-reported user home directory, so the
+// frontend can collapse paths starting with HOME to "~" for display.
+// Returns empty string on failure (the frontend already treats empty
+// HOME as "don't substitute").
+func (a *App) GetUserHomeDir() string {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
 // GetTaskSidebarCollapsed returns whether the task sidebar panel is collapsed.
 func (a *App) GetTaskSidebarCollapsed() bool {
 	if a.cfgStore == nil {
@@ -501,6 +513,43 @@ func (a *App) SetTaskSidebarCollapsed(collapsed bool) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.TaskSidebarCollapsed = collapsed
+	return a.cfgStore.Set(cfg)
+}
+
+const (
+	minTaskSidebarWidth = 180
+	maxTaskSidebarWidth = 480
+)
+
+// GetTaskSidebarWidth returns the persisted task sidebar pixel width,
+// clamped to a sane range. Returns the default (240) when no value is
+// stored or when the stored value is out of range.
+func (a *App) GetTaskSidebarWidth() int {
+	if a.cfgStore == nil {
+		return defaultTaskSidebarWidth
+	}
+	w := a.cfgStore.Get().TaskSidebarWidthOrDefault()
+	if w < minTaskSidebarWidth || w > maxTaskSidebarWidth {
+		return defaultTaskSidebarWidth
+	}
+	return w
+}
+
+// SetTaskSidebarWidth clamps px to [minTaskSidebarWidth, maxTaskSidebarWidth]
+// and persists. Out-of-range values are silently corrected so a frontend
+// bug that emits 1500 still leaves the user in a usable state.
+func (a *App) SetTaskSidebarWidth(px int) error {
+	if a.cfgStore == nil {
+		return nil
+	}
+	if px < minTaskSidebarWidth {
+		px = minTaskSidebarWidth
+	}
+	if px > maxTaskSidebarWidth {
+		px = maxTaskSidebarWidth
+	}
+	cfg := a.cfgStore.Get()
+	cfg.TaskSidebarWidth = px
 	return a.cfgStore.Set(cfg)
 }
 

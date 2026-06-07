@@ -8,6 +8,7 @@ package session
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,27 @@ type Session struct {
 	termTail   []byte
 	osc133Buf  []byte
 	cmdStarted time.Time
+
+	// Silence-detection heuristic state. silenceTimer is armed by
+	// rescheduleSilenceTimerLocked whenever the session is in running + alt
+	// screen; on fire onSilenceFired re-checks guards and flips to
+	// waiting_input. waitingFromSilence remembers that the current
+	// waiting_input came from this heuristic (so output arriving while in
+	// waiting_input restores running only for us, never undoing a
+	// looksLikeWaitingInput match). silenceThresholdMS and silenceDetectEnabled
+	// are populated from env at New() and cached per session so tests can
+	// inject short thresholds via t.Setenv.
+	silenceTimer         *time.Timer
+	waitingFromSilence   bool
+	silenceThresholdMS   int64
+	silenceDetectEnabled bool
+
+	// lastOutputMono is a monotonic wall-clock stamp of the last byte we
+	// processed in updateTerminalState. Used by the silence heuristic
+	// because LastOutputAt is unix-seconds, which silently rounds
+	// sub-second silenceThresholdMS values up to the next integer-second
+	// boundary.
+	lastOutputMono time.Time
 
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
 	// frames are forwarded to the PTY. Nil means no driver is currently
@@ -94,6 +116,28 @@ func (s *Subscriber) close() {
 	s.once.Do(func() { close(s.closed) })
 }
 
+const defaultSilenceThresholdMS int64 = 5000
+
+func envSilenceDetectEnabled() bool {
+	v := os.Getenv("ATTERM_TASK_SILENCE_DETECT")
+	if v == "" {
+		return true
+	}
+	return v != "0" && !strings.EqualFold(v, "false")
+}
+
+func envSilenceThresholdMS() int64 {
+	v := os.Getenv("ATTERM_TASK_SILENCE_THRESHOLD_MS")
+	if v == "" {
+		return defaultSilenceThresholdMS
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return defaultSilenceThresholdMS
+	}
+	return n
+}
+
 // New creates a Session with the given id and initial OPEN metadata.
 func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 	if meta.TaskState == "" {
@@ -103,12 +147,14 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 		meta.Type = SessionTypeShell
 	}
 	return &Session{
-		ID:        id,
-		StartedAt: time.Now(),
-		meta:      meta,
-		subs:      make(map[*Subscriber]struct{}),
-		scroll:    ringbuf.New(scrollbackBytes),
-		inbound:   make(chan proto.Frame, inboundQueueDepth),
+		ID:                   id,
+		StartedAt:            time.Now(),
+		meta:                 meta,
+		subs:                 make(map[*Subscriber]struct{}),
+		scroll:               ringbuf.New(scrollbackBytes),
+		inbound:              make(chan proto.Frame, inboundQueueDepth),
+		silenceThresholdMS:   envSilenceThresholdMS(),
+		silenceDetectEnabled: envSilenceDetectEnabled(),
 	}
 }
 
@@ -178,6 +224,10 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	if mergeTaskMeta(&s.meta, m) {
 		changed = true
 	}
+	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
+		s.waitingFromSilence = false
+	}
+	s.rescheduleSilenceTimerLocked()
 	// Mirror sessions adopt the upstream's authoritative driver. Local
 	// sessions never take driver fields from a META (preserves commit #4:
 	// a cwd-only update must not clobber driver state).
@@ -244,6 +294,10 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	if mergeTaskInfo(&s.meta, info) {
 		changed = true
 	}
+	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
+		s.waitingFromSilence = false
+	}
+	s.rescheduleSilenceTimerLocked()
 	metaCopy := s.meta
 	driverID := s.driverClientID
 	driverName := s.driverClientName
@@ -580,6 +634,7 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		changed = true
 	}
 	s.meta.LastOutputAt = now.Unix()
+	s.lastOutputMono = now
 	if s.applyOSC133Locked(data, now) {
 		changed = true
 	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
@@ -599,6 +654,19 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	}
 	s.altScreen = scanAltScreenMode(s.altScreen, data)
 	s.termTail = appendTrailingBytes(s.termTail[:0], prevTail, data, tailLen)
+
+	// Silence heuristic: output arriving while we were heuristic-waiting
+	// restores running. AttentionAt is intentionally NOT rolled back
+	// (2026-06-07 spec §6). Existing keyword-based waiting_input is left
+	// alone because waitingFromSilence == false.
+	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
+		s.meta.TaskState = proto.TaskStateRunning
+		s.waitingFromSilence = false
+		changed = true
+	}
+	// Always reschedule at the tail. The helper itself decides whether to
+	// arm based on the post-update state + altScreen + detect-enabled flag.
+	s.rescheduleSilenceTimerLocked()
 	return changed
 }
 
@@ -615,6 +683,10 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			exitNil := (*int)(nil)
 			if s.meta.TaskState != proto.TaskStateRunning {
 				s.meta.TaskState = proto.TaskStateRunning
+				changed = true
+			}
+			if s.waitingFromSilence {
+				s.waitingFromSilence = false
 				changed = true
 			}
 			if s.meta.CurrentCommand != command {
@@ -689,6 +761,13 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			s.meta.Summary = computeSummary(s.scroll, now, exitCode != 0)
 			if isAttentionType(s.meta.Type) {
 				s.meta.AttentionAt = now.Unix()
+			}
+			if s.waitingFromSilence {
+				s.waitingFromSilence = false
+			}
+			if s.silenceTimer != nil {
+				s.silenceTimer.Stop()
+				s.silenceTimer = nil
 			}
 			changed = true
 		}
@@ -777,6 +856,77 @@ func looksLikeWaitingInput(data []byte) bool {
 		}
 	}
 	return false
+}
+
+// rescheduleSilenceTimerLocked arms (or re-arms) the per-session silence
+// timer. Caller must hold s.mu.Lock(). Stops any existing timer first; only
+// arms a new one when the session is currently running, in alt-screen, not
+// closed, and detection is enabled. Callers reach here after every output
+// chunk, after applyOSC133Locked, and from updateTerminalState's tail.
+func (s *Session) rescheduleSilenceTimerLocked() {
+	if s.silenceTimer != nil {
+		s.silenceTimer.Stop()
+		s.silenceTimer = nil
+	}
+	if !s.silenceDetectEnabled {
+		return
+	}
+	if s.closed {
+		return
+	}
+	if s.meta.TaskState != proto.TaskStateRunning {
+		return
+	}
+	if !s.altScreen {
+		return
+	}
+	d := time.Duration(s.silenceThresholdMS) * time.Millisecond
+	if d <= 0 {
+		return
+	}
+	s.silenceTimer = time.AfterFunc(d, s.onSilenceFired)
+}
+
+// onSilenceFired runs in the timer's own goroutine after the configured
+// silence threshold has elapsed since the last output. It takes the lock
+// and re-checks every guard — state, altScreen, closed, and the actual
+// silence duration — because anything could have changed between arming
+// and firing. If the session is still genuinely silent in an alt-screen
+// running task, flip to waiting_input, bump AttentionAt, mark the
+// transition as "from silence", and broadcast META. If it isn't silent
+// long enough yet (e.g. output arrived after the timer was scheduled but
+// before LastOutputAt updates raced), simply re-arm and let the next fire
+// settle it.
+func (s *Session) onSilenceFired() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	if !s.silenceDetectEnabled {
+		s.mu.Unlock()
+		return
+	}
+	if s.meta.TaskState != proto.TaskStateRunning {
+		s.mu.Unlock()
+		return
+	}
+	if !s.altScreen {
+		s.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	threshold := time.Duration(s.silenceThresholdMS) * time.Millisecond
+	if s.lastOutputMono.IsZero() || now.Sub(s.lastOutputMono) < threshold {
+		s.rescheduleSilenceTimerLocked()
+		s.mu.Unlock()
+		return
+	}
+	s.meta.TaskState = proto.TaskStateWaitingInput
+	s.meta.AttentionAt = now.Unix()
+	s.waitingFromSilence = true
+	s.mu.Unlock()
+	s.broadcastCurrentMeta()
 }
 
 func mergeTaskMeta(meta *proto.SessionInfo, m proto.MetaPayload) bool {
@@ -1047,6 +1197,10 @@ func (s *Session) Close() {
 		return
 	}
 	s.closed = true
+	if s.silenceTimer != nil {
+		s.silenceTimer.Stop()
+		s.silenceTimer = nil
+	}
 	subs := s.subs
 	s.subs = nil
 	close(s.inbound)

@@ -428,11 +428,11 @@ export const zhCN = {
     preset: {
       vivid: {
         name: "鲜明",
-        description: "色彩鲜明 + 动画 + 类型图标。一眼看到正在发生什么。",
+        description: "色彩鲜明 + 动画。一眼看到正在发生什么。",
       },
       quiet: {
         name: "柔和",
-        description: "柔和色调,仅运行中带动画,无类型图标。专注时使用。",
+        description: "柔和色调,仅运行中带动画。专注时使用。",
       },
     },
     markAllRead: "全部标已读",

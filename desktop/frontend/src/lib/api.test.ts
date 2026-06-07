@@ -5,6 +5,9 @@ import {
   getTaskSidebarCollapsed,
   setTaskSidebarCollapsed,
   markSessionsSeen,
+  getUserHomeDir,
+  getTaskSidebarWidth,
+  setTaskSidebarWidth,
   __setBindingsForTest,
 } from "./api";
 
@@ -47,5 +50,22 @@ describe("task display api wrappers", () => {
     __setBindingsForTest({ MarkSessionsSeen: fn } as any);
     await markSessionsSeen({ all: true });
     expect(fn).toHaveBeenCalledWith([], true);
+  });
+  test("getUserHomeDir delegates to bindings", async () => {
+    const fn = vi.fn().mockResolvedValue("/Users/attson");
+    __setBindingsForTest({ GetUserHomeDir: fn } as any);
+    await expect(getUserHomeDir()).resolves.toBe("/Users/attson");
+    expect(fn).toHaveBeenCalledOnce();
+  });
+  test("getTaskSidebarWidth delegates to bindings", async () => {
+    const fn = vi.fn().mockResolvedValue(300);
+    __setBindingsForTest({ GetTaskSidebarWidth: fn } as any);
+    await expect(getTaskSidebarWidth()).resolves.toBe(300);
+  });
+  test("setTaskSidebarWidth passes the px value", async () => {
+    const fn = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({ SetTaskSidebarWidth: fn } as any);
+    await setTaskSidebarWidth(280);
+    expect(fn).toHaveBeenCalledWith(280);
   });
 });

@@ -109,6 +109,10 @@ type appConfig struct {
 	// TaskSidebarCollapsed records whether the task sidebar panel is collapsed.
 	// Zero value (false) means expanded, which is the default.
 	TaskSidebarCollapsed bool `json:"task_sidebar_collapsed,omitempty"`
+	// TaskSidebarWidth is the persisted pixel width of the task sidebar
+	// (expanded mode). 0 means "use default 240"; valid range enforced
+	// on Set in app.go.
+	TaskSidebarWidth int `json:"task_sidebar_width,omitempty"`
 }
 
 // AutoCheckUpdatesOrDefault returns the user's preference, defaulting to
@@ -151,6 +155,15 @@ func (c appConfig) TaskPresetOrDefault() string {
 		return c.TaskPreset
 	}
 	return taskPresetDefault
+}
+
+const defaultTaskSidebarWidth = 240
+
+func (c appConfig) TaskSidebarWidthOrDefault() int {
+	if c.TaskSidebarWidth == 0 {
+		return defaultTaskSidebarWidth
+	}
+	return c.TaskSidebarWidth
 }
 
 func (c appConfig) LocalePreferenceOrDefault() string {

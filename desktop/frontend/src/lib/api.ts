@@ -169,6 +169,9 @@ interface AppBindings {
   SetTaskPreset(preset: PresetId): Promise<void>;
   GetTaskSidebarCollapsed(): Promise<boolean>;
   SetTaskSidebarCollapsed(collapsed: boolean): Promise<void>;
+  GetTaskSidebarWidth(): Promise<number>;
+  SetTaskSidebarWidth(px: number): Promise<void>;
+  GetUserHomeDir(): Promise<string>;
   MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
 }
 
@@ -415,6 +418,17 @@ export function getTaskSidebarCollapsed(): Promise<boolean> {
 
 export function setTaskSidebarCollapsed(collapsed: boolean): Promise<void> {
   return bindings().SetTaskSidebarCollapsed(collapsed);
+}
+
+export function getTaskSidebarWidth(): Promise<number> {
+  return bindings().GetTaskSidebarWidth();
+}
+export function setTaskSidebarWidth(px: number): Promise<void> {
+  return bindings().SetTaskSidebarWidth(px);
+}
+
+export function getUserHomeDir(): Promise<string> {
+  return bindings().GetUserHomeDir();
 }
 
 export type MarkSessionsSeenOpts = { ids: string[] } | { all: true };

@@ -98,6 +98,10 @@ export function GetTaskSidebarCollapsed() {
   return window['go']['main']['App']['GetTaskSidebarCollapsed']();
 }
 
+export function GetTaskSidebarWidth() {
+  return window['go']['main']['App']['GetTaskSidebarWidth']();
+}
+
 export function GetTerminalTheme() {
   return window['go']['main']['App']['GetTerminalTheme']();
 }
@@ -110,6 +114,10 @@ export function GetUpdateState() {
   return window['go']['main']['App']['GetUpdateState']();
 }
 
+export function GetUserHomeDir() {
+  return window['go']['main']['App']['GetUserHomeDir']();
+}
+
 export function GetWebglRendererEnabled() {
   return window['go']['main']['App']['GetWebglRendererEnabled']();
 }
@@ -120,6 +128,10 @@ export function InstallUpdate() {
 
 export function ListShells() {
   return window['go']['main']['App']['ListShells']();
+}
+
+export function MarkSessionsSeen(arg1, arg2) {
+  return window['go']['main']['App']['MarkSessionsSeen'](arg1, arg2);
 }
 
 export function NewSession(arg1) {
@@ -170,16 +182,16 @@ export function SetShellIntegrationEnabled(arg1) {
   return window['go']['main']['App']['SetShellIntegrationEnabled'](arg1);
 }
 
-export function MarkSessionsSeen(arg1, arg2) {
-  return window['go']['main']['App']['MarkSessionsSeen'](arg1, arg2);
-}
-
 export function SetTaskPreset(arg1) {
   return window['go']['main']['App']['SetTaskPreset'](arg1);
 }
 
 export function SetTaskSidebarCollapsed(arg1) {
   return window['go']['main']['App']['SetTaskSidebarCollapsed'](arg1);
+}
+
+export function SetTaskSidebarWidth(arg1) {
+  return window['go']['main']['App']['SetTaskSidebarWidth'](arg1);
 }
 
 export function SetTerminalTheme(arg1) {

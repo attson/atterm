@@ -40,14 +40,14 @@ describe("TaskStateIcon", () => {
     expect(v.classes()).toContain("pulse");
     expect(q.classes()).not.toContain("pulse");
   });
-  test("vivid renders type icon when type is provided; quiet does not", () => {
+  test("neither preset renders a type icon when type is provided", () => {
     const v = mount(TaskStateIcon, {
       props: { state: "running", type: "ai", preset: presets.vivid },
     });
     const q = mount(TaskStateIcon, {
       props: { state: "running", type: "ai", preset: presets.quiet },
     });
-    expect(v.find("svg.task-type").exists()).toBe(true);
+    expect(v.find("svg.task-type").exists()).toBe(false);
     expect(q.find("svg.task-type").exists()).toBe(false);
   });
 });

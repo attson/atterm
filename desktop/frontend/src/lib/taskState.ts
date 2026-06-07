@@ -26,7 +26,6 @@ export interface TaskStatePreset {
   glyphOf(state: TaskState): "spinner" | string;
   spinnerDurationMs(state: TaskState): number;
   animatePulse(state: TaskState): boolean;
-  showTypeIcon: boolean;
   textOpacity: number;
 }
 
@@ -65,7 +64,6 @@ function makePreset(
   colors: Record<TaskState, string>,
   spinDuration: number,
   pulseWaiting: boolean,
-  showTypeIcon: boolean,
   textOpacity: number,
 ): TaskStatePreset {
   return {
@@ -75,12 +73,11 @@ function makePreset(
     glyphOf: (s) => GLYPHS[s],
     spinnerDurationMs: (s) => (s === "running" ? spinDuration : 0),
     animatePulse: (s) => pulseWaiting && s === "waiting_input",
-    showTypeIcon,
     textOpacity,
   };
 }
 
 export const presets: Record<PresetId, TaskStatePreset> = {
-  vivid: makePreset("vivid", VIVID_COLORS, 1500, true, true, 1.0),
-  quiet: makePreset("quiet", QUIET_COLORS, 2500, false, false, 0.75),
+  vivid: makePreset("vivid", VIVID_COLORS, 1500, true, 1.0),
+  quiet: makePreset("quiet", QUIET_COLORS, 2500, false, 0.75),
 };

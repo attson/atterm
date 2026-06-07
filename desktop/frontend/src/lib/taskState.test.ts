@@ -73,10 +73,6 @@ describe("taskState presets", () => {
     expect(presets.vivid.animatePulse("waiting_input")).toBe(true);
     expect(presets.quiet.animatePulse("waiting_input")).toBe(false);
   });
-  test("only vivid shows type icon", () => {
-    expect(presets.vivid.showTypeIcon).toBe(true);
-    expect(presets.quiet.showTypeIcon).toBe(false);
-  });
   test("quiet text opacity is lower than vivid", () => {
     expect(presets.quiet.textOpacity).toBeLessThan(presets.vivid.textOpacity);
   });

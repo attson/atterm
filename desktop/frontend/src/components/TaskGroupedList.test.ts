@@ -1,7 +1,11 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import TaskGroupedList from "./TaskGroupedList.vue";
 import type { RemoteSession } from "../platform/types";
+
+vi.mock("../lib/api", () => ({
+  getUserHomeDir: vi.fn().mockResolvedValue("/Users/attson"),
+}));
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -92,5 +96,31 @@ describe("TaskGroupedList", () => {
     expect(w.find('[data-test="completed-fold-row"]').exists()).toBe(false);
     await w.find('[data-test="completed-fold-toggle"]').trigger("click");
     expect(w.find('[data-test="completed-fold-row"]').exists()).toBe(true);
+  });
+
+  test("row renders the session cwd alongside the command", () => {
+    const byHost = {
+      h: [
+        mk({
+          session_id: "s1",
+          host: "mac",
+          task_state: "running",
+          current_command: "claude",
+          cwd: "/Users/attson/code/atterm",
+        }),
+      ],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+      },
+    });
+    const row = w.find('[data-test="task-row"]');
+    const text = row.text();
+    expect(text).toContain("claude");
+    expect(text).toMatch(/atterm/); // last segment always present after shortenCwd
   });
 });

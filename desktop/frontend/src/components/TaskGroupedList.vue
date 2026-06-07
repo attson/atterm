@@ -79,7 +79,6 @@ function onMarkFold() {
       >
         <TaskStateIcon
           :state="(s.task_state as TaskState | undefined) ?? 'idle'"
-          :type="(s.type as any) ?? undefined"
         />
         <span class="cmd">
           {{ s.current_command || s.title || s.session_id.slice(0, 8) }}

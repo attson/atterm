@@ -2,7 +2,6 @@
 import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
-import { displayForType } from "../lib/sessionType";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import type { TaskState } from "../lib/taskState";
 
@@ -59,10 +58,6 @@ function layoutTitle(t: TabSummary): string {
   }
 }
 
-function typeForTab(t: TabSummary) {
-  return displayForType(t.activeSession?.type);
-}
-
 function onClose(e: MouseEvent, id: string) {
   e.stopPropagation();
   emit("close", id);
@@ -98,11 +93,6 @@ function onClose(e: MouseEvent, id: string) {
           :state="(t.activeSession?.task_state as TaskState | undefined) ?? 'idle'"
           :size="10"
         />
-        <span v-if="typeForTab(t)" class="type-icon" :title="typeForTab(t)!.key" :style="{ color: typeForTab(t)!.color }">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path :d="typeForTab(t)!.iconPath" />
-          </svg>
-        </span>
         <span class="title">{{ shortTitle(t.activeSession) }}</span>
         <span
           v-if="t.activeSession?.unread"
@@ -160,7 +150,6 @@ function onClose(e: MouseEvent, id: string) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: -1px;
 }
-.tab .type-icon { display: inline-flex; align-items: center; margin: 0 4px 0 2px; }
 .tab .title {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;

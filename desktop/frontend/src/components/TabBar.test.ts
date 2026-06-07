@@ -75,41 +75,16 @@ describe("TabBar", () => {
     expect(wrapper.get(".layout-icon").attributes("title")).not.toBe("vertical");
   });
 
-  it("renders a type icon for non-shell sessions and nothing for shell", async () => {
-    await initI18n({
-      loadPreference: async () => "en",
-      getLanguages: () => ["en"],
-      listenLanguageChange: () => () => undefined,
-    });
-
-    const wrapper = mount(TabBar, {
-      props: {
-        tabs: [
-          {
-            id: "tab-ai",
-            layout: "single" as const,
-            activeSession: { id: "s1", command: "claude", cwd: "/", title: "", cols: 80, rows: 24, started_at: 0, type: "ai" },
-            activeRemote: false,
-            paneCount: 1,
-          },
-          {
-            id: "tab-shell",
-            layout: "single" as const,
-            activeSession: { id: "s2", command: "bash", cwd: "/", title: "", cols: 80, rows: 24, started_at: 0, type: "shell" },
-            activeRemote: false,
-            paneCount: 1,
-          },
-        ],
-        currentId: "tab-ai",
-        starting: false,
+  test("type icon is no longer rendered for any session type", () => {
+    const aiTab = {
+      ...baseTab,
+      activeSession: {
+        session_id: "s1", host_id: "h", host: "mac", user: "u", title: "claude",
+        cols: 80, rows: 24, task_state: "running", type: "ai",
       },
-    });
-
-    const aiTab = wrapper.get('[data-tab-id="tab-ai"]');
-    expect(aiTab.find('.type-icon').exists()).toBe(true);
-
-    const shellTab = wrapper.get('[data-tab-id="tab-shell"]');
-    expect(shellTab.find('.type-icon').exists()).toBe(false);
+    };
+    const w = mount(TabBar, { props: { tabs: [aiTab], currentId: "t1" } });
+    expect(w.find(".type-icon").exists()).toBe(false);
   });
 });
 

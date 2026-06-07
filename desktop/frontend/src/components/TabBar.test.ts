@@ -89,7 +89,7 @@ describe("TabBar", () => {
         host_id: "h",
         host: "mac",
         user: "u",
-        task_state: "running",
+        task_state: "running" as const,
         type: "ai",
       },
     };

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskGroupedList from "./TaskGroupedList.vue";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import { useI18n } from "../i18n/useI18n";
+import { getTaskSidebarWidth, setTaskSidebarWidth } from "../lib/api";
 
 const { t } = useI18n();
 
@@ -22,6 +23,58 @@ const emit = defineEmits<{
   (e: "open", session: RemoteSession): void;
   (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
 }>();
+
+const widthPx = ref(240);
+const minWidth = 180;
+const maxWidth = 480;
+let dragOriginX = 0;
+let dragOriginWidth = 0;
+let dragging = false;
+
+onMounted(async () => {
+  try {
+    const stored = await getTaskSidebarWidth();
+    if (stored > 0) widthPx.value = clampWidth(stored);
+  } catch {
+    /* default 240 */
+  }
+});
+
+function clampWidth(px: number): number {
+  return Math.max(minWidth, Math.min(maxWidth, px));
+}
+
+function onDragStart(e: PointerEvent) {
+  if (props.collapsed) return;
+  dragging = true;
+  dragOriginX = e.clientX;
+  dragOriginWidth = widthPx.value;
+  try {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    /* JSDOM may not implement pointer capture */
+  }
+}
+
+function onDragMove(e: PointerEvent) {
+  if (!dragging) return;
+  widthPx.value = clampWidth(dragOriginWidth + (e.clientX - dragOriginX));
+}
+
+async function onDragEnd(e: PointerEvent) {
+  if (!dragging) return;
+  dragging = false;
+  try {
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  } catch {
+    /* element may have been re-rendered or capture unsupported */
+  }
+  try {
+    await setTaskSidebarWidth(widthPx.value);
+  } catch {
+    /* persistence is best-effort */
+  }
+}
 
 const URGENCY: TaskState[] = [
   "waiting_input",
@@ -47,7 +100,20 @@ const railIcons = computed(() => {
 </script>
 
 <template>
-  <aside class="task-sidebar" :class="{ collapsed }">
+  <aside
+    class="task-sidebar"
+    :class="{ collapsed }"
+    :style="!collapsed ? { width: widthPx + 'px' } : undefined"
+  >
+    <div
+      v-if="!collapsed"
+      class="resize-handle"
+      data-test="sidebar-resize-handle"
+      @pointerdown="onDragStart"
+      @pointermove="onDragMove"
+      @pointerup="onDragEnd"
+      @pointercancel="onDragEnd"
+    />
     <div v-if="collapsed" class="rail" data-test="sidebar-rail">
       <button
         class="expand-button"
@@ -114,6 +180,7 @@ const railIcons = computed(() => {
 
 <style scoped>
 .task-sidebar {
+  position: relative;
   background: var(--bg-elev, #0e1116);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   display: flex;
@@ -122,6 +189,17 @@ const railIcons = computed(() => {
 }
 .task-sidebar.collapsed { width: 32px; }
 .task-sidebar:not(.collapsed) { width: 240px; }
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  user-select: none;
+  z-index: 1;
+}
+.resize-handle:hover { background: rgba(255, 255, 255, 0.06); }
 .sidebar-header {
   display: flex;
   align-items: center;

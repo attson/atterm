@@ -1,7 +1,8 @@
-import { describe, expect, test } from "vitest";
-import { mount } from "@vue/test-utils";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { mount, flushPromises } from "@vue/test-utils";
 import TaskSidebar from "./TaskSidebar.vue";
 import type { RemoteSession } from "../platform/types";
+import * as api from "../lib/api";
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -17,6 +18,10 @@ function mk(over: Partial<RemoteSession>): RemoteSession {
 }
 
 describe("TaskSidebar", () => {
+  beforeEach(() => {
+    vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+  });
+
   test("expanded shows TaskGroupedList and Mark-all-read button when unread > 0", () => {
     const w = mount(TaskSidebar, {
       props: {
@@ -107,4 +112,75 @@ describe("TaskSidebar", () => {
     await w.find('[data-test="sidebar-mark-all"]').trigger("click");
     expect(w.emitted("markSeen")?.[0]?.[0]).toEqual({ all: true });
   });
+});
+
+test("drag handle emits pointerdown→move→up and persists width", async () => {
+  const setSpy = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+  vi.spyOn(api, "setTaskSidebarWidth").mockImplementation(setSpy);
+
+  const w = mount(TaskSidebar, {
+    props: {
+      collapsed: false,
+      byHost: {},
+      unreadByHost: {},
+      primaryStateForHost: () => "idle",
+      completedSeen: [],
+      totalUnread: 0,
+    },
+  });
+  await flushPromises();
+
+  const handle = w.find('[data-test="sidebar-resize-handle"]');
+  expect(handle.exists()).toBe(true);
+
+  // pointerdown at x=240, move to x=340, pointerup at x=340 → width=340.
+  await handle.trigger("pointerdown", { clientX: 240, pointerId: 1 });
+  await handle.trigger("pointermove", { clientX: 340, pointerId: 1 });
+  await handle.trigger("pointerup", { clientX: 340, pointerId: 1 });
+  await flushPromises();
+
+  expect(setSpy).toHaveBeenCalledTimes(1);
+  expect(setSpy).toHaveBeenCalledWith(340);
+});
+
+test("drag handle clamps to bounds [180, 480]", async () => {
+  const setSpy = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+  vi.spyOn(api, "setTaskSidebarWidth").mockImplementation(setSpy);
+
+  const w = mount(TaskSidebar, {
+    props: {
+      collapsed: false,
+      byHost: {},
+      unreadByHost: {},
+      primaryStateForHost: () => "idle",
+      completedSeen: [],
+      totalUnread: 0,
+    },
+  });
+  await flushPromises();
+
+  const handle = w.find('[data-test="sidebar-resize-handle"]');
+  await handle.trigger("pointerdown", { clientX: 240, pointerId: 1 });
+  await handle.trigger("pointermove", { clientX: 1000, pointerId: 1 });
+  await handle.trigger("pointerup", { clientX: 1000, pointerId: 1 });
+  await flushPromises();
+
+  expect(setSpy).toHaveBeenCalledWith(480);
+});
+
+test("collapsed sidebar does not render drag handle", () => {
+  vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+  const w = mount(TaskSidebar, {
+    props: {
+      collapsed: true,
+      byHost: {},
+      unreadByHost: {},
+      primaryStateForHost: () => "idle",
+      completedSeen: [],
+      totalUnread: 0,
+    },
+  });
+  expect(w.find('[data-test="sidebar-resize-handle"]').exists()).toBe(false);
 });

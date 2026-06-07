@@ -2,32 +2,16 @@ package main
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestDarwinNotifySpecBuildsOsascriptCommand(t *testing.T) {
-	spec := darwinNotifySpec(`AT Term`, `Bell in atterm`)
+func TestNativeNotifySpecSkipsDarwinShellFallback(t *testing.T) {
+	spec, ok := nativeNotifySpecForGOOS("darwin", "AT Term", "Bell in atterm")
 
-	if spec.name != "osascript" {
-		t.Fatalf("name = %q; want osascript", spec.name)
-	}
-	if len(spec.args) != 2 || spec.args[0] != "-e" {
-		t.Fatalf("args = %#v; want [-e <script>]", spec.args)
-	}
-	if !strings.Contains(spec.args[1], `display notification "Bell in atterm" with title "AT Term"`) {
-		t.Fatalf("script = %q; want display notification clause", spec.args[1])
-	}
-}
-
-func TestDarwinNotifySpecEscapesQuotes(t *testing.T) {
-	spec := darwinNotifySpec(`title "with quote"`, `body \with backslash`)
-
-	if !strings.Contains(spec.args[1], `title \"with quote\"`) {
-		t.Fatalf("script = %q; want escaped quotes in title", spec.args[1])
-	}
-	if !strings.Contains(spec.args[1], `body \\with backslash`) {
-		t.Fatalf("script = %q; want escaped backslash in body", spec.args[1])
+	if ok {
+		t.Fatalf("ok = true with spec %#v; want false so macOS notifications stay attributed to AT Term", spec)
 	}
 }
 
@@ -91,6 +75,12 @@ func TestShowNotificationCallsRunnerWhenEnabled(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("err = %v; want nil", err)
+	}
+	if runtime.GOOS == "darwin" {
+		if got.name != "" {
+			t.Fatalf("runner was invoked on darwin with %#v; want native Wails notifications only", got)
+		}
+		return
 	}
 	if got.name == "" {
 		t.Fatal("runner was not invoked")

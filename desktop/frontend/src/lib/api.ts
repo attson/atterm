@@ -4,6 +4,13 @@
 
 import { t } from "../i18n";
 import type { PresetId } from "./taskState";
+import {
+  InitializeNotifications,
+  IsNotificationAvailable,
+  CheckNotificationAuthorization,
+  RequestNotificationAuthorization,
+  SendNotification,
+} from "../../wailsjs/runtime/runtime";
 
 export type TaskGroupBy = "host" | "state";
 
@@ -190,9 +197,20 @@ declare global {
 }
 
 let _bindingsOverride: AppBindings | undefined;
+let notificationRuntimeReady: Promise<boolean> | undefined;
+let notificationID = 0;
 
 export function __setBindingsForTest(b: AppBindings | undefined): void {
   _bindingsOverride = b;
+}
+
+function resetNotificationRuntime(): void {
+  notificationRuntimeReady = undefined;
+  notificationID = 0;
+}
+
+export function __resetNotificationRuntimeForTest(): void {
+  resetNotificationRuntime();
 }
 
 function bindings(): AppBindings {
@@ -200,6 +218,22 @@ function bindings(): AppBindings {
   const b = window.go?.main?.App;
   if (!b) throw new Error(t("app.wailsBindingsNotReady"));
   return b;
+}
+
+async function ensureNotificationRuntimeReady(): Promise<boolean> {
+  if (!notificationRuntimeReady) {
+    notificationRuntimeReady = (async () => {
+      try {
+        if (!(await IsNotificationAvailable())) return false;
+        await InitializeNotifications();
+        if (await CheckNotificationAuthorization()) return true;
+        return await RequestNotificationAuthorization();
+      } catch {
+        return false;
+      }
+    })();
+  }
+  return notificationRuntimeReady;
 }
 
 export function getClipboardPastePayload(): Promise<ClipboardPastePayload> {
@@ -341,7 +375,20 @@ export function setNotificationsEnabled(enabled: boolean): Promise<void> {
   return bindings().SetNotificationsEnabled(enabled);
 }
 
-export function showNotification(title: string, body: string): Promise<void> {
+export async function showNotification(title: string, body: string): Promise<void> {
+  if (await ensureNotificationRuntimeReady()) {
+    try {
+      notificationID += 1;
+      await SendNotification({
+        id: `atterm-${Date.now()}-${notificationID}`,
+        title,
+        body,
+      });
+      return;
+    } catch {
+      resetNotificationRuntime();
+    }
+  }
   return bindings().ShowNotification(title, body);
 }
 

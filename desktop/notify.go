@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os/exec"
 	"runtime"
@@ -37,9 +36,15 @@ func showNotification(
 }
 
 func nativeNotifySpec(title, body string) (commandSpec, bool) {
-	switch runtime.GOOS {
+	return nativeNotifySpecForGOOS(runtime.GOOS, title, body)
+}
+
+func nativeNotifySpecForGOOS(goos, title, body string) (commandSpec, bool) {
+	switch goos {
 	case "darwin":
-		return darwinNotifySpec(title, body), true
+		// AppleScript notifications are attributed to the script runner, so
+		// clicking them can activate Script Editor instead of AT Term.
+		return commandSpec{}, false
 	case "linux":
 		return linuxNotifySpec(title, body), true
 	case "windows":
@@ -47,15 +52,6 @@ func nativeNotifySpec(title, body string) (commandSpec, bool) {
 	default:
 		return commandSpec{}, false
 	}
-}
-
-func darwinNotifySpec(title, body string) commandSpec {
-	script := fmt.Sprintf(
-		`display notification "%s" with title "%s"`,
-		appleScriptString(body),
-		appleScriptString(title),
-	)
-	return commandSpec{name: "osascript", args: []string{"-e", script}}
 }
 
 func linuxNotifySpec(title, body string) commandSpec {

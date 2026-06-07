@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  InitializeNotifications,
+  IsNotificationAvailable,
+  CheckNotificationAuthorization,
+  RequestNotificationAuthorization,
+  SendNotification,
+} from "../../wailsjs/runtime/runtime";
+import {
   getTaskPreset,
   setTaskPreset,
   getTaskSidebarCollapsed,
@@ -8,11 +15,23 @@ import {
   getUserHomeDir,
   getTaskSidebarWidth,
   setTaskSidebarWidth,
+  showNotification,
   __setBindingsForTest,
+  __resetNotificationRuntimeForTest,
 } from "./api";
+
+vi.mock("../../wailsjs/runtime/runtime", () => ({
+  InitializeNotifications: vi.fn().mockResolvedValue(undefined),
+  IsNotificationAvailable: vi.fn().mockResolvedValue(true),
+  CheckNotificationAuthorization: vi.fn().mockResolvedValue(true),
+  RequestNotificationAuthorization: vi.fn().mockResolvedValue(true),
+  SendNotification: vi.fn().mockResolvedValue(undefined),
+}));
 
 afterEach(() => {
   __setBindingsForTest(undefined);
+  __resetNotificationRuntimeForTest();
+  vi.clearAllMocks();
 });
 
 describe("task display api wrappers", () => {
@@ -67,5 +86,38 @@ describe("task display api wrappers", () => {
     __setBindingsForTest({ SetTaskSidebarWidth: fn } as any);
     await setTaskSidebarWidth(280);
     expect(fn).toHaveBeenCalledWith(280);
+  });
+});
+
+describe("notification api wrapper", () => {
+  test("prefers Wails native notifications over the Go shell fallback", async () => {
+    const fallback = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({ ShowNotification: fallback } as any);
+
+    await showNotification("AT Term", "Bell in caiji2");
+
+    expect(IsNotificationAvailable).toHaveBeenCalledOnce();
+    expect(InitializeNotifications).toHaveBeenCalledOnce();
+    expect(CheckNotificationAuthorization).toHaveBeenCalledOnce();
+    expect(RequestNotificationAuthorization).not.toHaveBeenCalled();
+    expect(SendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.stringMatching(/^atterm-/),
+        title: "AT Term",
+        body: "Bell in caiji2",
+      }),
+    );
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  test("falls back to the Go binding when Wails native notifications are unavailable", async () => {
+    const fallback = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({ ShowNotification: fallback } as any);
+    vi.mocked(IsNotificationAvailable).mockResolvedValueOnce(false);
+
+    await showNotification("AT Term", "Bell in caiji2");
+
+    expect(SendNotification).not.toHaveBeenCalled();
+    expect(fallback).toHaveBeenCalledWith("AT Term", "Bell in caiji2");
   });
 });

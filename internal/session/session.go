@@ -8,6 +8,8 @@ package session
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -881,21 +883,26 @@ func (s *Session) rescheduleSilenceTimerLocked() {
 		s.silenceTimer = nil
 	}
 	if !s.silenceDetectEnabled {
+		silenceDebugLocked(s, "arm-skip: detect-disabled")
 		return
 	}
 	if s.closed {
 		return
 	}
 	if s.meta.TaskState != proto.TaskStateRunning {
+		silenceDebugLocked(s, fmt.Sprintf("arm-skip: state=%q (not running)", s.meta.TaskState))
 		return
 	}
 	if !s.silenceAppliesToLocked() {
+		silenceDebugLocked(s, fmt.Sprintf("arm-skip: not applicable (alt=%v type=%q)",
+			s.altScreen, s.meta.Type))
 		return
 	}
 	d := time.Duration(s.silenceThresholdMS) * time.Millisecond
 	if d <= 0 {
 		return
 	}
+	silenceDebugLocked(s, fmt.Sprintf("arm: in %v (type=%q alt=%v)", d, s.meta.Type, s.altScreen))
 	s.silenceTimer = time.AfterFunc(d, s.onSilenceFired)
 }
 
@@ -912,33 +919,54 @@ func (s *Session) rescheduleSilenceTimerLocked() {
 func (s *Session) onSilenceFired() {
 	s.mu.Lock()
 	if s.closed {
+		silenceDebugLocked(s, "fire-skip: closed")
 		s.mu.Unlock()
 		return
 	}
 	if !s.silenceDetectEnabled {
+		silenceDebugLocked(s, "fire-skip: detect-disabled")
 		s.mu.Unlock()
 		return
 	}
 	if s.meta.TaskState != proto.TaskStateRunning {
+		silenceDebugLocked(s, fmt.Sprintf("fire-skip: state=%q (not running)", s.meta.TaskState))
 		s.mu.Unlock()
 		return
 	}
 	if !s.silenceAppliesToLocked() {
+		silenceDebugLocked(s, fmt.Sprintf("fire-skip: not applicable (alt=%v type=%q)",
+			s.altScreen, s.meta.Type))
 		s.mu.Unlock()
 		return
 	}
 	now := time.Now()
 	threshold := time.Duration(s.silenceThresholdMS) * time.Millisecond
 	if s.lastOutputMono.IsZero() || now.Sub(s.lastOutputMono) < threshold {
+		silenceDebugLocked(s, fmt.Sprintf("fire-rearm: idle=%v < threshold=%v (mono-zero=%v)",
+			now.Sub(s.lastOutputMono), threshold, s.lastOutputMono.IsZero()))
 		s.rescheduleSilenceTimerLocked()
 		s.mu.Unlock()
 		return
 	}
+	silenceDebugLocked(s, fmt.Sprintf("fire-flip: state running -> waiting_input (idle=%v, type=%q, alt=%v)",
+		now.Sub(s.lastOutputMono), s.meta.Type, s.altScreen))
 	s.meta.TaskState = proto.TaskStateWaitingInput
 	s.meta.AttentionAt = now.Unix()
 	s.waitingFromSilence = true
 	s.mu.Unlock()
 	s.broadcastCurrentMeta()
+}
+
+var silenceDebugEnabled = os.Getenv("ATTERM_DEBUG_SILENCE") == "1"
+
+// silenceDebugLocked emits a one-line trace when ATTERM_DEBUG_SILENCE=1
+// is set in the environment. Cheap (literally one bool check) when off.
+// Caller must hold s.mu so it can safely read meta fields.
+func silenceDebugLocked(s *Session, msg string) {
+	if !silenceDebugEnabled {
+		return
+	}
+	log.Printf("[silence] sid=%s cmd=%q %s", s.ID.String()[:8], s.meta.CurrentCommand, msg)
 }
 
 func mergeTaskMeta(meta *proto.SessionInfo, m proto.MetaPayload) bool {

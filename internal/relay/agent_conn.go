@@ -53,6 +53,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 	}
 	sess := session.New(openFrame.SessionID, info)
 	sess.OwnerUserID = ownerUserID
+	sess.SetMetaChangedHook(s.registry.NotifyChange)
 	if _, err := s.registry.Add(sess); err != nil {
 		// Owner mismatch: another user already holds this session ID.
 		s.debugf("agent session_add_rejected session=%s reason=owner_mismatch", openFrame.SessionID)

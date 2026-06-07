@@ -97,6 +97,13 @@ type Session struct {
 	// remote viewer count downstream. Fired synchronously after the lock is
 	// released (to preserve count ordering); the hook must not block.
 	onSubscriberCount func(int)
+
+	// onMetaChanged, if set, fires after any spontaneous state change that
+	// originates inside Session (not in response to an inbound frame the
+	// caller already follows up with NotifyChange). The silence heuristic
+	// uses this so its async timer-driven waiting_input transitions reach
+	// the session-list subscribers. The hook runs OUTSIDE the lock.
+	onMetaChanged func()
 }
 
 // Subscriber is a client connection's outbox.
@@ -195,6 +202,16 @@ func (s *Session) SetSubscriberLifecycle(first, last func()) {
 func (s *Session) SetSubscriberCountHook(fn func(int)) {
 	s.mu.Lock()
 	s.onSubscriberCount = fn
+	s.mu.Unlock()
+}
+
+// SetMetaChangedHook registers a callback fired after Session-driven async
+// state transitions (currently: silence-heuristic flips). The hook runs
+// outside the lock. Typical use: have the registry owner pass
+// `registry.NotifyChange` so the session list view picks up the new state.
+func (s *Session) SetMetaChangedHook(fn func()) {
+	s.mu.Lock()
+	s.onMetaChanged = fn
 	s.mu.Unlock()
 }
 
@@ -628,7 +645,6 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		return false
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	changed := false
 	now := time.Now()
 	if s.meta.TaskState == "" {
@@ -661,14 +677,28 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	// restores running. AttentionAt is intentionally NOT rolled back
 	// (2026-06-07 spec §6). Existing keyword-based waiting_input is left
 	// alone because waitingFromSilence == false.
+	restoredFromSilence := false
 	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
 		s.meta.TaskState = proto.TaskStateRunning
 		s.waitingFromSilence = false
 		changed = true
+		restoredFromSilence = true
 	}
 	// Always reschedule at the tail. The helper itself decides whether to
 	// arm based on the post-update state + altScreen + detect-enabled flag.
 	s.rescheduleSilenceTimerLocked()
+	var metaHook func()
+	if restoredFromSilence {
+		metaHook = s.onMetaChanged
+	}
+	s.mu.Unlock()
+	if metaHook != nil {
+		// Fire OUT-OF-BAND so the session list view picks up running again
+		// after silence restored. The caller (PushOut) will also broadcast
+		// the OUT bytes, but the registry NotifyChange path is what kicks
+		// list-only subscribers (e.g. the desktop sidebar).
+		metaHook()
+	}
 	return changed
 }
 
@@ -953,8 +983,12 @@ func (s *Session) onSilenceFired() {
 	s.meta.TaskState = proto.TaskStateWaitingInput
 	s.meta.AttentionAt = now.Unix()
 	s.waitingFromSilence = true
+	metaHook := s.onMetaChanged
 	s.mu.Unlock()
 	s.broadcastCurrentMeta()
+	if metaHook != nil {
+		metaHook()
+	}
 }
 
 var silenceDebugEnabled = os.Getenv("ATTERM_DEBUG_SILENCE") == "1"

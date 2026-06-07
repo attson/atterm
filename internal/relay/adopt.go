@@ -42,6 +42,7 @@ type ImagePasteHost interface {
 func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.SessionInfo, host PtyHost) func() {
 	info.ID = id.String()
 	sess := session.New(id, info)
+	sess.SetMetaChangedHook(s.registry.NotifyChange)
 	s.registry.Add(sess)
 	s.debugf("adopt open session=%s command=%q cwd=%q title=%q host_id=%q host=%q user=%q cols=%d rows=%d",
 		id, info.Command, info.Cwd, info.Title, info.HostID, info.Host, info.User, info.Cols, info.Rows)

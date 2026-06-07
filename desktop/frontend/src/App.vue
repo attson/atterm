@@ -680,6 +680,18 @@ function onSwitchTab(delta: number) {
 }
 
 function openRemoteAsTab(sessionId: string) {
+  // If any tab already holds a pane for this session, just switch to it.
+  // Both the Remote Sessions dialog and the Task sidebar funnel through
+  // here; a second copy of the same session is confusing (especially via
+  // the sidebar, where the clicked row matches a single open tab 1:1).
+  const existing = tabs.value.find((t) =>
+    t.panes.some((p) => p.sessionId === sessionId),
+  );
+  if (existing) {
+    showRemote.value = false;
+    gotoTab(existing.id);
+    return;
+  }
   const id = newId();
   tabs.value.push({
     id,

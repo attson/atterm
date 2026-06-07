@@ -419,7 +419,7 @@ export const en = {
   },
   tasks: {
     sidebar: {
-      title: "Tasks",
+      title: "Sessions",
       collapse: "Collapse sidebar (Cmd/Ctrl+B)",
       expand: "Expand sidebar (Cmd/Ctrl+B)",
     },
@@ -438,9 +438,9 @@ export const en = {
     completedFold: "Completed",
     unreadBadge: "{count} unread",
     settings: {
-      section: "Task display",
+      section: "Session display",
       preset: "Visual preset",
-      expandByDefault: "Expand task sidebar by default",
+      expandByDefault: "Expand session sidebar by default",
     },
     unavailableToast: "Mark-read unavailable — please update the relay.",
   },

@@ -268,6 +268,85 @@ func TestSilence_TinyOutputDoesNotRestoreFromSilence(t *testing.T) {
 	}
 }
 
+// SIGWINCH-driven repaint after a PTY resize must NOT restore running
+// even though the repaint chunk can easily exceed the byte threshold.
+// Regression: collapsing the desktop task sidebar (which RESIZEs the
+// terminal) used to knock idle claude sessions back to running because
+// the alt-screen repaint blew past the accumulator.
+func TestSilence_ResizeRepaintDoesNotRestoreFromSilence(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	// Small byte threshold so a single chunk would otherwise restore.
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "32")
+	// Default grace window (1500ms) is plenty for this test.
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup: expected silence flip; got %q", s.Info().TaskState)
+	}
+	// User collapses the sidebar → frontend RESIZE → SIGWINCH → claude
+	// repaints the whole alt-screen as one large chunk.
+	s.UpdateSize(120, 30)
+	repaint := make([]byte, 4096)
+	for i := range repaint {
+		repaint[i] = 'A'
+	}
+	s.updateTerminalState(repaint)
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("resize repaint must NOT restore running; got %q", s.Info().TaskState)
+	}
+	s.mu.RLock()
+	bytes := s.silenceRestoreBytes
+	s.mu.RUnlock()
+	if bytes != 0 {
+		t.Fatalf("resize grace should keep accumulator at 0; got %d", bytes)
+	}
+}
+
+// After the resize grace window closes, accumulator behavior returns to
+// normal — sustained output then restores running as usual.
+func TestSilence_RestoreResumesAfterResizeGraceCloses(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "16")
+	t.Setenv("ATTERM_TASK_SILENCE_RESIZE_GRACE_MS", "30") // short, for the test
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.altScreen = true
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup: expected silence flip; got %q", s.Info().TaskState)
+	}
+	// Resize fires; repaint within the grace window is ignored.
+	s.UpdateSize(120, 30)
+	s.updateTerminalState([]byte("\x1b[2J\x1b[H")) // small repaint chunk
+	// Wait past the grace window.
+	time.Sleep(80 * time.Millisecond)
+	// Now sustained "real" output past the byte threshold.
+	for i := 0; i < 4; i++ {
+		s.updateTerminalState([]byte("0123456789"))
+	}
+	if s.Info().TaskState != proto.TaskStateRunning {
+		t.Fatalf("output past resize-grace should restore running; got %q", s.Info().TaskState)
+	}
+}
+
 // Larger sustained output — once the accumulator passes the threshold —
 // DOES restore to running. Sanity check that the gate isn't permanent.
 func TestSilence_LargeOutputRestoresFromSilence(t *testing.T) {

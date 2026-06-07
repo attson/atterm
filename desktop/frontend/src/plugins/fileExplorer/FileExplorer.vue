@@ -7,7 +7,7 @@ import { isLightTerminalTheme } from "../../lib/terminalThemes";
 import FileTree from "./FileTree.vue";
 import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
-import { openPath, closeTab, type TabsState } from "./tabsModel";
+import { openPath, closeTab, setViewMode, type TabsState } from "./tabsModel";
 import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 // theme.css is loaded once from App.vue so its --ed-* vars are available
@@ -89,6 +89,14 @@ function togglePin() {
   pinned.value = pinned.value === null ? props.context.activeCwd.value : null;
 }
 
+const activeViewMode = computed<"code" | "render">(() => {
+  const i = tabsState.value.activeIdx;
+  return i >= 0 ? tabsState.value.tabs[i].viewMode : "code";
+});
+function onToggleViewMode() {
+  tabsState.value = setViewMode(tabsState.value, activeViewMode.value === "code" ? "render" : "code");
+}
+
 const activePath = computed(() =>
   tabsState.value.activeIdx >= 0 ? tabsState.value.tabs[tabsState.value.activeIdx].path : null,
 );
@@ -134,8 +142,10 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         <FileTabs
           :tabs="tabsState.tabs"
           :active-idx="tabsState.activeIdx"
+          :view-mode="activeViewMode"
           @select="selectTab"
           @close="closeTabAt"
+          @toggle-view-mode="onToggleViewMode"
         />
         <div class="editor-area">
           <FileEditor
@@ -143,6 +153,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :path="activePath"
             :show-line-numbers="showLineNumbers"
             :theme="explorerTheme"
+            :view-mode="activeViewMode"
           />
           <div v-else class="placeholder">{{ t("plugins.fileExplorer.selectFile") }}</div>
         </div>

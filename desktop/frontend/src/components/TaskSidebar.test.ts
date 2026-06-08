@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import TaskSidebar from "./TaskSidebar.vue";
@@ -183,4 +185,10 @@ test("collapsed sidebar does not render drag handle", () => {
     },
   });
   expect(w.find('[data-test="sidebar-resize-handle"]').exists()).toBe(false);
+});
+
+test("list viewport keeps vertical scrolling without horizontal scrollbar overlap", () => {
+  const source = readFileSync(resolve(process.cwd(), "src/components/TaskSidebar.vue"), "utf8");
+
+  expect(source).toMatch(/\.list-wrap\s*\{[^}]*overflow-y:\s*auto;[^}]*overflow-x:\s*hidden;/s);
 });

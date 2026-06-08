@@ -252,7 +252,12 @@ const railIcons = computed(() => {
   opacity: 0.8;
 }
 .group-toggle:hover { opacity: 1; background: rgba(255, 255, 255, 0.05); }
-.list-wrap { flex: 1 1 auto; overflow: auto; padding: 4px; }
+.list-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px;
+}
 footer { padding: 8px; border-top: 1px solid rgba(255, 255, 255, 0.05); }
 .mark-all {
   background: none;

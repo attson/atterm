@@ -13,8 +13,11 @@ match the desktop task sidebar (`TaskSidebar.vue` + `TaskGroupedList.vue`):
   preview, and the long meta string.
 - Group-level ✓ and a footer "Mark all read" matching the desktop sidebar.
 
-To keep desktop and mobile from drifting, the grouping logic is extracted into
-a shared composable (`useSessionGroups`) consumed by both surfaces.
+To keep desktop and mobile from drifting, the grouping logic stays in the
+existing `composables/useSessions.ts` (which already exposes `byHost`,
+`byState`, `unreadByHost`, `unreadByState`, `completedSeen`, `totalUnread`,
+`primaryStateForHost`). The mobile list calls `useSessions(ref([]), remote)`
+and consumes the same outputs the desktop sidebar does.
 
 To make "Mark all read" actually work from the iOS app, the relay's CSRF
 middleware is updated to let `Authorization: Bearer …` requests through (the
@@ -36,67 +39,49 @@ attached by browsers).
 
 ```
 desktop/frontend/src/
-├── composables/
-│   └── useSessionGroups.ts            ← new; pure-computed grouping
 ├── lib/
-│   └── sessionLabel.ts                ← new; exported commandLabel / fullCommand / rowTitle
+│   └── sessionLabel.ts                ← new; exported commandLabel / fullCommand / rowTitle / hostName
 ├── components/
-│   └── TaskGroupedList.vue            ← consumes useSessionGroups + sessionLabel
+│   └── TaskGroupedList.vue            ← switches to importing from lib/sessionLabel
 ├── mobile/
-│   ├── MobileSessionList.vue          ← rewritten around useSessionGroups
+│   ├── MobileSessionList.vue          ← rewritten around useSessions
 │   └── MobileSessionCard.vue          ← new; trimmed card
 └── platform/
     ├── types.ts                       ← SessionBridge.markSessionsSeen?
-    ├── capacitor.ts                   ← list mapping + markSessionsSeen impl
+    ├── capacitor.ts                   ← list mapping (unread/attention_at) + markSessionsSeen impl
     └── wails.ts                       ← markSessionsSeen → lib/api.markSessionsSeen
 
 internal/relay/
-├── csrfmw.go                          ← Bearer → skip CSRF
+├── csrfmw.go                          ← Bearer → skip CSRF (auth still enforced inside)
 ├── csrfmw_test.go                     ← Bearer path coverage
 └── sessions_seen_http_test.go         ← +3 Bearer cases
 ```
 
-### `useSessionGroups` composable
+### Reusing `useSessions`
+
+`composables/useSessions.ts` already exposes everything needed:
 
 ```ts
-import { computed, type Ref } from 'vue'
-import type { RemoteSession } from '../platform/types'
-import type { TaskState } from '../lib/taskState'
-
-const STATE_ORDER: TaskState[] = [
-  'waiting_input', 'failed', 'running',
-  'completed', 'idle', 'disconnected', 'closed',
-]
-
-export function useSessionGroups(
-  sessions: Ref<RemoteSession[]>,
-  groupBy: Ref<'host' | 'state'>,
-) {
-  // completedSeen = task_state === 'completed' && !unread; pulled out of byGroup.
-  // byGroup respects STATE_ORDER for 'state' and host_id A-Z for 'host'.
-  // primaryStateForKey returns the most-urgent state in the group.
-  // unreadByGroup / totalUnread aggregate sessions where unread === true.
-  return {
-    groupKeys,           // string[]
-    byGroup,             // Record<string, RemoteSession[]>
-    unreadByGroup,       // Record<string, number>
-    completedSeen,       // RemoteSession[]
-    totalUnread,         // number
-    primaryStateForKey,  // (key: string) => TaskState
-    hostName,            // (hostId: string) => string  — `byGroup[hostId][0]?.host || hostId || t('sessions.unknownHost')`, matches TaskGroupedList.hostName
-  }
-}
+const sessions = useSessions(ref<RemoteSession[]>([]), remoteSessionsRef)
+// sessions.byHost, sessions.byState,
+// sessions.unreadByHost, sessions.unreadByState,
+// sessions.completedSeen, sessions.totalUnread,
+// sessions.primaryStateForHost
 ```
 
-Desktop `App.vue` currently derives `byHost`, `unreadByHost`,
-`primaryStateForHost`, `completedSeen`, `totalUnread`, plus equivalent
-`byStateGroups` / `unreadByStateGroups` inline. Those derivations move into
-`useSessionGroups`. `App.vue` consumes the composable and forwards the result
-to `<TaskSidebar>` props unchanged.
+The mobile list passes an empty local list (it has no local PTYs) and the
+remote-session ref. Output is identical in shape to what desktop's `App.vue`
+already feeds `<TaskSidebar>`.
 
-`TaskGroupedList.vue` internals stay; it continues to take its props from
-`App.vue` (via `TaskSidebar`) — no breaking change to the desktop component
-API.
+Implementation notes for the mobile consumer:
+
+- `byState` keys are TaskState strings, sorted internally by `useSessions` (unread first, then `last_output_at` desc). The mobile renderer picks group order via `STATE_ORDER` (defined inline — three lines).
+- `byHost` keys are `host_id`. Group order is `Object.keys(byHost).sort()` — alphabetical by host_id, matching `TaskGroupedList.vue`.
+- `completedSeen` in `useSessions` includes both `completed && !unread` AND `failed && !unread` — the mobile fold reuses this definition verbatim.
+- `primaryStateForKey(key)`: when `groupBy === 'host'`, call `sessions.primaryStateForHost(key)`; when `groupBy === 'state'`, the key itself IS the state.
+
+No change to `useSessions.ts` API. `TaskGroupedList.vue` keeps consuming its
+props from `App.vue` → `TaskSidebar` unchanged.
 
 ### `lib/sessionLabel.ts`
 
@@ -106,9 +91,16 @@ Pulled out of `TaskGroupedList.vue` so mobile can reuse it:
 export function fullCommand(s: { current_command?: string; title?: string; session_id: string }): string
 export function commandLabel(s: { current_command?: string; title?: string; session_id: string }): string
 export function rowTitle(s: { cwd?: string; current_command?: string; title?: string; session_id: string }): string
+export function hostName(
+  hostId: string,
+  list: { host?: string }[] | undefined,
+  unknownHostFallback: string,
+): string  // `list?.[0]?.host || hostId || unknownHostFallback`
 ```
 
-`TaskGroupedList.vue` switches to importing from here; behaviour is unchanged.
+`TaskGroupedList.vue` switches to importing all four from here. Mobile uses
+the same module to keep `commandLabel`/`hostName` formatting identical across
+surfaces.
 
 ### `MobileSessionList.vue`
 
@@ -321,12 +313,12 @@ POST and lets the relay's recomputed `unread` flag drive the UI.
 
 ### Vitest (frontend)
 
-- `composables/useSessionGroups.test.ts` (new):
-  - `groupBy='state'`: STATE_ORDER honoured, empty groups filtered,
-    completedSeen excluded from `completed` bucket.
-  - `groupBy='host'`: host_id A-Z, unread totals correct.
-  - `primaryStateForKey`: returns most urgent.
-  - `totalUnread`: cross-group sum; completedSeen not counted.
+- `lib/sessionLabel.test.ts` (new): unit tests for `commandLabel`,
+  `fullCommand`, `rowTitle`, `hostName`. These functions previously lived in
+  `TaskGroupedList.vue` (untested as exports); pulling them out is a good
+  moment to add coverage.
+- `composables/useSessions.test.ts` (existing) is unchanged — `useSessions`
+  itself is untouched and its tests should continue to pass.
 - `mobile/MobileSessionList.test.ts` (extend / create):
   - Renders host + state groupings.
   - `group-toggle` click switches mode (mock `useTaskGroupBy`).
@@ -342,9 +334,11 @@ POST and lets the relay's recomputed `unread` flag drive the UI.
   - `markSessionsSeen({ all: true })` posts `{ all: true }`.
   - `401` → throws `relay_unauthorized`.
 
-Existing `App.test.ts` / `App.theme.test.ts` run unchanged; only adjust if the
-`useSessionGroups` refactor breaks an assertion (treat any failure as a
-diagnostic of the refactor, not an excuse to mutate the test).
+Existing `App.test.ts` / `App.theme.test.ts` run unchanged. The only
+desktop touchpoint is `TaskGroupedList.vue` swapping local helpers for
+`lib/sessionLabel` imports — its existing tests should pass without
+modification; treat any failure as a diagnostic of the refactor, not an
+excuse to mutate the test.
 
 ## Edge cases
 
@@ -366,5 +360,10 @@ diagnostic of the refactor, not an excuse to mutate the test).
   mark-seen. This is a feature (Bearer tokens are valid out-of-browser
   credentials) but the test plan does not exhaustively re-test every gated
   route. Spot-check the auth flow during manual verification.
-- `commandLabel` extraction touches the desktop `TaskGroupedList.vue` — run
-  desktop tests to confirm no regression.
+- `commandLabel` / `hostName` extraction touches the desktop
+  `TaskGroupedList.vue` — run desktop tests to confirm no regression.
+- `useSessions.completedSeen` includes both `completed && !unread` AND
+  `failed && !unread`. The mobile fold therefore also shows seen-failed
+  sessions, not just seen-completed ones. This is intentional (parity with
+  desktop) but slightly broader than a literal "completed only" reading of
+  the section above.

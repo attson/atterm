@@ -3,7 +3,13 @@ import { computed, ref, onMounted } from 'vue'
 import { usePlatform } from '../platform'
 import type { RemoteSession } from '../platform/types'
 import { useI18n } from '../i18n/useI18n'
-import { displayForType } from '../lib/sessionType'
+import { useSessions } from '../composables/useSessions'
+import { useTaskGroupBy } from '../composables/useTaskGroupBy'
+import { hostName as hostNameHelper, taskStateLabel } from '../lib/sessionLabel'
+import { getUserHomeDir } from '../lib/api'
+import type { TaskState } from '../lib/taskState'
+import TaskStateIcon from '../components/TaskStateIcon.vue'
+import MobileSessionCard from './MobileSessionCard.vue'
 
 defineProps<{ openSessionIds: string[] }>()
 const emit = defineEmits<{
@@ -13,102 +19,121 @@ const emit = defineEmits<{
 }>()
 
 const platform = usePlatform()
-const sessions = ref<RemoteSession[]>([])
+const { t } = useI18n()
+const groupByState = useTaskGroupBy()
+const groupBy = computed(() => groupByState.activeId.value)
+
+const remote = ref<RemoteSession[]>([])
+const local = ref<RemoteSession[]>([])  // mobile has no local PTYs
+const sessions = useSessions(local, remote)
+
+// Single source of truth for which sessions belong to the bottom fold —
+// reuse useSessions.completedSeen verbatim so mobile and desktop never drift.
+const foldedIds = computed(() => new Set(sessions.completedSeen.value.map((s) => s.session_id)))
+function inFold(s: RemoteSession): boolean { return foldedIds.value.has(s.session_id) }
+
 const error = ref<string | null>(null)
 const loading = ref(false)
-const { t } = useI18n()
+const foldOpen = ref(false)
+const home = ref('')
 
-type TaskBucket = 'needs_attention' | 'running' | 'completed' | 'failed' | 'disconnected'
+const STATE_ORDER: TaskState[] = [
+  'waiting_input', 'failed', 'running',
+  'completed', 'idle', 'disconnected', 'closed',
+]
 
-const bucketOrder: TaskBucket[] = ['needs_attention', 'running', 'failed', 'completed', 'disconnected']
-
-const taskGroups = computed(() => {
-  return bucketOrder
-    .map((bucket) => ({
-      bucket,
-      sessions: sessions.value.filter((session) => bucketFor(session) === bucket),
-    }))
-    .filter((group) => group.sessions.length > 0)
+// Group keys for whichever mode is active. State mode honours STATE_ORDER;
+// host mode is alphabetical by host_id. Either way, drop groups that have no
+// non-folded sessions (e.g. a host group whose only sessions are completed+seen).
+const groupKeys = computed<string[]>(() => {
+  const candidates = groupBy.value === 'state'
+    ? STATE_ORDER.filter((s) => (sessions.byState.value[s] ?? []).length > 0)
+    : Object.keys(sessions.byHost.value).sort()
+  return candidates.filter((k) => byGroup(k).some((s) => !inFold(s)))
 })
+
+function byGroup(key: string): RemoteSession[] {
+  if (groupBy.value === 'state') return sessions.byState.value[key] ?? []
+  return sessions.byHost.value[key] ?? []
+}
+
+function unreadCount(key: string): number {
+  if (groupBy.value === 'state') return sessions.unreadByState.value[key] ?? 0
+  return sessions.unreadByHost.value[key] ?? 0
+}
+
+function primaryState(key: string): TaskState {
+  if (groupBy.value === 'state') return key as TaskState
+  return sessions.primaryStateForHost(key)
+}
+
+function groupHeader(key: string): string {
+  if (groupBy.value === 'state') return taskStateLabel(key, t)
+  return hostNameHelper(key, sessions.byHost.value[key], t('sessions.unknownHost'))
+}
+
+function unreadIdsForGroup(key: string): string[] {
+  return byGroup(key).filter((s) => s.unread).map((s) => s.session_id)
+}
+
+function groupTestId(key: string): string {
+  return groupBy.value === 'state' ? `state-group-${key}` : `host-group-${key}`
+}
+
+function groupMarkAllTestId(key: string): string {
+  // Distinct prefix so [data-testid^="state-group-"] / [data-testid^="host-group-"]
+  // does NOT pick up the ✓ button when querying for section headers.
+  return groupBy.value === 'state' ? `mark-all-state-${key}` : `mark-all-host-${key}`
+}
 
 async function refresh(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    sessions.value = await platform.sessions.listRemoteSessions()
+    remote.value = await platform.sessions.listRemoteSessions()
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     if (msg === 'relay_unauthorized') { emit('tokenInvalid'); return }
     error.value = msg
-    sessions.value = []
+    remote.value = []
   } finally {
     loading.value = false
   }
 }
 
-onMounted(refresh)
-
-function bucketFor(session: RemoteSession): TaskBucket {
-  switch (session.task_state) {
-    case 'waiting_input':
-      return 'needs_attention'
-    case 'failed':
-      return 'failed'
-    case 'completed':
-      return 'completed'
-    case 'disconnected':
-    case 'closed':
-      return 'disconnected'
-    case 'running':
-    case 'idle':
-    default:
-      return 'running'
+async function onMarkSeen(p: { ids: string[] } | { all: true }) {
+  try {
+    await platform.sessions.markSessionsSeen?.(p)
+  } catch (e) {
+    if (e instanceof Error && e.message === 'relay_unauthorized') {
+      emit('tokenInvalid'); return
+    }
+    console.warn('mark-seen failed', e)
+    return
   }
+  await refresh()
 }
 
-function taskTitle(session: RemoteSession): string {
-  return session.current_command || session.title || 'shell'
+function toggleGroupBy() {
+  void groupByState.setGroupBy(groupBy.value === 'host' ? 'state' : 'host')
 }
 
-function typeForSession(s: RemoteSession) {
-  return displayForType(s.type)
-}
-
-function taskMeta(session: RemoteSession): string {
-  const parts = [
-    `${session.host} · ${session.user}`,
-    taskStateLabel(session),
-    `${session.cols}×${session.rows}`,
-    session.remote_permission || 'full',
-  ]
-  const elapsed = formatDuration(session.command_duration_ms)
-  if (elapsed) parts.push(elapsed)
-  else if (session.command_started_at) parts.push(`${t('mobile.started')} ${formatClock(session.command_started_at)}`)
-  if (session.command_exit_code !== undefined) parts.push(`exit ${session.command_exit_code}`)
-  if (session.last_output_at) parts.push(`${t('mobile.lastOutput')} ${formatClock(session.last_output_at)}`)
-  return parts.join(' · ')
-}
-
-function taskStateLabel(session: RemoteSession): string {
-  return t(`mobile.taskStates.${session.task_state || 'idle'}`)
-}
-
-function formatDuration(ms?: number): string {
-  if (ms === undefined || ms < 0) return ''
-  const sec = Math.floor(ms / 1000)
-  if (sec < 60) return `${sec}s`
-  return `${Math.floor(sec / 60)}m${sec % 60}s`
-}
-
-function formatClock(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
+onMounted(async () => {
+  try { home.value = await getUserHomeDir() } catch { /* leave empty */ }
+  await refresh()
+})
 </script>
 
 <template>
   <div class="list">
     <header class="bar">
-      <span class="title">{{ t('mobile.sessionsTitle') }}</span>
+      <span class="title">{{ t('mobile.sessionsTitle') }}<span v-if="remote.length" class="count"> · {{ remote.length }}</span></span>
+      <button
+        class="group-toggle"
+        data-testid="group-toggle"
+        :title="t('tasks.settings.groupBy')"
+        @click="toggleGroupBy"
+      >{{ groupBy === 'state' ? t('tasks.settings.groupByState') : t('tasks.settings.groupByHost') }}</button>
       <button data-testid="refresh" class="icon" :disabled="loading" @click="refresh" :aria-label="t('common.refresh')">
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
       </button>
@@ -116,85 +141,106 @@ function formatClock(unixSeconds: number): string {
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
       </button>
     </header>
+
     <div class="body">
       <p v-if="error" data-testid="relay-disconnected" class="empty disconnected">
         {{ t('mobile.relayDisconnected') }} · {{ error }}
       </p>
-      <div v-for="g in taskGroups" :key="g.bucket" class="group" :data-testid="`task-section-${g.bucket}`">
-        <div class="grouphdr">{{ t(`mobile.taskSections.${g.bucket}`) }} · {{ g.sessions.length }}</div>
-        <button
-          v-for="s in g.sessions"
-          :key="s.session_id"
-          data-testid="task-card"
-          class="task"
-          :class="[`state-${bucketFor(s)}`]"
-          @click="emit('open', s)"
-        >
-          <span class="dot"></span>
-          <span :data-testid="`task-card-${s.session_id}`" class="col2">
-            <span class="title-row">
-              <span v-if="typeForSession(s)" class="type-chip" :style="{ '--chip': typeForSession(s)!.color }">
-                {{ t(`mobile.taskTypes.${typeForSession(s)!.key}`) }}
-              </span>
-              <span class="ttl">{{ taskTitle(s) }}</span>
-            </span>
-            <span v-if="s.cwd" :data-testid="`session-cwd-${s.session_id}`" class="cwd">{{ s.cwd }}</span>
-            <span class="meta">{{ taskMeta(s) }}</span>
-            <span
-              v-if="s.task_state === 'failed' && s.summary?.error_lines?.length"
-              class="err-line"
-              :data-testid="`task-err-${s.session_id}`"
-            >{{ s.summary.error_lines[0] }}</span>
+
+      <section
+        v-for="key in groupKeys"
+        :key="key"
+        class="group"
+        :data-testid="groupTestId(key)"
+      >
+        <header class="grouphdr">
+          <span class="caret">▼</span>
+          <span class="gname">{{ groupHeader(key) }}</span>
+          <span class="counts">
+            <TaskStateIcon :state="primaryState(key)" :size="10" />
+            <span class="count">{{ byGroup(key).length }}</span>
           </span>
-          <span v-if="openSessionIds.includes(s.session_id)" :data-testid="`open-badge-${s.session_id}`" class="open">{{ t('mobile.openBadge') }}</span>
-        </button>
-      </div>
-      <p v-if="!loading && !error && taskGroups.length === 0" class="empty">
+          <span v-if="unreadCount(key) > 0" class="unread-badge">{{ t('tasks.unreadBadge', { count: unreadCount(key) }) }}</span>
+          <button
+            v-if="unreadCount(key) > 0"
+            class="group-mark-all"
+            :data-testid="groupMarkAllTestId(key)"
+            :title="t('tasks.markAllRead')"
+            @click="onMarkSeen({ ids: unreadIdsForGroup(key) })"
+          >✓</button>
+        </header>
+        <MobileSessionCard
+          v-for="s in byGroup(key).filter((x) => !inFold(x))"
+          :key="s.session_id"
+          :session="s"
+          :home="home"
+          data-testid="task-card"
+          @open="emit('open', s)"
+          @markSeen="onMarkSeen"
+        />
+      </section>
+
+      <section v-if="sessions.completedSeen.value.length > 0" class="completed-fold">
+        <button
+          class="fold-toggle"
+          data-testid="completed-fold-toggle"
+          @click="foldOpen = !foldOpen"
+        >{{ foldOpen ? '▼' : '▶' }} {{ t('tasks.completedFold') }} · {{ sessions.completedSeen.value.length }}</button>
+        <template v-if="foldOpen">
+          <div
+            v-for="s in sessions.completedSeen.value"
+            :key="s.session_id"
+            class="fold-row"
+            :data-testid="`completed-fold-row-${s.session_id}`"
+            @click="emit('open', s)"
+          >
+            <TaskStateIcon :state="s.task_state ?? 'idle'" :size="12" />
+            <span class="cmd">{{ s.current_command || s.title }}</span>
+            <span class="meta">{{ s.host }}·{{ s.user }}</span>
+          </div>
+        </template>
+      </section>
+
+      <p v-if="!loading && !error && groupKeys.length === 0 && sessions.completedSeen.value.length === 0" class="empty">
         {{ t('mobile.noRemoteSessions') }}
       </p>
     </div>
+
+    <footer v-if="sessions.totalUnread.value > 0" class="footer">
+      <button
+        class="footer-mark-all"
+        data-testid="footer-mark-all"
+        @click="onMarkSeen({ all: true })"
+      >{{ t('tasks.markAllRead') }}</button>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-.list { min-height: 100vh; box-sizing: border-box; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); display: flex; flex-direction: column; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: var(--font-sans); }
+.list { min-height: 100vh; box-sizing: border-box; padding: env(safe-area-inset-top) 0 0; display: flex; flex-direction: column; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); font-family: var(--font-sans); }
 .bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px; border-bottom: 1px solid #1e2638; background: #0b1020; }
 .bar .title { flex: 1; font-weight: 600; }
-.icon { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: #8d93a3; padding: 4px; }
+.bar .count { color: #8d93a3; font-weight: 400; margin-left: 4px; font-family: var(--font-mono); font-size: 0.85em; }
+.group-toggle { background: none; border: 1px solid rgba(255,255,255,0.12); color: inherit; border-radius: 4px; font-size: 11px; padding: 4px 10px; cursor: pointer; }
+.group-toggle:hover { background: rgba(255,255,255,0.05); }
+.icon { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: #8d93a3; padding: 4px; min-width: 44px; min-height: 44px; }
 .body { flex: 1; overflow: auto; padding: 12px; }
 .group { margin-bottom: 14px; }
-.grouphdr { font-size: 0.72rem; color: #8d93a3; font-family: var(--font-mono); margin: 4px 2px 8px; }
-.task { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; margin-bottom: 8px; border-radius: 11px; background: #11182b; border: 1px solid #1e2638; color: inherit; text-align: left; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex: 0 0 auto; }
-.state-needs_attention .dot { background: #f59e0b; box-shadow: 0 0 14px rgba(245, 158, 11, .55); }
-.state-failed .dot { background: #ef4444; box-shadow: 0 0 14px rgba(239, 68, 68, .45); }
-.state-completed .dot { background: #60a5fa; }
-.state-disconnected .dot { background: #64748b; }
-.col2 { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.type-chip {
-  font-size: 0.66rem; line-height: 1;
-  padding: 2px 6px; border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--chip) 60%, transparent);
-  color: var(--chip);
-  background: color-mix(in srgb, var(--chip) 12%, transparent);
-  text-transform: uppercase; letter-spacing: 0.04em;
-  flex: 0 0 auto;
-}
-.ttl { font-size: 0.9rem; font-weight: 600; }
-.cwd { font-size: 0.74rem; color: #9aa3b2; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.meta { font-size: 0.72rem; color: #8d93a3; font-family: var(--font-mono); }
-.err-line {
-  display: block;
-  color: #f87171;
-  font-size: 0.72rem;
-  font-family: var(--font-mono);
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.open { font-size: 0.62rem; color: #9dc1ff; border: 1px solid rgba(59,130,246,.4); background: rgba(59,130,246,.12); border-radius: 5px; padding: 1px 6px; }
+.grouphdr { display: flex; align-items: center; gap: 6px; padding: 4px 2px 8px; font-size: 0.78rem; color: #c6cad5; font-family: var(--font-mono); }
+.grouphdr .caret { font-size: 9px; color: #8d93a3; }
+.grouphdr .gname { flex: 0 0 auto; }
+.grouphdr .counts { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+.grouphdr .count { font-size: 0.72rem; color: #8d93a3; }
+.unread-badge { font-size: 10px; opacity: 0.9; background: rgba(255,255,255,0.06); border-radius: 3px; padding: 1px 4px; }
+.group-mark-all { background: none; border: none; color: inherit; cursor: pointer; padding: 0 6px; font-size: 14px; min-width: 32px; min-height: 32px; }
+.completed-fold { border-top: 1px solid rgba(255,255,255,0.06); margin-top: 6px; padding-top: 4px; }
+.fold-toggle { background: none; border: none; cursor: pointer; padding: 8px 6px; width: 100%; text-align: left; color: inherit; opacity: 0.75; font-family: var(--font-mono); font-size: 0.78rem; }
+.fold-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; opacity: 0.7; font-family: var(--font-mono); font-size: 0.78rem; }
+.fold-row .cmd { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fold-row .meta { color: #8d93a3; }
 .empty { color: #8d93a3; font-size: 0.85rem; text-align: center; padding: 40px 12px; line-height: 1.6; }
 .disconnected { color: #f87171; }
+.footer { padding: 8px 12px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid #1e2638; background: #0b1020; }
+.footer-mark-all { width: 100%; min-height: 44px; background: none; border: 1px solid rgba(255,255,255,0.12); color: inherit; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+.footer-mark-all:hover { background: rgba(255,255,255,0.05); }
 </style>

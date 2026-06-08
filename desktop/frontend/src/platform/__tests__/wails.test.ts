@@ -16,6 +16,7 @@ vi.mock('../../lib/api', () => ({
   checkUpdate: vi.fn().mockResolvedValue(undefined),
   startDownload: vi.fn().mockResolvedValue(undefined),
   installUpdate: vi.fn().mockResolvedValue(undefined),
+  markSessionsSeen: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../../wailsjs/runtime/runtime', () => ({
@@ -46,7 +47,7 @@ import { createWailsPlatform } from '../wails'
 import { WindowMinimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
 import { GetPluginConfig, SetPluginConfig } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
-import { fetchRelayMe, showNotification, setUplinkPaused } from '../../lib/api'
+import { fetchRelayMe, showNotification, setUplinkPaused, markSessionsSeen } from '../../lib/api'
 
 describe('createWailsPlatform', () => {
   beforeEach(() => { vi.clearAllMocks() })
@@ -70,6 +71,12 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.relay.setUplinkPaused!(true)
     expect(setUplinkPaused).toHaveBeenCalledWith(true)
+  })
+
+  it('sessions.markSessionsSeen delegates to api.markSessionsSeen', async () => {
+    const p = createWailsPlatform()
+    await p.sessions.markSessionsSeen!({ ids: ['s1'] })
+    expect(markSessionsSeen).toHaveBeenCalledWith({ ids: ['s1'] })
   })
 
   it('system.showNotification delegates', async () => {

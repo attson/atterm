@@ -59,6 +59,7 @@ export function createWailsPlatform(): Platform {
       // Remote session listing currently goes through SessionListConnection
       // in App.vue. Keep this empty until the platform bridge is unified.
       listRemoteSessions: async (): Promise<RemoteSession[]> => [],
+      markSessionsSeen: api.markSessionsSeen,
     },
     system: {
       showNotification: api.showNotification,

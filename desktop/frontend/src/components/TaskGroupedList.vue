@@ -7,6 +7,7 @@ import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
 import { useTaskPreset } from "../composables/useTaskPreset";
+import { commandLabel, rowTitle, hostName as hostNameHelper, taskStateLabel } from "../lib/sessionLabel";
 
 const preset = useTaskPreset();
 const showStateLabel = computed(() => preset.active.value.showLabel);
@@ -65,8 +66,7 @@ onMounted(async () => {
 });
 
 function hostName(hostId: string): string {
-  const first = groups.value[hostId]?.[0];
-  return first?.host || hostId || t("sessions.unknownHost");
+  return hostNameHelper(hostId, groups.value[hostId], t("sessions.unknownHost"));
 }
 
 function groupHeader(key: string): string {
@@ -93,39 +93,10 @@ function onMarkFold() {
   emit("markSeen", { ids: props.completedSeen.map((s) => s.session_id) });
 }
 
-function fullCommand(s: { current_command?: string; title?: string; session_id: string }): string {
-  return s.current_command || s.title || s.session_id.slice(0, 8);
-}
-
-// commandLabel is the SHORT row display: only the executable name
-// (first whitespace-separated token, with any leading path stripped).
-// `/usr/local/bin/claude --permission-mode bypassPermissions` → `claude`.
-// The full string with args (and cwd) is exposed via the row's title
-// tooltip so nothing is lost.
-function commandLabel(s: { current_command?: string; title?: string; session_id: string }): string {
-  const raw = fullCommand(s);
-  const firstToken = raw.split(/\s+/)[0] || raw;
-  return firstToken.split("/").pop() || firstToken;
-}
-
-function rowTitle(s: { cwd?: string; current_command?: string; title?: string; session_id: string }): string {
-  const cmd = fullCommand(s);
-  return s.cwd ? `${cmd}\n${s.cwd}` : cmd;
-}
-
-// stateLabel returns the localized chip text for a TaskState. Switch (not
-// dynamic key) so the i18n MessageKey union stays exhaustive — vue-tsc
-// rejects `t(\`mobile.taskStates.${s}\`)`.
+// Thin wrapper so existing template call sites `stateLabel(s.task_state)`
+// stay terse — the actual i18n key switch lives in lib/sessionLabel.
 function stateLabel(state: string | undefined): string {
-  switch (state) {
-    case "running": return t("mobile.taskStates.running");
-    case "waiting_input": return t("mobile.taskStates.waiting_input");
-    case "completed": return t("mobile.taskStates.completed");
-    case "failed": return t("mobile.taskStates.failed");
-    case "disconnected": return t("mobile.taskStates.disconnected");
-    case "closed": return t("mobile.taskStates.closed");
-    default: return t("mobile.taskStates.idle");
-  }
+  return taskStateLabel(state, t);
 }
 </script>
 

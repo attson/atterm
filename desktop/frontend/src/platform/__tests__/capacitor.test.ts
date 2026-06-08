@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createCapacitorPlatform } from '../capacitor'
 import { secureStorage } from '../secureStorage'
 
@@ -297,5 +297,94 @@ describe('createCapacitorPlatform — templates', () => {
     localStorage.setItem('atterm.auxkeys', '{not json')
     const p = createCapacitorPlatform()
     expect(await p.auxKeys.load()).toEqual([])
+  })
+})
+
+// --- T5: list mapping + markSessionsSeen ---
+
+const STORED_RELAY = JSON.stringify({ url: 'https://relay.example', token: 'atk_test' })
+
+// capacitor.ts reads relay config from secureStorage first, then falls back to
+// loadLegacyFromLocalStorage(). secureStorage uses an in-memory backend under
+// vitest; we rely on that being empty and seed localStorage instead. Clearing
+// both each test keeps tests independent.
+describe('capacitor.listRemoteSessions', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  beforeEach(async () => {
+    const { secureStorage } = await import('../secureStorage')
+    await secureStorage.remove('atterm.relay')
+    localStorage.clear()
+    localStorage.setItem('atterm.relay', STORED_RELAY)
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('maps unread and attention_at from the JSON payload', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => [{
+        id: 's1', host_id: 'h', host: 'box', user: 'me',
+        title: 'zsh', command: 'zsh', cols: 80, rows: 24,
+        unread: true, attention_at: 1234567,
+      }],
+    } as unknown as Response)
+
+    const p = createCapacitorPlatform()
+    const list = await p.sessions.listRemoteSessions()
+    expect(list).toHaveLength(1)
+    expect(list[0].unread).toBe(true)
+    expect(list[0].attention_at).toBe(1234567)
+  })
+})
+
+describe('capacitor.markSessionsSeen', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  beforeEach(async () => {
+    const { secureStorage } = await import('../secureStorage')
+    await secureStorage.remove('atterm.relay')
+    localStorage.clear()
+    localStorage.setItem('atterm.relay', STORED_RELAY)
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('posts session_ids with Bearer auth', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 204,
+    } as unknown as Response)
+
+    const p = createCapacitorPlatform()
+    await p.sessions.markSessionsSeen!({ ids: ['s1', 's2'] })
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://relay.example/api/sessions/seen')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer atk_test')
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+    expect(JSON.parse(init.body as string)).toEqual({ session_ids: ['s1', 's2'] })
+  })
+
+  it('posts {all: true} when called with { all: true }', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 204,
+    } as unknown as Response)
+
+    const p = createCapacitorPlatform()
+    await p.sessions.markSessionsSeen!({ all: true })
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({ all: true })
+  })
+
+  it('throws relay_unauthorized on HTTP 401', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false, status: 401,
+    } as unknown as Response)
+
+    const p = createCapacitorPlatform()
+    await expect(p.sessions.markSessionsSeen!({ all: true })).rejects.toThrow('relay_unauthorized')
   })
 })

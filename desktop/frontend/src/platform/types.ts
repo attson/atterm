@@ -11,6 +11,7 @@ export type {
   LogPreview,
   ClipboardPastePayload,
   UpdateState,
+  MarkSessionsSeenOpts,
 } from '../lib/api'
 
 // PluginConfig + sub-types live in wailsjs/go/models, re-export here.
@@ -43,7 +44,7 @@ export interface Capabilities {
 }
 
 // ----- Bridges -----
-import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState } from '../lib/api'
+import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState, MarkSessionsSeenOpts as _MarkSessionsSeenOpts } from '../lib/api'
 
 export interface PairingConsumeResult {
   relay_url: string
@@ -92,6 +93,11 @@ export interface SessionBridge {
   closeSession(sessionID: string): Promise<void>
   listShells(): Promise<string[]>
   listRemoteSessions(): Promise<RemoteSession[]>
+  /** Optional — mark the given sessions (or all owned sessions) as seen on
+   *  the relay. Wails delegates to lib/api (which surfaces the raw HTTP
+   *  status on failure). Capacitor posts directly to /api/sessions/seen
+   *  with Bearer auth and throws `'relay_unauthorized'` on HTTP 401. */
+  markSessionsSeen?(opts: _MarkSessionsSeenOpts): Promise<void>
 }
 
 export interface SystemBridge {

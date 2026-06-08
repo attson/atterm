@@ -250,3 +250,35 @@ func TestMuxEnumerator_PushRoutesCsrfGated(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireCSRF_BearerPassThrough_NoCookieNoCSRF(t *testing.T) {
+	resolver, _, _ := newCSRFSetup([]byte("csrf-secret-bytes"))
+	handler := RequireCSRF(resolver, okHandler)
+
+	// Bearer present, no cookie, no X-CSRF-Token: should pass.
+	r := httptest.NewRequest(http.MethodPost, "/api/something", nil)
+	r.Header.Set("Authorization", "Bearer atk_anything-the-mw-does-not-validate")
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 (bearer bypasses CSRF), got %d", w.Code)
+	}
+}
+
+func TestRequireCSRF_NonBearerAuthorization_StillRequiresCookie(t *testing.T) {
+	resolver, _, _ := newCSRFSetup([]byte("csrf-secret-bytes"))
+	handler := RequireCSRF(resolver, okHandler)
+
+	// Authorization header that is NOT "Bearer …" must NOT bypass CSRF.
+	r := httptest.NewRequest(http.MethodPost, "/api/something", nil)
+	r.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("non-Bearer Authorization must NOT bypass CSRF; expected 401, got %d", w.Code)
+	}
+}

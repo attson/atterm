@@ -1,9 +1,11 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/attson/atterm/internal/proto"
@@ -46,6 +48,32 @@ func addOwnedSession(t *testing.T, srv *Server, ownerUserID string, attentionAt 
 		t.Fatalf("registry.Add: %v", err)
 	}
 	return id
+}
+
+// issueAPIToken creates a personal API token for userID and returns the
+// plaintext to be used as a Bearer credential.
+func issueAPIToken(t *testing.T, store *userstore.SQLiteStore, userID string) string {
+	t.Helper()
+	secret, _, err := store.CreateAPIToken(context.Background(), userID, "test-mobile")
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	return secret.Expose()
+}
+
+// postJSONWithBearer marshals body to JSON and POSTs it to path with an
+// Authorization: Bearer header. Returns the recorder.
+func postJSONWithBearer(handler http.Handler, path string, body any, bearer string) *httptest.ResponseRecorder {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+bearer)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	return w
 }
 
 // TestSessionsSeen_MarkAll: POST /api/sessions/seen {"all":true} marks every
@@ -161,5 +189,64 @@ func TestSessionsSeen_BodyTooLarge(t *testing.T) {
 	w := postJSONWithCSRF(handler, "/api/sessions/seen", json.RawMessage(rawBody), cookieA, csrfA)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("oversized body: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSessionsSeen_Bearer_MarkAll(t *testing.T) {
+	srv, store := newTestSeenServer(t)
+	handler := http.Handler(srv)
+
+	_, userAID, _ := signupAndLogin(t, handler, store, "bearerall@example.com", "correcthorsebattery")
+	token := issueAPIToken(t, store, userAID)
+	sessID := addOwnedSession(t, srv, userAID, 1000)
+
+	w := postJSONWithBearer(handler, "/api/sessions/seen", map[string]any{"all": true}, token)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	seen, err := store.SeenAt(context.Background(), userAID)
+	if err != nil {
+		t.Fatalf("SeenAt: %v", err)
+	}
+	if _, ok := seen[sessID.String()]; !ok {
+		t.Fatalf("expected session %s to be marked seen for user %s, got %v", sessID, userAID, seen)
+	}
+}
+
+func TestSessionsSeen_Bearer_CrossUserIgnored(t *testing.T) {
+	srv, store := newTestSeenServer(t)
+	handler := http.Handler(srv)
+
+	_, userAID, _ := signupAndLogin(t, handler, store, "bearerA@example.com", "correcthorsebattery")
+	_, userBID, _ := signupAndLogin(t, handler, store, "bearerB@example.com", "correcthorsebattery")
+	tokenA := issueAPIToken(t, store, userAID)
+	sessBID := addOwnedSession(t, srv, userBID, 2000)
+
+	w := postJSONWithBearer(handler, "/api/sessions/seen",
+		map[string]any{"session_ids": []string{sessBID.String()}},
+		tokenA)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	seen, err := store.SeenAt(context.Background(), userAID)
+	if err != nil {
+		t.Fatalf("SeenAt: %v", err)
+	}
+	if _, ok := seen[sessBID.String()]; ok {
+		t.Errorf("cross-user: session %s must NOT be marked seen under user A; got %v", sessBID, seen)
+	}
+}
+
+func TestSessionsSeen_Bearer_InvalidToken(t *testing.T) {
+	srv, _ := newTestSeenServer(t)
+	handler := http.Handler(srv)
+
+	w := postJSONWithBearer(handler, "/api/sessions/seen",
+		map[string]any{"all": true},
+		"atk_does_not_exist_in_store")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid bearer: expected 401, got %d: %s", w.Code, w.Body.String())
 	}
 }

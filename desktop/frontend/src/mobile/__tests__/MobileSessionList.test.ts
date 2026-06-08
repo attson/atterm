@@ -3,17 +3,25 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { __setPlatformForTests } from '../../platform'
 import { createFakePlatform } from '../../platform/__tests__/_fakePlatform'
 import MobileSessionList from '../MobileSessionList.vue'
+import { __resetForTests as resetGroupBy } from '../../composables/useTaskGroupBy'
 import type { RemoteSession } from '../../platform/types'
 
 const sessions: RemoteSession[] = [
-  { session_id: 'a', host_id: 'h1', host: 'box1', user: 'me', title: 'claude', cwd: '/Users/me/proj', cols: 80, rows: 24, task_state: 'waiting_input', current_command: 'codex', last_output_at: 1715234579, remote_permission: 'control' },
-  { session_id: 'b', host_id: 'h1', host: 'box1', user: 'me', title: 'zsh', cols: 100, rows: 30, task_state: 'running', current_command: 'npm test', command_started_at: 1715234500 },
-  { session_id: 'c', host_id: 'h2', host: 'box2', user: 'me', title: 'codex', cols: 120, rows: 40, task_state: 'failed', current_command: 'go test ./...', command_exit_code: 1, command_duration_ms: 12500, remote_permission: 'view' },
+  // attention-needing
+  { session_id: 'a', host_id: 'h1', host: 'box1', user: 'me', title: 'codex', cwd: '/Users/me/proj', cols: 80, rows: 24, task_state: 'waiting_input', current_command: 'codex --plan', unread: true },
+  // running
+  { session_id: 'b', host_id: 'h1', host: 'box1', user: 'me', title: 'zsh',   cwd: '/Users/me',      cols: 100, rows: 30, task_state: 'running',       current_command: 'npm test' },
+  // failed + unread
+  { session_id: 'c', host_id: 'h2', host: 'box2', user: 'me', title: 'go',    cwd: '/srv/api',       cols: 120, rows: 40, task_state: 'failed',        current_command: 'go test ./...', unread: true },
+  // completed + seen → fold
+  { session_id: 'd', host_id: 'h2', host: 'box2', user: 'me', title: 'ls',    cwd: '/srv/api',       cols: 120, rows: 40, task_state: 'completed',     current_command: 'ls',           unread: false },
 ]
 let platform: ReturnType<typeof createFakePlatform>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
+  resetGroupBy()
   platform = createFakePlatform()
   ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue(sessions)
   __setPlatformForTests(platform)
@@ -21,141 +29,91 @@ beforeEach(() => {
 afterEach(() => { __setPlatformForTests(null) })
 
 describe('MobileSessionList', () => {
-  it('lists sessions as task cards grouped by task state on mount', async () => {
+  it('groups sessions by state by default (excluding completed+seen) and orders by STATE_ORDER', async () => {
+    // Default groupBy is 'host'; flip via button to land on 'state' for this test.
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-    expect(w.find('[data-testid="task-section-needs_attention"]').exists()).toBe(true)
-    expect(w.find('[data-testid="task-section-running"]').exists()).toBe(true)
-    expect(w.find('[data-testid="task-section-failed"]').exists()).toBe(true)
-    expect(w.findAll('[data-testid="task-card"]').length).toBe(3)
+    await w.find('[data-testid="group-toggle"]').trigger('click')
+    await flushPromises()
+
+    // Headers present, in waiting_input → failed → running order; completed+seen
+    // belongs to the fold and must NOT appear as a state group.
+    const headers = w.findAll('[data-testid^="state-group-"]').map((el) => el.attributes('data-testid'))
+    expect(headers).toEqual([
+      'state-group-waiting_input',
+      'state-group-failed',
+      'state-group-running',
+    ])
   })
 
-  it('shows task command, host, cwd, dimensions and permission on each card', async () => {
+  it('groups by host when groupBy = host', async () => {
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-    const card = w.find('[data-testid="task-card-a"]')
-    expect(card.text()).toContain('codex')
-    expect(card.text()).toContain('box1')
-    expect(card.text()).toContain('/Users/me/proj')
-    expect(card.text()).toContain('80×24')
-    expect(card.text()).toContain('control')
-    expect(card.text()).toContain('waiting input')
-    expect(card.text()).toContain('last output')
+    const headers = w.findAll('[data-testid^="host-group-"]').map((el) => el.attributes('data-testid'))
+    expect(headers).toEqual(['host-group-h1', 'host-group-h2'])
   })
 
-  it('marks open sessions with an open badge', async () => {
-    const w = mount(MobileSessionList, { props: { openSessionIds: ['a'] } })
-    await flushPromises()
-    expect(w.find('[data-testid="open-badge-a"]').exists()).toBe(true)
-    expect(w.find('[data-testid="open-badge-b"]').exists()).toBe(false)
-  })
-
-  it('emits open(info) when a row is tapped', async () => {
+  it('renders a card per non-folded session with short command + cwd', async () => {
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-    await w.find('[data-testid="task-card"]').trigger('click')
+    const cards = w.findAll('[data-testid="task-card"]')
+    expect(cards).toHaveLength(3)              // d is folded
+    expect(cards[0]!.text()).toContain('codex')
+  })
+
+  it('emits open(session) when a card body is tapped', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    await w.find('[data-testid="card-body"]').trigger('click')
     expect(w.emitted('open')).toBeTruthy()
-    expect((w.emitted('open')![0]![0] as RemoteSession).session_id).toBe('a')
   })
 
-  it('refresh button re-fetches', async () => {
+  it('row ✓ posts markSessionsSeen with just that session id', async () => {
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-    await w.find('[data-testid="refresh"]').trigger('click')
-    await flushPromises()
-    expect(platform.sessions.listRemoteSessions).toHaveBeenCalledTimes(2)
+    await w.find('[data-testid="row-mark-read"]').trigger('click')
+    expect(platform.sessions.markSessionsSeen).toHaveBeenCalledWith({ ids: ['a'] })
   })
 
-  it('shows empty state when no sessions', async () => {
-    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([])
+  it('group ✓ posts markSessionsSeen with unread ids of that group', async () => {
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-    expect(w.text()).toMatch(/no remote sessions/i)
+    // Group h1 has session a (unread). Click its group-level mark-all.
+    await w.find('[data-testid="mark-all-host-h1"]').trigger('click')
+    expect(platform.sessions.markSessionsSeen).toHaveBeenCalledWith({ ids: ['a'] })
   })
 
-  it('shows relay disconnected empty state when the session fetch fails', async () => {
-    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network down'))
+  it('footer ✓ posts markSessionsSeen with { all: true } when totalUnread > 0', async () => {
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-    expect(w.find('[data-testid="relay-disconnected"]').exists()).toBe(true)
-    expect(w.text()).toContain('network down')
+    expect(w.find('[data-testid="footer-mark-all"]').exists()).toBe(true)
+    await w.find('[data-testid="footer-mark-all"]').trigger('click')
+    expect(platform.sessions.markSessionsSeen).toHaveBeenCalledWith({ all: true })
   })
 
-  it('renders task cards in a narrow mobile viewport', async () => {
-    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true })
-    Object.defineProperty(window, 'innerHeight', { value: 844, configurable: true })
+  it('completed+seen sessions are hidden in the default fold and revealed when toggled', async () => {
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-    expect(w.find('.list').exists()).toBe(true)
-    expect(w.findAll('[data-testid="task-card"]').length).toBe(3)
+    expect(w.find('[data-testid="completed-fold-row-d"]').exists()).toBe(false)
+    await w.find('[data-testid="completed-fold-toggle"]').trigger('click')
+    expect(w.find('[data-testid="completed-fold-row-d"]').exists()).toBe(true)
   })
 
-  it('emits token-invalid when listRemoteSessions throws relay_unauthorized', async () => {
-    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('relay_unauthorized'))
+  it('emits tokenInvalid when listRemoteSessions throws relay_unauthorized', async () => {
+    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('relay_unauthorized'))
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
     expect(w.emitted('tokenInvalid')).toBeTruthy()
   })
 
-  it('shows the localised type chip for non-shell sessions', async () => {
-    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { session_id: 'a', host_id: 'h', host: 'box', user: 'me', title: 'claude', cwd: '/', cols: 80, rows: 24, type: 'ai' },
-      { session_id: 'b', host_id: 'h', host: 'box', user: 'me', title: 'bash', cwd: '/', cols: 80, rows: 24, type: 'shell' },
-    ])
-
+  it('emits tokenInvalid when markSessionsSeen throws relay_unauthorized', async () => {
+    ;(platform.sessions.markSessionsSeen as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('relay_unauthorized'))
     const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
     await flushPromises()
-
-    const aiCard = w.get('[data-testid="task-card-a"]')
-    expect(aiCard.find('.type-chip').exists()).toBe(true)
-    expect(aiCard.find('.type-chip').text()).toBe('AI')
-
-    const shellCard = w.get('[data-testid="task-card-b"]')
-    expect(shellCard.find('.type-chip').exists()).toBe(false)
-  })
-
-  it('renders the first error line under failed cards that carry a summary', async () => {
-    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        session_id: 'a', host_id: 'h', host: 'box', user: 'me',
-        title: 'go test', cwd: '/', cols: 80, rows: 24,
-        task_state: 'failed',
-        summary: { recent_output: 'FAIL\nerror: boom\n', error_lines: ['FAIL', 'error: boom'], captured_at: 1 },
-      },
-    ])
-
-    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await w.find('[data-testid="row-mark-read"]').trigger('click')
     await flushPromises()
-
-    const errLine = w.find('[data-testid="task-err-a"]')
-    expect(errLine.exists()).toBe(true)
-    expect(errLine.text()).toBe('FAIL')
-  })
-
-  it('does not render the error line when a failed session has no summary', async () => {
-    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { session_id: 'b', host_id: 'h', host: 'box', user: 'me', title: 'go test', cwd: '/', cols: 80, rows: 24, task_state: 'failed' },
-    ])
-
-    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
-    await flushPromises()
-
-    expect(w.find('[data-testid="task-err-b"]').exists()).toBe(false)
-  })
-
-  it('does not render the error line when a session is not in failed state', async () => {
-    ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        session_id: 'c', host_id: 'h', host: 'box', user: 'me',
-        title: 'go test', cwd: '/', cols: 80, rows: 24,
-        task_state: 'completed',
-        summary: { error_lines: ['error: should be ignored on completed'], captured_at: 1 },
-      },
-    ])
-
-    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
-    await flushPromises()
-
-    expect(w.find('[data-testid="task-err-c"]').exists()).toBe(false)
+    expect(w.emitted('tokenInvalid')).toBeTruthy()
   })
 })

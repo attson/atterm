@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"net/http"
+	"strings"
 )
 
 // CSRFToken derives the per-session CSRF token used by both the server
@@ -22,6 +23,18 @@ func RequireCSRF(resolver *IdentityResolver, inner http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			inner.ServeHTTP(w, r)
+			return
+		}
+		// Bearer tokens skip CSRF on EVERY route this middleware guards
+		// (including account-management: password change, token mint/revoke,
+		// account delete, web-session sign-out, admin config). Rationale:
+		// Bearer is an out-of-band credential — not auto-attached by
+		// browsers, so CSRF adds no protection. A stolen API token has the
+		// same authority as a cookie session by design; treat token-theft
+		// posture accordingly. Auth is still enforced by inner handlers via
+		// Resolver.Resolve / Principal.IsUser.
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			inner.ServeHTTP(w, r)
 			return
 		}

@@ -139,7 +139,8 @@ export function createCapacitorPlatform(): Platform {
           id: string; command: string; title: string; cwd: string; cols: number; rows: number;
           host_id: string; host: string; user: string; remote_permission?: string; task_state?: RemoteSession['task_state'];
           current_command?: string; command_started_at?: number; command_ended_at?: number; command_duration_ms?: number;
-          command_exit_code?: number; last_output_at?: number; type?: string; summary?: SessionSummary
+          command_exit_code?: number; last_output_at?: number; type?: string; summary?: SessionSummary;
+          unread?: boolean; attention_at?: number;
         }>
         return raw.map((s) => {
           const out: RemoteSession = {
@@ -162,8 +163,30 @@ export function createCapacitorPlatform(): Platform {
           if (s.last_output_at !== undefined) out.last_output_at = s.last_output_at
           if (s.type !== undefined) out.type = s.type
           if (s.summary !== undefined) out.summary = s.summary
+          if (s.unread !== undefined) out.unread = s.unread
+          if (s.attention_at !== undefined) out.attention_at = s.attention_at
           return out
         })
+      },
+      markSessionsSeen: async (opts) => {
+        const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                  ?? loadLegacyFromLocalStorage()
+        if (!cfg?.url || !cfg.token) return
+        const base = cfg.url.replace(/\/$/, '')
+        const body = 'all' in opts && opts.all
+          ? { all: true }
+          : { session_ids: (opts as { ids: string[] }).ids }
+        const res = await fetch(base + '/api/sessions/seen', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${cfg.token}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'omit',
+          body: JSON.stringify(body),
+        })
+        if (res.status === 401) throw new Error('relay_unauthorized')
+        if (!res.ok) throw new Error(`mark-seen: HTTP ${res.status}`)
       },
     },
     system: {

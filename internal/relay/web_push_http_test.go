@@ -241,12 +241,10 @@ func doRequestWithCookieAndCSRF(t *testing.T, srv *Server, method, path, cookieV
 // TestWebPushHTTP_RequiresUserPrincipal verifies that /api/push/subscribe,
 // /api/push/unsubscribe, and /api/push/test require a User principal:
 //   - cookie session with CSRF (PrincipalUser) → 200/OK
-//   - admin bearer token (PrincipalAdmin) → 401 (RequireCSRF rejects: no cookie)
+//   - admin Bearer → 401: token not registered in the fake store, so
+//     Resolver.Resolve returns PrincipalNone and requireUserPrincipal
+//     rejects. (RequireCSRF lets Bearer through to the inner handler.)
 //   - no credentials (PrincipalNone) → 401
-//
-// Note: when cfg.Resolver is set, all three push routes are CSRF-gated.
-// Admin Bearer tokens carry no cookie so they fail at the CSRF layer with 401
-// (not 403 from requireUserPrincipal) — both are acceptable rejections.
 func TestWebPushHTTP_RequiresUserPrincipal(t *testing.T) {
 	csrfSecret := []byte("csrf-secret-for-push-test")
 	const cookieVal = "valid-cookie"
@@ -286,7 +284,9 @@ func TestWebPushHTTP_RequiresUserPrincipal(t *testing.T) {
 					wantStatus: 200,
 				},
 				{
-					// Admin uses Bearer token (no cookie) → RequireCSRF returns 401.
+					// Admin Bearer → 401: token not registered in the fake store, so
+					// Resolver.Resolve returns PrincipalNone and requireUserPrincipal
+					// rejects. (RequireCSRF lets Bearer through to the inner handler.)
 					name: "admin token → 401",
 					doReq: func() *http.Response {
 						return doRequest(t, srv, route.method, route.path, "admin-token-for-push-test", route.body)

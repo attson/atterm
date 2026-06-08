@@ -56,10 +56,8 @@ export function createWailsPlatform(): Platform {
       newSession: api.newSession,
       closeSession: api.closeSession,
       listShells: api.listShells,
-      // Remote session listing currently goes through relay HTTP API in
-      // existing components (RemoteSessionsDialog uses lib/api or direct
-      // fetch). For now expose an empty implementation; consumers continue
-      // to use their existing path until a follow-up PR consolidates.
+      // Remote session listing currently goes through SessionListConnection
+      // in App.vue. Keep this empty until the platform bridge is unified.
       listRemoteSessions: async (): Promise<RemoteSession[]> => [],
     },
     system: {

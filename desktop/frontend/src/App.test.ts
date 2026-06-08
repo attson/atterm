@@ -131,7 +131,7 @@ describe("merged title bar", () => {
   test("remote titlebar action expands the task sidebar instead of opening a remote dialog", () => {
     expect(source).toContain("function openRemoteFromTitleBar");
     expect(source).toContain("setSidebarCollapsedAndPersist(false)");
-    expect(source).not.toContain("<RemoteSessionsDialog");
+    expect(source).not.toContain("showRemote");
   });
 });
 

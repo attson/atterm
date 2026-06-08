@@ -3,6 +3,9 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { __setPlatformForTests } from "./platform";
 import { createFakePlatform } from "./platform/__tests__/_fakePlatform";
+import { __setBindingsForTest } from "./lib/api";
+import { TYPE, NIL_SID, encodeFrame, encodeText } from "./lib/proto";
+import type { SessionInfo } from "./lib/connection";
 import App from "./App.vue";
 
 // jsdom does not implement matchMedia; stub it so xterm's ScreenDprMonitor
@@ -39,6 +42,13 @@ describe("tab activation", () => {
 describe("terminal toasts", () => {
   test("wires pane-grid toast events to the existing toast surface", () => {
     expect(source).toContain('@toast="showToast"');
+  });
+});
+
+describe("remote session discovery", () => {
+  test("remote list snapshots do not clear already-open panes", () => {
+    const body = source.match(/function\s+applyRemoteSessions\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(body).not.toContain("sweepMissingSessions");
   });
 });
 
@@ -144,3 +154,130 @@ describe("TitleBar caps gate", () => {
     expect(w.find('[data-testid="titlebar-root"]').exists()).toBe(false)
   })
 })
+
+describe("remote tab session retention", () => {
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public url: string) {
+      FakeWebSocket.instances.push(this);
+    }
+
+    send() {}
+    close() {
+      this.readyState = FakeWebSocket.CONNECTING;
+      this.onclose?.();
+    }
+
+    emitSessions(sessions: SessionInfo[]) {
+      const bytes = encodeFrame(TYPE.LIST_RESP, NIL_SID, encodeText(JSON.stringify(sessions)));
+      this.onmessage?.({ data: bytes.buffer } as MessageEvent);
+    }
+  }
+
+  const remoteSession: SessionInfo = {
+    id: "remote-1",
+    command: "claude",
+    cwd: "/tmp",
+    title: "claude",
+    cols: 120,
+    rows: 40,
+    started_at: 1,
+    host_id: "host-remote",
+    host: "remote-host",
+    user: "attson",
+  };
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    __setPlatformForTests(createFakePlatform());
+    __setBindingsForTest({
+      GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
+      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", token: "" }),
+      GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
+      GetRelayConfig: vi.fn().mockResolvedValue({
+        url: "ws://remote",
+        token: "token",
+        allow_insecure_relay: false,
+        remote_permission: "full",
+        connected: true,
+      }),
+      GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(0),
+      ListShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
+      NewSession: vi.fn().mockResolvedValue({ session_id: "local-1" }),
+      CloseSession: vi.fn().mockResolvedValue(undefined),
+      GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      ConfirmQuit: vi.fn().mockResolvedValue(undefined),
+      MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
+    } as any);
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+  });
+
+  it("keeps an opened remote pane attached when a transient list snapshot omits it", async () => {
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TabBar: true,
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          TaskSidebar: {
+            template: `<button data-testid="open-remote" @click="$emit('open', { session_id: 'remote-1' })">open</button>`,
+          },
+          PaneGrid: {
+            props: ["tab"],
+            template: `
+              <div data-testid="pane-grid">
+                <div
+                  v-for="pane in tab.panes"
+                  :key="pane.sessionId || 'empty'"
+                  :data-testid="pane.sessionId ? 'pane-session' : 'pane-empty'"
+                  :data-session-id="pane.sessionId || ''"
+                >{{ pane.sessionId || 'empty' }}</div>
+              </div>
+            `,
+          },
+        },
+      },
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await flushPromises();
+
+    const visiblePaneSessionId = () => {
+      const pane = wrapper.findAll('[data-testid="pane-session"]').find((p) => p.isVisible());
+      return pane?.attributes("data-session-id");
+    };
+
+    const remoteSocket = FakeWebSocket.instances.find((ws) => ws.url === "ws://remote/client-sessions");
+    expect(remoteSocket).toBeTruthy();
+    remoteSocket!.emitSessions([remoteSession]);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="open-remote"]').trigger("click");
+    await flushPromises();
+    expect(visiblePaneSessionId()).toBe("remote-1");
+
+    remoteSocket!.emitSessions([]);
+    await flushPromises();
+
+    expect(visiblePaneSessionId()).toBe("remote-1");
+    expect(wrapper.find('[data-testid="pane-empty"]').exists()).toBe(false);
+  });
+});

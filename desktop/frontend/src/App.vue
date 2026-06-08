@@ -351,7 +351,7 @@ const { onMouseDown: onPanelResizeDown } = useResizer({
   },
 });
 
-// Sessions visible across all current tabs (drives sweep + remote-discover panel).
+// Sessions visible across all current tabs (drives local sweep + remote-discover panel).
 const allUsedSessionIds = computed(() => {
   const s = new Set<string>();
   for (const t of tabs.value) for (const p of t.panes) if (p.sessionId) s.add(p.sessionId);
@@ -381,10 +381,10 @@ function showToast(msg: string) {
 }
 
 // snapshotKnownSessions captures id → SessionInfo for everything we currently
-// know about (local + remote). Used before applying a new session list so
+// know about. Used before applying a new local session list so
 // sweepMissingSessions can stash the last-known info on a pane right before
-// nulling its sessionId — keeps the tab label meaningful across a transient
-// host disconnect.
+// nulling its sessionId, keeping the tab label meaningful after a local PTY
+// exits or disappears.
 function snapshotKnownSessions(): Map<string, SessionInfo> {
   const m = new Map<string, SessionInfo>();
   for (const s of localList.value) m.set(s.id, s);
@@ -394,12 +394,12 @@ function snapshotKnownSessions(): Map<string, SessionInfo> {
 
 function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
   const localIds = new Set(localList.value.map((s) => s.id));
-  const remoteIds = new Set(remoteList.value.map((s) => s.id));
   for (const t of tabs.value) {
     for (let i = 0; i < t.panes.length; i++) {
       const p = t.panes[i];
       if (!p.sessionId) continue;
-      if (p.remote ? !remoteIds.has(p.sessionId) : !localIds.has(p.sessionId)) {
+      if (p.remote) continue;
+      if (!localIds.has(p.sessionId)) {
         // Stash the SessionInfo we had a moment ago so the TabBar can still
         // show a useful title. Fall back to whatever the pane already cached
         // (covers the case where two consecutive sweeps fire before the host
@@ -425,10 +425,8 @@ function applyLocalSessions(sessions: SessionInfo[]) {
 }
 
 function applyRemoteSessions(sessions: SessionInfo[]) {
-  const snap = snapshotKnownSessions();
   remoteRawList.value = sessions;
   refreshVisibleRemoteSessions();
-  sweepMissingSessions(snap);
 }
 
 function connectLocalSessionList(endpoint: Endpoint) {
@@ -448,7 +446,6 @@ function connectRemoteSessionList(endpoint: Endpoint | null) {
   remoteRawList.value = [];
   remoteList.value = [];
   remoteEndpoint.value = endpoint;
-  sweepMissingSessions();
   if (!endpoint) return;
   remoteSessionListConn = new SessionListConnection(endpoint, {
     onSessions: applyRemoteSessions,
@@ -707,9 +704,8 @@ const tabSummaries = computed(() =>
   tabs.value.map((t) => {
     const active = t.panes[t.activePaneIdx];
     const info = active?.sessionId ? findSessionInfo(active.sessionId, active.remote) ?? null : null;
-    // When a remote host briefly drops, sweepMissingSessions nulls the
-    // pane's sessionId but stashes lastSeenInfo. Surface it as the tab's
-    // activeSession + disconnected flag so the label stays meaningful.
+    // Local sessions can disappear before the tab is closed; surface the
+    // stashed lastSeenInfo so the label stays meaningful after the sweep.
     const fallback = !info && active?.lastSeenInfo ? active.lastSeenInfo : null;
     return {
       id: t.id,

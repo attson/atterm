@@ -124,8 +124,14 @@ describe("merged title bar", () => {
   });
 
   test("wires open-remote and open-settings events", () => {
-    expect(source).toContain('@open-remote="showRemote = true"');
+    expect(source).toContain('@open-remote="openRemoteFromTitleBar"');
     expect(source).toContain('@open-settings="showSettings = true"');
+  });
+
+  test("remote titlebar action expands the task sidebar instead of opening a remote dialog", () => {
+    expect(source).toContain("function openRemoteFromTitleBar");
+    expect(source).toContain("setSidebarCollapsedAndPersist(false)");
+    expect(source).not.toContain("<RemoteSessionsDialog");
   });
 });
 

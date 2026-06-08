@@ -8,7 +8,6 @@ import TaskSidebar from "./components/TaskSidebar.vue";
 import { useWindowMaximized } from "./composables/useWindowMaximized";
 import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
-import RemoteSessionsDialog from "./components/RemoteSessionsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import ShortcutHints from "./components/ShortcutHints.vue";
@@ -117,6 +116,10 @@ function onSidebarOpen(s: RemoteSession) {
   openRemoteAsTab(s.session_id);
 }
 
+function openRemoteFromTitleBar() {
+  void setSidebarCollapsedAndPersist(false);
+}
+
 async function onMarkSeen(payload: MarkSessionsSeenOpts) {
   try {
     await markSessionsSeen(payload);
@@ -132,7 +135,6 @@ const status = ref<"loading" | "ready" | "error">("loading");
 const errorMsg = ref<string>("");
 const starting = ref(false);
 const showSettings = ref(false);
-const showRemote = ref(false);
 const toast = ref<string>("");
 
 const quitDialogOpen = ref(false);
@@ -678,14 +680,12 @@ function onSwitchTab(delta: number) {
 
 function openRemoteAsTab(sessionId: string) {
   // If any tab already holds a pane for this session, just switch to it.
-  // Both the Remote Sessions dialog and the Task sidebar funnel through
-  // here; a second copy of the same session is confusing (especially via
-  // the sidebar, where the clicked row matches a single open tab 1:1).
+  // Keep one tab per session so the clicked sidebar row maps to a single
+  // terminal tab instead of duplicating the same remote session.
   const existing = tabs.value.find((t) =>
     t.panes.some((p) => p.sessionId === sessionId),
   );
   if (existing) {
-    showRemote.value = false;
     gotoTab(existing.id);
     return;
   }
@@ -696,7 +696,6 @@ function openRemoteAsTab(sessionId: string) {
     panes: [{ sessionId, remote: true }],
     activePaneIdx: 0,
   });
-  showRemote.value = false;
   gotoTab(id);
 }
 
@@ -850,7 +849,7 @@ onUnmounted(() => {
       :remote-endpoint="remoteEndpoint"
       :available-remote-count="availableRemote.length"
       :update-badge="updateBadge"
-      @open-remote="showRemote = true"
+      @open-remote="openRemoteFromTitleBar"
       @open-settings="showSettings = true"
     />
 
@@ -937,13 +936,6 @@ onUnmounted(() => {
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @relay-config-changed="refreshRelayConfig"
       @close="showSettings = false; settingsInitialTab = undefined; refreshRelayConfig()"
-    />
-    <RemoteSessionsDialog
-      v-if="showRemote"
-      :sessions="availableRemote"
-      @open="openRemoteAsTab"
-      @markSeen="onMarkSeen"
-      @close="showRemote = false"
     />
     <SessionPickerDialog
       v-if="pickerCtx"

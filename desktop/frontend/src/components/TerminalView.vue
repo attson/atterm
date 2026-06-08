@@ -312,6 +312,14 @@ function safeFit() {
   }
 }
 
+function scrollToBottomAfterWriteQueue() {
+  const current = term;
+  if (!current) return;
+  current.write("", () => {
+    if (term === current) current.scrollToBottom();
+  });
+}
+
 async function ensureTerm() {
   if (term) return;
   term = new Terminal({
@@ -438,6 +446,7 @@ function startConnection() {
       },
       onReplayProgress: (progress) => {
         replayProgress.value = progress.phase === "end" ? null : progress;
+        if (progress.phase === "end") scrollToBottomAfterWriteQueue();
       },
       onMeta: (meta) => {
         if (typeof meta?.cols === "number") ptyCols.value = meta.cols;

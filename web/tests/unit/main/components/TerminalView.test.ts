@@ -2,6 +2,33 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 const sessionConnectionInstances: any[] = []
+const terminalInstances: any[] = []
+
+vi.mock('xterm', () => {
+  return {
+    Terminal: vi.fn().mockImplementation(() => {
+      const instance = {
+        options: {},
+        loadAddon: vi.fn(),
+        open: vi.fn(),
+        focus: vi.fn(),
+        onData: vi.fn(),
+        onResize: vi.fn(),
+        write: vi.fn((_data: unknown, cb?: () => void) => cb?.()),
+        scrollToBottom: vi.fn(),
+        getSelection: vi.fn().mockReturnValue(''),
+        reset: vi.fn(),
+        dispose: vi.fn(),
+      }
+      terminalInstances.push(instance)
+      return instance
+    }),
+  }
+})
+
+vi.mock('xterm-addon-fit', () => ({
+  FitAddon: vi.fn().mockImplementation(() => ({ fit: vi.fn() })),
+}))
 
 vi.mock('@shared/ws/client-conn', () => {
   return {
@@ -37,6 +64,7 @@ describe('TerminalView.vue', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     sessionConnectionInstances.length = 0
+    terminalInstances.length = 0
     vi.clearAllMocks()
   })
 
@@ -75,6 +103,22 @@ describe('TerminalView.vue', () => {
     conn.fire('onReplayProgress', { phase: 'end', bytes: 100, total_bytes: 100, seq: 0 })
     await flushPromises()
     expect(wrapper.find('[data-testid="replay-progress"]').exists()).toBe(false)
+  })
+
+  it('scrolls to the newest output after initial replay finishes', async () => {
+    mountView({ sessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+    await flushPromises()
+    const conn = sessionConnectionInstances[0]!
+    const terminal = terminalInstances[0]!
+
+    conn.fire('onReplayProgress', { phase: 'start', bytes: 0, total_bytes: 100, seq: 0 })
+    conn.fire('onOutput', new TextEncoder().encode('old output\r\n'), 1)
+    expect(terminal.scrollToBottom).not.toHaveBeenCalled()
+
+    conn.fire('onReplayProgress', { phase: 'end', bytes: 100, total_bytes: 100, seq: 1 })
+    await flushPromises()
+
+    expect(terminal.scrollToBottom).toHaveBeenCalledOnce()
   })
 
   it('shows the viewer overlay when not driver; take-control calls claimDriver', async () => {

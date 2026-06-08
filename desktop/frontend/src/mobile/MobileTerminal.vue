@@ -66,6 +66,14 @@ function fitIfDriver() {
   try { fit.fit() } catch { /* container not laid out yet */ }
 }
 
+function scrollToBottomAfterWriteQueue() {
+  const current = term
+  if (!current) return
+  current.write('', () => {
+    if (term === current) current.scrollToBottom()
+  })
+}
+
 const auxKeys = ref<readonly AuxKey[]>([])
 
 const canControl = computed(() => (props.info.remote_permission || 'full') !== 'view')
@@ -234,6 +242,9 @@ onMounted(() => {
 
   conn = new SessionConnection(props.endpoint, props.sessionId, {
     onOutput: (data) => term?.write(decode(data)),
+    onReplayProgress: (progress) => {
+      if (progress.phase === 'end') scrollToBottomAfterWriteQueue()
+    },
     onMeta: (meta) => {
       emit('meta', { cwd: meta.cwd, title: meta.title })
       // Viewer: lock our grid to the PTY's real cols/rows so we mirror the

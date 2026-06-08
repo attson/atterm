@@ -54,6 +54,14 @@ function safeFit() {
   }
 }
 
+function scrollToBottomAfterWriteQueue() {
+  const current = term
+  if (!current) return
+  current.write('', () => {
+    if (term === current) current.scrollToBottom()
+  })
+}
+
 function buildTerm() {
   term = new Terminal({
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -98,6 +106,7 @@ function buildConn() {
       const phase = String((p as { phase?: unknown }).phase)
       if (phase === 'end') {
         replay.value = null
+        scrollToBottomAfterWriteQueue()
       } else {
         replay.value = {
           bytes: Number((p as { bytes?: unknown }).bytes ?? 0),

@@ -21,6 +21,13 @@ describe("TerminalView overlay placement", () => {
   });
 });
 
+describe("TerminalView replay scroll", () => {
+  test("scrolls to the newest output after initial replay finishes", () => {
+    expect(source).toContain("function scrollToBottomAfterWriteQueue()");
+    expect(source).toMatch(/progress\.phase === "end"[\s\S]*scrollToBottomAfterWriteQueue\(\)/);
+  });
+});
+
 describe("TerminalView fit geometry", () => {
   test("puts terminal padding on xterm element so FitAddon subtracts it", () => {
     const termStyle = styleBlockFor(".term");

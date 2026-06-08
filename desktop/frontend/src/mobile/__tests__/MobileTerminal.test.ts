@@ -63,6 +63,7 @@ const termWrite = vi.fn()
 const termDispose = vi.fn()
 const termFit = vi.fn()
 const termResize = vi.fn()
+const termScrollToBottom = vi.fn()
 let lastTerm: any = null
 vi.mock('xterm', () => ({
   Terminal: class {
@@ -74,11 +75,12 @@ vi.mock('xterm', () => ({
     onData(cb: (s: string) => void) { (this as any)._onData = cb }
     onResize() {}
     open() {}
-    write(d: unknown) { termWrite(d) }
+    write(d: unknown, cb?: () => void) { termWrite(d); cb?.() }
     dispose() { termDispose() }
     focus() {}
     loadAddon() {}
     resize(c: number, r: number) { termResize(c, r) }
+    scrollToBottom() { termScrollToBottom() }
   },
 }))
 vi.mock('xterm-addon-fit', () => ({
@@ -118,6 +120,17 @@ describe('MobileTerminal', () => {
     mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onOutput?.(new Uint8Array([104, 105]))
     expect(termWrite).toHaveBeenCalled()
+  })
+
+  it('scrolls to newest output when initial replay finishes', async () => {
+    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    lastHandlers.onReplayProgress?.({ phase: 'start', bytes: 0, total_bytes: 100, seq: 0 })
+    lastHandlers.onOutput?.(new Uint8Array([104, 105]))
+    expect(termScrollToBottom).not.toHaveBeenCalled()
+
+    lastHandlers.onReplayProgress?.({ phase: 'end', bytes: 100, total_bytes: 100, seq: 1 })
+
+    expect(termScrollToBottom).toHaveBeenCalledOnce()
   })
 
   it('emits ended on CLOSE', () => {

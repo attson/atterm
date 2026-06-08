@@ -37,8 +37,8 @@ func TestZshSnippetHasGuardAndHookRegistration(t *testing.T) {
 	if !strings.Contains(zshSnippet, `\033]133`) && !strings.Contains(zshSnippet, `\x1b]133`) {
 		t.Fatalf("zsh snippet does not emit OSC 133 sequences")
 	}
-	if !strings.Contains(zshSnippet, "133;C;%s") || !strings.Contains(zshSnippet, `"$1"`) {
-		t.Fatalf("zsh snippet does not include the preexec command in OSC 133;C")
+	if !strings.Contains(zshSnippet, "133;C;%s") || !strings.Contains(zshSnippet, `${2:-$1}`) {
+		t.Fatalf("zsh snippet must emit the alias-expanded preexec command in OSC 133;C")
 	}
 }
 

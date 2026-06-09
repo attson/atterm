@@ -226,7 +226,7 @@ func (a *AdminServer) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 // handleResetPassword implements POST /admin/api/users/{id}/reset-password.
 // Response 200: {"plaintext": "tmp_…"}
-// Atomically: generates tmp password, updates hash, deletes web_sessions.
+// Atomically: generates tmp password, updates hash, deletes sessions.
 func (a *AdminServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("id")
 	if userID == "" {

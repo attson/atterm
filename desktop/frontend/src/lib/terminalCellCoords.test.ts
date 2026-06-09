@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { cellCoordsAt, type CellSizeReader } from './terminalCellCoords'
+import { describe, it, expect, vi } from 'vitest'
+import { cellCoordsAt, readXtermCellSize, type CellSizeReader } from './terminalCellCoords'
 
 // Build a fake viewport element with a known bounding rect and scrollTop.
 function viewport({ x, y, w, h, scrollTop = 0 }: { x: number; y: number; w: number; h: number; scrollTop?: number }) {
@@ -41,5 +41,24 @@ describe('cellCoordsAt', () => {
     const vp = viewport({ x: 100, y: 200, w: 640, h: 384 })
     // pixel (108, 216) is (cellX 1, cellY 1) → col 1, row 1
     expect(cellCoordsAt(108, 216, term, vp, cellReader)).toEqual({ col: 1, row: 1 })
+  })
+  it('returns null at the exact right edge (half-open interval)', () => {
+    const vp = viewport({ x: 0, y: 0, w: 640, h: 384 })
+    expect(cellCoordsAt(640, 40, term, vp, cellReader)).toBeNull()
+  })
+  it('returns null when the cell-size reader gives a zero width', () => {
+    const vp = viewport({ x: 0, y: 0, w: 640, h: 384 })
+    const zeroReader: CellSizeReader = () => ({ width: 0, height: 16 })
+    expect(cellCoordsAt(28, 40, term, vp, zeroReader)).toBeNull()
+  })
+  it('readXtermCellSize warns once per term when the internal API is unavailable', () => {
+    const fakeTerm = { options: { fontSize: 15, lineHeight: 1.0 } } as any
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    readXtermCellSize(fakeTerm)
+    readXtermCellSize(fakeTerm)
+    readXtermCellSize(fakeTerm)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toMatch(/xterm renderer dimensions unavailable/)
+    warn.mockRestore()
   })
 })

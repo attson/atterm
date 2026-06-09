@@ -14,6 +14,11 @@ export interface CellSize {
 // callers pass `readXtermCellSize` (below); tests stub it.
 export type CellSizeReader = (term: Terminal) => CellSize
 
+// fellBack tracks Terminal instances that have already triggered the fallback
+// warn, so we only warn once per Terminal lifetime. WeakSet lets entries be
+// garbage-collected together with the Terminal.
+const fellBack = new WeakSet<object>()
+
 // readXtermCellSize reads xterm's CSS-pixel cell size from its renderer's
 // dimensions. xterm 5.x exposes this via _core._renderService.dimensions —
 // an internal API. Falls back to a degraded `fontSize × lineHeight` estimate
@@ -26,9 +31,13 @@ export function readXtermCellSize(term: Terminal): CellSize {
   if (dim && typeof dim.width === 'number' && typeof dim.height === 'number' && dim.width > 0 && dim.height > 0) {
     return { width: dim.width, height: dim.height }
   }
+  if (!fellBack.has(term as unknown as object)) {
+    fellBack.add(term as unknown as object)
+    console.warn('[AT Term] terminalCellCoords: xterm renderer dimensions unavailable, using fontSize estimate. xterm internal API may have changed.')
+  }
   // Fallback: estimate from font options. Mono fonts average ~0.6 width/height
-  // ratio; xterm defaults lineHeight to 1.0.
-  const fontSize = (term.options.fontSize ?? 12) as number
+  // ratio; xterm 5 default fontSize is 15 and default lineHeight is 1.0.
+  const fontSize = (term.options.fontSize ?? 15) as number
   const lineHeight = (term.options.lineHeight ?? 1.0) as number
   return { width: fontSize * 0.6, height: fontSize * lineHeight }
 }

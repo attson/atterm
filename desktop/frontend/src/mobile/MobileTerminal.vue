@@ -16,6 +16,8 @@ import { useI18n } from '../i18n/useI18n'
 import { wordBoundaryAt } from '../lib/wordBoundary'
 import { cellCoordsAt, readXtermCellSize } from '../lib/terminalCellCoords'
 import MobileSelectionPopover from './MobileSelectionPopover.vue'
+import { copyTerminalSelection } from '../lib/terminalCopy'
+import { prepareSendPayload } from '../lib/terminalContextMenu'
 
 const props = defineProps<{
   endpoint: Endpoint
@@ -48,6 +50,13 @@ const popover = reactive({
   copying: false,
   sending: false,
 })
+const toastText = ref<string | null>(null)
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function showToast(msg: string) {
+  toastText.value = msg
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastText.value = null; toastTimer = null }, 1800)
+}
 let pressTimer: ReturnType<typeof setTimeout> | null = null
 let pressAnchor: { x: number; y: number } | null = null
 let dragAnchor: { start: number; end: number; row: number } | null = null
@@ -421,8 +430,33 @@ function onDocumentPointerDown(ev: PointerEvent) {
   exitSelection()
 }
 
-function onCopy() { exitSelection() }
-function onSend() { exitSelection() }
+async function onCopy() {
+  if (!term) { exitSelection(); return }
+  if (popover.copying) return
+  popover.copying = true
+  let ok = false
+  try {
+    ok = await copyTerminalSelection(term)
+  } catch (e) {
+    console.warn('[AT Term] copy failed', e)
+  }
+  popover.copying = false
+  showToast(ok ? t('mobile.selection.copied') : t('terminal.copyFailed'))
+  exitSelection()
+}
+
+function onSend() {
+  if (!term || !conn) { exitSelection(); return }
+  if (popover.sending) return
+  popover.sending = true
+  try {
+    const payload = prepareSendPayload(term.getSelection())
+    if (payload) sendRaw(payload)
+  } finally {
+    popover.sending = false
+    exitSelection()
+  }
+}
 function onCancel() { exitSelection() }
 
 onMounted(() => {
@@ -569,6 +603,7 @@ onBeforeUnmount(() => {
   term = null
   fit = null
   if (protectClearTimer) { clearTimeout(protectClearTimer); protectClearTimer = null }
+  if (toastTimer) { clearTimeout(toastTimer); toastTimer = null }
 })
 
 function onTermPointerDown(ev: PointerEvent) {
@@ -599,6 +634,7 @@ function onTermPointerDown(ev: PointerEvent) {
       @send="onSend"
       @cancel="onCancel"
     />
+    <div v-if="toastText" class="sel-toast" data-testid="mobile-selection-toast">{{ toastText }}</div>
     <div v-if="!isDriver" class="viewer-overlay">
       <div class="viewer-card">
         <div class="viewer-title">{{ t('terminal.remoteHasControl') }}</div>
@@ -718,4 +754,17 @@ function onTermPointerDown(ev: PointerEvent) {
 .paste-confirm { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
 .paste-confirm textarea { min-width: 0; resize: vertical; border-radius: 8px; border: 1px solid #1e2638; background: #020617; color: #e2e8f0; padding: 6px 8px; font: 0.78rem ui-monospace, Menlo, monospace; }
 .paste-confirm button { height: 30px; border-radius: 7px; border: 1px solid #1e2638; background: #11182b; color: #cbd5e1; padding: 0 10px; }
+.sel-toast {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(80px + env(safe-area-inset-bottom));
+  background: rgba(20, 22, 30, 0.92);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 14px;
+  font-size: 12px;
+  z-index: 1001;
+  pointer-events: none;
+}
 </style>

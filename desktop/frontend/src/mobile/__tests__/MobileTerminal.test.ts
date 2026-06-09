@@ -831,5 +831,87 @@ describe('MobileTerminal', () => {
         vi.useRealTimers()
       }
     })
+
+    it('copy: writes the selection to the clipboard and shows a toast', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelection.mockReturnValue('git')
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-copy"]').trigger('click')
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledWith('git')
+      expect(w.find('[data-testid="mobile-selection-toast"]').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-selection-toast"]').text()).toBe('Copied to clipboard')
+      expect(termClearSelection).toHaveBeenCalled()
+    })
+
+    it('copy: shows a failure toast when clipboard write rejects', async () => {
+      const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelection.mockReturnValue('git')
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-copy"]').trigger('click')
+      await flushPromises()
+      expect(w.find('[data-testid="mobile-selection-toast"]').text()).toBe('copy failed')
+    })
+
+    it('send: prepares payload and forwards to conn.sendInput, then exits selection', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('ls -la')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelection.mockReturnValue('ls -la')
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 6, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-send"]').trigger('click')
+      expect(sendInput).toHaveBeenCalledWith('ls -la\r')
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('send: silently no-ops when prepareSendPayload returns null', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('foo')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      // Now stage getSelection to return CR-only — prepareSendPayload normalizes
+      // \r and strips trailing \r, leaving '' → returns null.
+      termGetSelection.mockReturnValue('\r')
+
+      sendInput.mockClear()
+      await w.find('[data-testid="selection-popover-send"]').trigger('click')
+      expect(sendInput).not.toHaveBeenCalled()
+      // The selection still exits even though no send happened.
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
   })
 })

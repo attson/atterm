@@ -279,6 +279,91 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	return nil
 }
 
+// LoginRemoteRelay calls POST /api/auth/login on the given relay URL with the
+// supplied credentials, parses the returned {session_token, expires_at, user}
+// envelope, and persists (relayURL, session_token) to local config via
+// SetRelayConfig. Bound to the frontend's "Connect to remote relay" form.
+//
+// The user-facing input is the HTTP(S) URL of the relay (the same URL their
+// browser hits). We POST to that URL directly and normalize the scheme to
+// ws:// or wss:// before persistence — the uplink and validateRelayEndpoint
+// both expect the WebSocket form. HTTP API calls translate back on the fly
+// (see MarkSessionsSeen et al.).
+func (a *App) LoginRemoteRelay(relayURL, email, password string) error {
+	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
+	if relayURL == "" {
+		return fmt.Errorf("relay url is empty")
+	}
+	httpURL, wsURL, err := relayLoginEndpoints(relayURL)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	if err != nil {
+		return err
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", httpURL+"/api/auth/login", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("relay /api/auth/login returned status %d", resp.StatusCode)
+	}
+	var out struct {
+		SessionToken string `json:"session_token"`
+		ExpiresAt    int64  `json:"expires_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return fmt.Errorf("relay /api/auth/login: decode response: %w", err)
+	}
+	if out.SessionToken == "" {
+		return fmt.Errorf("relay /api/auth/login: empty session_token")
+	}
+	// Preserve unrelated relay-config fields (AllowInsecureRelay, RemotePermission)
+	// so login doesn't silently reset them. SetRelayConfig also restarts the uplink.
+	prev := a.GetRelayConfig()
+	return a.SetRelayConfig(RelayConfig{
+		URL:                wsURL,
+		Token:              out.SessionToken,
+		AllowInsecureRelay: prev.AllowInsecureRelay,
+		RemotePermission:   prev.RemotePermission,
+	})
+}
+
+// relayLoginEndpoints normalizes a user-entered relay URL into the (http(s),
+// ws(s)) pair we need. Accepts http://, https://, ws://, wss:// — anything
+// else is rejected so the caller sees a clear error before the POST.
+func relayLoginEndpoints(raw string) (httpURL, wsURL string, err error) {
+	u, perr := url.Parse(raw)
+	if perr != nil || u.Host == "" {
+		return "", "", fmt.Errorf("invalid relay url %q", raw)
+	}
+	switch u.Scheme {
+	case "http", "ws":
+		httpURL = "http://" + u.Host + u.Path
+		wsURL = "ws://" + u.Host + u.Path
+	case "https", "wss":
+		httpURL = "https://" + u.Host + u.Path
+		wsURL = "wss://" + u.Host + u.Path
+	default:
+		return "", "", fmt.Errorf("relay url scheme must be http(s) or ws(s), got %q", u.Scheme)
+	}
+	return strings.TrimRight(httpURL, "/"), strings.TrimRight(wsURL, "/"), nil
+}
+
 // SetUplinkPaused toggles the user-controlled pause flag without touching the
 // relay URL, token, insecure flag, or remote permission. This fixes the
 // "disconnect erases config" UX bug: the URL and token survive across

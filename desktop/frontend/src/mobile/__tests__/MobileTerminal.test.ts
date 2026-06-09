@@ -64,16 +64,31 @@ const termDispose = vi.fn()
 const termFit = vi.fn()
 const termResize = vi.fn()
 const termScrollToBottom = vi.fn()
+const termSelect = vi.fn()
+const termSelectLines = vi.fn()
+const termClearSelection = vi.fn()
+const termGetSelection = vi.fn().mockReturnValue('')
+const termGetSelectionPosition = vi.fn().mockReturnValue(undefined as any)
+const termScrollLines = vi.fn()
+let selectionChangeCb: (() => void) | null = null
+let bufferLineText = ''
 let lastTerm: any = null
+
 vi.mock('xterm', () => ({
   Terminal: class {
     options: Record<string, unknown> = {}
     cols = 80
     rows = 24
     textarea = document.createElement('textarea')
+    buffer = {
+      active: {
+        getLine: (_row: number) => ({ translateToString: () => bufferLineText }),
+      },
+    }
     constructor() { lastTerm = this }
     onData(cb: (s: string) => void) { (this as any)._onData = cb }
     onResize() {}
+    onSelectionChange(cb: () => void) { selectionChangeCb = cb; return { dispose() {} } }
     open() {}
     write(d: unknown, cb?: () => void) { termWrite(d); cb?.() }
     dispose() { termDispose() }
@@ -81,8 +96,18 @@ vi.mock('xterm', () => ({
     loadAddon() {}
     resize(c: number, r: number) { termResize(c, r) }
     scrollToBottom() { termScrollToBottom() }
+    select(c: number, r: number, len: number) { termSelect(c, r, len) }
+    selectLines(s: number, e: number) { termSelectLines(s, e) }
+    clearSelection() { termClearSelection() }
+    hasSelection() { return Boolean(termGetSelection()) }
+    getSelection() { return termGetSelection() }
+    getSelectionPosition() { return termGetSelectionPosition() }
+    scrollLines(n: number) { termScrollLines(n) }
   },
 }))
+
+// setBufferLine lets a test stage what term.buffer.active.getLine(row) returns.
+function setBufferLine(text: string) { bufferLineText = text }
 vi.mock('xterm-addon-fit', () => ({
   FitAddon: class { fit() { termFit() } activate() {} },
 }))
@@ -107,7 +132,16 @@ import type { RemoteSession } from '../../platform/types'
 
 const info: RemoteSession = { session_id: 's1', host_id: 'h', host: 'box', user: 'me', title: 't', cols: 80, rows: 24 }
 
-beforeEach(() => { vi.clearAllMocks(); lastHandlers = null; lastArgs = null; eventHandlers.clear() })
+beforeEach(() => {
+  vi.clearAllMocks()
+  lastHandlers = null
+  lastArgs = null
+  eventHandlers.clear()
+  selectionChangeCb = null
+  bufferLineText = ''
+  termGetSelection.mockReturnValue('')
+  termGetSelectionPosition.mockReturnValue(undefined)
+})
 
 describe('MobileTerminal', () => {
   it('creates SessionConnection with endpoint+sessionId and attaches on mount', () => {
@@ -451,5 +485,458 @@ describe('MobileTerminal', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await w.find('.term').trigger('pointerdown')
     expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
+  })
+
+  describe('long-press selection', () => {
+    function info(over: Partial<RemoteSession> = {}): RemoteSession {
+      return { session_id: 's1', host_id: 'h', host: 'box', user: 'me', title: 't', cols: 80, rows: 24, remote_permission: 'full', ...over }
+    }
+
+    async function mountReady(extra: Partial<RemoteSession> = {}) {
+      const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: info(extra), active: true } })
+      await flushPromises()
+      return w
+    }
+
+    function viewportEl(w: ReturnType<typeof mount>) {
+      // jsdom returns null for querySelector on inserted children of mocked xterm.
+      // For these tests we attach our own div with the xterm-viewport class and
+      // dispatch events on it.
+      const root = w.element as HTMLElement
+      let vp = root.querySelector('.xterm-viewport') as HTMLElement | null
+      if (!vp) {
+        vp = document.createElement('div')
+        vp.className = 'xterm-viewport'
+        Object.defineProperty(vp, 'getBoundingClientRect', { value: () => ({ left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, x: 0, y: 0, toJSON() { return this } }) })
+        Object.defineProperty(vp, 'scrollTop', { value: 0, configurable: true })
+        ;(root.querySelector('.term') as HTMLElement).appendChild(vp)
+      }
+      return vp
+    }
+
+    function pointerEvent(type: string, x: number, y: number): PointerEvent {
+      // jsdom lacks PointerEvent; build a minimal stand-in via MouseEvent + extra props.
+      const ev = new MouseEvent(type, { clientX: x, clientY: y, bubbles: true })
+      Object.defineProperty(ev, 'pointerId', { value: 1 })
+      return ev as unknown as PointerEvent
+    }
+
+    it('does not select when canSend is false (control mode off)', async () => {
+      const w = await mountReady()
+      // controlMode is false by default; canSend is therefore false.
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 100, 80))
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('selects the word at the press position after 500 ms when canSend is true', async () => {
+      const w = await mountReady()
+      // Engage control mode (this also requires being driver — true by default in mock).
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')              // cell (2,0) is the 't' of "git"
+      // cellW/Hour derived from fallback: fontSize=12 → cellW=7.2, cellH=12.
+      // For col=2 row=0, clientX=15 (15/7.2 ≈ 2.08 → col 2), clientY=8 (8/12 = 0).
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(0, 0, 3)  // selects "git"
+      // Popover should now be visible (mock getSelectionPosition to return a non-null bbox so updatePopoverFromSelection produces a valid result)
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+    })
+
+    it('exits selection when the cancel button is tapped', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-cancel"]').trigger('click')
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('exits selection when control mode is turned off mid-selection', async () => {
+      const w = await mountReady()
+      const toggle = w.find('[data-testid="mobile-control-toggle"]')
+      await toggle.setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+
+      await toggle.setValue(false)
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('exits selection on viewport scroll', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      vp.dispatchEvent(new Event('scroll', { bubbles: true }))
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+    })
+
+    it('exits selection on outside (document) pointerdown', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+
+      document.dispatchEvent(pointerEvent('pointerdown', 500, 500))
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('does NOT enter selection on whitespace (wordBoundary len=0)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git   status')             // whitespace at cols 3,4,5
+      vp.dispatchEvent(pointerEvent('pointerdown', 32, 8))  // col 4 with cellW≈7.2 → whitespace
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('cancel button click still works when a real pointerdown precedes it (capture-phase doc handler does not eat it)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+
+      // Dispatch a REAL pointerdown on the cancel button (not a synthetic click).
+      // The capture-phase document handler MUST recognize the button as
+      // popover-internal and not pre-emptively exit the selection.
+      const cancelBtn = w.find('[data-testid="selection-popover-cancel"]').element as HTMLElement
+      cancelBtn.dispatchEvent(pointerEvent('pointerdown', 100, 50))
+      await flushPromises()
+      // Popover should still be present (document handler must NOT have exited).
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+      // Now the click follows the pointerdown — synthesize it to complete the gesture.
+      await w.find('[data-testid="selection-popover-cancel"]').trigger('click')
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('tap inside viewport during selecting clears the old selection (no zombie popover)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+      termClearSelection.mockClear()
+
+      // User taps inside viewport again (short tap, no long press). The
+      // previous selection should clear immediately on pointerdown, not
+      // wait for an outside tap.
+      vp.dispatchEvent(pointerEvent('pointerdown', 200, 80))
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('extends the selection within a row on pointermove > 4 px', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status -v')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))    // col 2 of "git"
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(0, 0, 3)         // selects "git"
+      termSelect.mockClear()
+
+      // Drag 60 px to the right → about 8 cells over.
+      vp.dispatchEvent(pointerEvent('pointermove', 75, 8))
+      // Single-row drag uses term.select; multi-row uses term.selectLines.
+      expect(termSelect).toHaveBeenCalled()
+      const lastCall = termSelect.mock.calls[termSelect.mock.calls.length - 1]
+      expect(lastCall[0]).toBe(0)      // start col stays at anchor word start
+      expect(lastCall[1]).toBe(0)      // single row
+      expect(lastCall[2]).toBeGreaterThan(3)  // grew past "git"
+    })
+
+    it('drag within the original word keeps the word selected (does not shrink)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))    // col 2 of "git"
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(0, 0, 3)         // selects "git"
+      termSelect.mockClear()
+
+      // Drag to col 1 (still inside "git"). Selection should stay at cells 0-2.
+      vp.dispatchEvent(pointerEvent('pointermove', 8, 8))
+      const calls = termSelect.mock.calls
+      // The implementation may call term.select multiple times during the move.
+      // What matters is that the final state still spans the original word.
+      const last = calls[calls.length - 1]
+      expect(last[0]).toBe(0)              // start col stays at word start
+      expect(last[1]).toBe(0)              // single row
+      expect(last[2]).toBeGreaterThanOrEqual(3)  // covers at least the full word
+    })
+
+    it('drag LEFT past the word start extends leftward, preserving the word', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      // Press on "bar" of "foo bar" (col 4–6); long-press at col 5
+      setBufferLine('foo bar')
+      vp.dispatchEvent(pointerEvent('pointerdown', 36, 8))    // 36/cellW → col 5 for cellW≈7.2
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(4, 0, 3)         // "bar"
+      termSelect.mockClear()
+
+      // Drag well past the word's left edge (col 0). Selection should grow leftward:
+      // c0 = min(4, cur.col), c1 = max(6, cur.col) where cur.col == 0,
+      // giving select(0, 0, 7).
+      vp.dispatchEvent(pointerEvent('pointermove', 0, 8))
+      const last = termSelect.mock.calls[termSelect.mock.calls.length - 1]
+      expect(last[0]).toBe(0)              // start col went left of original word
+      expect(last[1]).toBe(0)              // single row
+      expect(last[2]).toBeGreaterThanOrEqual(7)  // covers original word + leftward
+    })
+
+    it('pointercancel from pressing state cancels timer and returns to idle', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      // We're now in 'pressing' state with a 500ms timer running. Fire cancel BEFORE the timer.
+      vp.dispatchEvent(pointerEvent('pointercancel', 15, 8))
+      // Let the (cancelled) timer's nominal time pass.
+      await new Promise((r) => setTimeout(r, 600))
+      // No selection should have been created.
+      expect(termSelect).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('uses selectLines when the drag crosses rows', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))    // row 0
+      await new Promise((r) => setTimeout(r, 600))
+      termSelectLines.mockClear()
+
+      // Drag down past one row (cellH≈12 → y=50 is row 4)
+      vp.dispatchEvent(pointerEvent('pointermove', 60, 50))
+      expect(termSelectLines).toHaveBeenCalled()
+      const lastCall = termSelectLines.mock.calls[termSelectLines.mock.calls.length - 1]
+      expect(lastCall[0]).toBe(0)      // start row
+      expect(lastCall[1]).toBeGreaterThan(0)  // end row > start row
+    })
+
+    it('auto-scrolls when the drag is near the top edge', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = await mountReady()
+        await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+        const vp = viewportEl(w)
+        setBufferLine('git status')
+        vp.dispatchEvent(pointerEvent('pointerdown', 15, 80))
+        await vi.advanceTimersByTimeAsync(600)
+        termScrollLines.mockClear()
+
+        // Drag into top 24 px zone.
+        vp.dispatchEvent(pointerEvent('pointermove', 100, 10))
+        await vi.advanceTimersByTimeAsync(120)
+        expect(termScrollLines).toHaveBeenCalledWith(-3)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('auto-scrolls when the drag is near the bottom edge', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = await mountReady()
+        await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+        const vp = viewportEl(w)
+        setBufferLine('git status')
+        vp.dispatchEvent(pointerEvent('pointerdown', 15, 80))
+        await vi.advanceTimersByTimeAsync(600)
+        termScrollLines.mockClear()
+
+        // Drag into bottom 24 px zone (viewport bottom is 600).
+        vp.dispatchEvent(pointerEvent('pointermove', 100, 590))
+        await vi.advanceTimersByTimeAsync(120)
+        expect(termScrollLines).toHaveBeenCalledWith(3)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('stops auto-scrolling on pointerup', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = await mountReady()
+        await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+        const vp = viewportEl(w)
+        setBufferLine('git status')
+        vp.dispatchEvent(pointerEvent('pointerdown', 15, 80))
+        await vi.advanceTimersByTimeAsync(600)
+        vp.dispatchEvent(pointerEvent('pointermove', 100, 10))
+        await vi.advanceTimersByTimeAsync(120)
+        termScrollLines.mockClear()
+        vp.dispatchEvent(pointerEvent('pointerup', 100, 10))
+        await vi.advanceTimersByTimeAsync(300)
+        expect(termScrollLines).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('copy: writes the selection to the clipboard and shows a toast', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelection.mockReturnValue('git')
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-copy"]').trigger('click')
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledWith('git')
+      expect(w.find('[data-testid="mobile-selection-toast"]').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-selection-toast"]').text()).toBe('Copied to clipboard')
+      expect(termClearSelection).toHaveBeenCalled()
+    })
+
+    it('copy: shows a failure toast when clipboard write rejects', async () => {
+      const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelection.mockReturnValue('git')
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-copy"]').trigger('click')
+      await flushPromises()
+      expect(w.find('[data-testid="mobile-selection-toast"]').text()).toBe('Copy failed')
+    })
+
+    it('copy: silently exits when selection is empty (no toast)', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      // Selection appears (selectionChangeCb fires with a bbox), popover up.
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      // But by the time the user taps Copy, the selection has been cleared
+      // (e.g. by some other event). getSelection now returns ''.
+      termGetSelection.mockReturnValue('')
+
+      await w.find('[data-testid="selection-popover-copy"]').trigger('click')
+      await flushPromises()
+      expect(writeText).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="mobile-selection-toast"]').exists()).toBe(false)
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('send: prepares payload and forwards to conn.sendInput, then exits selection', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('ls -la')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelection.mockReturnValue('ls -la')
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 6, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-send"]').trigger('click')
+      expect(sendInput).toHaveBeenCalledWith('ls -la\r')
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('send: silently no-ops when prepareSendPayload returns null', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('foo')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      // Now stage getSelection to return CR-only — prepareSendPayload normalizes
+      // \r and strips trailing \r, leaving '' → returns null.
+      termGetSelection.mockReturnValue('\r')
+
+      sendInput.mockClear()
+      await w.find('[data-testid="selection-popover-send"]').trigger('click')
+      expect(sendInput).not.toHaveBeenCalled()
+      // The selection still exits even though no send happened.
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
   })
 })

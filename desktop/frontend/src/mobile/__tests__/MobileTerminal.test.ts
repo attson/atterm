@@ -64,16 +64,31 @@ const termDispose = vi.fn()
 const termFit = vi.fn()
 const termResize = vi.fn()
 const termScrollToBottom = vi.fn()
+const termSelect = vi.fn()
+const termSelectLines = vi.fn()
+const termClearSelection = vi.fn()
+const termGetSelection = vi.fn().mockReturnValue('')
+const termGetSelectionPosition = vi.fn().mockReturnValue(undefined as any)
+const termScrollLines = vi.fn()
+let selectionChangeCb: (() => void) | null = null
+let bufferLineText = ''
 let lastTerm: any = null
+
 vi.mock('xterm', () => ({
   Terminal: class {
     options: Record<string, unknown> = {}
     cols = 80
     rows = 24
     textarea = document.createElement('textarea')
+    buffer = {
+      active: {
+        getLine: (_row: number) => ({ translateToString: () => bufferLineText }),
+      },
+    }
     constructor() { lastTerm = this }
     onData(cb: (s: string) => void) { (this as any)._onData = cb }
     onResize() {}
+    onSelectionChange(cb: () => void) { selectionChangeCb = cb; return { dispose() {} } }
     open() {}
     write(d: unknown, cb?: () => void) { termWrite(d); cb?.() }
     dispose() { termDispose() }
@@ -81,8 +96,18 @@ vi.mock('xterm', () => ({
     loadAddon() {}
     resize(c: number, r: number) { termResize(c, r) }
     scrollToBottom() { termScrollToBottom() }
+    select(c: number, r: number, len: number) { termSelect(c, r, len) }
+    selectLines(s: number, e: number) { termSelectLines(s, e) }
+    clearSelection() { termClearSelection() }
+    hasSelection() { return Boolean(termGetSelection()) }
+    getSelection() { return termGetSelection() }
+    getSelectionPosition() { return termGetSelectionPosition() }
+    scrollLines(n: number) { termScrollLines(n) }
   },
 }))
+
+// setBufferLine lets a test stage what term.buffer.active.getLine(row) returns.
+function setBufferLine(text: string) { bufferLineText = text }
 vi.mock('xterm-addon-fit', () => ({
   FitAddon: class { fit() { termFit() } activate() {} },
 }))
@@ -107,7 +132,16 @@ import type { RemoteSession } from '../../platform/types'
 
 const info: RemoteSession = { session_id: 's1', host_id: 'h', host: 'box', user: 'me', title: 't', cols: 80, rows: 24 }
 
-beforeEach(() => { vi.clearAllMocks(); lastHandlers = null; lastArgs = null; eventHandlers.clear() })
+beforeEach(() => {
+  vi.clearAllMocks()
+  lastHandlers = null
+  lastArgs = null
+  eventHandlers.clear()
+  selectionChangeCb = null
+  bufferLineText = ''
+  termGetSelection.mockReturnValue('')
+  termGetSelectionPosition.mockReturnValue(undefined)
+})
 
 describe('MobileTerminal', () => {
   it('creates SessionConnection with endpoint+sessionId and attaches on mount', () => {
@@ -451,5 +485,149 @@ describe('MobileTerminal', () => {
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await w.find('.term').trigger('pointerdown')
     expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
+  })
+
+  describe('long-press selection', () => {
+    function info(over: Partial<RemoteSession> = {}): RemoteSession {
+      return { session_id: 's1', host_id: 'h', host: 'box', user: 'me', title: 't', cols: 80, rows: 24, remote_permission: 'full', ...over }
+    }
+
+    async function mountReady(extra: Partial<RemoteSession> = {}) {
+      const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: info(extra), active: true } })
+      await flushPromises()
+      return w
+    }
+
+    function viewportEl(w: ReturnType<typeof mount>) {
+      // jsdom returns null for querySelector on inserted children of mocked xterm.
+      // For these tests we attach our own div with the xterm-viewport class and
+      // dispatch events on it.
+      const root = w.element as HTMLElement
+      let vp = root.querySelector('.xterm-viewport') as HTMLElement | null
+      if (!vp) {
+        vp = document.createElement('div')
+        vp.className = 'xterm-viewport'
+        Object.defineProperty(vp, 'getBoundingClientRect', { value: () => ({ left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, x: 0, y: 0, toJSON() { return this } }) })
+        Object.defineProperty(vp, 'scrollTop', { value: 0, configurable: true })
+        ;(root.querySelector('.term') as HTMLElement).appendChild(vp)
+      }
+      return vp
+    }
+
+    function pointerEvent(type: string, x: number, y: number): PointerEvent {
+      // jsdom lacks PointerEvent; build a minimal stand-in via MouseEvent + extra props.
+      const ev = new MouseEvent(type, { clientX: x, clientY: y, bubbles: true })
+      Object.defineProperty(ev, 'pointerId', { value: 1 })
+      return ev as unknown as PointerEvent
+    }
+
+    it('does not select when canSend is false (control mode off)', async () => {
+      const w = await mountReady()
+      // controlMode is false by default; canSend is therefore false.
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 100, 80))
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('selects the word at the press position after 500 ms when canSend is true', async () => {
+      const w = await mountReady()
+      // Engage control mode (this also requires being driver — true by default in mock).
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')              // cell (2,0) is the 't' of "git"
+      // cellW/Hour derived from fallback: fontSize=12 → cellW=7.2, cellH=12.
+      // For col=2 row=0, clientX=15 (15/7.2 ≈ 2.08 → col 2), clientY=8 (8/12 = 0).
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(0, 0, 3)  // selects "git"
+      // Popover should now be visible (mock getSelectionPosition to return a non-null bbox so updatePopoverFromSelection produces a valid result)
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+    })
+
+    it('exits selection when the cancel button is tapped', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      await w.find('[data-testid="selection-popover-cancel"]').trigger('click')
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('exits selection when control mode is turned off mid-selection', async () => {
+      const w = await mountReady()
+      const toggle = w.find('[data-testid="mobile-control-toggle"]')
+      await toggle.setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+
+      await toggle.setValue(false)
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('exits selection on viewport scroll', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+
+      vp.dispatchEvent(new Event('scroll', { bubbles: true }))
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+    })
+
+    it('exits selection on outside (document) pointerdown', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+
+      document.dispatchEvent(pointerEvent('pointerdown', 500, 500))
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('does NOT enter selection on whitespace (wordBoundary len=0)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git   status')             // whitespace at cols 3,4,5
+      vp.dispatchEvent(pointerEvent('pointerdown', 32, 8))  // col 4 with cellW≈7.2 → whitespace
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
   })
 })

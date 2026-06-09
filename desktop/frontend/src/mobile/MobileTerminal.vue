@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { WebglAddon } from 'xterm-addon-webgl'
@@ -13,6 +13,9 @@ import { TERMINAL_FONT_FAMILY } from '../lib/terminalFont'
 import type { RemoteSession } from '../platform/types'
 import { usePlatform } from '../platform'
 import { useI18n } from '../i18n/useI18n'
+import { wordBoundaryAt } from '../lib/wordBoundary'
+import { cellCoordsAt } from '../lib/terminalCellCoords'
+import MobileSelectionPopover from './MobileSelectionPopover.vue'
 
 const props = defineProps<{
   endpoint: Endpoint
@@ -35,6 +38,22 @@ const templatesHidden = ref(false)
 // :key so each bump restarts its shake animation.
 const protectBump = ref(0)
 let protectClearTimer: ReturnType<typeof setTimeout> | null = null
+type SelMode = 'idle' | 'pressing' | 'selecting' | 'dragging'
+const selMode = ref<SelMode>('idle')
+const popover = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  arrowDir: 'down' as 'down' | 'up',
+  copying: false,
+  sending: false,
+})
+let pressTimer: ReturnType<typeof setTimeout> | null = null
+let pressAnchor: { x: number; y: number } | null = null
+let selectionDisposer: { dispose: () => void } | null = null
+let viewportEl: HTMLElement | null = null
+const LONG_PRESS_MS = 500
+const PRESS_JITTER_PX = 8
 const platform = usePlatform()
 let term: Terminal | null = null
 let fit: FitAddon | null = null
@@ -193,6 +212,130 @@ async function openImagePicker() {
   }
 }
 
+function readSelBbox(pos: { start: { x: number; y: number }; end: { x: number; y: number } }): { x: number; y: number; w: number; h: number } | null {
+  if (!term || !viewportEl) return null
+  // Read cell size directly (duplicate of readXtermCellSize without exporting more API).
+  const dim = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number; height?: number } } } } } })
+    ._core?._renderService?.dimensions?.css?.cell
+  const cw = dim?.width ?? (term.options.fontSize ?? 15) * 0.6
+  const ch = dim?.height ?? (term.options.fontSize ?? 15) * ((term.options.lineHeight as number | undefined) ?? 1.0)
+  if (!cw || !ch) return null
+  const rect = viewportEl.getBoundingClientRect()
+  const sTop = viewportEl.scrollTop ?? 0
+  const left = rect.left + pos.start.x * cw
+  const top = rect.top + pos.start.y * ch - sTop
+  // Width: if start.y === end.y, use (end.x - start.x); else span the full
+  // viewport width (multi-row selection rect is approximate, popover centers
+  // on its midpoint regardless).
+  const w = pos.start.y === pos.end.y ? (pos.end.x - pos.start.x) * cw : rect.width
+  const h = (pos.end.y - pos.start.y + 1) * ch
+  return { x: left, y: top, w, h }
+}
+
+function updatePopoverFromSelection() {
+  if (!term || !viewportEl) return
+  const pos = term.getSelectionPosition?.()
+  if (!pos) { popover.visible = false; return }
+  const dim = readSelBbox(pos)
+  if (!dim) { popover.visible = false; return }
+  const popH = 28  // visual height incl. arrow padding; conservative for flip decision
+  const fitsAbove = dim.y - 6 - popH >= 8
+  popover.arrowDir = fitsAbove ? 'down' : 'up'
+  popover.x = dim.x + dim.w / 2
+  popover.y = fitsAbove
+    ? (window.innerHeight - dim.y + 6)        // CSS `bottom` distance from viewport bottom
+    : (dim.y + dim.h + 6)                     // CSS `top` distance from viewport top
+  popover.visible = true
+}
+
+function exitSelection() {
+  if (term) {
+    try { term.clearSelection() } catch { /* ignore */ }
+    term.options.disableStdin = !canSend.value
+  }
+  if (viewportEl) viewportEl.style.touchAction = 'pan-y'
+  popover.visible = false
+  selMode.value = 'idle'
+  if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
+  pressAnchor = null
+}
+
+// resolveViewport finds the .xterm-viewport element from the event target or
+// container. Caches the result in `viewportEl` once xterm has built its DOM.
+function resolveViewport(ev?: Event): HTMLElement | null {
+  if (viewportEl && document.contains(viewportEl)) return viewportEl
+  const target = ev?.target as HTMLElement | null
+  const fromTarget = target?.closest?.('.xterm-viewport') as HTMLElement | null
+  const found = fromTarget ?? (container.value?.querySelector('.xterm-viewport') as HTMLElement | null) ?? null
+  if (found) viewportEl = found
+  return viewportEl
+}
+
+function onSelPointerDown(ev: PointerEvent) {
+  if (!canSend.value) return  // strict gate (covers viewer + control-off)
+  if (!term) return
+  const vp = resolveViewport(ev)
+  if (!vp) return
+  pressAnchor = { x: ev.clientX, y: ev.clientY }
+  selMode.value = 'pressing'
+  if (pressTimer) clearTimeout(pressTimer)
+  pressTimer = setTimeout(() => {
+    pressTimer = null
+    if (selMode.value !== 'pressing' || !pressAnchor || !term || !vp) return
+    const hit = cellCoordsAt(pressAnchor.x, pressAnchor.y, term, vp)
+    if (!hit) { selMode.value = 'idle'; return }
+    let line = ''
+    try { line = term.buffer.active.getLine(hit.row)?.translateToString(true) ?? '' } catch { line = '' }
+    const wb = wordBoundaryAt(line, hit.col)
+    if (wb.len === 0) { selMode.value = 'idle'; return }
+    try { term.select(wb.start, hit.row, wb.len) } catch { selMode.value = 'idle'; return }
+    term.options.disableStdin = true
+    vp.style.touchAction = 'none'
+    selMode.value = 'selecting'
+    updatePopoverFromSelection()
+  }, LONG_PRESS_MS)
+}
+
+function onSelPointerMove(ev: PointerEvent) {
+  if (selMode.value === 'pressing' && pressAnchor) {
+    const dx = ev.clientX - pressAnchor.x
+    const dy = ev.clientY - pressAnchor.y
+    if (dx * dx + dy * dy > PRESS_JITTER_PX * PRESS_JITTER_PX) {
+      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
+      selMode.value = 'idle'
+      pressAnchor = null
+    }
+  }
+  // dragging logic lands in Task 6
+}
+
+function onSelPointerUp() {
+  if (selMode.value === 'pressing') {
+    // plain tap — cancel pending timer
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
+    selMode.value = 'idle'
+    pressAnchor = null
+  }
+  // when in 'selecting', the selection persists; popover waits for user action.
+}
+
+function onSelPointerCancel() { onSelPointerUp() }
+
+function onDocumentPointerDown(ev: PointerEvent) {
+  if (selMode.value === 'idle') return
+  const target = ev.target as Node | null
+  // Tap inside the viewport? Ignore (the viewport owns the gesture). Popover
+  // stops its own propagation; any pointerdown reaching document is therefore
+  // by definition outside the popover, so exit.
+  const vp = viewportEl ?? (container.value?.querySelector('.xterm-viewport') as HTMLElement | null)
+  if (target && vp?.contains(target)) return
+  exitSelection()
+}
+
+function onCopy() { exitSelection() }
+function onSend() { exitSelection() }
+function onCancel() { exitSelection() }
+
 onMounted(() => {
   term = new Terminal({ fontFamily: TERMINAL_FONT_FAMILY, fontSize: 12, convertEol: false, cursorBlink: true })
   fit = new FitAddon()
@@ -216,6 +359,23 @@ onMounted(() => {
   // from the resulting 'scroll' events.
   container.value!.querySelector('.xterm-viewport')
     ?.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true })
+  // Delegate selection pointer events on the .term container so we don't depend
+  // on .xterm-viewport existing at mount time (jsdom-mocked xterm; xterm DOM
+  // can also rebuild on renderer swap). The handlers look up the viewport
+  // lazily via the event target.
+  if (container.value) {
+    container.value.addEventListener('pointerdown', onSelPointerDown)
+    container.value.addEventListener('pointermove', onSelPointerMove)
+    container.value.addEventListener('pointerup', onSelPointerUp)
+    container.value.addEventListener('pointercancel', onSelPointerCancel)
+    container.value.addEventListener('scroll', exitSelection, { capture: true })
+  }
+  document.addEventListener('pointerdown', onDocumentPointerDown, { capture: true })
+  if (term && (term as any).onSelectionChange) {
+    selectionDisposer = (term as any).onSelectionChange(() => {
+      if (selMode.value === 'selecting' || selMode.value === 'dragging') updatePopoverFromSelection()
+    })
+  }
   term.onData((s: string) => sendRaw(s))
   term.onResize(({ cols, rows }) => conn?.sendResize(cols, rows))
 
@@ -284,6 +444,7 @@ onMounted(() => {
 })
 
 watch(canSend, refreshInputMode)
+watch(canSend, (now) => { if (!now && selMode.value !== 'idle') exitSelection() })
 
 watch(() => props.active, (now) => {
   if (now) {
@@ -300,6 +461,19 @@ onBeforeUnmount(() => {
   ro = null
   conn?.detach()
   conn = null
+  if (container.value) {
+    container.value.removeEventListener('pointerdown', onSelPointerDown)
+    container.value.removeEventListener('pointermove', onSelPointerMove)
+    container.value.removeEventListener('pointerup', onSelPointerUp)
+    container.value.removeEventListener('pointercancel', onSelPointerCancel)
+    container.value.removeEventListener('scroll', exitSelection, { capture: true } as any)
+  }
+  viewportEl = null
+  document.removeEventListener('pointerdown', onDocumentPointerDown, { capture: true } as any)
+  selectionDisposer?.dispose?.()
+  selectionDisposer = null
+  if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
+  pressAnchor = null
   term?.dispose()
   term = null
   fit = null
@@ -323,6 +497,17 @@ function onTermPointerDown(ev: PointerEvent) {
       :class="{ inert: !isDriver }"
       @pointerdown="onTermPointerDown"
     ></div>
+    <MobileSelectionPopover
+      :visible="popover.visible"
+      :x="popover.x"
+      :y="popover.y"
+      :arrow-dir="popover.arrowDir"
+      :copying="popover.copying"
+      :sending="popover.sending"
+      @copy="onCopy"
+      @send="onSend"
+      @cancel="onCancel"
+    />
     <div v-if="!isDriver" class="viewer-overlay">
       <div class="viewer-card">
         <div class="viewer-title">{{ t('terminal.remoteHasControl') }}</div>
@@ -408,6 +593,13 @@ function onTermPointerDown(ev: PointerEvent) {
    positioning); iOS draws the native blinking caret there, doubling up with
    xterm's own block cursor. Hide the native one. */
 .term :deep(.xterm-helper-textarea) { caret-color: transparent; }
+/* Suppress iOS system long-press menu / text-selection callout on the terminal
+   viewport — we render our own selection UI via xterm + MobileSelectionPopover. */
+.term :deep(.xterm-viewport) {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
 /* position+z-index keeps the whole panel (incl. the protect banner) above the
    terminal's GPU canvas layer; flex-shrink:0 stops it being squeezed to zero
    when the keyboard resizes the viewport. */

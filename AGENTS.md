@@ -11,15 +11,13 @@ atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 
 ```
 atterm/
 ├── cmd/
-│   ├── atterm-relay/       中央 relay 服务的入口（生产部署的 server）
-│   └── atterm-agent/       命令行 PTY wrapper（Phase 0 调试遗留，CLI 形态）
+│   └── atterm-relay/       中央 relay 服务的入口（生产部署的 server）
 ├── internal/
 │   ├── proto/              帧协议定义 + 二进制编解码（跨所有组件复用）
 │   ├── ringbuf/            scrollback 环形缓冲（按字节预算丢最老）
 │   ├── session/            relay 端 session 模型 + Subscriber fan-out + lifecycle 钩子
 │   ├── relay/              relay 服务实现：/agent · /uplink · /client · /api/sessions
 │   ├── ptyhost/            纯 PTY 包装（Open/Read/Write/Resize/Wait/Close + Cwd via /proc）
-│   ├── agent/              CLI agent 业务层（PTY + 本地 TTY 集成 + WS 客户端）
 │   └── hostid/             机器持久 UUID（~/.config/atterm/host_id）
 ├── desktop/                Wails v2 桌面 app（Go 后端 + Vue3+TS+xterm.js 前端）
 │   ├── main.go             Wails 入口；ldflags 注入 Version
@@ -81,9 +79,6 @@ ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 # For live web frontend dev: run `cd web && npm run dev`; Vite at 5173 proxies
 # /api, /admin/api, /agent, /uplink and /client to 127.0.0.1:8080.
 
-# 命令行 agent（Phase 0 wrapper，调试用；需先在 relay 创建用户并生成 API token）
-go run ./cmd/atterm-agent --relay ws://localhost:8080 --token atk_... -- bash
-
 # 桌面 app
 cd desktop
 wails dev -tags webkit2_41               # Linux 必须加 -tags webkit2_41
@@ -122,8 +117,7 @@ gh run list --repo attson/atterm --limit 10
 | 改 relay session 行为 | `internal/session/`（local + mirror 都用同一个 Session） |
 | 桌面新 binding | `desktop/app.go`（手写 + Wails 自动生成 `frontend/wailsjs/go/main/App.*`） |
 | 新前端组件 | `desktop/frontend/src/components/` |
-| 桌面端协议路径 | `desktop/uplink.go` 或 `desktop/relay_host.go`，**不要**碰 `internal/agent/` |
-| CLI wrapper 行为 | `internal/agent/` + `cmd/atterm-agent/` |
+| 桌面端协议路径 | `desktop/uplink.go` 或 `desktop/relay_host.go` |
 | 改 pane 布局 / 分屏键 | `desktop/frontend/src/lib/layout.ts`（纯函数 + 单测） + `composables/useTerminalShortcuts.ts`（document capture）+ `components/PaneGrid.vue` |
 | 改自动更新 | `desktop/updater.go`（state machine + Ed25519/SHA256 校验）+ `desktop/scripts/`（平台 helper）+ `.github/scripts/sign-release-checksums.go` + `.github/workflows/build.yml` + Settings UI |
 | 改 relay 启动安全策略 | `cmd/atterm-relay/main.go` + `cmd/atterm-relay/main_test.go` + `internal/relay/*_test.go` + `docs/spec/protocol.md` |

@@ -37,7 +37,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
                                 ▼
 ┌──────────────── atterm-relay（独立 Go 服务）──────────────────┐
 │                                                                │
-│  /agent — 旧式 agent（CLI wrapper）注册 session                │
+│  /agent — 直接连 relay 的 session 来源（保留给未来 wrapper）  │
 │  /uplink — 桌面 app 控制连，收 ANNOUNCE 维护 mirror sessions  │
 │  /client — web/桌面 客户端 attach（ATTACH/IN/RESIZE/收 OUT）  │
 │  /api/sessions / /api/version — JSON API                      │
@@ -63,9 +63,8 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子 | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
-| `userstore` | `internal/userstore/` | SQLite 持久化：users / invitations / api_tokens / web_sessions / pairing_tokens / webhooks | 不知道 HTTP / 不依赖 relay |
+| `userstore` | `internal/userstore/` | SQLite 持久化：users / invitations / sessions / pairing_tokens / webhooks | 不知道 HTTP / 不依赖 relay |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
-| `agent` | `internal/agent/` | CLI wrapper：`ptyhost` + 本地 stdin/stdout 桥接 + `relay` 客户端 | 不被桌面端用 |
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
 | `desktop/relay_host.go` | desktop | 启 mini relay，spawn PTY，AdoptSession | 不连远程 |
 | `desktop/uplink.go` | desktop | 远程 relay 客户端（lazy 协议） | 不直接拥有 PTY |
@@ -73,33 +72,34 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update / Pairing / Diagnostics / QuickTemplates) | 不实现协议 |
-| `web/` | web | Vue 3 + TypeScript + Naive UI 多页浏览器/PWA client（login/signup/main/settings/admin/setup），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style，不持久化除 cookie/session/token bootstrap 以外的会话状态 |
+| `web/` | web | Vue 3 + TypeScript + Naive UI 多页浏览器/PWA client（login/signup/main/settings/admin/setup），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token` |
 
 ## User accounts and identity
 
-当前 atterm-relay 以 per-user accounts 为生产默认。All session data,
-web push subscriptions, outbound webhooks, and API tokens are scoped to a
-user.
+All clients authenticate via email + password (or pairing). Successful
+login returns a `session_token` that the client carries on every
+HTTP/WS request. The `requireSession` middleware validates the token
+against the `sessions` table.
 
 ### Storage
 
 `internal/userstore` is the **only** package that opens the SQLite
 database (`${ATTERM_RELAY_CONFIG_DIR}/users.db`, WAL mode by default).
-Tables: `users`, `invitations`, `api_tokens`, `web_sessions`. All
-credentials (passwords, invite codes, API tokens, cookie values) are
-stored as `sha256` (or argon2id for passwords). Plaintext is returned to
-the user exactly once at issue time.
+Tables: `users`, `invitations`, `sessions`, `pairing_tokens`,
+`webhooks`. All credentials (passwords, invite codes, session tokens)
+are stored as `sha256` (or argon2id for passwords). Plaintext is
+returned to the user exactly once at issue time.
 
 ### Principal kinds
 
-`internal/relay/identity.go` resolves every incoming HTTP / WS-upgrade
-request to a `Principal`:
+`requireSession` in `internal/relay/auth.go` resolves every incoming
+HTTP / WS-upgrade request to a `Principal`:
 
 | Kind | Source | Use |
 |------|--------|-----|
-| User | `atterm_session` cookie OR `Authorization: Bearer atk_…` (or `Sec-WebSocket-Protocol: atterm-token.atk_…`) | All user-scoped routes |
-| Admin | `atterm_session` cookie where `user.is_admin=true` | Only `/admin/*` |
-| None | (no valid credential) | Public routes only |
+| User | Bearer session token (`Authorization: Bearer ses_…` or `Sec-WebSocket-Protocol: atterm-token.ses_…`) | All user-scoped routes |
+| Admin | Same session token whose user row has `is_admin=true` | Only `/admin/*` |
+| None | No / expired / revoked token | Public routes only (401 otherwise) |
 
 ### Entry-point gates
 
@@ -108,22 +108,24 @@ request to a `Principal`:
 | `GET /api/me/*` | User |
 | `GET /api/sessions` | User (filtered to `OwnerUserID == UserID`) |
 | `GET/WS /client?session=<id>` | User where `Session.OwnerUserID == Principal.UserID` |
-| `WS /uplink` | User from API token (cookie rejected) |
-| `WS /agent` | User from API token |
+| `WS /uplink` | User |
+| `WS /agent` | User |
 | `/admin/*` | Admin only |
-| `POST /api/auth/{signup,login}` | None (public) |
+| `POST /api/auth/{signup,login,setup}`, `POST /api/pair/consume` | None (public) |
 
 ### Bootstrap path
 
 1. Operator starts relay with `ATTERM_BOOTSTRAP_ADMIN_EMAIL` and
    `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` (password must satisfy the strength check
    on public listen: ≥16 chars, ≥3 character classes, not in dev blacklist).
-2. Operator logs in as the bootstrap admin and opens `/admin/` → creates an invitation.
-3. End user signs up at `/signup.html?invite=inv_…`.
-4. User generates an API token at `/settings.html`.
-5. User pastes the API token into desktop client → uplink connects.
+2. Operator logs in via `POST /api/auth/login` → receives `{session_token, expires_at, user}`.
+3. Operator opens `/admin/` (browser stores the token in localStorage and
+   sends it as `Authorization: Bearer`) → creates an invitation.
+4. End user signs up at `/signup.html?invite=inv_…` → also receives a `session_token`.
+5. Desktop / mobile clients either log in directly with email + password, or
+   scan a pairing QR (`POST /api/pair/consume` mints them a fresh `session_token`).
 
-See `docs/superpowers/specs/2026-05-15-saas-user-accounts-design.md`
+See `docs/superpowers/specs/2026-06-09-relay-auth-token-removal-design.md`
 for the full design (data model, security invariants, threat model,
 test strategy).
 
@@ -216,7 +218,7 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 - ✅ Phase 1：Wails 桌面壳，多 tab，自动建会话，cwd-driven 标题
 - ✅ Phase 1.5：lazy 远程镜像（ANNOUNCE/STREAM_REQUEST/STOP），GUI 设置入口，cast 面板
 - ✅ Phase 2：每 tab 1/2/4 pane 分屏（layout pure fns + iTerm-style ⌘N/⌘⇧N 快捷键）；自动更新（GitHub Releases，Ed25519/SHA256 验签，dev 短路，用户手动 force install）
-- ✅ Phase 3：用户账号、邀请码、per-user API token、admin UI、Web Push、outbound webhook、Vue 3 + TypeScript + Naive UI Web/PWA、多语言
+- ✅ Phase 3：用户账号、邀请码、session token 鉴权、admin UI、Web Push、outbound webhook、Vue 3 + TypeScript + Naive UI Web/PWA、多语言
 - ✅ Phase 4a：Capacitor iOS WebView MVP、移动 relay setup、host-grouped mobile session list、touch terminal
 - ✅ Phase 4b：P0 任务状态模型 / 移动任务首页 / 通知深链 / 移动快捷控制 / relay setup wizard
 - ✅ Phase 4c（v0.4 引导可信度）：P1.6 桌面端 QR 配对 + 移动端扫码消费 token（`/api/pair/*`）；P1.7 relay `/healthz` + admin `/admin/health` 健康检查页；P1.9 iOS Keychain 安全存储 + ATS；P1.10 桌面诊断信息导出 + 脱敏
@@ -236,7 +238,7 @@ desktop/app.go             A 持有 *relayHost、*uplink、*configStore、*Updat
                            pairing/diagnostics/quicktemplates/plugin-fs；
                            CloseSession sync 注销（cleanup() 同步调，notifyChange 立即
                            推 ANNOUNCE，不等 pty.Wait）；
-                           CreatePairingToken 用当前 RelayURL + API token 调
+                           CreatePairingToken 用当前 RelayURL + session token 调
                            `/api/pair/create`，前端拿到 token 渲染 QR；
                            GetQuickTemplates / SetQuickTemplates 读写
                            appConfig.QuickTemplates；
@@ -292,7 +294,7 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 - 可选 `--config` 启用持久化 runtime 配置（rate limit、连接数）；`/admin/` API 需 bootstrap admin 用户（通过 env vars 初始化）；
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
 
-鉴权详情见协议规范 §鉴权（browser cookie、desktop API token、admin Bearer token 三种来源）。
+鉴权详情见协议规范 §鉴权（统一为 Bearer session token，admin 由 `users.is_admin` 决定）。
 
 `internal/relay.NewServer(relay.Config{})` 作为库仍保留”不鉴权”语义（当 Resolver 和
 Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
@@ -303,10 +305,10 @@ Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等
 远程权限由拥有 PTY 的 desktop app 决定。Settings 中的默认权限会写入
 `desktop/config.go`，`desktop/uplink.go` 在 `ANNOUNCE` 的每个 `SessionInfo`
 里发布 `remote_permission`。远端 relay 计算 principal scope 与 owner 权限的交集：
-用户 API token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
+session token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
 
 relay admin 配置只服务运维场景：调整 rate limit 和连接数。用户账号管理（邀请码、
-用户列表、密码重置）通过 `/admin/api/*` 端点操作，凭证为 admin session cookie（`user.is_admin=true`）。
+用户列表、密码重置）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。
 
 ## 前端架构细节
 

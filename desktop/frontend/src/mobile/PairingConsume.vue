@@ -39,7 +39,7 @@ async function run() {
     const result = await platform.relay.consumePairing(parsed.origin, parsed.token)
     await platform.relay.save({
       url: result.relay_url,
-      token: result.api_token,
+      token: result.session_token,
       allow_insecure_relay: !!props.allowInsecure,
       remote_permission: 'full',
       connected: false,

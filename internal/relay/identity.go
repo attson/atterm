@@ -74,20 +74,12 @@ func (r *IdentityResolver) Resolve(req *http.Request) Principal {
 	}
 
 	// 2. Bearer token or WebSocket subprotocol token.
+	// TODO(task-1.9): the bearer/subprotocol path will be moved to the new
+	// requireSession middleware that consults LookupSession (single session
+	// table). api_tokens has been deleted; this branch is intentionally a
+	// no-op until the rewire lands.
 	if tok := tokenFromIdentityRequest(req); tok != "" {
-		tokenID, userID, err := r.store.LookupAPIToken(req.Context(), tok)
-		if err == nil {
-			kind := PrincipalUser
-			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
-				kind = PrincipalAdmin
-			}
-			return Principal{
-				Kind:    kind,
-				UserID:  userID,
-				TokenID: tokenID,
-				Scope:   authWrite,
-			}
-		}
+		_ = tok
 	}
 
 	return Principal{Kind: PrincipalNone}

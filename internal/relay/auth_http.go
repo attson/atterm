@@ -342,46 +342,9 @@ func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 // contains {id, name, prefix, created_at} and optional {last_used_at,
 // revoked_at}. No plaintext or token_hash fields are included.
 func (a *AuthServer) handleListTokens(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.requireUser(w, r)
-	if !ok {
-		return
-	}
-
-	tokens, err := a.Store.ListAPITokens(r.Context(), p.UserID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	type tokenRow struct {
-		ID         string  `json:"id"`
-		Name       string  `json:"name"`
-		Prefix     string  `json:"prefix"`
-		CreatedAt  string  `json:"created_at"`
-		LastUsedAt *string `json:"last_used_at,omitempty"`
-		RevokedAt  *string `json:"revoked_at,omitempty"`
-	}
-
-	out := make([]tokenRow, 0, len(tokens))
-	for _, t := range tokens {
-		row := tokenRow{
-			ID:        t.ID,
-			Name:      t.Name,
-			Prefix:    t.Prefix,
-			CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
-		}
-		if t.LastUsedAt != nil {
-			s := t.LastUsedAt.UTC().Format(time.RFC3339)
-			row.LastUsedAt = &s
-		}
-		if t.RevokedAt != nil {
-			s := t.RevokedAt.UTC().Format(time.RFC3339)
-			row.RevokedAt = &s
-		}
-		out = append(out, row)
-	}
-
-	writeJSONStatus(w, http.StatusOK, out)
+	// TODO(task-1.7): handler removed alongside api_tokens. Returns 410 Gone
+	// until the new route layout is wired up.
+	http.Error(w, "gone", http.StatusGone)
 }
 
 // handleCreateToken implements POST /api/me/tokens (CSRF-gated).
@@ -390,35 +353,9 @@ func (a *AuthServer) handleListTokens(w http.ResponseWriter, r *http.Request) {
 // Response 201: {id, plaintext, prefix, created_at}
 // The plaintext is returned exactly once and never stored.
 func (a *AuthServer) handleCreateToken(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.requireUser(w, r)
-	if !ok {
-		return
-	}
-
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return
-	}
-	if strings.TrimSpace(body.Name) == "" {
-		writeError(w, http.StatusBadRequest, "name_required")
-		return
-	}
-
-	secret, tok, err := a.Store.CreateAPIToken(r.Context(), p.UserID, body.Name)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	writeJSONStatus(w, http.StatusCreated, map[string]string{
-		"id":         tok.ID,
-		"plaintext":  secret.Expose(), // only call site for plaintext exposure
-		"prefix":     tok.Prefix,
-		"created_at": tok.CreatedAt.UTC().Format(time.RFC3339),
-	})
+	// TODO(task-1.7): handler removed alongside api_tokens. Returns 410 Gone
+	// until the new route layout is wired up.
+	http.Error(w, "gone", http.StatusGone)
 }
 
 // handleRevokeToken implements DELETE /api/me/tokens/{id} (CSRF-gated).
@@ -426,28 +363,9 @@ func (a *AuthServer) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 // Revokes the named token. Returns 204 on success, 404 if the token does not
 // exist or belongs to a different user (existence-leak protected), 500 on DB error.
 func (a *AuthServer) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.requireUser(w, r)
-	if !ok {
-		return
-	}
-
-	tokenID := r.PathValue("id")
-	if tokenID == "" {
-		http.Error(w, "missing token id", http.StatusBadRequest)
-		return
-	}
-
-	err := a.Store.RevokeAPIToken(r.Context(), tokenID, p.UserID)
-	if err != nil {
-		if errors.Is(err, userstore.ErrTokenNotOwnedOrMissing) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	// TODO(task-1.7): handler removed alongside api_tokens. Returns 410 Gone
+	// until the new route layout is wired up.
+	http.Error(w, "gone", http.StatusGone)
 }
 
 // handleChangePassword implements POST /api/me/password (CSRF-gated).

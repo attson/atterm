@@ -1,80 +1,48 @@
 package relay
 
 import (
-	"crypto/subtle"
+	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/attson/atterm/internal/userstore"
 )
 
-type authScope uint8
+type userCtxKey struct{}
 
-const (
-	authNone authScope = iota
-	authRead
-	authWrite
-)
-
-// authorize accepts an Authorization: Bearer <token> header or an auth
-// WebSocket subprotocol. URL query tokens are intentionally ignored so
-// secrets do not become a supported server-side credential path.
-func authorize(r *http.Request, expected string) bool {
-	return authorizeWithScope(r, expected, nil) == authWrite
+// UserFromContext returns the user attached by requireSession middleware.
+func UserFromContext(ctx context.Context) (*userstore.User, bool) {
+	u, ok := ctx.Value(userCtxKey{}).(*userstore.User)
+	return u, ok && u != nil
 }
 
-func authorizeClient(r *http.Request, expected string, readOnlyTokens []string) authScope {
-	return authorizeWithScopeAndHashes(r, expected, readOnlyTokens, nil)
-}
-
-func authorizeWithScope(r *http.Request, expected string, readOnlyTokens []string) authScope {
-	return authorizeWithScopeAndHashes(r, expected, readOnlyTokens, nil)
-}
-
-func authorizeClientWithConfig(r *http.Request, cfg Config) authScope {
-	return authorizeWithScopeAndHashes(r, cfg.Token, cfg.ReadOnlyTokens, cfg.ReadOnlyTokenHashes)
-}
-
-func authorizeClientWebSocketWithConfig(r *http.Request, cfg Config) authScope {
-	if _, hasQueryToken := r.URL.Query()["token"]; hasQueryToken {
-		return authNone
-	}
-	return authorizeWithScopeAndHashesFromToken(tokenFromRequestNoQuery(r), cfg.Token, cfg.ReadOnlyTokens, cfg.ReadOnlyTokenHashes)
-}
-
-func authorizeWithScopeAndHashes(r *http.Request, expected string, readOnlyTokens []string, readOnlyHashes []string) authScope {
-	return authorizeWithScopeAndHashesFromToken(tokenFromRequest(r), expected, readOnlyTokens, readOnlyHashes)
-}
-
-func authorizeWithScopeAndHashesFromToken(got, expected string, readOnlyTokens []string, readOnlyHashes []string) authScope {
-	if expected == "" && len(readOnlyTokens) == 0 && len(readOnlyHashes) == 0 {
-		return authWrite // dev mode: no token configured
-	}
-	if got == "" {
-		return authNone
-	}
-	if tokenEqual(got, expected) {
-		return authWrite
-	}
-	for _, ro := range readOnlyTokens {
-		if tokenEqual(got, ro) {
-			return authRead
+// requireSession extracts a session token from the request, looks it up
+// in the store, and injects the owning user into the request context.
+// On miss, expired, or revoked: writes 401 and aborts.
+func (s *Server) requireSession(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tok := tokenFromRequest(r)
+		if tok == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
-	}
-	for _, hash := range readOnlyHashes {
-		if tokenMatchesHash(got, hash) {
-			return authRead
+		_, user, err := s.cfg.Store.LookupSession(r.Context(), tok)
+		if err != nil || user == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
+		h(w, r.WithContext(context.WithValue(r.Context(), userCtxKey{}, user)))
 	}
-	return authNone
 }
 
-func tokenEqual(got, expected string) bool {
-	if expected == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
-}
-
+// tokenFromRequest accepts a session token via either:
+//  1. Authorization: Bearer <token>
+//  2. Sec-WebSocket-Protocol: atterm-token.<token>
+//  3. Sec-WebSocket-Protocol: atterm-token-b64.<base64url(token)>
+//
+// URL query tokens are intentionally rejected.
 func tokenFromRequest(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
@@ -82,28 +50,25 @@ func tokenFromRequest(r *http.Request) string {
 	return tokenFromSubprotocol(r)
 }
 
-func tokenFromRequestNoQuery(r *http.Request) string {
-	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
-	}
-	return tokenFromSubprotocol(r)
-}
-
 func tokenFromSubprotocol(r *http.Request) string {
-	if p := r.Header.Get("Sec-WebSocket-Protocol"); p != "" {
-		// allow browsers that pass token via the subprotocol header
-		for _, part := range strings.Split(p, ",") {
-			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "atterm-token.") {
-				return strings.TrimPrefix(part, "atterm-token.")
-			}
-			if strings.HasPrefix(part, "atterm-token-b64.") {
-				decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(part, "atterm-token-b64."))
-				if err == nil {
-					return string(decoded)
-				}
+	p := r.Header.Get("Sec-WebSocket-Protocol")
+	if p == "" {
+		return ""
+	}
+	for _, part := range strings.Split(p, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "atterm-token.") {
+			return strings.TrimPrefix(part, "atterm-token.")
+		}
+		if strings.HasPrefix(part, "atterm-token-b64.") {
+			decoded, err := base64.RawURLEncoding.DecodeString(
+				strings.TrimPrefix(part, "atterm-token-b64."))
+			if err == nil {
+				return string(decoded)
 			}
 		}
 	}
 	return ""
 }
+
+var errNoSession = errors.New("relay: no session in context")

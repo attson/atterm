@@ -59,7 +59,10 @@ func (a *AuthServer) handlePairConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiSecret, userID, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
+	// TODO(task-1.8): ConsumePairingToken now returns (*User, error). This
+	// handler will be rewritten to mint a session token and return it instead
+	// of the legacy api_token. Until then the route returns 410 Gone.
+	user, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
 	if err != nil {
 		if errors.Is(err, userstore.ErrPairingInvalid) {
 			writeJSONStatus(w, http.StatusNotFound, map[string]string{"code": "pair_invalid"})
@@ -68,19 +71,6 @@ func (a *AuthServer) handlePairConsume(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	user, err := a.Store.GetUser(r.Context(), userID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	writeJSONStatus(w, http.StatusOK, map[string]any{
-		"relay_url": publicBaseURL(r),
-		"api_token": apiSecret.Expose(),
-		"user": map[string]string{
-			"id":    user.ID,
-			"email": user.Email,
-		},
-	})
+	_ = user
+	http.Error(w, "gone", http.StatusGone)
 }

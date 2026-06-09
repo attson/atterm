@@ -40,3 +40,21 @@ CREATE TABLE invitations (
     consumed_at INTEGER,
     consumed_by TEXT REFERENCES users(id) ON DELETE SET NULL
 );
+
+CREATE TABLE webhooks (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    url            TEXT NOT NULL,
+    format         TEXT NOT NULL,
+    allow_insecure INTEGER NOT NULL DEFAULT 0,
+    created_at     INTEGER NOT NULL
+);
+CREATE INDEX idx_webhooks_user ON webhooks(user_id);
+
+CREATE TABLE session_seen (
+    user_id    TEXT    NOT NULL,
+    session_id TEXT    NOT NULL,
+    seen_at    INTEGER NOT NULL,
+    PRIMARY KEY (user_id, session_id)
+);

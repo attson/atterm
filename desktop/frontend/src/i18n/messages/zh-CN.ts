@@ -418,6 +418,12 @@ export const zhCN = {
       },
       setupHint: "你的 API token 会以明文方式经过 Wi-Fi 传输。仅建议在本地测试时启用。",
     },
+    selection: {
+      copy: "复制",
+      send: "发送",
+      cancel: "取消",
+      copied: "已复制到剪贴板",
+    },
   },
   tasks: {
     sidebar: {

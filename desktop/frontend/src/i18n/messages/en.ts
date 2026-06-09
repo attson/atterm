@@ -416,6 +416,12 @@ export const en = {
       },
       setupHint: 'Your API token will be sent in cleartext over Wi-Fi. Only enable for local-network testing.',
     },
+    selection: {
+      copy: "Copy",
+      send: "Send",
+      cancel: "Cancel",
+      copied: "Copied to clipboard",
+    },
   },
   tasks: {
     sidebar: {

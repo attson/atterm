@@ -134,6 +134,10 @@ export function ListShells() {
   return window['go']['main']['App']['ListShells']();
 }
 
+export function LoginRemoteRelay(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LoginRemoteRelay'](arg1, arg2, arg3);
+}
+
 export function MarkSessionsSeen(arg1, arg2) {
   return window['go']['main']['App']['MarkSessionsSeen'](arg1, arg2);
 }

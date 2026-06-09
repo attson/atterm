@@ -423,6 +423,7 @@ export const zhCN = {
       send: "发送",
       cancel: "取消",
       copied: "已复制到剪贴板",
+      copyFailed: "复制失败",
     },
   },
   tasks: {

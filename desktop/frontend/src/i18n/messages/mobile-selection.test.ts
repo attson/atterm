@@ -8,6 +8,7 @@ describe("mobile.selection i18n namespace", () => {
     expect(en.mobile.selection.send).toBeTypeOf("string");
     expect(en.mobile.selection.cancel).toBeTypeOf("string");
     expect(en.mobile.selection.copied).toBeTypeOf("string");
+    expect(en.mobile.selection.copyFailed).toBeTypeOf("string");
   });
   test("zh-CN matches en shape", () => {
     expect(Object.keys(zhCN.mobile.selection)).toEqual(Object.keys(en.mobile.selection));

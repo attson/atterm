@@ -872,7 +872,32 @@ describe('MobileTerminal', () => {
 
       await w.find('[data-testid="selection-popover-copy"]').trigger('click')
       await flushPromises()
-      expect(w.find('[data-testid="mobile-selection-toast"]').text()).toBe('copy failed')
+      expect(w.find('[data-testid="mobile-selection-toast"]').text()).toBe('Copy failed')
+    })
+
+    it('copy: silently exits when selection is empty (no toast)', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      // Selection appears (selectionChangeCb fires with a bbox), popover up.
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      // But by the time the user taps Copy, the selection has been cleared
+      // (e.g. by some other event). getSelection now returns ''.
+      termGetSelection.mockReturnValue('')
+
+      await w.find('[data-testid="selection-popover-copy"]').trigger('click')
+      await flushPromises()
+      expect(writeText).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="mobile-selection-toast"]').exists()).toBe(false)
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
     })
 
     it('send: prepares payload and forwards to conn.sendInput, then exits selection', async () => {

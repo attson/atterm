@@ -421,6 +421,7 @@ export const en = {
       send: "Send",
       cancel: "Cancel",
       copied: "Copied to clipboard",
+      copyFailed: "Copy failed",
     },
   },
   tasks: {

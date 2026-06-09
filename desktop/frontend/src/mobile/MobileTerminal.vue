@@ -433,6 +433,8 @@ function onDocumentPointerDown(ev: PointerEvent) {
 async function onCopy() {
   if (!term) { exitSelection(); return }
   if (popover.copying) return
+  // No selection? Silently exit — don't toast "copy failed" for a no-op.
+  if (!term.getSelection()) { exitSelection(); return }
   popover.copying = true
   let ok = false
   try {
@@ -441,7 +443,7 @@ async function onCopy() {
     console.warn('[AT Term] copy failed', e)
   }
   popover.copying = false
-  showToast(ok ? t('mobile.selection.copied') : t('terminal.copyFailed'))
+  showToast(ok ? t('mobile.selection.copied') : t('mobile.selection.copyFailed'))
   exitSelection()
 }
 

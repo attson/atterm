@@ -80,8 +80,12 @@ func main() {
 		log.Fatalf("open userstore: %v", err)
 	}
 
-	if err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword); err != nil {
+	bootstrapTok, _, err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword)
+	if err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
+	}
+	if bootstrapTok != "" {
+		log.Printf("bootstrap admin created; session_token=%s", bootstrapTok)
 	}
 
 	adminCfg := relay.AdminConfig{}

@@ -24,8 +24,15 @@ func openTestStore(t *testing.T) userstore.Store {
 
 func TestBootstrapAdmin_EmptyEmail_NoOp(t *testing.T) {
 	store := openTestStore(t)
-	if err := bootstrapAdmin(context.Background(), store, "", ""); err != nil {
+	tok, user, err := bootstrapAdmin(context.Background(), store, "", "")
+	if err != nil {
 		t.Fatalf("err = %v; want nil", err)
+	}
+	if tok != "" {
+		t.Errorf("token should be empty for no-op email")
+	}
+	if user != nil {
+		t.Errorf("user should be nil for no-op email")
 	}
 	users, _ := store.ListUsers(context.Background())
 	if len(users) != 0 {
@@ -35,7 +42,7 @@ func TestBootstrapAdmin_EmptyEmail_NoOp(t *testing.T) {
 
 func TestBootstrapAdmin_MalformedEmail_Errors(t *testing.T) {
 	store := openTestStore(t)
-	err := bootstrapAdmin(context.Background(), store, "not-an-email", "Strong-passphrase-2026")
+	_, _, err := bootstrapAdmin(context.Background(), store, "not-an-email", "Strong-passphrase-2026")
 	if err == nil {
 		t.Fatal("malformed email accepted")
 	}
@@ -50,8 +57,15 @@ func TestBootstrapAdmin_NewUser_Created(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	store := openTestStore(t)
-	if err := bootstrapAdmin(context.Background(), store, "fresh@example.com", "Strong-passphrase-2026"); err != nil {
+	tok, user, err := bootstrapAdmin(context.Background(), store, "fresh@example.com", "Strong-passphrase-2026")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if tok == "" {
+		t.Fatal("expected session token")
+	}
+	if user == nil || !user.IsAdmin {
+		t.Fatal("user not created as admin")
 	}
 	v, _ := store.VerifyPassword(context.Background(), "fresh@example.com", "Strong-passphrase-2026")
 	if v == nil || !v.IsAdmin {
@@ -71,8 +85,15 @@ func TestBootstrapAdmin_ExistingUser_PromotedAndWarn(t *testing.T) {
 	store := openTestStore(t)
 	u, _ := store.CreateUser(ctx, "existing@example.com", "original-passphrase")
 
-	if err := bootstrapAdmin(ctx, store, "existing@example.com", "Leftover-env-pwd-2026!"); err != nil {
+	tok, user, err := bootstrapAdmin(ctx, store, "existing@example.com", "Leftover-env-pwd-2026!")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if tok == "" {
+		t.Fatal("expected session token")
+	}
+	if user == nil || !user.IsAdmin {
+		t.Error("existing user not promoted")
 	}
 	got, _ := store.GetUser(ctx, u.ID)
 	if !got.IsAdmin {
@@ -85,7 +106,7 @@ func TestBootstrapAdmin_ExistingUser_PromotedAndWarn(t *testing.T) {
 
 func TestBootstrapAdmin_NewUser_WeakPassword_Errors(t *testing.T) {
 	store := openTestStore(t)
-	err := bootstrapAdmin(context.Background(), store, "fresh@example.com", "short")
+	_, _, err := bootstrapAdmin(context.Background(), store, "fresh@example.com", "short")
 	if err == nil {
 		t.Fatal("weak password accepted")
 	}
@@ -95,5 +116,26 @@ func TestBootstrapAdmin_NewUser_WeakPassword_Errors(t *testing.T) {
 	if !errors.Is(err, userstore.ErrEmptyBootstrapPassword) &&
 		!strings.Contains(err.Error(), "ATTERM_BOOTSTRAP_ADMIN_PASSWORD") {
 		t.Errorf("err = %v; want validateBootstrapPassword failure or ErrEmptyBootstrapPassword", err)
+	}
+}
+
+func TestBootstrapAdmin_EmitsSessionToken(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	tok, user, err := bootstrapAdmin(ctx, store, "admin@example.com", "Correct-Horse-Battery-Staple-1!")
+	if err != nil {
+		t.Fatalf("bootstrapAdmin: %v", err)
+	}
+	if tok == "" {
+		t.Fatal("expected session token")
+	}
+	if user == nil {
+		t.Fatal("expected user")
+	}
+	if user.Email != "admin@example.com" {
+		t.Fatalf("user.email: %q", user.Email)
+	}
+	if _, _, err := store.LookupSession(ctx, tok); err != nil {
+		t.Fatalf("session does not resolve: %v", err)
 	}
 }

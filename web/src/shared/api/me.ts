@@ -1,7 +1,5 @@
 import { apiFetch } from './client'
 import type {
-  ApiTokenCreated,
-  ApiTokenRow,
   MeResponse,
   SessionRow,
   SignOutOthersResponse,
@@ -13,24 +11,6 @@ import type {
 export async function getMe(): Promise<MeResponse> {
   const { data } = await apiFetch<MeResponse>('/api/me')
   return data
-}
-
-// API token helpers (settings → API Tokens tab).
-export async function listTokens(): Promise<ApiTokenRow[]> {
-  const { data } = await apiFetch<ApiTokenRow[]>('/api/me/tokens')
-  return data
-}
-
-export async function createToken(name: string): Promise<ApiTokenCreated> {
-  const { data } = await apiFetch<ApiTokenCreated>('/api/me/tokens', {
-    method: 'POST',
-    body: JSON.stringify({ name }),
-  })
-  return data
-}
-
-export async function revokeToken(id: string): Promise<void> {
-  await apiFetch(`/api/me/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // Web session helpers (settings → Signed-in devices tab).

@@ -139,19 +139,6 @@ export const zhCN = {
     host: '主机',
   },
   settings: {
-    apiTokens: {
-      copied: 'Token 已复制到剪贴板。',
-      copyManually: '剪贴板不可用，请手动选择并复制。',
-      copyNow: '请立即复制此 token，此后不会再次显示。',
-      createFailed: '创建 token 失败。',
-      empty: '还没有 token。',
-      invalidName: '请输入有效名称。',
-      loadFailed: '加载 token 失败。',
-      namePlaceholder: '例如 my-laptop',
-      nameRequired: 'Token 名称必填。',
-      revokeConfirm: '撤销此 token？此操作无法撤销。',
-      revokeFailed: '撤销 token 失败。',
-    },
     changePassword: {
       current: '当前密码',
       currentWrong: '当前密码不正确。',
@@ -165,7 +152,7 @@ export const zhCN = {
       confirmDelete: '永久删除此账号？此操作无法撤销。',
       currentPassword: '当前密码',
       deleteAccount: '删除我的账号',
-      description: '永久删除此账号。此操作无法撤销。API token、Web 会话和账号数据都会被删除。已使用的邀请码会保留（其“使用者”字段会被清空）。',
+      description: '永久删除此账号。此操作无法撤销。Web 会话和账号数据都会被删除。已使用的邀请码会保留（其”使用者”字段会被清空）。',
       emailMismatch: '邮箱不匹配，请输入完整且准确的邮箱。',
       failed: '删除失败，请重试。',
       invalidRequest: '请检查输入。',
@@ -221,7 +208,6 @@ export const zhCN = {
       unknownDevice: '未知设备',
     },
     tabs: {
-      apiTokens: 'API Tokens',
       changePassword: '修改密码',
       danger: '危险区',
       notifications: '通知',

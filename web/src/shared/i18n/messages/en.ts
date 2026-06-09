@@ -137,19 +137,6 @@ export const en = {
     host: 'Host',
   },
   settings: {
-    apiTokens: {
-      copied: 'Token copied to clipboard.',
-      copyManually: 'Clipboard not available - select and copy manually.',
-      copyNow: 'Copy this token now - it will not be shown again.',
-      createFailed: 'Failed to create token.',
-      empty: 'No tokens yet.',
-      invalidName: 'Please enter a valid name.',
-      loadFailed: 'Failed to load tokens.',
-      namePlaceholder: 'e.g. my-laptop',
-      nameRequired: 'Token name is required.',
-      revokeConfirm: 'Revoke this token? This cannot be undone.',
-      revokeFailed: 'Failed to revoke token.',
-    },
     changePassword: {
       current: 'Current password',
       currentWrong: 'Current password is incorrect.',
@@ -163,7 +150,7 @@ export const en = {
       confirmDelete: 'Permanently delete this account? This cannot be undone.',
       currentPassword: 'Current password',
       deleteAccount: 'Delete my account',
-      description: 'Permanently delete this account. This cannot be undone. API tokens, web sessions, and account data are removed. Invitations you have consumed stay (their "consumed by" field is cleared).',
+      description: 'Permanently delete this account. This cannot be undone. Web sessions and account data are removed. Invitations you have consumed stay (their "consumed by" field is cleared).',
       emailMismatch: "Email doesn't match - type your exact email.",
       failed: 'Delete failed. Please try again.',
       invalidRequest: 'Please check your input.',
@@ -219,7 +206,6 @@ export const en = {
       unknownDevice: 'Unknown device',
     },
     tabs: {
-      apiTokens: 'API Tokens',
       changePassword: 'Change Password',
       danger: 'Danger zone',
       notifications: 'Notifications',

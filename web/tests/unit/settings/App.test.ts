@@ -3,9 +3,6 @@ import { mount, flushPromises } from '@vue/test-utils'
 
 vi.mock('@shared/api/me', () => ({
   getMe: vi.fn().mockResolvedValue({ user_id: 'u', email: 'a@b', is_admin: false }),
-  listTokens: vi.fn().mockResolvedValue([]),
-  createToken: vi.fn(),
-  revokeToken: vi.fn(),
   listSessions: vi.fn().mockResolvedValue([]),
   revokeSession: vi.fn(),
   signOutOthers: vi.fn(),
@@ -40,15 +37,15 @@ describe('Settings App.vue', () => {
     Object.defineProperty(window, 'location', { value: originalLocation, writable: true })
   })
 
-  it('renders all five tab labels', async () => {
+  it('renders all tab labels', async () => {
     const wrapper = mount(App, { attachTo: document.body })
     await flushPromises()
     const text = wrapper.text()
-    expect(text).toContain('API Tokens')
     expect(text).toContain('Change Password')
     expect(text).toContain('Signed-in devices')
     expect(text).toContain('Notifications')
     expect(text).toContain('Danger zone')
+    expect(text).not.toContain('API Tokens')
   })
 
   it('opens the tab indicated by the hash on first paint', async () => {
@@ -62,14 +59,14 @@ describe('Settings App.vue', () => {
     expect(wrapper.text()).toContain('Each row is a browser')
   })
 
-  it('falls back to the api-tokens tab when hash is invalid', async () => {
+  it('falls back to the change-password tab when hash is invalid', async () => {
     Object.defineProperty(window, 'location', {
       value: { ...window.location, hash: '#bogus-tab' },
       writable: true,
     })
     const wrapper = mount(App, { attachTo: document.body })
     await flushPromises()
-    // ApiTokens panel renders the empty-state message.
-    expect(wrapper.text()).toContain('No tokens yet.')
+    // Change password panel renders the "Current password" label.
+    expect(wrapper.text()).toContain('Current password')
   })
 })

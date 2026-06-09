@@ -56,17 +56,16 @@ func NewIdentityResolver(store userstore.Store) *IdentityResolver {
 func (r *IdentityResolver) Resolve(req *http.Request) Principal {
 	// 1. Cookie — highest precedence.
 	if c, err := req.Cookie("atterm_session"); err == nil && c.Value != "" {
-		userID, csrfSecret, err := r.store.LookupWebSession(req.Context(), c.Value)
+		_, user, err := r.store.LookupSession(req.Context(), c.Value)
 		if err == nil {
 			kind := PrincipalUser
-			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
+			if user.IsAdmin {
 				kind = PrincipalAdmin
 			}
 			return Principal{
-				Kind:       kind,
-				UserID:     userID,
-				Scope:      authWrite,
-				CSRFSecret: csrfSecret,
+				Kind:   kind,
+				UserID: user.ID,
+				Scope:  authWrite,
 			}
 		}
 		// Invalid/expired cookie — fall through to PrincipalNone (do NOT check

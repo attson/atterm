@@ -207,10 +207,10 @@ func NewServer(cfg Config) *Server {
 			for {
 				select {
 				case <-t.C:
-					if n, err := cfg.Store.PurgeExpiredWebSessions(ctx); err != nil {
-						log.Printf("relay: PurgeExpiredWebSessions: %v", err)
+					if n, err := cfg.Store.PurgeExpiredSessions(ctx); err != nil {
+						log.Printf("relay: PurgeExpiredSessions: %v", err)
 					} else if n > 0 {
-						log.Printf("relay: purged %d expired web sessions", n)
+						log.Printf("relay: purged %d expired sessions", n)
 					}
 				}
 			}

@@ -20,9 +20,9 @@ func TestDeleteUser_CascadesAndNullsConsumedBy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Give the consumer an api_token and a web_session so we can verify cascade.
+	// Give the consumer an api_token and a session so we can verify cascade.
 	_, _, _ = s.CreateAPIToken(ctx, consumer.ID, "test-token")
-	_, _ = s.CreateWebSession(ctx, consumer.ID, "ua", "")
+	_, _, _ = s.CreateSession(ctx, consumer.ID, "ua", "", DefaultSessionTTL)
 
 	// Sanity: invitation is consumed by consumer.
 	invs, _ := s.ListInvitations(ctx)
@@ -46,14 +46,14 @@ func TestDeleteUser_CascadesAndNullsConsumedBy(t *testing.T) {
 	if _, err := s.GetUser(ctx, consumer.ID); err == nil {
 		t.Error("user still present after DeleteUser")
 	}
-	// api_tokens / web_sessions cascade gone.
+	// api_tokens / sessions cascade gone.
 	toks, _ := s.ListAPITokens(ctx, consumer.ID)
 	if len(toks) != 0 {
 		t.Errorf("api tokens not cascaded: %d remain", len(toks))
 	}
-	sess, _ := s.ListUserWebSessions(ctx, consumer.ID)
+	sess, _ := s.ListSessions(ctx, consumer.ID)
 	if len(sess) != 0 {
-		t.Errorf("web sessions not cascaded: %d remain", len(sess))
+		t.Errorf("sessions not cascaded: %d remain", len(sess))
 	}
 
 	// Invitation still exists, but consumed_by is now NULL (empty string in struct).

@@ -219,14 +219,14 @@ func (a *AuthServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create session and set cookie.
-	secret, err := a.Store.CreateWebSession(r.Context(), u.ID, r.UserAgent(), ipPrefix(r))
+	tok, _, err := a.Store.CreateSession(r.Context(), u.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
 	if err != nil {
 		a.failureSleep(start)
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
 
-	setSessionCookie(w, r, secret.Expose(), int((30 * 24 * time.Hour).Seconds()))
+	setSessionCookie(w, r, tok, int((30 * 24 * time.Hour).Seconds()))
 	writeJSONStatus(w, http.StatusOK, map[string]string{
 		"user_id": u.ID,
 		"email":   u.Email,
@@ -272,14 +272,14 @@ func (a *AuthServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := a.Store.CreateWebSession(r.Context(), user.ID, r.UserAgent(), ipPrefix(r))
+	tok, _, err := a.Store.CreateSession(r.Context(), user.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
 	if err != nil {
 		a.failureSleep(start)
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
 
-	setSessionCookie(w, r, secret.Expose(), int((30 * 24 * time.Hour).Seconds()))
+	setSessionCookie(w, r, tok, int((30 * 24 * time.Hour).Seconds()))
 	writeJSONStatus(w, http.StatusOK, map[string]string{
 		"user_id": user.ID,
 		"email":   user.Email,
@@ -297,7 +297,7 @@ func (a *AuthServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the session (ignore error; cookie will be cleared regardless).
-	_ = a.Store.DeleteWebSession(r.Context(), c.Value)
+	_ = a.Store.DeleteSession(r.Context(), c.Value)
 
 	// Clear the cookie.
 	setSessionCookie(w, r, "", -1)
@@ -488,12 +488,12 @@ func (a *AuthServer) handleChangePassword(w http.ResponseWriter, r *http.Request
 	}
 
 	// All old sessions are now deleted. Issue a fresh session for the requester.
-	secret, err := a.Store.CreateWebSession(r.Context(), p.UserID, r.UserAgent(), ipPrefix(r))
+	tok, _, err := a.Store.CreateSession(r.Context(), p.UserID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	setSessionCookie(w, r, secret.Expose(), int((30*24*time.Hour).Seconds()))
+	setSessionCookie(w, r, tok, int((30*24*time.Hour).Seconds()))
 	w.WriteHeader(http.StatusNoContent)
 }
 

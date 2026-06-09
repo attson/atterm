@@ -229,7 +229,7 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 // ChangePassword verifies currentPlaintext against userID's stored hash.
-// On success it hashes newPlaintext, deletes all web sessions for the user
+// On success it hashes newPlaintext, deletes all sessions for the user
 // (caller must issue a new session), and returns nil.
 // Returns ErrUserNotFound if the user ID is unknown, ErrPasswordIncorrect if
 // the current password does not match.
@@ -270,7 +270,7 @@ func (s *SQLiteStore) ChangePassword(ctx context.Context, userID, currentPlainte
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM web_sessions WHERE user_id=?`, userID); err != nil {
+		`DELETE FROM sessions WHERE user_id=?`, userID); err != nil {
 		return fmt.Errorf("delete sessions: %w", err)
 	}
 
@@ -281,7 +281,7 @@ func (s *SQLiteStore) ChangePassword(ctx context.Context, userID, currentPlainte
 }
 
 // ResetUserPassword generates a new temporary password (prefix "tmp_"), updates
-// the user's password_hash, and deletes all web_sessions for that user — all in
+// the user's password_hash, and deletes all sessions for that user — all in
 // one transaction. Returns the plaintext password once.
 func (s *SQLiteStore) ResetUserPassword(ctx context.Context, userID string) (Secret, error) {
 	// Generate 16 random bytes → base64url → "tmp_<22 chars>" (total ~26 chars).
@@ -309,7 +309,7 @@ func (s *SQLiteStore) ResetUserPassword(ctx context.Context, userID string) (Sec
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM web_sessions WHERE user_id=?`, userID); err != nil {
+		`DELETE FROM sessions WHERE user_id=?`, userID); err != nil {
 		return Secret{}, fmt.Errorf("delete sessions: %w", err)
 	}
 

@@ -18,7 +18,7 @@ type sessionRow struct {
 }
 
 // handleListSessions implements GET /api/me/sessions. Returns the
-// caller's web_sessions rows. Marks the row that matches the current
+// caller's sessions rows. Marks the row that matches the current
 // cookie as is_current=true so the UI hides Revoke on that row.
 func (a *AuthServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireUser(w, r)
@@ -26,7 +26,7 @@ func (a *AuthServer) handleListSessions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rows, err := a.Store.ListUserWebSessions(r.Context(), p.UserID)
+	rows, err := a.Store.ListSessions(r.Context(), p.UserID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -67,7 +67,7 @@ func (a *AuthServer) handleDeleteSession(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "missing id_hash", http.StatusBadRequest)
 		return
 	}
-	deleted, err := a.Store.DeleteUserWebSessionByIDHash(r.Context(), p.UserID, idHash)
+	deleted, err := a.Store.DeleteSessionByIDHash(r.Context(), p.UserID, idHash)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -79,8 +79,8 @@ func (a *AuthServer) handleDeleteSession(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSignOutOthers deletes every web_session for the caller except
-// the one matching the current cookie. Returns 200 + {"deleted": N}.
+// handleSignOutOthers deletes every session for the caller except the one
+// matching the current cookie. Returns 200 + {"deleted": N}.
 func (a *AuthServer) handleSignOutOthers(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireUser(w, r)
 	if !ok {
@@ -94,7 +94,7 @@ func (a *AuthServer) handleSignOutOthers(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	currentHash := userstore.SessionHash(c.Value)
-	n, err := a.Store.DeleteOtherWebSessionsForUser(r.Context(), p.UserID, currentHash)
+	n, err := a.Store.DeleteOtherSessionsForUser(r.Context(), p.UserID, currentHash)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

@@ -17,7 +17,7 @@ import (
 //   - last-admin guard: refuses if the caller is the only remaining admin,
 //     so the deploy can never be locked out by an accidental delete.
 //
-// On success the user row is dropped (api_tokens and web_sessions cascade
+// On success the user row is dropped (api_tokens and sessions cascade
 // via FK; invitations.consumed_by is nulled by DeleteUser's transaction).
 // The session cookie row is gone too, but we still emit a Max-Age=-1
 // Set-Cookie so the browser stops sending the invalid cookie.
@@ -76,7 +76,7 @@ func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear the session cookie so the browser stops sending the now-orphaned
-	// session id. The DB row was already cascade-dropped from web_sessions.
+	// session id. The DB row was already cascade-dropped from sessions.
 	setSessionCookie(w, r, "", -1)
 	w.WriteHeader(http.StatusNoContent)
 }

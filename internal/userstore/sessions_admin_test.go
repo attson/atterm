@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestListUserWebSessions_OrderAndFields(t *testing.T) {
+func TestListSessions_OrderAndFields(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, ":memory:")
 	if err != nil {
@@ -16,11 +16,11 @@ func TestListUserWebSessions_OrderAndFields(t *testing.T) {
 
 	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
 
-	s1, _ := s.CreateWebSession(ctx, u.ID, "ua/firefox", "203.0.113.0/24")
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua/firefox", "203.0.113.0/24", DefaultSessionTTL)
 	time.Sleep(2 * time.Millisecond) // ensure created_at ordering is deterministic
-	s2, _ := s.CreateWebSession(ctx, u.ID, "ua/chrome", "203.0.113.0/24")
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua/chrome", "203.0.113.0/24", DefaultSessionTTL)
 
-	list, err := s.ListUserWebSessions(ctx, u.ID)
+	list, err := s.ListSessions(ctx, u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,9 @@ func TestListUserWebSessions_OrderAndFields(t *testing.T) {
 	if list[0].ExpiresAt.Before(time.Now().Add(29 * 24 * time.Hour)) {
 		t.Errorf("ExpiresAt too soon: %v", list[0].ExpiresAt)
 	}
-	_ = s1
-	_ = s2
 }
 
-func TestListUserWebSessions_ScopedToUser(t *testing.T) {
+func TestListSessions_ScopedToUser(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, ":memory:")
 	if err != nil {
@@ -54,66 +52,66 @@ func TestListUserWebSessions_ScopedToUser(t *testing.T) {
 
 	u1, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
 	u2, _ := s.CreateUser(ctx, "b@example.com", "passphrase-1234")
-	_, _ = s.CreateWebSession(ctx, u1.ID, "ua-u1", "1.2.3.0/24")
-	_, _ = s.CreateWebSession(ctx, u2.ID, "ua-u2", "5.6.7.0/24")
+	_, _, _ = s.CreateSession(ctx, u1.ID, "ua-u1", "1.2.3.0/24", DefaultSessionTTL)
+	_, _, _ = s.CreateSession(ctx, u2.ID, "ua-u2", "5.6.7.0/24", DefaultSessionTTL)
 
-	list1, _ := s.ListUserWebSessions(ctx, u1.ID)
+	list1, _ := s.ListSessions(ctx, u1.ID)
 	if len(list1) != 1 || list1[0].UserAgent != "ua-u1" {
 		t.Errorf("u1 list leaked u2 rows or missing own: %+v", list1)
 	}
 }
 
-func TestDeleteUserWebSessionByIDHash_Success(t *testing.T) {
+func TestDeleteSessionByIDHash_Success(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
 	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
-	_, _ = s.CreateWebSession(ctx, u.ID, "ua1", "")
-	list, _ := s.ListUserWebSessions(ctx, u.ID)
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua1", "", DefaultSessionTTL)
+	list, _ := s.ListSessions(ctx, u.ID)
 	if len(list) != 1 {
 		t.Fatalf("setup: list len %d; want 1", len(list))
 	}
-	deleted, err := s.DeleteUserWebSessionByIDHash(ctx, u.ID, list[0].IDHash)
+	deleted, err := s.DeleteSessionByIDHash(ctx, u.ID, list[0].IDHash)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !deleted {
 		t.Error("deleted=false; want true")
 	}
-	after, _ := s.ListUserWebSessions(ctx, u.ID)
+	after, _ := s.ListSessions(ctx, u.ID)
 	if len(after) != 0 {
 		t.Errorf("session still listed after delete: %+v", after)
 	}
 }
 
-func TestDeleteUserWebSessionByIDHash_CrossUserIsNoop(t *testing.T) {
+func TestDeleteSessionByIDHash_CrossUserIsNoop(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
 	u1, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
 	u2, _ := s.CreateUser(ctx, "b@example.com", "passphrase-1234")
-	_, _ = s.CreateWebSession(ctx, u2.ID, "ua-u2", "")
-	list2, _ := s.ListUserWebSessions(ctx, u2.ID)
+	_, _, _ = s.CreateSession(ctx, u2.ID, "ua-u2", "", DefaultSessionTTL)
+	list2, _ := s.ListSessions(ctx, u2.ID)
 	// Attempt to delete u2's session as u1.
-	deleted, err := s.DeleteUserWebSessionByIDHash(ctx, u1.ID, list2[0].IDHash)
+	deleted, err := s.DeleteSessionByIDHash(ctx, u1.ID, list2[0].IDHash)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if deleted {
 		t.Error("deleted=true for cross-user delete; want false")
 	}
-	after, _ := s.ListUserWebSessions(ctx, u2.ID)
+	after, _ := s.ListSessions(ctx, u2.ID)
 	if len(after) != 1 {
 		t.Errorf("u2's session was wrongly deleted: %+v", after)
 	}
 }
 
-func TestDeleteUserWebSessionByIDHash_UnknownIDHashNoop(t *testing.T) {
+func TestDeleteSessionByIDHash_UnknownIDHashNoop(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
 	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
-	deleted, err := s.DeleteUserWebSessionByIDHash(ctx, u.ID, "deadbeef00")
+	deleted, err := s.DeleteSessionByIDHash(ctx, u.ID, "deadbeef00")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,47 +120,47 @@ func TestDeleteUserWebSessionByIDHash_UnknownIDHashNoop(t *testing.T) {
 	}
 }
 
-func TestDeleteOtherWebSessionsForUser_KeepsExceptOnly(t *testing.T) {
+func TestDeleteOtherSessionsForUser_KeepsExceptOnly(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
 	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
-	_, _ = s.CreateWebSession(ctx, u.ID, "ua1", "")
-	_, _ = s.CreateWebSession(ctx, u.ID, "ua2", "")
-	_, _ = s.CreateWebSession(ctx, u.ID, "ua3", "")
-	list, _ := s.ListUserWebSessions(ctx, u.ID)
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua1", "", DefaultSessionTTL)
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua2", "", DefaultSessionTTL)
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua3", "", DefaultSessionTTL)
+	list, _ := s.ListSessions(ctx, u.ID)
 	if len(list) != 3 {
 		t.Fatalf("setup: %d; want 3", len(list))
 	}
 	keep := list[1].IDHash // arbitrary middle row
-	n, err := s.DeleteOtherWebSessionsForUser(ctx, u.ID, keep)
+	n, err := s.DeleteOtherSessionsForUser(ctx, u.ID, keep)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
 		t.Errorf("deleted=%d; want 2", n)
 	}
-	after, _ := s.ListUserWebSessions(ctx, u.ID)
+	after, _ := s.ListSessions(ctx, u.ID)
 	if len(after) != 1 || after[0].IDHash != keep {
 		t.Errorf("after: %+v; want only %q", after, keep)
 	}
 }
 
-func TestDeleteOtherWebSessionsForUser_ExceptUnknownDeletesAll(t *testing.T) {
+func TestDeleteOtherSessionsForUser_ExceptUnknownDeletesAll(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
 	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
-	_, _ = s.CreateWebSession(ctx, u.ID, "ua1", "")
-	_, _ = s.CreateWebSession(ctx, u.ID, "ua2", "")
-	n, err := s.DeleteOtherWebSessionsForUser(ctx, u.ID, "no-such-hash")
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua1", "", DefaultSessionTTL)
+	_, _, _ = s.CreateSession(ctx, u.ID, "ua2", "", DefaultSessionTTL)
+	n, err := s.DeleteOtherSessionsForUser(ctx, u.ID, "no-such-hash")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
 		t.Errorf("deleted=%d; want 2 (unknown exceptIDHash drops nothing)", n)
 	}
-	after, _ := s.ListUserWebSessions(ctx, u.ID)
+	after, _ := s.ListSessions(ctx, u.ID)
 	if len(after) != 0 {
 		t.Errorf("after: %+v; want empty", after)
 	}

@@ -69,9 +69,6 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("GET /api/me/sessions", http.HandlerFunc(a.handleListSessions))
 	mux.Handle("DELETE /api/me/sessions/{id_hash}", http.HandlerFunc(a.handleDeleteSession))
 	mux.Handle("POST /api/me/sessions/sign-out-others", http.HandlerFunc(a.handleSignOutOthers))
-	mux.Handle("GET /api/me/tokens", http.HandlerFunc(a.handleListTokens))
-	mux.Handle("POST /api/me/tokens", http.HandlerFunc(a.handleCreateToken))
-	mux.Handle("DELETE /api/me/tokens/{id}", http.HandlerFunc(a.handleRevokeToken))
 	mux.Handle("GET /api/me/webhooks", http.HandlerFunc(a.handleListWebhooks))
 	mux.Handle("POST /api/me/webhooks", http.HandlerFunc(a.handleCreateWebhook))
 	mux.Handle("DELETE /api/me/webhooks/{id}", http.HandlerFunc(a.handleDeleteWebhook))
@@ -100,28 +97,6 @@ func (a *AuthServer) failureSleep(start time.Time) {
 	}
 }
 
-// isSecure returns true if the request was made over HTTPS.
-func isSecure(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
-}
-
-// setSessionCookie writes an HttpOnly, SameSite=Lax session cookie. Secure
-// flag is set only on HTTPS connections.
-func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
-	cookie := &http.Cookie{
-		Name:     "atterm_session",
-		Value:    value,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   maxAge,
-	}
-	if isSecure(r) {
-		cookie.Secure = true
-	}
-	http.SetCookie(w, cookie)
-}
-
 // writeJSONStatus writes a JSON response with the given status code.
 func writeJSONStatus(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -148,13 +123,15 @@ func ipPrefix(r *http.Request) string {
 // Flow:
 //  1. Validate email format and password length (≥ 12 chars).
 //  2. CreateUser (hashes password, inserts row).
-//  3. ConsumeInvitation atomically. If invite is invalid, delete the user row
-//     (compensation) and return 400.
+//  3. ConsumeInvitation atomically. If invite is invalid the user row exists
+//     orphaned (no session, no invite binding) — acceptable for MVP.
 //  4. On email-taken (from CreateUser), return 409 immediately.
-//  5. Create web session, set cookie, return 200 JSON.
+//  5. Create session and return {session_token, expires_at, user} JSON.
 //
 // All error paths sleep to the failure floor (SEC-5). Invite errors and
-// email-taken return distinct status codes per spec §5.2.
+// email-taken return distinct status codes per spec §5.2. No Set-Cookie is
+// emitted — clients store the returned session_token and send it as
+// Authorization: Bearer on subsequent requests.
 func (a *AuthServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
@@ -219,18 +196,22 @@ func (a *AuthServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create session and set cookie.
-	tok, _, err := a.Store.CreateSession(r.Context(), u.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
+	// Create session and return the plaintext token + user info in the body.
+	tok, sess, err := a.Store.CreateSession(r.Context(), u.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
 	if err != nil {
 		a.failureSleep(start)
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
 
-	setSessionCookie(w, r, tok, int((30 * 24 * time.Hour).Seconds()))
-	writeJSONStatus(w, http.StatusOK, map[string]string{
-		"user_id": u.ID,
-		"email":   u.Email,
+	writeJSONStatus(w, http.StatusOK, map[string]any{
+		"session_token": tok,
+		"expires_at":    sess.ExpiresAt.Unix(),
+		"user": map[string]any{
+			"id":       u.ID,
+			"email":    u.Email,
+			"is_admin": u.IsAdmin,
+		},
 	})
 }
 
@@ -239,8 +220,11 @@ func (a *AuthServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 // Flow:
 //  1. Call Store.VerifyPassword — internally runs argon2 against real or dummy
 //     hash, so missing-email timing matches wrong-password timing (SEC-3).
-//  2. On success, create session and set cookie.
+//  2. On success, create session and return {session_token, expires_at, user}.
 //  3. On failure (nil user), sleep to failure floor and return 401.
+//
+// No Set-Cookie is emitted — clients store the returned session_token and
+// send it as Authorization: Bearer on subsequent requests.
 func (a *AuthServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
@@ -273,36 +257,37 @@ func (a *AuthServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tok, _, err := a.Store.CreateSession(r.Context(), user.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
+	tok, sess, err := a.Store.CreateSession(r.Context(), user.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
 	if err != nil {
 		a.failureSleep(start)
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
 
-	setSessionCookie(w, r, tok, int((30 * 24 * time.Hour).Seconds()))
-	writeJSONStatus(w, http.StatusOK, map[string]string{
-		"user_id": user.ID,
-		"email":   user.Email,
+	writeJSONStatus(w, http.StatusOK, map[string]any{
+		"session_token": tok,
+		"expires_at":    sess.ExpiresAt.Unix(),
+		"user": map[string]any{
+			"id":       user.ID,
+			"email":    user.Email,
+			"is_admin": user.IsAdmin,
+		},
 	})
 }
 
 // handleLogout implements POST /api/auth/logout.
 //
-// Reads the session cookie, deletes the session, clears the cookie.
+// Reads the session token from Authorization: Bearer (or the WS subprotocol
+// header) and deletes that row. Always returns 204 — a missing token is
+// treated as a no-op so clients can call logout idempotently.
 func (a *AuthServer) handleLogout(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie("atterm_session")
-	if err != nil || c.Value == "" {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+	tok := tokenFromRequest(r)
+	if tok == "" {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
-	// Delete the session (ignore error; cookie will be cleared regardless).
-	_ = a.Store.DeleteSession(r.Context(), c.Value)
-
-	// Clear the cookie.
-	setSessionCookie(w, r, "", -1)
-	writeJSONStatus(w, http.StatusOK, map[string]string{"status": "logged_out"})
+	_ = a.Store.DeleteSession(r.Context(), tok)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleMe implements GET /api/me. Returns user info.
@@ -328,43 +313,12 @@ func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusOK, resp)
 }
 
-// handleListTokens implements GET /api/me/tokens.
-//
-// Returns all API tokens for the authenticated user. The response array
-// contains {id, name, prefix, created_at} and optional {last_used_at,
-// revoked_at}. No plaintext or token_hash fields are included.
-func (a *AuthServer) handleListTokens(w http.ResponseWriter, r *http.Request) {
-	// TODO(task-1.7): handler removed alongside api_tokens. Returns 410 Gone
-	// until the new route layout is wired up.
-	http.Error(w, "gone", http.StatusGone)
-}
-
-// handleCreateToken implements POST /api/me/tokens.
-//
-// Body: {"name": "<display name>"}
-// Response 201: {id, plaintext, prefix, created_at}
-// The plaintext is returned exactly once and never stored.
-func (a *AuthServer) handleCreateToken(w http.ResponseWriter, r *http.Request) {
-	// TODO(task-1.7): handler removed alongside api_tokens. Returns 410 Gone
-	// until the new route layout is wired up.
-	http.Error(w, "gone", http.StatusGone)
-}
-
-// handleRevokeToken implements DELETE /api/me/tokens/{id}.
-//
-// Revokes the named token. Returns 204 on success, 404 if the token does not
-// exist or belongs to a different user (existence-leak protected), 500 on DB error.
-func (a *AuthServer) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
-	// TODO(task-1.7): handler removed alongside api_tokens. Returns 410 Gone
-	// until the new route layout is wired up.
-	http.Error(w, "gone", http.StatusGone)
-}
-
 // handleChangePassword implements POST /api/me/password.
 //
 // Body: {"current_password": "...", "new_password": "..."}
-// On success: invalidates all web sessions for the user, issues a fresh
-// session cookie, and returns 204 No Content.
+// On success: invalidates all sessions for the user, issues a fresh session,
+// and returns {session_token, expires_at} so the caller can replace its
+// bearer token.
 // Error paths: 400 password_weak (new < 12 chars), 401 current_password_wrong,
 // 500 on store/session errors.
 func (a *AuthServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -398,13 +352,15 @@ func (a *AuthServer) handleChangePassword(w http.ResponseWriter, r *http.Request
 	}
 
 	// All old sessions are now deleted. Issue a fresh session for the requester.
-	tok, _, err := a.Store.CreateSession(r.Context(), p.UserID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
+	tok, sess, err := a.Store.CreateSession(r.Context(), p.UserID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	setSessionCookie(w, r, tok, int((30*24*time.Hour).Seconds()))
-	w.WriteHeader(http.StatusNoContent)
+	writeJSONStatus(w, http.StatusOK, map[string]any{
+		"session_token": tok,
+		"expires_at":    sess.ExpiresAt.Unix(),
+	})
 }
 
 // validEmail is a minimal email format check. The store normalises the case;

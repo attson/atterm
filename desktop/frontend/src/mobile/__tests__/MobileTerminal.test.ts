@@ -677,5 +677,102 @@ describe('MobileTerminal', () => {
       expect(termClearSelection).toHaveBeenCalled()
       expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
     })
+
+    it('extends the selection within a row on pointermove > 4 px', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status -v')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))    // col 2 of "git"
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(0, 0, 3)         // selects "git"
+      termSelect.mockClear()
+
+      // Drag 60 px to the right → about 8 cells over.
+      vp.dispatchEvent(pointerEvent('pointermove', 75, 8))
+      // Single-row drag uses term.select; multi-row uses term.selectLines.
+      expect(termSelect).toHaveBeenCalled()
+      const lastCall = termSelect.mock.calls[termSelect.mock.calls.length - 1]
+      expect(lastCall[0]).toBe(0)      // start col stays at anchor word start
+      expect(lastCall[1]).toBe(0)      // single row
+      expect(lastCall[2]).toBeGreaterThan(3)  // grew past "git"
+    })
+
+    it('uses selectLines when the drag crosses rows', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))    // row 0
+      await new Promise((r) => setTimeout(r, 600))
+      termSelectLines.mockClear()
+
+      // Drag down past one row (cellH≈12 → y=50 is row 4)
+      vp.dispatchEvent(pointerEvent('pointermove', 60, 50))
+      expect(termSelectLines).toHaveBeenCalled()
+      const lastCall = termSelectLines.mock.calls[termSelectLines.mock.calls.length - 1]
+      expect(lastCall[0]).toBe(0)      // start row
+      expect(lastCall[1]).toBeGreaterThan(0)  // end row > start row
+    })
+
+    it('auto-scrolls when the drag is near the top edge', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = await mountReady()
+        await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+        const vp = viewportEl(w)
+        setBufferLine('git status')
+        vp.dispatchEvent(pointerEvent('pointerdown', 15, 80))
+        await vi.advanceTimersByTimeAsync(600)
+        termScrollLines.mockClear()
+
+        // Drag into top 24 px zone.
+        vp.dispatchEvent(pointerEvent('pointermove', 100, 10))
+        await vi.advanceTimersByTimeAsync(120)
+        expect(termScrollLines).toHaveBeenCalledWith(-3)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('auto-scrolls when the drag is near the bottom edge', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = await mountReady()
+        await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+        const vp = viewportEl(w)
+        setBufferLine('git status')
+        vp.dispatchEvent(pointerEvent('pointerdown', 15, 80))
+        await vi.advanceTimersByTimeAsync(600)
+        termScrollLines.mockClear()
+
+        // Drag into bottom 24 px zone (viewport bottom is 600).
+        vp.dispatchEvent(pointerEvent('pointermove', 100, 590))
+        await vi.advanceTimersByTimeAsync(120)
+        expect(termScrollLines).toHaveBeenCalledWith(3)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('stops auto-scrolling on pointerup', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = await mountReady()
+        await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+        const vp = viewportEl(w)
+        setBufferLine('git status')
+        vp.dispatchEvent(pointerEvent('pointerdown', 15, 80))
+        await vi.advanceTimersByTimeAsync(600)
+        vp.dispatchEvent(pointerEvent('pointermove', 100, 10))
+        await vi.advanceTimersByTimeAsync(120)
+        termScrollLines.mockClear()
+        vp.dispatchEvent(pointerEvent('pointerup', 100, 10))
+        await vi.advanceTimersByTimeAsync(300)
+        expect(termScrollLines).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })

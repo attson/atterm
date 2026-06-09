@@ -50,10 +50,17 @@ const popover = reactive({
 })
 let pressTimer: ReturnType<typeof setTimeout> | null = null
 let pressAnchor: { x: number; y: number } | null = null
+let dragAnchor: { col: number; row: number } | null = null
+let edgeScrollTimer: ReturnType<typeof setInterval> | null = null
+let edgeScrollDir: -1 | 1 | 0 = 0
 let selectionDisposer: { dispose: () => void } | null = null
 let viewportEl: HTMLElement | null = null
 const LONG_PRESS_MS = 500
 const PRESS_JITTER_PX = 8
+const POST_PRESS_DRAG_PX = 4
+const EDGE_PX = 24
+const EDGE_SCROLL_LINES = 3
+const EDGE_SCROLL_INTERVAL_MS = 60
 const platform = usePlatform()
 let term: Terminal | null = null
 let fit: FitAddon | null = null
@@ -254,6 +261,8 @@ function exitSelection() {
   selMode.value = 'idle'
   if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
   pressAnchor = null
+  dragAnchor = null
+  stopEdgeScroll()
 }
 
 // resolveViewport finds the .xterm-viewport element from the event target or
@@ -297,6 +306,10 @@ function onSelPointerDown(ev: PointerEvent) {
     term.options.disableStdin = true
     vp.style.touchAction = 'none'
     selMode.value = 'selecting'
+    // Anchor a subsequent drag-extend at the word's start cell, not the literal
+    // press point — so dragging right from inside a word grows the selection
+    // from the start of the word rather than mid-word.
+    dragAnchor = { col: wb.start, row: hit.row }
     updatePopoverFromSelection()
   }, LONG_PRESS_MS)
 }
@@ -310,21 +323,78 @@ function onSelPointerMove(ev: PointerEvent) {
       selMode.value = 'idle'
       pressAnchor = null
     }
+    return
   }
-  // dragging logic lands in Task 6
+
+  if (selMode.value !== 'selecting' && selMode.value !== 'dragging') return
+  if (!term || !viewportEl) return
+
+  // Decide drag entry: from `selecting`, the first jitter > POST_PRESS_DRAG_PX
+  // commits to `dragging`. dragAnchor is pre-set at long-press commit time to
+  // the word's start cell, so the selection grows from the word boundary even
+  // when the finger started mid-word.
+  if (selMode.value === 'selecting' && pressAnchor) {
+    const dx = ev.clientX - pressAnchor.x
+    const dy = ev.clientY - pressAnchor.y
+    if (dx * dx + dy * dy < POST_PRESS_DRAG_PX * POST_PRESS_DRAG_PX) return
+    selMode.value = 'dragging'
+  }
+  if (!dragAnchor) return
+
+  const cur = cellCoordsAt(ev.clientX, ev.clientY, term, viewportEl)
+  if (!cur) return
+  const [r0, r1] = dragAnchor.row <= cur.row ? [dragAnchor.row, cur.row] : [cur.row, dragAnchor.row]
+  try {
+    if (r0 === r1) {
+      const [c0, c1] = dragAnchor.col <= cur.col ? [dragAnchor.col, cur.col] : [cur.col, dragAnchor.col]
+      term.select(c0, r0, Math.max(1, c1 - c0 + 1))
+    } else {
+      term.selectLines(r0, r1)
+    }
+  } catch { /* defensive: bad coords leave selection unchanged */ }
+
+  // Edge auto-scroll
+  const rect = viewportEl.getBoundingClientRect()
+  let dir: -1 | 1 | 0 = 0
+  if (ev.clientY - rect.top < EDGE_PX) dir = -1
+  else if (rect.bottom - ev.clientY < EDGE_PX) dir = 1
+  if (dir === 0) stopEdgeScroll()
+  else ensureEdgeScroll(dir)
+}
+
+function ensureEdgeScroll(dir: -1 | 1) {
+  if (edgeScrollDir === dir && edgeScrollTimer) return
+  stopEdgeScroll()
+  edgeScrollDir = dir
+  edgeScrollTimer = setInterval(() => {
+    try { term?.scrollLines(dir * EDGE_SCROLL_LINES) } catch { /* ignore */ }
+  }, EDGE_SCROLL_INTERVAL_MS)
+}
+
+function stopEdgeScroll() {
+  if (edgeScrollTimer) { clearInterval(edgeScrollTimer); edgeScrollTimer = null }
+  edgeScrollDir = 0
 }
 
 function onSelPointerUp() {
   if (selMode.value === 'pressing') {
-    // plain tap — cancel pending timer
     if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
     selMode.value = 'idle'
     pressAnchor = null
+    return
   }
-  // when in 'selecting', the selection persists; popover waits for user action.
+  if (selMode.value === 'dragging') {
+    selMode.value = 'selecting'
+    dragAnchor = null
+    stopEdgeScroll()
+  }
 }
 
-function onSelPointerCancel() { onSelPointerUp() }
+function onSelPointerCancel() {
+  stopEdgeScroll()
+  dragAnchor = null
+  if (selMode.value !== 'idle') selMode.value = 'selecting'
+}
 
 function onDocumentPointerDown(ev: PointerEvent) {
   if (selMode.value === 'idle') return
@@ -482,6 +552,8 @@ onBeforeUnmount(() => {
   selectionDisposer = null
   if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
   pressAnchor = null
+  stopEdgeScroll()
+  dragAnchor = null
   term?.dispose()
   term = null
   fit = null

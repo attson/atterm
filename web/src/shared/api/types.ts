@@ -10,6 +10,19 @@ export interface AuthSuccess {
   email: string
 }
 
+// LoginResp is the new shape returned by /api/auth/login and /api/auth/signup
+// in Phase 4 of the session-token migration. Phase 5 will retire the user_id
+// and email fields here in favor of a more structured user object.
+export interface LoginResp {
+  session_token: string
+  expires_at: number
+  user: {
+    id: string
+    email: string
+    is_admin?: boolean
+  }
+}
+
 export interface VersionResponse {
   version: string
 }

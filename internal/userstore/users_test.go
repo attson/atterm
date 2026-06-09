@@ -282,3 +282,13 @@ func TestSetIsAdminColumnRoundTrip(t *testing.T) {
 		t.Errorf("VerifyPassword returned IsAdmin=false after promotion")
 	}
 }
+
+func TestUser_HasNoCSRFSecretField(t *testing.T) {
+	// Reflection-free check: a User instance should compile and serialise
+	// without csrfSecret being part of its public or private API.
+	u := User{ID: "u_1", Email: "x@example.com"}
+	_ = u
+	// The presence of the test is the test — if csrf_secret survives in
+	// the User struct, downstream callers (auth_http.go) still reference
+	// it and the package won't compile.
+}

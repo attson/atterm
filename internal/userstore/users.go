@@ -20,18 +20,15 @@ var (
 	ErrPasswordIncorrect = errors.New("userstore: current password incorrect")
 )
 
-// User is the row shape exposed to callers. password_hash and csrf_secret
-// are intentionally not exported.
+// User is the row shape exposed to callers. password_hash is intentionally
+// not exported.
 type User struct {
 	ID         string
 	Email      string
 	IsAdmin    bool
 	CreatedAt  time.Time
 	DisabledAt *time.Time
-	csrfSecret []byte // populated by internal lookups; CSRFSecret() exposes
 }
-
-func (u *User) CSRFSecret() []byte { return u.csrfSecret }
 
 // argonParams are the SEC-2 fixed parameters. Stored hashes carry these
 // inline so future tuning does not invalidate old hashes.
@@ -107,16 +104,12 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, email, password string) (*
 	if err != nil {
 		return nil, fmt.Errorf("hash: %w", err)
 	}
-	csrfSecret := make([]byte, 32)
-	if _, err := rand.Read(csrfSecret); err != nil {
-		return nil, fmt.Errorf("csrf rand: %w", err)
-	}
 	id := defaultIDs.New()
 	now := time.Now().Unix()
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users(id, email, password_hash, csrf_secret, created_at)
-		 VALUES(?, ?, ?, ?, ?)`,
-		id, email, hash, csrfSecret, now)
+		`INSERT INTO users(id, email, password_hash, created_at)
+		 VALUES(?, ?, ?, ?)`,
+		id, email, hash, now)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.email") {
 			return nil, ErrEmailTaken
@@ -125,8 +118,7 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, email, password string) (*
 	}
 	return &User{
 		ID: id, Email: email,
-		CreatedAt:  time.Unix(now, 0),
-		csrfSecret: csrfSecret,
+		CreatedAt: time.Unix(now, 0),
 	}, nil
 }
 
@@ -139,15 +131,14 @@ func (s *SQLiteStore) VerifyPassword(ctx context.Context, email, password string
 	var (
 		id         string
 		hash       string
-		csrfSecret []byte
 		createdAt  int64
 		disabledAt sql.NullInt64
 		isAdmin    int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, password_hash, csrf_secret, created_at, disabled_at, is_admin
+		`SELECT id, password_hash, created_at, disabled_at, is_admin
 		 FROM users WHERE email = ?`, email,
-	).Scan(&id, &hash, &csrfSecret, &createdAt, &disabledAt, &isAdmin)
+	).Scan(&id, &hash, &createdAt, &disabledAt, &isAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Constant-time dummy verify, ignore result.
 		_ = verifyPassword(password, dummyHash)
@@ -165,9 +156,8 @@ func (s *SQLiteStore) VerifyPassword(ctx context.Context, email, password string
 	}
 	u := &User{
 		ID: id, Email: email,
-		IsAdmin:    isAdmin != 0,
-		CreatedAt:  time.Unix(createdAt, 0),
-		csrfSecret: csrfSecret,
+		IsAdmin:   isAdmin != 0,
+		CreatedAt: time.Unix(createdAt, 0),
 	}
 	return u, nil
 }
@@ -178,13 +168,12 @@ func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 		email      string
 		createdAt  int64
 		disabledAt sql.NullInt64
-		secret     []byte
 		isAdmin    int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT email, csrf_secret, created_at, disabled_at, is_admin
+		`SELECT email, created_at, disabled_at, is_admin
 		 FROM users WHERE id = ?`, id,
-	).Scan(&email, &secret, &createdAt, &disabledAt, &isAdmin)
+	).Scan(&email, &createdAt, &disabledAt, &isAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
 	} else if err != nil {
@@ -192,9 +181,8 @@ func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 	}
 	u := &User{
 		ID: id, Email: email,
-		IsAdmin:    isAdmin != 0,
-		CreatedAt:  time.Unix(createdAt, 0),
-		csrfSecret: secret,
+		IsAdmin:   isAdmin != 0,
+		CreatedAt: time.Unix(createdAt, 0),
 	}
 	if disabledAt.Valid {
 		t := time.Unix(disabledAt.Int64, 0)
@@ -241,8 +229,8 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 // ChangePassword verifies currentPlaintext against userID's stored hash.
-// On success it hashes newPlaintext, rotates csrf_secret, deletes all web
-// sessions for the user (caller must issue a new session), and returns nil.
+// On success it hashes newPlaintext, deletes all web sessions for the user
+// (caller must issue a new session), and returns nil.
 // Returns ErrUserNotFound if the user ID is unknown, ErrPasswordIncorrect if
 // the current password does not match.
 func (s *SQLiteStore) ChangePassword(ctx context.Context, userID, currentPlaintext, newPlaintext string) error {
@@ -268,13 +256,7 @@ func (s *SQLiteStore) ChangePassword(ctx context.Context, userID, currentPlainte
 		return fmt.Errorf("hash: %w", err)
 	}
 
-	// Rotate csrf_secret.
-	newCSRF := make([]byte, 32)
-	if _, err := rand.Read(newCSRF); err != nil {
-		return fmt.Errorf("csrf rand: %w", err)
-	}
-
-	// Update in a transaction: new hash + rotated CSRF + delete all sessions.
+	// Update in a transaction: new hash + delete all sessions.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -282,8 +264,8 @@ func (s *SQLiteStore) ChangePassword(ctx context.Context, userID, currentPlainte
 	defer tx.Rollback() //nolint:errcheck
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET password_hash=?, csrf_secret=? WHERE id=?`,
-		newHash, newCSRF, userID); err != nil {
+		`UPDATE users SET password_hash=? WHERE id=?`,
+		newHash, userID); err != nil {
 		return fmt.Errorf("update password: %w", err)
 	}
 
@@ -299,8 +281,8 @@ func (s *SQLiteStore) ChangePassword(ctx context.Context, userID, currentPlainte
 }
 
 // ResetUserPassword generates a new temporary password (prefix "tmp_"), updates
-// the user's password_hash, rotates csrf_secret, and deletes all web_sessions
-// for that user — all in one transaction. Returns the plaintext password once.
+// the user's password_hash, and deletes all web_sessions for that user — all in
+// one transaction. Returns the plaintext password once.
 func (s *SQLiteStore) ResetUserPassword(ctx context.Context, userID string) (Secret, error) {
 	// Generate 16 random bytes → base64url → "tmp_<22 chars>" (total ~26 chars).
 	raw := make([]byte, 16)
@@ -314,11 +296,6 @@ func (s *SQLiteStore) ResetUserPassword(ctx context.Context, userID string) (Sec
 		return Secret{}, fmt.Errorf("hash: %w", err)
 	}
 
-	newCSRF := make([]byte, 32)
-	if _, err := rand.Read(newCSRF); err != nil {
-		return Secret{}, fmt.Errorf("csrf rand: %w", err)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Secret{}, fmt.Errorf("begin tx: %w", err)
@@ -326,8 +303,8 @@ func (s *SQLiteStore) ResetUserPassword(ctx context.Context, userID string) (Sec
 	defer tx.Rollback() //nolint:errcheck
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET password_hash=?, csrf_secret=? WHERE id=?`,
-		hash, newCSRF, userID); err != nil {
+		`UPDATE users SET password_hash=? WHERE id=?`,
+		hash, userID); err != nil {
 		return Secret{}, fmt.Errorf("update password: %w", err)
 	}
 

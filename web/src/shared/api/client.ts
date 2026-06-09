@@ -1,4 +1,4 @@
-import { isMobileApp, loadRelayConfig } from './relay-config'
+import { clearRelayConfig, loadRelayConfig } from './relay-config'
 
 // safeNext validates a post-login redirect target. Every consumer of
 // the ?next= query param routes through this guard. See spec Sec-2.
@@ -15,17 +15,6 @@ export function safeNext(raw: string | null): string {
   } catch {
     return '/'
   }
-}
-
-// CSRF cache: relay derives the token from the session secret and
-// returns it in /api/me's body. Frontend caches it here and adds it
-// to every non-GET request. See spec Sec-4.
-let cachedCsrf = ''
-export function setCsrfToken(token: string): void {
-  cachedCsrf = token
-}
-export function clearCsrfToken(): void {
-  cachedCsrf = ''
 }
 
 export class ApiError extends Error {
@@ -45,51 +34,46 @@ export interface ApiResult<T> {
   headers: Headers
 }
 
+// apiFetch — single code path for every HTTP request issued by the web
+// client. Phase 4 of the session-token migration removed the cookie /
+// CSRF / mobile-vs-web split: the client now always carries the
+// session_token as Authorization: Bearer, never sends cookies, and on
+// 401 wipes localStorage and bounces to /login.html.
+//
+// baseURL on the stored RelayConfig is honoured when present so the
+// same code works from a remote-paired mobile app talking to a relay on
+// a different origin. Web users keep baseURL empty (same-origin).
 export async function apiFetch<T = unknown>(
   path: string,
   init: RequestInit = {},
 ): Promise<ApiResult<T>> {
   const method = (init.method || 'GET').toUpperCase()
   const headers = new Headers(init.headers)
+  const cfg = loadRelayConfig()
 
-  let url = path
-  let credentials: RequestCredentials = 'same-origin'
-
-  if (isMobileApp()) {
-    const cfg = loadRelayConfig()
-    if (!cfg) throw new ApiError(0, 'relay_not_configured', null)
-    url = cfg.base.replace(/\/$/, '') + path
-    headers.set('Authorization', `Bearer ${cfg.token}`)
-    credentials = 'omit'
-    if (!headers.has('Content-Type') && init.body !== undefined && method !== 'GET' && method !== 'HEAD') {
-      headers.set('Content-Type', 'application/json')
-    }
-  } else {
-    if (method !== 'GET' && method !== 'HEAD') {
-      if (cachedCsrf) headers.set('X-CSRF-Token', cachedCsrf)
-      if (!headers.has('Content-Type') && init.body !== undefined) {
-        headers.set('Content-Type', 'application/json')
-      }
-    }
+  if (cfg?.sessionToken) {
+    headers.set('Authorization', `Bearer ${cfg.sessionToken}`)
   }
+  if (!headers.has('Content-Type') && init.body !== undefined && method !== 'GET' && method !== 'HEAD') {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  const base = (cfg?.baseURL ?? '').replace(/\/$/, '')
+  const url = base + path
 
   let res: Response
   try {
-    res = await fetch(url, { ...init, headers, credentials })
+    res = await fetch(url, { ...init, headers, credentials: 'omit' })
   } catch {
     throw new ApiError(0, 'network_error', null)
   }
 
   if (res.status === 401) {
-    if (isMobileApp()) {
-      if (typeof location !== 'undefined') {
-        location.replace('/setup.html?reason=token_invalid')
-      }
-    } else {
+    clearRelayConfig()
+    if (typeof location !== 'undefined') {
       const onAuthPage =
-        typeof location !== 'undefined' &&
-        (location.pathname === '/login.html' || location.pathname === '/signup.html')
-      if (!onAuthPage && typeof location !== 'undefined') {
+        location.pathname === '/login.html' || location.pathname === '/signup.html'
+      if (!onAuthPage) {
         const next = safeNext(location.pathname + location.search + location.hash)
         location.assign('/login.html?next=' + encodeURIComponent(next))
       }

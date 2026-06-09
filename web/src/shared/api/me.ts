@@ -1,4 +1,4 @@
-import { apiFetch, clearCsrfToken, setCsrfToken } from './client'
+import { apiFetch } from './client'
 import type {
   ApiTokenCreated,
   ApiTokenRow,
@@ -7,11 +7,11 @@ import type {
   SignOutOthersResponse,
 } from './types'
 
-// getMe fetches the current user and refreshes the CSRF cache when the
-// server returns a token (always present for cookie-authenticated calls).
+// getMe fetches the current user. The relay no longer issues CSRF
+// tokens (session_token in Authorization: Bearer is sufficient
+// proof-of-intent), so the historical csrf_token round-trip is gone.
 export async function getMe(): Promise<MeResponse> {
   const { data } = await apiFetch<MeResponse>('/api/me')
-  if (data.csrf_token) setCsrfToken(data.csrf_token)
   return data
 }
 
@@ -62,13 +62,10 @@ export async function changePassword(
   })
 }
 
-// Account deletion (settings → Danger zone tab). Server clears the
-// session cookie; we also drop the local CSRF cache because the
-// account no longer exists to derive a new token.
+// Account deletion (settings → Danger zone tab).
 export async function deleteMe(email: string, password: string): Promise<void> {
   await apiFetch('/api/me', {
     method: 'DELETE',
     body: JSON.stringify({ email, password }),
   })
-  clearCsrfToken()
 }

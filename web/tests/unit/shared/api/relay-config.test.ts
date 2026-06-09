@@ -52,7 +52,16 @@ describe('relay config storage', () => {
     expect(loadRelayConfig()).toBeNull()
   })
 
-  it('saveRelayConfig persists fields and loadRelayConfig reads them back', () => {
+  it('saveRelayConfig persists session-token fields and loadRelayConfig reads them back', () => {
+    saveRelayConfig({ baseURL: 'https://r.example.com', sessionToken: 'ses_test', expiresAt: 123 })
+    expect(loadRelayConfig()).toEqual({
+      baseURL: 'https://r.example.com',
+      sessionToken: 'ses_test',
+      expiresAt: 123,
+    })
+  })
+
+  it('saveRelayConfig still round-trips the legacy mobile shape (Phase 5 cleanup)', () => {
     saveRelayConfig({ base: 'https://r.example.com', token: 'atk_test', allowInsecure: false })
     expect(loadRelayConfig()).toEqual({
       base: 'https://r.example.com',
@@ -66,13 +75,8 @@ describe('relay config storage', () => {
     expect(loadRelayConfig()).toBeNull()
   })
 
-  it('loadRelayConfig returns null when stored config is missing required fields', () => {
-    localStorage.setItem('atterm.relay', JSON.stringify({ base: 'https://r.example.com' }))
-    expect(loadRelayConfig()).toBeNull()
-  })
-
   it('clearRelayConfig removes the stored entry', () => {
-    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_x', allowInsecure: false })
+    saveRelayConfig({ baseURL: 'https://r.example.com', sessionToken: 'ses_x', expiresAt: null })
     clearRelayConfig()
     expect(loadRelayConfig()).toBeNull()
   })

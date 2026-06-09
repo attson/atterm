@@ -10,7 +10,7 @@ import {
   changePassword,
   deleteMe,
 } from '@shared/api/me'
-import { clearCsrfToken, setCsrfToken } from '@shared/api/client'
+import { clearRelayConfig, saveRelayConfig } from '@shared/api/relay-config'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -25,8 +25,8 @@ function emptyResponse(status: number): Response {
 
 describe('me.ts /api/me/tokens', () => {
   beforeEach(() => {
-    clearCsrfToken()
-    setCsrfToken('csrf-test')
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
     vi.restoreAllMocks()
   })
 
@@ -55,7 +55,10 @@ describe('me.ts /api/me/tokens', () => {
     expect(path).toBe('/api/me/tokens')
     expect((init as RequestInit).method).toBe('POST')
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ name: 'laptop' })
-    expect(new Headers((init as RequestInit).headers).get('X-CSRF-Token')).toBe('csrf-test')
+    // Authorization carries the session_token; CSRF is gone from the wire.
+    const headers = new Headers((init as RequestInit).headers)
+    expect(headers.get('Authorization')).toBe('Bearer ses_test')
+    expect(headers.has('X-CSRF-Token')).toBe(false)
   })
 
   it('revokeToken DELETEs the id-encoded URL and resolves on 204', async () => {
@@ -72,8 +75,8 @@ describe('me.ts /api/me/tokens', () => {
 
 describe('me.ts /api/me/sessions', () => {
   beforeEach(() => {
-    clearCsrfToken()
-    setCsrfToken('csrf-test')
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
     vi.restoreAllMocks()
   })
 
@@ -119,8 +122,8 @@ describe('me.ts /api/me/sessions', () => {
 
 describe('me.ts /api/me/password', () => {
   beforeEach(() => {
-    clearCsrfToken()
-    setCsrfToken('csrf-test')
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
     vi.restoreAllMocks()
   })
 
@@ -142,16 +145,13 @@ describe('me.ts /api/me/password', () => {
 
 describe('me.ts /api/me delete', () => {
   beforeEach(() => {
-    clearCsrfToken()
-    setCsrfToken('csrf-test')
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
     vi.restoreAllMocks()
   })
 
-  it('deleteMe DELETEs /api/me with email + password body, clears CSRF cache', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(emptyResponse(204))
-      .mockResolvedValueOnce(jsonResponse(200, { ok: true }))
+  it('deleteMe DELETEs /api/me with email + password body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(emptyResponse(204))
     vi.stubGlobal('fetch', fetchMock)
 
     await deleteMe('a@b.example', 'password-1234')
@@ -163,33 +163,22 @@ describe('me.ts /api/me delete', () => {
       email: 'a@b.example',
       password: 'password-1234',
     })
-
-    // verify cache cleared by issuing an unrelated mutating call
-    const { apiFetch } = await import('@shared/api/client')
-    await apiFetch('/api/me/tokens', { method: 'POST', body: '{}' })
-    const headers = new Headers((fetchMock.mock.calls[1]![1] as RequestInit).headers)
-    expect(headers.has('X-CSRF-Token')).toBe(false)
   })
 })
 
-describe('me.ts /api/me get (regression of PR-B getMe)', () => {
+describe('me.ts /api/me get', () => {
   beforeEach(() => {
-    clearCsrfToken()
+    clearRelayConfig()
     vi.restoreAllMocks()
   })
 
-  it('getMe still populates the cache when csrf_token is present', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(200, { user_id: 'u1', email: 'a@b', csrf_token: 'fresh-csrf' }))
-      .mockResolvedValueOnce(jsonResponse(200, { ok: true }))
+  it('getMe GETs /api/me and returns the body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { user_id: 'u1', email: 'a@b' }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await getMe()
-    const { apiFetch } = await import('@shared/api/client')
-    await apiFetch('/api/me/password', { method: 'POST', body: '{}' })
+    const result = await getMe()
 
-    const headers = new Headers((fetchMock.mock.calls[1]![1] as RequestInit).headers)
-    expect(headers.get('X-CSRF-Token')).toBe('fresh-csrf')
+    expect(result).toEqual({ user_id: 'u1', email: 'a@b' })
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/me')
   })
 })

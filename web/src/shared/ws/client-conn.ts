@@ -127,7 +127,8 @@ export class SessionConnection {
     if (this.detached) return
     const url = wsUrl('/client')
     const cfg = isMobileApp() ? loadRelayConfig() : null
-    const ws = cfg ? new WebSocket(url, [cfg.token]) : new WebSocket(url)
+    const wsToken = cfg?.token
+    const ws = wsToken ? new WebSocket(url, [wsToken]) : new WebSocket(url)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? 'connecting' : 'reconnecting')
@@ -231,8 +232,9 @@ export class SessionConnection {
 export function wsUrl(path: string): string {
   if (isMobileApp()) {
     const cfg = loadRelayConfig()
-    if (!cfg) throw new ApiError(0, 'relay_not_configured', null)
-    const u = new URL(cfg.base)
+    const baseStr = cfg?.baseURL ?? cfg?.base
+    if (!baseStr) throw new ApiError(0, 'relay_not_configured', null)
+    const u = new URL(baseStr)
     const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${u.host}${path}`
   }

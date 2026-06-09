@@ -10,7 +10,7 @@ import {
   getAdminConfig,
   setAdminConfig,
 } from '@shared/api/admin'
-import { clearCsrfToken, setCsrfToken } from '@shared/api/client'
+import { clearRelayConfig, saveRelayConfig } from '@shared/api/relay-config'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -25,8 +25,8 @@ function emptyResponse(status: number): Response {
 
 describe('admin /admin/api/users', () => {
   beforeEach(() => {
-    clearCsrfToken()
-    setCsrfToken('csrf-test')
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
     vi.restoreAllMocks()
   })
 
@@ -71,7 +71,7 @@ describe('admin /admin/api/users', () => {
 
     expect(fetchMock.mock.calls[0]![0]).toBe('/admin/api/users/u1/admin')
     expect((fetchMock.mock.calls[0]![1] as RequestInit).method).toBe('POST')
-    expect(new Headers((fetchMock.mock.calls[0]![1] as RequestInit).headers).get('X-CSRF-Token')).toBe('csrf-test')
+    expect(new Headers((fetchMock.mock.calls[0]![1] as RequestInit).headers).get('Authorization')).toBe('Bearer ses_test')
   })
 
   it('demoteUser DELETEs the admin endpoint', async () => {
@@ -96,8 +96,8 @@ describe('admin /admin/api/users', () => {
 
 describe('admin /admin/api/invitations', () => {
   beforeEach(() => {
-    clearCsrfToken()
-    setCsrfToken('csrf-test')
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
     vi.restoreAllMocks()
   })
 
@@ -150,8 +150,8 @@ describe('admin /admin/api/invitations', () => {
 
 describe('admin /admin/api/config', () => {
   beforeEach(() => {
-    clearCsrfToken()
-    setCsrfToken('csrf-test')
+    clearRelayConfig()
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
     vi.restoreAllMocks()
   })
 

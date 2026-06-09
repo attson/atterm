@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { login, signup, logout } from '@shared/api/auth'
-import { clearCsrfToken } from '@shared/api/client'
+import { clearRelayConfig } from '@shared/api/relay-config'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -11,36 +11,37 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe('auth helpers', () => {
   beforeEach(() => {
-    clearCsrfToken()
+    clearRelayConfig()
     vi.restoreAllMocks()
   })
 
-  it('login posts credentials and then refreshes /api/me to populate CSRF cache', async () => {
+  it('login POSTs credentials to /api/auth/login and returns body', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(200, { user_id: 'u1', email: 'a@b' }))
-      .mockResolvedValueOnce(jsonResponse(200, { user_id: 'u1', email: 'a@b', csrf_token: 'csrf-xyz' }))
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await login('a@b', 'password-1234')
 
     expect(result).toEqual({ user_id: 'u1', email: 'a@b' })
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/auth/login')
-    expect(fetchMock.mock.calls[1]![0]).toBe('/api/me')
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ email: 'a@b', password: 'password-1234' })
   })
 
-  it('signup posts the invite_code and then refreshes /api/me', async () => {
+  it('signup posts the invite_code and returns body', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(200, { user_id: 'u1', email: 'a@b' }))
-      .mockResolvedValueOnce(jsonResponse(200, { user_id: 'u1', email: 'a@b', csrf_token: 'csrf-xyz' }))
     vi.stubGlobal('fetch', fetchMock)
 
     await signup('a@b', 'password-1234', 'invite-abc')
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    const [, init] = fetchMock.mock.calls[0]!
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [path, init] = fetchMock.mock.calls[0]!
+    expect(path).toBe('/api/auth/signup')
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       email: 'a@b',
       password: 'password-1234',
@@ -48,7 +49,7 @@ describe('auth helpers', () => {
     })
   })
 
-  it('logout posts and clears the CSRF cache', async () => {
+  it('logout POSTs /api/auth/logout', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { status: 'logged_out' }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -56,8 +57,6 @@ describe('auth helpers', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/auth/logout')
-    // (We can't directly observe cachedCsrf, but a subsequent mutating
-    // request should not carry X-CSRF-Token. The detailed coverage of
-    // that lives in client.test.ts; here we just confirm logout runs.)
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).method).toBe('POST')
   })
 })

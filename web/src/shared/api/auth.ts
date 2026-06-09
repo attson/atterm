@@ -1,15 +1,15 @@
-import { apiFetch, clearCsrfToken } from './client'
-import { getMe } from './me'
+import { apiFetch } from './client'
 import type { AuthSuccess } from './types'
 
-// login submits credentials, then calls getMe to populate the CSRF
-// cache before any subsequent mutating request fires.
+// login submits credentials and returns the auth payload. Task 4.2
+// adds session_token persistence; for now this just preserves the
+// existing contract minus the CSRF refresh round-trip (CSRF is gone
+// from the relay).
 export async function login(email: string, password: string): Promise<AuthSuccess> {
   const { data } = await apiFetch<AuthSuccess>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
-  await getMe()
   return data
 }
 
@@ -23,12 +23,10 @@ export async function signup(
     method: 'POST',
     body: JSON.stringify({ email, password, invite_code }),
   })
-  await getMe()
   return data
 }
 
-// logout invalidates the server session and drops the local CSRF cache.
+// logout revokes the server-side session.
 export async function logout(): Promise<void> {
   await apiFetch('/api/auth/logout', { method: 'POST' })
-  clearCsrfToken()
 }

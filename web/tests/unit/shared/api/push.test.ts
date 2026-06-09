@@ -31,7 +31,7 @@ describe('push api', () => {
   it('getPushKey returns the VAPID key string', async () => {
     fetchMock.mockReturnValueOnce(jsonOk({ key: 'BLAH' }))
     expect(await getPushKey()).toBe('BLAH')
-    expect(fetchMock).toHaveBeenCalledWith('/api/push/key', expect.objectContaining({ credentials: 'same-origin' }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/push/key', expect.objectContaining({ credentials: 'omit' }))
   })
 
   it('subscribePush POSTs JSON body with endpoint + keys', async () => {

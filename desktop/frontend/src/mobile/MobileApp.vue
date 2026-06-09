@@ -19,13 +19,13 @@ const reason = ref<'token_invalid' | null>(null)
 const openTerminals = ref<OpenTerminal[]>([])   // stable open order (tab strip order)
 const recency = ref<string[]>([])               // MRU order (last = most recent), for eviction
 const activeSessionId = ref<string>('')
-const endpoint = ref<Endpoint>({ url: '', token: '' })
+const endpoint = ref<Endpoint>({ url: '', session_token: '' })
 
 const openSessionIds = computed(() => openTerminals.value.map((t) => t.sessionId))
 
 async function refreshEndpoint(): Promise<void> {
   const cfg = await platform.relay.load()
-  if (cfg) endpoint.value = { url: relayBaseToWsUrl(cfg.url), token: cfg.token }
+  if (cfg) endpoint.value = { url: relayBaseToWsUrl(cfg.url), session_token: cfg.token }
 }
 
 onMounted(async () => {

@@ -144,16 +144,16 @@ export namespace main {
 	}
 	export class Endpoint {
 	    url: string;
-	    token: string;
-	
+	    session_token: string;
+
 	    static createFrom(source: any = {}) {
 	        return new Endpoint(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
-	        this.token = source["token"];
+	        this.session_token = source["session_token"];
 	    }
 	}
 	export class FileContent {

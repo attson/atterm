@@ -16,7 +16,7 @@ export type TaskGroupBy = "host" | "state";
 
 export interface Endpoint {
   url: string;
-  token: string;
+  session_token: string;
 }
 
 export type LocalePreference = "system" | "en" | "zh-CN";

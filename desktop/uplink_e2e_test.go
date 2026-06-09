@@ -45,16 +45,8 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 	defer remoteHTTP.Close()
 	remoteAddr := remoteLn.Addr().String()
 
-	h1, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer h1.Stop()
-	h2, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer h2.Stop()
+	h1 := newTestRelayHost(t)
+	h2 := newTestRelayHost(t)
 
 	// host1 owns the session
 	sid, err := h1.NewSession(context.Background(), NewSessionReq{
@@ -189,11 +181,7 @@ func TestUplinkE2E(t *testing.T) {
 	remoteAddr := remoteLn.Addr().String()
 
 	// 2. local relayHost
-	host, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer host.Stop()
+	host := newTestRelayHost(t)
 
 	// spawn a bash session that waits for input
 	sid, err := host.NewSession(context.Background(), NewSessionReq{
@@ -356,11 +344,7 @@ func TestUplink_AuthInfo_EmitsUserID(t *testing.T) {
 		calls = append(calls, emitCall{name: name, data: d})
 	}
 
-	host, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer host.Stop()
+	host := newTestRelayHost(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -456,11 +440,7 @@ func TestUplink_Viewers_EmitsCount(t *testing.T) {
 		calls = append(calls, emitCall{name: name, data: d})
 	}
 
-	host, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer host.Stop()
+	host := newTestRelayHost(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -546,11 +526,7 @@ func TestUplink_AuthErrorClose_EmitsEvent(t *testing.T) {
 		calls = append(calls, emitCall{name: name, data: d})
 	}
 
-	host, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer host.Stop()
+	host := newTestRelayHost(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -608,11 +584,7 @@ func TestUplink_DriverHandoff_SecondClientSteals(t *testing.T) {
 	defer remoteHTTP.Close()
 	remoteAddr := remoteLn.Addr().String()
 
-	host, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer host.Stop()
+	host := newTestRelayHost(t)
 	sid, err := host.NewSession(context.Background(), NewSessionReq{
 		Command: "bash",
 		Args:    []string{"-c", "while read line; do echo got=$line; done"},
@@ -758,11 +730,7 @@ func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
 	defer remoteHTTP.Close()
 	remoteAddr := remoteLn.Addr().String()
 
-	host, err := startRelayHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer host.Stop()
+	host := newTestRelayHost(t)
 	sid, err := host.NewSession(context.Background(), NewSessionReq{
 		Command: "bash",
 		Args:    []string{"-c", "while read line; do echo got=$line; done"},
@@ -838,7 +806,7 @@ func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
 	}
 
 	// owner attaches to its own mini-relay
-	ownerConn := dialAttach("ws://"+host.addr, host.token, "owner")
+	ownerConn := dialAttach("ws://"+host.addr, host.sessionToken, "owner")
 	defer ownerConn.Close(websocket.StatusNormalClosure, "")
 	ownerDrv := driverChan(ownerConn)
 

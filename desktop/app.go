@@ -24,10 +24,13 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Endpoint is what the frontend uses to open a WebSocket to the in-process relay.
+// Endpoint is what the frontend uses to open a WebSocket to the in-process
+// relay. SessionToken is the bearer token returned by the desktop's local
+// bootstrap admin login; it is sent in Authorization headers / WS
+// subprotocols the same way it is for any remote relay.
 type Endpoint struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
+	URL          string `json:"url"`
+	SessionToken string `json:"session_token"`
 }
 
 // NewSessionReq is the body of NewSession.
@@ -127,15 +130,17 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.pluginFS.setupWatcher(ctx)
-	h, err := startRelayHost()
+	// cfgStore must be ready before startRelayHost — the relay host's
+	// bootstrap admin password lives in appConfig, so it has to be loaded
+	// (and possibly written on first run) before we open the userstore.
+	if a.cfgStore == nil {
+		a.cfgStore = loadConfig()
+	}
+	h, err := startRelayHost(a.cfgStore)
 	if err != nil {
 		log.Fatalf("desktop: start relay host: %v", err)
 	}
 	a.host = h
-	if a.cfgStore == nil {
-		a.cfgStore = loadConfig()
-	}
-	a.host.setConfigStore(a.cfgStore)
 
 	cfg := a.cfgStore.Get()
 	if cfg.RelayURL == "" {
@@ -222,13 +227,14 @@ func (a *App) GetHostInfo() HostInfo {
 	return HostInfo{HostID: id, Host: h, User: u}
 }
 
-// GetEndpoint returns the local relay endpoint and a token. The frontend uses
-// this to open a WebSocket to the in-process relay.
+// GetEndpoint returns the local relay endpoint and a session token. The
+// frontend uses this to open a WebSocket to the in-process relay; the
+// session token is bound to the desktop-local bootstrap admin user.
 func (a *App) GetEndpoint() Endpoint {
 	if a.host == nil {
 		return Endpoint{}
 	}
-	return Endpoint{URL: "ws://" + a.host.addr, Token: a.host.token}
+	return Endpoint{URL: "ws://" + a.host.addr, SessionToken: a.host.sessionToken}
 }
 
 // GetRelayConfig returns the currently-persisted relay URL/token plus whether

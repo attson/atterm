@@ -40,7 +40,7 @@ describe("PaneGrid close button", () => {
     const wrapper = mount(PaneGrid, {
       props: {
         tab,
-        endpointFor: () => ({ url: "ws://127.0.0.1:1", token: "token" }),
+        endpointFor: () => ({ url: "ws://127.0.0.1:1", session_token: "token" }),
         sessionInfoFor: () => null,
         active: true,
         terminalTheme: {},

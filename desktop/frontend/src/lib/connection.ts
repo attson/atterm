@@ -24,7 +24,7 @@ export type Status = "connecting" | "attached" | "reconnecting" | "ended" | "err
 
 export interface Endpoint {
   url: string; // ws://host:port (no trailing slash)
-  token: string;
+  session_token: string;
 }
 
 export interface ConnectionHandlers {
@@ -115,7 +115,7 @@ function tokenSubprotocol(token: string): string | undefined {
 
 export function webSocketAuth(endpoint: Endpoint, path: string): { url: string; protocols?: string[] } {
   const base = endpoint.url.replace(/\/$/, "");
-  const protocol = tokenSubprotocol(endpoint.token);
+  const protocol = tokenSubprotocol(endpoint.session_token);
   return {
     url: `${base}${path}`,
     protocols: protocol ? [protocol] : undefined,
@@ -399,7 +399,7 @@ export async function fetchSessions(endpoint: Endpoint): Promise<SessionInfo[]> 
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: endpoint.token ? { Authorization: "Bearer " + endpoint.token } : {},
+      headers: endpoint.session_token ? { Authorization: "Bearer " + endpoint.session_token } : {},
     });
   } catch (e: any) {
     throw new Error(`fetch ${url}: ${e?.message ?? e}`);

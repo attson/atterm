@@ -3,7 +3,7 @@ import type { QuickTemplate } from '../lib/templates'
 import type { AuxKey } from '../lib/auxKeys'
 import { secureStorage } from './secureStorage'
 
-const STORAGE_KEY = 'atterm.relay'
+const STORAGE_KEY = 'atterm.relay.session'
 const TEMPLATES_KEY = 'atterm.templates'
 const AUXKEYS_KEY = 'atterm.auxkeys'
 

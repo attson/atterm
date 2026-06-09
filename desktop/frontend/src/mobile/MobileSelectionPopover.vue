@@ -28,13 +28,15 @@ const popStyle = computed(() => {
 </script>
 
 <template>
+  <!-- Three .stop modifiers isolate popover taps from MobileTerminal's
+       pointer listeners on .xterm-viewport (long-press / drag). -->
   <div
     v-if="visible"
     class="popover"
     :class="[`arrow-${arrowDir}`]"
     :style="popStyle"
     data-testid="selection-popover"
-    role="toolbar"
+    role="group"
     :aria-label="t('mobile.selection.copy') + ' / ' + t('mobile.selection.send')"
     @pointerdown.stop
     @pointerup.stop
@@ -74,10 +76,8 @@ const popStyle = computed(() => {
   border-radius: 8px;
   display: flex;
   box-shadow: 0 6px 20px rgba(0, 0, 0, .4);
-  overflow: hidden;
   font-family: -apple-system, system-ui, sans-serif;
   z-index: 1000;            /* above terminal canvas + control panel */
-  pointer-events: auto;
 }
 /* Arrow rendered as a pseudo-element pointing at the selection */
 .popover::after {
@@ -115,9 +115,9 @@ const popStyle = computed(() => {
 .btn.send { color: #60a5fa; font-weight: 600; }
 .btn.cancel { font-size: 14px; line-height: 1; padding: 4px 8px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-/* Hit-slop: transparent box extends tap target above/below visual without
-   shifting layout. ::before is the hit area; pointer-events:auto on parent
-   .popover passes clicks through to the underlying <button>. */
+/* Hit-slop: ::before extends the button's hit area 8 px above/below the visual
+   without shifting layout. Pseudo-elements inherit pointer events from their
+   generating element, so a tap on the slop registers as a tap on the .btn. */
 .btn::before {
   content: '';
   position: absolute;

@@ -19,7 +19,7 @@ type sessionRow struct {
 
 // handleListSessions implements GET /api/me/sessions. Returns the
 // caller's sessions rows. Marks the row that matches the current
-// cookie as is_current=true so the UI hides Revoke on that row.
+// bearer token as is_current=true so the UI hides Revoke on that row.
 func (a *AuthServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireUser(w, r)
 	if !ok {
@@ -32,10 +32,10 @@ func (a *AuthServer) handleListSessions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Compute the current cookie's hash so we can mark is_current.
+	// Compute the current bearer token's hash so we can mark is_current.
 	var currentHash string
-	if c, cerr := r.Cookie("atterm_session"); cerr == nil && c.Value != "" {
-		currentHash = userstore.SessionHash(c.Value)
+	if tok := tokenFromRequest(r); tok != "" {
+		currentHash = userstore.SessionHash(tok)
 	}
 
 	out := make([]sessionRow, 0, len(rows))
@@ -80,20 +80,21 @@ func (a *AuthServer) handleDeleteSession(w http.ResponseWriter, r *http.Request)
 }
 
 // handleSignOutOthers deletes every session for the caller except the one
-// matching the current cookie. Returns 200 + {"deleted": N}.
+// matching the current bearer token. Returns 200 + {"deleted": N}.
 func (a *AuthServer) handleSignOutOthers(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireUser(w, r)
 	if !ok {
 		return
 	}
-	c, err := r.Cookie("atterm_session")
-	if err != nil || c.Value == "" {
-		// requireUser already authed via cookie OR api token; without a
-		// cookie we can't preserve "this device", so just error out.
-		http.Error(w, "current session not cookie-based", http.StatusBadRequest)
+	tok := tokenFromRequest(r)
+	if tok == "" {
+		// requireSession already vetted this request, so the bearer token must
+		// be present — this branch only survives as defence against future
+		// wiring mistakes.
+		http.Error(w, "current session token missing", http.StatusBadRequest)
 		return
 	}
-	currentHash := userstore.SessionHash(c.Value)
+	currentHash := userstore.SessionHash(tok)
 	n, err := a.Store.DeleteOtherSessionsForUser(r.Context(), p.UserID, currentHash)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

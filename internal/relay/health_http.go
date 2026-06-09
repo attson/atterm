@@ -130,16 +130,13 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requireAdminAccess is a thin wrapper that gates inner on PrincipalAdmin
-// via the same Resolver-based auth as AdminServer. Returns 401 on failure.
+// requireAdminAccess gates inner on the request's authenticated user having
+// is_admin=true. The outer requireSession wrapper has already validated the
+// session token and placed the user in the request context.
 func (s *Server) requireAdminAccess(inner http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Resolver == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		p := s.cfg.Resolver.Resolve(r)
-		if p.Kind != PrincipalAdmin {
+		u, ok := UserFromContext(r.Context())
+		if !ok || u == nil || !u.IsAdmin {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

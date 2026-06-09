@@ -96,14 +96,16 @@ type ServerDeps struct {
 
 // BuildMux constructs and returns the HTTP mux with all auth and admin routes
 // registered. It is exported so tests can build the full production mux for
-// route-enumeration checks (Task 3.4 mux-enumerator test).
-func BuildMux(d ServerDeps) *http.ServeMux {
+// route-enumeration checks (Task 3.4 mux-enumerator test). The requireSession
+// argument wraps every protected route; pass nil to leave protected routes
+// unwrapped (tests only).
+func BuildMux(d ServerDeps, requireSession func(http.HandlerFunc) http.HandlerFunc) *http.ServeMux {
 	mux := http.NewServeMux()
 	if d.Auth != nil {
-		d.Auth.RegisterInto(mux)
+		d.Auth.RegisterInto(mux, requireSession)
 	}
 	if d.Admin != nil {
-		d.Admin.RegisterInto(mux)
+		d.Admin.RegisterInto(mux, requireSession)
 	}
 	return mux
 }
@@ -129,54 +131,48 @@ func NewServer(cfg Config) *Server {
 		conns:     newConnectionLimiter(connLimit),
 		startTime: time.Now(),
 	}
+	// WebSocket + session-API routes — gated by requireSession.
 	s.mux.HandleFunc("/agent", s.requireSession(s.handleAgentHTTP))
 	s.mux.HandleFunc("/uplink", s.requireSession(s.handleUplinkHTTP))
 	s.mux.HandleFunc("/client", s.requireSession(s.handleClientHTTP))
 	s.mux.HandleFunc("/client-sessions", s.requireSession(s.handleClientSessionsHTTP))
 	s.mux.HandleFunc("/api/sessions", s.requireSession(s.handleSessionsHTTP))
+	// Public — anonymous traffic allowed.
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/admin/api/health", s.requireAdminAccess(s.handleAdminHealthAPI))
-	s.mux.HandleFunc("/admin/health", s.requireAdminAccess(s.handleAdminHealth))
-	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
-	if cfg.Resolver != nil {
-		s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
-		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
-		s.mux.HandleFunc("/api/push/test", s.handlePushTest)
-	} else {
-		s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
-		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
-		s.mux.HandleFunc("/api/push/test", s.handlePushTest)
-	}
+	// Admin-only — requireSession + is_admin flag (the latter checked by
+	// requireAdminAccess).
+	s.mux.HandleFunc("/admin/api/health", s.requireSession(s.requireAdminAccess(s.handleAdminHealthAPI)))
+	s.mux.HandleFunc("/admin/health", s.requireSession(s.requireAdminAccess(s.handleAdminHealth)))
+	s.mux.HandleFunc("/admin/api/config", s.requireSession(s.handleAdminConfigHTTP))
+	// Web-push — all four routes need an authenticated user.
+	s.mux.HandleFunc("/api/push/key", s.requireSession(s.handlePushKey))
+	s.mux.HandleFunc("/api/push/subscribe", s.requireSession(s.handlePushSubscribe))
+	s.mux.HandleFunc("/api/push/unsubscribe", s.requireSession(s.handlePushUnsubscribe))
+	s.mux.HandleFunc("/api/push/test", s.requireSession(s.handlePushTest))
 	if cfg.WebFS != nil {
 		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebFS))
 	}
-	// /admin/api/config is the runtime-limits endpoint used by the admin UI.
-	// Auth is PrincipalAdmin (cookie + user.is_admin), enforced inside the
-	// handler.
-	s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
 
 	// Mount user-account HTTP API when both resolver and store are wired.
 	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed
 	// here so the same wiring runs in both the production binary and any test
-	// that calls NewServer with a non-nil Resolver+Store.
+	// that calls NewServer with a non-nil Resolver+Store. Resolver itself is
+	// only consumed by newStaticHandler — auth & admin handlers read the user
+	// from request context via the requireSession wrapper.
 	if cfg.Resolver != nil && cfg.Store != nil {
 		argon := NewArgon2Pool(runtime.NumCPU())
 		limits := NewLimitRegistry()
 		authSrv := &AuthServer{
 			Store:        cfg.Store,
-			Resolver:     cfg.Resolver,
 			Argon:        argon,
 			Limits:       limits,
 			FailureFloor: 200 * time.Millisecond,
 		}
-		adminSrv := &AdminServer{
-			Store:    cfg.Store,
-			Resolver: cfg.Resolver,
-		}
-		authSrv.RegisterInto(s.mux)
-		adminSrv.RegisterInto(s.mux)
-		s.mux.HandleFunc("POST /api/sessions/seen", s.handleSessionsSeenHTTP)
+		adminSrv := &AdminServer{Store: cfg.Store}
+		authSrv.RegisterInto(s.mux, s.requireSession)
+		adminSrv.RegisterInto(s.mux, s.requireSession)
+		s.mux.HandleFunc("POST /api/sessions/seen", s.requireSession(s.handleSessionsSeenHTTP))
 
 		// Background goroutine: purge expired web sessions hourly.
 		go func() {

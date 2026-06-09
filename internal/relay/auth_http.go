@@ -12,16 +12,23 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 )
 
-// requireUser ensures the request resolves to PrincipalUser. Returns the
-// principal so handlers don't re-resolve. On failure, writes 401 and returns
-// (zero Principal, false).
+// requireUser pulls the authenticated user from the request context (placed
+// there by requireSession middleware) and returns a Principal view for the
+// handler. When the middleware is wired correctly the bool is always true;
+// the false branch survives only so handlers stay defensive against future
+// wiring mistakes (e.g. someone registering a /api/me route without the
+// requireSession wrapper).
 func (a *AuthServer) requireUser(w http.ResponseWriter, r *http.Request) (Principal, bool) {
-	p := a.Resolver.Resolve(r)
-	if !p.IsUser() {
+	u, ok := UserFromContext(r.Context())
+	if !ok || u == nil {
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
-		return p, false
+		return Principal{}, false
 	}
-	return p, true
+	kind := PrincipalUser
+	if u.IsAdmin {
+		kind = PrincipalAdmin
+	}
+	return Principal{Kind: kind, UserID: u.ID, Scope: authWrite}, true
 }
 
 // AuthServer handles the /api/auth/* and /api/me endpoints.
@@ -36,9 +43,8 @@ func (a *AuthServer) requireUser(w http.ResponseWriter, r *http.Request) (Princi
 // A true SQLite transaction combining both steps would eliminate the race
 // entirely; deferred to a follow-up task.
 type AuthServer struct {
-	Store    userstore.Store
-	Resolver *IdentityResolver
-	Argon    *Argon2Pool
+	Store userstore.Store
+	Argon *Argon2Pool
 	// Limits, when non-nil, enforces per-endpoint rate limits (SEC-5).
 	// Nil disables rate limiting (useful in some unit tests).
 	Limits *LimitRegistry
@@ -48,33 +54,42 @@ type AuthServer struct {
 	FailureFloor time.Duration
 }
 
-// Routes returns an http.Handler with all auth + me endpoints mounted.
-// Signup and login are public. Protected routes are unwrapped here;
-// requireSession wrapping is applied at the server level (Task 1.10).
+// Routes returns an http.Handler with all auth + me endpoints mounted. The
+// auth + pair-consume + logout routes are public-or-self-authenticating;
+// protected routes are unwrapped — callers that want session enforcement
+// must use RegisterInto with a non-nil requireSession wrapper.
 func (a *AuthServer) Routes() http.Handler {
 	mux := http.NewServeMux()
-	a.RegisterInto(mux)
+	a.RegisterInto(mux, nil)
 	return mux
 }
 
-// RegisterInto registers all auth + me routes into the provided mux.
-// Called by Routes() and by BuildMux (Task 3.4) so the production mux is
-// assembled from the same set of routes.
-func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
+// RegisterInto registers all auth + me routes into the provided mux. The
+// requireSession argument wraps every protected route; pass nil to leave them
+// unwrapped (only useful when a higher-level mux applies the wrapper, or in
+// tests that exercise unauthenticated paths). Public routes — signup, login,
+// logout (idempotent), and pair-consume — are always registered bare.
+func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.HandlerFunc) http.HandlerFunc) {
+	wrap := requireSession
+	if wrap == nil {
+		wrap = func(h http.HandlerFunc) http.HandlerFunc { return h }
+	}
+	// Public — no session required.
 	mux.Handle("POST /api/auth/signup", http.HandlerFunc(a.handleSignup))
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(a.handleLogin))
 	mux.Handle("POST /api/auth/logout", http.HandlerFunc(a.handleLogout))
-	mux.Handle("GET /api/me", http.HandlerFunc(a.handleMe))
-	mux.Handle("DELETE /api/me", http.HandlerFunc(a.handleDeleteMe))
-	mux.Handle("GET /api/me/sessions", http.HandlerFunc(a.handleListSessions))
-	mux.Handle("DELETE /api/me/sessions/{id_hash}", http.HandlerFunc(a.handleDeleteSession))
-	mux.Handle("POST /api/me/sessions/sign-out-others", http.HandlerFunc(a.handleSignOutOthers))
-	mux.Handle("GET /api/me/webhooks", http.HandlerFunc(a.handleListWebhooks))
-	mux.Handle("POST /api/me/webhooks", http.HandlerFunc(a.handleCreateWebhook))
-	mux.Handle("DELETE /api/me/webhooks/{id}", http.HandlerFunc(a.handleDeleteWebhook))
-	mux.Handle("POST /api/me/password", http.HandlerFunc(a.handleChangePassword))
-	mux.Handle("POST /api/pair/create", http.HandlerFunc(a.handlePairCreate))
 	mux.Handle("POST /api/pair/consume", http.HandlerFunc(a.handlePairConsume))
+	// Protected — session token required.
+	mux.Handle("GET /api/me", wrap(a.handleMe))
+	mux.Handle("DELETE /api/me", wrap(a.handleDeleteMe))
+	mux.Handle("GET /api/me/sessions", wrap(a.handleListSessions))
+	mux.Handle("DELETE /api/me/sessions/{id_hash}", wrap(a.handleDeleteSession))
+	mux.Handle("POST /api/me/sessions/sign-out-others", wrap(a.handleSignOutOthers))
+	mux.Handle("GET /api/me/webhooks", wrap(a.handleListWebhooks))
+	mux.Handle("POST /api/me/webhooks", wrap(a.handleCreateWebhook))
+	mux.Handle("DELETE /api/me/webhooks/{id}", wrap(a.handleDeleteWebhook))
+	mux.Handle("POST /api/me/password", wrap(a.handleChangePassword))
+	mux.Handle("POST /api/pair/create", wrap(a.handlePairCreate))
 }
 
 // failureSleep sleeps the remaining time needed to reach FailureFloor (plus
@@ -292,9 +307,8 @@ func (a *AuthServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleMe implements GET /api/me. Returns user info.
 func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
-	p := a.Resolver.Resolve(r)
-	if !p.IsUser() {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+	p, ok := a.requireUser(w, r)
+	if !ok {
 		return
 	}
 

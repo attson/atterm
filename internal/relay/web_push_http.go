@@ -10,32 +10,17 @@ import (
 	"github.com/attson/atterm/internal/webpush"
 )
 
-// requireUserPrincipal resolves the identity for a web-push request and
-// enforces that the caller is an authenticated user (cookie or session token).
-//
-//   - PrincipalUser  → returns the userID, ok=true
-//   - PrincipalNone  → writes 401 and returns ok=false
-//   - PrincipalAdmin → writes 403 and returns ok=false
-//
-// When s.cfg.Resolver is nil the relay is mis-configured (no identity backend);
-// every push call is rejected with 401.
+// requireUserPrincipal pulls the authenticated user from the request context
+// (set by requireSession middleware) and returns their userID. When the
+// middleware ran the bool is always true; the false branch survives as
+// defence against future wiring mistakes.
 func (s *Server) requireUserPrincipal(w http.ResponseWriter, r *http.Request) (userID string, ok bool) {
-	if s.cfg.Resolver == nil {
+	u, present := UserFromContext(r.Context())
+	if !present || u == nil {
 		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return "", false
 	}
-
-	p := s.cfg.Resolver.Resolve(r)
-	switch p.Kind {
-	case PrincipalUser:
-		return p.UserID, true
-	case PrincipalNone:
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-		return "", false
-	default: // PrincipalAdmin or any future kind
-		writePushJSON(w, http.StatusForbidden, map[string]string{"error": "user account required"})
-		return "", false
-	}
+	return u.ID, true
 }
 
 func (s *Server) handlePushKey(w http.ResponseWriter, r *http.Request) {
@@ -43,15 +28,10 @@ func (s *Server) handlePushKey(w http.ResponseWriter, r *http.Request) {
 		writePushJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "web push disabled"})
 		return
 	}
-	// /api/push/key is read-only; allow any authenticated principal (including
-	// admin) so the browser can fetch the VAPID key before subscribing.
-	if s.cfg.Resolver == nil {
+	// /api/push/key is read-only; any authenticated user can fetch the VAPID
+	// key before subscribing. requireSession has already vetted the request.
+	if _, ok := UserFromContext(r.Context()); !ok {
 		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-		return
-	}
-	p := s.cfg.Resolver.Resolve(r)
-	if p.Kind == PrincipalNone {
-		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
 		return
 	}
 	writePushJSON(w, http.StatusOK, map[string]string{"key": s.cfg.WebPush.PublicKey()})

@@ -29,10 +29,10 @@ func TestPairConsume_ReturnsSessionToken(t *testing.T) {
 		Resolver: NewIdentityResolver(store),
 	})
 
-	// User creates a pair code via the auth handler.
-	// For now, use a cookie since Bearer tokens aren't wired in the Resolver yet (Task 1.9).
+	// User creates a pair code via the auth handler. requireSession reads
+	// the bearer token from the Authorization header (Task 1.10).
 	req := httptest.NewRequest("POST", "/api/pair/create", nil)
-	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: tok})
+	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -125,7 +125,7 @@ func TestPairConsume_ConsumedTwice_Conflict(t *testing.T) {
 
 	// Create a pair token.
 	req := httptest.NewRequest("POST", "/api/pair/create", nil)
-	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: tok})
+	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	var create struct {

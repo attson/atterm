@@ -47,8 +47,8 @@ func (a *AdminServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("GET /admin/api/users", a.requireAdmin(a.handleListUsers))
 	mux.Handle("POST /admin/api/users/{id}/reset-password", a.requireAdmin(a.handleResetPassword))
 	mux.Handle("POST /admin/api/users/{id}/disable", a.requireAdmin(a.handleDisableUser))
-	mux.Handle("POST /admin/api/users/{id}/admin", RequireCSRF(a.Resolver, a.requireAdmin(a.handlePromoteUser)))
-	mux.Handle("DELETE /admin/api/users/{id}/admin", RequireCSRF(a.Resolver, a.requireAdmin(a.handleDemoteUser)))
+	mux.Handle("POST /admin/api/users/{id}/admin", a.requireAdmin(a.handlePromoteUser))
+	mux.Handle("DELETE /admin/api/users/{id}/admin", a.requireAdmin(a.handleDemoteUser))
 }
 
 // defaultInviteExpiry is the lifetime applied to invitations whose request
@@ -215,7 +215,7 @@ func (a *AdminServer) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 // handleResetPassword implements POST /admin/api/users/{id}/reset-password.
 // Response 200: {"plaintext": "tmp_…"}
-// Atomically: generates tmp password, updates hash + csrf_secret, deletes web_sessions.
+// Atomically: generates tmp password, updates hash, deletes web_sessions.
 func (a *AdminServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("id")
 	if userID == "" {
@@ -343,8 +343,7 @@ type adminConfigResponse struct {
 // Auth: requires PrincipalAdmin (cookie session on a user with is_admin=true,
 // or admin API token). When cfg.Resolver is nil (legacy/test setups with no
 // userstore) the endpoint returns 401 — there is no fallback to a shared
-// admin token. CSRF protection for PUT is layered on at the mux level via
-// RequireCSRF; this handler does not re-check CSRF.
+// admin token.
 func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Resolver == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

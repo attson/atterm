@@ -11,8 +11,7 @@ import (
 // handleSessionsSeenHTTP implements POST /api/sessions/seen. Body is either
 // {"all": true} (mark every session the caller owns) or
 // {"session_ids": ["..."]} (mark a specific set; ids not owned by the caller
-// are silently ignored). Auth is the cookie session (wrapped in RequireCSRF
-// at registration).
+// are silently ignored). Auth is the cookie session.
 func (s *Server) handleSessionsSeenHTTP(w http.ResponseWriter, r *http.Request) {
 	p := s.cfg.Resolver.Resolve(r)
 	if !p.IsUser() {

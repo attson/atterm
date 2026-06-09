@@ -12,8 +12,8 @@ import (
 //   - requireUser: anonymous callers 401 immediately.
 //   - email match: typo-protection; the client must echo the exact email of
 //     the user the cookie resolves to.
-//   - password re-verify: even with a stolen cookie + valid CSRF token, an
-//     attacker still needs the plaintext password.
+//   - password re-verify: even with a stolen cookie, an attacker still needs
+//     the plaintext password.
 //   - last-admin guard: refuses if the caller is the only remaining admin,
 //     so the deploy can never be locked out by an accidental delete.
 //
@@ -46,7 +46,7 @@ func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Re-verify password — attacker with cookie + CSRF still needs plaintext.
+	// Re-verify password — attacker with stolen cookie still needs plaintext.
 	v, err := a.Store.VerifyPassword(r.Context(), user.Email, body.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error")

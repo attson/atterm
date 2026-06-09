@@ -150,9 +150,9 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/admin/health", s.requireAdminAccess(s.handleAdminHealth))
 	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
 	if cfg.Resolver != nil {
-		s.mux.Handle("/api/push/subscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushSubscribe)))
-		s.mux.Handle("/api/push/unsubscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushUnsubscribe)))
-		s.mux.Handle("/api/push/test", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushTest)))
+		s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
+		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
+		s.mux.HandleFunc("/api/push/test", s.handlePushTest)
 	} else {
 		s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
@@ -163,14 +163,8 @@ func NewServer(cfg Config) *Server {
 	}
 	// /admin/api/config is the runtime-limits endpoint used by the admin UI.
 	// Auth is PrincipalAdmin (cookie + user.is_admin), enforced inside the
-	// handler. Mutating methods are additionally wrapped in RequireCSRF when
-	// a resolver is present; without a resolver the handler returns 401 so
-	// the route is safe to register unconditionally.
-	if cfg.Resolver != nil {
-		s.mux.Handle("/admin/api/config", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleAdminConfigHTTP)))
-	} else {
-		s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
-	}
+	// handler.
+	s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
 
 	// Mount user-account HTTP API when both resolver and store are wired.
 	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed
@@ -192,8 +186,7 @@ func NewServer(cfg Config) *Server {
 		}
 		authSrv.RegisterInto(s.mux)
 		adminSrv.RegisterInto(s.mux)
-		s.mux.Handle("POST /api/sessions/seen",
-			RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleSessionsSeenHTTP)))
+		s.mux.HandleFunc("POST /api/sessions/seen", s.handleSessionsSeenHTTP)
 
 		// Background goroutine: purge expired web sessions hourly.
 		go func() {

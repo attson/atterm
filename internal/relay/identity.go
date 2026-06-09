@@ -19,11 +19,10 @@ const (
 // Principal is the resolved identity for a single HTTP request.
 // authScope is declared in auth.go and reused here.
 type Principal struct {
-	Kind       PrincipalKind
-	UserID     string    // non-empty when authenticated as a user (PrincipalUser or PrincipalAdmin)
-	TokenID    string    // non-empty when source was an API token (not a cookie)
-	Scope      authScope // authWrite for all valid principals in this implementation
-	CSRFSecret []byte    // set when authenticated via cookie (PrincipalUser or PrincipalAdmin)
+	Kind    PrincipalKind
+	UserID  string    // non-empty when authenticated as a user (PrincipalUser or PrincipalAdmin)
+	TokenID string    // non-empty when source was an API token (not a cookie)
+	Scope   authScope // authWrite for all valid principals in this implementation
 }
 
 // IsUser reports whether p is an authenticated user. Admin is a strict

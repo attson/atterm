@@ -49,7 +49,8 @@ type AuthServer struct {
 }
 
 // Routes returns an http.Handler with all auth + me endpoints mounted.
-// Signup and login are public (no CSRF). Logout and token mutation require CSRF.
+// Signup and login are public. Protected routes are unwrapped here;
+// requireSession wrapping is applied at the server level (Task 1.10).
 func (a *AuthServer) Routes() http.Handler {
 	mux := http.NewServeMux()
 	a.RegisterInto(mux)
@@ -62,19 +63,19 @@ func (a *AuthServer) Routes() http.Handler {
 func (a *AuthServer) RegisterInto(mux *http.ServeMux) {
 	mux.Handle("POST /api/auth/signup", http.HandlerFunc(a.handleSignup))
 	mux.Handle("POST /api/auth/login", http.HandlerFunc(a.handleLogin))
-	mux.Handle("POST /api/auth/logout", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleLogout)))
+	mux.Handle("POST /api/auth/logout", http.HandlerFunc(a.handleLogout))
 	mux.Handle("GET /api/me", http.HandlerFunc(a.handleMe))
-	mux.Handle("DELETE /api/me", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleDeleteMe)))
+	mux.Handle("DELETE /api/me", http.HandlerFunc(a.handleDeleteMe))
 	mux.Handle("GET /api/me/sessions", http.HandlerFunc(a.handleListSessions))
-	mux.Handle("DELETE /api/me/sessions/{id_hash}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleDeleteSession)))
-	mux.Handle("POST /api/me/sessions/sign-out-others", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleSignOutOthers)))
+	mux.Handle("DELETE /api/me/sessions/{id_hash}", http.HandlerFunc(a.handleDeleteSession))
+	mux.Handle("POST /api/me/sessions/sign-out-others", http.HandlerFunc(a.handleSignOutOthers))
 	mux.Handle("GET /api/me/tokens", http.HandlerFunc(a.handleListTokens))
-	mux.Handle("POST /api/me/tokens", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleCreateToken)))
-	mux.Handle("DELETE /api/me/tokens/{id}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleRevokeToken)))
+	mux.Handle("POST /api/me/tokens", http.HandlerFunc(a.handleCreateToken))
+	mux.Handle("DELETE /api/me/tokens/{id}", http.HandlerFunc(a.handleRevokeToken))
 	mux.Handle("GET /api/me/webhooks", http.HandlerFunc(a.handleListWebhooks))
-	mux.Handle("POST /api/me/webhooks", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleCreateWebhook)))
-	mux.Handle("DELETE /api/me/webhooks/{id}", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleDeleteWebhook)))
-	mux.Handle("POST /api/me/password", RequireCSRF(a.Resolver, http.HandlerFunc(a.handleChangePassword)))
+	mux.Handle("POST /api/me/webhooks", http.HandlerFunc(a.handleCreateWebhook))
+	mux.Handle("DELETE /api/me/webhooks/{id}", http.HandlerFunc(a.handleDeleteWebhook))
+	mux.Handle("POST /api/me/password", http.HandlerFunc(a.handleChangePassword))
 	mux.Handle("POST /api/pair/create", http.HandlerFunc(a.handlePairCreate))
 	mux.Handle("POST /api/pair/consume", http.HandlerFunc(a.handlePairConsume))
 }
@@ -286,7 +287,7 @@ func (a *AuthServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLogout implements POST /api/auth/logout (CSRF-gated).
+// handleLogout implements POST /api/auth/logout.
 //
 // Reads the session cookie, deletes the session, clears the cookie.
 func (a *AuthServer) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -304,8 +305,7 @@ func (a *AuthServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusOK, map[string]string{"status": "logged_out"})
 }
 
-// handleMe implements GET /api/me. Returns user info and the CSRF token.
-// Required by TestLogout_DeletesWebSession to fetch the CSRF token for logout.
+// handleMe implements GET /api/me. Returns user info.
 func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	p := a.Resolver.Resolve(r)
 	if !p.IsUser() {
@@ -325,14 +325,6 @@ func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		"is_admin": user.IsAdmin,
 	}
 
-	// Only derive CSRF token when user authenticated via cookie (CSRFSecret set).
-	if len(p.CSRFSecret) > 0 {
-		c, err := r.Cookie("atterm_session")
-		if err == nil && c.Value != "" {
-			resp["csrf_token"] = CSRFToken(c.Value, p.CSRFSecret)
-		}
-	}
-
 	writeJSONStatus(w, http.StatusOK, resp)
 }
 
@@ -347,7 +339,7 @@ func (a *AuthServer) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "gone", http.StatusGone)
 }
 
-// handleCreateToken implements POST /api/me/tokens (CSRF-gated).
+// handleCreateToken implements POST /api/me/tokens.
 //
 // Body: {"name": "<display name>"}
 // Response 201: {id, plaintext, prefix, created_at}
@@ -358,7 +350,7 @@ func (a *AuthServer) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "gone", http.StatusGone)
 }
 
-// handleRevokeToken implements DELETE /api/me/tokens/{id} (CSRF-gated).
+// handleRevokeToken implements DELETE /api/me/tokens/{id}.
 //
 // Revokes the named token. Returns 204 on success, 404 if the token does not
 // exist or belongs to a different user (existence-leak protected), 500 on DB error.
@@ -368,7 +360,7 @@ func (a *AuthServer) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "gone", http.StatusGone)
 }
 
-// handleChangePassword implements POST /api/me/password (CSRF-gated).
+// handleChangePassword implements POST /api/me/password.
 //
 // Body: {"current_password": "...", "new_password": "..."}
 // On success: invalidates all web sessions for the user, issues a fresh
@@ -457,7 +449,7 @@ func (a *AuthServer) handleListWebhooks(w http.ResponseWriter, r *http.Request) 
 	writeJSONStatus(w, http.StatusOK, out)
 }
 
-// handleCreateWebhook implements POST /api/me/webhooks (CSRF-gated).
+// handleCreateWebhook implements POST /api/me/webhooks.
 //
 // Body: {"url":"…","format":"feishu|generic","name":"…","allow_insecure":false}
 // Response 201: {id, url, format, name, created_at}
@@ -507,7 +499,7 @@ func (a *AuthServer) handleCreateWebhook(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// handleDeleteWebhook implements DELETE /api/me/webhooks/{id} (CSRF-gated).
+// handleDeleteWebhook implements DELETE /api/me/webhooks/{id}.
 //
 // Returns 204 on success, 404 if not found/not owned, 500 on DB error.
 func (a *AuthServer) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {

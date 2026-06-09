@@ -15,7 +15,7 @@ CREATE TABLE sessions (
     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at   INTEGER NOT NULL,
     expires_at   INTEGER NOT NULL,
-    last_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL DEFAULT 0,
     user_agent   TEXT NOT NULL DEFAULT '',
     ip_prefix    TEXT NOT NULL DEFAULT ''
 );
@@ -33,12 +33,13 @@ CREATE TABLE pairing_tokens (
 CREATE INDEX pairing_tokens_user_idx ON pairing_tokens(user_id);
 
 CREATE TABLE invitations (
-    code       TEXT PRIMARY KEY,
-    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    consumed_at INTEGER,
-    consumed_by TEXT REFERENCES users(id) ON DELETE SET NULL
+    code_hash      TEXT PRIMARY KEY,
+    created_by     TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER,
+    consumed_at    INTEGER,
+    consumed_by    TEXT REFERENCES users(id),
+    note           TEXT
 );
 
 CREATE TABLE webhooks (

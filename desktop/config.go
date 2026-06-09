@@ -36,8 +36,8 @@ var terminalThemes = map[string]struct{}{
 // appConfig is what we persist to ~/.config/atterm/config.json.
 // Empty fields mean "not configured" — RelayURL == "" disables uplink entirely.
 type appConfig struct {
-	RelayURL   string `json:"relay_url,omitempty"`
-	RelayToken string `json:"relay_token,omitempty"`
+	RelayURL          string `json:"relay_url,omitempty"`
+	RelaySessionToken string `json:"relay_session_token,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`

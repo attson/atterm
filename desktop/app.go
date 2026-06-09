@@ -141,7 +141,7 @@ func (a *App) startup(ctx context.Context) {
 	if cfg.RelayURL == "" {
 		if env := strings.TrimSpace(os.Getenv("ATTERM_RELAY_URL")); env != "" {
 			cfg.RelayURL = env
-			cfg.RelayToken = strings.TrimSpace(os.Getenv("ATTERM_RELAY_TOKEN"))
+			cfg.RelaySessionToken = strings.TrimSpace(os.Getenv("ATTERM_RELAY_TOKEN"))
 		}
 	}
 	if a.logger == nil {
@@ -207,7 +207,7 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
-	a.uplink = newUplink(cfg.RelayURL, cfg.RelayToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError)
+	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError)
 	go a.uplink.Run(uplinkCtx)
 	log.Printf("desktop: uplink configured for %s", cfg.RelayURL)
 }
@@ -243,7 +243,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 	a.mu.Unlock()
 	return RelayConfig{
 		URL:                cfg.RelayURL,
-		Token:              cfg.RelayToken,
+		Token:              cfg.RelaySessionToken,
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		Connected:          connected,
@@ -259,7 +259,7 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.RelayURL = strings.TrimSpace(req.URL)
-	cfg.RelayToken = strings.TrimSpace(req.Token)
+	cfg.RelaySessionToken = strings.TrimSpace(req.Token)
 	cfg.AllowInsecureRelay = req.AllowInsecureRelay
 	switch req.RemotePermission {
 	case proto.RemotePermissionView, proto.RemotePermissionControl, proto.RemotePermissionFull:
@@ -583,7 +583,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 		return fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return fmt.Errorf("no relay configured")
 	}
 	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
@@ -598,7 +598,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -980,7 +980,7 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 		return RelayMe{}, fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return RelayMe{}, fmt.Errorf("no relay configured")
 	}
 	// Convert WS scheme to HTTP so we can use net/http.
@@ -989,7 +989,7 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 	if err != nil {
 		return RelayMe{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return RelayMe{}, err
@@ -1021,7 +1021,7 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 		return PairingTokenResponse{}, fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return PairingTokenResponse{}, fmt.Errorf("no relay configured")
 	}
 	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
@@ -1029,7 +1029,7 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	if err != nil {
 		return PairingTokenResponse{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

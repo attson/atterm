@@ -88,7 +88,7 @@ func TestAppLocalePreference(t *testing.T) {
 	a := newRelayTestApp(t)
 	initial := appConfig{
 		RelayURL:         "wss://relay.example",
-		RelayToken:       "atk_locale_test",
+		RelaySessionToken:       "atk_locale_test",
 		RemotePermission: "control",
 		RelayPaused:      true,
 		TerminalTheme:    terminalThemeNord,
@@ -105,7 +105,7 @@ func TestAppLocalePreference(t *testing.T) {
 			t.Fatalf("GetLocalePreference() = %q, want %q", got, pref)
 		}
 		cfg := a.cfgStore.Get()
-		if cfg.RelayURL != initial.RelayURL || cfg.RelayToken != initial.RelayToken || cfg.RemotePermission != initial.RemotePermission || cfg.RelayPaused != initial.RelayPaused || cfg.TerminalTheme != initial.TerminalTheme {
+		if cfg.RelayURL != initial.RelayURL || cfg.RelaySessionToken != initial.RelaySessionToken || cfg.RemotePermission != initial.RemotePermission || cfg.RelayPaused != initial.RelayPaused || cfg.TerminalTheme != initial.TerminalTheme {
 			t.Fatalf("SetLocalePreference(%q) changed unrelated config: %+v", pref, cfg)
 		}
 	}

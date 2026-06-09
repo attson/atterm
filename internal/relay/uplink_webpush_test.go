@@ -95,7 +95,6 @@ func TestUplinkCommandEventTriggersDispatchWhenSessionInManifest(t *testing.T) {
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
 	srv := NewServer(Config{
-		Token:   "write-token",
 		WebPush: svc,
 	})
 	// Register a subscription under the owner's user ID (not a token hash).
@@ -142,7 +141,7 @@ func TestUplinkWaitingInputStateTriggersWebPush(t *testing.T) {
 	webpush.InjectTransportForTesting(svc, rec)
 	addRelayWebPushSubscription(t, svc, userID)
 
-	srv := NewServer(Config{Resolver: NewIdentityResolver(store), WebPush: svc})
+	srv := NewServer(Config{Resolver: NewIdentityResolver(store), Store: store, WebPush: svc})
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -175,6 +174,7 @@ func TestUplinkRunningSessionIdleTimeoutTriggersWebPush(t *testing.T) {
 
 	srv := NewServer(Config{
 		Resolver:           NewIdentityResolver(store),
+		Store:              store,
 		WebPush:            svc,
 		WebPushIdleTimeout: 30 * time.Millisecond,
 	})
@@ -212,7 +212,7 @@ func TestUplinkDisconnectTriggersWebPush(t *testing.T) {
 	webpush.InjectTransportForTesting(svc, rec)
 	addRelayWebPushSubscription(t, svc, userID)
 
-	srv := NewServer(Config{Resolver: NewIdentityResolver(store), WebPush: svc})
+	srv := NewServer(Config{Resolver: NewIdentityResolver(store), Store: store, WebPush: svc})
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -236,7 +236,6 @@ func TestUplinkCommandEventDropsUnknownSession(t *testing.T) {
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
 	srv := NewServer(Config{
-		Token:   "write-token",
 		WebPush: svc,
 	})
 	sub := webpush.Subscription{Endpoint: "https://push.example/abc"}
@@ -256,7 +255,7 @@ func TestUplinkCommandEventDropsUnknownSession(t *testing.T) {
 }
 
 func TestUplinkCommandEventNoOpWhenWebPushNil(t *testing.T) {
-	srv := NewServer(Config{Token: "write-token", WebPush: nil})
+	srv := NewServer(Config{WebPush: nil})
 	mirrors := map[uuid.UUID]*mirrorState{}
 	var mu sync.Mutex
 	frame, _ := proto.EncodeCommandEvent(uuid.New(), proto.CommandEventPayload{ExitCode: 0})

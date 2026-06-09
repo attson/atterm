@@ -28,6 +28,7 @@ func newTestServer(t *testing.T, origins []string) (*relay.Server, userstore.Sto
 	cfg := relay.Config{
 		AllowedOrigins: origins,
 		Resolver:       resolver,
+		Store:          store,
 	}
 	return relay.NewServer(cfg), store
 }
@@ -73,23 +74,19 @@ func TestRelaySecurityAcceptsDesktopWebviewSessionListWS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Create a user and issue an API token.
-	if _, err := store.CreateUser(ctx, "test@example.com", "password123!"); err != nil {
+	// Create a user and mint a session token.
+	user, err := store.CreateUser(ctx, "test@example.com", "password123!")
+	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	user, err := store.VerifyPassword(ctx, "test@example.com", "password123!")
+	sessTok, _, err := store.CreateSession(ctx, user.ID, "wails-test", "127.0.0.1", userstore.DefaultSessionTTL)
 	if err != nil {
-		t.Fatalf("VerifyPassword: %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
-	apiSecret, _, err := store.CreateAPIToken(ctx, user.ID, "test-token")
-	if err != nil {
-		t.Fatalf("CreateAPIToken: %v", err)
-	}
-	apiToken := apiSecret.Expose()
 
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpSrv.URL, "http")+"/client-sessions", &websocket.DialOptions{
 		HTTPHeader:   http.Header{"Origin": []string{"wails://wails"}},
-		Subprotocols: []string{"atterm-token." + apiToken},
+		Subprotocols: []string{"atterm-token." + sessTok},
 	})
 	if err != nil {
 		t.Fatalf("desktop webview /client-sessions dial err: %v", err)

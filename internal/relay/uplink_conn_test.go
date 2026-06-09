@@ -15,8 +15,9 @@ import (
 	"nhooyr.io/websocket"
 )
 
-// newUplinkTestStore creates an in-memory SQLiteStore and a user+API-token pair
-// for uplink connection tests. Returns the store, userID, and plaintext api token.
+// newUplinkTestStore creates an in-memory SQLiteStore and a user+session-token
+// pair for uplink connection tests. Returns the store, userID, and plaintext
+// session token (suitable for "Authorization: Bearer <token>").
 func newUplinkTestStore(t *testing.T) (*userstore.SQLiteStore, string, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -30,20 +31,21 @@ func newUplinkTestStore(t *testing.T) (*userstore.SQLiteStore, string, string) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	secret, _, err := store.CreateAPIToken(ctx, user.ID, "test-token")
+	tok, _, err := store.CreateSession(ctx, user.ID, "test-uplink", "127.0.0.1", userstore.DefaultSessionTTL)
 	if err != nil {
-		t.Fatalf("CreateAPIToken: %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
-	return store, user.ID, secret.Expose()
+	return store, user.ID, tok
 }
 
-// newUplinkTestServer builds a *Server wired with a real IdentityResolver backed
-// by the given store.
+// newUplinkTestServer builds a *Server wired with the given store so that
+// requireSession can validate Bearer session tokens.
 func newUplinkTestServer(t *testing.T, store userstore.Store) *Server {
 	t.Helper()
 	resolver := NewIdentityResolver(store)
 	return NewServer(Config{
 		Resolver: resolver,
+		Store:    store,
 	})
 }
 
@@ -78,46 +80,6 @@ func sendAnnounce(t *testing.T, ctx context.Context, c *websocket.Conn, sessionI
 	if err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(frame)); err != nil {
 		t.Fatalf("sendAnnounce write: %v", err)
 	}
-}
-
-// TestUplink_RejectsCookiePrincipal: a valid cookie session (no Authorization)
-// must be rejected with HTTP 401 before WS upgrade.
-func TestUplink_RejectsCookiePrincipal(t *testing.T) {
-	ctx := context.Background()
-	store, userID, _ := newUplinkTestStore(t)
-
-	// Create a web session cookie for the user.
-	cookieSecret, err := store.CreateWebSession(ctx, userID, "test-agent", "127.0.0")
-	if err != nil {
-		t.Fatalf("CreateWebSession: %v", err)
-	}
-
-	srv := newUplinkTestServer(t, store)
-	httpSrv := httptest.NewServer(srv)
-	defer httpSrv.Close()
-
-	// Dial with a cookie but no Authorization header; the cookie is set on the
-	// request via custom header because the websocket library sends custom headers.
-	wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/uplink"
-	opts := &websocket.DialOptions{
-		HTTPHeader: http.Header{
-			"Cookie": []string{"atterm_session=" + cookieSecret.Expose()},
-		},
-	}
-	dialCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	_, resp, err := websocket.Dial(dialCtx, wsURL, opts)
-	if err == nil {
-		t.Fatal("expected dial to fail; got nil error")
-	}
-	if resp == nil {
-		t.Fatal("expected HTTP response; got nil")
-	}
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d; want 401", resp.StatusCode)
-	}
-	_ = userID
 }
 
 // TestUplink_RejectsInvalidPrincipal: connect with invalid bearer token → 401 before upgrade.
@@ -198,22 +160,21 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser bob: %v", err)
 	}
-	bobSecret, _, err := store.CreateAPIToken(ctx, bob.ID, "bob-token")
+	bobTok, _, err := store.CreateSession(ctx, bob.ID, "bob-uplink", "127.0.0.1", userstore.DefaultSessionTTL)
 	if err != nil {
-		t.Fatalf("CreateAPIToken bob: %v", err)
+		t.Fatalf("CreateSession bob: %v", err)
 	}
 
-	// Re-fetch alice's token (store, userID, apiToken from newUplinkTestStore
-	// returned alice's creds). Create fresh store for this test to keep alice and bob.
-	// Actually we already called newUplinkTestStore which created alice. Let's get
-	// alice's token from a new token creation.
+	// Re-fetch alice's user record and mint a fresh session token. The
+	// newUplinkTestStore helper created alice; we want her id to assert
+	// ownership stays under her after bob's conflict attempt.
 	alice, err := store.VerifyPassword(ctx, "alice@example.com", "correcthorsebatterystaple")
 	if err != nil {
 		t.Fatalf("VerifyPassword alice: %v", err)
 	}
-	aliceSecret, _, err := store.CreateAPIToken(ctx, alice.ID, "alice-token2")
+	aliceTok, _, err := store.CreateSession(ctx, alice.ID, "alice-uplink-2", "127.0.0.1", userstore.DefaultSessionTTL)
 	if err != nil {
-		t.Fatalf("CreateAPIToken alice: %v", err)
+		t.Fatalf("CreateSession alice: %v", err)
 	}
 
 	srv := newUplinkTestServer(t, store)
@@ -224,7 +185,7 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 	defer cancel()
 
 	// Connect user_A (alice).
-	connA, _, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+aliceSecret.Expose())
+	connA, _, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+aliceTok)
 	if err != nil {
 		t.Fatalf("dial alice: %v", err)
 	}
@@ -252,7 +213,7 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 	}
 
 	// Connect user_B (bob) and try to publish the same sid=X.
-	connB, _, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+bobSecret.Expose())
+	connB, _, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+bobTok)
 	if err != nil {
 		t.Fatalf("dial bob: %v", err)
 	}

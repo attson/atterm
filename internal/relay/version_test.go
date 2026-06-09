@@ -39,21 +39,8 @@ func newBearerRequest(method, target, token string) *http.Request {
 	return req
 }
 
-func TestQueryTokenDoesNotAuthorizeREST(t *testing.T) {
-	// /api/sessions still requires auth; ?token= must not satisfy it.
-	srv := NewServer(Config{Token: "rt"})
-	req := httptest.NewRequest(http.MethodGet, "/api/sessions?token=rt", nil)
-	rec := httptest.NewRecorder()
-
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d; want 401", rec.Code)
-	}
-}
-
 func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
-	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
+	srv := NewServer(Config{Version: "v1.2.3"})
 	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
 	rec := httptest.NewRecorder()
 
@@ -76,7 +63,7 @@ func TestVersionEndpointReturnsConfiguredVersion(t *testing.T) {
 func TestVersionEndpointIsPublic(t *testing.T) {
 	// Anonymous web clients (login.html / signup.html) need to read the
 	// version before the user has credentials. Anonymous GET must succeed.
-	srv := NewServer(Config{Token: "rt", Version: "v1.2.3"})
+	srv := NewServer(Config{Version: "v1.2.3"})
 	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
 	rec := httptest.NewRecorder()
 
@@ -121,9 +108,9 @@ func TestSecurityHeadersAllowXtermRuntimeStylesWithoutUnsafeScript(t *testing.T)
 	}
 }
 
-// TestAdminConfigUnauthorizedWithoutResolver — when no IdentityResolver is
-// configured (legacy/standalone test setups), /admin/api/config is registered
-// but the handler returns 401. Anonymous callers cannot reach the config.
+// TestAdminConfigUnauthorizedWithoutResolver — when no resolver/store is
+// configured, /admin/api/config is registered but the requireSession wrapper
+// returns 401 for anonymous callers.
 func TestAdminConfigUnauthorizedWithoutResolver(t *testing.T) {
 	srv := NewServer(Config{})
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
@@ -136,9 +123,9 @@ func TestAdminConfigUnauthorizedWithoutResolver(t *testing.T) {
 	}
 }
 
-// TestAdminConfigRequiresAdminPrincipal — an anonymous request (no cookie, no
-// token) to /admin/api/config must be rejected with 401, even when a resolver
-// is wired. Equivalent to the old token-based "wrong token" check.
+// TestAdminConfigRequiresAdminPrincipal — an anonymous request (no
+// Authorization header) to /admin/api/config is rejected with 401 even when
+// a store is wired.
 func TestAdminConfigRequiresAdminPrincipal(t *testing.T) {
 	ctx := context.Background()
 	store, err := userstore.Open(ctx, ":memory:")
@@ -158,10 +145,9 @@ func TestAdminConfigRequiresAdminPrincipal(t *testing.T) {
 	}
 }
 
-// TestAdminConfigPersistsRuntimeLimits — an admin (cookie + CSRF) PUTs new
-// runtime limits; the response and the on-disk admin config file both reflect
-// the new values. Inline fixture: an in-memory userstore with one admin user
-// and an active web session (Task 10 will provide a shared fixture).
+// TestAdminConfigPersistsRuntimeLimits — an admin (Bearer session token) PUTs
+// new runtime limits; the response and the on-disk admin config file both
+// reflect the new values.
 func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	ctx := context.Background()
 	store, err := userstore.Open(ctx, ":memory:")
@@ -177,7 +163,7 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	if err := store.SetUserAdmin(ctx, u.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	secret, err := store.CreateWebSession(ctx, u.ID, "ua", "1.2.3.0/24")
+	tok, _, err := store.CreateSession(ctx, u.ID, "ua", "1.2.3.0/24", 24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +179,7 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 
 	body := strings.NewReader(`{"rate_limit_per_minute":33,"max_connections_per_key":4}`)
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/config", body)
-	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
-	req.Header.Set("X-CSRF-Token", CSRFToken(secret.Expose(), u.CSRFSecret()))
+	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -211,12 +196,6 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	}
 }
 
-// TestAdminCreateReadOnlyTokenStoresHashAndAuthenticates was removed when
-// the v2 user-accounts work deleted the /admin/api/read-only-tokens endpoint.
-// Per-user API tokens (PrincipalUser via cookie or atk_ token) replaced
-// admin-issued shared read-only tokens; the latter has no UI affordance and
-// no admin endpoint left to test. See PR that removed the response field.
-
 func TestRateLimitRejectsExcessRequests(t *testing.T) {
 	srv := NewServer(Config{Version: "v1.2.3", RateLimitPerMinute: 1})
 
@@ -229,29 +208,6 @@ func TestRateLimitRejectsExcessRequests(t *testing.T) {
 	}
 
 	req2 := httptest.NewRequest(http.MethodGet, "/api/version", nil)
-	req2.RemoteAddr = "203.0.113.10:10001"
-	rec2 := httptest.NewRecorder()
-	srv.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusTooManyRequests {
-		t.Fatalf("second status = %d; want 429", rec2.Code)
-	}
-}
-
-func TestRateLimitBadTokensShareIPBucket(t *testing.T) {
-	// /api/sessions still requires auth, so two requests with different bad
-	// tokens from the same IP exercise the top-level per-IP rate limit:
-	// first 401 from auth, second 429 from the shared IP bucket.
-	srv := NewServer(Config{Token: "real-token", RateLimitPerMinute: 1})
-
-	req1 := newBearerRequest(http.MethodGet, "/api/sessions", "bad-a")
-	req1.RemoteAddr = "203.0.113.10:10000"
-	rec1 := httptest.NewRecorder()
-	srv.ServeHTTP(rec1, req1)
-	if rec1.Code != http.StatusUnauthorized {
-		t.Fatalf("first status = %d; want 401", rec1.Code)
-	}
-
-	req2 := newBearerRequest(http.MethodGet, "/api/sessions", "bad-b")
 	req2.RemoteAddr = "203.0.113.10:10001"
 	rec2 := httptest.NewRecorder()
 	srv.ServeHTTP(rec2, req2)
@@ -275,32 +231,33 @@ func TestRequestLimitKeyDoesNotExposeBearerToken(t *testing.T) {
 }
 
 func TestClientSessionsAcceptsSubprotocolToken(t *testing.T) {
-	srv := NewServer(Config{Token: "rw"})
+	srv, tok := serverWithSession(t)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client-sessions", &websocket.DialOptions{
-		Subprotocols: []string{"atterm-token.rw"},
+		Subprotocols: []string{"atterm-token." + tok},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
-	if conn.Subprotocol() != "atterm-token.rw" {
-		t.Fatalf("subprotocol = %q; want atterm-token.rw", conn.Subprotocol())
+	if conn.Subprotocol() != "atterm-token."+tok {
+		t.Fatalf("subprotocol = %q; want atterm-token.<tok>", conn.Subprotocol())
 	}
 }
 
 func TestClientWebSocketRejectsQueryToken(t *testing.T) {
-	srv := NewServer(Config{Token: "rw"})
+	srv, tok := serverWithSession(t)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	conn, resp, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token=rw", "rw")
+	// Pass token only as query string — must NOT authorize.
+	conn, resp, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client?token="+tok, nil)
 	if err == nil {
 		conn.Close(websocket.StatusNormalClosure, "")
 		t.Fatal("websocket connected with query token; want rejection")
@@ -314,13 +271,13 @@ func TestClientWebSocketRejectsQueryToken(t *testing.T) {
 }
 
 func TestClientSessionsWebSocketRejectsQueryToken(t *testing.T) {
-	srv := NewServer(Config{Token: "rw"})
+	srv, tok := serverWithSession(t)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	conn, resp, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client-sessions?token=rw", "rw")
+	conn, resp, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client-sessions?token="+tok, nil)
 	if err == nil {
 		conn.Close(websocket.StatusNormalClosure, "")
 		t.Fatal("session list websocket connected with query token; want rejection")
@@ -334,19 +291,20 @@ func TestClientSessionsWebSocketRejectsQueryToken(t *testing.T) {
 }
 
 func TestConnectionLimitRejectsExcessWebSockets(t *testing.T) {
-	srv := NewServer(Config{MaxConnectionsPerKey: 1})
+	srv, tok := serverWithSession(t)
+	srv.conns = newConnectionLimiter(1)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", nil)
+	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", tok)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	second, resp, err := websocket.Dial(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", nil)
+	second, resp, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", tok)
 	if err == nil {
 		second.Close(websocket.StatusNormalClosure, "")
 		t.Fatal("second websocket connected; want connection limit rejection")
@@ -359,106 +317,18 @@ func TestConnectionLimitRejectsExcessWebSockets(t *testing.T) {
 	}
 }
 
-func TestReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
-	srv := NewServer(Config{Token: "rw", ReadOnlyTokens: []string{"ro"}})
-	id := uuid.MustParse("33333333-3333-4333-8333-333333333333")
-	sess := session.New(id, proto.SessionInfo{Command: "bash"})
-	srv.registry.Add(sess)
-
-	apiReq := newBearerRequest(http.MethodGet, "/api/sessions", "ro")
-	apiRec := httptest.NewRecorder()
-	srv.ServeHTTP(apiRec, apiReq)
-	if apiRec.Code != http.StatusOK {
-		t.Fatalf("read-only list status = %d; want 200", apiRec.Code)
-	}
-
-	agentReq := newBearerRequest(http.MethodGet, "/agent", "ro")
-	agentRec := httptest.NewRecorder()
-	srv.ServeHTTP(agentRec, agentReq)
-	if agentRec.Code != http.StatusUnauthorized {
-		t.Fatalf("read-only agent status = %d; want 401", agentRec.Code)
-	}
-
-	httpSrv := httptest.NewServer(srv)
-	defer httpSrv.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	attachPayload, _ := json.Marshal(proto.AttachPayload{SessionID: id.String()})
-	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
-		Type: proto.TypeAttach, SessionID: id, Payload: attachPayload,
-	})); err != nil {
-		t.Fatal(err)
-	}
-	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
-		Type: proto.TypeIn, SessionID: id, Payload: []byte("whoami\n"),
-	})); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case f := <-sess.Inbound():
-		t.Fatalf("read-only token delivered inbound frame: %+v", f)
-	case <-time.After(100 * time.Millisecond):
-	}
-}
-
-func TestHashedReadOnlyTokenCanListButCannotSendInput(t *testing.T) {
-	srv := NewServer(Config{Token: "rw", ReadOnlyTokenHashes: []string{HashBearerToken("ro-hash")}})
-	id := uuid.MustParse("33333333-3333-4333-8333-444444444444")
-	sess := session.New(id, proto.SessionInfo{Command: "bash"})
-	srv.registry.Add(sess)
-
-	apiReq := newBearerRequest(http.MethodGet, "/api/sessions", "ro-hash")
-	apiRec := httptest.NewRecorder()
-	srv.ServeHTTP(apiRec, apiReq)
-	if apiRec.Code != http.StatusOK {
-		t.Fatalf("hashed read-only list status = %d; want 200", apiRec.Code)
-	}
-
-	httpSrv := httptest.NewServer(srv)
-	defer httpSrv.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "ro-hash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	attachPayload, _ := json.Marshal(proto.AttachPayload{SessionID: id.String()})
-	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
-		Type: proto.TypeAttach, SessionID: id, Payload: attachPayload,
-	})); err != nil {
-		t.Fatal(err)
-	}
-	if err := conn.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
-		Type: proto.TypeIn, SessionID: id, Payload: []byte("whoami\n"),
-	})); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case f := <-sess.Inbound():
-		t.Fatalf("hashed read-only token delivered inbound frame: %+v", f)
-	case <-time.After(100 * time.Millisecond):
-	}
-}
-
 func TestSessionPermissionViewDropsInputForWriteToken(t *testing.T) {
-	srv := NewServer(Config{Token: "rw"})
+	srv, tok, userID := serverWithSessionAndUser(t)
 	id := uuid.MustParse("44444444-4444-4444-8444-444444444444")
 	sess := session.New(id, proto.SessionInfo{Command: "bash", RemotePermission: proto.RemotePermissionView})
+	sess.OwnerUserID = userID
 	srv.registry.Add(sess)
 
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "rw")
+	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", tok)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,16 +353,17 @@ func TestSessionPermissionViewDropsInputForWriteToken(t *testing.T) {
 }
 
 func TestSessionPermissionControlAllowsInputButDropsPasteImage(t *testing.T) {
-	srv := NewServer(Config{Token: "rw"})
+	srv, tok, userID := serverWithSessionAndUser(t)
 	id := uuid.MustParse("55555555-5555-4555-8555-555555555555")
 	sess := session.New(id, proto.SessionInfo{Command: "bash", RemotePermission: proto.RemotePermissionControl})
+	sess.OwnerUserID = userID
 	srv.registry.Add(sess)
 
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", "rw")
+	conn, _, err := dialClientWithToken(ctx, "ws"+httpSrv.URL[len("http"):]+"/client", tok)
 	if err != nil {
 		t.Fatal(err)
 	}

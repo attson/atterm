@@ -194,15 +194,15 @@ func TestAdminHealthAPI_RegularUser_401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test")
+	tok, _, err := store.CreateSession(ctx, u.ID, "test", "127.0.0.1", 24*time.Hour)
 	if err != nil {
-		t.Fatalf("CreateAPIToken: %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
 	resolver := NewIdentityResolver(store)
 	srv := NewServer(Config{Resolver: resolver, Store: store})
 
 	r := httptest.NewRequest(http.MethodGet, "/admin/api/health", nil)
-	r.Header.Set("Authorization", "Bearer "+secret.Expose())
+	r.Header.Set("Authorization", "Bearer "+tok)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, r)
 
@@ -218,9 +218,9 @@ func TestAdminHealthAPI_Admin_200_AllFieldsPresent(t *testing.T) {
 		t.Fatalf("EnsureAdminUser: %v", err)
 	}
 	u := findUserByEmail(t, store, "admin@example.com")
-	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test-admin")
+	tok, _, err := store.CreateSession(ctx, u.ID, "test-admin", "127.0.0.1", 24*time.Hour)
 	if err != nil {
-		t.Fatalf("CreateAPIToken: %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
 
 	resolver := NewIdentityResolver(store)
@@ -232,7 +232,7 @@ func TestAdminHealthAPI_Admin_200_AllFieldsPresent(t *testing.T) {
 	})
 
 	r := httptest.NewRequest(http.MethodGet, "/admin/api/health", nil)
-	r.Header.Set("Authorization", "Bearer "+secret.Expose())
+	r.Header.Set("Authorization", "Bearer "+tok)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, r)
 
@@ -265,9 +265,9 @@ func TestAdminHealth_HTML_Admin_200_AllLabelsPresent(t *testing.T) {
 		t.Fatalf("EnsureAdminUser: %v", err)
 	}
 	u := findUserByEmail(t, store, "admin@example.com")
-	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test-admin")
+	tok, _, err := store.CreateSession(ctx, u.ID, "test-admin", "127.0.0.1", 24*time.Hour)
 	if err != nil {
-		t.Fatalf("CreateAPIToken: %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
 
 	resolver := NewIdentityResolver(store)
@@ -281,7 +281,7 @@ func TestAdminHealth_HTML_Admin_200_AllLabelsPresent(t *testing.T) {
 	})
 
 	r := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
-	r.Header.Set("Authorization", "Bearer "+secret.Expose())
+	r.Header.Set("Authorization", "Bearer "+tok)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, r)
 
@@ -373,9 +373,9 @@ func TestUplinkCount_IncrementsOnConnectDecrementsOnClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	secret, _, err := store.CreateAPIToken(ctx, u.ID, "test-uplink")
+	tok, _, err := store.CreateSession(ctx, u.ID, "test-uplink", "127.0.0.1", 24*time.Hour)
 	if err != nil {
-		t.Fatalf("CreateAPIToken: %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
 
 	resolver := NewIdentityResolver(store)
@@ -396,7 +396,7 @@ func TestUplinkCount_IncrementsOnConnectDecrementsOnClose(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/uplink"
 	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
 		HTTPHeader: map[string][]string{
-			"Authorization": {"Bearer " + secret.Expose()},
+			"Authorization": {"Bearer " + tok},
 		},
 	})
 	if err != nil {

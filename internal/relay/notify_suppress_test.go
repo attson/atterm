@@ -51,7 +51,6 @@ func TestNotifSuppressWebPushWhenWatched(t *testing.T) {
 
 	// --- Server under test ---
 	srv := NewServer(Config{
-		Token:   "write-token",
 		WebPush: svc,
 		Webhook: webhookSvc,
 	})

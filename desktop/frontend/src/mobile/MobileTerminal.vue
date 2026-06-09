@@ -50,7 +50,7 @@ const popover = reactive({
 })
 let pressTimer: ReturnType<typeof setTimeout> | null = null
 let pressAnchor: { x: number; y: number } | null = null
-let dragAnchor: { col: number; row: number } | null = null
+let dragAnchor: { start: number; end: number; row: number } | null = null
 let edgeScrollTimer: ReturnType<typeof setInterval> | null = null
 let edgeScrollDir: -1 | 1 | 0 = 0
 let selectionDisposer: { dispose: () => void } | null = null
@@ -306,10 +306,10 @@ function onSelPointerDown(ev: PointerEvent) {
     term.options.disableStdin = true
     vp.style.touchAction = 'none'
     selMode.value = 'selecting'
-    // Anchor a subsequent drag-extend at the word's start cell, not the literal
-    // press point — so dragging right from inside a word grows the selection
-    // from the start of the word rather than mid-word.
-    dragAnchor = { col: wb.start, row: hit.row }
+    // Anchor a subsequent drag-extend at the word's full span, not the literal
+    // press point — so dragging anywhere (inside or outside the word) grows
+    // the selection from the original word boundary rather than collapsing it.
+    dragAnchor = { start: wb.start, end: wb.start + wb.len - 1, row: hit.row }
     updatePopoverFromSelection()
   }, LONG_PRESS_MS)
 }
@@ -346,8 +346,12 @@ function onSelPointerMove(ev: PointerEvent) {
   const [r0, r1] = dragAnchor.row <= cur.row ? [dragAnchor.row, cur.row] : [cur.row, dragAnchor.row]
   try {
     if (r0 === r1) {
-      const [c0, c1] = dragAnchor.col <= cur.col ? [dragAnchor.col, cur.col] : [cur.col, dragAnchor.col]
-      term.select(c0, r0, Math.max(1, c1 - c0 + 1))
+      // Selection grows from the originally long-pressed word: never shrink
+      // below its original span, only extend left/right of it. Preserves the
+      // word the user picked when their finger drifts inside it.
+      const c0 = Math.min(dragAnchor.start, cur.col)
+      const c1 = Math.max(dragAnchor.end, cur.col)
+      term.select(c0, r0, c1 - c0 + 1)
     } else {
       term.selectLines(r0, r1)
     }
@@ -393,7 +397,14 @@ function onSelPointerUp() {
 function onSelPointerCancel() {
   stopEdgeScroll()
   dragAnchor = null
-  if (selMode.value !== 'idle') selMode.value = 'selecting'
+  if (selMode.value === 'pressing') {
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null }
+    selMode.value = 'idle'
+    pressAnchor = null
+    return
+  }
+  if (selMode.value === 'dragging') selMode.value = 'selecting'
+  // 'idle' and 'selecting' need no further action.
 }
 
 function onDocumentPointerDown(ev: PointerEvent) {

@@ -698,6 +698,63 @@ describe('MobileTerminal', () => {
       expect(lastCall[2]).toBeGreaterThan(3)  // grew past "git"
     })
 
+    it('drag within the original word keeps the word selected (does not shrink)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))    // col 2 of "git"
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(0, 0, 3)         // selects "git"
+      termSelect.mockClear()
+
+      // Drag to col 1 (still inside "git"). Selection should stay at cells 0-2.
+      vp.dispatchEvent(pointerEvent('pointermove', 8, 8))
+      const calls = termSelect.mock.calls
+      // The implementation may call term.select multiple times during the move.
+      // What matters is that the final state still spans the original word.
+      const last = calls[calls.length - 1]
+      expect(last[0]).toBe(0)              // start col stays at word start
+      expect(last[1]).toBe(0)              // single row
+      expect(last[2]).toBeGreaterThanOrEqual(3)  // covers at least the full word
+    })
+
+    it('drag LEFT past the word start extends leftward, preserving the word', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      // Press on "bar" of "foo bar" (col 4–6); long-press at col 5
+      setBufferLine('foo bar')
+      vp.dispatchEvent(pointerEvent('pointerdown', 36, 8))    // 36/cellW → col 5 for cellW≈7.2
+      await new Promise((r) => setTimeout(r, 600))
+      expect(termSelect).toHaveBeenCalledWith(4, 0, 3)         // "bar"
+      termSelect.mockClear()
+
+      // Drag well past the word's left edge (col 0). Selection should grow leftward:
+      // c0 = min(4, cur.col), c1 = max(6, cur.col) where cur.col == 0,
+      // giving select(0, 0, 7).
+      vp.dispatchEvent(pointerEvent('pointermove', 0, 8))
+      const last = termSelect.mock.calls[termSelect.mock.calls.length - 1]
+      expect(last[0]).toBe(0)              // start col went left of original word
+      expect(last[1]).toBe(0)              // single row
+      expect(last[2]).toBeGreaterThanOrEqual(7)  // covers original word + leftward
+    })
+
+    it('pointercancel from pressing state cancels timer and returns to idle', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      // We're now in 'pressing' state with a 500ms timer running. Fire cancel BEFORE the timer.
+      vp.dispatchEvent(pointerEvent('pointercancel', 15, 8))
+      // Let the (cancelled) timer's nominal time pass.
+      await new Promise((r) => setTimeout(r, 600))
+      // No selection should have been created.
+      expect(termSelect).not.toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
     it('uses selectLines when the drag crosses rows', async () => {
       const w = await mountReady()
       await w.find('[data-testid="mobile-control-toggle"]').setValue(true)

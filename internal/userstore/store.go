@@ -73,7 +73,7 @@ type Store interface {
 	// plaintext for the create path returns ErrEmptyBootstrapPassword;
 	// strength enforcement is the caller's job.
 	EnsureAdminUser(ctx context.Context, email, plaintext string) (created bool, err error)
-	// DeleteUser hard-deletes userID. api_tokens and sessions cascade
+	// DeleteUser hard-deletes userID. sessions and pairing_tokens cascade
 	// via the existing FK. invitations.consumed_by is REFERENCES users(id)
 	// without cascade (history field), so this method first sets that
 	// column to NULL for every invitation consumed by the user, then
@@ -85,16 +85,10 @@ type Store interface {
 	ConsumeInvitation(ctx context.Context, plaintext, userID string) error
 	ListInvitations(ctx context.Context) ([]Invitation, error)
 
-	// API tokens
-	CreateAPIToken(ctx context.Context, userID, name string) (Secret, *APIToken, error)
-	LookupAPIToken(ctx context.Context, plaintext string) (tokenID, userID string, err error)
-	RevokeAPIToken(ctx context.Context, tokenID, userID string) error
-	ListAPITokens(ctx context.Context, userID string) ([]APIToken, error)
-	TouchAPIToken(ctx context.Context, tokenID string) error
-
-	// Pairing tokens (mobile QR code)
+	// Pairing tokens (mobile QR code). Consuming a code returns the owning
+	// user; the caller is responsible for minting a session token.
 	CreatePairingToken(ctx context.Context, userID string, ttl time.Duration) (Secret, *PairingToken, error)
-	ConsumePairingToken(ctx context.Context, plaintext string) (apiToken Secret, userID string, err error)
+	ConsumePairingToken(ctx context.Context, plaintext string) (*User, error)
 
 	// Sessions (single bearer token; cookie OR Authorization header).
 	CreateSession(ctx context.Context, userID, userAgent, ipPrefix string, ttl time.Duration) (plaintext string, sess *Session, err error)

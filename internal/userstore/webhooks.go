@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// ErrWebhookNotOwnedOrMissing mirrors ErrTokenNotOwnedOrMissing: returned by
-// DeleteWebhook when the id is unknown or owned by another user. Callers map
-// it to HTTP 404 to avoid an existence oracle.
+// ErrWebhookNotOwnedOrMissing is returned by DeleteWebhook when the id is
+// unknown or owned by another user. Callers map it to HTTP 404 to avoid an
+// existence oracle.
 var ErrWebhookNotOwnedOrMissing = errors.New("userstore: webhook not found or not owned by the requesting user")
 
 // Webhook is a per-user outbound webhook configuration. The URL is stored and

@@ -12,6 +12,7 @@
 // col is a 0-based offset into the line's codepoints. If col is past the line
 // length, returns { start: line.length, len: 0 }.
 export function wordBoundaryAt(line: string, col: number): { start: number; len: number } {
+  if (col < 0) return { start: 0, len: 0 }
   if (col >= line.length) return { start: line.length, len: 0 }
   const ch = line[col]
   if (isWhitespace(ch)) return { start: col, len: 0 }

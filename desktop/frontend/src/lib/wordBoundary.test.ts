@@ -29,4 +29,15 @@ describe('wordBoundaryAt', () => {
   it('groups underscores and digits into the alnum class', () => {
     expect(wordBoundaryAt('foo_bar123 baz', 5)).toEqual({ start: 0, len: 10 })
   })
+  it('does not merge alnum across a leading punctuation prefix', () => {
+    // cursor on 'f' of '--foo' should yield just 'foo', not '--foo'
+    expect(wordBoundaryAt('--foo', 2)).toEqual({ start: 2, len: 3 })
+  })
+  it('does not merge punct across a trailing alnum word', () => {
+    // cursor on first '-' of 'foo--' should yield '--', not 'foo--'
+    expect(wordBoundaryAt('foo--', 3)).toEqual({ start: 3, len: 2 })
+  })
+  it('returns len=0 for negative col (defensive)', () => {
+    expect(wordBoundaryAt('abc', -1)).toEqual({ start: 0, len: 0 })
+  })
 })

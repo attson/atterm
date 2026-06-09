@@ -126,9 +126,9 @@ export class SessionConnection {
   private openWS(): void {
     if (this.detached) return
     const url = wsUrl('/client')
-    const cfg = isMobileApp() ? loadRelayConfig() : null
-    const wsToken = cfg?.token
-    const ws = wsToken ? new WebSocket(url, [wsToken]) : new WebSocket(url)
+    const cfg = loadRelayConfig()
+    const subprotocols = cfg?.sessionToken ? [`atterm-token.${cfg.sessionToken}`] : []
+    const ws = new WebSocket(url, subprotocols)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? 'connecting' : 'reconnecting')

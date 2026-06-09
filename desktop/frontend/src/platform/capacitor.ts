@@ -112,7 +112,7 @@ export function createCapacitorPlatform(): Platform {
           throw new Error(body.code || 'pair_invalid')
         }
         if (!res.ok) throw new Error(`pair_consume_http_${res.status}`)
-        return (await res.json()) as { relay_url: string; api_token: string; user: { id: string; email: string } }
+        return (await res.json()) as { relay_url: string; session_token: string; expires_at: number; user: { id: string; email: string } }
       },
       // setUplinkPaused omitted — desktop-only
     },

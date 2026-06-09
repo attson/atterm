@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"flag"
 	"io/fs"
 	"log"
@@ -257,14 +255,6 @@ func appendUniqueString(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
-}
-
-func generateRelayToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func isPublicListenAddr(addr string) bool {

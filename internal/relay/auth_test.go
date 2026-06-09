@@ -76,6 +76,14 @@ func TestRequireSession_BadToken_401(t *testing.T) {
 // serverWithSession returns a Server backed by an in-memory store + a
 // pre-created user with one fresh session, returning the plaintext token.
 func serverWithSession(t *testing.T) (*Server, string) {
+	s, tok, _ := serverWithSessionAndUser(t)
+	return s, tok
+}
+
+// serverWithSessionAndUser is like serverWithSession but also returns the
+// user ID. Tests that put sessions on the registry need the userID to set
+// session.OwnerUserID so that ownerUserID-filtered queries return them.
+func serverWithSessionAndUser(t *testing.T) (*Server, string, string) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()
@@ -87,5 +95,5 @@ func serverWithSession(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	return NewServer(Config{Store: store}), tok
+	return NewServer(Config{Store: store}), tok, u.ID
 }

@@ -18,11 +18,30 @@ func UserFromContext(ctx context.Context) (*userstore.User, bool) {
 	return u, ok && u != nil
 }
 
+// authScope classifies the level of access a caller has on attached sessions.
+// In the post-share-secret world it is always authWrite for any authenticated
+// principal; the type and constants survive because permissions.go and
+// client_conn.go still pattern-match on them. A future cleanup may fold these
+// uses into a per-session "remote permission" check.
+type authScope uint8
+
+const (
+	authNone authScope = iota
+	authRead
+	authWrite
+)
+
 // requireSession extracts a session token from the request, looks it up
 // in the store, and injects the owning user into the request context.
-// On miss, expired, or revoked: writes 401 and aborts.
+// On miss, expired, or revoked: writes 401 and aborts. When the server was
+// constructed without a userstore (Store == nil), every request is 401 —
+// that surface is permanently un-authable until the store is wired up.
 func (s *Server) requireSession(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.Store == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		tok := tokenFromRequest(r)
 		if tok == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

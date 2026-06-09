@@ -11,28 +11,18 @@ import (
 )
 
 // requireUserPrincipal resolves the identity for a web-push request and
-// enforces that the caller is an authenticated user (cookie or API token).
+// enforces that the caller is an authenticated user (cookie or session token).
 //
 //   - PrincipalUser  → returns the userID, ok=true
 //   - PrincipalNone  → writes 401 and returns ok=false
 //   - PrincipalAdmin → writes 403 and returns ok=false
 //
-// When s.cfg.Resolver is nil the server is operating in legacy shared-token
-// mode; in that case the original authorizeClientWithConfig gate is applied
-// and the token hash is returned as the key.
+// When s.cfg.Resolver is nil the relay is mis-configured (no identity backend);
+// every push call is rejected with 401.
 func (s *Server) requireUserPrincipal(w http.ResponseWriter, r *http.Request) (userID string, ok bool) {
 	if s.cfg.Resolver == nil {
-		// Legacy mode: fall back to shared-token gate.
-		if authorizeClientWithConfig(r, s.cfg) == authNone {
-			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
-			return "", false
-		}
-		token := tokenFromRequestNoQuery(r)
-		if token == "" {
-			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing token"})
-			return "", false
-		}
-		return tokenHash(token), true
+		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return "", false
 	}
 
 	p := s.cfg.Resolver.Resolve(r)
@@ -55,17 +45,14 @@ func (s *Server) handlePushKey(w http.ResponseWriter, r *http.Request) {
 	}
 	// /api/push/key is read-only; allow any authenticated principal (including
 	// admin) so the browser can fetch the VAPID key before subscribing.
-	if s.cfg.Resolver != nil {
-		p := s.cfg.Resolver.Resolve(r)
-		if p.Kind == PrincipalNone {
-			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
-			return
-		}
-	} else {
-		if authorizeClientWithConfig(r, s.cfg) == authNone {
-			writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
-			return
-		}
+	if s.cfg.Resolver == nil {
+		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	p := s.cfg.Resolver.Resolve(r)
+	if p.Kind == PrincipalNone {
+		writePushJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid token"})
+		return
 	}
 	writePushJSON(w, http.StatusOK, map[string]string{"key": s.cfg.WebPush.PublicKey()})
 }

@@ -629,5 +629,53 @@ describe('MobileTerminal', () => {
       expect(termSelect).not.toHaveBeenCalled()
       expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
     })
+
+    it('cancel button click still works when a real pointerdown precedes it (capture-phase doc handler does not eat it)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+
+      // Dispatch a REAL pointerdown on the cancel button (not a synthetic click).
+      // The capture-phase document handler MUST recognize the button as
+      // popover-internal and not pre-emptively exit the selection.
+      const cancelBtn = w.find('[data-testid="selection-popover-cancel"]').element as HTMLElement
+      cancelBtn.dispatchEvent(pointerEvent('pointerdown', 100, 50))
+      await flushPromises()
+      // Popover should still be present (document handler must NOT have exited).
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+      // Now the click follows the pointerdown — synthesize it to complete the gesture.
+      await w.find('[data-testid="selection-popover-cancel"]').trigger('click')
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
+
+    it('tap inside viewport during selecting clears the old selection (no zombie popover)', async () => {
+      const w = await mountReady()
+      await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
+      const vp = viewportEl(w)
+      setBufferLine('git status')
+      vp.dispatchEvent(pointerEvent('pointerdown', 15, 8))
+      await new Promise((r) => setTimeout(r, 600))
+      termGetSelectionPosition.mockReturnValue({ start: { x: 0, y: 0 }, end: { x: 3, y: 0 } })
+      selectionChangeCb?.()
+      await flushPromises()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(true)
+      termClearSelection.mockClear()
+
+      // User taps inside viewport again (short tap, no long press). The
+      // previous selection should clear immediately on pointerdown, not
+      // wait for an outside tap.
+      vp.dispatchEvent(pointerEvent('pointerdown', 200, 80))
+      await flushPromises()
+      expect(termClearSelection).toHaveBeenCalled()
+      expect(w.find('[data-testid="selection-popover"]').exists()).toBe(false)
+    })
   })
 })

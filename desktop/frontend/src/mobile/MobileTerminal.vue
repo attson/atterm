@@ -14,7 +14,7 @@ import type { RemoteSession } from '../platform/types'
 import { usePlatform } from '../platform'
 import { useI18n } from '../i18n/useI18n'
 import { wordBoundaryAt } from '../lib/wordBoundary'
-import { cellCoordsAt } from '../lib/terminalCellCoords'
+import { cellCoordsAt, readXtermCellSize } from '../lib/terminalCellCoords'
 import MobileSelectionPopover from './MobileSelectionPopover.vue'
 
 const props = defineProps<{
@@ -214,11 +214,7 @@ async function openImagePicker() {
 
 function readSelBbox(pos: { start: { x: number; y: number }; end: { x: number; y: number } }): { x: number; y: number; w: number; h: number } | null {
   if (!term || !viewportEl) return null
-  // Read cell size directly (duplicate of readXtermCellSize without exporting more API).
-  const dim = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number; height?: number } } } } } })
-    ._core?._renderService?.dimensions?.css?.cell
-  const cw = dim?.width ?? (term.options.fontSize ?? 15) * 0.6
-  const ch = dim?.height ?? (term.options.fontSize ?? 15) * ((term.options.lineHeight as number | undefined) ?? 1.0)
+  const { width: cw, height: ch } = readXtermCellSize(term)
   if (!cw || !ch) return null
   const rect = viewportEl.getBoundingClientRect()
   const sTop = viewportEl.scrollTop ?? 0
@@ -274,6 +270,15 @@ function resolveViewport(ev?: Event): HTMLElement | null {
 function onSelPointerDown(ev: PointerEvent) {
   if (!canSend.value) return  // strict gate (covers viewer + control-off)
   if (!term) return
+  // A tap inside the viewport while a selection is active: clear the old
+  // selection first (iOS-style "tap on existing selection dismisses it") so
+  // we don't leave the popover stuck if the user only taps (no long press).
+  // Without this, a short tap would overwrite selMode to 'pressing' and then
+  // pointerup → 'idle' but leave popover.visible/disableStdin/touch-action
+  // dangling, and the next outside-tap would short-circuit on selMode=idle.
+  if (selMode.value === 'selecting' || selMode.value === 'dragging') {
+    exitSelection()
+  }
   const vp = resolveViewport(ev)
   if (!vp) return
   pressAnchor = { x: ev.clientX, y: ev.clientY }
@@ -323,12 +328,15 @@ function onSelPointerCancel() { onSelPointerUp() }
 
 function onDocumentPointerDown(ev: PointerEvent) {
   if (selMode.value === 'idle') return
-  const target = ev.target as Node | null
-  // Tap inside the viewport? Ignore (the viewport owns the gesture). Popover
-  // stops its own propagation; any pointerdown reaching document is therefore
-  // by definition outside the popover, so exit.
+  const target = ev.target as Element | null
+  // Tap inside the viewport? Ignore (the viewport owns the gesture).
   const vp = viewportEl ?? (container.value?.querySelector('.xterm-viewport') as HTMLElement | null)
   if (target && vp?.contains(target)) return
+  // Tap inside the popover? Ignore — the button's own @click will run on
+  // bubble. (Popover's @pointerdown.stop is bubble-phase and doesn't help
+  // against THIS capture-phase listener; without this bail we'd exitSelection,
+  // unmount the popover, and the @click would never dispatch.)
+  if (target && typeof target.closest === 'function' && target.closest('[data-testid="selection-popover"]')) return
   exitSelection()
 }
 

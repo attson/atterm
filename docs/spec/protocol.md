@@ -1,5 +1,10 @@
 # Wire 协议规范 (v1)
 
+> **Audience**: 实现 WS 帧或 HTTP API 客户端的工程师
+> **Last updated**: 2026-06-10
+> **Status**: stable
+> **See also**: [auth.md](./auth.md) · [architecture.md](./architecture.md)
+
 atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份协议被三类连接复用：`/agent`（CLI wrapper）、`/uplink`（桌面 lazy 控制连）、`/client`（attach 接管）。
 
 ## 传输

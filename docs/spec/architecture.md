@@ -1,5 +1,10 @@
 # 架构规范
 
+> **Audience**: 理解 atterm 系统整体结构的工程师
+> **Last updated**: 2026-06-10
+> **Status**: stable
+> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md)
+
 ## 一句话总览
 
 atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独立 server）+ **任意 web/桌面客户端**。三者通过统一的二进制 WebSocket 帧协议通信。本地体验永远独立、可用；远程能力是叠加的，按需启动。

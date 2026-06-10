@@ -1,5 +1,10 @@
 # 组件样式规范
 
+> **Audience**: 改 atterm 前端 UI 的工程师
+> **Last updated**: 2026-06-10
+> **Status**: stable
+> **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md)
+
 本文定义 atterm 桌面端与 Web/PWA 前端的组件视觉规则。目标是让后续迭代保持“终端工具 + 低干扰控制台”的一致质感，避免局部组件退回浏览器或系统默认控件。
 
 ## 设计方向

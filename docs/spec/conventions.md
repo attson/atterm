@@ -1,5 +1,10 @@
 # 代码约定
 
+> **Audience**: 改 Go / 前端代码的工程师
+> **Last updated**: 2026-06-10
+> **Status**: stable
+> **See also**: [component-style.md](./component-style.md) · [architecture.md](./architecture.md)
+
 ## 包结构
 
 ### Go

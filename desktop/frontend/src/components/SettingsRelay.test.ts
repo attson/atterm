@@ -25,13 +25,12 @@ describe("SettingsRelay", () => {
 
   test("renders url, login form, permissions SelectDropdown, insecure toggle, and status pill", () => {
     expect(source).toContain(["placeholder", '"https://relay.example.com"'].join("="));
-    expect(source).toContain('type="password"');
     expect(source).toContain("settings.relay.remotePermissions");
     expect(source).toContain("import SelectDropdown");
     expect(source).toContain("<SelectDropdown");
     expect(source).toContain('v-model="remotePermission"');
     expect(source).toContain("settings.relay.insecureMode");
-    expect(source).toContain("settings.relay.uplinkRunning");
+    expect(source).toContain("settings.relay.connecting");
   });
 
   test("emits dirty whenever a field diverges from the persisted snapshot", () => {
@@ -48,37 +47,18 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.insecureWarning");
   });
 
-  // Session-token login (Phase 3): user supplies email + password and the
-  // backend's LoginRemoteRelay Wails method exchanges them for a session token.
-  test("renders email + password login form bound to LoginRemoteRelay", () => {
-    // Two new input fields and a Log in button replace the paste-token UI.
-    expect(source).toContain('data-testid="relay-login-form"');
-    expect(source).toContain('id="relay-login-email"');
-    expect(source).toContain('id="relay-login-password"');
-    expect(source).toContain("settings.relay.loginTitle");
+  // Session-token login (Phase 3): email + password are now top-level fields.
+  // The save() flow drives LoginRemoteRelay; no standalone Log in button.
+  test("renders email + password fields bound to LoginRemoteRelay via save()", () => {
+    expect(source).toContain('id="relay-email"');
+    expect(source).toContain('id="relay-password"');
     expect(source).toContain("settings.relay.email");
     expect(source).toContain("settings.relay.password");
-    expect(source).toContain("settings.relay.login");
-    expect(source).toContain("settings.relay.loginInProgress");
-    expect(source).toContain("settings.relay.loginFailed");
-    expect(source).toContain("settings.relay.loggedIn");
-  });
-
-  test("Log in button calls loginRemoteRelay with url + email + password", () => {
     expect(source).toContain("loginRemoteRelay");
-    // Function must pass relay URL, email, and password values.
-    expect(source).toMatch(/loginRemoteRelay\(\s*url\.value\.trim\(\)\s*,\s*email\.value\.trim\(\)\s*,\s*password\.value\s*\)/);
   });
 
-  test("clears password and shows success state on successful login", () => {
+  test("clears password after successful login", () => {
     expect(source).toContain("password.value = \"\"");
-    expect(source).toContain("loginSuccess.value = true");
-  });
-
-  test("surfaces login errors via loginError ref", () => {
-    expect(source).toContain("loginError.value");
-    // The login() handler must catch failures and write into the error ref.
-    expect(source).toMatch(/catch[\s\S]*loginError\.value\s*=/);
   });
 
   test("renders Uplink ON/OFF toggle bound to RelayPaused", () => {
@@ -166,5 +146,40 @@ describe("SettingsRelay", () => {
     expect(source).toContain("if (cfg.token)");
     expect(source).toContain("fetchRelayMe()");
     expect(source).toContain("connectedEmail.value = me.email");
+  });
+
+  test("statusPill has 4 states with warn and error classes", () => {
+    expect(source).toContain('cls: "warn"');
+    expect(source).toContain('cls: "error"');
+    expect(source).toContain("settings.relay.connecting");
+    expect(source).toContain("settings.relay.relayInvalid");
+  });
+
+  test("save() probes /api/version via ProbeRelayVersion before login", () => {
+    expect(source).toContain("probeRelayVersion");
+    expect(source).toContain("settings.relay.versionProbeFailed");
+  });
+
+  test("isValidRelayUrl rejects non-http(s)/ws(s) and empty hosts", () => {
+    expect(source).toContain("function isValidRelayUrl");
+    expect(source).toContain('"http:"');
+    expect(source).toContain('"https:"');
+    expect(source).toContain('"ws:"');
+    expect(source).toContain('"wss:"');
+  });
+
+  test("login card and standalone login button are gone", () => {
+    expect(source).not.toContain('data-testid="relay-login-form"');
+    expect(source).not.toContain("settings.relay.loginTitle");
+    expect(source).not.toContain("settings.relay.loginHint");
+    expect(source).not.toContain("settings.relay.loginInProgress");
+    expect(source).not.toContain("const loginInProgress");
+    expect(source).not.toContain("const loginSuccess");
+  });
+
+  test("save() handles three credential paths", () => {
+    expect(source).toContain("loginRemoteRelay");
+    expect(source).toContain("setRelayConfig");
+    expect(source).toContain("settings.relay.credentialsRequired");
   });
 });

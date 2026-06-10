@@ -376,6 +376,52 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string) error {
 	return nil
 }
 
+// ProbeRelayVersion does a lightweight GET <relayURL>/api/version to verify
+// the URL points at an atterm relay. Returns nil if the response is 200 and
+// the JSON body has a non-empty "version" field. Otherwise returns an error
+// the frontend surfaces as "无法连接到 relay" inline beneath the URL field.
+//
+// /api/version is auth-less per the session-token spec, so no credentials
+// are sent. 5-second timeout keeps the UI from blocking on a stalled
+// connection — the user can re-click "保存并连接" if the relay just woke up.
+func (a *App) ProbeRelayVersion(relayURL string) error {
+	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
+	if relayURL == "" {
+		return fmt.Errorf("relay url is empty")
+	}
+	httpURL, _, err := relayLoginEndpoints(relayURL)
+	if err != nil {
+		return fmt.Errorf("invalid relay url: %w", err)
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", httpURL+"/api/version", nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var out struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return fmt.Errorf("not an atterm relay (decode): %w", err)
+	}
+	if out.Version == "" {
+		return fmt.Errorf("not an atterm relay (no version field)")
+	}
+	return nil
+}
+
 // relayLoginEndpoints normalizes a user-entered relay URL into the (http(s),
 // ws(s)) pair we need. Accepts http://, https://, ws://, wss:// — anything
 // else is rejected so the caller sees a clear error before the POST.

@@ -100,7 +100,7 @@ vi.mock("../lib/api", () => ({
   getWebglRendererEnabled: vi.fn().mockResolvedValue(true),
   getCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(10),
   getRelayConfig: vi.fn().mockResolvedValue({
-    url: "", token: "", allow_insecure_relay: false, remote_permission: "full",
+    url: "", token: "", session_expires_at: 0, allow_insecure_relay: false, remote_permission: "full",
   }),
   fetchRelayMe: vi.fn().mockResolvedValue({ user_id: "u", email: "e" }),
   setRelayConfig: vi.fn().mockResolvedValue(undefined),

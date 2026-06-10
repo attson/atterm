@@ -38,6 +38,9 @@ var terminalThemes = map[string]struct{}{
 type appConfig struct {
 	RelayURL          string `json:"relay_url,omitempty"`
 	RelaySessionToken string `json:"relay_session_token,omitempty"`
+	// RelaySessionExpiresAt is the Unix-seconds expiry of the RelaySessionToken
+	// minted by /api/pair/consume or /api/auth/login. Zero means "unknown".
+	RelaySessionExpiresAt int64 `json:"relay_session_expires_at,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`

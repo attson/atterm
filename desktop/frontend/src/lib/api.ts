@@ -36,6 +36,11 @@ export interface NewSessionResp {
 export interface RelayConfig {
   url: string;
   token: string;
+  // Unix-seconds expiry of `token` when it was minted as a relay session
+  // token (e.g. via /api/pair/consume). 0 means "unknown" — treat `token`
+  // as an opaque, long-lived credential. Always present on the wire so the
+  // frontend can branch on `> 0` without optional-chaining.
+  session_expires_at: number;
   allow_insecure_relay: boolean;
   remote_permission: string;
   connected: boolean;
@@ -264,12 +269,14 @@ export function getRelayConfig(): Promise<RelayConfig> {
 export function setRelayConfig(cfg: {
   url: string;
   token: string;
+  session_expires_at?: number;
   allow_insecure_relay?: boolean;
   remote_permission?: string;
 }): Promise<void> {
   return bindings().SetRelayConfig({
     url: cfg.url,
     token: cfg.token,
+    session_expires_at: cfg.session_expires_at ?? 0,
     allow_insecure_relay: cfg.allow_insecure_relay ?? false,
     remote_permission: cfg.remote_permission ?? "full",
     connected: false,

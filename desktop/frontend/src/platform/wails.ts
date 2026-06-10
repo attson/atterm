@@ -37,6 +37,7 @@ export function createWailsPlatform(): Platform {
         await api.setRelayConfig({
           url: cfg.url,
           token: cfg.token,
+          session_expires_at: cfg.session_expires_at,
           allow_insecure_relay: cfg.allow_insecure_relay,
           remote_permission: cfg.remote_permission,
         })

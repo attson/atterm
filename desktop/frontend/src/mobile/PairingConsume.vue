@@ -40,6 +40,7 @@ async function run() {
     await platform.relay.save({
       url: result.relay_url,
       token: result.session_token,
+      session_expires_at: result.expires_at,
       allow_insecure_relay: !!props.allowInsecure,
       remote_permission: 'full',
       connected: false,

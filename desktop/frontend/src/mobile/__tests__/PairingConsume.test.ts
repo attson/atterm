@@ -52,6 +52,7 @@ describe('PairingConsume', () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({
       url: 'https://relay.example.com',
       token: 'sess_NEW',
+      session_expires_at: 1735689600,
     }))
     expect(wrapper.emitted('connected')).toBeTruthy()
   })

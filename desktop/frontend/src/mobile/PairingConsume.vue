@@ -43,6 +43,7 @@ async function run() {
       session_expires_at: result.expires_at,
       allow_insecure_relay: !!props.allowInsecure,
       remote_permission: 'full',
+      last_email: '',
       connected: false,
     })
     emit('connected')

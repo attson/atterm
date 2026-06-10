@@ -52,7 +52,7 @@ describe('createCapacitorPlatform', () => {
     const p = createCapacitorPlatform()
     const cfg = {
       url: 'https://relay.example.com', token: 'atk_xyz',
-      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false,
+      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
     }
     await p.relay.save(cfg)
     expect(JSON.parse((await secureStorage.get('atterm.relay.session'))!)).toMatchObject({ url: cfg.url, token: cfg.token })
@@ -67,7 +67,7 @@ describe('createCapacitorPlatform', () => {
 
   it('relay.clear removes both storage backends', async () => {
     const p = createCapacitorPlatform()
-    await p.relay.save({ url: 'https://r', token: 'atk_x', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false })
+    await p.relay.save({ url: 'https://r', token: 'atk_x', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false })
     await p.relay.clear()
     expect(localStorage.getItem('atterm.relay.session')).toBeNull()
     expect(await secureStorage.get('atterm.relay.session')).toBeNull()
@@ -75,7 +75,7 @@ describe('createCapacitorPlatform', () => {
 
   it('relay.fetchMe GETs base/api/me with Bearer + credentials omit', async () => {
     const p = createCapacitorPlatform()
-    await p.relay.save({ url: 'https://r.example.com', token: 'atk_bear', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false })
+    await p.relay.save({ url: 'https://r.example.com', token: 'atk_bear', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false })
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ user_id: 'u1', email: 'e@x' }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     )
@@ -140,7 +140,7 @@ describe('createCapacitorPlatform', () => {
 
   it('listRemoteSessions GETs base/api/sessions with Bearer and maps SessionInfo→RemoteSession', async () => {
     const p = createCapacitorPlatform()
-    await p.relay.save({ url: 'https://r.example.com', token: 'atk_t', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false })
+    await p.relay.save({ url: 'https://r.example.com', token: 'atk_t', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false })
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
       { id: 's1', command: 'bash', cwd: '/', title: '', cols: 80, rows: 24, started_at: 0, host_id: 'h1', host: 'box', user: 'me' },
       { id: 's2', command: 'zsh', cwd: '/', title: 'claude', cols: 100, rows: 30, started_at: 0, host_id: 'h1', host: 'box', user: 'me' },
@@ -164,7 +164,7 @@ describe('createCapacitorPlatform', () => {
 
   it('listRemoteSessions throws relay_unauthorized on 401', async () => {
     const p = createCapacitorPlatform()
-    await p.relay.save({ url: 'https://r.example.com', token: 'atk_bad', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false })
+    await p.relay.save({ url: 'https://r.example.com', token: 'atk_bad', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
     await expect(p.sessions.listRemoteSessions()).rejects.toThrow(/relay_unauthorized/)
   })
@@ -179,7 +179,7 @@ describe('createCapacitorPlatform — secure storage migration', () => {
   it('migrates from localStorage to secureStorage on first load, then clears localStorage', async () => {
     const cfg = {
       url: 'https://r.example.com', token: 'atk_legacy',
-      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false,
+      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
     }
     localStorage.setItem('atterm.relay.session', JSON.stringify(cfg))
     expect(await secureStorage.get('atterm.relay.session')).toBeNull()
@@ -195,11 +195,11 @@ describe('createCapacitorPlatform — secure storage migration', () => {
   it('prefers secureStorage over localStorage when both are present', async () => {
     const fromSecure = {
       url: 'https://secure.example.com', token: 'atk_secure',
-      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false,
+      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
     }
     const fromLocal = {
       url: 'https://local.example.com', token: 'atk_local',
-      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false,
+      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
     }
     await secureStorage.set('atterm.relay.session', JSON.stringify(fromSecure))
     localStorage.setItem('atterm.relay.session', JSON.stringify(fromLocal))
@@ -220,7 +220,7 @@ describe('createCapacitorPlatform — secure storage migration', () => {
   it('save writes only to secureStorage, not localStorage', async () => {
     const cfg = {
       url: 'https://r.example.com', token: 'atk_x',
-      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false,
+      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
     }
     const p = createCapacitorPlatform()
     await p.relay.save(cfg)
@@ -231,7 +231,7 @@ describe('createCapacitorPlatform — secure storage migration', () => {
   it('clear wipes both stores (defensive)', async () => {
     const cfg = {
       url: 'https://r', token: 'atk_x',
-      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false,
+      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
     }
     await secureStorage.set('atterm.relay.session', JSON.stringify(cfg))
     localStorage.setItem('atterm.relay.session', JSON.stringify(cfg))

@@ -156,4 +156,15 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.passwordShow");
     expect(source).toContain("settings.relay.passwordHide");
   });
+
+  test("onMounted prefills email from cfg.last_email", () => {
+    expect(source).toContain("cfg.last_email");
+    expect(source).toContain("email.value = cfg.last_email");
+  });
+
+  test("onMounted eagerly fetches /api/me when a session token is configured", () => {
+    expect(source).toContain("if (cfg.token)");
+    expect(source).toContain("fetchRelayMe()");
+    expect(source).toContain("connectedEmail.value = me.email");
+  });
 });

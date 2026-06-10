@@ -11,7 +11,7 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：两类 Principal（详见 §鉴权）：所有客户端（桌面 / 移动 / 浏览器）以邮箱 + 密码（或 pairing token）登录换取 `session_token`，HTTP 走 `Authorization: Bearer ses_…`；浏览器 WS 升级无法设 `Authorization` 头，改用 `Sec-WebSocket-Protocol: atterm-token.ses_…` / `atterm-token-b64.<base64url(utf8 token)>`。Admin 是 `is_admin=true` 的同种 session principal（仅在 `/admin/*` 有效）。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
+- 鉴权：见 §Auth in transit（携带姿势）与 [auth.md](./auth.md)（完整模型：Principal、生命周期、错误码、Bootstrap）。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
 - CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。`--origins` 可写完整 URL 或 host pattern；relay 会按 WebSocket 库要求规范成 Origin host pattern，并在启用白名单时自动允许 Wails 桌面客户端的本地 asset hosts。
 - 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端应用代码必须只加载同源静态资源；Vue/xterm/Naive UI 等 npm 依赖由 Vite 打包成同源 assets，PWA service worker 只预缓存这些静态产物。CSP 允许 inline style 仅用于 xterm.js 运行时布局样式；script-src 允许同源脚本，并预留 Cloudflare Web Analytics beacon 源，但不允许 unsafe eval/inline script 或应用代码引入 CDN 依赖。
 
@@ -387,8 +387,8 @@ Payload (UTF-8 JSON):
 | `/client-sessions` | GET (Upgrade: websocket) | session 列表推送 |
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
 | `/api/version` | GET | JSON 版本信息 |
-| `/api/pair/create` | POST | 桌面端用 owner 凭据签发一次性 pairing token（详见 §pairing tokens） |
-| `/api/pair/consume` | POST | 移动端用 pairing token 换取 relay URL + 新 session token（无需鉴权头） |
+| `/api/pair/create` | POST | 桌面端 owner 签发一次性 pairing token（详见 [auth.md](./auth.md)） |
+| `/api/pair/consume` | POST | 移动端用 pairing token 换 relay URL + session token（详见 [auth.md](./auth.md)） |
 | `/healthz` | GET | 公开 liveness 探测；返回 `{ok, version}`，无鉴权 |
 | `/admin/health` | GET | admin-only 运维健康检查页（HTML） |
 | `/admin/api/health` | GET | admin-only HealthPayload JSON（详见 §health endpoint） |
@@ -401,148 +401,16 @@ host（例如 `relay.example.com`、`*.example.com`）；`cmd/atterm-relay` 接�
 输入并规范成 host，同时追加 Wails 桌面客户端需要的 `wails` / `wails.localhost`
 host pattern，这样桌面客户端和同源 web 客户端都能连接。
 
-## 鉴权
+## Auth in transit
 
-### 用户账号模式（生产推荐）
+所有 protected endpoint 由 `requireSession` 中间件统一拦截。Token 通过以下姿势携带：
 
-`cmd/atterm-relay` 以用户账号模式启动时（默认），所有端点通过
-`requireSession` middleware 鉴权：取请求里的 token → sha256 后查
-`sessions` 表 → 校验未过期未撤销 → 把 `*User` 注入 request context。
+- HTTP `Authorization: Bearer <token>`
+- WS `Sec-WebSocket-Protocol: atterm-token.<token>` 或 `atterm-token-b64.<base64url(token)>`
 
-凭证只有一种形态：**session token**。所有客户端（桌面 / 移动 / 浏览器）
-都用邮箱 + 密码（或 pairing token）登录换取一份。
+不接受 `?token=` URL query。不接受 cookie。
 
-**Desktop / 移动 / 浏览器（session token）**：
-
-所有客户端 HTTP 调用走：
-
-```
-Authorization: Bearer ses_…
-```
-
-浏览器 WebSocket 升级无法设 `Authorization` 头，改用 subprotocol：
-
-```
-Sec-WebSocket-Protocol: atterm-token.ses_…
-Sec-WebSocket-Protocol: atterm-token-b64.<base64url(utf8 token)>
-```
-
-格式：前缀 `ses_` + 32 字节随机熵的 base64url 编码（详见
-`internal/userstore.CreateSession`）。明文只在签发时返回一次，服务端
-只存 sha256 摘要。
-
-签发渠道：
-
-- `POST /api/auth/login`（邮箱 + 密码）→ `{session_token, expires_at, user}`
-- `POST /api/auth/setup` / `POST /api/auth/signup`（邀请码或 bootstrap）→ 同上
-- `POST /api/pair/consume`（pairing token）→ 同上，附带 `relay_url`
-
-TTL：`sessions.expires_at`（默认 30 天，每次成功 lookup 刷新
-`last_seen_at`）。续期由 lookup 自动完成，不需要前端显式 refresh。
-
-撤销：`POST /api/auth/logout`（删除当前请求对应的 `sessions` 行）或
-admin 调 DELETE 对应行；过期或撤销后下次 lookup 返回 401，前端清掉
-本地 token 并跳登录。
-
-可连接 `/agent`、`/uplink`、`/client`、`/client-sessions`，可发送
-`IN`、`RESIZE`、`PASTE_IMAGE`。服务端不接受 `?token=` query。
-
-**Admin**：同一份 session token，只要对应 `users.is_admin = true` 就在
-`/admin/*` 下被识别为 admin principal。bootstrap 由
-`ATTERM_BOOTSTRAP_ADMIN_EMAIL` / `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 在
-relay 启动时种入第一条 admin 用户；后续可通过
-`POST /admin/api/users/{id}/admin` 提权其他用户。
-
-### Principal 类型
-
-| Principal | 来源 | 可用路径 |
-|---|---|---|
-| `PrincipalUser` | 有效 session token | `/agent` `/uplink` `/client` `/client-sessions` `/api/*` |
-| `PrincipalAdmin` | `PrincipalUser` with `is_admin=true` | `/admin/*` |
-| `PrincipalNone` | 无效/过期/撤销 token | — (401) |
-
-每个用户只能看到自己注册的 session（`/api/sessions`、WebSocket LIST 帧、
-`/client` ATTACH 均按 ownerUserID 过滤）。
-
-### 用户账号 HTTP 端点
-
-| 路径 | 方法 | 鉴权 | 说明 |
-|------|------|------|------|
-| `/api/auth/signup` | POST | 公开（需邀请码） | 注册用户，body 返回 `{session_token, expires_at, user}` |
-| `/api/auth/login` | POST | 公开 | 登录，body 返回 `{session_token, expires_at, user}` |
-| `/api/auth/setup` | POST | 公开（仅 bootstrap） | 首次部署创建 admin，body 同 login |
-| `/api/auth/logout` | POST | Bearer session token | 撤销当前 `sessions` 行 |
-| `/api/me` | GET | Bearer session token | 返回当前用户信息 |
-| `/api/me/password` | POST | Bearer session token | 修改密码（清除所有 session） |
-| `/api/push/key` | GET | Bearer session token | 获取 VAPID 公钥 |
-| `/api/push/subscribe` | POST | Bearer session token | 注册 push 订阅 |
-| `/api/push/unsubscribe` | POST | Bearer session token | 取消 push 订阅 |
-| `/api/push/test` | POST | Bearer session token | 发送测试 push 通知 |
-| `/api/me/webhooks` | GET/POST | Bearer session token | 列出/创建 outbound webhook |
-| `/api/me/webhooks/{id}` | DELETE | Bearer session token | 删除 outbound webhook |
-| `/api/pair/create` | POST | Bearer session token | 签发 5 分钟一次性 pairing token（详见 §pairing tokens） |
-| `/api/pair/consume` | POST | 公开（pairing token 即凭据） | 用 pairing token 换 relay URL + 新 session token + user info |
-| `/admin/api/invitations` | GET/POST | Admin principal | 列出/创建邀请码 |
-| `/admin/api/users` | GET | Admin principal | 列出用户 |
-| `/admin/api/users/{id}/reset-password` | POST | Admin principal | 重置用户密码 |
-| `/admin/api/users/{id}/disable` | POST | Admin principal | 禁用用户 |
-| `/admin/api/users/{id}/admin` | POST/DELETE | Admin principal | 晋升 / 取消 admin |
-| `/admin/api/config` | GET/PUT | Admin principal | 查看 / 更新 relay 运行限流配置 |
-
-### 启动安全策略
-
-- 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`；如果该用户不存在并需要 bootstrap 创建，`ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 必须非空且足够强（长度 ≥ 16，至少 3 类字符，且不在弱密码黑名单内），除非显式 `--dev-insecure`。
-- 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`。
-- `--rate-limit-per-minute` / `ATTERM_RATE_LIMIT_PER_MINUTE`：HTTP 请求与 WS upgrade 先按远端 IP 限流；鉴权成功后再按远端 IP + token hash 限流。`0` 用默认值，负数禁用。
-- `--max-connections-per-key` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP/token 的活跃 WS 连接上限；`0` 用默认值，负数禁用。
-- `--config` / `ATTERM_RELAY_CONFIG`：持久化 relay admin JSON 配置路径，仅保存运行参数；用户账号和 session 保存在 SQLite（users.db）。
-- `ATTERM_BOOTSTRAP_ADMIN_EMAIL` / `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`：初始化 admin 用户。bootstrap 每次启动都会确保该 email 是 admin；用户已存在时只提权并忽略 password env。现有用户无法通过重启改变密码，需改用 web UI `/settings.html`。
-- `--dev-insecure` 只用于开发/可信内网，会打印明文传输和弱鉴权风险警告。
-
-持久化 admin config 示例（仅保存运行参数，不保存 token 明文）：
-
-```json
-{
-  "rate_limit_per_minute": 600,
-  "max_connections_per_key": 64
-}
-```
-
-## Pairing tokens
-
-桌面端的 owner 在 Settings → Pairing 里点 "Generate QR code"，desktop app 走当前
-配置的 relay 调 `POST /api/pair/create`（带 owner 的 session token），relay 用
-`internal/userstore.Store.CreatePairingToken` 生成一条仅哈希存储的 token
-记录，明文只在签发时返回一次。Owner 拿到 `{token, expires_at, qr_url}` 后渲
-染二维码；移动端用相机扫码或粘贴 token 后调 `POST /api/pair/consume`：
-
-```
-POST /api/pair/consume
-Content-Type: application/json
-
-{ "token": "<pair_…>" }
-```
-
-成功返回 `{relay_url, session_token, expires_at, user: {id, email}}`，relay 同时
-atomically mark pairing token used（同条记录二次 consume 必失败）。失败统一返回
-404 + `{"code": "pair_invalid"}`，不区分 not-found / expired / already-used，避免
-oracle attack。
-
-约束：
-
-- TTL: 5 分钟（`internal/relay.pairingTTL`）。
-- 一次性：`ConsumePairingToken` 在 SQL 层做 atomic `used_at` 写入；竞争消费
-  只有一个成功，其它落到 `ErrPairingInvalid`。
-- Rate limit: owner 端 `Limits.AllowPairCreate(userID)`，consumer 端
-  `Limits.AllowPairConsume(ipPrefix)`，命中限流返回 `429 rate_limited`。
-- 鉴权：`/api/pair/create` 需要已登录 user principal（Bearer session token），
-  `/api/pair/consume` **不需要任何鉴权头**——pairing token 本身即凭据，trust
-  model 与 OAuth Device Code Flow 一致。
-- `qr_url` 拼自 `publicBaseURL(r) + "/pair?t=" + token`；relay 自动按
-  `X-Forwarded-Proto` 推断 https。
-
-存储：见 `internal/userstore/pairing.go`（`pairing_tokens` 表，sha256 + atomic
-`used_at`）；HTTP 处理在 `internal/relay/pair_http.go`。
+完整鉴权模型（Principal、生命周期、错误码、Bootstrap 流程、客户端实现要点）见 [auth.md](./auth.md)。
 
 ## Health endpoint
 

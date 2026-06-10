@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe, loginRemoteRelay } from "../lib/api";
+import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe, loginRemoteRelay, probeRelayVersion } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
@@ -29,9 +29,6 @@ const { t } = useI18n();
 const email = ref("");
 const password = ref("");
 const showPassword = ref(false);
-const loginInProgress = ref(false);
-const loginError = ref("");
-const loginSuccess = ref(false);
 
 // In-memory only (SEC-1): never persisted or logged.
 const connectedUserID = ref("");
@@ -58,11 +55,17 @@ const dirty = computed(
 
 watch(dirty, (value) => emit("dirty", value));
 
-const canLogin = computed(
-  () => !loginInProgress.value && !!url.value.trim() && !!email.value.trim() && !!password.value,
-);
+function isValidRelayUrl(s: string): boolean {
+  try {
+    const u = new URL(s.trim());
+    if (!u.host) return false;
+    return ["http:", "https:", "ws:", "wss:"].includes(u.protocol);
+  } catch {
+    return false;
+  }
+}
 
-// Status pill matrix per spec §8.2
+// Status pill: 4 states. Order matters — connected wins over everything.
 const statusPill = computed(() => {
   if (connectedEmail.value) {
     return { text: t("settings.relay.connectedAs", { identity: connectedEmail.value }), cls: "on" };
@@ -76,7 +79,10 @@ const statusPill = computed(() => {
   if (paused.value) {
     return { text: t("settings.relay.paused"), cls: "off" };
   }
-  return { text: t("settings.relay.uplinkRunning"), cls: "on" };
+  if (!isValidRelayUrl(url.value)) {
+    return { text: t("settings.relay.relayInvalid"), cls: "error" };
+  }
+  return { text: t("settings.relay.connecting"), cls: "warn" };
 });
 
 onMounted(async () => {
@@ -136,22 +142,74 @@ function snapshotPersisted() {
 async function save() {
   saving.value = true;
   error.value = "";
+
+  // 1. URL format check (cheap, local)
+  if (!isValidRelayUrl(url.value)) {
+    error.value = t("settings.relay.relayInvalid");
+    saving.value = false;
+    return;
+  }
+
+  // 2. /api/version probe via Wails Go method
   try {
-    await setRelayConfig({
-      url: url.value.trim(),
-      token: token.value.trim(),
-      allow_insecure_relay: allowInsecureRelay.value,
-      remote_permission: remotePermission.value,
-    });
+    await probeRelayVersion(url.value.trim());
+  } catch (e: any) {
+    error.value = t("settings.relay.versionProbeFailed", { reason: e?.message ?? String(e) });
+    saving.value = false;
+    return;
+  }
+
+  // 3. Login vs reuse-token vs error
+  const hasCreds = !!(email.value.trim() && password.value);
+  const hasExistingToken = !!token.value;
+
+  if (hasCreds) {
+    try {
+      await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value);
+    } catch (e: any) {
+      error.value = t("settings.relay.loginFailedInline", { reason: e?.message ?? String(e) });
+      saving.value = false;
+      return;
+    }
+    password.value = "";
+  } else if (hasExistingToken) {
+    try {
+      await setRelayConfig({
+        url: url.value.trim(),
+        token: token.value,
+        session_expires_at: 0,
+        allow_insecure_relay: allowInsecureRelay.value,
+        remote_permission: remotePermission.value,
+      });
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
+      saving.value = false;
+      return;
+    }
+  } else {
+    error.value = t("settings.relay.credentialsRequired");
+    saving.value = false;
+    return;
+  }
+
+  // 4. Refresh from persisted config
+  try {
     const cfg = await getRelayConfig();
+    url.value = cfg.url;
+    token.value = cfg.token;
+    allowInsecureRelay.value = cfg.allow_insecure_relay;
+    remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
+    email.value = cfg.last_email ?? "";
     snapshotPersisted();
-    emit("relay-config-changed");
   } catch (e: any) {
     error.value = e?.message ?? String(e);
-  } finally {
     saving.value = false;
+    return;
   }
+
+  saving.value = false;
+  emit("relay-config-changed");
 }
 
 async function handleTogglePaused() {
@@ -166,34 +224,6 @@ async function handleTogglePaused() {
     paused.value = !paused.value;
   } finally {
     togglingPause.value = false;
-  }
-}
-
-async function login() {
-  loginError.value = "";
-  loginSuccess.value = false;
-  if (!url.value.trim() || !email.value.trim() || !password.value) {
-    return;
-  }
-  loginInProgress.value = true;
-  try {
-    await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value);
-    // LoginRemoteRelay persisted the new session token via SetRelayConfig.
-    // Re-read so `token` reflects the new value (and dirty/save logic sees it).
-    const cfg = await getRelayConfig();
-    url.value = cfg.url;
-    token.value = cfg.token;
-    allowInsecureRelay.value = cfg.allow_insecure_relay;
-    remotePermission.value = cfg.remote_permission || "full";
-    paused.value = (cfg as any).paused ?? false;
-    snapshotPersisted();
-    password.value = "";
-    loginSuccess.value = true;
-    emit("relay-config-changed");
-  } catch (e: any) {
-    loginError.value = e?.message ?? String(e);
-  } finally {
-    loginInProgress.value = false;
   }
 }
 
@@ -245,92 +275,70 @@ defineExpose({
         v-model="url"
         type="text"
         placeholder="https://relay.example.com"
-        :disabled="saving || loginInProgress"
+        :disabled="saving"
         @keyup.enter="save"
       />
 
-      <section class="relay-login" data-testid="relay-login-form">
-        <div class="login-title">{{ t("settings.relay.loginTitle") }}</div>
-        <p class="hint">{{ t("settings.relay.loginHint") }}</p>
+      <label class="field-label" for="relay-email">{{ t("settings.relay.email") }}</label>
+      <input
+        id="relay-email"
+        v-model="email"
+        type="email"
+        autocomplete="username"
+        :disabled="saving"
+        @keyup.enter="save"
+      />
 
-        <label class="field-label" for="relay-login-email">{{ t("settings.relay.email") }}</label>
+      <label class="field-label" for="relay-password">{{ t("settings.relay.password") }}</label>
+      <div class="password-field">
         <input
-          id="relay-login-email"
-          v-model="email"
-          type="email"
-          autocomplete="username"
-          :disabled="loginInProgress || saving"
-          @keyup.enter="login"
+          id="relay-password"
+          v-model="password"
+          :type="showPassword ? 'text' : 'password'"
+          autocomplete="current-password"
+          :disabled="saving"
+          @keyup.enter="save"
         />
-
-        <label class="field-label" for="relay-login-password">{{ t("settings.relay.password") }}</label>
-        <div class="password-field">
-          <input
-            id="relay-login-password"
-            v-model="password"
-            :type="showPassword ? 'text' : 'password'"
-            autocomplete="current-password"
-            :disabled="loginInProgress || saving"
-            @keyup.enter="login"
-          />
-          <button
-            type="button"
-            class="password-toggle"
-            :aria-label="showPassword ? t('settings.relay.passwordHide') : t('settings.relay.passwordShow')"
-            :aria-pressed="showPassword"
-            :disabled="loginInProgress || saving"
-            @click="showPassword = !showPassword"
+        <button
+          type="button"
+          class="password-toggle"
+          :aria-label="showPassword ? t('settings.relay.passwordHide') : t('settings.relay.passwordShow')"
+          :aria-pressed="showPassword"
+          :disabled="saving"
+          @click="showPassword = !showPassword"
+        >
+          <svg
+            v-if="!showPassword"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
           >
-            <svg
-              v-if="!showPassword"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-            <svg
-              v-else
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-              <line x1="1" y1="1" x2="23" y2="23" />
-            </svg>
-          </button>
-        </div>
-
-        <div class="login-actions">
-          <button
-            type="button"
-            class="login-btn"
-            :disabled="!canLogin"
-            @click="login"
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          <svg
+            v-else
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
           >
-            {{ loginInProgress ? t("settings.relay.loginInProgress") : t("settings.relay.login") }}
-          </button>
-        </div>
-
-        <p v-if="loginSuccess" class="login-ok">{{ t("settings.relay.loggedIn") }}</p>
-        <p v-if="loginError" class="login-error">
-          <span class="login-error-label">{{ t("settings.relay.loginFailed") }}:</span>
-          {{ loginError }}
-        </p>
-      </section>
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </svg>
+        </button>
+      </div>
 
       <label class="field-label">{{ t("settings.relay.remotePermissions") }}</label>
       <SelectDropdown
@@ -442,6 +450,18 @@ defineExpose({
 .status-pill.off .dot { color: var(--fg-dim); }
 .status-pill.on { color: var(--good); }
 .status-pill.off { color: var(--fg-dim); }
+.status-pill.warn {
+  color: var(--warn, #d97706);
+}
+.status-pill.warn .dot {
+  color: var(--warn, #d97706);
+}
+.status-pill.error {
+  color: var(--bad);
+}
+.status-pill.error .dot {
+  color: var(--bad);
+}
 .hint {
   font-size: 12px;
   color: var(--fg-dim);
@@ -453,54 +473,6 @@ defineExpose({
   color: var(--fg-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-.relay-login {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
-}
-.login-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--fg);
-}
-.login-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-.login-btn {
-  height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--accent);
-  border-radius: 7px;
-  background: var(--accent);
-  color: var(--bg);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.login-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.login-ok {
-  color: var(--good);
-  font-size: 12px;
-  margin: 0;
-}
-.login-error {
-  color: var(--bad);
-  font-size: 12px;
-  margin: 0;
-  line-height: 1.45;
-}
-.login-error-label {
-  font-weight: 700;
-  margin-right: 4px;
 }
 .checkbox {
   display: flex;

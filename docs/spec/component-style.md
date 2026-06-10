@@ -221,7 +221,7 @@ mobile 设置页有独立的模板编辑器（见下方 §移动端设置页）�
 `MobileSettings.vue` 是从 `MobileSessionList` 的 ⚙ 按钮进入的独立 view。
 **不再退回连接页**（旧版 gear 直接进 setup 是 regression）。结构：
 
-```
+```text
 ┌─ ← 返回      设置                              ─┐
 │                                                  │
 │  语言          [ 跟随系统 ▾ ]                    │

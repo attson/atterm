@@ -9,7 +9,7 @@
 
 ### Go
 
-```
+```text
 cmd/<binary>/main.go        二进制入口，仅做配置 + wire-up，业务逻辑放 internal/
 internal/<package>/         可复用业务包，不依赖 cmd/ 或 desktop/
 desktop/                    Wails 桌面 app（package main，但比 cmd/ 大）
@@ -17,7 +17,7 @@ desktop/                    Wails 桌面 app（package main，但比 cmd/ 大）
 
 依赖方向规则：
 
-```
+```text
 cmd/* → internal/*           ✓
 desktop/ → internal/*        ✓
 internal/* → 其他 internal/* ✓ (按层次：proto < ringbuf < session < relay; ptyhost 独立; agent → ptyhost+proto+relay)
@@ -28,7 +28,7 @@ internal/* → cmd/* 或 desktop/   ✗ 禁止反向依赖
 
 ### TypeScript
 
-```
+```text
 desktop/frontend/src/
 ├── main.ts             Vue 入口
 ├── App.vue             根组件
@@ -49,7 +49,7 @@ desktop/frontend/src/
 
 `web/src/` 是独立的 Vue 3 + TypeScript + Naive UI MPA：
 
-```
+```text
 web/src/
 ├── main/ login/ signup/ setup/ settings/ admin/
 └── shared/              api、ws、i18n、theme、Topbar、mobile guard
@@ -140,7 +140,7 @@ if err != nil {
 - pairing token 必须有测试：`internal/userstore/pairing_test.go` 覆盖
   CreatePairingToken / ConsumePairingToken 的 atomic `used_at` 和过期分支；
   `internal/relay/pair_http_test.go` 覆盖 owner 鉴权、consumer 无鉴权、
-  rate-limit 返回 429、invalid/expired/used 统一 404；
+  rate-limit 返回 `429`、invalid/expired/used 统一 `404`；
   `desktop/app_pairing_test.go` 验证桌面 CreatePairingToken binding 携带 Bearer
   并解析响应
 - health endpoint 必须有契约测试：`internal/relay/health_http_test.go` 覆盖
@@ -319,7 +319,7 @@ non-shell 时才覆盖。这条 sticky 规则保证：
 
 参考现有 git log：
 
-```
+```text
 ci: github actions to build linux/amd64 + darwin/arm64 desktop
 
   - 缩进列表说明改动
@@ -343,21 +343,21 @@ ci: github actions to build linux/amd64 + darwin/arm64 desktop
 - ❌ 在 PTY 字节流路径加 JSON 解析或 regex 匹配
 - ❌ 用 `--no-verify` skip git hook（修复 hook 失败的根因，不是绕过）
 - ❌ 给 frontend 加新依赖未经讨论（已有 vue + xterm 已够）
-- ❌ 自动更新缺少 Ed25519/SHA256 校验时继续安装（缺公钥也必须 fail-closed）
+- ❌ 自动更新缺少 `Ed25519`/`SHA256` 校验时继续安装（缺公钥也必须 fail-closed）
 - ❌ 把 `ATTERM_UPDATE_SIGNING_PRIVATE_KEY` 写进仓库、日志或 release artifact
 - ❌ 公网 relay 默认允许弱 token/空鉴权、缺失 `--origins` 或弱 admin token；需要 `--dev-insecure` 才能放开这些限制
 - ❌ 桌面端默认允许非 loopback `ws://`；只能由用户在 Settings 显式打开 insecure mode
 - ❌ `web/` 引入 CDN script/style；浏览器客户端必须使用 Vite 打包出来的同源 assets，避免 CSP/PWA 回归
 - ❌ 服务端接受 `?token=` 鉴权，或让浏览器长期把 secret 留在地址栏、日志或可分享 URL 中；手工打开 web 页面只能用 `#token=...` fragment bootstrap，WS 鉴权必须用 `Sec-WebSocket-Protocol`
-- ❌ 把用户凭据明文（密码、邀请码、API token、cookie 值）写进数据库、日志或任何持久化路径——全部以 sha256/argon2id 散列存储，明文仅在签发时返回一次
+- ❌ 把用户凭据明文（密码、邀请码、API token、cookie 值）写进数据库、日志或任何持久化路径——全部以 `sha256`/`argon2id` 散列存储，明文仅在签发时返回一次
 - ❌ 把远程权限只做成 UI 提示；relay 和 desktop host 都必须实际拦截越权帧
 
 ## Release 签名与发版
 
 GitHub `prod` environment 需要两个 secrets：
 
-- `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：base64 Ed25519 公钥（32 bytes），构建桌面 app 时通过 ldflags 注入 `main.UpdateVerifyPublicKey`
-- `ATTERM_UPDATE_SIGNING_PRIVATE_KEY`：base64 Ed25519 私钥（64 bytes），只在 release job 里用于签 `SHA256SUMS`
+- `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：base64 `Ed25519` 公钥（32 bytes），构建桌面 app 时通过 ldflags 注入 `main.UpdateVerifyPublicKey`
+- `ATTERM_UPDATE_SIGNING_PRIVATE_KEY`：base64 `Ed25519` 私钥（64 bytes），只在 release job 里用于签 `SHA256SUMS`
 
 tag `v*` 触发 `.github/workflows/build.yml`：
 

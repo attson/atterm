@@ -154,3 +154,47 @@ describe("TaskGroupedList", () => {
     expect(title).toContain("/tmp");
   });
 });
+
+describe("TaskGroupedList AI title", () => {
+  test("shows AI session OSC title in the row when present", () => {
+    const sess = mk({
+      session_id: "s1",
+      host: "mac",
+      task_state: "running",
+      title: "Remove token auth from relay login",
+      current_command: "/usr/local/bin/claude --foo",
+      type: "ai",
+    });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [sess] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+      },
+    });
+    const cmd = w.find('[data-test="task-row"] .cmd');
+    expect(cmd.text()).toBe("Remove token auth from relay login");
+  });
+
+  test("falls back to commandLabel for non-ai sessions even when title is set", () => {
+    const sess = mk({
+      session_id: "s1",
+      host: "mac",
+      task_state: "running",
+      title: "user@host: ~/proj",
+      current_command: "zsh",
+      type: "shell",
+    });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [sess] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+      },
+    });
+    const cmd = w.find('[data-test="task-row"] .cmd');
+    expect(cmd.text()).toBe("zsh");
+  });
+});

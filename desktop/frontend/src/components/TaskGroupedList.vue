@@ -7,7 +7,7 @@ import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
 import { useTaskPreset } from "../composables/useTaskPreset";
-import { commandLabel, rowTitle, hostName as hostNameHelper, taskStateLabel } from "../lib/sessionLabel";
+import { aiTitleOrCommand, rowTitle, hostName as hostNameHelper, taskStateLabel } from "../lib/sessionLabel";
 
 const preset = useTaskPreset();
 const showStateLabel = computed(() => preset.active.value.showLabel);
@@ -144,7 +144,7 @@ function stateLabel(state: string | undefined): string {
           data-test="state-label"
         >{{ stateLabel(s.task_state) }}</span>
         <span class="cmd-and-cwd" :title="rowTitle(s)">
-          <span class="cmd">{{ commandLabel(s) }}</span>
+          <span class="cmd">{{ aiTitleOrCommand(s) }}</span>
           <span v-if="shortenCwd(s.cwd, home)" class="cwd">·&nbsp;{{ shortenCwd(s.cwd, home) }}</span>
         </span>
         <span v-if="s.unread" class="unread-dot" data-test="unread-dot">●</span>
@@ -188,7 +188,7 @@ function stateLabel(state: string | undefined): string {
             data-test="state-label"
           >{{ stateLabel(s.task_state) }}</span>
           <span class="cmd-and-cwd" :title="rowTitle(s)">
-            <span class="cmd">{{ commandLabel(s) }}</span>
+            <span class="cmd">{{ aiTitleOrCommand(s) }}</span>
             <span v-if="shortenCwd(s.cwd, home)" class="cwd">·&nbsp;{{ shortenCwd(s.cwd, home) }}</span>
           </span>
         </div>

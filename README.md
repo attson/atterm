@@ -1,5 +1,10 @@
 # AT Term
 
+> **Audience**: 第一次见到 atterm 的人 / 想跑起来或部署的开发者
+> **Last updated**: 2026-06-10
+> **Status**: stable
+> **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/roadmap.md](./docs/roadmap.md)
+
 AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动的 shell、Codex、Claude 等长任务，可以在离开电脑后从手机、浏览器或另一台电脑继续查看和输入。
 
 > 一句话：本地先好用；需要远程时，再把会话安全地同步到自己的 relay。
@@ -261,6 +266,8 @@ AT Term 的默认策略是 fail-closed：
 - relay 按远端 IP 和认证后的 token hash 做限流与连接数限制。
 - 桌面端默认拒绝非 loopback 的明文 `ws://` relay；可信内网需要在 Settings 手动开启 insecure mode。
 - 自动更新必须通过 Ed25519 签名和 SHA256 校验；缺公钥、缺签名、签名不匹配或 hash 不匹配都会失败。
+
+完整鉴权模型（含 bootstrap、pairing、错误码）见 [docs/spec/auth.md](./docs/spec/auth.md)。
 
 ## 开发环境
 

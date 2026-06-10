@@ -267,3 +267,12 @@
 - [ ] 插件工作流动作
 - [ ] Linux rpm package
 - [ ] Linux AppImage package
+
+## 鉴权后续
+
+来自 [docs/spec/auth.md](./spec/auth.md) 拆分时识别的迭代项：
+
+- [ ] session refresh / proactive renewal（30 天 TTL 滑动续期或显式 refresh endpoint）
+- [ ] 移动端 expires_at 触发预刷新（目前 `RelayConfig.session_expires_at` 已存但未使用）
+- [ ] `/login.html?next=...` redirect 的 CSRF / open-redirect audit
+- [ ] 桌面 App `localAdminPassword` 改用 OS Keychain 而非明文 `config.json`

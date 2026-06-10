@@ -1,5 +1,10 @@
 # 架构规范
 
+> **Audience**: 理解 atterm 系统整体结构的工程师
+> **Last updated**: 2026-06-10
+> **Status**: stable
+> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md)
+
 ## 一句话总览
 
 atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独立 server）+ **任意 web/桌面客户端**。三者通过统一的二进制 WebSocket 帧协议通信。本地体验永远独立、可用；远程能力是叠加的，按需启动。
@@ -76,58 +81,9 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 
 ## User accounts and identity
 
-All clients authenticate via email + password (or pairing). Successful
-login returns a `session_token` that the client carries on every
-HTTP/WS request. The `requireSession` middleware validates the token
-against the `sessions` table.
+所有客户端通过邮箱 + 密码登录 relay。登录成功后 relay 颁发 `session_token`（明文仅在响应 body 返回一次，DB 存 sha256 哈希），客户端在后续 HTTP / WS 请求中携带。`requireSession` 中间件统一在 mux 层拦截。
 
-### Storage
-
-`internal/userstore` is the **only** package that opens the SQLite
-database (`${ATTERM_RELAY_CONFIG_DIR}/users.db`, WAL mode by default).
-Tables: `users`, `invitations`, `sessions`, `pairing_tokens`,
-`webhooks`. All credentials (passwords, invite codes, session tokens)
-are stored as `sha256` (or argon2id for passwords). Plaintext is
-returned to the user exactly once at issue time.
-
-### Principal kinds
-
-`requireSession` in `internal/relay/auth.go` resolves every incoming
-HTTP / WS-upgrade request to a `Principal`:
-
-| Kind | Source | Use |
-|------|--------|-----|
-| User | Bearer session token (`Authorization: Bearer ses_…` or `Sec-WebSocket-Protocol: atterm-token.ses_…`) | All user-scoped routes |
-| Admin | Same session token whose user row has `is_admin=true` | Only `/admin/*` |
-| None | No / expired / revoked token | Public routes only (401 otherwise) |
-
-### Entry-point gates
-
-| Entry | Allowed Principal |
-|---|---|
-| `GET /api/me/*` | User |
-| `GET /api/sessions` | User (filtered to `OwnerUserID == UserID`) |
-| `GET/WS /client?session=<id>` | User where `Session.OwnerUserID == Principal.UserID` |
-| `WS /uplink` | User |
-| `WS /agent` | User |
-| `/admin/*` | Admin only |
-| `POST /api/auth/{signup,login,setup}`, `POST /api/pair/consume` | None (public) |
-
-### Bootstrap path
-
-1. Operator starts relay with `ATTERM_BOOTSTRAP_ADMIN_EMAIL` and
-   `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` (password must satisfy the strength check
-   on public listen: ≥16 chars, ≥3 character classes, not in dev blacklist).
-2. Operator logs in via `POST /api/auth/login` → receives `{session_token, expires_at, user}`.
-3. Operator opens `/admin/` (browser stores the token in localStorage and
-   sends it as `Authorization: Bearer`) → creates an invitation.
-4. End user signs up at `/signup.html?invite=inv_…` → also receives a `session_token`.
-5. Desktop / mobile clients either log in directly with email + password, or
-   scan a pairing QR (`POST /api/pair/consume` mints them a fresh `session_token`).
-
-See `docs/superpowers/specs/2026-06-09-relay-auth-token-removal-design.md`
-for the full design (data model, security invariants, threat model,
-test strategy).
+完整模型（含 bootstrap、pairing、状态机、错误码、客户端实现要点）见 [auth.md](./auth.md)。
 
 ## 三种核心数据流
 

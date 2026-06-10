@@ -24,10 +24,13 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Endpoint is what the frontend uses to open a WebSocket to the in-process relay.
+// Endpoint is what the frontend uses to open a WebSocket to the in-process
+// relay. SessionToken is the bearer token returned by the desktop's local
+// bootstrap admin login; it is sent in Authorization headers / WS
+// subprotocols the same way it is for any remote relay.
 type Endpoint struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
+	URL          string `json:"url"`
+	SessionToken string `json:"session_token"`
 }
 
 // NewSessionReq is the body of NewSession.
@@ -127,21 +130,23 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.pluginFS.setupWatcher(ctx)
-	h, err := startRelayHost()
+	// cfgStore must be ready before startRelayHost — the relay host's
+	// bootstrap admin password lives in appConfig, so it has to be loaded
+	// (and possibly written on first run) before we open the userstore.
+	if a.cfgStore == nil {
+		a.cfgStore = loadConfig()
+	}
+	h, err := startRelayHost(a.cfgStore)
 	if err != nil {
 		log.Fatalf("desktop: start relay host: %v", err)
 	}
 	a.host = h
-	if a.cfgStore == nil {
-		a.cfgStore = loadConfig()
-	}
-	a.host.setConfigStore(a.cfgStore)
 
 	cfg := a.cfgStore.Get()
 	if cfg.RelayURL == "" {
 		if env := strings.TrimSpace(os.Getenv("ATTERM_RELAY_URL")); env != "" {
 			cfg.RelayURL = env
-			cfg.RelayToken = strings.TrimSpace(os.Getenv("ATTERM_RELAY_TOKEN"))
+			cfg.RelaySessionToken = strings.TrimSpace(os.Getenv("ATTERM_RELAY_TOKEN"))
 		}
 	}
 	if a.logger == nil {
@@ -207,7 +212,7 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
-	a.uplink = newUplink(cfg.RelayURL, cfg.RelayToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError)
+	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError)
 	go a.uplink.Run(uplinkCtx)
 	log.Printf("desktop: uplink configured for %s", cfg.RelayURL)
 }
@@ -222,13 +227,14 @@ func (a *App) GetHostInfo() HostInfo {
 	return HostInfo{HostID: id, Host: h, User: u}
 }
 
-// GetEndpoint returns the local relay endpoint and a token. The frontend uses
-// this to open a WebSocket to the in-process relay.
+// GetEndpoint returns the local relay endpoint and a session token. The
+// frontend uses this to open a WebSocket to the in-process relay; the
+// session token is bound to the desktop-local bootstrap admin user.
 func (a *App) GetEndpoint() Endpoint {
 	if a.host == nil {
 		return Endpoint{}
 	}
-	return Endpoint{URL: "ws://" + a.host.addr, Token: a.host.token}
+	return Endpoint{URL: "ws://" + a.host.addr, SessionToken: a.host.sessionToken}
 }
 
 // GetRelayConfig returns the currently-persisted relay URL/token plus whether
@@ -243,7 +249,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 	a.mu.Unlock()
 	return RelayConfig{
 		URL:                cfg.RelayURL,
-		Token:              cfg.RelayToken,
+		Token:              cfg.RelaySessionToken,
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		Connected:          connected,
@@ -259,7 +265,7 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.RelayURL = strings.TrimSpace(req.URL)
-	cfg.RelayToken = strings.TrimSpace(req.Token)
+	cfg.RelaySessionToken = strings.TrimSpace(req.Token)
 	cfg.AllowInsecureRelay = req.AllowInsecureRelay
 	switch req.RemotePermission {
 	case proto.RemotePermissionView, proto.RemotePermissionControl, proto.RemotePermissionFull:
@@ -277,6 +283,91 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	}
 	a.applyRelayConfig(cfg)
 	return nil
+}
+
+// LoginRemoteRelay calls POST /api/auth/login on the given relay URL with the
+// supplied credentials, parses the returned {session_token, expires_at, user}
+// envelope, and persists (relayURL, session_token) to local config via
+// SetRelayConfig. Bound to the frontend's "Connect to remote relay" form.
+//
+// The user-facing input is the HTTP(S) URL of the relay (the same URL their
+// browser hits). We POST to that URL directly and normalize the scheme to
+// ws:// or wss:// before persistence — the uplink and validateRelayEndpoint
+// both expect the WebSocket form. HTTP API calls translate back on the fly
+// (see MarkSessionsSeen et al.).
+func (a *App) LoginRemoteRelay(relayURL, email, password string) error {
+	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
+	if relayURL == "" {
+		return fmt.Errorf("relay url is empty")
+	}
+	httpURL, wsURL, err := relayLoginEndpoints(relayURL)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]string{
+		"email":    email,
+		"password": password,
+	})
+	if err != nil {
+		return err
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", httpURL+"/api/auth/login", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("relay /api/auth/login returned status %d", resp.StatusCode)
+	}
+	var out struct {
+		SessionToken string `json:"session_token"`
+		ExpiresAt    int64  `json:"expires_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return fmt.Errorf("relay /api/auth/login: decode response: %w", err)
+	}
+	if out.SessionToken == "" {
+		return fmt.Errorf("relay /api/auth/login: empty session_token")
+	}
+	// Preserve unrelated relay-config fields (AllowInsecureRelay, RemotePermission)
+	// so login doesn't silently reset them. SetRelayConfig also restarts the uplink.
+	prev := a.GetRelayConfig()
+	return a.SetRelayConfig(RelayConfig{
+		URL:                wsURL,
+		Token:              out.SessionToken,
+		AllowInsecureRelay: prev.AllowInsecureRelay,
+		RemotePermission:   prev.RemotePermission,
+	})
+}
+
+// relayLoginEndpoints normalizes a user-entered relay URL into the (http(s),
+// ws(s)) pair we need. Accepts http://, https://, ws://, wss:// — anything
+// else is rejected so the caller sees a clear error before the POST.
+func relayLoginEndpoints(raw string) (httpURL, wsURL string, err error) {
+	u, perr := url.Parse(raw)
+	if perr != nil || u.Host == "" {
+		return "", "", fmt.Errorf("invalid relay url %q", raw)
+	}
+	switch u.Scheme {
+	case "http", "ws":
+		httpURL = "http://" + u.Host + u.Path
+		wsURL = "ws://" + u.Host + u.Path
+	case "https", "wss":
+		httpURL = "https://" + u.Host + u.Path
+		wsURL = "wss://" + u.Host + u.Path
+	default:
+		return "", "", fmt.Errorf("relay url scheme must be http(s) or ws(s), got %q", u.Scheme)
+	}
+	return strings.TrimRight(httpURL, "/"), strings.TrimRight(wsURL, "/"), nil
 }
 
 // SetUplinkPaused toggles the user-controlled pause flag without touching the
@@ -583,7 +674,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 		return fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return fmt.Errorf("no relay configured")
 	}
 	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
@@ -598,7 +689,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -980,7 +1071,7 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 		return RelayMe{}, fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return RelayMe{}, fmt.Errorf("no relay configured")
 	}
 	// Convert WS scheme to HTTP so we can use net/http.
@@ -989,7 +1080,7 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 	if err != nil {
 		return RelayMe{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return RelayMe{}, err
@@ -1021,7 +1112,7 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 		return PairingTokenResponse{}, fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.RelayURL == "" || cfg.RelayToken == "" {
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return PairingTokenResponse{}, fmt.Errorf("no relay configured")
 	}
 	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
@@ -1029,7 +1120,7 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	if err != nil {
 		return PairingTokenResponse{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.RelayToken)
+	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

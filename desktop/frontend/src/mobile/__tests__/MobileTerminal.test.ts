@@ -145,19 +145,19 @@ beforeEach(() => {
 
 describe('MobileTerminal', () => {
   it('creates SessionConnection with endpoint+sessionId and attaches on mount', () => {
-    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
-    expect(lastArgs).toEqual({ endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1' })
+    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    expect(lastArgs).toEqual({ endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1' })
     expect(attach).toHaveBeenCalledOnce()
   })
 
   it('writes incoming output to the terminal', () => {
-    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onOutput?.(new Uint8Array([104, 105]))
     expect(termWrite).toHaveBeenCalled()
   })
 
   it('scrolls to newest output when initial replay finishes', async () => {
-    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onReplayProgress?.({ phase: 'start', bytes: 0, total_bytes: 100, seq: 0 })
     lastHandlers.onOutput?.(new Uint8Array([104, 105]))
     expect(termScrollToBottom).not.toHaveBeenCalled()
@@ -168,25 +168,25 @@ describe('MobileTerminal', () => {
   })
 
   it('emits ended on CLOSE', () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onClose?.({ exit_code: 0 })
     expect(w.emitted('ended')).toBeTruthy()
   })
 
   it('emits tokenInvalid on error status', () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onStatus?.('error')
     expect(w.emitted('tokenInvalid')).toBeTruthy()
   })
 
   it('forwards cwd/title META updates via the meta event', () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onMeta?.({ cwd: '/Users/me/proj', title: 'vim' })
     expect(w.emitted('meta')![0]).toEqual([{ cwd: '/Users/me/proj', title: 'vim' }])
   })
 
   it('viewer locks the grid to the PTY cols/rows from META (avoids overflow)', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     // Become a viewer (not driver), then receive a wide PTY size.
     lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
     await w.vm.$nextTick()
@@ -196,7 +196,7 @@ describe('MobileTerminal', () => {
   })
 
   it('driver does NOT lock to META cols/rows (it fits its own viewport)', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     // Driver by default; a META with a wide size must not resize our grid.
     termResize.mockClear()
     lastHandlers.onMeta?.({ cols: 213, rows: 50 })
@@ -204,21 +204,21 @@ describe('MobileTerminal', () => {
   })
 
   it('detaches + disposes on unmount', () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     w.unmount()
     expect(detach).toHaveBeenCalledOnce()
     expect(termDispose).toHaveBeenCalledOnce()
   })
 
   it('pushes its size to the PTY when it becomes the driver', () => {
-    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     sendResize.mockClear() // ignore the mount-time fit resize
     lastHandlers.onDriverChange?.('me', true, '')
     expect(sendResize).toHaveBeenCalledWith(80, 24)
   })
 
   it('shows viewer overlay when not driver; take-control calls claimDriver', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     expect(w.find('[data-testid="mobile-take-control"]').exists()).toBe(false)
 
     lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
@@ -238,7 +238,7 @@ describe('MobileTerminal', () => {
   })
 
   it('blocks pointer events on .term while viewing so iOS taps cannot fall through to xterm', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     // Driver by default → no blocking.
     expect(w.find('.term').classes()).not.toContain('inert')
 
@@ -255,7 +255,7 @@ describe('MobileTerminal', () => {
 
   it('image button sends the picked photo via sendPasteImage when in control mode', async () => {
     getPhoto.mockResolvedValue({ base64String: btoa('PNGDATA'), format: 'png' })
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
 
@@ -274,7 +274,7 @@ describe('MobileTerminal', () => {
   })
 
   it('image button does not invoke the camera when not in control mode', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     // controlMode is false by default — button is inert and tapping it only
     // flashes the protect banner, never opens the camera.
@@ -285,7 +285,7 @@ describe('MobileTerminal', () => {
 
   it('image button is inert for view-only sessions', async () => {
     const viewOnly = { ...info, remote_permission: 'view' }
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewOnly, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info: viewOnly, active: true } })
     await flushPromises()
     const btn = w.find('[data-testid="mobile-image"]')
     if (btn.exists()) {
@@ -294,7 +294,7 @@ describe('MobileTerminal', () => {
   })
 
   it('renders a mobile control panel with the default aux keys', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     expect(w.find('[data-testid="mobile-control-panel"]').exists()).toBe(true)
     for (const id of ['aux-enter', 'aux-esc', 'aux-tab', 'aux-ctrl-c', 'aux-ctrl-d', 'aux-up', 'aux-down', 'aux-left', 'aux-right']) {
@@ -303,7 +303,7 @@ describe('MobileTerminal', () => {
   })
 
   it('requires explicit control mode before shortcut buttons send input', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
     expect(sendInput).not.toHaveBeenCalled()
@@ -314,7 +314,7 @@ describe('MobileTerminal', () => {
   })
 
   it('clicking the terminal area blurs the focused xterm textarea and hides the iOS keyboard', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     document.body.appendChild(lastTerm.textarea)
     const blur = vi.spyOn(lastTerm.textarea, 'blur')
     lastTerm.textarea.focus()
@@ -329,7 +329,7 @@ describe('MobileTerminal', () => {
   })
 
   it('does not hide the keyboard when the xterm textarea is not focused', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
 
     await w.find('.term').trigger('pointerdown')
 
@@ -338,7 +338,7 @@ describe('MobileTerminal', () => {
   })
 
   it('forwards non-composition IME insertText (punctuation/space/digit) xterm drops', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true) // canSend
     sendInput.mockClear()
@@ -349,7 +349,7 @@ describe('MobileTerminal', () => {
   })
 
   it('does NOT hijack composition input (pinyin→Hanzi stays with xterm)', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     sendInput.mockClear()
@@ -360,7 +360,7 @@ describe('MobileTerminal', () => {
   })
 
   it('sends Ctrl-D through the control panel', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     await w.find('[data-testid="mobile-key-aux-ctrl-d"]').trigger('click')
@@ -368,7 +368,7 @@ describe('MobileTerminal', () => {
   })
 
   it('asks for paste confirmation before sending clipboard text', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     await w.find('[data-testid="mobile-paste"]').trigger('click')
     expect(sendInput).not.toHaveBeenCalled()
@@ -379,7 +379,7 @@ describe('MobileTerminal', () => {
 
   it('marks control buttons inert and hides take-control for view-only sessions', async () => {
     const viewInfo = { ...info, remote_permission: 'view' as const }
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewInfo, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info: viewInfo, active: true } })
     await flushPromises()
     expect(w.find('[data-testid="mobile-view-only"]').exists()).toBe(true)
     expect(w.find('[data-testid="mobile-key-aux-enter"]').classes()).toContain('inert')
@@ -393,7 +393,7 @@ describe('MobileTerminal', () => {
   })
 
   it('mounts the template bar with templates loaded from platform.templates', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     // The defaults seed includes default-yes; mock platform returns [] which falls back to DEFAULT_TEMPLATES.
     expect(w.find('[data-testid="template-bar"]').exists()).toBe(true)
@@ -403,7 +403,7 @@ describe('MobileTerminal', () => {
   it('clicking a template button sends the text and a standalone Enter one tick later (no preview)', async () => {
     vi.useFakeTimers()
     try {
-      const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+      const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
       await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
       await flushPromises()
       await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
@@ -421,7 +421,7 @@ describe('MobileTerminal', () => {
   })
 
   it('subscribes to shortcutsChanged to live-reload bars, and unsubscribes on unmount', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     expect(eventsOn).toHaveBeenCalledWith('mobile:shortcutsChanged', expect.any(Function))
     // Firing the event reloads bars without a tab close/reopen.
@@ -433,39 +433,39 @@ describe('MobileTerminal', () => {
   })
 
   it('does not render the legacy QUICK_TEXTS row', () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     expect(w.find('[data-testid="mobile-quick-y"]').exists()).toBe(false)
     expect(w.find('[data-testid="mobile-quick-continue"]').exists()).toBe(false)
   })
 
   it('renders the protect-mode banner when controlMode is off and the user is an eligible driver', () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     // Default: driver + canControl + controlMode === false → banner shown.
     expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(true)
   })
 
   it('hides the protect-mode banner once controlMode is enabled', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
     expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(false)
   })
 
   it('does not render the protect-mode banner for view-only sessions (view-only banner covers it)', () => {
     const viewInfo = { ...info, remote_permission: 'view' as const }
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: viewInfo, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info: viewInfo, active: true } })
     expect(w.find('[data-testid="mobile-view-only"]').exists()).toBe(true)
     expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(false)
   })
 
   it('does not render the protect-mode banner while the user is a viewer (viewer overlay covers it)', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     lastHandlers.onDriverChange?.('owner-A', false, 'mac-mini')
     await w.vm.$nextTick()
     expect(w.find('[data-testid="mobile-protect-banner"]').exists()).toBe(false)
   })
 
   it('shakes the protect-mode banner when an inert aux key is tapped', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     expect(w.find('[data-testid="mobile-protect-banner"]').classes()).not.toContain('shaking')
     await w.find('[data-testid="mobile-key-aux-enter"]').trigger('click')
@@ -474,7 +474,7 @@ describe('MobileTerminal', () => {
   })
 
   it('shakes the protect-mode banner when an inert template button is tapped', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     await w.find('[data-testid="template-btn-default-yes"]').trigger('click')
     expect(sendInput).not.toHaveBeenCalled()
@@ -482,7 +482,7 @@ describe('MobileTerminal', () => {
   })
 
   it('shakes the protect-mode banner when the user taps the terminal area', async () => {
-    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info, active: true } })
+    const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await w.find('.term').trigger('pointerdown')
     expect(w.find('[data-testid="mobile-protect-banner"]').classes()).toContain('shaking')
   })
@@ -493,7 +493,7 @@ describe('MobileTerminal', () => {
     }
 
     async function mountReady(extra: Partial<RemoteSession> = {}) {
-      const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', token: 'atk_t' }, sessionId: 's1', info: info(extra), active: true } })
+      const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info: info(extra), active: true } })
       await flushPromises()
       return w
     }

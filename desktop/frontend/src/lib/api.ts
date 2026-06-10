@@ -16,7 +16,7 @@ export type TaskGroupBy = "host" | "state";
 
 export interface Endpoint {
   url: string;
-  token: string;
+  session_token: string;
 }
 
 export type LocalePreference = "system" | "en" | "zh-CN";
@@ -139,6 +139,7 @@ interface AppBindings {
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
+  LoginRemoteRelay(relayURL: string, email: string, password: string): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
@@ -277,6 +278,13 @@ export function setRelayConfig(cfg: {
 
 export function setUplinkPaused(paused: boolean): Promise<void> {
   return bindings().SetUplinkPaused(paused);
+}
+
+// loginRemoteRelay drives POST /api/auth/login on the Go side. The Wails
+// method persists the returned session token via SetRelayConfig and restarts
+// the uplink, so callers only need to refresh GetRelayConfig() afterwards.
+export function loginRemoteRelay(relayURL: string, email: string, password: string): Promise<void> {
+  return bindings().LoginRemoteRelay(relayURL, email, password);
 }
 
 export function getLoggingConfig(): Promise<LoggingConfig> {

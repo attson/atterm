@@ -157,7 +157,7 @@ func collectDiagnostics(a *App, userAgent string) DiagnosticsPayload {
 		UserAgent:          userAgent,
 		RelayURL:           redactURL(cfg.RelayURL),
 		RelayStatus:        status,
-		RelayTokenRedacted: redactToken(cfg.RelayToken),
+		RelayTokenRedacted: redactToken(cfg.RelaySessionToken),
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		UplinkPaused:       paused,

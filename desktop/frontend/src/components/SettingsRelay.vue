@@ -1,13 +1,11 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe } from "../lib/api";
+import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe, loginRemoteRelay } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
 import PairingPanel from "./PairingPanel.vue";
 import { useI18n } from "../i18n/useI18n";
-import type { MessageKey } from "../i18n";
-import { classifyRelaySetupError, relayHttpToWsURL, validateRelaySetupInputs, type RelaySetupIssue } from "../lib/relaySetupWizard";
 
 const emit = defineEmits<{
   (e: "relay-config-changed"): void;
@@ -15,6 +13,8 @@ const emit = defineEmits<{
 }>();
 
 const url = ref("");
+// `token` mirrors the persisted session token (issued by /api/auth/login).
+// It is no longer user-editable — see the email/password login form below.
 const token = ref("");
 const allowInsecureRelay = ref(false);
 const remotePermission = ref("full");
@@ -22,12 +22,15 @@ const paused = ref(false);
 const loading = ref(true);
 const saving = ref(false);
 const togglingPause = ref(false);
-const wizardRunning = ref(false);
-const wizardDone = ref(false);
-const wizardIssue = ref<RelaySetupIssue | null>(null);
-const wizardIdentity = ref("");
 const error = ref("");
 const { t } = useI18n();
+
+// Login form state. Password lives only in memory and is cleared on success.
+const email = ref("");
+const password = ref("");
+const loginInProgress = ref(false);
+const loginError = ref("");
+const loginSuccess = ref(false);
 
 // In-memory only (SEC-1): never persisted or logged.
 const connectedUserID = ref("");
@@ -54,11 +57,8 @@ const dirty = computed(
 
 watch(dirty, (value) => emit("dirty", value));
 
-// Token format warning: tokens must start with atk_
-const tokenWarning = computed(() =>
-  token.value && !token.value.startsWith("atk_")
-    ? t("settings.relay.tokenWarning")
-    : "",
+const canLogin = computed(
+  () => !loginInProgress.value && !!url.value.trim() && !!email.value.trim() && !!password.value,
 );
 
 // Status pill matrix per spec §8.2
@@ -148,64 +148,36 @@ async function handleTogglePaused() {
   }
 }
 
-function openInBrowser() {
-  if (!url.value) return;
-  void platform.system.openExternalURL(`${url.value}/settings.html`);
+async function login() {
+  loginError.value = "";
+  loginSuccess.value = false;
+  if (!url.value.trim() || !email.value.trim() || !password.value) {
+    return;
+  }
+  loginInProgress.value = true;
+  try {
+    await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value);
+    // LoginRemoteRelay persisted the new session token via SetRelayConfig.
+    // Re-read so `token` reflects the new value (and dirty/save logic sees it).
+    const cfg = await getRelayConfig();
+    url.value = cfg.url;
+    token.value = cfg.token;
+    allowInsecureRelay.value = cfg.allow_insecure_relay;
+    remotePermission.value = cfg.remote_permission || "full";
+    paused.value = (cfg as any).paused ?? false;
+    snapshotPersisted();
+    password.value = "";
+    loginSuccess.value = true;
+    emit("relay-config-changed");
+  } catch (e: any) {
+    loginError.value = e?.message ?? String(e);
+  } finally {
+    loginInProgress.value = false;
+  }
 }
 
 const canSave = computed(() => !saving.value && !!url.value.trim());
 const saveLabel = computed(() => (saving.value ? t("settings.relay.saving") : t("settings.relay.saveConnect")));
-const wizardWsUrl = computed(() => {
-  try {
-    return url.value.trim() ? relayHttpToWsURL(url.value.trim()) : "";
-  } catch {
-    return "";
-  }
-});
-const wizardRecovery = computed(() => wizardIssue.value ? t(wizardIssue.value.recoveryKey as MessageKey) : "");
-const wizardChecks = computed(() => [
-  { key: "reachability", label: t("settings.relay.wizard.steps.reachability") },
-  { key: "urlCompatibility", label: t("settings.relay.wizard.steps.urlCompatibility") },
-  { key: "apiToken", label: t("settings.relay.wizard.steps.apiToken") },
-  { key: "identity", label: t("settings.relay.wizard.steps.identity") },
-  { key: "uplink", label: t("settings.relay.wizard.steps.uplink") },
-]);
-
-async function runWizardValidation() {
-  wizardRunning.value = true;
-  wizardDone.value = false;
-  wizardIssue.value = null;
-  wizardIdentity.value = "";
-  error.value = "";
-  const localIssue = validateRelaySetupInputs(url.value, token.value, allowInsecureRelay.value);
-  if (localIssue) {
-    wizardIssue.value = localIssue;
-    wizardRunning.value = false;
-    return;
-  }
-  try {
-    await setRelayConfig({
-      url: url.value.trim(),
-      token: token.value.trim(),
-      allow_insecure_relay: allowInsecureRelay.value,
-      remote_permission: remotePermission.value,
-    });
-    const me = await fetchRelayMe();
-    wizardIdentity.value = me.email || me.user_id || "";
-    const cfg = await getRelayConfig();
-    paused.value = (cfg as any).paused ?? false;
-    if (!(cfg as any).connected) {
-      throw new Error("uplink not connected");
-    }
-    snapshotPersisted();
-    wizardDone.value = true;
-    emit("relay-config-changed");
-  } catch (e: any) {
-    wizardIssue.value = classifyRelaySetupError(e);
-  } finally {
-    wizardRunning.value = false;
-  }
-}
 
 defineExpose({
   save,
@@ -247,54 +219,56 @@ defineExpose({
         {{ t("settings.relay.hint") }}
       </p>
 
-      <section class="relay-wizard" data-testid="relay-setup-wizard">
-        <div class="wizard-head">
-          <div>
-            <div class="wizard-title">{{ t("settings.relay.wizard.title") }}</div>
-            <div class="wizard-sub">{{ wizardWsUrl || t("settings.relay.wizard.noWsUrl") }}</div>
-          </div>
-          <button type="button" :disabled="wizardRunning || saving" @click="runWizardValidation">
-            {{ wizardRunning ? t("settings.relay.wizard.checking") : t("settings.relay.wizard.run") }}
-          </button>
-        </div>
-        <div class="wizard-steps">
-          <span v-for="step in wizardChecks" :key="step.key" class="wizard-step">{{ step.label }}</span>
-        </div>
-        <p v-if="wizardDone" class="wizard-ok">
-          {{ t("settings.relay.wizard.ok", { identity: wizardIdentity }) }}
-        </p>
-        <p v-if="wizardIssue" class="wizard-error">
-          {{ t(`settings.relay.wizard.errors.${wizardIssue.code}` as MessageKey) }}
-          <span class="wizard-recovery">{{ wizardRecovery }}</span>
-        </p>
-      </section>
-
       <label class="field-label">{{ t("settings.relay.relayUrl") }}</label>
       <input
         v-model="url"
         type="text"
-        placeholder="wss://relay.example.com"
-        :disabled="saving"
+        placeholder="https://relay.example.com"
+        :disabled="saving || loginInProgress"
         @keyup.enter="save"
       />
 
-      <label class="field-label">{{ t("settings.relay.apiToken") }}</label>
-      <input
-        v-model="token"
-        type="password"
-        placeholder="atk_xxxxxxxx…"
-        :disabled="saving"
-        @keyup.enter="save"
-      />
-      <p v-if="tokenWarning" class="token-warning">{{ tokenWarning }}</p>
-      <div class="token-actions">
-        <button
-          v-if="url"
-          class="btn-link"
-          type="button"
-          @click="openInBrowser"
-        >{{ t("settings.relay.openInBrowser") }}</button>
-      </div>
+      <section class="relay-login" data-testid="relay-login-form">
+        <div class="login-title">{{ t("settings.relay.loginTitle") }}</div>
+        <p class="hint">{{ t("settings.relay.loginHint") }}</p>
+
+        <label class="field-label" for="relay-login-email">{{ t("settings.relay.email") }}</label>
+        <input
+          id="relay-login-email"
+          v-model="email"
+          type="email"
+          autocomplete="username"
+          :disabled="loginInProgress || saving"
+          @keyup.enter="login"
+        />
+
+        <label class="field-label" for="relay-login-password">{{ t("settings.relay.password") }}</label>
+        <input
+          id="relay-login-password"
+          v-model="password"
+          type="password"
+          autocomplete="current-password"
+          :disabled="loginInProgress || saving"
+          @keyup.enter="login"
+        />
+
+        <div class="login-actions">
+          <button
+            type="button"
+            class="login-btn"
+            :disabled="!canLogin"
+            @click="login"
+          >
+            {{ loginInProgress ? t("settings.relay.loginInProgress") : t("settings.relay.login") }}
+          </button>
+        </div>
+
+        <p v-if="loginSuccess" class="login-ok">{{ t("settings.relay.loggedIn") }}</p>
+        <p v-if="loginError" class="login-error">
+          <span class="login-error-label">{{ t("settings.relay.loginFailed") }}:</span>
+          {{ loginError }}
+        </p>
+      </section>
 
       <label class="field-label">{{ t("settings.relay.remotePermissions") }}</label>
       <SelectDropdown
@@ -418,26 +392,53 @@ defineExpose({
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.token-warning {
-  color: var(--bad);
+.relay-login {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+}
+.login-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.login-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.login-btn {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.login-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.login-ok {
+  color: var(--good);
   font-size: 12px;
   margin: 0;
 }
-.token-actions {
-  display: flex;
-  gap: 8px;
-}
-.btn-link {
-  background: none;
-  border: none;
-  color: var(--accent);
+.login-error {
+  color: var(--bad);
   font-size: 12px;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
+  margin: 0;
+  line-height: 1.45;
 }
-.btn-link:hover {
-  opacity: 0.8;
+.login-error-label {
+  font-weight: 700;
+  margin-right: 4px;
 }
 .checkbox {
   display: flex;
@@ -457,47 +458,8 @@ defineExpose({
   line-height: 1.45;
   margin: 0;
 }
-.relay-wizard {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
-}
-.wizard-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-.wizard-head button {
-  height: 30px;
-  border: 1px solid var(--accent);
-  border-radius: 7px;
-  background: var(--accent);
-  color: var(--bg);
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 700;
-}
-.wizard-head button:disabled { opacity: .55; }
-.wizard-title { font-size: 13px; font-weight: 700; color: var(--fg); }
-.wizard-sub { font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
-.wizard-steps { display: flex; flex-wrap: wrap; gap: 6px; }
-.wizard-step {
-  padding: 3px 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--fg-dim);
-  font-size: 11px;
-}
-.wizard-ok, .wizard-error { margin: 0; font-size: 12px; line-height: 1.45; }
-.wizard-ok { color: var(--good); }
-.wizard-error { color: var(--bad); }
-.wizard-recovery { display: block; color: var(--fg-dim); margin-top: 3px; }
 input[type="text"],
+input[type="email"],
 input[type="password"] {
   height: 32px;
   padding: 6px 10px;

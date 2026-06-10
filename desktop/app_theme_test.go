@@ -28,7 +28,7 @@ func TestSetTerminalThemePersistsAndPreservesConfig(t *testing.T) {
 	autoCheck := false
 	a := newThemeTestApp(t, appConfig{
 		RelayURL:           "wss://relay.example.com",
-		RelayToken:         "secret-token",
+		RelaySessionToken:         "secret-token",
 		AllowInsecureRelay: true,
 		RemotePermission:   proto.RemotePermissionControl,
 		AutoCheckUpdates:   &autoCheck,
@@ -46,7 +46,7 @@ func TestSetTerminalThemePersistsAndPreservesConfig(t *testing.T) {
 
 	cfg := a.cfgStore.Get()
 	if cfg.RelayURL != "wss://relay.example.com" ||
-		cfg.RelayToken != "secret-token" ||
+		cfg.RelaySessionToken != "secret-token" ||
 		!cfg.AllowInsecureRelay ||
 		cfg.RemotePermission != proto.RemotePermissionControl ||
 		cfg.AutoCheckUpdates != &autoCheck ||

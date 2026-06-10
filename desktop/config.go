@@ -36,8 +36,8 @@ var terminalThemes = map[string]struct{}{
 // appConfig is what we persist to ~/.config/atterm/config.json.
 // Empty fields mean "not configured" — RelayURL == "" disables uplink entirely.
 type appConfig struct {
-	RelayURL   string `json:"relay_url,omitempty"`
-	RelayToken string `json:"relay_token,omitempty"`
+	RelayURL          string `json:"relay_url,omitempty"`
+	RelaySessionToken string `json:"relay_session_token,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`
@@ -51,6 +51,13 @@ type appConfig struct {
 	// LocalePreference controls UI language. Empty means "system" so older
 	// configs keep following the OS/browser language after upgrade.
 	LocalePreference string `json:"locale_preference,omitempty"`
+	// LocalAdminPassword is the stable password for the desktop-only admin
+	// user (local@atterm.local) that owns the in-process mini-relay's
+	// userstore. Generated on first run and persisted so the desktop can
+	// re-mint a fresh session token on every launch. This file lives in
+	// the user's config dir; it is NOT secret from the user, but it is
+	// the only key holders of this machine's local relay sessions.
+	LocalAdminPassword string `json:"local_admin_password,omitempty"`
 	// TerminalTheme is the user's global desktop terminal theme preference.
 	// Unknown values fall back to classic so older configs remain usable.
 	TerminalTheme string `json:"terminal_theme,omitempty"`

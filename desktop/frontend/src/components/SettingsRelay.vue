@@ -28,6 +28,7 @@ const { t } = useI18n();
 // Login form state. Password lives only in memory and is cleared on success.
 const email = ref("");
 const password = ref("");
+const showPassword = ref(false);
 const loginInProgress = ref(false);
 const loginError = ref("");
 const loginSuccess = ref(false);
@@ -243,14 +244,55 @@ defineExpose({
         />
 
         <label class="field-label" for="relay-login-password">{{ t("settings.relay.password") }}</label>
-        <input
-          id="relay-login-password"
-          v-model="password"
-          type="password"
-          autocomplete="current-password"
-          :disabled="loginInProgress || saving"
-          @keyup.enter="login"
-        />
+        <div class="password-field">
+          <input
+            id="relay-login-password"
+            v-model="password"
+            :type="showPassword ? 'text' : 'password'"
+            autocomplete="current-password"
+            :disabled="loginInProgress || saving"
+            @keyup.enter="login"
+          />
+          <button
+            type="button"
+            class="password-toggle"
+            :aria-label="showPassword ? t('settings.relay.passwordHide') : t('settings.relay.passwordShow')"
+            :aria-pressed="showPassword"
+            :disabled="loginInProgress || saving"
+            @click="showPassword = !showPassword"
+          >
+            <svg
+              v-if="!showPassword"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            <svg
+              v-else
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+              <line x1="1" y1="1" x2="23" y2="23" />
+            </svg>
+          </button>
+        </div>
 
         <div class="login-actions">
           <button
@@ -472,5 +514,49 @@ input[type="password"] {
 input:focus {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent);
+}
+
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  width: 100%;
+  padding-right: 36px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.password-toggle:hover:not(:disabled) {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 12%, transparent 88%);
+}
+
+.password-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.password-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 </style>

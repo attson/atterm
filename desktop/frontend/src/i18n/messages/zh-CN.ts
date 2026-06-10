@@ -178,6 +178,8 @@ export const zhCN = {
       loginTitle: "连接远程 relay",
       email: "邮箱",
       password: "密码",
+      passwordShow: "显示密码",
+      passwordHide: "隐藏密码",
       login: "登录",
       loginInProgress: "登录中…",
       loginFailed: "登录失败",

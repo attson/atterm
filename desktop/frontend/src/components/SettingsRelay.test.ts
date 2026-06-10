@@ -144,4 +144,16 @@ describe("SettingsRelay", () => {
     expect(source).not.toContain("wizardRecovery");
     expect(source).not.toContain("relaySetupWizard");
   });
+
+  test("password input has show/hide toggle", () => {
+    // toggle ref + binding present (use whatever 'source' mechanism the other tests use)
+    expect(source).toContain("showPassword");
+    expect(source).toContain(':type="showPassword ? \'text\' : \'password\'"');
+    // toggle button present with aria-pressed bound to the ref
+    expect(source).toContain('class="password-toggle"');
+    expect(source).toContain(':aria-pressed="showPassword"');
+    // i18n keys for the toggle's accessible label
+    expect(source).toContain("settings.relay.passwordShow");
+    expect(source).toContain("settings.relay.passwordHide");
+  });
 });

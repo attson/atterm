@@ -346,8 +346,8 @@ macOS 上 Homebrew 的 `gh` 通常在 `/opt/homebrew/bin/gh`。非交互 shell �
 ## 仓库结构
 
 ```text
-cmd/          atterm-relay 和 atterm-agent 入口
-internal/     proto、session、relay、ptyhost、agent、hostid、ringbuf 等复用包
+cmd/          atterm-relay 入口
+internal/     proto、session、relay、ptyhost、hostid、ringbuf 等复用包
 desktop/      Wails 桌面 app：Go 后端 + Vue 3 + xterm.js 前端
 web/          Vue 3 + TypeScript + Naive UI 浏览器/PWA 客户端（MPA）
 mobile/       Capacitor iOS WebView wrapper，打包 web/ 静态资源

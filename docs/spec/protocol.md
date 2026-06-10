@@ -6,7 +6,7 @@ atterm 所有跨进程通信走单一二进制 WebSocket 帧协议。同一份�
 
 - WebSocket，binary message（**不**用 text）
 - 一帧 = 一 WS message。**不要**在一个 message 里塞多帧
-- 鉴权：三类 Principal（详见 §鉴权）：浏览器走 `atterm_session` HTTP-only cookie（mutating endpoint 额外要 `X-CSRF-Token`）；桌面 / CLI / 移动 web 走 `Authorization: Bearer atk_…`，WebSocket 升级也支持 `Sec-WebSocket-Protocol: atterm-token.atk_…` / `atterm-token-b64.<base64url(utf8 token)>` 以避免 token 进入 URL 日志；admin 是 `is_admin=true` 的用户 principal（浏览器 admin UI 用 cookie，自动化可用 admin 用户 API token；仅在 `/admin/*` 有效）。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
+- 鉴权：两类 Principal（详见 §鉴权）：所有客户端（桌面 / 移动 / 浏览器）以邮箱 + 密码（或 pairing token）登录换取 `session_token`，HTTP 走 `Authorization: Bearer ses_…`；浏览器 WS 升级无法设 `Authorization` 头，改用 `Sec-WebSocket-Protocol: atterm-token.ses_…` / `atterm-token-b64.<base64url(utf8 token)>`。Admin 是 `is_admin=true` 的同种 session principal（仅在 `/admin/*` 有效）。服务端所有鉴权接口都不接受 `?token=<urlencoded>` query token。`internal/relay.Config.Resolver == nil` 是本地 / dev 嵌入场景的不鉴权降级。
 - CORS：`/api/sessions` 等 REST 端点回 `Access-Control-Allow-Origin: *`；WebSocket Origin 由 `AllowedOrigins` 控制。公网部署必须设置 `--origins https://relay.example.com` / `ATTERM_ORIGINS` 并套 HTTPS/WSS 反向代理，除非显式 `--dev-insecure`。`--origins` 可写完整 URL 或 host pattern；relay 会按 WebSocket 库要求规范成 Origin host pattern，并在启用白名单时自动允许 Wails 桌面客户端的本地 asset hosts。
 - 安全头：relay 统一返回 CSP、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`、`Permissions-Policy`。`web/` 客户端应用代码必须只加载同源静态资源；Vue/xterm/Naive UI 等 npm 依赖由 Vite 打包成同源 assets，PWA service worker 只预缓存这些静态产物。CSP 允许 inline style 仅用于 xterm.js 运行时布局样式；script-src 允许同源脚本，并预留 Cloudflare Web Analytics beacon 源，但不允许 unsafe eval/inline script 或应用代码引入 CDN 依赖。
 
@@ -343,7 +343,7 @@ Payload (JSON):
 
 Direction: relay → uplink only. Not sent on `/client` or `/agent` connections.
 
-Emitted immediately after successful auth on `/uplink`, **before** the relay reads the first `ANNOUNCE` frame from the client. Only sent when the uplink authenticated as a `PrincipalUser` (i.e. via a per-user API token). The dev / loopback path with no resolver does not emit this frame.
+Emitted immediately after successful auth on `/uplink`, **before** the relay reads the first `ANNOUNCE` frame from the client. Only sent when the uplink authenticated as a `PrincipalUser` (i.e. via a session token). The dev / loopback path with no resolver does not emit this frame.
 
 `internal/proto.Version` remains 1 — this is a new frame type only, no change to existing frame semantics.
 
@@ -383,7 +383,7 @@ Payload (UTF-8 JSON):
 | `/api/sessions` | GET | JSON 列表（local + mirror） |
 | `/api/version` | GET | JSON 版本信息 |
 | `/api/pair/create` | POST | 桌面端用 owner 凭据签发一次性 pairing token（详见 §pairing tokens） |
-| `/api/pair/consume` | POST | 移动端用 pairing token 换取 relay URL + 新 API token（无需鉴权头） |
+| `/api/pair/consume` | POST | 移动端用 pairing token 换取 relay URL + 新 session token（无需鉴权头） |
 | `/healthz` | GET | 公开 liveness 探测；返回 `{ok, version}`，无鉴权 |
 | `/admin/health` | GET | admin-only 运维健康检查页（HTML） |
 | `/admin/api/health` | GET | admin-only HealthPayload JSON（详见 §health endpoint） |
@@ -400,52 +400,61 @@ host pattern，这样桌面客户端和同源 web 客户端都能连接。
 
 ### 用户账号模式（生产推荐）
 
-`cmd/atterm-relay` 以用户账号模式启动时（默认），所有端点通过 `IdentityResolver`
-鉴权，支持以下三种凭证来源：
+`cmd/atterm-relay` 以用户账号模式启动时（默认），所有端点通过
+`requireSession` middleware 鉴权：取请求里的 token → sha256 后查
+`sessions` 表 → 校验未过期未撤销 → 把 `*User` 注入 request context。
 
-**Browser（Web 客户端）**：HTTP-only cookie `atterm_session`，由
-`POST /api/auth/login` 或 `POST /api/auth/signup` 签发。变更状态的端点
-（logout、token 创建/撤销、push 订阅等）额外需要 `X-CSRF-Token` 请求头；
-token 由 `GET /api/me` 的 `csrf_token` 字段返回。
+凭证只有一种形态：**session token**。所有客户端（桌面 / 移动 / 浏览器）
+都用邮箱 + 密码（或 pairing token）登录换取一份。
 
-**Desktop/CLI（API token）**：
+**Desktop / 移动 / 浏览器（session token）**：
 
-```
-Authorization: Bearer atk_…
-```
-
-或（仅 WebSocket 升级，避免 token 进入 URL 日志）：
+所有客户端 HTTP 调用走：
 
 ```
-Sec-WebSocket-Protocol: atterm-token.atk_…
+Authorization: Bearer ses_…
+```
+
+浏览器 WebSocket 升级无法设 `Authorization` 头，改用 subprotocol：
+
+```
+Sec-WebSocket-Protocol: atterm-token.ses_…
 Sec-WebSocket-Protocol: atterm-token-b64.<base64url(utf8 token)>
 ```
 
-API token 由 `POST /api/me/tokens`（CSRF-gated）创建，前缀固定为 `atk_`。
+格式：前缀 `ses_` + 32 字节随机熵的 base64url 编码（详见
+`internal/userstore.CreateSession`）。明文只在签发时返回一次，服务端
+只存 sha256 摘要。
+
+签发渠道：
+
+- `POST /api/auth/login`（邮箱 + 密码）→ `{session_token, expires_at, user}`
+- `POST /api/auth/setup` / `POST /api/auth/signup`（邀请码或 bootstrap）→ 同上
+- `POST /api/pair/consume`（pairing token）→ 同上，附带 `relay_url`
+
+TTL：`sessions.expires_at`（默认 30 天，每次成功 lookup 刷新
+`last_seen_at`）。续期由 lookup 自动完成，不需要前端显式 refresh。
+
+撤销：`POST /api/auth/logout`（删除当前请求对应的 `sessions` 行）或
+admin 调 DELETE 对应行；过期或撤销后下次 lookup 返回 401，前端清掉
+本地 token 并跳登录。
+
 可连接 `/agent`、`/uplink`、`/client`、`/client-sessions`，可发送
-`IN`、`RESIZE`、`PASTE_IMAGE`。不携带 CSRF secret（无 cookie），故不能
-调用需要 CSRF 的端点（改用 cookie session 登录后操作）。
+`IN`、`RESIZE`、`PASTE_IMAGE`。服务端不接受 `?token=` query。
 
-**Admin（Administrator）**：
-
-```
-Cookie: atterm_session (with user.is_admin=true)
-```
-
-或 admin 用户的 API token（`Authorization: Bearer atk_…`）。仅在 `/admin/*`
-路径有效（由 `bootstrapAdmin` 在启动时配置，通过环境变量
-`ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 初始化）。
-浏览器 admin UI 使用 cookie；需要 CSRF 的 mutating endpoint 只接受 cookie + CSRF。
-用户账号管理端点（`/admin/api/invitations`、`/admin/api/users`）使用此 principal。
-admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户。
+**Admin**：同一份 session token，只要对应 `users.is_admin = true` 就在
+`/admin/*` 下被识别为 admin principal。bootstrap 由
+`ATTERM_BOOTSTRAP_ADMIN_EMAIL` / `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 在
+relay 启动时种入第一条 admin 用户；后续可通过
+`POST /admin/api/users/{id}/admin` 提权其他用户。
 
 ### Principal 类型
 
 | Principal | 来源 | 可用路径 |
 |---|---|---|
-| `PrincipalUser` | cookie session 或 API token | `/agent` `/uplink` `/client` `/client-sessions` `/api/*` |
+| `PrincipalUser` | 有效 session token | `/agent` `/uplink` `/client` `/client-sessions` `/api/*` |
 | `PrincipalAdmin` | `PrincipalUser` with `is_admin=true` | `/admin/*` |
-| `PrincipalNone` | 无效/过期凭证 | — (401) |
+| `PrincipalNone` | 无效/过期/撤销 token | — (401) |
 
 每个用户只能看到自己注册的 session（`/api/sessions`、WebSocket LIST 帧、
 `/client` ATTACH 均按 ownerUserID 过滤）。
@@ -454,27 +463,26 @@ admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户�
 
 | 路径 | 方法 | 鉴权 | 说明 |
 |------|------|------|------|
-| `/api/auth/signup` | POST | 公开（需邀请码） | 注册用户，签发 cookie session |
-| `/api/auth/login` | POST | 公开 | 登录，签发 cookie session |
-| `/api/auth/logout` | POST | Cookie + CSRF | 注销当前 session |
-| `/api/me` | GET | Cookie 或 API token | 返回用户信息和 csrf_token |
-| `/api/me/tokens` | GET/POST | Cookie (POST 需 CSRF) | 列出/创建 API token |
-| `/api/me/tokens/{id}` | DELETE | Cookie + CSRF | 撤销 API token |
-| `/api/me/password` | POST | Cookie + CSRF | 修改密码（清除所有 session） |
-| `/api/push/key` | GET | 任意已认证 Principal | 获取 VAPID 公钥 |
-| `/api/push/subscribe` | POST | Cookie + CSRF | 注册 push 订阅 |
-| `/api/push/unsubscribe` | POST | Cookie + CSRF | 取消 push 订阅 |
-| `/api/push/test` | POST | Cookie + CSRF | 发送测试 push 通知 |
-| `/api/me/webhooks` | GET/POST | Cookie (POST 需 CSRF) | 列出/创建 outbound webhook |
-| `/api/me/webhooks/{id}` | DELETE | Cookie + CSRF | 删除 outbound webhook |
-| `/api/pair/create` | POST | Cookie 或 API token | 签发 5 分钟一次性 pairing token（详见 §pairing tokens） |
-| `/api/pair/consume` | POST | 公开（pairing token 即凭据） | 用 pairing token 换 relay URL + 新 API token + user info |
+| `/api/auth/signup` | POST | 公开（需邀请码） | 注册用户，body 返回 `{session_token, expires_at, user}` |
+| `/api/auth/login` | POST | 公开 | 登录，body 返回 `{session_token, expires_at, user}` |
+| `/api/auth/setup` | POST | 公开（仅 bootstrap） | 首次部署创建 admin，body 同 login |
+| `/api/auth/logout` | POST | Bearer session token | 撤销当前 `sessions` 行 |
+| `/api/me` | GET | Bearer session token | 返回当前用户信息 |
+| `/api/me/password` | POST | Bearer session token | 修改密码（清除所有 session） |
+| `/api/push/key` | GET | Bearer session token | 获取 VAPID 公钥 |
+| `/api/push/subscribe` | POST | Bearer session token | 注册 push 订阅 |
+| `/api/push/unsubscribe` | POST | Bearer session token | 取消 push 订阅 |
+| `/api/push/test` | POST | Bearer session token | 发送测试 push 通知 |
+| `/api/me/webhooks` | GET/POST | Bearer session token | 列出/创建 outbound webhook |
+| `/api/me/webhooks/{id}` | DELETE | Bearer session token | 删除 outbound webhook |
+| `/api/pair/create` | POST | Bearer session token | 签发 5 分钟一次性 pairing token（详见 §pairing tokens） |
+| `/api/pair/consume` | POST | 公开（pairing token 即凭据） | 用 pairing token 换 relay URL + 新 session token + user info |
 | `/admin/api/invitations` | GET/POST | Admin principal | 列出/创建邀请码 |
 | `/admin/api/users` | GET | Admin principal | 列出用户 |
 | `/admin/api/users/{id}/reset-password` | POST | Admin principal | 重置用户密码 |
 | `/admin/api/users/{id}/disable` | POST | Admin principal | 禁用用户 |
-| `/admin/api/users/{id}/admin` | POST/DELETE | Admin cookie + CSRF | 晋升 / 取消 admin |
-| `/admin/api/config` | GET/PUT | Admin principal（PUT 需 CSRF） | 查看 / 更新 relay 运行限流配置 |
+| `/admin/api/users/{id}/admin` | POST/DELETE | Admin principal | 晋升 / 取消 admin |
+| `/admin/api/config` | GET/PUT | Admin principal | 查看 / 更新 relay 运行限流配置 |
 
 ### 启动安全策略
 
@@ -498,7 +506,7 @@ admin 用户也可通过 `POST /admin/api/users/{id}/admin` 晋升其他用户�
 ## Pairing tokens
 
 桌面端的 owner 在 Settings → Pairing 里点 "Generate QR code"，desktop app 走当前
-配置的 relay 调 `POST /api/pair/create`（带 owner 的 API token），relay 用
+配置的 relay 调 `POST /api/pair/create`（带 owner 的 session token），relay 用
 `internal/userstore.Store.CreatePairingToken` 生成一条仅哈希存储的 token
 记录，明文只在签发时返回一次。Owner 拿到 `{token, expires_at, qr_url}` 后渲
 染二维码；移动端用相机扫码或粘贴 token 后调 `POST /api/pair/consume`：
@@ -510,9 +518,9 @@ Content-Type: application/json
 { "token": "<pair_…>" }
 ```
 
-成功返回 `{relay_url, api_token, user: {id, email}}`，relay 同时 atomically
-mark pairing token used（同条记录二次 consume 必失败）。失败统一返回 404 +
-`{"code": "pair_invalid"}`，不区分 not-found / expired / already-used，避免
+成功返回 `{relay_url, session_token, expires_at, user: {id, email}}`，relay 同时
+atomically mark pairing token used（同条记录二次 consume 必失败）。失败统一返回
+404 + `{"code": "pair_invalid"}`，不区分 not-found / expired / already-used，避免
 oracle attack。
 
 约束：
@@ -522,9 +530,9 @@ oracle attack。
   只有一个成功，其它落到 `ErrPairingInvalid`。
 - Rate limit: owner 端 `Limits.AllowPairCreate(userID)`，consumer 端
   `Limits.AllowPairConsume(ipPrefix)`，命中限流返回 `429 rate_limited`。
-- 鉴权：`/api/pair/create` 需要已登录 user principal（cookie session 或 API
-  token），`/api/pair/consume` **不需要任何鉴权头**——pairing token 本身
-  即凭据，trust model 与 OAuth Device Code Flow 一致。
+- 鉴权：`/api/pair/create` 需要已登录 user principal（Bearer session token），
+  `/api/pair/consume` **不需要任何鉴权头**——pairing token 本身即凭据，trust
+  model 与 OAuth Device Code Flow 一致。
 - `qr_url` 拼自 `publicBaseURL(r) + "/pair?t=" + token`；relay 自动按
   `X-Forwarded-Proto` 推断 https。
 

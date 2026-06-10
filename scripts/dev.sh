@@ -2,19 +2,15 @@
 # scripts/dev.sh — start atterm-relay in the foreground for development.
 #
 # Usage:
-#   ATTERM_TOKEN=dev ./scripts/dev.sh
+#   ./scripts/dev.sh
 #
-# In another terminal:
-#   ATTERM_TOKEN=dev go run ./cmd/atterm-agent -- bash
-#
-# Then open http://localhost:8080?token=dev
+# Then open http://localhost:8080/login.html and sign in with a bootstrap
+# admin account (set ATTERM_BOOTSTRAP_ADMIN_EMAIL / _PASSWORD or use
+# --dev-insecure on loopback to skip the strength + Origin checks).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-: "${ATTERM_TOKEN:=dev}"
-export ATTERM_TOKEN
-
 ADDR="${ATTERM_ADDR:-:8080}"
 
-echo "atterm-relay: addr=$ADDR token=$ATTERM_TOKEN"
-exec go run ./cmd/atterm-relay --addr "$ADDR" --web web
+echo "atterm-relay: addr=$ADDR"
+exec go run ./cmd/atterm-relay --addr "$ADDR" --web web --dev-insecure

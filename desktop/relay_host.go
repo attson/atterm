@@ -29,6 +29,7 @@ import (
 type relayHost struct {
 	addr         string
 	sessionToken string
+	adminUserID  string // owner ULID for sessions adopted into the mini-relay
 	server       *relay.Server
 	httpSrv      *http.Server
 	store        userstore.Store // closed on Stop()
@@ -97,7 +98,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		return nil, fmt.Errorf("open userstore at %s: %w", dbPath, err)
 	}
 
-	tok, _, err := bootstrapLocalAdmin(ctx, store, localAdminEmail, cfg.LocalAdminPassword)
+	tok, adminUser, err := bootstrapLocalAdmin(ctx, store, localAdminEmail, cfg.LocalAdminPassword)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("bootstrap local admin: %w", err)
@@ -133,6 +134,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 	return &relayHost{
 		addr:         ln.Addr().String(),
 		sessionToken: tok,
+		adminUserID:  adminUser.ID,
 		server:       srv,
 		httpSrv:      httpSrv,
 		store:        store,
@@ -406,7 +408,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		StartedAt: time.Now().Unix(),
 	}
 
-	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty})
+	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty}, h.adminUserID)
 
 	var cleanupOnce sync.Once
 	combinedCleanup := func() {

@@ -1,15 +1,11 @@
 package relay
 
 import (
-	"context"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
-	"time"
-
-	"github.com/attson/atterm/internal/userstore"
 )
 
 // fakeWebFS returns an in-memory fs.FS that mimics what web-dist/
@@ -25,78 +21,64 @@ func fakeWebFS(t *testing.T) fs.FS {
 	}
 }
 
-func TestStaticHandler_AdminGate_AnonymousRedirectsToLogin(t *testing.T) {
+// Server-side auth gating on static paths was removed because browsers can
+// not attach the localStorage-resident Bearer token to plain navigation
+// requests. The SPA now reads localStorage on boot and apiFetch's 401
+// interceptor handles unauthenticated states. The tests below assert
+// that every page is served unconditionally; the only failure mode is
+// "path not allowed".
+
+func TestStaticHandler_RootServesUnconditionally(t *testing.T) {
 	fsys := fakeWebFS(t)
-	store, _ := userstore.Open(context.Background(), ":memory:")
-	defer store.Close()
-	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, fsys)
+	handler := newStaticHandler(nil, fsys)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status=%d; want 302", rec.Code)
-	}
-	if got := rec.Header().Get("Location"); got != "/login.html" {
-		t.Errorf("Location=%q; want /login.html", got)
-	}
-}
-
-func TestStaticHandler_AdminGate_NonAdminRedirectsToHome(t *testing.T) {
-	fsys := fakeWebFS(t)
-	ctx := context.Background()
-	store, _ := userstore.Open(ctx, ":memory:")
-	defer store.Close()
-	u, _ := store.CreateUser(ctx, "u@example.com", "passphrase-1234")
-	tok, _, _ := store.CreateSession(ctx, u.ID, "ua", "", 24*time.Hour)
-	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, fsys)
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status=%d; want 302", rec.Code)
-	}
-	if got := rec.Header().Get("Location"); got != "/" {
-		t.Errorf("Location=%q; want /", got)
-	}
-}
-
-func TestStaticHandler_AdminGate_AdminServesPage(t *testing.T) {
-	fsys := fakeWebFS(t)
-	ctx := context.Background()
-	store, _ := userstore.Open(ctx, ":memory:")
-	defer store.Close()
-	u, _ := store.CreateUser(ctx, "a@example.com", "passphrase-1234")
-	_ = store.SetUserAdmin(ctx, u.ID, true)
-	tok, _, _ := store.CreateSession(ctx, u.ID, "ua", "", 24*time.Hour)
-	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, fsys)
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d; want 200; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("status=%d; want 200 (root must serve index.html so the SPA can read localStorage)", rec.Code)
+	}
+	if !contains(rec.Body.String(), "home") {
+		t.Errorf("body did not contain home shell HTML; got %q", rec.Body.String())
+	}
+}
+
+func TestStaticHandler_AdminPageServesUnconditionally(t *testing.T) {
+	fsys := fakeWebFS(t)
+	handler := newStaticHandler(nil, fsys)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d; want 200 (admin shell loads then redirects client-side based on /api/me.is_admin)", rec.Code)
 	}
 	if !contains(rec.Body.String(), "admin") {
 		t.Errorf("body did not contain admin shell HTML; got %q", rec.Body.String())
 	}
 }
 
+// TestStaticHandler_DisallowedPathReturns404 — the path allow-list is the
+// last server-side guard; anything off the list 404s.
+func TestStaticHandler_DisallowedPathReturns404(t *testing.T) {
+	fsys := fakeWebFS(t)
+	handler := newStaticHandler(nil, fsys)
+
+	req := httptest.NewRequest(http.MethodGet, "/../etc/passwd", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d; want 404 for disallowed path", rec.Code)
+	}
+}
+
 func TestStaticHandler_AssetsBundle_NotGated(t *testing.T) {
 	fsys := fakeWebFS(t)
-	store, _ := userstore.Open(context.Background(), ":memory:")
-	defer store.Close()
-	resolver := NewIdentityResolver(store)
-	handler := newStaticHandler(resolver, fsys)
+	handler := newStaticHandler(nil, fsys)
 
-	// No auth header — anonymous request. Post-Vue-rewrite, admin code is part of
-	// the shared /assets/<hash>.js bundle, not under /admin/.
+	// Post-Vue-rewrite, admin code is part of the shared /assets/<hash>.js
+	// bundle, not under /admin/. Anonymous access is fine — API endpoints
+	// are the real auth boundary.
 	req := httptest.NewRequest(http.MethodGet, "/assets/admin-fake.js", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

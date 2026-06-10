@@ -60,7 +60,7 @@ describe('apiFetch headers', () => {
   })
 
   it('does not send X-CSRF-Token (CSRF is gone from the wire)', async () => {
-    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null, allowInsecure: false })
     const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -112,7 +112,7 @@ describe('apiFetch Bearer (unified path)', () => {
   })
 
   it('attaches Authorization: Bearer <sessionToken> when stored', async () => {
-    saveRelayConfig({ baseURL: '', sessionToken: 'ses_abc', expiresAt: null })
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_abc', expiresAt: null, allowInsecure: false })
     const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -128,6 +128,7 @@ describe('apiFetch Bearer (unified path)', () => {
       baseURL: 'https://r.example.com',
       sessionToken: 'ses_t',
       expiresAt: null,
+      allowInsecure: false,
     })
     const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
     vi.stubGlobal('fetch', fetchMock)
@@ -142,6 +143,7 @@ describe('apiFetch Bearer (unified path)', () => {
       baseURL: 'https://r.example.com/',
       sessionToken: 'ses_t',
       expiresAt: null,
+      allowInsecure: false,
     })
     const fetchMock = vi.fn().mockResolvedValue(makeResponse(200, { ok: true }))
     vi.stubGlobal('fetch', fetchMock)
@@ -253,7 +255,7 @@ describe('apiFetch 401 redirect', () => {
   })
 
   it('clears relay config (and Authorization on next call) on 401', async () => {
-    saveRelayConfig({ baseURL: '', sessionToken: 'ses_stale', expiresAt: null })
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_stale', expiresAt: null, allowInsecure: false })
     const { assign } = stubLocation('/settings.html')
     const fetchMock = vi
       .fn()

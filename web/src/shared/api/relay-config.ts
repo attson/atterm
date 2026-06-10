@@ -1,20 +1,15 @@
 import { t } from '@shared/i18n'
 
 // RelayConfig — single source of truth for "how do we reach the relay
-// and prove we're allowed to". Phase 4 of the session-token migration
-// added the canonical sessionToken + expiresAt + baseURL fields; the
-// legacy base/token/allowInsecure shape is still accepted so the mobile
-// setup/settings UI keeps compiling. Phase 5 finishes the mobile sweep.
+// and prove we're allowed to". After Phase 4 of the session-token
+// migration the legacy {base, token, allow_insecure} shape is gone;
+// loadRelayConfig still silently migrates any stale localStorage entry
+// on first read so users with an old shape on disk don't lose state.
 export interface RelayConfig {
-  // Canonical fields (session-token era).
-  baseURL?: string
-  sessionToken?: string | null
-  expiresAt?: number | null
-
-  // Legacy fields kept until Phase 5 mobile UI rewrite.
-  base?: string
-  token?: string
-  allowInsecure?: boolean
+  baseURL: string
+  sessionToken: string | null
+  expiresAt: number | null
+  allowInsecure: boolean
 }
 
 const STORAGE_KEY = 'atterm.relay'
@@ -36,14 +31,28 @@ export function isMobileApp(): boolean {
   return cachedMobile
 }
 
+// LegacyRelayConfig — the pre-session-token shape, kept solely so
+// loadRelayConfig can migrate it on read. Never written, never exported.
+interface LegacyRelayConfig {
+  base?: string
+  token?: string
+  allow_insecure?: boolean
+  allowInsecure?: boolean
+}
+
 export function loadRelayConfig(): RelayConfig | null {
   if (typeof localStorage === 'undefined') return null
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as Partial<RelayConfig>
+    const parsed = JSON.parse(raw) as Partial<RelayConfig> & LegacyRelayConfig
     if (typeof parsed !== 'object' || parsed === null) return null
-    return parsed as RelayConfig
+    return {
+      baseURL: parsed.baseURL ?? parsed.base ?? '',
+      sessionToken: parsed.sessionToken ?? parsed.token ?? null,
+      expiresAt: parsed.expiresAt ?? null,
+      allowInsecure: parsed.allowInsecure ?? parsed.allow_insecure ?? false,
+    }
   } catch {
     return null
   }

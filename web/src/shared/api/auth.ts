@@ -12,10 +12,13 @@ export async function login(email: string, password: string): Promise<LoginResp>
     body: JSON.stringify({ email, password }),
   })
 
-  // Persist session_token and expires_at to localStorage.
+  // Persist session_token and expires_at to localStorage. Preserve
+  // baseURL/allowInsecure if a prior RelayConfig exists (mobile remote
+  // pairing), otherwise default to same-origin.
   const existing = loadRelayConfig()
   saveRelayConfig({
-    ...(existing ?? {}),
+    baseURL: existing?.baseURL ?? '',
+    allowInsecure: existing?.allowInsecure ?? false,
     sessionToken: data.session_token,
     expiresAt: data.expires_at,
   })
@@ -35,10 +38,13 @@ export async function signup(
     body: JSON.stringify({ email, password, invite_code }),
   })
 
-  // Persist session_token and expires_at to localStorage.
+  // Persist session_token and expires_at to localStorage. Preserve
+  // baseURL/allowInsecure if a prior RelayConfig exists (mobile remote
+  // pairing), otherwise default to same-origin.
   const existing = loadRelayConfig()
   saveRelayConfig({
-    ...(existing ?? {}),
+    baseURL: existing?.baseURL ?? '',
+    allowInsecure: existing?.allowInsecure ?? false,
     sessionToken: data.session_token,
     expiresAt: data.expires_at,
   })

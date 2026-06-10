@@ -22,7 +22,12 @@ describe('settings/tabs/Relay.vue', () => {
     __resetMobileDetectionCache()
     clearRelayConfig()
     ;(globalThis as any).Capacitor = { isNativePlatform: () => true }
-    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_existing', allowInsecure: false })
+    saveRelayConfig({
+      baseURL: 'https://r.example.com',
+      sessionToken: 'ses_existing',
+      expiresAt: null,
+      allowInsecure: false,
+    })
     originalLocation = window.location
     replaceMock = vi.fn()
     Object.defineProperty(window, 'location', {
@@ -48,22 +53,25 @@ describe('settings/tabs/Relay.vue', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeResponse(200, { user_id: 'u', email: 'e' })))
     const wrapper = mount(Relay)
     await wrapper.find('input[name="relay-base"]').setValue('https://other.example.com')
-    await wrapper.find('input[name="relay-token"]').setValue('atk_new')
+    await wrapper.find('input[name="relay-token"]').setValue('ses_new')
     await wrapper.find('[data-testid="save"]').trigger('click')
     await flushPromises()
-    expect(loadRelayConfig()).toMatchObject({ base: 'https://other.example.com', token: 'atk_new' })
+    expect(loadRelayConfig()).toMatchObject({
+      baseURL: 'https://other.example.com',
+      sessionToken: 'ses_new',
+    })
   })
 
   it('shows 401 error and does not save', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeResponse(401, { error: 'unauthenticated' })))
     const wrapper = mount(Relay)
     await wrapper.find('input[name="relay-base"]').setValue('https://other.example.com')
-    await wrapper.find('input[name="relay-token"]').setValue('atk_bad')
+    await wrapper.find('input[name="relay-token"]').setValue('ses_bad')
     await wrapper.find('[data-testid="save"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toMatch(/token|invalid/i)
     // The stored config from beforeEach is unchanged
-    expect(loadRelayConfig()).toMatchObject({ token: 'atk_existing' })
+    expect(loadRelayConfig()).toMatchObject({ sessionToken: 'ses_existing' })
   })
 
   it('shows 403 origin-rejected error', async () => {

@@ -55,7 +55,12 @@ describe('applyMobileEntryGuard decision table', () => {
   for (const c of CASES) {
     it(c.name, () => {
       if (c.mobile) (globalThis as any).Capacitor = { isNativePlatform: () => true }
-      if (c.hasConfig) saveRelayConfig({ base: 'https://r.example.com', token: 'atk_t', allowInsecure: false })
+      if (c.hasConfig) saveRelayConfig({
+        baseURL: 'https://r.example.com',
+        sessionToken: 'ses_t',
+        expiresAt: null,
+        allowInsecure: false,
+      })
 
       const returned = applyMobileEntryGuard(c.page)
 

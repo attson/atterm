@@ -249,7 +249,12 @@ describe('SessionConnection', () => {
   })
 
   it('passes sessionToken as atterm-token.* subprotocol when available', () => {
-    saveRelayConfig({ sessionToken: 'test_session_token_123' })
+    saveRelayConfig({
+      baseURL: '',
+      sessionToken: 'test_session_token_123',
+      expiresAt: null,
+      allowInsecure: false,
+    })
     const conn = new SessionConnection(SID)
     conn.attach()
     const ws = createdSockets[0]!

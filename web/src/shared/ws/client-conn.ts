@@ -232,7 +232,7 @@ export class SessionConnection {
 export function wsUrl(path: string): string {
   if (isMobileApp()) {
     const cfg = loadRelayConfig()
-    const baseStr = cfg?.baseURL ?? cfg?.base
+    const baseStr = cfg?.baseURL
     if (!baseStr) throw new ApiError(0, 'relay_not_configured', null)
     const u = new URL(baseStr)
     const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'

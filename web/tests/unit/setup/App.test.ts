@@ -112,8 +112,9 @@ describe('setup/App.vue', () => {
     expect((init as RequestInit).credentials).toBe('omit')
 
     expect(loadRelayConfig()).toEqual({
-      base: 'https://r.example.com',
-      token: 'atk_good',
+      baseURL: 'https://r.example.com',
+      sessionToken: 'atk_good',
+      expiresAt: null,
       allowInsecure: false,
     })
     expect(replaceMock).toHaveBeenCalledWith('/')

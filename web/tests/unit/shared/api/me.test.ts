@@ -23,7 +23,7 @@ function emptyResponse(status: number): Response {
 describe('me.ts /api/me/sessions', () => {
   beforeEach(() => {
     clearRelayConfig()
-    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null, allowInsecure: false })
     vi.restoreAllMocks()
   })
 
@@ -70,7 +70,7 @@ describe('me.ts /api/me/sessions', () => {
 describe('me.ts /api/me/password', () => {
   beforeEach(() => {
     clearRelayConfig()
-    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null, allowInsecure: false })
     vi.restoreAllMocks()
   })
 
@@ -93,7 +93,7 @@ describe('me.ts /api/me/password', () => {
 describe('me.ts /api/me delete', () => {
   beforeEach(() => {
     clearRelayConfig()
-    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null })
+    saveRelayConfig({ baseURL: '', sessionToken: 'ses_test', expiresAt: null, allowInsecure: false })
     vi.restoreAllMocks()
   })
 

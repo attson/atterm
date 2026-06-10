@@ -52,20 +52,89 @@ describe('relay config storage', () => {
     expect(loadRelayConfig()).toBeNull()
   })
 
-  it('saveRelayConfig persists session-token fields and loadRelayConfig reads them back', () => {
-    saveRelayConfig({ baseURL: 'https://r.example.com', sessionToken: 'ses_test', expiresAt: 123 })
+  it('saveRelayConfig persists the canonical shape and loadRelayConfig reads it back', () => {
+    saveRelayConfig({
+      baseURL: 'https://r.example.com',
+      sessionToken: 'ses_test',
+      expiresAt: 123,
+      allowInsecure: false,
+    })
     expect(loadRelayConfig()).toEqual({
       baseURL: 'https://r.example.com',
       sessionToken: 'ses_test',
       expiresAt: 123,
+      allowInsecure: false,
     })
   })
 
-  it('saveRelayConfig still round-trips the legacy mobile shape (Phase 5 cleanup)', () => {
-    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_test', allowInsecure: false })
+  it('round-trips allowInsecure=true', () => {
+    saveRelayConfig({
+      baseURL: 'http://1.2.3.4:8080',
+      sessionToken: 'ses_lan',
+      expiresAt: null,
+      allowInsecure: true,
+    })
     expect(loadRelayConfig()).toEqual({
+      baseURL: 'http://1.2.3.4:8080',
+      sessionToken: 'ses_lan',
+      expiresAt: null,
+      allowInsecure: true,
+    })
+  })
+
+  it('migrates legacy {base, token, allow_insecure} on read', () => {
+    localStorage.setItem('atterm.relay', JSON.stringify({
+      base: 'ws://localhost:8080',
+      token: 'ses_old',
+      allow_insecure: true,
+    }))
+    expect(loadRelayConfig()).toEqual({
+      baseURL: 'ws://localhost:8080',
+      sessionToken: 'ses_old',
+      expiresAt: null,
+      allowInsecure: true,
+    })
+  })
+
+  it('migrates legacy {base, token, allowInsecure} camelCase on read', () => {
+    // Some legacy writers used camelCase allowInsecure, not snake_case.
+    localStorage.setItem('atterm.relay', JSON.stringify({
       base: 'https://r.example.com',
-      token: 'atk_test',
+      token: 'atk_legacy',
+      allowInsecure: false,
+    }))
+    expect(loadRelayConfig()).toEqual({
+      baseURL: 'https://r.example.com',
+      sessionToken: 'atk_legacy',
+      expiresAt: null,
+      allowInsecure: false,
+    })
+  })
+
+  it('canonical fields win over legacy fields when both are present', () => {
+    localStorage.setItem('atterm.relay', JSON.stringify({
+      baseURL: 'https://canonical.example.com',
+      base: 'https://legacy.example.com',
+      sessionToken: 'ses_canonical',
+      token: 'atk_legacy',
+      expiresAt: 999,
+      allowInsecure: true,
+      allow_insecure: false,
+    }))
+    expect(loadRelayConfig()).toEqual({
+      baseURL: 'https://canonical.example.com',
+      sessionToken: 'ses_canonical',
+      expiresAt: 999,
+      allowInsecure: true,
+    })
+  })
+
+  it('fills defaults when localStorage entry is an empty object', () => {
+    localStorage.setItem('atterm.relay', JSON.stringify({}))
+    expect(loadRelayConfig()).toEqual({
+      baseURL: '',
+      sessionToken: null,
+      expiresAt: null,
       allowInsecure: false,
     })
   })
@@ -76,7 +145,12 @@ describe('relay config storage', () => {
   })
 
   it('clearRelayConfig removes the stored entry', () => {
-    saveRelayConfig({ baseURL: 'https://r.example.com', sessionToken: 'ses_x', expiresAt: null })
+    saveRelayConfig({
+      baseURL: 'https://r.example.com',
+      sessionToken: 'ses_x',
+      expiresAt: null,
+      allowInsecure: false,
+    })
     clearRelayConfig()
     expect(loadRelayConfig()).toBeNull()
   })

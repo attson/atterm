@@ -68,7 +68,7 @@ export function InstallUpdate():Promise<void>;
 
 export function ListShells():Promise<Array<string>>;
 
-export function LoginRemoteRelay(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function LoginRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
 export function ProbeRelayVersion(arg1:string):Promise<void>;
 

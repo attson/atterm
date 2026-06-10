@@ -149,7 +149,7 @@ interface AppBindings {
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
-  LoginRemoteRelay(relayURL: string, email: string, password: string): Promise<void>;
+  LoginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void>;
   ProbeRelayVersion(arg1: string): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   CreatePairingToken(): Promise<PairingToken>;
@@ -297,8 +297,8 @@ export function setUplinkPaused(paused: boolean): Promise<void> {
 // loginRemoteRelay drives POST /api/auth/login on the Go side. The Wails
 // method persists the returned session token via SetRelayConfig and restarts
 // the uplink, so callers only need to refresh GetRelayConfig() afterwards.
-export function loginRemoteRelay(relayURL: string, email: string, password: string): Promise<void> {
-  return bindings().LoginRemoteRelay(relayURL, email, password);
+export function loginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void> {
+  return bindings().LoginRemoteRelay(relayURL, email, password, allowInsecure);
 }
 
 // probeRelayVersion calls the Wails ProbeRelayVersion method on the Go side

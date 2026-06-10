@@ -122,7 +122,7 @@ function onClose(e: MouseEvent, id: string) {
 <style scoped>
 .tabbar {
   display: flex; align-items: stretch; background: var(--panel);
-  border-bottom: 1px solid var(--border); flex: 0 0 auto; height: 34px;
+  border-bottom: 1px solid var(--border); flex: 0 0 auto; height: 28px;
   overflow: hidden;
 }
 .tabs {

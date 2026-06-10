@@ -134,8 +134,8 @@ export function ListShells() {
   return window['go']['main']['App']['ListShells']();
 }
 
-export function LoginRemoteRelay(arg1, arg2, arg3) {
-  return window['go']['main']['App']['LoginRemoteRelay'](arg1, arg2, arg3);
+export function LoginRemoteRelay(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['LoginRemoteRelay'](arg1, arg2, arg3, arg4);
 }
 
 export function ProbeRelayVersion(arg1) {

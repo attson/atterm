@@ -154,11 +154,11 @@ describe("SettingsDialog caps gating", () => {
       en.settings.tabs.general,
       en.tasks.settings.section,
       en.settings.tabs.relay,
-      en.settings.tabs.logging,
-      en.settings.tabs.updates,
       en.settings.tabs.plugins,
       en.settings.tabs.shortcuts,
       en.settings.templates.tab,
+      en.settings.tabs.logging,
+      en.settings.tabs.updates,
       en.settings.diagnostics.tab,
     ]);
   });

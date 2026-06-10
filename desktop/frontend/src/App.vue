@@ -301,6 +301,24 @@ watch(
   { immediate: true },
 );
 
+// In-window title shown in TitleBar's center area. Mirrors the TabBar's
+// per-tab title (AI OSC title for ai sessions, cwd basename otherwise) so
+// users have a persistent label of the active session even when the tab
+// row is scrolled.
+const currentTitleForBar = computed<string>(() => {
+  const s = currentActiveSession.value;
+  if (!s) return '';
+  if (s.type === 'ai' && s.title) return s.title;
+  if (s.cwd) {
+    const stripped = s.cwd.replace(/\/+$/, '');
+    if (stripped === '') return '/';
+    const base = stripped.split('/').pop();
+    if (base) return base;
+  }
+  const first = (s.command || '').split(/\s+/)[0] || '';
+  return first.split('/').pop() || first;
+});
+
 // Each TerminalView registers a driver-side input sender keyed by sessionId.
 // Plugins (Quick Input) route their send() through this map so input rides
 // the existing driver SessionConnection — a freshly attached connection
@@ -874,6 +892,7 @@ onUnmounted(() => {
       :remote-endpoint="remoteEndpoint"
       :available-remote-count="availableRemote.length"
       :update-badge="updateBadge"
+      :current-title="currentTitleForBar"
       @open-remote="openRemoteFromTitleBar"
       @open-settings="showSettings = true"
     />

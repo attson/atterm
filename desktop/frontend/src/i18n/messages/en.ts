@@ -176,6 +176,8 @@ export const en = {
       loginTitle: "Connect to remote relay",
       email: "Email",
       password: "Password",
+      passwordShow: "Show password",
+      passwordHide: "Hide password",
       login: "Log in",
       loginInProgress: "Logging in…",
       loginFailed: "Login failed",

@@ -103,8 +103,11 @@ func TestSecurityHeadersAllowXtermRuntimeStylesWithoutUnsafeScript(t *testing.T)
 	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
 		t.Fatalf("Content-Security-Policy = %q; want style-src to allow xterm runtime inline styles", csp)
 	}
-	if strings.Contains(csp, "script-src 'unsafe-inline'") || strings.Contains(csp, "script-src 'unsafe-eval'") {
-		t.Fatalf("Content-Security-Policy = %q; must not allow unsafe script execution", csp)
+	// 'unsafe-inline' is forbidden — would defeat the entire CSP. 'unsafe-eval'
+	// is permitted because Naive UI's bundled lodash uses Function("return this")
+	// to fetch globalThis; see server.go's CSP comment for the trade-off.
+	if strings.Contains(csp, "script-src 'unsafe-inline'") {
+		t.Fatalf("Content-Security-Policy = %q; script-src must not allow 'unsafe-inline'", csp)
 	}
 }
 

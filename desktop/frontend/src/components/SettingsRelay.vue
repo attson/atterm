@@ -88,6 +88,26 @@ onMounted(async () => {
     remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
     snapshotPersisted();
+
+    // Prefill email from persisted config (set by LoginRemoteRelay on
+    // last successful login). Password stays empty for security.
+    email.value = cfg.last_email ?? "";
+
+    // Show the "logged in as X" pill immediately without waiting for the
+    // uplink's relay:auth-info event. The event listener below stays
+    // registered as a fallback (covers identity changes during the dialog
+    // session — e.g., login from another device, admin promotion).
+    if (cfg.token) {
+      try {
+        const me = await fetchRelayMe();
+        connectedEmail.value = me.email || "";
+        connectedUserID.value = me.user_id || "";
+      } catch {
+        // Token rejected (401) or network error — pill stays empty; the
+        // uplink event stream and apiFetch's 401 interceptor will produce
+        // an accurate state if/when the session is actually invalid.
+      }
+    }
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {

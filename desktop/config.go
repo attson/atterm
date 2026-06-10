@@ -41,6 +41,12 @@ type appConfig struct {
 	// RelaySessionExpiresAt is the Unix-seconds expiry of the RelaySessionToken
 	// minted by /api/pair/consume or /api/auth/login. Zero means "unknown".
 	RelaySessionExpiresAt int64 `json:"relay_session_expires_at,omitempty"`
+	// RelayLastEmail caches the email used in the most recent successful
+	// LoginRemoteRelay call. Only used to prefill the Settings → Relay
+	// form on next open; never used for authentication itself. Plaintext
+	// is fine because the email is non-secret and lives next to the
+	// session token in the same config.json.
+	RelayLastEmail string `json:"relay_last_email,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`

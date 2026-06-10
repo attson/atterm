@@ -71,8 +71,13 @@ type RelayConfig struct {
 	SessionExpiresAt   int64  `json:"session_expires_at"`
 	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
 	RemotePermission   string `json:"remote_permission"`
-	Connected          bool   `json:"connected"`
-	Paused             bool   `json:"paused"`
+	// LastEmail is the email cached from the most recent successful
+	// LoginRemoteRelay call. Read-only from the frontend: GetRelayConfig
+	// populates it; SetRelayConfig ignores it. Only LoginRemoteRelay
+	// writes appConfig.RelayLastEmail.
+	LastEmail string `json:"last_email"`
+	Connected bool   `json:"connected"`
+	Paused    bool   `json:"paused"`
 }
 
 type LoggingConfig struct {
@@ -258,6 +263,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 		SessionExpiresAt:   cfg.RelaySessionExpiresAt,
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
+		LastEmail:          cfg.RelayLastEmail,
 		Connected:          connected,
 		Paused:             cfg.RelayPaused,
 	}
@@ -348,12 +354,26 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string) error {
 	// Preserve unrelated relay-config fields (AllowInsecureRelay, RemotePermission)
 	// so login doesn't silently reset them. SetRelayConfig also restarts the uplink.
 	prev := a.GetRelayConfig()
-	return a.SetRelayConfig(RelayConfig{
+	if err := a.SetRelayConfig(RelayConfig{
 		URL:                wsURL,
 		Token:              out.SessionToken,
+		SessionExpiresAt:   out.ExpiresAt,
 		AllowInsecureRelay: prev.AllowInsecureRelay,
 		RemotePermission:   prev.RemotePermission,
-	})
+	}); err != nil {
+		return err
+	}
+	// Persist the email separately — RelayConfig.LastEmail is read-only
+	// from the frontend's perspective (SetRelayConfig intentionally
+	// ignores it), so LoginRemoteRelay writes the cfgStore directly.
+	if a.cfgStore != nil {
+		cfg := a.cfgStore.Get()
+		cfg.RelayLastEmail = email
+		if err := a.cfgStore.Set(cfg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // relayLoginEndpoints normalizes a user-entered relay URL into the (http(s),

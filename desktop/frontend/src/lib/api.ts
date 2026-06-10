@@ -43,6 +43,11 @@ export interface RelayConfig {
   session_expires_at: number;
   allow_insecure_relay: boolean;
   remote_permission: string;
+  // Email cached from the most recent successful LoginRemoteRelay. Used
+  // by Settings → Relay to prefill the email field on reopen. Read-only
+  // from the frontend's perspective — setRelayConfig ignores it; only
+  // loginRemoteRelay writes it.
+  last_email: string;
   connected: boolean;
 }
 
@@ -279,6 +284,7 @@ export function setRelayConfig(cfg: {
     session_expires_at: cfg.session_expires_at ?? 0,
     allow_insecure_relay: cfg.allow_insecure_relay ?? false,
     remote_permission: cfg.remote_permission ?? "full",
+    last_email: "",
     connected: false,
   });
 }

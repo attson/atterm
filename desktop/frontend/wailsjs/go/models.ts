@@ -406,6 +406,7 @@ export namespace main {
 	    session_expires_at: number;
 	    allow_insecure_relay: boolean;
 	    remote_permission: string;
+	    last_email: string;
 	    connected: boolean;
 	    paused: boolean;
 
@@ -420,6 +421,7 @@ export namespace main {
 	        this.session_expires_at = source["session_expires_at"];
 	        this.allow_insecure_relay = source["allow_insecure_relay"];
 	        this.remote_permission = source["remote_permission"];
+	        this.last_email = source["last_email"];
 	        this.connected = source["connected"];
 	        this.paused = source["paused"];
 	    }

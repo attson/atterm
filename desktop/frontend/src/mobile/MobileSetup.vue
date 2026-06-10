@@ -103,6 +103,7 @@ async function onConnect(): Promise<void> {
       session_expires_at: 0,
       allow_insecure_relay: allowInsecure.value,
       remote_permission: 'full',
+      last_email: '',
       connected: false,
     })
     await platform.relay.fetchMe()

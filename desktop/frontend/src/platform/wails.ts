@@ -5,6 +5,7 @@ import {
   WindowMinimise,
   WindowToggleMaximise,
   WindowIsMaximised,
+  WindowSetTitle,
   Quit,
   Environment,
   BrowserOpenURL,
@@ -84,6 +85,7 @@ export function createWailsPlatform(): Platform {
       windowMinimize: async () => WindowMinimise(),
       windowToggleMaximize: async () => WindowToggleMaximise(),
       windowIsMaximized: () => WindowIsMaximised(),
+      windowSetTitle: async (title: string) => WindowSetTitle(title),
       quit: async () => Quit(),
     },
     events: {

@@ -111,6 +111,9 @@ export interface SystemBridge {
   windowMinimize?(): Promise<void>
   windowToggleMaximize?(): Promise<void>
   windowIsMaximized?(): Promise<boolean>
+  // windowSetTitle updates the OS window title (macOS title bar etc).
+  // Undefined on non-desktop platforms; callers must null-check.
+  windowSetTitle?(title: string): Promise<void>
   quit?(): Promise<void>
 }
 

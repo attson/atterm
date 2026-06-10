@@ -109,7 +109,7 @@ onUnmounted(() => {
             <span v-if="typeForSession(s)" class="type-chip" :style="{ '--chip': typeForSession(s)!.color }">
               {{ t(`main.taskTypes.${typeForSession(s)!.key}`) }}
             </span>
-            {{ s.command || t('main.unknownCommand') }}
+            {{ (s.type === 'ai' && s.title) ? s.title : (s.command || t('main.unknownCommand')) }}
           </div>
           <div class="meta">
             <span class="id"><code>{{ shortID(s.id) }}</code></span>

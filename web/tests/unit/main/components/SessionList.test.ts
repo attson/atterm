@@ -75,3 +75,51 @@ describe('SessionList.vue', () => {
     expect(listSessions).toHaveBeenCalledTimes(2)  // poll stopped after unmount
   })
 })
+
+describe('SessionList.vue AI title', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('shows AI title in card cmd when session.type=ai and title is set', async () => {
+    ;(listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: '11111111-2222-3333-4444-555555555555',
+        command: '/usr/local/bin/claude --foo',
+        title: 'Remove token auth from relay login',
+        type: 'ai',
+        cwd: '/Users/me/proj', cols: 80, rows: 24, started_at: 0,
+        host_id: 'h1', host: 'mac', user: 'me',
+      },
+    ])
+    const wrapper = mount(SessionList, { attachTo: document.body })
+    await flushPromises()
+    const text = wrapper.text()
+    expect(text).toContain('Remove token auth from relay login')
+    expect(text).not.toContain('/usr/local/bin/claude')
+  })
+
+  it('shows raw command for shell session even when title is set', async () => {
+    ;(listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: '22222222-3333-4444-5555-666666666666',
+        command: 'zsh',
+        title: 'user@host: ~/proj',
+        type: 'shell',
+        cwd: '/Users/me/proj', cols: 80, rows: 24, started_at: 0,
+        host_id: 'h1', host: 'mac', user: 'me',
+      },
+    ])
+    const wrapper = mount(SessionList, { attachTo: document.body })
+    await flushPromises()
+    const text = wrapper.text()
+    expect(text).toContain('zsh')
+    expect(text).not.toContain('user@host')
+  })
+})

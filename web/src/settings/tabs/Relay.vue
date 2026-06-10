@@ -19,8 +19,8 @@ import {
 import { useI18n } from '@shared/i18n/useI18n'
 
 const _cfg = loadRelayConfig()
-const base = ref(_cfg?.base ?? '')
-const token = ref(_cfg?.token ?? '')
+const base = ref(_cfg?.baseURL ?? '')
+const token = ref(_cfg?.sessionToken ?? '')
 const allowInsecure = ref(_cfg?.allowInsecure ?? false)
 const error = ref<string | null>(null)
 const ok = ref<string | null>(null)
@@ -65,8 +65,9 @@ async function onSave(): Promise<void> {
       return
     }
     saveRelayConfig({
-      base: base.value.replace(/\/$/, ''),
-      token: token.value.trim(),
+      baseURL: base.value.replace(/\/$/, ''),
+      sessionToken: token.value.trim(),
+      expiresAt: _cfg?.expiresAt ?? null,
       allowInsecure: allowInsecure.value,
     })
     ok.value = t('setup.saved')

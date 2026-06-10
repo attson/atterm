@@ -207,11 +207,12 @@ describe("remote tab session retention", () => {
     __setPlatformForTests(createFakePlatform());
     __setBindingsForTest({
       GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
-      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", token: "" }),
+      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
       GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
       GetRelayConfig: vi.fn().mockResolvedValue({
         url: "ws://remote",
         token: "token",
+        session_expires_at: 0,
         allow_insecure_relay: false,
         remote_permission: "full",
         connected: true,

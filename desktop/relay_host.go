@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
@@ -21,6 +19,7 @@ import (
 	"github.com/attson/atterm/internal/ptyhost"
 	"github.com/attson/atterm/internal/relay"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/google/uuid"
 )
 
@@ -28,10 +27,12 @@ import (
 // desktop app. It listens on 127.0.0.1:<random> and is the only WebSocket
 // endpoint the desktop frontend talks to.
 type relayHost struct {
-	addr    string
-	token   string
-	server  *relay.Server
-	httpSrv *http.Server
+	addr         string
+	sessionToken string
+	adminUserID  string // owner ULID for sessions adopted into the mini-relay
+	server       *relay.Server
+	httpSrv      *http.Server
+	store        userstore.Store // closed on Stop()
 
 	hostID string
 	host   string
@@ -54,17 +55,55 @@ type activeSession struct {
 	cleanup func()
 }
 
-func startRelayHost() (*relayHost, error) {
-	token, err := randomToken()
-	if err != nil {
-		return nil, err
+// startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
+// admin (creating the user on first launch, generating LocalAdminPassword if
+// the persisted config doesn't have one yet), mints a session token for that
+// user, and starts the loopback HTTP server gated by session-token auth.
+//
+// cfgStore must be non-nil — the bootstrap password lives in it. Tests can
+// pass an empty &configStore{}; on first call we generate the password and
+// persist it (which writes to UserConfigDir, isolated by the standard test
+// HOME/XDG overrides).
+func startRelayHost(cfgStore *configStore) (*relayHost, error) {
+	if cfgStore == nil {
+		return nil, fmt.Errorf("startRelayHost: cfgStore is nil")
 	}
-	// TODO(task-3.3): the desktop mini-relay used to gate access by a shared
-	// per-launch token assigned here. relay.Config no longer carries that
-	// field — Phase 3 reworks the desktop mini-relay to consume a real
-	// userstore + session token. Until then `token` is still generated and
-	// stored on relayHost so the webview's existing Authorization: Bearer
-	// requests don't crash; the mini-relay just no longer validates it.
+	ctx := context.Background()
+
+	// Persist the bootstrap password the first time we run on this machine.
+	// It is NOT cryptographically secret from the user (it lives in
+	// ~/.config/atterm/config.json), but it is the only thing tying this
+	// process to the on-disk users.db, so it must be stable across launches.
+	cfg := cfgStore.Get()
+	if cfg.LocalAdminPassword == "" {
+		pw := randomPassword(32)
+		if pw == "" {
+			return nil, fmt.Errorf("generate local admin password: rand failed")
+		}
+		cfg.LocalAdminPassword = pw
+		if err := cfgStore.Set(cfg); err != nil {
+			return nil, fmt.Errorf("persist local admin password: %w", err)
+		}
+	}
+
+	dbPath, err := localUserStorePath()
+	if err != nil {
+		return nil, fmt.Errorf("locate local userstore: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return nil, fmt.Errorf("create userstore dir: %w", err)
+	}
+	store, err := userstore.Open(ctx, dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open userstore at %s: %w", dbPath, err)
+	}
+
+	tok, adminUser, err := bootstrapLocalAdmin(ctx, store, localAdminEmail, cfg.LocalAdminPassword)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("bootstrap local admin: %w", err)
+	}
+
 	srv := relay.NewServer(relay.Config{
 		Version:      Version,
 		Debug:        relayDebugEnabled(),
@@ -73,9 +112,16 @@ func startRelayHost() (*relayHost, error) {
 		// any origin so the webview's wails:// scheme and Vite dev's
 		// http://localhost:* both pass the WS upgrade check.
 		AllowedOrigins: nil, // nil enables InsecureSkipVerify in acceptOptions
+		// Store + Resolver wire requireSession in the relay server — every
+		// /api/* and WS request now validates the session token against the
+		// local users.db. The desktop frontend bears tok via Bearer header /
+		// atterm-token subprotocol like any other relay client.
+		Store:    store,
+		Resolver: relay.NewIdentityResolver(store),
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
+		_ = store.Close()
 		return nil, err
 	}
 	// CORS is handled inside internal/relay.Server.ServeHTTP — no wrapper here.
@@ -86,24 +132,31 @@ func startRelayHost() (*relayHost, error) {
 		}
 	}()
 	return &relayHost{
-		addr:     ln.Addr().String(),
-		token:    token,
-		server:   srv,
-		httpSrv:  httpSrv,
-		hostID:   hostid.Get(),
-		host:     hostnameOrUnknown(),
-		user:     usernameOrUid(),
-		sessions:   make(map[uuid.UUID]*activeSession),
-		changes:    make(chan struct{}, 1),
-		uplinkSubs: make(map[uuid.UUID]*session.Subscriber),
+		addr:         ln.Addr().String(),
+		sessionToken: tok,
+		adminUserID:  adminUser.ID,
+		server:       srv,
+		httpSrv:      httpSrv,
+		store:        store,
+		hostID:       hostid.Get(),
+		host:         hostnameOrUnknown(),
+		user:         usernameOrUid(),
+		cfg:          cfgStore,
+		sessions:     make(map[uuid.UUID]*activeSession),
+		changes:      make(chan struct{}, 1),
+		uplinkSubs:   make(map[uuid.UUID]*session.Subscriber),
 	}, nil
 }
 
-// setConfigStore wires the shared appConfig store after construction; the
-// uplink and shell-integration logic both consult it. Safe to call exactly
-// once at startup.
-func (h *relayHost) setConfigStore(cfg *configStore) {
-	h.cfg = cfg
+// localUserStorePath returns the absolute path to the desktop's local
+// users.db. It lives next to config.json under UserConfigDir/atterm so
+// the same XDG_CONFIG_HOME / HOME test overrides apply.
+func localUserStorePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "atterm", "users.db"), nil
 }
 
 func relayDebugEnabled() bool {
@@ -275,7 +328,8 @@ func (h *relayHost) CloseSession(id uuid.UUID) error {
 	return err
 }
 
-// Stop tears down all live PTYs and shuts down the HTTP server. Idempotent.
+// Stop tears down all live PTYs, shuts down the HTTP server, and closes the
+// backing userstore. Idempotent.
 func (h *relayHost) Stop() {
 	h.mu.Lock()
 	sessions := h.sessions
@@ -288,6 +342,10 @@ func (h *relayHost) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = h.httpSrv.Shutdown(ctx)
+	if h.store != nil {
+		_ = h.store.Close()
+		h.store = nil
+	}
 }
 
 // NewSession spawns a PTY for the given command and adopts it as a session.
@@ -350,7 +408,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		StartedAt: time.Now().Unix(),
 	}
 
-	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty})
+	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty}, h.adminUserID)
 
 	var cleanupOnce sync.Once
 	combinedCleanup := func() {
@@ -421,14 +479,6 @@ func (h *relayHost) watchCwd(id uuid.UUID, pty *ptyhost.Host, initial string, do
 		h.server.Registry().NotifyChange()
 		h.notifyChange()
 	}
-}
-
-func randomToken() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func hostnameOrUnknown() string {

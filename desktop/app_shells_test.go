@@ -48,7 +48,7 @@ func TestSetDefaultShellPersistsAndPreservesConfig(t *testing.T) {
 	custom := writeExecutableShell(t)
 	a := newThemeTestApp(t, appConfig{
 		RelayURL:      "wss://relay.example.com",
-		RelayToken:    "secret-token",
+		RelaySessionToken:    "secret-token",
 		TerminalTheme: terminalThemeNord,
 	})
 
@@ -59,7 +59,7 @@ func TestSetDefaultShellPersistsAndPreservesConfig(t *testing.T) {
 		t.Fatalf("GetDefaultShell() = %q; want %q", got, custom)
 	}
 	cfg := a.cfgStore.Get()
-	if cfg.RelayURL != "wss://relay.example.com" || cfg.RelayToken != "secret-token" || cfg.TerminalTheme != terminalThemeNord {
+	if cfg.RelayURL != "wss://relay.example.com" || cfg.RelaySessionToken != "secret-token" || cfg.TerminalTheme != terminalThemeNord {
 		t.Fatalf("SetDefaultShell changed unrelated config: %#v", cfg)
 	}
 

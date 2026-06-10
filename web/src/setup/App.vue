@@ -77,8 +77,9 @@ async function onConnect(): Promise<void> {
       return
     }
     const cfg: RelayConfig = {
-      base: base.value.replace(/\/$/, ''),
-      token: token.value.trim(),
+      baseURL: base.value.replace(/\/$/, ''),
+      sessionToken: token.value.trim(),
+      expiresAt: null,
       allowInsecure: allowInsecure.value,
     }
     saveRelayConfig(cfg)

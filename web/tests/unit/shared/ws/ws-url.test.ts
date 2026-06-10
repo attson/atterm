@@ -45,18 +45,33 @@ describe('wsUrl mobile mode', () => {
     __resetMobileDetectionCache()
   })
 
-  it('derives ws:// from http:// base', () => {
-    saveRelayConfig({ base: 'http://1.2.3.4:8080', token: 'atk_t', allowInsecure: true })
+  it('derives ws:// from http:// baseURL', () => {
+    saveRelayConfig({
+      baseURL: 'http://1.2.3.4:8080',
+      sessionToken: 'ses_t',
+      expiresAt: null,
+      allowInsecure: true,
+    })
     expect(wsUrl('/client')).toBe('ws://1.2.3.4:8080/client')
   })
 
-  it('derives wss:// from https:// base', () => {
-    saveRelayConfig({ base: 'https://r.example.com', token: 'atk_t', allowInsecure: false })
+  it('derives wss:// from https:// baseURL', () => {
+    saveRelayConfig({
+      baseURL: 'https://r.example.com',
+      sessionToken: 'ses_t',
+      expiresAt: null,
+      allowInsecure: false,
+    })
     expect(wsUrl('/client')).toBe('wss://r.example.com/client')
   })
 
-  it('preserves the port from the base URL', () => {
-    saveRelayConfig({ base: 'https://r.example.com:8443', token: 'atk_t', allowInsecure: false })
+  it('preserves the port from the baseURL', () => {
+    saveRelayConfig({
+      baseURL: 'https://r.example.com:8443',
+      sessionToken: 'ses_t',
+      expiresAt: null,
+      allowInsecure: false,
+    })
     expect(wsUrl('/client')).toBe('wss://r.example.com:8443/client')
   })
 

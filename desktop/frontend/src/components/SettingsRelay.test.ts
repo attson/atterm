@@ -23,8 +23,8 @@ describe("SettingsRelay", () => {
     expect(source).toContain("save,");
   });
 
-  test("renders url, token, permissions SelectDropdown, insecure toggle, and status pill", () => {
-    expect(source).toContain(["placeholder", '"wss://relay.example.com"'].join("="));
+  test("renders url, login form, permissions SelectDropdown, insecure toggle, and status pill", () => {
+    expect(source).toContain(["placeholder", '"https://relay.example.com"'].join("="));
     expect(source).toContain('type="password"');
     expect(source).toContain("settings.relay.remotePermissions");
     expect(source).toContain("import SelectDropdown");
@@ -48,11 +48,37 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.insecureWarning");
   });
 
-  // Task 7.1 new tests
-  test("renders API token label, not 'token'", () => {
-    expect(source).toContain("settings.relay.apiToken");
-    expect(source).not.toContain("shared bearer token");
-    expect(source).not.toContain([">", "token", "<"].join(""));
+  // Session-token login (Phase 3): user supplies email + password and the
+  // backend's LoginRemoteRelay Wails method exchanges them for a session token.
+  test("renders email + password login form bound to LoginRemoteRelay", () => {
+    // Two new input fields and a Log in button replace the paste-token UI.
+    expect(source).toContain('data-testid="relay-login-form"');
+    expect(source).toContain('id="relay-login-email"');
+    expect(source).toContain('id="relay-login-password"');
+    expect(source).toContain("settings.relay.loginTitle");
+    expect(source).toContain("settings.relay.email");
+    expect(source).toContain("settings.relay.password");
+    expect(source).toContain("settings.relay.login");
+    expect(source).toContain("settings.relay.loginInProgress");
+    expect(source).toContain("settings.relay.loginFailed");
+    expect(source).toContain("settings.relay.loggedIn");
+  });
+
+  test("Log in button calls loginRemoteRelay with url + email + password", () => {
+    expect(source).toContain("loginRemoteRelay");
+    // Function must pass relay URL, email, and password values.
+    expect(source).toMatch(/loginRemoteRelay\(\s*url\.value\.trim\(\)\s*,\s*email\.value\.trim\(\)\s*,\s*password\.value\s*\)/);
+  });
+
+  test("clears password and shows success state on successful login", () => {
+    expect(source).toContain("password.value = \"\"");
+    expect(source).toContain("loginSuccess.value = true");
+  });
+
+  test("surfaces login errors via loginError ref", () => {
+    expect(source).toContain("loginError.value");
+    // The login() handler must catch failures and write into the error ref.
+    expect(source).toMatch(/catch[\s\S]*loginError\.value\s*=/);
   });
 
   test("renders Uplink ON/OFF toggle bound to RelayPaused", () => {
@@ -69,17 +95,13 @@ describe("SettingsRelay", () => {
     expect(source).not.toContain([">", "disconnect", "<"].join(""));
   });
 
-  test("paste of non-atk token surfaces a warning hint", () => {
-    // source must check if token starts with atk_
-    expect(source).toContain("atk_");
-    // and show a warning when it doesn't
-    expect(source).toContain("tokenWarning");
-    expect(source).toContain("settings.relay.apiToken");
-  });
-
-  test("Open in browser button calls platform.system.openExternalURL with relay URL + /settings.html", () => {
-    expect(source).toContain("platform.system.openExternalURL");
-    expect(source).toContain("/settings.html");
+  test("does not surface the legacy atk_ paste-token UI", () => {
+    // Old shared-token input + warning are gone.
+    expect(source).not.toContain("settings.relay.apiToken");
+    expect(source).not.toContain("settings.relay.tokenWarning");
+    expect(source).not.toContain("settings.relay.openInBrowser");
+    expect(source).not.toContain("atk_");
+    expect(source).not.toContain("tokenWarning");
   });
 
   // Task 8.1 tests
@@ -116,14 +138,10 @@ describe("SettingsRelay", () => {
     expect(platform.events.on).toBeDefined();
   });
 
-  test("renders relay setup wizard with validation steps and recovery actions", () => {
-    expect(source).toContain('data-testid="relay-setup-wizard"');
-    expect(source).toContain("settings.relay.wizard.title");
-    expect(source).toContain("settings.relay.wizard.steps.reachability");
-    expect(source).toContain("settings.relay.wizard.steps.urlCompatibility");
-    expect(source).toContain("settings.relay.wizard.steps.apiToken");
-    expect(source).toContain("settings.relay.wizard.steps.identity");
-    expect(source).toContain("settings.relay.wizard.steps.uplink");
-    expect(source).toContain("wizardRecovery");
+  test("setup wizard is removed in favor of inline email/password login", () => {
+    // The paste-token-era wizard is gone; the Log in button is the equivalent verification path.
+    expect(source).not.toContain('data-testid="relay-setup-wizard"');
+    expect(source).not.toContain("wizardRecovery");
+    expect(source).not.toContain("relaySetupWizard");
   });
 });

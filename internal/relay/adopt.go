@@ -35,13 +35,19 @@ type ImagePasteHost interface {
 // locally-spawned PTYs to the same xterm.js code path that handles remote
 // sessions.
 //
+// ownerUserID, when non-empty, marks the session as owned by that user so
+// requireSession-gated routes (/client, /api/sessions) will surface and
+// permit attach. Empty means "no owner" — only relays without Store wiring
+// should adopt anonymously; gated relays will refuse to surface the session.
+//
 // The returned cleanup must be called exactly once, when the caller has
 // decided the session is over (PTY exited, app shutting down, etc.). It is
 // idempotent. The PtyHost is NOT closed by cleanup — its lifecycle stays
 // with the caller.
-func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.SessionInfo, host PtyHost) func() {
+func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.SessionInfo, host PtyHost, ownerUserID string) func() {
 	info.ID = id.String()
 	sess := session.New(id, info)
+	sess.OwnerUserID = ownerUserID
 	sess.SetMetaChangedHook(s.registry.NotifyChange)
 	s.registry.Add(sess)
 	s.debugf("adopt open session=%s command=%q cwd=%q title=%q host_id=%q host=%q user=%q cols=%d rows=%d",

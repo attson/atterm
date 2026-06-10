@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock lib/api before the impl import so createWailsPlatform sees the mocks.
 vi.mock('../../lib/api', () => ({
-  getRelayConfig: vi.fn().mockResolvedValue({ url: 'https://r', token: 'atk_x', allow_insecure_relay: false, remote_permission: 'full', connected: false }),
+  getRelayConfig: vi.fn().mockResolvedValue({ url: 'https://r', token: 'atk_x', session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', connected: false }),
   setRelayConfig: vi.fn().mockResolvedValue(undefined),
   setUplinkPaused: vi.fn().mockResolvedValue(undefined),
   fetchRelayMe: vi.fn().mockResolvedValue({ user_id: 'u', email: 'e' }),

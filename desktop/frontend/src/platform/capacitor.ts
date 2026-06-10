@@ -3,7 +3,7 @@ import type { QuickTemplate } from '../lib/templates'
 import type { AuxKey } from '../lib/auxKeys'
 import { secureStorage } from './secureStorage'
 
-const STORAGE_KEY = 'atterm.relay'
+const STORAGE_KEY = 'atterm.relay.session'
 const TEMPLATES_KEY = 'atterm.templates'
 const AUXKEYS_KEY = 'atterm.auxkeys'
 
@@ -112,7 +112,7 @@ export function createCapacitorPlatform(): Platform {
           throw new Error(body.code || 'pair_invalid')
         }
         if (!res.ok) throw new Error(`pair_consume_http_${res.status}`)
-        return (await res.json()) as { relay_url: string; api_token: string; user: { id: string; email: string } }
+        return (await res.json()) as { relay_url: string; session_token: string; expires_at: number; user: { id: string; email: string } }
       },
       // setUplinkPaused omitted — desktop-only
     },

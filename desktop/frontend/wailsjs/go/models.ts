@@ -144,7 +144,7 @@ export namespace main {
 	}
 	export class Endpoint {
 	    url: string;
-	    token: string;
+	    session_token: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Endpoint(source);
@@ -153,7 +153,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
-	        this.token = source["token"];
+	        this.session_token = source["session_token"];
 	    }
 	}
 	export class FileContent {
@@ -403,19 +403,21 @@ export namespace main {
 	export class RelayConfig {
 	    url: string;
 	    token: string;
+	    session_expires_at: number;
 	    allow_insecure_relay: boolean;
 	    remote_permission: string;
 	    connected: boolean;
 	    paused: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RelayConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
 	        this.token = source["token"];
+	        this.session_expires_at = source["session_expires_at"];
 	        this.allow_insecure_relay = source["allow_insecure_relay"];
 	        this.remote_permission = source["remote_permission"];
 	        this.connected = source["connected"];

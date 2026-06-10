@@ -48,7 +48,8 @@ import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as
 
 export interface PairingConsumeResult {
   relay_url: string
-  api_token: string
+  session_token: string
+  expires_at: number
   user: { id: string; email: string }
 }
 

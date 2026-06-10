@@ -26,7 +26,7 @@ func TestCreatePairingToken_PostsToRelayWithBearerAndReturnsParsed(t *testing.T)
 	t.Cleanup(srv.Close)
 
 	a := newRelayTestApp(t)
-	if err := a.cfgStore.Set(appConfig{RelayURL: srv.URL, RelayToken: "atk_localtest"}); err != nil {
+	if err := a.cfgStore.Set(appConfig{RelayURL: srv.URL, RelaySessionToken: "atk_localtest"}); err != nil {
 		t.Fatalf("seed cfgStore: %v", err)
 	}
 

@@ -1,8 +1,14 @@
 import { t } from '@shared/i18n'
 
+// RelayConfig — single source of truth for "how do we reach the relay
+// and prove we're allowed to". After Phase 4 of the session-token
+// migration the legacy {base, token, allow_insecure} shape is gone;
+// loadRelayConfig still silently migrates any stale localStorage entry
+// on first read so users with an old shape on disk don't lose state.
 export interface RelayConfig {
-  base: string
-  token: string
+  baseURL: string
+  sessionToken: string | null
+  expiresAt: number | null
   allowInsecure: boolean
 }
 
@@ -15,6 +21,9 @@ export function __resetMobileDetectionCache(): void {
   cachedMobile = null
 }
 
+// isMobileApp is retained for legacy callers (mobile-guard, settings UI,
+// WS subprotocol). The session-token migration removes the apiFetch
+// branch on this but other entry-point gates still depend on it.
 export function isMobileApp(): boolean {
   if (cachedMobile !== null) return cachedMobile
   const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -22,20 +31,28 @@ export function isMobileApp(): boolean {
   return cachedMobile
 }
 
+// LegacyRelayConfig — the pre-session-token shape, kept solely so
+// loadRelayConfig can migrate it on read. Never written, never exported.
+interface LegacyRelayConfig {
+  base?: string
+  token?: string
+  allow_insecure?: boolean
+  allowInsecure?: boolean
+}
+
 export function loadRelayConfig(): RelayConfig | null {
   if (typeof localStorage === 'undefined') return null
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as Partial<RelayConfig>
-    if (
-      typeof parsed.base !== 'string' ||
-      typeof parsed.token !== 'string' ||
-      typeof parsed.allowInsecure !== 'boolean'
-    ) {
-      return null
+    const parsed = JSON.parse(raw) as Partial<RelayConfig> & LegacyRelayConfig
+    if (typeof parsed !== 'object' || parsed === null) return null
+    return {
+      baseURL: parsed.baseURL ?? parsed.base ?? '',
+      sessionToken: parsed.sessionToken ?? parsed.token ?? null,
+      expiresAt: parsed.expiresAt ?? null,
+      allowInsecure: parsed.allowInsecure ?? parsed.allow_insecure ?? false,
     }
-    return { base: parsed.base, token: parsed.token, allowInsecure: parsed.allowInsecure }
   } catch {
     return null
   }

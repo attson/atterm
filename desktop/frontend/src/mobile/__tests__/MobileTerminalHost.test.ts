@@ -16,7 +16,7 @@ const stubs = {
 }
 
 const baseProps = {
-  endpoint: { url: 'wss://r', token: 'atk_t' },
+  endpoint: { url: 'wss://r', session_token: 'atk_t' },
   openTerminals: [
     { sessionId: 'a', info: mk('a', 'claude') },
     { sessionId: 'b', info: mk('b', 'codex') },

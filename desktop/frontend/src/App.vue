@@ -462,12 +462,12 @@ async function refreshRelayConfig() {
   } catch {
     /* keep last known */
   }
-  const next = cfg.connected && cfg.url
-    ? { url: cfg.url, token: cfg.token }
+  const next: Endpoint | null = cfg.connected && cfg.url
+    ? { url: cfg.url, session_token: cfg.token }
     : null;
   if (
     remoteEndpoint.value?.url === next?.url &&
-    remoteEndpoint.value?.token === next?.token
+    remoteEndpoint.value?.session_token === next?.session_token
   ) {
     return;
   }

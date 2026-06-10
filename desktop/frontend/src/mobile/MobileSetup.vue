@@ -100,6 +100,7 @@ async function onConnect(): Promise<void> {
     await platform.relay.save({
       url: url.value.replace(/\/$/, ''),
       token: token.value.trim(),
+      session_expires_at: 0,
       allow_insecure_relay: allowInsecure.value,
       remote_permission: 'full',
       connected: false,

@@ -40,7 +40,8 @@ describe('PairingConsume', () => {
   it('happy path: calls consumePairing, saves config, emits connected', async () => {
     consumePairing.mockResolvedValue({
       relay_url: 'https://relay.example.com',
-      api_token: 'atk_NEW',
+      session_token: 'sess_NEW',
+      expires_at: 1735689600,
       user: { id: 'u1', email: 'alice@example.com' },
     })
     const wrapper = mount(PairingConsume, {
@@ -50,7 +51,8 @@ describe('PairingConsume', () => {
     expect(consumePairing).toHaveBeenCalledWith('https://relay.example.com', 'pair_VALID')
     expect(save).toHaveBeenCalledWith(expect.objectContaining({
       url: 'https://relay.example.com',
-      token: 'atk_NEW',
+      token: 'sess_NEW',
+      session_expires_at: 1735689600,
     }))
     expect(wrapper.emitted('connected')).toBeTruthy()
   })

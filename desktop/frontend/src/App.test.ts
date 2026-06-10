@@ -212,6 +212,7 @@ describe("remote tab session retention", () => {
       GetRelayConfig: vi.fn().mockResolvedValue({
         url: "ws://remote",
         token: "token",
+        session_expires_at: 0,
         allow_insecure_relay: false,
         remote_permission: "full",
         connected: true,

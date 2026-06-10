@@ -64,6 +64,11 @@ type HostInfo struct {
 type RelayConfig struct {
 	URL                string `json:"url"`
 	Token              string `json:"token"`
+	// SessionExpiresAt is the Unix-seconds expiry of Token when it was
+	// minted as a relay session token (e.g. via /api/pair/consume). 0
+	// means "unknown / not a session token" — the frontend then falls
+	// back to treating Token as an opaque long-lived credential.
+	SessionExpiresAt   int64  `json:"session_expires_at"`
 	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
 	RemotePermission   string `json:"remote_permission"`
 	Connected          bool   `json:"connected"`
@@ -250,6 +255,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 	return RelayConfig{
 		URL:                cfg.RelayURL,
 		Token:              cfg.RelaySessionToken,
+		SessionExpiresAt:   cfg.RelaySessionExpiresAt,
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		Connected:          connected,
@@ -266,6 +272,7 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	cfg := a.cfgStore.Get()
 	cfg.RelayURL = strings.TrimSpace(req.URL)
 	cfg.RelaySessionToken = strings.TrimSpace(req.Token)
+	cfg.RelaySessionExpiresAt = req.SessionExpiresAt
 	cfg.AllowInsecureRelay = req.AllowInsecureRelay
 	switch req.RemotePermission {
 	case proto.RemotePermissionView, proto.RemotePermissionControl, proto.RemotePermissionFull:

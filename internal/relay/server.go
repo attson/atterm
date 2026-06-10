@@ -470,38 +470,31 @@ func allowedStaticPath(p string) bool {
 	return false
 }
 
-// newStaticHandler wraps http.FileServer to enforce a login redirect for the
-// root path when the request carries no valid cookie session. Subresources
-// (*.js, *.css, *.html, etc.) are served unconditionally so that login.html
-// can load its own assets without authentication.
+// newStaticHandler wraps http.FileServer for the embedded web bundle.
+//
+// Before the session-token migration the relay relied on an HttpOnly cookie
+// to know whether a browser was authenticated, and this handler 302'd
+// unauthenticated `/` navigations to /login.html. Cookies are gone now and
+// browsers cannot attach the localStorage-resident Bearer token to plain
+// navigation requests, so the resolver always reports PrincipalNone for
+// page loads — the old server-side gate would redirect every successful
+// login back to /login.html (the production bug fixed by this change).
+//
+// Authorization is now a purely client-side concern: every page boots its
+// SPA, which reads the session token from localStorage. If the token is
+// missing or rejected, apiFetch's 401 interceptor sends the user to
+// /login.html. Admin gating works the same way — the admin SPA queries
+// /api/me, checks is_admin, and redirects clients without privileges.
+//
+// resolver is retained as a parameter for compatibility but is unused; the
+// resolver argument may be nil and is ignored at runtime.
 func newStaticHandler(resolver *IdentityResolver, webFS fs.FS) http.Handler {
+	_ = resolver
 	fileSrv := http.FileServer(http.FS(webFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowedStaticPath(r.URL.Path) {
 			http.NotFound(w, r)
 			return
-		}
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			if resolver != nil {
-				p := resolver.Resolve(r)
-				if !p.IsUser() {
-					http.Redirect(w, r, "/login.html", http.StatusFound)
-					return
-				}
-			}
-		}
-		if r.URL.Path == "/admin/" || r.URL.Path == "/admin/index.html" {
-			if resolver != nil {
-				p := resolver.Resolve(r)
-				if p.Kind == PrincipalNone {
-					http.Redirect(w, r, "/login.html", http.StatusFound)
-					return
-				}
-				if p.Kind != PrincipalAdmin {
-					http.Redirect(w, r, "/", http.StatusFound)
-					return
-				}
-			}
 		}
 		fileSrv.ServeHTTP(w, r)
 	})

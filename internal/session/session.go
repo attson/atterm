@@ -48,7 +48,12 @@ type Session struct {
 	altScreen  bool
 	termTail   []byte
 	osc133Buf  []byte
-	cmdStarted time.Time
+	// oscTitleBuf retains the tail of any unfinished OSC 0/1/2 (icon/window
+	// title) sequence so a terminator that lands on an Append boundary still
+	// parses. Independent from osc133Buf to keep the two parsers from
+	// tripping each other.
+	oscTitleBuf []byte
+	cmdStarted  time.Time
 
 	// Silence-detection heuristic state. silenceTimer is armed by
 	// rescheduleSilenceTimerLocked whenever the session is in running + alt
@@ -726,6 +731,12 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		s.meta.AttentionAt = now.Unix()
 		changed = true
 	}
+	// OSC 0/1/2 title scan is independent of OSC 133 and the waiting-input
+	// heuristic. Same Append can carry both; the downstream
+	// broadcastCurrentMeta covers both flags via the single `changed` path.
+	if s.applyOSCTitleLocked(data) {
+		changed = true
+	}
 	const tailLen = 32
 	prevTail := s.termTail
 	if len(prevTail) > 0 {
@@ -896,6 +907,32 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 		}
 	}
 	return changed
+}
+
+// applyOSCTitleLocked scans data for OSC 0/1/2 (icon/window title) sequences
+// and updates s.meta.Title in place when the title changes. Returns true
+// when the caller should broadcast a META frame. Same lock window as
+// applyOSC133Locked; independent of osc133Buf. See osc_title.go for the
+// underlying scanner.
+func (s *Session) applyOSCTitleLocked(data []byte) bool {
+	combined := append(append([]byte(nil), s.oscTitleBuf...), data...)
+	titles, consumed, ok := scanOSCTitles(combined)
+	tail := combined[consumed:]
+	const maxBuf = maxOSCTitlePayload + 8 // payload cap + introducer slack
+	if len(tail) > maxBuf {
+		tail = tail[len(tail)-maxBuf:]
+	}
+	s.oscTitleBuf = append(s.oscTitleBuf[:0], tail...)
+	if !ok || len(titles) == 0 {
+		return false
+	}
+	// Last-writer-wins: OSC 0/1/2 collapse to one field.
+	newTitle := titles[len(titles)-1]
+	if newTitle == s.meta.Title {
+		return false
+	}
+	s.meta.Title = newTitle
+	return true
 }
 
 func (s *Session) consumeOSC133Locked(data []byte) []string {

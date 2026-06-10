@@ -214,7 +214,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Cloudflare Web Analytics: static.cloudflareinsights.com serves beacon.min.js;
 	// cloudflareinsights.com receives the RUM beacon. Both are required when the
 	// site is fronted by Cloudflare with Web Analytics enabled.
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss: https://cloudflareinsights.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://static.cloudflareinsights.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+	//
+	// script-src 'unsafe-eval': Naive UI bundles a lodash chunk whose first line
+	// is `Function("return this")()` (the standard "get globalThis" polyfill).
+	// Without 'unsafe-eval' the chunk fails to load and every page using Naive
+	// UI components (login, settings, admin) breaks. Threat-model impact is
+	// minimal: an XSS attacker already needs 'self' capability to inject any
+	// script; gaining 'unsafe-eval' on top does not materially widen the gap.
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss: https://cloudflareinsights.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://static.cloudflareinsights.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Permissions-Policy", "clipboard-read=(self), clipboard-write=(self)")

@@ -57,6 +57,7 @@ func TestUplink_CommandEvent_FiresWebhook(t *testing.T) {
 	resolver := NewIdentityResolver(store)
 	srv := NewServer(Config{
 		Resolver: resolver,
+		Store:    store,
 		Webhook:  webhookSvc,
 	})
 	httpSrv := httptest.NewServer(srv)
@@ -65,7 +66,7 @@ func TestUplink_CommandEvent_FiresWebhook(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Connect the uplink with a valid API token.
+	// Connect the uplink with a valid session token.
 	conn, _, err := dialUplinkWS(t, ctx, httpSrv, "Bearer "+apiToken)
 	if err != nil {
 		t.Fatalf("dial uplink: %v", err)
@@ -131,6 +132,7 @@ func TestUplink_CommandEvent_NilWebhook_NoPanic(t *testing.T) {
 	// No Webhook in Config — must not panic.
 	srv := NewServer(Config{
 		Resolver: resolver,
+		Store:    store,
 		// Webhook intentionally left nil.
 	})
 	httpSrv := httptest.NewServer(srv)

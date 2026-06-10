@@ -111,14 +111,12 @@ func testServerDeps(t *testing.T) ServerDeps {
 	resolver := NewIdentityResolver(store)
 	pool := NewArgon2Pool(1)
 	auth := &AuthServer{
-		Store:    store,
-		Resolver: resolver,
-		Argon:    pool,
-		Limits:   limits,
+		Store:  store,
+		Argon:  pool,
+		Limits: limits,
 	}
 	admin := &AdminServer{
-		Store:    store,
-		Resolver: resolver,
+		Store: store,
 	}
 	return ServerDeps{
 		Store:    store,

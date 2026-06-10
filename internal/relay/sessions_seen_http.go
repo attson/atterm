@@ -11,11 +11,11 @@ import (
 // handleSessionsSeenHTTP implements POST /api/sessions/seen. Body is either
 // {"all": true} (mark every session the caller owns) or
 // {"session_ids": ["..."]} (mark a specific set; ids not owned by the caller
-// are silently ignored). Auth is the cookie session (wrapped in RequireCSRF
-// at registration).
+// are silently ignored). Auth: requireSession middleware places the user in
+// the request context.
 func (s *Server) handleSessionsSeenHTTP(w http.ResponseWriter, r *http.Request) {
-	p := s.cfg.Resolver.Resolve(r)
-	if !p.IsUser() {
+	u, ok := UserFromContext(r.Context())
+	if !ok || u == nil {
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
 		return
 	}
@@ -31,7 +31,7 @@ func (s *Server) handleSessionsSeenHTTP(w http.ResponseWriter, r *http.Request) 
 	var ids []string
 	if body.All {
 		for _, ss := range s.registry.List() {
-			if ss.OwnerUserID == p.UserID {
+			if ss.OwnerUserID == u.ID {
 				ids = append(ids, ss.ID.String())
 			}
 		}
@@ -41,14 +41,14 @@ func (s *Server) handleSessionsSeenHTTP(w http.ResponseWriter, r *http.Request) 
 			if err != nil {
 				continue
 			}
-			if ss, ok := s.registry.Get(id); ok && ss.OwnerUserID == p.UserID {
+			if ss, ok := s.registry.Get(id); ok && ss.OwnerUserID == u.ID {
 				ids = append(ids, ss.ID.String())
 			}
 		}
 	}
 
 	if len(ids) > 0 {
-		if err := s.cfg.Store.SetSeen(r.Context(), p.UserID, ids, time.Now().Unix()); err != nil {
+		if err := s.cfg.Store.SetSeen(r.Context(), u.ID, ids, time.Now().Unix()); err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

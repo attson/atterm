@@ -6,53 +6,57 @@ import (
 	"time"
 )
 
-// ListUserWebSessions returns all non-expired sessions for userID,
-// ordered by created_at DESC.
-func (s *SQLiteStore) ListUserWebSessions(ctx context.Context, userID string) ([]UserWebSession, error) {
+// ListSessions returns all non-expired sessions for userID, ordered by
+// created_at DESC.
+func (s *SQLiteStore) ListSessions(ctx context.Context, userID string) ([]Session, error) {
 	nowMs := time.Now().UnixMilli()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id_hash, COALESCE(user_agent, ''), COALESCE(ip_prefix, ''), created_at, expires_at
-		 FROM web_sessions
+		`SELECT id_hash, user_id, COALESCE(user_agent, ''), COALESCE(ip_prefix, ''), created_at, expires_at, last_seen_at
+		 FROM sessions
 		 WHERE user_id = ? AND expires_at >= ?
 		 ORDER BY created_at DESC`,
 		userID, nowMs,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list web_sessions: %w", err)
+		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 	defer rows.Close()
-	var out []UserWebSession
+	var out []Session
 	for rows.Next() {
 		var (
-			idHash    string
-			ua        string
-			ipPrefix  string
-			createdMs int64
-			expiresMs int64
+			idHash     string
+			uid        string
+			ua         string
+			ipPrefix   string
+			createdMs  int64
+			expiresMs  int64
+			lastSeenMs int64
 		)
-		if err := rows.Scan(&idHash, &ua, &ipPrefix, &createdMs, &expiresMs); err != nil {
-			return nil, fmt.Errorf("scan web_session: %w", err)
+		if err := rows.Scan(&idHash, &uid, &ua, &ipPrefix, &createdMs, &expiresMs, &lastSeenMs); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
 		}
-		out = append(out, UserWebSession{
-			IDHash:    idHash,
-			UserAgent: ua,
-			IPPrefix:  ipPrefix,
-			CreatedAt: time.UnixMilli(createdMs),
-			ExpiresAt: time.UnixMilli(expiresMs),
+		out = append(out, Session{
+			IDHash:     idHash,
+			UserID:     uid,
+			UserAgent:  ua,
+			IPPrefix:   ipPrefix,
+			CreatedAt:  time.UnixMilli(createdMs),
+			ExpiresAt:  time.UnixMilli(expiresMs),
+			LastSeenAt: time.UnixMilli(lastSeenMs),
 		})
 	}
 	return out, rows.Err()
 }
 
-// DeleteUserWebSessionByIDHash revokes the session ONLY IF owned by userID.
+// DeleteSessionByIDHash revokes the session ONLY IF owned by userID.
 // The (user_id, id_hash) WHERE clause is the security boundary.
-func (s *SQLiteStore) DeleteUserWebSessionByIDHash(ctx context.Context, userID, idHash string) (bool, error) {
+func (s *SQLiteStore) DeleteSessionByIDHash(ctx context.Context, userID, idHash string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM web_sessions WHERE user_id = ? AND id_hash = ?`,
+		`DELETE FROM sessions WHERE user_id = ? AND id_hash = ?`,
 		userID, idHash,
 	)
 	if err != nil {
-		return false, fmt.Errorf("delete web_session by id_hash: %w", err)
+		return false, fmt.Errorf("delete session by id_hash: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -61,16 +65,16 @@ func (s *SQLiteStore) DeleteUserWebSessionByIDHash(ctx context.Context, userID, 
 	return n > 0, nil
 }
 
-// DeleteOtherWebSessionsForUser drops every row owned by userID except
-// the one matching exceptIDHash. The caller is expected to pass the
-// current request's session id_hash so the operator stays signed in.
-func (s *SQLiteStore) DeleteOtherWebSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error) {
+// DeleteOtherSessionsForUser drops every row owned by userID except the one
+// matching exceptIDHash. The caller is expected to pass the current
+// request's session id_hash so the operator stays signed in.
+func (s *SQLiteStore) DeleteOtherSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM web_sessions WHERE user_id = ? AND id_hash != ?`,
+		`DELETE FROM sessions WHERE user_id = ? AND id_hash != ?`,
 		userID, exceptIDHash,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("delete other web_sessions: %w", err)
+		return 0, fmt.Errorf("delete other sessions: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

@@ -7,30 +7,28 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/attson/atterm/internal/userstore"
 )
 
-// deleteMeReq builds a DELETE /api/me request with JSON body, session cookie,
-// and CSRF header. Centralised so each test case stays focused on its assertion.
-func deleteMeReq(body any, cookie *http.Cookie, csrf string) *http.Request {
+// deleteMeReq builds a DELETE /api/me request with JSON body + Bearer header.
+func deleteMeReq(body any, token string) *http.Request {
 	b, _ := json.Marshal(body)
 	r := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(string(b)))
 	r.Header.Set("Content-Type", "application/json")
-	r.AddCookie(cookie)
-	r.Header.Set("X-CSRF-Token", csrf)
+	r.Header.Set("Authorization", "Bearer "+token)
 	return r
 }
 
 func TestDeleteMe_Success(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-	cookie, userID, _ := signupAndLogin(t, handler, store, "a@example.com", "passphrase-1234")
-	csrf := csrfTokenFor(t, handler, cookie)
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, deleteMeReq(map[string]string{
-		"email":    "a@example.com",
-		"password": "passphrase-1234",
-	}, cookie, csrf))
+	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
+		"email":    "a@b",
+		"password": "Correct-Horse-Battery-Staple-1!",
+	}, tok))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
 	}
@@ -40,16 +38,14 @@ func TestDeleteMe_Success(t *testing.T) {
 }
 
 func TestDeleteMe_WrongEmail_400(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-	cookie, userID, _ := signupAndLogin(t, handler, store, "a@example.com", "passphrase-1234")
-	csrf := csrfTokenFor(t, handler, cookie)
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, deleteMeReq(map[string]string{
+	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
 		"email":    "other@example.com",
-		"password": "passphrase-1234",
-	}, cookie, csrf))
+		"password": "Correct-Horse-Battery-Staple-1!",
+	}, tok))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d; want 400", rec.Code)
 	}
@@ -64,16 +60,14 @@ func TestDeleteMe_WrongEmail_400(t *testing.T) {
 }
 
 func TestDeleteMe_WrongPassword_401(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-	cookie, userID, _ := signupAndLogin(t, handler, store, "a@example.com", "passphrase-1234")
-	csrf := csrfTokenFor(t, handler, cookie)
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, deleteMeReq(map[string]string{
-		"email":    "a@example.com",
+	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
+		"email":    "a@b",
 		"password": "wrong-password-1234",
-	}, cookie, csrf))
+	}, tok))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d; want 401", rec.Code)
 	}
@@ -88,19 +82,17 @@ func TestDeleteMe_WrongPassword_401(t *testing.T) {
 }
 
 func TestDeleteMe_LastAdmin_409(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-	cookie, userID, _ := signupAndLogin(t, handler, store, "admin@example.com", "passphrase-1234")
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
 	if err := store.SetUserAdmin(context.Background(), userID, true); err != nil {
 		t.Fatalf("setup: SetUserAdmin: %v", err)
 	}
-	csrf := csrfTokenFor(t, handler, cookie)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, deleteMeReq(map[string]string{
-		"email":    "admin@example.com",
-		"password": "passphrase-1234",
-	}, cookie, csrf))
+	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
+		"email":    "a@b",
+		"password": "Correct-Horse-Battery-Staple-1!",
+	}, tok))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d; want 409", rec.Code)
 	}
@@ -115,14 +107,15 @@ func TestDeleteMe_LastAdmin_409(t *testing.T) {
 }
 
 func TestDeleteMe_EmailCaseInsensitive(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-	cookie, userID, _ := signupAndLogin(t, handler, store, "mixedcase@example.com", "passphrase-1234")
-	csrf := csrfTokenFor(t, handler, cookie)
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
 
-	// Email typed with different case must still match.
+	// Email typed with different case must still match. Helper creates "a@b".
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, deleteMeReq(map[string]string{"email": "MixedCase@Example.com", "password": "passphrase-1234"}, cookie, csrf))
+	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
+		"email":    "A@B",
+		"password": "Correct-Horse-Battery-Staple-1!",
+	}, tok))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status=%d; want 204 (case should not matter): %s", rec.Code, rec.Body.String())
 	}
@@ -132,16 +125,14 @@ func TestDeleteMe_EmailCaseInsensitive(t *testing.T) {
 }
 
 func TestDeleteMe_AdminButNotLast_Succeeds(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-	cookie, userID, _ := signupAndLogin(t, handler, store, "admin@example.com", "passphrase-1234")
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
 	if err := store.SetUserAdmin(context.Background(), userID, true); err != nil {
 		t.Fatalf("setup: SetUserAdmin for first admin: %v", err)
 	}
-	csrf := csrfTokenFor(t, handler, cookie)
 
 	// Second admin so the first isn't the last.
-	other, err := store.CreateUser(context.Background(), "other@example.com", "passphrase-1234")
+	other, err := store.CreateUser(context.Background(), "other@example.com", "Correct-Horse-Battery-Staple-1!")
 	if err != nil {
 		t.Fatalf("setup: CreateUser other: %v", err)
 	}
@@ -150,10 +141,10 @@ func TestDeleteMe_AdminButNotLast_Succeeds(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, deleteMeReq(map[string]string{
-		"email":    "admin@example.com",
-		"password": "passphrase-1234",
-	}, cookie, csrf))
+	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
+		"email":    "a@b",
+		"password": "Correct-Horse-Battery-Staple-1!",
+	}, tok))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
 	}

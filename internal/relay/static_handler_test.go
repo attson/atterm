@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -17,10 +18,10 @@ import (
 func fakeWebFS(t *testing.T) fs.FS {
 	t.Helper()
 	return fstest.MapFS{
-		"index.html":         {Data: []byte("<html>home</html>")},
-		"admin/index.html":   {Data: []byte("<html>admin</html>")},
+		"index.html":           {Data: []byte("<html>home</html>")},
+		"admin/index.html":     {Data: []byte("<html>admin</html>")},
 		"assets/admin-fake.js": {Data: []byte("/* admin */")},
-		"login.html":         {Data: []byte("<html>login</html>")},
+		"login.html":           {Data: []byte("<html>login</html>")},
 	}
 }
 
@@ -48,12 +49,12 @@ func TestStaticHandler_AdminGate_NonAdminRedirectsToHome(t *testing.T) {
 	store, _ := userstore.Open(ctx, ":memory:")
 	defer store.Close()
 	u, _ := store.CreateUser(ctx, "u@example.com", "passphrase-1234")
-	secret, _ := store.CreateWebSession(ctx, u.ID, "ua", "")
+	tok, _, _ := store.CreateSession(ctx, u.ID, "ua", "", 24*time.Hour)
 	resolver := NewIdentityResolver(store)
 	handler := newStaticHandler(resolver, fsys)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
-	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
+	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
@@ -71,12 +72,12 @@ func TestStaticHandler_AdminGate_AdminServesPage(t *testing.T) {
 	defer store.Close()
 	u, _ := store.CreateUser(ctx, "a@example.com", "passphrase-1234")
 	_ = store.SetUserAdmin(ctx, u.ID, true)
-	secret, _ := store.CreateWebSession(ctx, u.ID, "ua", "")
+	tok, _, _ := store.CreateSession(ctx, u.ID, "ua", "", 24*time.Hour)
 	resolver := NewIdentityResolver(store)
 	handler := newStaticHandler(resolver, fsys)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
-	req.AddCookie(&http.Cookie{Name: "atterm_session", Value: secret.Expose()})
+	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -94,7 +95,7 @@ func TestStaticHandler_AssetsBundle_NotGated(t *testing.T) {
 	resolver := NewIdentityResolver(store)
 	handler := newStaticHandler(resolver, fsys)
 
-	// No cookie — anonymous request. Post-Vue-rewrite, admin code is part of
+	// No auth header — anonymous request. Post-Vue-rewrite, admin code is part of
 	// the shared /assets/<hash>.js bundle, not under /admin/.
 	req := httptest.NewRequest(http.MethodGet, "/assets/admin-fake.js", nil)
 	rec := httptest.NewRecorder()

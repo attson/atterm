@@ -2,7 +2,6 @@ package relay
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -12,18 +11,18 @@ type PrincipalKind uint8
 
 const (
 	PrincipalNone  PrincipalKind = iota // unauthenticated / unknown
-	PrincipalUser                       // authenticated user (cookie or api token)
+	PrincipalUser                       // authenticated user
 	PrincipalAdmin                      // authenticated user with user.is_admin = true
 )
 
-// Principal is the resolved identity for a single HTTP request.
-// authScope is declared in auth.go and reused here.
+// Principal is the resolved identity for a single HTTP request. After the
+// session-token migration the only writer is IdentityResolver.Resolve (used
+// by the static handler's login redirect) and the requireUser shim in
+// auth_http.go that derives one from a UserFromContext call.
 type Principal struct {
-	Kind       PrincipalKind
-	UserID     string    // non-empty when authenticated as a user (PrincipalUser or PrincipalAdmin)
-	TokenID    string    // non-empty when source was an API token (not a cookie)
-	Scope      authScope // authWrite for all valid principals in this implementation
-	CSRFSecret []byte    // set when authenticated via cookie (PrincipalUser or PrincipalAdmin)
+	Kind   PrincipalKind
+	UserID string    // non-empty when Kind is PrincipalUser or PrincipalAdmin
+	Scope  authScope // authWrite for every authenticated principal
 }
 
 // IsUser reports whether p is an authenticated user. Admin is a strict
@@ -33,8 +32,11 @@ func (p Principal) IsUser() bool {
 	return p.Kind == PrincipalUser || p.Kind == PrincipalAdmin
 }
 
-// IdentityResolver is constructed once at relay startup and reused across
-// every handler.
+// IdentityResolver resolves the static handler's redirect Principal from a
+// bearer token. It is constructed once at relay startup and reused across
+// every static GET. Production HTTP / WebSocket routes do NOT use this type
+// — they go through requireSession, which writes the user into the request
+// context directly.
 type IdentityResolver struct {
 	store userstore.Store
 }
@@ -44,63 +46,26 @@ func NewIdentityResolver(store userstore.Store) *IdentityResolver {
 	return &IdentityResolver{store: store}
 }
 
-// Resolve returns the Principal for req. It never returns an error; all failure
-// modes collapse to Principal{Kind: PrincipalNone}.
+// Resolve returns the Principal for req. It never returns an error; all
+// failure modes collapse to Principal{Kind: PrincipalNone}.
 //
-// Precedence (spec §4):
-//  1. Session cookie "atterm_session" — highest priority
-//  2. Authorization: Bearer <token> or Sec-WebSocket-Protocol sub-protocol token
+// Token sources, in order:
+//  1. Authorization: Bearer <token>
+//  2. Sec-WebSocket-Protocol: atterm-token.<token> (or -b64.<base64>)
 //
-// URL query parameters are intentionally NOT read (red line: secrets must not
-// appear in server logs via query strings).
+// URL query parameters and HTTP cookies are intentionally NOT read.
 func (r *IdentityResolver) Resolve(req *http.Request) Principal {
-	// 1. Cookie — highest precedence.
-	if c, err := req.Cookie("atterm_session"); err == nil && c.Value != "" {
-		userID, csrfSecret, err := r.store.LookupWebSession(req.Context(), c.Value)
-		if err == nil {
-			kind := PrincipalUser
-			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
-				kind = PrincipalAdmin
-			}
-			return Principal{
-				Kind:       kind,
-				UserID:     userID,
-				Scope:      authWrite,
-				CSRFSecret: csrfSecret,
-			}
-		}
-		// Invalid/expired cookie — fall through to PrincipalNone (do NOT check
-		// bearer token when a cookie was present, to avoid downgrade confusion).
+	tok := tokenFromRequest(req)
+	if tok == "" {
 		return Principal{Kind: PrincipalNone}
 	}
-
-	// 2. Bearer token or WebSocket subprotocol token.
-	if tok := tokenFromIdentityRequest(req); tok != "" {
-		tokenID, userID, err := r.store.LookupAPIToken(req.Context(), tok)
-		if err == nil {
-			kind := PrincipalUser
-			if u, gerr := r.store.GetUser(req.Context(), userID); gerr == nil && u.IsAdmin {
-				kind = PrincipalAdmin
-			}
-			return Principal{
-				Kind:    kind,
-				UserID:  userID,
-				TokenID: tokenID,
-				Scope:   authWrite,
-			}
-		}
+	_, user, err := r.store.LookupSession(req.Context(), tok)
+	if err != nil || user == nil {
+		return Principal{Kind: PrincipalNone}
 	}
-
-	return Principal{Kind: PrincipalNone}
-}
-
-// tokenFromIdentityRequest extracts a bearer token from Authorization or the
-// Sec-WebSocket-Protocol header. It does NOT read URL query parameters.
-// It delegates subprotocol parsing to the existing tokenFromSubprotocol helper
-// in auth.go so the two implementations stay in sync.
-func tokenFromIdentityRequest(req *http.Request) string {
-	if h := req.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+	kind := PrincipalUser
+	if user.IsAdmin {
+		kind = PrincipalAdmin
 	}
-	return tokenFromSubprotocol(req)
+	return Principal{Kind: kind, UserID: user.ID, Scope: authWrite}
 }

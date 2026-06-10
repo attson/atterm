@@ -59,8 +59,13 @@ func startRelayHost() (*relayHost, error) {
 	if err != nil {
 		return nil, err
 	}
+	// TODO(task-3.3): the desktop mini-relay used to gate access by a shared
+	// per-launch token assigned here. relay.Config no longer carries that
+	// field — Phase 3 reworks the desktop mini-relay to consume a real
+	// userstore + session token. Until then `token` is still generated and
+	// stored on relayHost so the webview's existing Authorization: Bearer
+	// requests don't crash; the mini-relay just no longer validates it.
 	srv := relay.NewServer(relay.Config{
-		Token:        token,
 		Version:      Version,
 		Debug:        relayDebugEnabled(),
 		DebugPayload: relayDebugPayloadEnabled(),

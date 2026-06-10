@@ -19,14 +19,16 @@ import (
 )
 
 func TestClientSessionsStreamsInitialAndChangedSnapshots(t *testing.T) {
-	srv := NewServer(Config{})
+	srv, tok, userID := serverWithSessionAndUser(t)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/client-sessions"
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: map[string][]string{"Authorization": {"Bearer " + tok}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,9 @@ func TestClientSessionsStreamsInitialAndChangedSnapshots(t *testing.T) {
 	}
 
 	id := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	srv.registry.Add(session.New(id, proto.SessionInfo{Command: "bash", Cwd: "/tmp"}))
+	sess := session.New(id, proto.SessionInfo{Command: "bash", Cwd: "/tmp"})
+	sess.OwnerUserID = userID
+	srv.registry.Add(sess)
 
 	changed := readListResp(t, ctx, conn)
 	if len(changed) != 1 {
@@ -50,7 +54,7 @@ func TestClientSessionsStreamsInitialAndChangedSnapshots(t *testing.T) {
 }
 
 func TestClientResizeUpdatesSessionListSize(t *testing.T) {
-	srv := NewServer(Config{})
+	srv, tok, userID := serverWithSessionAndUser(t)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
@@ -59,16 +63,18 @@ func TestClientResizeUpdatesSessionListSize(t *testing.T) {
 
 	id := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	sess := session.New(id, proto.SessionInfo{Command: "bash", Cwd: "/tmp", Cols: 80, Rows: 24})
+	sess.OwnerUserID = userID
 	srv.registry.Add(sess)
 
-	listConn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpSrv.URL, "http")+"/client-sessions", nil)
+	authHeader := map[string][]string{"Authorization": {"Bearer " + tok}}
+	listConn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpSrv.URL, "http")+"/client-sessions", &websocket.DialOptions{HTTPHeader: authHeader})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer listConn.Close(websocket.StatusNormalClosure, "")
 	_ = readListResp(t, ctx, listConn)
 
-	clientConn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpSrv.URL, "http")+"/client", nil)
+	clientConn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpSrv.URL, "http")+"/client", &websocket.DialOptions{HTTPHeader: authHeader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,12 +109,13 @@ func TestClientWriterPingFailureUnsubscribesSession(t *testing.T) {
 		clientWriteWait = oldWriteWait
 	})
 
-	srv := NewServer(Config{})
+	srv, tok, userID := serverWithSessionAndUser(t)
 	httpSrv := httptest.NewServer(srv)
 	defer httpSrv.Close()
 
 	id := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	sess := session.New(id, proto.SessionInfo{Command: "bash"})
+	sess.OwnerUserID = userID
 	first := make(chan struct{}, 1)
 	last := make(chan struct{}, 1)
 	sess.SetSubscriberLifecycle(
@@ -119,7 +126,7 @@ func TestClientWriterPingFailureUnsubscribesSession(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	rawConn, err := dialRawWebSocketClient(httpSrv.URL, "/client")
+	rawConn, err := dialRawWebSocketClient(httpSrv.URL, "/client", tok)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +155,7 @@ func TestClientWriterPingFailureUnsubscribesSession(t *testing.T) {
 	}
 }
 
-func dialRawWebSocketClient(serverURL, path string) (net.Conn, error) {
+func dialRawWebSocketClient(serverURL, path, sessionToken string) (net.Conn, error) {
 	addr := strings.TrimPrefix(serverURL, "http://")
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -165,7 +172,11 @@ func dialRawWebSocketClient(serverURL, path string) (net.Conn, error) {
 		"Upgrade: websocket\r\n" +
 		"Connection: Upgrade\r\n" +
 		"Sec-WebSocket-Version: 13\r\n" +
-		"Sec-WebSocket-Key: " + key + "\r\n\r\n"
+		"Sec-WebSocket-Key: " + key + "\r\n"
+	if sessionToken != "" {
+		req += "Authorization: Bearer " + sessionToken + "\r\n"
+	}
+	req += "\r\n"
 	if _, err := conn.Write([]byte(req)); err != nil {
 		conn.Close()
 		return nil, err

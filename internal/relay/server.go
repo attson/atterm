@@ -5,8 +5,6 @@ package relay
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -29,14 +27,6 @@ import (
 
 // Config configures a Server.
 type Config struct {
-	// Token is the shared bearer token. Empty means no auth (dev only).
-	Token string
-	// ReadOnlyTokens can list and attach to sessions, but cannot send input,
-	// resize, paste images, or register agent/uplink connections.
-	ReadOnlyTokens []string
-	// ReadOnlyTokenHashes are sha256:base64url token hashes from persistent
-	// admin config. They behave like ReadOnlyTokens without storing secrets.
-	ReadOnlyTokenHashes []string
 	// WebFS is the static web client filesystem. Nil disables /.
 	// Callers typically pass relay.EmbeddedWebFS() (prod) or os.DirFS(path) (dev).
 	WebFS fs.FS
@@ -71,9 +61,9 @@ type Config struct {
 	WebPushIdleTimeout time.Duration
 	// Webhook, when non-nil, fires per-user outbound webhooks on command-finish.
 	Webhook *webhook.Service
-	// Resolver, when non-nil, enables Principal-based auth for /uplink and
-	// /agent. When nil, the legacy shared-token (Token field) path is used.
-	// Set this to enable per-user API-token gating (Task 4.1+).
+	// Resolver, when non-nil, enables Principal-based auth for cookie-bearing
+	// HTTP routes (e.g. /admin, /api/me, the static handler). WebSocket and
+	// /api/sessions routes are gated by requireSession (session-token only).
 	Resolver *IdentityResolver
 	// Store, when non-nil alongside Resolver, mounts the user-account HTTP API
 	// (/api/auth/*, /api/me/*, /admin/api/invitations, /admin/api/users).
@@ -106,14 +96,16 @@ type ServerDeps struct {
 
 // BuildMux constructs and returns the HTTP mux with all auth and admin routes
 // registered. It is exported so tests can build the full production mux for
-// route-enumeration checks (Task 3.4 mux-enumerator test).
-func BuildMux(d ServerDeps) *http.ServeMux {
+// route-enumeration checks (Task 3.4 mux-enumerator test). The requireSession
+// argument wraps every protected route; pass nil to leave protected routes
+// unwrapped (tests only).
+func BuildMux(d ServerDeps, requireSession func(http.HandlerFunc) http.HandlerFunc) *http.ServeMux {
 	mux := http.NewServeMux()
 	if d.Auth != nil {
-		d.Auth.RegisterInto(mux)
+		d.Auth.RegisterInto(mux, requireSession)
 	}
 	if d.Admin != nil {
-		d.Admin.RegisterInto(mux)
+		d.Admin.RegisterInto(mux, requireSession)
 	}
 	return mux
 }
@@ -139,61 +131,48 @@ func NewServer(cfg Config) *Server {
 		conns:     newConnectionLimiter(connLimit),
 		startTime: time.Now(),
 	}
-	s.mux.HandleFunc("/agent", s.handleAgentHTTP)
-	s.mux.HandleFunc("/uplink", s.handleUplinkHTTP)
-	s.mux.HandleFunc("/client", s.handleClientHTTP)
-	s.mux.HandleFunc("/client-sessions", s.handleClientSessionsHTTP)
-	s.mux.HandleFunc("/api/sessions", s.handleSessionsHTTP)
+	// WebSocket + session-API routes — gated by requireSession.
+	s.mux.HandleFunc("/agent", s.requireSession(s.handleAgentHTTP))
+	s.mux.HandleFunc("/uplink", s.requireSession(s.handleUplinkHTTP))
+	s.mux.HandleFunc("/client", s.requireSession(s.handleClientHTTP))
+	s.mux.HandleFunc("/client-sessions", s.requireSession(s.handleClientSessionsHTTP))
+	s.mux.HandleFunc("/api/sessions", s.requireSession(s.handleSessionsHTTP))
+	// Public — anonymous traffic allowed.
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/admin/api/health", s.requireAdminAccess(s.handleAdminHealthAPI))
-	s.mux.HandleFunc("/admin/health", s.requireAdminAccess(s.handleAdminHealth))
-	s.mux.HandleFunc("/api/push/key", s.handlePushKey)
-	if cfg.Resolver != nil {
-		s.mux.Handle("/api/push/subscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushSubscribe)))
-		s.mux.Handle("/api/push/unsubscribe", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushUnsubscribe)))
-		s.mux.Handle("/api/push/test", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handlePushTest)))
-	} else {
-		s.mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
-		s.mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
-		s.mux.HandleFunc("/api/push/test", s.handlePushTest)
-	}
+	// Admin-only — requireSession + is_admin flag (the latter checked by
+	// requireAdminAccess).
+	s.mux.HandleFunc("/admin/api/health", s.requireSession(s.requireAdminAccess(s.handleAdminHealthAPI)))
+	s.mux.HandleFunc("/admin/health", s.requireSession(s.requireAdminAccess(s.handleAdminHealth)))
+	s.mux.HandleFunc("/admin/api/config", s.requireSession(s.handleAdminConfigHTTP))
+	// Web-push — all four routes need an authenticated user.
+	s.mux.HandleFunc("/api/push/key", s.requireSession(s.handlePushKey))
+	s.mux.HandleFunc("/api/push/subscribe", s.requireSession(s.handlePushSubscribe))
+	s.mux.HandleFunc("/api/push/unsubscribe", s.requireSession(s.handlePushUnsubscribe))
+	s.mux.HandleFunc("/api/push/test", s.requireSession(s.handlePushTest))
 	if cfg.WebFS != nil {
 		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebFS))
-	}
-	// /admin/api/config is the runtime-limits endpoint used by the admin UI.
-	// Auth is PrincipalAdmin (cookie + user.is_admin), enforced inside the
-	// handler. Mutating methods are additionally wrapped in RequireCSRF when
-	// a resolver is present; without a resolver the handler returns 401 so
-	// the route is safe to register unconditionally.
-	if cfg.Resolver != nil {
-		s.mux.Handle("/admin/api/config", RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleAdminConfigHTTP)))
-	} else {
-		s.mux.HandleFunc("/admin/api/config", s.handleAdminConfigHTTP)
 	}
 
 	// Mount user-account HTTP API when both resolver and store are wired.
 	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed
 	// here so the same wiring runs in both the production binary and any test
-	// that calls NewServer with a non-nil Resolver+Store.
+	// that calls NewServer with a non-nil Resolver+Store. Resolver itself is
+	// only consumed by newStaticHandler — auth & admin handlers read the user
+	// from request context via the requireSession wrapper.
 	if cfg.Resolver != nil && cfg.Store != nil {
 		argon := NewArgon2Pool(runtime.NumCPU())
 		limits := NewLimitRegistry()
 		authSrv := &AuthServer{
 			Store:        cfg.Store,
-			Resolver:     cfg.Resolver,
 			Argon:        argon,
 			Limits:       limits,
 			FailureFloor: 200 * time.Millisecond,
 		}
-		adminSrv := &AdminServer{
-			Store:    cfg.Store,
-			Resolver: cfg.Resolver,
-		}
-		authSrv.RegisterInto(s.mux)
-		adminSrv.RegisterInto(s.mux)
-		s.mux.Handle("POST /api/sessions/seen",
-			RequireCSRF(cfg.Resolver, http.HandlerFunc(s.handleSessionsSeenHTTP)))
+		adminSrv := &AdminServer{Store: cfg.Store}
+		authSrv.RegisterInto(s.mux, s.requireSession)
+		adminSrv.RegisterInto(s.mux, s.requireSession)
+		s.mux.HandleFunc("POST /api/sessions/seen", s.requireSession(s.handleSessionsSeenHTTP))
 
 		// Background goroutine: purge expired web sessions hourly.
 		go func() {
@@ -207,10 +186,10 @@ func NewServer(cfg Config) *Server {
 			for {
 				select {
 				case <-t.C:
-					if n, err := cfg.Store.PurgeExpiredWebSessions(ctx); err != nil {
-						log.Printf("relay: PurgeExpiredWebSessions: %v", err)
+					if n, err := cfg.Store.PurgeExpiredSessions(ctx); err != nil {
+						log.Printf("relay: PurgeExpiredSessions: %v", err)
 					} else if n > 0 {
-						log.Printf("relay: purged %d expired web sessions", n)
+						log.Printf("relay: purged %d expired sessions", n)
 					}
 				}
 			}
@@ -297,21 +276,11 @@ func (s *Server) allowAuthenticatedRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentHTTP(w http.ResponseWriter, r *http.Request) {
+	// requireSession (mux wrapper) has already authenticated this request and
+	// stashed the user in the request context.
 	var ownerUserID string
-	if s.cfg.Resolver != nil {
-		p := s.cfg.Resolver.Resolve(r)
-		if !p.IsUser() || p.TokenID == "" {
-			s.debugf("http reject path=/agent remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		ownerUserID = p.UserID
-	} else {
-		if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
-			s.debugf("http reject path=/agent remote=%s reason=unauthorized", r.RemoteAddr)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if u, ok := UserFromContext(r.Context()); ok {
+		ownerUserID = u.ID
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -345,21 +314,11 @@ func (s *Server) StartTime() time.Time {
 }
 
 func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
+	// requireSession (mux wrapper) has already authenticated this request and
+	// stashed the user in the request context.
 	var ownerUserID string
-	if s.cfg.Resolver != nil {
-		p := s.cfg.Resolver.Resolve(r)
-		if !p.IsUser() || p.TokenID == "" {
-			s.debugf("http reject path=/uplink remote=%s reason=forbidden principal=%d tokenID=%q", r.RemoteAddr, p.Kind, p.TokenID)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		ownerUserID = p.UserID
-	} else {
-		if authorizeWithScope(r, s.cfg.Token, s.cfg.ReadOnlyTokens) != authWrite {
-			s.debugf("http reject path=/uplink remote=%s reason=unauthorized", r.RemoteAddr)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if u, ok := UserFromContext(r.Context()); ok {
+		ownerUserID = u.ID
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -383,26 +342,14 @@ func (s *Server) handleUplinkHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
+	// requireSession (mux wrapper) has already authenticated this request and
+	// stashed the user in the request context.
 	var (
-		scope       authScope
+		scope       = authWrite
 		ownerUserID string
 	)
-	if s.cfg.Resolver != nil {
-		p := s.cfg.Resolver.Resolve(r)
-		if !p.IsUser() {
-			s.debugf("http reject path=/client remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		scope = authWrite
-		ownerUserID = p.UserID
-	} else {
-		scope = authorizeClientWebSocketWithConfig(r, s.cfg)
-		if scope == authNone {
-			s.debugf("http reject path=/client remote=%s reason=unauthorized", r.RemoteAddr)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if u, ok := UserFromContext(r.Context()); ok {
+		ownerUserID = u.ID
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -426,22 +373,11 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {
+	// requireSession (mux wrapper) has already authenticated this request and
+	// stashed the user in the request context.
 	var ownerUserID string
-	if s.cfg.Resolver != nil {
-		p := s.cfg.Resolver.Resolve(r)
-		if !p.IsUser() {
-			s.debugf("http reject path=/client-sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		ownerUserID = p.UserID
-	} else {
-		scope := authorizeClientWebSocketWithConfig(r, s.cfg)
-		if scope == authNone {
-			s.debugf("http reject path=/client-sessions remote=%s reason=unauthorized", r.RemoteAddr)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if u, ok := UserFromContext(r.Context()); ok {
+		ownerUserID = u.ID
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -463,21 +399,11 @@ func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleSessionsHTTP(w http.ResponseWriter, r *http.Request) {
+	// requireSession (mux wrapper) has already authenticated this request and
+	// stashed the user in the request context.
 	var ownerUserID string
-	if s.cfg.Resolver != nil {
-		p := s.cfg.Resolver.Resolve(r)
-		if !p.IsUser() {
-			s.debugf("http reject path=/api/sessions remote=%s reason=forbidden principal=%d", r.RemoteAddr, p.Kind)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		ownerUserID = p.UserID
-	} else {
-		if authorizeClientWithConfig(r, s.cfg) == authNone {
-			s.debugf("http reject path=/api/sessions remote=%s reason=unauthorized", r.RemoteAddr)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if u, ok := UserFromContext(r.Context()); ok {
+		ownerUserID = u.ID
 	}
 	if !s.allowAuthenticatedRequest(w, r) {
 		return
@@ -505,16 +431,6 @@ func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
 	s.debugf("http api_version remote=%s version=%s", r.RemoteAddr, version)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(versionResponse{Version: version})
-}
-
-// tokenHash is the canonical sha256+base64url form used as a key in
-// legacy webpush subscription registries (pre-userID schema).
-func tokenHash(token string) string {
-	if token == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(token))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // allowedStaticPath reports whether p is a known production-asset path the

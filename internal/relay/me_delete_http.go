@@ -12,15 +12,15 @@ import (
 //   - requireUser: anonymous callers 401 immediately.
 //   - email match: typo-protection; the client must echo the exact email of
 //     the user the cookie resolves to.
-//   - password re-verify: even with a stolen cookie + valid CSRF token, an
-//     attacker still needs the plaintext password.
+//   - password re-verify: even with a stolen cookie, an attacker still needs
+//     the plaintext password.
 //   - last-admin guard: refuses if the caller is the only remaining admin,
 //     so the deploy can never be locked out by an accidental delete.
 //
-// On success the user row is dropped (api_tokens and web_sessions cascade
-// via FK; invitations.consumed_by is nulled by DeleteUser's transaction).
-// The session cookie row is gone too, but we still emit a Max-Age=-1
-// Set-Cookie so the browser stops sending the invalid cookie.
+// On success the user row is dropped (sessions cascade via FK;
+// invitations.consumed_by is nulled by DeleteUser's transaction). The
+// caller's bearer token is now invalid — the client is expected to discard
+// it after a successful 204.
 func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireUser(w, r)
 	if !ok {
@@ -46,7 +46,7 @@ func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Re-verify password — attacker with cookie + CSRF still needs plaintext.
+	// Re-verify password — attacker with stolen cookie still needs plaintext.
 	v, err := a.Store.VerifyPassword(r.Context(), user.Email, body.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error")
@@ -75,8 +75,7 @@ func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear the session cookie so the browser stops sending the now-orphaned
-	// session id. The DB row was already cascade-dropped from web_sessions.
-	setSessionCookie(w, r, "", -1)
+	// The bearer token is now orphaned (sessions row cascade-dropped). Client
+	// is responsible for discarding it on the 204 response.
 	w.WriteHeader(http.StatusNoContent)
 }

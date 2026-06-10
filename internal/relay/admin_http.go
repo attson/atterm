@@ -11,19 +11,20 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 )
 
-// AdminServer holds the user-account admin handlers (Task 3.3).
-// Handlers use requireAdmin middleware for Principal-based auth.
+// AdminServer holds the user-account admin handlers. Routes are mounted via
+// RegisterInto, which wraps each handler in requireSession (outer, validates
+// the session token) and requireAdmin (inner, checks the is_admin flag).
 type AdminServer struct {
-	Store    userstore.Store
-	Resolver *IdentityResolver
+	Store userstore.Store
 }
 
-// requireAdmin returns an http.Handler that allows only PrincipalAdmin requests.
-// It uses IdentityResolver.Resolve so all token sources (Bearer header) work.
+// requireAdmin gates inner on the request's authenticated user having
+// is_admin=true. The session-token check already ran in the outer
+// requireSession wrapper, so this only enforces the admin flag.
 func (a *AdminServer) requireAdmin(inner http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := a.Resolver.Resolve(r)
-		if p.Kind != PrincipalAdmin {
+		u, ok := UserFromContext(r.Context())
+		if !ok || u == nil || !u.IsAdmin {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -32,23 +33,33 @@ func (a *AdminServer) requireAdmin(inner http.HandlerFunc) http.Handler {
 }
 
 // AdminRoutes returns an http.Handler with all user-account admin endpoints.
+// Used by tests that don't want session-token enforcement.
 func (a *AdminServer) AdminRoutes() http.Handler {
 	mux := http.NewServeMux()
-	a.RegisterInto(mux)
+	a.RegisterInto(mux, nil)
 	return mux
 }
 
 // RegisterInto registers all user-account admin routes into the provided mux.
-// Called by AdminRoutes() and by BuildMux so the production mux is assembled
-// from the same set of routes.
-func (a *AdminServer) RegisterInto(mux *http.ServeMux) {
-	mux.Handle("POST /admin/api/invitations", a.requireAdmin(a.handleCreateInvite))
-	mux.Handle("GET /admin/api/invitations", a.requireAdmin(a.handleListInvites))
-	mux.Handle("GET /admin/api/users", a.requireAdmin(a.handleListUsers))
-	mux.Handle("POST /admin/api/users/{id}/reset-password", a.requireAdmin(a.handleResetPassword))
-	mux.Handle("POST /admin/api/users/{id}/disable", a.requireAdmin(a.handleDisableUser))
-	mux.Handle("POST /admin/api/users/{id}/admin", RequireCSRF(a.Resolver, a.requireAdmin(a.handlePromoteUser)))
-	mux.Handle("DELETE /admin/api/users/{id}/admin", RequireCSRF(a.Resolver, a.requireAdmin(a.handleDemoteUser)))
+// The requireSession argument wraps each admin route so the session-token is
+// validated before requireAdmin checks the is_admin flag. Pass nil to skip
+// the outer wrapper (tests or alternate hosts may apply it elsewhere).
+func (a *AdminServer) RegisterInto(mux *http.ServeMux, requireSession func(http.HandlerFunc) http.HandlerFunc) {
+	wrap := requireSession
+	if wrap == nil {
+		wrap = func(h http.HandlerFunc) http.HandlerFunc { return h }
+	}
+	// gate composes requireSession + requireAdmin for a single admin handler.
+	gate := func(h http.HandlerFunc) http.Handler {
+		return wrap(a.requireAdmin(h).ServeHTTP)
+	}
+	mux.Handle("POST /admin/api/invitations", gate(a.handleCreateInvite))
+	mux.Handle("GET /admin/api/invitations", gate(a.handleListInvites))
+	mux.Handle("GET /admin/api/users", gate(a.handleListUsers))
+	mux.Handle("POST /admin/api/users/{id}/reset-password", gate(a.handleResetPassword))
+	mux.Handle("POST /admin/api/users/{id}/disable", gate(a.handleDisableUser))
+	mux.Handle("POST /admin/api/users/{id}/admin", gate(a.handlePromoteUser))
+	mux.Handle("DELETE /admin/api/users/{id}/admin", gate(a.handleDemoteUser))
 }
 
 // defaultInviteExpiry is the lifetime applied to invitations whose request
@@ -215,7 +226,7 @@ func (a *AdminServer) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 // handleResetPassword implements POST /admin/api/users/{id}/reset-password.
 // Response 200: {"plaintext": "tmp_…"}
-// Atomically: generates tmp password, updates hash + csrf_secret, deletes web_sessions.
+// Atomically: generates tmp password, updates hash, deletes sessions.
 func (a *AdminServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("id")
 	if userID == "" {
@@ -259,12 +270,15 @@ func (a *AdminServer) handlePromoteUser(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing user id", http.StatusBadRequest)
 		return
 	}
-	actor := a.Resolver.Resolve(r)
+	var actorID string
+	if u, ok := UserFromContext(r.Context()); ok {
+		actorID = u.ID
+	}
 	if err := a.Store.SetUserAdmin(r.Context(), id, true); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("admin role change: actor=%s target=%s op=promote", actor.UserID, id)
+	log.Printf("admin role change: actor=%s target=%s op=promote", actorID, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -293,8 +307,11 @@ func (a *AdminServer) handleDemoteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing user id", http.StatusBadRequest)
 		return
 	}
-	actor := a.Resolver.Resolve(r)
-	if id == actor.UserID {
+	var actorID string
+	if u, ok := UserFromContext(r.Context()); ok {
+		actorID = u.ID
+	}
+	if id == actorID {
 		writeError(w, http.StatusBadRequest, "cannot_demote_self")
 		return
 	}
@@ -318,7 +335,7 @@ func (a *AdminServer) handleDemoteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("admin role change: actor=%s target=%s op=demote", actor.UserID, id)
+	log.Printf("admin role change: actor=%s target=%s op=demote", actorID, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -340,18 +357,12 @@ type adminConfigResponse struct {
 // handleAdminConfigHTTP serves GET/PUT /admin/api/config for the admin UI's
 // runtime-limits panel.
 //
-// Auth: requires PrincipalAdmin (cookie session on a user with is_admin=true,
-// or admin API token). When cfg.Resolver is nil (legacy/test setups with no
-// userstore) the endpoint returns 401 — there is no fallback to a shared
-// admin token. CSRF protection for PUT is layered on at the mux level via
-// RequireCSRF; this handler does not re-check CSRF.
+// Auth: the route is wrapped in requireSession at mount time, so the
+// request always carries a *userstore.User in its context. This handler
+// only needs to enforce the admin flag.
 func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.Resolver == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	p := s.cfg.Resolver.Resolve(r)
-	if p.Kind != PrincipalAdmin {
+	u, ok := UserFromContext(r.Context())
+	if !ok || u == nil || !u.IsAdmin {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

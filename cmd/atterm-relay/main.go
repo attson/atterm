@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"flag"
 	"io/fs"
 	"log"
@@ -82,8 +80,12 @@ func main() {
 		log.Fatalf("open userstore: %v", err)
 	}
 
-	if err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword); err != nil {
+	bootstrapTok, _, err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword)
+	if err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
+	}
+	if bootstrapTok != "" {
+		log.Printf("bootstrap admin created; session_token=%s", bootstrapTok)
 	}
 
 	adminCfg := relay.AdminConfig{}
@@ -257,14 +259,6 @@ func appendUniqueString(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
-}
-
-func generateRelayToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func isPublicListenAddr(addr string) bool {

@@ -22,9 +22,9 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 通知深链 | Web Push payload 携带 session id 与通知类型；点击后直接打开目标 session，等待输入通知会聚焦输入区 |
 | 移动快捷控制面板 | Enter / Esc / Tab / Ctrl-C / Ctrl-D / 方向键 / 粘贴 / 图片上传；view-only 会话禁用 |
 | Relay 连接向导 | 桌面端 setup wizard 逐项校验 URL / HTTP-WS 兼容 / token / 身份 / uplink，按错误给出恢复操作 |
-| QR 配对（P1.6） | 桌面端 Settings → Pairing 生成 5 分钟一次性 token 与二维码，移动端扫码即可换取 relay URL + API token，无需手动复制 |
+| QR 配对（P1.6） | 桌面端 Settings → Pairing 生成 5 分钟一次性 token 与二维码，移动端扫码即可换取 relay URL + session token，无需手动复制 |
 | Relay 健康检查（P1.7） | 公开 `/healthz`；admin `/admin/health` 显示 version / uptime / HTTPS / origins / bootstrap admin / 限流 / 活跃 uplinks，并标注移动端 origin 兼容性 |
-| 移动端安全存储（P1.9） | iOS Keychain 保存 relay URL / API token；旧 localStorage 凭据自动迁移并清理；非 HTTPS relay 需用户在 Settings 显式开启 |
+| 移动端安全存储（P1.9） | iOS Keychain 保存 relay URL / session token；旧 localStorage 凭据自动迁移并清理；非 HTTPS relay 需用户在 Settings 显式开启 |
 | 桌面诊断导出（P1.10） | Settings → Diagnostics 一键生成脱敏后的 app / OS / WebView / uplink / 配置摘要文本，方便贴 issue |
 | AI 任务控制台（P2.11–P2.13） | 自动识别 `codex` / `claude` / `gemini` / `aider` / `go test` / `docker build` / `kubectl` 等命令并打 type chip；失败任务卡片显示一行 error line；终端上方 Quick Templates bar 内置 `yes / ok / continue / commit / push / release / 1 / 2 / 3` 默认模板，可在 Settings 增删改、配置 hotkey、关掉 bar |
 | 快捷模板 hotkey | 桌面端每个模板可配快捷键（如 `Mod+1`、`Alt+Shift+P`），按下直接发送，无预览对话框 |
@@ -41,7 +41,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 公网 relay 安全默认值 | 强 bootstrap 管理员密码、Origin 白名单、CSRF、限流、安全响应头 |
 | Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
 | 通知 | 系统通知、Web Push、命令完成 outbound webhook（飞书 / generic JSON），并把状态 / type / summary 一并带过去 |
-| 用户系统 | 邀请码注册、per-user API token、用户独立的会话列表 / Web Push / webhooks；admin 后台管理用户与邀请 |
+| 用户系统 | 邀请码注册、邮箱+密码登录、用户独立的会话列表 / Web Push / webhooks；admin 后台管理用户与邀请 |
 | 桌面体验 | 主题、快捷键设置、右侧插件面板、Quick Input、文件浏览器、翻译插件 |
 
 还在路线图中的能力：桌面安装包 codesign / notarization（P1.8）、单 session 分享 + presence + 审计日志（P3）、可选持久化历史 + 命令级回放（P4）。详见 [`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/spec/architecture.md`](docs/spec/architecture.md) §phase 完成度。
@@ -77,7 +77,7 @@ docker compose up -d atterm-relay
 2. 在浏览器打开 `https://relay.example.com/login.html`，用 bootstrap 邮箱 + 密码登录；登录后顶部导航会出现 **Admin** 入口。登录成功后请把 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 从环境/systemd unit 中删除并重启，避免明文密码长期留在进程环境里。
 3. 在 “Invitations” 页面创建一个邀请码（`inv_…`），把它发给要使用的人（包括你自己）。
 4. 用户在 `https://relay.example.com/signup.html` 用邀请码 + 邮箱 + 密码完成注册。
-5. 登录后在 `/settings.html` 生成 API token（`atk_…`，**只显示一次**），复制后粘贴到桌面端 Settings → API token 字段。
+5. 在桌面端 Settings → Remote relay 填入 relay URL，用注册时的邮箱+密码登录；登录成功后 relay 会下发一份 session token（`ses_…`）并由桌面端持久化。
 6. 桌面端连上 relay 后，会显示 `connected as <email>`。手机或另一台电脑用同一账号登录 `https://relay.example.com` 即可看到 session 列表。
 
 ### 方式 C：源码启动调试
@@ -99,7 +99,7 @@ cd desktop
 wails dev -tags webkit2_41   # Linux 需要 tag；macOS/Windows 可省略
 ```
 
-浏览器访问 `http://127.0.0.1:8080/signup.html`（或 Vite 的 `http://127.0.0.1:5173/signup.html`），用邀请码注册账号；之后在 `/settings.html` 生成 API token，填入桌面端 Settings → API token 字段。
+浏览器访问 `http://127.0.0.1:8080/signup.html`（或 Vite 的 `http://127.0.0.1:5173/signup.html`），用邀请码注册账号；之后在桌面端 Settings → Remote relay 填入 relay URL 并用邮箱+密码登录，relay 会下发 session token 由桌面端持久化。
 
 ### 方式 D：iOS WebView MVP
 
@@ -118,21 +118,25 @@ iOS App 首次启动后有两种配置方式：
 
 1. 桌面端连接好 relay 后，打开 Settings → Pairing，点 `Generate QR code`。
 2. iOS App 点 Settings → Pair with desktop（或首次 setup 直接扫码），用相机扫码即可。
-3. 移动端会自动调 `/api/pair/consume` 拿到 relay URL + 一份独立的 API token，并写入 iOS Keychain。
+3. 移动端会自动调 `/api/pair/consume` 拿到 relay URL + 一份独立的 session token，并写入 iOS Keychain。
 4. token 5 分钟内一次性有效；扫成功一次后立刻失效，没扫到自然过期，不需要手动撤销。
 
 **fallback：手动填写**
 
 ```text
 relay URL: https://relay.example.com
-API token: atk_...（在 relay /settings.html 页面生成）
+邮箱:      you@example.com
+密码:      <注册时设置的密码>
 ```
+
+移动端登录后 relay 下发的 session token（`ses_…`）写入 iOS Keychain，不需要手动复制粘贴。
 
 如果只是用公网 IP:port 做内测，可以在手机端勾选 `allow insecure HTTP relay` 后填写：
 
 ```text
 relay URL: http://121.43.40.128:23301
-API token: atk_...
+邮箱:      you@example.com
+密码:      <注册时设置的密码>
 ```
 
 insecure mode 只适合可信测试环境；正式使用建议配置 HTTPS/WSS 域名，iOS App Transport Security 默认禁止明文 HTTP。
@@ -250,8 +254,8 @@ AT Term 的默认策略是 fail-closed：
 
 - 公网 relay 必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`；首次启动若要自动创建该 admin 用户，`ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 须满足 ≥16 字符、≥3 类字符、不在弱密码黑名单内，否则启动拒绝。Bootstrap 完成后应从环境中删除密码 env。
 - 公网 relay 必须使用明确的 `ATTERM_ORIGINS`。
-- 服务端鉴权不接受 `?token=` 参数；API token 通过 `Authorization: Bearer` 或桌面端 WebSocket 的 `Sec-WebSocket-Protocol` 传递，避免写进 URL。
-- 用户 API token（`atk_…`）仅在创建时明文展示一次，此后 relay 只保存哈希。
+- 服务端鉴权不接受 `?token=` 参数；session token 通过 `Authorization: Bearer` 或浏览器 / 桌面 WebSocket 的 `Sec-WebSocket-Protocol` 传递，避免写进 URL。
+- session token（`ses_…`）以 sha256 哈希存储，明文只在登录 / 配对响应里返回给客户端一次，由客户端自行持久化。
 - web 客户端只加载同源静态资源，不依赖 CDN。
 - relay 默认启用 CSP、Referrer-Policy、nosniff、Permissions-Policy 等安全头。
 - relay 按远端 IP 和认证后的 token hash 做限流与连接数限制。

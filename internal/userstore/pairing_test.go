@@ -2,6 +2,7 @@ package userstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func TestCreatePairingToken_ReturnsPlaintextOnceAndStoresHash(t *testing.T) {
 	}
 }
 
-func TestConsumePairingToken_HappyPath_MintsTokenWithSourcePairing(t *testing.T) {
+func TestConsumePairingToken_HappyPath_ReturnsUser(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
@@ -52,40 +53,18 @@ func TestConsumePairingToken_HappyPath_MintsTokenWithSourcePairing(t *testing.T)
 		t.Fatalf("CreatePairingToken: %v", err)
 	}
 
-	apiSecret, userID, err := s.ConsumePairingToken(ctx, pairSecret.Expose())
+	got, err := s.ConsumePairingToken(ctx, pairSecret.Expose())
 	if err != nil {
 		t.Fatalf("ConsumePairingToken: %v", err)
 	}
-	if userID != u.ID {
-		t.Fatalf("userID: got %q want %q", userID, u.ID)
+	if got == nil {
+		t.Fatal("ConsumePairingToken returned nil user")
 	}
-	plain := apiSecret.Expose()
-	if !strings.HasPrefix(plain, "atk_") {
-		t.Fatalf("api token does not start with atk_: %q", plain)
+	if got.ID != u.ID {
+		t.Fatalf("userID: got %q want %q", got.ID, u.ID)
 	}
-
-	// Verify source column was set to 'pairing'.
-	var source string
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT source FROM api_tokens WHERE token_hash = ?`,
-		tokenHash(plain),
-	).Scan(&source); err != nil {
-		t.Fatalf("select source: %v", err)
-	}
-	if source != "pairing" {
-		t.Fatalf("source: got %q want %q", source, "pairing")
-	}
-
-	// The minted token must authenticate as the original user.
-	gotTokenID, gotUserID, err := s.LookupAPIToken(ctx, plain)
-	if err != nil {
-		t.Fatalf("LookupAPIToken: %v", err)
-	}
-	if gotUserID != u.ID {
-		t.Fatalf("LookupAPIToken userID: got %q want %q", gotUserID, u.ID)
-	}
-	if gotTokenID == "" {
-		t.Fatalf("LookupAPIToken: empty tokenID")
+	if got.Email != u.Email {
+		t.Fatalf("email: got %q want %q", got.Email, u.Email)
 	}
 }
 
@@ -95,11 +74,11 @@ func TestConsumePairingToken_SecondCallFails(t *testing.T) {
 	u, _ := s.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
 	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute)
 
-	if _, _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != nil {
+	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != nil {
 		t.Fatalf("first consume: %v", err)
 	}
-	if _, _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != ErrPairingInvalid {
-		t.Fatalf("second consume: got %v want ErrPairingInvalid", err)
+	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingConsumed) {
+		t.Fatalf("second consume: got %v want ErrPairingConsumed", err)
 	}
 }
 
@@ -109,16 +88,16 @@ func TestConsumePairingToken_Expired(t *testing.T) {
 	u, _ := s.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
 	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, -1*time.Second)
 
-	if _, _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != ErrPairingInvalid {
-		t.Fatalf("expired consume: got %v want ErrPairingInvalid", err)
+	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingExpired) {
+		t.Fatalf("expired consume: got %v want ErrPairingExpired", err)
 	}
 }
 
 func TestConsumePairingToken_UnknownTokenString(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	if _, _, err := s.ConsumePairingToken(ctx, "pair_NOTAREALTOKENVALUE"); err != ErrPairingInvalid {
-		t.Fatalf("garbage consume: got %v want ErrPairingInvalid", err)
+	if _, err := s.ConsumePairingToken(ctx, "pair_NOTAREALTOKENVALUE"); !errors.Is(err, ErrPairingNotFound) {
+		t.Fatalf("garbage consume: got %v want ErrPairingNotFound", err)
 	}
 }
 
@@ -136,7 +115,7 @@ func TestConsumePairingToken_ConcurrentExactlyOneWinner(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, err := s.ConsumePairingToken(ctx, code)
+			_, err := s.ConsumePairingToken(ctx, code)
 			results <- err
 		}()
 	}
@@ -146,7 +125,7 @@ func TestConsumePairingToken_ConcurrentExactlyOneWinner(t *testing.T) {
 	for err := range results {
 		if err == nil {
 			wins++
-		} else if err == ErrPairingInvalid {
+		} else if errors.Is(err, ErrPairingConsumed) {
 			losses++
 		} else {
 			t.Errorf("unexpected error: %v", err)

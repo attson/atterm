@@ -42,7 +42,7 @@ func (a *AuthServer) handlePairCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePairConsume exchanges a pairing token for a fresh API token + relay URL
+// handlePairConsume exchanges a pairing token for a fresh session token + relay URL
 // + user info. No auth header required: the pairing token IS the credential
 // (same trust model as OAuth Device Code Flow).
 func (a *AuthServer) handlePairConsume(w http.ResponseWriter, r *http.Request) {
@@ -59,26 +59,30 @@ func (a *AuthServer) handlePairConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiSecret, userID, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
+	// Consume the pairing token to retrieve the user.
+	user, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
 	if err != nil {
-		if errors.Is(err, userstore.ErrPairingInvalid) {
-			writeJSONStatus(w, http.StatusNotFound, map[string]string{"code": "pair_invalid"})
-			return
+		status := http.StatusNotFound
+		if errors.Is(err, userstore.ErrPairingConsumed) {
+			status = http.StatusConflict
+		} else if errors.Is(err, userstore.ErrPairingExpired) {
+			status = http.StatusGone
 		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeJSONStatus(w, status, map[string]string{"code": "pair_invalid"})
 		return
 	}
 
-	user, err := a.Store.GetUser(r.Context(), userID)
+	// Create a new session for the user.
+	tok, sess, err := a.Store.CreateSession(r.Context(), user.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	writeJSONStatus(w, http.StatusOK, map[string]any{
-		"relay_url": publicBaseURL(r),
-		"api_token": apiSecret.Expose(),
-		"user": map[string]string{
+		"session_token": tok,
+		"expires_at":    sess.ExpiresAt.Unix(),
+		"user": map[string]any{
 			"id":    user.ID,
 			"email": user.Email,
 		},

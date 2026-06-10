@@ -7,12 +7,17 @@ import (
 	"testing"
 )
 
-func TestCreateAndListWebhook(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
+// webhookServer builds a full Server with auth wired so /api/me/webhooks
+// routes are gated by requireSession. Returns the Server and a fresh user's
+// session token.
+func webhookServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	s, tok, _ := serverWithAuthAndSession(t)
+	return s, tok
+}
 
-	cookie, _, _ := signupAndLogin(t, handler, store, "wh1@example.com", "correcthorsebattery")
-	csrfTok := csrfTokenFor(t, handler, cookie)
+func TestCreateAndListWebhook(t *testing.T) {
+	s, tok := webhookServer(t)
 
 	body := map[string]any{
 		"url":            "https://open.feishu.cn/x",
@@ -20,12 +25,12 @@ func TestCreateAndListWebhook(t *testing.T) {
 		"name":           "phone",
 		"allow_insecure": false,
 	}
-	wCreate := postJSONWithCSRF(handler, "/api/me/webhooks", body, cookie, csrfTok)
+	wCreate := postJSONWithBearer(s, "/api/me/webhooks", body, tok)
 	if wCreate.Code != http.StatusCreated {
 		t.Fatalf("create webhook: expected 201, got %d: %s", wCreate.Code, wCreate.Body.String())
 	}
 
-	wList := getWithCookie(handler, "/api/me/webhooks", cookie)
+	wList := getWithBearer(s, "/api/me/webhooks", tok)
 	if wList.Code != http.StatusOK {
 		t.Fatalf("list webhooks: expected 200, got %d: %s", wList.Code, wList.Body.String())
 	}
@@ -35,29 +40,21 @@ func TestCreateAndListWebhook(t *testing.T) {
 }
 
 func TestCreateWebhookRejectsBadFormat(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-
-	cookie, _, _ := signupAndLogin(t, handler, store, "wh2@example.com", "correcthorsebattery")
-	csrfTok := csrfTokenFor(t, handler, cookie)
+	s, tok := webhookServer(t)
 
 	body := map[string]any{
 		"url":    "https://hooks.slack.com/x",
 		"format": "slack",
 		"name":   "myslack",
 	}
-	w := postJSONWithCSRF(handler, "/api/me/webhooks", body, cookie, csrfTok)
+	w := postJSONWithBearer(s, "/api/me/webhooks", body, tok)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("bad format: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
 func TestCreateWebhookRejectsInsecureWithoutFlag(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-
-	cookie, _, _ := signupAndLogin(t, handler, store, "wh3@example.com", "correcthorsebattery")
-	csrfTok := csrfTokenFor(t, handler, cookie)
+	s, tok := webhookServer(t)
 
 	body := map[string]any{
 		"url":            "http://r.example.com/x",
@@ -65,18 +62,14 @@ func TestCreateWebhookRejectsInsecureWithoutFlag(t *testing.T) {
 		"name":           "insecure-no-flag",
 		"allow_insecure": false,
 	}
-	w := postJSONWithCSRF(handler, "/api/me/webhooks", body, cookie, csrfTok)
+	w := postJSONWithBearer(s, "/api/me/webhooks", body, tok)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("insecure without flag: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
 func TestCreateWebhookAcceptsInsecureWithFlag(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-
-	cookie, _, _ := signupAndLogin(t, handler, store, "wh4@example.com", "correcthorsebattery")
-	csrfTok := csrfTokenFor(t, handler, cookie)
+	s, tok := webhookServer(t)
 
 	body := map[string]any{
 		"url":            "http://r.example.com/x",
@@ -84,18 +77,14 @@ func TestCreateWebhookAcceptsInsecureWithFlag(t *testing.T) {
 		"name":           "insecure-ok",
 		"allow_insecure": true,
 	}
-	w := postJSONWithCSRF(handler, "/api/me/webhooks", body, cookie, csrfTok)
+	w := postJSONWithBearer(s, "/api/me/webhooks", body, tok)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("insecure with flag: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
 func TestDeleteWebhook(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-
-	cookie, _, _ := signupAndLogin(t, handler, store, "wh5@example.com", "correcthorsebattery")
-	csrfTok := csrfTokenFor(t, handler, cookie)
+	s, tok := webhookServer(t)
 
 	// Create one first.
 	body := map[string]any{
@@ -103,7 +92,7 @@ func TestDeleteWebhook(t *testing.T) {
 		"format": "feishu",
 		"name":   "to-delete",
 	}
-	wCreate := postJSONWithCSRF(handler, "/api/me/webhooks", body, cookie, csrfTok)
+	wCreate := postJSONWithBearer(s, "/api/me/webhooks", body, tok)
 	if wCreate.Code != http.StatusCreated {
 		t.Fatalf("create for delete: expected 201, got %d: %s", wCreate.Code, wCreate.Body.String())
 	}
@@ -116,32 +105,14 @@ func TestDeleteWebhook(t *testing.T) {
 		t.Fatal("create response missing id")
 	}
 
-	wDel := deleteWithCSRF(handler, "/api/me/webhooks/"+id, cookie, csrfTok)
+	wDel := deleteWithBearer(s, "/api/me/webhooks/"+id, tok)
 	if wDel.Code != http.StatusNoContent {
 		t.Fatalf("delete webhook: expected 204, got %d: %s", wDel.Code, wDel.Body.String())
 	}
 
 	// Verify it's gone.
-	wList := getWithCookie(handler, "/api/me/webhooks", cookie)
+	wList := getWithBearer(s, "/api/me/webhooks", tok)
 	if strings.Contains(wList.Body.String(), id) {
 		t.Errorf("deleted webhook still appears in list: %s", wList.Body.String())
-	}
-}
-
-func TestCreateWebhookRequiresCSRF(t *testing.T) {
-	srv, store := newTestAuthServer(t)
-	handler := srv.Routes()
-
-	cookie, _, _ := signupAndLogin(t, handler, store, "wh6@example.com", "correcthorsebattery")
-
-	body := map[string]any{
-		"url":    "https://open.feishu.cn/x",
-		"format": "feishu",
-		"name":   "no-csrf",
-	}
-	// Post without CSRF token (empty string).
-	w := postJSONWithCSRF(handler, "/api/me/webhooks", body, cookie, "")
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("no CSRF: expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 }

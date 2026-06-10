@@ -29,6 +29,9 @@ export interface SessionLike {
   title?: string
   session_id: string
   cwd?: string
+  // Optional workload classification — "ai" | "shell" | "test" | "build"
+  // | "deploy". When absent, treat as shell. Drives aiTitleOrCommand().
+  type?: string
 }
 
 export function fullCommand(s: Pick<SessionLike, 'current_command' | 'title' | 'session_id'>): string {
@@ -47,6 +50,15 @@ export function commandLabel(s: Pick<SessionLike, 'current_command' | 'title' | 
 export function rowTitle(s: SessionLike): string {
   const cmd = fullCommand(s)
   return s.cwd ? `${cmd}\n${s.cwd}` : cmd
+}
+
+// aiTitleOrCommand returns the AI-set window title (from OSC 0/1/2, surfaced
+// via SessionInfo.Title) when the session is classified as an AI workload
+// and a title is available. Otherwise returns the existing short command
+// label so shell sessions keep their current display.
+export function aiTitleOrCommand(s: SessionLike): string {
+  if (s.type === 'ai' && s.title) return s.title
+  return commandLabel(s)
 }
 
 // hostName resolves a host display name for a group key. The list is the

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  aiTitleOrCommand,
   commandLabel,
   fullCommand,
   rowTitle,
@@ -65,5 +66,42 @@ describe('sessionLabel.taskStateLabel', () => {
     expect(taskStateLabel(undefined, fakeT as any)).toBe('mobile.taskStates.idle')
     expect(taskStateLabel('made_up_state', fakeT as any)).toBe('mobile.taskStates.idle')
     expect(taskStateLabel('idle', fakeT as any)).toBe('mobile.taskStates.idle')
+  })
+})
+
+describe('sessionLabel.aiTitleOrCommand', () => {
+  it('returns AI title when session is ai and title is non-empty', () => {
+    expect(aiTitleOrCommand({
+      session_id: 'x',
+      current_command: 'claude --foo',
+      title: 'Remove token auth from relay login',
+      type: 'ai',
+    })).toBe('Remove token auth from relay login')
+  })
+
+  it('falls back to commandLabel when AI session has empty title', () => {
+    expect(aiTitleOrCommand({
+      session_id: 'x',
+      current_command: '/usr/local/bin/claude --bar',
+      title: '',
+      type: 'ai',
+    })).toBe('claude')
+  })
+
+  it('ignores title for non-AI sessions even when set', () => {
+    expect(aiTitleOrCommand({
+      session_id: 'x',
+      current_command: 'zsh',
+      title: 'user@host: ~/proj',
+      type: 'shell',
+    })).toBe('zsh')
+  })
+
+  it('treats undefined type as non-AI', () => {
+    expect(aiTitleOrCommand({
+      session_id: 'x',
+      current_command: 'zsh',
+      title: 'something',
+    })).toBe('zsh')
   })
 })

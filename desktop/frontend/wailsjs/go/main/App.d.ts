@@ -70,6 +70,8 @@ export function ListShells():Promise<Array<string>>;
 
 export function LoginRemoteRelay(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function ProbeRelayVersion(arg1:string):Promise<void>;
+
 export function MarkSessionsSeen(arg1:Array<string>,arg2:boolean):Promise<void>;
 
 export function NewSession(arg1:main.NewSessionReq):Promise<main.NewSessionResp>;

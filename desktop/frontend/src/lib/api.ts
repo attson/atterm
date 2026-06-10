@@ -150,6 +150,7 @@ interface AppBindings {
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
   LoginRemoteRelay(relayURL: string, email: string, password: string): Promise<void>;
+  ProbeRelayVersion(arg1: string): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
@@ -298,6 +299,12 @@ export function setUplinkPaused(paused: boolean): Promise<void> {
 // the uplink, so callers only need to refresh GetRelayConfig() afterwards.
 export function loginRemoteRelay(relayURL: string, email: string, password: string): Promise<void> {
   return bindings().LoginRemoteRelay(relayURL, email, password);
+}
+
+// probeRelayVersion calls the Wails ProbeRelayVersion method on the Go side
+// to verify the URL points at an atterm relay. Throws on probe failure.
+export function probeRelayVersion(url: string): Promise<void> {
+  return bindings().ProbeRelayVersion(url);
 }
 
 export function getLoggingConfig(): Promise<LoggingConfig> {

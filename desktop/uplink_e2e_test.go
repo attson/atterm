@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
-	"github.com/attson/atterm/internal/relay"
 	"nhooyr.io/websocket"
 )
 
@@ -33,17 +32,7 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e test")
 	}
-	// TODO(task-3.3): rewire desktop e2e tests after Phase 3 (per-user session
-	// tokens). The uplink currently sends "Bearer rt"; the remote relay now
-	// requires a real userstore session, so every uplink dial returns 401.
-	// Skipping until Phase 3 mints session tokens for these fixtures.
-	t.Skip("desktop uplink-e2e needs session tokens (Phase 3)")
-	remoteSrv := relay.NewServer(relay.Config{})
-	remoteLn, _ := net.Listen("tcp", "127.0.0.1:0")
-	remoteHTTP := &http.Server{Handler: remoteSrv}
-	go func() { _ = remoteHTTP.Serve(remoteLn) }()
-	defer remoteHTTP.Close()
-	remoteAddr := remoteLn.Addr().String()
+	remoteAddr, remoteTok := startE2ERemoteRelay(t)
 
 	h1 := newTestRelayHost(t)
 	h2 := newTestRelayHost(t)
@@ -60,10 +49,10 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u1 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h1, nil)
+	u1 := newUplink("ws://"+remoteAddr, remoteTok, proto.RemotePermissionFull, h1, nil)
 	u1.eventsEmit = func(context.Context, string, ...interface{}) {} // no Wails runtime in tests
 	go u1.Run(ctx)
-	u2 := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, h2, nil)
+	u2 := newUplink("ws://"+remoteAddr, remoteTok, proto.RemotePermissionFull, h2, nil)
 	u2.eventsEmit = func(context.Context, string, ...interface{}) {}
 	go u2.Run(ctx)
 
@@ -72,7 +61,7 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	saw := false
 	for time.Now().Before(deadline) && !saw {
-		res, err := getRemoteSessions(remoteAddr, "rt")
+		res, err := getRemoteSessions(remoteAddr, remoteTok)
 		if err == nil {
 			body, _ := io.ReadAll(res.Body)
 			_ = res.Body.Close()
@@ -97,7 +86,7 @@ func TestTwoHostsCrossAttach(t *testing.T) {
 	cliCtx, cliCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cliCancel()
 	cliConn, _, err := websocket.Dial(cliCtx, fmt.Sprintf("ws://%s/client", remoteAddr), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer rt"}},
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + remoteTok}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -163,22 +152,9 @@ func TestUplinkE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e test")
 	}
-	// TODO(task-3.3): rewire desktop e2e tests after Phase 3 (per-user session
-	// tokens). The uplink currently sends "Bearer rt"; the remote relay now
-	// requires a real userstore session, so every uplink dial returns 401.
-	// Skipping until Phase 3 mints session tokens for these fixtures.
-	t.Skip("desktop uplink-e2e needs session tokens (Phase 3)")
 
-	// 1. remote relay
-	remoteSrv := relay.NewServer(relay.Config{})
-	remoteLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	remoteHTTP := &http.Server{Handler: remoteSrv}
-	go func() { _ = remoteHTTP.Serve(remoteLn) }()
-	defer remoteHTTP.Close()
-	remoteAddr := remoteLn.Addr().String()
+	// 1. remote relay (backed by an in-memory userstore + one session token).
+	remoteAddr, remoteTok := startE2ERemoteRelay(t)
 
 	// 2. local relayHost
 	host := newTestRelayHost(t)
@@ -197,7 +173,7 @@ func TestUplinkE2E(t *testing.T) {
 	// 3. uplink
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host, nil)
+	u := newUplink("ws://"+remoteAddr, remoteTok, proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {} // no Wails runtime in tests
 	go u.Run(ctx)
 
@@ -206,7 +182,7 @@ func TestUplinkE2E(t *testing.T) {
 		t.Helper()
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
-			res, err := getRemoteSessions(remoteAddr, "rt")
+			res, err := getRemoteSessions(remoteAddr, remoteTok)
 			if err == nil {
 				body, _ := io.ReadAll(res.Body)
 				_ = res.Body.Close()
@@ -230,7 +206,7 @@ func TestUplinkE2E(t *testing.T) {
 	cliCtx, cliCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cliCancel()
 	cliConn, _, err := websocket.Dial(cliCtx, fmt.Sprintf("ws://%s/client", remoteAddr), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer rt"}},
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + remoteTok}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -569,20 +545,7 @@ func TestUplink_DriverHandoff_SecondClientSteals(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e test")
 	}
-	// TODO(task-3.3): rewire desktop e2e tests after Phase 3 (per-user session
-	// tokens). The uplink currently sends "Bearer rt"; the remote relay now
-	// requires a real userstore session, so every uplink dial returns 401.
-	// Skipping until Phase 3 mints session tokens for these fixtures.
-	t.Skip("desktop uplink-e2e needs session tokens (Phase 3)")
-	remoteSrv := relay.NewServer(relay.Config{})
-	remoteLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	remoteHTTP := &http.Server{Handler: remoteSrv}
-	go func() { _ = remoteHTTP.Serve(remoteLn) }()
-	defer remoteHTTP.Close()
-	remoteAddr := remoteLn.Addr().String()
+	remoteAddr, remoteTok := startE2ERemoteRelay(t)
 
 	host := newTestRelayHost(t)
 	sid, err := host.NewSession(context.Background(), NewSessionReq{
@@ -596,14 +559,14 @@ func TestUplink_DriverHandoff_SecondClientSteals(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host, nil)
+	u := newUplink("ws://"+remoteAddr, remoteTok, proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {}
 	go u.Run(ctx)
 
 	// wait for the mirror to appear on the remote relay
 	seen := false
 	for d := time.Now().Add(3 * time.Second); time.Now().Before(d) && !seen; {
-		res, e := getRemoteSessions(remoteAddr, "rt")
+		res, e := getRemoteSessions(remoteAddr, remoteTok)
 		if e == nil {
 			body, _ := io.ReadAll(res.Body)
 			_ = res.Body.Close()
@@ -626,7 +589,7 @@ func TestUplink_DriverHandoff_SecondClientSteals(t *testing.T) {
 
 	dial := func(id string) *websocket.Conn {
 		c, _, e := websocket.Dial(ctx, fmt.Sprintf("ws://%s/client", remoteAddr), &websocket.DialOptions{
-			HTTPHeader: http.Header{"Authorization": []string{"Bearer rt"}},
+			HTTPHeader: http.Header{"Authorization": []string{"Bearer " + remoteTok}},
 		})
 		if e != nil {
 			t.Fatal(e)
@@ -715,20 +678,7 @@ func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
 	if testing.Short() {
 		t.Skip("e2e test")
 	}
-	// TODO(task-3.3): rewire desktop e2e tests after Phase 3 (per-user session
-	// tokens). The uplink currently sends "Bearer rt"; the remote relay now
-	// requires a real userstore session, so every uplink dial returns 401.
-	// Skipping until Phase 3 mints session tokens for these fixtures.
-	t.Skip("desktop uplink-e2e needs session tokens (Phase 3)")
-	remoteSrv := relay.NewServer(relay.Config{})
-	remoteLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	remoteHTTP := &http.Server{Handler: remoteSrv}
-	go func() { _ = remoteHTTP.Serve(remoteLn) }()
-	defer remoteHTTP.Close()
-	remoteAddr := remoteLn.Addr().String()
+	remoteAddr, remoteTok := startE2ERemoteRelay(t)
 
 	host := newTestRelayHost(t)
 	sid, err := host.NewSession(context.Background(), NewSessionReq{
@@ -742,7 +692,7 @@ func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	u := newUplink("ws://"+remoteAddr, "rt", proto.RemotePermissionFull, host, nil)
+	u := newUplink("ws://"+remoteAddr, remoteTok, proto.RemotePermissionFull, host, nil)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {}
 	go u.Run(ctx)
 
@@ -813,7 +763,7 @@ func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
 	// wait for the mirror to appear so the remote can attach
 	seen := false
 	for d := time.Now().Add(3 * time.Second); time.Now().Before(d) && !seen; {
-		res, e := getRemoteSessions(remoteAddr, "rt")
+		res, e := getRemoteSessions(remoteAddr, remoteTok)
 		if e == nil {
 			body, _ := io.ReadAll(res.Body)
 			_ = res.Body.Close()
@@ -834,7 +784,7 @@ func TestUplink_DriverHandoff_OwnerAndRemote(t *testing.T) {
 		t.Fatal("mirror never appeared on remote relay")
 	}
 
-	remoteConn := dialAttach("ws://"+remoteAddr, "rt", "remote")
+	remoteConn := dialAttach("ws://"+remoteAddr, remoteTok, "remote")
 	defer remoteConn.Close(websocket.StatusNormalClosure, "")
 	remoteDrv := driverChan(remoteConn)
 

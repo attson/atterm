@@ -49,3 +49,34 @@ describe('MobileSessionCard', () => {
     expect(w.emitted('open')).toBeFalsy()
   })
 })
+
+describe('MobileSessionCard AI title', () => {
+  it('shows AI title in cmd span for ai session', () => {
+    const w = mount(MobileSessionCard, {
+      props: {
+        session: {
+          session_id: 'a', host_id: 'h', host: 'mac', user: 'me',
+          cwd: '/p', title: 'Improve sales order list styling',
+          current_command: 'claude', type: 'ai',
+          task_state: 'running', cols: 80, rows: 24,
+        },
+        home: '/Users/me',
+      },
+    })
+    expect(w.get('.cmd').text()).toBe('Improve sales order list styling')
+  })
+
+  it('falls back to commandLabel for shell session', () => {
+    const w = mount(MobileSessionCard, {
+      props: {
+        session: {
+          session_id: 'a', host_id: 'h', host: 'mac', user: 'me',
+          cwd: '/p', title: 'irrelevant', current_command: 'zsh',
+          type: 'shell', task_state: 'idle', cols: 80, rows: 24,
+        },
+        home: '/Users/me',
+      },
+    })
+    expect(w.get('.cmd').text()).toBe('zsh')
+  })
+})

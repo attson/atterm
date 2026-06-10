@@ -276,6 +276,31 @@ watch(
   { immediate: true, deep: false },
 );
 
+// Drive the OS window title from the active tab's AI session OSC title.
+// claude / codex prefix their OSC title with status glyphs (● / ✻) already,
+// so we don't add our own — that would double-prefix. Falls back to "AT
+// Term" for non-AI tabs and for AI tabs whose OSC title hasn't arrived
+// yet. Active session is resolved through the same findSessionInfo path
+// the TabBar uses (Tab itself only stores sessionId, not SessionInfo).
+const currentActiveSession = computed<SessionInfo | null>(() => {
+  const t = currentTab.value;
+  if (!t) return null;
+  const pane = t.panes[t.activePaneIdx];
+  if (!pane?.sessionId) return pane?.lastSeenInfo ?? null;
+  return findSessionInfo(pane.sessionId, pane.remote) ?? pane.lastSeenInfo ?? null;
+});
+watch(
+  () => {
+    const s = currentActiveSession.value;
+    return [s?.type, s?.title] as const;
+  },
+  ([type, title]) => {
+    const next = (type === 'ai' && title) ? title : 'AT Term';
+    $platform.system.windowSetTitle?.(next).catch(() => { /* non-desktop platforms */ });
+  },
+  { immediate: true },
+);
+
 // Each TerminalView registers a driver-side input sender keyed by sessionId.
 // Plugins (Quick Input) route their send() through this map so input rides
 // the existing driver SessionConnection — a freshly attached connection

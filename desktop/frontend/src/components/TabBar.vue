@@ -40,6 +40,14 @@ function shortTitle(s: SessionInfo | null): string {
   return first.split("/").pop() || first;
 }
 
+// AI sessions surface the OSC 0/1/2 title their tool sets (claude, codex…)
+// when one is available; everything else falls back to shortTitle so shell
+// tabs keep their cwd-basename display.
+function tabTitle(s: SessionInfo | null): string {
+  if (s?.type === 'ai' && s.title) return s.title;
+  return shortTitle(s);
+}
+
 function layoutLabel(t: TabSummary): string {
   switch (t.layout) {
     case "single": return "";
@@ -93,7 +101,7 @@ function onClose(e: MouseEvent, id: string) {
           :state="(t.activeSession?.task_state as TaskState | undefined) ?? 'idle'"
           :size="10"
         />
-        <span class="title">{{ shortTitle(t.activeSession) }}</span>
+        <span class="title">{{ tabTitle(t.activeSession) }}</span>
         <span
           v-if="t.activeSession?.unread"
           class="tab-unread-dot"

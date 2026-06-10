@@ -59,6 +59,7 @@ export function createFakePlatform(): Platform {
       windowMinimize: vi.fn().mockResolvedValue(undefined),
       windowToggleMaximize: vi.fn().mockResolvedValue(undefined),
       windowIsMaximized: vi.fn().mockResolvedValue(false),
+      windowSetTitle: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn().mockResolvedValue(undefined),
     },
     events: {

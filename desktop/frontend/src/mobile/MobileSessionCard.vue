@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { RemoteSession } from '../platform/types'
 import TaskStateIcon from '../components/TaskStateIcon.vue'
-import { commandLabel, taskStateLabel } from '../lib/sessionLabel'
+import { aiTitleOrCommand, taskStateLabel } from '../lib/sessionLabel'
 import { shortenCwd } from '../lib/shortenCwd'
 import { useI18n } from '../i18n/useI18n'
 import { useTaskPreset } from '../composables/useTaskPreset'
@@ -17,7 +17,7 @@ const { t } = useI18n()
 const preset = useTaskPreset()
 const showStateLabel = computed(() => preset.active.value.showLabel)
 
-const cmd = computed(() => commandLabel(props.session))
+const cmd = computed(() => aiTitleOrCommand(props.session))
 const cwd = computed(() => shortenCwd(props.session.cwd, props.home))
 
 function onMark() {

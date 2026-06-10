@@ -288,3 +288,42 @@ describe("remote tab session retention", () => {
     expect(wrapper.find('[data-testid="pane-empty"]').exists()).toBe(false);
   });
 });
+
+describe("App window title follows active AI session", () => {
+  test("source declares a watcher that reads activeSession.type/title", () => {
+    // Watcher must observe BOTH .type and .title so the title rewires when
+    // the AI tool emits OSC 0/1/2 mid-session, not just on tab switch.
+    expect(source).toContain("activeSession");
+    expect(source).toMatch(/windowSetTitle\?/);
+    expect(source).toMatch(/['"]AT Term['"]/);
+    expect(source).toContain("'ai'");
+  });
+
+  test("source uses AT Term fallback for non-AI or empty-title cases", () => {
+    // The fallback string must appear adjacent to the watcher logic so
+    // shell tabs and AI-tabs-without-title both restore the default title.
+    const body = source.match(/watch\([\s\S]*?windowSetTitle[\s\S]*?\)/)?.[0] ?? "";
+    expect(body).toContain("'ai'");
+    expect(body).toMatch(/['"]AT Term['"]/);
+  });
+
+  test("watcher initial call resolves to AT Term in the fake platform", async () => {
+    setActivePinia(createPinia());
+    const platform = createFakePlatform();
+    const setTitle = platform.system.windowSetTitle as ReturnType<typeof vi.fn>;
+    setTitle.mockClear();
+    __setPlatformForTests(platform);
+    try {
+      mount(App, {
+        global: {
+          stubs: { TitleBar: true, TabBar: true, PluginHost: true, TranslatePanelHost: true, ShortcutHints: true, TaskSidebar: true, PaneGrid: true },
+        },
+      });
+      await flushPromises();
+      // No tabs yet → fallback to AT Term via immediate: true.
+      expect(setTitle).toHaveBeenCalledWith("AT Term");
+    } finally {
+      __setPlatformForTests(null);
+    }
+  });
+});

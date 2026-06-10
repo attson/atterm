@@ -149,3 +149,60 @@ describe("TabBar state icon + unread", () => {
     expect(w.find('[data-test="tab-unread-dot"]').exists()).toBe(true);
   });
 });
+
+describe("TabBar AI title", () => {
+  test("shows OSC title for ai-typed session", () => {
+    const tab = {
+      ...baseTab,
+      activeSession: {
+        id: "s1",
+        command: "/usr/local/bin/claude",
+        cwd: "/Users/me/proj",
+        title: "Remove token auth from relay login",
+        cols: 80,
+        rows: 24,
+        started_at: 0,
+        type: "ai",
+        task_state: "running" as const,
+      },
+    };
+    const w = mount(TabBar, { props: { tabs: [tab], currentId: "t1", starting: false } });
+    expect(w.get(".title").text()).toBe("Remove token auth from relay login");
+  });
+
+  test("falls back to cwd basename when ai session has no title yet", () => {
+    const tab = {
+      ...baseTab,
+      activeSession: {
+        id: "s1",
+        command: "claude",
+        cwd: "/Users/me/proj",
+        title: "",
+        cols: 80,
+        rows: 24,
+        started_at: 0,
+        type: "ai",
+      },
+    };
+    const w = mount(TabBar, { props: { tabs: [tab], currentId: "t1", starting: false } });
+    expect(w.get(".title").text()).toBe("proj");
+  });
+
+  test("shell session ignores title and uses cwd basename", () => {
+    const tab = {
+      ...baseTab,
+      activeSession: {
+        id: "s1",
+        command: "zsh",
+        cwd: "/Users/me/proj",
+        title: "should-not-show",
+        cols: 80,
+        rows: 24,
+        started_at: 0,
+        type: "shell",
+      },
+    };
+    const w = mount(TabBar, { props: { tabs: [tab], currentId: "t1", starting: false } });
+    expect(w.get(".title").text()).toBe("proj");
+  });
+});

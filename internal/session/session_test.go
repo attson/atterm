@@ -746,3 +746,48 @@ func TestPushOut_DEventOnSuccess_NoErrorLines(t *testing.T) {
 		t.Fatalf("ErrorLines should be empty on success, got %v", info.Summary.ErrorLines)
 	}
 }
+
+func TestPushOut_OSC2_UpdatesTitleAndBroadcastsMeta(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	changed := s.PushOut(1, []byte("hi\x1b]2;Remove token auth from relay login\x07more"))
+	if !changed {
+		t.Fatalf("PushOut should return changed=true when title changes")
+	}
+	if got := s.Info().Title; got != "Remove token auth from relay login" {
+		t.Fatalf("Title = %q, want %q", got, "Remove token auth from relay login")
+	}
+}
+
+func TestPushOut_OSC2_NoChangeDoesNotBroadcast(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	_ = s.PushOut(1, []byte("\x1b]2;foo\x07"))
+	changed := s.PushOut(2, []byte("\x1b]2;foo\x07"))
+	if changed {
+		t.Fatalf("repeating same title should not trigger meta change")
+	}
+}
+
+func TestPushOut_OSC2_SplitAcrossAppend(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	_ = s.PushOut(1, []byte("\x1b]2;Remove tok"))
+	if got := s.Info().Title; got != "" {
+		t.Fatalf("title should be empty mid-sequence, got %q", got)
+	}
+	_ = s.PushOut(2, []byte("en auth\x07"))
+	if got := s.Info().Title; got != "Remove token auth" {
+		t.Fatalf("Title = %q, want %q", got, "Remove token auth")
+	}
+}
+
+func TestPushOut_OSC2_AlongsideOSC133(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	mixed := []byte("\x1b]133;C;npm test\x07hi\x1b]2;Run tests\x07")
+	_ = s.PushOut(1, mixed)
+	info := s.Info()
+	if info.Title != "Run tests" {
+		t.Fatalf("Title = %q, want %q", info.Title, "Run tests")
+	}
+	if info.CurrentCommand != "npm test" {
+		t.Fatalf("CurrentCommand = %q, want %q", info.CurrentCommand, "npm test")
+	}
+}

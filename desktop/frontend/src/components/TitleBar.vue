@@ -18,6 +18,7 @@ const props = defineProps<{
   remoteEndpoint: Endpoint | null;
   availableRemoteCount: number;
   updateBadge: boolean;
+  currentTitle?: string;
 }>();
 
 defineEmits<{
@@ -81,6 +82,12 @@ function onTitleDblClick() {
     :style="rootStyle"
     @dblclick.self="onTitleDblClick"
   >
+    <div
+      class="window-title"
+      data-testid="titlebar-current-title"
+      :title="currentTitle || ''"
+      @dblclick.self="onTitleDblClick"
+    >{{ currentTitle || '' }}</div>
     <div class="status">
       <template v-if="status === 'loading'">{{ t("terminal.starting") }}</template>
       <template v-else-if="status === 'error'">
@@ -143,7 +150,7 @@ function onTitleDblClick() {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 6px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
@@ -152,11 +159,23 @@ function onTitleDblClick() {
      this is a no-op there. The property cascades to children. */
   --wails-draggable: drag;
 }
+.window-title {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--fg);
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+}
 .status {
-  margin-left: auto;
   font-size: 12px;
   color: var(--fg-dim);
   --wails-draggable: no-drag;
+  flex: 0 0 auto;
 }
 .status .bad { color: var(--bad); }
 .status .dim { color: var(--good); }

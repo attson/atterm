@@ -308,7 +308,13 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 // ws:// or wss:// before persistence — the uplink and validateRelayEndpoint
 // both expect the WebSocket form. HTTP API calls translate back on the fly
 // (see MarkSessionsSeen et al.).
-func (a *App) LoginRemoteRelay(relayURL, email, password string) error {
+//
+// allowInsecure mirrors the "enable insecure mode" toggle on the form. It
+// applies to the SetRelayConfig call that persists the new session token so
+// the validator sees the user's latest intent, not the previously persisted
+// flag — without this, toggling the checkbox in the UI and clicking save
+// rejects ws:// targets even though the user just opted in.
+func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure bool) error {
 	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
 	if relayURL == "" {
 		return fmt.Errorf("relay url is empty")
@@ -351,14 +357,17 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string) error {
 	if out.SessionToken == "" {
 		return fmt.Errorf("relay /api/auth/login: empty session_token")
 	}
-	// Preserve unrelated relay-config fields (AllowInsecureRelay, RemotePermission)
-	// so login doesn't silently reset them. SetRelayConfig also restarts the uplink.
+	// RemotePermission is preserved from the persisted config (the login form
+	// doesn't surface it). AllowInsecureRelay comes from the call argument so
+	// the validator inside SetRelayConfig sees the form's current checkbox
+	// state rather than the previously persisted flag — necessary for
+	// ws:// targets the user is just now opting into.
 	prev := a.GetRelayConfig()
 	if err := a.SetRelayConfig(RelayConfig{
 		URL:                wsURL,
 		Token:              out.SessionToken,
 		SessionExpiresAt:   out.ExpiresAt,
-		AllowInsecureRelay: prev.AllowInsecureRelay,
+		AllowInsecureRelay: allowInsecure,
 		RemotePermission:   prev.RemotePermission,
 	}); err != nil {
 		return err

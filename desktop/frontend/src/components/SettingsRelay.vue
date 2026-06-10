@@ -165,7 +165,7 @@ async function save() {
 
   if (hasCreds) {
     try {
-      await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value);
+      await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value, allowInsecureRelay.value);
     } catch (e: any) {
       error.value = t("settings.relay.loginFailedInline", { reason: e?.message ?? String(e) });
       saving.value = false;

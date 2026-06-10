@@ -179,18 +179,6 @@ function onSaveClick() {
             @click="switchTab('relay')"
           >{{ t("settings.tabs.relay") }}</button>
           <button
-            v-if="caps.fileDialog"
-            class="settings-nav-item"
-            :class="{ active: activeTab === 'logging' }"
-            @click="switchTab('logging')"
-          >{{ t("settings.tabs.logging") }}</button>
-          <button
-            v-if="caps.autoUpdate"
-            class="settings-nav-item"
-            :class="{ active: activeTab === 'updates' }"
-            @click="switchTab('updates')"
-          >{{ t("settings.tabs.updates") }}</button>
-          <button
             v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'plugins' }"
@@ -207,6 +195,18 @@ function onSaveClick() {
             :class="{ active: activeTab === 'templates' }"
             @click="switchTab('templates')"
           >{{ t("settings.templates.tab") }}</button>
+          <button
+            v-if="caps.fileDialog"
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'logging' }"
+            @click="switchTab('logging')"
+          >{{ t("settings.tabs.logging") }}</button>
+          <button
+            v-if="caps.autoUpdate"
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'updates' }"
+            @click="switchTab('updates')"
+          >{{ t("settings.tabs.updates") }}</button>
           <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'diagnostics' }"

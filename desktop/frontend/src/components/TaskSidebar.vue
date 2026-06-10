@@ -206,8 +206,9 @@ const railIcons = computed(() => {
 <style scoped>
 .task-sidebar {
   position: relative;
-  background: var(--bg-elev, #0e1116);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  color: var(--fg);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -229,7 +230,7 @@ const railIcons = computed(() => {
   display: flex;
   align-items: center;
   padding: 8px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border);
 }
 .title { flex: 1; font-weight: 500; }
 .collapse-button,
@@ -242,7 +243,7 @@ const railIcons = computed(() => {
 }
 .group-toggle {
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   color: inherit;
   cursor: pointer;
   border-radius: 3px;
@@ -258,10 +259,10 @@ const railIcons = computed(() => {
   overflow-x: hidden;
   padding: 4px;
 }
-footer { padding: 8px; border-top: 1px solid rgba(255, 255, 255, 0.05); }
+footer { padding: 8px; border-top: 1px solid var(--border); }
 .mark-all {
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   cursor: pointer;
   padding: 6px 10px;
   color: inherit;

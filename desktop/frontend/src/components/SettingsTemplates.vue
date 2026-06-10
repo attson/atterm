@@ -122,8 +122,8 @@ function cancelReset() { resetOpen.value = false }
         class="row"
         :data-testid="`template-row-${it.id}`"
       >
-        <span class="label">{{ it.label }}</span>
-        <code class="text">{{ it.text }}</code>
+        <span class="label" :title="it.label">{{ it.label }}</span>
+        <code class="text" :title="it.text">{{ it.text }}</code>
         <code class="hotkey">{{ it.hotkey || '—' }}</code>
         <div class="actions">
           <button :disabled="idx === 0" @click="moveUp(it.id)">↑</button>
@@ -137,11 +137,31 @@ function cancelReset() { resetOpen.value = false }
     </ul>
 
     <div v-if="editing" class="edit-row">
-      <input v-model="editing.label" :placeholder="t('settings.templates.label')" data-testid="template-edit-label" />
-      <input v-model="editing.text" :placeholder="t('settings.templates.text')" data-testid="template-edit-text" />
-      <input v-model="editing.hotkey" :placeholder="t('settings.templates.hotkey')" data-testid="template-edit-hotkey" />
-      <button data-testid="template-edit-save" @click="saveEdit">{{ t('settings.templates.save') }}</button>
-      <button @click="cancelEdit">{{ t('common.cancel') }}</button>
+      <div class="edit-top">
+        <input
+          v-model="editing.label"
+          class="edit-label-input"
+          :placeholder="t('settings.templates.label')"
+          data-testid="template-edit-label"
+        />
+        <input
+          v-model="editing.hotkey"
+          class="edit-hotkey-input"
+          :placeholder="t('settings.templates.hotkey')"
+          data-testid="template-edit-hotkey"
+        />
+      </div>
+      <textarea
+        v-model="editing.text"
+        class="edit-text-input"
+        rows="3"
+        :placeholder="t('settings.templates.text')"
+        data-testid="template-edit-text"
+      />
+      <div class="edit-actions">
+        <button @click="cancelEdit">{{ t('common.cancel') }}</button>
+        <button class="primary" data-testid="template-edit-save" @click="saveEdit">{{ t('settings.templates.save') }}</button>
+      </div>
     </div>
 
     <div class="footer">
@@ -168,14 +188,20 @@ function cancelReset() { resetOpen.value = false }
 .show-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); }
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .row { display: grid; grid-template-columns: 7rem 1fr 5rem auto; gap: 8px; align-items: center; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
-.label { font-weight: 600; font-family: var(--font-mono); font-size: 0.85rem; }
+.label { font-weight: 600; font-family: var(--font-mono); font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .text { font-family: var(--font-mono); font-size: 0.78rem; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hotkey { font-family: var(--font-mono); font-size: 0.74rem; color: var(--fg-dim); text-align: center; }
 .actions { display: flex; gap: 4px; }
 .actions button { height: 24px; padding: 0 8px; font-size: 0.74rem; }
 .actions .del { color: var(--bad); border-color: rgba(248, 81, 73, 0.4); }
-.edit-row { display: grid; grid-template-columns: 7rem 1fr 5rem auto auto; gap: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
-.edit-row input { height: 28px; padding: 0 8px; }
+.edit-row { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
+.edit-top { display: grid; grid-template-columns: 1fr 8rem; gap: 8px; }
+.edit-row input, .edit-row textarea { padding: 6px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; font-family: var(--font-mono); width: 100%; box-sizing: border-box; }
+.edit-row input { height: 28px; }
+.edit-row textarea { resize: vertical; min-height: 60px; line-height: 1.4; }
+.edit-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.edit-actions button { height: 28px; padding: 0 14px; font-size: 0.78rem; }
+.edit-actions .primary { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
 .footer { display: flex; gap: 8px; align-items: center; }
 .error { color: var(--bad); font-size: 0.75rem; }
 .dialog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 50; }

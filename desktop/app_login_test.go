@@ -41,7 +41,7 @@ func TestLoginRemoteRelay_PersistsSessionToken(t *testing.T) {
 	defer fake.Close()
 
 	a := newRelayTestApp(t)
-	if err := a.LoginRemoteRelay(fake.URL, "u@example.com", "pw"); err != nil {
+	if err := a.LoginRemoteRelay(fake.URL, "u@example.com", "pw", false); err != nil {
 		t.Fatalf("LoginRemoteRelay: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestLoginRemoteRelay_BadStatusReturnsError(t *testing.T) {
 	defer fake.Close()
 
 	a := newRelayTestApp(t)
-	if err := a.LoginRemoteRelay(fake.URL, "u@example.com", "pw"); err == nil {
+	if err := a.LoginRemoteRelay(fake.URL, "u@example.com", "pw", false); err == nil {
 		t.Fatal("expected error on 401")
 	}
 

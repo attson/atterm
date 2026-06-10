@@ -13,7 +13,6 @@ import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { isMobileApp } from '@shared/api/relay-config'
 import { useI18n } from '@shared/i18n/useI18n'
 import { naiveLocale } from '@shared/i18n/naive-locale'
-import ApiTokens from './tabs/ApiTokens.vue'
 import ChangePassword from './tabs/ChangePassword.vue'
 import Sessions from './tabs/Sessions.vue'
 import Notifications from './tabs/Notifications.vue'
@@ -26,7 +25,7 @@ const { t } = useI18n()
 
 const TAB_NAMES = mobile
   ? (['relay'] as const)
-  : (['api-tokens', 'change-password', 'sessions', 'notifications', 'webhooks', 'danger'] as const)
+  : (['change-password', 'sessions', 'notifications', 'webhooks', 'danger'] as const)
 type TabName = (typeof TAB_NAMES)[number]
 
 function nameFromHash(): TabName {
@@ -82,9 +81,6 @@ const overrides = getNaiveOverrides()
             </n-tab-pane>
           </template>
           <template v-else>
-            <n-tab-pane name="api-tokens" :tab="t('settings.tabs.apiTokens')">
-              <ApiTokens />
-            </n-tab-pane>
             <n-tab-pane name="change-password" :tab="t('settings.tabs.changePassword')">
               <ChangePassword />
             </n-tab-pane>

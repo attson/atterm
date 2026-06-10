@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SessionConnection } from '@shared/ws/client-conn'
 import { TYPE, decodeFrame, encodeFrame, encodeOut, encodeResize, uuidToBytes } from '@shared/ws/protocol'
+import { saveRelayConfig, clearRelayConfig } from '@shared/api/relay-config'
 
 const SID = '11111111-2222-3333-4444-555555555555'
 const SID_BYTES = uuidToBytes(SID)
@@ -12,14 +13,16 @@ class MockWebSocket {
   readyState = MockWebSocket.CONNECTING
   binaryType = 'arraybuffer' as BinaryType
   url: string
+  protocols: string | string[] | undefined
   sent: Uint8Array[] = []
   onopen: ((ev: Event) => void) | null = null
   onmessage: ((ev: MessageEvent) => void) | null = null
   onclose: ((ev: CloseEvent) => void) | null = null
   onerror: ((ev: Event) => void) | null = null
 
-  constructor(url: string, _protocols?: string | string[]) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url
+    this.protocols = protocols
   }
 
   send(data: ArrayBuffer | ArrayBufferView): void {
@@ -56,6 +59,7 @@ let createdSockets: MockWebSocket[] = []
 let originalWS: typeof WebSocket
 
 beforeEach(() => {
+  clearRelayConfig()
   createdSockets = []
   originalWS = globalThis.WebSocket
   vi.stubGlobal('WebSocket', class extends MockWebSocket {
@@ -242,5 +246,25 @@ describe('SessionConnection', () => {
 
     ws.fireMessage(meta(ourId, 'web'))
     expect(onDriverChange).toHaveBeenLastCalledWith(ourId, true, 'web')
+  })
+
+  it('passes sessionToken as atterm-token.* subprotocol when available', () => {
+    saveRelayConfig({
+      baseURL: '',
+      sessionToken: 'test_session_token_123',
+      expiresAt: null,
+      allowInsecure: false,
+    })
+    const conn = new SessionConnection(SID)
+    conn.attach()
+    const ws = createdSockets[0]!
+    expect(ws.protocols).toEqual(['atterm-token.test_session_token_123'])
+  })
+
+  it('passes empty subprotocols array when no sessionToken', () => {
+    const conn = new SessionConnection(SID)
+    conn.attach()
+    const ws = createdSockets[0]!
+    expect(ws.protocols).toEqual([])
   })
 })

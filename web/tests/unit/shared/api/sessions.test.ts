@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { listSessions } from '@shared/api/sessions'
-import { clearCsrfToken } from '@shared/api/client'
+import { clearRelayConfig } from '@shared/api/relay-config'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -11,7 +11,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe('sessions /api/sessions', () => {
   beforeEach(() => {
-    clearCsrfToken()
+    clearRelayConfig()
     vi.restoreAllMocks()
   })
 

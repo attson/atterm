@@ -42,6 +42,9 @@ export function createFakePlatform(): Platform {
       clear: vi.fn().mockResolvedValue(undefined),
       fetchMe: vi.fn().mockResolvedValue({ user_id: 'u', email: 'e' }),
       setUplinkPaused: vi.fn().mockResolvedValue(undefined),
+      login: vi.fn().mockResolvedValue(undefined),
+      logout: vi.fn().mockResolvedValue(undefined),
+      loadSavedPassword: vi.fn().mockResolvedValue(''),
     },
     sessions: {
       newSession: vi.fn().mockResolvedValue({ session_id: 's1' }),

@@ -15,7 +15,9 @@ const { t, languageOptions, localePreference, setLocalePreference } = useI18n()
 const scheme = ref<'https://' | 'http://'>('https://')
 const host = ref('')
 const url = computed(() => scheme.value + host.value.trim())
-const token = ref('')
+const email = ref('')
+const password = ref('')
+const showPassword = ref(false)
 const allowInsecure = ref(false)
 const error = ref<string | null>(null)
 const submitting = ref(false)
@@ -61,8 +63,11 @@ onMounted(async () => {
   const cfg = await platform.relay.load()
   if (cfg) {
     applyUrl(cfg.url || '')
-    token.value = cfg.token || ''
+    email.value = cfg.last_email || ''
     allowInsecure.value = !!cfg.allow_insecure_relay
+  }
+  if (platform.relay.loadSavedPassword) {
+    password.value = await platform.relay.loadSavedPassword()
   }
 })
 
@@ -94,27 +99,28 @@ async function onConnect(): Promise<void> {
   error.value = null
   const v = validateRelayBase(url.value, allowInsecure.value)
   if (v) { error.value = v; return }
-  if (!token.value.trim()) { error.value = t('mobile.apiTokenRequired'); return }
+  if (!email.value.trim()) { error.value = t('mobile.emailRequired'); return }
+  if (!password.value) { error.value = t('mobile.passwordRequired'); return }
+  if (!platform.relay.login) {
+    error.value = t('mobile.cannotReachRelay', { message: 'login_unsupported' })
+    return
+  }
   submitting.value = true
   try {
-    await platform.relay.save({
-      url: url.value.replace(/\/$/, ''),
-      token: token.value.trim(),
-      session_expires_at: 0,
-      allow_insecure_relay: allowInsecure.value,
-      remote_permission: 'full',
-      last_email: '',
-      connected: false,
-    })
+    await platform.relay.login(
+      url.value.replace(/\/$/, ''),
+      email.value.trim(),
+      password.value,
+      allowInsecure.value,
+    )
     await platform.relay.fetchMe()
     emit('connected')
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    error.value = /401/.test(msg)
-      ? t('mobile.apiTokenInvalid')
-      : /403|origin/i.test(msg)
-        ? t('mobile.originRejected')
-        : t('mobile.cannotReachRelay', { message: msg })
+    if (msg === 'invalid_credentials') error.value = t('mobile.invalidCredentials')
+    else if (msg === 'rate_limited') error.value = t('mobile.rateLimited')
+    else if (/403|origin/i.test(msg)) error.value = t('mobile.originRejected')
+    else error.value = t('mobile.cannotReachRelay', { message: msg })
   } finally {
     submitting.value = false
   }
@@ -164,8 +170,25 @@ async function onLanguageChange(e: Event): Promise<void> {
         </div>
       </label>
       <label class="field">
-        <span>{{ t('mobile.apiToken') }}</span>
-        <input data-testid="relay-token" v-model="token" :disabled="submitting" type="password" placeholder="atk_…" autocomplete="off" />
+        <span>{{ t('mobile.email') }}</span>
+        <input data-testid="relay-email" v-model="email" :disabled="submitting" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="me@example.com" />
+      </label>
+      <label class="field">
+        <span>{{ t('mobile.password') }}</span>
+        <div class="password-input">
+          <input data-testid="relay-password" v-model="password" :disabled="submitting" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="••••••••" />
+          <button
+            type="button"
+            data-testid="password-toggle"
+            class="password-toggle"
+            :aria-label="showPassword ? t('mobile.passwordHide') : t('mobile.passwordShow')"
+            :aria-pressed="showPassword"
+            :disabled="submitting"
+            @click="showPassword = !showPassword"
+          >
+            {{ showPassword ? t('mobile.passwordHide') : t('mobile.passwordShow') }}
+          </button>
+        </div>
       </label>
       <label v-if="scheme === 'http://'" class="row">
         <span>{{ t('mobile.allowInsecure') }}</span>
@@ -180,7 +203,7 @@ async function onLanguageChange(e: Event): Promise<void> {
         <span>{{ t('mobile.insecure.setupHint') }}</span>
       </aside>
       <p v-if="error" class="error">{{ error }}</p>
-      <button data-testid="connect" class="btn" :disabled="submitting" @click="onConnect">{{ t('common.connect') }}</button>
+      <button data-testid="connect" class="btn" :disabled="submitting" @click="onConnect">{{ t('mobile.loginButton') }}</button>
     </template>
   </div>
 </template>
@@ -205,4 +228,8 @@ h1 { text-align: center; margin: 0 0 4px; font-size: 1.6rem; }
 .or { text-align: center; color: #8d93a3; font-size: 0.8rem; margin: 0 0 1rem; }
 .warn-hint { display: flex; gap: 8px; padding: 9px 11px; margin: 0 0 1rem; border: 1px solid rgba(245,158,11,.4); border-left-width: 3px; border-radius: 9px; background: rgba(245,158,11,.13); color: #f5c451; font-size: 0.78rem; line-height: 1.4; }
 .warn-icon { flex: 0 0 auto; margin-top: 1px; }
+.password-input { display: flex; gap: 8px; align-items: stretch; }
+.password-input input { flex: 1 1 auto; min-width: 0; }
+.password-toggle { flex: 0 0 auto; height: 42px; padding: 0 12px; border-radius: 9px; border: 1px solid #1e2638; background: #11182b; color: #8d93a3; font-size: 0.8rem; font-family: var(--font-sans); }
+.password-toggle:disabled { opacity: 0.6; }
 </style>

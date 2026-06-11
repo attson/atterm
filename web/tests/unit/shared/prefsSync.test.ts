@@ -42,6 +42,7 @@ describe('web prefsSync', () => {
     const e = new PrefsSyncEngine(localStorageAdapter(), apiRelayClient())
     await e.push()
     const call = fetchMock.mock.calls[0]
+    if (!call) throw new Error('fetch was not called')
     expect(call[0]).toBe('/api/me/preferences')
     expect((call[1] as RequestInit).method).toBe('PUT')
     const headers = (call[1] as RequestInit).headers as Headers

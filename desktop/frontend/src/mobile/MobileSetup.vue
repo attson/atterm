@@ -87,7 +87,12 @@ async function onScanQR(): Promise<void> {
     }
     scannedUrl.value = first.rawValue
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    const msg = e instanceof Error ? e.message : String(e)
+    if (/PLUGIN_NOT_AVAILABLE|not implemented/i.test(msg)) {
+      error.value = t('mobile.pairing.scanNotAvailable')
+    } else {
+      error.value = msg
+    }
   }
 }
 

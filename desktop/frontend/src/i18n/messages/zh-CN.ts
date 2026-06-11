@@ -395,6 +395,7 @@ export const zhCN = {
       orManual: "— 或手动输入 —",
       cameraDenied: "需要相机权限才能扫描二维码",
       noQrDetected: "未识别到二维码，请重试",
+      scanNotAvailable: "此版本暂不支持扫码功能，请在下方手动填入 relay 地址",
     },
     insecure: {
       warning: {

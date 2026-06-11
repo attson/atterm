@@ -180,7 +180,12 @@ export function createCapacitorPlatform(): Platform {
         if (resp.status < 200 || resp.status >= 300) {
           throw new Error(`pair_consume_http_${resp.status}`)
         }
-        return resp.data as { relay_url: string; session_token: string; expires_at: number; user: { id: string; email: string } }
+        // The relay server does not actually return relay_url (a leftover
+        // from when /api/pair/consume was going to redirect pairing to a
+        // different host). Use the base we just called as the relay URL —
+        // it is by definition the relay we want to talk to.
+        const body = resp.data as { session_token: string; expires_at: number; user: { id: string; email: string } }
+        return { relay_url: base, ...body }
       },
       login: async (url, email, password, allowInsecure) => {
         const base = url.replace(/\/$/, '')

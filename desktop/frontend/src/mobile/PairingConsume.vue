@@ -12,7 +12,9 @@ const { t } = useI18n()
 const status = ref<'pending' | 'error'>('pending')
 const errorCode = ref('')
 const elapsedMs = ref(0)
-let elapsedTimer: ReturnType<typeof setInterval> | null = null
+let rafHandle = 0
+let started = 0
+let cancelled = false
 
 // Map internal error tokens to localized strings. Unknown codes fall
 // through to the generic "Pairing failed: <code>" so we never lose the
@@ -26,6 +28,7 @@ const errorMessage = computed(() => {
     case 'cannot_reach_relay':     return t('mobile.pairing.errCannotReachRelay')
     case 'pair_timeout':           return t('mobile.pairing.errTimeout')
     case 'pair_invalid':           return t('mobile.pairing.errPairInvalid')
+    case 'cancelled':              return t('mobile.pairing.errCancelled')
     default:                       return t('mobile.pairing.errGeneric', { message: code })
   }
 })
@@ -47,6 +50,22 @@ function parseScanned(raw: string, allowInsecure: boolean): { origin: string; to
   return { origin: u.origin, token }
 }
 
+// RAF-driven elapsed counter. requestAnimationFrame is tied to the
+// display refresh signal and survives the throttling that drops
+// setInterval to ~0 Hz when WKWebView is mid-fetch on iOS.
+function tickElapsed(): void {
+  if (cancelled || status.value !== 'pending') return
+  elapsedMs.value = Date.now() - started
+  rafHandle = requestAnimationFrame(tickElapsed)
+}
+
+function onCancelClicked(): void {
+  cancelled = true
+  errorCode.value = 'cancelled'
+  status.value = 'error'
+  if (rafHandle) { cancelAnimationFrame(rafHandle); rafHandle = 0 }
+}
+
 async function run() {
   const parsed = parseScanned(props.scannedUrl, !!props.allowInsecure)
   if (typeof parsed === 'string') {
@@ -55,22 +74,22 @@ async function run() {
     return
   }
 
-  // Belt-and-suspenders timeout layer #2: even if platform.consumePairing's
-  // own AbortController fails to cancel the in-flight fetch (some WKWebView
-  // builds drop the abort signal mid-handshake), this Promise.race
-  // guarantees we surface pair_timeout to the user.
-  const started = Date.now()
+  started = Date.now()
   elapsedMs.value = 0
-  elapsedTimer = setInterval(() => { elapsedMs.value = Date.now() - started }, 100)
+  rafHandle = requestAnimationFrame(tickElapsed)
 
   try {
     if (!platform.relay.consumePairing) throw new Error('platform_unsupported')
+    // Two-layer timeout: platform.consumePairing has its own AbortController
+    // (15s); this Promise.race adds a JS-level 15.5s reject that fires even
+    // if AbortController is dropped by the WebView's fetch implementation.
     const result = await Promise.race([
       platform.relay.consumePairing(parsed.origin, parsed.token),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('pair_timeout')), 15_500),
       ),
     ])
+    if (cancelled) return
     await platform.relay.save({
       url: result.relay_url,
       token: result.session_token,
@@ -80,18 +99,21 @@ async function run() {
       last_email: '',
       connected: false,
     })
+    if (cancelled) return
     emit('connected')
   } catch (e) {
+    if (cancelled) return
     errorCode.value = e instanceof Error ? e.message : String(e)
     status.value = 'error'
   } finally {
-    if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+    if (rafHandle) { cancelAnimationFrame(rafHandle); rafHandle = 0 }
   }
 }
 
 onMounted(run)
 onBeforeUnmount(() => {
-  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+  cancelled = true
+  if (rafHandle) { cancelAnimationFrame(rafHandle); rafHandle = 0 }
 })
 </script>
 
@@ -100,6 +122,9 @@ onBeforeUnmount(() => {
     <div v-if="status === 'pending'" class="pending">
       <p>{{ t('mobile.pairing.connecting') }}</p>
       <p class="elapsed" data-testid="pair-elapsed">{{ elapsedLabel }}</p>
+      <button type="button" class="cancel" data-testid="pair-cancel" @click="onCancelClicked">
+        {{ t('common.cancel') }}
+      </button>
     </div>
     <div v-else class="error" data-testid="pair-error">
       <p>{{ t('mobile.pairing.failed') }}</p>
@@ -114,6 +139,7 @@ onBeforeUnmount(() => {
 .pending { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 0.95rem; color: #8d93a3; }
 .pending p { margin: 0; }
 .pending .elapsed { font-family: var(--font-mono); font-size: 0.8rem; color: #5b6172; }
+.pending .cancel { margin-top: 18px; height: 36px; padding: 0 18px; border: 1px solid #2e3340; border-radius: 8px; background: transparent; color: #8d93a3; font-size: 0.85rem; }
 .error p { margin: 0; }
 .error .code { font-family: var(--font-mono); color: #f87171; font-size: 0.8rem; }
 .error button { margin-top: 12px; height: 42px; padding: 0 18px; border: none; border-radius: 9px; background: #3b82f6; color: #fff; font-weight: 600; }

@@ -402,6 +402,7 @@ export const zhCN = {
       errCannotReachRelay: "无法连接 relay，请检查二维码地址或网络后重试",
       errTimeout: "配对请求超时（15s），请确认 relay 可达后重试",
       errPairInvalid: "二维码配对令牌无效或已过期，请重新生成",
+      errCancelled: "已取消配对",
       errGeneric: "配对失败：{message}",
     },
     insecure: {

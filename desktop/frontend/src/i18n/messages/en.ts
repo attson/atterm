@@ -400,6 +400,7 @@ export const en = {
       errCannotReachRelay: 'Cannot reach the relay. Check the QR address or your network, then try again.',
       errTimeout: 'Pairing timed out after 15s. Confirm the relay is reachable, then try again.',
       errPairInvalid: 'The pairing token is invalid or expired. Generate a new QR.',
+      errCancelled: 'Pairing cancelled.',
       errGeneric: 'Pairing failed: {message}',
     },
     insecure: {

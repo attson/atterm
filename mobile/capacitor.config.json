@@ -4,5 +4,10 @@
   "webDir": "www",
   "ios": {
     "scheme": "ATTerm"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
   }
 }

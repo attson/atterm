@@ -4,6 +4,7 @@ import type { AuxKey } from '../lib/auxKeys'
 import { secureStorage } from './secureStorage'
 
 const STORAGE_KEY = 'atterm.relay.session'
+const PASSWORD_KEY = 'atterm.relay.password'
 const TEMPLATES_KEY = 'atterm.templates'
 const AUXKEYS_KEY = 'atterm.auxkeys'
 
@@ -113,6 +114,66 @@ export function createCapacitorPlatform(): Platform {
         }
         if (!res.ok) throw new Error(`pair_consume_http_${res.status}`)
         return (await res.json()) as { relay_url: string; session_token: string; expires_at: number; user: { id: string; email: string } }
+      },
+      login: async (url, email, password, allowInsecure) => {
+        const base = url.replace(/\/$/, '')
+        let res: Response
+        try {
+          res = await fetch(base + '/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+            credentials: 'omit',
+          })
+        } catch {
+          throw new Error('cannot_reach_relay')
+        }
+        if (res.status === 401) throw new Error('invalid_credentials')
+        if (res.status === 429) throw new Error('rate_limited')
+        if (!res.ok) throw new Error('http_' + res.status)
+        const body = (await res.json()) as {
+          session_token: string
+          expires_at: number
+          user: { id: string; email: string }
+        }
+        const cfg: RelayConfig = {
+          url: base,
+          token: body.session_token,
+          session_expires_at: body.expires_at,
+          allow_insecure_relay: allowInsecure,
+          remote_permission: 'full',
+          last_email: body.user.email,
+          connected: false,
+        }
+        await secureStorage.set(STORAGE_KEY, JSON.stringify(cfg))
+        await secureStorage.set(PASSWORD_KEY, password)
+      },
+      logout: async () => {
+        const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                  ?? loadLegacyFromLocalStorage()
+        if (!cfg) return
+        if (cfg.url && cfg.token) {
+          const base = cfg.url.replace(/\/$/, '')
+          try {
+            await fetch(base + '/api/auth/logout', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${cfg.token}` },
+              credentials: 'omit',
+            })
+          } catch {
+            // Best-effort. Local clear still happens below.
+          }
+        }
+        const cleared: RelayConfig = {
+          ...cfg,
+          token: '',
+          session_expires_at: 0,
+        }
+        await secureStorage.set(STORAGE_KEY, JSON.stringify(cleared))
+      },
+      loadSavedPassword: async () => {
+        const v = await secureStorage.get(PASSWORD_KEY)
+        return v ?? ''
       },
       // setUplinkPaused omitted — desktop-only
     },

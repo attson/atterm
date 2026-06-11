@@ -170,6 +170,158 @@ describe('createCapacitorPlatform', () => {
   })
 })
 
+describe('createCapacitorPlatform — relay.login', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    await secureStorage.remove('atterm.relay.session')
+    await secureStorage.remove('atterm.relay.password')
+    vi.restoreAllMocks()
+  })
+
+  it('POSTs /api/auth/login and persists session_token + last_email + password', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      session_token: 'sess_abc',
+      expires_at: 1234567890,
+      user: { id: 'u1', email: 'me@example.com' },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const p = createCapacitorPlatform()
+    await p.relay.login!('https://r.example.com', 'me@example.com', 'hunter2hunter2', false)
+
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe('https://r.example.com/api/auth/login')
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).credentials).toBe('omit')
+    expect(new Headers((init as RequestInit).headers).get('Content-Type')).toBe('application/json')
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      email: 'me@example.com', password: 'hunter2hunter2',
+    })
+
+    const saved = JSON.parse((await secureStorage.get('atterm.relay.session'))!)
+    expect(saved).toMatchObject({
+      url: 'https://r.example.com',
+      token: 'sess_abc',
+      session_expires_at: 1234567890,
+      last_email: 'me@example.com',
+      allow_insecure_relay: false,
+      remote_permission: 'full',
+    })
+    expect(await secureStorage.get('atterm.relay.password')).toBe('hunter2hunter2')
+  })
+
+  it('throws invalid_credentials on 401', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
+    const p = createCapacitorPlatform()
+    await expect(p.relay.login!('https://r', 'a@b', 'pw', false)).rejects.toThrow('invalid_credentials')
+    expect(await secureStorage.get('atterm.relay.session')).toBeNull()
+    expect(await secureStorage.get('atterm.relay.password')).toBeNull()
+  })
+
+  it('throws rate_limited on 429', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 429 })))
+    const p = createCapacitorPlatform()
+    await expect(p.relay.login!('https://r', 'a@b', 'pw', false)).rejects.toThrow('rate_limited')
+  })
+
+  it('throws http_<status> on other non-2xx', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 500 })))
+    const p = createCapacitorPlatform()
+    await expect(p.relay.login!('https://r', 'a@b', 'pw', false)).rejects.toThrow('http_500')
+  })
+
+  it('throws cannot_reach_relay when fetch rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network down')))
+    const p = createCapacitorPlatform()
+    await expect(p.relay.login!('https://r', 'a@b', 'pw', false)).rejects.toThrow('cannot_reach_relay')
+  })
+})
+
+describe('createCapacitorPlatform — relay.logout', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    await secureStorage.remove('atterm.relay.session')
+    await secureStorage.remove('atterm.relay.password')
+    vi.restoreAllMocks()
+  })
+
+  it('POSTs /api/auth/logout with Bearer, clears local token, preserves email + password', async () => {
+    await secureStorage.set('atterm.relay.session', JSON.stringify({
+      url: 'https://r.example.com',
+      token: 'sess_old',
+      session_expires_at: 99,
+      allow_insecure_relay: false,
+      remote_permission: 'full',
+      last_email: 'me@example.com',
+      connected: false,
+    }))
+    await secureStorage.set('atterm.relay.password', 'hunter2hunter2')
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const p = createCapacitorPlatform()
+    await p.relay.logout!()
+
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe('https://r.example.com/api/auth/logout')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(new Headers((init as RequestInit).headers).get('Authorization')).toBe('Bearer sess_old')
+    expect((init as RequestInit).credentials).toBe('omit')
+
+    const saved = JSON.parse((await secureStorage.get('atterm.relay.session'))!)
+    expect(saved.token).toBe('')
+    expect(saved.session_expires_at).toBe(0)
+    expect(saved.url).toBe('https://r.example.com')
+    expect(saved.last_email).toBe('me@example.com')
+    expect(saved.allow_insecure_relay).toBe(false)
+    expect(saved.remote_permission).toBe('full')
+    expect(await secureStorage.get('atterm.relay.password')).toBe('hunter2hunter2')
+  })
+
+  it('swallows network errors but still clears the local token', async () => {
+    await secureStorage.set('atterm.relay.session', JSON.stringify({
+      url: 'https://r.example.com',
+      token: 'sess_old',
+      session_expires_at: 99,
+      allow_insecure_relay: false,
+      remote_permission: 'full',
+      last_email: 'me@example.com',
+      connected: false,
+    }))
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network down')))
+
+    const p = createCapacitorPlatform()
+    await expect(p.relay.logout!()).resolves.toBeUndefined()
+    const saved = JSON.parse((await secureStorage.get('atterm.relay.session'))!)
+    expect(saved.token).toBe('')
+  })
+
+  it('is a no-op when no config is stored', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const p = createCapacitorPlatform()
+    await expect(p.relay.logout!()).resolves.toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('createCapacitorPlatform — relay.loadSavedPassword', () => {
+  beforeEach(async () => {
+    await secureStorage.remove('atterm.relay.password')
+  })
+
+  it("returns '' when nothing is stored", async () => {
+    const p = createCapacitorPlatform()
+    expect(await p.relay.loadSavedPassword!()).toBe('')
+  })
+
+  it('returns the value previously written by login', async () => {
+    await secureStorage.set('atterm.relay.password', 'hunter2hunter2')
+    const p = createCapacitorPlatform()
+    expect(await p.relay.loadSavedPassword!()).toBe('hunter2hunter2')
+  })
+})
+
 describe('createCapacitorPlatform — secure storage migration', () => {
   beforeEach(async () => {
     localStorage.clear()

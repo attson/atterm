@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { usePlatform } from '../platform'
 import { useI18n } from '../i18n/useI18n'
 
@@ -11,6 +11,8 @@ const { t } = useI18n()
 
 const status = ref<'pending' | 'error'>('pending')
 const errorCode = ref('')
+const elapsedMs = ref(0)
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
 // Map internal error tokens to localized strings. Unknown codes fall
 // through to the generic "Pairing failed: <code>" so we never lose the
@@ -27,6 +29,8 @@ const errorMessage = computed(() => {
     default:                       return t('mobile.pairing.errGeneric', { message: code })
   }
 })
+
+const elapsedLabel = computed(() => (elapsedMs.value / 1000).toFixed(1) + 's')
 
 function parseScanned(raw: string, allowInsecure: boolean): { origin: string; token: string } | string {
   let u: URL
@@ -50,9 +54,23 @@ async function run() {
     status.value = 'error'
     return
   }
+
+  // Belt-and-suspenders timeout layer #2: even if platform.consumePairing's
+  // own AbortController fails to cancel the in-flight fetch (some WKWebView
+  // builds drop the abort signal mid-handshake), this Promise.race
+  // guarantees we surface pair_timeout to the user.
+  const started = Date.now()
+  elapsedMs.value = 0
+  elapsedTimer = setInterval(() => { elapsedMs.value = Date.now() - started }, 100)
+
   try {
     if (!platform.relay.consumePairing) throw new Error('platform_unsupported')
-    const result = await platform.relay.consumePairing(parsed.origin, parsed.token)
+    const result = await Promise.race([
+      platform.relay.consumePairing(parsed.origin, parsed.token),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('pair_timeout')), 15_500),
+      ),
+    ])
     await platform.relay.save({
       url: result.relay_url,
       token: result.session_token,
@@ -66,16 +84,22 @@ async function run() {
   } catch (e) {
     errorCode.value = e instanceof Error ? e.message : String(e)
     status.value = 'error'
+  } finally {
+    if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
   }
 }
 
 onMounted(run)
+onBeforeUnmount(() => {
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
+})
 </script>
 
 <template>
   <div class="pair-consume">
     <div v-if="status === 'pending'" class="pending">
-      {{ t('mobile.pairing.connecting') }}
+      <p>{{ t('mobile.pairing.connecting') }}</p>
+      <p class="elapsed" data-testid="pair-elapsed">{{ elapsedLabel }}</p>
     </div>
     <div v-else class="error" data-testid="pair-error">
       <p>{{ t('mobile.pairing.failed') }}</p>
@@ -87,7 +111,9 @@ onMounted(run)
 
 <style scoped>
 .pair-consume { min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; padding: 1.5rem; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); }
-.pending { font-size: 0.95rem; color: #8d93a3; }
+.pending { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 0.95rem; color: #8d93a3; }
+.pending p { margin: 0; }
+.pending .elapsed { font-family: var(--font-mono); font-size: 0.8rem; color: #5b6172; }
 .error p { margin: 0; }
 .error .code { font-family: var(--font-mono); color: #f87171; font-size: 0.8rem; }
 .error button { margin-top: 12px; height: 42px; padding: 0 18px; border: none; border-radius: 9px; background: #3b82f6; color: #fff; font-weight: 600; }

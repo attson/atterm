@@ -63,3 +63,37 @@ func SyncedKeys() []string {
 	sort.Strings(out)
 	return out
 }
+
+// Engine is a single per-app sync engine instance. NOT safe for
+// concurrent calls — wire it into a serial goroutine via the desktop
+// boot code.
+type Engine struct {
+	adapter Adapter
+	relay   RelayClient
+}
+
+func NewEngine(a Adapter, r RelayClient) *Engine {
+	return &Engine{adapter: a, relay: r}
+}
+
+// Pull fetches the server state and reconciles into local. Per-key rule:
+//   - server.updated_at > local.updated_at_local AND NOT dirty: adopt server
+//   - server.updated_at > local.updated_at_local AND dirty: preserve local
+//     (subsequent push will reconcile via LWW)
+//   - server.updated_at <= local.updated_at_local: no-op
+//   - key absent on server: leave local untouched
+func (e *Engine) Pull(ctx context.Context) error {
+	items, err := e.relay.Get(ctx)
+	if err != nil { return err }
+	for _, it := range items {
+		local := e.adapter.ReadMeta(it.Key)
+		if it.UpdatedAt > local.UpdatedAtLocal {
+			if local.Dirty {
+				continue
+			}
+			if err := e.adapter.WriteValue(it.Key, it.Value); err != nil { return err }
+			if err := e.adapter.WriteMeta(it.Key, Meta{UpdatedAtLocal: it.UpdatedAt, Dirty: false}); err != nil { return err }
+		}
+	}
+	return nil
+}

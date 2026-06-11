@@ -61,3 +61,63 @@ func TestAdapterContract_RoundTrip(t *testing.T) {
 	m := a.ReadMeta("locale_preference")
 	if m.UpdatedAtLocal != 100 || !m.Dirty { t.Fatalf("meta: %+v", m) }
 }
+
+type fakeRelay struct {
+	getReturn []ServerItem
+	getErr    error
+	putItems  []ClientItem
+	putReturn []ServerItem
+}
+
+func (f *fakeRelay) Get(ctx context.Context) ([]ServerItem, error) {
+	return f.getReturn, f.getErr
+}
+func (f *fakeRelay) Put(ctx context.Context, items []ClientItem) ([]ServerItem, error) {
+	f.putItems = append([]ClientItem(nil), items...)
+	if f.putReturn != nil { return f.putReturn, nil }
+	return nil, nil
+}
+
+func TestPull_ServerNewerOverwritesLocal(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: false})
+
+	r := &fakeRelay{getReturn: []ServerItem{
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
+	}}
+	e := NewEngine(a, r)
+	if err := e.Pull(context.Background()); err != nil { t.Fatalf("Pull: %v", err) }
+
+	v, _ := a.ReadValue("locale_preference")
+	if string(v) != `"zh-CN"` { t.Fatalf("expected overwrite, got %s", v) }
+	m := a.ReadMeta("locale_preference")
+	if m.UpdatedAtLocal != 500 || m.Dirty { t.Fatalf("meta: %+v", m) }
+}
+
+func TestPull_LocalDirtyNewerIsPreserved(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 800, Dirty: true})
+
+	r := &fakeRelay{getReturn: []ServerItem{
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 500},
+	}}
+	e := NewEngine(a, r)
+	if err := e.Pull(context.Background()); err != nil { t.Fatalf("Pull: %v", err) }
+
+	v, _ := a.ReadValue("locale_preference")
+	if string(v) != `"en"` { t.Fatalf("expected local preserved, got %s", v) }
+	m := a.ReadMeta("locale_preference")
+	if !m.Dirty { t.Fatalf("expected dirty kept") }
+}
+
+func TestPull_ServerMissingKeyDoesNotTouchLocal(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	r := &fakeRelay{getReturn: nil}
+	e := NewEngine(a, r)
+	if err := e.Pull(context.Background()); err != nil { t.Fatalf("Pull: %v", err) }
+	v, _ := a.ReadValue("locale_preference")
+	if string(v) != `"en"` { t.Fatalf("local wiped: %s", v) }
+}

@@ -396,6 +396,10 @@ export const zhCN = {
       cameraDenied: "需要相机权限才能扫描二维码",
       noQrDetected: "未识别到二维码，请重试",
       scanNotAvailable: "此版本暂不支持扫码功能，请在下方手动填入 relay 地址",
+      errInvalidUrl: "二维码内容不是合法的配对链接",
+      errInvalidScheme: "二维码地址不是 https，无法配对（如需 http 请回到设置打开 insecure 开关）",
+      errPlatformUnsupported: "当前平台不支持二维码配对",
+      errGeneric: "配对失败：{message}",
     },
     insecure: {
       warning: {

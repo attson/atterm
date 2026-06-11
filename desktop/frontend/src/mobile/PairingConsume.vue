@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { usePlatform } from '../platform'
 import { useI18n } from '../i18n/useI18n'
 
@@ -11,6 +11,19 @@ const { t } = useI18n()
 
 const status = ref<'pending' | 'error'>('pending')
 const errorCode = ref('')
+
+// Map internal error tokens to localized strings. Unknown codes fall
+// through to the generic "Pairing failed: <code>" so we never lose the
+// raw signal for debugging.
+const errorMessage = computed(() => {
+  const code = errorCode.value
+  switch (code) {
+    case 'pair_invalid_url':       return t('mobile.pairing.errInvalidUrl')
+    case 'pair_invalid_scheme':    return t('mobile.pairing.errInvalidScheme')
+    case 'platform_unsupported':   return t('mobile.pairing.errPlatformUnsupported')
+    default:                       return t('mobile.pairing.errGeneric', { message: code })
+  }
+})
 
 function parseScanned(raw: string, allowInsecure: boolean): { origin: string; token: string } | string {
   let u: URL
@@ -63,7 +76,7 @@ onMounted(run)
     </div>
     <div v-else class="error" data-testid="pair-error">
       <p>{{ t('mobile.pairing.failed') }}</p>
-      <p class="code">{{ errorCode }}</p>
+      <p class="code">{{ errorMessage }}</p>
       <button type="button" @click="emit('cancel')">{{ t('mobile.pairing.back') }}</button>
     </div>
   </div>

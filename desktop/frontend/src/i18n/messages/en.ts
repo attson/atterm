@@ -394,6 +394,10 @@ export const en = {
       cameraDenied: 'Camera permission required to scan the QR code.',
       noQrDetected: 'No QR code detected — try again.',
       scanNotAvailable: 'QR scanning is not available in this build — enter the relay URL manually below.',
+      errInvalidUrl: 'The QR code does not contain a valid pairing link.',
+      errInvalidScheme: 'QR scheme must be https. To pair with http, enable the insecure HTTP/WS toggle on the setup screen and rescan.',
+      errPlatformUnsupported: 'This platform does not support QR pairing.',
+      errGeneric: 'Pairing failed: {message}',
     },
     insecure: {
       warning: {

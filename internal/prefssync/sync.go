@@ -105,6 +105,23 @@ func (e *Engine) MarkDirty(key string, updatedAtLocalMs int64) {
 	e.adapter.WriteMeta(key, Meta{UpdatedAtLocal: updatedAtLocalMs, Dirty: true})
 }
 
+// SeedFromLocal stamps Dirty=true (with updatedAtLocalMs) for every
+// synced key that:
+//   - has a value in the local adapter, AND
+//   - is reported as non-default by isCustomized, AND
+//   - has Meta{Dirty: false} currently
+// Intended to run once per (relay user, device) after the first PULL,
+// to carry pre-sync customizations up to the server.
+func (e *Engine) SeedFromLocal(isCustomized func(key string) bool, updatedAtLocalMs int64) {
+	for _, k := range e.adapter.Keys() {
+		if _, ok := e.adapter.ReadValue(k); !ok { continue }
+		if !isCustomized(k) { continue }
+		m := e.adapter.ReadMeta(k)
+		if m.Dirty { continue }
+		e.adapter.WriteMeta(k, Meta{UpdatedAtLocal: updatedAtLocalMs, Dirty: true})
+	}
+}
+
 // Push collects all dirty keys, sends them as a single PUT, and
 // reconciles per-key with the server response (LWW: server's
 // updated_at is authoritative).

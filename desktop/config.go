@@ -54,6 +54,10 @@ type appConfig struct {
 	// is fine because the email is non-secret and lives next to the
 	// session token in the same config.json.
 	RelayLastEmail string `json:"relay_last_email,omitempty"`
+	// RelaySessionUserID is the user id returned by /api/auth/login and
+	// stored here so the first-login seed mechanism can key its
+	// PrefsSeedMarkers entry by user id rather than email.
+	RelaySessionUserID string `json:"relay_session_user_id,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`

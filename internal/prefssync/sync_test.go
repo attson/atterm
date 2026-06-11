@@ -179,3 +179,24 @@ func TestMarkDirty_StampsMeta(t *testing.T) {
 	m := a.ReadMeta("locale_preference")
 	if !m.Dirty || m.UpdatedAtLocal != 12345 { t.Fatalf("meta: %+v", m) }
 }
+
+func TestSeedFromLocal_MarksMissingNonDefaultDirty(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"zh-CN"`))
+	// Server returned nothing for any key (empty PULL response). We had no
+	// chance to write meta during PULL. SeedFromLocal should flag the local
+	// non-default value as dirty.
+	r := &fakeRelay{}
+	e := NewEngine(a, r)
+	e.SeedFromLocal(func(key string) bool {
+		// Only locale_preference's "zh-CN" is non-default in this test.
+		return key == "locale_preference"
+	}, 5555)
+
+	m := a.ReadMeta("locale_preference")
+	if !m.Dirty || m.UpdatedAtLocal != 5555 {
+		t.Fatalf("expected dirty seed, got %+v", m)
+	}
+	mn := a.ReadMeta("notifications_enabled")
+	if mn.Dirty { t.Fatalf("non-customized key should not be dirty") }
+}

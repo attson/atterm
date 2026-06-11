@@ -366,6 +366,9 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	var out struct {
 		SessionToken string `json:"session_token"`
 		ExpiresAt    int64  `json:"expires_at"`
+		User         struct {
+			ID string `json:"id"`
+		} `json:"user"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return fmt.Errorf("relay /api/auth/login: decode response: %w", err)
@@ -388,21 +391,34 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	}); err != nil {
 		return err
 	}
-	// Persist the email separately — RelayConfig.LastEmail is read-only
-	// from the frontend's perspective (SetRelayConfig intentionally
+	// Persist the email and user id separately — RelayConfig.LastEmail is
+	// read-only from the frontend's perspective (SetRelayConfig intentionally
 	// ignores it), so LoginRemoteRelay writes the cfgStore directly.
 	if a.cfgStore != nil {
 		cfg := a.cfgStore.Get()
 		cfg.RelayLastEmail = email
+		cfg.RelaySessionUserID = out.User.ID
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}
 	}
 	if a.prefsSync != nil {
 		go func() {
-			if err := a.prefsSync.Pull(a.ctx); err == nil {
+			if err := a.prefsSync.Pull(a.ctx); err != nil { return }
+			cfg := a.cfgStore.Get()
+			userID := cfg.RelaySessionUserID
+			if userID == "" || cfg.PrefsSeedMarkerFor(userID) {
 				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+				return
 			}
+			a.prefsSync.SeedFromLocal(isPrefCustomized(cfg), time.Now().UnixMilli())
+			_ = a.prefsSync.Push(a.ctx)
+
+			cfg2 := a.cfgStore.Get()
+			if cfg2.PrefsSeedMarkers == nil { cfg2.PrefsSeedMarkers = map[string]bool{} }
+			cfg2.PrefsSeedMarkers[userID] = true
+			_ = a.cfgStore.Set(cfg2)
+			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
 		}()
 	}
 	return nil
@@ -1339,4 +1355,24 @@ func (a *App) ExportDiagnostics(content string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// isPrefCustomized returns true when the given synced key's value in
+// the loaded config differs from the desktop's hard-coded default.
+func isPrefCustomized(c appConfig) func(string) bool {
+	return func(key string) bool {
+		switch key {
+		case "locale_preference":
+			return c.LocalePreference != "" && c.LocalePreference != localePreferenceSystem
+		case "quick_templates":
+			return len(c.QuickTemplates) > 0
+		case "notifications_enabled":
+			return c.NotificationsEnabled != nil
+		case "command_notify_threshold_seconds":
+			return c.CommandNotifyThresholdSeconds != nil
+		case "shell_integration_enabled":
+			return c.ShellIntegrationEnabled != nil
+		}
+		return false
+	}
 }

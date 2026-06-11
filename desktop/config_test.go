@@ -26,6 +26,26 @@ func TestAppConfig_DeserializeOldJSON_RelayPausedDefaultsFalse(t *testing.T) {
 	}
 }
 
+func TestPrefsMeta_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	store := loadConfig()
+	c := store.Get()
+	c.PrefsMeta = map[string]prefsMetaEntry{
+		"locale_preference": {UpdatedAtLocal: 1700, Dirty: true},
+	}
+	if err := store.Set(c); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	store2 := loadConfig()
+	got := store2.Get().PrefsMeta["locale_preference"]
+	if got.UpdatedAtLocal != 1700 || !got.Dirty {
+		t.Fatalf("round-trip lost data: %+v", got)
+	}
+}
+
 func TestLocalePreferenceOrDefault(t *testing.T) {
 	tests := []struct {
 		name string

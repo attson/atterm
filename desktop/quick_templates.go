@@ -41,5 +41,9 @@ func (a *App) SetQuickTemplates(list []QuickTemplate) error {
 	} else {
 		cfg.QuickTemplates = list
 	}
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("quick_templates")
+	return nil
 }

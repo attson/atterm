@@ -393,6 +393,7 @@ export const en = {
       orManual: '— or enter manually —',
       cameraDenied: 'Camera permission required to scan the QR code.',
       noQrDetected: 'No QR code detected — try again.',
+      scanNotAvailable: 'QR scanning is not available in this build — enter the relay URL manually below.',
     },
     insecure: {
       warning: {

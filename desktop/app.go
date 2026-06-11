@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -120,6 +121,8 @@ type App struct {
 
 	// writeFile is os.WriteFile in production; tests substitute a stub.
 	writeFile writeFileFunc
+
+	prefsSync *prefssync.Engine
 }
 
 // NewApp creates a new App application struct.
@@ -168,6 +171,19 @@ func (a *App) startup(ctx context.Context) {
 	a.applyRelayConfig(cfg)
 	if a.updater != nil {
 		a.updater.SetGHProxyURL(cfg.UpdateGHProxyURL)
+	}
+
+	adapter := newAppConfigAdapter(a.cfgStore)
+	relayClient := newHTTPRelayClient(a.cfgStore)
+	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
+
+	// Trigger an initial PULL in the background if already logged in.
+	if cfg := a.cfgStore.Get(); cfg.RelaySessionToken != "" {
+		go func() {
+			if err := a.prefsSync.Pull(a.ctx); err == nil {
+				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+			}
+		}()
 	}
 
 	// Auto-update background loop, gated on the persisted preference.
@@ -350,6 +366,9 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	var out struct {
 		SessionToken string `json:"session_token"`
 		ExpiresAt    int64  `json:"expires_at"`
+		User         struct {
+			ID string `json:"id"`
+		} `json:"user"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return fmt.Errorf("relay /api/auth/login: decode response: %w", err)
@@ -372,15 +391,35 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	}); err != nil {
 		return err
 	}
-	// Persist the email separately — RelayConfig.LastEmail is read-only
-	// from the frontend's perspective (SetRelayConfig intentionally
+	// Persist the email and user id separately — RelayConfig.LastEmail is
+	// read-only from the frontend's perspective (SetRelayConfig intentionally
 	// ignores it), so LoginRemoteRelay writes the cfgStore directly.
 	if a.cfgStore != nil {
 		cfg := a.cfgStore.Get()
 		cfg.RelayLastEmail = email
+		cfg.RelaySessionUserID = out.User.ID
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}
+	}
+	if a.prefsSync != nil {
+		go func() {
+			if err := a.prefsSync.Pull(a.ctx); err != nil { return }
+			cfg := a.cfgStore.Get()
+			userID := cfg.RelaySessionUserID
+			if userID == "" || cfg.PrefsSeedMarkerFor(userID) {
+				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+				return
+			}
+			a.prefsSync.SeedFromLocal(isPrefCustomized(cfg), time.Now().UnixMilli())
+			_ = a.prefsSync.Push(a.ctx)
+
+			cfg2 := a.cfgStore.Get()
+			if cfg2.PrefsSeedMarkers == nil { cfg2.PrefsSeedMarkers = map[string]bool{} }
+			cfg2.PrefsSeedMarkers[userID] = true
+			_ = a.cfgStore.Set(cfg2)
+			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+		}()
 	}
 	return nil
 }
@@ -612,7 +651,11 @@ func (a *App) SetLocalePreference(preference string) error {
 	default:
 		return errors.New("unsupported locale preference")
 	}
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("locale_preference")
+	return nil
 }
 
 func (a *App) GetDefaultShell() string {
@@ -1049,7 +1092,11 @@ func (a *App) SetNotificationsEnabled(enabled bool) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.NotificationsEnabled = &enabled
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("notifications_enabled")
+	return nil
 }
 
 // ShowNotification is called from the frontend when a terminal bell fires
@@ -1092,7 +1139,11 @@ func (a *App) SetShellIntegrationEnabled(enabled bool) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.ShellIntegrationEnabled = &enabled
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("shell_integration_enabled")
+	return nil
 }
 
 // GetCommandNotifyThresholdSeconds returns the current persisted command-
@@ -1114,7 +1165,11 @@ func (a *App) SetCommandNotifyThresholdSeconds(seconds int) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.CommandNotifyThresholdSeconds = &seconds
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("command_notify_threshold_seconds")
+	return nil
 }
 
 // BroadcastCommandFinished is invoked by the desktop frontend when an OSC
@@ -1239,6 +1294,21 @@ func (a *App) recordRelayError(err error) {
 	}
 }
 
+// markPrefDirtyAndPush stamps the meta for key with the current ms,
+// then triggers a background PUSH. Errors are swallowed by design (sync
+// is best-effort; user UI already reflects the change).
+func (a *App) markPrefDirtyAndPush(key string) {
+	if a.prefsSync == nil {
+		return
+	}
+	a.prefsSync.MarkDirty(key, time.Now().UnixMilli())
+	go func() {
+		if err := a.prefsSync.Push(a.ctx); err == nil {
+			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+		}
+	}()
+}
+
 // snapshotRelayErrors returns a copy of the recent-errors ring buffer.
 // Callers receive a fresh slice safe to mutate; the underlying buffer is
 // unaffected.
@@ -1285,4 +1355,24 @@ func (a *App) ExportDiagnostics(content string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// isPrefCustomized returns true when the given synced key's value in
+// the loaded config differs from the desktop's hard-coded default.
+func isPrefCustomized(c appConfig) func(string) bool {
+	return func(key string) bool {
+		switch key {
+		case "locale_preference":
+			return c.LocalePreference != "" && c.LocalePreference != localePreferenceSystem
+		case "quick_templates":
+			return len(c.QuickTemplates) > 0
+		case "notifications_enabled":
+			return c.NotificationsEnabled != nil
+		case "command_notify_threshold_seconds":
+			return c.CommandNotifyThresholdSeconds != nil
+		case "shell_integration_enabled":
+			return c.ShellIntegrationEnabled != nil
+		}
+		return false
+	}
 }

@@ -240,6 +240,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // this so its uplink can subscribe to local mini-relay sessions by id.
 func (s *Server) Registry() *session.Registry { return s.registry }
 
+// Store returns the underlying SQLiteStore. Test-only convenience; panics
+// if the server was constructed without a store or with a non-SQLite store.
+func (s *Server) Store() *userstore.SQLiteStore {
+	return s.cfg.Store.(*userstore.SQLiteStore)
+}
+
 // removeSession removes a session from the registry and prunes any per-user
 // seen rows for it. All session teardown paths funnel through here so the
 // session_seen table does not accumulate rows for dead sessions.

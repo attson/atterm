@@ -61,6 +61,12 @@ export const webTemplateStorage = {
     return new Promise((resolve) => {
       if (typeof localStorage === 'undefined') return resolve()
       localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+      try {
+        localStorage.setItem('atterm.quick_templates.value', JSON.stringify(list))
+      } catch { /* ignore */ }
+      import('./sync/prefsSync').then(({ notifyLocalChange }) => {
+        notifyLocalChange('quick_templates')
+      }).catch(() => {})
       resolve()
     })
   },

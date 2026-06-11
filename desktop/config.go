@@ -33,6 +33,13 @@ var terminalThemes = map[string]struct{}{
 	terminalThemeDaylight:      {},
 }
 
+// prefsMetaEntry tracks per-key sync state for the 5 synced preferences.
+// Lives next to the values in config.json, but never sent to the relay.
+type prefsMetaEntry struct {
+	UpdatedAtLocal int64 `json:"updated_at_local"`
+	Dirty          bool  `json:"dirty"`
+}
+
 // appConfig is what we persist to ~/.config/atterm/config.json.
 // Empty fields mean "not configured" — RelayURL == "" disables uplink entirely.
 type appConfig struct {
@@ -47,6 +54,10 @@ type appConfig struct {
 	// is fine because the email is non-secret and lives next to the
 	// session token in the same config.json.
 	RelayLastEmail string `json:"relay_last_email,omitempty"`
+	// RelaySessionUserID is the user id returned by /api/auth/login and
+	// stored here so the first-login seed mechanism can key its
+	// PrefsSeedMarkers entry by user id rather than email.
+	RelaySessionUserID string `json:"relay_session_user_id,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`
@@ -133,6 +144,13 @@ type appConfig struct {
 	// (expanded mode). 0 means "use default 240"; valid range enforced
 	// on Set in app.go.
 	TaskSidebarWidth int `json:"task_sidebar_width,omitempty"`
+
+	// PrefsMeta records per-key sync state (last local update timestamp and
+	// dirty flag) for the synced preferences. Never sent to the relay.
+	PrefsMeta map[string]prefsMetaEntry `json:"prefs_meta,omitempty"`
+	// PrefsSeedMarkers records whether the first-login seed upload has run
+	// for a given relay user id. Keyed by user id to survive logout/login.
+	PrefsSeedMarkers map[string]bool `json:"prefs_seed_markers,omitempty"`
 }
 
 // AutoCheckUpdatesOrDefault returns the user's preference, defaulting to
@@ -207,6 +225,16 @@ func (c appConfig) LocalePreferenceOrDefault() string {
 	default:
 		return localePreferenceSystem
 	}
+}
+
+// PrefsSeedMarkerFor reports whether the first-login seed upload has
+// already run for the given relay user id. Lives separately from
+// PrefsMeta so logout/login doesn't have to touch the meta map.
+func (c appConfig) PrefsSeedMarkerFor(userID string) bool {
+	if c.PrefsSeedMarkers == nil {
+		return false
+	}
+	return c.PrefsSeedMarkers[userID]
 }
 
 func (c appConfig) DefaultShellOrDefault() string {

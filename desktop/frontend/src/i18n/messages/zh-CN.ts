@@ -399,6 +399,9 @@ export const zhCN = {
       errInvalidUrl: "二维码内容不是合法的配对链接",
       errInvalidScheme: "二维码地址不是 https，无法配对（如需 http 请回到设置打开 insecure 开关）",
       errPlatformUnsupported: "当前平台不支持二维码配对",
+      errCannotReachRelay: "无法连接 relay，请检查二维码地址或网络后重试",
+      errTimeout: "配对请求超时（15s），请确认 relay 可达后重试",
+      errPairInvalid: "二维码配对令牌无效或已过期，请重新生成",
       errGeneric: "配对失败：{message}",
     },
     insecure: {

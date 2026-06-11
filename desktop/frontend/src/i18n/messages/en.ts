@@ -397,6 +397,9 @@ export const en = {
       errInvalidUrl: 'The QR code does not contain a valid pairing link.',
       errInvalidScheme: 'QR scheme must be https. To pair with http, enable the insecure HTTP/WS toggle on the setup screen and rescan.',
       errPlatformUnsupported: 'This platform does not support QR pairing.',
+      errCannotReachRelay: 'Cannot reach the relay. Check the QR address or your network, then try again.',
+      errTimeout: 'Pairing timed out after 15s. Confirm the relay is reachable, then try again.',
+      errPairInvalid: 'The pairing token is invalid or expired. Generate a new QR.',
       errGeneric: 'Pairing failed: {message}',
     },
     insecure: {

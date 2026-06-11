@@ -103,12 +103,25 @@ export function createCapacitorPlatform(): Platform {
       },
       consumePairing: async (relayBase, token) => {
         const base = relayBase.replace(/\/$/, '')
-        const res = await fetch(base + '/api/pair/consume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token }),
-          credentials: 'omit',
-        })
+        // Without an explicit timeout, an unreachable host (wrong QR, captive
+        // portal, etc.) leaves the UI stuck on "配对中…" forever.
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 15_000)
+        let res: Response
+        try {
+          res = await fetch(base + '/api/pair/consume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+            credentials: 'omit',
+            signal: controller.signal,
+          })
+        } catch (e) {
+          if ((e as { name?: string })?.name === 'AbortError') throw new Error('pair_timeout')
+          throw new Error('cannot_reach_relay')
+        } finally {
+          clearTimeout(timer)
+        }
         if (res.status === 404) {
           const body = await res.json().catch(() => ({}))
           throw new Error(body.code || 'pair_invalid')

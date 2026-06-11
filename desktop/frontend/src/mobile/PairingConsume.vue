@@ -21,6 +21,9 @@ const errorMessage = computed(() => {
     case 'pair_invalid_url':       return t('mobile.pairing.errInvalidUrl')
     case 'pair_invalid_scheme':    return t('mobile.pairing.errInvalidScheme')
     case 'platform_unsupported':   return t('mobile.pairing.errPlatformUnsupported')
+    case 'cannot_reach_relay':     return t('mobile.pairing.errCannotReachRelay')
+    case 'pair_timeout':           return t('mobile.pairing.errTimeout')
+    case 'pair_invalid':           return t('mobile.pairing.errPairInvalid')
     default:                       return t('mobile.pairing.errGeneric', { message: code })
   }
 })

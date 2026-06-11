@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/useI18n'
 import { usePlatform } from '../platform'
 import { validateRelayBase } from './relay'
 import PairingConsume from './PairingConsume.vue'
-import { BarcodeScanner } from '@capacitor-mlkit/barcode-scanning'
+import { QRScanner } from '../platform/qrScanner'
 
 const props = defineProps<{ reason?: 'token_invalid' | null }>()
 const emit = defineEmits<{ (e: 'connected'): void }>()
@@ -74,18 +74,18 @@ onMounted(async () => {
 async function onScanQR(): Promise<void> {
   error.value = null
   try {
-    const { camera } = await BarcodeScanner.requestPermissions()
-    if (camera !== 'granted' && camera !== 'limited') {
+    const { camera } = await QRScanner.requestPermissions()
+    if (camera !== 'granted') {
       error.value = t('mobile.pairing.cameraDenied')
       return
     }
-    const { barcodes } = await BarcodeScanner.scan({ formats: ['QR_CODE' as any] })
-    const first = barcodes[0]
-    if (!first?.rawValue) {
+    const result = await QRScanner.scan()
+    if (result.cancelled) return
+    if (!result.rawValue) {
       error.value = t('mobile.pairing.noQrDetected')
       return
     }
-    scannedUrl.value = first.rawValue
+    scannedUrl.value = result.rawValue
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     if (/PLUGIN_NOT_AVAILABLE|not implemented/i.test(msg)) {

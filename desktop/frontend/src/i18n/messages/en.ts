@@ -402,6 +402,9 @@ export const en = {
       errPairInvalid: 'The pairing token is invalid or expired. Generate a new QR.',
       errCancelled: 'Pairing cancelled.',
       errGeneric: 'Pairing failed: {message}',
+      stepParsing: 'Parsing QR…',
+      stepRequesting: 'Contacting relay…',
+      stepSaving: 'Saving config…',
     },
     insecure: {
       warning: {

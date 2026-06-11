@@ -1,6 +1,7 @@
 import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } from './types'
 import type { QuickTemplate } from '../lib/templates'
 import type { AuxKey } from '../lib/auxKeys'
+import { CapacitorHttp } from '@capacitor/core'
 import { secureStorage } from './secureStorage'
 import { notifyLocalChange } from '../lib/prefsSync.capacitor'
 
@@ -103,31 +104,34 @@ export function createCapacitorPlatform(): Platform {
       },
       consumePairing: async (relayBase, token) => {
         const base = relayBase.replace(/\/$/, '')
-        // Without an explicit timeout, an unreachable host (wrong QR, captive
-        // portal, etc.) leaves the UI stuck on "配对中…" forever.
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 15_000)
-        let res: Response
+        // Use CapacitorHttp explicitly instead of fetch. fetch() on iOS goes
+        // through WKWebView; when a TLS handshake hangs there, the entire JS
+        // timer pool freezes (setInterval / setTimeout / requestAnimationFrame
+        // all stop firing), and AbortController.abort() is also dropped.
+        // CapacitorHttp.post hits NSURLSession directly with native timeouts
+        // that fire regardless of WebView state.
+        let resp: { status: number; data: unknown }
         try {
-          res = await fetch(base + '/api/pair/consume', {
-            method: 'POST',
+          resp = await CapacitorHttp.post({
+            url: base + '/api/pair/consume',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token }),
-            credentials: 'omit',
-            signal: controller.signal,
+            data: { token },
+            connectTimeout: 10_000,
+            readTimeout: 15_000,
           })
         } catch (e) {
-          if ((e as { name?: string })?.name === 'AbortError') throw new Error('pair_timeout')
+          const msg = (e as { message?: string })?.message ?? String(e)
+          if (/timeout|timed out/i.test(msg)) throw new Error('pair_timeout')
           throw new Error('cannot_reach_relay')
-        } finally {
-          clearTimeout(timer)
         }
-        if (res.status === 404) {
-          const body = await res.json().catch(() => ({}))
+        if (resp.status === 404) {
+          const body = (resp.data as { code?: string }) || {}
           throw new Error(body.code || 'pair_invalid')
         }
-        if (!res.ok) throw new Error(`pair_consume_http_${res.status}`)
-        return (await res.json()) as { relay_url: string; session_token: string; expires_at: number; user: { id: string; email: string } }
+        if (resp.status < 200 || resp.status >= 300) {
+          throw new Error(`pair_consume_http_${resp.status}`)
+        }
+        return resp.data as { relay_url: string; session_token: string; expires_at: number; user: { id: string; email: string } }
       },
       login: async (url, email, password, allowInsecure) => {
         const base = url.replace(/\/$/, '')

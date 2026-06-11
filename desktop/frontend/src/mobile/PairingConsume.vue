@@ -12,6 +12,7 @@ const { t } = useI18n()
 const status = ref<'pending' | 'error'>('pending')
 const errorCode = ref('')
 const elapsedMs = ref(0)
+const step = ref<'parsing' | 'requesting' | 'saving'>('parsing')
 let rafHandle = 0
 let started = 0
 let cancelled = false
@@ -34,6 +35,14 @@ const errorMessage = computed(() => {
 })
 
 const elapsedLabel = computed(() => (elapsedMs.value / 1000).toFixed(1) + 's')
+const stepLabel = computed(() => {
+  switch (step.value) {
+    case 'parsing':    return t('mobile.pairing.stepParsing')
+    case 'requesting': return t('mobile.pairing.stepRequesting')
+    case 'saving':     return t('mobile.pairing.stepSaving')
+    default:           return ''
+  }
+})
 
 function parseScanned(raw: string, allowInsecure: boolean): { origin: string; token: string } | string {
   let u: URL
@@ -80,16 +89,18 @@ async function run() {
 
   try {
     if (!platform.relay.consumePairing) throw new Error('platform_unsupported')
-    // Two-layer timeout: platform.consumePairing has its own AbortController
-    // (15s); this Promise.race adds a JS-level 15.5s reject that fires even
-    // if AbortController is dropped by the WebView's fetch implementation.
+    // Two-layer timeout: platform.consumePairing has its own native timeout
+    // via CapacitorHttp; this Promise.race adds a JS-level 16s reject in
+    // case JS-side timers are still alive even when the network is hung.
+    step.value = 'requesting'
     const result = await Promise.race([
       platform.relay.consumePairing(parsed.origin, parsed.token),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('pair_timeout')), 15_500),
+        setTimeout(() => reject(new Error('pair_timeout')), 16_000),
       ),
     ])
     if (cancelled) return
+    step.value = 'saving'
     await platform.relay.save({
       url: result.relay_url,
       token: result.session_token,
@@ -121,6 +132,7 @@ onBeforeUnmount(() => {
   <div class="pair-consume">
     <div v-if="status === 'pending'" class="pending">
       <p>{{ t('mobile.pairing.connecting') }}</p>
+      <p class="step" data-testid="pair-step">{{ stepLabel }}</p>
       <p class="elapsed" data-testid="pair-elapsed">{{ elapsedLabel }}</p>
       <button type="button" class="cancel" data-testid="pair-cancel" @click="onCancelClicked">
         {{ t('common.cancel') }}
@@ -138,6 +150,7 @@ onBeforeUnmount(() => {
 .pair-consume { min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; padding: 1.5rem; background: var(--bg, #05070d); color: var(--fg, #e6e7ea); }
 .pending { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 0.95rem; color: #8d93a3; }
 .pending p { margin: 0; }
+.pending .step { font-size: 0.8rem; color: #6b7280; }
 .pending .elapsed { font-family: var(--font-mono); font-size: 0.8rem; color: #5b6172; }
 .pending .cancel { margin-top: 18px; height: 36px; padding: 0 18px; border: 1px solid #2e3340; border-radius: 8px; background: transparent; color: #8d93a3; font-size: 0.85rem; }
 .error p { margin: 0; }

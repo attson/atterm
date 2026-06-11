@@ -404,6 +404,9 @@ export const zhCN = {
       errPairInvalid: "二维码配对令牌无效或已过期，请重新生成",
       errCancelled: "已取消配对",
       errGeneric: "配对失败：{message}",
+      stepParsing: "解析二维码…",
+      stepRequesting: "请求 relay 服务器…",
+      stepSaving: "保存配置…",
     },
     insecure: {
       warning: {

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { localStorageAdapter, capacitorRelayClient } from './prefsSync.capacitor'
+import { localStorageAdapter, capacitorRelayClient, setSharedPrefsSync, notifyLocalChange } from './prefsSync.capacitor'
+import { PrefsSyncEngine } from './prefsSync'
 
 beforeEach(() => {
   localStorage.clear()
@@ -17,6 +18,18 @@ describe('localStorageAdapter', () => {
 
     expect(a.readValue('locale_preference')).toBe('zh-CN')
     expect(a.readMeta('locale_preference')).toEqual({ updatedAtLocal: 123, dirty: true })
+  })
+})
+
+describe('notifyLocalChange', () => {
+  it('marks dirty and schedules a push', () => {
+    const fakeRelay = { get: vi.fn(), put: vi.fn().mockResolvedValue([]) }
+    const e = new PrefsSyncEngine(localStorageAdapter(), fakeRelay)
+    localStorage.setItem('atterm.locale_preference.value', `"zh-CN"`)
+    setSharedPrefsSync(e)
+    notifyLocalChange('locale_preference')
+    expect(JSON.parse(localStorage.getItem('atterm.locale_preference.meta') ?? '{}').dirty)
+      .toBe(true)
   })
 })
 

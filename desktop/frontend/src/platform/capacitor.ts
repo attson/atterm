@@ -2,6 +2,7 @@ import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } fr
 import type { QuickTemplate } from '../lib/templates'
 import type { AuxKey } from '../lib/auxKeys'
 import { secureStorage } from './secureStorage'
+import { notifyLocalChange } from '../lib/prefsSync.capacitor'
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
@@ -279,6 +280,10 @@ export function createCapacitorPlatform(): Platform {
       save: async (list) => {
         if (typeof localStorage === 'undefined') return
         localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list))
+        try {
+          localStorage.setItem('atterm.quick_templates.value', JSON.stringify(list))
+        } catch { /* ignore */ }
+        notifyLocalChange('quick_templates')
       },
       clear: async () => {
         if (typeof localStorage === 'undefined') return

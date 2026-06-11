@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -120,6 +121,8 @@ type App struct {
 
 	// writeFile is os.WriteFile in production; tests substitute a stub.
 	writeFile writeFileFunc
+
+	prefsSync *prefssync.Engine
 }
 
 // NewApp creates a new App application struct.
@@ -168,6 +171,17 @@ func (a *App) startup(ctx context.Context) {
 	a.applyRelayConfig(cfg)
 	if a.updater != nil {
 		a.updater.SetGHProxyURL(cfg.UpdateGHProxyURL)
+	}
+
+	adapter := newAppConfigAdapter(a.cfgStore)
+	relayClient := newHTTPRelayClient(a.cfgStore)
+	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
+
+	// Trigger an initial PULL in the background if already logged in.
+	if cfg := a.cfgStore.Get(); cfg.RelaySessionToken != "" {
+		go func() {
+			_ = a.prefsSync.Pull(a.ctx)
+		}()
 	}
 
 	// Auto-update background loop, gated on the persisted preference.
@@ -381,6 +395,9 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}
+	}
+	if a.prefsSync != nil {
+		go func() { _ = a.prefsSync.Pull(a.ctx) }()
 	}
 	return nil
 }
@@ -612,7 +629,11 @@ func (a *App) SetLocalePreference(preference string) error {
 	default:
 		return errors.New("unsupported locale preference")
 	}
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("locale_preference")
+	return nil
 }
 
 func (a *App) GetDefaultShell() string {
@@ -1049,7 +1070,11 @@ func (a *App) SetNotificationsEnabled(enabled bool) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.NotificationsEnabled = &enabled
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("notifications_enabled")
+	return nil
 }
 
 // ShowNotification is called from the frontend when a terminal bell fires
@@ -1092,7 +1117,11 @@ func (a *App) SetShellIntegrationEnabled(enabled bool) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.ShellIntegrationEnabled = &enabled
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("shell_integration_enabled")
+	return nil
 }
 
 // GetCommandNotifyThresholdSeconds returns the current persisted command-
@@ -1114,7 +1143,11 @@ func (a *App) SetCommandNotifyThresholdSeconds(seconds int) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.CommandNotifyThresholdSeconds = &seconds
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("command_notify_threshold_seconds")
+	return nil
 }
 
 // BroadcastCommandFinished is invoked by the desktop frontend when an OSC
@@ -1237,6 +1270,17 @@ func (a *App) recordRelayError(err error) {
 	if len(a.relayErrors) > maxRelayErrors {
 		a.relayErrors = a.relayErrors[:maxRelayErrors]
 	}
+}
+
+// markPrefDirtyAndPush stamps the meta for key with the current ms,
+// then triggers a background PUSH. Errors are swallowed by design (sync
+// is best-effort; user UI already reflects the change).
+func (a *App) markPrefDirtyAndPush(key string) {
+	if a.prefsSync == nil {
+		return
+	}
+	a.prefsSync.MarkDirty(key, time.Now().UnixMilli())
+	go func() { _ = a.prefsSync.Push(a.ctx) }()
 }
 
 // snapshotRelayErrors returns a copy of the recent-errors ring buffer.

@@ -50,6 +50,13 @@ export function setLocalePreference(preference: LocalePreference): void {
   } catch {
     // Browser storage can be unavailable; runtime state still updates.
   }
+  // mirror into the prefsSync namespaced key + notify
+  try {
+    window.localStorage.setItem('atterm.locale_preference.value', JSON.stringify(preference))
+  } catch { /* storage unavailable */ }
+  import('@shared/sync/prefsSync').then(({ notifyLocalChange }) => {
+    notifyLocalChange('locale_preference')
+  }).catch(() => {})
 }
 
 export function resolveLocalePreference(

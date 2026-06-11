@@ -86,3 +86,28 @@ describe('MobileSettings', () => {
     expect(added.seq).toBe('\x1bOP') // \x1b decoded to a real ESC byte
   })
 })
+
+import MobileApp from '../MobileApp.vue'
+
+describe('MobileApp — hard logout', () => {
+  it('calls platform.relay.logout when MobileSettings emits logout', async () => {
+    ;(platform.relay.load as ReturnType<typeof vi.fn>).mockResolvedValue({
+      url: 'https://r.example.com',
+      token: 'sess_x',
+      session_expires_at: 0,
+      allow_insecure_relay: false,
+      remote_permission: 'full',
+      last_email: 'me@example.com',
+      connected: false,
+    })
+    const w = mount(MobileApp)
+    await flushPromises()
+
+    const vm = w.vm as unknown as { onLogout: () => Promise<void> | void }
+    if (typeof vm.onLogout !== 'function') {
+      throw new Error('MobileApp.onLogout not exposed via defineExpose — see plan Task 9')
+    }
+    await vm.onLogout()
+    expect(platform.relay.logout).toHaveBeenCalled()
+  })
+})

@@ -92,12 +92,15 @@ function onBack(): void { view.value = 'list' }
 function onOpenSettings(): void { view.value = 'settings' }
 function onSettingsBack(): void { view.value = 'list' }
 
-// Logout returns to the connect screen but deliberately preserves the saved
-// config (no relay.clear()): MobileSetup re-fills url + token from Keychain so
-// the user can reconnect or tweak without re-entering credentials. Open
-// terminals are torn down so we don't leave WS connections behind a screen the
-// user logically left (same teardown as onTokenInvalid).
-function onLogout(): void {
+// Hard logout: revoke the server-side session via platform.relay.logout
+// (which POSTs /api/auth/logout and clears the local token), then return to
+// the setup screen. The saved URL + last_email + Keychain password survive so
+// re-login is one tap. Open terminals are torn down so we don't leave WS
+// connections behind a screen the user logically left.
+async function onLogout(): Promise<void> {
+  if (platform.relay.logout) {
+    await platform.relay.logout()
+  }
   openTerminals.value = []
   recency.value = []
   activeSessionId.value = ''
@@ -112,6 +115,8 @@ function onTokenInvalid(): void {
   reason.value = 'token_invalid'
   view.value = 'setup'
 }
+
+defineExpose({ onLogout })
 </script>
 
 <template>

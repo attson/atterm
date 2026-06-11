@@ -66,23 +66,29 @@ export function createCapacitorPlatform(): Platform {
       fileDialog: false,
     },
     relay: {
-      // load: race Keychain.get against 3s timeout; fall back to localStorage
-      // if Keychain returns null OR hangs. We no longer remove the
-      // localStorage copy on a successful Keychain read — the two stores stay
-      // in lockstep so a Keychain-bridge hang on a later boot is still
-      // recoverable.
+      // load: prefer localStorage (synchronous, never hangs). Keychain is a
+      // last-resort fallback only consulted when localStorage is empty, with
+      // its own short race against setTimeout — but if the JS timer pool is
+      // frozen (the documented WKWebView issue that surfaced as "保存配置…
+      // 0.1s" stuck), setTimeout never fires either, so we shield from that
+      // by checking localStorage FIRST. Save now always writes localStorage,
+      // so after the first pairing this branch is the hot path.
       load: async () => {
+        const fromLocal = loadLegacyFromLocalStorage()
+        if (fromLocal) return fromLocal
+
         const fromSecure = await Promise.race([
           secureStorage.get(STORAGE_KEY).catch(() => null),
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
         ]).then(parseRelayJSON)
-        if (fromSecure) return fromSecure
-
-        const legacy = loadLegacyFromLocalStorage()
-        if (!legacy) return null
-        // Best-effort sync into Keychain; don't await so boot can't hang here.
-        secureStorage.set(STORAGE_KEY, JSON.stringify(legacy)).catch(() => {})
-        return legacy
+        if (fromSecure) {
+          // Mirror back into localStorage so the next boot avoids Keychain.
+          if (typeof localStorage !== 'undefined') {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fromSecure)) } catch {}
+          }
+          return fromSecure
+        }
+        return null
       },
       // save: localStorage commits synchronously (the primary write);
       // Keychain runs best-effort in the background. The relay session token

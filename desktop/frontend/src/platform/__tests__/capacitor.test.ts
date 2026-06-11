@@ -328,7 +328,7 @@ describe('createCapacitorPlatform — secure storage migration', () => {
     await secureStorage.remove('atterm.relay.session')
   })
 
-  it('migrates from localStorage to secureStorage on first load (keeps localStorage as fallback)', async () => {
+  it('reads localStorage synchronously when it has a config (does not touch Keychain)', async () => {
     const cfg = {
       url: 'https://r.example.com', token: 'atk_legacy',
       session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
@@ -340,15 +340,29 @@ describe('createCapacitorPlatform — secure storage migration', () => {
     const loaded = await p.relay.load()
 
     expect(loaded).toMatchObject({ url: cfg.url, token: cfg.token })
-    // Wait a tick for the fire-and-forget Keychain sync to land.
-    await new Promise((r) => setTimeout(r, 0))
-    expect(await secureStorage.get('atterm.relay.session')).not.toBeNull()
-    // localStorage is intentionally NOT cleared anymore — both stores stay in
-    // lockstep so a future Keychain bridge hang on boot is still recoverable.
+    // localStorage stays as the canonical source — load never wrote to
+    // Keychain on this path (avoids the bridge-hang risk).
     expect(localStorage.getItem('atterm.relay.session')).not.toBeNull()
   })
 
-  it('prefers secureStorage over localStorage when both are present', async () => {
+  it('falls back to Keychain when localStorage is empty, then mirrors back into localStorage', async () => {
+    const fromSecure = {
+      url: 'https://secure.example.com', token: 'atk_secure',
+      session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
+    }
+    await secureStorage.set('atterm.relay.session', JSON.stringify(fromSecure))
+    expect(localStorage.getItem('atterm.relay.session')).toBeNull()
+
+    const p = createCapacitorPlatform()
+    const loaded = await p.relay.load()
+
+    expect(loaded).toMatchObject({ url: fromSecure.url, token: fromSecure.token })
+    // After a Keychain-only read, load() mirrors back so the next boot uses
+    // the fast localStorage path.
+    expect(localStorage.getItem('atterm.relay.session')).not.toBeNull()
+  })
+
+  it('prefers localStorage when both stores are present (avoids Keychain bridge hangs)', async () => {
     const fromSecure = {
       url: 'https://secure.example.com', token: 'atk_secure',
       session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
@@ -363,9 +377,10 @@ describe('createCapacitorPlatform — secure storage migration', () => {
     const p = createCapacitorPlatform()
     const loaded = await p.relay.load()
 
-    expect(loaded).toMatchObject({ url: fromSecure.url, token: fromSecure.token })
-    // localStorage was not the source; we don't touch it on this path.
-    expect(localStorage.getItem('atterm.relay.session')).not.toBeNull()
+    // localStorage wins — save() always writes localStorage, so it's the
+    // canonical newest copy. Reading Keychain first risked hanging the boot
+    // on the WebView's bridge state.
+    expect(loaded).toMatchObject({ url: fromLocal.url, token: fromLocal.token })
   })
 
   it('returns null when both stores are empty', async () => {

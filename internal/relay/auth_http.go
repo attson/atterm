@@ -89,6 +89,7 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.H
 	mux.Handle("POST /api/me/webhooks", wrap(a.handleCreateWebhook))
 	mux.Handle("DELETE /api/me/webhooks/{id}", wrap(a.handleDeleteWebhook))
 	mux.Handle("POST /api/me/password", wrap(a.handleChangePassword))
+	mux.Handle("GET /api/me/preferences", wrap(a.handleGetPreferences))
 	mux.Handle("POST /api/pair/create", wrap(a.handlePairCreate))
 }
 

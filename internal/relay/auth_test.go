@@ -83,6 +83,8 @@ func serverWithSession(t *testing.T) (*Server, string) {
 // serverWithSessionAndUser is like serverWithSession but also returns the
 // user ID. Tests that put sessions on the registry need the userID to set
 // session.OwnerUserID so that ownerUserID-filtered queries return them.
+// Resolver is wired alongside Store so that the full auth+me route set
+// (including /api/me/preferences) is registered on the returned Server.
 func serverWithSessionAndUser(t *testing.T) (*Server, string, string) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
@@ -95,5 +97,5 @@ func serverWithSessionAndUser(t *testing.T) (*Server, string, string) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	return NewServer(Config{Store: store}), tok, u.ID
+	return NewServer(Config{Store: store, Resolver: NewIdentityResolver(store)}), tok, u.ID
 }

@@ -60,6 +60,20 @@ export interface RelayBridge {
   fetchMe(): Promise<_RelayMe>
   setUplinkPaused?(paused: boolean): Promise<void>
   consumePairing?(relayBase: string, token: string): Promise<PairingConsumeResult>
+  /** Mobile-only. POST {url}/api/auth/login with {email, password}; on success
+   *  writes the returned session token + email into the persisted RelayConfig
+   *  and stores the password under a separate Keychain key for one-tap
+   *  re-login. Throws Error with one of these messages:
+   *    'invalid_credentials' | 'rate_limited' | 'cannot_reach_relay' |
+   *    'http_<status>'. */
+  login?(url: string, email: string, password: string, allowInsecure: boolean): Promise<void>
+  /** Mobile-only. POST /api/auth/logout (best-effort, network errors ignored)
+   *  and clear the local session token. Preserves url + last_email + the
+   *  saved password so the next login is one tap. */
+  logout?(): Promise<void>
+  /** Mobile-only. Reads the saved password from Keychain. Returns '' when
+   *  nothing is stored. */
+  loadSavedPassword?(): Promise<string>
 }
 
 export interface RemoteSession {

@@ -180,7 +180,9 @@ func (a *App) startup(ctx context.Context) {
 	// Trigger an initial PULL in the background if already logged in.
 	if cfg := a.cfgStore.Get(); cfg.RelaySessionToken != "" {
 		go func() {
-			_ = a.prefsSync.Pull(a.ctx)
+			if err := a.prefsSync.Pull(a.ctx); err == nil {
+				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+			}
 		}()
 	}
 
@@ -397,7 +399,11 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 		}
 	}
 	if a.prefsSync != nil {
-		go func() { _ = a.prefsSync.Pull(a.ctx) }()
+		go func() {
+			if err := a.prefsSync.Pull(a.ctx); err == nil {
+				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+			}
+		}()
 	}
 	return nil
 }
@@ -1280,7 +1286,11 @@ func (a *App) markPrefDirtyAndPush(key string) {
 		return
 	}
 	a.prefsSync.MarkDirty(key, time.Now().UnixMilli())
-	go func() { _ = a.prefsSync.Push(a.ctx) }()
+	go func() {
+		if err := a.prefsSync.Push(a.ctx); err == nil {
+			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+		}
+	}()
 }
 
 // snapshotRelayErrors returns a copy of the recent-errors ring buffer.

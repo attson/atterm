@@ -5,7 +5,9 @@ import MobileApp from './mobile/MobileApp.vue'
 import { initPlatform } from './platform'
 import { createCapacitorPlatform } from './platform/capacitor'
 import { Capacitor } from '@capacitor/core'
+import { App as CapacitorApp } from '@capacitor/app'
 import { Keyboard } from '@capacitor/keyboard'
+import { createCapacitorPrefsSync, setSharedPrefsSync } from './lib/prefsSync.capacitor'
 import './style.css'
 
 const LOCALE_STORAGE_KEY = 'atterm.locale'
@@ -37,6 +39,15 @@ async function bootstrap() {
   }
 
   const platform = initPlatform(createCapacitorPlatform)
+
+  const prefsSync = createCapacitorPrefsSync()
+  setSharedPrefsSync(prefsSync)
+  // Initial PULL (fire-and-forget; mobile may not be logged in yet)
+  void prefsSync.pull().catch(() => {})
+  // Foreground PULL
+  CapacitorApp.addListener('appStateChange', (state) => {
+    if (state.isActive) void prefsSync.pull().catch(() => {})
+  })
 
   const app = createApp(MobileApp)
   app.use(createPinia())

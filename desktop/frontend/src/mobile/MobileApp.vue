@@ -8,7 +8,6 @@ import MobileSetup from './MobileSetup.vue'
 import MobileSessionList from './MobileSessionList.vue'
 import MobileSettings from './MobileSettings.vue'
 import MobileTerminalHost, { type OpenTerminal } from './MobileTerminalHost.vue'
-import { debugLog } from '../lib/debugLog'
 
 const MAX_OPEN_TERMINALS = 4
 
@@ -25,9 +24,7 @@ const endpoint = ref<Endpoint>({ url: '', session_token: '' })
 const openSessionIds = computed(() => openTerminals.value.map((t) => t.sessionId))
 
 async function refreshEndpoint(): Promise<void> {
-  debugLog('MobileApp.refreshEndpoint: enter')
   const cfg = await platform.relay.load()
-  debugLog('MobileApp.refreshEndpoint: load returned cfg=' + (cfg ? 'present' : 'null'))
   if (cfg) endpoint.value = { url: relayBaseToWsUrl(cfg.url), session_token: cfg.token }
 }
 
@@ -37,12 +34,9 @@ onMounted(async () => {
 })
 
 async function onConnected(): Promise<void> {
-  debugLog('MobileApp.onConnected: enter')
   await refreshEndpoint()
-  debugLog('MobileApp.onConnected: refreshEndpoint returned, setting view=list')
   reason.value = null
   view.value = 'list'
-  debugLog('MobileApp.onConnected: view set, done')
 }
 
 function touchRecency(sessionId: string): void {

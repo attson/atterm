@@ -4,7 +4,6 @@ import type { AuxKey } from '../lib/auxKeys'
 import { CapacitorHttp } from '@capacitor/core'
 import { secureStorage } from './secureStorage'
 import { notifyLocalChange } from '../lib/prefsSync.capacitor'
-import { debugLog } from '../lib/debugLog'
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
@@ -75,26 +74,19 @@ export function createCapacitorPlatform(): Platform {
       // by checking localStorage FIRST. Save now always writes localStorage,
       // so after the first pairing this branch is the hot path.
       load: async () => {
-        debugLog('relay.load: enter')
         const fromLocal = loadLegacyFromLocalStorage()
-        if (fromLocal) {
-          debugLog('relay.load: hit localStorage, returning')
-          return fromLocal
-        }
-        debugLog('relay.load: localStorage empty, trying Keychain (race with 3s)')
+        if (fromLocal) return fromLocal
 
         const fromSecure = await Promise.race([
-          secureStorage.get(STORAGE_KEY).catch((e) => { debugLog('relay.load: keychain.get rejected: ' + String(e?.message || e)); return null }),
-          new Promise<null>((resolve) => setTimeout(() => { debugLog('relay.load: keychain race 3s timeout'); resolve(null) }, 3000)),
+          secureStorage.get(STORAGE_KEY).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
         ]).then(parseRelayJSON)
         if (fromSecure) {
-          debugLog('relay.load: got from Keychain, mirroring to localStorage')
           if (typeof localStorage !== 'undefined') {
             try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fromSecure)) } catch {}
           }
           return fromSecure
         }
-        debugLog('relay.load: no config found, returning null')
         return null
       },
       // save: localStorage commits synchronously (the primary write);
@@ -109,27 +101,13 @@ export function createCapacitorPlatform(): Platform {
       // reads Keychain first then falls back to localStorage, so both stores
       // converge once the next app launch happens.
       save: async (cfg) => {
-        debugLog('relay.save: enter, url=' + cfg.url + ' token.len=' + (cfg.token || '').length)
         const json = JSON.stringify(cfg)
-        debugLog('relay.save: stringified ' + json.length + ' chars')
-        try {
-          secureStorage.set(STORAGE_KEY, json).then(
-            () => debugLog('relay.save: keychain.set resolved (bg)'),
-            (e) => debugLog('relay.save: keychain.set rejected (bg): ' + String(e?.message || e)),
-          )
-          debugLog('relay.save: keychain.set dispatched (not awaited)')
-        } catch (e: any) {
-          debugLog('relay.save: keychain.set threw sync: ' + String(e?.message || e))
-        }
+        secureStorage.set(STORAGE_KEY, json).catch((e) => {
+          console.warn('[AT Term] Keychain set failed; relay config saved to localStorage only:', e)
+        })
         if (typeof localStorage !== 'undefined') {
-          try {
-            localStorage.setItem(STORAGE_KEY, json)
-            debugLog('relay.save: localStorage.setItem ok')
-          } catch (e: any) {
-            debugLog('relay.save: localStorage.setItem threw: ' + String(e?.message || e))
-          }
+          localStorage.setItem(STORAGE_KEY, json)
         }
-        debugLog('relay.save: returning')
       },
       // clear: wipe both stores. localStorage clear is belt-and-braces in case
       // a previous migration was interrupted between the Keychain write and

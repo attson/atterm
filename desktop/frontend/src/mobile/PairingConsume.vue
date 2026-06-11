@@ -2,7 +2,6 @@
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { usePlatform } from '../platform'
 import { useI18n } from '../i18n/useI18n'
-import { debugLog } from '../lib/debugLog'
 
 const props = defineProps<{ scannedUrl: string; allowInsecure?: boolean }>()
 const emit = defineEmits<{ (e: 'connected'): void; (e: 'cancel'): void }>()
@@ -77,15 +76,12 @@ function onCancelClicked(): void {
 }
 
 async function run() {
-  debugLog('PairingConsume.run: enter')
   const parsed = parseScanned(props.scannedUrl, !!props.allowInsecure)
   if (typeof parsed === 'string') {
-    debugLog('PairingConsume.run: parse error ' + parsed)
     errorCode.value = parsed
     status.value = 'error'
     return
   }
-  debugLog('PairingConsume.run: parsed origin=' + parsed.origin)
 
   started = Date.now()
   elapsedMs.value = 0
@@ -94,17 +90,14 @@ async function run() {
   try {
     if (!platform.relay.consumePairing) throw new Error('platform_unsupported')
     step.value = 'requesting'
-    debugLog('PairingConsume.run: calling consumePairing')
     const result = await Promise.race([
       platform.relay.consumePairing(parsed.origin, parsed.token),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('pair_timeout')), 16_000),
       ),
     ])
-    debugLog('PairingConsume.run: consumePairing returned, relay_url=' + result.relay_url)
-    if (cancelled) { debugLog('PairingConsume.run: cancelled after consume'); return }
+    if (cancelled) return
     step.value = 'saving'
-    debugLog('PairingConsume.run: calling save')
     await platform.relay.save({
       url: result.relay_url,
       token: result.session_token,
@@ -114,19 +107,14 @@ async function run() {
       last_email: '',
       connected: false,
     })
-    debugLog('PairingConsume.run: save returned')
-    if (cancelled) { debugLog('PairingConsume.run: cancelled after save'); return }
-    debugLog('PairingConsume.run: emitting connected')
+    if (cancelled) return
     emit('connected')
-    debugLog('PairingConsume.run: emit returned')
   } catch (e) {
-    debugLog('PairingConsume.run: caught error: ' + (e instanceof Error ? e.message : String(e)))
     if (cancelled) return
     errorCode.value = e instanceof Error ? e.message : String(e)
     status.value = 'error'
   } finally {
     if (rafHandle) { cancelAnimationFrame(rafHandle); rafHandle = 0 }
-    debugLog('PairingConsume.run: finally complete')
   }
 }
 

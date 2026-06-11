@@ -328,7 +328,7 @@ describe('createCapacitorPlatform — secure storage migration', () => {
     await secureStorage.remove('atterm.relay.session')
   })
 
-  it('migrates from localStorage to secureStorage on first load, then clears localStorage', async () => {
+  it('migrates from localStorage to secureStorage on first load (keeps localStorage as fallback)', async () => {
     const cfg = {
       url: 'https://r.example.com', token: 'atk_legacy',
       session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
@@ -340,8 +340,12 @@ describe('createCapacitorPlatform — secure storage migration', () => {
     const loaded = await p.relay.load()
 
     expect(loaded).toMatchObject({ url: cfg.url, token: cfg.token })
+    // Wait a tick for the fire-and-forget Keychain sync to land.
+    await new Promise((r) => setTimeout(r, 0))
     expect(await secureStorage.get('atterm.relay.session')).not.toBeNull()
-    expect(localStorage.getItem('atterm.relay.session')).toBeNull()
+    // localStorage is intentionally NOT cleared anymore — both stores stay in
+    // lockstep so a future Keychain bridge hang on boot is still recoverable.
+    expect(localStorage.getItem('atterm.relay.session')).not.toBeNull()
   })
 
   it('prefers secureStorage over localStorage when both are present', async () => {
@@ -369,15 +373,19 @@ describe('createCapacitorPlatform — secure storage migration', () => {
     expect(await p.relay.load()).toBeNull()
   })
 
-  it('save writes only to secureStorage, not localStorage', async () => {
+  it('save writes to both localStorage (sync) and secureStorage (best-effort)', async () => {
     const cfg = {
       url: 'https://r.example.com', token: 'atk_x',
       session_expires_at: 0, allow_insecure_relay: false, remote_permission: 'full', last_email: '', connected: false,
     }
     const p = createCapacitorPlatform()
     await p.relay.save(cfg)
+    // localStorage commits synchronously so save() can return promptly even
+    // when the Keychain bridge hangs (the "保存配置…" freeze pre-fix).
+    expect(localStorage.getItem('atterm.relay.session')).not.toBeNull()
+    // Keychain is best-effort — wait a tick for the fire-and-forget call.
+    await new Promise((r) => setTimeout(r, 0))
     expect(await secureStorage.get('atterm.relay.session')).not.toBeNull()
-    expect(localStorage.getItem('atterm.relay.session')).toBeNull()
   })
 
   it('clear wipes both stores (defensive)', async () => {

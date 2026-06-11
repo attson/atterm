@@ -66,21 +66,43 @@ export function createCapacitorPlatform(): Platform {
       fileDialog: false,
     },
     relay: {
-      // load: prefer Keychain; if empty AND localStorage has a legacy blob,
-      // migrate it (write to Keychain, clear localStorage), then return.
+      // load: race Keychain.get against 3s timeout; fall back to localStorage
+      // if Keychain returns null OR hangs. We no longer remove the
+      // localStorage copy on a successful Keychain read — the two stores stay
+      // in lockstep so a Keychain-bridge hang on a later boot is still
+      // recoverable.
       load: async () => {
-        const fromSecure = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+        const fromSecure = await Promise.race([
+          secureStorage.get(STORAGE_KEY).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+        ]).then(parseRelayJSON)
         if (fromSecure) return fromSecure
 
         const legacy = loadLegacyFromLocalStorage()
         if (!legacy) return null
-        await secureStorage.set(STORAGE_KEY, JSON.stringify(legacy))
-        if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY)
+        // Best-effort sync into Keychain; don't await so boot can't hang here.
+        secureStorage.set(STORAGE_KEY, JSON.stringify(legacy)).catch(() => {})
         return legacy
       },
-      // save: write only to Keychain. localStorage is never written.
+      // save: localStorage commits synchronously (the primary write);
+      // Keychain runs best-effort in the background. The relay session token
+      // is already scoped to this app's WKWebView data store and the iOS app
+      // sandbox, so localStorage offers equivalent at-rest isolation to
+      // Keychain for our threat model. We previously awaited the Keychain
+      // call, which froze the pairing screen on "保存配置…" when the
+      // Capacitor bridge to AttermSecureStorage hung after a CapacitorHttp
+      // round-trip on the same bridge — likely a bridge-state interaction
+      // bug, but the symptom is a flow that never completes. load() already
+      // reads Keychain first then falls back to localStorage, so both stores
+      // converge once the next app launch happens.
       save: async (cfg) => {
-        await secureStorage.set(STORAGE_KEY, JSON.stringify(cfg))
+        const json = JSON.stringify(cfg)
+        secureStorage.set(STORAGE_KEY, json).catch((e) => {
+          console.warn('[AT Term] Keychain set failed; relay config saved to localStorage only:', e)
+        })
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, json)
+        }
       },
       // clear: wipe both stores. localStorage clear is belt-and-braces in case
       // a previous migration was interrupted between the Keychain write and

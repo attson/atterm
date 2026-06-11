@@ -129,6 +129,7 @@ type Store interface {
 
 	// User preferences (cross-platform settings sync)
 	GetUserPreferences(ctx context.Context, userID string) ([]PreferenceItem, error)
+	SetUserPreferences(ctx context.Context, userID string, serverNowMs int64, items []PreferenceItem) ([]PreferenceItem, error)
 
 	Close() error
 }

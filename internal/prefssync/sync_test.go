@@ -121,3 +121,61 @@ func TestPull_ServerMissingKeyDoesNotTouchLocal(t *testing.T) {
 	v, _ := a.ReadValue("locale_preference")
 	if string(v) != `"en"` { t.Fatalf("local wiped: %s", v) }
 }
+
+func TestPush_SendsDirtyAndClearsFlag(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"zh-CN"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 800, Dirty: true})
+	a.WriteValue("notifications_enabled", json.RawMessage(`true`))
+	a.WriteMeta("notifications_enabled", Meta{UpdatedAtLocal: 200, Dirty: false})
+
+	r := &fakeRelay{putReturn: []ServerItem{
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 850},
+	}}
+	e := NewEngine(a, r)
+	if err := e.Push(context.Background()); err != nil { t.Fatalf("Push: %v", err) }
+
+	if len(r.putItems) != 1 || r.putItems[0].Key != "locale_preference" {
+		t.Fatalf("expected only dirty key sent, got %+v", r.putItems)
+	}
+	m := a.ReadMeta("locale_preference")
+	if m.Dirty || m.UpdatedAtLocal != 850 { t.Fatalf("meta after push: %+v", m) }
+}
+
+func TestPush_ServerRejectionOverwritesLocal(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: true})
+
+	// Server returns a newer value (e.g., set by another device).
+	r := &fakeRelay{putReturn: []ServerItem{
+		{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 999},
+	}}
+	e := NewEngine(a, r)
+	if err := e.Push(context.Background()); err != nil { t.Fatalf("Push: %v", err) }
+
+	v, _ := a.ReadValue("locale_preference")
+	if string(v) != `"zh-CN"` { t.Fatalf("expected server value, got %s", v) }
+	m := a.ReadMeta("locale_preference")
+	if m.Dirty || m.UpdatedAtLocal != 999 { t.Fatalf("meta: %+v", m) }
+}
+
+func TestPush_NoDirtyKeysSkipsRequest(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: false})
+
+	r := &fakeRelay{}
+	e := NewEngine(a, r)
+	if err := e.Push(context.Background()); err != nil { t.Fatalf("Push: %v", err) }
+	if r.putItems != nil { t.Fatalf("unexpected PUT: %+v", r.putItems) }
+}
+
+func TestMarkDirty_StampsMeta(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	e := NewEngine(a, &fakeRelay{})
+	e.MarkDirty("locale_preference", 12345)
+	m := a.ReadMeta("locale_preference")
+	if !m.Dirty || m.UpdatedAtLocal != 12345 { t.Fatalf("meta: %+v", m) }
+}

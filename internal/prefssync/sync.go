@@ -97,3 +97,38 @@ func (e *Engine) Pull(ctx context.Context) error {
 	}
 	return nil
 }
+
+// MarkDirty stamps the meta entry for key with the given timestamp and
+// flips Dirty=true. The desktop App should call this after each
+// successful setter for a synced field, with timestamp = time.Now().UnixMilli().
+func (e *Engine) MarkDirty(key string, updatedAtLocalMs int64) {
+	e.adapter.WriteMeta(key, Meta{UpdatedAtLocal: updatedAtLocalMs, Dirty: true})
+}
+
+// Push collects all dirty keys, sends them as a single PUT, and
+// reconciles per-key with the server response (LWW: server's
+// updated_at is authoritative).
+func (e *Engine) Push(ctx context.Context) error {
+	var items []ClientItem
+	for _, k := range e.adapter.Keys() {
+		m := e.adapter.ReadMeta(k)
+		if !m.Dirty { continue }
+		v, ok := e.adapter.ReadValue(k)
+		if !ok { continue }
+		items = append(items, ClientItem{
+			Key: k, Value: v, ClientUpdatedAt: m.UpdatedAtLocal,
+		})
+	}
+	if len(items) == 0 { return nil }
+
+	resp, err := e.relay.Put(ctx, items)
+	if err != nil { return err }
+
+	for _, it := range resp {
+		// Always trust server's updated_at; if it accepted our push, server.value == ours.
+		// If server rejected (server newer), server.value overrides ours.
+		if err := e.adapter.WriteValue(it.Key, it.Value); err != nil { return err }
+		if err := e.adapter.WriteMeta(it.Key, Meta{UpdatedAtLocal: it.UpdatedAt, Dirty: false}); err != nil { return err }
+	}
+	return nil
+}

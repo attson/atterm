@@ -228,6 +228,65 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
+// ResetPasswordByEmail force-updates the password for the user with the
+// given email, deleting all their sessions. No current-password check.
+// Used by the desktop's bootstrap_local recovery path when the
+// config-stored local-admin password no longer matches the userstore
+// hash (e.g. config wiped while DB persisted). Caller must NOT expose
+// this through any network handler.
+func (s *SQLiteStore) ResetPasswordByEmail(ctx context.Context, email, newPlaintext string) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	var (
+		id         string
+		createdAt  int64
+		disabledAt sql.NullInt64
+		isAdmin    int
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, created_at, disabled_at, is_admin
+		 FROM users WHERE email = ?`, email,
+	).Scan(&id, &createdAt, &disabledAt, &isAdmin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lookup user: %w", err)
+	}
+
+	newHash, err := hashPassword(newPlaintext)
+	if err != nil {
+		return nil, fmt.Errorf("hash: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET password_hash=? WHERE id=?`, newHash, id); err != nil {
+		return nil, fmt.Errorf("update password: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sessions WHERE user_id=?`, id); err != nil {
+		return nil, fmt.Errorf("delete sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+
+	u := &User{
+		ID: id, Email: email,
+		IsAdmin:   isAdmin != 0,
+		CreatedAt: time.Unix(createdAt, 0),
+	}
+	if disabledAt.Valid {
+		t := time.Unix(disabledAt.Int64, 0)
+		u.DisabledAt = &t
+	}
+	return u, nil
+}
+
 // ChangePassword verifies currentPlaintext against userID's stored hash.
 // On success it hashes newPlaintext, deletes all sessions for the user
 // (caller must issue a new session), and returns nil.

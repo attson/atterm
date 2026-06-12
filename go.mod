@@ -13,7 +13,6 @@ require (
 	golang.org/x/mod v0.24.0
 	golang.org/x/sync v0.14.0
 	golang.org/x/sys v0.33.0
-	golang.org/x/term v0.29.0
 	modernc.org/sqlite v1.37.1
 	nhooyr.io/websocket v1.8.17
 )

@@ -197,4 +197,52 @@ describe("TaskGroupedList AI title", () => {
     const cmd = w.find('[data-test="task-row"] .cmd');
     expect(cmd.text()).toBe("zsh");
   });
+
+  test("clicking host-header collapses the group; clicking again expands", async () => {
+    const byHost = {
+      h: [
+        mk({ session_id: "s1", host: "mac", title: "a" }),
+        mk({ session_id: "s2", host: "mac", title: "b" }),
+      ],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+      },
+    });
+    expect(w.findAll('[data-test="task-row"]').length).toBe(2);
+    expect(w.find('[data-test="host-header"]').text()).toContain("▼");
+
+    await w.get('[data-test="host-header"]').trigger("click");
+    expect(w.findAll('[data-test="task-row"]').length).toBe(0);
+    expect(w.find('[data-test="host-header"]').text()).toContain("▶");
+    expect(w.get('[data-test="host-header"]').attributes("aria-expanded")).toBe("false");
+
+    await w.get('[data-test="host-header"]').trigger("click");
+    expect(w.findAll('[data-test="task-row"]').length).toBe(2);
+    expect(w.get('[data-test="host-header"]').attributes("aria-expanded")).toBe("true");
+  });
+
+  test("mark-all button inside header does NOT toggle collapse (click.stop)", async () => {
+    const byHost = {
+      h: [mk({ session_id: "s1", host: "mac", title: "a", unread: true })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: { h: 1 },
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+      },
+    });
+    expect(w.findAll('[data-test="task-row"]').length).toBe(1);
+    await w.get('[data-test="host-mark-all"]').trigger("click");
+    // Rows still visible — collapse was not triggered.
+    expect(w.findAll('[data-test="task-row"]').length).toBe(1);
+    // markSeen emitted once with the unread ids.
+    expect(w.emitted("markSeen")?.[0]).toEqual([{ ids: ["s1"] }]);
+  });
 });

@@ -179,6 +179,29 @@ describe("TitleBar drag region (frameless windows)", () => {
   });
 });
 
+describe("TitleBar running indicator", () => {
+  it("adds is-running class when currentTaskState === 'running'", async () => {
+    const w = await mountForPlatform("darwin", { currentTaskState: "running" });
+    expect(w.get('[data-testid="titlebar-root"]').classes()).toContain("is-running");
+  });
+
+  it("no is-running class for other task states", async () => {
+    const w = await mountForPlatform("darwin", { currentTaskState: "idle" });
+    expect(w.get('[data-testid="titlebar-root"]').classes()).not.toContain("is-running");
+  });
+
+  it("no is-running class when currentTaskState is null/undefined", async () => {
+    const w = await mountForPlatform("darwin", { currentTaskState: null });
+    expect(w.get('[data-testid="titlebar-root"]').classes()).not.toContain("is-running");
+  });
+
+  it("scoped style defines is-running underline + opacity-pulse keyframe", () => {
+    expect(titleBarSource).toMatch(/\.titlebar\.is-running::after/);
+    expect(titleBarSource).toMatch(/@keyframes titlebar-running-sweep/);
+    expect(titleBarSource).toMatch(/prefers-reduced-motion/);
+  });
+});
+
 describe("TitleBar double-click maximize (Win/Linux only)", () => {
   it("on windows, double-click on root calls windowToggleMaximize", async () => {
     const w = await mountForPlatform("windows");

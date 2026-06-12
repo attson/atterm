@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > **Audience**: 在 atterm 仓库里工作的 AI 编码 agent
-> **Last updated**: 2026-06-10
+> **Last updated**: 2026-06-13
 > **Status**: stable
 > **See also**: [README.md](./README.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md)
 
@@ -9,7 +9,8 @@ atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 
 
 阅读这份文件以快速上手；详细规范见 `docs/spec/`。
 
-- 当前 release：`v0.2.39`。v0.2.33 之后的关键合入：P2.13 AI 快捷模板（#99）；移动端防误触模式 banner（#100、v0.2.35）；移动端 setup UX（#102、v0.2.37）；**P1.9 iOS Keychain 真正落地**（#104、v0.2.38，靠 `CAPBridgedPlugin` + `registerPluginInstance` 修正 Capacitor 8 注册）；移动端独立设置页 + 模板/快捷键自定义 + 图片菜单 i18n（#105、v0.2.39 批）；终端首屏全屏 + viewer 锁尺寸（#106）；中文输入法标点/数字/空格补获（#107）；设置改动通过事件总线实时同步到已开 tab（#108）；mobile/package.json 注册 Camera + barcode plugin（#109）；删除 legacy quickInput 插件（#110）；QuickTemplate 加 hotkey + 删预览 + 隐藏开关 + 默认值变为 `yes/ok/continue/commit/push/release/1/2/3`（#111）；`NSPhotoLibraryAddUsageDescription`（#112）；`@capacitor/keyboard` 隐藏 WKWebView 键盘辅助条（#113）；`ios:sync` 自动跑 `npm install`（#114）。spec/plan 在 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`。Roadmap 完成度见 `docs/roadmap.md` 与 `docs/spec/architecture.md` §phase 完成度。
+- 当前 release：`v0.2.71`。最近的桌面 UI / 启动稳定性合入：**桌面 UI 抛光与 titlebar running indicator**（#150、v0.2.71）—— titlebar 标题绝对居中、底边新增 iTerm2 风格 running 指示（720px 绿波 L→R 流动，3.5s 周期、`opacity` 渐入渐出，详见 [docs/spec/component-style.md](./docs/spec/component-style.md) §Title bar）；session 侧栏 `.expanded` 改为 flex column 修复溢出、按主机分组可折叠（▼↔▶，详见 §会话侧栏分组折叠）；快捷模板栏支持滚轮横向滚动并隐藏 scrollbar gutter；`SessionListConnection / SessionConnection.openWS()` 包 `try/catch` 隔离 `new WebSocket` 同步抛出的 DOMException，启动 try/catch 按 `bootStage` 分阶段定位错误（详见 [docs/spec/conventions.md](./docs/spec/conventions.md) §WebSocket 同步异常隔离 / §启动 try/catch 分阶段）；顺手清掉 `go.mod` 中未引用的 `golang.org/x/term`。
+- v0.2.33 → v0.2.70 区间的关键合入：P2.13 AI 快捷模板（#99）；移动端防误触模式 banner（#100、v0.2.35）；移动端 setup UX（#102、v0.2.37）；**P1.9 iOS Keychain 真正落地**（#104、v0.2.38，靠 `CAPBridgedPlugin` + `registerPluginInstance` 修正 Capacitor 8 注册）；移动端独立设置页 + 模板/快捷键自定义 + 图片菜单 i18n（#105、v0.2.39 批）；终端首屏全屏 + viewer 锁尺寸（#106）；中文输入法标点/数字/空格补获（#107）；设置改动通过事件总线实时同步到已开 tab（#108）；mobile/package.json 注册 Camera + barcode plugin（#109）；删除 legacy quickInput 插件（#110）；QuickTemplate 加 hotkey + 删预览 + 隐藏开关 + 默认值变为 `yes/ok/continue/commit/push/release/1/2/3`（#111）；`NSPhotoLibraryAddUsageDescription`（#112）；`@capacitor/keyboard` 隐藏 WKWebView 键盘辅助条（#113）；`ios:sync` 自动跑 `npm install`（#114）；跨平台用户设置同步（#147）；移动端 inhouse QR scanner（#148–149）。spec/plan 在 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`。Roadmap 完成度见 `docs/roadmap.md` 与 `docs/spec/architecture.md` §phase 完成度。
 
 ## 仓库布局
 
@@ -62,6 +63,8 @@ atterm/
 15. **Capacitor 8 plugin 注册三件套**：(a) 自定义 plugin 的 Swift 类必须 conform `CAPBridgedPlugin`（`identifier` / `jsName` / `pluginMethods`）；旧式 `.m` 文件里的 `CAP_PLUGIN` 宏在 Capacitor 8 是 no-op；(b) app-local 自定义 plugin 不走 auto-discovery，要在 `MainViewController.capacitorDidLoad()` 里 `bridge?.registerPluginInstance(...)`，并把 `Main.storyboard` 根 VC 指到 `MainViewController`；(c) 第三方 plugin（`@capacitor/camera` / `@capacitor-mlkit/barcode-scanning` / `@capacitor/keyboard` 等）**必须装到 `mobile/package.json`** —— `cap sync` 只扫 mobile/ 的依赖。装在 `desktop/frontend/` 一边的 JS 能 import 但 native 不会注册，跑起来 `PLUGIN_NOT_AVAILABLE`。验证步骤详见 `docs/spec/conventions.md` §Capacitor 8 plugin 注册。
 16. **移动端 IME 标点/数字/空格 capture-phase 接管**：iOS 中文九宫格的 `，。？！` / 数字 / 空格走 `input` 事件（`inputType='insertText'`、`isComposing=false`），xterm 自己的 handler 不 forward。MobileTerminal 在 `term.textarea` 的 capture 阶段监听 `input`，对 `insertText && !isComposing` 自己 `sendInput(data)` 并 `stopImmediatePropagation`。**不要碰 composition 路径**（pinyin→Hanzi 走 `insertCompositionText`），那是 xterm 的领地，碰了会让中文字双发。
 17. **移动端 fit 走 ResizeObserver + viewer 锁尺寸**：MobileTerminal 首屏半屏的根因是 `fit.fit()` 跑在 `.term` 容器还没 settle 之前。改用 `ResizeObserver` 监听容器尺寸变化、driver 才 fit；viewer 模式下 `onMeta` 收到 `meta.cols/rows` 时 `term.resize(meta.cols, meta.rows)` 锁到 PTY 尺寸（不跑 FitAddon，匹配 protocol.md §Driver/Viewer）。两条都不要再去掉。
+18. **`new WebSocket()` 同步抛出必须被隔离**：`SessionListConnection.openWS()` / `SessionConnection.openWS()` 在调用 `new WebSocket(url, protocols)` 时必须用 try/catch 包裹，并把异常路由到 `handleOpenFailure` —— 它 `console.error` 出 url/protocols/error.name，触发 `onStatus("error")`，按指数退避排重连。WebKit 对非法 URL scheme / 非法 subprotocol 字符抛 `SyntaxError: The string did not match the expected pattern.` 是**同步**的，不像普通连接失败走异步 `onclose`；若漏接，调用者（`App.vue` onMounted boot 链）的 `await` chain 会被击穿，整个启动卡在「正在启动第一个会话…」+ titlebar 红字。详见 `docs/spec/conventions.md` §WebSocket 同步异常隔离。
+19. **桌面启动 try/catch 按 bootStage 分阶段**：`App.vue` `onMounted` 里 `refreshTerminalTheme` / `getEndpoint` / `getHostInfo` / `connectLocalSessionList` / `refreshRelayConfig` 顺序执行，必须用单个 `let bootStage = ""` 在每一步前重新赋值，catch 时把 `${bootStage}: ${e.name}: ${e.message}` 写进 `errorMsg`，同时 `console.error('[boot] step "${bootStage}" failed', { name, message, stack })`。否则一锅端的 catch 把五个调用塌成同一条不可读错误，下次再出 DOMException 又得猜。详见 `docs/spec/conventions.md` §启动 try/catch 分阶段。
 
 ## 开发命令
 
@@ -146,6 +149,10 @@ gh run list --repo attson/atterm --limit 10
 | 改移动端 IME / xterm 文本接管 | `desktop/frontend/src/mobile/MobileTerminal.vue`：`onImeInput` 函数 + `term.textarea` capture-phase 监听。**只**处理 `inputType === 'insertText' && !isComposing && data`，sendRaw + `stopImmediatePropagation`，清空 textarea。composition 路径（`insertCompositionText`）一律不碰 |
 | 改移动端 fit / viewer 锁尺寸 | `desktop/frontend/src/mobile/MobileTerminal.vue`：`ro = new ResizeObserver(fitIfDriver)` + `fitIfDriver()`（仅 isDriver 时 fit）+ `onMeta` viewer 锁 `term.resize(meta.cols, meta.rows)`。`onBeforeUnmount` `ro?.disconnect()` |
 | 改防误触模式 banner | `desktop/frontend/src/mobile/MobileTerminal.vue`：`protectActive = canControl && isDriver && !controlMode` + `protectBump` 计数器 + `nudgeProtect()`。banner 用 `:key="protectBump"` 触发 shake 动画。`.term` 加 `pointerdown` listener 也 nudge |
+| 改 titlebar 标题居中 / running indicator | `desktop/frontend/src/components/TitleBar.vue`：`.window-title` 用 `position: absolute; left: 50%; transform: translateX(-50%)`，`.status` 加 `margin-left: auto` 把右侧元素推到边缘；running indicator 走 `.titlebar::after`（伪元素永远存在，`opacity: 0` + `transition: opacity 0.5s`）+ `.titlebar.is-running::after { opacity: 1 }`，`background` 用 `repeating-linear-gradient(90deg, transparent, …, #bbf7d0, …, transparent)` 平铺 1120px 周期、`background-size: 1120px 100%`、`animation: titlebar-running-sweep 3.5s linear infinite` 把 background-position 推到 `1120px 0`。`prefers-reduced-motion` 退化成静态绿条。`App.vue` 把 `currentActiveSession.value?.task_state` 通过 `current-task-state` prop 传进来 |
+| 改会话侧栏分组折叠 / 隐藏滚动条 | `desktop/frontend/src/components/TaskGroupedList.vue`：`collapsedGroups: ref<Set<string>>`（用替换 Set 触发响应式）+ `isGroupCollapsed/toggleGroupCollapsed`；header 加 `role="button" tabindex="0"` + `@click` / `@keydown.enter` / `@keydown.space` + `aria-expanded`，caret 在 `▼` / `▶` 之间切换。`v-for` 改成 `(isGroupCollapsed(key) ? [] : groups[key])`。mark-all 按钮加 `@click.stop`，避免点 ✓ 顺带把分组折叠。`desktop/frontend/src/components/TaskSidebar.vue`：`.expanded { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column }` 让里层 `.list-wrap` 的 `flex: 1; overflow-y: auto` 真正工作；`.list-wrap` 加 `scrollbar-width: none` + `::-webkit-scrollbar { display: none }` 隐藏 gutter |
+| 改快捷模板栏滚轮 / 隐藏 gutter | `desktop/frontend/src/components/TerminalView.vue`：`.template-bar` 加 `scrollbar-width: none` + `::-webkit-scrollbar { display: none }`；`@wheel.passive="onTemplateBarWheel"` 把 `deltaY`（或 deltaX）折成 `scrollLeft`，让鼠标用户不按 Shift 也能横向 pan。passive listener 不 preventDefault，xterm 自己的 wheel 路径不受影响 |
+| 改桌面启动错误隔离 / 阶段定位 | `desktop/frontend/src/lib/connection.ts`：`SessionListConnection.openWS()` / `SessionConnection.openWS()` 用 `try { ws = new WebSocket(...) } catch (e) { this.handleOpenFailure(e, auth); return; }` 包裹；`handleOpenFailure` 打印 url/protocols/error.name，调 `onStatus("error")`，按 `Math.min(8000, 500 * 2^attempts)` 退避排重连。`desktop/frontend/src/App.vue`：`onMounted` 用 `let bootStage = ""` 在每一步前赋值（`refreshTerminalTheme` / `getEndpoint` / `getHostInfo` / `connectLocalSessionList` / `refreshRelayConfig`），catch 时把 `${bootStage}: ${e.name}: ${e.message}` 写进 `errorMsg`，并 `console.error('[boot] step "..."', { name, message, stack })` |
 
 ## 风格摘要
 
@@ -180,6 +187,9 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 自定义 Capacitor plugin 只写 `.m` 的 `CAP_PLUGIN` 宏 / 只在 `desktop/frontend` 装 plugin —— 必须走红线 #15 的三件套
 - ❌ 让 MobileTerminal IME 接管去碰 composition 路径（中文字会双发）
 - ❌ 给已删的 `quickInput` 插件加 backward-compat shim；它已被 QuickTemplate 取代，旧 config.json 字段直接忽略（single-user project）
+- ❌ 在 `connection.ts` 调 `new WebSocket(url, protocols)` 不包 try/catch；WebKit 对非法 url scheme / 非法 subprotocol 字符是**同步**抛 `SyntaxError` 的，会击穿 App.vue boot 的 await chain（红线 #18）
+- ❌ 把 `App.vue` onMounted 的多步启动塞进一个统一 try/catch 又不带阶段标记；红线 #19 要求 `bootStage` 在每个调用前赋值，否则失败时只能看到一条不可读错误
+- ❌ 在 titlebar 用 flex `flex: 1 1 0` 来"撑开"标题；左右两侧不对称时 flex 中点会偏。要绝对居中：`.window-title { position: absolute; left: 50%; transform: translateX(-50%) }` + `.status { margin-left: auto }`
 
 ## 文档导引
 

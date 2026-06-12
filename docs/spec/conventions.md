@@ -1,7 +1,7 @@
 # 代码约定
 
 > **Audience**: 改 Go / 前端代码的工程师
-> **Last updated**: 2026-06-10
+> **Last updated**: 2026-06-13
 > **Status**: stable
 > **See also**: [component-style.md](./component-style.md) · [architecture.md](./architecture.md)
 
@@ -299,6 +299,128 @@ ta?.addEventListener('input', (ev) => {
   结果）一律不碰，让 xterm 自己处理。否则中文字会双发。
 - `stopImmediatePropagation` 必须有，否则 xterm 的 bubble-phase handler 也会发一次。
 - capture 阶段必须在 xterm 注册的 input handler 之前生效，所以 capture=true。
+
+### WebSocket 同步异常隔离
+
+`SessionListConnection.openWS()` / `SessionConnection.openWS()`（都在
+`desktop/frontend/src/lib/connection.ts`）调 `new WebSocket(url, protocols)`
+必须包 try/catch，把异常路由到 `handleOpenFailure`：
+
+```ts
+private openWS(): void {
+  if (this.detached) return;
+  const auth = webSocketAuth(this.endpoint, "/client-sessions");
+  let ws: WebSocket;
+  try {
+    ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
+  } catch (e) {
+    this.handleOpenFailure(e, auth);
+    return;
+  }
+  // … 正常路径
+}
+
+private handleOpenFailure(e: unknown, auth: { url: string; protocols?: string[] }): void {
+  const err = e as { name?: string; message?: string } | null;
+  console.error("[SessionListConnection] new WebSocket failed", {
+    url: auth.url,
+    protocols: auth.protocols,
+    name: err?.name,
+    message: err?.message ?? String(e),
+  });
+  this.ws = null;
+  this.handlers.onStatus?.("error");
+  if (this.detached) return;
+  const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
+  this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
+}
+```
+
+**为什么是同步抛异常**：WebKit 对下列条件**同步**抛
+`SyntaxError: The string did not match the expected pattern.`（DOMException），
+**不**走异步 `onclose`：
+
+- url scheme 不是 `ws://` / `wss://`（例如配置漂成了 `https://`）
+- url 含非法字符（极少见，但比如 host 残留 `[::1]` 但格式错乱）
+- subprotocol 字符集越界（RFC 6455 token：`!#$%&'*+-.^_\`|~` + ALPHA + DIGIT；
+  我们的 `SUBPROTOCOL_SAFE` 兜底过滤，但兜底也可能漏，比如未来扩展时）
+
+**为什么必须接住**：`App.vue::onMounted` 的 boot 链是 `await refreshTerminalTheme()`
+→ `await getEndpoint()` → `await getHostInfo()` → `connectLocalSessionList(...)`（同步）
+→ `await refreshRelayConfig()`（其中又同步 `connectRemoteSessionList(...)`）。
+如果 `connectLocalSessionList` / `connectRemoteSessionList` 里 `new WebSocket`
+抛出，**整个 await chain 立即解开**，落进 App.vue 的 catch，把启动卡在
+"正在启动第一个会话…" + titlebar 红字 "The string did not match the expected pattern."。
+而且因为 `localEndpoint` 已经在 `getEndpoint()` 后赋值，主区显示空 PaneGrid
+loading 状态，整个 app 看着像挂了。
+
+**铁规**：
+
+- `new WebSocket(...)` 出现的所有点都必须 try/catch；目前只有 `connection.ts`
+  里两处 `openWS`。新加 WS 调用时一并加保护。
+- failure path 必须走 `onStatus("error")` + 指数退避重连（500 × 2^attempts，上限 8s），
+  不能直接 `throw e` 给调用者。
+- `console.error` 一定要带 `{ url, protocols, name, message }`，下次出问题
+  好定位是哪种非法值。
+- WebKit 的 message 是 `"The string did not match the expected pattern."`；
+  其它浏览器 message 可能不同。**只看 `name === 'SyntaxError'`**，不要 grep 文本。
+
+回归覆盖：`connection.test.ts` 的 `describe("openWS sync-throw isolation", ...)`
+用 source-text grep 守住 try/catch 包裹 + `handleOpenFailure` + `onStatus("error")` +
+`setTimeout(() => this.openWS(), delay)` 同时存在。删任何一条都会被测试抓住。
+
+### 启动 try/catch 分阶段
+
+`App.vue::onMounted` 里多步 boot 调用必须用 `let bootStage = ""` 在每一步**前**
+赋值；catch 时把 `${bootStage}: ${e.name}: ${e.message}` 写进
+`errorMsg.value` + `console.error('[boot] step "${bootStage}" failed', { … })`。
+
+```ts
+let bootStage = "";
+try {
+  bootStage = "refreshTerminalTheme";
+  await refreshTerminalTheme();
+  bootStage = "getEndpoint";
+  localEndpoint.value = await getEndpoint();
+  bootStage = "getHostInfo";
+  const info = await getHostInfo();
+  localHostID.value = info.host_id;
+  bootStage = "connectLocalSessionList";
+  connectLocalSessionList(localEndpoint.value);
+  bootStage = "refreshRelayConfig";
+  await refreshRelayConfig();
+} catch (e: any) {
+  const name = e?.name ?? "Error";
+  const msg = e?.message ?? String(e);
+  console.error(`[boot] step "${bootStage}" failed`, {
+    name, message: msg, stack: e?.stack,
+  });
+  status.value = "error";
+  errorMsg.value = `${bootStage}: ${name}: ${msg}` || i18nT("app.wailsBindingsUnavailable");
+  return;
+}
+```
+
+效果：
+
+- titlebar 错误从 `The string did not match the expected pattern.` 升级为
+  `connectLocalSessionList: SyntaxError: The string did not match the expected pattern.`，
+  一眼定位是哪步。
+- `console.error` 把 `stack` 一并打出来，在 dev / WebInspector 里能跳到行号。
+- bootStage 不会重置 —— 若 catch 在第 4 步触发，`bootStage === "connectLocalSessionList"`
+  就是失败点。
+
+**为什么不拆成多个 try/catch**：每个 catch 都要重复同样的 status / errorMsg 赋值，
+噪声大；用 `bootStage` 变量是单 catch + 阶段标签，可读性最好。
+
+**反例**：
+
+- 把 `bootStage = "..."` 放在 `await` 调用**之后**——那 await 抛异常时
+  bootStage 还是上一步的名字，误报。
+- 用 `try { step1 } catch (e) { return } try { step2 } catch (e) { return }`
+  这种分散 catch——5 个调用就 5 段相同的错误处理，写错一个就回归。
+- 把 `bootStage` 局部化到 try 内（`let bootStage = ""` 放 try 里）——
+  catch 拿不到。
 
 ### Sticky non-shell session type
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 
 	"github.com/attson/atterm/internal/userstore"
@@ -35,17 +36,26 @@ func bootstrapLocalAdmin(ctx context.Context, store userstore.Store, email, pw s
 		return "", nil, fmt.Errorf("verify local admin password: %w", err)
 	}
 	if user == nil {
-		// Either the user doesn't exist yet (fresh install) or the
-		// stored password doesn't match (config file lost or rotated).
-		// CreateUser is the right call for the first case; for the
-		// second it surfaces a UNIQUE-email constraint violation, which
-		// is the desired "you have an inconsistent local state" signal.
+		// VerifyPassword returns nil for both "user missing" and "password
+		// mismatch". Try CreateUser first — succeeds when fresh. On
+		// ErrEmailTaken (the user exists but the config-stored password
+		// drifted from the DB hash), force-reset the password so the
+		// desktop can always log into its own mini relay. Only ever runs
+		// on local-process-owned identities; never exposed to the relay
+		// HTTP surface.
 		user, err = store.CreateUser(ctx, email, pw)
-		if err != nil {
+		if errors.Is(err, userstore.ErrEmailTaken) {
+			user, err = store.ResetPasswordByEmail(ctx, email, pw)
+			if err != nil {
+				return "", nil, fmt.Errorf("reset local admin password: %w", err)
+			}
+		} else if err != nil {
 			return "", nil, fmt.Errorf("create local admin: %w", err)
 		}
-		if err := store.SetUserAdmin(ctx, user.ID, true); err != nil {
-			return "", nil, fmt.Errorf("promote local admin: %w", err)
+		if !user.IsAdmin {
+			if err := store.SetUserAdmin(ctx, user.ID, true); err != nil {
+				return "", nil, fmt.Errorf("promote local admin: %w", err)
+			}
 		}
 	}
 	tok, _, err := store.CreateSession(ctx, user.ID, "desktop-local", "", userstore.DefaultSessionTTL)

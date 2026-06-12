@@ -117,6 +117,14 @@ type Store interface {
 	// or ErrPasswordIncorrect on validation failure.
 	ChangePassword(ctx context.Context, userID, currentPlaintext, newPlaintext string) error
 
+	// ResetPasswordByEmail forces a new password for the user with the given
+	// email WITHOUT requiring the current one. All sessions are deleted.
+	// Intended for the desktop's bootstrap_local recovery path where the
+	// config-stored local-admin password drifted from the userstore hash —
+	// there's no human to type the original password. Never expose this to
+	// the relay HTTP surface. Returns ErrUserNotFound when email is unknown.
+	ResetPasswordByEmail(ctx context.Context, email, newPlaintext string) (*User, error)
+
 	// Webhooks
 	CreateWebhook(ctx context.Context, userID, url, format, name string, allowInsecure bool) (*Webhook, error)
 	ListWebhooks(ctx context.Context, userID string) ([]Webhook, error)

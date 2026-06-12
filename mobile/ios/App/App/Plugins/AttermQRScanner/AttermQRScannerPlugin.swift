@@ -27,7 +27,9 @@ public class AttermQRScannerPlugin: CAPPlugin, CAPBridgedPlugin {
     private var scannerVC: AttermQRScannerViewController?
 
     /// requestPermissions() -> { camera: 'granted' | 'denied' }
-    @objc func requestPermissions(_ call: CAPPluginCall) {
+    /// Overrides CAPPlugin.requestPermissions so Capacitor's permission
+    /// proxy routes here instead of returning the base no-op stub.
+    @objc public override func requestPermissions(_ call: CAPPluginCall) {
         let current = AVCaptureDevice.authorizationStatus(for: .video)
         switch current {
         case .authorized:

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTestStore(t *testing.T) *SQLiteStore {
@@ -263,4 +264,48 @@ func TestUser_HasNoCSRFSecretField(t *testing.T) {
 	// The presence of the test is the test — if csrf_secret survives in
 	// the User struct, downstream callers (auth_http.go) still reference
 	// it and the package won't compile.
+}
+
+func TestResetPasswordByEmail_UpdatesHashAndDeletesSessions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, err := s.CreateUser(ctx, "Alice@Example.com", "old-password-Aa1!")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	tok, _, err := s.CreateSession(ctx, u.ID, "ua", "1.2.3", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, _, err := s.LookupSession(ctx, tok); err != nil {
+		t.Fatalf("session should exist before reset: %v", err)
+	}
+
+	got, err := s.ResetPasswordByEmail(ctx, "alice@example.com", "new-password-Bb2!")
+	if err != nil {
+		t.Fatalf("ResetPasswordByEmail: %v", err)
+	}
+	if got.ID != u.ID {
+		t.Fatalf("user id mismatch: got %q want %q", got.ID, u.ID)
+	}
+
+	if v, _ := s.VerifyPassword(ctx, "alice@example.com", "old-password-Aa1!"); v != nil {
+		t.Fatal("old password should no longer verify")
+	}
+	if v, _ := s.VerifyPassword(ctx, "alice@example.com", "new-password-Bb2!"); v == nil {
+		t.Fatal("new password should verify")
+	}
+
+	if _, _, err := s.LookupSession(ctx, tok); err == nil {
+		t.Fatal("session should be deleted after password reset")
+	}
+}
+
+func TestResetPasswordByEmail_UnknownEmailReturnsErrUserNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if _, err := s.ResetPasswordByEmail(ctx, "ghost@example.com", "x"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
 }

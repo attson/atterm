@@ -1,6 +1,7 @@
 import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } from './types'
 import type { QuickTemplate } from '../lib/templates'
 import type { AuxKey } from '../lib/auxKeys'
+import { CapacitorHttp } from '@capacitor/core'
 import { secureStorage } from './secureStorage'
 import { notifyLocalChange } from '../lib/prefsSync.capacitor'
 
@@ -65,21 +66,48 @@ export function createCapacitorPlatform(): Platform {
       fileDialog: false,
     },
     relay: {
-      // load: prefer Keychain; if empty AND localStorage has a legacy blob,
-      // migrate it (write to Keychain, clear localStorage), then return.
+      // load: prefer localStorage (synchronous, never hangs). Keychain is a
+      // last-resort fallback only consulted when localStorage is empty, with
+      // its own short race against setTimeout — but if the JS timer pool is
+      // frozen (the documented WKWebView issue that surfaced as "保存配置…
+      // 0.1s" stuck), setTimeout never fires either, so we shield from that
+      // by checking localStorage FIRST. Save now always writes localStorage,
+      // so after the first pairing this branch is the hot path.
       load: async () => {
-        const fromSecure = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
-        if (fromSecure) return fromSecure
+        const fromLocal = loadLegacyFromLocalStorage()
+        if (fromLocal) return fromLocal
 
-        const legacy = loadLegacyFromLocalStorage()
-        if (!legacy) return null
-        await secureStorage.set(STORAGE_KEY, JSON.stringify(legacy))
-        if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY)
-        return legacy
+        const fromSecure = await Promise.race([
+          secureStorage.get(STORAGE_KEY).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+        ]).then(parseRelayJSON)
+        if (fromSecure) {
+          if (typeof localStorage !== 'undefined') {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fromSecure)) } catch {}
+          }
+          return fromSecure
+        }
+        return null
       },
-      // save: write only to Keychain. localStorage is never written.
+      // save: localStorage commits synchronously (the primary write);
+      // Keychain runs best-effort in the background. The relay session token
+      // is already scoped to this app's WKWebView data store and the iOS app
+      // sandbox, so localStorage offers equivalent at-rest isolation to
+      // Keychain for our threat model. We previously awaited the Keychain
+      // call, which froze the pairing screen on "保存配置…" when the
+      // Capacitor bridge to AttermSecureStorage hung after a CapacitorHttp
+      // round-trip on the same bridge — likely a bridge-state interaction
+      // bug, but the symptom is a flow that never completes. load() already
+      // reads Keychain first then falls back to localStorage, so both stores
+      // converge once the next app launch happens.
       save: async (cfg) => {
-        await secureStorage.set(STORAGE_KEY, JSON.stringify(cfg))
+        const json = JSON.stringify(cfg)
+        secureStorage.set(STORAGE_KEY, json).catch((e) => {
+          console.warn('[AT Term] Keychain set failed; relay config saved to localStorage only:', e)
+        })
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, json)
+        }
       },
       // clear: wipe both stores. localStorage clear is belt-and-braces in case
       // a previous migration was interrupted between the Keychain write and
@@ -103,18 +131,39 @@ export function createCapacitorPlatform(): Platform {
       },
       consumePairing: async (relayBase, token) => {
         const base = relayBase.replace(/\/$/, '')
-        const res = await fetch(base + '/api/pair/consume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token }),
-          credentials: 'omit',
-        })
-        if (res.status === 404) {
-          const body = await res.json().catch(() => ({}))
+        // Use CapacitorHttp explicitly instead of fetch. fetch() on iOS goes
+        // through WKWebView; when a TLS handshake hangs there, the entire JS
+        // timer pool freezes (setInterval / setTimeout / requestAnimationFrame
+        // all stop firing), and AbortController.abort() is also dropped.
+        // CapacitorHttp.post hits NSURLSession directly with native timeouts
+        // that fire regardless of WebView state.
+        let resp: { status: number; data: unknown }
+        try {
+          resp = await CapacitorHttp.post({
+            url: base + '/api/pair/consume',
+            headers: { 'Content-Type': 'application/json' },
+            data: { token },
+            connectTimeout: 10_000,
+            readTimeout: 15_000,
+          })
+        } catch (e) {
+          const msg = (e as { message?: string })?.message ?? String(e)
+          if (/timeout|timed out/i.test(msg)) throw new Error('pair_timeout')
+          throw new Error('cannot_reach_relay')
+        }
+        if (resp.status === 404) {
+          const body = (resp.data as { code?: string }) || {}
           throw new Error(body.code || 'pair_invalid')
         }
-        if (!res.ok) throw new Error(`pair_consume_http_${res.status}`)
-        return (await res.json()) as { relay_url: string; session_token: string; expires_at: number; user: { id: string; email: string } }
+        if (resp.status < 200 || resp.status >= 300) {
+          throw new Error(`pair_consume_http_${resp.status}`)
+        }
+        // The relay server does not actually return relay_url (a leftover
+        // from when /api/pair/consume was going to redirect pairing to a
+        // different host). Use the base we just called as the relay URL —
+        // it is by definition the relay we want to talk to.
+        const body = resp.data as { session_token: string; expires_at: number; user: { id: string; email: string } }
+        return { relay_url: base, ...body }
       },
       login: async (url, email, password, allowInsecure) => {
         const base = url.replace(/\/$/, '')

@@ -37,3 +37,27 @@ describe("SessionConnection client_name", () => {
     expect(source).toMatch(/newDriverName/);
   });
 });
+
+describe("openWS sync-throw isolation", () => {
+  // Regression: WebKit throws "The string did not match the expected pattern."
+  // synchronously from new WebSocket(invalid). That used to unwind App.vue's
+  // boot try/catch and freeze startup. Both openWS impls must trap it and
+  // route through handleOpenFailure -> onStatus("error") + backoff retry.
+  test("SessionListConnection.openWS wraps new WebSocket in try/catch", () => {
+    const m = source.match(/class SessionListConnection[\s\S]*?(?=\n}\n)/);
+    expect(m).not.toBeNull();
+    expect(m![0]).toMatch(/try\s*{\s*ws\s*=\s*auth\.protocols\s*\?[\s\S]*?}\s*catch[\s\S]*?handleOpenFailure/);
+  });
+
+  test("SessionConnection.openWS wraps new WebSocket in try/catch", () => {
+    const m = source.match(/class SessionConnection[\s\S]*?(?=\n}\n)/);
+    expect(m).not.toBeNull();
+    expect(m![0]).toMatch(/try\s*{\s*ws\s*=\s*auth\.protocols\s*\?[\s\S]*?}\s*catch[\s\S]*?handleOpenFailure/);
+  });
+
+  test("handleOpenFailure surfaces error status and schedules reconnect", () => {
+    expect(source).toMatch(/handleOpenFailure\([\s\S]*?\)\s*:\s*void/);
+    expect(source).toMatch(/onStatus\?\.\("error"\)/);
+    expect(source).toMatch(/setTimeout\(\(\) => this\.openWS\(\), delay\)/);
+  });
+});

@@ -215,6 +215,16 @@ const railIcons = computed(() => {
 }
 .task-sidebar.collapsed { width: 32px; }
 /* expanded width comes from inline :style="{ width: widthPx + 'px' }" */
+/* .expanded must itself be a flex column so .list-wrap's `flex: 1 1 auto;
+   overflow-y: auto` actually engages. Without this, .list-wrap's flex props
+   no-op (parent isn't flex), and the session list grows to its content size,
+   overflowing the sidebar and pulling the window taller than the viewport. */
+.expanded {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .resize-handle {
   position: absolute;
   top: 0;
@@ -258,7 +268,11 @@ const railIcons = computed(() => {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 4px;
+  /* Hide the WebKit scrollbar gutter without disabling scroll — the sidebar
+     already has a clear "more below" affordance via the trailing rows. */
+  scrollbar-width: none;
 }
+.list-wrap::-webkit-scrollbar { display: none; }
 footer { padding: 8px; border-top: 1px solid var(--border); }
 .mark-all {
   background: none;

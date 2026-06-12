@@ -138,10 +138,6 @@ export function LoginRemoteRelay(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LoginRemoteRelay'](arg1, arg2, arg3, arg4);
 }
 
-export function ProbeRelayVersion(arg1) {
-  return window['go']['main']['App']['ProbeRelayVersion'](arg1);
-}
-
 export function MarkSessionsSeen(arg1, arg2) {
   return window['go']['main']['App']['MarkSessionsSeen'](arg1, arg2);
 }
@@ -152,6 +148,10 @@ export function NewSession(arg1) {
 
 export function PickLogFilePath() {
   return window['go']['main']['App']['PickLogFilePath']();
+}
+
+export function ProbeRelayVersion(arg1) {
+  return window['go']['main']['App']['ProbeRelayVersion'](arg1);
 }
 
 export function SetAutoCheckUpdates(arg1) {

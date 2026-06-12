@@ -157,7 +157,18 @@ export class SessionListConnection {
   private openWS(): void {
     if (this.detached) return;
     const auth = webSocketAuth(this.endpoint, "/client-sessions");
-    const ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
+    let ws: WebSocket;
+    try {
+      ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
+    } catch (e) {
+      // WebKit throws "The string did not match the expected pattern." (a
+      // SyntaxError DOMException) synchronously when url scheme isn't ws/wss
+      // or a subprotocol contains chars outside the RFC 6455 token set.
+      // Don't let that tear down the caller's await chain — surface via
+      // onStatus and retry with backoff like a normal reconnect.
+      this.handleOpenFailure(e, auth);
+      return;
+    }
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
@@ -193,6 +204,21 @@ export class SessionListConnection {
     ws.onerror = () => {
       // onclose follows
     };
+  }
+
+  private handleOpenFailure(e: unknown, auth: { url: string; protocols?: string[] }): void {
+    const err = e as { name?: string; message?: string } | null;
+    console.error("[SessionListConnection] new WebSocket failed", {
+      url: auth.url,
+      protocols: auth.protocols,
+      name: err?.name,
+      message: err?.message ?? String(e),
+    });
+    this.ws = null;
+    this.handlers.onStatus?.("error");
+    if (this.detached) return;
+    const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
+    this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
   }
 }
 
@@ -304,7 +330,15 @@ export class SessionConnection {
   private openWS(): void {
     if (this.detached) return;
     const auth = webSocketAuth(this.endpoint, "/client");
-    const ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
+    let ws: WebSocket;
+    try {
+      ws = auth.protocols ? new WebSocket(auth.url, auth.protocols) : new WebSocket(auth.url);
+    } catch (e) {
+      // See SessionListConnection.openWS — sync constructor throws must not
+      // unwind callers; reroute to error + backoff reconnect.
+      this.handleOpenFailure(e, auth);
+      return;
+    }
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? "connecting" : "reconnecting");
@@ -390,6 +424,22 @@ export class SessionConnection {
     ws.onerror = () => {
       // onclose follows; nothing to do here
     };
+  }
+
+  private handleOpenFailure(e: unknown, auth: { url: string; protocols?: string[] }): void {
+    const err = e as { name?: string; message?: string } | null;
+    console.error("[SessionConnection] new WebSocket failed", {
+      url: auth.url,
+      protocols: auth.protocols,
+      sessionId: this.sessionId,
+      name: err?.name,
+      message: err?.message ?? String(e),
+    });
+    this.ws = null;
+    this.handlers.onStatus?.("error");
+    if (this.detached) return;
+    const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
+    this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
   }
 }
 

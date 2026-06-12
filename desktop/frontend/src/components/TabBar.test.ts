@@ -206,3 +206,4 @@ describe("TabBar AI title", () => {
     expect(w.get(".title").text()).toBe("proj");
   });
 });
+

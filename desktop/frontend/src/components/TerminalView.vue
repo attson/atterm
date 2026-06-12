@@ -497,6 +497,20 @@ function sendTemplate(tpl: QuickTemplate) {
   window.setTimeout(() => c?.sendInput("\r"), 16);
 }
 
+// Wheel-to-horizontal-scroll for the template bar. Trackpads emit deltaX
+// natively when scrolled sideways, but a vertical mouse wheel — the common
+// case when the cursor is hovering over a one-row strip — only emits deltaY.
+// Folding deltaY into scrollLeft gives users a working scroll without
+// reaching for shift. Listener is .passive (we don't preventDefault), so
+// xterm's keyboard/mouse pipeline downstream is untouched.
+function onTemplateBarWheel(e: WheelEvent) {
+  const el = e.currentTarget as HTMLElement | null;
+  if (!el) return;
+  const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+  if (delta === 0) return;
+  el.scrollLeft += delta;
+}
+
 // Re-read the persisted template list + hidden flag. Wired to the
 // 'quickTemplates:changed' event the Settings page emits so an open
 // terminal updates immediately, without a remount.
@@ -677,7 +691,12 @@ watch(status, (nextStatus) => {
         >{{ item.label }}</button>
       </div>
     </Teleport>
-    <div v-if="!templatesHidden" class="template-bar" data-testid="template-bar">
+    <div
+      v-if="!templatesHidden"
+      class="template-bar"
+      data-testid="template-bar"
+      @wheel.passive="onTemplateBarWheel"
+    >
       <button
         v-for="tpl in templates"
         :key="tpl.id"
@@ -718,7 +737,12 @@ watch(status, (nextStatus) => {
   border-top: 1px solid var(--border);
   background: var(--panel);
   z-index: 4;
+  /* Hide the WebKit scrollbar gutter — the row scrolls with wheel/trackpad
+     and individual buttons are reachable via keyboard; the scrollbar itself
+     just steals 12-15px of vertical space we'd rather give to the terminal. */
+  scrollbar-width: none;
 }
+.template-bar::-webkit-scrollbar { display: none; }
 .template-btn {
   flex: 0 0 auto;
   height: 22px;

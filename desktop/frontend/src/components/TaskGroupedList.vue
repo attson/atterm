@@ -57,6 +57,22 @@ const groupKeys = computed<string[]>(() => {
   return Object.keys(groups.value).sort();
 });
 const foldOpen = ref(false);
+// Per-group collapse state, in-memory only (matches `foldOpen`'s session-
+// local lifetime). Each entry is a group key that is currently collapsed;
+// absence means expanded. Works for both groupBy="host" and groupBy="state".
+const collapsedGroups = ref<Set<string>>(new Set());
+function isGroupCollapsed(key: string): boolean {
+  return collapsedGroups.value.has(key);
+}
+function toggleGroupCollapsed(key: string) {
+  // Mutate a fresh Set so Vue's reactivity picks up the change — Vue's
+  // shallow refs see `.add()` / `.delete()` as same-instance and skip the
+  // re-render.
+  const next = new Set(collapsedGroups.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsedGroups.value = next;
+}
 const home = ref("");
 
 onMounted(async () => {
@@ -108,8 +124,17 @@ function stateLabel(state: string | undefined): string {
       class="host-group"
       :data-test="`host-group-${key}`"
     >
-      <header class="host-header" data-test="host-header">
-        <span class="caret">▼</span>
+      <header
+        class="host-header"
+        data-test="host-header"
+        role="button"
+        tabindex="0"
+        :aria-expanded="!isGroupCollapsed(key)"
+        @click="toggleGroupCollapsed(key)"
+        @keydown.enter.prevent="toggleGroupCollapsed(key)"
+        @keydown.space.prevent="toggleGroupCollapsed(key)"
+      >
+        <span class="caret">{{ isGroupCollapsed(key) ? '▶' : '▼' }}</span>
         <span class="host-name">{{ groupHeader(key) }}</span>
         <span class="counts">
           <TaskStateIcon :state="groupPrimaryState(key)" :size="10" />
@@ -123,13 +148,13 @@ function stateLabel(state: string | undefined): string {
           class="mark-all"
           data-test="host-mark-all"
           :title="t('tasks.markAllRead')"
-          @click="onMarkGroup(key)"
+          @click.stop="onMarkGroup(key)"
         >
           ✓
         </button>
       </header>
       <button
-        v-for="s in groups[key]"
+        v-for="s in (isGroupCollapsed(key) ? [] : groups[key])"
         :key="s.session_id"
         class="task-row"
         data-test="task-row"
@@ -206,7 +231,9 @@ function stateLabel(state: string | undefined): string {
 
 <style scoped>
 .task-grouped-list { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
-.host-header { display: flex; align-items: center; gap: 6px; font-weight: 500; padding: 4px 6px; }
+.host-header { display: flex; align-items: center; gap: 6px; font-weight: 500; padding: 4px 6px; cursor: pointer; user-select: none; }
+.host-header:hover { background: rgba(255, 255, 255, 0.04); border-radius: 4px; }
+.host-header .caret { font-size: 9px; opacity: 0.7; width: 9px; display: inline-block; }
 .host-name { flex: 0 0 auto; }
 .counts { margin-left: auto; display: inline-flex; gap: 2px; align-items: center; }
 .unread-badge { font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; }

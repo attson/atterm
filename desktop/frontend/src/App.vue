@@ -301,6 +301,11 @@ watch(
   { immediate: true },
 );
 
+// Task state of the active session, surfaced to TitleBar so it can render a
+// running indicator (green line at the bottom of the titlebar) when the
+// foreground session has work in flight. Returns null when no session/state.
+const currentTaskStateForBar = computed(() => currentActiveSession.value?.task_state ?? null);
+
 // In-window title shown in TitleBar's center area. Mirrors the TabBar's
 // per-tab title (AI OSC title for ai sessions, cwd basename otherwise) so
 // users have a persistent label of the active session even when the tab
@@ -839,16 +844,33 @@ onMounted(async () => {
   } catch (e) {
     console.warn("[AT Term] failed to load command-notify threshold", e);
   }
+  // Track which boot step is running so a thrown error pins down the call
+  // site for the user (and the logs) — without this, the catch below collapses
+  // five independent calls into one opaque "<DOMException msg>" in the title
+  // bar with no way to tell which one fired.
+  let bootStage = "";
   try {
+    bootStage = "refreshTerminalTheme";
     await refreshTerminalTheme();
+    bootStage = "getEndpoint";
     localEndpoint.value = await getEndpoint();
+    bootStage = "getHostInfo";
     const info = await getHostInfo();
     localHostID.value = info.host_id;
+    bootStage = "connectLocalSessionList";
     connectLocalSessionList(localEndpoint.value);
+    bootStage = "refreshRelayConfig";
     await refreshRelayConfig();
   } catch (e: any) {
+    const name = e?.name ?? "Error";
+    const msg = e?.message ?? String(e);
+    console.error(`[boot] step "${bootStage}" failed`, {
+      name,
+      message: msg,
+      stack: e?.stack,
+    });
     status.value = "error";
-    errorMsg.value = e?.message ?? i18nT("app.wailsBindingsUnavailable");
+    errorMsg.value = `${bootStage}: ${name}: ${msg}` || i18nT("app.wailsBindingsUnavailable");
     return;
   }
 
@@ -893,6 +915,7 @@ onUnmounted(() => {
       :available-remote-count="availableRemote.length"
       :update-badge="updateBadge"
       :current-title="currentTitleForBar"
+      :current-task-state="currentTaskStateForBar"
       @open-remote="openRemoteFromTitleBar"
       @open-settings="showSettings = true"
     />

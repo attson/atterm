@@ -409,11 +409,11 @@ export namespace main {
 	    last_email: string;
 	    connected: boolean;
 	    paused: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RelayConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];

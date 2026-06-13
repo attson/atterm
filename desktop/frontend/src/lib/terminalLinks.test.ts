@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectLinks } from "./terminalLinks";
+import { detectLinks, normalizeForOpen, type LinkMatch } from "./terminalLinks";
 
 describe("detectLinks — URL schemes", () => {
   it("matches a bare https URL", () => {
@@ -131,5 +131,37 @@ describe("detectLinks — paths", () => {
   it("does not double-match path inside a URL", () => {
     const got = detectLinks("file:///tmp/x and /etc/hosts");
     expect(got.map((m) => m.text)).toEqual(["file:///tmp/x", "/etc/hosts"]);
+  });
+});
+
+describe("normalizeForOpen", () => {
+  const http: LinkMatch = { start: 0, end: 10, text: "http://x.t", kind: "http" };
+  const file: LinkMatch = { start: 0, end: 17, text: "file:///tmp/x.log", kind: "file" };
+  const abs: LinkMatch = { start: 0, end: 9, text: "/usr/local", kind: "path" };
+  const home: LinkMatch = { start: 0, end: 14, text: "~/Projects/foo", kind: "path" };
+
+  it("returns http(s) untouched", () => {
+    expect(normalizeForOpen(http, "")).toBe("http://x.t");
+  });
+
+  it("returns file:// untouched", () => {
+    expect(normalizeForOpen(file, "")).toBe("file:///tmp/x.log");
+  });
+
+  it("wraps absolute path in file://", () => {
+    expect(normalizeForOpen(abs, "")).toBe("file:///usr/local");
+  });
+
+  it("expands ~ when homeDir provided", () => {
+    expect(normalizeForOpen(home, "/Users/me")).toBe("file:///Users/me/Projects/foo");
+  });
+
+  it("returns null when ~ encountered with no homeDir", () => {
+    expect(normalizeForOpen(home, "")).toBeNull();
+    expect(normalizeForOpen(home, undefined)).toBeNull();
+  });
+
+  it("strips trailing slash from homeDir before joining", () => {
+    expect(normalizeForOpen(home, "/Users/me/")).toBe("file:///Users/me/Projects/foo");
   });
 });

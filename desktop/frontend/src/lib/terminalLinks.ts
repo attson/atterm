@@ -86,3 +86,17 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
   out.sort((a, b) => a.start - b.start);
   return out;
 }
+
+export function normalizeForOpen(
+  match: LinkMatch,
+  homeDir: string | undefined,
+): string | null {
+  const t = match.text;
+  if (match.kind === "http" || match.kind === "file") return t;
+  if (t.startsWith("~/") || t === "~/") {
+    if (!homeDir) return null;
+    const home = homeDir.replace(/\/+$/, "");
+    return `file://${home}${t.slice(1)}`;
+  }
+  return `file://${t}`;
+}

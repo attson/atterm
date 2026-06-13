@@ -23,7 +23,10 @@ import {
 } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
-import { broadcastCommandFinished, getHostInfo, getWebglRendererEnabled, showNotification } from "../lib/api";
+import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
+import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
+import { detectLinks, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
+import { cellCoordsAt } from "../lib/terminalCellCoords";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import { descriptorsForSlot } from "../plugins/registry";
 import { usePluginConfigStore } from "../plugins/configStore";
@@ -111,6 +114,8 @@ const pluginContext = inject<PluginContext>("atterm:pluginContext", null as unkn
 const pluginMenuItems = ref<MenuItem[]>([]);
 
 let resizeObserver: ResizeObserver | null = null;
+let linkProviderDisposer: { dispose(): void } | null = null;
+let cachedHomeDir = "";
 let copyKeyTarget: HTMLDivElement | null = null;
 
 const MENU_WIDTH = 150;
@@ -425,6 +430,19 @@ async function ensureTerm() {
     console.warn("[AT Term] OSC 133 handler registration failed", err);
   }
 
+  try {
+    cachedHomeDir = await getUserHomeDir();
+  } catch {
+    cachedHomeDir = "";
+  }
+  linkProviderDisposer = useTerminalLinkProvider({
+    term,
+    isMac,
+    getHomeDir: () => cachedHomeDir,
+    openURL: (u) => platform.system.openExternalURL(u),
+    onError: (key) => emit("toast", t(key)),
+  });
+
   resizeObserver = new ResizeObserver(() => safeFit());
   resizeObserver.observe(termContainer.value!);
 }
@@ -605,6 +623,8 @@ onBeforeUnmount(() => {
   conn = null;
   resizeObserver?.disconnect();
   resizeObserver = null;
+  linkProviderDisposer?.dispose();
+  linkProviderDisposer = null;
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);

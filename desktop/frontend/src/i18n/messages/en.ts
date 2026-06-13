@@ -97,6 +97,14 @@ export const en = {
     commandFinishedNotification: "Command finished - exit {exitCode} - {elapsed} - {session}",
     loadingHistoryBytes: "loading history - {bytes}",
     loadingHistoryProgress: "loading history {pct}% - {bytes} / {total}",
+    contextMenu: {
+      openLink: "Open Link",
+      copyLink: "Copy Link",
+    },
+    link: {
+      openFailed: "Failed to open link",
+      openFailedNoHome: "Cannot resolve ~ (home directory unavailable)",
+    },
   },
   sessions: {
     pickSession: "pick a session",

@@ -99,6 +99,14 @@ export const zhCN = {
     commandFinishedNotification: "命令已完成 - 退出码 {exitCode} - {elapsed} - {session}",
     loadingHistoryBytes: "正在加载历史 - {bytes}",
     loadingHistoryProgress: "正在加载历史 {pct}% - {bytes} / {total}",
+    contextMenu: {
+      openLink: "打开链接",
+      copyLink: "复制链接",
+    },
+    link: {
+      openFailed: "无法打开链接",
+      openFailedNoHome: "无法解析 ~（拿不到 home 目录）",
+    },
   },
   sessions: {
     pickSession: "选择会话",

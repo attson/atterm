@@ -12,6 +12,9 @@ export type {
   ClipboardPastePayload,
   UpdateState,
   MarkSessionsSeenOpts,
+  Webhook,
+  WebhookFormat,
+  CreateWebhookReq,
 } from '../lib/api'
 
 // PluginConfig + sub-types live in wailsjs/go/models, re-export here.
@@ -44,7 +47,18 @@ export interface Capabilities {
 }
 
 // ----- Bridges -----
-import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState, MarkSessionsSeenOpts as _MarkSessionsSeenOpts } from '../lib/api'
+import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState, MarkSessionsSeenOpts as _MarkSessionsSeenOpts, Webhook as _Webhook, CreateWebhookReq as _CreateWebhookReq } from '../lib/api'
+
+/** WebhookBridge handles per-user webhook config on the relay. The desktop
+ *  Wails impl forwards to the Go binding (Bearer + insecure TLS handled there);
+ *  the Capacitor impl talks to the relay HTTP API directly. Throws 'relay_unauthorized'
+ *  on HTTP 401, 'webhook_not_found' on delete 404, or the relay's `{error: code}`
+ *  string verbatim on other 4xx so the UI can map to localized messages. */
+export interface WebhookBridge {
+  list(): Promise<_Webhook[]>
+  create(req: _CreateWebhookReq): Promise<_Webhook>
+  delete(id: string): Promise<void>
+}
 
 export interface PairingConsumeResult {
   relay_url: string
@@ -74,6 +88,8 @@ export interface RelayBridge {
   /** Mobile-only. Reads the saved password from Keychain. Returns '' when
    *  nothing is stored. */
   loadSavedPassword?(): Promise<string>
+  /** Per-user webhook config. Optional so platforms without relay HTTP can omit. */
+  webhooks?: WebhookBridge
 }
 
 export interface RemoteSession {

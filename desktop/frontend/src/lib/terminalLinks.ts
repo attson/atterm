@@ -16,6 +16,12 @@ export interface LinkMatch {
 // (e.g. Wikipedia titles) while still dropping a stray sentence-end `)`.
 const URL_RE = /\b(https?|file):\/\/[^\s\x00-\x1f]+/g;
 
+// Absolute path: starts at word boundary with '/' or '~/', body chars exclude
+// whitespace + control. The lookbehind ensures we don't treat 12/24 as a path
+// (digit before slash) and we only trigger at start-of-line, whitespace, or one
+// of the common surrounding punctuation chars.
+const PATH_RE = /(?:(?<=^)|(?<=[\s(){}\[\]<>"'`]))(~\/|\/)([^\s\x00-\x1f]*)/g;
+
 const TRAILING_TRIM = new Set([".", ",", ";", ":", "!", "?", '"', "'"]);
 
 function trimTrailing(text: string): string {
@@ -49,6 +55,7 @@ function countChar(s: string, ch: string): number {
 export function detectLinks(line: string | null | undefined): LinkMatch[] {
   if (!line) return [];
   const out: LinkMatch[] = [];
+
   URL_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = URL_RE.exec(line)) !== null) {
@@ -63,5 +70,19 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
       kind: m[1] === "file" ? "file" : "http",
     });
   }
+
+  PATH_RE.lastIndex = 0;
+  while ((m = PATH_RE.exec(line)) !== null) {
+    const raw = m[0];
+    const trimmed = trimTrailing(raw);
+    if (!trimmed) continue;
+    const start = m.index;
+    const end = start + trimmed.length;
+    // Skip if this overlaps with any URL match already produced.
+    if (out.some((u) => start < u.end && end > u.start)) continue;
+    out.push({ start, end, text: trimmed, kind: "path" });
+  }
+
+  out.sort((a, b) => a.start - b.start);
   return out;
 }

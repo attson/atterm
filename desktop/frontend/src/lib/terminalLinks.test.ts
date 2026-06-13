@@ -84,3 +84,52 @@ describe("detectLinks — trailing punctuation", () => {
     ]);
   });
 });
+
+describe("detectLinks — paths", () => {
+  it("matches an absolute POSIX path", () => {
+    expect(detectLinks("log: /var/log/x.log here")).toEqual([
+      { start: 5, end: 19, text: "/var/log/x.log", kind: "path" },
+    ]);
+  });
+
+  it("matches a home-anchored path", () => {
+    expect(detectLinks("cd ~/Projects/foo")).toEqual([
+      { start: 3, end: 17, text: "~/Projects/foo", kind: "path" },
+    ]);
+  });
+
+  it("matches '~/' alone", () => {
+    expect(detectLinks("home is ~/")).toEqual([
+      { start: 8, end: 10, text: "~/", kind: "path" },
+    ]);
+  });
+
+  it("matches '/' alone (root)", () => {
+    expect(detectLinks("disk / is full")).toEqual([
+      { start: 5, end: 6, text: "/", kind: "path" },
+    ]);
+  });
+
+  it("does NOT match relative paths", () => {
+    expect(detectLinks("see ./foo and src/main.go")).toEqual([]);
+  });
+
+  it("does NOT match shorthand ~user", () => {
+    expect(detectLinks("cd ~foo")).toEqual([]);
+  });
+
+  it("does NOT match numeric expressions like 12/24", () => {
+    expect(detectLinks("date 12/24/2025")).toEqual([]);
+  });
+
+  it("strips trailing punct on paths too", () => {
+    expect(detectLinks("see /var/log,")).toEqual([
+      { start: 4, end: 12, text: "/var/log", kind: "path" },
+    ]);
+  });
+
+  it("does not double-match path inside a URL", () => {
+    const got = detectLinks("file:///tmp/x and /etc/hosts");
+    expect(got.map((m) => m.text)).toEqual(["file:///tmp/x", "/etc/hosts"]);
+  });
+});

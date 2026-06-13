@@ -144,7 +144,7 @@ Two minimal changes:
 
 1. **`ensureTerm()` tail** — after WebGL load, after OSC 133 wiring:
    ```ts
-   const homeDir = await api.getHomeDir().catch(() => '')
+   const homeDir = await api.getUserHomeDir().catch(() => '')
    linkProviderDisposer = useTerminalLinkProvider({
      term, isMac, getHomeDir: () => homeDir,
      openURL: (u) => platform.system.openExternalURL(u),
@@ -168,22 +168,11 @@ Two minimal changes:
 
    Existing menu items follow. No reordering.
 
-### `desktop/app.go` (modified)
+### Home-dir binding (already exists)
 
-Add an exported Wails method:
-
-```go
-func (a *App) GetHomeDir() string {
-    h, err := os.UserHomeDir()
-    if err != nil { return "" }
-    return h
-}
-```
-
-### `lib/api.ts` (modified)
-
-Re-export the binding as `getHomeDir(): Promise<string>` alongside the other
-App-bound calls.
+`desktop/app.go:732 GetUserHomeDir()` and `lib/api.ts:517 getUserHomeDir()`
+are already wired and used by `TaskGroupedList.vue` /
+`MobileSessionList.vue`. Reuse as-is — no Go / api.ts changes needed.
 
 ### `i18n/messages/{zh,en}.ts` (modified)
 

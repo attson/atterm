@@ -23,7 +23,10 @@ import {
 } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
-import { broadcastCommandFinished, getHostInfo, getWebglRendererEnabled, showNotification } from "../lib/api";
+import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
+import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
+import { detectLinks, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
+import { cellCoordsAt } from "../lib/terminalCellCoords";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import { descriptorsForSlot } from "../plugins/registry";
 import { usePluginConfigStore } from "../plugins/configStore";
@@ -109,8 +112,11 @@ const pluginContext = inject<PluginContext>("atterm:pluginContext", null as unkn
 
 // Menu items contributed by context-menu plugins. Populated on each right-click.
 const pluginMenuItems = ref<MenuItem[]>([]);
+const menuLinkHit = ref<LinkMatch | null>(null);
 
 let resizeObserver: ResizeObserver | null = null;
+let linkProviderDisposer: { dispose(): void } | null = null;
+let cachedHomeDir = "";
 let copyKeyTarget: HTMLDivElement | null = null;
 
 const MENU_WIDTH = 150;
@@ -170,6 +176,7 @@ async function handleImagePaste(e: ClipboardEvent) {
 function closeContextMenu() {
   menuOpen.value = false;
   pluginMenuItems.value = [];
+  menuLinkHit.value = null;
 }
 
 async function openContextMenu(e: MouseEvent) {
@@ -187,6 +194,7 @@ async function openContextMenu(e: MouseEvent) {
   menuX.value = pos.left;
   menuY.value = pos.top;
   pluginMenuItems.value = [];
+  menuLinkHit.value = computeLinkHit(e);
   menuOpen.value = true;
 
   // Collect context-menu plugin items and append after the menu is shown.
@@ -215,6 +223,48 @@ function onDocumentMouseDown(e: MouseEvent) {
 
 function onDocumentKeyDown(e: KeyboardEvent) {
   if (e.key === "Escape") closeContextMenu();
+}
+
+// computeLinkHit converts a right-click MouseEvent into the LinkMatch that
+// covers the clicked cell, or null when the click isn't on any detected link.
+// Reuses detectLinks so the menu agrees with what the hover provider drew.
+function computeLinkHit(e: MouseEvent): LinkMatch | null {
+  if (!term) return null;
+  const viewport = termContainer.value;
+  if (!viewport) return null;
+  const hit = cellCoordsAt(e.clientX, e.clientY, term, viewport);
+  if (!hit) return null;
+  const line = term.buffer.active.getLine(hit.row)?.translateToString(true) ?? "";
+  return detectLinks(line).find((m) => hit.col >= m.start && hit.col < m.end) ?? null;
+}
+
+async function onMenuOpenLink() {
+  const hit = menuLinkHit.value;
+  closeContextMenu();
+  if (!hit) return;
+  const url = normalizeForOpen(hit, cachedHomeDir);
+  if (!url) {
+    emit("toast", t("terminal.link.openFailedNoHome"));
+    return;
+  }
+  try {
+    await platform.system.openExternalURL(url);
+  } catch (err) {
+    console.warn("[AT Term] open link failed", err);
+    emit("toast", t("terminal.link.openFailed"));
+  }
+}
+
+async function onMenuCopyLink() {
+  const hit = menuLinkHit.value;
+  closeContextMenu();
+  if (!hit) return;
+  try {
+    await navigator.clipboard.writeText(hit.text);
+  } catch (err) {
+    console.warn("[AT Term] copy link failed", err);
+    emit("toast", t("terminal.copyFailed"));
+  }
 }
 
 async function onMenuCopy() {
@@ -425,6 +475,19 @@ async function ensureTerm() {
     console.warn("[AT Term] OSC 133 handler registration failed", err);
   }
 
+  try {
+    cachedHomeDir = await getUserHomeDir();
+  } catch {
+    cachedHomeDir = "";
+  }
+  linkProviderDisposer = useTerminalLinkProvider({
+    term,
+    isMac,
+    getHomeDir: () => cachedHomeDir,
+    openURL: (u) => platform.system.openExternalURL(u),
+    onError: (key) => emit("toast", t(key)),
+  });
+
   resizeObserver = new ResizeObserver(() => safeFit());
   resizeObserver.observe(termContainer.value!);
 }
@@ -605,6 +668,8 @@ onBeforeUnmount(() => {
   conn = null;
   resizeObserver?.disconnect();
   resizeObserver = null;
+  linkProviderDisposer?.dispose();
+  linkProviderDisposer = null;
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
@@ -678,6 +743,8 @@ watch(status, (nextStatus) => {
         @mousedown.stop
         @click.stop
       >
+        <button v-if="menuLinkHit" class="term-context-item" @click="onMenuOpenLink">{{ t("terminal.contextMenu.openLink") }}</button>
+        <button v-if="menuLinkHit" class="term-context-item" @click="onMenuCopyLink">{{ t("terminal.contextMenu.copyLink") }}</button>
         <button class="term-context-item" :disabled="!menuHasSelection" @click="onMenuCopy">{{ t("common.copy") }}</button>
         <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">{{ t("common.paste") }}</button>
         <button class="term-context-item" :disabled="!menuCanSend" @click="onMenuSend">{{ t("terminal.sendSelection") }}</button>

@@ -226,6 +226,60 @@ export function createCapacitorPlatform(): Platform {
         return v ?? ''
       },
       // setUplinkPaused omitted — desktop-only
+      webhooks: {
+        list: async () => {
+          const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                    ?? loadLegacyFromLocalStorage()
+          if (!cfg || !cfg.url || !cfg.token) throw new Error('relay_not_configured')
+          const base = cfg.url.replace(/\/$/, '')
+          const res = await fetch(base + '/api/me/webhooks', {
+            headers: { Authorization: `Bearer ${cfg.token}` },
+            credentials: 'omit',
+          })
+          if (res.status === 401) throw new Error('relay_unauthorized')
+          if (!res.ok) throw new Error(`list webhooks: HTTP ${res.status}`)
+          const arr = await res.json()
+          return Array.isArray(arr) ? arr : []
+        },
+        create: async (req) => {
+          const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                    ?? loadLegacyFromLocalStorage()
+          if (!cfg || !cfg.url || !cfg.token) throw new Error('relay_not_configured')
+          const base = cfg.url.replace(/\/$/, '')
+          const res = await fetch(base + '/api/me/webhooks', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${cfg.token}`,
+              'Content-Type': 'application/json',
+            },
+            credentials: 'omit',
+            body: JSON.stringify(req),
+          })
+          if (res.status === 401) throw new Error('relay_unauthorized')
+          if (!res.ok) {
+            const code = await res
+              .json()
+              .then((b: { error?: string }) => b?.error)
+              .catch(() => undefined)
+            throw new Error(code || `create webhook: HTTP ${res.status}`)
+          }
+          return res.json()
+        },
+        delete: async (id: string) => {
+          const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
+                    ?? loadLegacyFromLocalStorage()
+          if (!cfg || !cfg.url || !cfg.token) throw new Error('relay_not_configured')
+          const base = cfg.url.replace(/\/$/, '')
+          const res = await fetch(base + '/api/me/webhooks/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${cfg.token}` },
+            credentials: 'omit',
+          })
+          if (res.status === 401) throw new Error('relay_unauthorized')
+          if (res.status === 404) throw new Error('webhook_not_found')
+          if (res.status !== 204 && !res.ok) throw new Error(`delete webhook: HTTP ${res.status}`)
+        },
+      },
     },
     sessions: {
       // newSession omitted — capacitor cannot fork local PTYs

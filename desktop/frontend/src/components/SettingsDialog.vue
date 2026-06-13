@@ -10,6 +10,7 @@ import { getTerminalTheme } from "../lib/terminalThemes";
 import { usePlatform } from "../platform";
 import SettingsGeneral from "./SettingsGeneral.vue";
 import SettingsRelay from "./SettingsRelay.vue";
+import SettingsWebhooks from "./SettingsWebhooks.vue";
 import SettingsLogging from "./SettingsLogging.vue";
 import SettingsUpdates from "./SettingsUpdates.vue";
 import SettingsPlugins from "./SettingsPlugins.vue";
@@ -21,14 +22,26 @@ import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 import { useI18n } from "../i18n/useI18n";
 
-const caps = usePlatform().caps;
+const platform = usePlatform();
+const caps = platform.caps;
 const { t } = useI18n();
+
+const relayHasToken = ref(false);
+
+async function refreshRelayHasToken() {
+  try {
+    const cfg = await platform.relay.load();
+    relayHasToken.value = !!(cfg && cfg.url && cfg.token);
+  } catch {
+    relayHasToken.value = false;
+  }
+}
 
 const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
-  initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "tasks";
+  initialTab?: "general" | "relay" | "webhooks" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "tasks";
 }>();
 
 const emit = defineEmits<{
@@ -38,7 +51,7 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
-const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks">(props.initialTab ?? "general");
+const activeTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks">(props.initialTab ?? "general");
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
@@ -50,7 +63,7 @@ const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | null>(null);
+const pendingTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -62,6 +75,7 @@ const showConfirm = ref(false);
 const updateVersionForConfirm = ref("");
 
 onMounted(async () => {
+  await refreshRelayHasToken();
   try {
     const themeID = await getTerminalThemePreference();
     persistedTheme.value = getTerminalTheme(themeID).id;
@@ -70,7 +84,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks") {
+function switchTab(next: "general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -105,6 +119,7 @@ function onRelayDirty(value: boolean) {
 
 function onRelayConfigChanged() {
   relayDirty.value = false;
+  void refreshRelayHasToken();
   emit("relay-config-changed");
 }
 
@@ -179,6 +194,13 @@ function onSaveClick() {
             @click="switchTab('relay')"
           >{{ t("settings.tabs.relay") }}</button>
           <button
+            v-if="relayHasToken"
+            class="settings-nav-item"
+            data-testid="webhooks-nav"
+            :class="{ active: activeTab === 'webhooks' }"
+            @click="switchTab('webhooks')"
+          >{{ t("settings.tabs.webhooks") }}</button>
+          <button
             v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'plugins' }"
@@ -227,6 +249,9 @@ function onSaveClick() {
             ref="relayRef"
             @dirty="onRelayDirty"
             @relay-config-changed="onRelayConfigChanged"
+          />
+          <SettingsWebhooks
+            v-if="relayHasToken && activeTab === 'webhooks'"
           />
           <SettingsLogging
             v-if="caps.fileDialog"

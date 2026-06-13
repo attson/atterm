@@ -116,4 +116,91 @@ describe('MobileSessionList', () => {
     await flushPromises()
     expect(w.emitted('tokenInvalid')).toBeTruthy()
   })
+
+  it('renders groups expanded by default with aria-expanded=true', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    const headers = w.findAll('[data-testid="group-header"]')
+    expect(headers.length).toBeGreaterThan(0)
+    for (const h of headers) {
+      expect(h.attributes('aria-expanded')).toBe('true')
+    }
+    // h1 has session a (unread), card should render.
+    expect(w.find('[data-testid="card-body"]').exists()).toBe(true)
+  })
+
+  it('collapses a host group when its header is tapped, hiding only its cards', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+
+    // host mode: h1 has [a, b], h2 has [c] (d folded).
+    expect(w.findAll('[data-testid="task-card"]')).toHaveLength(3)
+
+    const h1Group = w.find('[data-testid="host-group-h1"]')
+    const h1Header = h1Group.find('[data-testid="group-header"]')
+    await h1Header.trigger('click')
+    await flushPromises()
+
+    // h1 cards hidden; h2 still showing.
+    expect(h1Group.findAll('[data-testid="task-card"]')).toHaveLength(0)
+    expect(h1Header.attributes('aria-expanded')).toBe('false')
+    expect(h1Header.text()).toContain('▶')
+
+    const h2Group = w.find('[data-testid="host-group-h2"]')
+    expect(h2Group.findAll('[data-testid="task-card"]')).toHaveLength(1)
+    expect(h2Group.find('[data-testid="group-header"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('re-expands a collapsed group on second click', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    const h1Header = w.find('[data-testid="host-group-h1"] [data-testid="group-header"]')
+    await h1Header.trigger('click')
+    await flushPromises()
+    await h1Header.trigger('click')
+    await flushPromises()
+    expect(h1Header.attributes('aria-expanded')).toBe('true')
+    expect(w.find('[data-testid="host-group-h1"]').findAll('[data-testid="task-card"]')).toHaveLength(2)
+  })
+
+  it('collapses also work in state grouping mode', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    await w.find('[data-testid="group-toggle"]').trigger('click')
+    await flushPromises()
+
+    const wgGroup = w.find('[data-testid="state-group-waiting_input"]')
+    const wgHeader = wgGroup.find('[data-testid="group-header"]')
+    await wgHeader.trigger('click')
+    await flushPromises()
+
+    expect(wgGroup.findAll('[data-testid="task-card"]')).toHaveLength(0)
+    expect(wgHeader.attributes('aria-expanded')).toBe('false')
+    // Other state groups stay open.
+    const failed = w.find('[data-testid="state-group-failed"]')
+    expect(failed.find('[data-testid="group-header"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('group mark-all button does NOT toggle group collapse', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    const h1Header = w.find('[data-testid="host-group-h1"] [data-testid="group-header"]')
+    expect(h1Header.attributes('aria-expanded')).toBe('true')
+
+    await w.find('[data-testid="mark-all-host-h1"]').trigger('click')
+    await flushPromises()
+    expect(h1Header.attributes('aria-expanded')).toBe('true')
+  })
+
+  it('keyboard Enter/Space on a header toggles collapse', async () => {
+    const w = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    const h1Header = w.find('[data-testid="host-group-h1"] [data-testid="group-header"]')
+    await h1Header.trigger('keydown.enter')
+    await flushPromises()
+    expect(h1Header.attributes('aria-expanded')).toBe('false')
+    await h1Header.trigger('keydown.space')
+    await flushPromises()
+    expect(h1Header.attributes('aria-expanded')).toBe('true')
+  })
 })

@@ -37,6 +37,20 @@ const loading = ref(false)
 const foldOpen = ref(false)
 const home = ref('')
 
+// Per-group collapse state. In-memory only — matches TaskGroupedList on
+// desktop so behavior is identical. Vue picks up the change by swapping
+// in a fresh Set; mutating .add()/.delete() in place would skip re-render.
+const collapsedGroups = ref<Set<string>>(new Set())
+function isGroupCollapsed(key: string): boolean {
+  return collapsedGroups.value.has(key)
+}
+function toggleGroupCollapsed(key: string): void {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsedGroups.value = next
+}
+
 const STATE_ORDER: TaskState[] = [
   'waiting_input', 'failed', 'running',
   'completed', 'idle', 'disconnected', 'closed',
@@ -153,8 +167,17 @@ onMounted(async () => {
         class="group"
         :data-testid="groupTestId(key)"
       >
-        <header class="grouphdr">
-          <span class="caret">▼</span>
+        <header
+          class="grouphdr"
+          data-testid="group-header"
+          role="button"
+          tabindex="0"
+          :aria-expanded="!isGroupCollapsed(key)"
+          @click="toggleGroupCollapsed(key)"
+          @keydown.enter.prevent="toggleGroupCollapsed(key)"
+          @keydown.space.prevent="toggleGroupCollapsed(key)"
+        >
+          <span class="caret">{{ isGroupCollapsed(key) ? '▶' : '▼' }}</span>
           <span class="gname">{{ groupHeader(key) }}</span>
           <span class="counts">
             <TaskStateIcon :state="primaryState(key)" :size="10" />
@@ -166,18 +189,20 @@ onMounted(async () => {
             class="group-mark-all"
             :data-testid="groupMarkAllTestId(key)"
             :title="t('tasks.markAllRead')"
-            @click="onMarkSeen({ ids: unreadIdsForGroup(key) })"
+            @click.stop="onMarkSeen({ ids: unreadIdsForGroup(key) })"
           >✓</button>
         </header>
-        <MobileSessionCard
-          v-for="s in byGroup(key).filter((x) => !inFold(x))"
-          :key="s.session_id"
-          :session="s"
-          :home="home"
-          data-testid="task-card"
-          @open="emit('open', s)"
-          @markSeen="onMarkSeen"
-        />
+        <template v-if="!isGroupCollapsed(key)">
+          <MobileSessionCard
+            v-for="s in byGroup(key).filter((x) => !inFold(x))"
+            :key="s.session_id"
+            :session="s"
+            :home="home"
+            data-testid="task-card"
+            @open="emit('open', s)"
+            @markSeen="onMarkSeen"
+          />
+        </template>
       </section>
 
       <section v-if="sessions.completedSeen.value.length > 0" class="completed-fold">
@@ -226,7 +251,8 @@ onMounted(async () => {
 .icon { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: #8d93a3; padding: 4px; min-width: 44px; min-height: 44px; }
 .body { flex: 1; overflow: auto; padding: 12px; }
 .group { margin-bottom: 14px; }
-.grouphdr { display: flex; align-items: center; gap: 6px; padding: 4px 2px 8px; font-size: 0.78rem; color: #c6cad5; font-family: var(--font-mono); }
+.grouphdr { display: flex; align-items: center; gap: 6px; padding: 4px 2px 8px; font-size: 0.78rem; color: #c6cad5; font-family: var(--font-mono); cursor: pointer; user-select: none; -webkit-user-select: none; min-height: 32px; }
+.grouphdr:focus { outline: 1px solid rgba(255,255,255,0.18); outline-offset: 2px; border-radius: 3px; }
 .grouphdr .caret { font-size: 9px; color: #8d93a3; }
 .grouphdr .gname { flex: 0 0 auto; }
 .grouphdr .counts { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }

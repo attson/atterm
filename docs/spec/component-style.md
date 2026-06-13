@@ -1,7 +1,7 @@
 # 组件样式规范
 
 > **Audience**: 改 atterm 前端 UI 的工程师
-> **Last updated**: 2026-06-10
+> **Last updated**: 2026-06-13
 > **Status**: stable
 > **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md)
 
@@ -112,6 +112,88 @@ Settings 是最容易跑偏的区域，新增 tab 或字段时遵守以下结构
 - Pane 关闭按钮、remote badge、viewer overlay 要使用轻量 overlay，不改变 xterm cell 尺寸。
 - Pane 内点击目标必须以事件归属 pane 为准，不能隐式作用于当前 active pane；此类交互需要布局/组件测试覆盖。
 
+## Title bar
+
+`desktop/frontend/src/components/TitleBar.vue` 是 macOS / Windows / Linux 桌面端共用的顶部 chrome。
+
+### 布局与标题居中
+
+- macOS 走 `mac.TitleBarHiddenInset()`，traffic lights 占左 80px，root 用 `padding-left: 80px`；Windows / Linux 渲染 `WindowControls` 在最右。
+- 标题对窗口**几何中心**居中，而**不是** flex 中点。两侧不对称（左侧 80px 内边距、右侧 status + 2 个图标按钮 + Win/Linux 还有窗口控制）时，flex 撑开法会把标题压偏 60-80px。
+- 正确做法：
+
+  ```css
+  .titlebar { position: relative; display: flex; align-items: center; padding: 6px 14px; }
+  .window-title {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 50%;
+    /* 字号、颜色等照常 */
+  }
+  .status { margin-left: auto; /* 把右侧元素挤到边缘 */ }
+  ```
+
+- 双击 titlebar 空白区或标题区都走 `windowToggleMaximize`（macOS TitleBarHiddenInset 下系统 zoom 不生效）；`@dblclick.self` 同时挂在 root 和 `.window-title` 上。
+- titlebar 整体走 `--wails-draggable: drag`（Linux/Windows frameless），状态文字和图标按钮单独 `--wails-draggable: no-drag` 以保留点击。
+
+### Running indicator
+
+当前 active session 的 `task_state === 'running'` 时，在 titlebar 底部画一条波形指示器：
+
+```css
+.titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+  height: 3px;
+  background: repeating-linear-gradient(90deg,
+    transparent 0px,
+    transparent 200px,
+    rgba(74, 222, 128, 0.3) 320px,
+    #4ade80 500px,
+    #bbf7d0 560px,
+    #4ade80 620px,
+    rgba(74, 222, 128, 0.3) 800px,
+    transparent 920px,
+    transparent 1120px);
+  background-size: 1120px 100%;
+  box-shadow: 0 -1px 6px rgba(74, 222, 128, 0.4);
+  animation: titlebar-running-sweep 3.5s linear infinite;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+}
+.titlebar.is-running::after { opacity: 1; }
+@keyframes titlebar-running-sweep {
+  0% { background-position: 0 0; }
+  100% { background-position: 1120px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .titlebar::after { animation: none; background: #4ade80; transition: opacity 0.25s ease; }
+}
+```
+
+设计要点（**别动**，每个数字都有原因）：
+
+- **透明底色，颜色跟着波走**：波到的位置才有绿色，过去就空回去。模拟"水波向右流"的语义而不是"常亮长条"。
+- **重复平铺 1120px / 单波 720px / 两侧各 200px 空白**：保证常驻 1-2 道波在屏，一道出右边时下一道已经在进入，**无空窗期**。
+- **波形对称渐变**：`transparent → rgba(0.3) → #4ade80 → #bbf7d0 (峰) → #4ade80 → rgba(0.3) → transparent`，三档亮度看得到"明暗起伏"但全部在绿色 spectrum 内，不会让谷地看起来像断条。
+- **`animation-timing-function: linear`**：横向流动用线性才不会忽快忽慢。3.5s 周期，正向位移 1120px / 周期 = 320 px/s。
+- **伪元素一直挂着**：`.titlebar::after` 默认 `opacity: 0` 让它隐藏，但 `animation` 持续跑。`.is-running` 只翻 opacity；进入 running 时波**已经在流动**，不会出现 cold-start 的某颗波突然出现在屏幕中间的突兀感；退出 running 时波继续流，opacity 渐隐到 0，没有 snap。
+- **`bottom: -1px` + `box-shadow: 0 -1px 6px`**：让光带压在 titlebar 与 tab bar 的分隔线上、晕光向上渗进 chrome。这样光带不和下面的 tab bar 抢空间。
+- **`prefers-reduced-motion: reduce`**：直接关动画退化成 `background: #4ade80` 静态绿条，过渡时长压到 0.25s。
+
+数据流：
+
+- `App.vue::currentActiveSession` 算出当前 tab 当前 pane 的 `SessionInfo`；
+- `App.vue::currentTaskStateForBar = computed(() => currentActiveSession.value?.task_state ?? null)`；
+- 作为 `:current-task-state` prop 传进 `TitleBar`；TitleBar 内部 `computed(() => props.currentTaskState === 'running')` 决定 `.is-running` class。
+
+**铁规**：
+
+- 不要把 indicator 改成 pulse-only（纯 opacity 呼吸不带横向移动）—— 那是早期版本，被推翻。波动必须是横向流动。
+- 不要把单波换回 `linear-gradient(...) no-repeat`：那会让一道波出去后到下一道波之间出现明显空窗。
+- 不要把 indicator 移到 tab bar；红线 #1 要求语义是"当前 active session 在跑"，title bar 是合适的位置。
+- 不要 hard-code 颜色到组件外；调色板用 `#4ade80 / #bbf7d0` + `rgba(34, 197, 94, …)` 系列（emerald-400/200 与对应 rgba）。
+
 ## 任务卡片：session type chip 与 error line
 
 mobile / web 的 session 列表是 P2 阶段最容易跑偏的视图，新增信息时遵守以下结构：
@@ -158,6 +240,81 @@ mobile / web 的 session 列表是 P2 阶段最容易跑偏的视图，新增信
 `summary.recent_output` 不在卡片上渲染（会撑爆列表），留给未来的 session
 detail 视图。
 
+## 会话侧栏：内部滚动 + 分组折叠
+
+`desktop/frontend/src/components/TaskSidebar.vue` + `TaskGroupedList.vue`
+负责左侧任务面板。两条结构性约束**不能弱化**：
+
+### 内部滚动，不撑窗口
+
+侧栏的 flex 链路必须保证里层 `.list-wrap` 的 `flex: 1 1 auto; overflow-y: auto`
+真正生效；否则会话多了之后整列把窗口拉得比 viewport 还高（屏幕底部连终端
+都被推下去）。要求：
+
+```css
+.task-sidebar { display: flex; flex-direction: column; height: 100%; }
+.expanded {
+  flex: 1 1 auto;       /* 占满 sidebar 主轴可用空间 */
+  min-height: 0;        /* 允许 flex item 收缩到内容以下 */
+  display: flex;
+  flex-direction: column;
+}
+.list-wrap {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 隐藏 WebKit / Firefox scrollbar gutter——已有"下面还有"的视觉暗示 */
+  scrollbar-width: none;
+}
+.list-wrap::-webkit-scrollbar { display: none; }
+```
+
+**反例（千万别）**：
+
+- `.expanded` 没有 `display: flex` —— 那 `.list-wrap` 的 `flex: 1` 就 no-op，
+  内容长出 sidebar，整列把外层 flex row（`.main-row`）撑高，窗口跟着变高。
+- `.task-sidebar` 漏 `min-height: 0` —— 同样导致 flex item 不能 shrink。
+
+### 按主机 / 状态分组的折叠
+
+`TaskGroupedList` 在 host / state 维度都支持每个 group 单独折叠。语义：
+
+- 状态：`collapsedGroups: ref<Set<string>>`，session-local（关窗口或刷新会重置，
+  跟 `completed-fold` 的生命周期一致；目前不持久化）。
+- toggle 实现要**替换** Set 实例（`new Set(collapsedGroups.value)`）——
+  Vue 浅响应式认 `.add() / .delete()` 是 same instance，会漏更新。
+- 折叠时 `v-for` 跑空数组：`v-for="s in (isGroupCollapsed(key) ? [] : groups[key])"`，
+  整组 row 不进 DOM；展开时再渲染。
+- caret 字符 `▼`（展开）/ `▶`（折叠）；CSS 设 `font-size: 9px; opacity: 0.7; width: 9px`
+  让宽度稳定不抖。
+
+header 必须可键盘操作：
+
+```vue
+<header
+  class="host-header"
+  role="button"
+  tabindex="0"
+  :aria-expanded="!isGroupCollapsed(key)"
+  @click="toggleGroupCollapsed(key)"
+  @keydown.enter.prevent="toggleGroupCollapsed(key)"
+  @keydown.space.prevent="toggleGroupCollapsed(key)"
+>
+  <span class="caret">{{ isGroupCollapsed(key) ? '▶' : '▼' }}</span>
+  …
+  <button v-if="unreadByGroup[key] > 0" class="mark-all" @click.stop="onMarkGroup(key)">✓</button>
+</header>
+```
+
+铁规：
+
+- header 内部的 mark-all 按钮**必须** `@click.stop`，否则点 ✓ 一并触发分组折叠。
+- header 加 `cursor: pointer` + `:hover` 微底色让"可点"对视觉清楚。
+- 状态分组（`groupBy === 'state'`）和 host 分组共用同一套 `collapsedGroups`
+  set；切换分组维度不需要保留折叠状态。
+- 不要给 group 顶部加滑动展开/收起的高度动画——session 列表数量变化时高度
+  动画会和 flex column 的 layout 抢主线程，引起明显抖动。直接 `v-if` 切换即可。
+
 ## 快捷模板：bar + hotkey + 隐藏开关
 
 桌面 / web / mobile 三端共用 `QuickTemplate { id, label, text, hotkey? }` 模型
@@ -190,6 +347,13 @@ bar 上方，以及 mobile MobileTerminal 替换原 `quickbar`。
 - `:disabled` 直接绑 `canSend`（driver + controlMode + 非 view-only），与
   paste 按钮同一 gate；**不要**为模板单独写权限分支。
 - 横向溢出 `overflow-x: auto`，按钮 `flex: 0 0 auto`；不要换行。
+- **隐藏 scrollbar gutter**：bar 只有 30px 高，scrollbar 占 12-15px 视觉 noisy。
+  加 `scrollbar-width: none` + `::-webkit-scrollbar { display: none }`，滚动行
+  为保留（鼠标 wheel / 触控板 swipe 都还能用）。
+- **鼠标滚轮转横向**：触控板会原生发 `deltaX`，鼠标滚轮在 30px 高条上只有
+  `deltaY`。给 `.template-bar` 挂 `@wheel.passive="onTemplateBarWheel"`，把
+  `deltaY` 折成 `scrollLeft`（`el.scrollLeft += e.deltaY !== 0 ? e.deltaY : e.deltaX`）。
+  passive listener 不 `preventDefault`，xterm 自己的 wheel pipeline 不受影响。
 
 ### Settings → Templates tab（desktop）
 

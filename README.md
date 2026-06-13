@@ -1,7 +1,7 @@
 # AT Term
 
 > **Audience**: 第一次见到 atterm 的人 / 想跑起来或部署的开发者
-> **Last updated**: 2026-06-10
+> **Last updated**: 2026-06-13
 > **Status**: stable
 > **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/roadmap.md](./docs/roadmap.md)
 
@@ -39,6 +39,11 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 移动端图片菜单本地化 | 用 `@capacitor/camera` 替代原生 file input，"从相册选择 / 拍照 / 取消" 跟随 app 语言 |
 | 移动端键盘可见 | 用 `@capacitor/keyboard.setAccessoryBarVisible(false)` 隐藏 WKWebView 上的 `✓ ↑ ↓` 辅助条，控制面板不再被遮 |
 | 移动端 viewer 锁尺寸 | viewer 模式 `term.resize(meta.cols, meta.rows)` 锁到 PTY 真实尺寸，镜像 driver 画面，不再因 fit 错乱横向溢出 |
+| 桌面 titlebar running 指示 | 当前 active session `task_state === 'running'` 时，titlebar 底边显示一道绿色波形指示器（720px 长波 L→R 流动、3.5s 周期），波到的位置才有颜色，淡入淡出无突兀切换。`prefers-reduced-motion` 退化成静态绿条 |
+| 桌面 titlebar 标题居中 | 标题用 `position: absolute; left: 50%; transform: translateX(-50%)` 对窗口几何中心居中，不被 traffic-lights 内边距和右侧 status/图标的不对称宽度挤偏 |
+| 桌面会话侧栏分组折叠 | 任务侧栏按主机 / 按状态分组，每个 group 可单独折叠（▼↔▶，键盘 Enter/Space 也行），无 session 时不撑窗口，scrollbar gutter 隐藏只保留滚动行为 |
+| 桌面快捷模板栏滚轮 | template-bar 不显示 scrollbar，鼠标滚轮在该区域时把 `deltaY` 折成横向滚动，无需按 Shift |
+| 桌面启动错误定位 | `App.vue` boot 链按 `bootStage` 分阶段，错误时 titlebar 显示 `connectLocalSessionList: SyntaxError: …` 一眼定位失败点；`new WebSocket()` 同步异常被隔离重连，不再让 DOMException 卡死整个启动 |
 | Web / PWA 客户端 | Vue 3 + TypeScript + Naive UI 多页应用，支持登录、注册、会话、设置、admin、setup 与中英双语 |
 | 手机浏览器 / iOS App | PWA、Capacitor iOS WebView、relay setup（含 QR 扫码 + 手动 token）、会话列表、触控终端、常用快捷键 |
 | Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |

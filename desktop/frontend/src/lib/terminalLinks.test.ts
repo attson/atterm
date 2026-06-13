@@ -43,3 +43,44 @@ describe("detectLinks — URL schemes", () => {
     expect(detectLinks(undefined as unknown as string)).toEqual([]);
   });
 });
+
+describe("detectLinks — trailing punctuation", () => {
+  it("strips trailing period", () => {
+    expect(detectLinks("Visit https://x.test.")).toEqual([
+      { start: 6, end: 20, text: "https://x.test", kind: "http" },
+    ]);
+  });
+
+  it("strips trailing comma and semicolon", () => {
+    expect(detectLinks("a https://x.test, then b")).toEqual([
+      { start: 2, end: 16, text: "https://x.test", kind: "http" },
+    ]);
+    expect(detectLinks("https://x.test;")).toEqual([
+      { start: 0, end: 14, text: "https://x.test", kind: "http" },
+    ]);
+  });
+
+  it("strips closing paren when URL is inside (parens)", () => {
+    expect(detectLinks("(see https://x.test)")).toEqual([
+      { start: 5, end: 19, text: "https://x.test", kind: "http" },
+    ]);
+  });
+
+  it("keeps closing paren when it balances a paren inside the URL", () => {
+    const line = "https://en.wikipedia.org/wiki/Foo_(bar)";
+    expect(detectLinks(line)).toEqual([
+      {
+        start: 0,
+        end: line.length,
+        text: "https://en.wikipedia.org/wiki/Foo_(bar)",
+        kind: "http",
+      },
+    ]);
+  });
+
+  it("strips trailing quote", () => {
+    expect(detectLinks(`hit "https://x.test"`)).toEqual([
+      { start: 5, end: 19, text: "https://x.test", kind: "http" },
+    ]);
+  });
+});

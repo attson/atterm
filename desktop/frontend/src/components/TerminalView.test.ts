@@ -85,6 +85,40 @@ describe("TerminalView right-click menu", () => {
     expect(source).toContain("term.clear()");
     expect(source).toMatch(/const\s+MENU_HEIGHT\s*=\s*150/);
   });
+
+  test("renders Open Link / Copy Link buttons gated by menuLinkHit", () => {
+    expect(source).toContain('t("terminal.contextMenu.openLink")');
+    expect(source).toContain('t("terminal.contextMenu.copyLink")');
+    expect(source).toContain('v-if="menuLinkHit"');
+    expect(source).toContain('@click="onMenuOpenLink"');
+    expect(source).toContain('@click="onMenuCopyLink"');
+  });
+
+  test("computes link hit during openContextMenu and resets on close", () => {
+    // computeLinkHit must run inside openContextMenu so the menu can decide
+    // whether to show Open/Copy Link items.
+    expect(source).toMatch(/menuLinkHit\.value\s*=\s*computeLinkHit\(e\)/);
+    // closeContextMenu must clear it so the next right-click on plain text
+    // doesn't carry over a stale hit.
+    expect(source).toMatch(/menuLinkHit\.value\s*=\s*null/);
+    // computeLinkHit reuses the same detectLinks used by the hover provider.
+    expect(source).toMatch(/detectLinks\(line\)\.find/);
+    expect(source).toContain("cellCoordsAt(");
+  });
+});
+
+describe("TerminalView link provider wiring", () => {
+  test("registers useTerminalLinkProvider with platform openExternalURL", () => {
+    expect(source).toContain("useTerminalLinkProvider");
+    expect(source).toContain("platform.system.openExternalURL");
+    expect(source).toContain("getUserHomeDir");
+    expect(source).toContain('emit("toast", t(key))');
+  });
+
+  test("disposes link provider in onBeforeUnmount", () => {
+    expect(source).toMatch(/linkProviderDisposer\?\.dispose\(\)/);
+    expect(source).toMatch(/linkProviderDisposer\s*=\s*null/);
+  });
 });
 
 describe("TerminalView driver/viewer mode", () => {

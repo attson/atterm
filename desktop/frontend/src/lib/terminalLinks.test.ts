@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { detectLinks, normalizeForOpen, type LinkMatch } from "./terminalLinks";
+import {
+  detectLinks,
+  isModClickEvent,
+  normalizeForOpen,
+  type LinkMatch,
+} from "./terminalLinks";
 
 describe("detectLinks — URL schemes", () => {
   it("matches a bare https URL", () => {
@@ -163,5 +168,35 @@ describe("normalizeForOpen", () => {
 
   it("strips trailing slash from homeDir before joining", () => {
     expect(normalizeForOpen(home, "/Users/me/")).toBe("file:///Users/me/Projects/foo");
+  });
+});
+
+describe("isModClickEvent", () => {
+  function ev(opts: MouseEventInit): MouseEvent {
+    return new MouseEvent("click", opts);
+  }
+
+  it("mac requires metaKey only", () => {
+    expect(isModClickEvent(ev({ metaKey: true }), true)).toBe(true);
+    expect(isModClickEvent(ev({ ctrlKey: true }), true)).toBe(false);
+    expect(isModClickEvent(ev({}), true)).toBe(false);
+  });
+
+  it("non-mac requires ctrlKey only", () => {
+    expect(isModClickEvent(ev({ ctrlKey: true }), false)).toBe(true);
+    expect(isModClickEvent(ev({ metaKey: true }), false)).toBe(false);
+    expect(isModClickEvent(ev({}), false)).toBe(false);
+  });
+
+  it("rejects combinations with alt/shift", () => {
+    expect(isModClickEvent(ev({ metaKey: true, shiftKey: true }), true)).toBe(false);
+    expect(isModClickEvent(ev({ metaKey: true, altKey: true }), true)).toBe(false);
+    expect(isModClickEvent(ev({ ctrlKey: true, shiftKey: true }), false)).toBe(false);
+    expect(isModClickEvent(ev({ ctrlKey: true, altKey: true }), false)).toBe(false);
+  });
+
+  it("rejects when both ctrl and meta are pressed (ambiguous)", () => {
+    expect(isModClickEvent(ev({ metaKey: true, ctrlKey: true }), true)).toBe(false);
+    expect(isModClickEvent(ev({ metaKey: true, ctrlKey: true }), false)).toBe(false);
   });
 });

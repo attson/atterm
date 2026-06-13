@@ -87,6 +87,11 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
   return out;
 }
 
+export function isModClickEvent(e: MouseEvent, isMac: boolean): boolean {
+  if (e.shiftKey || e.altKey) return false;
+  return isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+}
+
 export function normalizeForOpen(
   match: LinkMatch,
   homeDir: string | undefined,

@@ -353,3 +353,63 @@ func TestNewMirrorSessionAdoptsUpstreamDriver(t *testing.T) {
 		t.Fatalf("mirror driver after upstream META = %q; want owner-A", got)
 	}
 }
+
+// TestUplink_EchoesPingPayloadAsPong verifies the relay /uplink reader echoes
+// the payload of a TypePing back as TypePong. This is the application-level
+// RTT probe path used by the desktop uplink and (later) by web/mobile.
+func TestUplink_EchoesPingPayloadAsPong(t *testing.T) {
+	store, _, apiToken := newUplinkTestStore(t)
+
+	srv := newUplinkTestServer(t, store)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+apiToken)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Have to ANNOUNCE first; the reader gates on the first frame being ANNOUNCE.
+	sendAnnounce(t, dialCtx, conn)
+
+	// Send PING with a known 8-byte payload.
+	wantTS := uint64(0x0123_4567_89AB_CDEF)
+	frame := proto.Frame{Type: proto.TypePing, Payload: proto.EncodePingTimestamp(wantTS)}
+	if err := conn.Write(dialCtx, websocket.MessageBinary, proto.Marshal(frame)); err != nil {
+		t.Fatalf("write PING: %v", err)
+	}
+
+	// Read frames until we get the matching PONG. The uplink may interleave
+	// other admin frames (AUTH_INFO, VIEWERS) on connect — skip those.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for PONG echo")
+		}
+		readCtx, readCancel := context.WithTimeout(dialCtx, time.Until(deadline))
+		_, data, err := conn.Read(readCtx)
+		readCancel()
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		f, err := proto.Unmarshal(data)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if f.Type != proto.TypePong {
+			continue
+		}
+		got, ok := proto.DecodePingTimestamp(f.Payload)
+		if !ok {
+			t.Fatalf("PONG payload not 8 bytes: %x", f.Payload)
+		}
+		if got != wantTS {
+			t.Fatalf("PONG ts = 0x%x, want 0x%x", got, wantTS)
+		}
+		return
+	}
+}

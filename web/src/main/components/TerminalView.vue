@@ -186,6 +186,9 @@ defineExpose({
       void navigator.clipboard.writeText(sel).catch(() => {})
     }
   },
+  getHealth() {
+    return typeof conn?.getHealth === 'function' ? conn.getHealth() : null
+  },
 })
 </script>
 

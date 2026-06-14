@@ -286,6 +286,22 @@ export const en = {
   test: {
     interpolation: '{count} sessions',
   },
+  connHealth: {
+    pillLabelConnecting: 'connecting…',
+    pillLabelReconnecting: 'reconnecting…',
+    pillLabelOff: 'off',
+    drawerTitle: 'Connection health',
+    drawerRttNow: 'RTT (now)',
+    drawerRttP50P95: 'p50 / p95 (5 min)',
+    drawerBytesIn: '↓ in',
+    drawerBytesOut: '↑ out',
+    drawerState: 'State',
+    drawerReconnectsLastHour: 'Reconnects (1 h)',
+    drawerReconnectsTime: 'time',
+    drawerReconnectsReason: 'reason',
+    drawerReconnectsDowntime: 'downtime',
+    drawerSeqGaps: 'Seq gaps observed:',
+  },
 } as const;
 
 type DeepStringRecord<T> = {

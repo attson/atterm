@@ -1,3 +1,144 @@
+export namespace connhealth {
+	
+	export class ByteStats {
+	    in_per_sec: number;
+	    out_per_sec: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ByteStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.in_per_sec = source["in_per_sec"];
+	        this.out_per_sec = source["out_per_sec"];
+	    }
+	}
+	export class RTTSample {
+	    at_ms: number;
+	    rtt_ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RTTSample(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at_ms = source["at_ms"];
+	        this.rtt_ms = source["rtt_ms"];
+	    }
+	}
+	export class RTTStats {
+	    last_ms?: number;
+	    p50_ms?: number;
+	    p95_ms?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RTTStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.last_ms = source["last_ms"];
+	        this.p50_ms = source["p50_ms"];
+	        this.p95_ms = source["p95_ms"];
+	    }
+	}
+	export class ReconnectEvent {
+	    at_ms: number;
+	    reason: string;
+	    duration_ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReconnectEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.at_ms = source["at_ms"];
+	        this.reason = source["reason"];
+	        this.duration_ms = source["duration_ms"];
+	    }
+	}
+	export class ReconnectStats {
+	    count_last_hour: number;
+	    last_at_ms?: number;
+	    last_reason: string;
+	    history: ReconnectEvent[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReconnectStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.count_last_hour = source["count_last_hour"];
+	        this.last_at_ms = source["last_at_ms"];
+	        this.last_reason = source["last_reason"];
+	        this.history = this.convertValues(source["history"], ReconnectEvent);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Snapshot {
+	    state: string;
+	    rtt: RTTStats;
+	    rtt_samples: RTTSample[];
+	    reconnect: ReconnectStats;
+	    bytes: ByteStats;
+	    seq_gaps: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Snapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.rtt = this.convertValues(source["rtt"], RTTStats);
+	        this.rtt_samples = this.convertValues(source["rtt_samples"], RTTSample);
+	        this.reconnect = this.convertValues(source["reconnect"], ReconnectStats);
+	        this.bytes = this.convertValues(source["bytes"], ByteStats);
+	        this.seq_gaps = source["seq_gaps"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class ClipboardPastePayload {
@@ -50,6 +191,24 @@ export namespace main {
 	        this.log_file_path = source["log_file_path"];
 	        this.auto_check_updates = source["auto_check_updates"];
 	        this.command_notify_threshold_seconds = source["command_notify_threshold_seconds"];
+	    }
+	}
+	export class CreateWebhookReq {
+	    name: string;
+	    url: string;
+	    format: string;
+	    allow_insecure: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateWebhookReq(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.format = source["format"];
+	        this.allow_insecure = source["allow_insecure"];
 	    }
 	}
 	export class RelayErrorEntry {
@@ -479,6 +638,26 @@ export namespace main {
 	        this.asset_size = source["asset_size"];
 	        this.download_dir = source["download_dir"];
 	        this.download_path = source["download_path"];
+	    }
+	}
+	export class Webhook {
+	    id: string;
+	    name: string;
+	    url: string;
+	    format: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Webhook(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.format = source["format"];
+	        this.created_at = source["created_at"];
 	    }
 	}
 

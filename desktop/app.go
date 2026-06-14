@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
@@ -506,6 +507,21 @@ func (a *App) SetUplinkPaused(paused bool) error {
 	}
 	a.applyRelayConfig(cfg)
 	return nil
+}
+
+// GetUplinkHealth returns a snapshot of the desktop uplink's connection
+// health (RTT, reconnect history, byte rates, seq gaps). Surfaced to the
+// frontend ConnHealthPill / ConnHealthDrawer. Returns a "closed" snapshot
+// when no uplink exists (i.e. relay not configured or uplink paused).
+func (a *App) GetUplinkHealth() connhealth.Snapshot {
+	if a.uplink == nil {
+		return connhealth.Snapshot{
+			State:      connhealth.StateClosed,
+			RTTSamples: []connhealth.RTTSample{},
+			Reconnect:  connhealth.ReconnectStats{History: []connhealth.ReconnectEvent{}},
+		}
+	}
+	return a.uplink.Health()
 }
 
 func (a *App) GetLoggingConfig() LoggingConfig {

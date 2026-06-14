@@ -431,3 +431,52 @@ func TestClient_RejectsInvalidBearer(t *testing.T) {
 		t.Errorf("status = %d; want 401", resp.StatusCode)
 	}
 }
+
+// TestClient_EchoesPingPayloadAsPong verifies the /client reader echoes the
+// payload of a TypePing back as TypePong. Used by web/PWA/mobile to compute
+// application-level RTT.
+func TestClient_EchoesPingPayloadAsPong(t *testing.T) {
+	srv, tok, userID := serverWithSessionAndUser(t)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	id := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	sess := session.New(id, proto.SessionInfo{Command: "bash", Cols: 80, Rows: 24})
+	sess.OwnerUserID = userID
+	srv.registry.Add(sess)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c := dialClientAttach(t, ctx, httpSrv, tok, id, "client-ping")
+	defer c.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, c)
+
+	wantTS := uint64(0xFEED_FACE_CAFE_BEEF)
+	writeClientFrame(t, ctx, c, proto.TypePing, id, proto.EncodePingTimestamp(wantTS))
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for PONG echo")
+		}
+		readCtx, readCancel := context.WithTimeout(ctx, time.Until(deadline))
+		_, data, err := c.Read(readCtx)
+		readCancel()
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		f, err := proto.Unmarshal(data)
+		if err != nil {
+			continue
+		}
+		if f.Type != proto.TypePong {
+			continue
+		}
+		got, ok := proto.DecodePingTimestamp(f.Payload)
+		if !ok || got != wantTS {
+			t.Fatalf("PONG payload mismatch: ok=%v got=0x%x want=0x%x", ok, got, wantTS)
+		}
+		return
+	}
+}

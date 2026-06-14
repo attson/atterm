@@ -225,9 +225,31 @@ relay 在 client `ATTACH` 后、初始 scrollback 回放期间发送。payload =
 
 `REPLAY_PROGRESS` 不改变 `OUT.seq` 语义；老 client 收到未知帧应忽略。relay `/client` writer 在 replay 期间会按字节批次短暂停顿，让浏览器能绘制进度条，避免大历史会话看起来卡在 connecting。
 
-### `PING` (0x20) / `PONG` (0x21)
+### `PING` (0x20) / `PONG` (0x21) — 应用层 RTT 探测
 
-应用层心跳。除此之外 nhooyr WS 库会自动处理控制帧 ping/pong；这两个枚举仅给老客户端兼容。
+双向:任意一端可发起 PING,另一端必须将收到的 payload 原样作为 PONG 回送。
+
+| 帧 | Payload |
+|----|---------|
+| `PING (0x20)` | 空 **或** 8 字节大端无符号毫秒 monotonic 时间戳 |
+| `PONG (0x21)` | 收到的 `PING` payload 原样回送 |
+
+8 字节形式让发起方用自己的时钟双端测 RTT,不依赖对端时钟:
+
+```
+rtt_ms = now_ms_local() - decoded(payload)
+```
+
+兼容矩阵:
+
+- **旧客户端 + 新 relay**:旧客户端发空 PING → relay 回空 PONG。无 RTT,只当 liveness。
+- **新客户端 + 旧 relay**:新客户端发 8B PING → 旧 relay 可能回空 PONG。客户端检测 payload 长度 ≠ 8 时丢弃此 sample,只用连接状态/重连计数。
+
+使用:
+
+- 桌面 uplink、web/PWA、mobile 各端每 5s 发一次,接收 PONG 后计算 RTT,在标题栏/header 显示 `ConnHealthPill`(绿 < 150ms、黄 150–500ms、红 > 500ms)。详见 `internal/connhealth/` 与 `web/src/shared/connhealth/`。
+- relay 在 `/uplink` 和 `/client` 的 reader 路径里 echo;`/client-sessions` 单向不读不 echo。
+- WebSocket 控制帧 ping/pong(nhooyr `Conn.Ping`)仍用于底层 keepalive,与这两帧独立。
 
 ### `ANNOUNCE` (0x30) — uplink → relay
 

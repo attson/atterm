@@ -162,7 +162,7 @@ export class Tracker {
       seq_gaps: this.seqGaps,
     }
     if (samples.length > 0) {
-      out.rtt.last_ms = samples[samples.length - 1].rtt_ms
+      out.rtt.last_ms = samples[samples.length - 1]!.rtt_ms
       const sorted = samples.map(s => s.rtt_ms).sort((a, b) => a - b)
       out.rtt.p50_ms = nearestRank(sorted, 50)
       out.rtt.p95_ms = nearestRank(sorted, 95)
@@ -170,7 +170,7 @@ export class Tracker {
     const cutoff = nowMS - RECONNECT_WINDOW_MS
     out.reconnect.count_last_hour = this.reconnects.filter(e => e.at_ms >= cutoff).length
     if (this.reconnects.length > 0) {
-      const last = this.reconnects[this.reconnects.length - 1]
+      const last = this.reconnects[this.reconnects.length - 1]!
       out.reconnect.last_at_ms = last.at_ms
       out.reconnect.last_reason = last.reason
     }
@@ -187,8 +187,8 @@ export class Tracker {
 
 function nearestRank(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0
-  if (p <= 0) return sorted[0]
-  if (p >= 100) return sorted[sorted.length - 1]
+  if (p <= 0) return sorted[0]!
+  if (p >= 100) return sorted[sorted.length - 1]!
   const idx = Math.floor((p * sorted.length) / 100)
-  return sorted[Math.min(idx, sorted.length - 1)]
+  return sorted[Math.min(idx, sorted.length - 1)]!
 }

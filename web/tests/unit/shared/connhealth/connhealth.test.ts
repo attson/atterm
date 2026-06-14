@@ -36,7 +36,7 @@ describe('Tracker', () => {
     }
     const s = tr.snapshot(0)
     expect(s.rtt_samples.length).toBe(RTT_RING_SIZE)
-    expect(s.rtt_samples[0].rtt_ms).toBe(5)
+    expect(s.rtt_samples[0]!.rtt_ms).toBe(5)
   })
 
   it('tracks reconnect events with duration and reason', () => {
@@ -47,8 +47,8 @@ describe('Tracker', () => {
     const s = tr.snapshot(120_000)
     expect(s.reconnect.count_last_hour).toBe(1)
     expect(s.reconnect.history).toHaveLength(1)
-    expect(s.reconnect.history[0].reason).toBe('ws_close_1006')
-    expect(s.reconnect.history[0].duration_ms).toBe(2000)
+    expect(s.reconnect.history[0]!.reason).toBe('ws_close_1006')
+    expect(s.reconnect.history[0]!.duration_ms).toBe(2000)
   })
 
   it('windows reconnect count at one hour', () => {

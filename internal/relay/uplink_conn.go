@@ -471,6 +471,20 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			}
 		case proto.TypeCommandEvent:
 			s.handleUplinkCommandEvent(f, mirrors, &mu)
+		case proto.TypePing:
+			// Echo the payload back as PONG. Clients use this to measure
+			// application-level RTT (their PING carries an 8B timestamp;
+			// the same payload comes back unchanged). Empty payloads are
+			// also echoed unchanged so old clients still get a liveness
+			// signal.
+			pong := proto.Frame{Type: proto.TypePong, Payload: f.Payload}
+			select {
+			case uplinkOut <- pong:
+			case <-connCtx.Done():
+				return
+			default:
+				s.debugf("uplink pong_drop reason=out_full")
+			}
 		case proto.TypePong:
 			// keepalive
 		default:

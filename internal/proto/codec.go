@@ -92,6 +92,27 @@ func DecodeResize(payload []byte) (uint16, uint16, error) {
 	return binary.BigEndian.Uint16(payload[0:2]), binary.BigEndian.Uint16(payload[2:4]), nil
 }
 
+// EncodePingTimestamp returns the 8-byte big-endian encoding of ts, used as
+// the payload of a TypePing frame. The relay echoes the payload back inside
+// the matching TypePong, letting the sender compute RTT without trusting
+// the server's clock.
+func EncodePingTimestamp(ts uint64) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, ts)
+	return b
+}
+
+// DecodePingTimestamp returns the timestamp encoded in a TypePing or TypePong
+// payload. ok is false if the payload is not exactly 8 bytes — older clients
+// or relays may emit empty payloads, in which case the caller should treat
+// the frame as a liveness signal only and not record an RTT sample.
+func DecodePingTimestamp(payload []byte) (uint64, bool) {
+	if len(payload) != 8 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint64(payload), true
+}
+
 // CommandEventPayload is the JSON body of a TypeCommandEvent frame.
 // Direction: uplink -> relay. Not forwarded to clients.
 type CommandEventPayload struct {

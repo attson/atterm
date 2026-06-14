@@ -18,6 +18,11 @@ import {
 } from './protocol'
 import { isMobileApp, loadRelayConfig } from '../api/relay-config'
 import { ApiError } from '../api/client'
+import { Tracker, type ConnHealthSnapshot } from '../connhealth/connhealth'
+
+const PING_INTERVAL_MS = 5000
+const TICK_INTERVAL_MS = 1000
+const FRAME_HEADER_OVERHEAD = 22 // ver(1) + type(1) + payload_len(4) + sid(16)
 
 export type SessionStatus = 'connecting' | 'attached' | 'reconnecting' | 'ended' | 'lost'
 
@@ -51,10 +56,23 @@ export class SessionConnection {
   private readonly clientName = 'web'
   private currentDriverClientID = ''
 
+  private readonly health = new Tracker()
+  private pingTimer: ReturnType<typeof setInterval> | null = null
+  private tickTimer: ReturnType<typeof setInterval> | null = null
+  private lastSeqForGap = 0
+
   constructor(sessionId: string, handlers: SessionConnectionHandlers = {}) {
     this.sessionId = sessionId
     this.sidBytes = uuidToBytes(sessionId)
     this.handlers = handlers
+  }
+
+  getHealth(): ConnHealthSnapshot {
+    return this.health.snapshot(Date.now())
+  }
+
+  onHealthChange(fn: () => void): () => void {
+    return this.health.onChange(fn)
   }
 
   attach(): void {
@@ -68,6 +86,8 @@ export class SessionConnection {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+    this.stopHealthLoops()
+    this.health.setState('closed', Date.now())
     if (this.ws) {
       try {
         this.ws.close()
@@ -84,7 +104,9 @@ export class SessionConnection {
       return
     }
     if (this.ws.readyState !== WebSocket.OPEN) return
-    this.ws.send(encodeFrame(TYPE.IN, this.sidBytes, new TextEncoder().encode(s)))
+    const frame = encodeFrame(TYPE.IN, this.sidBytes, new TextEncoder().encode(s))
+    this.ws.send(frame)
+    this.health.onBytesOut(frame.byteLength, Date.now())
   }
 
   sendResize(cols: number, rows: number): void {
@@ -95,7 +117,9 @@ export class SessionConnection {
       // Defer cols/rows recording until the actual send fires.
       return
     }
-    this.ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)))
+    const frame = encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows))
+    this.ws.send(frame)
+    this.health.onBytesOut(frame.byteLength, Date.now())
     this.lastSentCols = cols
     this.lastSentRows = rows
   }
@@ -105,7 +129,9 @@ export class SessionConnection {
     const payload = new TextEncoder().encode(
       JSON.stringify({ client_id: this.clientID, client_name: this.clientName }),
     )
-    this.ws.send(encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload))
+    const frame = encodeFrame(TYPE.CLAIM_DRIVER, this.sidBytes, payload)
+    this.ws.send(frame)
+    this.health.onBytesOut(frame.byteLength, Date.now())
   }
 
   sendPasteImage(blob: Blob, filename = 'clipboard-image'): Promise<boolean> {
@@ -118,9 +144,32 @@ export class SessionConnection {
         content_type: blob.type || 'image/png',
         data,
       }))
-      this.ws.send(encodeFrame(TYPE.PASTE_IMAGE, this.sidBytes, payload))
+      const frame = encodeFrame(TYPE.PASTE_IMAGE, this.sidBytes, payload)
+      this.ws.send(frame)
+      this.health.onBytesOut(frame.byteLength, Date.now())
       return true
     })()
+  }
+
+  private startHealthLoops(ws: WebSocket): void {
+    this.stopHealthLoops()
+    this.tickTimer = setInterval(() => { this.health.tick(Date.now()) }, TICK_INTERVAL_MS)
+    this.pingTimer = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return
+      const nowMS = Date.now()
+      const payload = new Uint8Array(8)
+      const dv = new DataView(payload.buffer)
+      dv.setUint32(0, Math.floor(nowMS / 0x100000000), false)
+      dv.setUint32(4, nowMS >>> 0, false)
+      const frame = encodeFrame(TYPE.PING, this.sidBytes, payload)
+      ws.send(frame)
+      this.health.onBytesOut(frame.byteLength, Date.now())
+    }, PING_INTERVAL_MS)
+  }
+
+  private stopHealthLoops(): void {
+    if (this.pingTimer !== null) { clearInterval(this.pingTimer); this.pingTimer = null }
+    if (this.tickTimer !== null) { clearInterval(this.tickTimer); this.tickTimer = null }
   }
 
   private openWS(): void {
@@ -131,12 +180,14 @@ export class SessionConnection {
     const ws = new WebSocket(url, subprotocols)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
+    this.health.setState(this.reconnectAttempts === 0 ? 'connecting' : 'reconnecting', Date.now())
     this.handlers.onStatus?.(this.reconnectAttempts === 0 ? 'connecting' : 'reconnecting')
 
     ws.onopen = () => {
       this.reconnectAttempts = 0
       this.consecutiveFailures = 0
       this.firstFailureAt = null
+      this.health.setState('connected', Date.now())
       this.handlers.onStatus?.('attached')
       const attachPayload = new TextEncoder().encode(JSON.stringify({
         session_id: this.sessionId,
@@ -144,28 +195,52 @@ export class SessionConnection {
         client_id: this.clientID,
         client_name: this.clientName,
       }))
-      ws.send(encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload))
+      const attachFrame = encodeFrame(TYPE.ATTACH, this.sidBytes, attachPayload)
+      ws.send(attachFrame)
+      this.health.onBytesOut(attachFrame.byteLength, Date.now())
       if (this.pendingInputs.length > 0) {
         const queued = this.pendingInputs
         this.pendingInputs = []
         for (const s of queued) {
-          ws.send(encodeFrame(TYPE.IN, this.sidBytes, new TextEncoder().encode(s)))
+          const f = encodeFrame(TYPE.IN, this.sidBytes, new TextEncoder().encode(s))
+          ws.send(f)
+          this.health.onBytesOut(f.byteLength, Date.now())
         }
       }
+      this.startHealthLoops(ws)
     }
 
     ws.onmessage = (ev: MessageEvent) => {
+      const raw = new Uint8Array(ev.data as ArrayBuffer)
+      this.health.onBytesIn(raw.byteLength, Date.now())
       let f
       try {
-        f = decodeFrame(new Uint8Array(ev.data as ArrayBuffer))
+        f = decodeFrame(raw)
       } catch {
         return
       }
       switch (f.type) {
         case TYPE.OUT: {
           const { seq, data } = decodeOut(f.payload)
+          if (this.lastSeqForGap !== 0 && seq > this.lastSeqForGap + 1) {
+            this.health.onSeqGap()
+          }
+          this.lastSeqForGap = seq
           if (seq > this.lastSeq) this.lastSeq = seq
           this.handlers.onOutput?.(data, seq)
+          break
+        }
+        case TYPE.PONG: {
+          if (f.payload.length === 8) {
+            const dv = new DataView(f.payload.buffer, f.payload.byteOffset, f.payload.byteLength)
+            const hi = dv.getUint32(0, false)
+            const lo = dv.getUint32(4, false)
+            const sentMS = hi * 0x100000000 + lo
+            const rtt = Date.now() - sentMS
+            if (rtt >= 0 && rtt < 60_000) {
+              this.health.onPongRTT(rtt, Date.now())
+            }
+          }
           break
         }
         case TYPE.META: {
@@ -205,9 +280,16 @@ export class SessionConnection {
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (ev: CloseEvent) => {
       this.ws = null
-      if (this.detached) return
+      this.stopHealthLoops()
+      if (this.detached) {
+        this.health.setState('closed', Date.now())
+        return
+      }
+      const reason = ev.code ? `ws_close_${ev.code}` : 'ws_close'
+      this.health.setReconnectReason(reason, Date.now())
+      this.health.setState('reconnecting', Date.now())
       this.consecutiveFailures += 1
       if (this.firstFailureAt === null) this.firstFailureAt = Date.now()
       const lost = shouldShowReconnectBanner({

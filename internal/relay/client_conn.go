@@ -219,6 +219,20 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
 
+		case proto.TypePing:
+			// Echo PING payload as PONG so the client can compute RTT
+			// without trusting the server clock. nhooyr Conn.Write is
+			// safe for concurrent use, so racing the writer goroutine
+			// (which drains sub.Out()) is fine.
+			pong := proto.Frame{Type: proto.TypePong, SessionID: f.SessionID, Payload: f.Payload}
+			wctx, wcancel := context.WithTimeout(ctx, clientWriteWait)
+			err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(pong))
+			wcancel()
+			if err != nil {
+				s.debugf("client pong_write_failed error=%q", err)
+				return
+			}
+
 		case proto.TypePong:
 			// keepalive response
 

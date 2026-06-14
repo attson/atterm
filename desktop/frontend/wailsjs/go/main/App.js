@@ -22,6 +22,14 @@ export function CreatePairingToken() {
   return window['go']['main']['App']['CreatePairingToken']();
 }
 
+export function CreateWebhook(arg1) {
+  return window['go']['main']['App']['CreateWebhook'](arg1);
+}
+
+export function DeleteWebhook(arg1) {
+  return window['go']['main']['App']['DeleteWebhook'](arg1);
+}
+
 export function ExportDiagnostics(arg1) {
   return window['go']['main']['App']['ExportDiagnostics'](arg1);
 }
@@ -118,6 +126,10 @@ export function GetUpdateState() {
   return window['go']['main']['App']['GetUpdateState']();
 }
 
+export function GetUplinkHealth() {
+  return window['go']['main']['App']['GetUplinkHealth']();
+}
+
 export function GetUserHomeDir() {
   return window['go']['main']['App']['GetUserHomeDir']();
 }
@@ -132,6 +144,10 @@ export function InstallUpdate() {
 
 export function ListShells() {
   return window['go']['main']['App']['ListShells']();
+}
+
+export function ListWebhooks() {
+  return window['go']['main']['App']['ListWebhooks']();
 }
 
 export function LoginRemoteRelay(arg1, arg2, arg3, arg4) {

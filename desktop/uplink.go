@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
@@ -56,6 +57,15 @@ type uplink struct {
 	// recordError is called once per relay error so the App can keep a
 	// recent-errors ring buffer for diagnostics export. Nil-safe.
 	recordError func(err error)
+
+	// tracker accumulates link-health metrics (RTT, byte rate, reconnect
+	// history, seq gaps) for the connection. Surfaced to the frontend via
+	// (a *App).GetUplinkHealth and rendered as the ConnHealthPill / drawer.
+	tracker *connhealth.Tracker
+	// startMono is the wall time at uplink construction; it anchors the
+	// monotonic ms timestamps embedded in PING payloads. Using a relative
+	// origin keeps the 8-byte payload uint64-safe forever.
+	startMono time.Time
 }
 
 func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error)) *uplink {
@@ -66,25 +76,50 @@ func newUplink(relayURL, token, remotePermission string, host *relayHost, record
 		host:             host,
 		eventsEmit:       wailsruntime.EventsEmit,
 		recordError:      recordError,
+		tracker:          connhealth.New(),
+		startMono:        time.Now(),
 	}
+}
+
+// Health returns a snapshot of the uplink's connection-health metrics.
+// Safe to call concurrently with the read/write loops. Surfaced to the
+// frontend via App.GetUplinkHealth.
+func (u *uplink) Health() connhealth.Snapshot {
+	return u.tracker.Snapshot(time.Now())
+}
+
+// monoMS returns the uplink-relative monotonic timestamp in milliseconds
+// that we embed in PING payloads. Echoed back unchanged inside the matching
+// PONG, then subtracted from a fresh monoMS() to compute RTT.
+func (u *uplink) monoMS() uint64 {
+	return uint64(time.Since(u.startMono).Milliseconds())
 }
 
 // Run keeps a control connection open to the remote relay until ctx is cancelled.
 func (u *uplink) Run(ctx context.Context) {
 	backoff := 500 * time.Millisecond
 	for ctx.Err() == nil {
+		u.tracker.SetState(connhealth.StateConnecting, time.Now())
 		err := u.runOnce(ctx)
 		if ctx.Err() != nil {
+			u.tracker.SetState(connhealth.StateClosed, time.Now())
 			return
 		}
 		if err != nil {
+			reason := "network_error"
+			if err.Error() != "" {
+				reason = err.Error()
+			}
+			u.tracker.SetReconnectReason(reason, time.Now())
 			if u.recordError != nil {
 				u.recordError(err)
 			}
 			log.Printf("uplink: %v (retry in %s)", err, backoff)
 		}
+		u.tracker.SetState(connhealth.StateReconnecting, time.Now())
 		select {
 		case <-ctx.Done():
+			u.tracker.SetState(connhealth.StateClosed, time.Now())
 			return
 		case <-time.After(backoff):
 		}
@@ -93,6 +128,7 @@ func (u *uplink) Run(ctx context.Context) {
 			backoff = 8 * time.Second
 		}
 	}
+	u.tracker.SetState(connhealth.StateClosed, time.Now())
 }
 
 // streamingLocal tracks one active STREAM_REQUEST: a subscriber on a local
@@ -208,6 +244,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		return err
 	}
 	log.Printf("uplink: connected, sent ANNOUNCE (%d session(s))", len(u.host.Snapshot()))
+	u.tracker.SetState(connhealth.StateConnected, time.Now())
 
 	// streaming map and its lock.
 	var (
@@ -254,11 +291,38 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				return
 			case f := <-out:
 				wctx, wc := context.WithTimeout(connCtx, uplinkWriteTimeout)
-				err := conn.Write(wctx, websocket.MessageBinary, proto.Marshal(f))
+				data := proto.Marshal(f)
+				err := conn.Write(wctx, websocket.MessageBinary, data)
 				wc()
 				if err != nil {
 					cancelConn()
 					return
+				}
+				u.tracker.OnBytesOut(len(data), time.Now())
+			}
+		}
+	}()
+
+	// Application-level PING for RTT + 1Hz Tick for byte EMAs.
+	go func() {
+		pingTicker := time.NewTicker(5 * time.Second)
+		tickTicker := time.NewTicker(time.Second)
+		defer pingTicker.Stop()
+		defer tickTicker.Stop()
+		for {
+			select {
+			case <-connCtx.Done():
+				return
+			case <-tickTicker.C:
+				u.tracker.Tick(time.Now())
+			case <-pingTicker.C:
+				frame := proto.Frame{Type: proto.TypePing, Payload: proto.EncodePingTimestamp(u.monoMS())}
+				select {
+				case out <- frame:
+				case <-connCtx.Done():
+					return
+				default:
+					// Channel full — skip; next tick will retry.
 				}
 			}
 		}
@@ -347,6 +411,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		if mt != websocket.MessageBinary {
 			continue
 		}
+		u.tracker.OnBytesIn(len(data), time.Now())
 		f, err := proto.Unmarshal(data)
 		if err != nil {
 			continue
@@ -411,7 +476,15 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				u.eventsEmit(ctx, "relay:auth-info", info)
 			}
 		case proto.TypePong:
-			// keepalive ack from relay
+			// Relay echoes our PING payload back unchanged. An 8-byte
+			// payload carries our monoMS at send time; subtract from a
+			// fresh reading to get RTT.
+			if ts, ok := proto.DecodePingTimestamp(f.Payload); ok {
+				rtt := int(u.monoMS() - ts)
+				if rtt >= 0 && rtt < 60_000 {
+					u.tracker.OnPongRTT(rtt, time.Now())
+				}
+			}
 		default:
 			log.Printf("uplink: unexpected frame type 0x%02x", f.Type)
 		}

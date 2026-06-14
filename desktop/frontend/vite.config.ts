@@ -31,6 +31,11 @@ export default defineConfig({
     vue(),
     ...(target === 'capacitor' ? [renameCapacitorEntry()] : []),
   ],
+  resolve: {
+    alias: {
+      '@shared': fileURLToPath(new URL('../../web/src/shared', import.meta.url)),
+    },
+  },
   build: {
     outDir: target === 'capacitor' ? 'dist-capacitor' : 'dist',
     emptyOutDir: true,

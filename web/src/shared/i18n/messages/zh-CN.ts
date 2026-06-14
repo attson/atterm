@@ -288,4 +288,20 @@ export const zhCN = {
   test: {
     interpolation: '{count} 个会话',
   },
+  connHealth: {
+    pillLabelConnecting: '连接中…',
+    pillLabelReconnecting: '重连中…',
+    pillLabelOff: '已关闭',
+    drawerTitle: '连接质量',
+    drawerRttNow: 'RTT(当前)',
+    drawerRttP50P95: 'p50 / p95(最近 5 分钟)',
+    drawerBytesIn: '↓ 接收',
+    drawerBytesOut: '↑ 发送',
+    drawerState: '状态',
+    drawerReconnectsLastHour: '最近 1 小时重连',
+    drawerReconnectsTime: '时间',
+    drawerReconnectsReason: '原因',
+    drawerReconnectsDowntime: '断开时长',
+    drawerSeqGaps: '观察到的序号跳跃:',
+  },
 } satisfies Messages;

@@ -229,6 +229,45 @@ func TestCommandEventEmptyLabelAllowed(t *testing.T) {
 	}
 }
 
+func TestPingTimestampRoundTrip(t *testing.T) {
+	for _, ts := range []uint64{0, 1, 1234567, 1<<53 - 1, 1<<63 - 1} {
+		payload := EncodePingTimestamp(ts)
+		if len(payload) != 8 {
+			t.Fatalf("EncodePingTimestamp(%d) len = %d, want 8", ts, len(payload))
+		}
+		got, ok := DecodePingTimestamp(payload)
+		if !ok {
+			t.Fatalf("DecodePingTimestamp(%v) ok=false", payload)
+		}
+		if got != ts {
+			t.Fatalf("DecodePingTimestamp round-trip = %d, want %d", got, ts)
+		}
+	}
+}
+
+func TestDecodePingTimestamp_WrongLength(t *testing.T) {
+	for _, sz := range []int{0, 1, 7, 9, 16} {
+		if _, ok := DecodePingTimestamp(make([]byte, sz)); ok {
+			t.Fatalf("DecodePingTimestamp(len=%d) ok=true, want false", sz)
+		}
+	}
+}
+
+func TestPingPayloadSurvivesMarshalUnmarshal(t *testing.T) {
+	in := Frame{Type: TypePing, Payload: EncodePingTimestamp(0xDEADBEEFCAFEBABE)}
+	out, err := Unmarshal(Marshal(in))
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.Type != TypePing {
+		t.Fatalf("Type = 0x%02x, want 0x%02x", out.Type, TypePing)
+	}
+	got, ok := DecodePingTimestamp(out.Payload)
+	if !ok || got != 0xDEADBEEFCAFEBABE {
+		t.Fatalf("round-trip ts = %d ok=%v", got, ok)
+	}
+}
+
 func TestAuthInfo_RoundTrip(t *testing.T) {
 	payload := []byte(`{"user_id":"01HXABCDEF"}`)
 	f := Frame{Type: TypeAuthInfo, Payload: payload}

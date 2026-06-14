@@ -166,6 +166,7 @@ interface AppBindings {
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
+  GetUplinkHealth(): Promise<ConnHealthSnapshot>;
   LoginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void>;
   ProbeRelayVersion(arg1: string): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
@@ -325,6 +326,33 @@ export function loginRemoteRelay(relayURL: string, email: string, password: stri
 // to verify the URL points at an atterm relay. Throws on probe failure.
 export function probeRelayVersion(url: string): Promise<void> {
   return bindings().ProbeRelayVersion(url);
+}
+
+// ConnHealthSnapshot mirrors internal/connhealth.Snapshot. Returned by the
+// Wails GetUplinkHealth method and rendered by the ConnHealthPill / drawer.
+export interface ConnHealthSnapshot {
+  state: "closed" | "connecting" | "connected" | "reconnecting";
+  rtt: {
+    last_ms: number | null;
+    p50_ms: number | null;
+    p95_ms: number | null;
+  };
+  rtt_samples: Array<{ at_ms: number; rtt_ms: number }>;
+  reconnect: {
+    count_last_hour: number;
+    last_at_ms: number | null;
+    last_reason: string;
+    history: Array<{ at_ms: number; reason: string; duration_ms: number }>;
+  };
+  bytes: {
+    in_per_sec: number;
+    out_per_sec: number;
+  };
+  seq_gaps: number;
+}
+
+export function getUplinkHealth(): Promise<ConnHealthSnapshot> {
+  return bindings().GetUplinkHealth();
 }
 
 export function getLoggingConfig(): Promise<LoggingConfig> {

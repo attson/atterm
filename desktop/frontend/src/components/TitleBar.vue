@@ -6,9 +6,36 @@ import { setMaximized, useWindowMaximized } from "../composables/useWindowMaximi
 import type { Endpoint } from "../lib/api";
 import type { TaskState } from "../lib/taskState";
 import { useI18n } from "../i18n/useI18n";
+import { useUplinkHealth } from "../composables/useUplinkHealth";
+import ConnHealthPill from "@shared/components/ConnHealthPill.vue";
+import ConnHealthDrawer from "@shared/components/ConnHealthDrawer.vue";
 
 const platform = usePlatform();
 const { t } = useI18n();
+
+const connHealthDrawerOpen = ref(false);
+const connHealth = useUplinkHealth({ fast: () => connHealthDrawerOpen.value });
+
+const pillLabels = computed(() => ({
+  connecting: t("connHealth.pillLabelConnecting"),
+  reconnecting: t("connHealth.pillLabelReconnecting"),
+  off: t("connHealth.pillLabelOff"),
+}));
+
+const drawerLabels = computed(() => ({
+  title: t("connHealth.drawerTitle"),
+  rttNow: t("connHealth.drawerRttNow"),
+  rttP50P95: t("connHealth.drawerRttP50P95"),
+  bytesIn: t("connHealth.drawerBytesIn"),
+  bytesOut: t("connHealth.drawerBytesOut"),
+  state: t("connHealth.drawerState"),
+  reconnectsLastHour: t("connHealth.drawerReconnectsLastHour"),
+  reconnectsTime: t("connHealth.drawerReconnectsTime"),
+  reconnectsReason: t("connHealth.drawerReconnectsReason"),
+  reconnectsDowntime: t("connHealth.drawerReconnectsDowntime"),
+  seqGaps: t("connHealth.drawerSeqGaps"),
+  close: t("common.close"),
+}));
 
 type Status = "loading" | "ready" | "error";
 
@@ -103,6 +130,21 @@ function onTitleDblClick() {
         <span v-if="remoteEndpoint" class="dim"> · {{ t("terminal.uplinkOn") }}</span>
       </template>
     </div>
+    <ConnHealthPill
+      v-if="remoteEndpoint"
+      :health="connHealth"
+      :labels="pillLabels"
+      class="titlebar-conn-pill"
+      data-testid="titlebar-conn-health-pill"
+      @click="connHealthDrawerOpen = !connHealthDrawerOpen"
+    />
+    <ConnHealthDrawer
+      v-if="remoteEndpoint"
+      :health="connHealth"
+      :open="connHealthDrawerOpen"
+      :labels="drawerLabels"
+      @close="connHealthDrawerOpen = false"
+    />
     <button
       class="icon-btn"
       type="button"

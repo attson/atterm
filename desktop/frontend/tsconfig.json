@@ -14,7 +14,11 @@
       "ESNext",
       "DOM"
     ],
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["../../web/src/shared/*"]
+    }
   },
   "include": [
     "src/**/*.ts",

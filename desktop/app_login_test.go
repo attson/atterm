@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -18,19 +19,27 @@ import (
 // the WebSocket form; HTTP API calls translate scheme on the fly — see
 // MarkSessionsSeen at app.go:589).
 func TestLoginRemoteRelay_PersistsSessionToken(t *testing.T) {
-	var gotPath string
-	var gotBody struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
+	var (
+		mu       sync.Mutex
+		gotPath  string
+		gotBody  struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+	)
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		raw, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(raw, &gotBody)
+		// Only record the login call. After SetRelayConfig commits, the
+		// background uplink goroutine starts dialing /uplink on this same
+		// server — if we recorded every request we'd race that retry.
 		if r.URL.Path != "/api/auth/login" {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		mu.Lock()
+		gotPath = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"session_token": "ses_test_abc",

@@ -5,6 +5,7 @@ import type { RemoteSession } from '../platform/types'
 import { useI18n } from '../i18n/useI18n'
 import { useSessions } from '../composables/useSessions'
 import { useTaskGroupBy } from '../composables/useTaskGroupBy'
+import { useCollapsedGroups } from '../composables/useCollapsedGroups'
 import { hostName as hostNameHelper, taskStateLabel } from '../lib/sessionLabel'
 import { getUserHomeDir } from '../lib/api'
 import type { TaskState } from '../lib/taskState'
@@ -37,19 +38,10 @@ const loading = ref(false)
 const foldOpen = ref(false)
 const home = ref('')
 
-// Per-group collapse state. In-memory only — matches TaskGroupedList on
-// desktop so behavior is identical. Vue picks up the change by swapping
-// in a fresh Set; mutating .add()/.delete() in place would skip re-render.
-const collapsedGroups = ref<Set<string>>(new Set())
-function isGroupCollapsed(key: string): boolean {
-  return collapsedGroups.value.has(key)
-}
-function toggleGroupCollapsed(key: string): void {
-  const next = new Set(collapsedGroups.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  collapsedGroups.value = next
-}
+// Collapse state lives in a module-scope composable so it survives the
+// MobileApp v-if remount cycle (terminal → list, settings → list). Per-
+// session only — no persistence to disk.
+const { isCollapsed: isGroupCollapsed, toggle: toggleGroupCollapsed } = useCollapsedGroups()
 
 const STATE_ORDER: TaskState[] = [
   'waiting_input', 'failed', 'running',

@@ -4,6 +4,7 @@ import { __setPlatformForTests } from '../../platform'
 import { createFakePlatform } from '../../platform/__tests__/_fakePlatform'
 import MobileSessionList from '../MobileSessionList.vue'
 import { __resetForTests as resetGroupBy } from '../../composables/useTaskGroupBy'
+import { __resetForTests as resetCollapsedGroups } from '../../composables/useCollapsedGroups'
 import type { RemoteSession } from '../../platform/types'
 
 const sessions: RemoteSession[] = [
@@ -22,6 +23,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   resetGroupBy()
+  resetCollapsedGroups()
   platform = createFakePlatform()
   ;(platform.sessions.listRemoteSessions as ReturnType<typeof vi.fn>).mockResolvedValue(sessions)
   __setPlatformForTests(platform)
@@ -190,6 +192,30 @@ describe('MobileSessionList', () => {
     await w.find('[data-testid="mark-all-host-h1"]').trigger('click')
     await flushPromises()
     expect(h1Header.attributes('aria-expanded')).toBe('true')
+  })
+
+  it('collapse state survives unmount + remount (MobileApp v-if cycle)', async () => {
+    // First mount: collapse h1.
+    const first = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    const firstHeader = first.find('[data-testid="host-group-h1"] [data-testid="group-header"]')
+    await firstHeader.trigger('click')
+    await flushPromises()
+    expect(firstHeader.attributes('aria-expanded')).toBe('false')
+
+    // Tear down (mimics MobileApp toggling view away from 'list').
+    first.unmount()
+
+    // Remount: h1 must still be collapsed.
+    const second = mount(MobileSessionList, { props: { openSessionIds: [] } })
+    await flushPromises()
+    const secondHeader = second.find('[data-testid="host-group-h1"] [data-testid="group-header"]')
+    expect(secondHeader.attributes('aria-expanded')).toBe('false')
+    expect(second.find('[data-testid="host-group-h1"]').findAll('[data-testid="task-card"]')).toHaveLength(0)
+
+    // Sanity: h2 stayed expanded.
+    expect(second.find('[data-testid="host-group-h2"] [data-testid="group-header"]')
+      .attributes('aria-expanded')).toBe('true')
   })
 
   it('keyboard Enter/Space on a header toggles collapse', async () => {

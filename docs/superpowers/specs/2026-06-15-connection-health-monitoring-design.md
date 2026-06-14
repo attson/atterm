@@ -48,19 +48,25 @@ encodes arbitrary payloads on all frame types; codec tests just need a case for
 
 ### Relay echo path
 
-Three relay conns need a one-line change:
+Two relay conns need a one-line change:
 
 - `internal/relay/uplink_conn.go` — uplink reader: on `TypePing`, write back a
   `TypePong` with the received payload (`f.Payload`) instead of dropping it.
 - `internal/relay/client_conn.go` — viewer/control reader: same.
-- `internal/relay/client_sessions_conn.go` — list/sessions reader: same.
-- `internal/relay/agent_conn.go` — legacy agent reader: same (kept symmetric
-  even though no current client uses it for RTT).
 
-Writes go through the same write pump each conn already owns; no new mutex,
-no new goroutine. The write is at most ~16 bytes (1 type byte + 16 byte UUID +
-2 byte length + 8 byte payload) and happens at most once per ping interval per
-conn, so back-pressure on the existing send channel is not a concern.
+`internal/relay/client_sessions_conn.go` is **not** modified — it is
+unidirectional (relay → client only; no reader loop). Mobile / desktop views
+that show the session list before opening a specific session will see the pill
+in `connection-state-only` mode (no RTT band). RTT becomes available once the
+user enters a session and the `/client` WebSocket is open.
+
+`internal/relay/agent_conn.go` is also **not** modified — `agent_conn`
+represents the legacy "agent" role that no current client uses.
+
+Writes go through the same write channel each conn already owns; no new mutex,
+no new goroutine. The write is at most ~32 bytes (header + 16 byte UUID +
+8 byte payload) and happens at most once per ping interval per conn, so
+back-pressure on the existing send channel is not a concern.
 
 ### Client ConnHealth library
 
@@ -283,8 +289,6 @@ internal/connhealth/connhealth.go               (new)
 internal/connhealth/connhealth_test.go          (new)
 internal/relay/uplink_conn.go                   (echo)
 internal/relay/client_conn.go                   (echo)
-internal/relay/client_sessions_conn.go          (echo)
-internal/relay/agent_conn.go                    (echo)
 desktop/app.go                                  (GetUplinkHealth)
 desktop/app_conn_health_test.go                 (new)
 desktop/uplink.go                               (wire Tracker, send PING, echo seq)

@@ -72,6 +72,12 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.H
 	// Public — no session required.
 	mux.Handle("POST /api/auth/logout", http.HandlerFunc(a.handleLogout))
 	mux.Handle("POST /api/pair/consume", http.HandlerFunc(a.handlePairConsume))
+	// Retired endpoints — kept registered so old clients (bundled
+	// internal/relay/web-dist/* + web/src/*) get a structured 410 instead
+	// of a bare 404 when they POST password-auth payloads.
+	mux.Handle("POST /api/auth/login", http.HandlerFunc(removedRoute))
+	mux.Handle("POST /api/auth/signup", http.HandlerFunc(removedRoute))
+	mux.Handle("POST /api/me/password", http.HandlerFunc(removedRoute))
 	// Protected — session token required.
 	mux.Handle("GET /api/me", wrap(a.handleMe))
 	mux.Handle("DELETE /api/me", wrap(a.handleDeleteMe))
@@ -104,6 +110,18 @@ func (a *AuthServer) failureSleep(start time.Time) {
 	if elapsed < target {
 		time.Sleep(target - elapsed)
 	}
+}
+
+// removedRoute responds 410 Gone for the legacy bcrypt auth endpoints
+// that were retired in M1a (see docs/superpowers/specs/2026-06-15-relay-e2ee-design.md).
+// Clients posting to these paths must upgrade to the OPAQUE flow at
+// /api/auth/register/{init,finalize} and /api/auth/login/{init,finalize}.
+func removedRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusGone)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": "endpoint removed; client must use OPAQUE flow at /api/auth/register and /api/auth/login (init/finalize)",
+	})
 }
 
 // writeJSONStatus writes a JSON response with the given status code.

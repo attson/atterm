@@ -181,10 +181,9 @@ func (h *OpaqueAuthHandler) handleRegisterInit(w http.ResponseWriter, r *http.Re
 // calls only fail on transient DB errors; the operator can clean up by
 // hand if needed.
 //
-// Session token minting reuses the same Store.CreateSession helper that
-// the legacy bcrypt handleSignup / handleLogin path calls — we deliberately
-// don't extract a shared "mint a token" helper because the body is one
-// line and the auth_http path is slated for deletion in Task 12.
+// Session token minting goes straight through Store.CreateSession with no
+// intermediate helper: it's a one-liner and OPAQUE is now the only path
+// that mints sessions, so there's nothing to share with.
 func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *http.Request) {
 	var req registerFinalizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -347,9 +346,8 @@ func (h *OpaqueAuthHandler) handleLoginInit(w http.ResponseWriter, r *http.Reque
 
 	recordBytes, err := h.store.GetOpaqueRecord(ctx, user.ID)
 	if err != nil {
-		// Either the user pre-dates OPAQUE rollout (legacy bcrypt only)
-		// or the record was never persisted — both look the same to the
-		// client.
+		// OPAQUE record never persisted (incomplete registration) —
+		// surfaces to the client as a generic 401, same as a bad password.
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}

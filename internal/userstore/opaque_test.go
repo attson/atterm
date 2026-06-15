@@ -8,9 +8,12 @@ import (
 	"time"
 )
 
-// mustMakeUser inserts a user row directly via the store's underlying *sql.DB,
-// bypassing CreateUser because the latter still references the now-removed
-// password_hash column (cleanup is scheduled for T12). Returns the created User.
+// mustMakeUser inserts a user row directly via the store's underlying *sql.DB.
+// We deliberately don't go through CreateOpaqueUser here so the OPAQUE
+// record / wrap-blob tests below stay isolated from the user-creation flow
+// (which has its own coverage in users_test.go) — a bug in CreateOpaqueUser
+// shouldn't cascade into failures of the storage primitives being exercised
+// here. Returns the created User.
 func mustMakeUser(t *testing.T, store *SQLiteStore, email string) *User {
 	t.Helper()
 	ctx := context.Background()

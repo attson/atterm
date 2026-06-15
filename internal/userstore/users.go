@@ -20,12 +20,13 @@ var (
 	ErrPasswordIncorrect = errors.New("userstore: current password incorrect")
 )
 
-// User is the row shape exposed to callers. password_hash is intentionally
-// not exported.
+// User is the row shape exposed to callers. password_hash is removed in
+// favor of OPAQUE auth (see migration 0003_opaque_auth.sql); AuthMode
+// records which auth backend owns the credential ("opaque" only in v1).
 type User struct {
 	ID         string
 	Email      string
-	IsAdmin    bool
+	AuthMode   string // "opaque" only in v1
 	CreatedAt  time.Time
 	DisabledAt *time.Time
 }

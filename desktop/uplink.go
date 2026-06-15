@@ -534,7 +534,11 @@ func (u *uplink) handleCloseError(ctx context.Context, ce websocket.CloseError) 
 
 func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error {
 	hostID, host, user := u.host.HostMeta()
-	payload, err := buildAnnouncePayload(hostID, host, user, u.host.Snapshot(), u.remotePermission)
+	snapshot := u.host.Snapshot()
+	if u.accountKey != nil && len(u.accountKey()) >= e2eecrypto.SessionKeySize {
+		snapshot = stripContentFieldsFromSnapshot(snapshot)
+	}
+	payload, err := buildAnnouncePayload(hostID, host, user, snapshot, u.remotePermission)
 	if err != nil {
 		return err
 	}
@@ -551,6 +555,29 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error 
 	}
 	u.announced.markSent(payload)
 	return nil
+}
+
+// stripContentFieldsFromSnapshot removes the agent-side content fields
+// from a SessionInfo snapshot before it crosses the wire to a remote
+// relay. The relay never needs these to do its job — routing, push
+// timing, and session-list ordering all run off structural metadata
+// (id, host, cols/rows, started_at, last_output_at, task_state,
+// exit_code, command_duration, attention_at). Stripping Summary in
+// particular is the load-bearing change: Summary.RecentOutput
+// otherwise leaks a verbatim 4KB excerpt of the terminal output the
+// relay is structurally unable to read in OUT frames.
+//
+// Title, Cwd, Command, CurrentCommand stay in plaintext for now —
+// they remain useful for the session-list UI and are categorised as
+// "semi-sensitive" in the spec. M3b will fold them into a sealed
+// envelope alongside Summary once the client decrypt path lands.
+func stripContentFieldsFromSnapshot(sessions []proto.SessionInfo) []proto.SessionInfo {
+	out := make([]proto.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		s.Summary = nil
+		out[i] = s
+	}
+	return out
 }
 
 func buildAnnouncePayload(hostID, host, user string, sessions []proto.SessionInfo, remotePermission string) ([]byte, error) {
@@ -611,6 +638,11 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 	if f.Type == proto.TypeOut && accountKey != nil {
 		if sealed, ok := sealOutFrame(f, accountKey()); ok {
 			f = sealed
+		}
+	}
+	if f.Type == proto.TypeMeta && accountKey != nil && len(accountKey()) >= e2eecrypto.SessionKeySize {
+		if stripped, ok := stripMetaSummary(f); ok {
+			f = stripped
 		}
 	}
 	select {
@@ -696,6 +728,33 @@ func openInboundFrame(f proto.Frame, accountKey func() []byte) (proto.Frame, boo
 		Type:      f.Type,
 		SessionID: f.SessionID,
 		Payload:   plaintext,
+	}, true
+}
+
+// stripMetaSummary parses an outbound TypeMeta payload, drops the
+// Summary field, and re-marshals. Used on the E2EE path so live META
+// updates do not leak Summary.RecentOutput text to the relay while the
+// agent's OUT-byte stream is sealed. Returns ok == false when the
+// payload doesn't decode (in which case the caller passes the frame
+// through unchanged — losing the strip is preferable to dropping META
+// entirely).
+func stripMetaSummary(f proto.Frame) (proto.Frame, bool) {
+	var m proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &m); err != nil {
+		return f, false
+	}
+	if m.Summary == nil {
+		return f, false
+	}
+	m.Summary = nil
+	payload, err := json.Marshal(m)
+	if err != nil {
+		return f, false
+	}
+	return proto.Frame{
+		Type:      f.Type,
+		SessionID: f.SessionID,
+		Payload:   payload,
 	}, true
 }
 

@@ -1214,6 +1214,10 @@ func mergeTaskInfo(meta *proto.SessionInfo, info proto.SessionInfo) bool {
 		meta.LastOutputAt = info.LastOutputAt
 		changed = true
 	}
+	if !sameSummary(meta.Summary, info.Summary) {
+		meta.Summary = cloneSummary(info.Summary)
+		changed = true
+	}
 	return changed
 }
 
@@ -1224,7 +1228,49 @@ func hasTaskInfo(info proto.SessionInfo) bool {
 		info.CommandEndedAt != 0 ||
 		info.CommandDurationMS != 0 ||
 		info.CommandExitCode != nil ||
-		info.LastOutputAt != 0
+		info.LastOutputAt != 0 ||
+		info.Summary != nil
+}
+
+// sameSummary reports whether two SessionSummary pointers carry equivalent
+// content. Both nil → equal; one nil → unequal; both non-nil → field-wise.
+// Used by ANNOUNCE reconcile to avoid unnecessary META broadcasts when the
+// agent re-announces an unchanged summary.
+func sameSummary(a, b *proto.SessionSummary) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.RecentOutput != b.RecentOutput || a.CapturedAt != b.CapturedAt {
+		return false
+	}
+	if len(a.ErrorLines) != len(b.ErrorLines) {
+		return false
+	}
+	for i := range a.ErrorLines {
+		if a.ErrorLines[i] != b.ErrorLines[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// cloneSummary deep-copies the slice so a future mutation on the inbound
+// ANNOUNCE struct does not leak into the mirror session's meta.
+func cloneSummary(s *proto.SessionSummary) *proto.SessionSummary {
+	if s == nil {
+		return nil
+	}
+	out := &proto.SessionSummary{
+		RecentOutput: s.RecentOutput,
+		CapturedAt:   s.CapturedAt,
+	}
+	if len(s.ErrorLines) > 0 {
+		out.ErrorLines = append([]string(nil), s.ErrorLines...)
+	}
+	return out
 }
 
 func sameOptionalInt(a, b *int) bool {

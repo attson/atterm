@@ -83,3 +83,36 @@ func TestOpaqueRecordRoundTrip(t *testing.T) {
 		t.Fatalf("record mismatch")
 	}
 }
+
+func TestAccountKeyWrapRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	user := mustMakeUser(t, store, "bob@example.com")
+
+	if _, err := store.GetAccountKeyWrap(ctx, user.ID, "password"); !errors.Is(err, ErrAccountKeyWrapMissing) {
+		t.Fatalf("expected missing, got %v", err)
+	}
+	wrap := AccountKeyWrap{
+		UserID:    user.ID,
+		Method:    "password",
+		Wrapped:   []byte("aead-ciphertext"),
+		Nonce:     []byte("12345678901234567890abcd"),
+		Salt:      []byte("salt-16-bytes-here"),
+		KDFParams: `{"alg":"argon2id","m":67108864,"t":3,"p":1}`,
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	if err := store.StoreAccountKeyWrap(ctx, wrap); err != nil {
+		t.Fatalf("store wrap: %v", err)
+	}
+	got, err := store.GetAccountKeyWrap(ctx, user.ID, "password")
+	if err != nil {
+		t.Fatalf("get wrap: %v", err)
+	}
+	if string(got.Wrapped) != string(wrap.Wrapped) ||
+		string(got.Nonce) != string(wrap.Nonce) ||
+		string(got.Salt) != string(wrap.Salt) ||
+		got.KDFParams != wrap.KDFParams {
+		t.Fatalf("wrap round-trip mismatch")
+	}
+}

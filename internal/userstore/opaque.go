@@ -18,7 +18,70 @@ var (
 	// exists for the given user. Used by login-init to surface a generic
 	// "credentials invalid" without leaking account existence.
 	ErrOpaqueRecordMissing = errors.New("userstore: opaque record not found")
+	// ErrAccountKeyWrapMissing is returned by GetAccountKeyWrap when no
+	// wrap blob exists for the (user, method) pair. The relay treats the
+	// blob as opaque ciphertext — see spec §4.5.
+	ErrAccountKeyWrapMissing = errors.New("userstore: account key wrap not found")
 )
+
+// AccountKeyWrap is the per-user, per-method wrapped account key blob
+// stored opaquely by the relay. Wrapped/Nonce/Salt are AEAD ciphertext
+// + nonce + KDF salt (bytes are uninterpreted server-side); KDFParams
+// is the client-chosen KDF parameter JSON the client needs to derive
+// the wrap key on the next unlock.
+type AccountKeyWrap struct {
+	UserID    string
+	Method    string
+	Wrapped   []byte
+	Nonce     []byte
+	Salt      []byte
+	KDFParams string
+	CreatedAt time.Time
+}
+
+// GetAccountKeyWrap loads the wrap blob for (userID, method). Returns
+// ErrAccountKeyWrapMissing when the row does not exist; callers surface
+// this as a 404 to the client.
+func (s *SQLiteStore) GetAccountKeyWrap(ctx context.Context, userID, method string) (AccountKeyWrap, error) {
+	var (
+		w         AccountKeyWrap
+		createdAt int64
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT user_id, method, wrapped, nonce, salt, kdf_params, created_at
+		 FROM user_account_key_wraps WHERE user_id = ? AND method = ?`,
+		userID, method).Scan(&w.UserID, &w.Method, &w.Wrapped, &w.Nonce, &w.Salt, &w.KDFParams, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AccountKeyWrap{}, ErrAccountKeyWrapMissing
+	}
+	if err != nil {
+		return AccountKeyWrap{}, fmt.Errorf("query account key wrap: %w", err)
+	}
+	w.CreatedAt = time.Unix(createdAt, 0).UTC()
+	return w, nil
+}
+
+// StoreAccountKeyWrap upserts the wrap blob for (userID, method). The
+// relay does not validate KDFParams or blob contents — see spec §4.5.
+func (s *SQLiteStore) StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap) error {
+	if w.CreatedAt.IsZero() {
+		w.CreatedAt = time.Now()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO user_account_key_wraps(user_id, method, wrapped, nonce, salt, kdf_params, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, method) DO UPDATE SET
+		     wrapped    = excluded.wrapped,
+		     nonce      = excluded.nonce,
+		     salt       = excluded.salt,
+		     kdf_params = excluded.kdf_params,
+		     created_at = excluded.created_at`,
+		w.UserID, w.Method, w.Wrapped, w.Nonce, w.Salt, w.KDFParams, w.CreatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("upsert account key wrap: %w", err)
+	}
+	return nil
+}
 
 // OpaqueServerState is the persisted per-relay OPAQUE server material:
 // the OPRF seed (used to derive per-user OPRF keys) and the long-term

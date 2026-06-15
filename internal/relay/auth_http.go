@@ -89,6 +89,8 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.H
 	mux.Handle("DELETE /api/me/webhooks/{id}", wrap(a.handleDeleteWebhook))
 	mux.Handle("GET /api/me/preferences", wrap(a.handleGetPreferences))
 	mux.Handle("PUT /api/me/preferences", wrap(a.handlePutPreferences))
+	mux.Handle("GET /api/me/key", wrap(a.handleGetMeKey))
+	mux.Handle("PUT /api/me/key", wrap(a.handlePutMeKey))
 	mux.Handle("POST /api/pair/create", wrap(a.handlePairCreate))
 }
 
@@ -292,6 +294,90 @@ func (a *AuthServer) handleDeleteWebhook(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// meKeyWrapPayload is the wire shape used by GET /api/me/key and
+// PUT /api/me/key. The relay never inspects the encrypted bytes or KDF
+// parameters; it only stores and returns them.
+type meKeyWrapPayload struct {
+	Method    string `json:"method"`
+	Wrapped   []byte `json:"wrapped"`
+	Nonce     []byte `json:"nonce"`
+	Salt      []byte `json:"salt"`
+	KDFParams string `json:"kdf_params"`
+}
+
+// handleGetMeKey implements GET /api/me/key. Returns the user's current
+// password-method account_key wrap so a client that holds a session token
+// but lost its in-memory account_key (page refresh, app relaunch with the
+// keychain unavailable) can prompt the user for the password and unwrap
+// locally. 404 if no wrap exists — this happens for users created outside
+// the OPAQUE register flow (e.g. via legacy paths that no longer exist).
+func (a *AuthServer) handleGetMeKey(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	wrap, err := a.Store.GetAccountKeyWrap(r.Context(), p.UserID, "password")
+	if err != nil {
+		if errors.Is(err, userstore.ErrAccountKeyWrapMissing) {
+			http.Error(w, "wrap not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSONStatus(w, http.StatusOK, meKeyWrapPayload{
+		Method:    wrap.Method,
+		Wrapped:   wrap.Wrapped,
+		Nonce:     wrap.Nonce,
+		Salt:      wrap.Salt,
+		KDFParams: wrap.KDFParams,
+	})
+}
+
+// handlePutMeKey implements PUT /api/me/key. Replaces the user's current
+// password-method wrap blob — used by the password-change flow, where the
+// client derives a new wrap_key from the new password and re-seals the
+// existing account_key, then uploads the new envelope.
+//
+// The handler does NOT verify password possession on its own; the caller
+// must complete OPAQUE step-up first (M1c). For M1b the route is gated by
+// session bearer only; documented as a known gap.
+//
+// Returns 204 on success, 400 on invalid body, 500 on DB error.
+func (a *AuthServer) handlePutMeKey(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req meKeyWrapPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.Method == "" || len(req.Wrapped) == 0 || len(req.Nonce) == 0 ||
+		len(req.Salt) == 0 || req.KDFParams == "" {
+		http.Error(w, "missing fields", http.StatusBadRequest)
+		return
+	}
+	if req.Method != "password" {
+		// Future methods (recovery_code, passkey) need their own validation.
+		http.Error(w, "unsupported method", http.StatusBadRequest)
+		return
+	}
+	if err := a.Store.StoreAccountKeyWrap(r.Context(), userstore.AccountKeyWrap{
+		UserID:    p.UserID,
+		Method:    req.Method,
+		Wrapped:   req.Wrapped,
+		Nonce:     req.Nonce,
+		Salt:      req.Salt,
+		KDFParams: req.KDFParams,
+	}); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

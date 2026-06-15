@@ -55,8 +55,13 @@ const props = withDefaults(
     theme: ITheme;
     commandNotifyThresholdSec?: number;
     isLocalSession?: boolean;
+    // True while the user is dragging a pane splitter. FitAddon still runs
+    // so xterm stays visually correct, but we skip the PTY RESIZE until the
+    // drag ends — the child process gets one SIGWINCH on mouseup instead
+    // of dozens during the drag.
+    resizeSuspended?: boolean;
   }>(),
-  { active: true, focused: false, avoidTopRightBadge: false, commandNotifyThresholdSec: 10, isLocalSession: true }
+  { active: true, focused: false, avoidTopRightBadge: false, commandNotifyThresholdSec: 10, isLocalSession: true, resizeSuspended: false }
 );
 
 const emit = defineEmits<{
@@ -432,6 +437,7 @@ async function ensureTerm() {
   });
   term.onResize(({ cols, rows }) => {
     if (!isDriver.value) return; // viewer's local resize is FitAddon-suppressed anyway
+    if (props.resizeSuspended) return; // mid pane-splitter drag: defer the PTY RESIZE until mouseup
     conn?.sendResize(cols, rows);
   });
 
@@ -705,6 +711,21 @@ watch(
 watch(status, (nextStatus) => {
   if (nextStatus !== "attached") closeContextMenu();
 });
+
+// Falling edge of resize-suspended: pane splitter drag just ended. We
+// suppressed every onResize-driven sendResize during the drag; emit one
+// final RESIZE now so the PTY learns the new cols/rows. nextTick lets
+// the post-drop layout settle before we read term.cols/rows.
+watch(
+  () => props.resizeSuspended,
+  (next, prev) => {
+    if (prev && !next) {
+      nextTick(() => {
+        if (term && conn) conn.sendResize(term.cols, term.rows);
+      });
+    }
+  },
+);
 </script>
 
 <template>

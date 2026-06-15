@@ -326,3 +326,19 @@ describe("TerminalView template bar", () => {
     expect(source).toMatch(/effectiveTemplates\s*\(/);
   });
 });
+
+describe("TerminalView resize-suspended", () => {
+  test("declares resizeSuspended prop", () => {
+    expect(source).toMatch(/resizeSuspended\?:\s*boolean/);
+  });
+
+  test("term.onResize gates conn.sendResize on resizeSuspended", () => {
+    // The handler must early-return when props.resizeSuspended is true so the
+    // PTY child sees one SIGWINCH on mouseup instead of dozens during drag.
+    expect(source).toMatch(/term\.onResize\([\s\S]*?if \(props\.resizeSuspended\) return;[\s\S]*?conn\?\.sendResize/);
+  });
+
+  test("watches resize-suspended falling edge to emit final sendResize", () => {
+    expect(source).toMatch(/watch\(\s*\(\)\s*=>\s*props\.resizeSuspended,[\s\S]*?prev\s*&&\s*!next[\s\S]*?conn\.sendResize\(term\.cols,\s*term\.rows\)/);
+  });
+});

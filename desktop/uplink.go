@@ -562,19 +562,25 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error 
 // relay. The relay never needs these to do its job — routing, push
 // timing, and session-list ordering all run off structural metadata
 // (id, host, cols/rows, started_at, last_output_at, task_state,
-// exit_code, command_duration, attention_at). Stripping Summary in
-// particular is the load-bearing change: Summary.RecentOutput
-// otherwise leaks a verbatim 4KB excerpt of the terminal output the
-// relay is structurally unable to read in OUT frames.
+// exit_code, command_duration, attention_at).
 //
-// Title, Cwd, Command, CurrentCommand stay in plaintext for now —
+// Stripped in M3a:
+//   - Summary (RecentOutput is a ~4KB excerpt of terminal output)
+//
+// Stripped in M3c:
+//   - CurrentCommand (the live OSC 133 "current command" string —
+//     updates per command, leaks exactly what the user is running)
+//
+// Title, Cwd, Command (the spawn command) stay in plaintext for now —
 // they remain useful for the session-list UI and are categorised as
 // "semi-sensitive" in the spec. M3b will fold them into a sealed
-// envelope alongside Summary once the client decrypt path lands.
+// envelope alongside the M3a/M3c strips once the client decrypt path
+// lands.
 func stripContentFieldsFromSnapshot(sessions []proto.SessionInfo) []proto.SessionInfo {
 	out := make([]proto.SessionInfo, len(sessions))
 	for i, s := range sessions {
 		s.Summary = nil
+		s.CurrentCommand = ""
 		out[i] = s
 	}
 	return out
@@ -641,7 +647,7 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 		}
 	}
 	if f.Type == proto.TypeMeta && accountKey != nil && len(accountKey()) >= e2eecrypto.SessionKeySize {
-		if stripped, ok := stripMetaSummary(f); ok {
+		if stripped, ok := stripMetaContentFields(f); ok {
 			f = stripped
 		}
 	}
@@ -731,22 +737,28 @@ func openInboundFrame(f proto.Frame, accountKey func() []byte) (proto.Frame, boo
 	}, true
 }
 
-// stripMetaSummary parses an outbound TypeMeta payload, drops the
-// Summary field, and re-marshals. Used on the E2EE path so live META
-// updates do not leak Summary.RecentOutput text to the relay while the
-// agent's OUT-byte stream is sealed. Returns ok == false when the
-// payload doesn't decode (in which case the caller passes the frame
-// through unchanged — losing the strip is preferable to dropping META
-// entirely).
-func stripMetaSummary(f proto.Frame) (proto.Frame, bool) {
+// stripMetaContentFields parses an outbound TypeMeta payload, drops the
+// content fields the relay is not entitled to read under the E2EE
+// threat model, and re-marshals. Used on the agent's outbound path so
+// live META updates do not leak text the OUT-byte stream is hiding.
+//
+// Stripped here:
+//   - Summary       (M3a)
+//   - CurrentCommand (M3c)
+//
+// Returns ok == false when the payload doesn't decode or nothing
+// needed stripping (in which case the caller passes the frame through
+// unchanged — losing the strip is preferable to dropping META).
+func stripMetaContentFields(f proto.Frame) (proto.Frame, bool) {
 	var m proto.MetaPayload
 	if err := json.Unmarshal(f.Payload, &m); err != nil {
 		return f, false
 	}
-	if m.Summary == nil {
+	if m.Summary == nil && m.CurrentCommand == "" {
 		return f, false
 	}
 	m.Summary = nil
+	m.CurrentCommand = ""
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return f, false

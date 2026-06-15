@@ -46,6 +46,9 @@ func TestStripContentFieldsFromSnapshot_DropsSummary(t *testing.T) {
 	if got := out[0].Summary; got != nil {
 		t.Fatalf("Summary not stripped: %+v", got)
 	}
+	if out[0].CurrentCommand != "" {
+		t.Fatalf("CurrentCommand not stripped: %q", out[0].CurrentCommand)
+	}
 	// Structural fields preserved.
 	if out[0].ID != in[0].ID ||
 		out[0].HostID != in[0].HostID ||
@@ -56,12 +59,37 @@ func TestStripContentFieldsFromSnapshot_DropsSummary(t *testing.T) {
 		out[0].AttentionAt != in[0].AttentionAt {
 		t.Fatalf("structural metadata mutated: %+v", out[0])
 	}
-	// Semi-sensitive fields stay for M3a — M3b will fold them into a sealed envelope.
+	// Semi-sensitive fields stay for M3a/M3c — M3b will fold them into
+	// a sealed envelope once the client decrypt path lands.
 	if out[0].Title != in[0].Title ||
 		out[0].Cwd != in[0].Cwd ||
-		out[0].Command != in[0].Command ||
-		out[0].CurrentCommand != in[0].CurrentCommand {
-		t.Fatalf("M3a kept title/cwd/command in plaintext; got %+v", out[0])
+		out[0].Command != in[0].Command {
+		t.Fatalf("title/cwd/command should stay in plaintext; got %+v", out[0])
+	}
+}
+
+func TestStripMetaContentFields_DropsCurrentCommand(t *testing.T) {
+	payload, _ := json.Marshal(proto.MetaPayload{
+		Title:          "t",
+		Cwd:            "/x",
+		CurrentCommand: "rm -rf important/",
+		TaskState:      proto.TaskStateRunning,
+		Cols:           80,
+	})
+	f := proto.Frame{Type: proto.TypeMeta, SessionID: uuid.New(), Payload: payload}
+	out, ok := stripMetaContentFields(f)
+	if !ok {
+		t.Fatalf("stripMetaContentFields returned ok=false")
+	}
+	var got proto.MetaPayload
+	if err := json.Unmarshal(out.Payload, &got); err != nil {
+		t.Fatalf("decode stripped: %v", err)
+	}
+	if got.CurrentCommand != "" {
+		t.Fatalf("CurrentCommand still present: %q", got.CurrentCommand)
+	}
+	if got.Title != "t" || got.Cwd != "/x" {
+		t.Fatalf("other fields mutated: %+v", got)
 	}
 }
 
@@ -79,7 +107,7 @@ func TestStripContentFieldsFromSnapshot_NoMutationOfInput(t *testing.T) {
 	}
 }
 
-func TestStripMetaSummary_DropsSummary(t *testing.T) {
+func TestStripMetaContentFields_DropsSummary(t *testing.T) {
 	payload, _ := json.Marshal(proto.MetaPayload{
 		Title:     "t",
 		Cwd:       "/x",
@@ -88,9 +116,9 @@ func TestStripMetaSummary_DropsSummary(t *testing.T) {
 		Summary:   &proto.SessionSummary{RecentOutput: "secret"},
 	})
 	f := proto.Frame{Type: proto.TypeMeta, SessionID: uuid.New(), Payload: payload}
-	out, ok := stripMetaSummary(f)
+	out, ok := stripMetaContentFields(f)
 	if !ok {
-		t.Fatalf("stripMetaSummary returned ok=false")
+		t.Fatalf("stripMetaContentFields returned ok=false")
 	}
 	var got proto.MetaPayload
 	if err := json.Unmarshal(out.Payload, &got); err != nil {
@@ -104,18 +132,18 @@ func TestStripMetaSummary_DropsSummary(t *testing.T) {
 	}
 }
 
-func TestStripMetaSummary_NoSummary_NoOp(t *testing.T) {
+func TestStripMetaContentFields_NoSensitiveFields_NoOp(t *testing.T) {
 	payload, _ := json.Marshal(proto.MetaPayload{Title: "t"})
 	f := proto.Frame{Type: proto.TypeMeta, SessionID: uuid.New(), Payload: payload}
-	_, ok := stripMetaSummary(f)
+	_, ok := stripMetaContentFields(f)
 	if ok {
-		t.Fatalf("expected ok=false when Summary is already nil")
+		t.Fatalf("expected ok=false when Summary and CurrentCommand are already empty")
 	}
 }
 
-func TestStripMetaSummary_BadJSON_NoOp(t *testing.T) {
+func TestStripMetaContentFields_BadJSON_NoOp(t *testing.T) {
 	f := proto.Frame{Type: proto.TypeMeta, SessionID: uuid.New(), Payload: []byte("not json")}
-	out, ok := stripMetaSummary(f)
+	out, ok := stripMetaContentFields(f)
 	if ok {
 		t.Fatalf("expected ok=false on bad JSON")
 	}

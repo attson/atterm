@@ -43,7 +43,6 @@ func main() {
 
 	publicListen := isPublicListenAddr(*addr)
 	bootstrapEmail := strings.TrimSpace(os.Getenv("ATTERM_BOOTSTRAP_ADMIN_EMAIL"))
-	bootstrapPassword := os.Getenv("ATTERM_BOOTSTRAP_ADMIN_PASSWORD") // no trim — password may legitimately have whitespace
 
 	if publicListen && !*devInsecure && bootstrapEmail == "" {
 		log.Fatal("ATTERM_BOOTSTRAP_ADMIN_EMAIL must be set for a public relay; pass --dev-insecure to skip (development only)")
@@ -89,12 +88,8 @@ func main() {
 		log.Fatalf("opaque server init: %v", err)
 	}
 
-	bootstrapTok, _, err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword)
-	if err != nil {
+	if err := bootstrapAdmin(ctx, store, bootstrapEmail); err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
-	}
-	if bootstrapTok != "" {
-		log.Printf("bootstrap admin created; session_token=%s", bootstrapTok)
 	}
 
 	adminCfg := relay.AdminConfig{}

@@ -620,6 +620,135 @@ func TestLoginFinalize_MissingFields(t *testing.T) {
 	}
 }
 
+// registerFinalizeWithClaim drives a register init/finalize round-trip for
+// email + password with the supplied claimToken in the finalize body. It
+// returns the recorder so callers can inspect status and decoded body.
+// Mirrors registerUserForTest but does not assert 200 on finalize because
+// the claim-token tests exercise both happy and unhappy paths.
+func registerFinalizeWithClaim(t *testing.T, h *OpaqueAuthHandler, conf *opaque.Configuration, email, password, claimToken string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	client, err := conf.Client()
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	ke1 := client.RegistrationInit([]byte(password))
+
+	initBody, _ := json.Marshal(registerInitRequest{
+		Email:          email,
+		RegistrationKE: ke1.Serialize(),
+	})
+	initReq := httptest.NewRequest(http.MethodPost, "/api/auth/register/init", bytes.NewReader(initBody))
+	initRec := httptest.NewRecorder()
+	h.handleRegisterInit(initRec, initReq)
+	if initRec.Code != http.StatusOK {
+		t.Fatalf("init status=%d body=%s", initRec.Code, initRec.Body.String())
+	}
+	var initResp registerInitResponse
+	if err := json.NewDecoder(initRec.Body).Decode(&initResp); err != nil {
+		t.Fatalf("decode init: %v", err)
+	}
+	ke2, err := client.Deserialize.RegistrationResponse(initResp.RegistrationResponse)
+	if err != nil {
+		t.Fatalf("client.Deserialize.RegistrationResponse: %v", err)
+	}
+	record, _ := client.RegistrationFinalize(ke2, opaque.ClientRegistrationFinalizeOptions{
+		ClientIdentity: []byte(email),
+		ServerIdentity: []byte("atterm-relay"),
+	})
+
+	finBody, _ := json.Marshal(registerFinalizeRequest{
+		Email:              email,
+		RegistrationRecord: record.Serialize(),
+		AccountKeyWrap: accountKeyWrapPayload{
+			Method:    "password",
+			Wrapped:   []byte("ciphertext"),
+			Nonce:     []byte("xchacha-nonce-24-bytes-aa"),
+			Salt:      []byte("argon-salt-16byt"),
+			KDFParams: `{"alg":"argon2id","m":67108864,"t":3,"p":1}`,
+		},
+		ClaimToken: claimToken,
+	})
+	finReq := httptest.NewRequest(http.MethodPost, "/api/auth/register/finalize", bytes.NewReader(finBody))
+	finRec := httptest.NewRecorder()
+	h.handleRegisterFinalize(finRec, finReq)
+	return finRec
+}
+
+// TestRegisterFinalize_ClaimToken_PromotesAdmin verifies the bootstrap
+// flow: an "admin" claim token issued for the email being registered
+// promotes the new user to admin and is consumed in the process.
+func TestRegisterFinalize_ClaimToken_PromotesAdmin(t *testing.T) {
+	h, conf := newTestHandler(t)
+	ctx := context.Background()
+
+	plaintext, err := h.store.CreateClaimToken(ctx, "admin@example.com", "admin", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateClaimToken: %v", err)
+	}
+
+	rec := registerFinalizeWithClaim(t, h, conf, "admin@example.com", "hunter2hunter2", plaintext)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("finalize status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp registerFinalizeResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode resp: %v", err)
+	}
+
+	u, err := h.store.GetUser(ctx, resp.UserID)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if !u.IsAdmin {
+		t.Fatalf("expected IsAdmin=true after claim-token finalize, got false")
+	}
+
+	// Token must be consumed — a second finalize with the same plaintext
+	// (we re-use the same email so lookup hits) should now fail.
+	if err := h.store.ConsumeClaimToken(ctx, plaintext); err == nil {
+		t.Fatalf("expected consume to fail after first use")
+	}
+}
+
+// TestRegisterFinalize_ClaimToken_EmailMismatch ensures a claim token
+// bound to admin@example.com cannot be redeemed by registering a
+// different email — even if the OPAQUE half is valid. No user row may
+// be left behind because validation runs before CreateOpaqueUser.
+func TestRegisterFinalize_ClaimToken_EmailMismatch(t *testing.T) {
+	h, conf := newTestHandler(t)
+	ctx := context.Background()
+
+	plaintext, err := h.store.CreateClaimToken(ctx, "admin@example.com", "admin", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateClaimToken: %v", err)
+	}
+
+	rec := registerFinalizeWithClaim(t, h, conf, "attacker@example.com", "hunter2hunter2", plaintext)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("finalize status=%d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// No user row created.
+	if _, err := h.store.GetUserByEmail(ctx, "attacker@example.com"); err == nil {
+		t.Fatalf("expected GetUserByEmail to fail after rejected claim, got nil error")
+	}
+}
+
+// TestRegisterFinalize_ClaimToken_Bogus ensures a non-existent claim
+// token aborts the flow with 401 and leaves no user row behind.
+func TestRegisterFinalize_ClaimToken_Bogus(t *testing.T) {
+	h, conf := newTestHandler(t)
+
+	rec := registerFinalizeWithClaim(t, h, conf, "admin@example.com", "hunter2hunter2", "claim_does-not-exist")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("finalize status=%d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := h.store.GetUserByEmail(context.Background(), "admin@example.com"); err == nil {
+		t.Fatalf("expected no user row to exist, got one")
+	}
+}
+
 // TestRegisterFinalize_BadRecord ensures a non-empty but malformed record
 // is rejected with 400 before any DB write — the user row must NOT exist
 // after this call.

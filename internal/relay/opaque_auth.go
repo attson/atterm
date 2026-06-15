@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,6 +77,10 @@ type registerFinalizeRequest struct {
 	Email              string                `json:"email"`
 	RegistrationRecord []byte                `json:"registration_record"`
 	AccountKeyWrap     accountKeyWrapPayload `json:"account_key_wrap"`
+	// ClaimToken is the optional bootstrap / operator-issued one-time
+	// token that promotes the new account to the role baked into the
+	// token (e.g. "admin"). Empty for a normal self-service registration.
+	ClaimToken string `json:"claim_token,omitempty"`
 }
 
 type accountKeyWrapPayload struct {
@@ -212,6 +218,27 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 
 	ctx := r.Context()
 
+	// If a claim token is supplied, validate it BEFORE creating the user
+	// row so a bogus / expired / consumed token can't leave an orphan
+	// account behind. The token is consumed (and the role applied) after
+	// CreateOpaqueUser succeeds, see below.
+	var claimedRole string
+	if req.ClaimToken != "" {
+		tok, err := h.store.LookupClaimToken(ctx, req.ClaimToken)
+		if err != nil {
+			// Collapse NotFound / Consumed / Expired into one 401 so the
+			// endpoint isn't a token-validity oracle. Operator-facing
+			// detail is already in the sentinel error in logs if needed.
+			http.Error(w, "invalid claim token", http.StatusUnauthorized)
+			return
+		}
+		if !strings.EqualFold(tok.Email, req.Email) {
+			http.Error(w, "claim token email mismatch", http.StatusUnauthorized)
+			return
+		}
+		claimedRole = tok.Role
+	}
+
 	user, err := h.store.CreateOpaqueUser(ctx, req.Email)
 	if err != nil {
 		if errors.Is(err, userstore.ErrEmailTaken) {
@@ -237,6 +264,30 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 	}); err != nil {
 		http.Error(w, "internal: store wrap", http.StatusInternalServerError)
 		return
+	}
+
+	// Consume the claim token (if any) and apply its role. The token was
+	// already validated above, but a concurrent finalize for the same token
+	// could have consumed it in the meantime — the atomic UPDATE inside
+	// ConsumeClaimToken is what serializes that race. We deliberately
+	// consume AFTER the user row exists: at this point the registration is
+	// otherwise complete, so racing finalizes that lose the consume race
+	// see a 401 and the operator must mint a new token. The orphan user is
+	// acceptable (UNIQUE-email guards against the same email being claimed
+	// twice anyway).
+	if claimedRole != "" {
+		if err := h.store.ConsumeClaimToken(ctx, req.ClaimToken); err != nil {
+			http.Error(w, "claim token race", http.StatusUnauthorized)
+			return
+		}
+		if claimedRole == "admin" {
+			if err := h.store.SetUserAdmin(ctx, user.ID, true); err != nil {
+				// Promotion failure is non-fatal: registration succeeded,
+				// the operator can re-promote the user via the admin
+				// console. Log loudly so the gap is visible.
+				log.Printf("opaque-register: set admin on claimed user %s: %v", user.ID, err)
+			}
+		}
 	}
 
 	tok, _, err := h.store.CreateSession(ctx, user.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)

@@ -81,8 +81,50 @@ type loginFinalizeResponse struct {
 
 // ----- Handlers (stubs filled in by Tasks 7-10) -----
 
+// handleRegisterInit consumes the client's KE1 (RegistrationRequest) and
+// returns the server's KE2 (RegistrationResponse). No user row is created at
+// this step — finalize is what writes to the DB. The credential identifier
+// we hand to the OPAQUE library is the email bytes; this must stay stable
+// across init/finalize/login for a given user, which is naturally true
+// because the email is the lookup key on the client side too.
 func (h *OpaqueAuthHandler) handleRegisterInit(w http.ResponseWriter, r *http.Request) {
-	writeNotImpl(w)
+	var req registerInitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.Email == "" || len(req.RegistrationKE) == 0 {
+		http.Error(w, "missing fields", http.StatusBadRequest)
+		return
+	}
+
+	sv, err := h.srv.newServer()
+	if err != nil {
+		http.Error(w, "internal: opaque server", http.StatusInternalServerError)
+		return
+	}
+
+	// bytemare/opaque v0.10 exposes deserialization via the Server's
+	// Deserialize field (not on Configuration directly). Same goes for
+	// turning the stored AKE public-key bytes back into a *group.Element
+	// — RegistrationResponse takes the typed element, not raw bytes.
+	regReq, err := sv.Deserialize.RegistrationRequest(req.RegistrationKE)
+	if err != nil {
+		http.Error(w, "bad registration_ke", http.StatusBadRequest)
+		return
+	}
+	pks, err := sv.Deserialize.DecodeAkePublicKey(h.srv.akePublic)
+	if err != nil {
+		http.Error(w, "internal: decode server public key", http.StatusInternalServerError)
+		return
+	}
+
+	ke2 := sv.RegistrationResponse(regReq, pks, []byte(req.Email), h.srv.oprfSeed)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(registerInitResponse{
+		RegistrationResponse: ke2.Serialize(),
+	})
 }
 
 func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *http.Request) {

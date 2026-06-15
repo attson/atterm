@@ -1,9 +1,15 @@
 package relay
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
+	"time"
+
+	"github.com/bytemare/opaque"
 
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -12,14 +18,40 @@ import (
 // endpoints. It is wired by server.go after the OpaqueServer singleton
 // has loaded its persisted seed.
 //
-// The four endpoints (/api/auth/register/{init,finalize}, /api/auth/login/{init,finalize})
-// are stubs at this stage — handler bodies are filled in by Tasks 7-10. All
-// stubs return 501 Not Implemented so that an accidentally-wired server cannot
-// silently appear to "work".
+// loginSessions holds the per-flow OPAQUE state between LoginInit (KE2 sent
+// to client) and LoginFinish (KE3 received from client). The map is keyed
+// by a freshly minted random session_id — distinct from the user-facing
+// session_token issued post-login — so two concurrent in-flight login
+// attempts for the same email do not collide. Entries TTL out after 30s
+// via a per-entry time.AfterFunc janitor; the short window is fine because
+// the client is expected to call finalize immediately. The map is held
+// in-memory only; a relay restart cancels every pending flow, which is
+// safe (the client will see a 401 on finalize and re-issue init).
 type OpaqueAuthHandler struct {
-	store *userstore.SQLiteStore
-	srv   *OpaqueServer
+	store         *userstore.SQLiteStore
+	srv           *OpaqueServer
+	loginSessions sync.Map // session_id -> *loginPending
 }
+
+// loginPending is the in-flight OPAQUE login state for a single (email,
+// session_id) pair. server holds the per-request *opaque.Server primed
+// with SetKeyMaterial in handleLoginInit — re-using the same instance in
+// handleLoginFinish is what lets the library's internal AKE bookkeeping
+// (session key derivation, MAC verification) line up across the two HTTP
+// round-trips. expiresAt is checked defensively at finalize time in case
+// the AfterFunc janitor has not yet fired.
+type loginPending struct {
+	email     string
+	userID    string
+	server    *opaque.Server
+	expiresAt time.Time
+}
+
+// loginSessionTTL bounds how long the relay will hold OPAQUE init state
+// before discarding it. The client is expected to call finalize
+// immediately after receiving KE2; 30s comfortably covers slow links and
+// is short enough that abandoned flows do not accumulate.
+const loginSessionTTL = 30 * time.Second
 
 // NewOpaqueAuthHandler constructs the handler. Both store and srv must be
 // non-nil; the OpaqueServer is expected to have been initialized via
@@ -220,8 +252,122 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 	})
 }
 
+// handleLoginInit consumes the client's KE1 (login_ke) for the named email,
+// derives the server's KE2 (login_response) against the stored
+// RegistrationRecord, and parks the per-request *opaque.Server in
+// loginSessions under a fresh session_id so handleLoginFinalize can pick
+// up the same instance and verify KE3.
+//
+// Existence semantics: a missing user OR a missing OPAQUE record OR a
+// disabled user all return generic 401 "invalid credentials". We do NOT
+// run a dummy OPAQUE round to mask timing — that's a known v1 trade-off
+// (see spec §15). The shape of the response (status + body) does not
+// distinguish the three cases.
+//
+// CredentialIdentifier + ClientIdentity: both are the email bytes, which
+// must match what the client passed to RegistrationFinalize (see the test
+// in TestRegisterFinalize_PersistsRecordAndWrap). The relay's static
+// ServerIdentity ("atterm-relay") is supplied via SetKeyMaterial inside
+// newServer(); the library will mix that into the AKE transcript.
 func (h *OpaqueAuthHandler) handleLoginInit(w http.ResponseWriter, r *http.Request) {
-	writeNotImpl(w)
+	var req loginInitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.Email == "" || len(req.LoginKE) == 0 {
+		http.Error(w, "missing fields", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+
+	user, err := h.store.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		// Generic 401 to avoid revealing whether the email is registered.
+		// Timing equalization (dummy OPAQUE round) is acknowledged as a
+		// v1 gap; see spec §15.
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	if user.DisabledAt != nil {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	recordBytes, err := h.store.GetOpaqueRecord(ctx, user.ID)
+	if err != nil {
+		// Either the user pre-dates OPAQUE rollout (legacy bcrypt only)
+		// or the record was never persisted — both look the same to the
+		// client.
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	sv, err := h.srv.newServer()
+	if err != nil {
+		http.Error(w, "internal: opaque server", http.StatusInternalServerError)
+		return
+	}
+	record, err := sv.Deserialize.RegistrationRecord(recordBytes)
+	if err != nil {
+		// Stored record is corrupt — operator problem, not a client one.
+		http.Error(w, "internal: parse record", http.StatusInternalServerError)
+		return
+	}
+	ke1, err := sv.Deserialize.KE1(req.LoginKE)
+	if err != nil {
+		http.Error(w, "bad login_ke", http.StatusBadRequest)
+		return
+	}
+
+	emailBytes := []byte(user.Email) // post-normalization (lowercased)
+	ke2, err := sv.LoginInit(ke1, &opaque.ClientRecord{
+		CredentialIdentifier: emailBytes,
+		ClientIdentity:       emailBytes,
+		RegistrationRecord:   record,
+	})
+	if err != nil {
+		http.Error(w, "internal: login init", http.StatusInternalServerError)
+		return
+	}
+
+	sessionID, err := newLoginSessionID()
+	if err != nil {
+		http.Error(w, "internal: session id", http.StatusInternalServerError)
+		return
+	}
+	h.loginSessions.Store(sessionID, &loginPending{
+		email:     user.Email,
+		userID:    user.ID,
+		server:    sv,
+		expiresAt: time.Now().Add(loginSessionTTL),
+	})
+	// Per-entry janitor: bounds memory if finalize never arrives. The
+	// closure captures sessionID by value, not the *loginPending, so a
+	// fast finalize-then-init reuse cycle that hits the same session_id
+	// (cryptographically improbable but cheap to guard) would not stomp
+	// the new entry's lifetime. Delete is a no-op if finalize already
+	// removed the row.
+	time.AfterFunc(loginSessionTTL, func() { h.loginSessions.Delete(sessionID) })
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(loginInitResponse{
+		LoginResponse: ke2.Serialize(),
+		SessionID:     sessionID,
+	})
+}
+
+// newLoginSessionID returns a fresh, unguessable session_id used only as
+// the loginSessions map key — it is NOT a bearer credential and is not
+// persisted. 32 bytes of crypto/rand → ~43 chars of base64url, matching
+// the format CreateSession uses for session tokens so the two look
+// homogeneous in logs while remaining distinct namespaces.
+func newLoginSessionID() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func (h *OpaqueAuthHandler) handleLoginFinalize(w http.ResponseWriter, r *http.Request) {

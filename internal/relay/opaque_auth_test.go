@@ -7,11 +7,91 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/bytemare/opaque"
 
 	"github.com/attson/atterm/internal/userstore"
 )
+
+// newTestHandler is the T9+ replacement for newTestOpaqueAuthHandler: it
+// returns BOTH the handler and the *opaque.Configuration so a test that
+// needs to drive the library-side client (LoginInit, RegistrationInit,
+// etc.) can use the same suite the server was wired with. The
+// configuration is the one defaultConfig() locks in, identical to what
+// LoadOrInitOpaqueServer uses, so handler + client speak the same group.
+func newTestHandler(t *testing.T) (*OpaqueAuthHandler, *opaque.Configuration) {
+	t.Helper()
+	return newTestOpaqueAuthHandler(t), defaultConfig()
+}
+
+// registerUserForTest drives a full OPAQUE register-init → register-finalize
+// round-trip against the live handler and returns the resulting *User row.
+// Extracted from the T8 finalize test so T9/T10 can stand up authenticated
+// users without re-copying the dance. The wrap payload is a synthetic
+// placeholder (real clients send xchacha-wrapped account-key blobs) — the
+// shape matches what handleRegisterFinalize requires so the row survives
+// to lookup time.
+func registerUserForTest(t *testing.T, h *OpaqueAuthHandler, conf *opaque.Configuration, email, password string) *userstore.User {
+	t.Helper()
+
+	client, err := conf.Client()
+	if err != nil {
+		t.Fatalf("registerUserForTest: client: %v", err)
+	}
+	ke1 := client.RegistrationInit([]byte(password))
+
+	initBody, _ := json.Marshal(registerInitRequest{
+		Email:          email,
+		RegistrationKE: ke1.Serialize(),
+	})
+	initReq := httptest.NewRequest(http.MethodPost, "/api/auth/register/init", bytes.NewReader(initBody))
+	initRec := httptest.NewRecorder()
+	h.handleRegisterInit(initRec, initReq)
+	if initRec.Code != http.StatusOK {
+		t.Fatalf("registerUserForTest: init status=%d body=%s", initRec.Code, initRec.Body.String())
+	}
+	var initResp registerInitResponse
+	if err := json.NewDecoder(initRec.Body).Decode(&initResp); err != nil {
+		t.Fatalf("registerUserForTest: decode init: %v", err)
+	}
+
+	ke2, err := client.Deserialize.RegistrationResponse(initResp.RegistrationResponse)
+	if err != nil {
+		t.Fatalf("registerUserForTest: client.Deserialize.RegistrationResponse: %v", err)
+	}
+	record, _ := client.RegistrationFinalize(ke2, opaque.ClientRegistrationFinalizeOptions{
+		ClientIdentity: []byte(email),
+		ServerIdentity: []byte("atterm-relay"),
+	})
+
+	finBody, _ := json.Marshal(registerFinalizeRequest{
+		Email:              email,
+		RegistrationRecord: record.Serialize(),
+		AccountKeyWrap: accountKeyWrapPayload{
+			Method:    "password",
+			Wrapped:   []byte("ciphertext"),
+			Nonce:     []byte("xchacha-nonce-24-bytes-aa"),
+			Salt:      []byte("argon-salt-16byt"),
+			KDFParams: `{"alg":"argon2id","m":67108864,"t":3,"p":1}`,
+		},
+	})
+	finReq := httptest.NewRequest(http.MethodPost, "/api/auth/register/finalize", bytes.NewReader(finBody))
+	finRec := httptest.NewRecorder()
+	h.handleRegisterFinalize(finRec, finReq)
+	if finRec.Code != http.StatusOK {
+		t.Fatalf("registerUserForTest: finalize status=%d body=%s", finRec.Code, finRec.Body.String())
+	}
+	var finResp registerFinalizeResponse
+	if err := json.NewDecoder(finRec.Body).Decode(&finResp); err != nil {
+		t.Fatalf("registerUserForTest: decode fin: %v", err)
+	}
+	u, err := h.store.GetUser(context.Background(), finResp.UserID)
+	if err != nil {
+		t.Fatalf("registerUserForTest: GetUser: %v", err)
+	}
+	return u
+}
 
 // newTestOpaqueAuthHandler wires an in-memory store, a freshly-initialized
 // OPAQUE server singleton (first-boot path — generates a seed + AKE keypair),
@@ -248,6 +328,141 @@ func TestRegisterFinalize_MissingFields(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/register/finalize", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.handleRegisterFinalize(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLoginInit_ReturnsKE2AndSessionID drives a real client KE1 against the
+// login init endpoint for a freshly registered user and asserts the
+// handler:
+//  1. Returns 200 with non-empty login_response (KE2) and a non-empty
+//     session_id.
+//  2. Round-trips KE2 through the client's deserializer so we know the
+//     bytes are well-formed under the same suite.
+//  3. Parks a *loginPending in the handler's loginSessions map under the
+//     returned session_id, with the email/userID matching the registered
+//     row and a future expiresAt — this is what T10's finalize will pick
+//     up.
+func TestLoginInit_ReturnsKE2AndSessionID(t *testing.T) {
+	h, conf := newTestHandler(t)
+	user := registerUserForTest(t, h, conf, "alice@example.com", "hunter2hunter2")
+
+	client, err := conf.Client()
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	ke1 := client.LoginInit([]byte("hunter2hunter2"))
+
+	body, _ := json.Marshal(loginInitRequest{Email: "alice@example.com", LoginKE: ke1.Serialize()})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/init", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleLoginInit(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp loginInitResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.SessionID == "" || len(resp.LoginResponse) == 0 {
+		t.Fatalf("missing session_id or login_response: %+v", resp)
+	}
+
+	// KE2 must deserialize under the same configuration the client used
+	// to produce KE1 — guards against a suite mismatch silently slipping
+	// in between LoadOrInitOpaqueServer and defaultConfig().
+	if _, err := client.Deserialize.KE2(resp.LoginResponse); err != nil {
+		t.Fatalf("client.Deserialize.KE2: %v", err)
+	}
+
+	// The handler must have parked OPAQUE state under session_id so
+	// finalize can resume. The TTL must be in the future so the AfterFunc
+	// janitor has not pre-empted us.
+	v, ok := h.loginSessions.Load(resp.SessionID)
+	if !ok {
+		t.Fatalf("loginSessions missing session_id %q", resp.SessionID)
+	}
+	pend, ok := v.(*loginPending)
+	if !ok {
+		t.Fatalf("loginSessions value is %T, want *loginPending", v)
+	}
+	if pend.email != "alice@example.com" {
+		t.Fatalf("pending.email = %q, want alice@example.com", pend.email)
+	}
+	if pend.userID != user.ID {
+		t.Fatalf("pending.userID = %q, want %q", pend.userID, user.ID)
+	}
+	if pend.server == nil {
+		t.Fatalf("pending.server is nil — finalize cannot resume")
+	}
+	if !pend.expiresAt.After(time.Now()) {
+		t.Fatalf("pending.expiresAt = %v already in the past", pend.expiresAt)
+	}
+}
+
+// TestLoginInit_BadJSON guards the early-return path: malformed bodies
+// must yield 400, not panic inside the OPAQUE library.
+func TestLoginInit_BadJSON(t *testing.T) {
+	h, _ := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/init", bytes.NewReader([]byte("{not json")))
+	rec := httptest.NewRecorder()
+	h.handleLoginInit(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestLoginInit_MissingFields covers the "email or login_ke empty" branch.
+func TestLoginInit_MissingFields(t *testing.T) {
+	h, _ := newTestHandler(t)
+	body, _ := json.Marshal(loginInitRequest{Email: "", LoginKE: []byte("x")})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/init", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleLoginInit(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestLoginInit_UnknownEmail asserts the generic-401 path: a well-formed
+// KE1 for an email that was never registered must NOT leak that fact
+// through the status code or error message. It also guards against
+// accidentally returning 500 (which would let an attacker probe the user
+// table by watching for status-code skew).
+func TestLoginInit_UnknownEmail(t *testing.T) {
+	h, conf := newTestHandler(t)
+	client, err := conf.Client()
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	ke1 := client.LoginInit([]byte("anything"))
+	body, _ := json.Marshal(loginInitRequest{Email: "ghost@example.com", LoginKE: ke1.Serialize()})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/init", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleLoginInit(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLoginInit_BadKE1 asserts a syntactically valid JSON body with
+// garbage in login_ke is rejected with 400 once the user has been
+// resolved — the deserializer must catch malformed bytes before we hand
+// them to LoginInit. Note this returns 400 (not 401) because the user
+// exists; the failure is structural, not credential-related.
+func TestLoginInit_BadKE1(t *testing.T) {
+	h, conf := newTestHandler(t)
+	_ = registerUserForTest(t, h, conf, "alice@example.com", "hunter2hunter2")
+
+	body, _ := json.Marshal(loginInitRequest{
+		Email:   "alice@example.com",
+		LoginKE: []byte("not a real KE1"),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/init", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleLoginInit(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}

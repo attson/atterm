@@ -198,6 +198,47 @@ func (s *SQLiteStore) VerifyPassword(ctx context.Context, email, password string
 	return u, nil
 }
 
+// GetUserByEmail looks up a user row by email (case-insensitive via the
+// users.email COLLATE NOCASE column). Returns ErrUserNotFound if no row
+// matches. Mirrors GetUser's shape — DisabledAt is populated when set so
+// callers can refuse to operate on disabled users — and is used by the
+// OPAQUE login init path which needs (a) the user_id to look up the
+// stored RegistrationRecord and (b) the auth_mode to gate the flow.
+//
+// Email is normalized the same way CreateOpaqueUser / CreateUser write
+// it (lowercased + trimmed) so a caller passing "Alice@Example.com"
+// resolves to the row stored as "alice@example.com".
+func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	var (
+		id         string
+		authMode   sql.NullString
+		createdAt  int64
+		disabledAt sql.NullInt64
+		isAdmin    int
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, auth_mode, created_at, disabled_at, is_admin
+		 FROM users WHERE email = ?`, email,
+	).Scan(&id, &authMode, &createdAt, &disabledAt, &isAdmin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lookup user by email: %w", err)
+	}
+	u := &User{
+		ID: id, Email: email,
+		IsAdmin:   isAdmin != 0,
+		AuthMode:  authMode.String,
+		CreatedAt: time.Unix(createdAt, 0),
+	}
+	if disabledAt.Valid {
+		t := time.Unix(disabledAt.Int64, 0)
+		u.DisabledAt = &t
+	}
+	return u, nil
+}
+
 // GetUser by id; returns ErrUserNotFound if missing.
 func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 	var (

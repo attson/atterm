@@ -166,7 +166,7 @@ maybeSendResize();
 
 `maybeSendResize` 沿用红线 #6 的 `expectedCols/Rows` skip-no-op 守卫。
 
-mouseup 之后容器尺寸已稳定，ResizeObserver 不会再 fire；因此 commit 路径必须**主动**触发一次 sendResize：`PaneGrid` 在 splitter 的 `commit` 事件里 emit `resize-commit`，TerminalView 监听后 `nextTick(() => maybeSendResize())`。`maybeSendResize` 本身有 skip-no-op 守卫，相邻的两次相同 cols/rows 不会重复发帧。
+mouseup 之后容器尺寸已稳定，ResizeObserver 不会再 fire；因此 commit 路径必须**主动**触发一次 sendResize。最简实现：TerminalView 内部 `watch(() => props.resizeSuspended, (next, prev) => { if (prev && !next) { nextTick(() => { if (term && conn) conn.sendResize(term.cols, term.rows); }); } })`。这条 watch 监听 suspended 的下降沿——拖动结束时 term.cols/rows 已经被拖动期间的 fit 更新到当前值，发一次就到位。`sendResize` 本身经过 conn 的 expectedCols/Rows skip-no-op 守卫保护。
 
 ## App.vue integration
 
@@ -189,7 +189,7 @@ function makeTab(initial: Partial<Tab> = {}): Tab {
 
 `transitionLayout` / `closePane` 调用点把 `tab.colRatio` / `tab.rowRatio` 传入并把返回值写回。
 
-`PaneGrid` 对外暴露 `@update:col-ratio` / `@update:row-ratio`，`App.vue` 把这两个写回 tab。`dragging` 状态和 `commit-resize` 事件是 `PaneGrid` 内部状态，直接传给子组件 `TerminalView`，不冒泡到 `App.vue`。
+`PaneGrid` 对外暴露 `@update:col-ratio` / `@update:row-ratio`，`App.vue` 把这两个写回 tab。`dragging` 状态是 `PaneGrid` 内部 ref，通过 `:resize-suspended` prop 传给子组件 `TerminalView`，不冒泡到 `App.vue`。
 
 ## Error handling
 
@@ -220,7 +220,7 @@ function makeTab(initial: Partial<Tab> = {}): Tab {
 
 `TerminalView.test.ts` 添加：
 - `resize-suspended=true` 时 fit 仍跑、但 `sendResize` 不调
-- 收到 `resize-commit` 事件后下一个 tick 触发 `sendResize`
+- `resize-suspended` 从 true → false 的下降沿，下一个 tick 触发 `sendResize`
 
 ## Out of scope
 

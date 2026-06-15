@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/connhealth"
+	"github.com/attson/atterm/internal/e2eecrypto"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
@@ -66,9 +67,17 @@ type uplink struct {
 	// monotonic ms timestamps embedded in PING payloads. Using a relative
 	// origin keeps the 8-byte payload uint64-safe forever.
 	startMono time.Time
+
+	// accountKey, when non-nil, returns the unlocked E2EE account key for
+	// the user authenticated against this remote relay. Nil-returning is
+	// the "key not unlocked" state — TypeOut frames bypass encryption and
+	// the relay sees plaintext (degrades cleanly: bootstrap-admin / local-
+	// only setups, or first-boot before the user has logged in, work
+	// unchanged). Set by NewApp wiring (see desktop/app.go).
+	accountKey func() []byte
 }
 
-func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error)) *uplink {
+func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error), accountKey func() []byte) *uplink {
 	return &uplink{
 		relayURL:         strings.TrimRight(relayURL, "/"),
 		token:            token,
@@ -78,6 +87,7 @@ func newUplink(relayURL, token, remotePermission string, host *relayHost, record
 		recordError:      recordError,
 		tracker:          connhealth.New(),
 		startMono:        time.Now(),
+		accountKey:       accountKey,
 	}
 }
 
@@ -366,7 +376,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 					}
 					if !forwardLocalSubscriberFrame(fwdCtx, out, f, stats, func() {
 						u.host.RequestLocalRepaint(id)
-					}) {
+					}, u.accountKey) {
 						reason = "uplink_out_closed"
 						return
 					}
@@ -584,7 +594,7 @@ func localSubscriberFrameForwardedToUplink(typ proto.Type) bool {
 	}
 }
 
-func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f proto.Frame, stats *streamForwardStats, requestRepaint func()) bool {
+func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f proto.Frame, stats *streamForwardStats, requestRepaint func(), accountKey func() []byte) bool {
 	if stats != nil {
 		stats.observe(f)
 	}
@@ -595,12 +605,48 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 	if !localSubscriberFrameForwardedToUplink(f.Type) {
 		return true
 	}
+	if f.Type == proto.TypeOut && accountKey != nil {
+		if sealed, ok := sealOutFrame(f, accountKey()); ok {
+			f = sealed
+		}
+	}
 	select {
 	case out <- f:
 		return true
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// sealOutFrame wraps a TypeOut payload's bytes with an AEAD envelope so
+// the remote relay carries only opaque ciphertext. The wire layout of
+// TypeOut stays seq(8B BE) || data — only the data portion is replaced
+// with the envelope. accountKey == nil (user not logged in / no remote
+// E2EE relay) is a clean bypass: the original plaintext frame is sent
+// through.
+//
+// ok == false on any sealing error; caller falls back to plaintext. This
+// is the right call for the M2b agent path because losing one chunk is
+// preferable to dropping the session, and the only failure modes here are
+// program bugs (account_key shorter than 32B) — they will be caught in
+// unit tests, not at runtime.
+func sealOutFrame(f proto.Frame, accountKey []byte) (proto.Frame, bool) {
+	if len(accountKey) < e2eecrypto.SessionKeySize {
+		return f, false
+	}
+	seq, data, err := proto.DecodeOut(f.Payload)
+	if err != nil {
+		return f, false
+	}
+	sk, err := e2eecrypto.DeriveSessionKey(accountKey, f.SessionID)
+	if err != nil {
+		return f, false
+	}
+	envelope, err := e2eecrypto.SealOut(sk, f.SessionID, byte(proto.TypeOut), seq, data)
+	if err != nil {
+		return f, false
+	}
+	return proto.EncodeOut(f.SessionID, seq, envelope), true
 }
 
 func localSubscriberFrameRequestsRepaint(f proto.Frame) bool {

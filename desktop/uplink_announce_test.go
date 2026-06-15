@@ -126,7 +126,7 @@ func TestForwardLocalSubscriberFrameRequestsRepaintForAltScreenReset(t *testing.
 	repaints := 0
 	frame := proto.EncodeOut(id, 0, []byte("\x1b[?1049h\x1b[2J\x1b[H"))
 
-	if ok := forwardLocalSubscriberFrame(context.Background(), out, frame, nil, func() { repaints++ }); !ok {
+	if ok := forwardLocalSubscriberFrame(context.Background(), out, frame, nil, func() { repaints++ }, nil); !ok {
 		t.Fatal("forwardLocalSubscriberFrame returned false")
 	}
 	if repaints != 1 {

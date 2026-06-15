@@ -60,7 +60,7 @@ func TestSnapshotRelayErrors_ReturnsCopy(t *testing.T) {
 
 func TestUplink_HandleCloseError_RecordsAuthFailure(t *testing.T) {
 	a := newRelayTestApp(t)
-	u := newUplink("ws://test", "atk_test", "full", a.host, a.recordRelayError)
+	u := newUplink("ws://test", "atk_test", "full", a.host, a.recordRelayError, nil)
 	// Stub eventsEmit so we don't hit wailsruntime in tests.
 	u.eventsEmit = func(ctx context.Context, name string, data ...interface{}) {}
 	// Pretend a 4001 close from the relay.

@@ -168,6 +168,8 @@ interface AppBindings {
   SetUplinkPaused(paused: boolean): Promise<void>;
   GetUplinkHealth(): Promise<ConnHealthSnapshot>;
   LoginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void>;
+  RegisterRemoteRelay(relayURL: string, email: string, password: string, claimToken: string, allowInsecure: boolean): Promise<void>;
+  HasAccountKey(): Promise<boolean>;
   ProbeRelayVersion(arg1: string): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   ListWebhooks(): Promise<Webhook[]>;
@@ -315,11 +317,28 @@ export function setUplinkPaused(paused: boolean): Promise<void> {
   return bindings().SetUplinkPaused(paused);
 }
 
-// loginRemoteRelay drives POST /api/auth/login on the Go side. The Wails
-// method persists the returned session token via SetRelayConfig and restarts
-// the uplink, so callers only need to refresh GetRelayConfig() afterwards.
+// loginRemoteRelay drives the OPAQUE login flow on the Go side. The Wails
+// method completes the protocol round-trip, persists the returned session
+// token via SetRelayConfig, unlocks the account_key into App memory, and
+// restarts the uplink — callers only need to refresh GetRelayConfig()
+// afterwards.
 export function loginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void> {
   return bindings().LoginRemoteRelay(relayURL, email, password, allowInsecure);
+}
+
+// registerRemoteRelay drives the OPAQUE registration flow on the Go side.
+// Same persistence semantics as loginRemoteRelay; claimToken is optional
+// (supply the plaintext token printed by `atterm-relay` bootstrap to also
+// promote the new user to admin, otherwise pass "").
+export function registerRemoteRelay(relayURL: string, email: string, password: string, claimToken: string, allowInsecure: boolean): Promise<void> {
+  return bindings().RegisterRemoteRelay(relayURL, email, password, claimToken, allowInsecure);
+}
+
+// hasAccountKey reports whether the E2EE account_key is currently unlocked
+// in App memory. False after app restart (key is in-memory only in v1) —
+// the frontend uses this to decide between "unlock" and full-login prompts.
+export function hasAccountKey(): Promise<boolean> {
+  return bindings().HasAccountKey();
 }
 
 // probeRelayVersion calls the Wails ProbeRelayVersion method on the Go side

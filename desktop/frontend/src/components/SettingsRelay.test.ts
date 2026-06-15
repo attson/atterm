@@ -182,4 +182,24 @@ describe("SettingsRelay", () => {
     expect(source).toContain("setRelayConfig");
     expect(source).toContain("settings.relay.credentialsRequired");
   });
+
+  test("offers register mode that calls registerRemoteRelay with claim_token", () => {
+    // The OPAQUE register flow lives behind a mode toggle next to the
+    // email field. When the user picks "register" the save() handler
+    // must route through registerRemoteRelay and forward claimToken.
+    expect(source).toContain('authMode');
+    expect(source).toContain('"register"');
+    expect(source).toContain('registerRemoteRelay');
+    expect(source).toContain('claimToken');
+    expect(source).toContain('settings.relay.modeRegister');
+    expect(source).toContain('settings.relay.modeLogin');
+    expect(source).toContain('settings.relay.claimToken');
+  });
+
+  test("claim_token input is only rendered in register mode", () => {
+    // The claim-token field would confuse login users — show it only
+    // when authMode === 'register'.
+    expect(source).toMatch(/v-if="authMode === ['"]register['"]"/);
+    expect(source).toContain('relay-claim-token');
+  });
 });

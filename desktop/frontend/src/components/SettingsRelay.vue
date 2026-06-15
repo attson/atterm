@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe, loginRemoteRelay, probeRelayVersion } from "../lib/api";
+import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
@@ -29,6 +29,13 @@ const { t } = useI18n();
 const email = ref("");
 const password = ref("");
 const showPassword = ref(false);
+
+// Mode toggle: "login" against an existing account, or "register" a new
+// one via the OPAQUE flow. claimToken is shown only in register mode and
+// is optional (operators supply it from `atterm-relay` bootstrap output
+// to promote the new user to admin).
+const authMode = ref<"login" | "register">("login");
+const claimToken = ref("");
 
 // In-memory only (SEC-1): never persisted or logged.
 const connectedUserID = ref("");
@@ -165,13 +172,18 @@ async function save() {
 
   if (hasCreds) {
     try {
-      await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value, allowInsecureRelay.value);
+      if (authMode.value === "register") {
+        await registerRemoteRelay(url.value.trim(), email.value.trim(), password.value, claimToken.value.trim(), allowInsecureRelay.value);
+      } else {
+        await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value, allowInsecureRelay.value);
+      }
     } catch (e: any) {
       error.value = t("settings.relay.loginFailedInline", { reason: e?.message ?? String(e) });
       saving.value = false;
       return;
     }
     password.value = "";
+    claimToken.value = "";
   } else if (hasExistingToken) {
     try {
       await setRelayConfig({
@@ -279,12 +291,35 @@ defineExpose({
         @keyup.enter="save"
       />
 
+      <div class="mode-toggle" role="radiogroup" :aria-label="t('settings.relay.authMode')">
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: authMode === 'login' }"
+          :aria-pressed="authMode === 'login'"
+          :disabled="saving"
+          @click="authMode = 'login'"
+        >
+          {{ t("settings.relay.modeLogin") }}
+        </button>
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: authMode === 'register' }"
+          :aria-pressed="authMode === 'register'"
+          :disabled="saving"
+          @click="authMode = 'register'"
+        >
+          {{ t("settings.relay.modeRegister") }}
+        </button>
+      </div>
+
       <label class="field-label" for="relay-email">{{ t("settings.relay.email") }}</label>
       <input
         id="relay-email"
         v-model="email"
         type="email"
-        autocomplete="username"
+        :autocomplete="authMode === 'register' ? 'email' : 'username'"
         :disabled="saving"
         @keyup.enter="save"
       />
@@ -340,6 +375,21 @@ defineExpose({
         </button>
       </div>
 
+      <template v-if="authMode === 'register'">
+        <label class="field-label" for="relay-claim-token">{{ t("settings.relay.claimToken") }}</label>
+        <input
+          id="relay-claim-token"
+          v-model="claimToken"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          :placeholder="t('settings.relay.claimTokenPlaceholder')"
+          :disabled="saving"
+          @keyup.enter="save"
+        />
+        <p class="hint">{{ t("settings.relay.claimTokenHint") }}</p>
+      </template>
+
       <label class="field-label">{{ t("settings.relay.remotePermissions") }}</label>
       <SelectDropdown
         v-model="remotePermission"
@@ -371,6 +421,42 @@ defineExpose({
 </template>
 
 <style scoped>
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 6px;
+  padding: 3px;
+  background: var(--surface-2, #1f1f23);
+  border-radius: 8px;
+  width: fit-content;
+}
+
+.mode-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted, #aaa);
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.mode-btn:hover:not(:disabled) {
+  color: var(--text, #fff);
+}
+
+.mode-btn.active {
+  background: var(--surface-3, #303036);
+  color: var(--text, #fff);
+}
+
+.mode-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .tab-pane {
   display: flex;
   flex-direction: column;

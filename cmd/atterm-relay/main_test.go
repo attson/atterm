@@ -75,7 +75,7 @@ func TestRelaySecurityAcceptsDesktopWebviewSessionListWS(t *testing.T) {
 	defer cancel()
 
 	// Create a user and mint a session token.
-	user, err := store.CreateUser(ctx, "test@example.com", "password123!")
+	user, err := store.CreateOpaqueUser(ctx, "test@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

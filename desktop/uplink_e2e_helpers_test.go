@@ -23,7 +23,7 @@ func startE2ERemoteRelay(t *testing.T) (addr, sessionToken string) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "e2e@example.com", "Correct-Horse-Battery-Staple-1!")
+	u, err := store.CreateOpaqueUser(ctx, "e2e@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -94,7 +93,6 @@ type Server struct {
 type ServerDeps struct {
 	Store    userstore.Store
 	Resolver *IdentityResolver
-	Argon    *Argon2Pool
 	Limits   *LimitRegistry
 	Auth     *AuthServer
 	Admin    *AdminServer
@@ -161,17 +159,15 @@ func NewServer(cfg Config) *Server {
 	}
 
 	// Mount user-account HTTP API when both resolver and store are wired.
-	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed
-	// here so the same wiring runs in both the production binary and any test
-	// that calls NewServer with a non-nil Resolver+Store. Resolver itself is
-	// only consumed by newStaticHandler — auth & admin handlers read the user
+	// The LimitRegistry, AuthServer, and AdminServer are constructed here so
+	// the same wiring runs in both the production binary and any test that
+	// calls NewServer with a non-nil Resolver+Store. Resolver itself is only
+	// consumed by newStaticHandler — auth & admin handlers read the user
 	// from request context via the requireSession wrapper.
 	if cfg.Resolver != nil && cfg.Store != nil {
-		argon := NewArgon2Pool(runtime.NumCPU())
 		limits := NewLimitRegistry()
 		authSrv := &AuthServer{
 			Store:        cfg.Store,
-			Argon:        argon,
 			Limits:       limits,
 			FailureFloor: 200 * time.Millisecond,
 		}
@@ -182,11 +178,9 @@ func NewServer(cfg Config) *Server {
 
 		// OPAQUE auth: wire only when both the singleton was built
 		// upstream and the store is the concrete SQLite one the handler
-		// requires. Tests that don't set Config.OpaqueServer fall through
-		// silently — only the legacy bcrypt /api/auth/{signup,login}
-		// routes are exposed in that case. The type assertion mirrors the
-		// pattern already used by Server.Store(); the same constraint
-		// (Store must be *SQLiteStore) holds for both code paths.
+		// requires. Tests that don't set Config.OpaqueServer leave the
+		// OPAQUE routes unmounted; there is no longer any legacy
+		// password fallback.
 		if cfg.OpaqueServer != nil {
 			if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
 				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer)

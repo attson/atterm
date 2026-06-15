@@ -12,10 +12,14 @@ import (
 //   - requireUser: anonymous callers 401 immediately.
 //   - email match: typo-protection; the client must echo the exact email of
 //     the user the cookie resolves to.
-//   - password re-verify: even with a stolen cookie, an attacker still needs
-//     the plaintext password.
 //   - last-admin guard: refuses if the caller is the only remaining admin,
 //     so the deploy can never be locked out by an accidental delete.
+//
+// Note: under password auth this also did a password re-verify. With
+// OPAQUE we cannot replay credentials server-side without a full client
+// round, so re-verification will be folded into a separate OPAQUE
+// step-up flow in M1b. For now, holding the bearer token plus typing
+// the email is the required proof.
 //
 // On success the user row is dropped (sessions cascade via FK;
 // invitations.consumed_by is nulled by DeleteUser's transaction). The
@@ -28,8 +32,7 @@ func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request")
@@ -43,17 +46,6 @@ func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.EqualFold(strings.TrimSpace(body.Email), user.Email) {
 		writeError(w, http.StatusBadRequest, "email_mismatch")
-		return
-	}
-
-	// Re-verify password — attacker with stolen cookie still needs plaintext.
-	v, err := a.Store.VerifyPassword(r.Context(), user.Email, body.Password)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	if v == nil {
-		writeError(w, http.StatusUnauthorized, "password_incorrect")
 		return
 	}
 

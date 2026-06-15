@@ -9,7 +9,7 @@ func TestWebhookCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	user, err := s.CreateUser(ctx, "wh@example.com", "supersecretpassword")
+	user, err := s.CreateOpaqueUser(ctx, "wh@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestWebhookCascadeOnUserDelete(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	user, err := s.CreateUser(ctx, "wh2@example.com", "supersecretpassword")
+	user, err := s.CreateOpaqueUser(ctx, "wh2@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

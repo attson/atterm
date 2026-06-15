@@ -14,7 +14,7 @@ func TestListSessions_OrderAndFields(t *testing.T) {
 	}
 	defer s.Close()
 
-	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	u, _ := s.CreateOpaqueUser(ctx, "a@example.com")
 
 	_, _, _ = s.CreateSession(ctx, u.ID, "ua/firefox", "203.0.113.0/24", DefaultSessionTTL)
 	time.Sleep(2 * time.Millisecond) // ensure created_at ordering is deterministic
@@ -50,8 +50,8 @@ func TestListSessions_ScopedToUser(t *testing.T) {
 	}
 	defer s.Close()
 
-	u1, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
-	u2, _ := s.CreateUser(ctx, "b@example.com", "passphrase-1234")
+	u1, _ := s.CreateOpaqueUser(ctx, "a@example.com")
+	u2, _ := s.CreateOpaqueUser(ctx, "b@example.com")
 	_, _, _ = s.CreateSession(ctx, u1.ID, "ua-u1", "1.2.3.0/24", DefaultSessionTTL)
 	_, _, _ = s.CreateSession(ctx, u2.ID, "ua-u2", "5.6.7.0/24", DefaultSessionTTL)
 
@@ -65,7 +65,7 @@ func TestDeleteSessionByIDHash_Success(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
-	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	u, _ := s.CreateOpaqueUser(ctx, "a@example.com")
 	_, _, _ = s.CreateSession(ctx, u.ID, "ua1", "", DefaultSessionTTL)
 	list, _ := s.ListSessions(ctx, u.ID)
 	if len(list) != 1 {
@@ -88,8 +88,8 @@ func TestDeleteSessionByIDHash_CrossUserIsNoop(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
-	u1, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
-	u2, _ := s.CreateUser(ctx, "b@example.com", "passphrase-1234")
+	u1, _ := s.CreateOpaqueUser(ctx, "a@example.com")
+	u2, _ := s.CreateOpaqueUser(ctx, "b@example.com")
 	_, _, _ = s.CreateSession(ctx, u2.ID, "ua-u2", "", DefaultSessionTTL)
 	list2, _ := s.ListSessions(ctx, u2.ID)
 	// Attempt to delete u2's session as u1.
@@ -110,7 +110,7 @@ func TestDeleteSessionByIDHash_UnknownIDHashNoop(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
-	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	u, _ := s.CreateOpaqueUser(ctx, "a@example.com")
 	deleted, err := s.DeleteSessionByIDHash(ctx, u.ID, "deadbeef00")
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestDeleteOtherSessionsForUser_KeepsExceptOnly(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
-	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	u, _ := s.CreateOpaqueUser(ctx, "a@example.com")
 	_, _, _ = s.CreateSession(ctx, u.ID, "ua1", "", DefaultSessionTTL)
 	_, _, _ = s.CreateSession(ctx, u.ID, "ua2", "", DefaultSessionTTL)
 	_, _, _ = s.CreateSession(ctx, u.ID, "ua3", "", DefaultSessionTTL)
@@ -150,7 +150,7 @@ func TestDeleteOtherSessionsForUser_ExceptUnknownDeletesAll(t *testing.T) {
 	ctx := context.Background()
 	s, _ := Open(ctx, ":memory:")
 	defer s.Close()
-	u, _ := s.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	u, _ := s.CreateOpaqueUser(ctx, "a@example.com")
 	_, _, _ = s.CreateSession(ctx, u.ID, "ua1", "", DefaultSessionTTL)
 	_, _, _ = s.CreateSession(ctx, u.ID, "ua2", "", DefaultSessionTTL)
 	n, err := s.DeleteOtherSessionsForUser(ctx, u.ID, "no-such-hash")

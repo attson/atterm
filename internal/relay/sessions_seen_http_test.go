@@ -63,7 +63,7 @@ func issueSessionToken(t *testing.T, store *userstore.SQLiteStore, userID string
 func TestSessionsSeen_MarkAll(t *testing.T) {
 	srv, store := newTestSeenServer(t)
 
-	_, userAID := signupAndLogin(t, srv, store, "seenall@example.com", "correcthorsebattery")
+	_, userAID := createUserWithSession(t, store, "seenall@example.com")
 	tokenA := issueSessionToken(t, store, userAID)
 	sessID := addOwnedSession(t, srv, userAID, 1000)
 
@@ -91,8 +91,8 @@ func TestSessionsSeen_MarkAll(t *testing.T) {
 func TestSessionsSeen_CrossUserIgnored(t *testing.T) {
 	srv, store := newTestSeenServer(t)
 
-	_, userAID := signupAndLogin(t, srv, store, "seenA@example.com", "correcthorsebattery")
-	_, userBID := signupAndLogin(t, srv, store, "seenB@example.com", "correcthorsebattery")
+	_, userAID := createUserWithSession(t, store, "seenA@example.com")
+	_, userBID := createUserWithSession(t, store, "seenB@example.com")
 	tokenA := issueSessionToken(t, store, userAID)
 	sessBID := addOwnedSession(t, srv, userBID, 2000)
 
@@ -127,7 +127,7 @@ func TestSessionsSeen_NoAuth(t *testing.T) {
 func TestSessionsSeen_BodyTooLarge(t *testing.T) {
 	srv, store := newTestSeenServer(t)
 
-	_, userAID := signupAndLogin(t, srv, store, "seenlarge@example.com", "correcthorsebattery")
+	_, userAID := createUserWithSession(t, store, "seenlarge@example.com")
 	token := issueSessionToken(t, store, userAID)
 
 	// 5000 padded UUIDs in a JSON array far exceeds 64 KB.

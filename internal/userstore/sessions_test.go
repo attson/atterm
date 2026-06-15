@@ -6,11 +6,14 @@ import (
 	"time"
 )
 
-// createTestUser is a thin wrapper around (*SQLiteStore).CreateUser used by
-// sessions tests. It matches the helper-shape the tests in this file expect.
-func createTestUser(t *testing.T, st *SQLiteStore, email, password string) (*User, error) {
+// createTestUser is a thin wrapper around (*SQLiteStore).CreateOpaqueUser
+// used by sessions tests. The password argument is ignored — sessions
+// tests only need a user row to exist, not real credentials. Retaining
+// the password parameter keeps callsites mechanical to migrate while the
+// signature contract stays predictable.
+func createTestUser(t *testing.T, st *SQLiteStore, email, _ string) (*User, error) {
 	t.Helper()
-	return st.CreateUser(context.Background(), email, password)
+	return st.CreateOpaqueUser(context.Background(), email)
 }
 
 func TestLookupSession_HitReturnsUser(t *testing.T) {

@@ -85,7 +85,7 @@ func TestDeleteSession_OtherUserSession_404(t *testing.T) {
 	srv, tokA, _ := serverWithAuthAndSession(t)
 	store := srv.cfg.Store.(*userstore.SQLiteStore)
 
-	userB, _ := store.CreateUser(context.Background(), "b@example.com", "passphrase-1234")
+	userB, _ := store.CreateOpaqueUser(context.Background(), "b@example.com")
 	_, _, _ = store.CreateSession(context.Background(), userB.ID, "ua-b", "", userstore.DefaultSessionTTL)
 	listB, _ := store.ListSessions(context.Background(), userB.ID)
 

@@ -190,7 +190,7 @@ func TestAdminHealthAPI_Unauthenticated_401(t *testing.T) {
 func TestAdminHealthAPI_RegularUser_401(t *testing.T) {
 	store := newTestStoreForRelay(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	u, err := store.CreateOpaqueUser(ctx, "alice@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -214,8 +214,10 @@ func TestAdminHealthAPI_RegularUser_401(t *testing.T) {
 func TestAdminHealthAPI_Admin_200_AllFieldsPresent(t *testing.T) {
 	store := newTestStoreForRelay(t)
 	ctx := context.Background()
-	if _, err := store.EnsureAdminUser(ctx, "admin@example.com", "correcthorsebatterystaple"); err != nil {
-		t.Fatalf("EnsureAdminUser: %v", err)
+	if u, err := store.CreateOpaqueUser(ctx, "admin@example.com"); err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	} else if err := store.SetUserAdmin(ctx, u.ID, true); err != nil {
+		t.Fatalf("SetUserAdmin: %v", err)
 	}
 	u := findUserByEmail(t, store, "admin@example.com")
 	tok, _, err := store.CreateSession(ctx, u.ID, "test-admin", "127.0.0.1", 24*time.Hour)
@@ -261,8 +263,10 @@ func TestAdminHealthAPI_Admin_200_AllFieldsPresent(t *testing.T) {
 func TestAdminHealth_HTML_Admin_200_AllLabelsPresent(t *testing.T) {
 	store := newTestStoreForRelay(t)
 	ctx := context.Background()
-	if _, err := store.EnsureAdminUser(ctx, "admin@example.com", "correcthorsebatterystaple"); err != nil {
-		t.Fatalf("EnsureAdminUser: %v", err)
+	if u, err := store.CreateOpaqueUser(ctx, "admin@example.com"); err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	} else if err := store.SetUserAdmin(ctx, u.ID, true); err != nil {
+		t.Fatalf("SetUserAdmin: %v", err)
 	}
 	u := findUserByEmail(t, store, "admin@example.com")
 	tok, _, err := store.CreateSession(ctx, u.ID, "test-admin", "127.0.0.1", 24*time.Hour)
@@ -369,7 +373,7 @@ func TestHealthPayload_JSONFieldsStable(t *testing.T) {
 func TestUplinkCount_IncrementsOnConnectDecrementsOnClose(t *testing.T) {
 	store := newTestStoreForRelay(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	u, err := store.CreateOpaqueUser(ctx, "alice@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

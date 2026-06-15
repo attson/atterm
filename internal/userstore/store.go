@@ -58,21 +58,16 @@ func (s *SQLiteStore) DB() *sql.DB { return s.db }
 // a memory implementation that satisfies this interface.
 type Store interface {
 	// Users
-	CreateUser(ctx context.Context, email, password string) (*User, error)
-	VerifyPassword(ctx context.Context, email, password string) (*User, error)
+	// CreateOpaqueUser inserts a row tagged auth_mode='opaque' with no
+	// credential material. Used by the OPAQUE register/finalize flow
+	// (and by tests that just need a user row).
+	CreateOpaqueUser(ctx context.Context, email string) (*User, error)
 	GetUser(ctx context.Context, id string) (*User, error)
+	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	DisableUser(ctx context.Context, id string) error
 	ListUsers(ctx context.Context) ([]User, error)
-	ResetUserPassword(ctx context.Context, userID string) (Secret, error)
 	// SetUserAdmin sets the is_admin flag for userID. Idempotent.
 	SetUserAdmin(ctx context.Context, userID string, admin bool) error
-	// EnsureAdminUser is idempotent. If a user with this email exists, it
-	// is marked is_admin=1 and returns (created=false, nil); password is
-	// ignored. Otherwise a new user is created with the given plaintext
-	// password and is_admin=1, returning (created=true, nil). Empty
-	// plaintext for the create path returns ErrEmptyBootstrapPassword;
-	// strength enforcement is the caller's job.
-	EnsureAdminUser(ctx context.Context, email, plaintext string) (created bool, err error)
 	// DeleteUser hard-deletes userID. sessions and pairing_tokens cascade
 	// via the existing FK. invitations.consumed_by is REFERENCES users(id)
 	// without cascade (history field), so this method first sets that
@@ -110,20 +105,6 @@ type Store interface {
 	// rows deleted. Used by Settings → Sign out everywhere except this
 	// device.
 	DeleteOtherSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error)
-
-	// ChangePassword verifies currentPlaintext against the stored hash for
-	// userID, then updates to a new hash. All existing sessions for the user
-	// are deleted (caller issues a fresh session). Returns ErrUserNotFound
-	// or ErrPasswordIncorrect on validation failure.
-	ChangePassword(ctx context.Context, userID, currentPlaintext, newPlaintext string) error
-
-	// ResetPasswordByEmail forces a new password for the user with the given
-	// email WITHOUT requiring the current one. All sessions are deleted.
-	// Intended for the desktop's bootstrap_local recovery path where the
-	// config-stored local-admin password drifted from the userstore hash —
-	// there's no human to type the original password. Never expose this to
-	// the relay HTTP surface. Returns ErrUserNotFound when email is unknown.
-	ResetPasswordByEmail(ctx context.Context, email, newPlaintext string) (*User, error)
 
 	// Webhooks
 	CreateWebhook(ctx context.Context, userID, url, format, name string, allowInsecure bool) (*Webhook, error)

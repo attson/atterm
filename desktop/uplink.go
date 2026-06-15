@@ -453,6 +453,9 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				log.Printf("desktop-uplink: inbound_drop_permission type=%s permission=%s %s", desktopUplinkFrameTypeName(f.Type), u.remotePermission, desktopUplinkFrameLogDetails(f))
 				continue
 			}
+			if opened, ok := openInboundFrame(f, u.accountKey); ok {
+				f = opened
+			}
 			if err := u.host.SendLocalInbound(f.SessionID, f); err != nil {
 				log.Printf("desktop-uplink: inbound_forward_failed type=%s %s error=%v", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f), err)
 			} else {
@@ -647,6 +650,67 @@ func sealOutFrame(f proto.Frame, accountKey []byte) (proto.Frame, bool) {
 		return f, false
 	}
 	return proto.EncodeOut(f.SessionID, seq, envelope), true
+}
+
+// openInboundFrame is the M2e counterpart of sealOutFrame for the
+// relay→agent direction: when an inbound TypeIn or TypePasteImage frame
+// carries an e2eecrypto envelope (cipher_id 0x01 prefix + minimum
+// envelope size), unseal it with the per-session key and return the
+// plaintext frame. TypeResize is structural metadata (cols/rows) and
+// is never encrypted; skipped here.
+//
+// ok == false means "leave the frame as-is". Cases that hit this path:
+//   - accountKey == nil (user not logged in / no remote E2EE relay)
+//   - frame is not TypeIn / TypePasteImage
+//   - payload does not look like an envelope (plaintext from a legacy
+//     client that hasn't migrated yet)
+//   - AEAD open fails (tampered, wrong key, replay across sessions)
+//
+// All four are treated identically: pass the frame through unchanged
+// so the legacy plaintext path keeps working. A future hardening pass
+// can promote AEAD failures into hard drops once every client speaks
+// the encrypted dialect.
+func openInboundFrame(f proto.Frame, accountKey func() []byte) (proto.Frame, bool) {
+	if accountKey == nil {
+		return f, false
+	}
+	if f.Type != proto.TypeIn && f.Type != proto.TypePasteImage {
+		return f, false
+	}
+	if !looksLikeUnsequencedEnvelope(f.Payload) {
+		return f, false
+	}
+	key := accountKey()
+	if len(key) < e2eecrypto.SessionKeySize {
+		return f, false
+	}
+	sk, err := e2eecrypto.DeriveSessionKey(key, f.SessionID)
+	if err != nil {
+		return f, false
+	}
+	plaintext, err := e2eecrypto.OpenUnsequenced(sk, f.SessionID, byte(f.Type), f.Payload)
+	if err != nil {
+		return f, false
+	}
+	return proto.Frame{
+		Type:      f.Type,
+		SessionID: f.SessionID,
+		Payload:   plaintext,
+	}, true
+}
+
+// looksLikeUnsequencedEnvelope returns true when the payload has the
+// on-wire shape of an e2eecrypto envelope: cipher_id 0x01 at byte zero
+// + at least the minimum envelope length (1 + 24-byte nonce + 16-byte
+// Poly1305 tag). Same heuristic as the relay's looksLikeEncryptedOut
+// helper, but for the unsequenced (no seq prefix) variant used by IN
+// and PASTE_IMAGE.
+func looksLikeUnsequencedEnvelope(payload []byte) bool {
+	const minEnvelopeLen = 1 + 24 + 16
+	if len(payload) < minEnvelopeLen {
+		return false
+	}
+	return payload[0] == 0x01
 }
 
 func localSubscriberFrameRequestsRepaint(f proto.Frame) bool {

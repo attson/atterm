@@ -69,6 +69,12 @@ type Config struct {
 	// (/api/auth/*, /api/me/*, /admin/api/invitations, /admin/api/users).
 	// If nil the new routes are not registered (legacy mode).
 	Store userstore.Store
+	// OpaqueServer, when non-nil alongside Store, mounts the four OPAQUE
+	// authentication routes (/api/auth/register/init, /register/finalize,
+	// /login/init, /login/finalize). Tests that do not exercise OPAQUE may
+	// leave this nil; the production main.go builds it via
+	// LoadOrInitOpaqueServer.
+	OpaqueServer *OpaqueServer
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -173,6 +179,20 @@ func NewServer(cfg Config) *Server {
 		authSrv.RegisterInto(s.mux, s.requireSession)
 		adminSrv.RegisterInto(s.mux, s.requireSession)
 		s.mux.HandleFunc("POST /api/sessions/seen", s.requireSession(s.handleSessionsSeenHTTP))
+
+		// OPAQUE auth: wire only when both the singleton was built
+		// upstream and the store is the concrete SQLite one the handler
+		// requires. Tests that don't set Config.OpaqueServer fall through
+		// silently — only the legacy bcrypt /api/auth/{signup,login}
+		// routes are exposed in that case. The type assertion mirrors the
+		// pattern already used by Server.Store(); the same constraint
+		// (Store must be *SQLiteStore) holds for both code paths.
+		if cfg.OpaqueServer != nil {
+			if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
+				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer)
+				opaqueAuth.Register(s.mux)
+			}
+		}
 
 		// Background goroutine: purge expired web sessions hourly.
 		go func() {

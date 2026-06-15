@@ -80,6 +80,15 @@ func main() {
 		log.Fatalf("open userstore: %v", err)
 	}
 
+	// OPAQUE server singleton — loads persisted OPRF seed + AKE keypair, or
+	// generates them on first boot. Must run after userstore.Open (depends on
+	// the opaque_server_state table created by the 0003 migration) and before
+	// NewServer (Config.OpaqueServer is consumed there).
+	opaqueSrv, err := relay.LoadOrInitOpaqueServer(ctx, store)
+	if err != nil {
+		log.Fatalf("opaque server init: %v", err)
+	}
+
 	bootstrapTok, _, err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword)
 	if err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
@@ -127,6 +136,7 @@ func main() {
 		AdminConfigStore:     adminStore,
 		Resolver:             resolver,
 		Store:                store,
+		OpaqueServer:         opaqueSrv,
 	}
 
 	wpSvc, wpErr := webpush.Open(persistDir, *vapidSubject)

@@ -75,8 +75,12 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.H
 		wrap = func(h http.HandlerFunc) http.HandlerFunc { return h }
 	}
 	// Public — no session required.
-	mux.Handle("POST /api/auth/signup", http.HandlerFunc(a.handleSignup))
-	mux.Handle("POST /api/auth/login", http.HandlerFunc(a.handleLogin))
+	// /api/auth/signup and /api/auth/login are no longer registered here:
+	// the OPAQUE replacement routes live at /api/auth/register/{init,finalize}
+	// and /api/auth/login/{init,finalize}, wired by OpaqueAuthHandler.Register
+	// from server.go. The handleSignup / handleLogin methods on this struct
+	// are dead code pending deletion in M1a Task 12 (kept here to limit the
+	// blast radius of T11 to route-registration only).
 	mux.Handle("POST /api/auth/logout", http.HandlerFunc(a.handleLogout))
 	mux.Handle("POST /api/pair/consume", http.HandlerFunc(a.handlePairConsume))
 	// Protected — session token required.

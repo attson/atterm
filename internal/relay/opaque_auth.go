@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/attson/atterm/internal/userstore"
@@ -127,8 +128,96 @@ func (h *OpaqueAuthHandler) handleRegisterInit(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// handleRegisterFinalize consumes the client's RegistrationRecord and the
+// account_key wrap blob, persists both alongside a fresh user row, and mints
+// a session token so the client can immediately call authenticated APIs.
+//
+// Failure ordering matters: we validate inputs cheaply (JSON, required
+// fields, well-formed record bytes) before touching the DB; CreateOpaqueUser
+// runs first so we can map UNIQUE-email failures to a 409 without leaving
+// orphaned opaque_record / wrap rows. Only after the user row exists do we
+// persist the OPAQUE record and the wrap; failures of either fall through
+// to 500 — the user row is left in place because (a) re-registering with
+// the same email would now collide on UNIQUE, and (b) the relay does not
+// model a "user exists but unusable" state. In practice both StoreOpaque*
+// calls only fail on transient DB errors; the operator can clean up by
+// hand if needed.
+//
+// Session token minting reuses the same Store.CreateSession helper that
+// the legacy bcrypt handleSignup / handleLogin path calls — we deliberately
+// don't extract a shared "mint a token" helper because the body is one
+// line and the auth_http path is slated for deletion in Task 12.
 func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *http.Request) {
-	writeNotImpl(w)
+	var req registerFinalizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.Email == "" ||
+		len(req.RegistrationRecord) == 0 ||
+		len(req.AccountKeyWrap.Wrapped) == 0 ||
+		len(req.AccountKeyWrap.Nonce) == 0 ||
+		len(req.AccountKeyWrap.Salt) == 0 ||
+		req.AccountKeyWrap.Method == "" ||
+		req.AccountKeyWrap.KDFParams == "" {
+		http.Error(w, "missing fields", http.StatusBadRequest)
+		return
+	}
+
+	// Validate the registration record bytes before any DB write so a
+	// garbage payload can't leave an orphaned user row behind. The
+	// Deserializer lives on the per-request *opaque.Server (same pattern
+	// as handleRegisterInit), not on the Configuration.
+	sv, err := h.srv.newServer()
+	if err != nil {
+		http.Error(w, "internal: opaque server", http.StatusInternalServerError)
+		return
+	}
+	if _, err := sv.Deserialize.RegistrationRecord(req.RegistrationRecord); err != nil {
+		http.Error(w, "bad registration record", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	user, err := h.store.CreateOpaqueUser(ctx, req.Email)
+	if err != nil {
+		if errors.Is(err, userstore.ErrEmailTaken) {
+			http.Error(w, "email taken", http.StatusConflict)
+			return
+		}
+		http.Error(w, "internal: create user", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.store.StoreOpaqueRecord(ctx, user.ID, req.RegistrationRecord); err != nil {
+		http.Error(w, "internal: store record", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.store.StoreAccountKeyWrap(ctx, userstore.AccountKeyWrap{
+		UserID:    user.ID,
+		Method:    req.AccountKeyWrap.Method,
+		Wrapped:   req.AccountKeyWrap.Wrapped,
+		Nonce:     req.AccountKeyWrap.Nonce,
+		Salt:      req.AccountKeyWrap.Salt,
+		KDFParams: req.AccountKeyWrap.KDFParams,
+	}); err != nil {
+		http.Error(w, "internal: store wrap", http.StatusInternalServerError)
+		return
+	}
+
+	tok, _, err := h.store.CreateSession(ctx, user.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
+	if err != nil {
+		http.Error(w, "internal: create session", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(registerFinalizeResponse{
+		UserID:       user.ID,
+		SessionToken: tok,
+	})
 }
 
 func (h *OpaqueAuthHandler) handleLoginInit(w http.ResponseWriter, r *http.Request) {

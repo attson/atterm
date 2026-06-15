@@ -124,6 +124,40 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, email, password string) (*
 	}, nil
 }
 
+// CreateOpaqueUser inserts a user row tagged as auth_mode='opaque', with
+// no password column populated. The caller is responsible for separately
+// storing the OPAQUE registration record (StoreOpaqueRecord) and the
+// account_key wrap (StoreAccountKeyWrap). Used by the OPAQUE
+// register/finalize flow.
+//
+// Email is lowercased to match the case-insensitive UNIQUE COLLATE NOCASE
+// constraint and to align with the legacy CreateUser path. Returns
+// ErrEmailTaken on uniqueness conflict so callers can surface 409
+// consistently. We reuse the existing ULID generator (defaultIDs) so user
+// IDs stay homogeneous across both auth modes during the OPAQUE
+// transition.
+func (s *SQLiteStore) CreateOpaqueUser(ctx context.Context, email string) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	id := defaultIDs.New()
+	now := time.Now()
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO users(id, email, is_admin, auth_mode, created_at) VALUES (?, ?, ?, ?, ?)`,
+		id, email, 0, "opaque", now.Unix())
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.email") {
+			return nil, ErrEmailTaken
+		}
+		return nil, fmt.Errorf("insert user: %w", err)
+	}
+	return &User{
+		ID:        id,
+		Email:     email,
+		IsAdmin:   false,
+		AuthMode:  "opaque",
+		CreatedAt: now,
+	}, nil
+}
+
 // VerifyPassword returns the matched user on success, or (nil, nil) when
 // either the email does not exist OR the password is wrong. Both paths
 // run argon2id verification against either the real hash or the global

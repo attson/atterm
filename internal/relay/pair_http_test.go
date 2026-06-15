@@ -16,7 +16,7 @@ func TestPairConsume_ReturnsSessionToken(t *testing.T) {
 	// Create a server with an authenticated user.
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "a@b", "Correct-Horse-Battery-Staple-1!")
+	u, err := store.CreateOpaqueUser(ctx, "a@b")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestPairConsume_InvalidToken_404(t *testing.T) {
 func TestPairConsume_ConsumedTwice_Conflict(t *testing.T) {
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "test@example.com", "Correct-Horse-Battery-Staple-1!")
+	u, err := store.CreateOpaqueUser(ctx, "test@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

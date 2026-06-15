@@ -25,7 +25,7 @@ func newWebPushTestServer(t *testing.T) (*Server, *webpush.Service, string, stri
 	}
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "push@example.com", "Correct-Horse-Battery-Staple-1!")
+	u, err := store.CreateOpaqueUser(ctx, "push@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestPushKeyRejectsMissingToken(t *testing.T) {
 
 func TestPushKey503WhenWebPushDisabled(t *testing.T) {
 	store := userstore.NewInMemory(t)
-	u, _ := store.CreateUser(context.Background(), "p@b", "Correct-Horse-Battery-Staple-1!")
+	u, _ := store.CreateOpaqueUser(context.Background(), "p@b")
 	tok, _, _ := store.CreateSession(context.Background(), u.ID, "p", "127.0.0.1", 24*time.Hour)
 	srv := NewServer(Config{Store: store, Resolver: NewIdentityResolver(store) /* WebPush intentionally nil */})
 	resp := doRequest(t, srv, http.MethodGet, "/api/push/key", tok, "")
@@ -228,7 +228,7 @@ func TestWebPushHTTP_KeysSubscriptionByUserID(t *testing.T) {
 	srv, svc, tokA, userAID := newWebPushTestServer(t)
 	// Mint a second user/session to confirm subscriptions don't bleed across.
 	store := srv.cfg.Store.(*userstore.SQLiteStore)
-	userB, _ := store.CreateUser(context.Background(), "userb@example.com", "Correct-Horse-Battery-Staple-1!")
+	userB, _ := store.CreateOpaqueUser(context.Background(), "userb@example.com")
 
 	body := `{"endpoint":"https://push.example/userA","keys":{"p256dh":"AAECAwQFBgcICQoLDA0ODw","auth":"AAECAwQFBgcICQoLDA0ODw"}}`
 	resp := doRequest(t, srv, http.MethodPost, "/api/push/subscribe", tokA, body)

@@ -56,7 +56,11 @@ func (a *AdminServer) RegisterInto(mux *http.ServeMux, requireSession func(http.
 	mux.Handle("POST /admin/api/invitations", gate(a.handleCreateInvite))
 	mux.Handle("GET /admin/api/invitations", gate(a.handleListInvites))
 	mux.Handle("GET /admin/api/users", gate(a.handleListUsers))
-	mux.Handle("POST /admin/api/users/{id}/reset-password", gate(a.handleResetPassword))
+	// /admin/api/users/{id}/reset-password was removed alongside the
+	// legacy password store methods in M1a T12. Password resets for
+	// OPAQUE accounts will be handled out-of-band (re-register via a
+	// fresh claim token) and re-introduced under a different route
+	// later in M1b.
 	mux.Handle("POST /admin/api/users/{id}/disable", gate(a.handleDisableUser))
 	mux.Handle("POST /admin/api/users/{id}/admin", gate(a.handlePromoteUser))
 	mux.Handle("DELETE /admin/api/users/{id}/admin", gate(a.handleDemoteUser))
@@ -222,27 +226,6 @@ func (a *AdminServer) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row)
 	}
 	writeJSONStatus(w, http.StatusOK, out)
-}
-
-// handleResetPassword implements POST /admin/api/users/{id}/reset-password.
-// Response 200: {"plaintext": "tmp_…"}
-// Atomically: generates tmp password, updates hash, deletes sessions.
-func (a *AdminServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
-	userID := r.PathValue("id")
-	if userID == "" {
-		http.Error(w, "missing user id", http.StatusBadRequest)
-		return
-	}
-
-	secret, err := a.Store.ResetUserPassword(r.Context(), userID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	writeJSONStatus(w, http.StatusOK, map[string]string{
-		"plaintext": secret.Expose(),
-	})
 }
 
 // handleDisableUser implements POST /admin/api/users/{id}/disable.

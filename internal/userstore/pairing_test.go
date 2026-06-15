@@ -13,7 +13,7 @@ func TestCreatePairingToken_ReturnsPlaintextOnceAndStoresHash(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	u, err := s.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	u, err := s.CreateOpaqueUser(ctx, "alice@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestConsumePairingToken_HappyPath_ReturnsUser(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	u, err := s.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	u, err := s.CreateOpaqueUser(ctx, "alice@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestConsumePairingToken_HappyPath_ReturnsUser(t *testing.T) {
 func TestConsumePairingToken_SecondCallFails(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	u, _ := s.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
 	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute)
 
 	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != nil {
@@ -85,7 +85,7 @@ func TestConsumePairingToken_SecondCallFails(t *testing.T) {
 func TestConsumePairingToken_Expired(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	u, _ := s.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
 	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, -1*time.Second)
 
 	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingExpired) {
@@ -104,7 +104,7 @@ func TestConsumePairingToken_UnknownTokenString(t *testing.T) {
 func TestConsumePairingToken_ConcurrentExactlyOneWinner(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	u, _ := s.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
 	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute)
 	code := pairSecret.Expose()
 

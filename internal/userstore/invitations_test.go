@@ -46,7 +46,7 @@ func TestConsumeInvitation_OneShotUnderConcurrency(t *testing.T) {
 	s := newTestStore(t)
 
 	// Create a real user for the FK constraint on consumed_by.
-	user, err := s.CreateUser(ctx, "winner@example.com", "correcthorsebatterystaple")
+	user, err := s.CreateOpaqueUser(ctx, "winner@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestConsumeInvitation_Expired(t *testing.T) {
 		t.Fatalf("CreateInvitation: %v", err)
 	}
 
-	user, err := s.CreateUser(ctx, "expiry@example.com", "correcthorsebatterystaple")
+	user, err := s.CreateOpaqueUser(ctx, "expiry@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestListInvitations_AdminView(t *testing.T) {
 	s := newTestStore(t)
 
 	// Create a real user for consuming.
-	user, err := s.CreateUser(ctx, "list@example.com", "correcthorsebatterystaple")
+	user, err := s.CreateOpaqueUser(ctx, "list@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}

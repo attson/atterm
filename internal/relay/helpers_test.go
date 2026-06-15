@@ -12,14 +12,13 @@ import (
 )
 
 // newTestAuthServer returns an AuthServer + the in-memory store backing it.
-// FailureFloor is zeroed so the rate-limit / login tests don't sleep 200ms
-// on every wrong-password attempt.
+// FailureFloor is zeroed so the rate-limit / invite tests don't sleep 200ms
+// on every wrong-invite attempt.
 func newTestAuthServer(t *testing.T) (*AuthServer, *userstore.SQLiteStore) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	return &AuthServer{
 		Store:  store,
-		Argon:  NewArgon2Pool(1),
 		Limits: NewLimitRegistry(),
 	}, store
 }
@@ -83,58 +82,53 @@ func deleteWithBearer(handler http.Handler, path, bearer string) *httptest.Respo
 	return w
 }
 
-// doSignup performs POST /api/auth/signup against handler and returns the
-// recorder. Tests can decode the session_token out of the body to follow up
-// with authenticated requests.
-func doSignup(t *testing.T, handler http.Handler, email, password, inviteCode string) *httptest.ResponseRecorder {
-	t.Helper()
-	return postJSON(handler, "/api/auth/signup", map[string]string{
-		"email":       email,
-		"password":    password,
-		"invite_code": inviteCode,
-	})
+// serverWithSession returns a Server backed by an in-memory store + a
+// pre-created user with one fresh session, returning the plaintext token.
+func serverWithSession(t *testing.T) (*Server, string) {
+	s, tok, _ := serverWithSessionAndUser(t)
+	return s, tok
 }
 
-// serverWithAuthAndSession builds a Server with both Resolver and Store
-// wired (so /api/me/* routes are mounted) and pre-creates a user + active
-// session. Returns the Server, the session token, and the user ID.
-func serverWithAuthAndSession(t *testing.T) (*Server, string, string) {
+// serverWithSessionAndUser is like serverWithSession but also returns the
+// user ID. Tests that put sessions on the registry need the userID to set
+// session.OwnerUserID so that ownerUserID-filtered queries return them.
+// Resolver is wired alongside Store so the full /api/me/* route set is
+// registered on the returned Server.
+func serverWithSessionAndUser(t *testing.T) (*Server, string, string) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "a@b", "Correct-Horse-Battery-Staple-1!")
+	u, err := store.CreateOpaqueUser(ctx, "a@b")
 	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+		t.Fatalf("CreateOpaqueUser: %v", err)
 	}
 	tok, _, err := store.CreateSession(ctx, u.ID, "go-test", "127.0.0.1", userstore.DefaultSessionTTL)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	resolver := NewIdentityResolver(store)
-	return NewServer(Config{Store: store, Resolver: resolver}), tok, u.ID
+	return NewServer(Config{Store: store, Resolver: NewIdentityResolver(store)}), tok, u.ID
 }
 
-// signupAndLogin signs up a fresh user and returns the session token plus
-// the user's ID. Used by tests that need an authenticated principal without
-// caring about the underlying signup mechanics.
-func signupAndLogin(t *testing.T, handler http.Handler, store *userstore.SQLiteStore, email, password string) (token, userID string) {
+// serverWithAuthAndSession is an alias for serverWithSessionAndUser kept
+// for tests that pre-date the helper rename. It returns the Server, the
+// session token, and the user ID.
+func serverWithAuthAndSession(t *testing.T) (*Server, string, string) {
+	return serverWithSessionAndUser(t)
+}
+
+// createUserWithSession inserts a fresh OPAQUE user, mints a session, and
+// returns (token, userID). Replaces the old signup-flow helper that
+// posted to /api/auth/signup.
+func createUserWithSession(t *testing.T, store *userstore.SQLiteStore, email string) (token, userID string) {
 	t.Helper()
-	code := createInvite(t, store)
-	w := doSignup(t, handler, email, password, code)
-	if w.Code != http.StatusOK {
-		t.Fatalf("signup: expected 200, got %d: %s", w.Code, w.Body.String())
+	ctx := context.Background()
+	u, err := store.CreateOpaqueUser(ctx, email)
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser %s: %v", email, err)
 	}
-	var resp struct {
-		SessionToken string `json:"session_token"`
-		User         struct {
-			ID string `json:"id"`
-		} `json:"user"`
+	tok, _, err := store.CreateSession(ctx, u.ID, "go-test", "127.0.0.1", userstore.DefaultSessionTTL)
+	if err != nil {
+		t.Fatalf("CreateSession %s: %v", email, err)
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("signupAndLogin: unmarshal: %v body=%s", err, w.Body.String())
-	}
-	if resp.SessionToken == "" {
-		t.Fatal("signupAndLogin: empty session_token in signup response")
-	}
-	return resp.SessionToken, resp.User.ID
+	return tok, u.ID
 }

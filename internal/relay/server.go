@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -69,6 +68,12 @@ type Config struct {
 	// (/api/auth/*, /api/me/*, /admin/api/invitations, /admin/api/users).
 	// If nil the new routes are not registered (legacy mode).
 	Store userstore.Store
+	// OpaqueServer, when non-nil alongside Store, mounts the four OPAQUE
+	// authentication routes (/api/auth/register/init, /register/finalize,
+	// /login/init, /login/finalize). Tests that do not exercise OPAQUE may
+	// leave this nil; the production main.go builds it via
+	// LoadOrInitOpaqueServer.
+	OpaqueServer *OpaqueServer
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -88,7 +93,6 @@ type Server struct {
 type ServerDeps struct {
 	Store    userstore.Store
 	Resolver *IdentityResolver
-	Argon    *Argon2Pool
 	Limits   *LimitRegistry
 	Auth     *AuthServer
 	Admin    *AdminServer
@@ -155,17 +159,15 @@ func NewServer(cfg Config) *Server {
 	}
 
 	// Mount user-account HTTP API when both resolver and store are wired.
-	// The Argon2Pool, LimitRegistry, AuthServer, and AdminServer are constructed
-	// here so the same wiring runs in both the production binary and any test
-	// that calls NewServer with a non-nil Resolver+Store. Resolver itself is
-	// only consumed by newStaticHandler — auth & admin handlers read the user
+	// The LimitRegistry, AuthServer, and AdminServer are constructed here so
+	// the same wiring runs in both the production binary and any test that
+	// calls NewServer with a non-nil Resolver+Store. Resolver itself is only
+	// consumed by newStaticHandler — auth & admin handlers read the user
 	// from request context via the requireSession wrapper.
 	if cfg.Resolver != nil && cfg.Store != nil {
-		argon := NewArgon2Pool(runtime.NumCPU())
 		limits := NewLimitRegistry()
 		authSrv := &AuthServer{
 			Store:        cfg.Store,
-			Argon:        argon,
 			Limits:       limits,
 			FailureFloor: 200 * time.Millisecond,
 		}
@@ -173,6 +175,18 @@ func NewServer(cfg Config) *Server {
 		authSrv.RegisterInto(s.mux, s.requireSession)
 		adminSrv.RegisterInto(s.mux, s.requireSession)
 		s.mux.HandleFunc("POST /api/sessions/seen", s.requireSession(s.handleSessionsSeenHTTP))
+
+		// OPAQUE auth: wire only when both the singleton was built
+		// upstream and the store is the concrete SQLite one the handler
+		// requires. Tests that don't set Config.OpaqueServer leave the
+		// OPAQUE routes unmounted; there is no longer any legacy
+		// password fallback.
+		if cfg.OpaqueServer != nil {
+			if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
+				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer)
+				opaqueAuth.Register(s.mux)
+			}
+		}
 
 		// Background goroutine: purge expired web sessions hourly.
 		go func() {

@@ -21,7 +21,7 @@ func newAdminTestServer(t *testing.T) (*Server, *userstore.SQLiteStore, string, 
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "admin@example.com", "passphrase-fixture-1234")
+	u, err := store.CreateOpaqueUser(ctx, "admin@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestAdmin_CreateInvitation_RequiresAdmin(t *testing.T) {
 
 	// Create a non-admin user + session token.
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "user@example.com", "somepassword12345")
+	u, err := store.CreateOpaqueUser(ctx, "user@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -257,10 +257,10 @@ func TestAdmin_ListUsers(t *testing.T) {
 	srv, store, _, tok := newAdminTestServer(t)
 
 	ctx := context.Background()
-	if _, err := store.CreateUser(ctx, "user1@example.com", "correcthorsebattery"); err != nil {
+	if _, err := store.CreateOpaqueUser(ctx, "user1@example.com"); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	if _, err := store.CreateUser(ctx, "user2@example.com", "correcthorsebattery"); err != nil {
+	if _, err := store.CreateOpaqueUser(ctx, "user2@example.com"); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
@@ -292,77 +292,18 @@ func TestAdmin_ListUsers(t *testing.T) {
 	}
 }
 
-// TestAdmin_ResetPassword: reset → new tmp_ password works for login;
-// old sessions for the target user are revoked.
-func TestAdmin_ResetPassword(t *testing.T) {
+// TestAdmin_DisableUser_Idempotent: disable the user, verify GetUser sees
+// disabled_at set, then disable again — must be a no-op (200 either way).
+// The previous version also verified /api/auth/login returns 401 after
+// disable, but that route was removed in M1a T12; the OPAQUE login flow's
+// disabled-user gating is covered by opaque_auth_test.go.
+func TestAdmin_DisableUser_Idempotent(t *testing.T) {
 	srv, store, _, adminTok := newAdminTestServer(t)
 
 	ctx := context.Background()
-	// Create the target user + their existing session.
-	u, err := store.CreateUser(ctx, "alice@example.com", "originalpassword12345")
+	u, err := store.CreateOpaqueUser(ctx, "bob@example.com")
 	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-	oldUserTok, _, err := store.CreateSession(ctx, u.ID, "test-agent", "127.0.0.1", userstore.DefaultSessionTTL)
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-
-	// Hit reset-password.
-	w := adminPostBearer(srv, "/admin/api/users/"+u.ID+"/reset-password", nil, adminTok)
-	if w.Code != http.StatusOK {
-		t.Fatalf("reset-password: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resetResp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resetResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	plaintext, _ := resetResp["plaintext"].(string)
-	if !strings.HasPrefix(plaintext, "tmp_") {
-		t.Fatalf("plaintext should start with tmp_, got %q", plaintext)
-	}
-
-	// New password must work via /api/auth/login.
-	loginResp := postJSON(srv, "/api/auth/login", map[string]string{
-		"email":    "alice@example.com",
-		"password": plaintext,
-	})
-	if loginResp.Code != http.StatusOK {
-		t.Fatalf("login with new password: expected 200, got %d: %s", loginResp.Code, loginResp.Body.String())
-	}
-
-	// Old password must NOT work.
-	oldLoginResp := postJSON(srv, "/api/auth/login", map[string]string{
-		"email":    "alice@example.com",
-		"password": "originalpassword12345",
-	})
-	if oldLoginResp.Code == http.StatusOK {
-		t.Error("old password still works after reset")
-	}
-
-	// Old session must be revoked — LookupSession should fail.
-	_, _, err = store.LookupSession(ctx, oldUserTok)
-	if err == nil {
-		t.Error("old session still valid after reset")
-	}
-}
-
-// TestAdmin_DisableUser: disable → subsequent login returns 401.
-func TestAdmin_DisableUser(t *testing.T) {
-	srv, store, _, adminTok := newAdminTestServer(t)
-
-	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "bob@example.com", "bobspassword12345")
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-
-	// Verify login works before disable.
-	wBefore := postJSON(srv, "/api/auth/login", map[string]string{
-		"email": "bob@example.com", "password": "bobspassword12345",
-	})
-	if wBefore.Code != http.StatusOK {
-		t.Fatalf("login before disable: expected 200, got %d", wBefore.Code)
+		t.Fatalf("CreateOpaqueUser: %v", err)
 	}
 
 	// Disable via admin endpoint.
@@ -371,12 +312,18 @@ func TestAdmin_DisableUser(t *testing.T) {
 		t.Fatalf("disable: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Login must now fail.
-	wAfter := postJSON(srv, "/api/auth/login", map[string]string{
-		"email": "bob@example.com", "password": "bobspassword12345",
-	})
-	if wAfter.Code != http.StatusUnauthorized {
-		t.Errorf("login after disable: expected 401, got %d: %s", wAfter.Code, wAfter.Body.String())
+	got, err := store.GetUser(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUser after disable: %v", err)
+	}
+	if got.DisabledAt == nil {
+		t.Errorf("user.DisabledAt = nil after disable; want non-nil")
+	}
+
+	// Second disable: still 200.
+	w2 := adminPostBearer(srv, "/admin/api/users/"+u.ID+"/disable", nil, adminTok)
+	if w2.Code != http.StatusOK {
+		t.Errorf("disable (second): expected 200, got %d", w2.Code)
 	}
 }
 
@@ -386,7 +333,7 @@ func TestAdminAPI_NonAdminUser_Unauthorized(t *testing.T) {
 	srv, store, _, _ := newAdminTestServer(t)
 
 	ctx := context.Background()
-	u, err := store.CreateUser(ctx, "user@example.com", "passphrase-1234")
+	u, err := store.CreateOpaqueUser(ctx, "user@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -406,7 +353,7 @@ func TestAdminPromoteUser_Success(t *testing.T) {
 	srv, store, _, adminTok := newAdminTestServer(t)
 
 	ctx := context.Background()
-	target, _ := store.CreateUser(ctx, "target@example.com", "passphrase-1234")
+	target, _ := store.CreateOpaqueUser(ctx, "target@example.com")
 	if target.IsAdmin {
 		t.Fatal("target already admin")
 	}
@@ -431,7 +378,7 @@ func TestAdminPromoteUser_AuditLog(t *testing.T) {
 	srv, store, actorID, adminTok := newAdminTestServer(t)
 
 	ctx := context.Background()
-	target, _ := store.CreateUser(ctx, "t@example.com", "passphrase-1234")
+	target, _ := store.CreateOpaqueUser(ctx, "t@example.com")
 
 	adminPostBearer(srv, "/admin/api/users/"+target.ID+"/admin", nil, adminTok)
 
@@ -450,7 +397,7 @@ func TestAdminDemoteUser_Success(t *testing.T) {
 
 	// Second admin so demoting other doesn't trip last-admin guard.
 	ctx := context.Background()
-	other, _ := store.CreateUser(ctx, "other@example.com", "passphrase-1234")
+	other, _ := store.CreateOpaqueUser(ctx, "other@example.com")
 	_ = store.SetUserAdmin(ctx, other.ID, true)
 
 	rec := adminDeleteBearer(srv, "/admin/api/users/"+other.ID+"/admin", adminTok)
@@ -486,7 +433,7 @@ func TestAdminDemoteUser_AuditLog(t *testing.T) {
 	srv, store, actorID, adminTok := newAdminTestServer(t)
 
 	ctx := context.Background()
-	other, _ := store.CreateUser(ctx, "other@example.com", "passphrase-1234")
+	other, _ := store.CreateOpaqueUser(ctx, "other@example.com")
 	_ = store.SetUserAdmin(ctx, other.ID, true)
 
 	adminDeleteBearer(srv, "/admin/api/users/"+other.ID+"/admin", adminTok)
@@ -508,7 +455,7 @@ func TestCountAdmins_OneTriggersLastAdminGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	u, _ := store.CreateUser(ctx, "only@example.com", "passphrase-1234")
+	u, _ := store.CreateOpaqueUser(ctx, "only@example.com")
 	_ = store.SetUserAdmin(ctx, u.ID, true)
 	n, err := countAdmins(ctx, store)
 	if err != nil {
@@ -524,7 +471,7 @@ func TestCountAdmins_OneTriggersLastAdminGuard(t *testing.T) {
 func TestAdminListUsers_IncludesIsAdmin(t *testing.T) {
 	srv, store, _, adminTok := newAdminTestServer(t)
 
-	nonAdmin, _ := store.CreateUser(context.Background(), "u@example.com", "passphrase-1234")
+	nonAdmin, _ := store.CreateOpaqueUser(context.Background(), "u@example.com")
 
 	rec := adminGetBearer(srv, "/admin/api/users", adminTok)
 	if rec.Code != http.StatusOK {

@@ -12,10 +12,10 @@ func TestDeleteUser_CascadesAndNullsConsumedBy(t *testing.T) {
 	defer s.Close()
 
 	// Create an admin to issue invites; consumer is the user we'll delete.
-	issuer, _ := s.CreateUser(ctx, "admin@example.com", "passphrase-1234")
+	issuer, _ := s.CreateOpaqueUser(ctx, "admin@example.com")
 	secret, invite, _ := s.CreateInvitation(ctx, ptrTime(time.Now().Add(24*time.Hour)), "for delete test")
 
-	consumer, _ := s.CreateUser(ctx, "victim@example.com", "passphrase-1234")
+	consumer, _ := s.CreateOpaqueUser(ctx, "victim@example.com")
 	if err := s.ConsumeInvitation(ctx, secret.Expose(), consumer.ID); err != nil {
 		t.Fatal(err)
 	}

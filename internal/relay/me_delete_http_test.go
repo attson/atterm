@@ -59,28 +59,6 @@ func TestDeleteMe_WrongEmail_400(t *testing.T) {
 	}
 }
 
-func TestDeleteMe_WrongPassword_401(t *testing.T) {
-	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
-
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
-		"email":    "a@b",
-		"password": "wrong-password-1234",
-	}, tok))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status=%d; want 401", rec.Code)
-	}
-	var resp map[string]string
-	json.NewDecoder(rec.Body).Decode(&resp)
-	if resp["error"] != "password_incorrect" {
-		t.Errorf("error=%q; want password_incorrect", resp["error"])
-	}
-	if _, err := store.GetUser(context.Background(), userID); err != nil {
-		t.Errorf("user should still exist after rejected delete: %v", err)
-	}
-}
-
 func TestDeleteMe_LastAdmin_409(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
 	store := srv.cfg.Store.(*userstore.SQLiteStore)
@@ -132,7 +110,7 @@ func TestDeleteMe_AdminButNotLast_Succeeds(t *testing.T) {
 	}
 
 	// Second admin so the first isn't the last.
-	other, err := store.CreateUser(context.Background(), "other@example.com", "Correct-Horse-Battery-Staple-1!")
+	other, err := store.CreateOpaqueUser(context.Background(), "other@example.com")
 	if err != nil {
 		t.Fatalf("setup: CreateUser other: %v", err)
 	}

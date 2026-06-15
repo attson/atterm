@@ -4,85 +4,46 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/mail"
+	"time"
 
 	"github.com/attson/atterm/internal/userstore"
 )
 
-// bootstrapAdmin reconciles the relay's admin role with the
-// ATTERM_BOOTSTRAP_ADMIN_EMAIL / _PASSWORD env vars on startup. See
-// docs/superpowers/specs/2026-05-17-web-ui-redesign-design.md.
+// bootstrapAdminTokenTTL is how long the operator has to complete OPAQUE
+// registration with the printed claim token. One week is generous enough
+// for a relay that boots, prints the token, and is left waiting for the
+// operator to come back to it — and short enough that a forgotten token
+// rotates out on its own.
+const bootstrapAdminTokenTTL = 7 * 24 * time.Hour
+
+// bootstrapAdmin mints a single-use claim token that the operator uses to
+// complete OPAQUE registration as the named admin email. The plaintext
+// token is printed once; it cannot be recovered after this run.
 //
-//   - email == ""                          → no-op (returns "", nil, nil).
-//   - email + existing user                → promote, ignore password,
-//     WARN if password was set, mint session, return token.
-//   - email + missing user + valid password → create as admin, WARN to
-//     unset the password env now, mint session, return token.
-//   - malformed email                      → error; caller log.Fatalfs.
-//   - weak/empty password (create path)    → error; caller log.Fatalfs.
-func bootstrapAdmin(ctx context.Context, store userstore.Store, email, password string) (string, *userstore.User, error) {
+// OPAQUE requires a client-side protocol round (the user types their
+// password into a client that runs RegistrationInit / RegistrationFinalize),
+// so the server can no longer accept a password on boot. The claim token
+// is the rendezvous: the operator pastes it into the registration flow,
+// which validates the token, creates the user, consumes the token, and
+// promotes the new user to admin via SetUserAdmin.
+//
+// Empty email is treated as "no bootstrap requested" and returns nil so
+// that local-only relays without ATTERM_BOOTSTRAP_ADMIN_EMAIL set still
+// boot cleanly.
+func bootstrapAdmin(ctx context.Context, store userstore.Store, email string) error {
 	if email == "" {
-		return "", nil, nil
+		return nil // no admin bootstrap requested
 	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		return "", nil, fmt.Errorf("ATTERM_BOOTSTRAP_ADMIN_EMAIL: %w", err)
+	sqliteStore, ok := store.(*userstore.SQLiteStore)
+	if !ok {
+		return fmt.Errorf("bootstrap admin: store is not SQLite (got %T)", store)
 	}
-	// If the password is set, enforce the bootstrap strength rule now —
-	// it's a no-op when the user already exists (EnsureAdminUser will
-	// ignore it), but a misconfigured weak password should still fail
-	// fast so the operator notices.
-	if password != "" {
-		if err := validateBootstrapPassword(password); err != nil {
-			return "", nil, err
-		}
-	}
-	created, err := store.EnsureAdminUser(ctx, email, password)
+	plaintext, err := sqliteStore.CreateClaimToken(ctx, email, "admin", bootstrapAdminTokenTTL)
 	if err != nil {
-		return "", nil, err
+		return fmt.Errorf("bootstrap admin: %w", err)
 	}
-
-	// Look up the user to get its ID for session creation
-	// For a newly created user with a password, VerifyPassword will succeed.
-	// For an existing user that was promoted, VerifyPassword might fail if the
-	// password env var is empty or wrong, so fall back to ListUsers.
-	var user *userstore.User
-	if created && password != "" {
-		// Newly created user with password - VerifyPassword should work
-		user, err = store.VerifyPassword(ctx, email, password)
-		if err != nil {
-			return "", nil, fmt.Errorf("verify password for new user: %w", err)
-		}
-	} else {
-		// Existing user (created=false) - look up by listing users since
-		// password may not be known or may have changed
-		users, err := store.ListUsers(ctx)
-		if err != nil {
-			return "", nil, fmt.Errorf("list users: %w", err)
-		}
-		for i := range users {
-			if users[i].Email == email {
-				user = &users[i]
-				break
-			}
-		}
-		if user == nil {
-			return "", nil, fmt.Errorf("user not found after ensure: %s", email)
-		}
-	}
-
-	if created {
-		log.Printf("WARN: bootstrap created admin user %s — unset ATTERM_BOOTSTRAP_ADMIN_PASSWORD and restart to remove the credential from process state.", email)
-	} else if password != "" {
-		log.Printf("WARN: ATTERM_BOOTSTRAP_ADMIN_PASSWORD set but %s already exists — password ignored. Unset the env to remove it from process state.", email)
-	} else {
-		log.Printf("promoted existing user to admin: %s", email)
-	}
-
-	// Mint a session token for the newly created/promoted admin user
-	tok, _, err := store.CreateSession(ctx, user.ID, "bootstrap", "", userstore.DefaultSessionTTL)
-	if err != nil {
-		return "", nil, fmt.Errorf("bootstrap: create session: %w", err)
-	}
-
-	return tok, user, nil
+	log.Printf("bootstrap-admin: claim token for %s (expires in 7 days):", email)
+	log.Printf("    %s", plaintext)
+	log.Printf("bootstrap-admin: complete OPAQUE registration via POST /api/auth/register/finalize with this token in claim_token to receive admin role")
+	return nil
 }

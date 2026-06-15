@@ -159,7 +159,7 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	u, err := store.CreateUser(ctx, "admin@example.com", "passphrase-1234567890")
+	u, err := store.CreateOpaqueUser(ctx, "admin@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

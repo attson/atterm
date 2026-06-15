@@ -133,7 +133,7 @@ func newClientTestStore(t *testing.T) (store *userstore.SQLiteStore, userAID, to
 	}
 	t.Cleanup(func() { store.Close() })
 
-	userA, err := store.CreateUser(ctx, "usera@example.com", "correcthorsebatterystaple")
+	userA, err := store.CreateOpaqueUser(ctx, "usera@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser A: %v", err)
 	}
@@ -143,7 +143,7 @@ func newClientTestStore(t *testing.T) (store *userstore.SQLiteStore, userAID, to
 		t.Fatalf("CreateSession A: %v", err)
 	}
 
-	userB, err := store.CreateUser(ctx, "userb@example.com", "correcthorsebatterystaple2")
+	userB, err := store.CreateOpaqueUser(ctx, "userb@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser B: %v", err)
 	}

@@ -27,7 +27,7 @@ func newUplinkTestStore(t *testing.T) (*userstore.SQLiteStore, string, string) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	user, err := store.CreateUser(ctx, "alice@example.com", "correcthorsebatterystaple")
+	user, err := store.CreateOpaqueUser(ctx, "alice@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 	store, _, _ := newUplinkTestStore(t) // alice already created
 
 	// Create a second user (bob) and their API token.
-	bob, err := store.CreateUser(ctx, "bob@example.com", "correcthorsebatterystaple2")
+	bob, err := store.CreateOpaqueUser(ctx, "bob@example.com")
 	if err != nil {
 		t.Fatalf("CreateUser bob: %v", err)
 	}
@@ -168,9 +168,9 @@ func TestUplink_DuplicateSessionIDDifferentUser_Closes(t *testing.T) {
 	// Re-fetch alice's user record and mint a fresh session token. The
 	// newUplinkTestStore helper created alice; we want her id to assert
 	// ownership stays under her after bob's conflict attempt.
-	alice, err := store.VerifyPassword(ctx, "alice@example.com", "correcthorsebatterystaple")
+	alice, err := store.GetUserByEmail(ctx, "alice@example.com")
 	if err != nil {
-		t.Fatalf("VerifyPassword alice: %v", err)
+		t.Fatalf("GetUserByEmail alice: %v", err)
 	}
 	aliceTok, _, err := store.CreateSession(ctx, alice.ID, "alice-uplink-2", "127.0.0.1", userstore.DefaultSessionTTL)
 	if err != nil {

@@ -43,7 +43,6 @@ func main() {
 
 	publicListen := isPublicListenAddr(*addr)
 	bootstrapEmail := strings.TrimSpace(os.Getenv("ATTERM_BOOTSTRAP_ADMIN_EMAIL"))
-	bootstrapPassword := os.Getenv("ATTERM_BOOTSTRAP_ADMIN_PASSWORD") // no trim — password may legitimately have whitespace
 
 	if publicListen && !*devInsecure && bootstrapEmail == "" {
 		log.Fatal("ATTERM_BOOTSTRAP_ADMIN_EMAIL must be set for a public relay; pass --dev-insecure to skip (development only)")
@@ -80,12 +79,17 @@ func main() {
 		log.Fatalf("open userstore: %v", err)
 	}
 
-	bootstrapTok, _, err := bootstrapAdmin(ctx, store, bootstrapEmail, bootstrapPassword)
+	// OPAQUE server singleton — loads persisted OPRF seed + AKE keypair, or
+	// generates them on first boot. Must run after userstore.Open (depends on
+	// the opaque_server_state table created by the 0003 migration) and before
+	// NewServer (Config.OpaqueServer is consumed there).
+	opaqueSrv, err := relay.LoadOrInitOpaqueServer(ctx, store)
 	if err != nil {
-		log.Fatalf("bootstrap admin: %v", err)
+		log.Fatalf("opaque server init: %v", err)
 	}
-	if bootstrapTok != "" {
-		log.Printf("bootstrap admin created; session_token=%s", bootstrapTok)
+
+	if err := bootstrapAdmin(ctx, store, bootstrapEmail); err != nil {
+		log.Fatalf("bootstrap admin: %v", err)
 	}
 
 	adminCfg := relay.AdminConfig{}
@@ -127,6 +131,7 @@ func main() {
 		AdminConfigStore:     adminStore,
 		Resolver:             resolver,
 		Store:                store,
+		OpaqueServer:         opaqueSrv,
 	}
 
 	wpSvc, wpErr := webpush.Open(persistDir, *vapidSubject)

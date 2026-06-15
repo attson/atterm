@@ -31,31 +31,26 @@ func (a *AuthServer) requireUser(w http.ResponseWriter, r *http.Request) (Princi
 	return Principal{Kind: kind, UserID: u.ID, Scope: authWrite}, true
 }
 
-// AuthServer handles the /api/auth/* and /api/me endpoints.
-//
-// Signup transaction order: consume invitation first, then create user.
-// If ConsumeInvitation succeeds but CreateUser fails (e.g. email taken),
-// the invitation is consumed but no user exists. This is documented as
-// DONE_WITH_CONCERNS: in that edge case the invite code is spent. The
-// alternative (create user first, compensate by deleting on invite failure)
-// requires a DeleteUser store method not yet in the interface. The chosen
-// order is simpler and the race is extremely unlikely in invite-only signup.
-// A true SQLite transaction combining both steps would eliminate the race
-// entirely; deferred to a follow-up task.
+// AuthServer hosts the /api/me, /api/auth/logout, /api/pair/*, and
+// /api/me/webhooks routes. The historical /api/auth/signup and
+// /api/auth/login routes were password-based and are gone; OPAQUE
+// equivalents live at /api/auth/{register,login}/{init,finalize},
+// registered separately by OpaqueAuthHandler.Register.
 type AuthServer struct {
 	Store userstore.Store
-	Argon *Argon2Pool
 	// Limits, when non-nil, enforces per-endpoint rate limits (SEC-5).
-	// Nil disables rate limiting (useful in some unit tests).
+	// Currently only invite-failure and signup limits are still relevant
+	// for the surviving handlers (pair-consume / future invite use); the
+	// login-failure limiter is consumed by the OPAQUE handler.
 	Limits *LimitRegistry
 	// FailureFloor enforces SEC-5: any failed response (invite invalid,
-	// wrong password, etc.) sleeps until at least this duration has elapsed.
+	// etc.) sleeps until at least this duration has elapsed.
 	// Default 200ms; ±50ms random jitter is added.
 	FailureFloor time.Duration
 }
 
 // Routes returns an http.Handler with all auth + me endpoints mounted. The
-// auth + pair-consume + logout routes are public-or-self-authenticating;
+// pair-consume and logout routes are public-or-self-authenticating;
 // protected routes are unwrapped — callers that want session enforcement
 // must use RegisterInto with a non-nil requireSession wrapper.
 func (a *AuthServer) Routes() http.Handler {
@@ -67,18 +62,22 @@ func (a *AuthServer) Routes() http.Handler {
 // RegisterInto registers all auth + me routes into the provided mux. The
 // requireSession argument wraps every protected route; pass nil to leave them
 // unwrapped (only useful when a higher-level mux applies the wrapper, or in
-// tests that exercise unauthenticated paths). Public routes — signup, login,
-// logout (idempotent), and pair-consume — are always registered bare.
+// tests that exercise unauthenticated paths). Public routes — logout
+// (idempotent) and pair-consume — are always registered bare.
 func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.HandlerFunc) http.HandlerFunc) {
 	wrap := requireSession
 	if wrap == nil {
 		wrap = func(h http.HandlerFunc) http.HandlerFunc { return h }
 	}
 	// Public — no session required.
-	mux.Handle("POST /api/auth/signup", http.HandlerFunc(a.handleSignup))
-	mux.Handle("POST /api/auth/login", http.HandlerFunc(a.handleLogin))
 	mux.Handle("POST /api/auth/logout", http.HandlerFunc(a.handleLogout))
 	mux.Handle("POST /api/pair/consume", http.HandlerFunc(a.handlePairConsume))
+	// Retired endpoints — kept registered so old clients (bundled
+	// internal/relay/web-dist/* + web/src/*) get a structured 410 instead
+	// of a bare 404 when they POST password-auth payloads.
+	mux.Handle("POST /api/auth/login", http.HandlerFunc(removedRoute))
+	mux.Handle("POST /api/auth/signup", http.HandlerFunc(removedRoute))
+	mux.Handle("POST /api/me/password", http.HandlerFunc(removedRoute))
 	// Protected — session token required.
 	mux.Handle("GET /api/me", wrap(a.handleMe))
 	mux.Handle("DELETE /api/me", wrap(a.handleDeleteMe))
@@ -88,7 +87,6 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.H
 	mux.Handle("GET /api/me/webhooks", wrap(a.handleListWebhooks))
 	mux.Handle("POST /api/me/webhooks", wrap(a.handleCreateWebhook))
 	mux.Handle("DELETE /api/me/webhooks/{id}", wrap(a.handleDeleteWebhook))
-	mux.Handle("POST /api/me/password", wrap(a.handleChangePassword))
 	mux.Handle("GET /api/me/preferences", wrap(a.handleGetPreferences))
 	mux.Handle("PUT /api/me/preferences", wrap(a.handlePutPreferences))
 	mux.Handle("POST /api/pair/create", wrap(a.handlePairCreate))
@@ -114,6 +112,18 @@ func (a *AuthServer) failureSleep(start time.Time) {
 	}
 }
 
+// removedRoute responds 410 Gone for the legacy bcrypt auth endpoints
+// that were retired in M1a (see docs/superpowers/specs/2026-06-15-relay-e2ee-design.md).
+// Clients posting to these paths must upgrade to the OPAQUE flow at
+// /api/auth/register/{init,finalize} and /api/auth/login/{init,finalize}.
+func removedRoute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusGone)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": "endpoint removed; client must use OPAQUE flow at /api/auth/register and /api/auth/login (init/finalize)",
+	})
+}
+
 // writeJSONStatus writes a JSON response with the given status code.
 func writeJSONStatus(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -133,163 +143,6 @@ func ipPrefix(r *http.Request) string {
 		host = host[:i]
 	}
 	return host
-}
-
-// handleSignup implements POST /api/auth/signup.
-//
-// Flow:
-//  1. Validate email format and password length (≥ 12 chars).
-//  2. CreateUser (hashes password, inserts row).
-//  3. ConsumeInvitation atomically. If invite is invalid the user row exists
-//     orphaned (no session, no invite binding) — acceptable for MVP.
-//  4. On email-taken (from CreateUser), return 409 immediately.
-//  5. Create session and return {session_token, expires_at, user} JSON.
-//
-// All error paths sleep to the failure floor (SEC-5). Invite errors and
-// email-taken return distinct status codes per spec §5.2. No Set-Cookie is
-// emitted — clients store the returned session_token and send it as
-// Authorization: Bearer on subsequent requests.
-func (a *AuthServer) handleSignup(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-
-	// SEC-5: per-IP signup rate limit (5 / hour). Check before any work.
-	ip := ipPrefix(r)
-	if a.Limits != nil && !a.Limits.AllowSignup(ip) {
-		a.failureSleep(start)
-		writeError(w, http.StatusTooManyRequests, "rate_limited")
-		return
-	}
-
-	var body struct {
-		Email      string `json:"email"`
-		Password   string `json:"password"`
-		InviteCode string `json:"invite_code"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		a.failureSleep(start)
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return
-	}
-
-	// Validate password length first (cheap).
-	if len(body.Password) < 12 {
-		a.failureSleep(start)
-		writeError(w, http.StatusBadRequest, "password_weak")
-		return
-	}
-
-	// Validate email (simple check).
-	if !validEmail(body.Email) {
-		a.failureSleep(start)
-		writeError(w, http.StatusBadRequest, "invalid_email")
-		return
-	}
-
-	// Create the user first (hashes password, generates ULID).
-	u, err := a.Store.CreateUser(r.Context(), body.Email, body.Password)
-	if err != nil {
-		if errors.Is(err, userstore.ErrEmailTaken) {
-			a.failureSleep(start)
-			writeError(w, http.StatusConflict, "email_taken")
-			return
-		}
-		a.failureSleep(start)
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-
-	// Consume the invitation. If this fails (invalid/expired/race), the user
-	// row exists but is orphaned (no session, no invite binding). Acceptable
-	// for MVP; see struct comment.
-	if err := a.Store.ConsumeInvitation(r.Context(), body.InviteCode, u.ID); err != nil {
-		// SEC-5: per-IP invite-failure rate limit (10 / hour).
-		if a.Limits != nil && !a.Limits.AllowInviteFail(ip) {
-			a.failureSleep(start)
-			writeError(w, http.StatusTooManyRequests, "rate_limited")
-			return
-		}
-		a.failureSleep(start)
-		writeError(w, http.StatusBadRequest, "invite_invalid")
-		return
-	}
-
-	// Create session and return the plaintext token + user info in the body.
-	tok, sess, err := a.Store.CreateSession(r.Context(), u.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
-	if err != nil {
-		a.failureSleep(start)
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-
-	writeJSONStatus(w, http.StatusOK, map[string]any{
-		"session_token": tok,
-		"expires_at":    sess.ExpiresAt.Unix(),
-		"user": map[string]any{
-			"id":       u.ID,
-			"email":    u.Email,
-			"is_admin": u.IsAdmin,
-		},
-	})
-}
-
-// handleLogin implements POST /api/auth/login.
-//
-// Flow:
-//  1. Call Store.VerifyPassword — internally runs argon2 against real or dummy
-//     hash, so missing-email timing matches wrong-password timing (SEC-3).
-//  2. On success, create session and return {session_token, expires_at, user}.
-//  3. On failure (nil user), sleep to failure floor and return 401.
-//
-// No Set-Cookie is emitted — clients store the returned session_token and
-// send it as Authorization: Bearer on subsequent requests.
-func (a *AuthServer) handleLogin(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		a.failureSleep(start)
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return
-	}
-
-	user, err := a.Store.VerifyPassword(r.Context(), body.Email, body.Password)
-	if err != nil {
-		a.failureSleep(start)
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	if user == nil {
-		// SEC-5: per-(IP, sha256(email)) brute-force limit (10 / 5min).
-		// Check after VerifyPassword so the argon2 work always runs (timing parity).
-		if a.Limits != nil && !a.Limits.AllowLoginFailure(ipPrefix(r), sha256Hex(body.Email)) {
-			a.failureSleep(start)
-			writeError(w, http.StatusTooManyRequests, "rate_limited")
-			return
-		}
-		a.failureSleep(start)
-		writeError(w, http.StatusUnauthorized, "invalid_credentials")
-		return
-	}
-
-	tok, sess, err := a.Store.CreateSession(r.Context(), user.ID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
-	if err != nil {
-		a.failureSleep(start)
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-
-	writeJSONStatus(w, http.StatusOK, map[string]any{
-		"session_token": tok,
-		"expires_at":    sess.ExpiresAt.Unix(),
-		"user": map[string]any{
-			"id":       user.ID,
-			"email":    user.Email,
-			"is_admin": user.IsAdmin,
-		},
-	})
 }
 
 // handleLogout implements POST /api/auth/logout.
@@ -327,56 +180,6 @@ func (a *AuthServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONStatus(w, http.StatusOK, resp)
-}
-
-// handleChangePassword implements POST /api/me/password.
-//
-// Body: {"current_password": "...", "new_password": "..."}
-// On success: invalidates all sessions for the user, issues a fresh session,
-// and returns {session_token, expires_at} so the caller can replace its
-// bearer token.
-// Error paths: 400 password_weak (new < 12 chars), 401 current_password_wrong,
-// 500 on store/session errors.
-func (a *AuthServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.requireUser(w, r)
-	if !ok {
-		return
-	}
-
-	var body struct {
-		Current string `json:"current_password"`
-		New     string `json:"new_password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return
-	}
-
-	if len(body.New) < 12 {
-		writeError(w, http.StatusBadRequest, "password_weak")
-		return
-	}
-
-	err := a.Store.ChangePassword(r.Context(), p.UserID, body.Current, body.New)
-	if errors.Is(err, userstore.ErrPasswordIncorrect) {
-		writeError(w, http.StatusUnauthorized, "current_password_wrong")
-		return
-	}
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// All old sessions are now deleted. Issue a fresh session for the requester.
-	tok, sess, err := a.Store.CreateSession(r.Context(), p.UserID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	writeJSONStatus(w, http.StatusOK, map[string]any{
-		"session_token": tok,
-		"expires_at":    sess.ExpiresAt.Unix(),
-	})
 }
 
 // validEmail is a minimal email format check. The store normalises the case;

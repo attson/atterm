@@ -31,7 +31,7 @@ func TestResolveIdentity(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	u, err := store.CreateUser(ctx, "u@example.com", "passphrase-1234")
+	u, err := store.CreateOpaqueUser(ctx, "u@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestResolve_BearerSession_AdminUser_BecomesPrincipalAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	u, _ := store.CreateUser(ctx, "a@example.com", "passphrase-1234")
+	u, _ := store.CreateOpaqueUser(ctx, "a@example.com")
 	_ = store.SetUserAdmin(ctx, u.ID, true)
 	tok, _, _ := store.CreateSession(ctx, u.ID, "ua/test", "203.0.113.0/24", 24*time.Hour)
 
@@ -135,7 +135,7 @@ func TestResolve_BearerSession_NonAdminUser_StaysPrincipalUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	u, _ := store.CreateUser(ctx, "b@example.com", "passphrase-1234")
+	u, _ := store.CreateOpaqueUser(ctx, "b@example.com")
 	tok, _, _ := store.CreateSession(ctx, u.ID, "ua/test", "203.0.113.0/24", 24*time.Hour)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/me", nil)

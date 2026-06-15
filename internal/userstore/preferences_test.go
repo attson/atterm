@@ -23,7 +23,7 @@ func TestUserPreferences_TableExists(t *testing.T) {
 func TestGetUserPreferences_EmptyByDefault(t *testing.T) {
 	s := NewInMemory(t)
 	ctx := context.Background()
-	u, err := s.CreateUser(ctx, "x@y.com", "Correct-Horse-Battery-Staple-1!")
+	u, err := s.CreateOpaqueUser(ctx, "x@y.com")
 	if err != nil { t.Fatalf("CreateUser: %v", err) }
 
 	items, err := s.GetUserPreferences(ctx, u.ID)
@@ -36,7 +36,7 @@ func TestGetUserPreferences_EmptyByDefault(t *testing.T) {
 func TestGetUserPreferences_ReturnsStoredRows(t *testing.T) {
 	s := NewInMemory(t)
 	ctx := context.Background()
-	u, _ := s.CreateUser(ctx, "x@y.com", "Correct-Horse-Battery-Staple-1!")
+	u, _ := s.CreateOpaqueUser(ctx, "x@y.com")
 
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_preferences(user_id, key, value_json, updated_at)
@@ -70,7 +70,7 @@ func TestGetUserPreferences_ReturnsStoredRows(t *testing.T) {
 func TestSetUserPreferences_InsertsNewRows(t *testing.T) {
 	s := NewInMemory(t)
 	ctx := context.Background()
-	u, _ := s.CreateUser(ctx, "x@y.com", "Correct-Horse-Battery-Staple-1!")
+	u, _ := s.CreateOpaqueUser(ctx, "x@y.com")
 
 	now := int64(1700000000000)
 	result, err := s.SetUserPreferences(ctx, u.ID, now, []PreferenceItem{
@@ -88,7 +88,7 @@ func TestSetUserPreferences_InsertsNewRows(t *testing.T) {
 func TestSetUserPreferences_RejectsOlderTimestamp(t *testing.T) {
 	s := NewInMemory(t)
 	ctx := context.Background()
-	u, _ := s.CreateUser(ctx, "x@y.com", "Correct-Horse-Battery-Staple-1!")
+	u, _ := s.CreateOpaqueUser(ctx, "x@y.com")
 
 	_, _ = s.SetUserPreferences(ctx, u.ID, 5000, []PreferenceItem{
 		{Key: "locale_preference", ValueJSON: json.RawMessage(`"zh-CN"`), UpdatedAt: 4000},
@@ -109,7 +109,7 @@ func TestSetUserPreferences_RejectsOlderTimestamp(t *testing.T) {
 func TestSetUserPreferences_UnknownKeyRejected(t *testing.T) {
 	s := NewInMemory(t)
 	ctx := context.Background()
-	u, _ := s.CreateUser(ctx, "x@y.com", "Correct-Horse-Battery-Staple-1!")
+	u, _ := s.CreateOpaqueUser(ctx, "x@y.com")
 
 	_, err := s.SetUserPreferences(ctx, u.ID, 1, []PreferenceItem{
 		{Key: "evil_key", ValueJSON: json.RawMessage(`"x"`), UpdatedAt: 1},
@@ -122,7 +122,7 @@ func TestSetUserPreferences_UnknownKeyRejected(t *testing.T) {
 func TestSetUserPreferences_TypeMismatchRejected(t *testing.T) {
 	s := NewInMemory(t)
 	ctx := context.Background()
-	u, _ := s.CreateUser(ctx, "x@y.com", "Correct-Horse-Battery-Staple-1!")
+	u, _ := s.CreateOpaqueUser(ctx, "x@y.com")
 
 	_, err := s.SetUserPreferences(ctx, u.ID, 1, []PreferenceItem{
 		{Key: "locale_preference", ValueJSON: json.RawMessage(`true`), UpdatedAt: 1},

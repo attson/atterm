@@ -179,6 +179,21 @@ func (a *App) startup(ctx context.Context) {
 			log.Fatalf("desktop: init logging: %v", err)
 		}
 	}
+	// Restore the E2EE account_key from the OS keychain if a previous
+	// login persisted one. Failures are logged but never fatal — a
+	// missing or corrupted entry just means the user has to log in
+	// again. This MUST run before applyRelayConfig so the uplink picks
+	// up the unlocked key on the same boot.
+	if cfg.RelayURL != "" && cfg.RelaySessionUserID != "" {
+		if key, err := loadAccountKey(cfg.RelayURL, cfg.RelaySessionUserID); err != nil {
+			log.Printf("desktop: load persisted account_key: %v", err)
+		} else if len(key) > 0 {
+			a.accountKeyMu.Lock()
+			a.accountKey = key
+			a.accountKeyMu.Unlock()
+			log.Printf("desktop: account_key restored from keychain (user=%s)", cfg.RelaySessionUserID)
+		}
+	}
 	a.applyRelayConfig(cfg)
 	if a.updater != nil {
 		a.updater.SetGHProxyURL(cfg.UpdateGHProxyURL)
@@ -462,12 +477,32 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 // callers see the most recent successful value via accountKeySnapshot.
 func (a *App) setAccountKey(key []byte) {
 	a.accountKeyMu.Lock()
-	defer a.accountKeyMu.Unlock()
 	if len(key) == 0 {
 		a.accountKey = nil
+	} else {
+		a.accountKey = append([]byte(nil), key...)
+	}
+	a.accountKeyMu.Unlock()
+	a.persistAccountKey(key)
+}
+
+// persistAccountKey writes (or clears) the account_key for the currently
+// configured (relay URL, user ID). Failures are logged but never
+// returned — losing the persistence is a UX regression (requires
+// re-login on app restart) but not a correctness one (in-memory key is
+// still set / cleared). Callers MUST hold accountKeyMu released so the
+// keychain syscall doesn't lengthen the critical section.
+func (a *App) persistAccountKey(key []byte) {
+	if a.cfgStore == nil {
 		return
 	}
-	a.accountKey = append([]byte(nil), key...)
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionUserID == "" {
+		return
+	}
+	if err := saveAccountKey(cfg.RelayURL, cfg.RelaySessionUserID, key); err != nil {
+		log.Printf("desktop: persist account_key failed: %v", err)
+	}
 }
 
 // accountKeySnapshot returns a defensive copy of the current account_key

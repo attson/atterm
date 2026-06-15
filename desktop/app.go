@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/connhealth"
+	"github.com/attson/atterm/internal/e2eeclient"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
@@ -124,6 +125,15 @@ type App struct {
 	writeFile writeFileFunc
 
 	prefsSync *prefssync.Engine
+
+	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
+	// the most recent successful LoginRemoteRelay / RegisterRemoteRelay.
+	// In-memory only in v1 — lost on app restart, requires re-login. A
+	// future milestone will persist it via OS keychain. Protected by
+	// accountKeyMu because the uplink reads it while the foreground
+	// thread might rewrap during password change.
+	accountKeyMu sync.Mutex
+	accountKey   []byte
 }
 
 // NewApp creates a new App application struct.
@@ -340,53 +350,27 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(map[string]string{
-		"email":    email,
-		"password": password,
-	})
-	if err != nil {
-		return err
-	}
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", httpURL+"/api/auth/login", bytes.NewReader(body))
+	c := &e2eeclient.Client{BaseURL: httpURL}
+	res, err := c.Login(ctx, email, password)
 	if err != nil {
-		return err
+		return fmt.Errorf("relay OPAQUE login: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("relay /api/auth/login returned status %d", resp.StatusCode)
-	}
-	var out struct {
-		SessionToken string `json:"session_token"`
-		ExpiresAt    int64  `json:"expires_at"`
-		User         struct {
-			ID string `json:"id"`
-		} `json:"user"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return fmt.Errorf("relay /api/auth/login: decode response: %w", err)
-	}
-	if out.SessionToken == "" {
-		return fmt.Errorf("relay /api/auth/login: empty session_token")
-	}
+	a.setAccountKey(res.AccountKey)
 	// RemotePermission is preserved from the persisted config (the login form
 	// doesn't surface it). AllowInsecureRelay comes from the call argument so
 	// the validator inside SetRelayConfig sees the form's current checkbox
 	// state rather than the previously persisted flag — necessary for
-	// ws:// targets the user is just now opting into.
+	// ws:// targets the user is just now opting into. Session expiry is no
+	// longer returned by the OPAQUE login response (it lives entirely on the
+	// relay side); the frontend will rely on 401-on-expiry instead.
 	prev := a.GetRelayConfig()
 	if err := a.SetRelayConfig(RelayConfig{
 		URL:                wsURL,
-		Token:              out.SessionToken,
-		SessionExpiresAt:   out.ExpiresAt,
+		Token:              res.SessionToken,
 		AllowInsecureRelay: allowInsecure,
 		RemotePermission:   prev.RemotePermission,
 	}); err != nil {
@@ -398,7 +382,7 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	if a.cfgStore != nil {
 		cfg := a.cfgStore.Get()
 		cfg.RelayLastEmail = email
-		cfg.RelaySessionUserID = out.User.ID
+		cfg.RelaySessionUserID = res.UserID
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}
@@ -423,6 +407,86 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 		}()
 	}
 	return nil
+}
+
+// RegisterRemoteRelay creates a fresh OPAQUE-authenticated account on the
+// remote relay (POST /api/auth/register/init + /finalize via SDK), mints a
+// session token, persists URL+token+email locally, and stores the freshly
+// generated account_key in memory. claimToken is optional — supply the
+// plaintext token printed by `atterm-relay` bootstrap to also promote the
+// new user to admin.
+//
+// On success behaves identically to LoginRemoteRelay (same SetRelayConfig
+// + prefsSync seed path); on failure the call returns the underlying
+// SDK error verbatim so the frontend can surface a meaningful message.
+func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, allowInsecure bool) error {
+	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
+	if relayURL == "" {
+		return fmt.Errorf("relay url is empty")
+	}
+	httpURL, wsURL, err := relayLoginEndpoints(relayURL)
+	if err != nil {
+		return err
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c := &e2eeclient.Client{BaseURL: httpURL}
+	res, err := c.Register(ctx, email, password, claimToken)
+	if err != nil {
+		return fmt.Errorf("relay OPAQUE register: %w", err)
+	}
+	a.setAccountKey(res.AccountKey)
+	prev := a.GetRelayConfig()
+	if err := a.SetRelayConfig(RelayConfig{
+		URL:                wsURL,
+		Token:              res.SessionToken,
+		AllowInsecureRelay: allowInsecure,
+		RemotePermission:   prev.RemotePermission,
+	}); err != nil {
+		return err
+	}
+	if a.cfgStore != nil {
+		cfg := a.cfgStore.Get()
+		cfg.RelayLastEmail = email
+		cfg.RelaySessionUserID = res.UserID
+		if err := a.cfgStore.Set(cfg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// setAccountKey stores key as the current in-memory account_key. Concurrent
+// callers see the most recent successful value via accountKeySnapshot.
+func (a *App) setAccountKey(key []byte) {
+	a.accountKeyMu.Lock()
+	defer a.accountKeyMu.Unlock()
+	if len(key) == 0 {
+		a.accountKey = nil
+		return
+	}
+	a.accountKey = append([]byte(nil), key...)
+}
+
+// accountKeySnapshot returns a defensive copy of the current account_key
+// (or nil if unlocked). The uplink consumes this to derive per-session
+// frame keys once frame-level encryption ships in M2.
+func (a *App) accountKeySnapshot() []byte {
+	a.accountKeyMu.Lock()
+	defer a.accountKeyMu.Unlock()
+	if len(a.accountKey) == 0 {
+		return nil
+	}
+	return append([]byte(nil), a.accountKey...)
+}
+
+// HasAccountKey reports whether an account_key is currently unlocked in
+// memory. The frontend uses this to decide whether to surface a "unlock"
+// prompt vs assume the user just needs to re-authenticate.
+func (a *App) HasAccountKey() bool {
+	return len(a.accountKeySnapshot()) > 0
 }
 
 // ProbeRelayVersion does a lightweight GET <relayURL>/api/version to verify

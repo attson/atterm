@@ -14,10 +14,12 @@ package relay
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/bytemare/ksf"
 	"github.com/bytemare/opaque"
 
 	"github.com/attson/atterm/internal/userstore"
@@ -27,7 +29,14 @@ import (
 // keys were generated under. Stored verbatim so a later suite change can
 // surface a clear error instead of letting SetKeyMaterial reject the
 // material with an opaque (heh) message.
-const opaqueSuiteTag = "default-v1"
+//
+// v2: P256Sha256 + Scrypt — chosen so the @cloudflare/opaque-ts client
+// library (which only ships P-256 / P-384 / P-521 suites and Scrypt or
+// Identity as memory-hard function) can interop with this server. v1
+// was opaque.DefaultConfiguration (ristretto255-SHA512 + Argon2id),
+// which was the secure default but unreachable from browsers without
+// shipping a custom WASM build.
+const opaqueSuiteTag = "p256-scrypt-v1"
 
 // opaqueServerIdentity is the relay's static server identity, mixed into
 // every AKE transcript via SetKeyMaterial. Clients pin this string, so it
@@ -53,8 +62,20 @@ type OpaqueServer struct {
 // LoadOrInitOpaqueServer and any test that needs to talk to the server
 // should go through this helper so a future suite tweak only edits one
 // place.
+//
+// P256-SHA256 with Scrypt is the CFRG-recommended "TLS 1.3-compatible"
+// OPAQUE configuration; @cloudflare/opaque-ts ships matching client
+// support so a browser can speak this protocol to the relay directly.
 func defaultConfig() *opaque.Configuration {
-	return opaque.DefaultConfiguration()
+	return &opaque.Configuration{
+		OPRF:    opaque.P256Sha256,
+		KDF:     crypto.SHA256,
+		MAC:     crypto.SHA256,
+		Hash:    crypto.SHA256,
+		KSF:     ksf.Scrypt,
+		AKE:     opaque.P256Sha256,
+		Context: nil,
+	}
 }
 
 // LoadOrInitOpaqueServer returns the relay's OPAQUE server singleton.

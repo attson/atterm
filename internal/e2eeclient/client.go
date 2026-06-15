@@ -16,7 +16,9 @@ package e2eeclient
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/rand"
+	_ "crypto/sha256" // register SHA-256 so crypto.SHA256.Available() returns true
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/bytemare/ksf"
 	"github.com/bytemare/opaque"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -284,8 +287,22 @@ var ErrInvalidPassword = errors.New("e2eeclient: invalid password")
 
 // ---- internal helpers ----
 
+// defaultOpaqueConfig MUST match internal/relay/opaque_server.go's
+// defaultConfig — different cipher suites produce non-interoperable
+// protocol bytes. P-256-SHA256 + Scrypt is the CFRG-recommended
+// TLS-1.3-compatible OPAQUE configuration; this is also the suite the
+// browser/web-side @cloudflare/opaque-ts speaks, so a future TS client
+// can interop with the same relay.
 func defaultOpaqueConfig() *opaque.Configuration {
-	return opaque.DefaultConfiguration()
+	return &opaque.Configuration{
+		OPRF:    opaque.P256Sha256,
+		KDF:     crypto.SHA256,
+		MAC:     crypto.SHA256,
+		Hash:    crypto.SHA256,
+		KSF:     ksf.Scrypt,
+		AKE:     opaque.P256Sha256,
+		Context: nil,
+	}
 }
 
 // wrapAccountKey derives wrap_key = Argon2id(password, salt, params),

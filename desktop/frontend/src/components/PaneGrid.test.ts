@@ -35,6 +35,8 @@ describe("PaneGrid close button", () => {
         { sessionId: "left", remote: false },
         { sessionId: "right", remote: false },
       ],
+      colRatio: 0.5,
+      rowRatio: 0.5,
     };
 
     const wrapper = mount(PaneGrid, {

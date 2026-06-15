@@ -45,7 +45,7 @@ import type { Endpoint, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionInfo } from "./lib/connection";
 import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
-import { closePane, focusNeighbor, transitionLayout } from "./lib/layout";
+import { RATIO_DEFAULT, closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import {
@@ -595,6 +595,8 @@ async function startNewTab() {
       layout: "single",
       panes: [{ sessionId: sid, remote: false }],
       activePaneIdx: 0,
+      colRatio: RATIO_DEFAULT,
+      rowRatio: RATIO_DEFAULT,
     });
     gotoTab(id);
   } catch (e: any) {
@@ -629,7 +631,7 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
     }
   }
 
-  const result = transitionLayout(t.layout, t.panes, t.activePaneIdx, dir);
+  const result = transitionLayout(t.layout, t.panes, t.activePaneIdx, dir, t.colRatio, t.rowRatio);
   if (result.noop) {
     showToast(i18nT("app.paneFull"));
     return;
@@ -638,6 +640,8 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
   t.layout = result.layout;
   t.panes = result.panes;
   t.activePaneIdx = result.activePaneIdx;
+  t.colRatio = result.colRatio;
+  t.rowRatio = result.rowRatio;
 
   if (mode === "pick") {
     pickerCtx.value = { tabId: t.id, paneIdx: result.newPaneIdx };
@@ -685,10 +689,12 @@ async function closePaneAt(t: Tab, idx: number) {
   if (target?.sessionId && !target.remote) {
     try { await closeSession(target.sessionId); } catch { /* sweep cleans up */ }
   }
-  const r = closePane(t.layout, t.panes, idx);
+  const r = closePane(t.layout, t.panes, idx, t.colRatio, t.rowRatio);
   t.layout = r.layout;
   t.panes = r.panes;
   t.activePaneIdx = r.activePaneIdx;
+  t.colRatio = r.colRatio;
+  t.rowRatio = r.rowRatio;
   if (r.closeTab) {
     closeTab(t.id);
   }
@@ -743,6 +749,8 @@ function openRemoteAsTab(sessionId: string) {
     layout: "single",
     panes: [{ sessionId, remote: true }],
     activePaneIdx: 0,
+    colRatio: RATIO_DEFAULT,
+    rowRatio: RATIO_DEFAULT,
   });
   gotoTab(id);
 }

@@ -1,5 +1,5 @@
 // Pure layout state transitions. No DOM, no Vue, no IO. Tested via vitest.
-// See docs/superpowers/specs/2026-05-10-pane-split-layouts-design.md.
+// See docs/superpowers/specs/2026-06-15-multi-pane-resize-design.md.
 
 import type {
   FocusDir,
@@ -9,6 +9,17 @@ import type {
   Tab,
 } from "./types";
 import { EMPTY_PANE, PANE_COUNT } from "./types";
+
+export const RATIO_MIN = 0.1;
+export const RATIO_MAX = 0.9;
+export const RATIO_DEFAULT = 0.5;
+
+export function clampRatio(r: number): number {
+  if (!Number.isFinite(r)) return RATIO_DEFAULT;
+  if (r < RATIO_MIN) return RATIO_MIN;
+  if (r > RATIO_MAX) return RATIO_MAX;
+  return r;
+}
 
 const empty = (): Pane => ({ ...EMPTY_PANE });
 
@@ -22,6 +33,9 @@ export interface TransitionResult {
   // True when the layout is full (grid2x2 with no empty slot). Caller should
   // surface a "pane full" toast and not start any new session.
   noop?: boolean;
+  // Pane ratios threaded through so the tab's geometry survives transitions.
+  colRatio: number;
+  rowRatio: number;
 }
 
 export function transitionLayout(
@@ -29,6 +43,8 @@ export function transitionLayout(
   panes: Pane[],
   activeIdx: number,
   dir: SplitDir,
+  colRatio: number,
+  rowRatio: number,
 ): TransitionResult {
   if (current === "single") {
     // Direction matters here: it picks vertical vs horizontal layout.
@@ -38,6 +54,8 @@ export function transitionLayout(
       panes: [{ ...panes[0] }, empty()],
       activePaneIdx: 1,
       newPaneIdx: 1,
+      colRatio,
+      rowRatio,
     };
   }
 
@@ -52,6 +70,8 @@ export function transitionLayout(
       panes: next,
       activePaneIdx: newIdx,
       newPaneIdx: newIdx,
+      colRatio,
+      rowRatio,
     };
   }
 
@@ -65,6 +85,8 @@ export function transitionLayout(
       panes: next,
       activePaneIdx: newIdx,
       newPaneIdx: newIdx,
+      colRatio,
+      rowRatio,
     };
   }
 
@@ -77,6 +99,8 @@ export function transitionLayout(
       activePaneIdx: activeIdx,
       newPaneIdx: -1,
       noop: true,
+      colRatio,
+      rowRatio,
     };
   }
   return {
@@ -84,6 +108,8 @@ export function transitionLayout(
     panes: panes.map((p) => ({ ...p })),
     activePaneIdx: emptyIdx,
     newPaneIdx: emptyIdx,
+    colRatio,
+    rowRatio,
   };
 }
 
@@ -95,12 +121,16 @@ export interface CloseResult {
   //   - layout was `single`
   //   - layout becomes `single` with no survivor (no filled panes left)
   closeTab?: boolean;
+  colRatio: number;
+  rowRatio: number;
 }
 
 export function closePane(
   layout: LayoutKind,
   panes: Pane[],
   closeIdx: number,
+  colRatio: number,
+  rowRatio: number,
 ): CloseResult {
   if (layout === "single") {
     return {
@@ -108,6 +138,8 @@ export function closePane(
       panes: panes.map((p) => ({ ...p })),
       activePaneIdx: 0,
       closeTab: true,
+      colRatio,
+      rowRatio,
     };
   }
 
@@ -117,6 +149,8 @@ export function closePane(
       layout: "single",
       panes: [{ ...panes[survivorIdx] }],
       activePaneIdx: 0,
+      colRatio,
+      rowRatio,
     };
   }
 
@@ -133,11 +167,13 @@ export function closePane(
       layout: "grid2x2",
       panes: next,
       activePaneIdx: filledIndices[0],
+      colRatio,
+      rowRatio,
     };
   }
 
   if (filled === 2) {
-    return reduceTwoFilled(next, filledIndices);
+    return reduceTwoFilled(next, filledIndices, colRatio, rowRatio);
   }
 
   if (filled === 1) {
@@ -145,6 +181,8 @@ export function closePane(
       layout: "single",
       panes: [{ ...next[filledIndices[0]] }],
       activePaneIdx: 0,
+      colRatio,
+      rowRatio,
     };
   }
 
@@ -154,10 +192,17 @@ export function closePane(
     panes: [empty()],
     activePaneIdx: 0,
     closeTab: true,
+    colRatio,
+    rowRatio,
   };
 }
 
-function reduceTwoFilled(panes: Pane[], idx: number[]): CloseResult {
+function reduceTwoFilled(
+  panes: Pane[],
+  idx: number[],
+  colRatio: number,
+  rowRatio: number,
+): CloseResult {
   // panes is the post-close grid2x2 slice (length 4); idx are the two filled
   // indices in ascending order. Map back to vertical/horizontal:
   //   {0,1} top row    → vertical  [pane@0, pane@1]
@@ -173,6 +218,8 @@ function reduceTwoFilled(panes: Pane[], idx: number[]): CloseResult {
     layout,
     panes: [{ ...panes[a] }, { ...panes[b] }],
     activePaneIdx: 0,
+    colRatio,
+    rowRatio,
   };
 }
 

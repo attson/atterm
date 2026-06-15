@@ -1,12 +1,14 @@
 <script lang="ts" setup>
-import { computed } from "vue";
+import { computed, ref, type CSSProperties } from "vue";
 import TerminalView from "./TerminalView.vue";
+import PaneSplitter from "./PaneSplitter.vue";
 import type { Endpoint } from "../lib/api";
 import type { SessionInfo } from "../lib/connection";
 import type { Pane, Tab } from "../lib/types";
 import type { TerminalThemeDefinition } from "../lib/terminalThemes";
 import { extractSessionLabel } from "../lib/terminalBell";
 import { useI18n } from "../i18n/useI18n";
+import { RATIO_DEFAULT, clampRatio } from "../lib/layout";
 
 const props = defineProps<{
   tab: Tab;
@@ -22,6 +24,8 @@ const emit = defineEmits<{
   (e: "set-active-pane", paneIdx: number): void;
   (e: "close-pane", paneIdx: number): void;
   (e: "toast", message: string): void;
+  (e: "update:col-ratio", ratio: number): void;
+  (e: "update:row-ratio", ratio: number): void;
 }>();
 
 const { t } = useI18n();
@@ -34,6 +38,59 @@ const AREA_FOR_LAYOUT = {
 } as const;
 
 const areaFor = computed(() => AREA_FOR_LAYOUT[props.tab.layout]);
+
+const gridRoot = ref<HTMLDivElement | null>(null);
+const dragging = ref(false);
+
+function getContainerRect(): DOMRect | null {
+  return gridRoot.value?.getBoundingClientRect() ?? null;
+}
+
+const gridStyle = computed<CSSProperties>(() => {
+  const c = clampRatio(props.tab.colRatio);
+  const r = clampRatio(props.tab.rowRatio);
+  const cl = c.toFixed(4);
+  const cr = (1 - c).toFixed(4);
+  const rt = r.toFixed(4);
+  const rb = (1 - r).toFixed(4);
+  switch (props.tab.layout) {
+    case "single":
+      return {};
+    case "vertical":
+      return { gridTemplate: `"a b" / ${cl}fr ${cr}fr` };
+    case "horizontal":
+      return { gridTemplate: `"a" ${rt}fr "b" ${rb}fr / 1fr` };
+    case "grid2x2":
+      return { gridTemplate: `"a b" ${rt}fr "c d" ${rb}fr / ${cl}fr ${cr}fr` };
+  }
+  return {};
+});
+
+const showColSplitter = computed(
+  () => props.tab.layout === "vertical" || props.tab.layout === "grid2x2",
+);
+const showRowSplitter = computed(
+  () => props.tab.layout === "horizontal" || props.tab.layout === "grid2x2",
+);
+
+function onColUpdate(next: number) {
+  emit("update:col-ratio", next);
+}
+function onRowUpdate(next: number) {
+  emit("update:row-ratio", next);
+}
+function onColReset() {
+  emit("update:col-ratio", RATIO_DEFAULT);
+}
+function onRowReset() {
+  emit("update:row-ratio", RATIO_DEFAULT);
+}
+function onSplitterPointerDown() {
+  dragging.value = true;
+}
+function onSplitterCommit() {
+  dragging.value = false;
+}
 
 function onPaneClick(idx: number) {
   if (idx !== props.tab.activePaneIdx) emit("set-active-pane", idx);
@@ -49,7 +106,12 @@ function formatWho(info: SessionInfo | null): string {
 </script>
 
 <template>
-  <div class="pane-grid" :class="tab.layout">
+  <div
+    ref="gridRoot"
+    class="pane-grid"
+    :class="tab.layout"
+    :style="gridStyle"
+  >
     <div
       v-for="(pane, idx) in tab.panes"
       :key="idx"
@@ -72,6 +134,7 @@ function formatWho(info: SessionInfo | null): string {
           :theme="terminalTheme"
           :is-local-session="!pane.remote"
           :command-notify-threshold-sec="commandNotifyThresholdSec"
+          :resize-suspended="dragging"
           @toast="emit('toast', $event)"
         />
         <div v-else class="empty">{{ t("terminal.emptyPaneHint") }}</div>
@@ -132,6 +195,27 @@ function formatWho(info: SessionInfo | null): string {
         >×</button>
       </div>
     </div>
+
+    <PaneSplitter
+      v-if="showColSplitter"
+      orientation="col"
+      :ratio="tab.colRatio"
+      :container-rect="getContainerRect"
+      @pointerdown="onSplitterPointerDown"
+      @update:ratio="onColUpdate"
+      @commit="onSplitterCommit"
+      @reset="onColReset"
+    />
+    <PaneSplitter
+      v-if="showRowSplitter"
+      orientation="row"
+      :ratio="tab.rowRatio"
+      :container-rect="getContainerRect"
+      @pointerdown="onSplitterPointerDown"
+      @update:ratio="onRowUpdate"
+      @commit="onSplitterCommit"
+      @reset="onRowReset"
+    />
   </div>
 </template>
 
@@ -143,10 +227,8 @@ function formatWho(info: SessionInfo | null): string {
   gap: 2px;
   background: var(--terminal-grid);
 }
-.pane-grid.single     { grid-template: "a"; }
-.pane-grid.vertical   { grid-template: "a b" / 1fr 1fr; }
-.pane-grid.horizontal { grid-template: "a" 1fr "b" 1fr; }
-.pane-grid.grid2x2    { grid-template: "a b" 1fr "c d" 1fr / 1fr 1fr; }
+.pane-grid.single { grid-template: "a"; }
+/* vertical / horizontal / grid2x2 templates set via :style from gridStyle */
 
 .cell {
   position: relative;

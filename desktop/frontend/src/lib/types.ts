@@ -1,5 +1,5 @@
 // Shared types for the per-tab pane-split layout model. See
-// docs/superpowers/specs/2026-05-10-pane-split-layouts-design.md.
+// docs/superpowers/specs/2026-06-15-multi-pane-resize-design.md.
 
 import type { SessionInfo } from "./connection";
 
@@ -32,6 +32,11 @@ export interface Tab {
   layout: LayoutKind;
   panes: Pane[];         // length matches layout: 1 / 2 / 2 / 4
   activePaneIdx: number; // index in panes[] of the keyboard-focused pane
+  // 0.1..0.9, left column share for vertical/grid2x2. Always present so
+  // callers don't branch; single/horizontal layouts ignore it.
+  colRatio: number;
+  // 0.1..0.9, top row share for horizontal/grid2x2. Same caveat as colRatio.
+  rowRatio: number;
 }
 
 export const PANE_COUNT: Record<LayoutKind, number> = {

@@ -976,6 +976,8 @@ onUnmounted(() => {
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
             @close-pane="(idx) => closePaneAt(t, idx)"
             @toast="showToast"
+            @update:col-ratio="(r) => { t.colRatio = r; }"
+            @update:row-ratio="(r) => { t.rowRatio = r; }"
           />
         </template>
         <div v-if="toast" class="toast">{{ toast }}</div>

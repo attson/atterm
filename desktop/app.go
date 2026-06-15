@@ -249,7 +249,7 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
-	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError)
+	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.accountKeySnapshot)
 	go a.uplink.Run(uplinkCtx)
 	log.Printf("desktop: uplink configured for %s", cfg.RelayURL)
 }

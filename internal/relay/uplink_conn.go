@@ -433,6 +433,9 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			ms := mirrors[f.SessionID]
 			mu.Unlock()
 			if ms != nil {
+				if looksLikeEncryptedOut(data) {
+					ms.sess.MarkContentOpaque()
+				}
 				if ms.sess.PushOut(seq, data) {
 					s.registry.NotifyChange()
 					handleTaskNotifications(f.SessionID, ms)
@@ -569,4 +572,21 @@ func taskNotificationKey(info proto.SessionInfo) int64 {
 		return info.LastOutputAt
 	}
 	return 1
+}
+
+// looksLikeEncryptedOut returns true when the inbound OUT data bytes have
+// the on-wire shape of an e2eecrypto envelope: cipher_id == 0x01 in byte
+// zero, length at least the minimum envelope (cipher_id + 24B nonce +
+// 16B Poly1305 tag). The check is intentionally heuristic — a plaintext
+// chunk starting with 0x01 (Ctrl-A) AND at least 41 bytes long would
+// false-positive, but Ctrl-A keystrokes are tiny single-byte chunks in
+// practice, so the overlap is vanishingly small. A false positive only
+// suppresses OSC parsing on the relay, which is the right side to err
+// on under the E2EE threat model.
+func looksLikeEncryptedOut(data []byte) bool {
+	const minEnvelopeLen = 1 + 24 + 16
+	if len(data) < minEnvelopeLen {
+		return false
+	}
+	return data[0] == 0x01
 }

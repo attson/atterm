@@ -48,6 +48,11 @@ type Session struct {
 	altScreen  bool
 	termTail   []byte
 	osc133Buf  []byte
+	// contentOpaque is the E2EE bypass flag. When set, PushOut treats the
+	// session's OUT bytes as opaque ciphertext and skips OSC 133 parsing /
+	// Summary accumulation. Set by uplink_conn the first time it sees the
+	// e2eecrypto cipher_id prefix on an inbound chunk. See MarkContentOpaque.
+	contentOpaque bool
 	// oscTitleBuf retains the tail of any unfinished OSC 0/1/2 (icon/window
 	// title) sequence so a terminator that lands on an Append boundary still
 	// parses. Independent from osc133Buf to keep the two parsers from
@@ -432,15 +437,46 @@ func (s *Session) UpdateSize(cols, rows uint16) {
 // It records the chunk to scrollback and fans out to current subscribers.
 // Slow subscribers are dropped (their channels are closed) so they reconnect.
 // It returns true when advertised task metadata changed.
+//
+// When the session is marked content-opaque (see MarkContentOpaque), the
+// OSC 133 parser is bypassed — the data bytes are treated as ciphertext
+// the relay is structurally unable to read. Task state, exit codes, and
+// Summary continue to come from agent-supplied META events instead.
 func (s *Session) PushOut(seq uint64, data []byte) bool {
-	metaChanged := s.updateTerminalState(data)
-	if metaChanged {
-		s.broadcastCurrentMeta()
+	var metaChanged bool
+	if !s.isContentOpaque() {
+		metaChanged = s.updateTerminalState(data)
+		if metaChanged {
+			s.broadcastCurrentMeta()
+		}
 	}
 	s.scroll.Push(ringbuf.Chunk{Seq: seq, Data: append([]byte(nil), data...)})
 	frame := proto.EncodeOut(s.ID, seq, data)
 	s.fanout(frame)
 	return metaChanged
+}
+
+// MarkContentOpaque permanently flags this Session as carrying encrypted
+// OUT bytes. PushOut stops invoking the OSC 133 parser; ringbuf storage
+// and subscriber fan-out continue unchanged (the relay still routes the
+// bytes, it just stops trying to read them). Idempotent; never unwinds.
+//
+// Called by uplink_conn the first time an inbound OUT chunk carries the
+// e2eecrypto cipher_id prefix. Once set, the agent could send plaintext
+// chunks mid-session (theoretically — would never happen in v1 since the
+// agent locks the decision per-uplink-connection) and the relay would
+// still treat the session as opaque. That bias toward "stay opaque" is
+// safer than oscillating.
+func (s *Session) MarkContentOpaque() {
+	s.mu.Lock()
+	s.contentOpaque = true
+	s.mu.Unlock()
+}
+
+func (s *Session) isContentOpaque() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contentOpaque
 }
 
 // Broadcast sends a frame (META/CLOSE) to all subscribers.

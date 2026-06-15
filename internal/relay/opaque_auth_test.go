@@ -468,6 +468,158 @@ func TestLoginInit_BadKE1(t *testing.T) {
 	}
 }
 
+// TestLoginFinalize_FullRoundTrip exercises the full OPAQUE login flow end
+// to end: register the user, drive client-side LoginInit through the
+// handler, take the server's KE2 and produce a real KE3 via LoginFinish on
+// the client, then post that to /login/finalize and assert the handler
+// hands back (a) a 200, (b) a session_token that resolves to the user, and
+// (c) the verbatim account_key wrap blob the client persisted at register
+// time. The account_key wrap round-trip is the load-bearing piece: the
+// client uses it (decrypted via the OPAQUE exportKey) to recover its
+// account key on a new device, so a wrap that doesn't survive register →
+// login transit silently breaks every higher-layer feature.
+func TestLoginFinalize_FullRoundTrip(t *testing.T) {
+	h, conf := newTestHandler(t)
+	user := registerUserForTest(t, h, conf, "alice@example.com", "hunter2hunter2")
+
+	client, err := conf.Client()
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	ke1 := client.LoginInit([]byte("hunter2hunter2"))
+
+	body1, _ := json.Marshal(loginInitRequest{Email: "alice@example.com", LoginKE: ke1.Serialize()})
+	req1 := httptest.NewRequest(http.MethodPost, "/api/auth/login/init", bytes.NewReader(body1))
+	rec1 := httptest.NewRecorder()
+	h.handleLoginInit(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("init status = %d, body=%s", rec1.Code, rec1.Body.String())
+	}
+	var initResp loginInitResponse
+	if err := json.NewDecoder(rec1.Body).Decode(&initResp); err != nil {
+		t.Fatalf("decode init: %v", err)
+	}
+
+	ke2, err := client.Deserialize.KE2(initResp.LoginResponse)
+	if err != nil {
+		t.Fatalf("client.Deserialize.KE2: %v", err)
+	}
+	// ClientLoginFinishOptions must match the identities the client
+	// committed to at registration (see TestRegisterFinalize_PersistsRecordAndWrap),
+	// otherwise the AKE transcript won't reconcile and LoginFinish will
+	// reject KE2 with a MAC mismatch.
+	ke3, exportKey, err := client.LoginFinish(ke2, opaque.ClientLoginFinishOptions{
+		ClientIdentity: []byte("alice@example.com"),
+		ServerIdentity: []byte("atterm-relay"),
+	})
+	if err != nil {
+		t.Fatalf("LoginFinish: %v", err)
+	}
+	if len(exportKey) == 0 {
+		t.Fatalf("empty exportKey — needed for wrap decryption")
+	}
+
+	body2, _ := json.Marshal(loginFinalizeRequest{
+		Email:     "alice@example.com",
+		SessionID: initResp.SessionID,
+		LoginKE3:  ke3.Serialize(),
+	})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/auth/login/finalize", bytes.NewReader(body2))
+	rec2 := httptest.NewRecorder()
+	h.handleLoginFinalize(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("finalize status = %d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	var resp loginFinalizeResponse
+	if err := json.NewDecoder(rec2.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode finalize: %v", err)
+	}
+	if resp.UserID != user.ID {
+		t.Fatalf("resp.UserID = %q, want %q", resp.UserID, user.ID)
+	}
+	if resp.SessionToken == "" {
+		t.Fatalf("no session token")
+	}
+	// Wrap blob must round-trip verbatim. registerUserForTest persists
+	// "ciphertext" / "xchacha-nonce-24-bytes-aa" / etc — the finalize
+	// payload must hand the client the same bytes back.
+	if string(resp.AccountKeyWrap.Wrapped) != "ciphertext" {
+		t.Fatalf("AccountKeyWrap.Wrapped = %q, want %q", resp.AccountKeyWrap.Wrapped, "ciphertext")
+	}
+	if resp.AccountKeyWrap.Method != "password" {
+		t.Fatalf("AccountKeyWrap.Method = %q, want password", resp.AccountKeyWrap.Method)
+	}
+	if resp.AccountKeyWrap.KDFParams != `{"alg":"argon2id","m":67108864,"t":3,"p":1}` {
+		t.Fatalf("AccountKeyWrap.KDFParams mismatch: got %q", resp.AccountKeyWrap.KDFParams)
+	}
+
+	// Session token must look up to the registered user.
+	sess, sessUser, err := h.store.LookupSession(context.Background(), resp.SessionToken)
+	if err != nil {
+		t.Fatalf("LookupSession: %v", err)
+	}
+	if sess == nil || sessUser == nil || sessUser.ID != user.ID {
+		t.Fatalf("session token does not resolve to user: sess=%+v user=%+v", sess, sessUser)
+	}
+
+	// Single-use guarantee: replaying the same KE3 under the same
+	// session_id must now miss the loginSessions map and yield 401. This
+	// is the load-bearing property for KE3 replay protection — without
+	// LoadAndDelete an attacker who captures a finalize body could
+	// re-mint a token forever.
+	req3 := httptest.NewRequest(http.MethodPost, "/api/auth/login/finalize", bytes.NewReader(body2))
+	rec3 := httptest.NewRecorder()
+	h.handleLoginFinalize(rec3, req3)
+	if rec3.Code != http.StatusUnauthorized {
+		t.Fatalf("replay status = %d, want 401", rec3.Code)
+	}
+}
+
+// TestLoginFinalize_UnknownSession asserts that a finalize call with a
+// session_id never produced by login/init yields a generic 401 — same
+// status as a credential failure, so the response shape does not let an
+// attacker probe which session_ids have been minted.
+func TestLoginFinalize_UnknownSession(t *testing.T) {
+	h, _ := newTestHandler(t)
+	body, _ := json.Marshal(loginFinalizeRequest{
+		Email:     "alice@example.com",
+		SessionID: "not-a-real-session-id",
+		LoginKE3:  []byte("garbage"),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/finalize", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleLoginFinalize(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// TestLoginFinalize_BadJSON guards the early-return path: malformed bodies
+// must yield 400, not panic inside the OPAQUE library.
+func TestLoginFinalize_BadJSON(t *testing.T) {
+	h, _ := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/finalize", bytes.NewReader([]byte("{not json")))
+	rec := httptest.NewRecorder()
+	h.handleLoginFinalize(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestLoginFinalize_MissingFields covers the "email/session_id/ke3 empty"
+// branch — any one missing should yield 400 before we touch the session map.
+func TestLoginFinalize_MissingFields(t *testing.T) {
+	h, _ := newTestHandler(t)
+	body, _ := json.Marshal(loginFinalizeRequest{Email: "", SessionID: "x", LoginKE3: []byte("x")})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login/finalize", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.handleLoginFinalize(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
 // TestRegisterFinalize_BadRecord ensures a non-empty but malformed record
 // is rejected with 400 before any DB write — the user row must NOT exist
 // after this call.

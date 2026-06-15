@@ -370,13 +370,89 @@ func newLoginSessionID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
+// handleLoginFinalize consumes the client's KE3 for a parked session_id,
+// verifies it against the *opaque.Server primed at login/init time, mints a
+// real session token, and returns the wrapped account_key so the client can
+// derive its account key locally from the OPAQUE exportKey.
+//
+// LoadAndDelete on the session_id is the single-use guarantee: any retry —
+// whether honest (lost response, browser back-button) or hostile (KE3 replay)
+// — will miss the map and get a generic 401. The expiresAt check after
+// LoadAndDelete is defensive against the per-entry AfterFunc janitor racing
+// with finalize on the slow path.
+//
+// Failure ordering mirrors handleLoginInit: we degrade to generic 401 for
+// any credential-shaped failure (missing session, expired session, MAC
+// mismatch), and only return 500 for true server-side faults (wrap fetch,
+// token mint). The MAC verification inside LoginFinish is the actual
+// credential check — a wrong password results in an error here, not at
+// login/init time, because the OPAQUE protocol does not let the server
+// distinguish a bad password from a tampered transcript until KE3 arrives.
 func (h *OpaqueAuthHandler) handleLoginFinalize(w http.ResponseWriter, r *http.Request) {
-	writeNotImpl(w)
-}
+	var req loginFinalizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if req.Email == "" || req.SessionID == "" || len(req.LoginKE3) == 0 {
+		http.Error(w, "missing fields", http.StatusBadRequest)
+		return
+	}
 
-func writeNotImpl(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusNotImplemented)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "not implemented"})
+	// LoadAndDelete is what enforces "session_id usable at most once":
+	// honest retries and KE3 replays alike land in the !ok branch.
+	raw, ok := h.loginSessions.LoadAndDelete(req.SessionID)
+	if !ok {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	pending := raw.(*loginPending)
+	// Defensive expiry check — the per-entry AfterFunc janitor normally
+	// fires first, but a paused goroutine could in principle let an
+	// expired entry survive long enough to reach LoadAndDelete.
+	if pending.email != req.Email || time.Now().After(pending.expiresAt) {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	ke3, err := pending.server.Deserialize.KE3(req.LoginKE3)
+	if err != nil {
+		http.Error(w, "bad login_ke3", http.StatusBadRequest)
+		return
+	}
+	// LoginFinish runs the AKE MAC check. A wrong password (or any
+	// transcript tamper) shows up here as a non-nil error. Either way the
+	// client sees a generic 401 — we do not leak which.
+	if err := pending.server.LoginFinish(ke3); err != nil {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+	wrap, err := h.store.GetAccountKeyWrap(ctx, pending.userID, "password")
+	if err != nil {
+		http.Error(w, "internal: wrap", http.StatusInternalServerError)
+		return
+	}
+
+	tok, _, err := h.store.CreateSession(ctx, pending.userID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
+	if err != nil {
+		http.Error(w, "internal: create session", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(loginFinalizeResponse{
+		UserID:       pending.userID,
+		SessionToken: tok,
+		AccountKeyWrap: accountKeyWrapPayload{
+			Method:    wrap.Method,
+			Wrapped:   wrap.Wrapped,
+			Nonce:     wrap.Nonce,
+			Salt:      wrap.Salt,
+			KDFParams: wrap.KDFParams,
+		},
+	})
 }
 
 // Register adds the four OPAQUE routes to mux. Mirrors the style used by

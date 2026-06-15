@@ -120,6 +120,14 @@ type Store interface {
 	GetUserPreferences(ctx context.Context, userID string) ([]PreferenceItem, error)
 	SetUserPreferences(ctx context.Context, userID string, serverNowMs int64, items []PreferenceItem) ([]PreferenceItem, error)
 
+	// Account-key wrap (E2EE). The relay treats the wrap blob as opaque
+	// bytes; only the holder of the user's password can unwrap to recover
+	// account_key. See docs/superpowers/specs/2026-06-15-relay-e2ee-design.md
+	// §4.5. Method is "password" in v1; future methods (recovery_code,
+	// passkey) will share the table via the composite (user_id, method) PK.
+	GetAccountKeyWrap(ctx context.Context, userID, method string) (AccountKeyWrap, error)
+	StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap) error
+
 	Close() error
 }
 

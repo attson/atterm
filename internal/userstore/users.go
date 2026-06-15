@@ -26,6 +26,7 @@ var (
 type User struct {
 	ID         string
 	Email      string
+	IsAdmin    bool
 	AuthMode   string // "opaque" only in v1
 	CreatedAt  time.Time
 	DisabledAt *time.Time

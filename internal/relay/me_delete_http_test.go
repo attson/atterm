@@ -12,11 +12,22 @@ import (
 )
 
 // deleteMeReq builds a DELETE /api/me request with JSON body + Bearer header.
-func deleteMeReq(body any, token string) *http.Request {
+// The optional stepUpUserID, when non-empty, mints a fresh step-up token
+// for that user (M1i) and attaches it in the X-Step-Up-Token header so
+// the request passes the step-up gate. Pass "" to deliberately omit the
+// header — useful for the "step-up required" rejection test.
+func deleteMeReq(body any, token, stepUpUserID string) *http.Request {
 	b, _ := json.Marshal(body)
 	r := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(string(b)))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+token)
+	if stepUpUserID != "" {
+		tok, err := MintStepUpToken(stepUpUserID)
+		if err != nil {
+			panic(err)
+		}
+		r.Header.Set("X-Step-Up-Token", tok)
+	}
 	return r
 }
 
@@ -28,7 +39,7 @@ func TestDeleteMe_Success(t *testing.T) {
 	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
 		"email":    "a@b",
 		"password": "Correct-Horse-Battery-Staple-1!",
-	}, tok))
+	}, tok, userID))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
 	}
@@ -45,7 +56,7 @@ func TestDeleteMe_WrongEmail_400(t *testing.T) {
 	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
 		"email":    "other@example.com",
 		"password": "Correct-Horse-Battery-Staple-1!",
-	}, tok))
+	}, tok, userID))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d; want 400", rec.Code)
 	}
@@ -70,7 +81,7 @@ func TestDeleteMe_LastAdmin_409(t *testing.T) {
 	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
 		"email":    "a@b",
 		"password": "Correct-Horse-Battery-Staple-1!",
-	}, tok))
+	}, tok, userID))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d; want 409", rec.Code)
 	}
@@ -93,12 +104,66 @@ func TestDeleteMe_EmailCaseInsensitive(t *testing.T) {
 	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
 		"email":    "A@B",
 		"password": "Correct-Horse-Battery-Staple-1!",
-	}, tok))
+	}, tok, userID))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status=%d; want 204 (case should not matter): %s", rec.Code, rec.Body.String())
 	}
 	if _, err := store.GetUser(context.Background(), userID); err == nil {
 		t.Error("user still exists")
+	}
+}
+
+// TestDeleteMe_MissingStepUpToken_401 covers the M1i-enforce gate.
+// A bearer-authenticated request without X-Step-Up-Token must be
+// rejected with 401 and "step_up_required" so the UI can prompt the
+// user to run the OPAQUE step-up handshake first.
+func TestDeleteMe_MissingStepUpToken_401(t *testing.T) {
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
+
+	rec := httptest.NewRecorder()
+	// stepUpUserID == "" intentionally omits the header.
+	srv.ServeHTTP(rec, deleteMeReq(map[string]string{"email": "a@b"}, tok, ""))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d: want 401 with missing step-up", rec.Code)
+	}
+	var resp map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["error"] != "step_up_required" {
+		t.Errorf("error=%q; want step_up_required", resp["error"])
+	}
+	if _, err := store.GetUser(context.Background(), userID); err != nil {
+		t.Errorf("user should still exist after rejected delete: %v", err)
+	}
+}
+
+// TestDeleteMe_InvalidStepUpToken_401 verifies that a forged or expired
+// step-up token also lands in the rejected bucket — distinct error code
+// so the UI can hint at "request a fresh handshake" instead of "you
+// forgot to do it".
+func TestDeleteMe_InvalidStepUpToken_401(t *testing.T) {
+	srv, tok, userID := serverWithAuthAndSession(t)
+	store := srv.cfg.Store.(*userstore.SQLiteStore)
+
+	// Hand-craft a request with a clearly invalid step-up token.
+	b, _ := json.Marshal(map[string]string{"email": "a@b"})
+	r := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(string(b)))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+tok)
+	r.Header.Set("X-Step-Up-Token", "stepup_obviously-fake")
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d: want 401 with bogus step-up", rec.Code)
+	}
+	var resp map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["error"] != "step_up_invalid" {
+		t.Errorf("error=%q; want step_up_invalid", resp["error"])
+	}
+	if _, err := store.GetUser(context.Background(), userID); err != nil {
+		t.Errorf("user should still exist after rejected delete: %v", err)
 	}
 }
 
@@ -122,7 +187,7 @@ func TestDeleteMe_AdminButNotLast_Succeeds(t *testing.T) {
 	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
 		"email":    "a@b",
 		"password": "Correct-Horse-Battery-Staple-1!",
-	}, tok))
+	}, tok, userID))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
 	}

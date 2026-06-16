@@ -238,4 +238,18 @@ type SessionInfo struct {
 	// session list: attention_at > seen_at AND no client is attached. Always
 	// zero in session-local copies; the relay sets it. See spec §2.
 	Unread bool `json:"unread,omitempty"`
+	// Sealed is the AEAD envelope (cipher_id + nonce + ciphertext + tag,
+	// per internal/e2eecrypto) over a JSON document carrying the
+	// content-bearing fields the relay is structurally unable to read
+	// when E2EE is on: title, cwd, command, current_command. The agent
+	// populates it when it has the user's unlocked account_key;
+	// clients that share the account_key (same user, same relay)
+	// decrypt and prefer these values over the plaintext fields.
+	//
+	// During the M3b-additive rollout the plaintext fields (Title,
+	// Cwd, Command, CurrentCommand) stay populated alongside Sealed
+	// so older clients without decrypt support keep rendering. A
+	// later slice (M3b-strip) will drop the plaintext fields once
+	// every shipping client reliably decrypts.
+	Sealed []byte `json:"sealed,omitempty"`
 }

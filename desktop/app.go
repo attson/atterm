@@ -1724,3 +1724,17 @@ func (a *App) MarkCleanShutdown() error {
 	a.mu.Unlock()
 	return a.recoveryStore.MarkCleanShutdown(snap)
 }
+
+// GetRecoveryDialogEnabled mirrors appConfig.RecoveryDialogEnabledOrDefault
+// for the frontend Settings → General toggle.
+func (a *App) GetRecoveryDialogEnabled() bool {
+	return a.cfgStore.Get().RecoveryDialogEnabledOrDefault()
+}
+
+// SetRecoveryDialogEnabled persists the user's choice. true re-enables the
+// startup recovery dialog; false skips it.
+func (a *App) SetRecoveryDialogEnabled(enabled bool) error {
+	cfg := a.cfgStore.Get()
+	cfg.RecoveryDialogEnabled = &enabled
+	return a.cfgStore.Set(cfg)
+}

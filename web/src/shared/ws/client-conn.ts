@@ -17,6 +17,8 @@ import {
   uuidToBytes,
 } from './protocol'
 import { isMobileApp, loadRelayConfig } from '../api/relay-config'
+import { loadAccountKey } from '../api/account-key'
+import { openMetaFields } from '../lib/opaque'
 import { ApiError } from '../api/client'
 import { Tracker, type ConnHealthSnapshot } from '../connhealth/connhealth'
 
@@ -245,7 +247,22 @@ export class SessionConnection {
         }
         case TYPE.META: {
           try {
-            const meta = JSON.parse(new TextDecoder().decode(f.payload))
+            const meta = JSON.parse(new TextDecoder().decode(f.payload)) as Record<string, unknown>
+            // M5-meta-web: decrypt MetaPayload.Sealed when an
+            // account_key is unlocked and overlay the recovered
+            // content fields onto the plaintext META. Cipher /
+            // parse failures fall back silently to the empty
+            // plaintext fields the M5 agent ships.
+            const accountKey = loadAccountKey()
+            if (accountKey && typeof meta.sealed === 'string' && meta.sealed.length > 0) {
+              const env = base64ToBytes(meta.sealed)
+              const fields = openMetaFields(env, accountKey, this.sessionId)
+              if (fields) {
+                if (fields.cwd !== undefined) meta.cwd = fields.cwd
+                if (fields.title !== undefined) meta.title = fields.title
+                if (fields.current_command !== undefined) meta.current_command = fields.current_command
+              }
+            }
             this.handlers.onMeta?.(meta)
             const newDriver = String((meta as { driver_client_id?: unknown }).driver_client_id ?? '')
             const newDriverName = String((meta as { driver_client_name?: unknown }).driver_client_name ?? '')
@@ -329,6 +346,17 @@ function btoaBytes(bytes: Uint8Array): string {
   let s = ''
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!)
   return btoa(s)
+}
+
+/** base64ToBytes accepts both std-padded and URL-safe variants so a
+ * future Go-side encoding switch cannot silently break META decrypt. */
+function base64ToBytes(s: string): Uint8Array {
+  const norm = s.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = norm.length % 4 === 0 ? '' : '='.repeat(4 - (norm.length % 4))
+  const bin = atob(norm + pad)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
 }
 
 export interface ReconnectStatus {

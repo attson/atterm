@@ -17,6 +17,14 @@ test('notification click worker extension routes push clicks to session deep lin
   assert.match(script, /sessionId/, 'script must fall back to payload data.sessionId')
   assert.match(script, /clients\.matchAll/, 'script must focus an existing window when possible')
   assert.match(script, /clients\.openWindow/, 'script must open a session route when no window exists')
+
+  // M6-sw: incoming push payloads may carry an opaque `sealedBody`
+  // the relay never decrypted. The SW must ask a visible client to
+  // decrypt with the unlocked account_key and fall back gracefully
+  // when no client answers.
+  assert.match(script, /sealedBody/, 'push handler must consult payload.sealedBody for E2EE rich body')
+  assert.match(script, /atterm-decrypt-sealed-body/, 'push handler must dispatch decrypt request to a visible client')
+  assert.match(script, /MessageChannel/, 'push handler must round-trip the reply through a MessageChannel')
 })
 
 test('generated service worker imports notification click worker extension', () => {

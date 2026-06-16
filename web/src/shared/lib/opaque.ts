@@ -230,6 +230,34 @@ export function openSessionFields(
   return openSealedFields<SealedSessionFields>(sealed, accountKey, sessionUUID, SESSION_INFO_AAD_FRAME_TYPE)
 }
 
+/** SealedPushBody mirrors the Go agent's sealedPushBody struct in
+ * desktop/uplink_seal_push.go. The CommandEvent envelope (M6-foundation,
+ * v0.2.108) carries the three fields the service worker needs to
+ * render a rich "command finished" notification without leaking any
+ * of them to the relay. */
+export interface SealedPushBody {
+  label?: string
+  exit_code: number
+  elapsed_ms: number
+}
+
+/** AAD frame_type discriminator for sealed push body envelopes. Distinct
+ * from SESSION_INFO_AAD_FRAME_TYPE (0x12) and META_AAD_FRAME_TYPE
+ * (0x05) so a stolen envelope cannot be replayed across types.
+ * 0x35 matches proto.TypeCommandEvent on the wire. */
+const PUSH_BODY_AAD_FRAME_TYPE = 0x35
+
+/** openPushBodyFields decrypts a CommandEvent SealedBody envelope
+ * (M6-foundation). Returns null on any cipher / parse error; the SW
+ * caller falls back to the legacy plaintext title/body strings. */
+export function openPushBodyFields(
+  sealed: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+): SealedPushBody | null {
+  return openSealedFields<SealedPushBody>(sealed, accountKey, sessionUUID, PUSH_BODY_AAD_FRAME_TYPE)
+}
+
 /** openSealedFields is the shared low-level inverse of the agent's
  * AEAD seal. The frameType byte goes into the AAD; SESSION_INFO and
  * META live on the same wire codec but with distinct discriminators so

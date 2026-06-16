@@ -583,6 +583,20 @@ export const en = {
     drawerReconnectsDowntime: "downtime",
     drawerSeqGaps: "Seq gaps observed:",
   },
+  recovery: {
+    dialog: {
+      title: "Restore your previous session?",
+      subtitleClean: "Last cleanly exited · {minutes} min ago",
+      subtitleUnclean: "Last session ended unexpectedly · {minutes} min ago",
+      btnRestoreAll: "Restore all {count}",
+      btnRestoreSelected: "Restore {count} selected",
+      btnDiscard: "Discard all",
+      badgeResumable: "resumable",
+      badgeFresh: "fresh (sid not captured)",
+      badgeShell: "(no AI)",
+      badgeUnclassified: "not classified as AI",
+    },
+  },
 };
 
 export type Messages = typeof en;

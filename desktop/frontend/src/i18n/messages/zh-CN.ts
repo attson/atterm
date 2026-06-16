@@ -585,4 +585,18 @@ export const zhCN = {
     drawerReconnectsDowntime: "断开时长",
     drawerSeqGaps: "观察到的序号跳跃:",
   },
+  recovery: {
+    dialog: {
+      title: "恢复上次的会话？",
+      subtitleClean: "上次正常退出 · {minutes} 分钟前",
+      subtitleUnclean: "上次异常结束 · {minutes} 分钟前",
+      btnRestoreAll: "恢复全部 {count} 个",
+      btnRestoreSelected: "恢复选中的 {count} 个",
+      btnDiscard: "全部丢弃",
+      badgeResumable: "可续接",
+      badgeFresh: "无 sid（不自动续接）",
+      badgeShell: "（无 AI）",
+      badgeUnclassified: "未识别为 AI",
+    },
+  },
 } as const satisfies Messages;

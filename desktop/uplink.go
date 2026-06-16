@@ -535,8 +535,17 @@ func (u *uplink) handleCloseError(ctx context.Context, ce websocket.CloseError) 
 func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error {
 	hostID, host, user := u.host.HostMeta()
 	snapshot := u.host.Snapshot()
-	if u.accountKey != nil && len(u.accountKey()) >= e2eecrypto.SessionKeySize {
-		snapshot = stripContentFieldsFromSnapshot(snapshot)
+	if u.accountKey != nil {
+		ak := u.accountKey()
+		if len(ak) >= e2eecrypto.SessionKeySize {
+			// M3b: seal title/cwd/command/current_command into
+			// SessionInfo.Sealed so a future client with the same
+			// account_key can decrypt; plaintext fields stay on the
+			// outer struct during the M3b-additive rollout.
+			snapshot = sealSessionInfoContent(snapshot, ak)
+			// M3a/c: strip Summary + CurrentCommand outright.
+			snapshot = stripContentFieldsFromSnapshot(snapshot)
+		}
 	}
 	payload, err := buildAnnouncePayload(hostID, host, user, snapshot, u.remotePermission)
 	if err != nil {

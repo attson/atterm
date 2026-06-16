@@ -14,6 +14,8 @@ import {
 } from "./proto";
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
+import { getCurrentAccountKey } from "./account-key";
+import { openMetaFields } from "./opaque";
 
 export interface ClosePayload {
   exit_code: number;
@@ -393,7 +395,20 @@ export class SessionConnection {
         this.handlers.onStatus?.("ended");
       } else if (f.type === TYPE.META) {
         try {
-          const meta = JSON.parse(decodeText(f.payload));
+          const meta = JSON.parse(decodeText(f.payload)) as Record<string, unknown>;
+          // M5-meta-mobile: overlay MetaPayload.Sealed when an
+          // account_key is unlocked. The platform registers the key
+          // via setAccountKeyProvider in lib/account-key.ts.
+          const accountKey = getCurrentAccountKey();
+          if (accountKey && typeof meta.sealed === "string" && meta.sealed.length > 0) {
+            const env = b64StdToBytes(meta.sealed);
+            const fields = openMetaFields(env, accountKey, this.sessionId);
+            if (fields) {
+              if (fields.cwd !== undefined) meta.cwd = fields.cwd;
+              if (fields.title !== undefined) meta.title = fields.title;
+              if (fields.current_command !== undefined) meta.current_command = fields.current_command;
+            }
+          }
           this.handlers.onMeta?.(meta);
           const newDriver = String(meta.driver_client_id ?? "");
           const newDriverName = String(meta.driver_client_name ?? "");
@@ -496,3 +511,15 @@ export type TaskState =
   | "failed"
   | "disconnected"
   | "closed";
+
+/** Std / URL-safe base64 → bytes. Tolerant of either Go encoding so a
+ * future Sealed-field wire-encoding change cannot silently break the
+ * mobile META decrypt. */
+function b64StdToBytes(s: string): Uint8Array {
+  const norm = s.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = norm.length % 4 === 0 ? "" : "=".repeat(4 - (norm.length % 4));
+  const bin = atob(norm + pad);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}

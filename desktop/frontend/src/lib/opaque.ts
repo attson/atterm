@@ -156,6 +156,44 @@ export function openSessionFields(
   accountKey: Uint8Array,
   sessionUUID: string,
 ): SealedSessionFields | null {
+  return openSealedFields<SealedSessionFields>(sealed, accountKey, sessionUUID, SESSION_INFO_AAD_FRAME_TYPE)
+}
+
+/** SealedMetaFields mirrors the Go agent's sealedMetaFields struct in
+ * desktop/uplink.go (M5-meta-seal). Live TypeMeta envelope carries
+ * only the three fields the relay was able to peek at as a session
+ * ran: cwd, title, current_command. */
+export interface SealedMetaFields {
+  cwd?: string
+  title?: string
+  current_command?: string
+}
+
+/** AAD frame_type discriminator for live TypeMeta sealed envelopes.
+ * Distinct from SESSION_INFO_AAD_FRAME_TYPE so a META envelope cannot
+ * be replayed as a SessionInfo blob and vice versa. */
+const META_AAD_FRAME_TYPE = 0x05
+
+/** openMetaFields decrypts a MetaPayload.Sealed envelope from a live
+ * TypeMeta frame. */
+export function openMetaFields(
+  sealed: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+): SealedMetaFields | null {
+  return openSealedFields<SealedMetaFields>(sealed, accountKey, sessionUUID, META_AAD_FRAME_TYPE)
+}
+
+/** Shared low-level inverse of the agent's AEAD seal. The frameType
+ * byte goes into the AAD; SessionInfo (0x12) and META (0x05) live on
+ * the same wire codec but with distinct discriminators so an envelope
+ * sealed for one cannot be replayed as the other. */
+function openSealedFields<T>(
+  sealed: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+  frameType: number,
+): T | null {
   if (!sealed) return null
   const envelope = sealed instanceof Uint8Array ? sealed : new Uint8Array(sealed)
   const minEnvelopeLen = 1 + 24 + 16
@@ -175,7 +213,7 @@ export function openSessionFields(
   const uuidBytes = uuidStringToBytes(sessionUUID)
   const aad = new Uint8Array(uuidBytes.length + 1)
   aad.set(uuidBytes, 0)
-  aad[uuidBytes.length] = SESSION_INFO_AAD_FRAME_TYPE
+  aad[uuidBytes.length] = frameType
 
   const aead = xchacha20poly1305(sk, nonce, aad)
   let plaintext: Uint8Array
@@ -185,7 +223,7 @@ export function openSessionFields(
     return null
   }
   try {
-    return JSON.parse(new TextDecoder().decode(plaintext)) as SealedSessionFields
+    return JSON.parse(new TextDecoder().decode(plaintext)) as T
   } catch {
     return null
   }

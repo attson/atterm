@@ -3,9 +3,15 @@ import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { utf8ToBytes, randomBytes } from '@noble/hashes/utils.js'
-import { openSessionFields, type SealedSessionFields } from './opaque'
+import {
+  openMetaFields,
+  openSessionFields,
+  type SealedMetaFields,
+  type SealedSessionFields,
+} from './opaque'
 
 const AAD_FRAME_TYPE = 0x12
+const META_AAD_FRAME_TYPE = 0x05
 const CIPHER_ID = 0x01
 
 function uuidStringToBytes(s: string): Uint8Array {
@@ -72,5 +78,52 @@ describe('openSessionFields (M3b-mobile)', () => {
   it('accepts number[] (JSON-parsed) input', () => {
     const env = sealFields(accountKey, uuid, { title: 'x' })
     expect(openSessionFields(Array.from(env), accountKey, uuid)).toEqual({ title: 'x' })
+  })
+})
+
+function sealMetaWithFrameType(
+  accountKey: Uint8Array,
+  uuid: string,
+  frameType: number,
+  fields: SealedMetaFields,
+): Uint8Array {
+  const uuidBytes = uuidStringToBytes(uuid)
+  const prefix = utf8ToBytes('atterm-session-v1')
+  const info = new Uint8Array(prefix.length + uuidBytes.length)
+  info.set(prefix, 0)
+  info.set(uuidBytes, prefix.length)
+  const sessionKey = hkdf(sha256, accountKey, undefined, info, 32)
+  const nonce = randomBytes(24)
+  const aad = new Uint8Array(uuidBytes.length + 1)
+  aad.set(uuidBytes, 0)
+  aad[uuidBytes.length] = frameType
+  const aead = xchacha20poly1305(sessionKey, nonce, aad)
+  const ct = aead.encrypt(new TextEncoder().encode(JSON.stringify(fields)))
+  const env = new Uint8Array(1 + 24 + ct.length)
+  env[0] = CIPHER_ID
+  env.set(nonce, 1)
+  env.set(ct, 1 + 24)
+  return env
+}
+
+describe('openMetaFields (M5-meta-mobile)', () => {
+  const uuid = 'a1b2c3d4-e5f6-7890-1234-567890abcdef'
+  const accountKey = new Uint8Array(32).map((_, i) => (i * 13) & 0xff)
+
+  it('recovers cwd / title / current_command', () => {
+    const fields: SealedMetaFields = {
+      cwd: '/Users/alice/secrets',
+      title: 'atterm - bash',
+      current_command: 'rg api_key',
+    }
+    const env = sealMetaWithFrameType(accountKey, uuid, META_AAD_FRAME_TYPE, fields)
+    expect(openMetaFields(env, accountKey, uuid)).toEqual(fields)
+  })
+
+  it('rejects a SessionInfo-AAD envelope (cross-replay guard)', () => {
+    const env = sealMetaWithFrameType(accountKey, uuid, AAD_FRAME_TYPE, { title: 'x' })
+    expect(openMetaFields(env, accountKey, uuid)).toBeNull()
+    // Same envelope opens under openSessionFields.
+    expect(openSessionFields(env, accountKey, uuid)).toEqual({ title: 'x' })
   })
 })

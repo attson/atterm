@@ -18,6 +18,7 @@ import {
   wrapAccountKey,
   type AccountKeyWrap,
 } from '../lib/opaque'
+import { setAccountKeyProvider } from '../lib/account-key'
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
@@ -224,7 +225,32 @@ function createEventBus() {
   }
 }
 
+// In-memory cache of the unlocked account_key. Populated synchronously
+// after every login / register and at platform-init time after a
+// secureStorage read. The Sealed / SessionInfo decrypt paths in
+// connection.ts need a synchronous getter, but secureStorage is
+// async; the cache bridges that gap.
+let cachedAccountKey: Uint8Array | null = null
+
+function setCachedAccountKey(bytes: Uint8Array | null): void {
+  cachedAccountKey = bytes && bytes.length > 0 ? bytes : null
+}
+
+// Best-effort one-shot bootstrap: read the persisted key on platform
+// creation so an already-logged-in user can decrypt sealed META on
+// the first session attach without waiting for an explicit re-login.
+async function bootstrapCachedAccountKey(): Promise<void> {
+  try {
+    const v = await secureStorage.get(ACCOUNT_KEY_KEY)
+    if (v) setCachedAccountKey(b64StdToBytes(v))
+  } catch {
+    // ignore — the user can re-login if it matters
+  }
+}
+
 export function createCapacitorPlatform(): Platform {
+  setAccountKeyProvider(() => cachedAccountKey)
+  void bootstrapCachedAccountKey()
   return {
     caps: {
       localPty: false,
@@ -358,6 +384,7 @@ export function createCapacitorPlatform(): Platform {
         // these in the iOS Keychain (see PR #101); when the app
         // relaunches we re-read it without prompting the user again.
         await secureStorage.set(ACCOUNT_KEY_KEY, bytesToB64Std(result.account_key))
+        setCachedAccountKey(result.account_key)
       },
       logout: async () => {
         const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
@@ -386,6 +413,7 @@ export function createCapacitorPlatform(): Platform {
         // other process holding the Keychain item recover the user's
         // E2EE state.
         try { await secureStorage.set(ACCOUNT_KEY_KEY, '') } catch {}
+        setCachedAccountKey(null)
       },
       loadSavedPassword: async () => {
         const v = await secureStorage.get(PASSWORD_KEY)

@@ -10,6 +10,7 @@ import PaneGrid from "./components/PaneGrid.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
+import RecoveryDialog from "./components/RecoveryDialog.vue";
 import ShortcutHints from "./components/ShortcutHints.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
@@ -39,15 +40,26 @@ import {
   markSessionsSeen,
   getTaskSidebarCollapsed,
   setTaskSidebarCollapsed,
+  loadRecoverySnapshot,
+  getRecoveryDialogEnabled,
+  discardRecoverySnapshot,
   type MarkSessionsSeenOpts,
+  type RecoverySnapshot,
+  type RecoveryTabSnapshot,
 } from "./lib/api";
 import type { Endpoint, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionInfo } from "./lib/connection";
-import type { LayoutKind, Pane, Tab, SplitDir } from "./lib/types";
+import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
 import { RATIO_DEFAULT, closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
+import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
+import {
+  computeResumeLine,
+  buildRestoreSessionReq,
+  awaitFirstPromptReady,
+} from "./lib/recoveryRestore";
 import {
   DEFAULT_TERMINAL_THEME_ID,
   getTerminalTheme,
@@ -173,6 +185,14 @@ const showMaximizedInset = computed(() => isMaximized.value && platform.value !=
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
 const pickerCtx = ref<{ tabId: string; paneIdx: number } | null>(null);
+
+// Recovery dialog state. Populated during boot from loadRecoverySnapshot()
+// when a non-empty snapshot exists AND the recovery-dialog setting is on.
+// Cleared when the user picks restore/discard.
+const recoveryDialogState = ref<{ open: boolean; snapshot: RecoverySnapshot | null }>({
+  open: false,
+  snapshot: null,
+});
 
 let autoStarted = false;
 let toastHandle: number | null = null;
@@ -678,6 +698,90 @@ function onPickerClose() {
   pickerCtx.value = null;
 }
 
+async function onRecoveryRestore(picks: RecoveryTabSnapshot[]) {
+  const savedActive = recoveryDialogState.value.snapshot?.active_tab_id ?? "";
+  recoveryDialogState.value = { open: false, snapshot: null };
+  if (picks.length === 0) {
+    await startNewTab();
+    return;
+  }
+  await executeRestore(picks, savedActive);
+}
+
+async function onRecoveryDiscard() {
+  recoveryDialogState.value = { open: false, snapshot: null };
+  try {
+    await discardRecoverySnapshot();
+  } catch (e) {
+    console.warn("[recovery] discard failed", e);
+  }
+  await startNewTab();
+}
+
+// executeRestore rebuilds tabs/panes from a snapshot. Serial per tab (and
+// per pane): the spawn must finish before we push the Tab so the spawn
+// failure paths (pane = empty) land in the correct slot. Parallel would
+// race against snapshot mutation and complicate error placement.
+async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: string) {
+  const newIds: string[] = [];
+  let savedActiveIdx = -1;
+  for (let pickIdx = 0; pickIdx < picks.length; pickIdx++) {
+    const tab = picks[pickIdx];
+    const t: Tab = {
+      id: newId(),
+      layout: tab.layout,
+      activePaneIdx: tab.active_pane_idx,
+      colRatio: tab.col_ratio,
+      rowRatio: tab.row_ratio,
+      panes: [],
+    };
+    if (tab.id === savedActiveTabId) savedActiveIdx = pickIdx;
+    const want = PANE_COUNT[tab.layout];
+    for (let i = 0; i < want; i++) {
+      const snap = tab.panes.find((p) => p.slot === i);
+      if (!snap) {
+        t.panes[i] = { sessionId: null, remote: false };
+        continue;
+      }
+      try {
+        const dims = predictCellDims(tab.layout);
+        const req = buildRestoreSessionReq(snap, dims.cols, dims.rows);
+        const resp = await newSession(req);
+        t.panes[i] = { sessionId: resp.session_id, remote: false };
+        scheduleResumeInject(resp.session_id, snap);
+      } catch (e) {
+        console.warn("[recovery] pane spawn failed", e);
+        t.panes[i] = { sessionId: null, remote: false };
+      }
+    }
+    tabs.value.push(t);
+    newIds.push(t.id);
+  }
+  if (savedActiveIdx >= 0 && newIds[savedActiveIdx]) {
+    gotoTab(newIds[savedActiveIdx]);
+  } else if (newIds.length > 0) {
+    gotoTab(newIds[0]);
+  }
+}
+
+// scheduleResumeInject waits for the first OSC-133;A prompt (task_state =
+// "waiting_input") and then writes the resume line into the PTY. Non-AI
+// snapshots and snapshots without enough info to resume are a no-op.
+function scheduleResumeInject(sessionId: string, snap: RecoveryTabSnapshot["panes"][number]) {
+  if (snap.session_type !== "ai") return;
+  const line = computeResumeLine(snap.ai, snap.last_command_line ?? "");
+  if (!line) return;
+  const ep = localEndpoint.value;
+  if (!ep) return;
+  awaitFirstPromptReady(() => findSessionInfo(sessionId, false)?.task_state).then((result) => {
+    if (result === "timeout") {
+      showToast(i18nT("recovery.pane.resumeTimeout", { kind: snap.ai?.kind ?? "" }));
+      return;
+    }
+    sendInputToSession(ep, sessionId, line);
+  });
+}
+
 async function onClosePane() {
   const t = currentTab.value;
   if (!t) return;
@@ -811,6 +915,15 @@ useTerminalShortcuts(
   { bindings: shortcutBindings },
 );
 
+// Persists tab/pane structure (+ AI sid captures) so a crash or unclean exit
+// can rebuild the workspace on next launch. cwd/title heartbeat is a
+// follow-up; the structural watch covers the v1 use case.
+useRecoverySnapshot({
+  tabs,
+  currentTabId,
+  sessionInfoFor: (sid: string) => findSessionInfo(sid, false),
+});
+
 watch([tabs, currentTabId], () => {
   if (tabs.value.length === 0) return;
   if (currentTabId.value && tabs.value.find((t) => t.id === currentTabId.value)) return;
@@ -857,6 +970,14 @@ onMounted(async () => {
   // five independent calls into one opaque "<DOMException msg>" in the title
   // bar with no way to tell which one fired.
   let bootStage = "";
+  let recoverySnap: RecoverySnapshot = {
+    version: 1,
+    host_id: "",
+    clean_shutdown: false,
+    saved_at_unix: 0,
+    tabs: [],
+  };
+  let recoveryEnabled = true;
   try {
     bootStage = "refreshTerminalTheme";
     await refreshTerminalTheme();
@@ -865,6 +986,9 @@ onMounted(async () => {
     bootStage = "getHostInfo";
     const info = await getHostInfo();
     localHostID.value = info.host_id;
+    bootStage = "loadRecoverySnapshot";
+    recoverySnap = await loadRecoverySnapshot();
+    recoveryEnabled = await getRecoveryDialogEnabled();
     bootStage = "connectLocalSessionList";
     connectLocalSessionList(localEndpoint.value);
     bootStage = "refreshRelayConfig";
@@ -896,7 +1020,14 @@ onMounted(async () => {
 
   if (!autoStarted && tabs.value.length === 0) {
     autoStarted = true;
-    startNewTab();
+    if (recoveryEnabled && recoverySnap.tabs.length > 0) {
+      // Dialog handlers (onRecoveryRestore / onRecoveryDiscard) decide
+      // whether to spawn restored panes or fall back to startNewTab — so
+      // we deliberately do NOT call startNewTab() here.
+      recoveryDialogState.value = { open: true, snapshot: recoverySnap };
+    } else {
+      startNewTab();
+    }
   }
 });
 
@@ -1028,6 +1159,13 @@ onUnmounted(() => {
       :remote-count="remoteSessionCount"
       @confirm="onConfirmQuit"
       @cancel="onCancelQuit"
+    />
+    <RecoveryDialog
+      v-if="recoveryDialogState.snapshot"
+      :open="recoveryDialogState.open"
+      :snapshot="recoveryDialogState.snapshot"
+      @restore="onRecoveryRestore"
+      @discard="onRecoveryDiscard"
     />
     <ShortcutHints />
   </div>

@@ -25,6 +25,18 @@ if (typeof window !== "undefined" && !window.matchMedia) {
     })),
   });
 }
+
+// useRecoverySnapshot subscribes via wailsjs/runtime EventsOn → window.runtime;
+// jsdom has neither, so stub a no-op runtime once for the whole file.
+if (typeof window !== "undefined" && !(window as any).runtime) {
+  (window as any).runtime = {
+    EventsOnMultiple: vi.fn(() => () => {}),
+    EventsOn: vi.fn(() => () => {}),
+    EventsOff: vi.fn(),
+    EventsOffAll: vi.fn(),
+    EventsEmit: vi.fn(),
+  };
+}
 import source from "./App.vue?raw";
 import settingsSource from "./components/SettingsDialog.vue?raw";
 
@@ -225,6 +237,16 @@ describe("remote tab session retention", () => {
       GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
       ConfirmQuit: vi.fn().mockResolvedValue(undefined),
       MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
+      LoadRecoverySnapshot: vi.fn().mockResolvedValue({
+        version: 1,
+        host_id: "",
+        clean_shutdown: true,
+        saved_at_unix: 0,
+        tabs: [],
+      }),
+      SaveRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      DiscardRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
     } as any);
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);

@@ -958,6 +958,15 @@ func (u *uplink) SendCommandEvent(sessionID uuid.UUID, exit, elapsedMS int, labe
 	if u.accountKey != nil {
 		if sealed, ok := sealCommandEventBody(sessionID, payload, u.accountKey()); ok {
 			payload.SealedBody = sealed
+			// M6-final: once the body is sealed, the relay no longer
+			// needs to see the plaintext fields — strip them so the
+			// uplink frame, the relay logs, and every downstream
+			// dispatch (web push, webhook) carry only the opaque
+			// envelope. SW + webhook receivers reconstruct content
+			// from sealedBody using the account_key.
+			payload.Label = ""
+			payload.ExitCode = 0
+			payload.ElapsedMS = 0
 		}
 	}
 	frame, err := proto.EncodeCommandEvent(sessionID, payload)

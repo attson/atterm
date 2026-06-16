@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -9,12 +10,18 @@ import (
 
 // CommandFinished is the event shape, identical to webpush.CommandFinished so
 // the dispatch site can construct both from the same decoded uplink payload.
+//
+// When SealedBody is set (M6-final), the agent has stripped the plaintext
+// Label/ExitCode/ElapsedMS fields before sending the CommandEvent up;
+// receivers can only learn what command ran by decrypting SealedBody with
+// the user's account_key.
 type CommandFinished struct {
-	SessionID uuid.UUID
-	HostID    uuid.UUID
-	ExitCode  int
-	ElapsedMS int
-	Label     string
+	SessionID  uuid.UUID
+	HostID     uuid.UUID
+	ExitCode   int
+	ElapsedMS  int
+	Label      string
+	SealedBody []byte
 }
 
 // formatElapsed renders milliseconds as "2.3s" (<60s) or "1m04s" (>=60s),
@@ -27,7 +34,14 @@ func formatElapsed(ms int) string {
 	return fmt.Sprintf("%dm%02ds", totalSec/60, totalSec%60)
 }
 
+// sealed reports whether this event was emitted under E2EE — i.e. the
+// agent attached an opaque sealedBody and stripped the plaintext fields.
+func (ev CommandFinished) sealed() bool { return len(ev.SealedBody) > 0 }
+
 func humanText(ev CommandFinished) string {
+	if ev.sealed() {
+		return "Session command finished"
+	}
 	label := ev.Label
 	if label == "" {
 		label = "command"
@@ -49,10 +63,14 @@ func renderGeneric(ev CommandFinished) []byte {
 		"event":      "command_finished",
 		"session_id": ev.SessionID.String(),
 		"host_id":    ev.HostID.String(),
-		"exit_code":  ev.ExitCode,
-		"elapsed_ms": ev.ElapsedMS,
-		"label":      ev.Label,
 		"text":       humanText(ev),
+	}
+	if ev.sealed() {
+		payload["sealed_body"] = base64.StdEncoding.EncodeToString(ev.SealedBody)
+	} else {
+		payload["exit_code"] = ev.ExitCode
+		payload["elapsed_ms"] = ev.ElapsedMS
+		payload["label"] = ev.Label
 	}
 	b, _ := json.Marshal(payload)
 	return b

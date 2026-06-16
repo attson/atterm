@@ -19,6 +19,7 @@ const (
 const (
 	NotificationCommandCompleted   = "command_completed"
 	NotificationCommandFailed      = "command_failed"
+	NotificationCommandFinished    = "command_finished"
 	NotificationWaitingInput       = "waiting_input"
 	NotificationIdleTimeout        = "idle_timeout"
 	NotificationUplinkDisconnected = "uplink_disconnected"
@@ -138,7 +139,55 @@ func (s *Service) sendOne(userID string, sub Subscription, body []byte) {
 
 // payloadJSON encodes the notification payload that the browser SW will
 // see. Exposed for tests.
+//
+// When the agent attaches a SealedBody (M6-final), the relay knows only
+// that a command finished — not which command, not its exit code, not
+// how long it ran. The push payload therefore carries a generic title
+// / body / notificationType, with no exitCode or elapsedMs in data,
+// plus the opaque envelope for the SW to decrypt locally.
 func payloadJSON(ev CommandFinished) []byte {
+	sealed := len(ev.SealedBody) > 0
+	notificationType := pickNotificationType(ev, sealed)
+	data := map[string]interface{}{
+		"notificationType": notificationType,
+		"clickUrl":         clickURL(ev.SessionID, notificationType, ev.RemotePermission),
+		"sessionId":        ev.SessionID.String(),
+		"hostId":           ev.HostID.String(),
+	}
+	if !sealed {
+		data["exitCode"] = ev.ExitCode
+		data["elapsedMs"] = ev.ElapsedMS
+	}
+	if ev.RemotePermission != "" {
+		data["remotePermission"] = ev.RemotePermission
+	}
+	payload := map[string]interface{}{
+		"title": pushTitle(ev, sealed),
+		"body":  pushBody(ev, sealed),
+		"tag":   ev.SessionID.String(),
+		"data":  data,
+	}
+	if sealed {
+		payload["sealedBody"] = base64.StdEncoding.EncodeToString(ev.SealedBody)
+	}
+	b, _ := json.Marshal(payload)
+	return b
+}
+
+func pickNotificationType(ev CommandFinished, sealed bool) string {
+	if sealed {
+		return NotificationCommandFinished
+	}
+	if ev.ExitCode != 0 {
+		return NotificationCommandFailed
+	}
+	return NotificationCommandCompleted
+}
+
+func pushTitle(ev CommandFinished, sealed bool) string {
+	if sealed {
+		return "AT Term"
+	}
 	label := ev.Label
 	if label == "" {
 		label = "session"
@@ -146,32 +195,14 @@ func payloadJSON(ev CommandFinished) []byte {
 	if len(label) > maxLabelLen {
 		label = label[:maxLabelLen]
 	}
-	notificationType := NotificationCommandCompleted
-	if ev.ExitCode != 0 {
-		notificationType = NotificationCommandFailed
+	return fmt.Sprintf("AT Term · %s", label)
+}
+
+func pushBody(ev CommandFinished, sealed bool) string {
+	if sealed {
+		return "Session command finished"
 	}
-	data := map[string]interface{}{
-		"notificationType": notificationType,
-		"clickUrl":         clickURL(ev.SessionID, notificationType, ev.RemotePermission),
-		"exitCode":         ev.ExitCode,
-		"elapsedMs":        ev.ElapsedMS,
-		"sessionId":        ev.SessionID.String(),
-		"hostId":           ev.HostID.String(),
-	}
-	if ev.RemotePermission != "" {
-		data["remotePermission"] = ev.RemotePermission
-	}
-	payload := map[string]interface{}{
-		"title": fmt.Sprintf("AT Term · %s", label),
-		"body":  fmt.Sprintf("Command finished · exit %d · %s", ev.ExitCode, formatElapsed(ev.ElapsedMS)),
-		"tag":   ev.SessionID.String(),
-		"data":  data,
-	}
-	if len(ev.SealedBody) > 0 {
-		payload["sealedBody"] = base64.StdEncoding.EncodeToString(ev.SealedBody)
-	}
-	b, _ := json.Marshal(payload)
-	return b
+	return fmt.Sprintf("Command finished · exit %d · %s", ev.ExitCode, formatElapsed(ev.ElapsedMS))
 }
 
 func sessionNotificationPayloadJSON(ev SessionNotification) []byte {

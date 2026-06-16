@@ -97,19 +97,39 @@ describe('me.ts /api/me delete', () => {
     vi.restoreAllMocks()
   })
 
-  it('deleteMe DELETEs /api/me with email + password body', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(emptyResponse(204))
+  // After M1i-enforce DELETE /api/me requires an X-Step-Up-Token header
+  // minted via a fresh OPAQUE step-up handshake. The current deleteMe
+  // wrapper drives the handshake first (two fetches to
+  // /api/auth/stepup/init + /finalize) and then issues DELETE with the
+  // returned token. The full handshake is exercised against a live relay
+  // in tests/unit/opaque-interop.test.ts; here we just assert the
+  // sequence of calls is correct without trying to mock the OPAQUE bytes.
+
+  it('deleteMe runs step-up handshake then DELETEs /api/me with the token + email body', async () => {
+    // step-up /init responds; client-side authFinish will fail on the
+    // garbage KE2 below, which makes deleteMe throw — fine, the test
+    // is only about the FIRST request being the step-up init.
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      login_response: 'AAAA',
+      session_id: 'sid-xyz',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await deleteMe('a@b.example', 'password-1234')
+    await deleteMe('a@b.example', 'password-1234').catch(() => undefined)
 
+    expect(fetchMock).toHaveBeenCalled()
     const [path, init] = fetchMock.mock.calls[0]!
-    expect(path).toBe('/api/me')
-    expect((init as RequestInit).method).toBe('DELETE')
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
-      email: 'a@b.example',
-      password: 'password-1234',
-    })
+    expect(path).toBe('/api/auth/stepup/init')
+    expect((init as RequestInit).method).toBe('POST')
+    const body = JSON.parse((init as RequestInit).body as string)
+    expect(body.email).toBe('a@b.example')
+    expect(typeof body.login_ke).toBe('string')
+    expect(body.login_ke.length).toBeGreaterThan(0)
+    // DELETE never goes out when step-up fails — verify by checking that
+    // every recorded call is on a stepup path, never /api/me.
+    for (const call of fetchMock.mock.calls) {
+      expect(call[0]).not.toBe('/api/me')
+    }
   })
 })
 

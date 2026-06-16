@@ -1,4 +1,5 @@
 import { apiFetch } from './client'
+import { requestStepUpToken } from './stepup'
 import type {
   MeResponse,
   SessionRow,
@@ -42,10 +43,15 @@ export async function changePassword(
   })
 }
 
-// Account deletion (settings → Danger zone tab).
+// Account deletion (settings → Danger zone tab). The relay's
+// /api/me handler requires an X-Step-Up-Token issued by a fresh
+// OPAQUE step-up handshake (M1i-enforce); we drive it here so the
+// caller only needs to supply email + password.
 export async function deleteMe(email: string, password: string): Promise<void> {
+  const stepUpToken = await requestStepUpToken(email, password)
   await apiFetch('/api/me', {
     method: 'DELETE',
-    body: JSON.stringify({ email, password }),
+    headers: { 'X-Step-Up-Token': stepUpToken },
+    body: JSON.stringify({ email }),
   })
 }

@@ -1,11 +1,11 @@
 # AT Term
 
 > **Audience**: 第一次见到 atterm 的人 / 想跑起来或部署的开发者
-> **Last updated**: 2026-06-13
+> **Last updated**: 2026-06-16
 > **Status**: stable
-> **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/roadmap.md](./docs/roadmap.md)
+> **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md) · [docs/roadmap.md](./docs/roadmap.md)
 
-AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动的 shell、Codex、Claude 等长任务，可以在离开电脑后从手机、浏览器或另一台电脑继续查看和输入。
+AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动的 shell、Codex、Claude 等长任务，可以在离开电脑后从手机、浏览器或另一台电脑继续查看和输入。Relay 端启用 E2EE 后，命令输出 / 标题 / cwd / 任务摘要在传输和持久化路径上都对 relay 不可读，只在拥有 `account_key` 的客户端解开。
 
 > 一句话：本地先好用；需要远程时，再把会话安全地同步到自己的 relay。
 
@@ -13,48 +13,55 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 
 - 经常跑长时间 AI / 构建 / 运维任务，希望离开工位后还能接着看的用户。
 - 想用一个轻量桌面终端，同时保留浏览器远程 attach 能力的开发者。
-- 偏好自托管，不想把终端输入输出交给第三方平台的人。
+- 偏好自托管 + 端到端加密，不想把终端输入输出交给第三方平台的人。
 
 ## 现在能做什么
 
-| 能力 | 状态 |
-|------|------|
-| 桌面终端 | 支持 macOS / Linux / Windows，多 tab、本地 PTY、cwd 跟踪 |
-| 分屏 | 每个 tab 支持 1 / 2 / 4 pane，macOS 用 `⌘N` / `⌘⇧N`，Linux/Windows 用 `Ctrl` |
-| 远程接管 | 桌面端连上 relay 后，其他浏览器或桌面端可 attach 同一会话；远程默认是 viewer，需要按空格 take over 才能输入 |
-| 任务状态闭环 | 基于 OSC 133 推导运行 / 等待输入 / 完成 / 失败 / 断连状态，同步到桌面、web、mobile 与 push 通知 |
-| 移动端任务首页 | 任务卡片按状态分组（需关注 / 运行中 / 完成 / 失败 / 断连），高亮等待输入与失败任务 |
-| 通知深链 | Web Push payload 携带 session id 与通知类型；点击后直接打开目标 session，等待输入通知会聚焦输入区 |
-| 移动快捷控制面板 | Enter / Esc / Tab / Ctrl-C / Ctrl-D / 方向键 / 粘贴 / 图片上传；view-only 会话禁用 |
-| Relay 连接向导 | 桌面端 setup wizard 逐项校验 URL / HTTP-WS 兼容 / token / 身份 / uplink，按错误给出恢复操作 |
-| QR 配对（P1.6） | 桌面端 Settings → Pairing 生成 5 分钟一次性 token 与二维码，移动端扫码即可换取 relay URL + session token，无需手动复制 |
-| Relay 健康检查（P1.7） | 公开 `/healthz`；admin `/admin/health` 显示 version / uptime / HTTPS / origins / bootstrap admin / 限流 / 活跃 uplinks，并标注移动端 origin 兼容性 |
-| 移动端安全存储（P1.9） | iOS Keychain 保存 relay URL / session token；旧 localStorage 凭据自动迁移并清理；非 HTTPS relay 需用户在 Settings 显式开启 |
-| 桌面诊断导出（P1.10） | Settings → Diagnostics 一键生成脱敏后的 app / OS / WebView / uplink / 配置摘要文本，方便贴 issue |
-| AI 任务控制台（P2.11–P2.13） | 自动识别 `codex` / `claude` / `gemini` / `aider` / `go test` / `docker build` / `kubectl` 等命令并打 type chip；失败任务卡片显示一行 error line；终端上方 Quick Templates bar 内置 `yes / ok / continue / commit / push / release / 1 / 2 / 3` 默认模板，可在 Settings 增删改、配置 hotkey、关掉 bar |
-| 快捷模板 hotkey | 桌面端每个模板可配快捷键（如 `Mod+1`、`Alt+Shift+P`），按下直接发送，无预览对话框 |
-| 移动端独立设置页 | iOS / PWA 进设置页（不再退到连接页）：语言切换 / 模板编辑器 / 快捷按键（aux）编辑器 / 退出登录（保留 relay 配置）。aux 键支持 `\r \n \t \e \xNN ^X` 转义输入 |
-| 移动端防误触模式 | 没开"控制模式"时点击键 / 终端会闪一条黄色横幅说明，避免误触发输入 |
-| 移动端中文输入法补获 | 中文九宫格的 `，。？！` / 数字 / 空格 在 capture 阶段接管 `input` 事件，xterm 漏 forward 的也能送到 PTY，且中文字不会双发 |
-| 移动端图片菜单本地化 | 用 `@capacitor/camera` 替代原生 file input，"从相册选择 / 拍照 / 取消" 跟随 app 语言 |
-| 移动端键盘可见 | 用 `@capacitor/keyboard.setAccessoryBarVisible(false)` 隐藏 WKWebView 上的 `✓ ↑ ↓` 辅助条，控制面板不再被遮 |
-| 移动端 viewer 锁尺寸 | viewer 模式 `term.resize(meta.cols, meta.rows)` 锁到 PTY 真实尺寸，镜像 driver 画面，不再因 fit 错乱横向溢出 |
-| 桌面 titlebar running 指示 | 当前 active session `task_state === 'running'` 时，titlebar 底边显示一道绿色波形指示器（720px 长波 L→R 流动、3.5s 周期），波到的位置才有颜色，淡入淡出无突兀切换。`prefers-reduced-motion` 退化成静态绿条 |
-| 桌面 titlebar 标题居中 | 标题用 `position: absolute; left: 50%; transform: translateX(-50%)` 对窗口几何中心居中，不被 traffic-lights 内边距和右侧 status/图标的不对称宽度挤偏 |
-| 桌面会话侧栏分组折叠 | 任务侧栏按主机 / 按状态分组，每个 group 可单独折叠（▼↔▶，键盘 Enter/Space 也行），无 session 时不撑窗口，scrollbar gutter 隐藏只保留滚动行为 |
-| 桌面快捷模板栏滚轮 | template-bar 不显示 scrollbar，鼠标滚轮在该区域时把 `deltaY` 折成横向滚动，无需按 Shift |
-| 桌面启动错误定位 | `App.vue` boot 链按 `bootStage` 分阶段，错误时 titlebar 显示 `connectLocalSessionList: SyntaxError: …` 一眼定位失败点；`new WebSocket()` 同步异常被隔离重连，不再让 DOMException 卡死整个启动 |
-| Web / PWA 客户端 | Vue 3 + TypeScript + Naive UI 多页应用，支持登录、注册、会话、设置、admin、setup 与中英双语 |
-| 手机浏览器 / iOS App | PWA、Capacitor iOS WebView、relay setup（含 QR 扫码 + 手动 token）、会话列表、触控终端、常用快捷键 |
-| Lazy 同步 | 没有远程用户观看时不上传 PTY 字节，本地体验不依赖 relay |
-| 自动更新 | 桌面端可手动检查、下载、确认重启安装；release 包先验 Ed25519 + SHA256 再安装 |
-| 公网 relay 安全默认值 | 强 bootstrap 管理员密码、Origin 白名单、CSRF、限流、安全响应头 |
-| Shell 集成（OSC 133） | macOS / Linux 自动注入 zsh / bash / fish hook；Windows 自动注入 PowerShell；命令完成 ≥10s 且窗口未聚焦时发系统通知 |
-| 通知 | 系统通知、Web Push、命令完成 outbound webhook（飞书 / generic JSON），并把状态 / type / summary 一并带过去 |
-| 用户系统 | 邀请码注册、邮箱+密码登录、用户独立的会话列表 / Web Push / webhooks；admin 后台管理用户与邀请 |
-| 桌面体验 | 主题、快捷键设置、右侧插件面板、Quick Input、文件浏览器、翻译插件 |
+按用途分组（每个条目下面用一句说清来源 / 边界）：
 
-还在路线图中的能力：桌面安装包 codesign / notarization（P1.8）、单 session 分享 + presence + 审计日志（P3）、可选持久化历史 + 命令级回放（P4）。详见 [`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/spec/architecture.md`](docs/spec/architecture.md) §phase 完成度。
+**核心终端体验**
+
+- 桌面端 macOS / Linux / Windows 三平台，多 tab、本地 PTY、cwd 跟踪。
+- 每 tab 1 / 2 / 4 pane 分屏，分割线可拖拽缩放；macOS `⌘N` / `⌘⇧N`，其他平台 `Ctrl`。
+- 主题 / 快捷键设置、右侧插件面板、Quick Input、文件浏览器、翻译插件。
+
+**远程接管（lazy 同步）**
+
+- 桌面连上 relay 后，其他浏览器 / 桌面端 / iOS app 可 attach 同一会话；默认 viewer 模式，按空格 take over 才能写。
+- 远程没人看时不上传 PTY 字节；权限由桌面端的 `remote_permission` 字段定义（`view` / `control` / `full`），relay 和 host 双重强制。
+- 远程接管伴随 viewer 数量徽章（👁 N）与连接健康指示（RTT pill + 抽屉详情）。
+
+**任务状态闭环**
+
+- OSC 133 推导 running / waiting-input / completed / failed / disconnected 状态，三端同步。
+- 命令完成触发系统通知、Web Push、出站 webhook（飞书 / generic JSON）；payload 带 session id / 任务类型 / summary。
+- AI 任务控制台：自动给 `codex` / `claude` / `gemini` / `aider` / `go test` / `docker build` / `kubectl` 等命令打 type chip；失败卡片附 error 行；可配快捷模板（`yes / ok / continue / commit / push / release / 1 / 2 / 3` 默认，hotkey 可绑）。
+
+**移动端 / Web / PWA**
+
+- Web 端 Vue 3 + TS + Naive UI 多页应用（login / signup / main / settings / admin / setup），中英双语。
+- iOS Capacitor 壳：QR 扫码配对（5min 一次性 token）/ 手动登录 / Keychain 凭据持久化 / 防误触模式 / 中文输入法补获 / `@capacitor/camera` 图片菜单 / 隐藏键盘辅助条 / viewer 锁 PTY 尺寸。
+- 移动任务首页按状态分组（需关注 / 运行中 / 完成 / 失败 / 断连）、列表分组可折叠。
+
+**Relay 自托管**
+
+- 邮箱 + 密码登录，邀请码注册，session token 走 `Authorization: Bearer` 或 WS subprotocol，不出现在 URL。
+- 公网默认 fail-closed：强 bootstrap 密码、`ATTERM_ORIGINS` 白名单、CSP / 限流 / 连接数上限、Ed25519 签名的自动更新。
+- Pairing QR、`/healthz` 公共健康端点 + `/admin/health` 管理页、admin 后台、出站 webhook。
+
+**端到端加密（M1–M6，relay-e2ee-design）**
+
+- OPAQUE aPAKE 注册 / 登录 / step-up（P-256-SHA256 + Scrypt）；服务器从不接触明文密码。
+- 32 字节 `account_key` 随机生成、用 Argon2id 派生的 wrap key + XChaCha20-Poly1305 封装存 relay；客户端用密码当场解开后存 sessionStorage / Keychain / Keyring。
+- 终端输出 / 标题 / cwd / 当前命令 / 任务摘要 / 命令完成 push body 在 agent 端用 HKDF-SHA256(account_key) 派生的 session key 封装；relay 转发不解开，只看 routing 必需的 session id / 时间戳。AAD 由 `uuid || frame_type` 鉴别帧类型，防止 cross-type 替换重放。
+- 详见 [`docs/superpowers/specs/2026-06-15-relay-e2ee-design.md`](docs/superpowers/specs/2026-06-15-relay-e2ee-design.md)，wire 格式见 [`docs/spec/protocol.md`](docs/spec/protocol.md) §E2EE 信封。
+
+**桌面诊断 + 启动稳定性**
+
+- Settings → Diagnostics 一键导出脱敏的 app / OS / WebView / uplink / 配置摘要，方便贴 issue。
+- 启动链按 `bootStage` 分阶段，失败时 titlebar 直接显示 `connectLocalSessionList: SyntaxError: …`；`new WebSocket()` 同步异常被隔离重连，不会击穿 boot await chain。
+
+路线图未完成：桌面安装包 codesign / notarization（P1.8）、单 session 分享 + presence + 审计日志（P3）、可选持久化历史 + 命令级回放（P4）、E2EE 外部加密评审（M7-audit）。详见 [`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/spec/architecture.md`](docs/spec/architecture.md) §phase 完成度。
 
 ## 快速开始
 
@@ -174,6 +181,20 @@ go run ./cmd/atterm-relay --addr :8080
 ### 让同事查看会话
 
 如需让同事 attach 查看，通过 admin 后台为其创建一个账号邀请（`inv_…`），对方注册后即可用自己的账号登录 relay 查看会话。relay 级别的共享只读 token 已在用户账号版本中移除；权限控制现在通过桌面端的 `remote_permission` 字段实现。
+
+### 启用端到端加密
+
+新账号在注册时（`signup.html` / 桌面 Settings → Remote relay → Register）走 OPAQUE 流程，浏览器 / 桌面端在本地随机生成 32 字节 `account_key`，用 Argon2id 派生的 wrap key + XChaCha20-Poly1305 封装成 wrap blob 上传，relay 只看到 wrap 不看密码。登录时同样在本地 OPAQUE 后用密码解 wrap 拿回 `account_key`，存 sessionStorage / Keychain / Keyring。
+
+只要 `account_key` 解锁，agent 就会自动开 E2EE：
+
+- 终端 OUT 字节、会话标题 / cwd / 当前命令、任务摘要、命令完成 push body 都封装上链，relay 收到的就是密文。
+- 浏览器 / 桌面 / 移动端在本地解密；service worker 命令完成通知会通过 `MessageChannel` 找到可见 tab 解密，渲染出富文本（无可见 tab 时退化到 "AT Term · Session command finished" 通用文案）。
+- Webhook 接收端（飞书 / generic JSON）此时只看到 `Session command finished` + 一段 base64 `sealed_body`；要解开就拿 `account_key` 自己 AEAD-open。
+
+特殊门控：硬删除账号 `DELETE /api/me` 走 step-up（再走一次 OPAQUE login 换 60s 一次性 token）。**没有密码找回**——忘记密码只能 admin reset，相当于换一把新 `account_key`，旧会话的 sealed ringbuf 内容永久不可解；这是单用户自托管定位下的设计选择。
+
+详见 [`docs/spec/auth.md`](docs/spec/auth.md) §OPAQUE / `account_key` 与 [`docs/superpowers/specs/2026-06-15-relay-e2ee-design.md`](docs/superpowers/specs/2026-06-15-relay-e2ee-design.md)。
 
 ### 选择远程权限
 
@@ -372,10 +393,13 @@ docs/spec/    架构、协议、工程约定
 ## 文档
 
 - [`docs/spec/architecture.md`](docs/spec/architecture.md)：架构、数据流、生命周期、路线图。
-- [`docs/spec/protocol.md`](docs/spec/protocol.md)：二进制 WebSocket 帧协议、帧类型、重连语义。
+- [`docs/spec/protocol.md`](docs/spec/protocol.md)：二进制 WebSocket 帧协议、帧类型、E2EE 信封、重连语义。
+- [`docs/spec/auth.md`](docs/spec/auth.md)：session token、OPAQUE、`account_key` wrap、step-up、错误码字典。
+- [`docs/spec/conventions.md`](docs/spec/conventions.md)：Go / TypeScript 风格、测试组织、提交约定。
+- [`docs/spec/component-style.md`](docs/spec/component-style.md)：前端组件视觉与控件规范。
 - [`docs/shell-integration.md`](docs/shell-integration.md)：OSC 133 shell 集成机制、各 shell 的注入方式、如何手动卸载。
 - [`docs/web-push.md`](docs/web-push.md)：浏览器 / PWA 订阅 Web Push 命令完成通知的启用方式、iOS 限制、自托管关键管理。
-- [`docs/spec/conventions.md`](docs/spec/conventions.md)：Go / TypeScript 风格、测试组织、提交约定。
+- [`docs/superpowers/specs/2026-06-15-relay-e2ee-design.md`](docs/superpowers/specs/2026-06-15-relay-e2ee-design.md)：E2EE 完整设计（威胁模型、cipher suite、key 派生链、AAD 鉴别、实现状态表）。
 - [`AGENTS.md`](AGENTS.md)：给开发代理和贡献者看的项目红线与修改指引。
 
 ## 贡献前检查

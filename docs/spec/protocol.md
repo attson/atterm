@@ -99,6 +99,8 @@ payload = 8 字节 `seq` (u64 BE) + 原始字节流。
 
 `seq` 从 1 单调递增，每帧 +1，**不是字节偏移**。重连/续传依赖 seq 而非 byte offset。**不**在 reconnect/reattach 时重置。
 
+**E2EE**：当 agent 持有 `account_key` 时，`原始字节流` 是 [§E2EE 信封](#e2ee-信封) 描述的 AEAD 信封，AAD 鉴别字节 = `0x03`（即帧类型本身）。relay 不解开、不做 OSC 解析，按 `session.MarkContentOpaque()` 关掉 OSC 路径。解密后的明文才是真实 PTY 字节，客户端走原本的 xterm 写入路径。
+
 ### `RESIZE` (0x04) — 窗口尺寸变更
 
 payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
@@ -124,7 +126,8 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
     "recent_output": "FAIL  ./internal/foo  0.123s\n",
     "error_lines": ["FAIL  ./internal/foo  0.123s"],
     "captured_at": 1715234580
-  }
+  },
+  "sealed": "<base64 AEAD envelope, optional>"
 }
 ```
 
@@ -140,6 +143,8 @@ payload = 4 字节：`cols` (u16 BE) | `rows` (u16 BE)。
 - `summary` 是上一条命令的 ANSI-stripped 尾部输出 + 抽取的错误行；只在 OSC 133 `D` 事件触发时刷新（recent_output ≤ 4 KiB；error_lines 仅在 `command_exit_code != 0` 时填充，最多 5 行）。subscriber 应当显示 `summary.error_lines[0]` 作为失败任务一行错误摘要。详细生成规则见 `internal/session/summary.go`
 
 每个新 subscriber 在 `ATTACH` 后会立即收到一帧 snapshot META，包含当前 driver_client_id / driver_client_name / cols / rows / task metadata + type + summary，作为初始状态。
+
+**E2EE（`sealed` 字段）**：当 agent 持有 `account_key` 时，`title` / `cwd` / `current_command` 三个明文字段被擦掉（写回 ""），同样的内容以 `SealedMetaFields { title, cwd, current_command }` JSON 形式封装进 [§E2EE 信封](#e2ee-信封)，base64-std 编码后写在 `sealed` 字段里。AAD 鉴别字节 = `0x05`（即 META 帧类型）。客户端在拿到 `account_key` 后解开 `sealed`，把字段 overlay 回去；不持有 key 的客户端只能看到 routing/驱动相关字段。`driver_client_id` / `task_state` / `cols/rows` / 时间戳 / `type` / `summary.captured_at` 仍走明文（routing + UI 必需），`summary.recent_output` / `summary.error_lines` 在 sealed 路径下由 agent 直接擦零；客户端如需富文本，等命令完成时通过 `CommandEventPayload.SealedBody` 拿到。
 
 ### `CLOSE` (0x06) — 会话结束
 
@@ -193,13 +198,16 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
   "summary": {
     "recent_output": "PASS\nok  ./internal/foo  0.123s\n",
     "captured_at": 1715234579
-  }
+  },
+  "sealed": "<base64 AEAD envelope, optional>"
 }]
 ```
 
 `remote_permission` 是 owner desktop 发布的可选字段；缺省表示 `full`，保持旧客户端兼容。
 
 任务字段均为可选 additive metadata。缺失 `task_state` 的旧 publisher 按 `idle` 处理。`type` / `summary` 字段与 META 帧同语义（详见 §`META`），新增于 P2.11 / P2.12。
+
+**E2EE（`sealed` 字段）**：M3b 之后 agent 在 ANNOUNCE 时把 `title` / `cwd` / `command` / `current_command` 写零，等价的 `SealedSessionFields { title, cwd, command, current_command }` 封装进 [§E2EE 信封](#e2ee-信封) 并 base64 存进 `sealed` 字段。AAD 鉴别字节 = `0x12`（LIST_RESP 帧类型）。`summary.error_lines` 在 sealed 路径下也由 agent 直接擦零，避免泄漏失败行内容；客户端解开 `sealed` 后把字段 overlay 回 list 渲染。
 
 | 值 | 远程允许 | relay/host 拦截 |
 |----|----------|-----------------|
@@ -339,7 +347,8 @@ Payload (JSON):
 {
   "exit_code": 0,
   "elapsed_ms": 12500,
-  "label": "atterm"
+  "label": "atterm",
+  "sealed_body": "<base64 AEAD envelope, optional>"
 }
 ```
 
@@ -347,6 +356,8 @@ Payload (JSON):
 - `host_id` is intentionally not in the payload. The relay reconstructs it from the sender's ANNOUNCE manifest at handler time, which makes cross-uplink spoofing impossible.
 - The relay drops the frame silently when `session_id` is not present in the sender's current manifest.
 - `label` is truncated to 256 bytes before being forwarded into a notification payload.
+
+**E2EE（`sealed_body` 字段）**：当 agent 持有 `account_key` 时，`SealedPushBody { label, exit_code, elapsed_ms }` 封装进 [§E2EE 信封](#e2ee-信封)，AAD 鉴别字节 = `0x35`（COMMAND_EVENT 帧类型）；同时 agent 把 `label` 写空、`exit_code` / `elapsed_ms` 写零（M6-final）。relay 不解开，把 `sealed_body` 经 base64 透传到 Web Push payload 的 `sealedBody` 字段、webhook 的 `sealed_body` 字段。service worker 走 [MessageChannel 桥](../superpowers/specs/2026-06-15-relay-e2ee-design.md) 找可见 client 解密渲染富文本；无可见 client 时退化为通用 `AT Term · Session command finished`。
 
 ### `VIEWERS` (0x36) — relay → uplink only (remote viewer count)
 
@@ -433,6 +444,63 @@ host pattern，这样桌面客户端和同源 web 客户端都能连接。
 不接受 `?token=` URL query。不接受 cookie。
 
 完整鉴权模型（Principal、生命周期、错误码、Bootstrap 流程、客户端实现要点）见 [auth.md](./auth.md)。
+
+## E2EE 信封
+
+agent 持有 `account_key` 时，下列字段以**统一 AEAD 信封**封装：`OUT` 帧的字节流、`META.sealed` / `SessionInfo.sealed` / `CommandEventPayload.sealed_body`。relay 不解开，只按 routing 必需的字段（session_id / 时间戳 / `task_state` / `cols/rows` / `driver_client_id` / `host_id`）做转发与限流。
+
+### 信封 wire 格式
+
+```text
+envelope = cipher_id(1B)  ‖  nonce(24B)  ‖  XChaCha20-Poly1305_ciphertext(N + 16B tag)
+
+cipher_id   = 0x01  (XChaCha20-Poly1305)
+ciphertext  = encrypt(
+                key       = HKDF-SHA256(account_key, info = "atterm-session-v1" ‖ session_uuid_bytes),
+                nonce     = nonce,
+                plaintext = JSON 序列化的 sealed 字段（或 OUT 帧的原始字节流）,
+                aad       = session_uuid_bytes(16) ‖ frame_type(1B),
+              )
+```
+
+key 派生：每 session 独立 `session_key = HKDF-SHA256(salt=nil, ikm=account_key, info=b"atterm-session-v1" ‖ session_uuid_bytes, length=32)`。session_id 不同 → key 不同；同 session 多次连接 / 重连用同一把 key。`account_key` 永远在 main thread / Keychain / Keyring 内，**不**进 URL / 日志 / IndexedDB / SW 全局（[AGENTS.md](../../AGENTS.md) §21）。
+
+`cipher_id = 0x01` 是当前唯一已分配值。如果将来要换 cipher（AES-256-GCM-SIV、ChaCha20-Poly1305-RFC8439 等）就用 `0x02 / 0x03 / …`，让旧客户端通过 `cipher_id` 检测并优雅降级到明文回退路径。
+
+### AAD 鉴别表（cross-type replay 防线）
+
+AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字段所在帧的 `Type` 字节**，把信封绑死到帧类型上——攻击者就算偷到一条合法信封，也无法把它替换到别的帧里（cipher 解开会因 AAD 不匹配直接失败）。
+
+| frame_type | 出现位置 | sealed 内容 |
+|------------|----------|-------------|
+| `0x03` `OUT` | OUT 帧 `seq` 后的字节流 | 原始 PTY 输出字节 |
+| `0x05` `META` | `MetaPayload.sealed`（base64） | JSON `SealedMetaFields { title, cwd, current_command }` |
+| `0x12` `LIST_RESP` | `SessionInfo.sealed`（base64） | JSON `SealedSessionFields { title, cwd, command, current_command }` |
+| `0x35` `COMMAND_EVENT` | `CommandEventPayload.sealed_body`（base64） | JSON `SealedPushBody { label, exit_code, elapsed_ms }` |
+
+**红线**：加新 sealed 帧时**必须**给一个**唯一**的 `frame_type` 字节，并在这张表里增行；不允许复用（[AGENTS.md](../../AGENTS.md) §22）。
+
+### Plaintext strip 与 fallback
+
+Agent seal 成功后**必须**把对应明文字段擦零（[AGENTS.md](../../AGENTS.md) §23）：
+
+| 信封 | 同时清零 / 清空的明文字段 |
+|------|---------------------------|
+| `META.sealed` | `MetaPayload.title` / `cwd` / `current_command` 写为 `""` |
+| `SessionInfo.sealed` | `SessionInfo.title` / `cwd` / `command` / `current_command` 写为 `""`；`summary.error_lines` 清空 |
+| `CommandEventPayload.sealed_body` | `label` 写空、`exit_code` / `elapsed_ms` 写零 |
+| `OUT` 帧 | 整条字节流就是密文（没有明文 fallback） |
+
+`account_key` 解锁失败 / seal 出错 / 客户端是旧版本 → agent 走 fallback：sealed 字段不发，明文字段照常 publish。这是 "no key = no encryption" 的对称路径，让 dev 模式和未注册账号下的体验不受影响。
+
+### 实现指针
+
+- 编解码：`internal/proto/codec.go`（`CommandEventPayload.SealedBody`、`EncodeCommandEvent` / `DecodeCommandEvent`）+ `internal/proto/frame.go`（`SessionInfo.Sealed`、`MetaPayload.Sealed`）
+- 通用 seal / open：`internal/e2eecrypto/sessionkey.go::DeriveSessionKey` + `envelope.go::SealOut / OpenOut`（seq-bound）/ `SealUnsequenced / OpenUnsequenced`
+- agent seal helper：`desktop/uplink_seal_fields.go`（SessionInfo + META）、`desktop/uplink_seal_push.go`（CommandEvent）
+- relay 拒绝 OSC 解析：`internal/relay/uplink_conn.go::looksLikeEncryptedOut` → `session.MarkContentOpaque()`
+- 客户端 open：Web `web/src/shared/lib/opaque.ts::openSessionFields / openMetaFields / openPushBodyFields`；iOS `desktop/frontend/src/lib/opaque.ts`（同源镜像）；Service Worker 走 `web/src/shared/sw-bridge.ts` 的 MessageChannel 桥
+- 完整设计与威胁模型：[../superpowers/specs/2026-06-15-relay-e2ee-design.md](../superpowers/specs/2026-06-15-relay-e2ee-design.md)
 
 ## Health endpoint
 

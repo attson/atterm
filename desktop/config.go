@@ -61,6 +61,14 @@ type appConfig struct {
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`
+	// DisableE2EE turns off agent-side sealing for ALL sessions on this
+	// desktop instance. The account_key stays loaded in memory so the JS
+	// side can still decrypt frames originating from OTHER desktops, but
+	// this desktop's agent stops sealing OUT / META / SessionInfo /
+	// CommandEventPayload, so the relay sees plaintext content end to
+	// end. Intended for testing / demo / regression of the unsealed
+	// fallback path. Off by default; the user must opt in via Settings.
+	DisableE2EE bool `json:"disable_e2ee,omitempty"`
 	// RemotePermission is the default owner permission announced for this
 	// desktop's sessions on the remote relay.
 	RemotePermission string `json:"remote_permission,omitempty"`

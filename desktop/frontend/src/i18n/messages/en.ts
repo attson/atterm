@@ -49,6 +49,10 @@ export const en = {
     noEndpoint: "No endpoint",
     pluginFailedToLoad: "Plugin \"{title}\" failed to load",
   },
+  titlebar: {
+    e2eeOffChip: "Plaintext",
+    e2eeOffTitle: "End-to-end encryption is disabled: this desktop's agent is sending terminal output, session title / cwd / current command, and command-finished notifications to the relay in clear text. Turn it back on in Settings → Remote relay.",
+  },
   terminal: {
     connecting: "connecting...",
     reconnecting: "reconnecting...",
@@ -213,6 +217,8 @@ export const en = {
       fullDesc: "allow input, resize, and image paste",
       insecureMode: "enable insecure mode (allow ws:// cleartext relay)",
       insecureWarning: "ws:// sends the relay token, terminal output, and your input in clear text. Use this only on trusted private networks.",
+      disableE2EE: "disable end-to-end encryption (testing / debug only)",
+      disableE2EEWarning: "Agent will send terminal output, session title / cwd / current command, and command-finished notifications to the relay in clear text. Your account key stays loaded — only outbound sealing is paused. Intended for testing the unsealed path; the title bar will keep showing a ⚠ Plaintext indicator while this is on.",
       saving: "saving...",
       saveConnect: "save & connect",
       pairing: {

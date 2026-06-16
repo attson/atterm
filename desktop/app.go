@@ -74,7 +74,12 @@ type RelayConfig struct {
 	// back to treating Token as an opaque long-lived credential.
 	SessionExpiresAt   int64  `json:"session_expires_at"`
 	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
-	RemotePermission   string `json:"remote_permission"`
+	// DisableE2EE mirrors appConfig.DisableE2EE — see that field for the
+	// threat-model write-up. Surfaced through GetRelayConfig /
+	// SetRelayDisableE2EE so the Settings UI can flip it and render the
+	// titlebar Plaintext chip.
+	DisableE2EE      bool   `json:"disable_e2ee"`
+	RemotePermission string `json:"remote_permission"`
 	// LastEmail is the email cached from the most recent successful
 	// LoginRemoteRelay call. Read-only from the frontend: GetRelayConfig
 	// populates it; SetRelayConfig ignores it. Only LoginRemoteRelay
@@ -276,7 +281,7 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
-	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.accountKeySnapshot)
+	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey)
 	go a.uplink.Run(uplinkCtx)
 	log.Printf("desktop: uplink configured for %s", cfg.RelayURL)
 }
@@ -316,11 +321,51 @@ func (a *App) GetRelayConfig() RelayConfig {
 		Token:              cfg.RelaySessionToken,
 		SessionExpiresAt:   cfg.RelaySessionExpiresAt,
 		AllowInsecureRelay: cfg.AllowInsecureRelay,
+		DisableE2EE:        cfg.DisableE2EE,
 		RemotePermission:   cfg.RemotePermissionOrDefault(),
 		LastEmail:          cfg.RelayLastEmail,
 		Connected:          connected,
 		Paused:             cfg.RelayPaused,
 	}
+}
+
+// SetRelayDisableE2EE flips the per-desktop "stop sealing outbound
+// session content" toggle and persists it. The change takes effect on
+// the next agent frame — agentSealAccountKey is a closure that reads
+// cfg on every call, so no uplink restart is needed.
+//
+// Emits an "e2ee-mode-changed" Wails event so the frontend (TitleBar
+// chip, Settings checkbox) can refresh without polling.
+//
+// Intended for testing / regression of the unsealed fallback path.
+// Off by default; the Settings UI presents this with a ⚠ warning so
+// users don't leave it on by mistake.
+func (a *App) SetRelayDisableE2EE(disabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.DisableE2EE == disabled {
+		return nil
+	}
+	cfg.DisableE2EE = disabled
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.emitE2EEModeChanged(disabled)
+	return nil
+}
+
+// emitE2EEModeChanged notifies the frontend of a toggle flip. Split
+// into its own method so tests can swap in a capture-style emitter
+// via App.eventsEmitter (set in NewApp; see M5-meta-wails wiring).
+func (a *App) emitE2EEModeChanged(disabled bool) {
+	if a.eventsEmitter == nil {
+		return
+	}
+	a.eventsEmitter(a.ctx, "e2ee-mode-changed", map[string]any{
+		"disabled": disabled,
+	})
 }
 
 // SetRelayConfig persists a new relay URL/token and (re)starts the uplink. To
@@ -334,6 +379,8 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	cfg.RelaySessionToken = strings.TrimSpace(req.Token)
 	cfg.RelaySessionExpiresAt = req.SessionExpiresAt
 	cfg.AllowInsecureRelay = req.AllowInsecureRelay
+	priorDisableE2EE := cfg.DisableE2EE
+	cfg.DisableE2EE = req.DisableE2EE
 	switch req.RemotePermission {
 	case proto.RemotePermissionView, proto.RemotePermissionControl, proto.RemotePermissionFull:
 		cfg.RemotePermission = req.RemotePermission
@@ -349,6 +396,9 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 		return err
 	}
 	a.applyRelayConfig(cfg)
+	if priorDisableE2EE != cfg.DisableE2EE {
+		a.emitE2EEModeChanged(cfg.DisableE2EE)
+	}
 	return nil
 }
 
@@ -543,6 +593,27 @@ func (a *App) accountKeySnapshot() []byte {
 		return nil
 	}
 	return append([]byte(nil), a.accountKey...)
+}
+
+// agentSealAccountKey is the closure handed to newUplink. It returns
+// the live account_key for seal operations EXCEPT when the user has
+// flipped the per-desktop DisableE2EE toggle — in that case it returns
+// nil, which is the existing "no key = no encryption" code path. Every
+// seal site in uplink.go / uplink_seal_*.go falls through to plaintext
+// automatically without any additional branching. Hot-toggleable: the
+// closure consults the latest cfg on every call, so flipping the flag
+// in Settings takes effect on the next frame without restart.
+//
+// Distinct from accountKeySnapshot, which is also used by the JS-side
+// GetAccountKey binding for decrypting frames originating from OTHER
+// desktops. The toggle only suppresses THIS desktop's sealing; cross-
+// desktop decrypt keeps working so a paused-encryption desktop still
+// reads its other devices' sealed sessions correctly.
+func (a *App) agentSealAccountKey() []byte {
+	if a.cfgStore != nil && a.cfgStore.Get().DisableE2EE {
+		return nil
+	}
+	return a.accountKeySnapshot()
 }
 
 // HasAccountKey reports whether an account_key is currently unlocked in

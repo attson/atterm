@@ -117,6 +117,12 @@ export interface RemoteSession {
   /** Unix seconds of the session's last attention-worthy transition
    *  (waiting_input, or non-shell completed/failed). 0/undefined = none pending. */
   attention_at?: number
+  /** Base64 (std) AEAD envelope over {title, cwd, command,
+   *  current_command} sealed by the agent under HKDF(account_key,
+   *  session_uuid). Empty / absent for sessions whose agent did not
+   *  have an unlocked account_key. See @lib/opaque openSessionFields
+   *  for the decrypt path. */
+  sealed?: string
 }
 
 export interface SessionBridge {

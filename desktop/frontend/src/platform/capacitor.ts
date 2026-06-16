@@ -13,6 +13,7 @@ import {
   defaultKDFParams,
   getOpaqueConfig,
   newOpaqueClient,
+  openSessionFields,
   unwrapWithPassword,
   wrapAccountKey,
   type AccountKeyWrap,
@@ -470,9 +471,34 @@ export function createCapacitorPlatform(): Platform {
           host_id: string; host: string; user: string; remote_permission?: string; task_state?: RemoteSession['task_state'];
           current_command?: string; command_started_at?: number; command_ended_at?: number; command_duration_ms?: number;
           command_exit_code?: number; last_output_at?: number; type?: string; summary?: SessionSummary;
-          unread?: boolean; attention_at?: number;
+          unread?: boolean; attention_at?: number; sealed?: string;
         }>
+        // M3b: decrypt SessionInfo.Sealed when an account_key is in
+        // secureStorage. Mirrors web/src/shared/api/sessions.ts. On any
+        // cipher failure we silently keep the plaintext fields that
+        // the additive-rollout agent still ships.
+        const accountKeyB64 = await secureStorage.get(ACCOUNT_KEY_KEY)
+        const accountKey = accountKeyB64 ? b64StdToBytes(accountKeyB64) : null
         return raw.map((s) => {
+          let title = s.title
+          let cwd = s.cwd
+          let command = s.command
+          let currentCommand = s.current_command
+          if (accountKey && s.sealed) {
+            try {
+              const env = b64StdToBytes(s.sealed)
+              const fields = openSessionFields(env, accountKey, s.id)
+              if (fields) {
+                if (fields.title !== undefined) title = fields.title
+                if (fields.cwd !== undefined) cwd = fields.cwd
+                if (fields.command !== undefined) command = fields.command
+                if (fields.current_command !== undefined) currentCommand = fields.current_command
+              }
+            } catch {
+              // ignore — fall back to plaintext
+            }
+          }
+          s = { ...s, title, cwd, command, current_command: currentCommand }
           const out: RemoteSession = {
             session_id: s.id,
             host_id: s.host_id,

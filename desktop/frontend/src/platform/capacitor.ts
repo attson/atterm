@@ -4,11 +4,180 @@ import type { AuxKey } from '../lib/auxKeys'
 import { CapacitorHttp } from '@capacitor/core'
 import { secureStorage } from './secureStorage'
 import { notifyLocalChange } from '../lib/prefsSync.capacitor'
+import {
+  RegistrationResponse,
+  KE2,
+} from '@cloudflare/opaque-ts'
+import {
+  SERVER_IDENTITY,
+  defaultKDFParams,
+  getOpaqueConfig,
+  newOpaqueClient,
+  unwrapWithPassword,
+  wrapAccountKey,
+  type AccountKeyWrap,
+} from '../lib/opaque'
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
+const ACCOUNT_KEY_KEY = 'atterm.relay.account-key'
 const TEMPLATES_KEY = 'atterm.templates'
 const AUXKEYS_KEY = 'atterm.auxkeys'
+
+// Shared base64 helpers for the OPAQUE / wrap envelope bytes. Same
+// conventions as web/src/shared/api/auth.ts so a wrap sealed on web
+// can unwrap on mobile (matters when the same user is logged in
+// across both clients).
+function bytesToB64Std(b: Uint8Array): string {
+  return btoa(String.fromCharCode(...b))
+}
+
+function b64StdToBytes(s: string): Uint8Array {
+  const bin = atob(s)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+function numberArrayToB64(b: number[]): string {
+  return bytesToB64Std(new Uint8Array(b))
+}
+
+// loginFlow drives the two-stage OPAQUE handshake against a relay base
+// URL. Captures the response shapes the Go relay returns at each step
+// so the mobile bundle does not depend on the @shared/api types. On
+// success, returns the user_id, session_token, and the unwrapped 32-
+// byte account_key — the caller persists each in the right place.
+//
+// Errors are mapped to the historical strings the UI already handles
+// (invalid_credentials, cannot_reach_relay, http_*) so the
+// mobile/MobileSetup.vue + login flow does not need to change.
+async function opaqueLogin(
+  base: string,
+  email: string,
+  password: string,
+): Promise<{ user_id: string; session_token: string; account_key: Uint8Array }> {
+  const cfg = getOpaqueConfig()
+  const client = newOpaqueClient()
+
+  const ke1OrErr = await client.authInit(password)
+  if (ke1OrErr instanceof Error) throw new Error('cannot_reach_relay')
+  const ke1 = ke1OrErr
+
+  let initRes: Response
+  try {
+    initRes = await fetch(base + '/api/auth/login/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, login_ke: numberArrayToB64(ke1.serialize()) }),
+      credentials: 'omit',
+    })
+  } catch {
+    throw new Error('cannot_reach_relay')
+  }
+  if (initRes.status === 401) throw new Error('invalid_credentials')
+  if (initRes.status === 429) throw new Error('rate_limited')
+  if (!initRes.ok) throw new Error('http_' + initRes.status)
+  const initBody = (await initRes.json()) as { login_response: string; session_id: string }
+
+  const ke2 = KE2.deserialize(cfg, Array.from(b64StdToBytes(initBody.login_response)))
+  const finishOrErr = await client.authFinish(ke2, SERVER_IDENTITY, email)
+  if (finishOrErr instanceof Error) throw new Error('invalid_credentials')
+  const { ke3 } = finishOrErr
+
+  let finRes: Response
+  try {
+    finRes = await fetch(base + '/api/auth/login/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        session_id: initBody.session_id,
+        login_ke3: numberArrayToB64(ke3.serialize()),
+      }),
+      credentials: 'omit',
+    })
+  } catch {
+    throw new Error('cannot_reach_relay')
+  }
+  if (finRes.status === 401) throw new Error('invalid_credentials')
+  if (!finRes.ok) throw new Error('http_' + finRes.status)
+  const finBody = (await finRes.json()) as {
+    user_id: string
+    session_token: string
+    account_key_wrap: AccountKeyWrap
+  }
+  const accountKey = unwrapWithPassword(password, finBody.account_key_wrap)
+  return { user_id: finBody.user_id, session_token: finBody.session_token, account_key: accountKey }
+}
+
+// opaqueRegister mints a fresh account_key, wraps it, and runs the
+// OPAQUE register init/finalize round-trip. Returns the same shape as
+// opaqueLogin so callers can treat both as the entry point that unlocks
+// the user's local state.
+async function opaqueRegister(
+  base: string,
+  email: string,
+  password: string,
+  claim_token = '',
+): Promise<{ user_id: string; session_token: string; account_key: Uint8Array }> {
+  const cfg = getOpaqueConfig()
+  const client = newOpaqueClient()
+
+  const ke1OrErr = await client.registerInit(password)
+  if (ke1OrErr instanceof Error) throw new Error('cannot_reach_relay')
+  const ke1 = ke1OrErr
+
+  let initRes: Response
+  try {
+    initRes = await fetch(base + '/api/auth/register/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, registration_ke: numberArrayToB64(ke1.serialize()) }),
+      credentials: 'omit',
+    })
+  } catch {
+    throw new Error('cannot_reach_relay')
+  }
+  if (initRes.status === 409) throw new Error('email_taken')
+  if (!initRes.ok) throw new Error('http_' + initRes.status)
+  const initBody = (await initRes.json()) as { registration_response: string }
+
+  const ke2 = RegistrationResponse.deserialize(
+    cfg,
+    Array.from(b64StdToBytes(initBody.registration_response)),
+  )
+  const finishOrErr = await client.registerFinish(ke2, SERVER_IDENTITY, email)
+  if (finishOrErr instanceof Error) throw new Error('http_400')
+  const { record } = finishOrErr
+
+  const accountKey = new Uint8Array(32)
+  crypto.getRandomValues(accountKey)
+  const wrap = wrapAccountKey(password, accountKey, defaultKDFParams())
+
+  const finBody: Record<string, unknown> = {
+    email,
+    registration_record: numberArrayToB64(record.serialize()),
+    account_key_wrap: wrap,
+  }
+  if (claim_token) finBody.claim_token = claim_token
+
+  let finRes: Response
+  try {
+    finRes = await fetch(base + '/api/auth/register/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(finBody),
+      credentials: 'omit',
+    })
+  } catch {
+    throw new Error('cannot_reach_relay')
+  }
+  if (finRes.status === 409) throw new Error('email_taken')
+  if (!finRes.ok) throw new Error('http_' + finRes.status)
+  const fin = (await finRes.json()) as { user_id: string; session_token: string }
+  return { user_id: fin.user_id, session_token: fin.session_token, account_key: accountKey }
+}
 
 // loadLegacyFromLocalStorage reads (but does not clear) the legacy
 // localStorage blob. Returned as parsed RelayConfig or null. Malformed JSON
@@ -167,36 +336,27 @@ export function createCapacitorPlatform(): Platform {
       },
       login: async (url, email, password, allowInsecure) => {
         const base = url.replace(/\/$/, '')
-        let res: Response
-        try {
-          res = await fetch(base + '/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
-            credentials: 'omit',
-          })
-        } catch {
-          throw new Error('cannot_reach_relay')
-        }
-        if (res.status === 401) throw new Error('invalid_credentials')
-        if (res.status === 429) throw new Error('rate_limited')
-        if (!res.ok) throw new Error('http_' + res.status)
-        const body = (await res.json()) as {
-          session_token: string
-          expires_at: number
-          user: { id: string; email: string }
-        }
+        const result = await opaqueLogin(base, email, password)
         const cfg: RelayConfig = {
           url: base,
-          token: body.session_token,
-          session_expires_at: body.expires_at,
+          token: result.session_token,
+          // The OPAQUE login response no longer carries an expiry;
+          // the relay is authoritative and surfaces it via 401 when
+          // the token rolls. Store 0 so the existing UI treats it as
+          // "unknown" rather than "expired".
+          session_expires_at: 0,
           allow_insecure_relay: allowInsecure,
           remote_permission: 'full',
-          last_email: body.user.email,
+          last_email: email,
           connected: false,
         }
         await secureStorage.set(STORAGE_KEY, JSON.stringify(cfg))
         await secureStorage.set(PASSWORD_KEY, password)
+        // Persist the unlocked account_key to the same secure-storage
+        // backend the session token uses. AttermSecureStorage stores
+        // these in the iOS Keychain (see PR #101); when the app
+        // relaunches we re-read it without prompting the user again.
+        await secureStorage.set(ACCOUNT_KEY_KEY, bytesToB64Std(result.account_key))
       },
       logout: async () => {
         const cfg = parseRelayJSON(await secureStorage.get(STORAGE_KEY))
@@ -220,6 +380,11 @@ export function createCapacitorPlatform(): Platform {
           session_expires_at: 0,
         }
         await secureStorage.set(STORAGE_KEY, JSON.stringify(cleared))
+        // Wipe the unlocked account_key alongside the session token.
+        // Leaving it persisted after an explicit logout would let any
+        // other process holding the Keychain item recover the user's
+        // E2EE state.
+        try { await secureStorage.set(ACCOUNT_KEY_KEY, '') } catch {}
       },
       loadSavedPassword: async () => {
         const v = await secureStorage.get(PASSWORD_KEY)

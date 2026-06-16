@@ -139,3 +139,45 @@ func TestApp_AiSidCallback_EmitsEvent(t *testing.T) {
 		t.Fatal("event not received")
 	}
 }
+
+func TestApp_BeforeClose_MarksCleanShutdown(t *testing.T) {
+	app := newRecoveryTestApp(t)
+	payload := `{"version":1,"host_id":"` + app.host.hostID + `","saved_at_unix":1750000000,"tabs":[{"id":"t","panes":[{"slot":0,"shell":"/bin/zsh"}]}]}`
+	if err := app.SaveRecoverySnapshot(payload); err != nil {
+		t.Fatal(err)
+	}
+	// Drain on-disk clean flag back to false (simulates a launch reading
+	// the snapshot before the user quits).
+	if _, err := app.LoadRecoverySnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	// User approves quit.
+	app.quitApproved.Store(true)
+	// Wails calls OnBeforeClose; we expect false (proceed) and clean=true on disk.
+	if proceed := app.beforeClose(app.ctx, func() {}); proceed {
+		t.Fatalf("beforeClose returned true (abort), want false (proceed) after quitApproved")
+	}
+	got, _ := app.LoadRecoverySnapshot()
+	if !got.CleanShutdown {
+		t.Fatalf("expected clean_shutdown=true after beforeClose with quitApproved, got %+v", got)
+	}
+}
+
+func TestApp_BeforeClose_DoesNotMarkWhenNotApproved(t *testing.T) {
+	app := newRecoveryTestApp(t)
+	payload := `{"version":1,"host_id":"` + app.host.hostID + `","saved_at_unix":1750000000,"tabs":[{"id":"t","panes":[{"slot":0,"shell":"/bin/zsh"}]}]}`
+	if err := app.SaveRecoverySnapshot(payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.LoadRecoverySnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	// quitApproved stays false. beforeClose should NOT mark clean.
+	if proceed := app.beforeClose(app.ctx, func() {}); !proceed {
+		t.Fatalf("beforeClose returned false (proceed) without quitApproved, want true (abort)")
+	}
+	got, _ := app.LoadRecoverySnapshot()
+	if got.CleanShutdown {
+		t.Fatalf("clean_shutdown must remain false when quit was not approved")
+	}
+}

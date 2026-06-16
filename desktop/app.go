@@ -1312,6 +1312,13 @@ func normalizeUpdateGHProxyURL(proxyURL string) (string, error) {
 // gating without bringing up a Wails runtime.
 func (a *App) beforeClose(ctx context.Context, emit func()) bool {
 	if a.quitApproved.Load() {
+		// Last chance to mark the recovery snapshot as a clean exit so
+		// the next launch shows "last clean exit" instead of "ended
+		// unexpectedly". Best-effort: a failure here doesn't block the
+		// close — the user already approved.
+		if err := a.MarkCleanShutdown(); err != nil {
+			log.Printf("recovery: MarkCleanShutdown on close: %v", err)
+		}
 		return false
 	}
 	emit()

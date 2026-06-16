@@ -44,6 +44,20 @@ type NewSessionReq struct {
 	Cwd     string   `json:"cwd,omitempty"`
 	Cols    uint16   `json:"cols,omitempty"`
 	Rows    uint16   `json:"rows,omitempty"`
+
+	// AIKind is set by the frontend after calling its own classifyAIKind()
+	// on the user-typed command. Allowed values match the keys of
+	// aiSniffers ("claude" | "codex" | "aider"). Empty disables AI behavior
+	// (sniffer doesn't start, no resume metadata). Names here are kept in
+	// sync with internal/session/ClassifyCommand.
+	AIKind string `json:"ai_kind,omitempty"`
+
+	// InitialAISessionID is the AI-side session id we captured before a
+	// previous crash. When non-empty, the frontend is responsible for
+	// PTY-writing the resume command after first prompt-ready; the Go side
+	// just round-trips this value through PaneSnapshot bookkeeping. We do
+	// NOT pass it as an arg to the spawned process.
+	InitialAISessionID string `json:"initial_ai_session_id,omitempty"`
 }
 
 // NewSessionResp is returned by NewSession.

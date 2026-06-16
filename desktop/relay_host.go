@@ -48,6 +48,15 @@ type relayHost struct {
 	// attacher (behind the uplink) sends CLAIM_DRIVER and we need to promote
 	// that subscription to driver on the local session.
 	uplinkSubs map[uuid.UUID]*session.Subscriber
+
+	// startSniffFn launches an AI session-id sniff goroutine. Defaults to
+	// startAISniff in production; tests override with a stub.
+	startSniffFn func(ctx context.Context, cwd, kind string, onCapture func(sid string))
+
+	// aiSidCallback is set by app.go after startRelayHost returns; it
+	// receives every captured AI session id and emits a Wails event. Nil
+	// when no app is wired (tests / standalone).
+	aiSidCallback func(localSessionID uuid.UUID, kind, aiSid string)
 }
 
 type activeSession struct {
@@ -145,6 +154,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		sessions:     make(map[uuid.UUID]*activeSession),
 		changes:      make(chan struct{}, 1),
 		uplinkSubs:   make(map[uuid.UUID]*session.Subscriber),
+		startSniffFn: startAISniff,
 	}, nil
 }
 
@@ -420,6 +430,16 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		})
 	}
 
+	// AI session id sniff: snapshot the CLI's data dir before the PTY can
+	// write anything, then poll for a new file. The captured sid is round-
+	// tripped to the frontend over Wails events (see app.aiSidCallback).
+	if req.AIKind != "" && h.startSniffFn != nil {
+		sidCopy := id
+		go h.startSniffFn(ctx, cwd, req.AIKind, func(sid string) {
+			h.onAISidCaptured(sidCopy, req.AIKind, sid)
+		})
+	}
+
 	h.mu.Lock()
 	if h.sessions == nil {
 		h.mu.Unlock()
@@ -531,4 +551,13 @@ func mergeShellIntegrationPlan(argv, env []string, p shellintegration.Plan) ([]s
 		outEnv = append(outEnv, p.ExtraEnv...)
 	}
 	return outArgv, outEnv
+}
+
+// onAISidCaptured forwards a captured AI session id to the registered
+// callback (set by the App during startup). Safe to call when the
+// callback is nil — the sniff just fires and forgets.
+func (h *relayHost) onAISidCaptured(localSessionID uuid.UUID, kind, aiSid string) {
+	if h.aiSidCallback != nil {
+		h.aiSidCallback(localSessionID, kind, aiSid)
+	}
 }

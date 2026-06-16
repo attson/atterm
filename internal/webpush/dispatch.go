@@ -2,6 +2,7 @@ package webpush
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -31,6 +32,13 @@ type CommandFinished struct {
 	ElapsedMS        int
 	Label            string
 	RemotePermission string
+	// SealedBody is the agent-composed AEAD envelope (M6-foundation)
+	// that the service worker can decrypt with the user's account_key
+	// to render rich content the relay was not able to read. When
+	// non-empty the relay includes a base64 copy in the push payload
+	// under "sealedBody"; when empty the SW falls back to the
+	// existing title/body strings.
+	SealedBody []byte
 }
 
 // SessionNotification is the input to task-state push notifications that are
@@ -158,6 +166,9 @@ func payloadJSON(ev CommandFinished) []byte {
 		"body":  fmt.Sprintf("Command finished · exit %d · %s", ev.ExitCode, formatElapsed(ev.ElapsedMS)),
 		"tag":   ev.SessionID.String(),
 		"data":  data,
+	}
+	if len(ev.SealedBody) > 0 {
+		payload["sealedBody"] = base64.StdEncoding.EncodeToString(ev.SealedBody)
 	}
 	b, _ := json.Marshal(payload)
 	return b

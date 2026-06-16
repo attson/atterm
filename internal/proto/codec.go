@@ -115,10 +115,21 @@ func DecodePingTimestamp(payload []byte) (uint64, bool) {
 
 // CommandEventPayload is the JSON body of a TypeCommandEvent frame.
 // Direction: uplink -> relay. Not forwarded to clients.
+//
+// M6-foundation: SealedBody carries an AEAD envelope (per
+// internal/e2eecrypto) over a JSON document the agent composes
+// locally — typically the human-readable push body the relay would
+// otherwise build from Label. The relay treats it as opaque bytes
+// and forwards it as a base64 string inside the W3C Web Push payload
+// body alongside the existing fallback strings. A future service-
+// worker change decrypts it with the user's account_key and renders
+// the rich text instead of the relay's generic "AT Term · session"
+// fallback.
 type CommandEventPayload struct {
-	ExitCode  int    `json:"exit_code"`
-	ElapsedMS int    `json:"elapsed_ms"`
-	Label     string `json:"label,omitempty"`
+	ExitCode   int    `json:"exit_code"`
+	ElapsedMS  int    `json:"elapsed_ms"`
+	Label      string `json:"label,omitempty"`
+	SealedBody []byte `json:"sealed_body,omitempty"`
 }
 
 // EncodeCommandEvent builds a TypeCommandEvent frame.

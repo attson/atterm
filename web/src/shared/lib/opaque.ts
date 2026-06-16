@@ -19,6 +19,8 @@ import {
 } from '@cloudflare/opaque-ts'
 import { argon2id } from '@noble/hashes/argon2.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
+import { hkdf } from '@noble/hashes/hkdf.js'
+import { sha256 } from '@noble/hashes/sha2.js'
 import { utf8ToBytes, randomBytes } from '@noble/hashes/utils.js'
 
 /** Server identity bound into the AKE transcript. Must match Go side. */
@@ -141,3 +143,95 @@ function b64ToBytes(s: string): Uint8Array {
 
 /** Re-export message types so callers can deserialize relay responses. */
 export { KE2, RegistrationResponse, getConfig as getOpaqueConfig }
+
+// ---- M3b: per-session content decrypt ----
+//
+// The Go agent encrypts {title, cwd, command, current_command} into
+// SessionInfo.Sealed via:
+//   session_key = HKDF-SHA256(account_key, info = "atterm-session-v1" || uuid_bytes)
+//   envelope    = cipher_id(0x01) || nonce(24) || XChaCha20-Poly1305.encrypt(
+//                    key = session_key,
+//                    nonce,
+//                    plaintext = JSON({title, cwd, command, current_command}),
+//                    aad = uuid(16) || 0x12 /* TypeListResp */,
+//                 )
+// openSessionFields below is the matching client-side inverse.
+
+const SESSION_INFO_AAD_FRAME_TYPE = 0x12
+const SESSION_KEY_INFO_PREFIX = utf8ToBytes('atterm-session-v1')
+const CIPHER_ID_XCHACHA20_POLY1305 = 0x01
+
+/** Sealed JSON shape — keep in sync with desktop/uplink_seal_fields.go's
+ * sealedSessionFields struct. */
+export interface SealedSessionFields {
+  title?: string
+  cwd?: string
+  command?: string
+  current_command?: string
+}
+
+/** uuidStringToBytes parses a canonical UUID string into 16 raw bytes.
+ * The Go side mixes these into the HKDF info and AEAD AAD, so a mismatch
+ * here breaks decryption silently. */
+function uuidStringToBytes(s: string): Uint8Array {
+  const hex = s.replace(/-/g, '')
+  if (hex.length !== 32) throw new Error(`invalid uuid: ${s}`)
+  const out = new Uint8Array(16)
+  for (let i = 0; i < 16; i++) {
+    out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16)
+  }
+  return out
+}
+
+/** Derive the per-session AEAD key from the user's unlocked account_key
+ * and a session uuid. Mirrors internal/e2eecrypto/sessionkey.go. */
+function deriveSessionKey(accountKey: Uint8Array, sessionUUID: string): Uint8Array {
+  const uuidBytes = uuidStringToBytes(sessionUUID)
+  const info = new Uint8Array(SESSION_KEY_INFO_PREFIX.length + uuidBytes.length)
+  info.set(SESSION_KEY_INFO_PREFIX, 0)
+  info.set(uuidBytes, SESSION_KEY_INFO_PREFIX.length)
+  return hkdf(sha256, accountKey, undefined, info, 32)
+}
+
+/** Open a SessionInfo.Sealed envelope and parse the JSON inside.
+ * Returns null on any cipher / parse error; the caller falls back to the
+ * plaintext fields on the outer SessionInfo. */
+export function openSessionFields(
+  sealed: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+): SealedSessionFields | null {
+  if (!sealed) return null
+  const envelope = sealed instanceof Uint8Array ? sealed : new Uint8Array(sealed)
+  const minEnvelopeLen = 1 + 24 + 16
+  if (envelope.length < minEnvelopeLen) return null
+  if (envelope[0] !== CIPHER_ID_XCHACHA20_POLY1305) return null
+
+  let sk: Uint8Array
+  try {
+    sk = deriveSessionKey(accountKey, sessionUUID)
+  } catch {
+    return null
+  }
+
+  const nonce = envelope.subarray(1, 1 + 24)
+  const ciphertext = envelope.subarray(1 + 24)
+
+  const uuidBytes = uuidStringToBytes(sessionUUID)
+  const aad = new Uint8Array(uuidBytes.length + 1)
+  aad.set(uuidBytes, 0)
+  aad[uuidBytes.length] = SESSION_INFO_AAD_FRAME_TYPE
+
+  const aead = xchacha20poly1305(sk, nonce, aad)
+  let plaintext: Uint8Array
+  try {
+    plaintext = aead.decrypt(ciphertext)
+  } catch {
+    return null
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(plaintext)) as SealedSessionFields
+  } catch {
+    return null
+  }
+}

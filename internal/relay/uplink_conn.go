@@ -533,11 +533,12 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 	}
 	if s.cfg.Webhook != nil {
 		s.cfg.Webhook.DispatchCommandFinished(ms.sess.OwnerUserID, webhook.CommandFinished{
-			SessionID: f.SessionID,
-			HostID:    hostID,
-			ExitCode:  payload.ExitCode,
-			ElapsedMS: payload.ElapsedMS,
-			Label:     payload.Label,
+			SessionID:  f.SessionID,
+			HostID:     hostID,
+			ExitCode:   payload.ExitCode,
+			ElapsedMS:  payload.ElapsedMS,
+			Label:      payload.Label,
+			SealedBody: payload.SealedBody,
 		})
 	}
 }

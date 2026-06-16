@@ -416,6 +416,68 @@ func TestDispatch_FilteredByOwner(t *testing.T) {
 	}
 }
 
+// TestPayloadJSON_Sealed_GenericFieldsOnly verifies M6-final: when
+// the agent attaches a SealedBody, the relay MUST emit a generic
+// title / body / notificationType and MUST NOT include exit code or
+// elapsed ms in `data`. Everything content-bearing lives only inside
+// the sealed envelope from the relay's perspective.
+func TestPayloadJSON_Sealed_GenericFieldsOnly(t *testing.T) {
+	sid := uuid.New()
+	hid := uuid.New()
+	body := payloadJSON(CommandFinished{
+		SessionID:        sid,
+		HostID:           hid,
+		ExitCode:         127,
+		ElapsedMS:        65000,
+		Label:            "this_should_not_appear",
+		RemotePermission: "view",
+		SealedBody:       []byte{0xaa, 0xbb},
+	})
+	var payload struct {
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		Tag        string `json:"tag"`
+		SealedBody string `json:"sealedBody"`
+		Data       struct {
+			NotificationType string `json:"notificationType"`
+			ClickURL         string `json:"clickUrl"`
+			RemotePermission string `json:"remotePermission"`
+			SessionID        string `json:"sessionId"`
+			HostID           string `json:"hostId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+	if payload.Title != "AT Term" {
+		t.Fatalf("title = %q; want bare 'AT Term'", payload.Title)
+	}
+	if payload.Body != "Session command finished" {
+		t.Fatalf("body = %q; want generic", payload.Body)
+	}
+	if strings.Contains(string(body), "this_should_not_appear") {
+		t.Fatalf("Label leaked into sealed push: %s", body)
+	}
+	if strings.Contains(string(body), "exitCode") || strings.Contains(string(body), "elapsedMs") {
+		t.Fatalf("exit/elapsed leaked into sealed push: %s", body)
+	}
+	if strings.Contains(string(body), "exit 127") {
+		t.Fatalf("body leaked literal exit code: %s", body)
+	}
+	if payload.Data.NotificationType != NotificationCommandFinished {
+		t.Fatalf("notificationType = %q; want %q", payload.Data.NotificationType, NotificationCommandFinished)
+	}
+	if payload.Data.ClickURL != "/#/s/"+sid.String()+"?notification=command_finished&permission=view" {
+		t.Fatalf("clickUrl = %q", payload.Data.ClickURL)
+	}
+	if payload.SealedBody == "" {
+		t.Fatalf("sealedBody not propagated to push payload")
+	}
+	if payload.Data.SessionID != sid.String() || payload.Data.HostID != hid.String() {
+		t.Fatalf("data ids mismatch: %+v", payload.Data)
+	}
+}
+
 // TestPayloadJSON_SealedBodyBase64 verifies M6-foundation: when the
 // agent supplies a SealedBody, the relay includes a base64 std copy
 // in the push payload under "sealedBody". When empty the field is

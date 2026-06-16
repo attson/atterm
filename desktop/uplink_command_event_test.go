@@ -39,6 +39,68 @@ func TestSendCommandEventQueuesFrameOnOutChan(t *testing.T) {
 	}
 }
 
+// TestSendCommandEvent_SealStripsPlaintext: M6-final — once the body
+// is successfully sealed under the user's account_key, the outgoing
+// CommandEventPayload MUST have its Label, ExitCode, and ElapsedMS
+// fields zeroed. Otherwise the relay still sees plaintext alongside
+// the envelope and the seal accomplishes nothing.
+func TestSendCommandEvent_SealStripsPlaintext(t *testing.T) {
+	ak := mustAccountKey32(t)
+	ch := make(chan proto.Frame, 4)
+	u := &uplink{accountKey: func() []byte { return ak }}
+	u.out = ch
+	sid := uuid.New()
+	u.SendCommandEvent(sid, 127, 65000, "deploy")
+	select {
+	case f := <-ch:
+		payload, err := proto.DecodeCommandEvent(f)
+		if err != nil {
+			t.Fatalf("DecodeCommandEvent: %v", err)
+		}
+		if payload.Label != "" {
+			t.Fatalf("Label not stripped: %q", payload.Label)
+		}
+		if payload.ExitCode != 0 {
+			t.Fatalf("ExitCode not stripped: %d", payload.ExitCode)
+		}
+		if payload.ElapsedMS != 0 {
+			t.Fatalf("ElapsedMS not stripped: %d", payload.ElapsedMS)
+		}
+		if len(payload.SealedBody) == 0 {
+			t.Fatalf("SealedBody missing — strip should only fire on successful seal")
+		}
+	default:
+		t.Fatal("no frame queued")
+	}
+}
+
+// TestSendCommandEvent_NoAccountKey_KeepsPlaintext: when no account_key
+// is available (legacy / dev path) the agent must NOT strip plaintext —
+// otherwise the relay's legacy webhook + push composition gets empty
+// fields and the dev experience regresses.
+func TestSendCommandEvent_NoAccountKey_KeepsPlaintext(t *testing.T) {
+	ch := make(chan proto.Frame, 4)
+	u := &uplink{}
+	u.out = ch
+	sid := uuid.New()
+	u.SendCommandEvent(sid, 127, 65000, "deploy")
+	select {
+	case f := <-ch:
+		payload, err := proto.DecodeCommandEvent(f)
+		if err != nil {
+			t.Fatalf("DecodeCommandEvent: %v", err)
+		}
+		if payload.Label != "deploy" || payload.ExitCode != 127 || payload.ElapsedMS != 65000 {
+			t.Fatalf("plaintext fields tampered with: %+v", payload)
+		}
+		if len(payload.SealedBody) != 0 {
+			t.Fatalf("SealedBody set without account_key: %x", payload.SealedBody)
+		}
+	default:
+		t.Fatal("no frame queued")
+	}
+}
+
 func TestSendCommandEventDropsWhenBufferFull(t *testing.T) {
 	// 0-capacity buffer means any non-receiving channel is "full" from the
 	// sender's perspective. Must not block or panic.

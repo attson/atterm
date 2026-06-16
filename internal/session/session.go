@@ -136,6 +136,13 @@ type Session struct {
 	// uses this so its async timer-driven waiting_input transitions reach
 	// the session-list subscribers. The hook runs OUTSIDE the lock.
 	onMetaChanged func()
+
+	// onAIClassified fires once per type→ai transition in applyOSC133Locked.
+	// Receives the OSC 133;C command line payload (stripped of "C;") and the
+	// session's current cwd at fire time. Desktop uses it to spawn the AI
+	// sid sniffer for fresh sessions (restored sessions get sniff via
+	// NewSession's req.AIKind path).
+	onAIClassified func(commandLine, cwd string)
 }
 
 // Subscriber is a client connection's outbox.
@@ -281,6 +288,15 @@ func (s *Session) SetSubscriberCountHook(fn func(int)) {
 func (s *Session) SetMetaChangedHook(fn func()) {
 	s.mu.Lock()
 	s.onMetaChanged = fn
+	s.mu.Unlock()
+}
+
+// SetOnAIClassified registers a callback invoked once when the session's
+// type transitions to ai via OSC 133;C ClassifyCommand. The callback runs
+// while s.mu is held — keep it non-blocking (typically `go startSniff(...)`).
+func (s *Session) SetOnAIClassified(fn func(commandLine, cwd string)) {
+	s.mu.Lock()
+	s.onAIClassified = fn
 	s.mu.Unlock()
 }
 
@@ -867,8 +883,14 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			// to the shell prompt, and running `ls` keeps the session
 			// flagged as ai). See spec §4.
 			if newType := ClassifyCommand(command); newType != SessionTypeShell && s.meta.Type != newType {
+				wasNonAI := s.meta.Type != SessionTypeAI
 				s.meta.Type = newType
 				changed = true
+				if newType == SessionTypeAI && wasNonAI && s.onAIClassified != nil {
+					// First shell→ai transition. Fire so desktop can spawn the AI
+					// sid sniffer. We hold s.mu — callback must be non-blocking.
+					s.onAIClassified(command, s.meta.Cwd)
+				}
 			}
 			started := now.Unix()
 			s.cmdStarted = now

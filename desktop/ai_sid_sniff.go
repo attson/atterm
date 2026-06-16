@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -153,4 +155,52 @@ func computeResumeArgs(kind, sid, lastCommandLine string) []string {
 		return nil
 	}
 	return append([]string{bin}, args...)
+}
+
+// classifyAIKindFromCommand extracts the AI CLI kind from an OSC 133;C
+// command line. Returns "" when the command's first token (basename, after
+// stripping env-assign prefixes and a small wrapper list) isn't in
+// aiSniffers. Mirrors the frontend's classifyAIKind in lib/aiKind.ts —
+// keep the two in sync.
+func classifyAIKindFromCommand(commandLine string) string {
+	tokens := strings.Fields(commandLine)
+	for len(tokens) > 0 {
+		t := tokens[0]
+		if envAssignFromCommand(t) || isAIWrapper(t) {
+			tokens = tokens[1:]
+			continue
+		}
+		break
+	}
+	if len(tokens) == 0 {
+		return ""
+	}
+	first := filepath.Base(tokens[0])
+	if _, ok := aiSniffers[first]; ok {
+		return first
+	}
+	return ""
+}
+
+var aiWrappers = map[string]struct{}{
+	"sudo": {}, "time": {}, "nice": {}, "env": {},
+}
+
+func isAIWrapper(t string) bool {
+	_, ok := aiWrappers[t]
+	return ok
+}
+
+func envAssignFromCommand(t string) bool {
+	eq := strings.IndexByte(t, '=')
+	if eq <= 0 {
+		return false
+	}
+	for i := 0; i < eq; i++ {
+		c := t[i]
+		if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9' && i > 0)) {
+			return false
+		}
+	}
+	return true
 }

@@ -62,3 +62,41 @@ func TestRelayHost_NewSession_NoAIKind_NoSniff(t *testing.T) {
 		t.Fatal("sniff should not start when AIKind is empty")
 	}
 }
+
+func TestRelayHost_NewSession_OnAIClassified_StartsSniff(t *testing.T) {
+	h := newTestRelayHost(t)
+
+	var mu sync.Mutex
+	var captured []string
+	h.startSniffFn = func(_ context.Context, cwd, kind string, _ func(string)) {
+		mu.Lock()
+		defer mu.Unlock()
+		captured = append(captured, kind+"@"+cwd)
+	}
+
+	cwd := t.TempDir()
+	id, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh",
+		Cwd:     cwd,
+		Cols:    80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatalf("session %s not found", id)
+	}
+
+	sess.PushOut(1, []byte("\x1b]133;C;claude --foo\x07"))
+
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 sniff start, got %d (captured=%v)", len(captured), captured)
+	}
+	if captured[0] != "claude@"+cwd {
+		t.Fatalf("expected claude@%s, got %s", cwd, captured[0])
+	}
+}

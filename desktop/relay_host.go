@@ -430,6 +430,22 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		})
 	}
 
+	// Hook fresh AI sniff: session's OSC 133;C handler fires once when type
+	// transitions shell→ai (user types claude/codex/aider at the prompt).
+	// Restored sessions skip this path because req.AIKind triggers sniff below.
+	if sess, ok := h.server.Registry().Get(id); ok {
+		sidCopy := id
+		sess.SetOnAIClassified(func(commandLine, cwd string) {
+			kind := classifyAIKindFromCommand(commandLine)
+			if kind == "" || h.startSniffFn == nil {
+				return
+			}
+			go h.startSniffFn(ctx, cwd, kind, func(aiSid string) {
+				h.onAISidCaptured(sidCopy, kind, aiSid)
+			})
+		})
+	}
+
 	// AI session id sniff: snapshot the CLI's data dir before the PTY can
 	// write anything, then poll for a new file. The captured sid is round-
 	// tripped to the frontend over Wails events (see app.aiSidCallback).

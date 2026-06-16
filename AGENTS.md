@@ -1,16 +1,15 @@
 # AGENTS.md
 
 > **Audience**: 在 atterm 仓库里工作的 AI 编码 agent
-> **Last updated**: 2026-06-13
+> **Last updated**: 2026-06-16
 > **Status**: stable
-> **See also**: [README.md](./README.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md)
+> **See also**: [README.md](./README.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md)
 
 atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 启动的会话默认可被任意设备的 web/桌面客户端 attach、查看历史、继续输入。核心场景：本机跑 codex/claude 的长 AI 任务，离开工位后用手机/另一台机器接管。
 
-阅读这份文件以快速上手；详细规范见 `docs/spec/`。
+阅读这份文件以快速上手；详细规范见 `docs/spec/`。最近版本和 PR 列表用 `git log --oneline -30` / `gh pr list --state merged --limit 30` 取真相，文档里不再维护流水账。
 
-- 当前 release：`v0.2.71`。最近的桌面 UI / 启动稳定性合入：**桌面 UI 抛光与 titlebar running indicator**（#150、v0.2.71）—— titlebar 标题绝对居中、底边新增 iTerm2 风格 running 指示（720px 绿波 L→R 流动，3.5s 周期、`opacity` 渐入渐出，详见 [docs/spec/component-style.md](./docs/spec/component-style.md) §Title bar）；session 侧栏 `.expanded` 改为 flex column 修复溢出、按主机分组可折叠（▼↔▶，详见 §会话侧栏分组折叠）；快捷模板栏支持滚轮横向滚动并隐藏 scrollbar gutter；`SessionListConnection / SessionConnection.openWS()` 包 `try/catch` 隔离 `new WebSocket` 同步抛出的 DOMException，启动 try/catch 按 `bootStage` 分阶段定位错误（详见 [docs/spec/conventions.md](./docs/spec/conventions.md) §WebSocket 同步异常隔离 / §启动 try/catch 分阶段）；顺手清掉 `go.mod` 中未引用的 `golang.org/x/term`。
-- v0.2.33 → v0.2.70 区间的关键合入：P2.13 AI 快捷模板（#99）；移动端防误触模式 banner（#100、v0.2.35）；移动端 setup UX（#102、v0.2.37）；**P1.9 iOS Keychain 真正落地**（#104、v0.2.38，靠 `CAPBridgedPlugin` + `registerPluginInstance` 修正 Capacitor 8 注册）；移动端独立设置页 + 模板/快捷键自定义 + 图片菜单 i18n（#105、v0.2.39 批）；终端首屏全屏 + viewer 锁尺寸（#106）；中文输入法标点/数字/空格补获（#107）；设置改动通过事件总线实时同步到已开 tab（#108）；mobile/package.json 注册 Camera + barcode plugin（#109）；删除 legacy quickInput 插件（#110）；QuickTemplate 加 hotkey + 删预览 + 隐藏开关 + 默认值变为 `yes/ok/continue/commit/push/release/1/2/3`（#111）；`NSPhotoLibraryAddUsageDescription`（#112）；`@capacitor/keyboard` 隐藏 WKWebView 键盘辅助条（#113）；`ios:sync` 自动跑 `npm install`（#114）；跨平台用户设置同步（#147）；移动端 inhouse QR scanner（#148–149）。spec/plan 在 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`。Roadmap 完成度见 `docs/roadmap.md` 与 `docs/spec/architecture.md` §phase 完成度。
+历史规范（已完成的大初始化系列）：用户账号 + OPAQUE E2EE 套件（M1–M6，至 v0.2.110，spec 见 [docs/superpowers/specs/2026-06-15-relay-e2ee-design.md](./docs/superpowers/specs/2026-06-15-relay-e2ee-design.md)）、移动端任务首页 + Capacitor 8 plugin 三件套（至 v0.2.39）、桌面 UI 抛光与 boot stage 错误隔离（v0.2.71、#150）。各 phase 完成度见 [docs/spec/architecture.md](./docs/spec/architecture.md) §phase 完成度。
 
 ## 仓库布局
 
@@ -65,6 +64,12 @@ atterm/
 17. **移动端 fit 走 ResizeObserver + viewer 锁尺寸**：MobileTerminal 首屏半屏的根因是 `fit.fit()` 跑在 `.term` 容器还没 settle 之前。改用 `ResizeObserver` 监听容器尺寸变化、driver 才 fit；viewer 模式下 `onMeta` 收到 `meta.cols/rows` 时 `term.resize(meta.cols, meta.rows)` 锁到 PTY 尺寸（不跑 FitAddon，匹配 protocol.md §Driver/Viewer）。两条都不要再去掉。
 18. **`new WebSocket()` 同步抛出必须被隔离**：`SessionListConnection.openWS()` / `SessionConnection.openWS()` 在调用 `new WebSocket(url, protocols)` 时必须用 try/catch 包裹，并把异常路由到 `handleOpenFailure` —— 它 `console.error` 出 url/protocols/error.name，触发 `onStatus("error")`，按指数退避排重连。WebKit 对非法 URL scheme / 非法 subprotocol 字符抛 `SyntaxError: The string did not match the expected pattern.` 是**同步**的，不像普通连接失败走异步 `onclose`；若漏接，调用者（`App.vue` onMounted boot 链）的 `await` chain 会被击穿，整个启动卡在「正在启动第一个会话…」+ titlebar 红字。详见 `docs/spec/conventions.md` §WebSocket 同步异常隔离。
 19. **桌面启动 try/catch 按 bootStage 分阶段**：`App.vue` `onMounted` 里 `refreshTerminalTheme` / `getEndpoint` / `getHostInfo` / `connectLocalSessionList` / `refreshRelayConfig` 顺序执行，必须用单个 `let bootStage = ""` 在每一步前重新赋值，catch 时把 `${bootStage}: ${e.name}: ${e.message}` 写进 `errorMsg`，同时 `console.error('[boot] step "${bootStage}" failed', { name, message, stack })`。否则一锅端的 catch 把五个调用塌成同一条不可读错误，下次再出 DOMException 又得猜。详见 `docs/spec/conventions.md` §启动 try/catch 分阶段。
+20. **OPAQUE 套件 = P-256-SHA256 + Scrypt**：Go 端 `internal/relay/opaque_server.go` 的 `opaqueSuiteTag = "p256-scrypt-v1"` 和 TS 端 `@cloudflare/opaque-ts` 的 `OpaqueID.OPAQUE_P256 + ScryptMemHardFn` 绑死。bytemare 默认是 ristretto255-SHA512，但 Cloudflare TS 不支持，所以**不要**给"安全升级"为别的曲线——会让浏览器/桌面之间的握手直接失败。`SERVER_IDENTITY = "atterm-relay"` 也是两端硬编码。详见 [docs/spec/auth.md](./docs/spec/auth.md) §OPAQUE。
+21. **account_key 永远不出主线程 / 不进 URL / 不进日志**：浏览器把 32B `account_key` 存 `sessionStorage`（tab 关掉就丢），桌面用 `zalando/go-keyring`，iOS 用 `AttermSecureStorage` Keychain plugin。SW 解密 push body 只能通过 `MessageChannel` 向可见 client 请求（M6-sw 的 `web/src/shared/sw-bridge.ts`），**不要**把 key 写进 IndexedDB / postMessage 广播 / GET query。同理 `password` / wrap 中间产物也不允许 log。
+22. **AAD 鉴别字节是 cross-type replay 的唯一防线**：每个 sealed 信封的 AAD = `uuid(16B) || frame_type(1B)`。当前分配：`OUT=0x03` / `META=0x05` / `LIST_RESP/SessionInfo=0x12` / `COMMAND_EVENT=0x35`。加新 sealed 帧类型时**必须**给新 frame_type 一个唯一字节，并在 [docs/spec/protocol.md](./docs/spec/protocol.md) §E2EE 信封 加一行，否则别处的信封能被替换重放。
+23. **agent seal 成功后必须 strip plaintext**：`desktop/uplink.go` 的 `SendCommandEvent` / `uplink_seal_fields.go` 的 SessionInfo/META 封装都遵守同一模式——seal 成功就把对应明文字段（`Title/Cwd/Command/CurrentCommand/Label/ExitCode/ElapsedMS`）写回零值。**不要**留一份明文给 relay 做 fallback——那会让 webhook/push 路径走回明文分支，绕过 E2EE。Seal 失败（短 key、cipher 出错）才走 fallback 路径。
+24. **不要给 OPAQUE 加密码恢复 / step-up 之外的特权门**：spec 明确不做密码找回，admin reset 等于丢密钥；任何"备用问题/邮件链接"都会把整个 E2EE 模型降级回服务端可读。唯一的特权操作（DELETE /api/me 等）通过 step-up token（60s 单次有效，由再走一次 OPAQUE login 换取，见 `internal/relay/opaque_stepup.go`）。
+25. **proto.Frame 拓展遵守"opaque field 可加, 含义不可改"**：`SessionInfo.Sealed []byte` / `MetaPayload.Sealed []byte` / `CommandEventPayload.SealedBody []byte` 当前已落地；新增 sealed payload 时遵循同一三件套（payload struct 加 `Sealed`/`SealedBody` 字节段、agent seal helper、客户端 open helper）。`Sealed` 字段为空 = 未加密；非空时客户端**必须**在拿到 `account_key` 后才信任内容，旧版客户端可以忽略并 fall back 到外层明文字段。
 
 ## 开发命令
 
@@ -153,6 +158,9 @@ gh run list --repo attson/atterm --limit 10
 | 改会话侧栏分组折叠 / 隐藏滚动条 | `desktop/frontend/src/components/TaskGroupedList.vue`：`collapsedGroups: ref<Set<string>>`（用替换 Set 触发响应式）+ `isGroupCollapsed/toggleGroupCollapsed`；header 加 `role="button" tabindex="0"` + `@click` / `@keydown.enter` / `@keydown.space` + `aria-expanded`，caret 在 `▼` / `▶` 之间切换。`v-for` 改成 `(isGroupCollapsed(key) ? [] : groups[key])`。mark-all 按钮加 `@click.stop`，避免点 ✓ 顺带把分组折叠。`desktop/frontend/src/components/TaskSidebar.vue`：`.expanded { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column }` 让里层 `.list-wrap` 的 `flex: 1; overflow-y: auto` 真正工作；`.list-wrap` 加 `scrollbar-width: none` + `::-webkit-scrollbar { display: none }` 隐藏 gutter |
 | 改快捷模板栏滚轮 / 隐藏 gutter | `desktop/frontend/src/components/TerminalView.vue`：`.template-bar` 加 `scrollbar-width: none` + `::-webkit-scrollbar { display: none }`；`@wheel.passive="onTemplateBarWheel"` 把 `deltaY`（或 deltaX）折成 `scrollLeft`，让鼠标用户不按 Shift 也能横向 pan。passive listener 不 preventDefault，xterm 自己的 wheel 路径不受影响 |
 | 改桌面启动错误隔离 / 阶段定位 | `desktop/frontend/src/lib/connection.ts`：`SessionListConnection.openWS()` / `SessionConnection.openWS()` 用 `try { ws = new WebSocket(...) } catch (e) { this.handleOpenFailure(e, auth); return; }` 包裹；`handleOpenFailure` 打印 url/protocols/error.name，调 `onStatus("error")`，按 `Math.min(8000, 500 * 2^attempts)` 退避排重连。`desktop/frontend/src/App.vue`：`onMounted` 用 `let bootStage = ""` 在每一步前赋值（`refreshTerminalTheme` / `getEndpoint` / `getHostInfo` / `connectLocalSessionList` / `refreshRelayConfig`），catch 时把 `${bootStage}: ${e.name}: ${e.message}` 写进 `errorMsg`，并 `console.error('[boot] step "..."', { name, message, stack })` |
+| 改 OPAQUE 注册 / 登录 / step-up | `internal/relay/opaque_server.go`（套件 + persistence）+ `internal/relay/opaque_auth.go`（register/login HTTP handler）+ `internal/relay/opaque_stepup.go`（60s 一次性 token）+ `internal/e2eeclient/`（Go 桌面 SDK）+ `web/src/shared/lib/opaque.ts` + `desktop/frontend/src/lib/opaque.ts`（mobile mirror）。改套件**必须**两端一起改——见红线 #20 |
+| 改 account_key 持久化 / 解锁路径 | 桌面：`zalando/go-keyring` via `desktop/account_key.go` + Wails 绑定 `GetAccountKey` / `setAccountKey` + `EventsEmit("account-key-changed")`。Web：`web/src/shared/api/account-key.ts`（sessionStorage）。iOS：`mobile/ios/.../AttermSecureStorage.swift` + `desktop/frontend/src/platform/capacitor.ts` + `desktop/frontend/src/lib/account-key.ts`（cache 注册表）。改写入/读取路径时**不要**加 IndexedDB / localStorage（红线 #21）|
+| 改 sealed 字段 / E2EE 信封 | agent: `desktop/uplink.go::SendCommandEvent` / `desktop/uplink_seal_fields.go` / `desktop/uplink_seal_push.go`（seal + plaintext strip,红线 #23）。relay: `internal/relay/uplink_conn.go::handleUplinkCommandEvent`（透传 SealedBody）+ `internal/webpush/dispatch.go`（sealed 分支）+ `internal/webhook/render.go`（sealed 分支）。client 解密：`web/src/shared/lib/opaque.ts::openSessionFields/openMetaFields/openPushBodyFields` + `web/src/shared/sw-bridge.ts`（SW 解密桥）。`proto.CommandEventPayload.SealedBody` / `SessionInfo.Sealed` / `MetaPayload.Sealed` 已在 `internal/proto/frame.go` 落地；加新 sealed 帧请同时 bump [docs/spec/protocol.md](./docs/spec/protocol.md) §E2EE 信封 的 AAD 表（红线 #22）|
 
 ## 风格摘要
 
@@ -190,6 +198,11 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 在 `connection.ts` 调 `new WebSocket(url, protocols)` 不包 try/catch；WebKit 对非法 url scheme / 非法 subprotocol 字符是**同步**抛 `SyntaxError` 的，会击穿 App.vue boot 的 await chain（红线 #18）
 - ❌ 把 `App.vue` onMounted 的多步启动塞进一个统一 try/catch 又不带阶段标记；红线 #19 要求 `bootStage` 在每个调用前赋值，否则失败时只能看到一条不可读错误
 - ❌ 在 titlebar 用 flex `flex: 1 1 0` 来"撑开"标题；左右两侧不对称时 flex 中点会偏。要绝对居中：`.window-title { position: absolute; left: 50%; transform: translateX(-50%) }` + `.status { margin-left: auto }`
+- ❌ 给 OPAQUE 换套件 / 改 `SERVER_IDENTITY` 不同步两端；改 Go 一边 TS 会报 `unsupported KE2 / ke3 length`，握手当场断（红线 #20）
+- ❌ 把 `account_key`、`password`、wrap intermediate 写进 URL query / log / IndexedDB / postMessage 广播（红线 #21）
+- ❌ 给新 sealed 帧复用已分配的 AAD frame_type 字节（红线 #22），或忘记在 `docs/spec/protocol.md` §E2EE 信封 加一行
+- ❌ agent seal 成功后还把同一份字段以明文继续 emit（红线 #23）；webhook/push 路径会优先走明文分支，等于 seal 没干活
+- ❌ 给 E2EE 加"密码找回 / 备用问题 / 邮件链接"分支；这会让 relay 重新拿到 `account_key`，整套 E2EE 模型降级（红线 #24）。step-up 只是给 hard-delete 这种特权操作加一道再确认
 
 ## 文档导引
 

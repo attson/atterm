@@ -10,16 +10,15 @@ import (
 //
 // Defence in depth:
 //   - requireUser: anonymous callers 401 immediately.
+//   - X-Step-Up-Token header: a fresh, single-use OPAQUE step-up token
+//     proving the caller re-verified their password in the last 60
+//     seconds. Minted via POST /api/auth/stepup/{init,finalize}; consumed
+//     here via ConsumeStepUpToken. Restores the password re-verify
+//     defence that the M1a → OPAQUE migration retired (M1i-enforce).
 //   - email match: typo-protection; the client must echo the exact email of
 //     the user the cookie resolves to.
 //   - last-admin guard: refuses if the caller is the only remaining admin,
 //     so the deploy can never be locked out by an accidental delete.
-//
-// Note: under password auth this also did a password re-verify. With
-// OPAQUE we cannot replay credentials server-side without a full client
-// round, so re-verification will be folded into a separate OPAQUE
-// step-up flow in M1b. For now, holding the bearer token plus typing
-// the email is the required proof.
 //
 // On success the user row is dropped (sessions cascade via FK;
 // invitations.consumed_by is nulled by DeleteUser's transaction). The
@@ -28,6 +27,20 @@ import (
 func (a *AuthServer) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireUser(w, r)
 	if !ok {
+		return
+	}
+
+	// Step-up gate. Single-use, 60s TTL, user-bound — see opaque_stepup.go.
+	// A missing or invalid token is the most likely failure mode in
+	// practice (UI forgot to run the handshake first), so the error code
+	// is distinct from the other 400/409 reasons below.
+	stepUpTok := strings.TrimSpace(r.Header.Get("X-Step-Up-Token"))
+	if stepUpTok == "" {
+		writeError(w, http.StatusUnauthorized, "step_up_required")
+		return
+	}
+	if !ConsumeStepUpToken(stepUpTok, p.UserID) {
+		writeError(w, http.StatusUnauthorized, "step_up_invalid")
 		return
 	}
 

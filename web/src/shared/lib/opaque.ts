@@ -118,19 +118,22 @@ export function unwrapWithPassword(password: string, wrap: AccountKeyWrap): Uint
   }
 }
 
-/** Helpers — base64url with no padding so we round-trip with Go's
- * encoding/base64.RawURLEncoding (used by the relay's wire encoding). */
+/** Helpers — standard base64 WITH padding. This is what Go's
+ * encoding/json picks when serializing a struct field typed []byte,
+ * so the wrap envelope round-trips byte-for-byte through the Go
+ * relay's accountKeyWrapPayload. URL-safe / no-padding variants
+ * decode cleanly too thanks to the explicit char remap below. */
 function bytesToB64(b: Uint8Array): string {
   return btoa(String.fromCharCode(...b))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
 }
 
 function b64ToBytes(s: string): Uint8Array {
-  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4))
-  const norm = s.replace(/-/g, '+').replace(/_/g, '/') + pad
-  const bin = atob(norm)
+  // Accept either std or URL-safe encodings, with or without padding,
+  // so a Go server that someday switches encodings cannot silently
+  // break unwrap.
+  const norm = s.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = norm.length % 4 === 0 ? '' : '='.repeat(4 - (norm.length % 4))
+  const bin = atob(norm + pad)
   const out = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
   return out

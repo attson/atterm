@@ -20,8 +20,42 @@ import {
   OpenExternal,
 } from '../../wailsjs/go/main/PluginFS'
 import type { Platform, EnvironmentInfo, RemoteSession } from './types'
+import { setAccountKeyProvider } from '../lib/account-key'
+
+// In-memory cache of the unlocked account_key. Mirrors the Capacitor
+// platform's cache but reads from the Go App.GetAccountKey binding
+// rather than secureStorage. Populated on platform init + after every
+// login/register (api.loginRemoteRelay / api.registerRemoteRelay calls
+// are wrapped to refetch). Wiped on logout.
+let cachedAccountKey: Uint8Array | null = null
+
+function b64StdToBytes(s: string): Uint8Array {
+  if (!s) return new Uint8Array(0)
+  const norm = s.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = norm.length % 4 === 0 ? '' : '='.repeat(4 - (norm.length % 4))
+  const bin = atob(norm + pad)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+async function refreshCachedAccountKey(): Promise<void> {
+  try {
+    const b64 = await api.getAccountKey()
+    cachedAccountKey = b64 ? b64StdToBytes(b64) : null
+  } catch {
+    cachedAccountKey = null
+  }
+}
 
 export function createWailsPlatform(): Platform {
+  setAccountKeyProvider(() => cachedAccountKey)
+  void refreshCachedAccountKey()
+  // Refresh whenever the Go side mutates the unlocked key (login,
+  // register, logout). No polling, no race window.
+  EventsOn('account-key:changed', () => {
+    void refreshCachedAccountKey()
+  })
   return {
     caps: {
       localPty: true,

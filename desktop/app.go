@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -134,11 +135,22 @@ type App struct {
 	// thread might rewrap during password change.
 	accountKeyMu sync.Mutex
 	accountKey   []byte
+
+	// eventsEmitter is the Wails EventsEmit function used to push events
+	// to the frontend. Defaults to wailsruntime.EventsEmit in NewApp;
+	// tests substitute a no-op so they don't crash on wailsruntime's
+	// strict context check. Same pattern as uplink.eventsEmit.
+	eventsEmitter func(ctx context.Context, name string, data ...interface{})
 }
 
 // NewApp creates a new App application struct.
 func NewApp(cfgStore *configStore, logger *loggingManager) *App {
-	a := &App{cfgStore: cfgStore, logger: logger, pluginFS: NewPluginFS()}
+	a := &App{
+		cfgStore:      cfgStore,
+		logger:        logger,
+		pluginFS:      NewPluginFS(),
+		eventsEmitter: wailsruntime.EventsEmit,
+	}
 	a.updater = newUpdater(updaterConfig{
 		current:         Version,
 		repo:            "attson/atterm",
@@ -484,6 +496,22 @@ func (a *App) setAccountKey(key []byte) {
 	}
 	a.accountKeyMu.Unlock()
 	a.persistAccountKey(key)
+	a.emitAccountKeyChanged()
+}
+
+// emitAccountKeyChanged notifies the frontend so the platform-layer
+// cache (wails.ts setAccountKeyProvider) refreshes. Routed through
+// the injectable a.eventsEmitter so unit tests that wire a plain
+// context.Background() do not crash on wailsruntime's strict context
+// check.
+func (a *App) emitAccountKeyChanged() {
+	if a.ctx == nil {
+		return
+	}
+	if a.eventsEmitter == nil {
+		return
+	}
+	a.eventsEmitter(a.ctx, "account-key:changed")
 }
 
 // persistAccountKey writes (or clears) the account_key for the currently
@@ -522,6 +550,30 @@ func (a *App) accountKeySnapshot() []byte {
 // prompt vs assume the user just needs to re-authenticate.
 func (a *App) HasAccountKey() bool {
 	return len(a.accountKeySnapshot()) > 0
+}
+
+// GetAccountKey returns the unlocked E2EE account_key as a standard
+// base64 string, or the empty string when no key is available (user
+// not logged in, bootstrap-admin path, etc.).
+//
+// Threat model: this binding sits entirely inside the desktop's own
+// process boundary — the JS side runs in the same OS user's Wails
+// host. Exposing the key to JS lets the connection layer decrypt
+// MetaPayload.Sealed / SessionInfo.Sealed in the WebSocket hot path
+// without an async round-trip per frame. The same key would have
+// been derivable by anything running in this process anyway (via
+// Wails' own ipc binding mechanism), so the surface area does not
+// change.
+//
+// Note: do NOT log the return value. Do NOT persist it. The Go side
+// already has a Keychain copy under M1f; this binding is for the JS
+// runtime to cache once at platform-init and discard on logout.
+func (a *App) GetAccountKey() string {
+	key := a.accountKeySnapshot()
+	if len(key) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(key)
 }
 
 // ProbeRelayVersion does a lightweight GET <relayURL>/api/version to verify

@@ -573,23 +573,30 @@ func (u *uplink) writeAnnounce(ctx context.Context, conn *websocket.Conn) error 
 // (id, host, cols/rows, started_at, last_output_at, task_state,
 // exit_code, command_duration, attention_at).
 //
-// Stripped in M3a:
+// Stripped in M3a/M3c (immediately, no decrypt path needed):
 //   - Summary (RecentOutput is a ~4KB excerpt of terminal output)
-//
-// Stripped in M3c:
 //   - CurrentCommand (the live OSC 133 "current command" string —
 //     updates per command, leaks exactly what the user is running)
 //
-// Title, Cwd, Command (the spawn command) stay in plaintext for now —
-// they remain useful for the session-list UI and are categorised as
-// "semi-sensitive" in the spec. M3b will fold them into a sealed
-// envelope alongside the M3a/M3c strips once the client decrypt path
-// lands.
+// Stripped in M3b-strip (only after M3b-web + M3b-mobile shipped the
+// client-side decrypt path; sealSessionInfoContent runs first so the
+// agent emits an encrypted copy that the clients overlay back on top):
+//   - Title
+//   - Cwd
+//   - Command (the spawn command)
+//
+// Caller MUST run sealSessionInfoContent on the same snapshot before
+// invoking this helper — otherwise the relay carries opaque ids
+// without any plaintext or sealed envelope and clients have nothing
+// to render.
 func stripContentFieldsFromSnapshot(sessions []proto.SessionInfo) []proto.SessionInfo {
 	out := make([]proto.SessionInfo, len(sessions))
 	for i, s := range sessions {
 		s.Summary = nil
 		s.CurrentCommand = ""
+		s.Title = ""
+		s.Cwd = ""
+		s.Command = ""
 		out[i] = s
 	}
 	return out

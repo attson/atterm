@@ -133,6 +133,80 @@ func TestSealSessionInfoContent_BadIDSkipsSilently(t *testing.T) {
 	}
 }
 
+// TestSealThenStrip_RelayCantSeePlaintext is the M3b-strip end-to-end
+// proof: run the same pipeline writeAnnounce drives (seal then strip),
+// then JSON-marshal the result (the wire shape the relay reads). The
+// known plaintext marker MUST NOT appear anywhere in the marshaled
+// bytes — the relay holds only the sealed envelope and structural
+// fields. A holder of the matching account_key then opens the envelope
+// and recovers the fields byte-for-byte.
+func TestSealThenStrip_RelayCantSeePlaintext(t *testing.T) {
+	const marker = "M3B_STRIP_E2E_MARKER_7C9D"
+	ak := mustAccountKey32(t)
+	in := []proto.SessionInfo{{
+		ID:        uuid.NewString(),
+		HostID:    "host-1",
+		Title:     marker + "-title",
+		Cwd:       "/home/alice/" + marker,
+		Command:   marker + " --flag",
+		StartedAt: 1700000000,
+		Cols:      80,
+		Rows:      24,
+		TaskState: proto.TaskStateRunning,
+	}}
+
+	sealed := sealSessionInfoContent(in, ak)
+	stripped := stripContentFieldsFromSnapshot(sealed)
+
+	// Wire shape — JSON exactly what the relay will receive after the
+	// ANNOUNCE frame is decoded.
+	wire, err := json.Marshal(stripped)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if bytesContainsString(wire, marker) {
+		t.Fatalf("relay would see plaintext marker %q in wire: %s", marker, wire)
+	}
+
+	// Decrypt side recovers the fields.
+	id, _ := uuid.Parse(stripped[0].ID)
+	sk, _ := e2eecrypto.DeriveSessionKey(ak, id)
+	pt, err := e2eecrypto.OpenUnsequenced(sk, id, sessionInfoSealedAADFrameType, stripped[0].Sealed)
+	if err != nil {
+		t.Fatalf("OpenUnsequenced: %v", err)
+	}
+	var got sealedSessionFields
+	if err := json.Unmarshal(pt, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if got.Title != marker+"-title" || got.Command != marker+" --flag" {
+		t.Fatalf("recovered fields mismatch: %+v", got)
+	}
+}
+
+func bytesContainsString(b []byte, s string) bool {
+	return indexOf(b, []byte(s)) >= 0
+}
+
+func indexOf(haystack, needle []byte) int {
+	if len(needle) == 0 || len(haystack) < len(needle) {
+		return -1
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		match := true
+		for j := 0; j < len(needle); j++ {
+			if haystack[i+j] != needle[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestSealSessionInfoContent_PerSessionKeyIsolation: two sessions
 // with different ids produce envelopes that cannot decrypt under each
 // other's key. This is the load-bearing property: leaking one

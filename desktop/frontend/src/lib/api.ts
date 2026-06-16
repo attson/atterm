@@ -170,6 +170,7 @@ interface AppBindings {
   LoginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void>;
   RegisterRemoteRelay(relayURL: string, email: string, password: string, claimToken: string, allowInsecure: boolean): Promise<void>;
   HasAccountKey(): Promise<boolean>;
+  GetAccountKey(): Promise<string>;
   ProbeRelayVersion(arg1: string): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   ListWebhooks(): Promise<Webhook[]>;
@@ -339,6 +340,14 @@ export function registerRemoteRelay(relayURL: string, email: string, password: s
 // the frontend uses this to decide between "unlock" and full-login prompts.
 export function hasAccountKey(): Promise<boolean> {
   return bindings().HasAccountKey();
+}
+
+// getAccountKey returns the unlocked account_key as a base64 std string,
+// or empty string when locked / no user. The Wails platform layer
+// caches this in JS memory so MetaPayload.Sealed decrypt in the hot
+// path stays synchronous. See platform/wails.ts.
+export function getAccountKey(): Promise<string> {
+  return bindings().GetAccountKey();
 }
 
 // probeRelayVersion calls the Wails ProbeRelayVersion method on the Go side

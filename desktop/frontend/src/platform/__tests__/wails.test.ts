@@ -105,9 +105,13 @@ describe('createWailsPlatform', () => {
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {
+    // createWailsPlatform calls EventsOn once for 'account-key:changed'
+    // during construction (M5-meta-wails). Construct first, then prime
+    // the next EventsOn return so the assertion lands on the test's
+    // own subscription, not the platform's.
+    const p = createWailsPlatform()
     const off = vi.fn()
     ;(EventsOn as ReturnType<typeof vi.fn>).mockReturnValueOnce(off)
-    const p = createWailsPlatform()
     const handler = vi.fn()
     const u = p.events.on('relay:auth-error', handler)
     expect(EventsOn).toHaveBeenCalledWith('relay:auth-error', handler)

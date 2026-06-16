@@ -51,6 +51,10 @@ export const zhCN = {
     noEndpoint: "没有 endpoint",
     pluginFailedToLoad: "插件“{title}”加载失败",
   },
+  titlebar: {
+    e2eeOffChip: "明文",
+    e2eeOffTitle: "已禁用端到端加密：本机 agent 现在以明文向 relay 发送终端输出、会话标题 / cwd / 当前命令、命令完成通知。在 Settings → Remote relay 关闭即可恢复加密。",
+  },
   terminal: {
     connecting: "连接中...",
     reconnecting: "重新连接中...",
@@ -215,6 +219,8 @@ export const zhCN = {
       fullDesc: "允许输入、调整尺寸和粘贴图片",
       insecureMode: "启用 insecure mode（允许 ws:// 明文 relay）",
       insecureWarning: "ws:// 会以明文发送 relay token、终端输出和你的输入。仅应在可信私有网络中使用。",
+      disableE2EE: "禁用端到端加密（测试 / 调试用）",
+      disableE2EEWarning: "agent 会以明文向 relay 发送终端输出、会话标题 / cwd / 当前命令、命令完成通知。账号密钥仍保留，只暂停本机出站加密。仅用于测试 unsealed 路径；标题栏会持续显示 ⚠ Plaintext 提醒。",
       saving: "保存中...",
       saveConnect: "保存并连接",
       pairing: {

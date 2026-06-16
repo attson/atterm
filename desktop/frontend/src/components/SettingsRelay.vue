@@ -1,6 +1,6 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion } from "../lib/api";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import SelectDropdown from "./SelectDropdown.vue";
@@ -17,6 +17,12 @@ const url = ref("");
 // It is no longer user-editable — see the email/password login form below.
 const token = ref("");
 const allowInsecureRelay = ref(false);
+// disableE2EE = true means agent will NOT seal outbound session content.
+// Persisted in appConfig.DisableE2EE and applied immediately via the
+// dedicated setRelayDisableE2EE binding (no Save needed). Used for
+// testing the plaintext fallback path; the TitleBar shows a ⚠ chip
+// while this is on so the user doesn't forget.
+const disableE2EE = ref(false);
 const remotePermission = ref("full");
 const paused = ref(false);
 const loading = ref(true);
@@ -98,6 +104,7 @@ onMounted(async () => {
     url.value = cfg.url;
     token.value = cfg.token;
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    disableE2EE.value = (cfg as any).disable_e2ee ?? false;
     remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
     snapshotPersisted();
@@ -137,7 +144,41 @@ onMounted(async () => {
       // Ignore; status row falls back to showing the short user_id.
     }
   });
+
+  // Backend-side flips (e.g. from another window) feed this event so
+  // the checkbox stays in sync with the persisted state without polling.
+  platform.events.on('e2ee-mode-changed', (data) => {
+    const next = (data as { disabled?: boolean })?.disabled;
+    if (typeof next === 'boolean') {
+      disableE2EE.value = next;
+    }
+  });
 });
+
+onBeforeUnmount(() => {
+  // platform.events handlers are cleaned up at the platform layer when
+  // the component unmounts; this hook is kept as the documented place
+  // to revisit if the event API ever returns explicit dispose handles.
+});
+
+// E2EE toggle is applied immediately (no Save required) — testing the
+// unsealed fallback otherwise means typing email/password again every
+// flip. setRelayDisableE2EE is idempotent and emits the same event we
+// listen for above, so the optimistic UI update reconciles with the
+// authoritative state on the next round-trip.
+async function onDisableE2EEChange(e: Event) {
+  const target = e.target as HTMLInputElement | null;
+  const want = !!target?.checked;
+  disableE2EE.value = want;
+  try {
+    await setRelayDisableE2EE(want);
+  } catch (err: any) {
+    // Revert the optimistic flip on failure so the UI matches the
+    // backend.
+    disableE2EE.value = !want;
+    error.value = err?.message ?? String(err);
+  }
+}
 
 function snapshotPersisted() {
   persistedUrl.value = url.value;
@@ -191,6 +232,7 @@ async function save() {
         token: token.value,
         session_expires_at: 0,
         allow_insecure_relay: allowInsecureRelay.value,
+        disable_e2ee: disableE2EE.value,
         remote_permission: remotePermission.value,
       });
     } catch (e: any) {
@@ -210,6 +252,7 @@ async function save() {
     url.value = cfg.url;
     token.value = cfg.token;
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    disableE2EE.value = (cfg as any).disable_e2ee ?? false;
     remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
     email.value = cfg.last_email ?? "";
@@ -411,6 +454,19 @@ defineExpose({
       </label>
       <p v-if="allowInsecureRelay" class="warning">
         {{ t("settings.relay.insecureWarning") }}
+      </p>
+
+      <label class="checkbox">
+        <input
+          :checked="disableE2EE"
+          type="checkbox"
+          :disabled="saving"
+          @change="onDisableE2EEChange"
+        />
+        {{ t("settings.relay.disableE2EE") }}
+      </label>
+      <p v-if="disableE2EE" class="warning">
+        {{ t("settings.relay.disableE2EEWarning") }}
       </p>
 
       <p v-if="error" class="error">{{ error }}</p>

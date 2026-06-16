@@ -74,6 +74,7 @@ export function createWailsPlatform(): Platform {
           token: cfg.token,
           session_expires_at: cfg.session_expires_at,
           allow_insecure_relay: cfg.allow_insecure_relay,
+          disable_e2ee: cfg.disable_e2ee,
           remote_permission: cfg.remote_permission,
         })
       },
@@ -82,6 +83,7 @@ export function createWailsPlatform(): Platform {
           url: '',
           token: '',
           allow_insecure_relay: false,
+          disable_e2ee: false,
           remote_permission: 'full',
         })
       },

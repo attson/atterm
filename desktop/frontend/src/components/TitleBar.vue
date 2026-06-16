@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { usePlatform } from "../platform";
 import WindowControls from "./WindowControls.vue";
 import { setMaximized, useWindowMaximized } from "../composables/useWindowMaximized";
-import type { Endpoint } from "../lib/api";
+import { getRelayConfig, type Endpoint } from "../lib/api";
 import type { TaskState } from "../lib/taskState";
 import { useI18n } from "../i18n/useI18n";
 import { useUplinkHealth } from "../composables/useUplinkHealth";
@@ -51,6 +51,31 @@ const props = defineProps<{
 }>();
 
 const isRunning = computed(() => props.currentTaskState === "running");
+
+// e2eeDisabled tracks the per-desktop "stop sealing" toggle. The chip
+// is always visible while this is true so the user doesn't forget the
+// agent is sending plaintext to the relay. Loaded once from
+// getRelayConfig() then kept in sync via the e2ee-mode-changed event.
+const e2eeDisabled = ref(false);
+const e2eeChipTitle = computed(() => t("titlebar.e2eeOffTitle"));
+const e2eeChipText = computed(() => t("titlebar.e2eeOffChip"));
+
+onMounted(async () => {
+  try {
+    const cfg = await getRelayConfig();
+    e2eeDisabled.value = (cfg as { disable_e2ee?: boolean }).disable_e2ee ?? false;
+  } catch {
+    // Pre-uplink boot can fail this call; the event listener below
+    // will catch up once the backend is ready.
+  }
+});
+
+platform.events.on("e2ee-mode-changed", (data) => {
+  const next = (data as { disabled?: boolean })?.disabled;
+  if (typeof next === "boolean") {
+    e2eeDisabled.value = next;
+  }
+});
 
 defineEmits<{
   (e: "open-remote"): void;
@@ -129,6 +154,16 @@ function onTitleDblClick() {
         {{ t(sessionStatusKey, { count: sessionCount }) }}
         <span v-if="remoteEndpoint" class="dim"> · {{ t("terminal.uplinkOn") }}</span>
       </template>
+    </div>
+    <div
+      v-if="e2eeDisabled"
+      class="e2ee-off-chip"
+      role="status"
+      data-testid="titlebar-e2ee-off"
+      :title="e2eeChipTitle"
+    >
+      <span class="chip-icon" aria-hidden="true">⚠</span>
+      <span>{{ e2eeChipText }}</span>
     </div>
     <ConnHealthPill
       v-if="remoteEndpoint"
@@ -237,6 +272,32 @@ function onTitleDblClick() {
 }
 .status .bad { color: var(--bad); }
 .status .dim { color: var(--good); }
+
+/* E2EE-off chip — present only when the user has paused outbound
+   sealing. Amber-yellow to read as "warning, not fatal"; user can
+   still hover to see the long-form tooltip. Stays out of the way
+   when E2EE is on (v-if). */
+.e2ee-off-chip {
+  --wails-draggable: no-drag;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #1f1300;
+  background: #f4b740;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.e2ee-off-chip .chip-icon {
+  font-size: 12px;
+  line-height: 1;
+}
 
 .icon-btn {
   position: relative;

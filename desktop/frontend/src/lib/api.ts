@@ -42,6 +42,14 @@ export interface RelayConfig {
   // frontend can branch on `> 0` without optional-chaining.
   session_expires_at: number;
   allow_insecure_relay: boolean;
+  // disable_e2ee, when true, turns off this desktop's agent-side sealing.
+  // The account_key stays loaded so cross-desktop decrypt keeps working;
+  // only outbound OUT / META / SessionInfo / CommandEventPayload sealing
+  // is suppressed. Intended for testing the unsealed fallback path.
+  // Optional in the type so iOS Capacitor's local RelayConfig fixtures
+  // (which never run an agent) can omit it; Go always returns a
+  // concrete bool over the wire, never undefined.
+  disable_e2ee?: boolean;
   remote_permission: string;
   // Email cached from the most recent successful LoginRemoteRelay. Used
   // by Settings → Relay to prefill the email field on reopen. Read-only
@@ -165,6 +173,7 @@ interface AppBindings {
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
+  SetRelayDisableE2EE(disabled: boolean): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
   GetUplinkHealth(): Promise<ConnHealthSnapshot>;
   LoginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void>;
@@ -301,6 +310,7 @@ export function setRelayConfig(cfg: {
   token: string;
   session_expires_at?: number;
   allow_insecure_relay?: boolean;
+  disable_e2ee?: boolean;
   remote_permission?: string;
 }): Promise<void> {
   return bindings().SetRelayConfig({
@@ -308,10 +318,18 @@ export function setRelayConfig(cfg: {
     token: cfg.token,
     session_expires_at: cfg.session_expires_at ?? 0,
     allow_insecure_relay: cfg.allow_insecure_relay ?? false,
+    disable_e2ee: cfg.disable_e2ee ?? false,
     remote_permission: cfg.remote_permission ?? "full",
     last_email: "",
     connected: false,
   });
+}
+
+// setRelayDisableE2EE flips the agent-side seal toggle directly without
+// touching URL / token / permission — used by Settings when the user
+// wants the change to take effect immediately, not on the next "Save".
+export function setRelayDisableE2EE(disabled: boolean): Promise<void> {
+  return bindings().SetRelayDisableE2EE(disabled);
 }
 
 export function setUplinkPaused(paused: boolean): Promise<void> {

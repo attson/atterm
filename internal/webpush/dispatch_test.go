@@ -3,6 +3,7 @@ package webpush
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -412,6 +413,39 @@ func TestDispatch_FilteredByOwner(t *testing.T) {
 	}
 	if !strings.Contains(got[0].endpoint, "userA") {
 		t.Fatalf("push went to wrong endpoint %q; want userA's endpoint", got[0].endpoint)
+	}
+}
+
+// TestPayloadJSON_SealedBodyBase64 verifies M6-foundation: when the
+// agent supplies a SealedBody, the relay includes a base64 std copy
+// in the push payload under "sealedBody". When empty the field is
+// omitted entirely so existing clients don't see a stray null.
+func TestPayloadJSON_SealedBodyBase64(t *testing.T) {
+	sid := uuid.New()
+	hid := uuid.New()
+
+	// With SealedBody set: appears as base64 string.
+	body := payloadJSON(CommandFinished{
+		SessionID:  sid,
+		HostID:     hid,
+		ExitCode:   0,
+		Label:      "build",
+		SealedBody: []byte{0x01, 0x02, 0x03, 0x04, 0x05},
+	})
+	var got struct {
+		SealedBody string `json:"sealedBody"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.SealedBody != base64.StdEncoding.EncodeToString([]byte{0x01, 0x02, 0x03, 0x04, 0x05}) {
+		t.Fatalf("sealedBody = %q; want base64 of [01 02 03 04 05]", got.SealedBody)
+	}
+
+	// Without SealedBody: field absent.
+	body = payloadJSON(CommandFinished{SessionID: sid, HostID: hid, Label: "x"})
+	if strings.Contains(string(body), `"sealedBody"`) {
+		t.Fatalf("sealedBody key present when empty: %s", body)
 	}
 }
 

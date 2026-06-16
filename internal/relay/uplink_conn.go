@@ -527,6 +527,7 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 			ExitCode:         payload.ExitCode,
 			ElapsedMS:        payload.ElapsedMS,
 			Label:            payload.Label,
+			SealedBody:       payload.SealedBody,
 			RemotePermission: info.RemotePermission,
 		})
 	}

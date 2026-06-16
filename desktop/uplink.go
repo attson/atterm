@@ -950,11 +950,17 @@ func (u *uplink) SendCommandEvent(sessionID uuid.UUID, exit, elapsedMS int, labe
 	if out == nil {
 		return
 	}
-	frame, err := proto.EncodeCommandEvent(sessionID, proto.CommandEventPayload{
+	payload := proto.CommandEventPayload{
 		ExitCode:  exit,
 		ElapsedMS: elapsedMS,
 		Label:     label,
-	})
+	}
+	if u.accountKey != nil {
+		if sealed, ok := sealCommandEventBody(sessionID, payload, u.accountKey()); ok {
+			payload.SealedBody = sealed
+		}
+	}
+	frame, err := proto.EncodeCommandEvent(sessionID, payload)
 	if err != nil {
 		log.Printf("uplink: SendCommandEvent encode: %v", err)
 		return

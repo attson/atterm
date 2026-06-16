@@ -59,12 +59,12 @@ func TestStripContentFieldsFromSnapshot_DropsSummary(t *testing.T) {
 		out[0].AttentionAt != in[0].AttentionAt {
 		t.Fatalf("structural metadata mutated: %+v", out[0])
 	}
-	// Semi-sensitive fields stay for M3a/M3c — M3b will fold them into
-	// a sealed envelope once the client decrypt path lands.
-	if out[0].Title != in[0].Title ||
-		out[0].Cwd != in[0].Cwd ||
-		out[0].Command != in[0].Command {
-		t.Fatalf("title/cwd/command should stay in plaintext; got %+v", out[0])
+	// M3b-strip: title/cwd/command are now cleared too. The agent
+	// runs sealSessionInfoContent first (see writeAnnounce), so a
+	// matching-key client overlays them back on top of the
+	// SessionInfo via openSessionFields.
+	if out[0].Title != "" || out[0].Cwd != "" || out[0].Command != "" {
+		t.Fatalf("M3b-strip should clear title/cwd/command; got %+v", out[0])
 	}
 }
 

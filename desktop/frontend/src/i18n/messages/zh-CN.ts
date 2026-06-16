@@ -156,6 +156,8 @@ export const zhCN = {
       notificationsHint: "仅在 AT Term 窗口未聚焦时触发。",
       shellIntegration: "启用 shell 集成",
       shellIntegrationHint: "在会话启动时向 zsh / bash / fish / pwsh 注入 OSC 133 hooks，用于检测命令何时完成。仅影响新会话。",
+      recoveryEnabled: "启动时检测并提示恢复上次会话",
+      recoveryEnabledHint: "在启动时询问是否恢复上次的标签页和分屏。",
       defaultShell: "默认 shell",
       auto: "自动",
       customPath: "自定义路径...",
@@ -597,6 +599,10 @@ export const zhCN = {
       badgeFresh: "无 sid（不自动续接）",
       badgeShell: "（无 AI）",
       badgeUnclassified: "未识别为 AI",
+    },
+    pane: {
+      failed: "（已失败）",
+      resumeTimeout: "{kind} 自动续接超时，请按 ↑ 调出上次命令",
     },
   },
 } as const satisfies Messages;

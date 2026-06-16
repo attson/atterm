@@ -1,10 +1,10 @@
 # Relay end-to-end encryption (E2EE) — design
 
 Date: 2026-06-15
-Status: Shipped through v0.2.102; M5 / M6 / M7-audit pending.
+Status: Shipped through v0.2.110; M7-audit pending.
         See "Implementation status" below for the per-milestone breakdown.
 
-## 0. Implementation status (as of v0.2.102)
+## 0. Implementation status (as of v0.2.110)
 
 The relay can no longer read terminal output bytes, task summaries,
 live current_command strings, or title / cwd / spawn command for any
@@ -41,38 +41,47 @@ and session-list ordering.
 | M3b-desktop Decrypt | N/A | — | Wails listRemoteSessions is a stub; nothing to decrypt |
 | M3b-strip Drop plaintext | ✅ | v0.2.102 | Relay carries only Sealed for title/cwd/command/current_command |
 | M4 OSC133/Summary processor | implicit | — | Agent already runs the parser via local Session; relay drops via M2c |
-| M5 META protocol split | partial | — | MetaPayload sealed/clear split not yet formalised as a separate frame schema; agent's TypeMeta forwarder strips Summary + CurrentCommand (M3a/c). Title/Cwd/Command in TypeMeta are NOT yet sealed — only ANNOUNCE/SessionInfo is. |
-| M6 Push + Webhook agent-side | pending | — | Web Push body still composed by relay using clear fields; with M3b-strip those are empty for sealed sessions, so labels degrade to "AT Term · session". Agent-composed bodies (with double envelope) not yet wired. |
+| M5-meta-seal Agent seal live TypeMeta | ✅ | v0.2.104 | sealMetaContent attaches MetaPayload.Sealed for cwd/title/current_command |
+| M5-meta-web Web decrypt live META | ✅ | v0.2.105 | openMetaFields in client-conn.ts; live overlay matches ANNOUNCE path |
+| M5-meta-mobile Mobile decrypt live META | ✅ | v0.2.106 | Capacitor frontend mirrors web META decrypt path |
+| M5-meta-wails Wails expose account_key | ✅ | v0.2.107 | Wails GetAccountKey binding + emitAccountKeyChanged event |
+| M6-foundation CommandEvent SealedBody | ✅ | v0.2.108 | proto.CommandEventPayload.SealedBody + agent seal + relay → push pass-through |
+| M6-sw Web SW decrypt sealedBody | ✅ | v0.2.109 | sw-bridge.ts + openPushBodyFields; SW renders rich content with main-thread key |
+| M6-final Strip plaintext from dispatch | ✅ | v0.2.110 | Agent zeros Label/ExitCode/ElapsedMS on seal; relay push + webhook emit generic + sealed only |
 | M7-status Spec status update | ✅ | this commit | |
 | M7-audit External crypto review | pending | — | Self-review + the cross-language interop fixtures are the current proof; external audit not yet engaged. |
 
-### Known gaps after v0.2.102
+### Known gaps after v0.2.110
 
-1. **Web Push notification labels degrade for E2EE-sealed sessions**:
-   webPushSessionLabel falls back to the literal "session" when title /
-   current_command / command are all empty. Functional but uninformative.
-   M6 fixes this by moving body composition to the agent.
-
-2. **TypeMeta frames sent live during a session do not seal title/cwd**:
-   The agent's uplink forwarder strips Summary + CurrentCommand from
-   live TypeMeta (M3a/c) but does not yet add sealed bytes for Title or
-   Cwd. The ANNOUNCE / SessionInfo path is fully sealed; live META updates
-   are not. Low impact because the relay falls back to the ANNOUNCE
-   snapshot, but worth closing in M5.
-
-3. **No remote viewer sharing**: the design only supports a single user
+1. **No remote viewer sharing**: the design only supports a single user
    account viewing their own sessions across devices. Sharing a session
    with a different account would need a per-session viewer pairing
    flow that does not exist (spec §13.1).
 
-4. **No password recovery**: forgotten password = admin reset = new
+2. **No password recovery**: forgotten password = admin reset = new
    account_key = old session ringbuf ciphertext is permanently
    unrecoverable (spec §13.2). Documented and accepted; sessions are
    ephemeral.
 
-5. **No traffic-analysis defences**: frame counts, sizes, and inter-
+3. **No traffic-analysis defences**: frame counts, sizes, and inter-
    arrival times remain observable to the relay (spec §13.4). Padding
    / timing obfuscation deferred indefinitely.
+
+4. **Service-worker decrypt requires a visible client**: the M6-sw
+   bridge asks any visible window for the account_key over
+   `MessageChannel`. With no tab open the SW falls back to the
+   relay-composed generic title/body ("AT Term" / "Session command
+   finished"). Moving the key into origin-isolated IndexedDB so the
+   SW can decrypt without a client is a deliberate non-goal — the
+   sessionStorage scoping is part of the threat model.
+
+5. **Webhook receivers under E2EE see only the sealed envelope**: with
+   M6-final the relay forwards `sealed_body` (base64) plus a generic
+   "Session command finished" line. Receivers that previously parsed
+   label / exit_code / elapsed_ms now must decrypt the envelope with
+   the user's account_key out-of-band. Aligned with the no-backward-
+   compat preference; documented for users wiring Feishu / generic
+   webhooks.
 
 6. **External cryptographic audit not engaged**: the test surface
    (Go-Go OPAQUE round-trip, TS-Go OPAQUE round-trip via live relay,

@@ -1,7 +1,85 @@
 # Relay end-to-end encryption (E2EE) — design
 
 Date: 2026-06-15
-Status: Draft (design phase); pending implementation plan
+Status: Shipped through v0.2.102; M5 / M6 / M7-audit pending.
+        See "Implementation status" below for the per-milestone breakdown.
+
+## 0. Implementation status (as of v0.2.102)
+
+The relay can no longer read terminal output bytes, task summaries,
+live current_command strings, or title / cwd / spawn command for any
+session whose agent runs with E2EE unlocked. Structural metadata
+(session id, host, cols/rows, started_at, task_state, exit_code,
+timestamps) remains visible — necessary for routing, push timing,
+and session-list ordering.
+
+| Milestone | Status | Tag | Notes |
+| --- | --- | --- | --- |
+| M1a Server-side OPAQUE | ✅ | v0.2.79 | bytemare/opaque, schema migration, register/login endpoints |
+| M1b GET/PUT /api/me/key | ✅ | v0.2.80 | Server endpoints for wrap blob retrieval / rotation |
+| M1c Desktop Go SDK | ✅ | v0.2.81 | internal/e2eeclient + Wails RegisterRemoteRelay binding |
+| M1d-foundation TS | ✅ | v0.2.92 | Suite swap: ristretto255-SHA512 → P-256-SHA256-Scrypt for browser interop |
+| M1d-interop | ✅ | v0.2.93 | TS ↔ Go cross-language OPAQUE round-trip (live test) |
+| M1e Desktop UI register | ✅ | v0.2.82 | SettingsRelay segmented Log in / Register + claim_token field |
+| M1f Keychain persistence | ✅ | v0.2.91 | zalando/go-keyring; account_key survives desktop relaunch |
+| M1g Web auth.ts | ✅ | v0.2.94 | login + register + logout via OPAQUE; sessionStorage account_key |
+| M1h Mobile auth (Capacitor) | ✅ | v0.2.95 | AttermSecureStorage account_key persistence |
+| M1i Step-up endpoints | ✅ | v0.2.96 | POST /api/auth/stepup/{init,finalize}; 60s single-use token |
+| M1i-enforce DELETE /api/me | ✅ | v0.2.97 | X-Step-Up-Token gate on hard-delete |
+| M1j Web step-up driver | ✅ | v0.2.98 | requestStepUpToken; deleteMe() drives handshake |
+| M2a Crypto primitives | ✅ | v0.2.83 | DeriveSessionKey + Seal/OpenOut + Seal/OpenUnsequenced |
+| M2b Agent OUT seal | ✅ | v0.2.84 | sealOutFrame in desktop/uplink forwarder |
+| M2c Mirror skip OSC | ✅ | v0.2.85 | session.MarkContentOpaque; relay stops parsing ciphertext |
+| M2d Summary via ANNOUNCE | ✅ | v0.2.86 | mergeTaskInfo adopts agent-supplied Summary |
+| M2e Agent IN/PASTE open | ✅ | v0.2.87 | openInboundFrame on inbound reader |
+| M2f E2E ciphertext test | ✅ | v0.2.88 | TestUplink_E2E_OUTSealedThroughRelay |
+| M3a Strip Summary | ✅ | v0.2.89 | stripContentFieldsFromSnapshot drops Summary |
+| M3c Strip CurrentCommand | ✅ | v0.2.90 | stripMetaContentFields drops live command |
+| M3b-agent Seal title/cwd/command | ✅ | v0.2.99 | sealSessionInfoContent writes SessionInfo.Sealed |
+| M3b-web Decrypt SessionInfo | ✅ | v0.2.100 | openSessionFields in web bundle; listSessions overlay |
+| M3b-mobile Decrypt SessionInfo | ✅ | v0.2.101 | Capacitor mirror of M3b-web |
+| M3b-desktop Decrypt | N/A | — | Wails listRemoteSessions is a stub; nothing to decrypt |
+| M3b-strip Drop plaintext | ✅ | v0.2.102 | Relay carries only Sealed for title/cwd/command/current_command |
+| M4 OSC133/Summary processor | implicit | — | Agent already runs the parser via local Session; relay drops via M2c |
+| M5 META protocol split | partial | — | MetaPayload sealed/clear split not yet formalised as a separate frame schema; agent's TypeMeta forwarder strips Summary + CurrentCommand (M3a/c). Title/Cwd/Command in TypeMeta are NOT yet sealed — only ANNOUNCE/SessionInfo is. |
+| M6 Push + Webhook agent-side | pending | — | Web Push body still composed by relay using clear fields; with M3b-strip those are empty for sealed sessions, so labels degrade to "AT Term · session". Agent-composed bodies (with double envelope) not yet wired. |
+| M7-status Spec status update | ✅ | this commit | |
+| M7-audit External crypto review | pending | — | Self-review + the cross-language interop fixtures are the current proof; external audit not yet engaged. |
+
+### Known gaps after v0.2.102
+
+1. **Web Push notification labels degrade for E2EE-sealed sessions**:
+   webPushSessionLabel falls back to the literal "session" when title /
+   current_command / command are all empty. Functional but uninformative.
+   M6 fixes this by moving body composition to the agent.
+
+2. **TypeMeta frames sent live during a session do not seal title/cwd**:
+   The agent's uplink forwarder strips Summary + CurrentCommand from
+   live TypeMeta (M3a/c) but does not yet add sealed bytes for Title or
+   Cwd. The ANNOUNCE / SessionInfo path is fully sealed; live META updates
+   are not. Low impact because the relay falls back to the ANNOUNCE
+   snapshot, but worth closing in M5.
+
+3. **No remote viewer sharing**: the design only supports a single user
+   account viewing their own sessions across devices. Sharing a session
+   with a different account would need a per-session viewer pairing
+   flow that does not exist (spec §13.1).
+
+4. **No password recovery**: forgotten password = admin reset = new
+   account_key = old session ringbuf ciphertext is permanently
+   unrecoverable (spec §13.2). Documented and accepted; sessions are
+   ephemeral.
+
+5. **No traffic-analysis defences**: frame counts, sizes, and inter-
+   arrival times remain observable to the relay (spec §13.4). Padding
+   / timing obfuscation deferred indefinitely.
+
+6. **External cryptographic audit not engaged**: the test surface
+   (Go-Go OPAQUE round-trip, TS-Go OPAQUE round-trip via live relay,
+   the seal/open round-trip and AAD-binding properties) constitutes
+   self-review only. An external review pass on the OPAQUE suite
+   choice, the AAD scheme, and the wrap-key derivation is the missing
+   M7 work.
 
 ## 1. Goal
 

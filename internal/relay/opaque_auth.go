@@ -30,9 +30,10 @@ import (
 // in-memory only; a relay restart cancels every pending flow, which is
 // safe (the client will see a 401 on finalize and re-issue init).
 type OpaqueAuthHandler struct {
-	store         *userstore.SQLiteStore
-	srv           *OpaqueServer
-	loginSessions sync.Map // session_id -> *loginPending
+	store          *userstore.SQLiteStore
+	srv            *OpaqueServer
+	loginSessions  sync.Map // session_id -> *loginPending
+	stepUpSessions sync.Map // session_id -> *stepUpPending (M1i)
 }
 
 // loginPending is the in-flight OPAQUE login state for a single (email,
@@ -513,4 +514,8 @@ func (h *OpaqueAuthHandler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/auth/register/finalize", http.HandlerFunc(h.handleRegisterFinalize))
 	mux.Handle("POST /api/auth/login/init", http.HandlerFunc(h.handleLoginInit))
 	mux.Handle("POST /api/auth/login/finalize", http.HandlerFunc(h.handleLoginFinalize))
+	// M1i: step-up OPAQUE round-trip for sensitive operations. Same
+	// protocol bytes as login; emits a short-lived single-use step_up_token.
+	mux.Handle("POST /api/auth/stepup/init", http.HandlerFunc(h.handleStepUpInit))
+	mux.Handle("POST /api/auth/stepup/finalize", http.HandlerFunc(h.handleStepUpFinalize))
 }

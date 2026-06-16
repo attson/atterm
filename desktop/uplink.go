@@ -662,9 +662,15 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 			f = sealed
 		}
 	}
-	if f.Type == proto.TypeMeta && accountKey != nil && len(accountKey()) >= e2eecrypto.SessionKeySize {
-		if stripped, ok := stripMetaContentFields(f); ok {
-			f = stripped
+	if f.Type == proto.TypeMeta && accountKey != nil {
+		ak := accountKey()
+		if len(ak) >= e2eecrypto.SessionKeySize {
+			if sealed, ok := sealMetaContentFields(f, ak); ok {
+				f = sealed
+			}
+			if stripped, ok := stripMetaContentFields(f); ok {
+				f = stripped
+			}
 		}
 	}
 	select {
@@ -761,6 +767,12 @@ func openInboundFrame(f proto.Frame, accountKey func() []byte) (proto.Frame, boo
 // Stripped here:
 //   - Summary       (M3a)
 //   - CurrentCommand (M3c)
+//   - Cwd            (M5)
+//   - Title          (M5)
+//
+// Caller MUST run sealMetaContentFields on the frame first so the
+// sealed envelope is populated before the plaintext fields are
+// cleared; otherwise clients have nothing to render.
 //
 // Returns ok == false when the payload doesn't decode or nothing
 // needed stripping (in which case the caller passes the frame through
@@ -770,11 +782,71 @@ func stripMetaContentFields(f proto.Frame) (proto.Frame, bool) {
 	if err := json.Unmarshal(f.Payload, &m); err != nil {
 		return f, false
 	}
-	if m.Summary == nil && m.CurrentCommand == "" {
+	if m.Summary == nil && m.CurrentCommand == "" && m.Cwd == "" && m.Title == "" {
 		return f, false
 	}
 	m.Summary = nil
 	m.CurrentCommand = ""
+	m.Cwd = ""
+	m.Title = ""
+	payload, err := json.Marshal(m)
+	if err != nil {
+		return f, false
+	}
+	return proto.Frame{
+		Type:      f.Type,
+		SessionID: f.SessionID,
+		Payload:   payload,
+	}, true
+}
+
+// sealedMetaFields is the JSON document we encrypt into MetaPayload.Sealed.
+// Mirrors sealedSessionFields (M3b-agent) but for the live TypeMeta path —
+// the relay sees this as opaque ciphertext, clients with the matching
+// account_key decrypt it and overlay the fields back onto MetaPayload.
+type sealedMetaFields struct {
+	Cwd            string `json:"cwd,omitempty"`
+	Title          string `json:"title,omitempty"`
+	CurrentCommand string `json:"current_command,omitempty"`
+}
+
+// sealMetaContentFields rewrites a TypeMeta frame's payload so the
+// MetaPayload.Sealed field carries an AEAD envelope over the content-
+// bearing fields. The plaintext fields stay populated; the caller is
+// expected to invoke stripMetaContentFields immediately after to zero
+// them out. Two-step split keeps the per-test surface tidy.
+//
+// Returns ok == false when there is nothing sensitive to seal, the
+// session id can't be parsed, or any cipher operation fails — in any
+// of those cases the caller forwards the frame unchanged.
+func sealMetaContentFields(f proto.Frame, accountKey []byte) (proto.Frame, bool) {
+	if len(accountKey) < e2eecrypto.SessionKeySize {
+		return f, false
+	}
+	var m proto.MetaPayload
+	if err := json.Unmarshal(f.Payload, &m); err != nil {
+		return f, false
+	}
+	if m.Cwd == "" && m.Title == "" && m.CurrentCommand == "" {
+		return f, false
+	}
+	sk, err := e2eecrypto.DeriveSessionKey(accountKey, f.SessionID)
+	if err != nil {
+		return f, false
+	}
+	body, err := json.Marshal(sealedMetaFields{
+		Cwd:            m.Cwd,
+		Title:          m.Title,
+		CurrentCommand: m.CurrentCommand,
+	})
+	if err != nil {
+		return f, false
+	}
+	env, err := e2eecrypto.SealUnsequenced(sk, f.SessionID, byte(proto.TypeMeta), body)
+	if err != nil {
+		return f, false
+	}
+	m.Sealed = env
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return f, false

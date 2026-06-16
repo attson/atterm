@@ -68,7 +68,7 @@ func TestStripContentFieldsFromSnapshot_DropsSummary(t *testing.T) {
 	}
 }
 
-func TestStripMetaContentFields_DropsCurrentCommand(t *testing.T) {
+func TestStripMetaContentFields_DropsAllContentFields(t *testing.T) {
 	payload, _ := json.Marshal(proto.MetaPayload{
 		Title:          "t",
 		Cwd:            "/x",
@@ -85,11 +85,15 @@ func TestStripMetaContentFields_DropsCurrentCommand(t *testing.T) {
 	if err := json.Unmarshal(out.Payload, &got); err != nil {
 		t.Fatalf("decode stripped: %v", err)
 	}
-	if got.CurrentCommand != "" {
-		t.Fatalf("CurrentCommand still present: %q", got.CurrentCommand)
+	// M5: Cwd / Title / CurrentCommand all cleared. Caller is
+	// expected to have sealMetaContentFields'd the frame first so
+	// MetaPayload.Sealed carries the encrypted copy.
+	if got.CurrentCommand != "" || got.Title != "" || got.Cwd != "" {
+		t.Fatalf("content fields not cleared: %+v", got)
 	}
-	if got.Title != "t" || got.Cwd != "/x" {
-		t.Fatalf("other fields mutated: %+v", got)
+	// Structural / task fields survive.
+	if got.Cols != 80 || got.TaskState != proto.TaskStateRunning {
+		t.Fatalf("structural fields mutated: %+v", got)
 	}
 }
 
@@ -127,17 +131,22 @@ func TestStripMetaContentFields_DropsSummary(t *testing.T) {
 	if got.Summary != nil {
 		t.Fatalf("Summary still present: %+v", got.Summary)
 	}
-	if got.Title != "t" || got.Cwd != "/x" || got.Cols != 80 || got.TaskState != proto.TaskStateRunning {
-		t.Fatalf("other fields mutated: %+v", got)
+	// M5: title/cwd are stripped too now; only structural fields stay.
+	if got.Title != "" || got.Cwd != "" {
+		t.Fatalf("title/cwd not stripped: %+v", got)
+	}
+	if got.Cols != 80 || got.TaskState != proto.TaskStateRunning {
+		t.Fatalf("structural fields mutated: %+v", got)
 	}
 }
 
 func TestStripMetaContentFields_NoSensitiveFields_NoOp(t *testing.T) {
-	payload, _ := json.Marshal(proto.MetaPayload{Title: "t"})
+	// Cwd / Title / CurrentCommand / Summary all empty — strip is a no-op.
+	payload, _ := json.Marshal(proto.MetaPayload{TaskState: proto.TaskStateRunning, Cols: 80})
 	f := proto.Frame{Type: proto.TypeMeta, SessionID: uuid.New(), Payload: payload}
 	_, ok := stripMetaContentFields(f)
 	if ok {
-		t.Fatalf("expected ok=false when Summary and CurrentCommand are already empty")
+		t.Fatalf("expected ok=false when content fields are all empty")
 	}
 }
 

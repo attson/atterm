@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { login, signup, logout } from '@shared/api/auth'
+import { login, register, logout } from '@shared/api/auth'
 import { clearRelayConfig, loadRelayConfig } from '@shared/api/relay-config'
+import { clearAccountKey, hasAccountKey } from '@shared/api/account-key'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -9,80 +10,82 @@ function jsonResponse(status: number, body: unknown): Response {
   })
 }
 
-const mockLoginResponse = {
-  session_token: 'ses_test_abc123',
-  expires_at: 1234567890,
-  user: {
-    id: 'u1',
-    email: 'a@b',
-    is_admin: false,
-  },
-}
-
-describe('auth helpers', () => {
+describe('OPAQUE auth helpers', () => {
   beforeEach(() => {
     clearRelayConfig()
+    clearAccountKey()
     vi.restoreAllMocks()
   })
 
-  it('login POSTs credentials to /api/auth/login, persists session_token, and returns body', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, mockLoginResponse))
+  // The OPAQUE protocol's protocol-bytes round-trip is exercised end to
+  // end against the real Go relay in opaque-interop.test.ts. The unit
+  // tests below focus on the auth.ts wrapper's local responsibilities:
+  // logout wipes session + account_key; the two-stage POST shapes hit
+  // the right endpoints; and failure paths don't leave the account_key
+  // half-persisted.
+
+  it('logout clears RelayConfig and account_key even when the relay returns 500', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(500, { error: 'down' }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await login('a@b', 'password-1234')
-
-    expect(result).toEqual(mockLoginResponse)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls[0]![0]).toBe('/api/auth/login')
-    const init = fetchMock.mock.calls[0]![1] as RequestInit
-    expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body as string)).toEqual({ email: 'a@b', password: 'password-1234' })
-
-    // Verify that session_token and expires_at were persisted to localStorage.
-    const stored = loadRelayConfig()
-    expect(stored?.sessionToken).toBe('ses_test_abc123')
-    expect(stored?.expiresAt).toBe(1234567890)
-  })
-
-  it('signup posts the invite_code, persists session_token, and returns body', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, mockLoginResponse))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const result = await signup('a@b', 'password-1234', 'invite-abc')
-
-    expect(result).toEqual(mockLoginResponse)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [path, init] = fetchMock.mock.calls[0]!
-    expect(path).toBe('/api/auth/signup')
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
-      email: 'a@b',
-      password: 'password-1234',
-      invite_code: 'invite-abc',
-    })
-
-    // Verify that session_token and expires_at were persisted to localStorage.
-    const stored = loadRelayConfig()
-    expect(stored?.sessionToken).toBe('ses_test_abc123')
-    expect(stored?.expiresAt).toBe(1234567890)
-  })
-
-  it('logout POSTs /api/auth/logout and clears RelayConfig', async () => {
-    // Pre-populate localStorage with a session token.
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { status: 'logged_out' }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    // Save a fake config first.
-    const initialConfig = loadRelayConfig()
-    expect(initialConfig).toBeNull() // Should be cleared from beforeEach.
-
-    await logout()
+    await logout().catch(() => undefined)
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/auth/logout')
-    expect((fetchMock.mock.calls[0]![1] as RequestInit).method).toBe('POST')
+    expect(loadRelayConfig()).toBeNull()
+    expect(hasAccountKey()).toBe(false)
+  })
 
-    // Verify that RelayConfig was cleared.
-    const cleared = loadRelayConfig()
-    expect(cleared).toBeNull()
+  it('register init wires the OPAQUE register endpoint, not the legacy /signup', async () => {
+    // First fetch is /api/auth/register/init. Returning an invalid
+    // base64 payload causes registerFinish to throw, which is fine —
+    // the assertion is purely about the URL we hit on init.
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(200, { registration_response: 'AAAA' }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await register('a@b', 'pw').catch(() => undefined)
+
+    expect(fetchMock).toHaveBeenCalled()
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/auth/register/init')
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)
+    expect(body.email).toBe('a@b')
+    expect(typeof body.registration_ke).toBe('string')
+    expect(body.registration_ke.length).toBeGreaterThan(0)
+  })
+
+  it('login init wires the OPAQUE login endpoint, not the legacy /login', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { login_response: 'AAAA', session_id: 'sid' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await login('a@b', 'pw').catch(() => undefined)
+
+    expect(fetchMock).toHaveBeenCalled()
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/auth/login/init')
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)
+    expect(body.email).toBe('a@b')
+    expect(typeof body.login_ke).toBe('string')
+    expect(body.login_ke.length).toBeGreaterThan(0)
+  })
+
+  it('register surfaces an error and does not persist anything on init failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(500, { error: 'boom' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(register('a@b', 'pw')).rejects.toBeTruthy()
+    expect(loadRelayConfig()).toBeNull()
+    expect(hasAccountKey()).toBe(false)
+  })
+
+  it('login surfaces an error and does not persist anything on init failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(500, { error: 'boom' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(login('a@b', 'pw')).rejects.toBeTruthy()
+    expect(loadRelayConfig()).toBeNull()
+    expect(hasAccountKey()).toBe(false)
   })
 })

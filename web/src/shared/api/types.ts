@@ -124,6 +124,12 @@ export interface SessionInfo {
   last_output_at?: number
   type?: string
   summary?: SessionSummary
+  // sealed is the base64-encoded AEAD envelope produced by the agent
+  // when E2EE is unlocked. Mirrors Go's proto.SessionInfo.Sealed
+  // (encoding/json marshals []byte as standard base64 with padding).
+  // Decryption happens client-side via openSessionFields in
+  // @shared/lib/opaque; see api/sessions.ts for the wrapper.
+  sealed?: string
 }
 
 export type TaskState =

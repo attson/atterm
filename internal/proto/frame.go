@@ -118,6 +118,15 @@ type MetaPayload struct {
 	// the latest attention timestamp in real time. Unread is intentionally
 	// NOT carried in META: an attached client is watching ⇒ read.
 	AttentionAt int64 `json:"attention_at,omitempty"`
+	// Sealed is the AEAD envelope (per internal/e2eecrypto) over a JSON
+	// document carrying the content-bearing META fields the relay is
+	// structurally unable to read when E2EE is on: Cwd, Title,
+	// CurrentCommand. Mirrors SessionInfo.Sealed (M3b) but rides on
+	// live TypeMeta frames so live updates do not leak between
+	// ANNOUNCE snapshots. The agent's uplink forwarder seals
+	// these fields and clears their plaintext counterparts when an
+	// account_key is unlocked.
+	Sealed []byte `json:"sealed,omitempty"`
 }
 
 // ClosePayload is the JSON body of a TypeClose frame.

@@ -194,6 +194,24 @@ func main() {
 		}()
 	}
 
+	// Schedule daily sweep of expired feishu pending bind tokens.
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if n, err := store.SweepExpiredFeishuPendingBinds(ctx); err != nil {
+					log.Printf("feishu: sweep expired pending binds: %v", err)
+				} else if n > 0 {
+					log.Printf("feishu: swept %d expired pending bind(s)", n)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	httpSrv := &http.Server{
 		Addr:              *addr,
 		Handler:           srv,

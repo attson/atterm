@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/webhook"
@@ -170,21 +171,29 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 	}
 
 	notifySession := func(ms *mirrorState, info proto.SessionInfo, notificationType string, idleForSeconds int) {
-		if s.cfg.WebPush == nil || ms == nil {
+		if ms == nil {
 			return
 		}
 		if ms.sess.SubscriberCount() > 0 { // watching == read == no push
 			return
 		}
 		hostID, _ := uuid.Parse(info.HostID) // host id is informational in push payloads
-		s.cfg.WebPush.DispatchSessionNotification(ms.sess.OwnerUserID, webpush.SessionNotification{
-			SessionID:        ms.sess.ID,
-			HostID:           hostID,
-			NotificationType: notificationType,
-			Label:            webPushSessionLabel(info),
-			RemotePermission: info.RemotePermission,
-			IdleForSeconds:   idleForSeconds,
-		})
+		if s.cfg.WebPush != nil {
+			s.cfg.WebPush.DispatchSessionNotification(ms.sess.OwnerUserID, webpush.SessionNotification{
+				SessionID:        ms.sess.ID,
+				HostID:           hostID,
+				NotificationType: notificationType,
+				Label:            webPushSessionLabel(info),
+				RemotePermission: info.RemotePermission,
+				IdleForSeconds:   idleForSeconds,
+			})
+		}
+		if s.cfg.Feishu != nil && notificationType == webpush.NotificationWaitingInput {
+			s.cfg.Feishu.SendSessionNotification(context.Background(), ms.sess.OwnerUserID, feishu.WaitingInputInput{
+				SessionID:      ms.sess.ID,
+				IdleForSeconds: idleForSeconds,
+			})
+		}
 	}
 
 	cancelIdleTimer := func(ms *mirrorState) {
@@ -502,7 +511,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 // "command finished" events for another uplink's sessions. host_id is
 // pulled from the session's info, not the payload, for the same reason.
 func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*mirrorState, mu *sync.Mutex) {
-	if s.cfg.WebPush == nil && s.cfg.Webhook == nil {
+	if s.cfg.WebPush == nil && s.cfg.Webhook == nil && s.cfg.Feishu == nil {
 		return
 	}
 	payload, err := proto.DecodeCommandEvent(f)
@@ -535,6 +544,15 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 		s.cfg.Webhook.DispatchCommandFinished(ms.sess.OwnerUserID, webhook.CommandFinished{
 			SessionID:  f.SessionID,
 			HostID:     hostID,
+			ExitCode:   payload.ExitCode,
+			ElapsedMS:  payload.ElapsedMS,
+			Label:      payload.Label,
+			SealedBody: payload.SealedBody,
+		})
+	}
+	if s.cfg.Feishu != nil {
+		s.cfg.Feishu.SendCommandFinished(context.Background(), ms.sess.OwnerUserID, feishu.CommandFinishedInput{
+			SessionID:  f.SessionID,
 			ExitCode:   payload.ExitCode,
 			ElapsedMS:  payload.ElapsedMS,
 			Label:      payload.Label,

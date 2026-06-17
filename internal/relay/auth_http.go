@@ -228,7 +228,7 @@ func (a *AuthServer) handleListWebhooks(w http.ResponseWriter, r *http.Request) 
 
 // handleCreateWebhook implements POST /api/me/webhooks.
 //
-// Body: {"url":"…","format":"feishu|generic","name":"…","allow_insecure":false}
+// Body: {"url":"…","format":"generic","name":"…","allow_insecure":false}
 // Response 201: {id, url, format, name, created_at}
 func (a *AuthServer) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.requireUser(w, r)
@@ -245,7 +245,7 @@ func (a *AuthServer) handleCreateWebhook(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if body.Format != "feishu" && body.Format != "generic" {
+	if body.Format != "generic" {
 		writeError(w, http.StatusBadRequest, "invalid_format")
 		return
 	}

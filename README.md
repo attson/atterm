@@ -230,6 +230,8 @@ docker compose logs atterm-relay
 | `ATTERM_RELAY_CONFIG_DIR` | relay 持久化配置目录，默认 `./data/atterm-relay` |
 | `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP 的请求与 WS upgrade 分钟限额 |
 | `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP 的活跃 WebSocket 连接上限 |
+| `ATTERM_FEISHU_ENCRYPT_KEY` | **必填**。飞书应用凭据 AEAD 静态加密密钥（32 字节，base64 编码）。生成：`openssl rand -base64 32`。用于对 `feishu_bindings` 表中的飞书 app 凭据做 at-rest 加密 |
+| `ATTERM_FEISHU_BASE_URL` | 飞书 Open Platform 基础 URL，默认 `https://open.feishu.cn`；私有化部署时覆盖 |
 
 公网示例：
 

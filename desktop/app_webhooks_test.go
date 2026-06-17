@@ -92,7 +92,7 @@ func TestCreateWebhook_PostsBodyAndReturnsRow(t *testing.T) {
 		gotBody = string(b)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"wh_2","name":"feishu-bot","url":"https://open.feishu/x","format":"feishu","created_at":"2026-06-13T01:00:00Z"}`))
+		_, _ = w.Write([]byte(`{"id":"wh_2","name":"feishu-bot","url":"https://open.feishu/x","format":"generic","created_at":"2026-06-13T01:00:00Z"}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -100,18 +100,18 @@ func TestCreateWebhook_PostsBodyAndReturnsRow(t *testing.T) {
 	_ = a.cfgStore.Set(appConfig{RelayURL: srv.URL, RelaySessionToken: "t"})
 
 	got, err := a.CreateWebhook(CreateWebhookReq{
-		Name: "feishu-bot", URL: "https://open.feishu/x", Format: "feishu", AllowInsecure: false,
+		Name: "feishu-bot", URL: "https://open.feishu/x", Format: "generic", AllowInsecure: false,
 	})
 	if err != nil {
 		t.Fatalf("CreateWebhook: %v", err)
 	}
 	if !strings.Contains(gotBody, `"name":"feishu-bot"`) ||
 		!strings.Contains(gotBody, `"url":"https://open.feishu/x"`) ||
-		!strings.Contains(gotBody, `"format":"feishu"`) ||
+		!strings.Contains(gotBody, `"format":"generic"`) ||
 		!strings.Contains(gotBody, `"allow_insecure":false`) {
 		t.Errorf("body = %s", gotBody)
 	}
-	if got.ID != "wh_2" || got.Name != "feishu-bot" || got.Format != "feishu" {
+	if got.ID != "wh_2" || got.Name != "feishu-bot" || got.Format != "generic" {
 		t.Errorf("row = %+v", got)
 	}
 }

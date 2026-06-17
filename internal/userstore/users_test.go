@@ -8,7 +8,7 @@ import (
 
 func newTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
-	s, err := Open(context.Background(), ":memory:")
+	s, err := Open(context.Background(), ":memory:", WithSecretCipher(testCipher))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

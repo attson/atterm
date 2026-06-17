@@ -4,12 +4,14 @@ go 1.23.0
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.3.0
+	github.com/bytemare/ksf v0.1.0
 	github.com/bytemare/opaque v0.10.0
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/wailsapp/wails/v2 v2.12.0
+	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.33.0
 	golang.org/x/mod v0.24.0
 	golang.org/x/sync v0.14.0
@@ -26,7 +28,6 @@ require (
 	github.com/bytemare/crypto v0.4.3 // indirect
 	github.com/bytemare/hash v0.1.5 // indirect
 	github.com/bytemare/hash2curve v0.1.3 // indirect
-	github.com/bytemare/ksf v0.1.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -54,7 +55,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	github.com/zalando/go-keyring v0.2.8 // indirect
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/text v0.22.0 // indirect

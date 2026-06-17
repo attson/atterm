@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
@@ -74,6 +75,10 @@ type Config struct {
 	// leave this nil; the production main.go builds it via
 	// LoadOrInitOpaqueServer.
 	OpaqueServer *OpaqueServer
+	// Feishu, when non-nil, mounts the /v1/feishu/* routes. Requires Store
+	// to be a *userstore.SQLiteStore with a cipher configured. Nil → routes
+	// are not registered and any /v1/feishu/* request returns 404.
+	Feishu *feishu.Service
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -154,6 +159,17 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/api/push/subscribe", s.requireSession(s.handlePushSubscribe))
 	s.mux.HandleFunc("/api/push/unsubscribe", s.requireSession(s.handlePushUnsubscribe))
 	s.mux.HandleFunc("/api/push/test", s.requireSession(s.handlePushTest))
+	// Feishu bindings API — requires Store to be *SQLiteStore with cipher.
+	if cfg.Feishu != nil {
+		if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
+			fh := NewFeishuHTTPHandler(sqliteStore, cfg.Feishu)
+			s.mux.HandleFunc("/v1/feishu/bindings/me", s.requireSession(fh.ServeHTTPSession))
+			s.mux.HandleFunc("/v1/feishu/bindings/me/begin-pair", s.requireSession(fh.ServeHTTPSession))
+			// /v1/feishu/events/{hash} is unauthenticated (signed by encrypt_key).
+			// T12 fills the body; T11 registers the path with a 501 stub.
+			s.mux.HandleFunc("/v1/feishu/events/", fh.ServeHTTPEvents)
+		}
+	}
 	if cfg.WebFS != nil {
 		s.mux.Handle("/", newStaticHandler(cfg.Resolver, cfg.WebFS))
 	}

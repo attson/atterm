@@ -257,3 +257,15 @@ func (s *Service) sendBindReply(ctx context.Context, b *Binding, openID, text st
 		log.Printf("feishu: bind reply: %v", err)
 	}
 }
+
+// MintTokenForCreds is a thin wrapper around the configured TokenSource;
+// used by the relay HTTP handler to validate user-pasted credentials.
+func (s *Service) MintTokenForCreds(ctx context.Context, appID, appSecret string) (string, error) {
+	return s.cfg.Token.Get(ctx, appID, appSecret)
+}
+
+// InvalidateTokenForAppID drops a cached token; called by the HTTP
+// handler after DELETE /v1/feishu/bindings/me.
+func (s *Service) InvalidateTokenForAppID(appID string) {
+	s.cfg.Token.Invalidate(appID)
+}

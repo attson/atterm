@@ -849,3 +849,51 @@ func TestSession_OnAIClassified_DoesNotFireOnShellCommands(t *testing.T) {
 		t.Fatalf("expected 0 fires for shell commands, got %d", fires)
 	}
 }
+
+func TestSession_OnTaskStateChange_FiresOnTransitions(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	var transitions []struct{ Prev, Next string }
+	var mu sync.Mutex
+	s.SetOnTaskStateChange(func(_ uuid.UUID, prev, next string, _ TaskMeta) {
+		mu.Lock()
+		defer mu.Unlock()
+		transitions = append(transitions, struct{ Prev, Next string }{prev, next})
+	})
+
+	// Simulate running → completed via OSC 133 D
+	prompt := "$ "
+	s.PushOut(1, []byte(prompt+"\x1b]133;A\x07command\x1b]133;C\x07output\x1b]133;D;0\x07"))
+
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, tr := range transitions {
+		if tr.Next == proto.TaskStateCompleted {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a completed transition; saw %+v", transitions)
+	}
+}
+
+func TestSession_OnTaskStateChange_FiresOnWaiting(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	fired := make(chan struct{}, 1)
+	s.SetOnTaskStateChange(func(_ uuid.UUID, prev, next string, _ TaskMeta) {
+		if next == proto.TaskStateWaitingInput {
+			select {
+			case fired <- struct{}{}:
+			default:
+			}
+		}
+	})
+	// Feed bytes that look like a "do you want? (y/N)" prompt.
+	s.PushOut(1, []byte("Continue? (y/N) "))
+	select {
+	case <-fired:
+	case <-time.After(time.Second):
+		t.Fatalf("expected WaitingInput transition")
+	}
+}

@@ -338,6 +338,15 @@ func (h *relayHost) RequestLocalRepaint(id uuid.UUID) {
 	}(info.Cols, info.Rows)
 }
 
+// Exists reports whether a session with the given ID is currently active in
+// this relay host. Satisfies feishu.SessionLookup.
+func (h *relayHost) Exists(id uuid.UUID) bool {
+	h.mu.Lock()
+	_, ok := h.sessions[id]
+	h.mu.Unlock()
+	return ok
+}
+
 // CloseSession terminates the PTY for a session and synchronously evicts
 // it from the local registry, so the uplink learns NOW (rather than after
 // the eventual pty.Wait() in the watcher goroutine) and the upstream relay

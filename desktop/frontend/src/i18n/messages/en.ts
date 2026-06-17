@@ -351,6 +351,16 @@ export const en = {
       copyFailed: "Copy failed.",
       exported: "Saved to {path}",
     },
+    feishu: {
+      title: "Feishu Integration",
+      disabled: "Feishu integration is not active.",
+      mode: "Mode",
+      bound: "Bound to open_id: {open_id}",
+      save: "Save Credentials",
+      begin_pair: "Start Pair",
+      pair_hint: "Send \"/bind {code}\" to the bot in private chat within 15 minutes.",
+      delete: "Delete Binding",
+    },
     templates: {
       tab: "Templates",
       intro: "Each template sends its text to the active session when clicked.",

@@ -140,7 +140,45 @@ export namespace connhealth {
 }
 
 export namespace main {
-	
+
+	export class FeishuCredentials {
+	    app_id: string;
+	    app_secret: string;
+	    encrypt_key: string;
+	    verify_token: string;
+
+	    static createFrom(source: any = {}) {
+	        return new FeishuCredentials(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.app_id = source["AppID"] ?? source["app_id"] ?? "";
+	        this.app_secret = source["AppSecret"] ?? source["app_secret"] ?? "";
+	        this.encrypt_key = source["EncryptKey"] ?? source["encrypt_key"] ?? "";
+	        this.verify_token = source["VerifyToken"] ?? source["verify_token"] ?? "";
+	    }
+	}
+	export class FeishuStatusResp {
+	    enabled: boolean;
+	    mode: string;
+	    bound: boolean;
+	    open_id: string;
+	    disabled: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new FeishuStatusResp(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.mode = source["mode"];
+	        this.bound = source["bound"];
+	        this.open_id = source["open_id"];
+	        this.disabled = source["disabled"];
+	    }
+	}
 	export class ClipboardPastePayload {
 	    kind: string;
 	    text?: string;

@@ -158,6 +158,21 @@ export interface PairingToken {
   qr_url: string;
 }
 
+export interface FeishuCredentials {
+  AppID: string;
+  AppSecret: string;
+  EncryptKey: string;
+  VerifyToken: string;
+}
+
+export interface FeishuStatusResp {
+  enabled: boolean;
+  mode: "local" | "relay";
+  bound: boolean;
+  open_id: string;
+  disabled: boolean;
+}
+
 export interface HostInfo {
   host_id: string;
   host: string;
@@ -264,6 +279,10 @@ interface AppBindings {
   BroadcastCommandFinished(sessionId: string, exitCode: number, elapsedMs: number, label: string): Promise<void>;
   GetDiagnostics(userAgent: string): Promise<DiagnosticsPayload>;
   ExportDiagnostics(content: string): Promise<string>;
+  GetFeishuStatus(): Promise<FeishuStatusResp>;
+  SetFeishuCredentials(c: FeishuCredentials): Promise<void>;
+  BeginFeishuPair(): Promise<string>;
+  DeleteFeishuBinding(): Promise<void>;
   GetQuickTemplates(): Promise<import('./templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void>;
   GetTaskPreset(): Promise<string>;
@@ -698,4 +717,20 @@ export function markSessionsSeen(opts: MarkSessionsSeenOpts): Promise<void> {
     return bindings().MarkSessionsSeen([], true);
   }
   return bindings().MarkSessionsSeen((opts as { ids: string[] }).ids, false);
+}
+
+export function getFeishuStatus(): Promise<FeishuStatusResp> {
+  return bindings().GetFeishuStatus();
+}
+
+export function setFeishuCredentials(c: FeishuCredentials): Promise<void> {
+  return bindings().SetFeishuCredentials(c);
+}
+
+export function beginFeishuPair(): Promise<string> {
+  return bindings().BeginFeishuPair();
+}
+
+export function deleteFeishuBinding(): Promise<void> {
+  return bindings().DeleteFeishuBinding();
 }

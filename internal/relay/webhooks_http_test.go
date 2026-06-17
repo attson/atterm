@@ -21,7 +21,7 @@ func TestCreateAndListWebhook(t *testing.T) {
 
 	body := map[string]any{
 		"url":            "https://open.feishu.cn/x",
-		"format":         "feishu",
+		"format":         "generic",
 		"name":           "phone",
 		"allow_insecure": false,
 	}
@@ -89,7 +89,7 @@ func TestDeleteWebhook(t *testing.T) {
 	// Create one first.
 	body := map[string]any{
 		"url":    "https://open.feishu.cn/del",
-		"format": "feishu",
+		"format": "generic",
 		"name":   "to-delete",
 	}
 	wCreate := postJSONWithBearer(s, "/api/me/webhooks", body, tok)

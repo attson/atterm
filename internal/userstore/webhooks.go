@@ -15,11 +15,15 @@ var ErrWebhookNotOwnedOrMissing = errors.New("userstore: webhook not found or no
 // Webhook is a per-user outbound webhook configuration. The URL is stored and
 // returned to its owner verbatim (Feishu URLs embed a bot token).
 type Webhook struct {
-	ID            string
-	UserID        string
-	Name          string
-	URL           string
-	Format        string // "feishu" | "generic"
+	ID     string
+	UserID string
+	Name   string
+	URL    string
+	// Format describes how the relay renders the event body.
+	// Only "generic" is supported. The legacy "feishu" custom-bot URL
+	// path was removed when the relay gained Feishu app-mode integration
+	// (see internal/feishu/).
+	Format        string
 	AllowInsecure bool
 	CreatedAt     time.Time
 }

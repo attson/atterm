@@ -2,7 +2,6 @@ package webhook
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -18,28 +17,6 @@ func sampleEvent() CommandFinished {
 	}
 }
 
-func TestRenderFeishu(t *testing.T) {
-	body := renderFeishu(sampleEvent())
-	var parsed struct {
-		MsgType string `json:"msg_type"`
-		Content struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		t.Fatalf("feishu body not valid json: %v", err)
-	}
-	if parsed.MsgType != "text" {
-		t.Fatalf("msg_type = %q, want text", parsed.MsgType)
-	}
-	if !strings.Contains(parsed.Content.Text, "npm test") || !strings.Contains(parsed.Content.Text, "exit 0") {
-		t.Fatalf("feishu text missing label/exit: %q", parsed.Content.Text)
-	}
-	if !strings.Contains(parsed.Content.Text, "2.3s") {
-		t.Fatalf("feishu text missing formatted elapsed: %q", parsed.Content.Text)
-	}
-}
-
 func TestRenderGeneric(t *testing.T) {
 	body := renderGeneric(sampleEvent())
 	var parsed map[string]any
@@ -51,30 +28,6 @@ func TestRenderGeneric(t *testing.T) {
 	}
 	if parsed["session_id"] == "" || parsed["host_id"] == "" {
 		t.Fatalf("generic payload missing ids: %+v", parsed)
-	}
-}
-
-// TestRenderFeishu_Sealed: when the event carries an E2EE sealedBody
-// (M6-final), feishu/text renderers must emit a generic line that
-// does NOT include the plaintext label or any timing/exit info. The
-// downstream relay never sees those fields once the agent has sealed.
-func TestRenderFeishu_Sealed(t *testing.T) {
-	ev := sampleEvent()
-	ev.SealedBody = []byte{0x01, 0x02, 0x03}
-	body := renderFeishu(ev)
-	var parsed struct {
-		Content struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		t.Fatalf("feishu body not valid json: %v", err)
-	}
-	if parsed.Content.Text != "Session command finished" {
-		t.Fatalf("feishu sealed text = %q; want generic", parsed.Content.Text)
-	}
-	if strings.Contains(parsed.Content.Text, "npm test") || strings.Contains(parsed.Content.Text, "exit") || strings.Contains(parsed.Content.Text, "2.3") {
-		t.Fatalf("feishu sealed text leaked plaintext: %q", parsed.Content.Text)
 	}
 }
 

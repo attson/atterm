@@ -25,15 +25,19 @@ func TestDispatchFansOutToAllWebhooks(t *testing.T) {
 	hits := map[string]int{}
 	mk := func(tag string) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock(); hits[tag]++; mu.Unlock()
+			mu.Lock()
+			hits[tag]++
+			mu.Unlock()
 			w.WriteHeader(200)
 		}))
 	}
-	s1 := mk("a"); defer s1.Close()
-	s2 := mk("b"); defer s2.Close()
+	s1 := mk("a")
+	defer s1.Close()
+	s2 := mk("b")
+	defer s2.Close()
 
 	store := &fakeStore{hooks: []Webhook{
-		{ID: "1", URL: s1.URL, Format: "feishu"},
+		{ID: "1", URL: s1.URL, Format: "generic"},
 		{ID: "2", URL: s2.URL, Format: "generic"},
 	}}
 	svc := New(store)
@@ -41,8 +45,12 @@ func TestDispatchFansOutToAllWebhooks(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		mu.Lock(); done := hits["a"] == 1 && hits["b"] == 1; mu.Unlock()
-		if done { return }
+		mu.Lock()
+		done := hits["a"] == 1 && hits["b"] == 1
+		mu.Unlock()
+		if done {
+			return
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("expected both webhooks hit once, got %v", hits)

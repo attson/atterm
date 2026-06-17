@@ -49,15 +49,6 @@ func humanText(ev CommandFinished) string {
 	return fmt.Sprintf("%s finished (exit %d, %s)", label, ev.ExitCode, formatElapsed(ev.ElapsedMS))
 }
 
-func renderFeishu(ev CommandFinished) []byte {
-	payload := map[string]any{
-		"msg_type": "text",
-		"content":  map[string]string{"text": humanText(ev)},
-	}
-	b, _ := json.Marshal(payload)
-	return b
-}
-
 func renderGeneric(ev CommandFinished) []byte {
 	payload := map[string]any{
 		"event":      "command_finished",
@@ -76,10 +67,9 @@ func renderGeneric(ev CommandFinished) []byte {
 	return b
 }
 
-// renderForFormat selects the renderer; unknown formats fall back to generic.
+// renderForFormat selects the renderer; only "generic" remains after
+// the Feishu app-mode integration replaced the legacy custom-bot path.
+// Unknown formats fall back to generic.
 func renderForFormat(format string, ev CommandFinished) []byte {
-	if format == "feishu" {
-		return renderFeishu(ev)
-	}
 	return renderGeneric(ev)
 }

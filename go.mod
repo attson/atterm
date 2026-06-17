@@ -9,6 +9,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
+	github.com/larksuite/oapi-sdk-go/v3 v3.9.6
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/zalando/go-keyring v0.2.8

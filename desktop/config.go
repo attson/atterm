@@ -117,6 +117,11 @@ type appConfig struct {
 	// defaults to true for existing installs. Only affects new sessions;
 	// already-running PTYs keep their current behavior.
 	ShellIntegrationEnabled *bool `json:"shell_integration_enabled,omitempty"`
+
+	// RecoveryDialogEnabled gates the startup recovery dialog. Nil means
+	// "never set" → default true. Stored as pointer so we can distinguish
+	// "user opted out" from "fresh install".
+	RecoveryDialogEnabled *bool `json:"recovery_dialog_enabled,omitempty"`
 	// CommandNotifyThresholdSeconds gates the command-finished notification:
 	// commands shorter than this duration (start-to-finish) do not produce
 	// a notification. Nil → default 10. Clamped to [1, 600] at read time.
@@ -175,6 +180,13 @@ func (c appConfig) NotificationsEnabledOrDefault() bool {
 		return true
 	}
 	return *c.NotificationsEnabled
+}
+
+func (c appConfig) RecoveryDialogEnabledOrDefault() bool {
+	if c.RecoveryDialogEnabled == nil {
+		return true
+	}
+	return *c.RecoveryDialogEnabled
 }
 
 func (c appConfig) RemotePermissionOrDefault() string {

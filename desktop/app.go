@@ -44,6 +44,20 @@ type NewSessionReq struct {
 	Cwd     string   `json:"cwd,omitempty"`
 	Cols    uint16   `json:"cols,omitempty"`
 	Rows    uint16   `json:"rows,omitempty"`
+
+	// AIKind is set by the frontend after calling its own classifyAIKind()
+	// on the user-typed command. Allowed values match the keys of
+	// aiSniffers ("claude" | "codex" | "aider"). Empty disables AI behavior
+	// (sniffer doesn't start, no resume metadata). Names here are kept in
+	// sync with internal/session/ClassifyCommand.
+	AIKind string `json:"ai_kind,omitempty"`
+
+	// InitialAISessionID is the AI-side session id we captured before a
+	// previous crash. When non-empty, the frontend is responsible for
+	// PTY-writing the resume command after first prompt-ready; the Go side
+	// just round-trips this value through PaneSnapshot bookkeeping. We do
+	// NOT pass it as an arg to the spawned process.
+	InitialAISessionID string `json:"initial_ai_session_id,omitempty"`
 }
 
 // NewSessionResp is returned by NewSession.
@@ -146,6 +160,17 @@ type App struct {
 	// tests substitute a no-op so they don't crash on wailsruntime's
 	// strict context check. Same pattern as uplink.eventsEmit.
 	eventsEmitter func(ctx context.Context, name string, data ...interface{})
+
+	// recoveryStore persists tab/pane layout to disk so a relaunch can show
+	// the recovery dialog. Wired in startup; nil in tests that don't need it.
+	recoveryStore *RecoveryStore
+
+	// lastSnapshot caches the latest payload the frontend pushed via
+	// SaveRecoverySnapshot. MarkCleanShutdown re-Saves this exact value with
+	// CleanShutdown=true so a clean exit is distinguishable from a crash.
+	// Guarded by mu (re-using the existing uplink mutex; both are touched
+	// only on relatively cold paths).
+	lastSnapshot RecoverySnapshot
 }
 
 // NewApp creates a new App application struct.
@@ -182,6 +207,19 @@ func (a *App) startup(ctx context.Context) {
 		log.Fatalf("desktop: start relay host: %v", err)
 	}
 	a.host = h
+
+	if rs, err := NewRecoveryStore(a.host.hostID); err == nil {
+		a.recoveryStore = rs
+	} else {
+		log.Printf("recovery store unavailable: %v", err)
+	}
+	a.host.aiSidCallback = func(localSessionID uuid.UUID, kind, aiSid string) {
+		a.eventsEmitter(a.ctx, "recovery:ai-sid", map[string]string{
+			"session_id":    localSessionID.String(),
+			"kind":          kind,
+			"ai_session_id": aiSid,
+		})
+	}
 
 	cfg := a.cfgStore.Get()
 	if cfg.RelayURL == "" {
@@ -1274,6 +1312,13 @@ func normalizeUpdateGHProxyURL(proxyURL string) (string, error) {
 // gating without bringing up a Wails runtime.
 func (a *App) beforeClose(ctx context.Context, emit func()) bool {
 	if a.quitApproved.Load() {
+		// Last chance to mark the recovery snapshot as a clean exit so
+		// the next launch shows "last clean exit" instead of "ended
+		// unexpectedly". Best-effort: a failure here doesn't block the
+		// close — the user already approved.
+		if err := a.MarkCleanShutdown(); err != nil {
+			log.Printf("recovery: MarkCleanShutdown on close: %v", err)
+		}
 		return false
 	}
 	emit()
@@ -1613,4 +1658,83 @@ func isPrefCustomized(c appConfig) func(string) bool {
 		}
 		return false
 	}
+}
+
+// LoadRecoverySnapshot returns the most recent snapshot, or a zero value
+// when there's nothing to recover. Side effect: rewrites the on-disk file
+// with CleanShutdown=false so a crash during the recovery dialog is caught
+// next launch.
+func (a *App) LoadRecoverySnapshot() (RecoverySnapshot, error) {
+	if a.recoveryStore == nil {
+		return RecoverySnapshot{}, nil
+	}
+	snap, err := a.recoveryStore.Load()
+	if err != nil {
+		return RecoverySnapshot{}, err
+	}
+	a.mu.Lock()
+	a.lastSnapshot = snap
+	a.mu.Unlock()
+	return snap, nil
+}
+
+// SaveRecoverySnapshot accepts a JSON-encoded RecoverySnapshot from the
+// frontend (debounce-driven). Validates by unmarshalling into the typed
+// struct so malformed payloads fail loudly. Server-side overrides
+// Version/HostID/SavedAtUnix so the frontend can't lie about them.
+func (a *App) SaveRecoverySnapshot(payload string) error {
+	if a.recoveryStore == nil {
+		return nil
+	}
+	var snap RecoverySnapshot
+	if err := json.Unmarshal([]byte(payload), &snap); err != nil {
+		return fmt.Errorf("decode recovery snapshot: %w", err)
+	}
+	snap.Version = recoverySnapshotVersion
+	snap.HostID = a.host.hostID
+	snap.SavedAtUnix = a.recoveryStore.nowUnix()
+	a.mu.Lock()
+	a.lastSnapshot = snap
+	a.mu.Unlock()
+	return a.recoveryStore.Save(snap)
+}
+
+// DiscardRecoverySnapshot removes recovery.json. Used by the dialog's
+// "discard" / close-X paths.
+func (a *App) DiscardRecoverySnapshot() error {
+	if a.recoveryStore == nil {
+		return nil
+	}
+	a.mu.Lock()
+	a.lastSnapshot = RecoverySnapshot{}
+	a.mu.Unlock()
+	return a.recoveryStore.Discard()
+}
+
+// MarkCleanShutdown is called from OnBeforeClose right before the wails
+// runtime tears the window down. It rewrites the latest snapshot with
+// CleanShutdown=true so the next launch's dialog can render "last clean
+// exit" copy. No-op when nothing has been saved this session.
+func (a *App) MarkCleanShutdown() error {
+	if a.recoveryStore == nil {
+		return nil
+	}
+	a.mu.Lock()
+	snap := a.lastSnapshot
+	a.mu.Unlock()
+	return a.recoveryStore.MarkCleanShutdown(snap)
+}
+
+// GetRecoveryDialogEnabled mirrors appConfig.RecoveryDialogEnabledOrDefault
+// for the frontend Settings → General toggle.
+func (a *App) GetRecoveryDialogEnabled() bool {
+	return a.cfgStore.Get().RecoveryDialogEnabledOrDefault()
+}
+
+// SetRecoveryDialogEnabled persists the user's choice. true re-enables the
+// startup recovery dialog; false skips it.
+func (a *App) SetRecoveryDialogEnabled(enabled bool) error {
+	cfg := a.cfgStore.Get()
+	cfg.RecoveryDialogEnabled = &enabled
+	return a.cfgStore.Set(cfg)
 }

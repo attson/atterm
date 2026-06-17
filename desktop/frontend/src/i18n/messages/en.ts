@@ -154,6 +154,8 @@ export const en = {
       notificationsHint: "Only fires when the AT Term window is not focused.",
       shellIntegration: "Enable shell integration",
       shellIntegrationHint: "Injects OSC 133 hooks into zsh / bash / fish / pwsh at session start so we can detect when a command finishes. Only affects new sessions.",
+      recoveryEnabled: "Show recovery prompt at launch",
+      recoveryEnabledHint: "Ask before restoring last session's tabs and panes.",
       defaultShell: "default shell",
       auto: "Auto",
       customPath: "Custom path...",
@@ -582,6 +584,24 @@ export const en = {
     drawerReconnectsReason: "reason",
     drawerReconnectsDowntime: "downtime",
     drawerSeqGaps: "Seq gaps observed:",
+  },
+  recovery: {
+    dialog: {
+      title: "Restore your previous session?",
+      subtitleClean: "Last cleanly exited · {minutes} min ago",
+      subtitleUnclean: "Last session ended unexpectedly · {minutes} min ago",
+      btnRestoreAll: "Restore all {count}",
+      btnRestoreSelected: "Restore {count} selected",
+      btnDiscard: "Discard all",
+      badgeResumable: "resumable",
+      badgeFresh: "fresh (sid not captured)",
+      badgeShell: "(no AI)",
+      badgeUnclassified: "not classified as AI",
+    },
+    pane: {
+      failed: "(failed)",
+      resumeTimeout: "{kind} resume timed out — press ↑ to recall the last command",
+    },
   },
 };
 

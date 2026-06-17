@@ -5,12 +5,14 @@ import {
   getDefaultShell,
   getLocalePreference,
   getNotificationsEnabled,
+  getRecoveryDialogEnabled,
   getShellIntegrationEnabled,
   getWebglRendererEnabled,
   listShells,
   setCommandNotifyThresholdSeconds,
   setDefaultShell,
   setNotificationsEnabled,
+  setRecoveryDialogEnabled,
   setShellIntegrationEnabled,
   setWebglRendererEnabled,
   setTerminalThemePreference,
@@ -58,6 +60,8 @@ const notificationsEnabled = ref(true);
 const notificationsLoading = ref(true);
 const shellIntegrationEnabled = ref(true);
 const shellIntegrationLoading = ref(true);
+const recoveryEnabled = ref(true);
+const recoveryEnabledLoading = ref(true);
 const defaultShellLoading = ref(true);
 const defaultShellSaving = ref(false);
 const selectedDefaultShell = ref("auto");
@@ -96,6 +100,13 @@ onMounted(async () => {
     error.value = e?.message ?? String(e);
   } finally {
     shellIntegrationLoading.value = false;
+  }
+  try {
+    recoveryEnabled.value = await getRecoveryDialogEnabled();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    recoveryEnabledLoading.value = false;
   }
   try {
     const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
@@ -153,6 +164,19 @@ async function onShellIntegrationToggle(e: Event) {
     await setShellIntegrationEnabled(target.checked);
   } catch (e: any) {
     shellIntegrationEnabled.value = previous;
+    error.value = e?.message ?? String(e);
+  }
+}
+
+async function onRecoveryEnabledToggle(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previous = recoveryEnabled.value;
+  recoveryEnabled.value = target.checked;
+  error.value = "";
+  try {
+    await setRecoveryDialogEnabled(target.checked);
+  } catch (e: any) {
+    recoveryEnabled.value = previous;
     error.value = e?.message ?? String(e);
   }
 }
@@ -315,6 +339,18 @@ async function onChange() {
     </label>
     <p class="hint" v-if="!shellIntegrationLoading">
       {{ t("settings.general.shellIntegrationHint") }}
+    </p>
+
+    <label class="checkbox" v-if="!recoveryEnabledLoading">
+      <input
+        type="checkbox"
+        :checked="recoveryEnabled"
+        @change="onRecoveryEnabledToggle"
+      />
+      {{ t("settings.general.recoveryEnabled") }}
+    </label>
+    <p class="hint" v-if="!recoveryEnabledLoading">
+      {{ t("settings.general.recoveryEnabledHint") }}
     </p>
 
     <label class="field-label" v-if="!defaultShellLoading">{{ t("settings.general.defaultShell") }}</label>

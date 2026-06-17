@@ -791,3 +791,61 @@ func TestPushOut_OSC2_AlongsideOSC133(t *testing.T) {
 		t.Fatalf("CurrentCommand = %q, want %q", info.CurrentCommand, "npm test")
 	}
 }
+
+func TestSession_OnAIClassified_FiresOnFirstTransition(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cwd: "/x"})
+	defer s.Close()
+
+	type fire struct {
+		cmd string
+		cwd string
+	}
+	fires := make([]fire, 0, 4)
+	s.SetOnAIClassified(func(commandLine, cwd string) {
+		fires = append(fires, fire{commandLine, cwd})
+	})
+
+	_ = s.PushOut(1, []byte("\x1b]133;A\x07"))
+	_ = s.PushOut(2, []byte("\x1b]133;C;claude --resume abc\x07"))
+
+	if len(fires) != 1 {
+		t.Fatalf("expected 1 fire, got %d", len(fires))
+	}
+	if fires[0].cmd != "claude --resume abc" {
+		t.Fatalf("cmd = %q", fires[0].cmd)
+	}
+	if fires[0].cwd != "/x" {
+		t.Fatalf("cwd = %q", fires[0].cwd)
+	}
+}
+
+func TestSession_OnAIClassified_DoesNotRefireOnSecondAICommand(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cwd: "/y"})
+	defer s.Close()
+
+	fires := 0
+	s.SetOnAIClassified(func(_, _ string) { fires++ })
+
+	_ = s.PushOut(1, []byte("\x1b]133;C;claude\x07"))
+	_ = s.PushOut(2, []byte("\x1b]133;C;codex\x07"))
+	_ = s.PushOut(3, []byte("\x1b]133;C;claude\x07"))
+
+	if fires != 1 {
+		t.Fatalf("expected exactly 1 fire (sticky), got %d", fires)
+	}
+}
+
+func TestSession_OnAIClassified_DoesNotFireOnShellCommands(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cwd: "/z"})
+	defer s.Close()
+
+	fires := 0
+	s.SetOnAIClassified(func(_, _ string) { fires++ })
+
+	_ = s.PushOut(1, []byte("\x1b]133;C;ls -la\x07"))
+	_ = s.PushOut(2, []byte("\x1b]133;C;cd /tmp\x07"))
+
+	if fires != 0 {
+		t.Fatalf("expected 0 fires for shell commands, got %d", fires)
+	}
+}

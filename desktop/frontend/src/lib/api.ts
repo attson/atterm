@@ -27,10 +27,52 @@ export interface NewSessionReq {
   cwd?: string;
   cols?: number;
   rows?: number;
+  // Filled by classifyAIKind() in lib/aiKind.ts when the user-typed command
+  // matches a known AI CLI. Empty value disables sniff + resume.
+  ai_kind?: "claude" | "codex" | "aider" | "";
+  // Round-tripped from the previous run's snapshot during executeRestore.
+  // Not used by Go to spawn the child — only the frontend injects the
+  // resume command after prompt-ready.
+  initial_ai_session_id?: string;
 }
 
 export interface NewSessionResp {
   session_id: string;
+}
+
+export interface RecoveryAIInfo {
+  kind: "claude" | "codex" | "aider";
+  session_id?: string;
+  captured_at_unix?: number;
+}
+
+export interface RecoveryPaneSnapshot {
+  slot: number;
+  shell: string;
+  shell_args?: string[];
+  last_cwd?: string;
+  session_type?: string;
+  last_command_line?: string;
+  title?: string;
+  ai?: RecoveryAIInfo;
+}
+
+export interface RecoveryTabSnapshot {
+  id: string;
+  layout: "single" | "vertical" | "horizontal" | "grid2x2";
+  active_pane_idx: number;
+  col_ratio: number;
+  row_ratio: number;
+  panes: RecoveryPaneSnapshot[];
+}
+
+export interface RecoverySnapshot {
+  version: number;
+  host_id: string;
+  clean_shutdown: boolean;
+  saved_at_unix: number;
+  active_tab_id?: string;
+  tabs: RecoveryTabSnapshot[];
 }
 
 export interface RelayConfig {
@@ -210,6 +252,11 @@ interface AppBindings {
   ShowNotification(title: string, body: string): Promise<void>;
   GetShellIntegrationEnabled(): Promise<boolean>;
   SetShellIntegrationEnabled(enabled: boolean): Promise<void>;
+  LoadRecoverySnapshot(): Promise<RecoverySnapshot>;
+  SaveRecoverySnapshot(payload: string): Promise<void>;
+  DiscardRecoverySnapshot(): Promise<void>;
+  GetRecoveryDialogEnabled(): Promise<boolean>;
+  SetRecoveryDialogEnabled(enabled: boolean): Promise<void>;
   GetWebglRendererEnabled(): Promise<boolean>;
   SetWebglRendererEnabled(enabled: boolean): Promise<void>;
   GetCommandNotifyThresholdSeconds(): Promise<number>;
@@ -520,6 +567,26 @@ export function getShellIntegrationEnabled(): Promise<boolean> {
 
 export function setShellIntegrationEnabled(enabled: boolean): Promise<void> {
   return bindings().SetShellIntegrationEnabled(enabled);
+}
+
+export function loadRecoverySnapshot(): Promise<RecoverySnapshot> {
+  return bindings().LoadRecoverySnapshot();
+}
+
+export function saveRecoverySnapshot(snap: RecoverySnapshot): Promise<void> {
+  return bindings().SaveRecoverySnapshot(JSON.stringify(snap));
+}
+
+export function discardRecoverySnapshot(): Promise<void> {
+  return bindings().DiscardRecoverySnapshot();
+}
+
+export function getRecoveryDialogEnabled(): Promise<boolean> {
+  return bindings().GetRecoveryDialogEnabled();
+}
+
+export function setRecoveryDialogEnabled(enabled: boolean): Promise<void> {
+  return bindings().SetRecoveryDialogEnabled(enabled);
 }
 
 export function getWebglRendererEnabled(): Promise<boolean> {

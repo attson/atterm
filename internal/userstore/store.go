@@ -17,13 +17,24 @@ import (
 
 // SQLiteStore is the production Store backed by a single SQLite file.
 type SQLiteStore struct {
-	db *sql.DB
+	db     *sql.DB
+	cipher *SecretCipher // nil = feishu CRUD will error
+}
+
+// OpenOption is a functional option for Open.
+type OpenOption func(*SQLiteStore)
+
+// WithSecretCipher sets the AEAD cipher used for field-level secret encryption
+// (e.g. Feishu app_secret). Must be called with a non-nil cipher before any
+// Feishu CRUD methods are used.
+func WithSecretCipher(c *SecretCipher) OpenOption {
+	return func(s *SQLiteStore) { s.cipher = c }
 }
 
 // Open opens (or creates) the SQLite database at path and runs any pending
 // migrations. Pass ":memory:" for tests. WAL mode is enabled on file-backed
 // databases; tests against ":memory:" fall back to the default journal.
-func Open(ctx context.Context, path string) (*SQLiteStore, error) {
+func Open(ctx context.Context, path string, opts ...OpenOption) (*SQLiteStore, error) {
 	dsn := path
 	if path != ":memory:" {
 		dsn = path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
@@ -40,6 +51,9 @@ func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	s := &SQLiteStore{db: db}
+	for _, o := range opts {
+		o(s)
+	}
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err

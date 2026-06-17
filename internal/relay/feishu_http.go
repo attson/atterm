@@ -2,9 +2,12 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/attson/atterm/internal/feishu"
@@ -39,13 +42,40 @@ func (h *FeishuHTTPHandler) ServeHTTPSession(w http.ResponseWriter, r *http.Requ
 }
 
 // ServeHTTPEvents handles the unauthenticated event callback.
-// (Stub for T11; full implementation lands in T12.)
 func (h *FeishuHTTPHandler) ServeHTTPEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
 	}
-	w.WriteHeader(http.StatusNotImplemented)
+	hash := strings.TrimPrefix(r.URL.Path, "/v1/feishu/events/")
+	hash = strings.TrimSuffix(hash, "/")
+	if hash == "" || strings.Contains(hash, "/") {
+		http.Error(w, "missing hash", http.StatusBadRequest)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		// Even read errors must 200 — log only.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2500*time.Millisecond)
+	defer cancel()
+	resp, _ := h.svc.HandleEvent(ctx, hash, body)
+	if resp == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if resp.URLChallenge != "" {
+		writeJSONStatus(w, http.StatusOK, map[string]string{"challenge": resp.URLChallenge})
+		return
+	}
+	if resp.CardUpdate != nil {
+		writeJSONStatus(w, http.StatusOK, resp.CardUpdate)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *FeishuHTTPHandler) callbackURL(r *http.Request, hash string) string {

@@ -53,3 +53,37 @@ type fakeRuntime struct {
 
 func (r *fakeRuntime) Run(ctx context.Context) error   { <-ctx.Done(); return nil }
 func (r *fakeRuntime) Close(ctx context.Context) error { r.closed = true; return nil }
+
+func TestLongConn_OnBindMessage_RoutesText(t *testing.T) {
+	gotSender := ""
+	gotText := ""
+	cfg := LongConnConfig{
+		AppID: "x", AppSecret: "y",
+		OnBindMessage: func(ctx context.Context, senderOpenID, text string) {
+			gotSender = senderOpenID
+			gotText = text
+		},
+	}
+	r := newTestableRuntime(cfg)
+	r.injectIMMessage("ou_sender", "/bind ABC123")
+	if gotSender != "ou_sender" || gotText != "/bind ABC123" {
+		t.Fatalf("not routed: sender=%q text=%q", gotSender, gotText)
+	}
+}
+
+func TestLongConn_OnCardAction_RoutesAck(t *testing.T) {
+	called := 0
+	gotSID := ""
+	cfg := LongConnConfig{
+		AppID: "x", AppSecret: "y",
+		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID string) {
+			called++
+			gotSID = sessionID
+		},
+	}
+	r := newTestableRuntime(cfg)
+	r.injectCardAction("ou_op", "sid-99", "ack", "command_finished")
+	if called != 1 || gotSID != "sid-99" {
+		t.Fatalf("expected one card-action callback with sid-99, got %d / %q", called, gotSID)
+	}
+}

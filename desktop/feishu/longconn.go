@@ -29,6 +29,11 @@ type LongConnConfig struct {
 
 	OnBindMessage func(ctx context.Context, senderOpenID, text string)
 	OnCardAction  func(ctx context.Context, sessionID, kind, event, operatorOpenID string)
+
+	// OnAuthClassFailure fires once when the SDK returns an auth-class
+	// error (invalid app secret, app disabled, etc.). The reconnect loop
+	// halts after invoking it.
+	OnAuthClassFailure func(ctx context.Context, err error)
 }
 
 // longConnRuntime is the boundary the SDK adapter satisfies.
@@ -72,18 +77,70 @@ func (l *LongConn) Start(ctx context.Context) error {
 		l.mu.Unlock()
 		return errors.New("longconn: already started")
 	}
-	rt, err := l.factory(l.cfg)
-	if err != nil {
-		l.mu.Unlock()
-		return err
-	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	l.cancel = cancel
-	l.rt = rt
 	l.started = true
 	l.mu.Unlock()
-	go func() { _ = rt.Run(runCtx) }()
+	go l.runLoop(runCtx)
 	return nil
+}
+
+func (l *LongConn) runLoop(ctx context.Context) {
+	backoff := l.cfg.Backoff.Initial
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		rt, err := l.factory(l.cfg)
+		if err != nil {
+			if isAuthClass(err) {
+				if l.cfg.OnAuthClassFailure != nil {
+					l.cfg.OnAuthClassFailure(ctx, err)
+				}
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff = nextBackoff(backoff, l.cfg.Backoff.Max)
+			continue
+		}
+		l.mu.Lock()
+		l.rt = rt
+		l.mu.Unlock()
+		err = rt.Run(ctx)
+		_ = rt.Close(context.Background())
+		if ctx.Err() != nil {
+			return
+		}
+		if isAuthClass(err) {
+			if l.cfg.OnAuthClassFailure != nil {
+				l.cfg.OnAuthClassFailure(ctx, err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff = nextBackoff(backoff, l.cfg.Backoff.Max)
+	}
+}
+
+func nextBackoff(cur, max time.Duration) time.Duration {
+	next := cur * 2
+	if next > max {
+		next = max
+	}
+	return next
+}
+
+func isAuthClass(err error) bool {
+	var ac interface{ IsFeishuAuthClassError() bool }
+	return errors.As(err, &ac) && ac.IsFeishuAuthClassError()
 }
 
 func (l *LongConn) Close(ctx context.Context) error {

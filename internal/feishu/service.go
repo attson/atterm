@@ -34,6 +34,11 @@ var ErrFeishuPendingBindNotFoundService = errors.New("feishu: pending bind not f
 // ErrDecryptFailed wraps any decryption-side error.
 var ErrDecryptFailed = errors.New("feishu: decrypt failed")
 
+// ErrBindingDisabled is returned by RelayToken when the stored binding
+// has been marked disabled (typically after auth-class failures). The
+// caller surfaces this to the desktop so the UI prompts re-config.
+var ErrBindingDisabled = errors.New("feishu: binding disabled")
+
 // BindingStore is what the service needs from userstore.
 type BindingStore interface {
 	GetBindingByAppIDHash(ctx context.Context, hash string) (*Binding, error)
@@ -69,6 +74,31 @@ type Service struct {
 
 func NewService(cfg ServiceConfig) *Service {
 	return &Service{cfg: cfg}
+}
+
+// RelayToken mints a tenant_access_token for the user's bound app and
+// returns it along with the bound open_id + app_id_hash. Used by the
+// new POST /v1/feishu/relay-token/me handler so the desktop can send
+// IM messages directly without the relay seeing the payload.
+//
+// Errors:
+//
+//	ErrBindingNotFound  → caller maps to 404
+//	ErrBindingDisabled  → caller maps to 410
+//	other               → caller maps to 502 (Feishu unreachable)
+func (s *Service) RelayToken(ctx context.Context, userID string) (token, openID, appIDHash string, err error) {
+	b, err := s.cfg.Store.GetBindingByUserID(ctx, userID)
+	if err != nil {
+		return "", "", "", err
+	}
+	if b.DisabledAt != 0 {
+		return "", "", "", ErrBindingDisabled
+	}
+	tok, err := s.cfg.Token.Get(ctx, b.AppID, b.AppSecret)
+	if err != nil {
+		return "", "", "", err
+	}
+	return tok, b.OpenID, b.AppIDHash, nil
 }
 
 // HandleStatus is the high-level result for the HTTP handler.

@@ -216,3 +216,50 @@ func TestService_HandleEvent_DecryptFailure(t *testing.T) {
 		t.Fatalf("resp: %+v", resp)
 	}
 }
+
+func TestService_RelayToken_Success(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{
+		UserID: "u1", AppID: "a", AppSecret: "s",
+		EncryptKey: "k", VerifyToken: "v",
+		AppIDHash: "h", OpenID: "ou_x",
+	})
+	svc := newSvc(st, &fakeIM{}, &fakeToken{tok: "tt"})
+
+	tok, openID, hash, err := svc.RelayToken(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("RelayToken: %v", err)
+	}
+	if tok != "tt" || openID != "ou_x" || hash != "h" {
+		t.Fatalf("got tok=%q open=%q hash=%q", tok, openID, hash)
+	}
+}
+
+func TestService_RelayToken_NoBinding(t *testing.T) {
+	svc := newSvc(newFakeStore(), &fakeIM{}, &fakeToken{tok: "tt"})
+	_, _, _, err := svc.RelayToken(context.Background(), "missing")
+	if !errors.Is(err, ErrBindingNotFound) {
+		t.Fatalf("want ErrBindingNotFound, got %v", err)
+	}
+}
+
+func TestService_RelayToken_Disabled(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{UserID: "u1", AppIDHash: "h", DisabledAt: 1, OpenID: "ou_x"})
+	svc := newSvc(st, &fakeIM{}, &fakeToken{tok: "tt"})
+	_, _, _, err := svc.RelayToken(context.Background(), "u1")
+	if !errors.Is(err, ErrBindingDisabled) {
+		t.Fatalf("want ErrBindingDisabled, got %v", err)
+	}
+}
+
+func TestService_RelayToken_UpstreamFail(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{UserID: "u1", AppID: "a", AppSecret: "s", AppIDHash: "h", OpenID: "ou_x"})
+	bad := errors.New("upstream boom")
+	svc := newSvc(st, &fakeIM{}, &fakeToken{err: bad})
+	_, _, _, err := svc.RelayToken(context.Background(), "u1")
+	if !errors.Is(err, bad) {
+		t.Fatalf("want upstream error, got %v", err)
+	}
+}

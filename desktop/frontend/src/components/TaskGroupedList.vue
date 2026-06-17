@@ -20,10 +20,12 @@ const props = withDefaults(defineProps<{
   groupBy?: "host" | "state";
   byState?: Record<string, RemoteSession[]>;
   unreadByState?: Record<string, number>;
+  activeSessionId?: string | null;
 }>(), {
   groupBy: "host",
   byState: () => ({}),
   unreadByState: () => ({}),
+  activeSessionId: null,
 });
 
 const emit = defineEmits<{
@@ -157,7 +159,9 @@ function stateLabel(state: string | undefined): string {
         v-for="s in (isGroupCollapsed(key) ? [] : groups[key])"
         :key="s.session_id"
         class="task-row"
+        :class="{ active: s.session_id === activeSessionId }"
         data-test="task-row"
+        :data-active="s.session_id === activeSessionId ? 'true' : undefined"
         @click="emit('open', s)"
       >
         <span class="row-top">
@@ -205,7 +209,9 @@ function stateLabel(state: string | undefined): string {
           v-for="s in completedSeen"
           :key="s.session_id"
           class="task-row dim"
+          :class="{ active: s.session_id === activeSessionId }"
           data-test="completed-fold-row"
+          :data-active="s.session_id === activeSessionId ? 'true' : undefined"
           @click="emit('open', s)"
         >
           <span class="row-top">
@@ -241,7 +247,10 @@ function stateLabel(state: string | undefined): string {
 .host-group { display: flex; flex-direction: column; gap: 4px; }
 .task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; }
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
+.task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }
+.task-row.active:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .task-row.dim { opacity: 0.6; }
+.task-row.dim.active { opacity: 0.9; }
 .row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }

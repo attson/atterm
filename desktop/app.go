@@ -1797,7 +1797,7 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 		log.Printf("desktop: feishu hook server start: %v", err)
 		return
 	}
-	hookEndpoint := "http://" + addr
+	hookEndpoint := "http://" + addr + "/atterm-hook/notify"
 
 	if err := feishu.WriteEndpointFile(hookEndpoint); err != nil {
 		log.Printf("desktop: write feishu endpoint file: %v", err)
@@ -1865,12 +1865,13 @@ func (a *App) SetFeishuCredentials(ctx context.Context, c feishu.Credentials) er
 }
 
 // BeginFeishuPair issues a short-code that the user sends to the bot via
-// private chat to complete the bind flow.
+// private chat to complete the bind flow. In relay mode the code is issued by
+// the relay; in local mode it is generated in-process.
 func (a *App) BeginFeishuPair(ctx context.Context) (string, error) {
 	if a.feishuService == nil {
 		return "", errors.New("feishu disabled")
 	}
-	return a.feishuService.IssuePending(), nil
+	return a.feishuService.BeginPair(ctx)
 }
 
 // DeleteFeishuBinding removes the bound OpenID from the store.

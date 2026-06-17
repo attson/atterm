@@ -1,9 +1,12 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -183,6 +186,40 @@ func (s *Service) IssuePending() string {
 	pendingCodes[code] = time.Now().Add(15 * time.Minute).Unix()
 	pendingMu.Unlock()
 	return code
+}
+
+// BeginPair returns a short-code the user can send to the bot to complete the
+// bind flow. In relay mode the code is issued by the relay; in local mode it
+// is generated in-process via IssuePending.
+func (s *Service) BeginPair(ctx context.Context) (string, error) {
+	if s.cfg.Mode == ModeRelay {
+		url := strings.TrimRight(s.cfg.RelayURL, "/") + "/v1/feishu/bindings/me/begin-pair"
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte("{}")))
+		if err != nil {
+			return "", fmt.Errorf("feishu begin-pair: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+s.cfg.RelayToken())
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := s.cfg.HTTPClient.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("feishu begin-pair: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("feishu begin-pair: relay status %d", resp.StatusCode)
+		}
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return "", fmt.Errorf("feishu begin-pair: decode: %w", err)
+		}
+		if body.Code == "" {
+			return "", errors.New("feishu begin-pair: relay returned empty code")
+		}
+		return body.Code, nil
+	}
+	return s.IssuePending(), nil
 }
 
 func (s *Service) consumePending(code string) bool {

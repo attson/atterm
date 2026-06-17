@@ -481,7 +481,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			}
 			switch next {
 			case proto.TaskStateCompleted, proto.TaskStateFailed:
-				h.FeishuDispatcher.DispatchCommandFinished(context.Background(),
+				go h.FeishuDispatcher.DispatchCommandFinished(context.Background(),
 					feishu.CommandFinishedEvent{
 						SessionID:  sid,
 						ExitCode:   meta.ExitCode,
@@ -490,7 +490,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 						SealedBody: meta.SealedBody,
 					})
 			case proto.TaskStateWaitingInput:
-				h.FeishuDispatcher.DispatchWaitingInput(context.Background(),
+				go h.FeishuDispatcher.DispatchWaitingInput(context.Background(),
 					feishu.WaitingInputDispatchEvent{
 						SessionID: sid,
 						Source:    feishu.WaitingSourceHeuristic,

@@ -58,7 +58,10 @@ func TestRelayBackedBindingStore_GetNotConfigured(t *testing.T) {
 
 func TestRelayBackedBindingStore_SetCredentials(t *testing.T) {
 	var got struct {
-		AppID, AppSecret, EncryptKey, VerifyToken string
+		AppID       string `json:"app_id"`
+		AppSecret   string `json:"app_secret"`
+		EncryptKey  string `json:"encrypt_key"`
+		VerifyToken string `json:"verify_token"`
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/feishu/bindings/me" && r.Method == "POST" {

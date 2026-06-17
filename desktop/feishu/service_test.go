@@ -1,6 +1,10 @@
 package feishu
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
@@ -77,5 +81,64 @@ func TestService_RelayMode_RequiresTokenFn(t *testing.T) {
 	_, err := NewService(ServiceConfig{Mode: ModeRelay, RelayURL: "http://x"})
 	if err == nil {
 		t.Fatalf("expected error when RelayToken is nil in relay mode")
+	}
+}
+
+func TestService_BeginPair_RelayMode(t *testing.T) {
+	var hitBeginPair bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/feishu/bindings/me/begin-pair" && r.Method == "POST" {
+			hitBeginPair = true
+			if got := r.Header.Get("Authorization"); got != "Bearer relay-tok" {
+				t.Errorf("auth header: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": "ABC123"})
+			return
+		}
+		t.Errorf("unexpected req %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	svc, err := NewService(ServiceConfig{
+		Mode:       ModeRelay,
+		RelayURL:   srv.URL,
+		RelayToken: func() string { return "relay-tok" },
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	code, err := svc.BeginPair(context.Background())
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
+	if code != "ABC123" {
+		t.Fatalf("code: %q", code)
+	}
+	if !hitBeginPair {
+		t.Fatal("begin-pair endpoint was not called")
+	}
+}
+
+func TestService_BeginPair_LocalMode(t *testing.T) {
+	keyring.MockInit()
+	defer keyring.MockInitWithError(nil)
+
+	svc, err := NewService(ServiceConfig{
+		Mode:       ModeLocal,
+		FeishuBase: "https://open.feishu.cn",
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	code, err := svc.BeginPair(context.Background())
+	if err != nil {
+		t.Fatalf("BeginPair local: %v", err)
+	}
+	if len(code) != 6 {
+		t.Fatalf("expected 6-char code, got %q", code)
 	}
 }

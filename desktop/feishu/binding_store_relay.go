@@ -97,10 +97,10 @@ func (s *RelayBackedBindingStore) Get(ctx context.Context) (*BindingView, error)
 
 func (s *RelayBackedBindingStore) SetCredentials(ctx context.Context, c Credentials) error {
 	resp, err := s.do(ctx, "POST", "/v1/feishu/bindings/me", map[string]string{
-		"AppID":       c.AppID,
-		"AppSecret":   c.AppSecret,
-		"EncryptKey":  c.EncryptKey,
-		"VerifyToken": c.VerifyToken,
+		"app_id":       c.AppID,
+		"app_secret":   c.AppSecret,
+		"encrypt_key":  c.EncryptKey,
+		"verify_token": c.VerifyToken,
 	})
 	if err != nil {
 		return fmt.Errorf("relay set credentials: %w", err)

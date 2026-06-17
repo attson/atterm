@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"io/fs"
 	"log"
@@ -16,10 +17,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/relay"
 	"github.com/attson/atterm/internal/userstore"
-	"github.com/attson/atterm/internal/webpush"
 	"github.com/attson/atterm/internal/webhook"
+	"github.com/attson/atterm/internal/webpush"
 )
 
 // Version is set at build time via -ldflags -X main.Version=<tag>.
@@ -73,8 +75,21 @@ func main() {
 		log.Fatalf("create persist dir %s: %v", persistDir, err)
 	}
 
+	encKeyB64 := os.Getenv("ATTERM_FEISHU_ENCRYPT_KEY")
+	if encKeyB64 == "" {
+		log.Fatal("ATTERM_FEISHU_ENCRYPT_KEY is required (32 random bytes, base64-encoded)")
+	}
+	encKey, err := base64.StdEncoding.DecodeString(encKeyB64)
+	if err != nil || len(encKey) != 32 {
+		log.Fatalf("ATTERM_FEISHU_ENCRYPT_KEY: want 32 base64-decoded bytes, got %d (err=%v)", len(encKey), err)
+	}
+	secretCipher, err := userstore.NewSecretCipher(encKey)
+	if err != nil {
+		log.Fatalf("secret cipher: %v", err)
+	}
+
 	dbPath := filepath.Join(persistDir, "users.db")
-	store, err := userstore.Open(ctx, dbPath)
+	store, err := userstore.Open(ctx, dbPath, userstore.WithSecretCipher(secretCipher))
 	if err != nil {
 		log.Fatalf("open userstore: %v", err)
 	}
@@ -141,6 +156,19 @@ func main() {
 	}
 	cfg.WebPush = wpSvc
 	cfg.Webhook = webhook.New(webhookStoreAdapter{store})
+
+	feishuBase := os.Getenv("ATTERM_FEISHU_BASE_URL")
+	if feishuBase == "" {
+		feishuBase = "https://open.feishu.cn"
+	}
+	feishuHTTP := &http.Client{Timeout: 10 * time.Second}
+	feishuSvc := feishu.NewService(feishu.ServiceConfig{
+		Store: relay.NewFeishuBindStore(store),
+		IM:    feishu.NewClient(feishuBase, feishuHTTP),
+		Token: feishu.NewTenantTokenCache(feishuBase, feishuHTTP, time.Now),
+	})
+	cfg.Feishu = feishuSvc
+	log.Printf("feishu: app-mode integration enabled (base=%s)", feishuBase)
 
 	if *devInsecure {
 		log.Printf("WARNING: INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")

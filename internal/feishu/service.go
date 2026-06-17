@@ -205,7 +205,7 @@ func (s *Service) HandleEvent(ctx context.Context, appIDHash string, body []byte
 		if env.Message == nil {
 			return &HandleResult{Reason: "no_message"}, nil
 		}
-		go s.handleBindMessage(ctx, b, env.Message)
+		go s.handleBindMessage(context.WithoutCancel(ctx), b, env.Message)
 		return &HandleResult{Reason: "im_message_dispatched"}, nil
 	case "card.action.trigger":
 		if env.CardAction == nil || env.CardAction.Kind != "ack" {

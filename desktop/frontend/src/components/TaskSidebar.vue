@@ -20,9 +20,11 @@ const props = withDefaults(defineProps<{
   totalUnread: number;
   byStateGroups?: Record<string, RemoteSession[]>;
   unreadByStateGroups?: Record<string, number>;
+  activeSessionId?: string | null;
 }>(), {
   byStateGroups: () => ({}),
   unreadByStateGroups: () => ({}),
+  activeSessionId: null,
 });
 
 const emit = defineEmits<{
@@ -186,6 +188,7 @@ const railIcons = computed(() => {
           :group-by="groupByState.activeId.value"
           :by-state="byStateGroups"
           :unread-by-state="unreadByStateGroups"
+          :active-session-id="activeSessionId"
           @open="(s) => emit('open', s)"
           @markSeen="(p) => emit('markSeen', p)"
         />

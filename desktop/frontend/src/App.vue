@@ -1084,6 +1084,7 @@ onUnmounted(() => {
         :total-unread="sessions.totalUnread.value"
         :by-state-groups="sessions.byState.value"
         :unread-by-state-groups="sessions.unreadByState.value"
+        :active-session-id="activePaneRef?.sessionId ?? null"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @markSeen="onMarkSeen"

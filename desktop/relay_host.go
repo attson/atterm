@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/desktop/feishu"
 	"github.com/attson/atterm/desktop/shellintegration"
 	"github.com/attson/atterm/internal/hostid"
 	"github.com/attson/atterm/internal/proto"
@@ -57,11 +58,31 @@ type relayHost struct {
 	// receives every captured AI session id and emits a Wails event. Nil
 	// when no app is wired (tests / standalone).
 	aiSidCallback func(localSessionID uuid.UUID, kind, aiSid string)
+
+	// FeishuHookEndpoint is set by app.go at startup once the HookServer
+	// has bound a port. Empty when feishu is disabled or not yet started.
+	FeishuHookEndpoint string
+
+	// FeishuDispatcher is set by app.go at startup. nil → no-op.
+	FeishuDispatcher *feishu.Dispatcher
 }
 
 type activeSession struct {
 	host    *ptyhost.Host
 	cleanup func()
+}
+
+// appendFeishuHookEnv adds ATTERM_SESSION_ID + ATTERM_HOOK_ENDPOINT to
+// a process env slice. The hook endpoint comes from the desktop's
+// in-process FeishuService (set up in Task 21); empty endpoint = skip.
+func appendFeishuHookEnv(env []string, sessionID, hookEndpoint string) []string {
+	if sessionID != "" {
+		env = append(env, "ATTERM_SESSION_ID="+sessionID)
+	}
+	if hookEndpoint != "" {
+		env = append(env, "ATTERM_HOOK_ENDPOINT="+hookEndpoint)
+	}
+	return env
 }
 
 // startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
@@ -387,6 +408,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	sid := uuid.New() // generated here so the plan can scope temp files by id
 	plan := shellintegration.Prepare(req.Command, enabled, sid.String())
 	argv, env = mergeShellIntegrationPlan(argv, env, plan)
+	env = appendFeishuHookEnv(env, sid.String(), h.FeishuHookEndpoint)
 	if plan.Shell != "" {
 		log.Printf("desktop-shell-integration: enabled session=%s shell=%s", sid, plan.Shell)
 	}
@@ -443,6 +465,28 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			go h.startSniffFn(ctx, cwd, kind, func(aiSid string) {
 				h.onAISidCaptured(sidCopy, kind, aiSid)
 			})
+		})
+		sess.SetOnTaskStateChange(func(sid uuid.UUID, prev, next string, meta session.TaskMeta) {
+			if h.FeishuDispatcher == nil {
+				return
+			}
+			switch next {
+			case proto.TaskStateCompleted, proto.TaskStateFailed:
+				h.FeishuDispatcher.DispatchCommandFinished(context.Background(),
+					feishu.CommandFinishedEvent{
+						SessionID:  sid,
+						ExitCode:   meta.ExitCode,
+						ElapsedMS:  meta.ElapsedMS,
+						Label:      meta.Label,
+						SealedBody: meta.SealedBody,
+					})
+			case proto.TaskStateWaitingInput:
+				h.FeishuDispatcher.DispatchWaitingInput(context.Background(),
+					feishu.WaitingInputDispatchEvent{
+						SessionID: sid,
+						Source:    feishu.WaitingSourceHeuristic,
+					})
+			}
 		})
 	}
 

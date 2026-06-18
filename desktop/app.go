@@ -1822,6 +1822,14 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 		log.Printf("desktop: write feishu endpoint file: %v", err)
 	}
 
+	svc.HookServer().SetSuspectCallback(func() {
+		// A misrouted POST may indicate stale install; nudge the
+		// debounced auto-repair on next UI poll.
+		hookInstallLastAttemptMu.Lock()
+		hookInstallLastAttempt = time.Time{}
+		hookInstallLastAttemptMu.Unlock()
+	})
+
 	if a.host != nil {
 		a.host.FeishuHookEndpoint = hookEndpoint
 		a.host.FeishuDispatcher = svc.Dispatcher()

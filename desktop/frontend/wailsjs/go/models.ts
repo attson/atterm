@@ -139,44 +139,45 @@ export namespace connhealth {
 
 }
 
-export namespace main {
-
-	export class FeishuCredentials {
-	    app_id: string;
-	    app_secret: string;
-	    encrypt_key: string;
-	    verify_token: string;
-
+export namespace feishu {
+	
+	export class Credentials {
+	    AppID: string;
+	    AppSecret: string;
+	    EncryptKey: string;
+	    VerifyToken: string;
+	
 	    static createFrom(source: any = {}) {
-	        return new FeishuCredentials(source);
+	        return new Credentials(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.app_id = source["AppID"] ?? source["app_id"] ?? "";
-	        this.app_secret = source["AppSecret"] ?? source["app_secret"] ?? "";
-	        this.encrypt_key = source["EncryptKey"] ?? source["encrypt_key"] ?? "";
-	        this.verify_token = source["VerifyToken"] ?? source["verify_token"] ?? "";
+	        this.AppID = source["AppID"];
+	        this.AppSecret = source["AppSecret"];
+	        this.EncryptKey = source["EncryptKey"];
+	        this.VerifyToken = source["VerifyToken"];
 	    }
 	}
-	export class FeishuStatusResp {
-	    enabled: boolean;
-	    mode: string;
-	    bound: boolean;
-	    open_id: string;
-	    disabled: boolean;
 
+}
+
+export namespace main {
+	
+	export class AIInfo {
+	    kind: string;
+	    session_id?: string;
+	    captured_at_unix?: number;
+	
 	    static createFrom(source: any = {}) {
-	        return new FeishuStatusResp(source);
+	        return new AIInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.enabled = source["enabled"];
-	        this.mode = source["mode"];
-	        this.bound = source["bound"];
-	        this.open_id = source["open_id"];
-	        this.disabled = source["disabled"];
+	        this.kind = source["kind"];
+	        this.session_id = source["session_id"];
+	        this.captured_at_unix = source["captured_at_unix"];
 	    }
 	}
 	export class ClipboardPastePayload {
@@ -353,6 +354,26 @@ export namespace main {
 	        this.session_token = source["session_token"];
 	    }
 	}
+	export class FeishuStatusResp {
+	    enabled: boolean;
+	    mode: string;
+	    bound: boolean;
+	    open_id: string;
+	    disabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new FeishuStatusResp(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.mode = source["mode"];
+	        this.bound = source["bound"];
+	        this.open_id = source["open_id"];
+	        this.disabled = source["disabled"];
+	    }
+	}
 	export class FileContent {
 	    path: string;
 	    data: number[];
@@ -469,6 +490,8 @@ export namespace main {
 	    cwd?: string;
 	    cols?: number;
 	    rows?: number;
+	    ai_kind?: string;
+	    initial_ai_session_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new NewSessionReq(source);
@@ -481,6 +504,8 @@ export namespace main {
 	        this.cwd = source["cwd"];
 	        this.cols = source["cols"];
 	        this.rows = source["rows"];
+	        this.ai_kind = source["ai_kind"];
+	        this.initial_ai_session_id = source["initial_ai_session_id"];
 	    }
 	}
 	export class NewSessionResp {
@@ -510,6 +535,50 @@ export namespace main {
 	        this.expires_at = source["expires_at"];
 	        this.qr_url = source["qr_url"];
 	    }
+	}
+	export class PaneSnapshot {
+	    slot: number;
+	    shell: string;
+	    shell_args?: string[];
+	    last_cwd?: string;
+	    session_type?: string;
+	    last_command_line?: string;
+	    title?: string;
+	    ai?: AIInfo;
+	
+	    static createFrom(source: any = {}) {
+	        return new PaneSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.slot = source["slot"];
+	        this.shell = source["shell"];
+	        this.shell_args = source["shell_args"];
+	        this.last_cwd = source["last_cwd"];
+	        this.session_type = source["session_type"];
+	        this.last_command_line = source["last_command_line"];
+	        this.title = source["title"];
+	        this.ai = this.convertValues(source["ai"], AIInfo);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ShortcutsConfig {
 	    bindings: Record<string, string>;
@@ -597,11 +666,92 @@ export namespace main {
 	        this.hotkey = source["hotkey"];
 	    }
 	}
+	export class TabSnapshot {
+	    id: string;
+	    layout: string;
+	    active_pane_idx: number;
+	    col_ratio: number;
+	    row_ratio: number;
+	    panes: PaneSnapshot[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TabSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.layout = source["layout"];
+	        this.active_pane_idx = source["active_pane_idx"];
+	        this.col_ratio = source["col_ratio"];
+	        this.row_ratio = source["row_ratio"];
+	        this.panes = this.convertValues(source["panes"], PaneSnapshot);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RecoverySnapshot {
+	    version: number;
+	    host_id: string;
+	    clean_shutdown: boolean;
+	    saved_at_unix: number;
+	    active_tab_id?: string;
+	    tabs: TabSnapshot[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RecoverySnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.host_id = source["host_id"];
+	        this.clean_shutdown = source["clean_shutdown"];
+	        this.saved_at_unix = source["saved_at_unix"];
+	        this.active_tab_id = source["active_tab_id"];
+	        this.tabs = this.convertValues(source["tabs"], TabSnapshot);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RelayConfig {
 	    url: string;
 	    token: string;
 	    session_expires_at: number;
 	    allow_insecure_relay: boolean;
+	    disable_e2ee: boolean;
 	    remote_permission: string;
 	    last_email: string;
 	    connected: boolean;
@@ -617,6 +767,7 @@ export namespace main {
 	        this.token = source["token"];
 	        this.session_expires_at = source["session_expires_at"];
 	        this.allow_insecure_relay = source["allow_insecure_relay"];
+	        this.disable_e2ee = source["disable_e2ee"];
 	        this.remote_permission = source["remote_permission"];
 	        this.last_email = source["last_email"];
 	        this.connected = source["connected"];
@@ -638,6 +789,7 @@ export namespace main {
 	        this.email = source["email"];
 	    }
 	}
+	
 	
 	
 	export class UpdateState {

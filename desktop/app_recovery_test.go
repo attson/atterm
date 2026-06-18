@@ -90,6 +90,52 @@ func TestApp_DiscardRecoverySnapshot(t *testing.T) {
 	}
 }
 
+// TestApp_LoadRecoverySnapshot_TabsNeverNil pins the wire shape that the
+// frontend depends on: Go's nil slice marshals to JSON `null`, and the
+// onMounted boot block accesses `recoverySnap.tabs.length` outside of a
+// try/catch — a nil slice there used to lock the app on the "starting first
+// session" message with no surfaced error (no recovery.json on disk = the
+// first-ever launch).
+func TestApp_LoadRecoverySnapshot_TabsNeverNil(t *testing.T) {
+	t.Run("no recoveryStore", func(t *testing.T) {
+		app := &App{ctx: context.Background()}
+		got, err := app.LoadRecoverySnapshot()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.Tabs == nil {
+			t.Fatalf("Tabs must be non-nil (would marshal to JSON null)")
+		}
+	})
+	t.Run("file does not exist", func(t *testing.T) {
+		app := newRecoveryTestApp(t)
+		got, err := app.LoadRecoverySnapshot()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.Tabs == nil {
+			t.Fatalf("Tabs must be non-nil even when recovery.json does not exist")
+		}
+	})
+	t.Run("after discard", func(t *testing.T) {
+		app := newRecoveryTestApp(t)
+		payload := `{"version":1,"host_id":"` + app.host.hostID + `","saved_at_unix":1750000000,"tabs":[{"id":"t","panes":[{"slot":0,"shell":"/bin/zsh"}]}]}`
+		if err := app.SaveRecoverySnapshot(payload); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if err := app.DiscardRecoverySnapshot(); err != nil {
+			t.Fatalf("Discard: %v", err)
+		}
+		got, err := app.LoadRecoverySnapshot()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got.Tabs == nil {
+			t.Fatalf("Tabs must be non-nil after discard")
+		}
+	})
+}
+
 func TestApp_MarkCleanShutdown(t *testing.T) {
 	app := newRecoveryTestApp(t)
 	payload := `{"version":1,"host_id":"` + app.host.hostID + `","saved_at_unix":1750000000,"tabs":[{"id":"t","panes":[{"slot":0,"shell":"/bin/zsh"}]}]}`

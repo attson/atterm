@@ -38,12 +38,20 @@ export function DeleteWebhook(arg1) {
   return window['go']['main']['App']['DeleteWebhook'](arg1);
 }
 
+export function DiscardRecoverySnapshot() {
+  return window['go']['main']['App']['DiscardRecoverySnapshot']();
+}
+
 export function ExportDiagnostics(arg1) {
   return window['go']['main']['App']['ExportDiagnostics'](arg1);
 }
 
 export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
+}
+
+export function GetAccountKey() {
+  return window['go']['main']['App']['GetAccountKey']();
 }
 
 export function GetAutoCheckUpdates() {
@@ -102,6 +110,10 @@ export function GetQuickTemplates() {
   return window['go']['main']['App']['GetQuickTemplates']();
 }
 
+export function GetRecoveryDialogEnabled() {
+  return window['go']['main']['App']['GetRecoveryDialogEnabled']();
+}
+
 export function GetRelayConfig() {
   return window['go']['main']['App']['GetRelayConfig']();
 }
@@ -150,6 +162,10 @@ export function GetWebglRendererEnabled() {
   return window['go']['main']['App']['GetWebglRendererEnabled']();
 }
 
+export function HasAccountKey() {
+  return window['go']['main']['App']['HasAccountKey']();
+}
+
 export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
@@ -162,8 +178,16 @@ export function ListWebhooks() {
   return window['go']['main']['App']['ListWebhooks']();
 }
 
+export function LoadRecoverySnapshot() {
+  return window['go']['main']['App']['LoadRecoverySnapshot']();
+}
+
 export function LoginRemoteRelay(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LoginRemoteRelay'](arg1, arg2, arg3, arg4);
+}
+
+export function MarkCleanShutdown() {
+  return window['go']['main']['App']['MarkCleanShutdown']();
 }
 
 export function MarkSessionsSeen(arg1, arg2) {
@@ -182,6 +206,14 @@ export function ProbeRelayVersion(arg1) {
   return window['go']['main']['App']['ProbeRelayVersion'](arg1);
 }
 
+export function RegisterRemoteRelay(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['RegisterRemoteRelay'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SaveRecoverySnapshot(arg1) {
+  return window['go']['main']['App']['SaveRecoverySnapshot'](arg1);
+}
+
 export function SetAutoCheckUpdates(arg1) {
   return window['go']['main']['App']['SetAutoCheckUpdates'](arg1);
 }
@@ -192,6 +224,10 @@ export function SetCommandNotifyThresholdSeconds(arg1) {
 
 export function SetDefaultShell(arg1) {
   return window['go']['main']['App']['SetDefaultShell'](arg1);
+}
+
+export function SetFeishuCredentials(arg1) {
+  return window['go']['main']['App']['SetFeishuCredentials'](arg1);
 }
 
 export function SetLocalePreference(arg1) {
@@ -214,12 +250,16 @@ export function SetQuickTemplates(arg1) {
   return window['go']['main']['App']['SetQuickTemplates'](arg1);
 }
 
-export function SetFeishuCredentials(arg1) {
-  return window['go']['main']['App']['SetFeishuCredentials'](arg1);
+export function SetRecoveryDialogEnabled(arg1) {
+  return window['go']['main']['App']['SetRecoveryDialogEnabled'](arg1);
 }
 
 export function SetRelayConfig(arg1) {
   return window['go']['main']['App']['SetRelayConfig'](arg1);
+}
+
+export function SetRelayDisableE2EE(arg1) {
+  return window['go']['main']['App']['SetRelayDisableE2EE'](arg1);
 }
 
 export function SetShellIntegrationEnabled(arg1) {

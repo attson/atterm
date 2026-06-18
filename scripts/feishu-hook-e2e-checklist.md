@@ -13,16 +13,15 @@ or `internal/feishu/`. Not part of CI — requires a real Feishu app.
 2. Create a self-built Feishu app at https://open.feishu.cn/app, note
    app_id/app_secret/encrypt_key/verify_token, enable "事件订阅加密",
    subscribe `im.message.receive_v1` + `card.action.trigger`.
-3. Add Notification hooks to `~/.claude/settings.json`:
-   ```json
-   { "hooks": {
-       "Notification": [
-         { "matcher": {"type":"idle_prompt","tool":"AskUserQuestion"},
-           "command": "atterm-hook" },
-         { "matcher": {"type":"permission_prompt"},
-           "command": "atterm-hook" }
-       ] } }
-   ```
+3. Hook is now auto-installed. **No manual settings.json editing needed.**
+   On first atterm launch with auto-install enabled (default), check:
+   - `ls -la ~/.atterm/bin/atterm-hook` shows a symlink
+   - `cat ~/.claude/settings.json | python3 -m json.tool` shows two
+     atterm-managed Notification entries pointing at the symlink.
+
+   To opt out: in atterm Settings → Feishu, toggle off "Auto-install
+   Claude Code hook". The two atterm entries will be removed; any
+   user-managed Notification entries are preserved.
 
 ## Relay-backed mode
 
@@ -64,3 +63,28 @@ or `internal/feishu/`. Not part of CI — requires a real Feishu app.
 
 - [ ] Delete binding via UI → confirm endpoint file `~/.config/atterm/hook-endpoint`
       removed after atterm shutdown.
+
+## Hook auto-install
+
+- [ ] Fresh launch on a machine with **no** `~/.claude/settings.json`:
+      file created with both atterm entries; `~/.atterm/bin/atterm-hook`
+      symlink points at `atterm-hook-<sha8>`; Settings · Feishu shows
+      green dot + "Hook installed and healthy".
+- [ ] Fresh launch with pre-existing **non-atterm** Notification hook:
+      both atterm entries appended; user's entry preserved verbatim.
+- [ ] Toggle "Auto-install Claude Code hook" OFF in Settings · Feishu:
+      both atterm entries removed; user's entry intact; symlink removed;
+      versioned `atterm-hook-<sha8>` file kept.
+- [ ] Toggle ON again: re-installs cleanly.
+- [ ] Break the binary: `rm ~/.atterm/bin/atterm-hook-<sha8>` (the
+      symlink target). Open Settings · Feishu; status dot is amber for
+      the first poll, then auto-repair writes a fresh `atterm-hook-<sha8>`
+      and the next poll shows green. (Note: `chmod 000` alone does NOT
+      trigger re-write — `ensureBinary` skips the write when the target
+      file already exists. Removal is the right reproduction.)
+- [ ] Make settings.json read-only: `chmod 444 ~/.claude/settings.json`;
+      restart atterm; status dot is amber; LastError mentions "cannot
+      update Claude settings"; atterm is otherwise functional.
+- [ ] Put garbage in settings.json: `echo not-json > ~/.claude/settings.json`;
+      restart atterm; status dot amber; LastError mentions "invalid JSON";
+      file is **not** overwritten.

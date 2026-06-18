@@ -1,7 +1,6 @@
 package hookinstall
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,6 +140,3 @@ func TestUninstall_DoesNotDeleteVersionedBinaries(t *testing.T) {
 		t.Errorf("versioned binary removed: %v", err)
 	}
 }
-
-// keep import — exported test helpers in this file may not actually use json
-var _ = json.Marshal

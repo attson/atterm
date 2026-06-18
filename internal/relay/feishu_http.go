@@ -25,7 +25,7 @@ func NewFeishuHTTPHandler(store *userstore.SQLiteStore, svc *feishu.Service) *Fe
 }
 
 // ServeHTTPSession is the handler registered behind requireSession.
-// It dispatches the four authenticated bindings routes.
+// It dispatches the five authenticated routes (bindings + relay-token).
 func (h *FeishuHTTPHandler) ServeHTTPSession(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/v1/feishu/bindings/me" && r.Method == http.MethodGet:
@@ -36,6 +36,8 @@ func (h *FeishuHTTPHandler) ServeHTTPSession(w http.ResponseWriter, r *http.Requ
 		h.handleDelete(w, r)
 	case r.URL.Path == "/v1/feishu/bindings/me/begin-pair" && r.Method == http.MethodPost:
 		h.handleBeginPair(w, r)
+	case r.URL.Path == "/v1/feishu/relay-token/me" && r.Method == http.MethodPost:
+		h.handleRelayToken(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -204,5 +206,36 @@ func (h *FeishuHTTPHandler) handleBeginPair(w http.ResponseWriter, r *http.Reque
 	writeJSONStatus(w, http.StatusOK, map[string]any{
 		"code":       code,
 		"expires_at": expires,
+	})
+}
+
+// handleRelayToken hands the caller a fresh tenant_access_token plus
+// the bound open_id + app_id_hash. Used by the desktop in relay-backed
+// mode to send Feishu IM messages directly without round-tripping
+// payloads through the relay.
+func (h *FeishuHTTPHandler) handleRelayToken(w http.ResponseWriter, r *http.Request) {
+	uid, ok := currentUserID(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	tok, openID, hash, err := h.svc.RelayToken(r.Context(), uid)
+	if errors.Is(err, feishu.ErrBindingNotFound) {
+		http.Error(w, "feishu binding not configured", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, feishu.ErrBindingDisabled) {
+		http.Error(w, "feishu binding disabled — re-configure", http.StatusGone)
+		return
+	}
+	if err != nil {
+		http.Error(w, "feishu upstream error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSONStatus(w, http.StatusOK, map[string]any{
+		"tenant_access_token": tok,
+		"open_id":             openID,
+		"app_id_hash":         hash,
+		"expires_in":          3000,
 	})
 }

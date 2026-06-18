@@ -353,6 +353,16 @@ export const zhCN = {
       copyFailed: "复制失败",
       exported: "已保存到 {path}",
     },
+    feishu: {
+      title: "飞书集成",
+      disabled: "飞书集成尚未启用。",
+      mode: "模式",
+      bound: "已绑定到 open_id：{open_id}",
+      save: "保存凭据",
+      begin_pair: "开始绑定",
+      pair_hint: "请在 15 分钟内向机器人发送私聊：/bind {code}",
+      delete: "解绑",
+    },
     templates: {
       tab: "快捷模板",
       intro: "每个模板被点击时会把它的文本发到当前会话。",

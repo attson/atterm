@@ -274,3 +274,105 @@ func TestFeishuHTTP_EventCallback_CardAckUpdates(t *testing.T) {
 		t.Fatalf("expected update card in body: %s", rr.Body.String())
 	}
 }
+
+func TestFeishuHTTP_RelayToken_Success(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	u, _ := st.CreateOpaqueUser(ctx, "rt@example.com")
+	_ = st.UpsertFeishuBinding(ctx, u.ID, userstore.FeishuBindingCredentials{
+		AppID: "cli_rt", AppSecret: "s", EncryptKey: "k", VerifyToken: "v",
+	})
+	_ = st.MarkFeishuBindingBound(ctx, u.ID, "ou_user")
+	h, _ := newFeishuTestHandler(t, st, 0, "tt-xyz")
+
+	req := httptest.NewRequest("POST", "/v1/feishu/relay-token/me", nil)
+	req = req.WithContext(ctxWithUser(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPSession(rr, req)
+
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Token     string `json:"tenant_access_token"`
+		ExpiresIn int    `json:"expires_in"`
+		OpenID    string `json:"open_id"`
+		AppIDHash string `json:"app_id_hash"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.Token != "tt-xyz" || resp.OpenID != "ou_user" {
+		t.Fatalf("resp: %+v", resp)
+	}
+	if resp.AppIDHash == "" {
+		t.Fatalf("expected app_id_hash in response")
+	}
+}
+
+func TestFeishuHTTP_RelayToken_NoBinding(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	u, _ := st.CreateOpaqueUser(ctx, "nb@example.com")
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	req := httptest.NewRequest("POST", "/v1/feishu/relay-token/me", nil)
+	req = req.WithContext(ctxWithUser(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPSession(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestFeishuHTTP_RelayToken_Disabled(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	u, _ := st.CreateOpaqueUser(ctx, "dis@example.com")
+	_ = st.UpsertFeishuBinding(ctx, u.ID, userstore.FeishuBindingCredentials{
+		AppID: "x", AppSecret: "s", EncryptKey: "k", VerifyToken: "v",
+	})
+	_ = st.MarkFeishuBindingDisabled(ctx, u.ID)
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	req := httptest.NewRequest("POST", "/v1/feishu/relay-token/me", nil)
+	req = req.WithContext(ctxWithUser(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPSession(rr, req)
+
+	if rr.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d", rr.Code)
+	}
+}
+
+func TestFeishuHTTP_RelayToken_UpstreamFail(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	u, _ := st.CreateOpaqueUser(ctx, "up@example.com")
+	_ = st.UpsertFeishuBinding(ctx, u.ID, userstore.FeishuBindingCredentials{
+		AppID: "x", AppSecret: "bad", EncryptKey: "k", VerifyToken: "v",
+	})
+	_ = st.MarkFeishuBindingBound(ctx, u.ID, "ou_user")
+	h, _ := newFeishuTestHandler(t, st, 99991000, "")
+
+	req := httptest.NewRequest("POST", "/v1/feishu/relay-token/me", nil)
+	req = req.WithContext(ctxWithUser(req.Context(), u.ID))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPSession(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestFeishuHTTP_RelayToken_Unauthorized(t *testing.T) {
+	st := newTestUserStoreWithCipher(t)
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	req := httptest.NewRequest("POST", "/v1/feishu/relay-token/me", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTPSession(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}

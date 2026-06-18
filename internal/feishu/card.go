@@ -3,6 +3,7 @@ package feishu
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +25,7 @@ func (in CommandFinishedInput) sealed() bool { return len(in.SealedBody) > 0 }
 type WaitingInputInput struct {
 	SessionID      uuid.UUID
 	IdleForSeconds int
+	QuestionText   string // optional; populated by hook adapters
 }
 
 type AckUpdateInput struct {
@@ -108,6 +110,27 @@ func RenderCommandFinishedCard(in CommandFinishedInput) Card {
 }
 
 func RenderWaitingInputCard(in WaitingInputInput) Card {
+	elements := []any{
+		map[string]any{
+			"tag": "div",
+			"text": map[string]any{
+				"tag":     "lark_md",
+				"content": fmt.Sprintf("Agent 在等待你回复（已闲置 %ds）", in.IdleForSeconds),
+			},
+		},
+	}
+	if q := strings.TrimSpace(in.QuestionText); q != "" {
+		body, truncated := truncateQuestion(q)
+		content := "```\n" + body + "\n```"
+		if truncated {
+			content += "\n_（已截断）_"
+		}
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "lark_md", "content": content},
+		})
+	}
+	elements = append(elements, actionRow(in.SessionID, "waiting_input"))
 	return Card{
 		MsgType: "interactive",
 		Card: map[string]any{
@@ -116,18 +139,28 @@ func RenderWaitingInputCard(in WaitingInputInput) Card {
 				"title":    map[string]any{"tag": "plain_text", "content": "Session 等待输入"},
 				"template": "orange",
 			},
-			"elements": []any{
-				map[string]any{
-					"tag": "div",
-					"text": map[string]any{
-						"tag":     "lark_md",
-						"content": fmt.Sprintf("Agent 在等待你回复（已闲置 %ds）", in.IdleForSeconds),
-					},
-				},
-				actionRow(in.SessionID, "waiting_input"),
-			},
+			"elements": elements,
 		},
 	}
+}
+
+func truncateQuestion(q string) (string, bool) {
+	const (
+		maxLines = 6
+		maxChars = 1200
+	)
+	truncated := false
+	lines := strings.Split(q, "\n")
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		truncated = true
+	}
+	body := strings.Join(lines, "\n")
+	if len(body) > maxChars {
+		body = body[:maxChars]
+		truncated = true
+	}
+	return body, truncated
 }
 
 func actionRow(sessionID uuid.UUID, event string) map[string]any {

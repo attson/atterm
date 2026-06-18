@@ -1,0 +1,228 @@
+// desktop/feishu/dispatcher.go
+package feishu
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	internalfeishu "github.com/attson/atterm/internal/feishu"
+)
+
+// IMClient is the subset of internal/feishu.Client the dispatcher uses.
+type IMClient interface {
+	SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) error
+	SendTextToOpenID(ctx context.Context, token, openID, text string) error
+}
+
+// CommandFinishedEvent feeds the dispatcher from the heuristic OSC 133 D path.
+type CommandFinishedEvent struct {
+	SessionID  uuid.UUID
+	ExitCode   int
+	ElapsedMS  int
+	Label      string
+	SealedBody []byte
+}
+
+// WaitingInputDispatchEvent feeds the dispatcher from both hook + heuristic paths.
+type WaitingInputDispatchEvent struct {
+	SessionID      uuid.UUID
+	IdleForSeconds int
+	Source         WaitingSource
+	QuestionText   string
+	DedupKey       string
+}
+
+type WaitingSource int
+
+const (
+	WaitingSourceHeuristic WaitingSource = iota
+	WaitingSourceHook
+)
+
+// DispatcherConfig holds the wired-in dependencies.
+type DispatcherConfig struct {
+	Store BindingStore
+	Token TokenSource
+	IM    IMClient
+	// Now returns Unix seconds. Default = time.Now().Unix.
+	Now func() int64
+}
+
+// Dispatcher merges trigger streams into Feishu IM sends. Safe for concurrent use.
+type Dispatcher struct {
+	cfg DispatcherConfig
+
+	muD          sync.Mutex
+	lastDispatch map[string]int64
+	authFailures int // global auth-class failure count
+}
+
+const (
+	dedupWindowSeconds = 30
+	maxAuthFails       = 3
+)
+
+func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
+	if cfg.Now == nil {
+		cfg.Now = func() int64 { return time.Now().Unix() }
+	}
+	return &Dispatcher{
+		cfg:          cfg,
+		lastDispatch: map[string]int64{},
+	}
+}
+
+func (d *Dispatcher) DispatchCommandFinished(ctx context.Context, ev CommandFinishedEvent) {
+	d.dispatch(ctx, ev.SessionID, "cmd:"+ev.SessionID.String(), func() ([]byte, error) {
+		card := internalfeishu.RenderCommandFinishedCard(internalfeishu.CommandFinishedInput{
+			SessionID:  ev.SessionID,
+			ExitCode:   ev.ExitCode,
+			ElapsedMS:  ev.ElapsedMS,
+			Label:      ev.Label,
+			SealedBody: ev.SealedBody,
+		})
+		return json.Marshal(card)
+	})
+}
+
+func (d *Dispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent) {
+	// The session-level key gates all waiting-input sends for this session,
+	// regardless of whether the trigger came from the hook or heuristic path.
+	sessionKey := "waiting:" + ev.SessionID.String()
+
+	key := ev.DedupKey
+	if key == "" {
+		key = sessionKey
+	}
+
+	d.dispatchWaiting(ctx, ev.SessionID, key, sessionKey, func() ([]byte, error) {
+		card := internalfeishu.RenderWaitingInputCard(internalfeishu.WaitingInputInput{
+			SessionID:      ev.SessionID,
+			IdleForSeconds: ev.IdleForSeconds,
+			QuestionText:   ev.QuestionText,
+		})
+		return json.Marshal(card)
+	})
+}
+
+// dispatchWaiting is like dispatch but also blocks on and records the
+// session-level key, preventing heuristic fallbacks from firing after a
+// hook-sourced card has been sent within the dedup window.
+func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKey, sessionKey string, render func() ([]byte, error)) {
+	now := d.cfg.Now()
+
+	d.muD.Lock()
+	// Block if either the specific key or the session-level key is still fresh.
+	if last, ok := d.lastDispatch[dedupKey]; ok && now-last < dedupWindowSeconds {
+		d.muD.Unlock()
+		return
+	}
+	if sessionKey != dedupKey {
+		if last, ok := d.lastDispatch[sessionKey]; ok && now-last < dedupWindowSeconds {
+			d.muD.Unlock()
+			return
+		}
+	}
+	d.muD.Unlock()
+
+	tok, openID, _, err := d.cfg.Token.Get(ctx)
+	if err != nil {
+		if errors.Is(err, ErrTokenNotConfigured) {
+			return
+		}
+		if errors.Is(err, ErrTokenDisabled) {
+			return
+		}
+		log.Printf("feishu: dispatch token: %v", err)
+		return
+	}
+	if openID == "" {
+		return
+	}
+
+	body, err := render()
+	if err != nil {
+		log.Printf("feishu: render card: %v", err)
+		return
+	}
+
+	if err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body); err != nil {
+		d.recordSendError(ctx, sid, err)
+		return
+	}
+
+	d.muD.Lock()
+	d.lastDispatch[dedupKey] = now
+	// Always stamp the session-level key too so heuristic fallbacks are gated.
+	d.lastDispatch[sessionKey] = now
+	d.muD.Unlock()
+}
+
+func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey string, render func() ([]byte, error)) {
+	now := d.cfg.Now()
+
+	d.muD.Lock()
+	if last, ok := d.lastDispatch[dedupKey]; ok && now-last < dedupWindowSeconds {
+		d.muD.Unlock()
+		return
+	}
+	d.muD.Unlock()
+
+	tok, openID, _, err := d.cfg.Token.Get(ctx)
+	if err != nil {
+		if errors.Is(err, ErrTokenNotConfigured) {
+			return
+		}
+		if errors.Is(err, ErrTokenDisabled) {
+			return
+		}
+		log.Printf("feishu: dispatch token: %v", err)
+		return
+	}
+	if openID == "" {
+		return
+	}
+
+	body, err := render()
+	if err != nil {
+		log.Printf("feishu: render card: %v", err)
+		return
+	}
+
+	if err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body); err != nil {
+		d.recordSendError(ctx, sid, err)
+		return
+	}
+
+	d.muD.Lock()
+	d.lastDispatch[dedupKey] = now
+	d.muD.Unlock()
+}
+
+type feishuAuthClass interface {
+	IsFeishuAuthClassError() bool
+}
+
+func (d *Dispatcher) recordSendError(ctx context.Context, sid uuid.UUID, err error) {
+	var ac feishuAuthClass
+	if errors.As(err, &ac) && ac.IsFeishuAuthClassError() {
+		d.muD.Lock()
+		d.authFailures++
+		count := d.authFailures
+		d.muD.Unlock()
+		if count >= maxAuthFails {
+			if setErr := d.cfg.Store.SetDisabled(ctx); setErr != nil && !errors.Is(setErr, ErrRelayManagedBoundState) {
+				log.Printf("feishu: SetDisabled: %v", setErr)
+			}
+			d.cfg.Token.Invalidate()
+		}
+		return
+	}
+	log.Printf("feishu: send to %s: %v", sid, err)
+}

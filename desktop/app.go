@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/attson/atterm/desktop/feishu"
 	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/e2eeclient"
 	"github.com/attson/atterm/internal/prefssync"
@@ -80,14 +81,14 @@ type HostInfo struct {
 // Paused reflects whether the user has toggled the uplink off without clearing
 // the URL/token (the "pause without erasing config" state).
 type RelayConfig struct {
-	URL                string `json:"url"`
-	Token              string `json:"token"`
+	URL   string `json:"url"`
+	Token string `json:"token"`
 	// SessionExpiresAt is the Unix-seconds expiry of Token when it was
 	// minted as a relay session token (e.g. via /api/pair/consume). 0
 	// means "unknown / not a session token" — the frontend then falls
 	// back to treating Token as an opaque long-lived credential.
-	SessionExpiresAt   int64  `json:"session_expires_at"`
-	AllowInsecureRelay bool   `json:"allow_insecure_relay"`
+	SessionExpiresAt   int64 `json:"session_expires_at"`
+	AllowInsecureRelay bool  `json:"allow_insecure_relay"`
 	// DisableE2EE mirrors appConfig.DisableE2EE — see that field for the
 	// threat-model write-up. Surfaced through GetRelayConfig /
 	// SetRelayDisableE2EE so the Settings UI can flip it and render the
@@ -171,6 +172,12 @@ type App struct {
 	// Guarded by mu (re-using the existing uplink mutex; both are touched
 	// only on relatively cold paths).
 	lastSnapshot RecoverySnapshot
+
+	// feishuService is the top-level Feishu integration façade. Nil when
+	// feishu startup fails (non-fatal).
+	feishuService *feishu.Service
+	// feishuMode is "local" or "relay", set at startup alongside feishuService.
+	feishuMode string
 }
 
 // NewApp creates a new App application struct.
@@ -272,6 +279,9 @@ func (a *App) startup(ctx context.Context) {
 	if a.updater != nil && cfg.AutoCheckUpdatesOrDefault() {
 		a.updater.Start(ctx)
 	}
+
+	// Feishu integration: choose mode based on relay login state.
+	a.startFeishu(ctx, cfg)
 }
 
 // shutdown is called when the window is closed; clean up PTYs and HTTP server.
@@ -292,6 +302,9 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.host != nil {
 		a.host.Stop()
 		a.host = nil
+	}
+	if err := feishu.DeleteEndpointFile(); err != nil {
+		log.Printf("desktop: delete feishu endpoint file: %v", err)
 	}
 }
 
@@ -504,7 +517,9 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	}
 	if a.prefsSync != nil {
 		go func() {
-			if err := a.prefsSync.Pull(a.ctx); err != nil { return }
+			if err := a.prefsSync.Pull(a.ctx); err != nil {
+				return
+			}
 			cfg := a.cfgStore.Get()
 			userID := cfg.RelaySessionUserID
 			if userID == "" || cfg.PrefsSeedMarkerFor(userID) {
@@ -515,7 +530,9 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 			_ = a.prefsSync.Push(a.ctx)
 
 			cfg2 := a.cfgStore.Get()
-			if cfg2.PrefsSeedMarkers == nil { cfg2.PrefsSeedMarkers = map[string]bool{} }
+			if cfg2.PrefsSeedMarkers == nil {
+				cfg2.PrefsSeedMarkers = map[string]bool{}
+			}
 			cfg2.PrefsSeedMarkers[userID] = true
 			_ = a.cfgStore.Set(cfg2)
 			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
@@ -1737,4 +1754,130 @@ func (a *App) SetRecoveryDialogEnabled(enabled bool) error {
 	cfg := a.cfgStore.Get()
 	cfg.RecoveryDialogEnabled = &enabled
 	return a.cfgStore.Set(cfg)
+}
+
+// startFeishu constructs feishu.Service, starts the HookServer, writes the
+// endpoint file, and wires up the relayHost. Called once from startup().
+func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
+	isRelayMode := cfg.RelayURL != "" && cfg.RelaySessionToken != ""
+
+	var svcCfg feishu.ServiceConfig
+	if isRelayMode {
+		a.feishuMode = "relay"
+		relayURL := cfg.RelayURL
+		// Capture token func at startup; reads cfgStore on each call so it
+		// stays current after token refresh.
+		svcCfg = feishu.ServiceConfig{
+			Mode:     feishu.ModeRelay,
+			RelayURL: relayURL,
+			RelayToken: func() string {
+				if a.cfgStore == nil {
+					return ""
+				}
+				return a.cfgStore.Get().RelaySessionToken
+			},
+			Sessions: a.host,
+		}
+	} else {
+		a.feishuMode = "local"
+		svcCfg = feishu.ServiceConfig{
+			Mode:     feishu.ModeLocal,
+			Sessions: a.host,
+		}
+	}
+
+	svc, err := feishu.NewService(svcCfg)
+	if err != nil {
+		log.Printf("desktop: feishu service init: %v", err)
+		return
+	}
+
+	addr, _, err := svc.HookServer().Start()
+	if err != nil {
+		log.Printf("desktop: feishu hook server start: %v", err)
+		return
+	}
+	hookEndpoint := "http://" + addr + "/atterm-hook/notify"
+
+	if err := feishu.WriteEndpointFile(hookEndpoint); err != nil {
+		log.Printf("desktop: write feishu endpoint file: %v", err)
+	}
+
+	if a.host != nil {
+		a.host.FeishuHookEndpoint = hookEndpoint
+		a.host.FeishuDispatcher = svc.Dispatcher()
+	}
+
+	if !isRelayMode {
+		if err := svc.EnsureLongConn(ctx); err != nil {
+			// Not fatal — credentials may not be set yet.
+			log.Printf("desktop: feishu long-conn: %v", err)
+		}
+	}
+
+	a.feishuService = svc
+	log.Printf("desktop: feishu service started (mode=%s endpoint=%s)", a.feishuMode, hookEndpoint)
+}
+
+// FeishuStatusResp is returned by GetFeishuStatus.
+type FeishuStatusResp struct {
+	Enabled  bool   `json:"enabled"`
+	Mode     string `json:"mode"`
+	Bound    bool   `json:"bound"`
+	OpenID   string `json:"open_id"`
+	Disabled bool   `json:"disabled"`
+}
+
+// GetFeishuStatus returns the current Feishu integration state.
+func (a *App) GetFeishuStatus(ctx context.Context) (FeishuStatusResp, error) {
+	if a.feishuService == nil {
+		return FeishuStatusResp{Enabled: false}, nil
+	}
+	v, err := a.feishuService.Store().Get(ctx)
+	if errors.Is(err, feishu.ErrLocalBindingNotFound) {
+		return FeishuStatusResp{
+			Enabled: true,
+			Mode:    a.feishuMode,
+			Bound:   false,
+		}, nil
+	}
+	if err != nil {
+		return FeishuStatusResp{}, err
+	}
+	return FeishuStatusResp{
+		Enabled:  true,
+		Mode:     a.feishuMode,
+		Bound:    v.OpenID != "",
+		OpenID:   v.OpenID,
+		Disabled: v.DisabledAt != 0,
+	}, nil
+}
+
+// SetFeishuCredentials saves app credentials and (re)starts the long-conn.
+func (a *App) SetFeishuCredentials(ctx context.Context, c feishu.Credentials) error {
+	if a.feishuService == nil {
+		return errors.New("feishu disabled")
+	}
+	if err := a.feishuService.Store().SetCredentials(ctx, c); err != nil {
+		return err
+	}
+	return a.feishuService.EnsureLongConn(ctx)
+}
+
+// BeginFeishuPair issues a short-code that the user sends to the bot via
+// private chat to complete the bind flow. In relay mode the code is issued by
+// the relay; in local mode it is generated in-process.
+func (a *App) BeginFeishuPair(ctx context.Context) (string, error) {
+	if a.feishuService == nil {
+		return "", errors.New("feishu disabled")
+	}
+	return a.feishuService.BeginPair(ctx)
+}
+
+// DeleteFeishuBinding removes the bound OpenID from the store.
+func (a *App) DeleteFeishuBinding(ctx context.Context) error {
+	if a.feishuService == nil {
+		return errors.New("feishu disabled")
+	}
+	return a.feishuService.Store().Delete(ctx)
 }

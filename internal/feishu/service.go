@@ -3,7 +3,6 @@ package feishu
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -35,6 +34,11 @@ var ErrFeishuPendingBindNotFoundService = errors.New("feishu: pending bind not f
 // ErrDecryptFailed wraps any decryption-side error.
 var ErrDecryptFailed = errors.New("feishu: decrypt failed")
 
+// ErrBindingDisabled is returned by RelayToken when the stored binding
+// has been marked disabled (typically after auth-class failures). The
+// caller surfaces this to the desktop so the UI prompts re-config.
+var ErrBindingDisabled = errors.New("feishu: binding disabled")
+
 // BindingStore is what the service needs from userstore.
 type BindingStore interface {
 	GetBindingByAppIDHash(ctx context.Context, hash string) (*Binding, error)
@@ -65,91 +69,36 @@ type ServiceConfig struct {
 
 // Service is the aggregate layer. Methods are safe for concurrent use.
 type Service struct {
-	cfg          ServiceConfig
-	authFailMu   chan struct{} // semaphore-of-1 for the auth-fail counter map
-	authFailures map[string]int
+	cfg ServiceConfig
 }
 
 func NewService(cfg ServiceConfig) *Service {
-	return &Service{
-		cfg:          cfg,
-		authFailMu:   make(chan struct{}, 1),
-		authFailures: map[string]int{},
-	}
+	return &Service{cfg: cfg}
 }
 
-// SendCommandFinished spawns a goroutine that renders the card and
-// posts it. Always fire-and-forget; any error is logged. Tests should
-// call sendCommandFinishedSync to avoid timing races.
-func (s *Service) SendCommandFinished(ctx context.Context, userID string, in CommandFinishedInput) {
-	go s.sendCommandFinishedSync(ctx, userID, in)
-}
-
-func (s *Service) sendCommandFinishedSync(ctx context.Context, userID string, in CommandFinishedInput) {
-	s.send(ctx, userID, func() ([]byte, error) {
-		card := RenderCommandFinishedCard(in)
-		return json.Marshal(card)
-	})
-}
-
-// SendSessionNotification mirrors SendCommandFinished for the
-// waiting_input event. Same fire-and-forget semantics.
-func (s *Service) SendSessionNotification(ctx context.Context, userID string, in WaitingInputInput) {
-	go s.sendSessionNotificationSync(ctx, userID, in)
-}
-
-func (s *Service) sendSessionNotificationSync(ctx context.Context, userID string, in WaitingInputInput) {
-	s.send(ctx, userID, func() ([]byte, error) {
-		card := RenderWaitingInputCard(in)
-		return json.Marshal(card)
-	})
-}
-
-func (s *Service) send(ctx context.Context, userID string, render func() ([]byte, error)) {
+// RelayToken mints a tenant_access_token for the user's bound app and
+// returns it along with the bound open_id + app_id_hash. Used by the
+// new POST /v1/feishu/relay-token/me handler so the desktop can send
+// IM messages directly without the relay seeing the payload.
+//
+// Errors:
+//
+//	ErrBindingNotFound  → caller maps to 404
+//	ErrBindingDisabled  → caller maps to 410
+//	other               → caller maps to 502 (Feishu unreachable)
+func (s *Service) RelayToken(ctx context.Context, userID string) (token, openID, appIDHash string, err error) {
 	b, err := s.cfg.Store.GetBindingByUserID(ctx, userID)
-	if errors.Is(err, ErrBindingNotFound) {
-		return
-	}
 	if err != nil {
-		log.Printf("feishu: lookup binding for %s: %v", userID, err)
-		return
+		return "", "", "", err
 	}
-	if b.OpenID == "" || b.DisabledAt != 0 {
-		return
-	}
-	cardBody, err := render()
-	if err != nil {
-		log.Printf("feishu: render card: %v", err)
-		return
+	if b.DisabledAt != 0 {
+		return "", "", "", ErrBindingDisabled
 	}
 	tok, err := s.cfg.Token.Get(ctx, b.AppID, b.AppSecret)
 	if err != nil {
-		s.recordSendError(ctx, b, err)
-		return
+		return "", "", "", err
 	}
-	if err := s.cfg.IM.SendInteractiveToOpenID(ctx, tok, b.OpenID, cardBody); err != nil {
-		s.recordSendError(ctx, b, err)
-	}
-}
-
-// recordSendError counts consecutive auth-class failures per binding;
-// 3-in-a-row → mark disabled.
-func (s *Service) recordSendError(ctx context.Context, b *Binding, err error) {
-	if !IsAuthClassError(err) {
-		log.Printf("feishu: send to %s: %v", b.UserID, err)
-		return
-	}
-	s.authFailMu <- struct{}{}
-	s.authFailures[b.UserID]++
-	count := s.authFailures[b.UserID]
-	<-s.authFailMu
-	log.Printf("feishu: auth failure #%d for %s: %v", count, b.UserID, err)
-	if count >= 3 {
-		if err := s.cfg.Store.MarkDisabled(ctx, b.UserID); err != nil {
-			log.Printf("feishu: mark disabled: %v", err)
-		}
-		s.cfg.Token.Invalidate(b.AppID)
-	}
+	return tok, b.OpenID, b.AppIDHash, nil
 }
 
 // HandleStatus is the high-level result for the HTTP handler.

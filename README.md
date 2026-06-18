@@ -182,6 +182,12 @@ go run ./cmd/atterm-relay --addr :8080
 
 如需让同事 attach 查看，通过 admin 后台为其创建一个账号邀请（`inv_…`），对方注册后即可用自己的账号登录 relay 查看会话。relay 级别的共享只读 token 已在用户账号版本中移除；权限控制现在通过桌面端的 `remote_permission` 字段实现。
 
+### Feishu — claude-code question text
+
+当 `claude-code` 在 atterm session 内运行时，可配置其 Notification hooks（见 `~/.claude/settings.json`）来触发 `atterm-hook` CLI。CLI 将提示上下文 POST 到 atterm 的桌面进程，后者将一张包含实际问题文本的飞书 IM 卡片发送出去。`ATTERM_SESSION_ID` 和 `ATTERM_HOOK_ENDPOINT` 环境变量会自动注入到 atterm 生成的每个 PTY，所以除了配置 hook 外无需额外连接。
+
+完整的手工端到端检查清单见 [`scripts/feishu-hook-e2e-checklist.md`](scripts/feishu-hook-e2e-checklist.md)。
+
 ### 启用端到端加密
 
 新账号在注册时（`signup.html` / 桌面 Settings → Remote relay → Register）走 OPAQUE 流程，浏览器 / 桌面端在本地随机生成 32 字节 `account_key`，用 Argon2id 派生的 wrap key + XChaCha20-Poly1305 封装成 wrap blob 上传，relay 只看到 wrap 不看密码。登录时同样在本地 OPAQUE 后用密码解 wrap 拿回 `account_key`，存 sessionStorage / Keychain / Keyring。

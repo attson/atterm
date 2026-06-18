@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/webhook"
@@ -186,12 +185,6 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				Label:            webPushSessionLabel(info),
 				RemotePermission: info.RemotePermission,
 				IdleForSeconds:   idleForSeconds,
-			})
-		}
-		if s.cfg.Feishu != nil && notificationType == webpush.NotificationWaitingInput {
-			s.cfg.Feishu.SendSessionNotification(context.Background(), ms.sess.OwnerUserID, feishu.WaitingInputInput{
-				SessionID:      ms.sess.ID,
-				IdleForSeconds: idleForSeconds,
 			})
 		}
 	}
@@ -511,7 +504,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 // "command finished" events for another uplink's sessions. host_id is
 // pulled from the session's info, not the payload, for the same reason.
 func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*mirrorState, mu *sync.Mutex) {
-	if s.cfg.WebPush == nil && s.cfg.Webhook == nil && s.cfg.Feishu == nil {
+	if s.cfg.WebPush == nil && s.cfg.Webhook == nil {
 		return
 	}
 	payload, err := proto.DecodeCommandEvent(f)
@@ -544,15 +537,6 @@ func (s *Server) handleUplinkCommandEvent(f proto.Frame, mirrors map[uuid.UUID]*
 		s.cfg.Webhook.DispatchCommandFinished(ms.sess.OwnerUserID, webhook.CommandFinished{
 			SessionID:  f.SessionID,
 			HostID:     hostID,
-			ExitCode:   payload.ExitCode,
-			ElapsedMS:  payload.ElapsedMS,
-			Label:      payload.Label,
-			SealedBody: payload.SealedBody,
-		})
-	}
-	if s.cfg.Feishu != nil {
-		s.cfg.Feishu.SendCommandFinished(context.Background(), ms.sess.OwnerUserID, feishu.CommandFinishedInput{
-			SessionID:  f.SessionID,
 			ExitCode:   payload.ExitCode,
 			ElapsedMS:  payload.ElapsedMS,
 			Label:      payload.Label,

@@ -7,20 +7,17 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // fakeStore implements the BindingStore interface for service tests.
 type fakeStore struct {
-	mu            sync.Mutex
-	byHash        map[string]*Binding
-	byUser        map[string]*Binding
-	pending       map[string]string // code -> user_id
-	boundCalls    []string          // user_ids passed to MarkBound
-	disabled      map[string]bool
-	bindError     error
-	tokenAuthFail int
+	mu         sync.Mutex
+	byHash     map[string]*Binding
+	byUser     map[string]*Binding
+	pending    map[string]string // code -> user_id
+	boundCalls []string          // user_ids passed to MarkBound
+	disabled   map[string]bool
+	bindError  error
 }
 
 func newFakeStore() *fakeStore {
@@ -74,15 +71,11 @@ type fakeIM struct {
 	}
 	sentText []struct{ Token, OpenID, Text string }
 	err      error
-	authFail bool
 }
 
 func (f *fakeIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.authFail {
-		return &AuthClassError{Code: 99991663, Msg: "fake"}
-	}
 	if f.err != nil {
 		return f.err
 	}
@@ -115,44 +108,6 @@ func (f *fakeToken) Invalidate(string) {}
 
 func newSvc(store BindingStore, im IMClient, tok TokenSource) *Service {
 	return NewService(ServiceConfig{Store: store, IM: im, Token: tok})
-}
-
-func TestService_SendCommandFinished_NoBinding(t *testing.T) {
-	st := newFakeStore()
-	im := &fakeIM{}
-	s := newSvc(st, im, &fakeToken{tok: "tt"})
-	s.sendCommandFinishedSync(context.Background(), "user-missing", CommandFinishedInput{SessionID: uuid.New()})
-	if len(im.sentInteractive) != 0 {
-		t.Fatalf("should not send for missing binding")
-	}
-}
-
-func TestService_SendCommandFinished_HappyPath(t *testing.T) {
-	st := newFakeStore()
-	st.addBinding(&Binding{UserID: "u1", AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v", AppIDHash: "h", OpenID: "ou_x"})
-	im := &fakeIM{}
-	s := newSvc(st, im, &fakeToken{tok: "tt"})
-	// Sync variant for deterministic tests; production callers use the
-	// goroutined SendCommandFinished wrapper.
-	s.sendCommandFinishedSync(context.Background(), "u1", CommandFinishedInput{SessionID: uuid.New(), ExitCode: 0, Label: "x"})
-	if len(im.sentInteractive) != 1 {
-		t.Fatalf("expected 1 send, got %d", len(im.sentInteractive))
-	}
-	got := im.sentInteractive[0]
-	if got.Token != "tt" || got.OpenID != "ou_x" {
-		t.Fatalf("send args: %+v", got)
-	}
-}
-
-func TestService_SendCommandFinished_SkipsDisabled(t *testing.T) {
-	st := newFakeStore()
-	st.addBinding(&Binding{UserID: "u1", OpenID: "ou_x", AppIDHash: "h", DisabledAt: 1})
-	im := &fakeIM{}
-	s := newSvc(st, im, &fakeToken{tok: "tt"})
-	s.sendCommandFinishedSync(context.Background(), "u1", CommandFinishedInput{SessionID: uuid.New()})
-	if len(im.sentInteractive) != 0 {
-		t.Fatalf("disabled binding should be skipped")
-	}
 }
 
 func TestService_HandleEvent_BindMessageHappy(t *testing.T) {
@@ -259,5 +214,52 @@ func TestService_HandleEvent_DecryptFailure(t *testing.T) {
 	}
 	if resp.Status != HandleStatusOK || !errors.Is(resp.LogError, ErrDecryptFailed) {
 		t.Fatalf("resp: %+v", resp)
+	}
+}
+
+func TestService_RelayToken_Success(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{
+		UserID: "u1", AppID: "a", AppSecret: "s",
+		EncryptKey: "k", VerifyToken: "v",
+		AppIDHash: "h", OpenID: "ou_x",
+	})
+	svc := newSvc(st, &fakeIM{}, &fakeToken{tok: "tt"})
+
+	tok, openID, hash, err := svc.RelayToken(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("RelayToken: %v", err)
+	}
+	if tok != "tt" || openID != "ou_x" || hash != "h" {
+		t.Fatalf("got tok=%q open=%q hash=%q", tok, openID, hash)
+	}
+}
+
+func TestService_RelayToken_NoBinding(t *testing.T) {
+	svc := newSvc(newFakeStore(), &fakeIM{}, &fakeToken{tok: "tt"})
+	_, _, _, err := svc.RelayToken(context.Background(), "missing")
+	if !errors.Is(err, ErrBindingNotFound) {
+		t.Fatalf("want ErrBindingNotFound, got %v", err)
+	}
+}
+
+func TestService_RelayToken_Disabled(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{UserID: "u1", AppIDHash: "h", DisabledAt: 1, OpenID: "ou_x"})
+	svc := newSvc(st, &fakeIM{}, &fakeToken{tok: "tt"})
+	_, _, _, err := svc.RelayToken(context.Background(), "u1")
+	if !errors.Is(err, ErrBindingDisabled) {
+		t.Fatalf("want ErrBindingDisabled, got %v", err)
+	}
+}
+
+func TestService_RelayToken_UpstreamFail(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{UserID: "u1", AppID: "a", AppSecret: "s", AppIDHash: "h", OpenID: "ou_x"})
+	bad := errors.New("upstream boom")
+	svc := newSvc(st, &fakeIM{}, &fakeToken{err: bad})
+	_, _, _, err := svc.RelayToken(context.Background(), "u1")
+	if !errors.Is(err, bad) {
+		t.Fatalf("want upstream error, got %v", err)
 	}
 }

@@ -3,6 +3,8 @@
 import {main} from '../models';
 import {connhealth} from '../models';
 
+export function BeginFeishuPair():Promise<string>;
+
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;
 
 export function CheckUpdate():Promise<void>;
@@ -14,6 +16,8 @@ export function ConfirmQuit():Promise<void>;
 export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 
 export function CreateWebhook(arg1:main.CreateWebhookReq):Promise<main.Webhook>;
+
+export function DeleteFeishuBinding():Promise<void>;
 
 export function DeleteWebhook(arg1:string):Promise<void>;
 
@@ -32,6 +36,8 @@ export function GetDefaultShell():Promise<string>;
 export function GetDiagnostics(arg1:string):Promise<main.DiagnosticsPayload>;
 
 export function GetEndpoint():Promise<main.Endpoint>;
+
+export function GetFeishuStatus():Promise<main.FeishuStatusResp>;
 
 export function GetHostInfo():Promise<main.HostInfo>;
 
@@ -102,6 +108,8 @@ export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 export function SetPluginConfig(arg1:main.PluginConfig):Promise<void>;
 
 export function SetQuickTemplates(arg1:Array<main.QuickTemplate>):Promise<void>;
+
+export function SetFeishuCredentials(arg1:main.FeishuCredentials):Promise<void>;
 
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 

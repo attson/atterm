@@ -18,6 +18,7 @@ import SettingsShortcuts from "./SettingsShortcuts.vue";
 import SettingsDiagnostics from "./SettingsDiagnostics.vue";
 import SettingsTemplates from "./SettingsTemplates.vue";
 import SettingsTasks from "./SettingsTasks.vue";
+import SettingsFeishu from "./SettingsFeishu.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 import { useI18n } from "../i18n/useI18n";
@@ -41,7 +42,7 @@ const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
-  initialTab?: "general" | "relay" | "webhooks" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "tasks";
+  initialTab?: "general" | "relay" | "webhooks" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu";
 }>();
 
 const emit = defineEmits<{
@@ -51,7 +52,7 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
-const activeTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks">(props.initialTab ?? "general");
+const activeTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu">(props.initialTab ?? "general");
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
@@ -63,7 +64,7 @@ const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | null>(null);
+const pendingTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -84,7 +85,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks") {
+function switchTab(next: "general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -234,6 +235,11 @@ function onSaveClick() {
             :class="{ active: activeTab === 'diagnostics' }"
             @click="switchTab('diagnostics')"
           >{{ t("settings.diagnostics.tab") }}</button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'feishu' }"
+            @click="switchTab('feishu')"
+          >{{ t("settings.feishu.title") }}</button>
         </aside>
 
         <section class="settings-pane">
@@ -267,6 +273,7 @@ function onSaveClick() {
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
           <SettingsDiagnostics v-if="activeTab === 'diagnostics'" />
+          <SettingsFeishu v-if="activeTab === 'feishu'" />
         </section>
       </div>
 

@@ -39,15 +39,15 @@ type Session struct {
 	StartedAt   time.Time
 	OwnerUserID string // ULID; empty for legacy/non-account paths
 
-	mu         sync.RWMutex
-	meta       proto.SessionInfo
-	closed     bool
-	subs       map[*Subscriber]struct{}
-	scroll     *ringbuf.Buffer
-	inbound    chan proto.Frame // bounded; client -> agent
-	altScreen  bool
-	termTail   []byte
-	osc133Buf  []byte
+	mu        sync.RWMutex
+	meta      proto.SessionInfo
+	closed    bool
+	subs      map[*Subscriber]struct{}
+	scroll    *ringbuf.Buffer
+	inbound   chan proto.Frame // bounded; client -> agent
+	altScreen bool
+	termTail  []byte
+	osc133Buf []byte
 	// contentOpaque is the E2EE bypass flag. When set, PushOut treats the
 	// session's OUT bytes as opaque ciphertext and skips OSC 133 parsing /
 	// Summary accumulation. Set by uplink_conn the first time it sees the
@@ -143,6 +143,22 @@ type Session struct {
 	// sid sniffer for fresh sessions (restored sessions get sniff via
 	// NewSession's req.AIKind path).
 	onAIClassified func(commandLine, cwd string)
+
+	// onTaskStateChange fires once per task-state transition observed within
+	// the session. The callback runs while the session mutex is held —
+	// implementers must NOT call back into Session methods that take s.mu.
+	onTaskStateChange func(sid uuid.UUID, prev, next string, meta TaskMeta)
+}
+
+// TaskMeta carries the fields the OnTaskStateChange caller needs that
+// are NOT already in proto.SessionInfo. Right now this is just enough
+// for the desktop dispatcher to render Feishu cards. Add fields as
+// new use cases need them.
+type TaskMeta struct {
+	ExitCode   int
+	ElapsedMS  int
+	Label      string
+	SealedBody []byte
 }
 
 // Subscriber is a client connection's outbox.
@@ -230,12 +246,12 @@ func New(id uuid.UUID, meta proto.SessionInfo) *Session {
 		meta.Type = SessionTypeShell
 	}
 	return &Session{
-		ID:                   id,
-		StartedAt:            time.Now(),
-		meta:                 meta,
-		subs:                 make(map[*Subscriber]struct{}),
-		scroll:               ringbuf.New(scrollbackBytes),
-		inbound:              make(chan proto.Frame, inboundQueueDepth),
+		ID:                          id,
+		StartedAt:                   time.Now(),
+		meta:                        meta,
+		subs:                        make(map[*Subscriber]struct{}),
+		scroll:                      ringbuf.New(scrollbackBytes),
+		inbound:                     make(chan proto.Frame, inboundQueueDepth),
 		silenceThresholdMS:          envSilenceThresholdMS(),
 		silenceDetectEnabled:        envSilenceDetectEnabled(),
 		silenceRestoreByteThreshold: envSilenceRestoreByteThreshold(),
@@ -298,6 +314,14 @@ func (s *Session) SetOnAIClassified(fn func(commandLine, cwd string)) {
 	s.mu.Lock()
 	s.onAIClassified = fn
 	s.mu.Unlock()
+}
+
+// SetOnTaskStateChange registers a callback that fires on every
+// task-state transition observed inside the session.
+func (s *Session) SetOnTaskStateChange(fn func(sid uuid.UUID, prev, next string, meta TaskMeta)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onTaskStateChange = fn
 }
 
 // SubscriberCount returns the number of currently-attached subscribers.
@@ -779,9 +803,11 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	if s.applyOSC133Locked(data, now) {
 		changed = true
 	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
+		prevStateW := s.meta.TaskState
 		s.meta.TaskState = proto.TaskStateWaitingInput
 		s.meta.AttentionAt = now.Unix()
 		changed = true
+		s.fireTaskStateLocked(prevStateW, proto.TaskStateWaitingInput, TaskMeta{})
 	}
 	// OSC 0/1/2 title scan is independent of OSC 133 and the waiting-input
 	// heuristic. Same Append can carry both; the downstream
@@ -865,6 +891,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 		case 'C':
 			command := strings.TrimSpace(strings.TrimPrefix(payload, "C;"))
 			exitNil := (*int)(nil)
+			prevStateC := s.meta.TaskState
 			if s.meta.TaskState != proto.TaskStateRunning {
 				s.meta.TaskState = proto.TaskStateRunning
 				changed = true
@@ -910,10 +937,12 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.meta.CommandExitCode = exitNil
 				changed = true
 			}
+			s.fireTaskStateLocked(prevStateC, proto.TaskStateRunning, TaskMeta{Label: command})
 		case 'D':
 			if s.meta.TaskState != proto.TaskStateRunning && s.meta.CommandStartedAt == 0 {
 				continue
 			}
+			prevStateD := s.meta.TaskState
 			exitCode := parseOSC133Exit(payload)
 			state := proto.TaskStateCompleted
 			if exitCode != 0 {
@@ -962,6 +991,11 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.silenceTimer = nil
 			}
 			changed = true
+			s.fireTaskStateLocked(prevStateD, state, TaskMeta{
+				ExitCode:  exitCode,
+				ElapsedMS: duration,
+				Label:     s.meta.CurrentCommand,
+			})
 		}
 	}
 	return changed
@@ -1170,6 +1204,7 @@ func (s *Session) onSilenceFired() {
 	s.meta.AttentionAt = now.Unix()
 	s.waitingFromSilence = true
 	s.silenceRestoreBytes = 0
+	s.fireTaskStateLocked(proto.TaskStateRunning, proto.TaskStateWaitingInput, TaskMeta{})
 	metaHook := s.onMetaChanged
 	s.mu.Unlock()
 	s.broadcastCurrentMeta()
@@ -1529,4 +1564,13 @@ func (s *Session) IsDriver(sub *Subscriber) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.driverSubscriber == sub
+}
+
+// fireTaskStateLocked invokes onTaskStateChange while s.mu is already
+// held. Skips when state didn't change or no callback is registered.
+func (s *Session) fireTaskStateLocked(prev, next string, meta TaskMeta) {
+	if prev == next || s.onTaskStateChange == nil {
+		return
+	}
+	s.onTaskStateChange(s.ID, prev, next, meta)
 }

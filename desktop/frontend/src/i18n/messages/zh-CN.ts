@@ -362,6 +362,13 @@ export const zhCN = {
       begin_pair: "开始绑定",
       pair_hint: "请在 15 分钟内向机器人发送私聊：/bind {code}",
       delete: "解绑",
+      hook_install: {
+        enable: "自动安装 Claude Code Hook",
+        retry: "重试",
+        healthy: "Hook 已安装且健康",
+        needs_attention: "Hook 需要修复",
+        disabled: "Hook 自动安装已关闭",
+      },
     },
     templates: {
       tab: "快捷模板",

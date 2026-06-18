@@ -173,6 +173,19 @@ export interface FeishuStatusResp {
   disabled: boolean;
 }
 
+// HookInstallState mirrors desktop/hookinstall.State (json tags). Returned by
+// GetHookInstallState; rendered by SettingsFeishu's status row.
+export interface HookInstallState {
+  enabled: boolean;
+  binary_path: string;
+  binary_ok: boolean;
+  binary_version: string;
+  settings_path: string;
+  settings_ok: boolean;
+  last_error: string;
+  last_check: string; // ISO timestamp (Go time.Time -> JSON string)
+}
+
 export interface HostInfo {
   host_id: string;
   host: string;
@@ -283,6 +296,8 @@ interface AppBindings {
   SetFeishuCredentials(c: FeishuCredentials): Promise<void>;
   BeginFeishuPair(): Promise<string>;
   DeleteFeishuBinding(): Promise<void>;
+  GetHookInstallState(): Promise<HookInstallState>;
+  SetHookInstallEnabled(on: boolean): Promise<void>;
   GetQuickTemplates(): Promise<import('./templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('./templates').QuickTemplate[]): Promise<void>;
   GetTaskPreset(): Promise<string>;
@@ -733,4 +748,19 @@ export function beginFeishuPair(): Promise<string> {
 
 export function deleteFeishuBinding(): Promise<void> {
   return bindings().DeleteFeishuBinding();
+}
+
+// getHookInstallState returns the current Claude Code hook auto-install
+// health. The backend silently runs Install when enabled + unhealthy +
+// not already attempted in the debounce window, so the returned state
+// reflects the post-repair situation.
+export function getHookInstallState(): Promise<HookInstallState> {
+  return bindings().GetHookInstallState();
+}
+
+// setHookInstallEnabled persists the toggle and either installs or
+// uninstalls. Errors propagate so the Retry button in Settings can
+// surface them.
+export function setHookInstallEnabled(on: boolean): Promise<void> {
+  return bindings().SetHookInstallEnabled(on);
 }

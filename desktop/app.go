@@ -1681,13 +1681,22 @@ func isPrefCustomized(c appConfig) func(string) bool {
 // when there's nothing to recover. Side effect: rewrites the on-disk file
 // with CleanShutdown=false so a crash during the recovery dialog is caught
 // next launch.
+//
+// All return paths normalize Tabs to a non-nil slice — Go's `nil` slice
+// marshals to JSON `null`, and the frontend's check
+// `recoverySnap.tabs.length > 0` throws on `null` (uncaught, because the
+// check sits outside the boot try/catch). Keeping Tabs as `[]` here makes
+// that wire shape impossible to regress.
 func (a *App) LoadRecoverySnapshot() (RecoverySnapshot, error) {
 	if a.recoveryStore == nil {
-		return RecoverySnapshot{}, nil
+		return RecoverySnapshot{Tabs: []TabSnapshot{}}, nil
 	}
 	snap, err := a.recoveryStore.Load()
 	if err != nil {
-		return RecoverySnapshot{}, err
+		return RecoverySnapshot{Tabs: []TabSnapshot{}}, err
+	}
+	if snap.Tabs == nil {
+		snap.Tabs = []TabSnapshot{}
 	}
 	a.mu.Lock()
 	a.lastSnapshot = snap
@@ -1829,11 +1838,16 @@ type FeishuStatusResp struct {
 }
 
 // GetFeishuStatus returns the current Feishu integration state.
-func (a *App) GetFeishuStatus(ctx context.Context) (FeishuStatusResp, error) {
+//
+// Wails-bound methods must not declare context.Context in their signature —
+// the generator surfaces it as a required JS argument, so the frontend call
+// fails with "received 0 arguments, expected 1". Internal callers (long-conn,
+// store, dispatcher) get the lifecycle context via a.ctx.
+func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
 	if a.feishuService == nil {
 		return FeishuStatusResp{Enabled: false}, nil
 	}
-	v, err := a.feishuService.Store().Get(ctx)
+	v, err := a.feishuService.Store().Get(a.ctx)
 	if errors.Is(err, feishu.ErrLocalBindingNotFound) {
 		return FeishuStatusResp{
 			Enabled: true,
@@ -1854,30 +1868,30 @@ func (a *App) GetFeishuStatus(ctx context.Context) (FeishuStatusResp, error) {
 }
 
 // SetFeishuCredentials saves app credentials and (re)starts the long-conn.
-func (a *App) SetFeishuCredentials(ctx context.Context, c feishu.Credentials) error {
+func (a *App) SetFeishuCredentials(c feishu.Credentials) error {
 	if a.feishuService == nil {
 		return errors.New("feishu disabled")
 	}
-	if err := a.feishuService.Store().SetCredentials(ctx, c); err != nil {
+	if err := a.feishuService.Store().SetCredentials(a.ctx, c); err != nil {
 		return err
 	}
-	return a.feishuService.EnsureLongConn(ctx)
+	return a.feishuService.EnsureLongConn(a.ctx)
 }
 
 // BeginFeishuPair issues a short-code that the user sends to the bot via
 // private chat to complete the bind flow. In relay mode the code is issued by
 // the relay; in local mode it is generated in-process.
-func (a *App) BeginFeishuPair(ctx context.Context) (string, error) {
+func (a *App) BeginFeishuPair() (string, error) {
 	if a.feishuService == nil {
 		return "", errors.New("feishu disabled")
 	}
-	return a.feishuService.BeginPair(ctx)
+	return a.feishuService.BeginPair(a.ctx)
 }
 
 // DeleteFeishuBinding removes the bound OpenID from the store.
-func (a *App) DeleteFeishuBinding(ctx context.Context) error {
+func (a *App) DeleteFeishuBinding() error {
 	if a.feishuService == nil {
 		return errors.New("feishu disabled")
 	}
-	return a.feishuService.Store().Delete(ctx)
+	return a.feishuService.Store().Delete(a.ctx)
 }

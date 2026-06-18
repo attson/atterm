@@ -1018,16 +1018,30 @@ onMounted(async () => {
     }
   }, 5000);
 
-  if (!autoStarted && tabs.value.length === 0) {
-    autoStarted = true;
-    if (recoveryEnabled && recoverySnap.tabs.length > 0) {
-      // Dialog handlers (onRecoveryRestore / onRecoveryDiscard) decide
-      // whether to spawn restored panes or fall back to startNewTab — so
-      // we deliberately do NOT call startNewTab() here.
-      recoveryDialogState.value = { open: true, snapshot: recoverySnap };
-    } else {
-      startNewTab();
+  // Auto-start guarded by try/catch: a stray throw here (e.g. a Wails-side
+  // shape regression making `recoverySnap.tabs` null) used to escape onMounted
+  // and leave the app stuck on the "starting first session" message with no
+  // surfaced error. Funnel any failure to errorMsg so the TitleBar shows it
+  // instead of failing silently.
+  try {
+    if (!autoStarted && tabs.value.length === 0) {
+      autoStarted = true;
+      const hasRecovery = recoveryEnabled && (recoverySnap?.tabs?.length ?? 0) > 0;
+      if (hasRecovery) {
+        // Dialog handlers (onRecoveryRestore / onRecoveryDiscard) decide
+        // whether to spawn restored panes or fall back to startNewTab — so
+        // we deliberately do NOT call startNewTab() here.
+        recoveryDialogState.value = { open: true, snapshot: recoverySnap };
+      } else {
+        startNewTab();
+      }
     }
+  } catch (e: any) {
+    const name = e?.name ?? "Error";
+    const msg = e?.message ?? String(e);
+    console.error("[boot] auto-start failed", { name, message: msg, stack: e?.stack });
+    status.value = "error";
+    errorMsg.value = `autoStart: ${name}: ${msg}`;
   }
 });
 

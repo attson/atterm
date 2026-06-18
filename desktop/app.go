@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/desktop/feishu"
+	"github.com/attson/atterm/desktop/hookinstall"
 	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/e2eeclient"
 	"github.com/attson/atterm/internal/prefssync"
@@ -257,6 +258,15 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 	a.applyRelayConfig(cfg)
+	// Auto-install ~/.claude/settings.json hook entries + materialize
+	// atterm-hook binary, so a fresh install gets Feishu notifications
+	// without manual settings.json editing. Failure is non-fatal — the
+	// Settings · Feishu panel will surface the LastError.
+	if cfg.HookAutoInstallEnabledOrDefault() {
+		if err := hookinstall.Install(ctx); err != nil {
+			log.Printf("hookinstall: install: %v", err)
+		}
+	}
 	if a.updater != nil {
 		a.updater.SetGHProxyURL(cfg.UpdateGHProxyURL)
 	}
@@ -1812,6 +1822,14 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 		log.Printf("desktop: write feishu endpoint file: %v", err)
 	}
 
+	svc.HookServer().SetSuspectCallback(func() {
+		// A misrouted POST may indicate stale install; nudge the
+		// debounced auto-repair on next UI poll.
+		hookInstallLastAttemptMu.Lock()
+		hookInstallLastAttempt = time.Time{}
+		hookInstallLastAttemptMu.Unlock()
+	})
+
 	if a.host != nil {
 		a.host.FeishuHookEndpoint = hookEndpoint
 		a.host.FeishuDispatcher = svc.Dispatcher()
@@ -1894,4 +1912,63 @@ func (a *App) DeleteFeishuBinding() error {
 		return errors.New("feishu disabled")
 	}
 	return a.feishuService.Store().Delete(a.ctx)
+}
+
+// hookInstallLastAttempt tracks when we last auto-repaired so the UI
+// poll doesn't trigger a Check→Install loop while the underlying issue
+// is permanent (e.g. read-only mount).
+var (
+	hookInstallLastAttempt   time.Time
+	hookInstallLastAttemptMu sync.Mutex
+)
+
+const hookInstallRepairDebounce = 5 * time.Second
+
+// GetHookInstallState returns the current health snapshot. When the
+// surface is unhealthy and we haven't tried in the last 5 seconds,
+// we kick a silent Install before returning the post-repair state.
+func (a *App) GetHookInstallState() hookinstall.State {
+	enabled := true
+	if a.cfgStore != nil {
+		enabled = a.cfgStore.Get().HookAutoInstallEnabledOrDefault()
+	}
+	s := hookinstall.Check(a.ctx, enabled)
+	if !s.Healthy() && enabled && allowHookInstallRepair() {
+		if err := hookinstall.Install(a.ctx); err != nil {
+			log.Printf("hookinstall: auto-repair: %v", err)
+		}
+		s = hookinstall.Check(a.ctx, enabled)
+	}
+	return s
+}
+
+// SetHookInstallEnabled persists the toggle and either installs or
+// uninstalls. Errors are returned to the frontend so the Retry button
+// can surface them.
+func (a *App) SetHookInstallEnabled(on bool) error {
+	if a.cfgStore != nil {
+		cfg := a.cfgStore.Get()
+		cfg.HookAutoInstallEnabled = &on
+		if err := a.cfgStore.Set(cfg); err != nil {
+			return err
+		}
+	}
+	if on {
+		// Reset debounce so a manual toggle ALWAYS retries.
+		hookInstallLastAttemptMu.Lock()
+		hookInstallLastAttempt = time.Time{}
+		hookInstallLastAttemptMu.Unlock()
+		return hookinstall.Install(a.ctx)
+	}
+	return hookinstall.Uninstall(a.ctx)
+}
+
+func allowHookInstallRepair() bool {
+	hookInstallLastAttemptMu.Lock()
+	defer hookInstallLastAttemptMu.Unlock()
+	if time.Since(hookInstallLastAttempt) < hookInstallRepairDebounce {
+		return false
+	}
+	hookInstallLastAttempt = time.Now()
+	return true
 }

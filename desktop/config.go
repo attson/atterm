@@ -122,6 +122,11 @@ type appConfig struct {
 	// "never set" → default true. Stored as pointer so we can distinguish
 	// "user opted out" from "fresh install".
 	RecoveryDialogEnabled *bool `json:"recovery_dialog_enabled,omitempty"`
+
+	// HookAutoInstallEnabled controls whether the desktop materializes
+	// the atterm-hook binary and patches ~/.claude/settings.json on
+	// startup. Nil means "never set" → default true for fresh installs.
+	HookAutoInstallEnabled *bool `json:"hook_auto_install_enabled,omitempty"`
 	// CommandNotifyThresholdSeconds gates the command-finished notification:
 	// commands shorter than this duration (start-to-finish) do not produce
 	// a notification. Nil → default 10. Clamped to [1, 600] at read time.
@@ -187,6 +192,13 @@ func (c appConfig) RecoveryDialogEnabledOrDefault() bool {
 		return true
 	}
 	return *c.RecoveryDialogEnabled
+}
+
+func (c appConfig) HookAutoInstallEnabledOrDefault() bool {
+	if c.HookAutoInstallEnabled == nil {
+		return true
+	}
+	return *c.HookAutoInstallEnabled
 }
 
 func (c appConfig) RemotePermissionOrDefault() string {

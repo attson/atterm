@@ -99,6 +99,11 @@ jobs:
         working-directory: desktop/frontend
         run: npm run build
 
+      # desktop/hookinstall/embed.go has //go:embed atterm-hook — Go
+      # demands the file exists at compile time for vet / test / build.
+      - name: build atterm-hook embed
+        run: ./scripts/build-hook-binary.sh
+
       - name: PluginFS isolation guard
         run: ./.github/scripts/check-plugin-fs-isolation.sh
 
@@ -192,6 +197,11 @@ jobs:
         working-directory: desktop/frontend
         run: npm run build
 
+      # desktop/hookinstall/embed.go has //go:embed atterm-hook — Go
+      # demands the file exists at compile time for wails build.
+      - name: build atterm-hook embed
+        run: ./scripts/build-hook-binary.sh
+
       - name: PluginFS isolation guard
         run: ./.github/scripts/check-plugin-fs-isolation.sh
 
@@ -279,6 +289,11 @@ jobs:
       - name: build frontend
         working-directory: desktop/frontend
         run: npm run build
+
+      # desktop/hookinstall/embed.go has //go:embed atterm-hook — Go
+      # demands the file exists at compile time for test / build steps.
+      - name: build atterm-hook embed
+        run: ./scripts/build-hook-binary.sh
 
       - name: PluginFS isolation guard
         run: ./.github/scripts/check-plugin-fs-isolation.sh

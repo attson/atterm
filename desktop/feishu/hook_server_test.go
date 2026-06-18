@@ -120,6 +120,36 @@ func TestHookServer_BindLocalhost(t *testing.T) {
 	_ = atomic.AddInt32(new(int32), 1)
 }
 
+func TestHookServer_FiresSuspectOnUnknownAgentKind(t *testing.T) {
+	disp := &recordingDispatcher{}
+	sid := uuid.New()
+	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+	srv := NewHookServer(disp, sessions)
+
+	var suspectCalled int
+	srv.SetSuspectCallback(func() { suspectCalled++ })
+
+	addr, server, err := srv.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Shutdown(context.Background())
+
+	body := bytes.NewBufferString(`{"session_id":"` + sid.String() +
+		`","agent_kind":"made-up","hook_input":{}}`)
+	resp, err := http.Post("http://"+addr+"/atterm-hook/notify",
+		"application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d; want 200", resp.StatusCode)
+	}
+	if suspectCalled != 1 {
+		t.Errorf("suspectCalled = %d; want 1", suspectCalled)
+	}
+}
+
 func mustJSONBytes(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)

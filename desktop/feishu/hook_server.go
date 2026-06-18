@@ -27,8 +27,9 @@ type WaitingDispatcher interface {
 
 // HookServer terminates POSTs from the atterm-hook CLI.
 type HookServer struct {
-	disp     WaitingDispatcher
-	sessions SessionLookup
+	disp      WaitingDispatcher
+	sessions  SessionLookup
+	onSuspect func()
 }
 
 type hookNotifyRequest struct {
@@ -40,6 +41,14 @@ type hookNotifyRequest struct {
 
 func NewHookServer(disp WaitingDispatcher, sessions SessionLookup) *HookServer {
 	return &HookServer{disp: disp, sessions: sessions}
+}
+
+// SetSuspectCallback registers a callback invoked when a POST is well-
+// formed but the agent_kind isn't recognized, signaling that the
+// installed hook is mis-wired (e.g. a stale binary, broken adapter).
+// Safe to call before or after Start.
+func (h *HookServer) SetSuspectCallback(fn func()) {
+	h.onSuspect = fn
 }
 
 // Start binds a localhost listener on 127.0.0.1:0 and returns the chosen
@@ -95,11 +104,19 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	adapter, ok := LookupHookAdapter(req.AgentKind)
 	if !ok {
+		if h.onSuspect != nil {
+			h.onSuspect()
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	ev, emit := adapter.Parse(req.HookInput, req.HookVersion)
 	if !emit {
+		// emit=false is a normal "this event isn't a question we route"
+		// signal (e.g. unrelated matcher type). Intentionally NOT
+		// invoking onSuspect here — that callback exists for "the hook
+		// is mis-wired" signals (unknown agent_kind), not for routine
+		// per-event filtering.
 		w.WriteHeader(http.StatusOK)
 		return
 	}

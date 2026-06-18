@@ -162,6 +162,56 @@ export namespace feishu {
 
 }
 
+export namespace hookinstall {
+	
+	export class State {
+	    enabled: boolean;
+	    binary_path: string;
+	    binary_ok: boolean;
+	    binary_version: string;
+	    settings_path: string;
+	    settings_ok: boolean;
+	    last_error: string;
+	    // Go type: time
+	    last_check: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new State(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.binary_path = source["binary_path"];
+	        this.binary_ok = source["binary_ok"];
+	        this.binary_version = source["binary_version"];
+	        this.settings_path = source["settings_path"];
+	        this.settings_ok = source["settings_ok"];
+	        this.last_error = source["last_error"];
+	        this.last_check = this.convertValues(source["last_check"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class AIInfo {

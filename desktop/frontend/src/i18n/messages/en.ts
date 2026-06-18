@@ -360,6 +360,13 @@ export const en = {
       begin_pair: "Start Pair",
       pair_hint: "Send \"/bind {code}\" to the bot in private chat within 15 minutes.",
       delete: "Delete Binding",
+      hook_install: {
+        enable: "Auto-install Claude Code hook",
+        retry: "Retry",
+        healthy: "Hook installed and healthy",
+        needs_attention: "Hook needs attention",
+        disabled: "Hook auto-install disabled",
+      },
     },
     templates: {
       tab: "Templates",

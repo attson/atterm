@@ -82,6 +82,10 @@ export function GetFeishuStatus() {
   return window['go']['main']['App']['GetFeishuStatus']();
 }
 
+export function GetHookInstallState() {
+  return window['go']['main']['App']['GetHookInstallState']();
+}
+
 export function GetHostInfo() {
   return window['go']['main']['App']['GetHostInfo']();
 }
@@ -228,6 +232,10 @@ export function SetDefaultShell(arg1) {
 
 export function SetFeishuCredentials(arg1) {
   return window['go']['main']['App']['SetFeishuCredentials'](arg1);
+}
+
+export function SetHookInstallEnabled(arg1) {
+  return window['go']['main']['App']['SetHookInstallEnabled'](arg1);
 }
 
 export function SetLocalePreference(arg1) {

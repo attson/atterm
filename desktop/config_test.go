@@ -46,6 +46,23 @@ func TestPrefsMeta_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestHookAutoInstallEnabledOrDefault(t *testing.T) {
+	c := appConfig{}
+	if !c.HookAutoInstallEnabledOrDefault() {
+		t.Errorf("nil pointer should default to true (fresh installs opt in)")
+	}
+	v := false
+	c.HookAutoInstallEnabled = &v
+	if c.HookAutoInstallEnabledOrDefault() {
+		t.Errorf("explicit false should disable")
+	}
+	t2 := true
+	c.HookAutoInstallEnabled = &t2
+	if !c.HookAutoInstallEnabledOrDefault() {
+		t.Errorf("explicit true should enable")
+	}
+}
+
 func TestLocalePreferenceOrDefault(t *testing.T) {
 	tests := []struct {
 		name string

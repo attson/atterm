@@ -26,3 +26,7 @@
 /docs/superpowers/plans/2026-05-14-settings-redesign.md
 /docs/superpowers/plans/2026-05-18-web-vue-rewrite-pr-f-pwa.md
 /mobile/ios/App/App.xcodeproj/project.pbxproj
+
+# Build artifact for desktop/hookinstall embed; produced by
+# scripts/build-hook-binary.sh on demand.
+desktop/hookinstall/atterm-hook

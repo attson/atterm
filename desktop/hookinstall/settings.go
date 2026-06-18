@@ -14,15 +14,15 @@ import (
 // about. Unknown top-level keys are preserved via extra map so the
 // write back doesn't drop the user's theme, model, etc.
 type ClaudeSettings struct {
-	Hooks ClaudeHooks    `json:"hooks"`
-	Extra map[string]any `json:"-"`
+	Hooks ClaudeHooks                `json:"hooks"`
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
 // ClaudeHooks is the "hooks" object. We only own the Notification slot.
 // Other hook lists (e.g. PreToolUse) are passed through unmodified.
 type ClaudeHooks struct {
-	Notification []HookEntry    `json:"Notification,omitempty"`
-	Extra        map[string]any `json:"-"`
+	Notification []HookEntry                `json:"Notification,omitempty"`
+	Extra        map[string]json.RawMessage `json:"-"`
 }
 
 // UnmarshalJSON splits the known field from the unknown rest so we can
@@ -32,20 +32,13 @@ func (c *ClaudeSettings) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	c.Extra = map[string]any{}
 	if h, ok := raw["hooks"]; ok {
 		if err := json.Unmarshal(h, &c.Hooks); err != nil {
 			return err
 		}
 		delete(raw, "hooks")
 	}
-	for k, v := range raw {
-		var anyV any
-		if err := json.Unmarshal(v, &anyV); err != nil {
-			return err
-		}
-		c.Extra[k] = anyV
-	}
+	c.Extra = raw
 	return nil
 }
 
@@ -63,20 +56,13 @@ func (h *ClaudeHooks) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	h.Extra = map[string]any{}
 	if n, ok := raw["Notification"]; ok {
 		if err := json.Unmarshal(n, &h.Notification); err != nil {
 			return err
 		}
 		delete(raw, "Notification")
 	}
-	for k, v := range raw {
-		var anyV any
-		if err := json.Unmarshal(v, &anyV); err != nil {
-			return err
-		}
-		h.Extra[k] = anyV
-	}
+	h.Extra = raw
 	return nil
 }
 

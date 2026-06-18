@@ -1,10 +1,12 @@
 package hookinstall
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +136,38 @@ func TestWriteClaudeSettings_AtomicTempCleared(t *testing.T) {
 	entries, _ := filepath.Glob(filepath.Join(claudeDir(home), "settings.json.atterm-tmp-*"))
 	if len(entries) != 0 {
 		t.Errorf("temp files left behind: %v", entries)
+	}
+}
+
+func TestExtraPreservesLargeIntegers(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(claudeDir(home), 0o700)
+	// 12345678901234567 > 2^53 (9007199254740992); float64 loses the last bit.
+	raw := `{"timestamp":12345678901234567,"hooks":{}}`
+	os.WriteFile(claudeSettingsPath(home), []byte(raw), 0o644)
+
+	cfg, err := readClaudeSettings(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeClaudeSettings(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(claudeSettingsPath(home))
+	if !strings.Contains(string(out), "12345678901234567") {
+		t.Errorf("large integer corrupted by round-trip: %s", out)
+	}
+}
+
+func TestMarshalIsDeterministic(t *testing.T) {
+	raw := `{"theme":"dark","model":"opus","hooks":{"Notification":[{"matcher":{"type":"x"},"command":"/u/y"}]}}`
+	var cfg ClaudeSettings
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.MarshalIndent(cfg, "", "  ")
+	b, _ := json.MarshalIndent(cfg, "", "  ")
+	if !bytes.Equal(a, b) {
+		t.Errorf("non-deterministic marshal:\n%s\nvs\n%s", a, b)
 	}
 }

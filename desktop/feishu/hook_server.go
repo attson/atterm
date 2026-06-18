@@ -112,6 +112,11 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ev, emit := adapter.Parse(req.HookInput, req.HookVersion)
 	if !emit {
+		// emit=false is a normal "this event isn't a question we route"
+		// signal (e.g. unrelated matcher type). Intentionally NOT
+		// invoking onSuspect here — that callback exists for "the hook
+		// is mis-wired" signals (unknown agent_kind), not for routine
+		// per-event filtering.
 		w.WriteHeader(http.StatusOK)
 		return
 	}

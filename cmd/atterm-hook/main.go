@@ -31,6 +31,10 @@ type hookNotifyRequest struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println("atterm-hook dev")
+		os.Exit(0)
+	}
 	limited := io.LimitReader(os.Stdin, maxStdin+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {

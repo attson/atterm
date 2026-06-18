@@ -167,3 +167,23 @@ func TestHook_StdinTooLarge_Drops(t *testing.T) {
 		t.Fatalf("expected stderr warning, got %q", stderr)
 	}
 }
+
+func TestVersionFlag(t *testing.T) {
+	// Build the CLI into a temp dir.
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "atterm-hook")
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Dir = "."
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	out, err := exec.Command(bin, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("--version: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(got, "atterm-hook ") {
+		t.Errorf("unexpected version line %q", got)
+	}
+}

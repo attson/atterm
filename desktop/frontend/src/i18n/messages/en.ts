@@ -242,6 +242,7 @@ export const en = {
       changeLocation: "change location",
       resetDefault: "reset default",
       viewLogs: "view logs",
+      liveTail: "Live tail (auto-refreshes every 3s)",
     },
     webhooks: {
       title: "Webhooks",

@@ -9,6 +9,8 @@
   --accent: #58a6ff;
   --good: #3fb950;
   --bad: #f85149;
+  --warn: #d29922;
+  --neutral: #6e7681;
   --terminal-bg: #000000;
   --terminal-grid: #11161d;
   --terminal-overlay: rgba(13, 17, 23, 0.85);

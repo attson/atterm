@@ -1,13 +1,26 @@
 # AT Term
 
+[![Release](https://img.shields.io/github/v/release/attson/atterm?style=flat-square)](https://github.com/attson/atterm/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](#)
+[![Go](https://img.shields.io/badge/go-1.23-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
+
 > **Audience**: 第一次见到 atterm 的人 / 想跑起来或部署的开发者
-> **Last updated**: 2026-06-16
+> **Last updated**: 2026-06-19
 > **Status**: stable
 > **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md) · [docs/roadmap.md](./docs/roadmap.md)
 
 AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动的 shell、Codex、Claude 等长任务，可以在离开电脑后从手机、浏览器或另一台电脑继续查看和输入。Relay 端启用 E2EE 后，命令输出 / 标题 / cwd / 任务摘要在传输和持久化路径上都对 relay 不可读，只在拥有 `account_key` 的客户端解开。
 
 > 一句话：本地先好用；需要远程时，再把会话安全地同步到自己的 relay。
+
+## 工作原理（5 行速览）
+
+1. 桌面端跑本地 PTY，每个 tab 是一个独立会话；OSC 133 推导任务状态（running / waiting / done / failed）。
+2. 登录 relay 后，桌面端按需把会话状态 + PTY 字节上行；远程端（手机 / 浏览器 / 另一台桌面）attach 后才上传字节，无人看时不上传。
+3. 启用 E2EE：account_key 只在客户端持有；输出 / 标题 / cwd / 摘要在 relay 侧全程密文。
+4. 任务关键节点（命令完成、AI 等输入）触发系统通知 / Web Push / 飞书卡片 / 出站 webhook，payload 带 session id 与摘要。
+5. AI agent（Claude Code / Codex / Aider / Gemini）自动识别：命令分类、resume 注入、Notification hook 自动安装。
 
 ## 适合谁
 
@@ -62,6 +75,20 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 - 启动链按 `bootStage` 分阶段，失败时 titlebar 直接显示 `connectLocalSessionList: SyntaxError: …`；`new WebSocket()` 同步异常被隔离重连，不会击穿 boot await chain。
 
 路线图未完成：桌面安装包 codesign / notarization（P1.8）、单 session 分享 + presence + 审计日志（P3）、可选持久化历史 + 命令级回放（P4）、E2EE 外部加密评审（M7-audit）。详见 [`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/spec/architecture.md`](docs/spec/architecture.md) §phase 完成度。
+
+## AI agent 支持
+
+`内置识别`：会话内启动的 AI CLI 会被自动归类并显示对应 type chip（来源：`desktop/ai_sid_sniff.go` + 前端 `lib/aiKind.ts`）。
+
+| Agent | type chip | resume 注入 | session jsonl 嗅探 | Notification hook |
+|---|---|---|---|---|
+| **Claude Code** (`claude`) | ✅ | `claude --resume <sid>` | `~/.claude/projects/<cwd>/<sid>.jsonl` | ✅ atterm 自动安装 + 健康巡检（Feishu 路径） |
+| **Codex** (`codex`) | ✅ | `codex resume <sid>` | `~/.codex/sessions/YYYY/MM/DD/rollout-*-<sid>.jsonl` | ⏳ 自动安装路径未做（hook 协议复用既有） |
+| **Aider** (`aider`) | ✅ | 直接重放上一条 command line | —（无稳定 jsonl 协议） | — |
+| **Gemini CLI** (`gemini`) | ✅ | —（暂无） | — | — |
+| 其他（`go test` / `docker build` / `kubectl` …） | ✅ 命令分类 | — | — | — |
+
+权限审批 / AskUserQuestion 等待这两条信号目前仅 Claude Code 走 Notification hook 路径；Codex 走 jsonl 监听是后续 spec。
 
 ## 快速开始
 

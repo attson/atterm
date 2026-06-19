@@ -224,7 +224,7 @@ async function onDelete() {
 }
 .hook-install {
   padding: 8px 0 12px;
-  border-bottom: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
+  border-bottom: 1px solid var(--border);
   margin-bottom: 12px;
 }
 .hook-install__row {
@@ -238,11 +238,11 @@ async function onDelete() {
   height: 8px;
   border-radius: 50%;
 }
-.hook-install__dot--green { background: #2ea043; }
-.hook-install__dot--amber { background: #d29922; }
-.hook-install__dot--gray  { background: #6e7681; }
+.hook-install__dot--green { background: var(--good); }
+.hook-install__dot--amber { background: var(--warn); }
+.hook-install__dot--gray  { background: var(--neutral); }
 .hook-install__label { flex: 1; font-size: 13px; }
 .hook-install__toggle { display: flex; gap: 4px; align-items: center; font-size: 12px; }
 .hook-install__retry { font-size: 12px; padding: 2px 8px; }
-.hook-install__error { font-size: 12px; color: #d29922; margin: 6px 0 0; }
+.hook-install__error { font-size: 12px; color: var(--warn); margin: 6px 0 0; }
 </style>

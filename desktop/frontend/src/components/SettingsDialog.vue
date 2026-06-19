@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   getLogPreview,
   getTerminalThemePreference,
@@ -22,10 +22,54 @@ import SettingsFeishu from "./SettingsFeishu.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 import { useI18n } from "../i18n/useI18n";
+import type { MessageKey } from "../i18n";
 
 const platform = usePlatform();
 const caps = platform.caps;
-const { t } = useI18n();
+const { t, resolvedLocale } = useI18n();
+
+// Tab heading metadata: i18n key + English subtitle shown under H2 when the
+// UI is in Chinese (CodeIsland-style "通用 General preferences" anchor).
+// English locale skips the subtitle to avoid duplicate text.
+type SettingsTabId = "general" | "tasks" | "relay" | "webhooks" | "plugins"
+  | "shortcuts" | "templates" | "logging" | "updates" | "diagnostics" | "feishu";
+
+const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> = {
+  general:     { labelKey: "settings.tabs.general",        english: "General preferences" },
+  tasks:       { labelKey: "tasks.settings.section",       english: "Tasks display" },
+  relay:       { labelKey: "settings.tabs.relay",          english: "Relay" },
+  webhooks:    { labelKey: "settings.tabs.webhooks",       english: "Outbound webhooks" },
+  plugins:     { labelKey: "settings.tabs.plugins",        english: "Plugins" },
+  shortcuts:   { labelKey: "settings.tabs.shortcuts",      english: "Keyboard shortcuts" },
+  templates:   { labelKey: "settings.templates.tab",       english: "Quick templates" },
+  logging:     { labelKey: "settings.tabs.logging",        english: "Logging" },
+  updates:     { labelKey: "settings.tabs.updates",        english: "Updates" },
+  diagnostics: { labelKey: "settings.diagnostics.tab",     english: "Diagnostics" },
+  feishu:      { labelKey: "settings.feishu.title",        english: "Feishu integration" },
+};
+
+const activeTabLabel = computed(() => t(tabMeta[activeTab.value].labelKey));
+const activeTabEnglish = computed(() =>
+  resolvedLocale.value === "zh-CN" ? tabMeta[activeTab.value].english : ""
+);
+
+// 14px stroke-1.6 SVG icons for the sidebar. Inline as v-html — content
+// is local & trusted, no XSS surface. Kept minimal so the bundle does
+// not pull in a full icon library.
+const icoBase = 'viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
+const tabIcons: Record<SettingsTabId, string> = {
+  general:     `<svg ${icoBase}><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v2M8 12.4v2M14.4 8h-2M3.6 8h-2M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4M12.5 12.5l-1.4-1.4M4.9 4.9 3.5 3.5"/></svg>`,
+  tasks:       `<svg ${icoBase}><path d="M3 4h10M3 8h10M3 12h6"/></svg>`,
+  relay:       `<svg ${icoBase}><circle cx="8" cy="8" r="1.4"/><path d="M4.4 4.4a5 5 0 0 0 0 7.2M11.6 11.6a5 5 0 0 0 0-7.2M2.4 2.4a8 8 0 0 0 0 11.2M13.6 13.6a8 8 0 0 0 0-11.2"/></svg>`,
+  webhooks:    `<svg ${icoBase}><circle cx="4.5" cy="11.5" r="1.6"/><circle cx="11" cy="3.6" r="1.6"/><circle cx="11" cy="11.5" r="1.6"/><path d="M5.6 10.3 9.9 4.9M6.1 11.5h3.3"/></svg>`,
+  plugins:     `<svg ${icoBase}><path d="M5 2v2.5H2.5V8H5v3.5h3.5V14H12V11.5h2V8h-2.5V4.5H8.5V2z"/></svg>`,
+  shortcuts:   `<svg ${icoBase}><rect x="1.6" y="4.2" width="12.8" height="7.6" rx="1.6"/><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M4.5 9.5h7"/></svg>`,
+  templates:   `<svg ${icoBase}><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="1.4"/><path d="M2.4 6h11.2M6 6v7.6"/></svg>`,
+  logging:     `<svg ${icoBase}><path d="M3 2.5h7l3 3v8H3z"/><path d="M10 2.5v3h3M5 8.5h6M5 11h4"/></svg>`,
+  updates:     `<svg ${icoBase}><path d="M2.5 8a5.5 5.5 0 0 1 9.7-3.5L14 6.5"/><path d="M14 2.5v4h-4"/><path d="M13.5 8a5.5 5.5 0 0 1-9.7 3.5L2 9.5"/><path d="M2 13.5v-4h4"/></svg>`,
+  diagnostics: `<svg ${icoBase}><circle cx="7.2" cy="7.2" r="4.4"/><path d="m10.4 10.4 3 3"/></svg>`,
+  feishu:      `<svg ${icoBase}><path d="M3.5 4.5h6l2 2v5a1.5 1.5 0 0 1-1.5 1.5h-6.5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1Z"/><path d="M9.5 4.5v2h2"/></svg>`,
+};
 
 const relayHasToken = ref(false);
 
@@ -183,66 +227,103 @@ function onSaveClick() {
             class="settings-nav-item"
             :class="{ active: activeTab === 'general' }"
             @click="switchTab('general')"
-          >{{ t("settings.tabs.general") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.general"></span>
+            <span class="nav-label">{{ t("settings.tabs.general") }}</span>
+          </button>
           <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'tasks' }"
             @click="switchTab('tasks')"
-          >{{ t("tasks.settings.section") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.tasks"></span>
+            <span class="nav-label">{{ t("tasks.settings.section") }}</span>
+          </button>
           <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'relay' }"
             @click="switchTab('relay')"
-          >{{ t("settings.tabs.relay") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.relay"></span>
+            <span class="nav-label">{{ t("settings.tabs.relay") }}</span>
+          </button>
           <button
             v-if="relayHasToken"
             class="settings-nav-item"
             data-testid="webhooks-nav"
             :class="{ active: activeTab === 'webhooks' }"
             @click="switchTab('webhooks')"
-          >{{ t("settings.tabs.webhooks") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.webhooks"></span>
+            <span class="nav-label">{{ t("settings.tabs.webhooks") }}</span>
+          </button>
           <button
             v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'plugins' }"
             @click="switchTab('plugins')"
-          >{{ t("settings.tabs.plugins") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.plugins"></span>
+            <span class="nav-label">{{ t("settings.tabs.plugins") }}</span>
+          </button>
           <button
             v-if="caps.pluginHost"
             class="settings-nav-item"
             :class="{ active: activeTab === 'shortcuts' }"
             @click="switchTab('shortcuts')"
-          >{{ t("settings.tabs.shortcuts") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.shortcuts"></span>
+            <span class="nav-label">{{ t("settings.tabs.shortcuts") }}</span>
+          </button>
           <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'templates' }"
             @click="switchTab('templates')"
-          >{{ t("settings.templates.tab") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.templates"></span>
+            <span class="nav-label">{{ t("settings.templates.tab") }}</span>
+          </button>
           <button
             v-if="caps.fileDialog"
             class="settings-nav-item"
             :class="{ active: activeTab === 'logging' }"
             @click="switchTab('logging')"
-          >{{ t("settings.tabs.logging") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.logging"></span>
+            <span class="nav-label">{{ t("settings.tabs.logging") }}</span>
+          </button>
           <button
             v-if="caps.autoUpdate"
             class="settings-nav-item"
             :class="{ active: activeTab === 'updates' }"
             @click="switchTab('updates')"
-          >{{ t("settings.tabs.updates") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.updates"></span>
+            <span class="nav-label">{{ t("settings.tabs.updates") }}</span>
+          </button>
           <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'diagnostics' }"
             @click="switchTab('diagnostics')"
-          >{{ t("settings.diagnostics.tab") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.diagnostics"></span>
+            <span class="nav-label">{{ t("settings.diagnostics.tab") }}</span>
+          </button>
           <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'feishu' }"
             @click="switchTab('feishu')"
-          >{{ t("settings.feishu.title") }}</button>
+          >
+            <span class="nav-icon" v-html="tabIcons.feishu"></span>
+            <span class="nav-label">{{ t("settings.feishu.title") }}</span>
+          </button>
         </aside>
 
         <section class="settings-pane">
+          <header class="settings-pane-header">
+            <h3 class="settings-pane-title">{{ activeTabLabel }}</h3>
+            <span v-if="activeTabEnglish" class="settings-pane-subtitle">{{ activeTabEnglish }}</span>
+          </header>
           <SettingsGeneral
             v-show="activeTab === 'general'"
             :terminal-theme-id="persistedTheme"
@@ -384,7 +465,9 @@ function onSaveClick() {
   gap: 2px;
 }
 .settings-nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -395,6 +478,16 @@ function onSaveClick() {
   cursor: pointer;
   font-size: 13px;
 }
+.settings-nav-item .nav-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--fg-dim);
+}
+.settings-nav-item .nav-icon :deep(svg) { width: 16px; height: 16px; }
+.settings-nav-item.active .nav-icon { color: var(--accent); }
+.settings-nav-item .nav-label { flex: 1 1 auto; min-width: 0; }
 .settings-nav-item:hover {
   background: rgba(255, 255, 255, 0.04);
   color: var(--fg);
@@ -408,6 +501,23 @@ function onSaveClick() {
   flex: 1 1 auto;
   padding: 20px 24px;
   overflow-y: auto;
+}
+.settings-pane-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.settings-pane-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.settings-pane-subtitle {
+  font-size: 12px;
+  color: var(--fg-dim);
 }
 .settings-footer {
   display: flex;

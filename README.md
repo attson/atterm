@@ -59,7 +59,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 **Relay 自托管**
 
 - 邮箱 + 密码登录，邀请码注册，session token 走 `Authorization: Bearer` 或 WS subprotocol，不出现在 URL。
-- 公网默认 fail-closed：强 bootstrap 密码、`ATTERM_ORIGINS` 白名单、CSP / 限流 / 连接数上限、Ed25519 签名的自动更新。
+- 公网默认 fail-closed：OPAQUE 密码认证（relay 不见明文密码）+ claim-token 引导 admin、`ATTERM_ORIGINS` 白名单、CSP / 限流 / 连接数上限、Ed25519 签名的自动更新。
 - Pairing QR、`/healthz` 公共健康端点 + `/admin/health` 管理页、admin 后台、出站 webhook。
 
 **端到端加密（M1–M6，relay-e2ee-design）**
@@ -109,18 +109,17 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 
 这个模式适合「电脑上跑任务，手机/另一台机器接管」。
 
-1. 启动 relay（设置 bootstrap 管理员邮箱 + 密码，密码至少 16 字符、含 3 类字符，不能在弱密码黑名单内）：
+1. 启动 relay（只需 bootstrap 管理员邮箱 + Origin 白名单，**不需要密码 env**——密码由你后面在浏览器注册时本地设置，走 OPAQUE）：
 
 ```bash
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
-ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 docker compose up -d atterm-relay
 ```
 
-2. 在浏览器打开 `https://relay.example.com/login.html`，用 bootstrap 邮箱 + 密码登录；登录后顶部导航会出现 **Admin** 入口。登录成功后请把 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 从环境/systemd unit 中删除并重启，避免明文密码长期留在进程环境里。
-3. 在 “Invitations” 页面创建一个邀请码（`inv_…`），把它发给要使用的人（包括你自己）。
-4. 用户在 `https://relay.example.com/signup.html` 用邀请码 + 邮箱 + 密码完成注册。
+2. 看启动日志里打印的一次性 **claim token**（`docker compose logs atterm-relay`，形如 `bootstrap-admin: claim token for you@example.com …`）。该 token 7 天有效、只显示一次。
+3. 在浏览器打开 `https://relay.example.com/signup.html`，用 bootstrap 邮箱 + 自设密码注册，并把上一步的 **claim token 填进「邀请码 / claim token」输入框**。注册完成即获得 admin 角色（claim token 校验邮箱匹配后自动提权）。
+4. 用 bootstrap 邮箱 + 刚设的密码在 `https://relay.example.com/login.html` 登录；顶部导航出现 **Admin** 入口。飞书、限流、Origin 等都在 Admin → Config / Feishu 里配置（见“部署 relay”）。
 5. 在桌面端 Settings → Remote relay 填入 relay URL，用注册时的邮箱+密码登录；登录成功后 relay 会下发一份 session token（`ses_…`）并由桌面端持久化。
 6. 桌面端连上 relay 后，会显示 `connected as <email>`。手机或另一台电脑用同一账号登录 `https://relay.example.com` 即可看到 session 列表。
 
@@ -129,7 +128,7 @@ docker compose up -d atterm-relay
 ```bash
 export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 
-# 终端 1：启动 relay（--dev-insecure 跳过 Origin/密码强度校验）
+# 终端 1：启动 relay（--dev-insecure 跳过 Origin 校验与 admin 引导）
 # --web 省略时使用 internal/relay/web-dist/ 的内嵌 web 构建产物。
 go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
 
@@ -189,7 +188,6 @@ insecure mode 只适合可信测试环境；正式使用建议配置 HTTPS/WSS �
 
 ```bash
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
-ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com,capacitor://localhost' \
 go run ./cmd/atterm-relay --addr :8080
 ```
@@ -252,25 +250,31 @@ docker compose up -d atterm-relay
 docker compose logs atterm-relay
 ```
 
-常用环境变量：
+大多数配置已下沉到管理后台（Admin → Config / Feishu），持久化在 `<config-dir>/relay.json`，运行时即可修改、无需重启（VAPID subject 除外）。**启动只需要核心 env**；其余 env 仍被支持，会在首次启动时一次性「播种」进 `relay.json`。
+
+核心环境变量：
 
 | 变量 | 用途 |
 |------|------|
-| `ATTERM_BOOTSTRAP_ADMIN_EMAIL` | 启动时将该邮箱对应的用户标记为 admin；用户不存在时配合 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 创建新用户。公网监听必须设置（除非 `--dev-insecure`） |
-| `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` | 首次启动用来创建 admin 用户的明文密码；须满足 ≥16 字符、≥3 类字符、不在弱密码黑名单内。若用户已存在则忽略。**首次登录后请从环境中删除**，避免明文密码长期留在进程状态里 |
-| `ATTERM_ORIGINS` | 浏览器 Origin 白名单；公网部署必须设成真实域名 |
+| `ATTERM_BOOTSTRAP_ADMIN_EMAIL` | 启动时为该邮箱打印一次性 claim token（见下「Bootstrap admin」）；用它注册一个**新**账号即获得 admin。公网监听必须设置（除非 `--dev-insecure`） |
+| `ATTERM_ORIGINS` | 浏览器 Origin 白名单；公网部署必须设成真实域名（也可后台 Admin → Config 修改） |
 | `ATTERM_RELAY_PORT` | 宿主机端口，默认 `8080` |
-| `ATTERM_RELAY_CONFIG_DIR` | relay 持久化配置目录，默认 `./data/atterm-relay` |
-| `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP 的请求与 WS upgrade 分钟限额 |
-| `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP 的活跃 WebSocket 连接上限 |
-| `ATTERM_FEISHU_ENCRYPT_KEY` | **必填**。飞书应用凭据 AEAD 静态加密密钥（32 字节，base64 编码）。生成：`openssl rand -base64 32`。用于对 `feishu_bindings` 表中的飞书 app 凭据做 at-rest 加密 |
-| `ATTERM_FEISHU_BASE_URL` | 飞书 Open Platform 基础 URL，默认 `https://open.feishu.cn`；私有化部署时覆盖 |
+| `ATTERM_RELAY_CONFIG_DIR` | relay 持久化配置目录（含 `users.db`、`relay.json`），默认 `./data/atterm-relay` |
+
+可选环境变量（不设也能启动；现在更推荐在管理后台配置）：
+
+| 变量 | 用途 |
+|------|------|
+| `ATTERM_FEISHU_ENCRYPT_KEY` | 飞书应用凭据 AEAD 静态加密密钥（32 字节 base64）。**不再必填**——在 Admin → Feishu 里可一键「生成」并保存。仅当你想用 env 预置时设置（`openssl rand -base64 32`），首次启动会播种进 `relay.json` 并自动启用飞书 |
+| `ATTERM_FEISHU_BASE_URL` | 飞书 Open Platform 基础 URL，默认 `https://open.feishu.cn`；私有化部署时覆盖（也可后台配置） |
+| `ATTERM_VAPID_SUBJECT` | Web Push VAPID subject，默认 `mailto:noreply@atterm.local`（改动需重启 relay） |
+| `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP 的请求与 WS upgrade 分钟限额（也可后台 Admin → Config 修改） |
+| `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP 的活跃 WebSocket 连接上限（同上） |
 
 公网示例：
 
 ```bash
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
-ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 docker compose up -d atterm-relay
 ```
@@ -287,12 +291,11 @@ docker compose --profile auto-update up -d
 
 ```bash
 ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
-ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
 ATTERM_ORIGINS='https://relay.example.com' \
 go run ./cmd/atterm-relay --addr :8080
 ```
 
-本地开发可以临时跳过强度与 Origin 校验（loopback 时 bootstrap envs 可省略，relay 不会自动创建 admin）：
+本地开发可以临时跳过 Origin 校验（loopback 时 bootstrap env 可省略，relay 不会打印 claim token）：
 
 ```bash
 go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
@@ -300,25 +303,34 @@ go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
 
 `--web` 省略时使用 `internal/relay/web-dist/` 的内嵌 web 构建产物；需要测试当前工作区的 web 改动时，先 `cd web && npm run build`，再从仓库根目录传 `--web web/dist`。
 
-公网监听默认拒绝缺失 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`、弱 bootstrap 密码、缺失 Origin 白名单。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
+公网监听默认拒绝缺失 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 或缺失 Origin 白名单。只有明确传 `--dev-insecure` 才会放开这些限制；不要在公网生产环境使用。
 
 ### Bootstrap admin
 
-启动时 relay 读取 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`，分三种情况：
+密码认证已切换到 OPAQUE（密码只在客户端本地参与协议，**relay 永不接收明文密码**），因此 bootstrap 不再用密码 env，而是用一次性 **claim token**：
 
-- **两个 env 都未设置**：relay 正常启动，但不会自动创建 admin。admin 接口在没有任何 admin 用户之前会返回 401，需要手动把某个用户提升为 admin（例如 `UPDATE users SET is_admin=1 WHERE email='you@…';`）。
-- **email 已设置且用户已存在**：把该用户标记为 `is_admin=1`，忽略密码 env。日志会打一条 WARN，提示你登录后从环境中删除密码 env。
-- **email 已设置且用户不存在**：使用提供的密码创建新用户并标记为 admin。日志会打一条 WARN，提示登录后从环境中删除密码 env。
+- **`ATTERM_BOOTSTRAP_ADMIN_EMAIL` 未设置**：relay 正常启动，不打印 claim token、也不创建 admin。可手动提权某用户（`UPDATE users SET is_admin=1 WHERE email='you@…';`）。
+- **email 已设置**：relay 每次启动都为该 email 打印一条 7 天有效、**单次使用**的 claim token。在 `/signup.html` 用**该邮箱注册一个新账号**并把 token 填进「邀请码 / claim token」框，注册完成即创建用户并提为 admin（token 随即作废）。
 
-**安全提醒**：bootstrap 用户创建/提权后，请把 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 从 env 文件 / systemd unit 删除并重启 relay。明文密码长期留在进程环境里（`/proc/self/environ`、备份、同宿主其他服务）都可能被读出来。
+claim token 是 OPAQUE 注册的「会合凭据」：`register/finalize` 校验 token 邮箱匹配 → 创建用户 → 消费 token → 提权。token 只在日志里出现一次、不可找回，过期或忘了就重启 relay 重新生成。注意它只能用于**注册新账号**——若该邮箱已注册过，token 无法消费（邮箱已占用），此时改用上面的 SQL 直接提权。
 
 公网监听场景下 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 是必需的（缺失时 relay 拒绝启动，除非 `--dev-insecure`）。
+
+### 管理后台（Admin）
+
+以 admin 账号登录后，顶部导航出现 **Admin**，大部分运行时配置都在这里改、保存即生效、无需重启（持久化到 `<config-dir>/relay.json`，权限 0600）：
+
+- **Config**：速率限制、每 key 连接上限、Origin 白名单、详细日志开关（`debug` / `debug_payload`，后者会记录终端输入输出，属敏感信息，仅排查时临时开）。
+- **Feishu**：飞书集成开关 + 加密密钥（可一键「生成」32 字节安全码）+ Open Platform base URL。保存后 relay 即可热接入飞书，无需重启；关闭即拆除。该密钥用于加密 `users.db` 里的飞书凭据，存在 `relay.json`（GET 接口只回显末 4 位、绝不返回明文）。
+- **Invitations / Users**：邀请记录与用户/角色管理。
+
+> 唯一需要重启才生效的是 VAPID subject（Web Push 启动时一次性消费）。
 
 ## 安全模型
 
 AT Term 的默认策略是 fail-closed：
 
-- 公网 relay 必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`；首次启动若要自动创建该 admin 用户，`ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 须满足 ≥16 字符、≥3 类字符、不在弱密码黑名单内，否则启动拒绝。Bootstrap 完成后应从环境中删除密码 env。
+- 公网 relay 必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（缺失则拒绝启动，除非 `--dev-insecure`）；admin 通过启动日志里的一次性 claim token 完成 OPAQUE 注册获得。密码走 OPAQUE，relay 永不接收明文密码。
 - 公网 relay 必须使用明确的 `ATTERM_ORIGINS`。
 - 服务端鉴权不接受 `?token=` 参数；session token 通过 `Authorization: Bearer` 或浏览器 / 桌面 WebSocket 的 `Sec-WebSocket-Protocol` 传递，避免写进 URL。
 - session token（`ses_…`）以 sha256 哈希存储，明文只在登录 / 配对响应里返回给客户端一次，由客户端自行持久化。

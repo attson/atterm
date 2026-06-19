@@ -85,7 +85,7 @@ func TestCheck_SettingsMissingMarkerEntries(t *testing.T) {
 	// Write a settings.json that has zero atterm entries.
 	os.MkdirAll(claudeDir(home), 0o700)
 	os.WriteFile(claudeSettingsPath(home),
-		[]byte(`{"hooks":{"Notification":[{"matcher":{"type":"x"},"command":"/u/y"}]}}`),
+		[]byte(`{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"/u/y"}]}]}}`),
 		0o644)
 
 	s := checkAt(home, true)
@@ -105,7 +105,7 @@ func TestCheck_SettingsCommandPathStale(t *testing.T) {
 	// Manually mutate settings.json so one atterm entry points at a
 	// stale (different) path.
 	cfg, _ := readClaudeSettings(home)
-	cfg.Hooks.Notification[0].Command = "/tmp/wrong/.atterm/bin/atterm-hook"
+	cfg.Hooks.Notification[0].Hooks[0].Command = "/tmp/wrong/.atterm/bin/atterm-hook"
 	writeClaudeSettings(home, cfg)
 
 	s := checkAt(home, true)

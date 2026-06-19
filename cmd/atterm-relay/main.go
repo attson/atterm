@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"flag"
 	"io/fs"
 	"log"
@@ -17,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/relay"
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webhook"
@@ -50,11 +48,6 @@ func main() {
 		log.Fatal("ATTERM_BOOTSTRAP_ADMIN_EMAIL must be set for a public relay; pass --dev-insecure to skip (development only)")
 	}
 
-	allowedOrigins := allowedOriginHosts(*origins)
-	if publicListen && len(allowedOrigins) == 0 && !*devInsecure {
-		log.Fatal("refusing public relay without --origins; set --origins https://relay.example.com or pass --dev-insecure for development")
-	}
-
 	// Resolve persistence directory.
 	persistDir := *configDir
 	if persistDir == "" && *configPath != "" {
@@ -64,10 +57,10 @@ func main() {
 		persistDir = "./data/atterm-relay"
 	}
 
-	// Open user store (SQLite). Create the persistence directory if it
-	// doesn't exist yet — first-run bootstrap should "just work" without
-	// requiring the operator to pre-create the directory. Without this
-	// SQLite fails with a misleading "out of memory (CANTOPEN)" error.
+	// Create the persistence directory if it doesn't exist yet — first-run
+	// bootstrap should "just work" without requiring the operator to
+	// pre-create it. Without this SQLite fails with a misleading
+	// "out of memory (CANTOPEN)" error.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -75,21 +68,26 @@ func main() {
 		log.Fatalf("create persist dir %s: %v", persistDir, err)
 	}
 
-	encKeyB64 := os.Getenv("ATTERM_FEISHU_ENCRYPT_KEY")
-	if encKeyB64 == "" {
-		log.Fatal("ATTERM_FEISHU_ENCRYPT_KEY is required (32 random bytes, base64-encoded)")
+	// Admin config persistence. Default the path under persistDir so runtime
+	// admin changes (Feishu integration, limits, origins) always have
+	// somewhere to land even when --config / ATTERM_RELAY_CONFIG is unset.
+	cfgFilePath := *configPath
+	if cfgFilePath == "" {
+		cfgFilePath = filepath.Join(persistDir, "relay.json")
 	}
-	encKey, err := base64.StdEncoding.DecodeString(encKeyB64)
-	if err != nil || len(encKey) != 32 {
-		log.Fatalf("ATTERM_FEISHU_ENCRYPT_KEY: want 32 base64-decoded bytes, got %d (err=%v)", len(encKey), err)
-	}
-	secretCipher, err := userstore.NewSecretCipher(encKey)
+	adminCfg, err := relay.LoadAdminConfig(cfgFilePath)
 	if err != nil {
-		log.Fatalf("secret cipher: %v", err)
+		log.Fatalf("load relay config: %v", err)
 	}
+	adminStore := relay.NewAdminConfigStore(cfgFilePath, adminCfg)
 
+	// Open the user store WITHOUT a field-encryption cipher. Core relay
+	// (OPAQUE auth, sessions, web, push) needs no Feishu key; the cipher is
+	// attached later only if Feishu is enabled (env seed below, or via the
+	// admin API at runtime). This is what lets the relay boot with zero
+	// Feishu configuration instead of crash-looping.
 	dbPath := filepath.Join(persistDir, "users.db")
-	store, err := userstore.Open(ctx, dbPath, userstore.WithSecretCipher(secretCipher))
+	store, err := userstore.Open(ctx, dbPath)
 	if err != nil {
 		log.Fatalf("open userstore: %v", err)
 	}
@@ -107,16 +105,52 @@ func main() {
 		log.Fatalf("bootstrap admin: %v", err)
 	}
 
-	adminCfg := relay.AdminConfig{}
-	var adminStore *relay.AdminConfigStore
-	if *configPath != "" {
-		var err error
-		adminCfg, err = relay.LoadAdminConfig(*configPath)
-		if err != nil {
-			log.Fatalf("load relay config: %v", err)
-		}
-		adminStore = relay.NewAdminConfigStore(*configPath, adminCfg)
+	// One-time env → config seeding (config wins). Keeps existing
+	// env-configured deployments working while moving the source of truth
+	// into relay.json, which the admin UI then manages.
+	seeded := false
+	if v := os.Getenv("ATTERM_FEISHU_ENCRYPT_KEY"); v != "" && adminCfg.FeishuEncryptKey == "" {
+		adminCfg.FeishuEncryptKey = v
+		adminCfg.FeishuEnabled = true
+		seeded = true
 	}
+	if v := os.Getenv("ATTERM_FEISHU_BASE_URL"); v != "" && adminCfg.FeishuBaseURL == "" {
+		adminCfg.FeishuBaseURL = v
+		seeded = true
+	}
+	if envOrigins := splitCSV(*origins); len(envOrigins) > 0 && len(adminCfg.AllowedOrigins) == 0 {
+		adminCfg.AllowedOrigins = envOrigins
+		seeded = true
+	}
+	if adminCfg.VAPIDSubject == "" {
+		adminCfg.VAPIDSubject = *vapidSubject
+		seeded = true
+	}
+	// Debug flags/env seed the config only when turned on (a bool can't tell
+	// "unset" from "false"); the admin UI is then the source of truth.
+	if *debug && !adminCfg.Debug {
+		adminCfg.Debug = true
+		seeded = true
+	}
+	if *debugPayload && !adminCfg.DebugPayload {
+		adminCfg.DebugPayload = true
+		seeded = true
+	}
+	if seeded {
+		if err := adminStore.Set(adminCfg); err != nil {
+			log.Printf("WARN: persist seeded relay config: %v", err)
+		}
+		adminCfg = adminStore.Snapshot()
+	}
+
+	// Effective origins come from config (seeded from --origins/env above).
+	// A public relay still requires at least one user-provided origin unless
+	// --dev-insecure; desktop webview hosts are appended for runtime matching.
+	if publicListen && len(adminCfg.AllowedOrigins) == 0 && !*devInsecure {
+		log.Fatal("refusing public relay without origins; set --origins/ATTERM_ORIGINS or configure them in the admin UI, or pass --dev-insecure for development")
+	}
+	allowedOrigins := allowedOriginHosts(strings.Join(adminCfg.AllowedOrigins, ","))
+
 	rateVal := *rateLimit
 	if rateVal == 0 {
 		rateVal = adminCfg.RateLimitPerMinute
@@ -139,8 +173,8 @@ func main() {
 		WebFS:                webFS,
 		Version:              Version,
 		AllowedOrigins:       allowedOrigins,
-		Debug:                *debug || *debugPayload,
-		DebugPayload:         *debugPayload,
+		Debug:                adminCfg.Debug || adminCfg.DebugPayload,
+		DebugPayload:         adminCfg.DebugPayload,
 		RateLimitPerMinute:   rateVal,
 		MaxConnectionsPerKey: maxVal,
 		AdminConfigStore:     adminStore,
@@ -149,7 +183,12 @@ func main() {
 		OpaqueServer:         opaqueSrv,
 	}
 
-	wpSvc, wpErr := webpush.Open(persistDir, *vapidSubject)
+	// VAPID subject is consumed once here; changing it later needs a restart.
+	effectiveVapid := adminCfg.VAPIDSubject
+	if effectiveVapid == "" {
+		effectiveVapid = *vapidSubject
+	}
+	wpSvc, wpErr := webpush.Open(persistDir, effectiveVapid)
 	if wpErr != nil {
 		log.Printf("WARN: web-push disabled: %v", wpErr)
 		wpSvc = nil
@@ -157,24 +196,28 @@ func main() {
 	cfg.WebPush = wpSvc
 	cfg.Webhook = webhook.New(webhookStoreAdapter{store})
 
-	feishuBase := os.Getenv("ATTERM_FEISHU_BASE_URL")
-	if feishuBase == "" {
-		feishuBase = "https://open.feishu.cn"
-	}
-	feishuHTTP := &http.Client{Timeout: 10 * time.Second}
-	feishuSvc := feishu.NewService(feishu.ServiceConfig{
-		Store: relay.NewFeishuBindStore(store),
-		IM:    feishu.NewClient(feishuBase, feishuHTTP),
-		Token: feishu.NewTenantTokenCache(feishuBase, feishuHTTP, time.Now),
-	})
-	cfg.Feishu = feishuSvc
-	log.Printf("feishu: app-mode integration enabled (base=%s)", feishuBase)
-
 	if *devInsecure {
 		log.Printf("WARNING: INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")
 	}
 
 	srv := relay.NewServer(cfg)
+
+	// Attach Feishu at boot if enabled with a usable key. Never fatal — a
+	// missing or bad key just leaves Feishu off; an admin can fix it in the
+	// UI without restarting.
+	if adminCfg.FeishuEnabled {
+		if key, err := adminCfg.DecodeFeishuKey(); err != nil {
+			log.Printf("WARN: feishu disabled: %v", err)
+		} else if err := srv.ApplyFeishuConfig(true, key, adminCfg.FeishuBaseURL); err != nil {
+			log.Printf("WARN: feishu enable failed: %v", err)
+		} else {
+			base := adminCfg.FeishuBaseURL
+			if base == "" {
+				base = "https://open.feishu.cn"
+			}
+			log.Printf("feishu: app-mode integration enabled (base=%s)", base)
+		}
+	}
 
 	if wpSvc != nil {
 		// Schedule daily cleanup of legacy web-push subscription files.

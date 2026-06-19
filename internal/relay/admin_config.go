@@ -24,6 +24,42 @@ type AdminConfig struct {
 	RateLimitPerMinute   int           `json:"rate_limit_per_minute"`
 	MaxConnectionsPerKey int           `json:"max_connections_per_key"`
 	ReadOnlyTokens       []StoredToken `json:"read_only_tokens,omitempty"`
+
+	// Feishu integration — moved out of env so an admin can toggle it at
+	// runtime. FeishuEncryptKey is the relay-wide field-encryption key
+	// (base64, 32 bytes) that protects per-user Feishu credentials at rest
+	// in users.db. It lives in this 0600 file, never logged or returned in
+	// plaintext by the admin API.
+	FeishuEnabled    bool   `json:"feishu_enabled,omitempty"`
+	FeishuEncryptKey string `json:"feishu_encrypt_key,omitempty"`
+	FeishuBaseURL    string `json:"feishu_base_url,omitempty"`
+
+	// AllowedOrigins is the HTTP/WS Origin allow-list (hot-reloadable).
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+	// VAPIDSubject is persisted but applied only at startup (webpush.Open
+	// consumes it once); changing it needs a relay restart.
+	VAPIDSubject string `json:"vapid_subject,omitempty"`
+
+	// Debug / DebugPayload are hot-reloadable verbose-logging switches.
+	// DebugPayload also logs PTY byte contents (terminal in/out) — sensitive.
+	Debug        bool `json:"debug,omitempty"`
+	DebugPayload bool `json:"debug_payload,omitempty"`
+}
+
+// DecodeFeishuKey decodes FeishuEncryptKey to its 32 raw bytes, or returns
+// an error if it is empty or malformed.
+func (c AdminConfig) DecodeFeishuKey() ([]byte, error) {
+	if c.FeishuEncryptKey == "" {
+		return nil, errors.New("feishu encrypt key is empty")
+	}
+	raw, err := base64.StdEncoding.DecodeString(c.FeishuEncryptKey)
+	if err != nil {
+		return nil, fmt.Errorf("feishu encrypt key: not valid base64: %w", err)
+	}
+	if len(raw) != 32 {
+		return nil, fmt.Errorf("feishu encrypt key: want 32 bytes, got %d", len(raw))
+	}
+	return raw, nil
 }
 
 type AdminConfigStore struct {
@@ -125,11 +161,18 @@ func (c AdminConfig) validate() error {
 			return fmt.Errorf("read-only token %q has unsupported hash", id)
 		}
 	}
+	// A Feishu-enabled config must carry a usable 32-byte key.
+	if c.FeishuEnabled {
+		if _, err := c.DecodeFeishuKey(); err != nil {
+			return fmt.Errorf("feishu enabled but %w", err)
+		}
+	}
 	return nil
 }
 
 func cloneAdminConfig(cfg AdminConfig) AdminConfig {
 	cfg.ReadOnlyTokens = append([]StoredToken(nil), cfg.ReadOnlyTokens...)
+	cfg.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
 	return cfg
 }
 

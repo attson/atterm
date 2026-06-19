@@ -87,7 +87,7 @@ func collectHealth(ctx context.Context, s *Server, r *http.Request) HealthPayloa
 		connLimit = defaultMaxConnections
 	}
 
-	originsCopy := append([]string(nil), cfg.AllowedOrigins...)
+	originsCopy := append([]string(nil), s.currentAllowedOrigins()...)
 
 	payload := HealthPayload{
 		Version:                cfg.Version,

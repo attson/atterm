@@ -80,12 +80,14 @@ func uninstallAt(home string) error {
 	return writeClaudeSettings(home, cfg)
 }
 
-// desiredEntries returns the two Notification entries we own, pointing
-// at the supplied symlink path.
+// desiredEntries returns the single Notification entry we own. The
+// matcher is empty (match all notifications) and the command relays the
+// full hook payload to the atterm desktop process, which discriminates
+// the event kind itself — so one schema-valid entry replaces what used
+// to be two object-matcher entries.
 func desiredEntries(link string) []HookEntry {
 	return []HookEntry{
-		{Matcher: HookMatcher{Type: "permission_prompt"}, Command: link},
-		{Matcher: HookMatcher{Type: "idle_prompt", Tool: "AskUserQuestion"}, Command: link},
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
 	}
 }
 

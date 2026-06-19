@@ -2,10 +2,13 @@ package relay
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/attson/atterm/internal/userstore"
@@ -334,6 +337,10 @@ type adminConfigResponse struct {
 	DefaultRateLimitPerMinute   int `json:"default_rate_limit_per_minute"`
 	DefaultMaxConnectionsPerKey int `json:"default_max_connections_per_key"`
 
+	// Hot-reloadable verbose logging switches.
+	Debug        bool `json:"debug"`
+	DebugPayload bool `json:"debug_payload"`
+
 	Version string `json:"version"`
 }
 
@@ -354,8 +361,12 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.adminConfigResponse())
 	case http.MethodPut:
 		var req struct {
-			RateLimitPerMinute   int `json:"rate_limit_per_minute"`
-			MaxConnectionsPerKey int `json:"max_connections_per_key"`
+			RateLimitPerMinute   int       `json:"rate_limit_per_minute"`
+			MaxConnectionsPerKey int       `json:"max_connections_per_key"`
+			AllowedOrigins       *[]string `json:"allowed_origins,omitempty"`
+			VAPIDSubject         *string   `json:"vapid_subject,omitempty"`
+			Debug                *bool     `json:"debug,omitempty"`
+			DebugPayload         *bool     `json:"debug_payload,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -364,12 +375,33 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := s.updateAdminConfig(func(cfg AdminConfig) AdminConfig {
 			cfg.RateLimitPerMinute = req.RateLimitPerMinute
 			cfg.MaxConnectionsPerKey = req.MaxConnectionsPerKey
+			if req.AllowedOrigins != nil {
+				cfg.AllowedOrigins = *req.AllowedOrigins
+			}
+			if req.VAPIDSubject != nil {
+				cfg.VAPIDSubject = *req.VAPIDSubject
+			}
+			if req.Debug != nil {
+				cfg.Debug = *req.Debug
+			}
+			if req.DebugPayload != nil {
+				cfg.DebugPayload = *req.DebugPayload
+			}
 			return cfg
 		}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		s.applyRuntimeLimits(req.RateLimitPerMinute, req.MaxConnectionsPerKey)
+		// Origins + debug hot-apply immediately; VAPID subject is persisted but
+		// only takes effect on restart (webpush.Open consumes it once).
+		if req.AllowedOrigins != nil {
+			s.SetAllowedOrigins(OriginPatterns(*req.AllowedOrigins))
+		}
+		if req.Debug != nil || req.DebugPayload != nil {
+			cur := s.cfg.AdminConfigStore.Snapshot()
+			s.SetDebug(cur.Debug, cur.DebugPayload)
+		}
 		writeJSON(w, s.adminConfigResponse())
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -388,6 +420,8 @@ func (s *Server) adminConfigResponse() adminConfigResponse {
 		MaxConnectionsPerKey:        cfg.MaxConnectionsPerKey,
 		DefaultRateLimitPerMinute:   defaultRateLimitPerMinute,
 		DefaultMaxConnectionsPerKey: defaultMaxConnections,
+		Debug:                       s.debugOn(),
+		DebugPayload:                s.debugPayloadOn(),
 		Version:                     s.cfg.Version,
 	}
 }
@@ -399,6 +433,132 @@ func (s *Server) updateAdminConfig(update func(AdminConfig) AdminConfig) error {
 	cfg := s.cfg.AdminConfigStore.Snapshot()
 	cfg = update(cfg)
 	return s.cfg.AdminConfigStore.Set(cfg)
+}
+
+// feishuAdminResponse is the masked Feishu integration view returned to the
+// admin UI. The plaintext encrypt key is NEVER included — only whether one is
+// set and its last 4 chars for recognition.
+type feishuAdminResponse struct {
+	Enabled                 bool   `json:"enabled"`
+	Running                 bool   `json:"running"`
+	BaseURL                 string `json:"base_url"`
+	KeySet                  bool   `json:"key_set"`
+	KeyLast4                string `json:"key_last4,omitempty"`
+	VAPIDSubject            string `json:"vapid_subject,omitempty"`
+	RequiresRestartForVAPID bool   `json:"requires_restart_for_vapid"`
+}
+
+func (s *Server) feishuAdminResponse() feishuAdminResponse {
+	cfg := AdminConfig{}
+	if s.cfg.AdminConfigStore != nil {
+		cfg = s.cfg.AdminConfigStore.Snapshot()
+	}
+	resp := feishuAdminResponse{
+		Enabled:                 cfg.FeishuEnabled,
+		Running:                 s.FeishuEnabled(),
+		BaseURL:                 cfg.FeishuBaseURL,
+		KeySet:                  cfg.FeishuEncryptKey != "",
+		VAPIDSubject:            cfg.VAPIDSubject,
+		RequiresRestartForVAPID: true,
+	}
+	if n := len(cfg.FeishuEncryptKey); n >= 4 {
+		resp.KeyLast4 = cfg.FeishuEncryptKey[n-4:]
+	}
+	return resp
+}
+
+// handleAdminFeishuHTTP serves GET/PUT /admin/api/feishu — the admin UI's
+// Feishu integration panel. PUT persists to relay.json and hot-applies the
+// enable/disable transition (attach/detach the secret cipher + handler) with
+// no restart.
+func (s *Server) handleAdminFeishuHTTP(w http.ResponseWriter, r *http.Request) {
+	u, ok := UserFromContext(r.Context())
+	if !ok || u == nil || !u.IsAdmin {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, s.feishuAdminResponse())
+	case http.MethodPut:
+		var req struct {
+			Enabled    bool   `json:"enabled"`
+			EncryptKey string `json:"encrypt_key"`
+			BaseURL    string `json:"base_url"`
+			Force      bool   `json:"force"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if s.cfg.AdminConfigStore == nil {
+			http.Error(w, "admin config path is not configured", http.StatusInternalServerError)
+			return
+		}
+		cur := s.cfg.AdminConfigStore.Snapshot()
+		baseURL := strings.TrimSpace(req.BaseURL)
+		// Keep the existing key when the client doesn't resend one, so a plain
+		// enable/disable toggle needn't carry the secret.
+		newKey := strings.TrimSpace(req.EncryptKey)
+		effectiveKey := cur.FeishuEncryptKey
+		if newKey != "" {
+			// Rotation guard: a different key orphans existing encrypted rows.
+			if cur.FeishuEncryptKey != "" && cur.FeishuEncryptKey != newKey && !req.Force {
+				http.Error(w, "changing the encrypt key makes existing Feishu bindings undecryptable; resend with force=true to proceed", http.StatusConflict)
+				return
+			}
+			effectiveKey = newKey
+		}
+		if req.Enabled && effectiveKey == "" {
+			http.Error(w, "encrypt_key required to enable Feishu", http.StatusBadRequest)
+			return
+		}
+		var keyBytes []byte
+		if effectiveKey != "" {
+			b, err := AdminConfig{FeishuEncryptKey: effectiveKey}.DecodeFeishuKey()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			keyBytes = b
+		}
+		if err := s.updateAdminConfig(func(cfg AdminConfig) AdminConfig {
+			cfg.FeishuEnabled = req.Enabled
+			cfg.FeishuEncryptKey = effectiveKey
+			cfg.FeishuBaseURL = baseURL
+			return cfg
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := s.ApplyFeishuConfig(req.Enabled, keyBytes, baseURL); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, s.feishuAdminResponse())
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAdminFeishuGenerateKey returns a fresh base64-encoded 32-byte key for
+// the UI's "generate" button. It does NOT persist — the client PUTs it back.
+func (s *Server) handleAdminFeishuGenerateKey(w http.ResponseWriter, r *http.Request) {
+	u, ok := UserFromContext(r.Context())
+	if !ok || u == nil || !u.IsAdmin {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		http.Error(w, "rng failure", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"encrypt_key": base64.StdEncoding.EncodeToString(buf)})
 }
 
 func (s *Server) applyRuntimeLimits(rateLimit, connLimit int) {
@@ -430,4 +590,3 @@ func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
 }
-

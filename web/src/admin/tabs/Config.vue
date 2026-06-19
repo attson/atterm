@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { NCard, NForm, NFormItem, NInputNumber, NButton, NSpace, useMessage } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInputNumber, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { getAdminConfig, setAdminConfig } from '@shared/api/admin'
 import type { AdminConfig } from '@shared/api/types'
@@ -9,6 +9,8 @@ import { useI18n } from '@shared/i18n/useI18n'
 const cfg = ref<AdminConfig | null>(null)
 const rateInput = ref<number>(0)
 const connInput = ref<number>(0)
+const debugInput = ref(false)
+const debugPayloadInput = ref(false)
 const loading = ref(true)
 const saving = ref(false)
 const errorMsg = ref('')
@@ -36,6 +38,8 @@ async function load() {
     cfg.value = c
     rateInput.value = c.rate_limit_per_minute
     connInput.value = c.max_connections_per_key
+    debugInput.value = c.debug
+    debugPayloadInput.value = c.debug_payload
   } catch (e) {
     if (e instanceof ApiError) errorMsg.value = t('admin.config.loadFailed')
   } finally {
@@ -51,10 +55,14 @@ async function onSave() {
     const updated = await setAdminConfig({
       rate_limit_per_minute: Math.round(rateInput.value),
       max_connections_per_key: Math.round(connInput.value),
+      debug: debugInput.value,
+      debug_payload: debugPayloadInput.value,
     })
     cfg.value = updated
     rateInput.value = updated.rate_limit_per_minute
     connInput.value = updated.max_connections_per_key
+    debugInput.value = updated.debug
+    debugPayloadInput.value = updated.debug_payload
     message.success(t('setup.saved'))
   } catch (e) {
     if (e instanceof ApiError) errorMsg.value = t('admin.config.saveFailed')
@@ -95,6 +103,18 @@ onMounted(load)
           <span class="muted">{{ connEffective }}</span>
         </n-space>
       </n-form-item>
+      <n-form-item :label="t('admin.config.debug')" :show-feedback="false">
+        <n-space align="center" :size="8">
+          <n-switch v-model:value="debugInput" data-testid="cfg-debug" />
+          <span class="muted">{{ t('admin.config.debugHint') }}</span>
+        </n-space>
+      </n-form-item>
+      <n-form-item :label="t('admin.config.debugPayload')" :show-feedback="false">
+        <n-space align="center" :size="8">
+          <n-switch v-model:value="debugPayloadInput" data-testid="cfg-debug-payload" />
+          <span class="warn">{{ t('admin.config.debugPayloadWarn') }}</span>
+        </n-space>
+      </n-form-item>
       <n-space class="actions" align="center">
         <n-button
           type="primary"
@@ -115,6 +135,7 @@ onMounted(load)
 <style scoped>
 .hint { color: var(--fg-dim); font-size: 0.875rem; margin: 0 0 1rem; }
 .muted { color: var(--fg-dim); font-size: 0.875rem; }
+.warn { color: var(--warn, #d89614); font-size: 0.8125rem; }
 .actions { margin-top: 1rem; }
 .version code { color: var(--fg); }
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }

@@ -241,14 +241,24 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 
 `cmd/atterm-relay` 是生产入口，默认 fail-closed：
 
-- 用户账号和身份信息存储在 SQLite（`users.db`，路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；
-- 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`（见协议规范 §鉴权），除非显式 `--dev-insecure`；
+- 用户账号和身份信息存储在 SQLite（`users.db`，路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；密码走 OPAQUE，relay 永不接收明文密码（见 auth.md §12）；
+- 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（relay 启动打印一次性 claim token，操作员用它完成 OPAQUE 注册即获得 admin；**无 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`**），除非显式 `--dev-insecure`；
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`；
 - 默认返回 CSP/security headers，`web/` 项目代码只允许同源 script 和同源 stylesheet；CSP 额外允许 inline style 供 xterm.js 运行时布局样式，并预留 Cloudflare Web Analytics beacon 源（不允许应用代码引入 CDN 依赖）；Vue/xterm/Naive UI 等依赖由 Vite 打包为同源 assets，并由 PWA service worker 预缓存；
 - 对 HTTP 请求和 WS upgrade 先按远端 IP 限流，鉴权成功后再按远端 IP + token hash 限流，并限制同一 key 的活跃 WS 连接数；
 - 支持 owner 发布的 `remote_permission`（view/control/full），relay 和 desktop uplink 双重强制执行；
-- 可选 `--config` 启用持久化 runtime 配置（rate limit、连接数）；`/admin/` API 需 bootstrap admin 用户（通过 env vars 初始化）；
+- runtime 配置持久化在 `<config-dir>/relay.json`（`--config` / `ATTERM_RELAY_CONFIG` 覆盖路径），`/admin/api/*` 可运行时读写并热生效，无需重启（见下「运行时配置」）；`/admin/` API 需 admin 用户；
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
+
+### 运行时配置（`relay.json` + 管理后台）
+
+启动所需 env 已收窄到「核心」（bootstrap email、origins、持久化目录）；飞书、限流、Origin 白名单、VAPID subject、详细日志等都下沉到 `internal/relay/admin_config.go` 的 `AdminConfig`，由 `/admin/api/config` 与 `/admin/api/feishu` 读写并热应用：
+
+- **热生效（不重启）**：origins / debug 走 `Server` 上的 `atomic.Pointer` / `atomic.Bool`；限流走 `applyRuntimeLimits`；飞书走 `Server.ApplyFeishuConfig`（运行时建/拆 secret cipher + handler，路由常注册后按原子 handler 门控，因为 `http.ServeMux` 不支持注销路由）。
+- **唯一需重启**：VAPID subject（`webpush.Open` 启动时一次性消费）。
+- **DB 在无 secret cipher 下也能打开**：字段加密 cipher 只在启用飞书时挂载（`userstore.SetSecretCipher`），所以 `ATTERM_FEISHU_ENCRYPT_KEY` 不再是启动必填——没配飞书的 relay 不会因缺密钥崩溃。
+- **env→config 播种**：上述每个 env 在首次启动时若 `relay.json` 对应项为空则写入一次（config 优先），之后管理后台是唯一可信源。
+- 飞书主加密密钥有意持久化在 `relay.json`（0600）以保护 `users.db` 里的飞书凭据；admin GET 只回显末 4 位、绝不返回明文。详见 AGENTS.md 红线 #26。
 
 鉴权详情见协议规范 §鉴权（统一为 Bearer session token，admin 由 `users.is_admin` 决定）。
 
@@ -263,8 +273,7 @@ Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等
 里发布 `remote_permission`。远端 relay 计算 principal scope 与 owner 权限的交集：
 session token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
 
-relay admin 配置只服务运维场景：调整 rate limit 和连接数。用户账号管理（邀请码、
-用户列表、密码重置）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。
+relay admin 配置（`AdminConfig` / `relay.json`）覆盖运维场景：rate limit、连接数、Origin 白名单、详细日志开关，以及飞书集成（开关 + 加密密钥 + base URL）。改动经 `/admin/api/config` 与 `/admin/api/feishu` 热生效（见上「运行时配置」）。用户账号管理（邀请、用户列表、提权）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。前端对应 `web/src/admin/tabs/{Config,FeishuConfig,Users,Invitations}.vue`。
 
 ## 前端架构细节
 
@@ -318,7 +327,7 @@ web/src/
 ├── main/                  session list + xterm attach + PWA install hint
 ├── login/ signup/ setup/  auth 与移动 relay bootstrap
 ├── settings/              tokens / sessions / push / webhooks / relay config
-├── admin/                 users / invitations / relay config
+├── admin/                 users / invitations / config（限流·origins·debug）/ feishu（开关·密钥·base url）
 └── shared/                api clients、ws protocol、i18n、Naive theme、Topbar
 ```
 

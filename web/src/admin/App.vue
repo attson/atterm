@@ -14,8 +14,9 @@ import { naiveLocale } from '@shared/i18n/naive-locale'
 import Invitations from './tabs/Invitations.vue'
 import Users from './tabs/Users.vue'
 import Config from './tabs/Config.vue'
+import FeishuConfig from './tabs/FeishuConfig.vue'
 
-const TAB_NAMES = ['invitations', 'users', 'config'] as const
+const TAB_NAMES = ['invitations', 'users', 'config', 'feishu'] as const
 type TabName = (typeof TAB_NAMES)[number]
 
 function nameFromHash(): TabName {
@@ -67,6 +68,9 @@ const overrides = getNaiveOverrides()
           </n-tab-pane>
           <n-tab-pane name="config" :tab="t('admin.configTab')">
             <Config />
+          </n-tab-pane>
+          <n-tab-pane name="feishu" :tab="t('admin.feishuTab')">
+            <FeishuConfig />
           </n-tab-pane>
         </n-tabs>
       </main>

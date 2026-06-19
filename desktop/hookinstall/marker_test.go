@@ -20,7 +20,7 @@ func TestIsAttermHookCommand(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := isAttermHookCommand(HookEntry{Command: c.cmd})
+			got := isAttermHookCommand(HookEntry{Hooks: []HookCommand{{Type: "command", Command: c.cmd}}})
 			if got != c.want {
 				t.Errorf("isAttermHookCommand(%q) = %v; want %v", c.cmd, got, c.want)
 			}

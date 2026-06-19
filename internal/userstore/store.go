@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -17,19 +18,32 @@ import (
 
 // SQLiteStore is the production Store backed by a single SQLite file.
 type SQLiteStore struct {
-	db     *sql.DB
-	cipher *SecretCipher // nil = feishu CRUD will error
+	db *sql.DB
+	// cipher is the AEAD cipher for field-level secret encryption (Feishu
+	// app_secret etc.). It is settable after Open so the relay can enable
+	// Feishu at runtime without a restart; a nil pointer means Feishu CRUD
+	// errors. Use an atomic pointer because SetSecretCipher can race with
+	// in-flight Feishu reads/writes — those load it once into a local.
+	cipher atomic.Pointer[SecretCipher]
 }
 
 // OpenOption is a functional option for Open.
 type OpenOption func(*SQLiteStore)
 
 // WithSecretCipher sets the AEAD cipher used for field-level secret encryption
-// (e.g. Feishu app_secret). Must be called with a non-nil cipher before any
+// (e.g. Feishu app_secret). Must be set with a non-nil cipher before any
 // Feishu CRUD methods are used.
 func WithSecretCipher(c *SecretCipher) OpenOption {
-	return func(s *SQLiteStore) { s.cipher = c }
+	return func(s *SQLiteStore) { s.cipher.Store(c) }
 }
+
+// SetSecretCipher swaps the field-encryption cipher at runtime. Pass a
+// non-nil cipher to enable Feishu CRUD, or nil to disable it. Safe to call
+// concurrently with Feishu reads/writes (they snapshot the pointer once).
+func (s *SQLiteStore) SetSecretCipher(c *SecretCipher) { s.cipher.Store(c) }
+
+// HasSecretCipher reports whether a field-encryption cipher is configured.
+func (s *SQLiteStore) HasSecretCipher() bool { return s.cipher.Load() != nil }
 
 // Open opens (or creates) the SQLite database at path and runs any pending
 // migrations. Pass ":memory:" for tests. WAL mode is enabled on file-backed

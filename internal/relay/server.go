@@ -6,12 +6,15 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -90,6 +93,26 @@ type Server struct {
 	conns       *connectionLimiter
 	startTime   time.Time
 	uplinkCount int64 // atomic; read via UplinkCount()
+	// feishu holds the runtime Feishu handler; nil = integration disabled.
+	// The /v1/feishu/* routes are registered once and gate on this pointer
+	// so the admin API can toggle Feishu without restarting (ServeMux has no
+	// route deregistration).
+	feishu feishuRuntime
+	// allowedOrigins is the hot-reloadable WS/HTTP Origin allow-list. Read
+	// per-request by acceptOptions/health; updated by SetAllowedOrigins.
+	allowedOrigins atomic.Pointer[[]string]
+	// debugEnabled / debugPayloadEnabled are hot-reloadable verbose-logging
+	// switches, read on every debug log call so the admin API can flip them
+	// without a restart. debugPayload additionally dumps PTY byte contents.
+	debugEnabled        atomic.Bool
+	debugPayloadEnabled atomic.Bool
+}
+
+// feishuRuntime is the swappable Feishu handler holder. mu serializes
+// enable/disable transitions; handler is loaded lock-free on the hot path.
+type feishuRuntime struct {
+	mu      sync.Mutex
+	handler atomic.Pointer[FeishuHTTPHandler]
 }
 
 // ServerDeps holds the constructed subsystems that BuildMux needs to wire
@@ -140,6 +163,10 @@ func NewServer(cfg Config) *Server {
 		conns:     newConnectionLimiter(connLimit),
 		startTime: time.Now(),
 	}
+	originsInit := append([]string(nil), cfg.AllowedOrigins...)
+	s.allowedOrigins.Store(&originsInit)
+	s.debugEnabled.Store(cfg.Debug)
+	s.debugPayloadEnabled.Store(cfg.DebugPayload)
 	// WebSocket + session-API routes — gated by requireSession.
 	s.mux.HandleFunc("/agent", s.requireSession(s.handleAgentHTTP))
 	s.mux.HandleFunc("/uplink", s.requireSession(s.handleUplinkHTTP))
@@ -154,20 +181,23 @@ func NewServer(cfg Config) *Server {
 	s.mux.HandleFunc("/admin/api/health", s.requireSession(s.requireAdminAccess(s.handleAdminHealthAPI)))
 	s.mux.HandleFunc("/admin/health", s.requireSession(s.requireAdminAccess(s.handleAdminHealth)))
 	s.mux.HandleFunc("/admin/api/config", s.requireSession(s.handleAdminConfigHTTP))
+	s.mux.HandleFunc("/admin/api/feishu", s.requireSession(s.handleAdminFeishuHTTP))
+	s.mux.HandleFunc("/admin/api/feishu/generate-key", s.requireSession(s.handleAdminFeishuGenerateKey))
 	// Web-push — all four routes need an authenticated user.
 	s.mux.HandleFunc("/api/push/key", s.requireSession(s.handlePushKey))
 	s.mux.HandleFunc("/api/push/subscribe", s.requireSession(s.handlePushSubscribe))
 	s.mux.HandleFunc("/api/push/unsubscribe", s.requireSession(s.handlePushUnsubscribe))
 	s.mux.HandleFunc("/api/push/test", s.requireSession(s.handlePushTest))
-	// Feishu bindings API — requires Store to be *SQLiteStore with cipher.
-	if cfg.Feishu != nil {
-		if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
-			fh := NewFeishuHTTPHandler(sqliteStore, cfg.Feishu)
-			s.mux.HandleFunc("/v1/feishu/bindings/me", s.requireSession(fh.ServeHTTPSession))
-			s.mux.HandleFunc("/v1/feishu/bindings/me/begin-pair", s.requireSession(fh.ServeHTTPSession))
-			// /v1/feishu/events/{hash} is unauthenticated (signed by encrypt_key).
-			// T12 fills the body; T11 registers the path with a 501 stub.
-			s.mux.HandleFunc("/v1/feishu/events/", fh.ServeHTTPEvents)
+	// Feishu bindings API — registered once whenever a SQLite store is
+	// present, then gated on the runtime handler so the admin API can enable
+	// or disable the integration without a restart. /v1/feishu/events/{hash}
+	// is unauthenticated (signed by encrypt_key).
+	if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
+		s.mux.HandleFunc("/v1/feishu/bindings/me", s.requireSession(s.serveFeishuSession))
+		s.mux.HandleFunc("/v1/feishu/bindings/me/begin-pair", s.requireSession(s.serveFeishuSession))
+		s.mux.HandleFunc("/v1/feishu/events/", s.serveFeishuEvents)
+		if cfg.Feishu != nil {
+			s.feishu.handler.Store(NewFeishuHTTPHandler(sqliteStore, cfg.Feishu))
 		}
 	}
 	if cfg.WebFS != nil {
@@ -286,11 +316,135 @@ func (s *Server) removeSession(id uuid.UUID) {
 	}
 }
 
-func (s *Server) acceptOptions() *websocket.AcceptOptions {
-	return &websocket.AcceptOptions{
-		InsecureSkipVerify: len(s.cfg.AllowedOrigins) == 0,
-		OriginPatterns:     s.cfg.AllowedOrigins,
+// currentAllowedOrigins returns a snapshot of the hot-reloadable Origin
+// allow-list. Never returns nil (empty slice = allow any origin / dev mode).
+func (s *Server) currentAllowedOrigins() []string {
+	if p := s.allowedOrigins.Load(); p != nil {
+		return *p
 	}
+	return nil
+}
+
+// SetAllowedOrigins hot-swaps the WS/HTTP Origin allow-list. An empty slice
+// reverts to "allow any origin". Safe to call at runtime. The stored value is
+// taken verbatim — callers that need desktop-webview hosts appended should
+// pass the result of OriginPatterns.
+func (s *Server) SetAllowedOrigins(origins []string) {
+	cp := append([]string(nil), origins...)
+	s.allowedOrigins.Store(&cp)
+}
+
+// relayDesktopWebviewOriginHosts mirror the packaged-Wails asset hosts so a
+// desktop client keeps matching after an admin edits origins at runtime.
+var relayDesktopWebviewOriginHosts = []string{"wails", "wails.localhost", "wails.localhost:*"}
+
+// OriginPatterns normalizes user-supplied origins to host patterns and appends
+// the desktop webview hosts. Empty input → nil (allow any origin / dev mode).
+// Mirrors the bootstrap's allowedOriginHosts so admin edits stay consistent.
+func OriginPatterns(origins []string) []string {
+	clean := make([]string, 0, len(origins))
+	for _, o := range origins {
+		if o = strings.TrimSpace(o); o != "" {
+			clean = append(clean, o)
+		}
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(clean)+len(relayDesktopWebviewOriginHosts))
+	for _, o := range clean {
+		if u, err := url.Parse(o); err == nil && u.Host != "" {
+			o = u.Host
+		}
+		out = appendUniqueOrigin(out, o)
+	}
+	for _, h := range relayDesktopWebviewOriginHosts {
+		out = appendUniqueOrigin(out, h)
+	}
+	return out
+}
+
+func appendUniqueOrigin(vs []string, v string) []string {
+	for _, e := range vs {
+		if e == v {
+			return vs
+		}
+	}
+	return append(vs, v)
+}
+
+func (s *Server) acceptOptions() *websocket.AcceptOptions {
+	origins := s.currentAllowedOrigins()
+	return &websocket.AcceptOptions{
+		InsecureSkipVerify: len(origins) == 0,
+		OriginPatterns:     origins,
+	}
+}
+
+// serveFeishuSession / serveFeishuEvents are the stable route handlers that
+// gate on the runtime Feishu handler. When disabled, session routes return
+// 503 and the (unauthenticated) events route returns 404 — close to the
+// pre-registration "not mounted → 404" behavior.
+func (s *Server) serveFeishuSession(w http.ResponseWriter, r *http.Request) {
+	h := s.feishu.handler.Load()
+	if h == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "feishu integration disabled"})
+		return
+	}
+	h.ServeHTTPSession(w, r)
+}
+
+func (s *Server) serveFeishuEvents(w http.ResponseWriter, r *http.Request) {
+	h := s.feishu.handler.Load()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.ServeHTTPEvents(w, r)
+}
+
+// FeishuEnabled reports whether a Feishu handler is currently attached.
+func (s *Server) FeishuEnabled() bool { return s.feishu.handler.Load() != nil }
+
+// ApplyFeishuConfig hot-applies a Feishu integration state without a restart.
+// When enabling, key must be 32 bytes: it sets the store's field-encryption
+// cipher and attaches a fresh handler. When disabling, it detaches the
+// handler first, then clears the cipher (so in-flight requests that already
+// snapshotted the cipher finish safely). Requires a *userstore.SQLiteStore.
+func (s *Server) ApplyFeishuConfig(enabled bool, key []byte, baseURL string) error {
+	store, ok := s.cfg.Store.(*userstore.SQLiteStore)
+	if !ok {
+		return errors.New("feishu requires a SQLite store")
+	}
+	s.feishu.mu.Lock()
+	defer s.feishu.mu.Unlock()
+	if !enabled {
+		s.feishu.handler.Store(nil)
+		store.SetSecretCipher(nil)
+		return nil
+	}
+	cipher, err := userstore.NewSecretCipher(key)
+	if err != nil {
+		return err
+	}
+	store.SetSecretCipher(cipher)
+	s.feishu.handler.Store(NewFeishuHTTPHandler(store, buildFeishuService(store, baseURL)))
+	return nil
+}
+
+// buildFeishuService constructs a Feishu service bound to store. Mirrors the
+// startup wiring so both the bootstrap and the admin hot-apply path share one
+// definition. An empty baseURL falls back to Feishu's public endpoint.
+func buildFeishuService(store *userstore.SQLiteStore, baseURL string) *feishu.Service {
+	if baseURL == "" {
+		baseURL = "https://open.feishu.cn"
+	}
+	httpc := &http.Client{Timeout: 10 * time.Second}
+	return feishu.NewService(feishu.ServiceConfig{
+		Store: NewFeishuBindStore(store),
+		IM:    feishu.NewClient(baseURL, httpc),
+		Token: feishu.NewTenantTokenCache(baseURL, httpc, time.Now),
+	})
 }
 
 func (s *Server) acceptOptionsWithAuthSubprotocol(r *http.Request) *websocket.AcceptOptions {

@@ -56,7 +56,6 @@ function groupByLabel(id: TaskGroupBy): string {
 
 <template>
   <section class="settings-tasks">
-    <h3 class="section-title">{{ t("tasks.settings.section") }}</h3>
     <div class="preset-list">
       <label v-for="id in presetIds" :key="id" class="preset-option">
         <input

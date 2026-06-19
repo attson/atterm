@@ -1,9 +1,11 @@
 <script lang="ts" setup>
-import { onMounted, ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
+  getLogPreview,
   getLoggingConfig,
   pickLogFilePath,
   setLoggingConfig,
+  type LogPreview,
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
 
@@ -18,6 +20,34 @@ const loading = ref(true);
 const error = ref("");
 const { t } = useI18n();
 
+// Inline log tail: refresh every 3 s while the panel is mounted so the
+// user can watch new lines land without opening the full-screen viewer.
+const tail = ref<LogPreview | null>(null);
+const tailError = ref("");
+const tailLoading = ref(false);
+let tailTimer: number | null = null;
+const tailEl = ref<HTMLPreElement | null>(null);
+
+async function refreshTail() {
+  if (!enabled.value) return;
+  tailLoading.value = true;
+  tailError.value = "";
+  try {
+    tail.value = await getLogPreview();
+  } catch (e: any) {
+    tailError.value = e?.message ?? String(e);
+  } finally {
+    tailLoading.value = false;
+  }
+  await nextTick();
+  const el = tailEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+watch(() => tail.value?.content, () => {
+  /* auto-scroll handled inside refreshTail */
+});
+
 onMounted(async () => {
   try {
     const cfg = await getLoggingConfig();
@@ -28,6 +58,15 @@ onMounted(async () => {
     error.value = e?.message ?? String(e);
   } finally {
     loading.value = false;
+  }
+  await refreshTail();
+  tailTimer = window.setInterval(refreshTail, 3000);
+});
+
+onBeforeUnmount(() => {
+  if (tailTimer !== null) {
+    window.clearInterval(tailTimer);
+    tailTimer = null;
   }
 });
 
@@ -102,6 +141,20 @@ async function onResetPath() {
       </div>
 
       <p v-if="error" class="error">{{ error }}</p>
+
+      <section v-if="enabled" class="tail-wrap">
+        <header class="tail-header">
+          <span class="tail-label">{{ t("settings.logging.liveTail") }}</span>
+          <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail">
+            {{ t("common.refresh") }}
+          </button>
+        </header>
+        <p v-if="tailError" class="tail-error">{{ tailError }}</p>
+        <p v-else-if="!tail || !tail.exists" class="tail-empty">
+          {{ t("settings.logging.noContent") }}
+        </p>
+        <pre v-else ref="tailEl" class="tail-content">{{ tail.content }}</pre>
+      </section>
     </template>
   </div>
 </template>
@@ -162,5 +215,53 @@ button {
 }
 button:hover {
   background: rgba(255, 255, 255, 0.04);
+}
+.tail-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.tail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tail-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: 1 1 auto;
+}
+.tail-refresh {
+  height: 24px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+.tail-empty {
+  color: var(--fg-dim);
+  font-size: 12px;
+  margin: 0;
+}
+.tail-error {
+  color: var(--bad);
+  font-size: 12px;
+  margin: 0;
+}
+.tail-content {
+  margin: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

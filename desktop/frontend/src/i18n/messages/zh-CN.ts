@@ -244,6 +244,7 @@ export const zhCN = {
       changeLocation: "更改位置",
       resetDefault: "重置默认值",
       viewLogs: "查看日志",
+      liveTail: "实时尾部（每 3 秒刷新）",
     },
     webhooks: {
       title: "Webhook",

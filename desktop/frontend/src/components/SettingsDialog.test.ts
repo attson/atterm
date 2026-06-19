@@ -31,7 +31,6 @@ describe("SettingsDialog shell", () => {
     expect(source).toContain('@click="switchTab(\'general\')"');
     expect(source).toContain('@click="switchTab(\'relay\')"');
     expect(source).toContain('@click="switchTab(\'webhooks\')"');
-    expect(source).toContain('@click="switchTab(\'logging\')"');
     expect(source).toContain('@click="switchTab(\'updates\')"');
     expect(source).toContain('@click="switchTab(\'plugins\')"');
   });
@@ -149,7 +148,7 @@ function navLabels(w: ReturnType<typeof mount>) {
 }
 
 describe("SettingsDialog caps gating", () => {
-  it("renders all 10 tabs with full desktop caps", () => {
+  it("renders all 9 tabs with full desktop caps (Logging folded into Diagnostics)", () => {
     const w = mountDialog();
     expect(navLabels(w)).toEqual([
       en.settings.tabs.general,
@@ -158,11 +157,12 @@ describe("SettingsDialog caps gating", () => {
       en.settings.tabs.plugins,
       en.settings.tabs.shortcuts,
       en.settings.templates.tab,
-      en.settings.tabs.logging,
       en.settings.tabs.updates,
       en.settings.diagnostics.tab,
       en.settings.feishu.title,
     ]);
+    // Logging is no longer a standalone nav item.
+    expect(navLabels(w)).not.toContain(en.settings.tabs.logging);
   });
 
   it("hides Updates when autoUpdate=false", () => {
@@ -179,10 +179,20 @@ describe("SettingsDialog caps gating", () => {
     expect(labels).not.toContain(en.settings.tabs.shortcuts);
   });
 
-  it("hides Logging when fileDialog=false", () => {
-    platform.caps = { ...platform.caps, fileDialog: false };
-    __setPlatformForTests(platform);
-    expect(navLabels(mountDialog())).not.toContain(en.settings.tabs.logging);
+  it("folds Logging into the Diagnostics pane instead of a standalone tab", () => {
+    // The merged pane renders SettingsLogging above SettingsDiagnostics.
+    expect(source).toContain('class="diag-merged"');
+    expect(source).toContain('@open-log-viewer="openLogViewer"');
+    expect(source).toContain("<SettingsDiagnostics />");
+    // Diagnostics stays a top-level tab; Logging never is.
+    const labels = navLabels(mountDialog());
+    expect(labels).toContain(en.settings.diagnostics.tab);
+    expect(labels).not.toContain(en.settings.tabs.logging);
+  });
+
+  it("keeps the logging section out of the Diagnostics pane when fileDialog=false", () => {
+    // Section is gated on caps.fileDialog inside the merged pane.
+    expect(source).toContain('<section v-if="caps.fileDialog" class="merged-section">');
   });
 
   it("with capacitor-style caps shows General + Task display + Relay + Templates + Diagnostics + Feishu", () => {

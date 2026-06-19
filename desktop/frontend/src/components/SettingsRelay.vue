@@ -12,7 +12,11 @@ const emit = defineEmits<{
   (e: "dirty", value: boolean): void;
 }>();
 
-const url = ref("");
+// `host` holds the bare relay host the user types (no scheme). The scheme is
+// derived from `allowInsecureRelay` and rendered as a fixed prefix in the UI:
+// https:// normally, http:// in insecure mode. `fullUrl` reconstructs the URL
+// that gets sent to the backend.
+const host = ref("");
 // `token` mirrors the persisted session token (issued by /api/auth/login).
 // It is no longer user-editable — see the email/password login form below.
 const token = ref("");
@@ -47,10 +51,32 @@ const claimToken = ref("");
 const connectedUserID = ref("");
 const connectedEmail = ref("");
 
-const persistedUrl = ref("");
+const persistedHost = ref("");
 const persistedToken = ref("");
 const persistedAllowInsecure = ref(false);
 const persistedPermission = ref("full");
+
+// Strip any scheme the user might paste so `host` always stays bare; the
+// canonical scheme is owned by the insecure-mode toggle.
+function stripScheme(s: string): string {
+  return s.trim().replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
+}
+
+const urlScheme = computed(() => (allowInsecureRelay.value ? "http://" : "https://"));
+
+// If a full URL is pasted into the host field, drop the scheme so the bare
+// host doesn't render doubled against the fixed prefix. Only fires when a
+// `scheme://` is actually present, so normal host typing is untouched.
+watch(host, (value) => {
+  if (/:\/\//.test(value)) host.value = stripScheme(value);
+});
+
+// Full URL handed to the backend (probe / login / setRelayConfig). Empty when
+// no host is entered so callers can treat it like the old `url` value.
+const fullUrl = computed(() => {
+  const h = stripScheme(host.value);
+  return h ? urlScheme.value + h : "";
+});
 
 const permissionOptions = computed(() => [
   { value: "view", label: t("settings.relay.viewOnly"), description: t("settings.relay.viewOnlyDesc") },
@@ -60,13 +86,21 @@ const permissionOptions = computed(() => [
 
 const dirty = computed(
   () =>
-    url.value !== persistedUrl.value ||
+    stripScheme(host.value) !== persistedHost.value ||
     token.value !== persistedToken.value ||
     allowInsecureRelay.value !== persistedAllowInsecure.value ||
     remotePermission.value !== persistedPermission.value,
 );
 
 watch(dirty, (value) => emit("dirty", value));
+
+// Login is the default; register is reached through the muted link below the
+// password field. Switching modes clears the claim token so a stale value
+// can't leak into the next attempt.
+function toggleAuthMode() {
+  authMode.value = authMode.value === "login" ? "register" : "login";
+  if (authMode.value === "login") claimToken.value = "";
+}
 
 function isValidRelayUrl(s: string): boolean {
   try {
@@ -86,13 +120,13 @@ const statusPill = computed(() => {
   if (connectedUserID.value) {
     return { text: t("settings.relay.connectedAs", { identity: connectedUserID.value.slice(0, 8) }), cls: "on" };
   }
-  if (!url.value) {
+  if (!fullUrl.value) {
     return { text: t("settings.relay.notConfigured"), cls: "off" };
   }
   if (paused.value) {
     return { text: t("settings.relay.paused"), cls: "off" };
   }
-  if (!isValidRelayUrl(url.value)) {
+  if (!isValidRelayUrl(fullUrl.value)) {
     return { text: t("settings.relay.relayInvalid"), cls: "error" };
   }
   return { text: t("settings.relay.connecting"), cls: "warn" };
@@ -101,9 +135,9 @@ const statusPill = computed(() => {
 onMounted(async () => {
   try {
     const cfg = await getRelayConfig();
-    url.value = cfg.url;
-    token.value = cfg.token;
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    host.value = stripScheme(cfg.url);
+    token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
     remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
@@ -181,7 +215,7 @@ async function onDisableE2EEChange(e: Event) {
 }
 
 function snapshotPersisted() {
-  persistedUrl.value = url.value;
+  persistedHost.value = stripScheme(host.value);
   persistedToken.value = token.value;
   persistedAllowInsecure.value = allowInsecureRelay.value;
   persistedPermission.value = remotePermission.value;
@@ -191,8 +225,9 @@ async function save() {
   saving.value = true;
   error.value = "";
 
-  // 1. URL format check (cheap, local)
-  if (!isValidRelayUrl(url.value)) {
+  // 1. URL format check (cheap, local). fullUrl already carries the scheme
+  // derived from insecure mode, so we validate the reconstructed value.
+  if (!isValidRelayUrl(fullUrl.value)) {
     error.value = t("settings.relay.relayInvalid");
     saving.value = false;
     return;
@@ -200,7 +235,7 @@ async function save() {
 
   // 2. /api/version probe via Wails Go method
   try {
-    await probeRelayVersion(url.value.trim());
+    await probeRelayVersion(fullUrl.value);
   } catch (e: any) {
     error.value = t("settings.relay.versionProbeFailed", { reason: e?.message ?? String(e) });
     saving.value = false;
@@ -214,9 +249,9 @@ async function save() {
   if (hasCreds) {
     try {
       if (authMode.value === "register") {
-        await registerRemoteRelay(url.value.trim(), email.value.trim(), password.value, claimToken.value.trim(), allowInsecureRelay.value);
+        await registerRemoteRelay(fullUrl.value, email.value.trim(), password.value, claimToken.value.trim(), allowInsecureRelay.value);
       } else {
-        await loginRemoteRelay(url.value.trim(), email.value.trim(), password.value, allowInsecureRelay.value);
+        await loginRemoteRelay(fullUrl.value, email.value.trim(), password.value, allowInsecureRelay.value);
       }
     } catch (e: any) {
       error.value = t("settings.relay.loginFailedInline", { reason: e?.message ?? String(e) });
@@ -228,7 +263,7 @@ async function save() {
   } else if (hasExistingToken) {
     try {
       await setRelayConfig({
-        url: url.value.trim(),
+        url: fullUrl.value,
         token: token.value,
         session_expires_at: 0,
         allow_insecure_relay: allowInsecureRelay.value,
@@ -249,9 +284,9 @@ async function save() {
   // 4. Refresh from persisted config
   try {
     const cfg = await getRelayConfig();
-    url.value = cfg.url;
-    token.value = cfg.token;
     allowInsecureRelay.value = cfg.allow_insecure_relay;
+    host.value = stripScheme(cfg.url);
+    token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
     remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
@@ -282,7 +317,7 @@ async function handleTogglePaused() {
   }
 }
 
-const canSave = computed(() => !saving.value && !!url.value.trim());
+const canSave = computed(() => !saving.value && !!stripScheme(host.value));
 const saveLabel = computed(() => (saving.value ? t("settings.relay.saving") : t("settings.relay.saveConnect")));
 
 defineExpose({
@@ -306,7 +341,7 @@ defineExpose({
             type="checkbox"
             :true-value="false"
             :false-value="true"
-            :disabled="togglingPause || !url"
+            :disabled="togglingPause || !host"
             @change="handleTogglePaused"
           />
           <span class="toggle-track">
@@ -325,37 +360,33 @@ defineExpose({
         {{ t("settings.relay.hint") }}
       </p>
 
-      <label class="field-label">{{ t("settings.relay.relayUrl") }}</label>
-      <input
-        v-model="url"
-        type="text"
-        placeholder="https://relay.example.com"
-        :disabled="saving"
-        @keyup.enter="save"
-      />
-
-      <div class="mode-toggle" role="radiogroup" :aria-label="t('settings.relay.authMode')">
-        <button
-          type="button"
-          class="mode-btn"
-          :class="{ active: authMode === 'login' }"
-          :aria-pressed="authMode === 'login'"
-          :disabled="saving"
-          @click="authMode = 'login'"
-        >
-          {{ t("settings.relay.modeLogin") }}
-        </button>
-        <button
-          type="button"
-          class="mode-btn"
-          :class="{ active: authMode === 'register' }"
-          :aria-pressed="authMode === 'register'"
-          :disabled="saving"
-          @click="authMode = 'register'"
-        >
-          {{ t("settings.relay.modeRegister") }}
-        </button>
+      <div class="url-label-row">
+        <label class="field-label" for="relay-host">{{ t("settings.relay.relayUrl") }}</label>
+        <label class="insecure-inline">
+          <input
+            v-model="allowInsecureRelay"
+            type="checkbox"
+            :disabled="saving"
+          />
+          {{ t("settings.relay.insecureMode") }}
+        </label>
       </div>
+      <div class="url-input" :class="{ insecure: allowInsecureRelay }">
+        <span class="url-scheme" aria-hidden="true">{{ urlScheme }}</span>
+        <input
+          id="relay-host"
+          v-model="host"
+          type="text"
+          placeholder="relay.example.com"
+          autocomplete="off"
+          spellcheck="false"
+          :disabled="saving"
+          @keyup.enter="save"
+        />
+      </div>
+      <p v-if="allowInsecureRelay" class="warning">
+        {{ t("settings.relay.insecureWarning") }}
+      </p>
 
       <label class="field-label" for="relay-email">{{ t("settings.relay.email") }}</label>
       <input
@@ -433,6 +464,16 @@ defineExpose({
         <p class="hint">{{ t("settings.relay.claimTokenHint") }}</p>
       </template>
 
+      <button
+        type="button"
+        class="auth-switch"
+        :disabled="saving"
+        @click="toggleAuthMode"
+      >
+        {{ authMode === 'login' ? t('settings.relay.noAccountPrompt') : t('settings.relay.haveAccountPrompt') }}
+        <span class="auth-switch-action">{{ authMode === 'login' ? t('settings.relay.modeRegister') : t('settings.relay.modeLogin') }}</span>
+      </button>
+
       <label class="field-label">{{ t("settings.relay.remotePermissions") }}</label>
       <SelectDropdown
         v-model="remotePermission"
@@ -442,18 +483,6 @@ defineExpose({
       />
       <p class="hint">
         {{ t("settings.relay.permissionsHint") }}
-      </p>
-
-      <label class="checkbox">
-        <input
-          v-model="allowInsecureRelay"
-          type="checkbox"
-          :disabled="saving"
-        />
-        {{ t("settings.relay.insecureMode") }}
-      </label>
-      <p v-if="allowInsecureRelay" class="warning">
-        {{ t("settings.relay.insecureWarning") }}
       </p>
 
       <label class="checkbox">
@@ -477,40 +506,89 @@ defineExpose({
 </template>
 
 <style scoped>
-.mode-toggle {
+/* relay url label row: label on the left, insecure-mode toggle on the right */
+.url-label-row {
   display: flex;
-  gap: 4px;
-  margin: 12px 0 6px;
-  padding: 3px;
-  background: var(--surface-2, #1f1f23);
-  border-radius: 8px;
-  width: fit-content;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.insecure-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+  user-select: none;
+}
+.insecure-inline input[type="checkbox"] {
+  margin: 0;
 }
 
-.mode-btn {
+/* url input with a fixed, non-editable scheme prefix glued to its left */
+.url-input {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.url-input:focus-within {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.url-scheme {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--fg-dim) 12%, transparent 88%);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  white-space: nowrap;
+}
+.url-input.insecure .url-scheme {
+  color: var(--warn, #d97706);
+}
+.url-input input {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  min-width: 0;
+}
+.url-input input:focus {
+  box-shadow: none;
+}
+
+/* muted register/login switch link below the password field */
+.auth-switch {
   appearance: none;
+  align-self: flex-start;
   background: transparent;
   border: 0;
-  color: var(--text-muted, #aaa);
+  padding: 0;
+  margin: -4px 0 0;
   font: inherit;
-  padding: 6px 14px;
-  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
 }
-
-.mode-btn:hover:not(:disabled) {
-  color: var(--text, #fff);
-}
-
-.mode-btn.active {
-  background: var(--surface-3, #303036);
-  color: var(--text, #fff);
-}
-
-.mode-btn:disabled {
+.auth-switch:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+.auth-switch-action {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.auth-switch:hover:not(:disabled) .auth-switch-action {
+  text-decoration: none;
 }
 
 .tab-pane {

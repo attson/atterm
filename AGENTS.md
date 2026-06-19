@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > **Audience**: 在 atterm 仓库里工作的 AI 编码 agent
-> **Last updated**: 2026-06-16
+> **Last updated**: 2026-06-19
 > **Status**: stable
 > **See also**: [README.md](./README.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md)
 
@@ -53,7 +53,7 @@ atterm/
 6. **PTY winsize 必须在 fork 时设好**：前端的 `predictCellDims`（FitAddon 探针）→ `NewSession(cols/rows)` → `pty.StartWithSize`。子进程从一开始就是终态尺寸，避免开局 SIGWINCH 触发某些 zsh 主题的 `PROMPT_EOL_MARK`。`SessionConnection.sendResize` 在 WS 还 CONNECTING 时排队，TerminalView 比对 expectedCols/Rows 跳过无意义 RESIZE。三件耦合，单独动一个会回归。
 7. **更新流程不打扰用户**：`updater.go` 永远手动触发——后台只检查、不静默重启。`InstallAndQuit` 必须由用户在 Settings 里点 "force install & restart" 走过 `ConfirmInstallDialog` 确认才执行。dev 构建（`Version == "dev"`）整个 update 子系统短路。
 8. **自动更新必须验签**：release 构建通过 ldflags 注入 `main.UpdateVerifyPublicKey`。下载 asset 后必须先用 Ed25519 验证 `SHA256SUMS.sig`，再校验 asset SHA256；缺公钥、缺 `SHA256SUMS`/`.sig`、签名或 hash 不匹配都必须 fail-closed，不允许 install。
-9. **公网 relay 默认安全**：`cmd/atterm-relay` 公网监听时必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（启动时该 user 不存在则需同时提供 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` ≥16 字符 + ≥3 类字符 + 不在弱密码黑名单内），否则启动拒绝；缺失 `--origins`/`ATTERM_ORIGINS` 同样拒绝，除非显式 `--dev-insecure`。relay 默认加 CSP/security headers，并按 IP 做 HTTP/WS rate limit 与连接数限制。服务端所有鉴权接口都不接受 `?token=`：HTTP 走 `Authorization: Bearer`，浏览器 WS 走 `Sec-WebSocket-Protocol: atterm-token.<token>` 子协议头。完整鉴权模型见 [docs/spec/auth.md](./docs/spec/auth.md)。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
+9. **公网 relay 默认安全**：`cmd/atterm-relay` 公网监听时必须提供 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`，否则启动拒绝；缺失 `--origins`/`ATTERM_ORIGINS` 同样拒绝，除非显式 `--dev-insecure`。bootstrap 走 OPAQUE：relay 启动时为该 email 打印一次性 **claim token**（`cmd/atterm-relay/bootstrap_admin.go::CreateClaimToken`），操作员在 `/signup.html` 用它完成注册并自动提为 admin——**没有 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`**，relay 永不接收明文密码（密码只在客户端参与 OPAQUE）。relay 默认加 CSP/security headers，并按 IP 做 HTTP/WS rate limit 与连接数限制。服务端所有鉴权接口都不接受 `?token=`：HTTP 走 `Authorization: Bearer`，浏览器 WS 走 `Sec-WebSocket-Protocol: atterm-token.<token>` 子协议头。完整鉴权模型见 [docs/spec/auth.md](./docs/spec/auth.md)。桌面端默认拒绝非 loopback `ws://`，只有用户在 Settings 打开 insecure mode 才允许。
 10. **Web 客户端不依赖 CDN**：`web/` 必须只加载同源构建产物；Vue/xterm/Naive UI 等 npm 依赖由 Vite 打包进同源 assets，并由 service worker 预缓存。不要重新引入外部 CDN script/style，否则 CSP/PWA 离线能力会回归。
 11. **远程权限由 owner 决定、relay/host 强制执行**：桌面端通过 `remote_permission` 发布 view/control/full；relay 先拦截越权 `IN`/`RESIZE`/`PASTE_IMAGE`，desktop uplink 写本机 PTY 前再拦一次。relay 不再有共享只读 token；如需限制某用户只读，在桌面端将该 session 的 `remote_permission` 设为 `view`。
 12. **大历史 attach 要可感知**：relay 初始 scrollback 回放必须发 `REPLAY_PROGRESS`，并在 `/client` writer 侧做轻量 pacing，避免桌面/web 客户端长时间只显示 connecting 或卡住。不要移除该帧，wire 变更同步更新 `docs/spec/protocol.md`。
@@ -70,6 +70,7 @@ atterm/
 23. **agent seal 成功后必须 strip plaintext**：`desktop/uplink.go` 的 `SendCommandEvent` / `uplink_seal_fields.go` 的 SessionInfo/META 封装都遵守同一模式——seal 成功就把对应明文字段（`Title/Cwd/Command/CurrentCommand/Label/ExitCode/ElapsedMS`）写回零值。**不要**留一份明文给 relay 做 fallback——那会让 webhook/push 路径走回明文分支，绕过 E2EE。Seal 失败（短 key、cipher 出错）才走 fallback 路径。
 24. **不要给 OPAQUE 加密码恢复 / step-up 之外的特权门**：spec 明确不做密码找回，admin reset 等于丢密钥；任何"备用问题/邮件链接"都会把整个 E2EE 模型降级回服务端可读。唯一的特权操作（DELETE /api/me 等）通过 step-up token（60s 单次有效，由再走一次 OPAQUE login 换取，见 `internal/relay/opaque_stepup.go`）。
 25. **proto.Frame 拓展遵守"opaque field 可加, 含义不可改"**：`SessionInfo.Sealed []byte` / `MetaPayload.Sealed []byte` / `CommandEventPayload.SealedBody []byte` 当前已落地；新增 sealed payload 时遵循同一三件套（payload struct 加 `Sealed`/`SealedBody` 字节段、agent seal helper、客户端 open helper）。`Sealed` 字段为空 = 未加密；非空时客户端**必须**在拿到 `account_key` 后才信任内容，旧版客户端可以忽略并 fall back 到外层明文字段。
+26. **relay 运行时配置以 `relay.json`（`AdminConfig`）为准、能热生效就不重启**：origins / 限流 / 连接数 / debug / 飞书都在 `internal/relay/admin_config.go` 的 `AdminConfig` 里，经 `/admin/api/config` 与 `/admin/api/feishu`（`admin_http.go`）读写并**热应用**——origins/debug 走 `Server` 上的 `atomic.Pointer`/`atomic.Bool`，飞书走 `Server.ApplyFeishuConfig`（建/拆 secret cipher + handler）。唯一需重启的是 VAPID subject（`webpush.Open` 一次性消费）。三条配套铁律：(a) **DB 必须能在无 secret cipher 下打开**（`userstore.Open` 不强制传 cipher，飞书未启用时 cipher 为 nil，仅飞书 CRUD 报错）——`ATTERM_FEISHU_ENCRYPT_KEY` 不再是启动必填，否则又会回到崩溃重启循环；(b) 飞书路由（`/v1/feishu/*`）在有 SQLite store 时**无条件注册一次**、闭包内按 `feishuRuntime.handler.Load()` 门控（`http.ServeMux` 不支持注销路由，禁用时绑定路由返 503、事件路由返 404）；(c) 飞书主加密密钥**有意持久化在 `relay.json`（0600）**，是「secret 不进 admin config」(见“不要做”) 的明确例外——GET 只回显末 4 位、绝不返回明文、绝不写日志；换 key 会让旧飞书绑定无法解密，故 PUT 默认拒绝轮换、需 `force:true`。env 仅作首启一次性播种（config 优先）。
 
 ## 开发命令
 
@@ -82,10 +83,10 @@ export PATH=/opt/homebrew/bin:$HOME/sdk/go1.23.12/bin:$HOME/go/bin:$PATH
 # 漏掉 internal/relay/web-dist/ 重建后被 CI 兜底打回）。
 git config core.hooksPath .githooks
 
-# 命令行 relay（本地调试；--dev-insecure 跳过强度与 Origin 校验，loopback 时 bootstrap envs 可省略）
-ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
-ATTERM_BOOTSTRAP_ADMIN_PASSWORD='Bootstrap-Pass-2026!' \
-  go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
+# 命令行 relay（本地调试；--dev-insecure 跳过 Origin 校验，loopback 时 bootstrap env 可省略）
+go run ./cmd/atterm-relay --addr 127.0.0.1:8080 --dev-insecure
+# 需要 admin：设 ATTERM_BOOTSTRAP_ADMIN_EMAIL，relay 启动会打印一次性 claim token，
+# 在 /signup.html 用该 email + claim token 注册即提为 admin（无密码 env）。
 # --web flag omitted ⇒ uses the embedded FS at internal/relay/web-dist/.
 # For production-like frontend dev: build once and serve from disk:
 #   cd web && npm run build && cd .. && go run ./cmd/atterm-relay --web web/dist ...
@@ -109,13 +110,22 @@ cd mobile && npm test                              # Capacitor wrapper sync 脚�
 gh run list --repo attson/atterm --limit 10
 ```
 
-环境变量：
-- `ATTERM_BOOTSTRAP_ADMIN_EMAIL`：启动时把该邮箱对应的 user 标记为 admin；公网监听时必填（否则启动拒绝），除非 `--dev-insecure`。User 已存在则只提权、忽略密码 env
-- `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`：首次启动用来创建 admin 用户的明文密码；须满足 ≥16 字符、≥3 类字符、不在弱密码黑名单内（公网监听且 user 不存在时校验）。**首次登录后从 env / systemd unit 中删除并重启**，避免明文密码留在进程状态中
-- `ATTERM_ORIGINS`：逗号分隔的浏览器 WebSocket Origin 白名单；公网 relay 必须配置（除非 `--dev-insecure`）
-- `ATTERM_RATE_LIMIT_PER_MINUTE`：每个远端 IP 的 HTTP 请求与 WS upgrade 分钟限额；`0` 用默认值，负数禁用
-- `ATTERM_MAX_CONNECTIONS_PER_KEY`：每个远端 IP 的活跃 WS 连接上限；`0` 用默认值，负数禁用
-- `ATTERM_RELAY_CONFIG`：relay admin 持久化 JSON 配置路径
+环境变量（relay 已把大部分配置下沉到 `relay.json` + 管理后台，env 多为「核心」或「首启播种」）：
+
+核心：
+- `ATTERM_BOOTSTRAP_ADMIN_EMAIL`：启动时为该 email 打印一次性 claim token（7 天 / 单次）；用它在 `/signup.html` 注册**新**账号即提为 admin（该 email 已注册则 token 无法消费，改用 SQL 提权）。公网监听必填，除非 `--dev-insecure`。**无 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`**——已随 OPAQUE 迁移移除
+- `ATTERM_ORIGINS`：逗号分隔的浏览器 WS Origin 白名单；公网必填（除非 `--dev-insecure`）。首启播种进 `relay.json`，之后可在 Admin → Config 改
+- `ATTERM_RELAY_CONFIG_DIR`：持久化目录（`users.db` + `relay.json`），默认 `./data/atterm-relay`
+- `ATTERM_RELAY_CONFIG`：admin 配置文件路径覆盖（默认 `<config-dir>/relay.json`）
+
+可选（不设也能启动；首启一次性播种进 `relay.json`，之后以管理后台为准）：
+- `ATTERM_FEISHU_ENCRYPT_KEY`：飞书凭据字段加密密钥（base64 32B）。**不再必填**——Admin → Feishu 可生成；DB 在无 cipher 下也能开，仅启用飞书时才挂载
+- `ATTERM_FEISHU_BASE_URL`：飞书 Open Platform base URL（默认 `https://open.feishu.cn`）
+- `ATTERM_VAPID_SUBJECT`：Web Push VAPID subject（改动需重启）
+- `ATTERM_RATE_LIMIT_PER_MINUTE` / `ATTERM_MAX_CONNECTIONS_PER_KEY`：限额；`0` 默认值、负数禁用
+- `ATTERM_RELAY_DEBUG` / `ATTERM_RELAY_DEBUG_PAYLOAD`：详细日志（现在 Admin → Config 也能热开关）
+
+其它：
 - `ATTERM_RELAY_URL` / `ATTERM_RELAY_TOKEN`：桌面 app 首次启动时若无配置文件，从这俩 env 读初始值
 - `ATTERM_HOST_ID`：覆盖 host id 文件（容器场景）
 - `ATTERM_UPDATE_VERIFY_PUBLIC_KEY`：GitHub prod environment secret；base64 Ed25519 公钥，release 构建时注入桌面 app
@@ -138,7 +148,7 @@ gh run list --repo attson/atterm --limit 10
 | 改 web 文案 / 多语言 | `web/src/shared/i18n/messages/*.ts` + `desktop/frontend/src/i18n/messages/*.ts`；新增用户可见文案时同步中英两套 |
 | 改桌面远程 relay 配置 | `desktop/app.go` + `desktop/config.go` + `desktop/relay_security.go` + `desktop/frontend/src/components/SettingsDialog.vue` |
 | 改远程权限模型 | `internal/proto/frame.go` + `internal/relay/permissions.go` + `desktop/uplink.go` + Settings UI + 协议规范 |
-| 改 relay admin 配置 | `internal/relay/admin_config.go` + `internal/relay/admin_http.go` + `cmd/atterm-relay/main.go` + README/spec |
+| 改 relay admin 配置（限流 / origins / debug / 飞书 / VAPID） | `internal/relay/admin_config.go`（`AdminConfig` 字段 + validate）+ `internal/relay/admin_http.go`（`/admin/api/config`、`/admin/api/feishu`、generate-key）+ `internal/relay/server.go`（热应用：atomic origins/debug、`ApplyFeishuConfig`、飞书路由门控）+ `internal/userstore/store.go`（`SetSecretCipher`）+ `cmd/atterm-relay/main.go`（env→config 播种）+ `web/src/admin/tabs/{Config,FeishuConfig}.vue` + `web/src/shared/api/admin.ts` + i18n + README/spec。红线 #26 |
 | relay 注册表清理 | `internal/relay/uplink_conn.go`（writer ping fail 触发 cancelConn → cleanup mirror sessions） |
 | 改移动 app relay 配置 | `web/src/setup/` + `web/src/shared/api/relay-config.ts` + `web/src/shared/mobile-guard.ts` + `web/src/settings/tabs/Relay.vue`；`apiFetch`/`wsUrl` 的 mobile 分支在 `web/src/shared/api/client.ts` 和 `web/src/shared/ws/client-conn.ts` |
 | 改桌面前端 ↔ Go IPC | `desktop/frontend/src/platform/wails.ts`（适配器）；新方法先在 `desktop/app.go` 或 `desktop/plugin_*.go` 定义，让 Wails 重生成 `wailsjs/`，再在 `platform/wails.ts` 包一层。**不要**在 `src/platform/` 之外的文件直接 import `wailsjs/*`。 |
@@ -186,7 +196,8 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 桌面端默认允许非 loopback `ws://`；必须由用户打开 insecure mode
 - ❌ `web/` 重新引入外部 CDN script/style，或让 token 长期留在浏览器地址栏
 - ❌ 新增用户可见文案只改一种语言；desktop 和 web 的 i18n messages 必须保持中英覆盖
-- ❌ 把主 write token 持久化到 relay admin config；只能来自 env/flag/启动自动生成
+- ❌ 把主 write token（read-only token）持久化到 relay admin config；只能来自 env/flag/启动自动生成。**例外**：飞书字段加密密钥是有意存进 `relay.json`（0600）的（红线 #26），GET 必须脱敏；别把这条例外推广到其它 secret
+- ❌ 让 `userstore.Open` 强制要求 secret cipher、或把 `ATTERM_FEISHU_ENCRYPT_KEY` 设回启动必填——会让没配飞书的 relay 崩溃重启循环（红线 #26）
 - ❌ 只在访问者客户端 UI 隐藏输入按钮而不在 relay/desktop host 强制拦截
 - ❌ 把 `-apple-system` / `system-ui` 放在 CJK family 之前——iOS 26 WebKit 会触发 `[?]` 方框回归
 - ❌ 把 pairing token 明文写进日志、URL query 或长期存储（只在 `qr_url` 与 owner 单次返回里出现，consumer 调用时通过 POST body 传输）

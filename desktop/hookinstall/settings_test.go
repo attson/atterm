@@ -10,10 +10,14 @@ import (
 	"testing"
 )
 
+// entry builds a schema-valid HookEntry with a single command action.
+func entry(matcher, cmd string) HookEntry {
+	return HookEntry{Matcher: matcher, Hooks: []HookCommand{{Type: "command", Command: cmd}}}
+}
+
 func TestMergeAttermEntries(t *testing.T) {
 	desired := []HookEntry{
-		{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/H/.atterm/bin/atterm-hook"},
-		{Matcher: HookMatcher{Type: "idle_prompt", Tool: "AskUserQuestion"}, Command: "/H/.atterm/bin/atterm-hook"},
+		entry("", "/H/.atterm/bin/atterm-hook"),
 	}
 	cases := []struct {
 		name     string
@@ -28,33 +32,33 @@ func TestMergeAttermEntries(t *testing.T) {
 		{
 			name: "existing has only external hooks — appended",
 			existing: []HookEntry{
-				{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/usr/local/bin/myhook"},
+				entry("", "/usr/local/bin/myhook"),
 			},
 			want: []HookEntry{
-				{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/usr/local/bin/myhook"},
-				desired[0], desired[1],
+				entry("", "/usr/local/bin/myhook"),
+				desired[0],
 			},
 		},
 		{
 			name: "existing has stale atterm entries — replaced",
 			existing: []HookEntry{
-				{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/old/.atterm/bin/atterm-hook"},
-				{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/usr/local/bin/myhook"},
+				entry("", "/old/.atterm/bin/atterm-hook"),
+				entry("", "/usr/local/bin/myhook"),
 			},
 			want: []HookEntry{
-				{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/usr/local/bin/myhook"},
-				desired[0], desired[1],
+				entry("", "/usr/local/bin/myhook"),
+				desired[0],
 			},
 		},
 		{
 			name: "idempotent: running on already-installed produces same output",
 			existing: []HookEntry{
-				{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/usr/local/bin/myhook"},
-				desired[0], desired[1],
+				entry("", "/usr/local/bin/myhook"),
+				desired[0],
 			},
 			want: []HookEntry{
-				{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/usr/local/bin/myhook"},
-				desired[0], desired[1],
+				entry("", "/usr/local/bin/myhook"),
+				desired[0],
 			},
 		},
 	}
@@ -75,7 +79,7 @@ func TestReadWriteSettings_Roundtrip(t *testing.T) {
 	}
 	path := claudeSettingsPath(home)
 	// Pre-populate with other top-level keys that must be preserved.
-	raw := `{"theme":"dark","hooks":{"Notification":[{"matcher":{"type":"permission_prompt"},"command":"/u/bin/x"}]}}`
+	raw := `{"theme":"dark","hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"/u/bin/x"}]}]}}`
 	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -84,13 +88,11 @@ func TestReadWriteSettings_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Hooks.Notification) != 1 || cfg.Hooks.Notification[0].Command != "/u/bin/x" {
+	if len(cfg.Hooks.Notification) != 1 || cfg.Hooks.Notification[0].Hooks[0].Command != "/u/bin/x" {
 		t.Errorf("read lost the existing entry: %+v", cfg.Hooks.Notification)
 	}
 
-	cfg.Hooks.Notification = append(cfg.Hooks.Notification, HookEntry{
-		Matcher: HookMatcher{Type: "idle_prompt"}, Command: "/u/bin/y",
-	})
+	cfg.Hooks.Notification = append(cfg.Hooks.Notification, entry("", "/u/bin/y"))
 	if err := writeClaudeSettings(home, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +162,7 @@ func TestExtraPreservesLargeIntegers(t *testing.T) {
 }
 
 func TestMarshalIsDeterministic(t *testing.T) {
-	raw := `{"theme":"dark","model":"opus","hooks":{"Notification":[{"matcher":{"type":"x"},"command":"/u/y"}]}}`
+	raw := `{"theme":"dark","model":"opus","hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"/u/y"}]}]}}`
 	var cfg ClaudeSettings
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatal(err)

@@ -16,11 +16,15 @@ export interface LinkMatch {
 // (e.g. Wikipedia titles) while still dropping a stray sentence-end `)`.
 const URL_RE = /\b(https?|file):\/\/[^\s\x00-\x1f]+/g;
 
-// Absolute path: starts at word boundary with '/' or '~/', body chars exclude
-// whitespace + control. The lookbehind ensures we don't treat 12/24 as a path
-// (digit before slash) and we only trigger at start-of-line, whitespace, or one
-// of the common surrounding punctuation chars.
-const PATH_RE = /(?:(?<=^)|(?<=[\s(){}\[\]<>"'`]))(~\/|\/)([^\s\x00-\x1f]*)/g;
+// Absolute path: starts at start-of-line or after a delimiter char, with '/'
+// or '~/'; body chars exclude whitespace + control. We capture the leading
+// delimiter in group 1 instead of using a lookbehind: older WebKit (e.g. the
+// Safari shipped with macOS 12) rejects lookbehind with "Invalid regular
+// expression: invalid group specifier name", which throws at module-eval time
+// and blanks the whole app. detectLinks() strips group 1 back off so the
+// reported span still excludes the delimiter. The leading anchor keeps us from
+// treating 12/24 as a path (digit before slash is neither ^ nor a delimiter).
+const PATH_RE = /(^|[\s(){}\[\]<>"'`])(~\/|\/)([^\s\x00-\x1f]*)/g;
 
 const TRAILING_TRIM = new Set([".", ",", ";", ":", "!", "?", '"', "'"]);
 
@@ -73,10 +77,13 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
 
   PATH_RE.lastIndex = 0;
   while ((m = PATH_RE.exec(line)) !== null) {
-    const raw = m[0];
+    // Group 1 is the consumed leading delimiter (empty at start-of-line);
+    // drop it so start/text describe just the path itself.
+    const lead = m[1];
+    const raw = m[0].slice(lead.length);
     const trimmed = trimTrailing(raw);
     if (!trimmed) continue;
-    const start = m.index;
+    const start = m.index + lead.length;
     const end = start + trimmed.length;
     // Skip if this overlaps with any URL match already produced.
     if (out.some((u) => start < u.end && end > u.start)) continue;

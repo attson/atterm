@@ -13,14 +13,17 @@ import (
 // State is the read-only health snapshot returned by Check. Renders
 // directly to the Settings · Feishu status row.
 type State struct {
-	Enabled       bool      `json:"enabled"`
-	BinaryPath    string    `json:"binary_path"`
-	BinaryOK      bool      `json:"binary_ok"`
-	BinaryVersion string    `json:"binary_version"`
-	SettingsPath  string    `json:"settings_path"`
-	SettingsOK    bool      `json:"settings_ok"`
-	LastError     string    `json:"last_error"`
-	LastCheck     time.Time `json:"last_check"`
+	Enabled       bool   `json:"enabled"`
+	BinaryPath    string `json:"binary_path"`
+	BinaryOK      bool   `json:"binary_ok"`
+	BinaryVersion string `json:"binary_version"`
+	SettingsPath  string `json:"settings_path"`
+	SettingsOK    bool   `json:"settings_ok"`
+	LastError     string `json:"last_error"`
+	// LastCheck is an RFC3339 timestamp. It is a string rather than a
+	// time.Time so the Wails binding generator can map it to a TS `string`
+	// (time.Time has no TS counterpart and is emitted as `any`).
+	LastCheck string `json:"last_check"`
 }
 
 // Healthy returns true when both surfaces are OK and auto-install is on.
@@ -35,7 +38,7 @@ func Check(_ context.Context, enabled bool) State {
 			BinaryPath:   "",
 			SettingsPath: "",
 			LastError:    "auto-install unsupported on Windows",
-			LastCheck:    time.Now(),
+			LastCheck:    time.Now().Format(time.RFC3339),
 		}
 	}
 	return checkAt(homeOrDie(), enabled)
@@ -46,7 +49,7 @@ func checkAt(home string, enabled bool) State {
 		Enabled:      enabled,
 		BinaryPath:   attermHookSymlink(home),
 		SettingsPath: claudeSettingsPath(home),
-		LastCheck:    time.Now(),
+		LastCheck:    time.Now().Format(time.RFC3339),
 	}
 	if !enabled {
 		return s
@@ -107,15 +110,17 @@ func checkSettings(home string, wantCommand string) (ok bool, errStr string) {
 			attermEntries = append(attermEntries, e)
 		}
 	}
-	if len(attermEntries) < 2 {
-		return false, "Notification hook entries missing or incomplete"
+	if len(attermEntries) == 0 {
+		return false, "Notification hook entry missing"
 	}
 	for _, e := range attermEntries {
-		if e.Command != wantCommand {
-			return false, "Notification entry points at stale binary path"
-		}
-		if _, err := os.Stat(e.Command); err != nil {
-			return false, "Notification command path missing on disk"
+		for _, h := range e.Hooks {
+			if h.Command != wantCommand {
+				return false, "Notification entry points at stale binary path"
+			}
+			if _, err := os.Stat(h.Command); err != nil {
+				return false, "Notification command path missing on disk"
+			}
 		}
 	}
 	return true, ""

@@ -22,13 +22,15 @@ func TestInstall_FreshHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := mustReadSettings(t, home)
-	if len(c.Hooks.Notification) != 2 {
-		t.Fatalf("want 2 entries; got %d: %+v", len(c.Hooks.Notification), c.Hooks.Notification)
+	if len(c.Hooks.Notification) != 1 {
+		t.Fatalf("want 1 entry; got %d: %+v", len(c.Hooks.Notification), c.Hooks.Notification)
 	}
 	link := attermHookSymlink(home)
 	for _, e := range c.Hooks.Notification {
-		if e.Command != link {
-			t.Errorf("entry command = %q; want %q", e.Command, link)
+		for _, h := range e.Hooks {
+			if h.Command != link {
+				t.Errorf("entry command = %q; want %q", h.Command, link)
+			}
 		}
 	}
 }
@@ -36,18 +38,49 @@ func TestInstall_FreshHome(t *testing.T) {
 func TestInstall_PreservesExternalNotificationHook(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(claudeDir(home), 0o700)
-	raw := `{"hooks":{"Notification":[{"matcher":{"type":"permission_prompt"},"command":"/usr/local/bin/myhook"}]}}`
+	raw := `{"hooks":{"Notification":[{"matcher":"","hooks":[{"type":"command","command":"/usr/local/bin/myhook"}]}]}}`
 	os.WriteFile(claudeSettingsPath(home), []byte(raw), 0o644)
 
 	if err := installAt(home); err != nil {
 		t.Fatal(err)
 	}
 	c := mustReadSettings(t, home)
-	if len(c.Hooks.Notification) != 3 {
-		t.Fatalf("want 3 entries; got %d", len(c.Hooks.Notification))
+	if len(c.Hooks.Notification) != 2 {
+		t.Fatalf("want 2 entries; got %d", len(c.Hooks.Notification))
 	}
-	if c.Hooks.Notification[0].Command != "/usr/local/bin/myhook" {
+	if c.Hooks.Notification[0].Hooks[0].Command != "/usr/local/bin/myhook" {
 		t.Errorf("external hook lost: %+v", c.Hooks.Notification[0])
+	}
+}
+
+func TestInstall_MigratesLegacyAttermEntries(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(claudeDir(home), 0o700)
+	link := attermHookSymlink(home)
+	// Settings left behind by a pre-fix atterm: object-typed matcher and a
+	// top-level command — the shape Claude Code's /doctor rejected.
+	raw := `{"hooks":{"Notification":[` +
+		`{"matcher":{"type":"permission_prompt"},"command":"` + link + `"},` +
+		`{"matcher":{"type":"idle_prompt","tool":"AskUserQuestion"},"command":"` + link + `"}` +
+		`]}}`
+	os.WriteFile(claudeSettingsPath(home), []byte(raw), 0o644)
+
+	if err := installAt(home); err != nil {
+		t.Fatalf("install over legacy entries should not error: %v", err)
+	}
+	c := mustReadSettings(t, home)
+	if len(c.Hooks.Notification) != 1 {
+		t.Fatalf("legacy entries not collapsed; want 1, got %d: %+v",
+			len(c.Hooks.Notification), c.Hooks.Notification)
+	}
+	e := c.Hooks.Notification[0]
+	if e.Matcher != "" || len(e.Hooks) != 1 || e.Hooks[0].Command != link {
+		t.Errorf("migrated entry has wrong shape: %+v", e)
+	}
+	// The legacy object-typed matcher must be gone from disk.
+	data, _ := os.ReadFile(claudeSettingsPath(home))
+	if strings.Contains(string(data), `"matcher":{`) {
+		t.Errorf("legacy object matcher survived on disk: %s", data)
 	}
 }
 
@@ -106,7 +139,7 @@ func TestUninstall_RemovesAttermEntriesOnly(t *testing.T) {
 	// Add an external entry post-install.
 	c := mustReadSettings(t, home)
 	c.Hooks.Notification = append([]HookEntry{
-		{Matcher: HookMatcher{Type: "permission_prompt"}, Command: "/u/bin/mine"},
+		entry("", "/u/bin/mine"),
 	}, c.Hooks.Notification...)
 	if err := writeClaudeSettings(home, c); err != nil {
 		t.Fatal(err)
@@ -119,7 +152,7 @@ func TestUninstall_RemovesAttermEntriesOnly(t *testing.T) {
 	if len(c.Hooks.Notification) != 1 {
 		t.Fatalf("want 1 external entry left; got %d", len(c.Hooks.Notification))
 	}
-	if c.Hooks.Notification[0].Command != "/u/bin/mine" {
+	if c.Hooks.Notification[0].Hooks[0].Command != "/u/bin/mine" {
 		t.Errorf("uninstall took the wrong entry: %+v", c.Hooks.Notification[0])
 	}
 	if _, err := os.Lstat(attermHookSymlink(home)); err == nil {

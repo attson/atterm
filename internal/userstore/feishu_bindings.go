@@ -44,34 +44,40 @@ func hashAppID(appID string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *SQLiteStore) requireCipher() error {
-	if s.cipher == nil {
-		return fmt.Errorf("userstore: secret cipher not configured (WithSecretCipher required for feishu CRUD)")
+// loadCipher snapshots the field-encryption cipher once per operation. A
+// nil cipher (Feishu disabled) yields a clear error. Callers reuse the
+// returned local so a concurrent SetSecretCipher(nil) can't turn the cipher
+// nil between successive Encrypt/Decrypt calls within one method.
+func (s *SQLiteStore) loadCipher() (*SecretCipher, error) {
+	c := s.cipher.Load()
+	if c == nil {
+		return nil, fmt.Errorf("userstore: feishu not enabled (no secret cipher configured)")
 	}
-	return nil
+	return c, nil
 }
 
 // UpsertFeishuBinding inserts or replaces the row for userID. open_id /
 // bound_at / disabled_at are preserved on upsert (only credentials are
 // rewritten).
 func (s *SQLiteStore) UpsertFeishuBinding(ctx context.Context, userID string, c FeishuBindingCredentials) error {
-	if err := s.requireCipher(); err != nil {
+	cipher, err := s.loadCipher()
+	if err != nil {
 		return err
 	}
 	hash := hashAppID(c.AppID)
-	encA, err := s.cipher.Encrypt([]byte(c.AppID))
+	encA, err := cipher.Encrypt([]byte(c.AppID))
 	if err != nil {
 		return fmt.Errorf("encrypt app_id: %w", err)
 	}
-	encS, err := s.cipher.Encrypt([]byte(c.AppSecret))
+	encS, err := cipher.Encrypt([]byte(c.AppSecret))
 	if err != nil {
 		return fmt.Errorf("encrypt app_secret: %w", err)
 	}
-	encK, err := s.cipher.Encrypt([]byte(c.EncryptKey))
+	encK, err := cipher.Encrypt([]byte(c.EncryptKey))
 	if err != nil {
 		return fmt.Errorf("encrypt encrypt_key: %w", err)
 	}
-	encV, err := s.cipher.Encrypt([]byte(c.VerifyToken))
+	encV, err := cipher.Encrypt([]byte(c.VerifyToken))
 	if err != nil {
 		return fmt.Errorf("encrypt verify_token: %w", err)
 	}
@@ -128,13 +134,14 @@ func (s *SQLiteStore) GetFeishuBindingByAppIDHash(ctx context.Context, hash stri
 }
 
 func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string) (*FeishuBinding, error) {
-	if err := s.requireCipher(); err != nil {
+	cipher, err := s.loadCipher()
+	if err != nil {
 		return nil, err
 	}
 	row := s.db.QueryRowContext(ctx, q, arg)
 	var b FeishuBinding
 	var encA, encS, encK, encV []byte
-	err := row.Scan(&b.UserID, &b.AppIDHash, &encA, &encS, &encK, &encV,
+	err = row.Scan(&b.UserID, &b.AppIDHash, &encA, &encS, &encK, &encV,
 		&b.OpenID, &b.BoundAt, &b.DisabledAt, &b.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrFeishuBindingNotFound
@@ -142,22 +149,22 @@ func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string
 	if err != nil {
 		return nil, fmt.Errorf("scan feishu binding: %w", err)
 	}
-	if plain, err := s.cipher.Decrypt(encA); err != nil {
+	if plain, err := cipher.Decrypt(encA); err != nil {
 		return nil, fmt.Errorf("decrypt app_id: %w", err)
 	} else {
 		b.AppID = string(plain)
 	}
-	if plain, err := s.cipher.Decrypt(encS); err != nil {
+	if plain, err := cipher.Decrypt(encS); err != nil {
 		return nil, fmt.Errorf("decrypt app_secret: %w", err)
 	} else {
 		b.AppSecret = string(plain)
 	}
-	if plain, err := s.cipher.Decrypt(encK); err != nil {
+	if plain, err := cipher.Decrypt(encK); err != nil {
 		return nil, fmt.Errorf("decrypt encrypt_key: %w", err)
 	} else {
 		b.EncryptKey = string(plain)
 	}
-	if plain, err := s.cipher.Decrypt(encV); err != nil {
+	if plain, err := cipher.Decrypt(encV); err != nil {
 		return nil, fmt.Errorf("decrypt verify_token: %w", err)
 	} else {
 		b.VerifyToken = string(plain)

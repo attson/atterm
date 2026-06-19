@@ -8,15 +8,27 @@ import (
 	"github.com/attson/atterm/internal/proto"
 )
 
+// debugOn / debugPayloadOn read the hot-reloadable switches. SetDebug flips
+// them at runtime (admin API) without a restart; payload implies debug so the
+// frames it annotates are actually emitted.
+func (s *Server) debugOn() bool        { return s.debugEnabled.Load() }
+func (s *Server) debugPayloadOn() bool { return s.debugPayloadEnabled.Load() }
+
+// SetDebug hot-swaps verbose logging. Enabling payload also enables debug.
+func (s *Server) SetDebug(debug, payload bool) {
+	s.debugEnabled.Store(debug || payload)
+	s.debugPayloadEnabled.Store(payload)
+}
+
 func (s *Server) debugf(format string, args ...any) {
-	if !s.cfg.Debug {
+	if !s.debugOn() {
 		return
 	}
 	log.New(s.cfg.DebugLog, "", log.LstdFlags).Printf("relay-debug "+format, args...)
 }
 
 func (s *Server) debugFrame(component, direction string, f proto.Frame) {
-	if !s.cfg.Debug {
+	if !s.debugOn() {
 		return
 	}
 	s.debugf("%s %s %s session=%s%s",
@@ -106,7 +118,7 @@ func (s *Server) debugFrameDetails(f proto.Frame) string {
 
 func (s *Server) debugBytes(label string, data []byte) string {
 	out := fmt.Sprintf(" %s=%d", label, len(data))
-	if s.cfg.DebugPayload {
+	if s.debugPayloadOn() {
 		out += fmt.Sprintf(" payload=%q", data)
 	}
 	return out

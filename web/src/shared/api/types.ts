@@ -77,12 +77,38 @@ export interface AdminConfig {
   max_connections_per_key: number
   default_rate_limit_per_minute: number
   default_max_connections_per_key: number
+  debug: boolean
+  debug_payload: boolean
   version: string
 }
 
 export interface AdminConfigUpdate {
   rate_limit_per_minute: number
   max_connections_per_key: number
+  debug?: boolean
+  debug_payload?: boolean
+}
+
+// FeishuAdminConfig is the masked Feishu integration view (GET /admin/api/feishu).
+// The plaintext encrypt key is never returned — only whether one is set.
+export interface FeishuAdminConfig {
+  enabled: boolean
+  running: boolean
+  base_url: string
+  key_set: boolean
+  key_last4?: string
+  vapid_subject?: string
+  requires_restart_for_vapid: boolean
+}
+
+// FeishuAdminConfigUpdate is the PUT body. Omit encrypt_key to keep the
+// existing key (e.g. a plain enable/disable toggle); set force to rotate an
+// existing key.
+export interface FeishuAdminConfigUpdate {
+  enabled: boolean
+  encrypt_key?: string
+  base_url?: string
+  force?: boolean
 }
 
 export interface ResetPasswordResponse {

@@ -3,6 +3,8 @@ import type {
   AdminConfig,
   AdminConfigUpdate,
   AdminUserRow,
+  FeishuAdminConfig,
+  FeishuAdminConfigUpdate,
   InvitationCreateBatchResponse,
   InvitationCreated,
   InvitationRow,
@@ -73,4 +75,27 @@ export async function setAdminConfig(update: AdminConfigUpdate): Promise<AdminCo
     body: JSON.stringify(update),
   })
   return data
+}
+
+// Feishu integration (admin/api/feishu).
+export async function getFeishuAdminConfig(): Promise<FeishuAdminConfig> {
+  const { data } = await apiFetch<FeishuAdminConfig>('/admin/api/feishu')
+  return data
+}
+
+export async function setFeishuAdminConfig(update: FeishuAdminConfigUpdate): Promise<FeishuAdminConfig> {
+  const { data } = await apiFetch<FeishuAdminConfig>('/admin/api/feishu', {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  })
+  return data
+}
+
+// generateFeishuKey asks the server for a fresh base64 32-byte key. The caller
+// must PUT it back to persist + apply.
+export async function generateFeishuKey(): Promise<string> {
+  const { data } = await apiFetch<{ encrypt_key: string }>('/admin/api/feishu/generate-key', {
+    method: 'POST',
+  })
+  return data.encrypt_key
 }

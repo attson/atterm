@@ -70,16 +70,16 @@ flowchart LR
 
 ```sql
 CREATE TABLE users (
-    id            TEXT PRIMARY KEY,
-    email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password_hash TEXT NOT NULL,
-    is_admin      INTEGER NOT NULL DEFAULT 0,
-    created_at    INTEGER NOT NULL,
-    disabled_at   INTEGER
+    id          TEXT PRIMARY KEY,
+    email       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    auth_mode   TEXT NOT NULL DEFAULT 'opaque',  -- migration 0003 DROP 了旧 password_hash 列
+    is_admin    INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    disabled_at INTEGER
 );
 ```
 
-- `password_hash` 由 argon2id 生成，`internal/userstore/users.go` 中的 `CreateUser` / `VerifyPassword` 是唯一写入 / 读取点
+- 密码走 OPAQUE：口令材料存 `user_opaque_records.record`（见 §12.3），relay 没有 `password_hash`、也没有 bcrypt/argon2id 口令哈希回退路径。`CreateOpaqueUser` 建行、`StoreOpaqueRecord` 写记录
 - `disabled_at` 非空时，所有 `LookupSession` 调用对该用户的 session 都返回 `ErrSessionInvalid`，相当于踢出所有设备
 
 ### 3.2 `sessions`
@@ -125,83 +125,55 @@ CREATE INDEX pairing_tokens_user_idx ON pairing_tokens(user_id);
 
 ### 4.1 Bootstrap admin（首次启动）
 
-在数据库为空、且环境变量同时设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` + `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 时触发，仅在 relay 启动期间运行一次。
+设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 时，relay 每次启动为该 email mint 一个一次性 **claim token** 并打印到日志。密码认证走 OPAQUE（relay 不接收明文密码），所以 bootstrap 不再用密码 env——claim token 是 OPAQUE 注册的「会合凭据」，操作员用它完成注册后自动获得 admin 角色。
 
 ```mermaid
 sequenceDiagram
     participant E as 环境变量
     participant R as atterm-relay (启动)
-    participant DB as users + sessions
-    participant Op as 操作员 (查看 stdout)
-    E->>R: ATTERM_BOOTSTRAP_ADMIN_EMAIL/PASSWORD
-    R->>DB: 若 email 不存在则 CreateUser + SetUserAdmin
-    R->>DB: CreateSession(user.ID, "bootstrap", "", DefaultSessionTTL)
-    DB-->>R: session_token (plaintext)
-    R-->>Op: stdout: "bootstrap admin created; session_token=ses_..."
-    Note over Op: 复制 token 到桌面 App config 或 curl
+    participant DB as users + claim_tokens
+    participant Op as 操作员 (浏览器 /signup.html)
+    E->>R: ATTERM_BOOTSTRAP_ADMIN_EMAIL
+    R->>DB: CreateClaimToken(email, "admin", 7d)
+    DB-->>R: claim_token (plaintext)
+    R-->>Op: 日志: "bootstrap-admin: claim token for <email>: <token>"
+    Op->>R: POST /api/auth/register/{init,finalize}<br/>{email, OPAQUE record, claim_token}
+    R->>DB: 校验 token 邮箱匹配 → CreateOpaqueUser → 消费 token → SetUserAdmin
+    DB-->>Op: session_token (登录态)
 ```
 
 步骤：
 
-1. 操作员在启动 relay 前设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 和 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`
-2. relay 启动时 `internal/relay/bootstrap_admin.go::bootstrapAdmin` 检查用户是否存在；不存在则用提供的 email + password 创建并 promote 为 admin
-3. 创建成功后 mint 一个新的 session（来源 = `"bootstrap"`），明文 token 写入 stdout
-4. 后续操作员可 `curl -H "Authorization: Bearer <token>" http://relay/api/me` 验证
+1. 操作员在启动 relay 前设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（公网监听必需，除非 `--dev-insecure`）
+2. relay 启动时 `cmd/atterm-relay/bootstrap_admin.go::bootstrapAdmin` 调 `CreateClaimToken(email, "admin", 7d)`，把明文 token 打印到日志（7 天有效、单次使用）
+3. 操作员在 `/signup.html` 用该 email + 自设密码完成 OPAQUE 注册，并把 claim token 填进「邀请码 / claim token」框；`register/finalize`（`internal/relay/opaque_auth.go`）校验 token 邮箱匹配 → `CreateOpaqueUser` → `ConsumeClaimToken` → `SetUserAdmin`
+4. 注册即登录，后续可 `curl -H "Authorization: Bearer <session_token>" http://relay/api/me` 验证
 
-详见 §8 Bootstrap admin 详解。
+注意：claim token 只能用于**注册新账号**——若该 email 已注册，`CreateOpaqueUser` 返回 `ErrEmailTaken`（409），token 无法消费；此时改用 SQL 直接提权（`UPDATE users SET is_admin=1 WHERE email=…`）。详见 §8。
 
-### 4.2 注册（邀请码 + 邮箱 + 密码）
+### 4.2 注册（OPAQUE，邮箱 + 密码，可选 claim token）
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant R as Relay
-    participant DB as users + sessions
-    C->>R: POST /api/auth/signup<br/>{email, password, invite_code}
-    R->>DB: ConsumeInvitation(invite_code)
-    DB-->>R: ok / ErrInvitationConsumed / ErrInvitationExpired
-    R->>DB: CreateUser(email, password)
-    DB-->>R: user
-    R->>DB: CreateSession(user.ID, ua, ip_prefix, DefaultSessionTTL)
-    DB-->>R: session_token (plaintext)
-    R-->>C: 200 {session_token, expires_at, user{id, email, is_admin}}
-    Note over C: persist session_token<br/>localStorage / Keychain
-```
+> 注册走 OPAQUE 两步握手，relay 不接收明文密码。旧的密码端点 `POST /api/auth/signup` 已下线（返回 410）。完整套件 / `account_key_wrap` / 时序见 §12。
 
-步骤：
+要点（`internal/relay/opaque_auth.go`）：
 
-1. 客户端从 admin 拿到邀请码（`inv_…`）
-2. `POST /api/auth/signup` 提交 `{email, password, invite_code}`
-3. 服务端验证 invite → CreateUser → CreateSession → 一次性返回 `session_token`
-4. 客户端持久化 token，登录成功
+1. 客户端 `POST /api/auth/register/init` → `POST /api/auth/register/finalize`；密码只在客户端参与 OPAQUE。
+2. finalize body 带 `email`、OPAQUE `RegistrationRecord`、`account_key_wrap`，以及**可选** `claim_token`。
+3. `claim_token` 只用于授予角色（bootstrap admin，见 §4.1 / §8）；注册本身**不被邀请码门控**，留空也能注册。
+4. 成功一次性返回 `session_token` + user 摘要；客户端持久化（web → sessionStorage / localStorage；mobile → Keychain；desktop → `appConfig.RelaySessionToken`）。
 
-### 4.3 登录（邮箱 + 密码）
+### 4.3 登录（OPAQUE，邮箱 + 密码）
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant R as Relay
-    participant DB as users + sessions
-    C->>R: POST /api/auth/login {email, password}
-    R->>DB: VerifyPassword
-    DB-->>R: user / ErrPasswordInvalid
-    R->>DB: CreateSession(user.ID, ua, ip_prefix, DefaultSessionTTL)
-    DB-->>R: session_token (plaintext)
-    R-->>C: 200 {session_token, expires_at, user{id, email, is_admin}}
-    Note over C: persist session_token
-    C->>R: GET /api/me<br/>(Authorization: Bearer ...)
-    R->>DB: LookupSession(sha256(token))
-    DB-->>R: *User
-    R-->>C: 200 {id, email, is_admin}
-```
+> 旧的密码端点 `POST /api/auth/login`（argon2id `VerifyPassword`）已下线（返回 410）。
 
-步骤：
+要点：
 
-1. `POST /api/auth/login` 提交 `{email, password}`
-2. `internal/userstore/users.go::VerifyPassword` 用 argon2id 验证；失败返回 `401`
-3. 成功则 `CreateSession`，明文写入响应 body
-4. 客户端持久化（web → localStorage；mobile → Keychain；desktop → `appConfig.RelaySessionToken`）
-5. 后续请求带 `Authorization: Bearer <session_token>`；WS 升级带 `Sec-WebSocket-Protocol: atterm-token.<session_token>`
+1. `POST /api/auth/login/init` → `POST /api/auth/login/finalize`；本地用密码跑 OPAQUE，relay 全程接触不到密码或口令哈希。
+2. finalize 返回 `session_token` + `account_key_wrap`（客户端本地解开拿回 32B `account_key`）+ user 摘要。
+3. 后续请求带 `Authorization: Bearer <session_token>`；WS 升级带 `Sec-WebSocket-Protocol: atterm-token.<session_token>`。
+4. 特权操作（`DELETE /api/me` 等）需 step-up：再走一次 `/api/auth/stepup/{init,finalize}` 换 60s 单次有效的 `step_up_token`（`internal/relay/opaque_stepup.go`）。
+
+完整 OPAQUE 套件、endpoint、数据模型与时序见 §12。`GET /api/me`（Bearer）→ `LookupSession(sha256(token))` → user 摘要，这部分与认证方式无关。
 
 ### 4.4 配对（QR + 一次性 pairing token）
 
@@ -337,8 +309,8 @@ unauthorized
 
 | 方法 | 路径 | 公开原因 |
 |---|---|---|
-| `POST` | `/api/auth/signup` | 新用户尚无凭据 |
-| `POST` | `/api/auth/login` | 凭据交换入口 |
+| `POST` | `/api/auth/register/{init,finalize}` | 新用户尚无凭据（OPAQUE 注册） |
+| `POST` | `/api/auth/login/{init,finalize}` | 凭据交换入口（OPAQUE 登录） |
 | `POST` | `/api/pair/consume` | 新设备尚无凭据，pair token 自身就是临时凭据 |
 | `GET` | `/healthz` | 监控探针；不暴露任何内部状态 |
 | `GET` | `/version` | 客户端版本协商 |
@@ -352,43 +324,42 @@ unauthorized
 
 ### 8.1 触发条件
 
-启动 relay 时同时满足：
+- 环境变量 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 非空、是合法邮箱 → relay 每次启动 mint 一个 `role="admin"` 的 claim token。
+- 未设置 → 跳过（仍正常启动，首个 admin 需经其他途径，如 SQL `UPDATE users SET is_admin=1`）。
 
-- 环境变量 `ATTERM_BOOTSTRAP_ADMIN_EMAIL` 非空、是合法 RFC5322 邮箱
-- 环境变量 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 非空、≥ 16 字符、≥ 3 种字符类型、不在弱密码黑名单内
+不再有 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD` 及其密码强度校验——密码随 OPAQUE 迁移（#159）移到客户端，relay 永不接收明文密码。
 
-任一不满足，relay 跳过 bootstrap（仍可正常启动，但首个 admin 需要其他途径创建）。
+### 8.2 日志输出格式
 
-### 8.2 stdout 输出格式
-
-成功时 relay 在 `log.Printf` 输出一行：
+`cmd/atterm-relay/bootstrap_admin.go` 用 `log.Printf` 输出三行：
 
 ```
-2026/06/10 12:34:56 bootstrap admin created; session_token=ses_abc123def456...
+2026/06/19 12:34:56 bootstrap-admin: claim token for you@example.com (expires in 7 days):
+2026/06/19 12:34:56     clm_abc123def456...
+2026/06/19 12:34:56 bootstrap-admin: complete OPAQUE registration via POST /api/auth/register/finalize with this token in claim_token to receive admin role
 ```
 
 注意：
 
-- 行格式固定，可被 grep / awk 抓取
-- 仅首次成功 create 时输出；如果 admin 已存在（重启场景），不再 mint 新 session
-- 失败（密码弱、邮箱不合法）会 `log.Fatalf` 退出进程
+- claim token 明文只在日志出现一次，不可找回；过期（7 天）或丢失就重启 relay 重新 mint
+- 单次使用：注册消费后即作废（`ConsumeClaimToken` 的原子 UPDATE 串行化并发 finalize）
+- token 只能用于注册**新** email；已注册的 email 无法消费（注册返回 409 email taken）
 
-### 8.3 自动登入桌面 App / CI 的对接姿势
+### 8.3 CI / 桌面 App 对接
 
 CI 场景：
 
 ```bash
 docker run -d \
   -e ATTERM_BOOTSTRAP_ADMIN_EMAIL=admin@ci.local \
-  -e ATTERM_BOOTSTRAP_ADMIN_PASSWORD=Correct-Horse-Battery-Staple-1! \
   -e ATTERM_ORIGINS=https://ci.example.com \
   -p 8080:8080 atterm-relay
-# 等 5 秒
-docker logs <container> | grep "session_token=" | sed 's/.*session_token=//'
-# 输出明文 token，可用于 curl 测试
+# 等几秒，从日志抓 claim token：
+docker logs <container> | grep -A1 'claim token for' | tail -1 | awk '{print $NF}'
+# 把它喂给注册脚本/客户端的 OPAQUE register 流程（claim_token 字段）
 ```
 
-桌面 App 场景：本地 mini-relay 由 `desktop/relay_host.go::startRelayHost` 启动，自动用 `local@atterm.local` + `appConfig.LocalAdminPassword`（首次启动随机生成）调用 bootstrap，session token 持有在 `relayHost.sessionToken`，前端通过 Wails `GetEndpoint()` 拿到。
+桌面 App 场景：本地 mini-relay 走**独立**的 bootstrap 路径——`desktop/relay_host.go::startRelayHost` 用 `local@atterm.local` + `appConfig.LocalAdminPassword`（首次启动随机生成）调 `bootstrapLocalAdmin` 直接建用户 + mint session（loopback only，不经公网 claim-token 流程）；session token 持有在 `relayHost.sessionToken`，前端通过 Wails `GetEndpoint()` 拿到。
 
 ## 9. 安全考量
 
@@ -440,10 +411,11 @@ Web 浏览器没有等价存储——只能用 localStorage。XSS 风险：单�
 | 状态码 | 路径 / 上下文 | 触发条件 | 客户端建议 |
 |---|---|---|---|
 | `401` | 任意 requireSession 保护的 endpoint | token 缺失 / 哈希查不到 / `expires_at < now` / user disabled | 清本地 token，跳登录 |
-| `400` | `POST /api/auth/login` | JSON 解析失败、email/password 空 | 校验表单 |
-| `401` | `POST /api/auth/login` | 密码错 | 提示"邮箱或密码错"（不区分） |
-| `400` | `POST /api/auth/signup` | 邀请码无效 / 邮箱格式错 / 密码强度不足 | 显示具体错 |
-| `409` | `POST /api/auth/signup` | 邮箱已被注册 | 提示用户去登录 |
+| `400` | `POST /api/auth/login/{init,finalize}` | JSON / OPAQUE 消息解析失败 | 校验表单 |
+| `401` | `POST /api/auth/login/finalize` | OPAQUE 校验失败（密码错 / 用户不存在，不区分） | 提示"邮箱或密码错" |
+| `401` | `POST /api/auth/register/finalize` | `claim_token` 无效 / 过期 / 已用 / 邮箱不匹配 | 重新获取 claim token |
+| `409` | `POST /api/auth/register/finalize` | 邮箱已被注册 | 提示用户去登录 |
+| `410` | `POST /api/auth/{login,signup}`（旧密码端点） | 端点已下线 | 升级客户端走 OPAQUE |
 | `400` | `POST /api/pair/consume` | JSON 解析失败、token 空 | 重新扫码 |
 | `404` | `POST /api/pair/consume` | token 不存在 | 重新让老设备生成 |
 | `409` | `POST /api/pair/consume` | token 已被消费 | 重新让老设备生成 |
@@ -503,14 +475,18 @@ WS 升级失败统一表现为 HTTP 状态码（在 upgrade 之前），客户�
 
 ### 12.2 OPAQUE endpoint
 
+实际路径**不带** `/opaque/` 段（见 `internal/relay/opaque_auth.go::Register`）：
+
 | 路径 | 用途 | 输入 | 输出 |
 |------|-----|------|------|
-| `POST /api/auth/opaque/register/init` | 注册第一步 | `email`、`invitation_code`、`opaque.RegistrationRequest`（base64） | `opaque.RegistrationResponse`（base64） |
-| `POST /api/auth/opaque/register/finalize` | 注册第二步 | `email`、`opaque.RegistrationRecord`、`account_key_wrap`（见 §12.3） | `session_token` + `*User` 摘要 |
-| `POST /api/auth/opaque/login/init` | 登录第一步 | `email`、`opaque.KE1` | `opaque.KE2`（含 envelope） |
-| `POST /api/auth/opaque/login/finalize` | 登录第二步 | `email`、`opaque.KE3` | `session_token`、`account_key_wrap`、`*User` |
+| `POST /api/auth/register/init` | 注册第一步 | `email`、`opaque.RegistrationRequest`（base64） | `opaque.RegistrationResponse`（base64） |
+| `POST /api/auth/register/finalize` | 注册第二步 | `email`、`opaque.RegistrationRecord`、`account_key_wrap`（见 §12.3）、**可选** `claim_token` | `session_token` + `*User` 摘要 |
+| `POST /api/auth/login/init` | 登录第一步 | `email`、`opaque.KE1` | `opaque.KE2`（含 envelope） |
+| `POST /api/auth/login/finalize` | 登录第二步 | `email`、`opaque.KE3` | `session_token`、`account_key_wrap`、`*User` |
 | `POST /api/auth/stepup/init` | 特权操作再认证 | 同 login/init | KE2 |
 | `POST /api/auth/stepup/finalize` | 特权操作再认证 | 同 login/finalize | `step_up_token`（60 秒、单次有效） |
+
+注册不再用 `invitation_code` 门控；`register/finalize` 的可选 `claim_token`（operator 启动时打印，见 §4.1）只用于授予角色（如 admin）。旧的密码端点 `POST /api/auth/{login,signup}` 返回 410。
 
 实现：`internal/relay/opaque_server.go`（套件 + persistence）、`internal/relay/opaque_auth.go`（register/login HTTP handler）、`internal/relay/opaque_stepup.go`（step-up）。
 
@@ -560,8 +536,8 @@ AccountKeyWrap = {
   Client                              Relay
   ───────────────────────────────────────────────────
   生成 RegistrationRequest(password)
-  ─── POST /opaque/register/init ───►
-                                      验证邀请码、email 唯一
+  ─── POST /api/auth/register/init ──►
+                                      email 唯一性检查
                                       bytemare/opaque.Server.RegistrationResponse
   ◄── RegistrationResponse ──────────
   RegistrationRecord(server_resp,
@@ -569,7 +545,8 @@ AccountKeyWrap = {
                      client_identity=email)
   生成 account_key = randomBytes(32)
   AccountKeyWrap(password, account_key)
-  ─── POST /opaque/register/finalize ►
+  ─ POST /api/auth/register/finalize ►
+                                      (可选 claim_token → 校验+提权)
                                       持久化 users.opaque_record + account_key_wrap
                                       生成 session_token (明文返回一次)
   ◄── { session_token, user } ───────
@@ -580,11 +557,11 @@ AccountKeyWrap = {
   Client                              Relay
   ───────────────────────────────────────────────────
   KE1 = ake1(password)
-  ─── POST /opaque/login/init ───────►
+  ─── POST /api/auth/login/init ─────►
                                       ake1 + opaque_record → KE2
   ◄── KE2 ────────────────────────────
   KE3 = ake3(KE2)
-  ─── POST /opaque/login/finalize ───►
+  ─── POST /api/auth/login/finalize ─►
                                       ake4(KE3) → 验通过
                                       新 session_token (明文返回一次)
   ◄── { session_token, account_key_wrap, user }

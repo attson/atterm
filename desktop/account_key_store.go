@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zalando/go-keyring"
+	"github.com/attson/atterm/internal/safekeyring"
 )
 
 // accountKeyService is the OS-keychain service name under which atterm
@@ -38,7 +38,7 @@ func accountKeyAccount(relayOrigin, userID string) string {
 
 // errKeychainNotConfigured is the keyring-unconfigured error we surface
 // to callers as "no key persisted" rather than as a real failure.
-var errKeychainNotConfigured = keyring.ErrNotFound
+var errKeychainNotConfigured = safekeyring.ErrNotFound
 
 // loadAccountKey reads the persisted E2EE account key for (relayOrigin,
 // userID), or returns nil if nothing was stored. Any keychain-level
@@ -54,7 +54,7 @@ func loadAccountKey(relayOrigin, userID string) ([]byte, error) {
 	if account == "" {
 		return nil, nil
 	}
-	encoded, err := keyring.Get(accountKeyService, account)
+	encoded, err := safekeyring.Get(accountKeyService, account)
 	if err != nil {
 		if errors.Is(err, errKeychainNotConfigured) {
 			return nil, nil
@@ -80,7 +80,7 @@ func saveAccountKey(relayOrigin, userID string, key []byte) error {
 		return clearAccountKeyFor(relayOrigin, userID)
 	}
 	encoded := base64.RawStdEncoding.EncodeToString(key)
-	if err := keyring.Set(accountKeyService, account, encoded); err != nil {
+	if err := safekeyring.Set(accountKeyService, account, encoded); err != nil {
 		return fmt.Errorf("keychain set: %w", err)
 	}
 	return nil
@@ -93,8 +93,8 @@ func clearAccountKeyFor(relayOrigin, userID string) error {
 	if account == "" {
 		return nil
 	}
-	if err := keyring.Delete(accountKeyService, account); err != nil {
-		if errors.Is(err, keyring.ErrNotFound) {
+	if err := safekeyring.Delete(accountKeyService, account); err != nil {
+		if errors.Is(err, safekeyring.ErrNotFound) {
 			return nil
 		}
 		return fmt.Errorf("keychain delete: %w", err)

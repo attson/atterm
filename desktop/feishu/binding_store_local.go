@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zalando/go-keyring"
+	"github.com/attson/atterm/internal/safekeyring"
 )
 
 const (
@@ -35,8 +35,8 @@ type localBindingBlob struct {
 }
 
 func (s *LocalKeychainBindingStore) Get(ctx context.Context) (*BindingView, error) {
-	raw, err := keyring.Get(keychainService, keychainAccount)
-	if errors.Is(err, keyring.ErrNotFound) {
+	raw, err := safekeyring.Get(keychainService, keychainAccount)
+	if errors.Is(err, safekeyring.ErrNotFound) {
 		return nil, ErrLocalBindingNotFound
 	}
 	if err != nil {
@@ -61,7 +61,7 @@ func (s *LocalKeychainBindingStore) write(b localBindingBlob) error {
 	if err != nil {
 		return fmt.Errorf("encode blob: %w", err)
 	}
-	return keyring.Set(keychainService, keychainAccount, string(buf))
+	return safekeyring.Set(keychainService, keychainAccount, string(buf))
 }
 
 func (s *LocalKeychainBindingStore) SetCredentials(ctx context.Context, c Credentials) error {
@@ -124,8 +124,8 @@ func (s *LocalKeychainBindingStore) ClearDisabled(ctx context.Context) error {
 }
 
 func (s *LocalKeychainBindingStore) Delete(ctx context.Context) error {
-	err := keyring.Delete(keychainService, keychainAccount)
-	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+	err := safekeyring.Delete(keychainService, keychainAccount)
+	if err != nil && !errors.Is(err, safekeyring.ErrNotFound) {
 		return fmt.Errorf("keyring delete: %w", err)
 	}
 	return nil

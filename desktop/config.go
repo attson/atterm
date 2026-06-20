@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/proto"
 )
 
@@ -364,11 +365,11 @@ func supportedTerminalThemes() []string {
 }
 
 func configPath() string {
-	dir, err := os.UserConfigDir()
+	dir, err := appdir.ConfigDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "atterm", "config.json")
+	return filepath.Join(dir, "config.json")
 }
 
 // configStore is a thin lock-protected wrapper around appConfig with disk I/O.

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/attson/atterm/internal/appdir"
 )
 
 const (
@@ -30,12 +32,8 @@ type RecoveryStore struct {
 // NewRecoveryStore wires a store to ~/.config/atterm/recovery.json. Used by
 // production code; tests build their own with tempRecoveryStore.
 func NewRecoveryStore(hostID string) (*RecoveryStore, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := appdir.ConfigDir()
 	if err != nil {
-		return nil, err
-	}
-	dir = filepath.Join(dir, "atterm")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	return &RecoveryStore{

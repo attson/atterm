@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -18,6 +19,14 @@ var assets embed.FS
 var Version = "dev"
 
 func main() {
+	// A `wails dev` build keeps Version == "dev". Isolate all of its data
+	// (config, recovery, local relay db, cache, credentials) under a separate
+	// "atterm-dev" namespace so development never reads or clobbers the
+	// installed app's state. Must run before any path is computed below.
+	if Version == "dev" {
+		appdir.UseDev()
+	}
+
 	configurePlatformEnvironment()
 
 	cfgStore := loadConfig()

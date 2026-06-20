@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ptyhost"
 	"github.com/google/uuid"
@@ -77,11 +78,11 @@ func savePastedImage(sessionID uuid.UUID, p proto.PasteImagePayload) (string, er
 	if len(p.Data) > maxPasteImageBytes {
 		return "", fmt.Errorf("paste image: image too large")
 	}
-	base, err := os.UserCacheDir()
+	base, err := appdir.CacheDir()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(base, "atterm", "paste-images", sessionID.String())
+	dir := filepath.Join(base, "paste-images", sessionID.String())
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

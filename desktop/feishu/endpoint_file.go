@@ -9,22 +9,25 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/attson/atterm/internal/appdir"
 )
 
 func endpointFilePath() (string, error) {
+	ns := appdir.Name()
 	if runtime.GOOS == "windows" {
 		if v := os.Getenv("APPDATA"); v != "" {
-			return filepath.Join(v, "atterm", "hook-endpoint"), nil
+			return filepath.Join(v, ns, "hook-endpoint"), nil
 		}
 	}
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return filepath.Join(v, "atterm", "hook-endpoint"), nil
+		return filepath.Join(v, ns, "hook-endpoint"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "atterm", "hook-endpoint"), nil
+	return filepath.Join(home, ".config", ns, "hook-endpoint"), nil
 }
 
 func WriteEndpointFile(url string) error {

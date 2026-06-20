@@ -19,11 +19,12 @@ var assets embed.FS
 var Version = "dev"
 
 func main() {
-	// A `wails dev` build keeps Version == "dev". Isolate all of its data
-	// (config, recovery, local relay db, cache, credentials) under a separate
-	// "atterm-dev" namespace so development never reads or clobbers the
-	// installed app's state. Must run before any path is computed below.
-	if Version == "dev" {
+	// A `wails dev` build leaves Version unset / "dev". Route all of its data
+	// (config, recovery, local relay db, cache, logs, credentials) to a
+	// project-local .atterm-dev directory so development never reads, clobbers,
+	// or pollutes the installed app's state or the system app dirs. Must run
+	// before any path is computed below.
+	if isDevBuild(Version) {
 		appdir.UseDev()
 	}
 

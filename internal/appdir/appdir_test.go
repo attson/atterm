@@ -5,36 +5,52 @@ import (
 	"testing"
 )
 
+func reset() {
+	mu.Lock()
+	name = prodName
+	devRoot = ""
+	mu.Unlock()
+}
+
 func TestDefaultIsProd(t *testing.T) {
-	name = prodName // ensure clean state regardless of test order
+	reset()
 	if got := Name(); got != "atterm" {
 		t.Fatalf("Name() = %q, want atterm", got)
 	}
 	if IsDev() {
 		t.Fatal("IsDev() = true in default state")
 	}
-	if got := KeychainSuffix(); got != "" {
-		t.Fatalf("KeychainSuffix() = %q, want empty", got)
+	if KeychainSuffix() != "" {
+		t.Fatalf("KeychainSuffix() = %q, want empty", KeychainSuffix())
+	}
+	if DevRoot() != "" {
+		t.Fatalf("DevRoot() = %q, want empty in prod", DevRoot())
+	}
+	if _, ok := DevLogFile(); ok {
+		t.Fatal("DevLogFile() ok=true in prod")
 	}
 }
 
-func TestUseDevNamespaces(t *testing.T) {
-	t.Cleanup(func() { name = prodName })
+func TestUseDevUsesProjectLocalRoot(t *testing.T) {
+	reset()
+	t.Cleanup(reset)
+	root := filepath.Join(t.TempDir(), "devroot")
+	t.Setenv("ATTERM_DEV_DIR", root)
 	UseDev()
-	if got := Name(); got != "atterm-dev" {
-		t.Fatalf("Name() = %q, want atterm-dev", got)
+
+	if !IsDev() || KeychainSuffix() != ".dev" {
+		t.Fatalf("IsDev=%v suffix=%q", IsDev(), KeychainSuffix())
 	}
-	if !IsDev() {
-		t.Fatal("IsDev() = false after UseDev")
+	cfg, err := ConfigDir()
+	if err != nil || cfg != root {
+		t.Fatalf("ConfigDir = %q, %v; want %q", cfg, err, root)
 	}
-	if got := KeychainSuffix(); got != ".dev" {
-		t.Fatalf("KeychainSuffix() = %q, want .dev", got)
+	cache, err := CacheDir()
+	if err != nil || cache != filepath.Join(root, "cache") {
+		t.Fatalf("CacheDir = %q, %v; want %s/cache", cache, err, root)
 	}
-	dir, err := ConfigDir()
-	if err != nil {
-		t.Fatalf("ConfigDir: %v", err)
-	}
-	if filepath.Base(dir) != "atterm-dev" {
-		t.Fatalf("ConfigDir leaf = %q, want atterm-dev", filepath.Base(dir))
+	logp, ok := DevLogFile()
+	if !ok || logp != filepath.Join(root, "logs", "desktop.log") {
+		t.Fatalf("DevLogFile = %q, %v; want %s/logs/desktop.log", logp, ok, root)
 	}
 }

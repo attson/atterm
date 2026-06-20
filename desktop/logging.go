@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/attson/atterm/internal/appdir"
 )
 
 const (
@@ -147,6 +149,10 @@ func (m *loggingManager) Close() error {
 }
 
 func defaultLogFilePath() string {
+	// A dev build keeps all data — including logs — under a project-local dir.
+	if p, ok := appdir.DevLogFile(); ok {
+		return p
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		if home, err := os.UserHomeDir(); err == nil && home != "" {

@@ -37,7 +37,6 @@ describe('FeishuConfig.vue', () => {
       running: false,
       base_url: '',
       key_set: false,
-      requires_restart_for_vapid: true,
     })
     const wrapper = mountWithProvider()
     await flushPromises()
@@ -50,10 +49,10 @@ describe('FeishuConfig.vue', () => {
 
   it('saves the enabled flag + key on save', async () => {
     ;(getFeishuAdminConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-      enabled: false, running: false, base_url: '', key_set: false, requires_restart_for_vapid: true,
+      enabled: false, running: false, base_url: '', key_set: false,
     })
     ;(setFeishuAdminConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-      enabled: true, running: true, base_url: '', key_set: true, key_last4: 'abcd', requires_restart_for_vapid: true,
+      enabled: true, running: true, base_url: '', key_set: true, key_last4: 'abcd',
     })
     const wrapper = mountWithProvider()
     await flushPromises()

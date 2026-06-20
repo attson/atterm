@@ -101,7 +101,7 @@ export function NewSession(arg1:main.NewSessionReq):Promise<main.NewSessionResp>
 
 export function PickLogFilePath():Promise<string>;
 
-export function ProbeRelayVersion(arg1:string):Promise<void>;
+export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
 export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 

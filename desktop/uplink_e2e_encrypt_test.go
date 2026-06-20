@@ -65,7 +65,7 @@ func TestUplink_E2E_OUTSealedThroughRelay(t *testing.T) {
 	defer uplinkCancel()
 	u := newUplink("ws://"+remoteAddr, remoteTok, proto.RemotePermissionFull, host, nil, func() []byte {
 		return accountKey
-	})
+	}, false)
 	u.eventsEmit = func(context.Context, string, ...interface{}) {}
 	go u.Run(uplinkCtx)
 

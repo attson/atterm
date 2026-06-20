@@ -234,7 +234,7 @@ interface AppBindings {
   RegisterRemoteRelay(relayURL: string, email: string, password: string, claimToken: string, allowInsecure: boolean): Promise<void>;
   HasAccountKey(): Promise<boolean>;
   GetAccountKey(): Promise<string>;
-  ProbeRelayVersion(arg1: string): Promise<void>;
+  ProbeRelayVersion(arg1: string, arg2: boolean): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
@@ -432,8 +432,9 @@ export function getAccountKey(): Promise<string> {
 
 // probeRelayVersion calls the Wails ProbeRelayVersion method on the Go side
 // to verify the URL points at an atterm relay. Throws on probe failure.
-export function probeRelayVersion(url: string): Promise<void> {
-  return bindings().ProbeRelayVersion(url);
+// allowInsecure skips TLS verification so a self-signed relay is reachable.
+export function probeRelayVersion(url: string, allowInsecure: boolean): Promise<void> {
+  return bindings().ProbeRelayVersion(url, allowInsecure);
 }
 
 // ConnHealthSnapshot mirrors internal/connhealth.Snapshot. Returned by the

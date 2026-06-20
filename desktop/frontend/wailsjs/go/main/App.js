@@ -194,8 +194,8 @@ export function PickLogFilePath() {
   return window['go']['main']['App']['PickLogFilePath']();
 }
 
-export function ProbeRelayVersion(arg1) {
-  return window['go']['main']['App']['ProbeRelayVersion'](arg1);
+export function ProbeRelayVersion(arg1, arg2) {
+  return window['go']['main']['App']['ProbeRelayVersion'](arg1, arg2);
 }
 
 export function RegisterRemoteRelay(arg1, arg2, arg3, arg4, arg5) {

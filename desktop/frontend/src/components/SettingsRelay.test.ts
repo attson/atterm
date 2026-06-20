@@ -34,16 +34,18 @@ describe("SettingsRelay", () => {
     expect(source).toContain("settings.relay.connecting");
   });
 
-  test("derives the relay scheme from insecure mode instead of asking the user to type it", () => {
-    // Bare host is stored; the scheme prefix is computed.
+  test("relay scheme is always https; the insecure toggle only relaxes cert verification", () => {
+    // Bare host is stored; the scheme prefix is a fixed https:// (no longer
+    // derived from the insecure toggle — connections stay HTTPS/WSS).
     expect(source).toContain("const host = ref");
     expect(source).toContain("function stripScheme");
-    expect(source).toContain('allowInsecureRelay.value ? "http://" : "https://"');
-    // A non-editable prefix renders the derived scheme next to the input.
+    expect(source).toContain('const urlScheme = computed(() => "https://")');
+    expect(source).not.toContain('? "http://" : "https://"');
+    // A non-editable prefix renders the scheme next to the input.
     expect(source).toContain('class="url-scheme"');
     expect(source).toContain("{{ urlScheme }}");
-    // The reconstructed URL is what the backend calls receive.
-    expect(source).toContain("probeRelayVersion(fullUrl.value)");
+    // The reconstructed URL + the self-signed-trust flag reach the probe.
+    expect(source).toContain("probeRelayVersion(fullUrl.value, allowInsecureRelay.value)");
   });
 
   test("insecure-mode toggle sits on the relay url label row", () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NForm, NFormItem, NInput, NButton, NSpace, NSwitch, NAlert, useMessage } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInput, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { getFeishuAdminConfig, setFeishuAdminConfig, generateFeishuKey } from '@shared/api/admin'
 import type { FeishuAdminConfig, FeishuAdminConfigUpdate } from '@shared/api/types'
@@ -114,10 +114,6 @@ onMounted(load)
         <n-input v-model:value="baseUrl" placeholder="https://open.feishu.cn" data-testid="feishu-base" />
       </n-form-item>
 
-      <n-alert v-if="cfg.requires_restart_for_vapid && cfg.vapid_subject" type="info" :show-icon="false" class="note">
-        {{ t('admin.feishuConfig.vapidNote') }}
-      </n-alert>
-
       <n-space class="actions" align="center">
         <n-button type="primary" :loading="saving" :disabled="saving" data-testid="feishu-save" @click="onSave">
           {{ t('common.save') }}
@@ -133,7 +129,6 @@ onMounted(load)
 .hint { color: var(--fg-dim); font-size: 0.875rem; margin: 0 0 1rem; }
 .muted { color: var(--fg-dim); font-size: 0.875rem; }
 .warn { color: var(--warn, #d89614); font-size: 0.8125rem; }
-.note { margin: 0.75rem 0; }
 .actions { margin-top: 1rem; }
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
 </style>

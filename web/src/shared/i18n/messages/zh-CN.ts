@@ -256,7 +256,6 @@ export const zhCN = {
       keyCopyOnce: '请妥善复制保存此密钥——它只显示这一次，之后不再展示。',
       forceRotate: '替换现有密钥（现有飞书绑定将失效）',
       baseUrl: 'Base URL',
-      vapidNote: '修改 VAPID subject 需要重启 relay 才能生效。',
       statusRunning: '运行中',
       statusStopped: '已停止',
       rotateConflict: '这会更改现有密钥。需勾选「替换」才能轮换（现有绑定会失效）。',

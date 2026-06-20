@@ -73,7 +73,7 @@ func sniffAISessionIDForTest(
 	totalBudget time.Duration,
 	onCapture func(sid string),
 ) {
-	before := snapshotJsonlNames(dir)
+	before := snapshotJsonlMtimes(dir)
 	deadline := time.Now().Add(totalBudget)
 	interval := initialInterval
 	const maxInterval = 3200 * time.Millisecond
@@ -84,14 +84,13 @@ func sniffAISessionIDForTest(
 			return
 		case <-time.After(interval):
 		}
-		now := snapshotJsonlNames(dir)
-		diff := setDiff(now, before)
-		if len(diff) >= 2 {
-			log.Printf("recovery: ai sniff ambiguous (%d new files in %s) — abort", len(diff), dir)
+		active := activeJsonl(snapshotJsonlMtimes(dir), before)
+		if len(active) >= 2 {
+			log.Printf("recovery: ai sniff ambiguous (%d active files in %s) — abort", len(active), dir)
 			return
 		}
-		if len(diff) == 1 {
-			if sid, ok := spec.NewFile(diff[0]); ok {
+		if len(active) == 1 {
+			if sid, ok := spec.NewFile(active[0]); ok {
 				onCapture(sid)
 				return
 			}
@@ -104,28 +103,41 @@ func sniffAISessionIDForTest(
 	log.Printf("recovery: ai sniff timeout in %s", dir)
 }
 
-// snapshotJsonlNames returns the set of *.jsonl basenames in dir (or
-// the empty set if dir is unreadable).
-func snapshotJsonlNames(dir string) map[string]struct{} {
-	out := map[string]struct{}{}
+// snapshotJsonlMtimes maps each *.jsonl basename in dir to its modtime (empty
+// if dir is unreadable). Subdirectories (Claude writes a per-session subdir of
+// the same UUID) and non-jsonl files (locks, *.tmp) are skipped so they can't
+// create false "new file" ambiguity.
+func snapshotJsonlMtimes(dir string) map[string]time.Time {
+	out := map[string]time.Time{}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return out
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		out[e.Name()] = struct{}{}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out[e.Name()] = info.ModTime()
 	}
 	return out
 }
 
-func setDiff(now, before map[string]struct{}) []string {
+// activeJsonl returns the *.jsonl basenames that are new (absent from before)
+// or whose modtime advanced — i.e. the session file(s) being actively written
+// during the watch window. Detecting modified files (not just newly created
+// ones) is what captures resumed/continued sessions: `claude -c` / `--resume`
+// and atterm's own restore append to an existing file rather than creating a
+// new one, so a creation-only watch would time out without ever capturing the
+// sid.
+func activeJsonl(now, before map[string]time.Time) []string {
 	out := []string{}
-	for k := range now {
-		if _, in := before[k]; !in {
-			out = append(out, k)
+	for name, mt := range now {
+		if prev, existed := before[name]; !existed || mt.After(prev) {
+			out = append(out, name)
 		}
 	}
 	sort.Strings(out)

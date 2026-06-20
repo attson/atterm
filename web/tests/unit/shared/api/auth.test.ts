@@ -1,4 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// The OPAQUE protocol runs in the bytemare WASM client (browser-only loader);
+// stub it so these unit tests exercise auth.ts's HTTP/endpoint wiring without a
+// real wasm instance. Real protocol interop is covered by opaque-interop.test.ts.
+vi.mock('@shared/lib/opaqueWasm', () => ({
+  opaqueRegisterInit: vi.fn(async () => ({ handle: 1, ke1: 'a2Ux' })),
+  opaqueRegisterFinish: vi.fn(async () => ({ record: 'cmVj', exportKey: '' })),
+  opaqueLoginInit: vi.fn(async () => ({ handle: 1, ke1: 'a2Ux' })),
+  opaqueLoginFinish: vi.fn(async () => ({ ke3: 'a2Uz', exportKey: '', sessionKey: '' })),
+}))
+
 import { login, register, logout } from '@shared/api/auth'
 import { clearRelayConfig, loadRelayConfig } from '@shared/api/relay-config'
 import { clearAccountKey, hasAccountKey } from '@shared/api/account-key'

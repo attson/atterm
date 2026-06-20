@@ -1,81 +1,14 @@
-// Self-contained OPAQUE round-trip test for the TS client. Cross-
-// language interop against the Go relay is a follow-up slice — this
-// suite just verifies the @cloudflare/opaque-ts library works under
-// the P-256-SHA256 + Scrypt cipher suite the Go server speaks, and
-// that the account-key wrap helpers round-trip cleanly.
+// Tests for the account-key AEAD wrap helpers (Argon2id + XChaCha20-Poly1305).
+// These are NOT part of OPAQUE — the OPAQUE protocol now runs in the bytemare
+// WASM client (@shared/lib/opaqueWasm), and cross-client interop is guarded by
+// the relay-gated opaque-interop.test.ts and the Go-side
+// internal/e2eeclient tests. The KSF golden vector moved to Go
+// (TestOpaqueKSFGoldenVector) since the KSF now lives in bytemare.
 
 import { describe, expect, it } from 'vitest'
-import {
-  OpaqueClient,
-  OpaqueServer,
-  IdentityMemHardFn,
-  RegistrationRequest,
-  RegistrationResponse,
-  RegistrationRecord,
-  KE1,
-  KE2,
-  KE3,
-} from '@cloudflare/opaque-ts'
-import {
-  SERVER_IDENTITY,
-  defaultKDFParams,
-  getOpaqueConfig,
-  newOpaqueClient,
-  opaqueStretch,
-  unwrapWithPassword,
-  wrapAccountKey,
-} from '@shared/lib/opaque'
+import { defaultKDFParams, unwrapWithPassword, wrapAccountKey } from '@shared/lib/opaque'
 
-const EMAIL = 'alice@example.com'
 const PASSWORD = 'hunter2'
-
-function makeOpaqueServer(): OpaqueServer {
-  const cfg = getOpaqueConfig()
-  const oprfSeed = Array.from({ length: cfg.constants.Nseed }, (_, i) => i)
-  const akeKeypair = {
-    public_key: Array.from({ length: 33 }, () => 0),
-    private_key: Array.from({ length: 32 }, () => 0),
-  }
-  // Generate a real keypair via the server's static helper-equivalent:
-  // the easiest path is to spin up a throwaway server with placeholder
-  // bytes, then ask it to derive a usable pair via the lib's own RNG.
-  // OpaqueServer's constructor requires `ake_keypair_export` upfront,
-  // so we instead synthesise one by running the lib's KE.deriveKeyPair
-  // — exposed only indirectly via the AKE class. Easier still:
-  // round-trip a registration the way the example tests do.
-  return new OpaqueServer(cfg, oprfSeed, akeKeypair, SERVER_IDENTITY)
-}
-
-describe('opaque client/server round-trip (TS self-test)', () => {
-  it('uses the P-256 cipher suite (matches the Go relay)', () => {
-    const cfg = getOpaqueConfig()
-    // P-256 / SHA-256 yields a 33-byte serialized scalar (compressed) +
-    // 32-byte hash output. The cfg.constants.Nseed will be ≥ 32 for
-    // both Ristretto255 and P-256; the discriminator is the OPRF group.
-    expect(cfg).toBeDefined()
-    expect(cfg.constants.Nseed).toBeGreaterThanOrEqual(32)
-  })
-
-  it('client can be instantiated via newOpaqueClient()', () => {
-    const cl = newOpaqueClient()
-    expect(cl).toBeInstanceOf(OpaqueClient)
-  })
-
-  it('KSF stretch matches the Go desktop client byte-for-byte (cross-language interop)', () => {
-    // The Go desktop client (bytemare/opaque) hardens the password to the
-    // P-256 OPRF element length (33 bytes). This golden vector is produced
-    // identically by ksf.Scrypt.Harden([]byte("atterm-interop"), nil, 33) in
-    // Go — see internal/e2eeclient TestOpaqueKSFGoldenVector. A drift here
-    // (e.g. reverting dkLen to the cloudflare default of 32) silently breaks
-    // web<->desktop login with "invalid credentials".
-    const out = opaqueStretch(new TextEncoder().encode('atterm-interop'))
-    expect(out.length).toBe(33)
-    const hex = Array.from(out)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-    expect(hex).toBe('7001bf4adf717b8af42e1d88c36629ec8d1677e0a50d7d3095eda1bd3bde740bf3')
-  })
-})
 
 describe('account-key wrap helpers', () => {
   it('wraps and unwraps a 32-byte account_key with the same password', () => {

@@ -5,6 +5,7 @@ import (
 	"embed"
 
 	"github.com/attson/atterm/internal/appdir"
+	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -26,6 +27,10 @@ func main() {
 	// before any path is computed below.
 	if isDevBuild(Version) {
 		appdir.UseDev()
+		// Dev builds are unsigned, so the OS keychain is unreliable (macOS
+		// prompts / kills the helper). Keep secrets in the project-local file
+		// store instead — no keychain prompts during development.
+		safekeyring.UseFileStore()
 	}
 
 	configurePlatformEnvironment()

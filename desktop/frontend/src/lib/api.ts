@@ -374,6 +374,9 @@ export function setRelayConfig(cfg: {
   allow_insecure_relay?: boolean;
   disable_e2ee?: boolean;
   remote_permission?: string;
+  // When provided, persists the cached email (used to remember inputs after a
+  // failed login). Empty leaves the stored value untouched.
+  last_email?: string;
 }): Promise<void> {
   return bindings().SetRelayConfig({
     url: cfg.url,
@@ -382,7 +385,7 @@ export function setRelayConfig(cfg: {
     allow_insecure_relay: cfg.allow_insecure_relay ?? false,
     disable_e2ee: cfg.disable_e2ee ?? false,
     remote_permission: cfg.remote_permission ?? "full",
-    last_email: "",
+    last_email: cfg.last_email ?? "",
     connected: false,
   });
 }

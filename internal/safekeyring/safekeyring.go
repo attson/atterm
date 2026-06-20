@@ -32,12 +32,24 @@ var ErrNotFound = keyring.ErrNotFound
 
 var (
 	mu       sync.Mutex
-	degraded bool
+	degraded bool // latched after a hard keychain failure
+	fileOnly bool // skip the keychain entirely (dev / tests / unsigned builds)
 
 	fileMu  sync.Mutex // serializes the fallback file read-modify-write
 	dirMu   sync.Mutex // guards fileDir
-	fileDir string     // test override; "" = <UserConfigDir>/atterm
+	fileDir string     // test override; "" = <appdir.ConfigDir>
 )
+
+// UseFileStore makes every operation use the 0600 file store directly, without
+// ever invoking the OS keychain. Call this for builds where the keychain is
+// known to be unavailable or undesirable — a `wails dev` build, or tests —
+// so macOS never pops a keychain-access prompt and Linux/Windows never spawn
+// the helper.
+func UseFileStore() {
+	mu.Lock()
+	fileOnly = true
+	mu.Unlock()
+}
 
 func markDegraded(op string, err error) {
 	mu.Lock()
@@ -50,16 +62,19 @@ func markDegraded(op string, err error) {
 	}
 }
 
-func isDegraded() bool {
+// useFile reports whether operations should bypass the keychain — either
+// latched degraded, or forced via UseFileStore.
+func useFile() bool {
 	mu.Lock()
 	defer mu.Unlock()
-	return degraded
+	return degraded || fileOnly
 }
 
-// Reset clears the degraded latch. Intended for tests.
+// Reset clears the degraded latch and file-only flag. Intended for tests.
 func Reset() {
 	mu.Lock()
 	degraded = false
+	fileOnly = false
 	mu.Unlock()
 }
 
@@ -74,7 +89,7 @@ func SetFileDirForTest(dir string) {
 // Get returns the stored secret, or ErrNotFound if absent. When the keychain
 // is healthy it is the source of truth; once degraded, the file store is.
 func Get(service, account string) (string, error) {
-	if !isDegraded() {
+	if !useFile() {
 		v, err := keyring.Get(service, account)
 		if err == nil {
 			return v, nil
@@ -91,7 +106,7 @@ func Get(service, account string) (string, error) {
 // it writes the 0600 file instead. A file write error is returned so callers
 // know persistence truly failed.
 func Set(service, account, secret string) error {
-	if !isDegraded() {
+	if !useFile() {
 		if err := keyring.Set(service, account, secret); err == nil {
 			return nil
 		} else {
@@ -104,7 +119,7 @@ func Set(service, account, secret string) error {
 // Delete removes the secret from whichever store is active. Absent secrets
 // succeed.
 func Delete(service, account string) error {
-	if !isDegraded() {
+	if !useFile() {
 		if err := keyring.Delete(service, account); err == nil || errors.Is(err, keyring.ErrNotFound) {
 			return nil
 		} else {

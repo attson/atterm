@@ -215,6 +215,26 @@ function snapshotPersisted() {
   persistedAllowInsecure.value = allowInsecureRelay.value;
 }
 
+// Persist the URL / insecure flag / email even when the connect fails, so
+// reopening the dialog doesn't lose them. The token is kept as-is; with no
+// token the backend skips the uplink (no failing reconnect loop). Best-effort —
+// never masks the real connect error.
+async function rememberInputs() {
+  try {
+    await setRelayConfig({
+      url: fullUrl.value,
+      token: token.value,
+      session_expires_at: 0,
+      allow_insecure_relay: allowInsecureRelay.value,
+      disable_e2ee: disableE2EE.value,
+      remote_permission: "full",
+      last_email: email.value.trim(),
+    });
+  } catch {
+    /* ignore — the real failure is already surfaced */
+  }
+}
+
 async function save() {
   saving.value = true;
   error.value = "";
@@ -231,6 +251,7 @@ async function save() {
   try {
     await probeRelayVersion(fullUrl.value, allowInsecureRelay.value);
   } catch (e: any) {
+    await rememberInputs();
     error.value = t("settings.relay.versionProbeFailed", { reason: e?.message ?? String(e) });
     saving.value = false;
     return;
@@ -248,6 +269,7 @@ async function save() {
         await loginRemoteRelay(fullUrl.value, email.value.trim(), password.value, allowInsecureRelay.value);
       }
     } catch (e: any) {
+      await rememberInputs();
       error.value = t("settings.relay.loginFailedInline", { reason: e?.message ?? String(e) });
       saving.value = false;
       return;
@@ -273,6 +295,7 @@ async function save() {
       return;
     }
   } else {
+    await rememberInputs();
     error.value = t("settings.relay.credentialsRequired");
     saving.value = false;
     return;

@@ -328,10 +328,15 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 		a.uplinkCancel = nil
 		a.uplink = nil
 	}
-	if cfg.RelayURL == "" || cfg.RelayPaused {
+	if cfg.RelayURL == "" || cfg.RelayPaused || cfg.RelaySessionToken == "" {
 		reason := "no URL"
 		if cfg.RelayPaused {
 			reason = "paused by user"
+		} else if cfg.RelayURL != "" && cfg.RelaySessionToken == "" {
+			// A URL persisted without a token is a remembered draft (e.g. the
+			// user saved settings after a failed login). There is nothing to
+			// authenticate with, so don't spin a doomed reconnect loop.
+			reason = "no session token"
 		}
 		log.Printf("desktop: uplink disabled (%s)", reason)
 		return
@@ -440,6 +445,12 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	cfg.RelaySessionToken = strings.TrimSpace(req.Token)
 	cfg.RelaySessionExpiresAt = req.SessionExpiresAt
 	cfg.AllowInsecureRelay = req.AllowInsecureRelay
+	// Persist the email when provided so a failed-login "remember my inputs"
+	// save keeps it (LoginRemoteRelay still writes it on success). Empty leaves
+	// the cached value untouched.
+	if req.LastEmail != "" {
+		cfg.RelayLastEmail = req.LastEmail
+	}
 	priorDisableE2EE := cfg.DisableE2EE
 	cfg.DisableE2EE = req.DisableE2EE
 	switch req.RemotePermission {

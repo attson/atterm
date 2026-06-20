@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/zalando/go-keyring"
 )
 
@@ -120,11 +121,14 @@ func fallbackPath() (string, error) {
 	dir := fileDir
 	dirMu.Unlock()
 	if dir == "" {
-		cfg, err := os.UserConfigDir()
+		// Default: the namespaced app config dir (appdir already MkdirAll's it),
+		// so the fallback file sits next to config.json / recovery.json and is
+		// isolated per dev/prod build.
+		d, err := appdir.ConfigDir()
 		if err != nil {
 			return "", err
 		}
-		dir = filepath.Join(cfg, "atterm")
+		return filepath.Join(d, "keyring-fallback.json"), nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err

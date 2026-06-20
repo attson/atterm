@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/appdir"
 	"golang.org/x/mod/semver"
 )
 
@@ -402,7 +403,7 @@ func (u *Updater) updatesDir() (string, error) {
 			return "", err
 		}
 	}
-	dir := filepath.Join(base, "atterm", "updates")
+	dir := filepath.Join(base, appdir.Name(), "updates")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

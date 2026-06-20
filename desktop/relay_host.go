@@ -15,6 +15,7 @@ import (
 
 	"github.com/attson/atterm/desktop/feishu"
 	"github.com/attson/atterm/desktop/shellintegration"
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/hostid"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ptyhost"
@@ -183,11 +184,11 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 // users.db. It lives next to config.json under UserConfigDir/atterm so
 // the same XDG_CONFIG_HOME / HOME test overrides apply.
 func localUserStorePath() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := appdir.ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "atterm", "users.db"), nil
+	return filepath.Join(dir, "users.db"), nil
 }
 
 func relayDebugEnabled() bool {

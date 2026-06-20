@@ -8,13 +8,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/safekeyring"
 )
 
-const (
-	keychainService = "atterm.feishu.binding"
-	keychainAccount = "binding-v1"
-)
+const keychainAccount = "binding-v1"
+
+// keychainService namespaces the binding's keychain entry so a dev build does
+// not share the production binding (suffix is empty in production).
+func keychainService() string {
+	return "atterm.feishu.binding" + appdir.KeychainSuffix()
+}
 
 // LocalKeychainBindingStore persists the user's Feishu binding to the
 // OS keychain as a single JSON blob. Used in non-relay mode.
@@ -35,7 +39,7 @@ type localBindingBlob struct {
 }
 
 func (s *LocalKeychainBindingStore) Get(ctx context.Context) (*BindingView, error) {
-	raw, err := safekeyring.Get(keychainService, keychainAccount)
+	raw, err := safekeyring.Get(keychainService(), keychainAccount)
 	if errors.Is(err, safekeyring.ErrNotFound) {
 		return nil, ErrLocalBindingNotFound
 	}
@@ -61,7 +65,7 @@ func (s *LocalKeychainBindingStore) write(b localBindingBlob) error {
 	if err != nil {
 		return fmt.Errorf("encode blob: %w", err)
 	}
-	return safekeyring.Set(keychainService, keychainAccount, string(buf))
+	return safekeyring.Set(keychainService(), keychainAccount, string(buf))
 }
 
 func (s *LocalKeychainBindingStore) SetCredentials(ctx context.Context, c Credentials) error {
@@ -124,7 +128,7 @@ func (s *LocalKeychainBindingStore) ClearDisabled(ctx context.Context) error {
 }
 
 func (s *LocalKeychainBindingStore) Delete(ctx context.Context) error {
-	err := safekeyring.Delete(keychainService, keychainAccount)
+	err := safekeyring.Delete(keychainService(), keychainAccount)
 	if err != nil && !errors.Is(err, safekeyring.ErrNotFound) {
 		return fmt.Errorf("keyring delete: %w", err)
 	}

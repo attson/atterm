@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/safekeyring"
 )
 
@@ -17,7 +18,9 @@ import (
 // The trailing version suffix lets us migrate to a new wrap format
 // later without colliding with old entries — drop the v1 read once a
 // future "v2" path is reading + writing cleanly.
-const accountKeyService = "com.atterm.account-key.v1"
+func accountKeyService() string {
+	return "com.atterm.account-key.v1" + appdir.KeychainSuffix()
+}
 
 // accountKeyAccount derives the keychain "account" name from the relay
 // origin and user ID. Multiple relays on the same desktop must not
@@ -54,7 +57,7 @@ func loadAccountKey(relayOrigin, userID string) ([]byte, error) {
 	if account == "" {
 		return nil, nil
 	}
-	encoded, err := safekeyring.Get(accountKeyService, account)
+	encoded, err := safekeyring.Get(accountKeyService(), account)
 	if err != nil {
 		if errors.Is(err, errKeychainNotConfigured) {
 			return nil, nil
@@ -80,7 +83,7 @@ func saveAccountKey(relayOrigin, userID string, key []byte) error {
 		return clearAccountKeyFor(relayOrigin, userID)
 	}
 	encoded := base64.RawStdEncoding.EncodeToString(key)
-	if err := safekeyring.Set(accountKeyService, account, encoded); err != nil {
+	if err := safekeyring.Set(accountKeyService(), account, encoded); err != nil {
 		return fmt.Errorf("keychain set: %w", err)
 	}
 	return nil
@@ -93,7 +96,7 @@ func clearAccountKeyFor(relayOrigin, userID string) error {
 	if account == "" {
 		return nil
 	}
-	if err := safekeyring.Delete(accountKeyService, account); err != nil {
+	if err := safekeyring.Delete(accountKeyService(), account); err != nil {
 		if errors.Is(err, safekeyring.ErrNotFound) {
 			return nil
 		}

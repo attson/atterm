@@ -25,14 +25,26 @@ func relayHTTPClient(allowInsecure bool, timeout time.Duration) *http.Client {
 	// h2 on TLS dials. Required for the WebSocket upgrade to succeed.
 	tr.ForceAttemptHTTP2 = false
 	tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+
+	cfg := tr.TLSClientConfig
+	if cfg == nil {
+		cfg = &tls.Config{} // #nosec G402 -- InsecureSkipVerify set conditionally below
+	} else {
+		cfg = cfg.Clone()
+	}
+	// Pin the ALPN offer to HTTP/1.1. The relay's TLS listener advertises both
+	// "h2" and "http/1.1"; disabling h2 on the transport is not enough — the
+	// cloned DefaultTransport can still offer "h2" in the ClientHello, so the
+	// server negotiates HTTP/2 and (a) the WebSocket upgrade fails and (b) the
+	// REST client mis-parses the server's h2 SETTINGS frame as a malformed
+	// HTTP/1.1 response. Offering only http/1.1 removes that ambiguity.
+	cfg.NextProtos = []string{"http/1.1"}
 	if allowInsecure {
-		if tr.TLSClientConfig == nil {
-			tr.TLSClientConfig = &tls.Config{} // #nosec G402 -- InsecureSkipVerify set below
-		}
 		// #nosec G402 -- opt-in: the user explicitly enabled "trust self-signed
 		// certificate" for this relay. A trusted-CA relay still verifies
 		// normally (allowInsecure=false leaves verification on).
-		tr.TLSClientConfig.InsecureSkipVerify = true
+		cfg.InsecureSkipVerify = true
 	}
+	tr.TLSClientConfig = cfg
 	return &http.Client{Timeout: timeout, Transport: tr}
 }

@@ -233,7 +233,15 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	if u.token != "" {
 		hdr["Authorization"] = []string{"Bearer " + u.token}
 	}
-	conn, _, err := websocket.Dial(dialCtx, u.relayURL+"/uplink", &websocket.DialOptions{HTTPHeader: hdr, HTTPClient: relayHTTPClient(u.allowInsecure, 0)})
+	dialOpts := &websocket.DialOptions{HTTPHeader: hdr}
+	if u.allowInsecure {
+		// Self-signed relay: skip TLS verification. relayHTTPClient also forces
+		// HTTP/1.1, which the WebSocket upgrade requires. The default path
+		// (allowInsecure=false) passes no client so coder/websocket uses its
+		// own HTTP/1.1 dialer — unchanged from before this option existed.
+		dialOpts.HTTPClient = relayHTTPClient(true, 0)
+	}
+	conn, _, err := websocket.Dial(dialCtx, u.relayURL+"/uplink", dialOpts)
 	cancelDial()
 	if err != nil {
 		return err

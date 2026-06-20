@@ -37,6 +37,40 @@ func TestAISniffer_Claude_CapturesNewFile(t *testing.T) {
 	t.Fatal("sniff did not fire")
 }
 
+// A resumed/continued session (claude -c / --resume, or atterm's own restore)
+// appends to an existing jsonl rather than creating a new one. The sniff must
+// still capture its sid by noticing the modtime advance — this is the case
+// that previously logged "ai sniff timeout" and broke AI session recovery.
+func TestAISniffer_Claude_CapturesResumedFile(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(dir, 0o700)
+	// Pre-existing session file present BEFORE the sniff snapshots `before`.
+	target := filepath.Join(dir, "deadbeef-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl")
+	_ = os.WriteFile(target, []byte("{}\n"), 0o600)
+
+	var got atomic.Value // string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sniffAISessionIDForTest(ctx, dir, aiSniffers["claude"], 100*time.Millisecond, 3*time.Second, func(sid string) {
+		got.Store(sid)
+	})
+	time.Sleep(170 * time.Millisecond) // let loop snapshot `before`, then advance mtime
+	// Resume appends — same filename, no new file, just a later modtime.
+	_ = os.WriteFile(target, []byte("{}\n{}\n"), 0o600)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if v := got.Load(); v != nil && v.(string) != "" {
+			if v.(string) != "deadbeef-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+				t.Fatalf("got sid %q", v)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("sniff did not capture the resumed (appended) session file")
+}
+
 func TestAISniffer_TimeoutNoEmit(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.MkdirAll(dir, 0o700)

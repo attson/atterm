@@ -8,12 +8,8 @@
 // just hits different endpoints. Keep in sync with auth.ts.
 
 import { apiFetch } from './client'
-import { KE2 } from '@cloudflare/opaque-ts'
-import {
-  SERVER_IDENTITY,
-  getOpaqueConfig,
-  newOpaqueClient,
-} from '@shared/lib/opaque'
+import { SERVER_IDENTITY } from '@shared/lib/opaque'
+import { opaqueLoginInit, opaqueLoginFinish } from '@shared/lib/opaqueWasm'
 
 interface StepUpInitResp {
   login_response: string
@@ -23,21 +19,6 @@ interface StepUpFinalizeResp {
   user_id: string
   step_up_token: string
   expires_in_sec: number
-}
-
-function bytesToB64Std(b: Uint8Array): string {
-  return btoa(String.fromCharCode(...b))
-}
-
-function b64StdToBytes(s: string): Uint8Array {
-  const bin = atob(s)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}
-
-function numberArrayToB64(b: number[]): string {
-  return bytesToB64Std(new Uint8Array(b))
 }
 
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
@@ -59,29 +40,24 @@ export async function requestStepUpToken(
   email: string,
   password: string,
 ): Promise<string> {
-  const cfg = getOpaqueConfig()
-  const client = newOpaqueClient()
-
-  const ke1OrErr = await client.authInit(password)
-  if (ke1OrErr instanceof Error) throw ke1OrErr
+  const { handle, ke1 } = await opaqueLoginInit(password)
 
   const init = await postJSON<StepUpInitResp>('/api/auth/stepup/init', {
     email,
-    login_ke: numberArrayToB64(ke1OrErr.serialize()),
+    login_ke: ke1,
   })
 
-  const ke2Bytes = Array.from(b64StdToBytes(init.login_response))
-  const ke2 = KE2.deserialize(cfg, ke2Bytes)
-
-  const finishOrErr = await client.authFinish(ke2, SERVER_IDENTITY, email)
-  if (finishOrErr instanceof Error) {
+  let ke3: string
+  try {
+    ;({ ke3 } = await opaqueLoginFinish(handle, init.login_response, SERVER_IDENTITY, email))
+  } catch {
     throw new Error('invalid credentials')
   }
 
   const final = await postJSON<StepUpFinalizeResp>('/api/auth/stepup/finalize', {
     email,
     session_id: init.session_id,
-    login_ke3: numberArrayToB64(finishOrErr.ke3.serialize()),
+    login_ke3: ke3,
   })
   return final.step_up_token
 }

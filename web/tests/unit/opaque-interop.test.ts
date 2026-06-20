@@ -1,179 +1,86 @@
-// Cross-language OPAQUE interop test. Speaks the same protocol the Go
-// SDK in internal/e2eeclient drives, against a real running atterm-relay
-// exposed via $ATTERM_RELAY_URL.
+// Cross-client OPAQUE interop test: drives the SAME bytemare WASM client the
+// browser uses (@shared/lib/opaqueWasm, loaded here via the node helper)
+// against a real running atterm-relay exposed via $ATTERM_RELAY_URL. This is
+// the gap that hid the cloudflare<->bytemare incompatibility: it proves the web
+// client interoperates with the Go relay/desktop.
 //
 // HOW TO RUN
-//   1. Start an atterm-relay in another terminal with a dev config:
-//        ATTERM_RELAY_LISTEN=:7099 \
-//        ATTERM_RELAY_BOOTSTRAP_ADMIN_EMAIL=interop@local \
-//        ATTERM_RELAY_DEBUG=1 \
-//        ./atterm-relay
-//      The first boot prints a claim token; you only need it if you
-//      want the registered user to be admin, this test does not.
-//   2. Either set ATTERM_OPAQUE_CLAIM_TOKEN to that printed token, or
-//      leave it unset (the test will register a regular user).
-//   3. Set ATTERM_RELAY_URL and run the test:
-//        ATTERM_RELAY_URL=http://localhost:7099 \
-//        npx vitest run tests/unit/opaque-interop.test.ts
-//
-// CI INTEGRATION (follow-up): a small shell wrapper in
-// .github/workflows/build.yaml can `go build cmd/atterm-relay`, launch
-// it on a free port, set ATTERM_RELAY_URL, and run this test. Until
-// that wraps up the test SKIPS when the env var is missing so normal
-// `npm test` runs stay green.
+//   1. Build the wasm: GOOS=js GOARCH=wasm go build -o web/src/shared/lib/opaque.wasm ./cmd/opaque-wasm
+//      and copy $(go env GOROOT)/{misc,lib}/wasm/wasm_exec.js to web/src/shared/lib/
+//      (scripts/build-web.sh does both).
+//   2. Start an atterm-relay (e.g. ./atterm-relay --addr :7099 --https-addr "").
+//   3. ATTERM_RELAY_URL=http://localhost:7099 npx vitest run tests/unit/opaque-interop.test.ts
+//   The cross-CLIENT proof (web register -> desktop login) lives in the CI
+//   shell step + internal/e2eeclient; this test proves web client <-> relay.
 
 import { describe, it, expect } from 'vitest'
 import {
-  OpaqueClient,
-  RegistrationResponse,
-  KE2,
-} from '@cloudflare/opaque-ts'
-import {
   SERVER_IDENTITY,
   defaultKDFParams,
-  getOpaqueConfig,
-  newOpaqueClient,
   unwrapWithPassword,
   wrapAccountKey,
-  type AccountKeyWrap,
 } from '@shared/lib/opaque'
+import { loadWasmOpaque, expectOk } from '../helpers/wasmNode'
 
 const RELAY_URL = process.env.ATTERM_RELAY_URL
 const CLAIM_TOKEN = process.env.ATTERM_OPAQUE_CLAIM_TOKEN ?? ''
-
 const describeIfRelay = RELAY_URL ? describe : describe.skip
 
-// Test fixtures use a fresh random email per run so successive
-// invocations against the same relay don't collide. The relay's
-// register/finalize returns 409 on email-taken.
 function freshEmail(): string {
-  const suffix = Math.random().toString(36).slice(2, 10)
-  return `interop-${suffix}@example.com`
+  return `interop-${Math.random().toString(36).slice(2, 10)}@example.com`
 }
 
-function bytesToB64Std(b: Uint8Array): string {
-  return btoa(String.fromCharCode(...b))
-}
-
-function numberArrayToB64(b: number[]): string {
-  return bytesToB64Std(new Uint8Array(b))
-}
-
-async function relayPost<T>(path: string, body: unknown): Promise<T> {
+async function post<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(`${RELAY_URL}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!r.ok) {
-    const text = await r.text()
-    throw new Error(`${path} → ${r.status} ${text}`)
-  }
+  if (!r.ok) throw new Error(`${path} → ${r.status} ${await r.text()}`)
   return (await r.json()) as T
 }
 
-interface RegisterInitResp {
-  registration_response: string
-}
-interface RegisterFinalizeResp {
-  user_id: string
-  session_token: string
-}
-interface LoginInitResp {
-  login_response: string
-  session_id: string
-}
-interface LoginFinalizeResp {
-  user_id: string
-  session_token: string
-  account_key_wrap: AccountKeyWrap
-}
-
-describeIfRelay('OPAQUE interop: TS client ↔ Go relay', () => {
+describeIfRelay('OPAQUE interop: WASM (bytemare) client ↔ Go relay', () => {
   const email = freshEmail()
   const password = 'hunter2-interop'
-  // Random 32-byte account_key. The server stores its wrap blob blindly
-  // and returns it at login; we then unwrap locally to assert that the
-  // bytes survived the round trip.
   const accountKey = new Uint8Array(32)
   crypto.getRandomValues(accountKey)
 
-  it('registers + logs in via OPAQUE round-trip; recovered account_key matches', async () => {
-    const cfg = getOpaqueConfig()
+  it('registers + logs in via the WASM client; account_key round-trips', async () => {
+    const O = await loadWasmOpaque()
+
     // ---------- REGISTRATION ----------
-    const client = newOpaqueClient()
-    const ke1OrErr = await client.registerInit(password)
-    if (ke1OrErr instanceof Error) throw ke1OrErr
-    const ke1 = ke1OrErr
-
-    const initResp = await relayPost<RegisterInitResp>(
-      '/api/auth/register/init',
-      { email, registration_ke: numberArrayToB64(ke1.serialize()) },
-    )
-    expect(initResp.registration_response.length).toBeGreaterThan(0)
-
-    const ke2Bytes = Array.from(b64Decode(initResp.registration_response))
-    const ke2 = RegistrationResponse.deserialize(cfg, ke2Bytes)
-
-    const finOrErr = await client.registerFinish(ke2, SERVER_IDENTITY, email)
-    if (finOrErr instanceof Error) throw finOrErr
-    const { record } = finOrErr
-
+    const ri = expectOk(O.registerInit(password))
+    const regInit = await post<{ registration_response: string }>('/api/auth/register/init', {
+      email,
+      registration_ke: ri.ke1,
+    })
+    const rf = expectOk(O.registerFinish(ri.handle, regInit.registration_response, SERVER_IDENTITY, email))
     const wrap = wrapAccountKey(password, accountKey, defaultKDFParams())
     const finBody: Record<string, unknown> = {
       email,
-      registration_record: numberArrayToB64(record.serialize()),
+      registration_record: rf.record,
       account_key_wrap: wrap,
     }
     if (CLAIM_TOKEN) finBody.claim_token = CLAIM_TOKEN
-    const finResp = await relayPost<RegisterFinalizeResp>(
-      '/api/auth/register/finalize',
-      finBody,
-    )
-    expect(finResp.user_id).toBeTruthy()
-    expect(finResp.session_token).toBeTruthy()
-    const registeredUserID = finResp.user_id
+    const regFinal = await post<{ user_id: string }>('/api/auth/register/finalize', finBody)
+    expect(regFinal.user_id).toBeTruthy()
 
     // ---------- LOGIN ----------
-    const client2 = newOpaqueClient()
-    const ke1LoginOrErr = await client2.authInit(password)
-    if (ke1LoginOrErr instanceof Error) throw ke1LoginOrErr
-    const ke1Login = ke1LoginOrErr
-
-    const loginInit = await relayPost<LoginInitResp>('/api/auth/login/init', {
+    const li = expectOk(O.loginInit(password))
+    const logInit = await post<{ login_response: string; session_id: string }>('/api/auth/login/init', {
       email,
-      login_ke: numberArrayToB64(ke1Login.serialize()),
+      login_ke: li.ke1,
     })
-    expect(loginInit.session_id).toBeTruthy()
-
-    const ke2LoginBytes = Array.from(b64Decode(loginInit.login_response))
-    const ke2Login = KE2.deserialize(cfg, ke2LoginBytes)
-
-    const finishOrErr = await client2.authFinish(ke2Login, SERVER_IDENTITY, email)
-    if (finishOrErr instanceof Error) throw finishOrErr
-    const { ke3 } = finishOrErr
-
-    const loginFinal = await relayPost<LoginFinalizeResp>(
+    const lf = expectOk(O.loginFinish(li.handle, logInit.login_response, SERVER_IDENTITY, email))
+    const logFinal = await post<{ user_id: string; account_key_wrap: Parameters<typeof unwrapWithPassword>[1] }>(
       '/api/auth/login/finalize',
-      {
-        email,
-        session_id: loginInit.session_id,
-        login_ke3: numberArrayToB64(ke3.serialize()),
-      },
+      { email, session_id: logInit.session_id, login_ke3: lf.ke3 },
     )
-    expect(loginFinal.user_id).toBe(registeredUserID)
-    expect(loginFinal.session_token).toBeTruthy()
-    expect(loginFinal.account_key_wrap).toBeDefined()
+    expect(logFinal.user_id).toBe(regFinal.user_id)
 
     // ---------- UNWRAP ----------
-    const recovered = unwrapWithPassword(password, loginFinal.account_key_wrap)
+    const recovered = unwrapWithPassword(password, logFinal.account_key_wrap)
     expect(recovered).toEqual(accountKey)
   }, 30_000)
 })
-
-function b64Decode(s: string): Uint8Array {
-  const bin = atob(s)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}

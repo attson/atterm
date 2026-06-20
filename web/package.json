@@ -11,7 +11,6 @@
     "test:contract": "node --test tests/contract/*.test.mjs"
   },
   "dependencies": {
-    "@cloudflare/opaque-ts": "^0.7.5",
     "@noble/ciphers": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "naive-ui": "2.40.4",

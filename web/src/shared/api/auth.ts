@@ -2,18 +2,18 @@ import { apiFetch } from './client'
 import { loadRelayConfig, saveRelayConfig, clearRelayConfig } from './relay-config'
 import { saveAccountKey, clearAccountKey } from './account-key'
 import {
-  RegistrationResponse,
-  KE2,
-} from '@cloudflare/opaque-ts'
-import {
   SERVER_IDENTITY,
   defaultKDFParams,
-  getOpaqueConfig,
-  newOpaqueClient,
   unwrapWithPassword,
   wrapAccountKey,
   type AccountKeyWrap,
 } from '@shared/lib/opaque'
+import {
+  opaqueLoginInit,
+  opaqueLoginFinish,
+  opaqueRegisterInit,
+  opaqueRegisterFinish,
+} from '@shared/lib/opaqueWasm'
 
 // AuthResult is what login() / register() now hand back to the UI.
 // The legacy {session_token, expires_at, user} envelope is gone — both
@@ -58,21 +58,6 @@ interface LoginFinalizeResp {
   account_key_wrap: AccountKeyWrap
 }
 
-function bytesToB64Std(b: Uint8Array): string {
-  return btoa(String.fromCharCode(...b))
-}
-
-function b64StdToBytes(s: string): Uint8Array {
-  const bin = atob(s)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}
-
-function numberArrayToB64(b: number[]): string {
-  return bytesToB64Std(new Uint8Array(b))
-}
-
 function persistSession(sessionToken: string): void {
   const existing = loadRelayConfig()
   saveRelayConfig({
@@ -97,33 +82,28 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
 // server, and persists both the session token and the unlocked key for
 // follow-on requests.
 export async function login(email: string, password: string): Promise<AuthResult> {
-  const cfg = getOpaqueConfig()
-  const client = newOpaqueClient()
-
-  const ke1OrErr = await client.authInit(password)
-  if (ke1OrErr instanceof Error) throw ke1OrErr
-  const ke1 = ke1OrErr
+  // OPAQUE protocol runs in the bytemare WASM client; messages are base64
+  // strings matching the wire fields, so they pass straight through.
+  const { handle, ke1 } = await opaqueLoginInit(password)
 
   const init = await postJSON<LoginInitResp>('/api/auth/login/init', {
     email,
-    login_ke: numberArrayToB64(ke1.serialize()),
+    login_ke: ke1,
   })
 
-  const ke2Bytes = Array.from(b64StdToBytes(init.login_response))
-  const ke2 = KE2.deserialize(cfg, ke2Bytes)
-
-  const finishOrErr = await client.authFinish(ke2, SERVER_IDENTITY, email)
-  if (finishOrErr instanceof Error) {
-    // The TS lib detects wrong-password during the KE2 MAC check —
-    // surface a stable error string the UI can match against.
+  let ke3: string
+  try {
+    ;({ ke3 } = await opaqueLoginFinish(handle, init.login_response, SERVER_IDENTITY, email))
+  } catch {
+    // Wrong password — the wasm rejects at the KE2 MAC / key-recovery step.
+    // Surface a stable string the UI can match against.
     throw new Error('invalid credentials')
   }
-  const { ke3 } = finishOrErr
 
   const final = await postJSON<LoginFinalizeResp>('/api/auth/login/finalize', {
     email,
     session_id: init.session_id,
-    login_ke3: numberArrayToB64(ke3.serialize()),
+    login_ke3: ke3,
   })
 
   const accountKey = unwrapWithPassword(password, final.account_key_wrap)
@@ -144,33 +124,28 @@ export async function register(
   password: string,
   claim_token = '',
 ): Promise<AuthResult> {
-  const cfg = getOpaqueConfig()
-  const client = newOpaqueClient()
-
-  const ke1OrErr = await client.registerInit(password)
-  if (ke1OrErr instanceof Error) throw ke1OrErr
-  const ke1 = ke1OrErr
+  const { handle, ke1 } = await opaqueRegisterInit(password)
 
   const init = await postJSON<RegisterInitResp>('/api/auth/register/init', {
     email,
-    registration_ke: numberArrayToB64(ke1.serialize()),
+    registration_ke: ke1,
   })
 
-  const ke2Bytes = Array.from(b64StdToBytes(init.registration_response))
-  const ke2 = RegistrationResponse.deserialize(cfg, ke2Bytes)
+  const { record } = await opaqueRegisterFinish(
+    handle,
+    init.registration_response,
+    SERVER_IDENTITY,
+    email,
+  )
 
-  const finishOrErr = await client.registerFinish(ke2, SERVER_IDENTITY, email)
-  if (finishOrErr instanceof Error) throw finishOrErr
-  const { record } = finishOrErr
-
-  // Mint the account_key + wrap it.
+  // Mint the account_key + wrap it (noble; unchanged).
   const accountKey = new Uint8Array(32)
   crypto.getRandomValues(accountKey)
   const wrap = wrapAccountKey(password, accountKey, defaultKDFParams())
 
   const finBody: Record<string, unknown> = {
     email,
-    registration_record: numberArrayToB64(record.serialize()),
+    registration_record: record,
     account_key_wrap: wrap,
   }
   if (claim_token) finBody.claim_token = claim_token

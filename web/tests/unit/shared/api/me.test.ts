@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// deleteMe runs an OPAQUE step-up handshake (stepup.ts → opaqueWasm). Stub the
+// WASM client so the unit test exercises the step-up HTTP wiring without a real
+// wasm instance.
+vi.mock('@shared/lib/opaqueWasm', () => ({
+  opaqueLoginInit: vi.fn(async () => ({ handle: 1, ke1: 'a2Ux' })),
+  opaqueLoginFinish: vi.fn(async () => ({ ke3: 'a2Uz', exportKey: '', sessionKey: '' })),
+}))
+
 import {
   getMe,
   listSessions,

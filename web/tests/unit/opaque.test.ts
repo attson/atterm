@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest'
 import {
   OpaqueClient,
   OpaqueServer,
-  ScryptMemHardFn,
   IdentityMemHardFn,
   RegistrationRequest,
   RegistrationResponse,
@@ -22,6 +21,7 @@ import {
   defaultKDFParams,
   getOpaqueConfig,
   newOpaqueClient,
+  opaqueStretch,
   unwrapWithPassword,
   wrapAccountKey,
 } from '@shared/lib/opaque'
@@ -59,6 +59,21 @@ describe('opaque client/server round-trip (TS self-test)', () => {
   it('client can be instantiated via newOpaqueClient()', () => {
     const cl = newOpaqueClient()
     expect(cl).toBeInstanceOf(OpaqueClient)
+  })
+
+  it('KSF stretch matches the Go desktop client byte-for-byte (cross-language interop)', () => {
+    // The Go desktop client (bytemare/opaque) hardens the password to the
+    // P-256 OPRF element length (33 bytes). This golden vector is produced
+    // identically by ksf.Scrypt.Harden([]byte("atterm-interop"), nil, 33) in
+    // Go — see internal/e2eeclient TestOpaqueKSFGoldenVector. A drift here
+    // (e.g. reverting dkLen to the cloudflare default of 32) silently breaks
+    // web<->desktop login with "invalid credentials".
+    const out = opaqueStretch(new TextEncoder().encode('atterm-interop'))
+    expect(out.length).toBe(33)
+    const hex = Array.from(out)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    expect(hex).toBe('7001bf4adf717b8af42e1d88c36629ec8d1677e0a50d7d3095eda1bd3bde740bf3')
   })
 })
 

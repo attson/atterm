@@ -11,13 +11,13 @@
 import {
   OpaqueClient,
   OpaqueID,
-  ScryptMemHardFn,
   getOpaqueConfig,
   type Config,
   KE2,
   RegistrationResponse,
 } from '@cloudflare/opaque-ts'
 import { argon2id } from '@noble/hashes/argon2.js'
+import { scrypt } from '@noble/hashes/scrypt.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
@@ -64,9 +64,29 @@ function getConfig(): Config {
   return getOpaqueConfig(OpaqueID.OPAQUE_P256)
 }
 
+// INTEROP — do not change the dkLen without changing the Go desktop client.
+// The Go client (bytemare/opaque, internal/e2eeclient) hardens the password to
+// the OPRF *element* length, which is 33 bytes for P-256:
+//   client.go:70  KSF.Harden(output, nil, OPRF.Group().ElementLength() /* 33 */)
+// The default @cloudflare/opaque-ts ScryptMemHardFn uses scrypt's 32-byte
+// dkLen, producing a DIFFERENT randomized_pwd. With a 1-byte length mismatch a
+// record registered in one client cannot be used to log in from the other
+// ("relay OPAQUE login: invalid credentials"). dkLen MUST be 33 here to match
+// bytemare. N/r/p and the empty salt already match. See AGENTS.md #20.
+const P256_OPAQUE_KSF_DKLEN = 33
+
+/** opaqueStretch is the OPAQUE client KSF (scrypt N=32768,r=8,p=1, empty salt,
+ * 33-byte output). Exported for the cross-language golden-vector test that
+ * pins it byte-for-byte to the Go desktop client's bytemare KSF. */
+export function opaqueStretch(msg: Uint8Array): Uint8Array {
+  return scrypt(msg, new Uint8Array(), { N: 32768, r: 8, p: 1, dkLen: P256_OPAQUE_KSF_DKLEN })
+}
+
+const scryptMemHardFn33 = { name: 'scrypt', harden: opaqueStretch }
+
 /** New OPAQUE client bound to the relay's cipher suite + Scrypt MHF. */
 export function newOpaqueClient(): OpaqueClient {
-  return new OpaqueClient(getConfig(), ScryptMemHardFn)
+  return new OpaqueClient(getConfig(), scryptMemHardFn33)
 }
 
 /** Derive a 32-byte wrap key from password + salt + Argon2id params. */

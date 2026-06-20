@@ -26,16 +26,8 @@ export function CreatePairingToken() {
   return window['go']['main']['App']['CreatePairingToken']();
 }
 
-export function CreateWebhook(arg1) {
-  return window['go']['main']['App']['CreateWebhook'](arg1);
-}
-
 export function DeleteFeishuBinding() {
   return window['go']['main']['App']['DeleteFeishuBinding']();
-}
-
-export function DeleteWebhook(arg1) {
-  return window['go']['main']['App']['DeleteWebhook'](arg1);
 }
 
 export function DiscardRecoverySnapshot() {
@@ -176,10 +168,6 @@ export function InstallUpdate() {
 
 export function ListShells() {
   return window['go']['main']['App']['ListShells']();
-}
-
-export function ListWebhooks() {
-  return window['go']['main']['App']['ListWebhooks']();
 }
 
 export function LoadRecoverySnapshot() {

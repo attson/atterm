@@ -89,11 +89,6 @@ export function createWailsPlatform(): Platform {
       },
       fetchMe: () => api.fetchRelayMe(),
       setUplinkPaused: (paused: boolean) => api.setUplinkPaused(paused),
-      webhooks: {
-        list: () => api.listWebhooks(),
-        create: (req) => api.createWebhook(req),
-        delete: (id: string) => api.deleteWebhook(id),
-      },
     },
     sessions: {
       newSession: api.newSession,

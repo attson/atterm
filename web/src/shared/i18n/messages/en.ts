@@ -221,23 +221,8 @@ export const en = {
       notifications: 'Notifications',
       relay: 'Relay',
       sessions: 'Signed-in devices',
-      webhooks: 'Webhooks',
     },
     title: 'Settings',
-    webhooks: {
-      add: 'Add webhook',
-      allowPlainHttp: 'Allow plain http:// (no TLS)',
-      created: 'created',
-      createFailed: 'Failed to create webhook.',
-      deleteFailed: 'Failed to delete webhook.',
-      empty: 'No webhooks yet.',
-      formats: {
-        feishu: 'Feishu',
-        generic: 'Generic',
-      },
-      namePlaceholder: 'Name',
-      urlPlaceholder: 'https://...',
-    },
   },
   admin: {
     actions: 'Actions',

@@ -18,14 +18,13 @@ import Sessions from './tabs/Sessions.vue'
 import Notifications from './tabs/Notifications.vue'
 import DangerZone from './tabs/DangerZone.vue'
 import Relay from './tabs/Relay.vue'
-import Webhooks from './tabs/Webhooks.vue'
 
 const mobile = isMobileApp()
 const { t } = useI18n()
 
 const TAB_NAMES = mobile
   ? (['relay'] as const)
-  : (['change-password', 'sessions', 'notifications', 'webhooks', 'danger'] as const)
+  : (['change-password', 'sessions', 'notifications', 'danger'] as const)
 type TabName = (typeof TAB_NAMES)[number]
 
 function nameFromHash(): TabName {
@@ -89,9 +88,6 @@ const overrides = getNaiveOverrides()
             </n-tab-pane>
             <n-tab-pane name="notifications" :tab="t('settings.tabs.notifications')">
               <Notifications />
-            </n-tab-pane>
-            <n-tab-pane name="webhooks" :tab="t('settings.tabs.webhooks')">
-              <Webhooks />
             </n-tab-pane>
             <n-tab-pane name="danger" :tab="t('settings.tabs.danger')">
               <DangerZone />

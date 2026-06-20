@@ -17,11 +17,7 @@ export function ConfirmQuit():Promise<void>;
 
 export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 
-export function CreateWebhook(arg1:main.CreateWebhookReq):Promise<main.Webhook>;
-
 export function DeleteFeishuBinding():Promise<void>;
-
-export function DeleteWebhook(arg1:string):Promise<void>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
 
@@ -92,8 +88,6 @@ export function HasAccountKey():Promise<boolean>;
 export function InstallUpdate():Promise<void>;
 
 export function ListShells():Promise<Array<string>>;
-
-export function ListWebhooks():Promise<Array<main.Webhook>>;
 
 export function LoadRecoverySnapshot():Promise<main.RecoverySnapshot>;
 

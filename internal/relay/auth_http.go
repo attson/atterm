@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -31,8 +30,8 @@ func (a *AuthServer) requireUser(w http.ResponseWriter, r *http.Request) (Princi
 	return Principal{Kind: kind, UserID: u.ID, Scope: authWrite}, true
 }
 
-// AuthServer hosts the /api/me, /api/auth/logout, /api/pair/*, and
-// /api/me/webhooks routes. The historical /api/auth/signup and
+// AuthServer hosts the /api/me, /api/auth/logout, and /api/pair/*
+// routes. The historical /api/auth/signup and
 // /api/auth/login routes were password-based and are gone; OPAQUE
 // equivalents live at /api/auth/{register,login}/{init,finalize},
 // registered separately by OpaqueAuthHandler.Register.
@@ -84,9 +83,6 @@ func (a *AuthServer) RegisterInto(mux *http.ServeMux, requireSession func(http.H
 	mux.Handle("GET /api/me/sessions", wrap(a.handleListSessions))
 	mux.Handle("DELETE /api/me/sessions/{id_hash}", wrap(a.handleDeleteSession))
 	mux.Handle("POST /api/me/sessions/sign-out-others", wrap(a.handleSignOutOthers))
-	mux.Handle("GET /api/me/webhooks", wrap(a.handleListWebhooks))
-	mux.Handle("POST /api/me/webhooks", wrap(a.handleCreateWebhook))
-	mux.Handle("DELETE /api/me/webhooks/{id}", wrap(a.handleDeleteWebhook))
 	mux.Handle("GET /api/me/preferences", wrap(a.handleGetPreferences))
 	mux.Handle("PUT /api/me/preferences", wrap(a.handlePutPreferences))
 	mux.Handle("GET /api/me/key", wrap(a.handleGetMeKey))
@@ -193,111 +189,6 @@ func validEmail(email string) bool {
 	}
 	domain := email[at+1:]
 	return strings.Contains(domain, ".")
-}
-
-// handleListWebhooks implements GET /api/me/webhooks.
-func (a *AuthServer) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.requireUser(w, r)
-	if !ok {
-		return
-	}
-	hooks, err := a.Store.ListWebhooks(r.Context(), p.UserID)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	type row struct {
-		ID        string `json:"id"`
-		Name      string `json:"name"`
-		URL       string `json:"url"`
-		Format    string `json:"format"`
-		CreatedAt string `json:"created_at"`
-	}
-	out := make([]row, 0, len(hooks))
-	for _, h := range hooks {
-		out = append(out, row{
-			ID:        h.ID,
-			Name:      h.Name,
-			URL:       h.URL,
-			Format:    h.Format,
-			CreatedAt: h.CreatedAt.UTC().Format(time.RFC3339),
-		})
-	}
-	writeJSONStatus(w, http.StatusOK, out)
-}
-
-// handleCreateWebhook implements POST /api/me/webhooks.
-//
-// Body: {"url":"…","format":"generic","name":"…","allow_insecure":false}
-// Response 201: {id, url, format, name, created_at}
-func (a *AuthServer) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.requireUser(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		URL           string `json:"url"`
-		Format        string `json:"format"`
-		Name          string `json:"name"`
-		AllowInsecure bool   `json:"allow_insecure"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return
-	}
-	if body.Format != "generic" {
-		writeError(w, http.StatusBadRequest, "invalid_format")
-		return
-	}
-	u, err := url.Parse(strings.TrimSpace(body.URL))
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		writeError(w, http.StatusBadRequest, "invalid_url")
-		return
-	}
-	if u.Scheme == "http" && !body.AllowInsecure {
-		writeError(w, http.StatusBadRequest, "insecure_url")
-		return
-	}
-	if strings.TrimSpace(body.Name) == "" {
-		writeError(w, http.StatusBadRequest, "name_required")
-		return
-	}
-	wh, err := a.Store.CreateWebhook(r.Context(), p.UserID, body.URL, body.Format, body.Name, body.AllowInsecure)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	writeJSONStatus(w, http.StatusCreated, map[string]any{
-		"id":         wh.ID,
-		"url":        wh.URL,
-		"format":     wh.Format,
-		"name":       wh.Name,
-		"created_at": wh.CreatedAt.UTC().Format(time.RFC3339),
-	})
-}
-
-// handleDeleteWebhook implements DELETE /api/me/webhooks/{id}.
-//
-// Returns 204 on success, 404 if not found/not owned, 500 on DB error.
-func (a *AuthServer) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.requireUser(w, r)
-	if !ok {
-		return
-	}
-	id := r.PathValue("id")
-	if id == "" {
-		http.Error(w, "missing id", http.StatusBadRequest)
-		return
-	}
-	if err := a.Store.DeleteWebhook(r.Context(), id, p.UserID); err != nil {
-		if errors.Is(err, userstore.ErrWebhookNotOwnedOrMissing) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // meKeyWrapPayload is the wire shape used by GET /api/me/key and

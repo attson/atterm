@@ -45,13 +45,6 @@ export function createFakePlatform(): Platform {
       login: vi.fn().mockResolvedValue(undefined),
       logout: vi.fn().mockResolvedValue(undefined),
       loadSavedPassword: vi.fn().mockResolvedValue(''),
-      webhooks: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn().mockResolvedValue({
-          id: 'wh_new', name: '', url: '', format: 'generic', created_at: '',
-        }),
-        delete: vi.fn().mockResolvedValue(undefined),
-      },
     },
     sessions: {
       newSession: vi.fn().mockResolvedValue({ session_id: 's1' }),

@@ -263,24 +263,6 @@ export namespace main {
 	        this.command_notify_threshold_seconds = source["command_notify_threshold_seconds"];
 	    }
 	}
-	export class CreateWebhookReq {
-	    name: string;
-	    url: string;
-	    format: string;
-	    allow_insecure: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new CreateWebhookReq(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.url = source["url"];
-	        this.format = source["format"];
-	        this.allow_insecure = source["allow_insecure"];
-	    }
-	}
 	export class RelayErrorEntry {
 	    timestamp: string;
 	    message: string;
@@ -859,26 +841,6 @@ export namespace main {
 	        this.asset_size = source["asset_size"];
 	        this.download_dir = source["download_dir"];
 	        this.download_path = source["download_path"];
-	    }
-	}
-	export class Webhook {
-	    id: string;
-	    name: string;
-	    url: string;
-	    format: string;
-	    created_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Webhook(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.url = source["url"];
-	        this.format = source["format"];
-	        this.created_at = source["created_at"];
 	    }
 	}
 

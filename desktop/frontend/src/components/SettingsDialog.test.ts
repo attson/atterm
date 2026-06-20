@@ -27,10 +27,9 @@ describe("SettingsDialog shell", () => {
   });
 
   test("tracks the active tab and switches via sidebar clicks", () => {
-    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']relay["']\s*\|\s*["']webhooks["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']\s*\|\s*["']shortcuts["']/);
+    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']\s*\|\s*["']shortcuts["']/);
     expect(source).toContain('@click="switchTab(\'general\')"');
     expect(source).toContain('@click="switchTab(\'relay\')"');
-    expect(source).toContain('@click="switchTab(\'webhooks\')"');
     expect(source).toContain('@click="switchTab(\'updates\')"');
     expect(source).toContain('@click="switchTab(\'plugins\')"');
   });
@@ -216,30 +215,3 @@ describe("SettingsDialog caps gating", () => {
   });
 });
 
-describe("SettingsDialog webhooks tab visibility", () => {
-  it("does not render the webhooks tab when relay has no token", async () => {
-    platform.relay.load = vi.fn().mockResolvedValue({
-      url: "", token: "", session_expires_at: 0,
-      allow_insecure_relay: false, remote_permission: "full",
-      last_email: "", connected: false,
-    });
-    __setPlatformForTests(platform);
-    const w = mountDialog();
-    await flushPromises();
-    expect(w.find('[data-testid="webhooks-nav"]').exists()).toBe(false);
-    expect(navLabels(w)).not.toContain(en.settings.tabs.webhooks);
-  });
-
-  it("renders the webhooks tab when relay url + token are present", async () => {
-    platform.relay.load = vi.fn().mockResolvedValue({
-      url: "https://relay.example", token: "atk_x", session_expires_at: 0,
-      allow_insecure_relay: false, remote_permission: "full",
-      last_email: "", connected: true,
-    });
-    __setPlatformForTests(platform);
-    const w = mountDialog();
-    await flushPromises();
-    expect(w.find('[data-testid="webhooks-nav"]').exists()).toBe(true);
-    expect(navLabels(w)).toContain(en.settings.tabs.webhooks);
-  });
-});

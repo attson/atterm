@@ -223,23 +223,8 @@ export const zhCN = {
       notifications: '通知',
       relay: 'Relay',
       sessions: '已登录设备',
-      webhooks: 'Webhooks',
     },
     title: '设置',
-    webhooks: {
-      add: '添加 webhook',
-      allowPlainHttp: '允许明文 http://（无 TLS）',
-      created: '创建于',
-      createFailed: '创建 webhook 失败。',
-      deleteFailed: '删除 webhook 失败。',
-      empty: '还没有 webhook。',
-      formats: {
-        feishu: '飞书',
-        generic: '通用',
-      },
-      namePlaceholder: '名称',
-      urlPlaceholder: 'https://...',
-    },
   },
   admin: {
     actions: '操作',

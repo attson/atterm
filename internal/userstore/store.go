@@ -137,11 +137,6 @@ type Store interface {
 	// device.
 	DeleteOtherSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error)
 
-	// Webhooks
-	CreateWebhook(ctx context.Context, userID, url, format, name string, allowInsecure bool) (*Webhook, error)
-	ListWebhooks(ctx context.Context, userID string) ([]Webhook, error)
-	DeleteWebhook(ctx context.Context, webhookID, userID string) error
-
 	// Session seen/unread inbox
 	SetSeen(ctx context.Context, userID string, sessionIDs []string, at int64) error
 	SeenAt(ctx context.Context, userID string) (map[string]int64, error)

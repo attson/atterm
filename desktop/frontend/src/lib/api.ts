@@ -106,22 +106,6 @@ export interface RelayMe {
   email: string;
 }
 
-export type WebhookFormat = "feishu" | "generic";
-
-export interface Webhook {
-  id: string;
-  name: string;
-  url: string;
-  format: WebhookFormat;
-  created_at: string;
-}
-
-export interface CreateWebhookReq {
-  name: string;
-  url: string;
-  format: WebhookFormat;
-  allow_insecure: boolean;
-}
 
 export interface DiagnosticsPayload {
   generated_at: string;
@@ -252,9 +236,6 @@ interface AppBindings {
   GetAccountKey(): Promise<string>;
   ProbeRelayVersion(arg1: string): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
-  ListWebhooks(): Promise<Webhook[]>;
-  CreateWebhook(req: CreateWebhookReq): Promise<Webhook>;
-  DeleteWebhook(id: string): Promise<void>;
   CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
@@ -653,18 +634,6 @@ export function broadcastCommandFinished(
 // token. The returned email is held in memory only (SEC-1 — not persisted).
 export function fetchRelayMe(): Promise<RelayMe> {
   return bindings().FetchRelayMe();
-}
-
-export function listWebhooks(): Promise<Webhook[]> {
-  return bindings().ListWebhooks();
-}
-
-export function createWebhook(req: CreateWebhookReq): Promise<Webhook> {
-  return bindings().CreateWebhook(req);
-}
-
-export function deleteWebhook(id: string): Promise<void> {
-  return bindings().DeleteWebhook(id);
 }
 
 // createPairingToken asks the relay to mint a 5-minute single-use pairing

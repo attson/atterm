@@ -20,7 +20,7 @@ func newRelay(t *testing.T) (*httptest.Server, *userstore.SQLiteStore) {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv).Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts, store
@@ -105,7 +105,7 @@ func TestClient_GetKeyWrap(t *testing.T) {
 	store := userstore.NewInMemory(t)
 	opaqueSrv, _ := relay.LoadOrInitOpaqueServer(context.Background(), store)
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv).Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
 	// Bring up the full server (with the session middleware) and use its
 	// ServeHTTP as the test transport so /api/me/key routes through
 	// requireSession.
@@ -192,7 +192,7 @@ func TestClient_Register_ClaimToken_PromotesAdmin(t *testing.T) {
 	store := userstore.NewInMemory(t)
 	opaqueSrv, _ := relay.LoadOrInitOpaqueServer(context.Background(), store)
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv).Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 

@@ -82,6 +82,11 @@ type Config struct {
 	// to be a *userstore.SQLiteStore with a cipher configured. Nil → routes
 	// are not registered and any /v1/feishu/* request returns 404.
 	Feishu *feishu.Service
+	// BootstrapAdminEmail is ATTERM_BOOTSTRAP_ADMIN_EMAIL. Drives the
+	// first-run setup flow: while no admin exists, a registration whose
+	// email matches this is auto-promoted to admin (no claim token). Empty
+	// disables the email-gated path.
+	BootstrapAdminEmail string
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -176,6 +181,7 @@ func NewServer(cfg Config) *Server {
 	// Public — anonymous traffic allowed.
 	s.mux.HandleFunc("/api/version", s.handleVersionHTTP)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /api/bootstrap/status", s.handleBootstrapStatus)
 	// Admin-only — requireSession + is_admin flag (the latter checked by
 	// requireAdminAccess).
 	s.mux.HandleFunc("/admin/api/health", s.requireSession(s.requireAdminAccess(s.handleAdminHealthAPI)))
@@ -229,7 +235,7 @@ func NewServer(cfg Config) *Server {
 		// password fallback.
 		if cfg.OpaqueServer != nil {
 			if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
-				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer)
+				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer, cfg.BootstrapAdminEmail)
 				opaqueAuth.Register(s.mux)
 			}
 		}
@@ -630,6 +636,23 @@ func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(versionResponse{Version: version})
 }
 
+// handleBootstrapStatus is public: the login / first-run pages call it before
+// any credentials exist to decide whether to show login or the first-run admin
+// setup. It reports only whether an admin already exists — never the bootstrap
+// email — so the email stays a shared secret the operator must type in.
+func (s *Server) handleBootstrapStatus(w http.ResponseWriter, r *http.Request) {
+	adminExists := true // fail safe: on error, don't advertise an open setup window
+	if s.cfg.Store != nil {
+		if ok, err := s.cfg.Store.AdminExists(r.Context()); err != nil {
+			log.Printf("bootstrap-status: AdminExists: %v", err)
+		} else {
+			adminExists = ok
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"admin_exists": adminExists})
+}
+
 // allowedStaticPath reports whether p is a known production-asset path the
 // static handler is willing to serve. The whitelist is the exhaustive set of
 // files vite-plugin-pwa + the multi-entry MPA build emits at the embed root,
@@ -643,7 +666,7 @@ func (s *Server) handleVersionHTTP(w http.ResponseWriter, r *http.Request) {
 func allowedStaticPath(p string) bool {
 	switch p {
 	case "/", "/index.html",
-		"/login.html", "/signup.html", "/settings.html",
+		"/login.html", "/signup.html", "/settings.html", "/firstrun.html",
 		"/admin/", "/admin/index.html",
 		"/sw.js", "/manifest.webmanifest",
 		"/icon.svg", "/icon.png":

@@ -11,8 +11,8 @@ import {
   darkTheme,
 } from 'naive-ui'
 import { getNaiveOverrides } from '@shared/theme/naive-theme'
-import { safeNext, ApiError } from '@shared/api/client'
-import { login, getBootstrapStatus } from '@shared/api/auth'
+import { ApiError } from '@shared/api/client'
+import { register, getBootstrapStatus } from '@shared/api/auth'
 import { fetchVersion, formatVersionLabel } from '@shared/api/version'
 import LanguageSelect from '@shared/components/LanguageSelect.vue'
 import { useI18n } from '@shared/i18n/useI18n'
@@ -20,46 +20,58 @@ import { naiveLocale } from '@shared/i18n/naive-locale'
 
 const email = ref('')
 const password = ref('')
+const confirm = ref('')
 const submitting = ref(false)
 const errorMsg = ref('')
+const ready = ref(false)
 const version = ref('dev')
 const { t } = useI18n()
 const versionLabel = computed(() => formatVersionLabel(version.value, t))
 
 onMounted(async () => {
-  // First-run: if the relay has no admin yet, send the operator to the
-  // setup page instead of showing a login form for an account that can't
-  // exist. Best-effort — a failed check just leaves the login form up.
+  // If an admin already exists, this page is done — send to login.
   try {
     const { admin_exists } = await getBootstrapStatus()
-    if (!admin_exists) {
-      location.replace('/firstrun.html')
+    if (admin_exists) {
+      location.replace('/login.html')
       return
     }
   } catch {
-    /* ignore — show login */
+    /* ignore — still show the form; the relay may be momentarily unreachable */
   }
+  ready.value = true
   version.value = await fetchVersion()
 })
 
 function mapError(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.code === 'invalid_credentials') return t('auth.errors.invalidCredentials')
-    if (e.code === 'rate_limited') return t('auth.errors.rateLimited')
+    if (e.code === 'email_taken') return t('auth.errors.emailTaken')
+    if (e.code === 'password_weak') return t('auth.errors.passwordWeak')
+    if (e.code === 'invalid_email') return t('auth.errors.invalidEmail')
+    if (e.code === 'rate_limited') return t('auth.errors.rateLimitedShort')
     if (e.code === 'invalid_request') return t('auth.errors.invalidRequest')
   }
-  return t('auth.errors.signInFailed')
+  return t('auth.setup.failed')
 }
 
 async function onSubmit(e: Event) {
   e.preventDefault()
   if (submitting.value) return
   errorMsg.value = ''
+  if (password.value !== confirm.value) {
+    errorMsg.value = t('auth.setup.passwordMismatch')
+    return
+  }
   submitting.value = true
   try {
-    await login(email.value, password.value)
-    const nextParam = new URLSearchParams(location.search).get('next')
-    location.assign(safeNext(nextParam))
+    const res = await register(email.value.trim(), password.value)
+    if (res.is_admin) {
+      location.assign('/')
+    } else {
+      // Account created but the email didn't match ATTERM_BOOTSTRAP_ADMIN_EMAIL,
+      // so no admin role was granted.
+      errorMsg.value = t('auth.setup.notAdmin')
+    }
   } catch (err) {
     errorMsg.value = mapError(err)
   } finally {
@@ -80,11 +92,12 @@ const overrides = getNaiveOverrides()
     <n-message-provider>
       <main class="auth-page">
         <LanguageSelect class="auth-language" />
-        <n-card class="auth-card" :bordered="false">
+        <n-card v-if="ready" class="auth-card" :bordered="false">
           <header class="auth-title">
             <h1>{{ t('common.appName') }}</h1>
-            <p class="auth-subtitle">{{ t('auth.signIn') }}</p>
+            <p class="auth-subtitle">{{ t('auth.setup.title') }}</p>
           </header>
+          <p class="auth-hint">{{ t('auth.setup.hint') }}</p>
           <n-form
             label-placement="top"
             require-mark-placement="right-hanging"
@@ -93,36 +106,44 @@ const overrides = getNaiveOverrides()
             @submit="onSubmit"
           >
             <n-form-item :label="t('auth.email')" :show-feedback="false">
-                <n-input
-                  v-model:value="email"
-                  type="text"
-                  :placeholder="t('auth.emailPlaceholder')"
-                  :input-props="{ type: 'email', required: true, autocomplete: 'username' }"
-                />
-              </n-form-item>
-              <n-form-item :label="t('auth.password')" :show-feedback="false">
-                <n-input
-                  v-model:value="password"
-                  type="password"
-                  show-password-on="click"
-                  :input-props="{ required: true, autocomplete: 'current-password' }"
-                />
-              </n-form-item>
-              <n-button
-                class="submit-btn"
-                type="primary"
-                attr-type="submit"
-                :loading="submitting"
-                :disabled="submitting"
-                block
-              >
-                {{ t('auth.signIn') }}
-              </n-button>
-              <p v-if="errorMsg" class="auth-error" role="alert">{{ errorMsg }}</p>
-              <p class="auth-alt">
-                {{ t('auth.haveInviteCode') }}
-                <a href="/signup.html">{{ t('auth.signUpHere') }}</a>.
-              </p>
+              <n-input
+                v-model:value="email"
+                type="text"
+                :placeholder="t('auth.setup.emailPlaceholder')"
+                :input-props="{ type: 'email', required: true, autocomplete: 'username' }"
+              />
+            </n-form-item>
+            <n-form-item :label="t('auth.password')" :show-feedback="false">
+              <n-input
+                v-model:value="password"
+                type="password"
+                show-password-on="click"
+                :input-props="{ required: true, autocomplete: 'new-password', minlength: 12 }"
+              />
+            </n-form-item>
+            <n-form-item :label="t('auth.setup.confirmPassword')" :show-feedback="false">
+              <n-input
+                v-model:value="confirm"
+                type="password"
+                show-password-on="click"
+                :input-props="{ required: true, autocomplete: 'new-password', minlength: 12 }"
+              />
+            </n-form-item>
+            <n-button
+              class="submit-btn"
+              type="primary"
+              attr-type="submit"
+              :loading="submitting"
+              :disabled="submitting"
+              block
+            >
+              {{ t('auth.setup.createAdmin') }}
+            </n-button>
+            <p v-if="errorMsg" class="auth-error" role="alert">{{ errorMsg }}</p>
+            <p class="auth-alt">
+              {{ t('auth.alreadyHaveAccount') }}
+              <a href="/login.html">{{ t('auth.signIn') }}</a>.
+            </p>
           </n-form>
         </n-card>
         <p class="auth-version">{{ versionLabel }}</p>
@@ -154,7 +175,7 @@ const overrides = getNaiveOverrides()
 }
 .auth-title {
   text-align: center;
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
 }
 .auth-title h1 {
   margin: 0;
@@ -167,6 +188,12 @@ const overrides = getNaiveOverrides()
   font-size: 0.875rem;
   text-transform: lowercase;
   letter-spacing: 0.1em;
+}
+.auth-hint {
+  color: var(--fg-dim);
+  font-size: 0.8125rem;
+  text-align: center;
+  margin: 0 0 1rem;
 }
 .submit-btn { margin-top: 1rem; }
 .auth-error {
@@ -188,17 +215,10 @@ const overrides = getNaiveOverrides()
   font-size: 0.75rem;
   margin: 0;
 }
-
 </style>
 
 <style>
-/* Autofill background override — unscoped on purpose. Chrome sets
-   background-color via UA stylesheet with !important, and the standard
-   workaround is an inset box-shadow that masks the yellow tint. The
-   previous attempt lived inside <style scoped> + :deep(), but the
-   data-v hash didn't propagate past naive-ui's NCard wrapper, so the
-   selector never matched. Target the bare <input> so we don't depend
-   on naive-ui's internal class names either. */
+/* Autofill background override — unscoped (see web/src/login/App.vue). */
 .auth-page input:-webkit-autofill,
 .auth-page input:-webkit-autofill:hover,
 .auth-page input:-webkit-autofill:focus,

@@ -35,6 +35,16 @@ export const en = {
     createAccount: 'Create account',
     email: 'Email',
     emailPlaceholder: 'you@example.com',
+    setup: {
+      title: 'First-run setup',
+      hint: 'No admin yet. Create the first admin account — use the email you set in ATTERM_BOOTSTRAP_ADMIN_EMAIL.',
+      emailPlaceholder: 'your ATTERM_BOOTSTRAP_ADMIN_EMAIL',
+      confirmPassword: 'Confirm password',
+      createAdmin: 'Create admin',
+      passwordMismatch: 'The two passwords do not match.',
+      notAdmin: 'Account created, but it is not an admin — make sure the email matches ATTERM_BOOTSTRAP_ADMIN_EMAIL.',
+      failed: 'Setup failed. Please try again.',
+    },
     errors: {
       emailTaken: 'An account with that email already exists.',
       invalidCredentials: 'Invalid email or password.',

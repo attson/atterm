@@ -74,6 +74,7 @@ export default defineConfig({
         settings: fileURLToPath(new URL('./settings.html',        import.meta.url)),
         admin:    fileURLToPath(new URL('./admin/index.html',     import.meta.url)),
         setup:    fileURLToPath(new URL('./setup.html',           import.meta.url)),
+        firstrun: fileURLToPath(new URL('./firstrun.html',        import.meta.url)),
       },
     },
   },

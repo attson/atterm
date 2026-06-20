@@ -99,12 +99,19 @@ func registerUserForTest(t *testing.T, h *OpaqueAuthHandler, conf *opaque.Config
 // stay isolated.
 func newTestOpaqueAuthHandler(t *testing.T) *OpaqueAuthHandler {
 	t.Helper()
+	return newTestOpaqueAuthHandlerEmail(t, "")
+}
+
+// newTestOpaqueAuthHandlerEmail builds a handler with a specific
+// ATTERM_BOOTSTRAP_ADMIN_EMAIL, for first-run setup tests.
+func newTestOpaqueAuthHandlerEmail(t *testing.T, bootstrapEmail string) *OpaqueAuthHandler {
+	t.Helper()
 	store := userstore.NewInMemory(t)
 	srv, err := LoadOrInitOpaqueServer(context.Background(), store)
 	if err != nil {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
-	return NewOpaqueAuthHandler(store, srv)
+	return NewOpaqueAuthHandler(store, srv, bootstrapEmail)
 }
 
 // TestRegisterInit_ReturnsKE2 drives the registerInit endpoint with a real

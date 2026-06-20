@@ -30,8 +30,13 @@ import (
 // in-memory only; a relay restart cancels every pending flow, which is
 // safe (the client will see a 401 on finalize and re-issue init).
 type OpaqueAuthHandler struct {
-	store          *userstore.SQLiteStore
-	srv            *OpaqueServer
+	store *userstore.SQLiteStore
+	srv   *OpaqueServer
+	// bootstrapEmail is ATTERM_BOOTSTRAP_ADMIN_EMAIL. The first-run setup
+	// flow auto-promotes a registration to admin when its email matches this
+	// (case-insensitive) AND no admin exists yet — no claim token needed.
+	// Empty disables the email-gated path (claim tokens still work).
+	bootstrapEmail string
 	loginSessions  sync.Map // session_id -> *loginPending
 	stepUpSessions sync.Map // session_id -> *stepUpPending (M1i)
 }
@@ -59,8 +64,8 @@ const loginSessionTTL = 30 * time.Second
 // NewOpaqueAuthHandler constructs the handler. Both store and srv must be
 // non-nil; the OpaqueServer is expected to have been initialized via
 // LoadOrInitOpaqueServer before this constructor is called.
-func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer) *OpaqueAuthHandler {
-	return &OpaqueAuthHandler{store: store, srv: srv}
+func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer, bootstrapEmail string) *OpaqueAuthHandler {
+	return &OpaqueAuthHandler{store: store, srv: srv, bootstrapEmail: strings.TrimSpace(bootstrapEmail)}
 }
 
 // ----- Wire types -----
@@ -95,6 +100,7 @@ type accountKeyWrapPayload struct {
 type registerFinalizeResponse struct {
 	UserID       string `json:"user_id"`
 	SessionToken string `json:"session_token"`
+	IsAdmin      bool   `json:"is_admin"`
 }
 
 type loginInitRequest struct {
@@ -275,7 +281,9 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 	// see a 401 and the operator must mint a new token. The orphan user is
 	// acceptable (UNIQUE-email guards against the same email being claimed
 	// twice anyway).
-	if claimedRole != "" {
+	isAdmin := false
+	switch {
+	case claimedRole != "":
 		if err := h.store.ConsumeClaimToken(ctx, req.ClaimToken); err != nil {
 			http.Error(w, "claim token race", http.StatusUnauthorized)
 			return
@@ -286,6 +294,23 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 				// the operator can re-promote the user via the admin
 				// console. Log loudly so the gap is visible.
 				log.Printf("opaque-register: set admin on claimed user %s: %v", user.ID, err)
+			} else {
+				isAdmin = true
+			}
+		}
+	case h.bootstrapEmail != "" && strings.EqualFold(req.Email, h.bootstrapEmail):
+		// First-run setup: no claim token, but the email matches the
+		// configured bootstrap admin AND no admin exists yet → auto-promote.
+		// The channel closes the moment the first admin exists; email
+		// UNIQUEness means only one account can ever hold this email.
+		if adminExists, err := h.store.AdminExists(ctx); err != nil {
+			log.Printf("opaque-register: admin-exists check: %v", err)
+		} else if !adminExists {
+			if err := h.store.SetUserAdmin(ctx, user.ID, true); err != nil {
+				log.Printf("opaque-register: first-run auto-admin %s: %v", user.ID, err)
+			} else {
+				isAdmin = true
+				log.Printf("opaque-register: first-run admin created for %s", req.Email)
 			}
 		}
 	}
@@ -300,6 +325,7 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 	_ = json.NewEncoder(w).Encode(registerFinalizeResponse{
 		UserID:       user.ID,
 		SessionToken: tok,
+		IsAdmin:      isAdmin,
 	})
 }
 

@@ -24,13 +24,42 @@ describe("SettingsRelay", () => {
   });
 
   test("renders url, login form, permissions SelectDropdown, insecure toggle, and status pill", () => {
-    expect(source).toContain(["placeholder", '"https://relay.example.com"'].join("="));
+    // The scheme is no longer typed; the input takes a bare host.
+    expect(source).toContain(["placeholder", '"relay.example.com"'].join("="));
     expect(source).toContain("settings.relay.remotePermissions");
     expect(source).toContain("import SelectDropdown");
     expect(source).toContain("<SelectDropdown");
     expect(source).toContain('v-model="remotePermission"');
     expect(source).toContain("settings.relay.insecureMode");
     expect(source).toContain("settings.relay.connecting");
+  });
+
+  test("derives the relay scheme from insecure mode instead of asking the user to type it", () => {
+    // Bare host is stored; the scheme prefix is computed.
+    expect(source).toContain("const host = ref");
+    expect(source).toContain("function stripScheme");
+    expect(source).toContain('allowInsecureRelay.value ? "http://" : "https://"');
+    // A non-editable prefix renders the derived scheme next to the input.
+    expect(source).toContain('class="url-scheme"');
+    expect(source).toContain("{{ urlScheme }}");
+    // The reconstructed URL is what the backend calls receive.
+    expect(source).toContain("probeRelayVersion(fullUrl.value)");
+  });
+
+  test("insecure-mode toggle sits on the relay url label row", () => {
+    expect(source).toContain('class="url-label-row"');
+    expect(source).toContain('class="insecure-inline"');
+  });
+
+  test("register is reached through a muted switch link, not a segmented toggle", () => {
+    // The old segmented radiogroup is gone.
+    expect(source).not.toContain('class="mode-toggle"');
+    expect(source).not.toContain('role="radiogroup"');
+    // A single switch link toggles the mode.
+    expect(source).toContain('class="auth-switch"');
+    expect(source).toContain("toggleAuthMode");
+    expect(source).toContain("settings.relay.noAccountPrompt");
+    expect(source).toContain("settings.relay.haveAccountPrompt");
   });
 
   test("emits dirty whenever a field diverges from the persisted snapshot", () => {

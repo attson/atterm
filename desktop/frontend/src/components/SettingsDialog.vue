@@ -96,12 +96,15 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
 }>();
 
-const activeTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu">(props.initialTab ?? "general");
+// Logging is no longer a standalone tab — it lives inside the Diagnostics
+// pane. Map any legacy `initialTab: 'logging'` onto diagnostics so deep links
+// keep working.
+const initialTab = props.initialTab === "logging" ? "diagnostics" : (props.initialTab ?? "general");
+const activeTab = ref<"general" | "relay" | "webhooks" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu">(initialTab);
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
 if (!caps.pluginHost) { hiddenTabs.add('plugins'); hiddenTabs.add('shortcuts') }
-if (!caps.fileDialog) hiddenTabs.add('logging')
 if (hiddenTabs.has(activeTab.value)) activeTab.value = 'general'
 
 const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
@@ -284,15 +287,6 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.templates.tab") }}</span>
           </button>
           <button
-            v-if="caps.fileDialog"
-            class="settings-nav-item"
-            :class="{ active: activeTab === 'logging' }"
-            @click="switchTab('logging')"
-          >
-            <span class="nav-icon" v-html="tabIcons.logging"></span>
-            <span class="nav-label">{{ t("settings.tabs.logging") }}</span>
-          </button>
-          <button
             v-if="caps.autoUpdate"
             class="settings-nav-item"
             :class="{ active: activeTab === 'updates' }"
@@ -340,11 +334,6 @@ function onSaveClick() {
           <SettingsWebhooks
             v-if="relayHasToken && activeTab === 'webhooks'"
           />
-          <SettingsLogging
-            v-if="caps.fileDialog"
-            v-show="activeTab === 'logging'"
-            @open-log-viewer="openLogViewer"
-          />
           <SettingsUpdates
             v-if="caps.autoUpdate"
             v-show="activeTab === 'updates'"
@@ -353,7 +342,16 @@ function onSaveClick() {
           <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
-          <SettingsDiagnostics v-if="activeTab === 'diagnostics'" />
+          <div v-if="activeTab === 'diagnostics'" class="diag-merged">
+            <section v-if="caps.fileDialog" class="merged-section">
+              <h4 class="merged-section-title">{{ t("settings.tabs.logging") }}</h4>
+              <SettingsLogging @open-log-viewer="openLogViewer" />
+            </section>
+            <section class="merged-section">
+              <h4 v-if="caps.fileDialog" class="merged-section-title">{{ t("settings.diagnostics.section") }}</h4>
+              <SettingsDiagnostics />
+            </section>
+          </div>
           <SettingsFeishu v-if="activeTab === 'feishu'" />
         </section>
       </div>
@@ -559,6 +557,31 @@ function onSaveClick() {
 }
 .settings-footer .danger:hover:not(:disabled) {
   background: rgba(248, 81, 73, 0.1);
+}
+
+/* Diagnostics pane hosts two stacked sections: Logging (top) + Diagnostics
+   snapshot (bottom), separated by a divider. */
+.diag-merged {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.merged-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.merged-section + .merged-section {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+.merged-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
 }
 
 .discard-backdrop {

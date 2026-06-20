@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"io/fs"
 	"log"
@@ -26,7 +27,8 @@ import (
 var Version = "dev"
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", ":8080", "plain HTTP listen address — for a reverse proxy / internal use (empty disables)")
+	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ":8443"), "HTTPS listen address — the browser-facing port; self-signed by default (or ATTERM_HTTPS_ADDR; empty disables)")
 	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
@@ -41,7 +43,8 @@ func main() {
 	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (unbootstrapped admin); development/private networks only")
 	flag.Parse()
 
-	publicListen := isPublicListenAddr(*addr)
+	publicListen := (*addr != "" && isPublicListenAddr(*addr)) ||
+		(*httpsAddr != "" && isPublicListenAddr(*httpsAddr))
 	bootstrapEmail := strings.TrimSpace(os.Getenv("ATTERM_BOOTSTRAP_ADMIN_EMAIL"))
 
 	if publicListen && !*devInsecure && bootstrapEmail == "" {
@@ -256,24 +259,65 @@ func main() {
 		}
 	}()
 
-	httpSrv := &http.Server{
-		Addr:              *addr,
-		Handler:           srv,
-		ReadHeaderTimeout: 10 * time.Second,
+	// Build the TLS config for the HTTPS listener. OPAQUE needs a secure
+	// browser context (WebCrypto), so HTTPS is the default browser-facing
+	// path. Bring-your-own cert wins; otherwise a persisted self-signed cert
+	// is generated so quick-start works with no reverse proxy (browsers warn
+	// once). The plain HTTP listener stays for reverse-proxy deployments.
+	var tlsConfig *tls.Config
+	if *httpsAddr != "" {
+		tlsCertFile := strings.TrimSpace(os.Getenv("ATTERM_TLS_CERT"))
+		tlsKeyFile := strings.TrimSpace(os.Getenv("ATTERM_TLS_KEY"))
+		var cert tls.Certificate
+		if tlsCertFile != "" && tlsKeyFile != "" {
+			cert, err = tls.LoadX509KeyPair(tlsCertFile, tlsKeyFile)
+			if err != nil {
+				log.Fatalf("load TLS cert/key: %v", err)
+			}
+		} else {
+			hosts := append([]string{"localhost", "127.0.0.1", "::1"}, splitCSV(os.Getenv("ATTERM_TLS_HOST"))...)
+			cert, err = relay.LoadOrCreateSelfSigned(persistDir, hosts)
+			if err != nil {
+				log.Fatalf("self-signed TLS: %v", err)
+			}
+			log.Printf("https: using self-signed cert (browsers warn once; set ATTERM_TLS_HOST=<ip|domain> to match, or front --addr with a reverse proxy / real cert)")
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	}
 
-	go func() {
-		log.Printf("atterm-relay listening on %s", *addr)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
-		}
-	}()
+	if *addr == "" && *httpsAddr == "" {
+		log.Fatal("no listener: set --addr and/or --https-addr")
+	}
+
+	var servers []*http.Server
+	if *addr != "" {
+		httpSrv := &http.Server{Addr: *addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
+		servers = append(servers, httpSrv)
+		go func() {
+			log.Printf("atterm-relay listening (http) on %s", *addr)
+			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("listen http: %v", err)
+			}
+		}()
+	}
+	if *httpsAddr != "" {
+		httpsSrv := &http.Server{Addr: *httpsAddr, Handler: srv, TLSConfig: tlsConfig, ReadHeaderTimeout: 10 * time.Second}
+		servers = append(servers, httpsSrv)
+		go func() {
+			log.Printf("atterm-relay listening (https) on %s", *httpsAddr)
+			if err := httpsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("listen https: %v", err)
+			}
+		}()
+	}
 
 	<-ctx.Done()
 	log.Println("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = httpSrv.Shutdown(shutdownCtx)
+	for _, s := range servers {
+		_ = s.Shutdown(shutdownCtx)
+	}
 }
 
 func envEnabled(name string) bool {

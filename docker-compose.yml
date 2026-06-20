@@ -24,6 +24,13 @@ services:
       ATTERM_RELAY_CONFIG_DIR: /etc/atterm
       # Optional config-file path override (defaults to <config-dir>/relay.json).
       ATTERM_RELAY_CONFIG: ${ATTERM_RELAY_CONFIG:-/etc/atterm/relay.json}
+      # TLS: the relay serves HTTPS on :8443 by default with a self-signed
+      # cert (browsers warn once). Set ATTERM_TLS_HOST to your public IP or
+      # domain so the cert matches and the warning is host-correct. OPAQUE
+      # login REQUIRES https (or localhost) — plain http won't work in a
+      # browser. Bring your own cert with ATTERM_TLS_CERT/ATTERM_TLS_KEY, or
+      # front the :8080 HTTP port with Caddy/nginx/Tailscale for a real cert.
+      ATTERM_TLS_HOST: ${ATTERM_TLS_HOST:-}
       # ── Optional (configure in the admin UI instead) ────────────────────
       # All of the following are OPTIONAL and now managed under Admin →
       # Config / Feishu. Set them here only to pre-seed relay.json on first
@@ -34,10 +41,15 @@ services:
       #   ATTERM_RATE_LIMIT_PER_MINUTE / ATTERM_MAX_CONNECTIONS_PER_KEY
       #   ATTERM_RELAY_DEBUG / ATTERM_RELAY_DEBUG_PAYLOAD (verbose logging)
     ports:
+      # HTTPS (self-signed) — the browser-facing port. Open https://<host>:8443.
+      - "${ATTERM_RELAY_HTTPS_PORT:-8443}:8443"
+      # Plain HTTP — for a reverse proxy that terminates TLS, or internal use.
+      # Not usable directly from a browser (OPAQUE needs a secure context).
       - "${ATTERM_RELAY_PORT:-8080}:8080"
     labels:
       com.centurylinklabs.watchtower.enable: "true"
-    command: ["--addr", ":8080"]
+    # Both listeners are on by default (--https-addr defaults to :8443).
+    command: ["--addr", ":8080", "--https-addr", ":8443"]
     volumes:
       - ${ATTERM_RELAY_CONFIG_DIR:-./data/atterm-relay}:/etc/atterm
 

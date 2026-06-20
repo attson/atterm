@@ -30,3 +30,5 @@
 # Build artifact for desktop/hookinstall embed; produced by
 # scripts/build-hook-binary.sh on demand.
 desktop/hookinstall/atterm-hook
+# wails dev project-local data dir (config/recovery/db/cache/logs)
+.atterm-dev/

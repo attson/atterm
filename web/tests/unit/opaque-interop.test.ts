@@ -27,7 +27,6 @@ import {
   OpaqueClient,
   RegistrationResponse,
   KE2,
-  ScryptMemHardFn,
 } from '@cloudflare/opaque-ts'
 import {
   SERVER_IDENTITY,

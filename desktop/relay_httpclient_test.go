@@ -23,6 +23,11 @@ func TestRelayHTTPClientDisablesHTTP2(t *testing.T) {
 		if tr.TLSNextProto == nil {
 			t.Errorf("allowInsecure=%v: TLSNextProto is nil (h2 auto-upgrade enabled), want empty non-nil map", allowInsecure)
 		}
+		// The ALPN offer must be pinned to http/1.1 — otherwise the cloned
+		// DefaultTransport can still advertise h2 and the relay negotiates it.
+		if got := tr.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+			t.Errorf("allowInsecure=%v: NextProtos = %v, want [http/1.1]", allowInsecure, got)
+		}
 	}
 }
 

@@ -23,15 +23,19 @@ describe("SettingsRelay", () => {
     expect(source).toContain("save,");
   });
 
-  test("renders url, login form, permissions SelectDropdown, insecure toggle, and status pill", () => {
+  test("renders url, login form, insecure toggle, and status pill", () => {
     // The scheme is no longer typed; the input takes a bare host.
     expect(source).toContain(["placeholder", '"relay.example.com"'].join("="));
-    expect(source).toContain("settings.relay.remotePermissions");
-    expect(source).toContain("import SelectDropdown");
-    expect(source).toContain("<SelectDropdown");
-    expect(source).toContain('v-model="remotePermission"');
     expect(source).toContain("settings.relay.insecureMode");
     expect(source).toContain("settings.relay.connecting");
+  });
+
+  test("remote-session-permission selector is gone (single-user tool, no sharing)", () => {
+    expect(source).not.toContain("settings.relay.remotePermissions");
+    expect(source).not.toContain("SelectDropdown");
+    expect(source).not.toContain("remotePermission");
+    // Sessions are always published with full permission.
+    expect(source).toContain('remote_permission: "full"');
   });
 
   test("relay scheme is always https; the insecure toggle only relaxes cert verification", () => {

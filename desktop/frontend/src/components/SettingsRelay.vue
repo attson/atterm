@@ -3,7 +3,6 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
-import SelectDropdown from "./SelectDropdown.vue";
 import PairingPanel from "./PairingPanel.vue";
 import { useI18n } from "../i18n/useI18n";
 
@@ -30,7 +29,6 @@ const allowInsecureRelay = ref(false);
 // testing the plaintext fallback path; the TitleBar shows a ⚠ chip
 // while this is on so the user doesn't forget.
 const disableE2EE = ref(false);
-const remotePermission = ref("full");
 const paused = ref(false);
 const loading = ref(true);
 const saving = ref(false);
@@ -57,7 +55,6 @@ const connectedEmail = ref("");
 const persistedHost = ref("");
 const persistedToken = ref("");
 const persistedAllowInsecure = ref(false);
-const persistedPermission = ref("full");
 
 // Strip any scheme the user might paste so `host` always stays bare; the
 // canonical scheme is owned by the insecure-mode toggle.
@@ -84,18 +81,11 @@ const fullUrl = computed(() => {
   return h ? urlScheme.value + h : "";
 });
 
-const permissionOptions = computed(() => [
-  { value: "view", label: t("settings.relay.viewOnly"), description: t("settings.relay.viewOnlyDesc") },
-  { value: "control", label: t("settings.relay.control"), description: t("settings.relay.controlDesc") },
-  { value: "full", label: t("settings.relay.full"), description: t("settings.relay.fullDesc") },
-]);
-
 const dirty = computed(
   () =>
     stripScheme(host.value) !== persistedHost.value ||
     token.value !== persistedToken.value ||
-    allowInsecureRelay.value !== persistedAllowInsecure.value ||
-    remotePermission.value !== persistedPermission.value,
+    allowInsecureRelay.value !== persistedAllowInsecure.value,
 );
 
 watch(dirty, (value) => emit("dirty", value));
@@ -145,7 +135,6 @@ onMounted(async () => {
     host.value = stripScheme(cfg.url);
     token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
-    remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
     snapshotPersisted();
 
@@ -224,7 +213,6 @@ function snapshotPersisted() {
   persistedHost.value = stripScheme(host.value);
   persistedToken.value = token.value;
   persistedAllowInsecure.value = allowInsecureRelay.value;
-  persistedPermission.value = remotePermission.value;
 }
 
 async function save() {
@@ -274,7 +262,10 @@ async function save() {
         session_expires_at: 0,
         allow_insecure_relay: allowInsecureRelay.value,
         disable_e2ee: disableE2EE.value,
-        remote_permission: remotePermission.value,
+        // Single-user tool: sessions are always published with full
+        // permission (the view/control selector was removed — there is no
+        // sharing scenario). The wire field is kept for protocol compat.
+        remote_permission: "full",
       });
     } catch (e: any) {
       error.value = e?.message ?? String(e);
@@ -294,7 +285,6 @@ async function save() {
     host.value = stripScheme(cfg.url);
     token.value = cfg.token;
     disableE2EE.value = (cfg as any).disable_e2ee ?? false;
-    remotePermission.value = cfg.remote_permission || "full";
     paused.value = (cfg as any).paused ?? false;
     email.value = cfg.last_email ?? "";
     snapshotPersisted();
@@ -479,17 +469,6 @@ defineExpose({
         {{ authMode === 'login' ? t('settings.relay.noAccountPrompt') : t('settings.relay.haveAccountPrompt') }}
         <span class="auth-switch-action">{{ authMode === 'login' ? t('settings.relay.modeRegister') : t('settings.relay.modeLogin') }}</span>
       </button>
-
-      <label class="field-label">{{ t("settings.relay.remotePermissions") }}</label>
-      <SelectDropdown
-        v-model="remotePermission"
-        :options="permissionOptions"
-        :disabled="saving"
-        :aria-label="t('settings.relay.remotePermissions')"
-      />
-      <p class="hint">
-        {{ t("settings.relay.permissionsHint") }}
-      </p>
 
       <label class="checkbox">
         <input

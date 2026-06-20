@@ -181,6 +181,7 @@ func main() {
 		Resolver:             resolver,
 		Store:                store,
 		OpaqueServer:         opaqueSrv,
+		BootstrapAdminEmail:  bootstrapEmail,
 	}
 
 	// VAPID subject is consumed once here; changing it later needs a restart.

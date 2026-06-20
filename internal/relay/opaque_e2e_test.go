@@ -38,7 +38,7 @@ func TestOPAQUE_FullRegisterAndLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewOpaqueAuthHandler(store, srv)
+	h := NewOpaqueAuthHandler(store, srv, "")
 
 	mux := http.NewServeMux()
 	h.Register(mux)

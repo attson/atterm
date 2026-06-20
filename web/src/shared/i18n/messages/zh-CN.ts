@@ -37,6 +37,16 @@ export const zhCN = {
     createAccount: '创建账号',
     email: '邮箱',
     emailPlaceholder: 'you@example.com',
+    setup: {
+      title: '首次安装',
+      hint: '还没有管理员。创建第一个管理员账号——请填写你在 ATTERM_BOOTSTRAP_ADMIN_EMAIL 配置的邮箱。',
+      emailPlaceholder: '你配置的 ATTERM_BOOTSTRAP_ADMIN_EMAIL',
+      confirmPassword: '确认密码',
+      createAdmin: '创建管理员',
+      passwordMismatch: '两次输入的密码不一致。',
+      notAdmin: '账号已创建，但不是管理员——请确认邮箱与 ATTERM_BOOTSTRAP_ADMIN_EMAIL 一致。',
+      failed: '初始化失败，请重试。',
+    },
     errors: {
       emailTaken: '该邮箱已注册。',
       invalidCredentials: '邮箱或密码不正确。',

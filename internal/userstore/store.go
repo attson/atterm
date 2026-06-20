@@ -96,6 +96,9 @@ type Store interface {
 	ListUsers(ctx context.Context) ([]User, error)
 	// SetUserAdmin sets the is_admin flag for userID. Idempotent.
 	SetUserAdmin(ctx context.Context, userID string, admin bool) error
+	// AdminExists reports whether any enabled admin user exists. Gates the
+	// first-run setup flow's email-matched auto-promotion.
+	AdminExists(ctx context.Context) (bool, error)
 	// DeleteUser hard-deletes userID. sessions and pairing_tokens cascade
 	// via the existing FK. invitations.consumed_by is REFERENCES users(id)
 	// without cascade (history field), so this method first sets that

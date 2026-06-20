@@ -22,6 +22,22 @@ import {
 export interface AuthResult {
   user_id: string
   email: string
+  // is_admin is set by register() (the finalize response carries it) so the
+  // first-run setup page can confirm the account got the admin role.
+  is_admin?: boolean
+}
+
+// BootstrapStatus is the public first-run signal (GET /api/bootstrap/status).
+// admin_exists=false means the relay has no admin yet → show first-run setup.
+export interface BootstrapStatus {
+  admin_exists: boolean
+}
+
+// getBootstrapStatus is unauthenticated; used by the login + first-run pages
+// before any credentials exist.
+export async function getBootstrapStatus(): Promise<BootstrapStatus> {
+  const { data } = await apiFetch<BootstrapStatus>('/api/bootstrap/status')
+  return data
 }
 
 interface RegisterInitResp {
@@ -30,6 +46,7 @@ interface RegisterInitResp {
 interface RegisterFinalizeResp {
   user_id: string
   session_token: string
+  is_admin: boolean
 }
 interface LoginInitResp {
   login_response: string
@@ -166,7 +183,7 @@ export async function register(
   saveAccountKey(accountKey)
   persistSession(final.session_token)
 
-  return { user_id: final.user_id, email }
+  return { user_id: final.user_id, email, is_admin: final.is_admin }
 }
 
 // signup is kept as a thin alias for callers that still expect the

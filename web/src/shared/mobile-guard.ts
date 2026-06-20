@@ -1,6 +1,6 @@
 import { isMobileApp, loadRelayConfig } from './api/relay-config'
 
-export type EntryPage = 'home' | 'login' | 'signup' | 'settings' | 'admin' | 'setup'
+export type EntryPage = 'home' | 'login' | 'signup' | 'settings' | 'admin' | 'setup' | 'firstrun'
 
 // applyMobileEntryGuard inspects the Capacitor environment and stored
 // relay config, then issues a redirect when the current page would be
@@ -18,7 +18,7 @@ export function applyMobileEntryGuard(page: EntryPage): boolean {
   }
 
   // hasConfig is true here.
-  if (page === 'setup' || page === 'login' || page === 'signup') {
+  if (page === 'setup' || page === 'login' || page === 'signup' || page === 'firstrun') {
     location.replace('/')
     return true
   }

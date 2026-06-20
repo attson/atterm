@@ -439,13 +439,11 @@ func (s *Server) updateAdminConfig(update func(AdminConfig) AdminConfig) error {
 // admin UI. The plaintext encrypt key is NEVER included — only whether one is
 // set and its last 4 chars for recognition.
 type feishuAdminResponse struct {
-	Enabled                 bool   `json:"enabled"`
-	Running                 bool   `json:"running"`
-	BaseURL                 string `json:"base_url"`
-	KeySet                  bool   `json:"key_set"`
-	KeyLast4                string `json:"key_last4,omitempty"`
-	VAPIDSubject            string `json:"vapid_subject,omitempty"`
-	RequiresRestartForVAPID bool   `json:"requires_restart_for_vapid"`
+	Enabled  bool   `json:"enabled"`
+	Running  bool   `json:"running"`
+	BaseURL  string `json:"base_url"`
+	KeySet   bool   `json:"key_set"`
+	KeyLast4 string `json:"key_last4,omitempty"`
 }
 
 func (s *Server) feishuAdminResponse() feishuAdminResponse {
@@ -454,12 +452,10 @@ func (s *Server) feishuAdminResponse() feishuAdminResponse {
 		cfg = s.cfg.AdminConfigStore.Snapshot()
 	}
 	resp := feishuAdminResponse{
-		Enabled:                 cfg.FeishuEnabled,
-		Running:                 s.FeishuEnabled(),
-		BaseURL:                 cfg.FeishuBaseURL,
-		KeySet:                  cfg.FeishuEncryptKey != "",
-		VAPIDSubject:            cfg.VAPIDSubject,
-		RequiresRestartForVAPID: true,
+		Enabled: cfg.FeishuEnabled,
+		Running: s.FeishuEnabled(),
+		BaseURL: cfg.FeishuBaseURL,
+		KeySet:  cfg.FeishuEncryptKey != "",
 	}
 	if n := len(cfg.FeishuEncryptKey); n >= 4 {
 		resp.KeyLast4 = cfg.FeishuEncryptKey[n-4:]

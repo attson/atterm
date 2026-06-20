@@ -97,8 +97,6 @@ export interface FeishuAdminConfig {
   base_url: string
   key_set: boolean
   key_last4?: string
-  vapid_subject?: string
-  requires_restart_for_vapid: boolean
 }
 
 // FeishuAdminConfigUpdate is the PUT body. Omit encrypt_key to keep the

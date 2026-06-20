@@ -12,14 +12,17 @@ const emit = defineEmits<{
   (e: "dirty", value: boolean): void;
 }>();
 
-// `host` holds the bare relay host the user types (no scheme). The scheme is
-// derived from `allowInsecureRelay` and rendered as a fixed prefix in the UI:
-// https:// normally, http:// in insecure mode. `fullUrl` reconstructs the URL
-// that gets sent to the backend.
+// `host` holds the bare relay host the user types (no scheme). Relay
+// connections are always HTTPS/WSS; the scheme is rendered as a fixed
+// `https://` prefix. `fullUrl` reconstructs the URL sent to the backend.
 const host = ref("");
 // `token` mirrors the persisted session token (issued by /api/auth/login).
 // It is no longer user-editable — see the email/password login form below.
 const token = ref("");
+// allowInsecureRelay = "trust self-signed certificate": when checked the
+// desktop skips TLS verification so it can reach a relay serving a
+// self-signed cert (atterm-relay's quick-start default). It no longer
+// downgrades the scheme to http:// — connections stay HTTPS either way.
 const allowInsecureRelay = ref(false);
 // disableE2EE = true means agent will NOT seal outbound session content.
 // Persisted in appConfig.DisableE2EE and applied immediately via the
@@ -62,7 +65,10 @@ function stripScheme(s: string): string {
   return s.trim().replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
 }
 
-const urlScheme = computed(() => (allowInsecureRelay.value ? "http://" : "https://"));
+// Always HTTPS — WebCrypto/OPAQUE require a secure context and the relay
+// serves TLS by default. The self-signed-trust checkbox is orthogonal to the
+// scheme (it only relaxes certificate verification on the desktop side).
+const urlScheme = computed(() => "https://");
 
 // If a full URL is pasted into the host field, drop the scheme so the bare
 // host doesn't render doubled against the fixed prefix. Only fires when a
@@ -235,7 +241,7 @@ async function save() {
 
   // 2. /api/version probe via Wails Go method
   try {
-    await probeRelayVersion(fullUrl.value);
+    await probeRelayVersion(fullUrl.value, allowInsecureRelay.value);
   } catch (e: any) {
     error.value = t("settings.relay.versionProbeFailed", { reason: e?.message ?? String(e) });
     saving.value = false;

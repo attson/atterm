@@ -75,9 +75,14 @@ type uplink struct {
 	// only setups, or first-boot before the user has logged in, work
 	// unchanged). Set by NewApp wiring (see desktop/app.go).
 	accountKey func() []byte
+
+	// allowInsecure mirrors RelayConfig.AllowInsecureRelay: when true the
+	// uplink's WebSocket dial skips TLS certificate verification so it can
+	// reach a relay serving a self-signed certificate.
+	allowInsecure bool
 }
 
-func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error), accountKey func() []byte) *uplink {
+func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error), accountKey func() []byte, allowInsecure bool) *uplink {
 	return &uplink{
 		relayURL:         strings.TrimRight(relayURL, "/"),
 		token:            token,
@@ -88,6 +93,7 @@ func newUplink(relayURL, token, remotePermission string, host *relayHost, record
 		tracker:          connhealth.New(),
 		startMono:        time.Now(),
 		accountKey:       accountKey,
+		allowInsecure:    allowInsecure,
 	}
 }
 
@@ -227,7 +233,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	if u.token != "" {
 		hdr["Authorization"] = []string{"Bearer " + u.token}
 	}
-	conn, _, err := websocket.Dial(dialCtx, u.relayURL+"/uplink", &websocket.DialOptions{HTTPHeader: hdr})
+	conn, _, err := websocket.Dial(dialCtx, u.relayURL+"/uplink", &websocket.DialOptions{HTTPHeader: hdr, HTTPClient: relayHTTPClient(u.allowInsecure, 0)})
 	cancelDial()
 	if err != nil {
 		return err

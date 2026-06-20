@@ -254,7 +254,6 @@ export const en = {
       keyCopyOnce: 'Copy this key somewhere safe — it is shown only once and never again.',
       forceRotate: 'Replace the existing key (existing Feishu bindings will stop working)',
       baseUrl: 'Base URL',
-      vapidNote: 'Changing the VAPID subject requires a relay restart.',
       statusRunning: 'Running',
       statusStopped: 'Stopped',
       rotateConflict: 'That changes the existing key. Enable "replace" to rotate it (existing bindings will break).',

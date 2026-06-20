@@ -342,7 +342,7 @@ func (a *App) applyRelayConfig(cfg appConfig) {
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
-	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey)
+	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey, cfg.AllowInsecureRelay)
 	go a.uplink.Run(uplinkCtx)
 	log.Printf("desktop: uplink configured for %s", cfg.RelayURL)
 }
@@ -492,7 +492,7 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c := &e2eeclient.Client{BaseURL: httpURL}
+	c := &e2eeclient.Client{BaseURL: httpURL, HTTPClient: relayHTTPClient(allowInsecure, 0)}
 	res, err := c.Login(ctx, email, password)
 	if err != nil {
 		return fmt.Errorf("relay OPAQUE login: %w", err)
@@ -574,7 +574,7 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c := &e2eeclient.Client{BaseURL: httpURL}
+	c := &e2eeclient.Client{BaseURL: httpURL, HTTPClient: relayHTTPClient(allowInsecure, 0)}
 	res, err := c.Register(ctx, email, password, claimToken)
 	if err != nil {
 		return fmt.Errorf("relay OPAQUE register: %w", err)
@@ -720,7 +720,7 @@ func (a *App) GetAccountKey() string {
 // /api/version is auth-less per the session-token spec, so no credentials
 // are sent. 5-second timeout keeps the UI from blocking on a stalled
 // connection — the user can re-click "保存并连接" if the relay just woke up.
-func (a *App) ProbeRelayVersion(relayURL string) error {
+func (a *App) ProbeRelayVersion(relayURL string, allowInsecure bool) error {
 	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
 	if relayURL == "" {
 		return fmt.Errorf("relay url is empty")
@@ -737,7 +737,7 @@ func (a *App) ProbeRelayVersion(relayURL string) error {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := relayHTTPClient(allowInsecure, 5*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -1119,7 +1119,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := relayHTTPClient(cfg.AllowInsecureRelay, 0).Do(req)
 	if err != nil {
 		return err
 	}
@@ -1528,7 +1528,7 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 		return RelayMe{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := relayHTTPClient(cfg.AllowInsecureRelay, 0).Do(req)
 	if err != nil {
 		return RelayMe{}, err
 	}
@@ -1569,7 +1569,7 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := relayHTTPClient(cfg.AllowInsecureRelay, 0).Do(req)
 	if err != nil {
 		return PairingTokenResponse{}, err
 	}

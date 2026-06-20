@@ -114,11 +114,23 @@ func (a *appConfigAdapter) Keys() []string { return prefssync.SyncedKeys() }
 // config store.
 type httpRelayClient struct {
 	store *configStore
-	http  *http.Client
+	// http, when non-nil, overrides the per-request client (tests inject an
+	// httptest client here). Production leaves it nil so clientFor builds a
+	// client that honours the relay's allow_insecure_relay flag.
+	http *http.Client
 }
 
 func newHTTPRelayClient(s *configStore) *httpRelayClient {
-	return &httpRelayClient{store: s, http: http.DefaultClient}
+	return &httpRelayClient{store: s}
+}
+
+// clientFor returns the HTTP client to use for a request, honouring the
+// relay's allow_insecure_relay flag so self-signed relays are reachable.
+func (c *httpRelayClient) clientFor() *http.Client {
+	if c.http != nil {
+		return c.http
+	}
+	return relayHTTPClient(c.store.Get().AllowInsecureRelay, 0)
 }
 
 func (c *httpRelayClient) base() (string, string, error) {
@@ -143,7 +155,7 @@ func (c *httpRelayClient) Get(ctx context.Context) ([]prefssync.ServerItem, erro
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := c.http.Do(req)
+	resp, err := c.clientFor().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +184,7 @@ func (c *httpRelayClient) Put(ctx context.Context, items []prefssync.ClientItem)
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.clientFor().Do(req)
 	if err != nil {
 		return nil, err
 	}

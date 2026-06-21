@@ -304,6 +304,9 @@ export const zhCN = {
     feishu: {
       title: "飞书集成",
       disabled: "飞书集成尚未启用。",
+      relay_disabled: "服务端（relay）已关闭飞书集成。",
+      load_error: "无法获取飞书状态：{error}",
+      retry_status: "重试",
       mode: "模式",
       bound: "已绑定到 open_id：{open_id}",
       save: "保存凭据",

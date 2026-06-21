@@ -22,7 +22,16 @@
         {{ hookState.last_error }}
       </p>
     </section>
-    <p v-if="!status.enabled" class="hint">{{ t('settings.feishu.disabled') }}</p>
+    <div v-if="status.error" class="hint feishu-status-error" data-test="feishu-load-error">
+      <span>{{ t('settings.feishu.load_error', { error: status.error }) }}</span>
+      <button type="button" class="hook-install__retry" @click="refresh" data-test="feishu-status-retry">
+        {{ t('settings.feishu.retry_status') }}
+      </button>
+    </div>
+    <p v-else-if="status.relay_disabled" class="hint" data-test="feishu-relay-disabled">
+      {{ t('settings.feishu.relay_disabled') }}
+    </p>
+    <p v-else-if="!status.enabled" class="hint">{{ t('settings.feishu.disabled') }}</p>
     <template v-else>
       <p class="hint">{{ t('settings.feishu.mode') }}: {{ status.mode }}</p>
       <template v-if="status.bound">
@@ -102,7 +111,17 @@ async function refresh() {
   try {
     status.value = await getFeishuStatus()
   } catch (e) {
-    // non-fatal; status stays disabled
+    // The Wails call itself failed (rare — the backend normally encodes
+    // failures in resp.error). Surface it instead of silently showing
+    // "disabled", which conflates "off" with "couldn't load".
+    status.value = {
+      enabled: false,
+      mode: status.value.mode,
+      bound: false,
+      open_id: '',
+      disabled: false,
+      error: e instanceof Error ? e.message : String(e),
+    }
   }
 }
 
@@ -221,6 +240,12 @@ async function onDelete() {
   font-size: 13px;
   color: var(--fg-dim);
   margin: 0 0 1rem;
+}
+.feishu-status-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--warn);
 }
 .hook-install {
   padding: 8px 0 12px;

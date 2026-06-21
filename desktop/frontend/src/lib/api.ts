@@ -155,6 +155,11 @@ export interface FeishuStatusResp {
   bound: boolean;
   open_id: string;
   disabled: boolean;
+  // relay_disabled: relay reachable but the admin turned Feishu off server-side.
+  relay_disabled?: boolean;
+  // error: the status fetch failed; the real state is unknown. When set, the UI
+  // must not claim the integration is disabled.
+  error?: string;
 }
 
 // HookInstallState mirrors desktop/hookinstall.State (json tags). Returned by

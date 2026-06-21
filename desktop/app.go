@@ -1116,7 +1116,7 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return fmt.Errorf("no relay configured")
 	}
-	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+	baseHTTP := relayHTTPBase(cfg.RelayURL)
 	body, err := json.Marshal(map[string]any{
 		"session_ids": ids,
 		"all":         all,
@@ -1533,7 +1533,7 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 		return RelayMe{}, fmt.Errorf("no relay configured")
 	}
 	// Convert WS scheme to HTTP so we can use net/http.
-	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+	baseHTTP := relayHTTPBase(cfg.RelayURL)
 	req, err := http.NewRequest("GET", baseHTTP+"/api/me", nil)
 	if err != nil {
 		return RelayMe{}, err
@@ -1573,7 +1573,7 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return PairingTokenResponse{}, fmt.Errorf("no relay configured")
 	}
-	baseHTTP := strings.Replace(strings.Replace(cfg.RelayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+	baseHTTP := relayHTTPBase(cfg.RelayURL)
 	req, err := http.NewRequest("POST", baseHTTP+"/api/pair/create", strings.NewReader("{}"))
 	if err != nil {
 		return PairingTokenResponse{}, err
@@ -1786,6 +1786,14 @@ func (a *App) SetRecoveryDialogEnabled(enabled bool) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// relayHTTPBase rewrites a stored relay WebSocket URL (wss://, ws://) to the
+// HTTP scheme its REST endpoints are served over. http.Client rejects "wss"/
+// "ws" with "unsupported protocol scheme", so every HTTP call to the relay must
+// go through this first. A URL already using http(s):// is returned unchanged.
+func relayHTTPBase(relayURL string) string {
+	return strings.Replace(strings.Replace(relayURL, "wss://", "https://", 1), "ws://", "http://", 1)
+}
+
 // startFeishu constructs feishu.Service, starts the HookServer, writes the
 // endpoint file, and wires up the relayHost. Called once from startup().
 func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
@@ -1794,7 +1802,10 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	var svcCfg feishu.ServiceConfig
 	if isRelayMode {
 		a.feishuMode = "relay"
-		relayURL := cfg.RelayURL
+		// The stored relay URL is a WebSocket URL (wss://). The Feishu relay
+		// store/token source make plain HTTP REST calls, and http.Client rejects
+		// "wss"/"ws" ("unsupported protocol scheme"), so rewrite the scheme.
+		relayURL := relayHTTPBase(cfg.RelayURL)
 		// Capture token func at startup; reads cfgStore on each call so it
 		// stays current after token refresh.
 		svcCfg = feishu.ServiceConfig{
@@ -1806,7 +1817,11 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 				}
 				return a.cfgStore.Get().RelaySessionToken
 			},
-			Sessions: a.host,
+			// Use the same client the rest of the app uses for the relay: it
+			// pins ALPN to http/1.1 and, when the user opted into
+			// AllowInsecureRelay, trusts the relay's self-signed certificate.
+			RelayHTTPClient: relayHTTPClient(cfg.AllowInsecureRelay, 10*time.Second),
+			Sessions:        a.host,
 		}
 	} else {
 		a.feishuMode = "local"
@@ -1858,12 +1873,26 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 }
 
 // FeishuStatusResp is returned by GetFeishuStatus.
+//
+// Enabled / RelayDisabled / Error are mutually exclusive views the UI renders
+// differently:
+//   - Enabled=true: integration is active (see Bound/Disabled for detail).
+//   - RelayDisabled=true: relay mode, but the relay admin turned Feishu off.
+//   - Error!="": the status fetch failed (network/keychain/etc.) — state unknown.
+//   - all zero: integration is not running on this client.
 type FeishuStatusResp struct {
 	Enabled  bool   `json:"enabled"`
 	Mode     string `json:"mode"`
 	Bound    bool   `json:"bound"`
 	OpenID   string `json:"open_id"`
 	Disabled bool   `json:"disabled"`
+	// RelayDisabled is set when the relay responded that Feishu is disabled
+	// server-side (HTTP 503). Distinct from "not configured".
+	RelayDisabled bool `json:"relay_disabled,omitempty"`
+	// Error carries a human-readable reason the status could not be fetched.
+	// When set, the UI must NOT claim the integration is disabled — the real
+	// state is unknown. Empty on success.
+	Error string `json:"error,omitempty"`
 }
 
 // GetFeishuStatus returns the current Feishu integration state.
@@ -1884,8 +1913,16 @@ func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
 			Bound:   false,
 		}, nil
 	}
+	if errors.Is(err, feishu.ErrRelayFeishuDisabled) {
+		// The relay reachable but the admin turned Feishu off server-side.
+		return FeishuStatusResp{Mode: a.feishuMode, RelayDisabled: true}, nil
+	}
 	if err != nil {
-		return FeishuStatusResp{}, err
+		// Status couldn't be fetched (network, keychain, relay error). Report
+		// it as a non-nil Error rather than returning a Go error: the latter
+		// surfaces as a rejected Promise that the UI silently swallowed, which
+		// is exactly what made a transient failure look like "not enabled".
+		return FeishuStatusResp{Mode: a.feishuMode, Error: err.Error()}, nil
 	}
 	return FeishuStatusResp{
 		Enabled:  true,

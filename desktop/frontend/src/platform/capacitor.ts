@@ -5,19 +5,19 @@ import { CapacitorHttp } from '@capacitor/core'
 import { secureStorage } from './secureStorage'
 import { notifyLocalChange } from '../lib/prefsSync.capacitor'
 import {
-  RegistrationResponse,
-  KE2,
-} from '@cloudflare/opaque-ts'
-import {
   SERVER_IDENTITY,
   defaultKDFParams,
-  getOpaqueConfig,
-  newOpaqueClient,
   openSessionFields,
   unwrapWithPassword,
   wrapAccountKey,
   type AccountKeyWrap,
 } from '../lib/opaque'
+import {
+  opaqueLoginInit,
+  opaqueLoginFinish,
+  opaqueRegisterInit,
+  opaqueRegisterFinish,
+} from '../lib/opaqueWasm'
 import { setAccountKeyProvider } from '../lib/account-key'
 
 const STORAGE_KEY = 'atterm.relay.session'
@@ -41,10 +41,6 @@ function b64StdToBytes(s: string): Uint8Array {
   return out
 }
 
-function numberArrayToB64(b: number[]): string {
-  return bytesToB64Std(new Uint8Array(b))
-}
-
 // loginFlow drives the two-stage OPAQUE handshake against a relay base
 // URL. Captures the response shapes the Go relay returns at each step
 // so the mobile bundle does not depend on the @shared/api types. On
@@ -59,19 +55,22 @@ async function opaqueLogin(
   email: string,
   password: string,
 ): Promise<{ user_id: string; session_token: string; account_key: Uint8Array }> {
-  const cfg = getOpaqueConfig()
-  const client = newOpaqueClient()
-
-  const ke1OrErr = await client.authInit(password)
-  if (ke1OrErr instanceof Error) throw new Error('cannot_reach_relay')
-  const ke1 = ke1OrErr
+  // ke1 / login_response / ke3 are all standard-base64 strings straight off the
+  // WASM client; they go on the wire verbatim (no re-encode, no deserialize).
+  let handle: number
+  let ke1: string
+  try {
+    ;({ handle, ke1 } = await opaqueLoginInit(password))
+  } catch {
+    throw new Error('cannot_reach_relay')
+  }
 
   let initRes: Response
   try {
     initRes = await fetch(base + '/api/auth/login/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, login_ke: numberArrayToB64(ke1.serialize()) }),
+      body: JSON.stringify({ email, login_ke: ke1 }),
       credentials: 'omit',
     })
   } catch {
@@ -82,10 +81,12 @@ async function opaqueLogin(
   if (!initRes.ok) throw new Error('http_' + initRes.status)
   const initBody = (await initRes.json()) as { login_response: string; session_id: string }
 
-  const ke2 = KE2.deserialize(cfg, Array.from(b64StdToBytes(initBody.login_response)))
-  const finishOrErr = await client.authFinish(ke2, SERVER_IDENTITY, email)
-  if (finishOrErr instanceof Error) throw new Error('invalid_credentials')
-  const { ke3 } = finishOrErr
+  let ke3: string
+  try {
+    ;({ ke3 } = await opaqueLoginFinish(handle, initBody.login_response, SERVER_IDENTITY, email))
+  } catch {
+    throw new Error('invalid_credentials')
+  }
 
   let finRes: Response
   try {
@@ -95,7 +96,7 @@ async function opaqueLogin(
       body: JSON.stringify({
         email,
         session_id: initBody.session_id,
-        login_ke3: numberArrayToB64(ke3.serialize()),
+        login_ke3: ke3,
       }),
       credentials: 'omit',
     })
@@ -123,19 +124,20 @@ async function opaqueRegister(
   password: string,
   claim_token = '',
 ): Promise<{ user_id: string; session_token: string; account_key: Uint8Array }> {
-  const cfg = getOpaqueConfig()
-  const client = newOpaqueClient()
-
-  const ke1OrErr = await client.registerInit(password)
-  if (ke1OrErr instanceof Error) throw new Error('cannot_reach_relay')
-  const ke1 = ke1OrErr
+  let handle: number
+  let ke1: string
+  try {
+    ;({ handle, ke1 } = await opaqueRegisterInit(password))
+  } catch {
+    throw new Error('cannot_reach_relay')
+  }
 
   let initRes: Response
   try {
     initRes = await fetch(base + '/api/auth/register/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, registration_ke: numberArrayToB64(ke1.serialize()) }),
+      body: JSON.stringify({ email, registration_ke: ke1 }),
       credentials: 'omit',
     })
   } catch {
@@ -145,13 +147,17 @@ async function opaqueRegister(
   if (!initRes.ok) throw new Error('http_' + initRes.status)
   const initBody = (await initRes.json()) as { registration_response: string }
 
-  const ke2 = RegistrationResponse.deserialize(
-    cfg,
-    Array.from(b64StdToBytes(initBody.registration_response)),
-  )
-  const finishOrErr = await client.registerFinish(ke2, SERVER_IDENTITY, email)
-  if (finishOrErr instanceof Error) throw new Error('http_400')
-  const { record } = finishOrErr
+  let record: string
+  try {
+    ;({ record } = await opaqueRegisterFinish(
+      handle,
+      initBody.registration_response,
+      SERVER_IDENTITY,
+      email,
+    ))
+  } catch {
+    throw new Error('http_400')
+  }
 
   const accountKey = new Uint8Array(32)
   crypto.getRandomValues(accountKey)
@@ -159,7 +165,7 @@ async function opaqueRegister(
 
   const finBody: Record<string, unknown> = {
     email,
-    registration_record: numberArrayToB64(record.serialize()),
+    registration_record: record,
     account_key_wrap: wrap,
   }
   if (claim_token) finBody.claim_token = claim_token

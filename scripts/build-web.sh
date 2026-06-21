@@ -40,23 +40,10 @@ if [ -f web/package.json ] && [ -d web/node_modules ]; then
   # web speaks the SAME protocol bytes as the desktop + relay (cross-client
   # interop). The web imports opaque.wasm + Go's wasm_exec.js via Vite ?url;
   # both are gitignored — only the Vite-emitted hashed copies in
-  # web-dist/assets/ land in git. wasm_exec.js MUST come from the toolchain that
-  # built the .wasm, so resolve it from GOROOT (the path moved misc/ -> lib/
-  # across Go versions; try both).
-  # The .wasm must be byte-reproducible across developers and CI (the committed
-  # web-dist must survive the "verify embed has no drift" gate, and its content
-  # hash cascades into the importing JS chunks). Two stampers break that:
-  #   -trimpath      strips the build machine's absolute module-cache paths.
-  #   -buildvcs=false strips Go's automatic VCS stamp. Without it the binary
-  #                  embeds vcs.revision = the git HEAD SHA; on pull_request CI
-  #                  that HEAD is the EPHEMERAL refs/pull/N/merge commit, whose
-  #                  SHA changes every run -> the wasm (and every chunk that
-  #                  ?url-imports it) drifts on every push. See build.yml.
-  # Both require the SAME Go version everywhere (GO_VERSION pinned exactly).
-  wasm_exec_src="$(go env GOROOT)/misc/wasm/wasm_exec.js"
-  [ -f "$wasm_exec_src" ] || wasm_exec_src="$(go env GOROOT)/lib/wasm/wasm_exec.js"
-  GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false -ldflags="-s -w" -o web/src/shared/lib/opaque.wasm ./cmd/opaque-wasm
-  cp "$wasm_exec_src" web/src/shared/lib/wasm_exec.js
+  # web-dist/assets/ land in git. The mobile/capacitor bundle builds the SAME
+  # wasm into desktop/frontend/src/lib via this same script. Reproducibility
+  # flags (-trimpath -buildvcs=false) are documented in build-opaque-wasm.sh.
+  ./scripts/build-opaque-wasm.sh web/src/shared/lib
 
   # Clear Vite's dep cache so the build is reproducible. A WARM cache (left by a
   # prior `vite build`/`vite dev`) produces byte-different chunks than a COLD

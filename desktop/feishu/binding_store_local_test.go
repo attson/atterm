@@ -6,8 +6,31 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/zalando/go-keyring"
 )
+
+// TestLocalKeychainBindingStore_GetDegradedKeychain locks the fix for the
+// "飞书集成尚未启用" bug: on an unsigned/ad-hoc build the OS keychain helper is
+// SIGKILL'd ("signal: killed"). The store must fall back to the 0600 file via
+// safekeyring and report ErrLocalBindingNotFound — NOT a wrapped error — so
+// GetFeishuStatus reports the integration as enabled-but-unbound instead of
+// failing the status fetch (which the UI silently rendered as "not enabled").
+func TestLocalKeychainBindingStore_GetDegradedKeychain(t *testing.T) {
+	safekeyring.Reset()
+	safekeyring.SetFileDirForTest(t.TempDir())
+	t.Cleanup(func() {
+		safekeyring.Reset()
+		safekeyring.SetFileDirForTest("")
+	})
+	keyring.MockInitWithError(errors.New("exec: signal: killed"))
+	t.Cleanup(func() { keyring.MockInitWithError(nil) })
+
+	s := NewLocalKeychainBindingStore()
+	if _, err := s.Get(context.Background()); !errors.Is(err, ErrLocalBindingNotFound) {
+		t.Fatalf("degraded keychain Get must return ErrLocalBindingNotFound, got %v", err)
+	}
+}
 
 func TestLocalKeychainBindingStore_RoundTrip(t *testing.T) {
 	keyring.MockInit()

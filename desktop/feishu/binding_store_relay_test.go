@@ -56,6 +56,20 @@ func TestRelayBackedBindingStore_GetNotConfigured(t *testing.T) {
 	}
 }
 
+func TestRelayBackedBindingStore_GetRelayDisabled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Mirrors the relay's serveFeishuSession 503 when the admin has
+		// turned the integration off (handler not loaded).
+		writeJSONStatusForTest(w, http.StatusServiceUnavailable, map[string]string{"error": "feishu integration disabled"})
+	}))
+	defer srv.Close()
+
+	s := NewRelayBackedBindingStore(srv.URL, func() string { return "token" })
+	if _, err := s.Get(context.Background()); !errors.Is(err, ErrRelayFeishuDisabled) {
+		t.Fatalf("expected ErrRelayFeishuDisabled, got %v", err)
+	}
+}
+
 func TestRelayBackedBindingStore_SetCredentials(t *testing.T) {
 	var got struct {
 		AppID       string `json:"app_id"`
@@ -120,3 +134,11 @@ func TestRelayBackedBindingStore_SetBoundReturnsErrUnsupported(t *testing.T) {
 // srv_url_for_test allows the callback_url string above to compile without
 // importing httptest in the format string.
 func srv_url_for_test() string { return "http://test" }
+
+// writeJSONStatusForTest mirrors the relay's writeJSONStatus helper so the
+// disabled-integration response shape matches production.
+func writeJSONStatusForTest(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}

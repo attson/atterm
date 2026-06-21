@@ -31,6 +31,10 @@ type ServiceConfig struct {
 	// Relay mode:
 	RelayURL   string
 	RelayToken func() string
+	// RelayHTTPClient is the client used for relay REST calls (binding store +
+	// borrowed-token source). Production wires the insecure-capable, ALPN-pinned
+	// relay client here so a self-signed relay works. Nil falls back to HTTPClient.
+	RelayHTTPClient *http.Client
 
 	// Local mode:
 	FeishuBase string
@@ -70,8 +74,18 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	var ts TokenSource
 	switch cfg.Mode {
 	case ModeRelay:
-		store = NewRelayBackedBindingStore(cfg.RelayURL, cfg.RelayToken)
-		ts = NewRelayBorrowedTokenSource(cfg.RelayURL, cfg.RelayToken)
+		// Relay REST calls go through RelayHTTPClient (insecure-capable +
+		// ALPN-pinned in production); fall back to the general HTTPClient.
+		relayClient := cfg.RelayHTTPClient
+		if relayClient == nil {
+			relayClient = cfg.HTTPClient
+		}
+		rs := NewRelayBackedBindingStore(cfg.RelayURL, cfg.RelayToken)
+		rs.client = relayClient
+		store = rs
+		rts := NewRelayBorrowedTokenSource(cfg.RelayURL, cfg.RelayToken)
+		rts.client = relayClient
+		ts = rts
 	case ModeLocal:
 		ls := NewLocalKeychainBindingStore()
 		store = ls

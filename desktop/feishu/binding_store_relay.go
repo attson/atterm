@@ -17,6 +17,12 @@ import (
 // owned by the relay.
 var ErrRelayManagedBoundState = errors.New("desktop/feishu: bound state managed by relay")
 
+// ErrRelayFeishuDisabled is returned by Get when the relay responds 503,
+// meaning the relay admin has turned the Feishu integration off. Callers
+// distinguish this from a transient failure so the UI can say "the server
+// disabled Feishu" rather than "not configured" or "couldn't load status".
+var ErrRelayFeishuDisabled = errors.New("desktop/feishu: relay feishu integration disabled")
+
 // RelayBackedBindingStore proxies binding operations to the relay's
 // /v1/feishu/bindings/me endpoints.
 type RelayBackedBindingStore struct {
@@ -65,6 +71,9 @@ func (s *RelayBackedBindingStore) Get(ctx context.Context) (*BindingView, error)
 		return nil, fmt.Errorf("relay get binding: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, ErrRelayFeishuDisabled
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("relay get binding: status %d", resp.StatusCode)
 	}

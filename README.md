@@ -246,19 +246,19 @@ go run ./cmd/atterm-relay --addr :8080
 最简单的部署方式：
 
 ```bash
-# 把 ATTERM_TLS_HOST 设成你的公网 IP 或域名，让自签证书匹配主机名
-ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' ATTERM_TLS_HOST='203.0.113.10' \
+ATTERM_BOOTSTRAP_ADMIN_EMAIL='you@example.com' \
   docker compose up -d atterm-relay
 docker compose logs atterm-relay
 ```
 
-浏览器打开 **`https://<host>:8443`**（默认 HTTPS，自签证书，**第一次点一下「继续/仍要访问」**），没有 admin 时会自动进入首次安装页创建管理员。
+compose 默认只起明文 HTTP `:8080`，**前面要挂一个 TLS 终止反代**（Cloudflare/Caddy/nginx/Tailscale）。浏览器经反代的 `https://relay.<你的域名>` 访问，没有 admin 时会自动进入首次安装页创建管理员。
 
-> **为什么必须 HTTPS**：OPAQUE 登录用浏览器 WebCrypto，而它只在「安全上下文」(HTTPS 或 `localhost`) 可用，明文 HTTP 在公网 IP 上无法登录。relay 因此**默认就开 HTTPS（自签）**。
+> **为什么必须 HTTPS**：OPAQUE 登录用浏览器 WebCrypto，而它只在「安全上下文」(HTTPS 或 `localhost`) 可用，明文 HTTP 在公网 IP 上无法登录。**relay 不再自带自签证书**——浏览器直连的 TLS 必须来自真证书或前置反代。
 >
-> - **去掉证书警告**：用自己的证书 `ATTERM_TLS_CERT`/`ATTERM_TLS_KEY`，或在前面挂 Caddy/nginx/Tailscale/Cloudflare Tunnel（终止 TLS，反代到下面的 `:8080` HTTP 端口）。
+> - **前置反代（推荐）**：Caddy/nginx/Tailscale/Cloudflare 终止 TLS，反代到 `:8080` HTTP 端口。
+> - **relay 直接跑 HTTPS**：提供真证书 `ATTERM_TLS_CERT`/`ATTERM_TLS_KEY`，并加 `--https-addr :8443`（缺证书会直接报错退出，没有自签回退）。
 > - **`:8080` 是明文 HTTP 端口**：仅供反代后端或内网用，浏览器直连它登录不了。
-> - 仅本机临时用：`ssh -L 8443:127.0.0.1:8443 <host>` 后开 `https://localhost:8443`。
+> - 仅本机临时用：`ssh -L 8080:127.0.0.1:8080 <host>` 后开 `http://localhost:8080`（loopback 是安全上下文）。
 
 大多数配置已下沉到管理后台（Admin → Config / Feishu），持久化在 `<config-dir>/relay.json`，运行时即可修改、无需重启（VAPID subject 除外）。**启动只需要核心 env**；其余 env 仍被支持，会在首次启动时一次性「播种」进 `relay.json`。
 

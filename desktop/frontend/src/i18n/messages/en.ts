@@ -302,6 +302,9 @@ export const en = {
     feishu: {
       title: "Feishu Integration",
       disabled: "Feishu integration is not active.",
+      relay_disabled: "The server (relay) has Feishu integration turned off.",
+      load_error: "Couldn't fetch Feishu status: {error}",
+      retry_status: "Retry",
       mode: "Mode",
       bound: "Bound to open_id: {open_id}",
       save: "Save Credentials",

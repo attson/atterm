@@ -242,7 +242,7 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 `cmd/atterm-relay` 是生产入口，默认 fail-closed：
 
 - 用户账号和身份信息存储在 SQLite（`users.db`，路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；密码走 OPAQUE，relay 永不接收明文密码（见 auth.md §12）；
-- 默认同时监听 HTTP（`--addr :8080`，给反代）与 HTTPS（`--https-addr :8443`，自签证书，浏览器直连的默认路径）。OPAQUE 用浏览器 WebCrypto，只在安全上下文（HTTPS/localhost）可用，故 HTTPS 是默认；自签证书持久化在 `<config-dir>/tls/`，自带证书用 `ATTERM_TLS_CERT/KEY`，SAN 用 `ATTERM_TLS_HOST`（红线 #27）；
+- 监听 HTTP（`--addr :8080`，给反代后端 / loopback 开发）与 HTTPS（`--https-addr`，浏览器直连）。OPAQUE 用浏览器 WebCrypto，只在安全上下文（HTTPS/localhost）可用，故浏览器必须经 HTTPS 访问。**无自签回退**：开 `--https-addr` 必须提供真证书 `ATTERM_TLS_CERT/KEY`（缺失即 fatal，见 `buildTLSConfig`），否则在 `:8080` 前面挂 TLS 终止反代（Cloudflare/Caddy/nginx）（红线 #27）；
 - 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（relay 启动打印一次性 claim token，操作员用它完成 OPAQUE 注册即获得 admin；**无 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`**），除非显式 `--dev-insecure`；
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`；
 - 默认返回 CSP/security headers，`web/` 项目代码只允许同源 script 和同源 stylesheet；CSP 额外允许 inline style 供 xterm.js 运行时布局样式，并预留 Cloudflare Web Analytics beacon 源（不允许应用代码引入 CDN 依赖）；Vue/xterm/Naive UI 等依赖由 Vite 打包为同源 assets，并由 PWA service worker 预缓存；

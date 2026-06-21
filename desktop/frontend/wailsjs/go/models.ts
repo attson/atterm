@@ -373,6 +373,8 @@ export namespace main {
 	    bound: boolean;
 	    open_id: string;
 	    disabled: boolean;
+	    relay_disabled?: boolean;
+	    error?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FeishuStatusResp(source);
@@ -385,6 +387,8 @@ export namespace main {
 	        this.bound = source["bound"];
 	        this.open_id = source["open_id"];
 	        this.disabled = source["disabled"];
+	        this.relay_disabled = source["relay_disabled"];
+	        this.error = source["error"];
 	    }
 	}
 	export class FileContent {

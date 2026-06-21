@@ -1,8 +1,8 @@
-// E2EE OPAQUE client + AEAD account-key wrap for the mobile/capacitor
-// bundle. Mirrors web/src/shared/lib/opaque.ts and internal/e2eeclient
-// (Go): same P-256-SHA256 + Scrypt OPAQUE suite, same identity bindings
-// (ClientIdentity = email, ServerIdentity = "atterm-relay"), same AEAD
-// construction (XChaCha20-Poly1305 with AAD "atterm-account-key-v1").
+// AEAD account-key wrap + per-session content decrypt for the mobile/capacitor
+// bundle. Mirrors web/src/shared/lib/opaque.ts: same AEAD construction
+// (XChaCha20-Poly1305 with AAD "atterm-account-key-v1"), same Argon2id KDF,
+// same session/meta seal codec. The OPAQUE protocol itself now runs in the
+// bytemare WASM client (./opaqueWasm.ts), not here — see capacitor.ts.
 //
 // Why duplicate the web copy: the two bundles ship to different runtimes
 // (Capacitor WKWebView vs browser tab) and currently have separate
@@ -10,15 +10,6 @@
 // cross-device interop, so any change here MUST be mirrored in
 // web/src/shared/lib/opaque.ts.
 
-import {
-  OpaqueClient,
-  OpaqueID,
-  ScryptMemHardFn,
-  getOpaqueConfig as cfGetOpaqueConfig,
-  type Config,
-  KE2,
-  RegistrationResponse,
-} from '@cloudflare/opaque-ts'
 import { argon2id } from '@noble/hashes/argon2.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
@@ -45,14 +36,6 @@ export interface AccountKeyWrap {
   nonce: string
   salt: string
   kdf_params: string
-}
-
-function getConfig(): Config {
-  return cfGetOpaqueConfig(OpaqueID.OPAQUE_P256)
-}
-
-export function newOpaqueClient(): OpaqueClient {
-  return new OpaqueClient(getConfig(), ScryptMemHardFn)
 }
 
 function deriveWrapKey(password: string, salt: Uint8Array, kp: KDFParams): Uint8Array {
@@ -114,8 +97,6 @@ function b64ToBytes(s: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
   return out
 }
-
-export { KE2, RegistrationResponse, getConfig as getOpaqueConfig }
 
 // ---- M3b: per-session content decrypt ----
 // Mirror of web/src/shared/lib/opaque.ts. Any change to this block MUST

@@ -1,0 +1,6 @@
+# Built OPAQUE client (github.com/bytemare/opaque -> wasm) + Go's runtime
+# loader, produced by scripts/build-opaque-wasm.sh via the prebuild:capacitor
+# npm step. Only the Vite-emitted content-hashed copies under dist-capacitor/
+# (synced into mobile/www/) land in git.
+src/lib/opaque.wasm
+src/lib/wasm_exec.js

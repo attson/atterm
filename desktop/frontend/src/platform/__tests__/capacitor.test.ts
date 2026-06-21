@@ -1,4 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+// The OPAQUE protocol runs in the bytemare WASM client (browser/WebView-only
+// loader); stub it so these tests exercise capacitor.ts's HTTP/endpoint wiring
+// and error mapping without a real wasm instance. Real protocol interop is
+// covered by web/tests/unit/opaque-interop.test.ts (same wasm binary).
+vi.mock('../../lib/opaqueWasm', () => ({
+  opaqueLoginInit: vi.fn(async () => ({ handle: 1, ke1: 'a2Ux' })),
+  opaqueLoginFinish: vi.fn(async () => ({ ke3: 'a2Uz', exportKey: '', sessionKey: '' })),
+  opaqueRegisterInit: vi.fn(async () => ({ handle: 1, ke1: 'a2Ux' })),
+  opaqueRegisterFinish: vi.fn(async () => ({ record: 'cmVj', exportKey: '' })),
+}))
+
 import { createCapacitorPlatform } from '../capacitor'
 import { secureStorage } from '../secureStorage'
 

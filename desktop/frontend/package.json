@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:wails": "vue-tsc --noEmit && VITE_TARGET=wails vite build",
     "build:capacitor": "vue-tsc --noEmit && VITE_TARGET=capacitor vite build",
+    "prebuild:capacitor": "../../scripts/build-opaque-wasm.sh src/lib",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -16,7 +17,6 @@
     "@capacitor/app": "^8.1.0",
     "@capacitor/camera": "^8.2.0",
     "@capacitor/keyboard": "^8.0.1",
-    "@cloudflare/opaque-ts": "^0.7.5",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-go": "^6.0.1",

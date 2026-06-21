@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -27,7 +29,7 @@ var Version = "dev"
 
 func main() {
 	addr := flag.String("addr", ":8080", "plain HTTP listen address — for a reverse proxy / internal use (empty disables)")
-	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ":8443"), "HTTPS listen address — the browser-facing port; self-signed by default (or ATTERM_HTTPS_ADDR; empty disables)")
+	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ":8443"), "HTTPS listen address — the browser-facing port; requires ATTERM_TLS_CERT+ATTERM_TLS_KEY (or ATTERM_HTTPS_ADDR; empty disables)")
 	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
@@ -258,29 +260,17 @@ func main() {
 	}()
 
 	// Build the TLS config for the HTTPS listener. OPAQUE needs a secure
-	// browser context (WebCrypto), so HTTPS is the default browser-facing
-	// path. Bring-your-own cert wins; otherwise a persisted self-signed cert
-	// is generated so quick-start works with no reverse proxy (browsers warn
-	// once). The plain HTTP listener stays for reverse-proxy deployments.
+	// browser context (WebCrypto), so browser-facing traffic must be HTTPS —
+	// either via a TLS-terminating proxy (Cloudflare/Caddy/nginx) in front of
+	// the plain --addr listener, or by giving this listener a real cert. There
+	// is no self-signed fallback: ATTERM_TLS_CERT + ATTERM_TLS_KEY are required
+	// whenever --https-addr is set.
 	var tlsConfig *tls.Config
 	if *httpsAddr != "" {
-		tlsCertFile := strings.TrimSpace(os.Getenv("ATTERM_TLS_CERT"))
-		tlsKeyFile := strings.TrimSpace(os.Getenv("ATTERM_TLS_KEY"))
-		var cert tls.Certificate
-		if tlsCertFile != "" && tlsKeyFile != "" {
-			cert, err = tls.LoadX509KeyPair(tlsCertFile, tlsKeyFile)
-			if err != nil {
-				log.Fatalf("load TLS cert/key: %v", err)
-			}
-		} else {
-			hosts := append([]string{"localhost", "127.0.0.1", "::1"}, splitCSV(os.Getenv("ATTERM_TLS_HOST"))...)
-			cert, err = relay.LoadOrCreateSelfSigned(persistDir, hosts)
-			if err != nil {
-				log.Fatalf("self-signed TLS: %v", err)
-			}
-			log.Printf("https: using self-signed cert (browsers warn once; set ATTERM_TLS_HOST=<ip|domain> to match, or front --addr with a reverse proxy / real cert)")
+		tlsConfig, err = buildTLSConfig(strings.TrimSpace(os.Getenv("ATTERM_TLS_CERT")), strings.TrimSpace(os.Getenv("ATTERM_TLS_KEY")))
+		if err != nil {
+			log.Fatal(err)
 		}
-		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	}
 
 	if *addr == "" && *httpsAddr == "" {
@@ -396,6 +386,22 @@ func appendUniqueString(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
+}
+
+// buildTLSConfig loads the operator-supplied certificate for the HTTPS
+// listener. There is no self-signed fallback: front the relay with a
+// TLS-terminating proxy (Cloudflare/Caddy/nginx) on the plain --addr port, or
+// pass ATTERM_TLS_CERT + ATTERM_TLS_KEY to serve HTTPS directly.
+func buildTLSConfig(certFile, keyFile string) (*tls.Config, error) {
+	if certFile == "" || keyFile == "" {
+		return nil, errors.New("HTTPS listener requires ATTERM_TLS_CERT and ATTERM_TLS_KEY " +
+			"(front with a TLS-terminating proxy, or disable with --https-addr \"\")")
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load TLS cert/key: %w", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}, nil
 }
 
 func isPublicListenAddr(addr string) bool {

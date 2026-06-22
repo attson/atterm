@@ -229,6 +229,11 @@ export const en = {
       resetDefault: "reset default",
       viewLogs: "view logs",
       liveTail: "Live tail (auto-refreshes every 3s)",
+      levelFilter: "Level",
+      ptyInputDebug: "Log terminal input bytes",
+      ptyInputDebugHint: "Diagnose stuck or dropped input",
+      tailPaused: "Paused",
+      tailPausedHint: "Following paused while scrolled up — click or scroll to the bottom to resume",
     },
     updates: {
       devDisabled: "development build - auto-update disabled",

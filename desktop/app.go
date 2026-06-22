@@ -1481,6 +1481,26 @@ func (a *App) SetNotificationsEnabled(enabled bool) error {
 	return nil
 }
 
+// GetPtyInputDebugEnabled reports whether PTY input debug logging is on.
+func (a *App) GetPtyInputDebugEnabled() bool {
+	if a.cfgStore == nil {
+		return false
+	}
+	return a.cfgStore.Get().PtyInputDebugEnabledOrDefault()
+}
+
+// SetPtyInputDebugEnabled persists the PTY input debug logging toggle.
+// No markPrefDirtyAndPush: the setting is read live per-write in
+// desktopPtyHost.Write and has no reactive frontend consumer to push to.
+func (a *App) SetPtyInputDebugEnabled(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.PtyInputDebugEnabled = &enabled
+	return a.cfgStore.Set(cfg)
+}
+
 // ShowNotification is called from the frontend when a terminal bell fires
 // and the window is unfocused. Routes through the platform-native
 // notification system. Failures are logged, never propagated.

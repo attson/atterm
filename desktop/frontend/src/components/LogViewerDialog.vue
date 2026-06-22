@@ -2,6 +2,9 @@
 import { nextTick, ref, watch } from "vue";
 import type { LogPreview } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
+import LogLines from "./LogLines.vue";
+import SelectDropdown from "./SelectDropdown.vue";
+import { LEVEL_FILTER_OPTIONS, type LogLevel } from "../lib/parseLogLine";
 
 const props = defineProps<{
   preview: LogPreview;
@@ -15,15 +18,16 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const minLevel = ref<LogLevel>("DEBUG");
 
 // Logs are append-only and the user almost always wants the latest tail.
 // Auto-scroll the <pre> to the bottom whenever new content lands (mount
 // and every refresh). Keep it simple: always jump to bottom; if the user
 // wanted to read an older section they can refresh to come back here.
-const contentEl = ref<HTMLPreElement | null>(null);
+const contentEl = ref<any>(null);
 async function scrollToBottom() {
   await nextTick();
-  const el = contentEl.value;
+  const el = (contentEl.value as any)?.$el as HTMLElement | undefined;
   if (el) el.scrollTop = el.scrollHeight;
 }
 watch(() => props.preview.content, () => { void scrollToBottom(); }, { immediate: true });
@@ -50,10 +54,21 @@ async function copyContent() {
         <div v-if="props.preview.truncated" class="hint">
           {{ t("settings.logging.truncated") }}
         </div>
-        <pre ref="contentEl" class="content">{{ props.preview.content }}</pre>
+        <LogLines ref="contentEl" class="content" :content="props.preview.content" :minLevel="minLevel" />
       </div>
 
       <div class="row">
+        <div class="lvl-filter">
+          <span class="lvl-filter-label">{{ t("settings.logging.levelFilter") }}</span>
+          <div class="lvl-filter-select">
+            <SelectDropdown
+              :modelValue="minLevel"
+              :options="LEVEL_FILTER_OPTIONS"
+              :ariaLabel="t('settings.logging.levelFilter')"
+              @update:modelValue="(v) => (minLevel = v as LogLevel)"
+            />
+          </div>
+        </div>
         <button @click="emit('refresh')">{{ t("common.refresh") }}</button>
         <button @click="copyContent" :disabled="!props.preview.content">{{ t("common.copy") }}</button>
         <button class="primary" @click="emit('close')">{{ t("common.close") }}</button>
@@ -125,4 +140,6 @@ async function copyContent() {
   background: var(--accent); color: #0d1117; border-color: var(--accent);
   font-weight: 600;
 }
+.lvl-filter { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-dim); margin-right: auto; }
+.lvl-filter-select { width: 104px; }
 </style>

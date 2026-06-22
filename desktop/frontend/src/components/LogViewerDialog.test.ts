@@ -7,9 +7,10 @@ describe("LogViewerDialog", () => {
     expect(source).toContain("copy");
   });
 
-  test("shows readonly preview content", () => {
+  test("shows readonly preview content via LogLines", () => {
     expect(source).toContain("props.preview.content");
-    expect(source).toContain("white-space: pre-wrap");
+    expect(source).toContain("LogLines");
+    expect(source).toContain(":content=");
   });
 
   test("auto-scrolls to bottom on mount and on content change", () => {

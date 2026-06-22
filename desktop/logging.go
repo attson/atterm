@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/attson/atterm/internal/appdir"
 )
@@ -19,6 +21,53 @@ const (
 	defaultLogMaxBytes     = 10 * 1024 * 1024
 	defaultLogMaxBackups   = 5
 )
+
+// activeLogManager is the process-wide logging manager, set in
+// newLoggingManager. The leveled helpers (logDebug/...) route through it.
+var activeLogManager *loggingManager
+
+const logTimeLayout = "2006/01/02 15:04:05.000"
+
+// formatLogLine renders one structured, plain-text log record:
+//
+//	2006/01/02 15:04:05.000 LEVEL [tag] message\n
+//
+// LEVEL is right-padded to width 5 for column alignment.
+func formatLogLine(t time.Time, level, tag, msg string) string {
+	return t.Format(logTimeLayout) + " " + padLevel(level) + " [" + tag + "] " + msg + "\n"
+}
+
+func padLevel(level string) string {
+	for len(level) < 5 {
+		level += " "
+	}
+	return level
+}
+
+// Emit writes a level/tag-tagged record through the current sink.
+func (m *loggingManager) Emit(level, tag, msg string) {
+	line := formatLogLine(time.Now(), level, tag, msg)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.currentWriter == nil {
+		return
+	}
+	_, _ = io.WriteString(m.currentWriter, line)
+}
+
+func logEmit(level, tag, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if activeLogManager != nil {
+		activeLogManager.Emit(level, tag, msg)
+		return
+	}
+	log.Printf("[%s] %s", tag, msg)
+}
+
+func logDebug(tag, format string, args ...any) { logEmit("DEBUG", tag, format, args...) }
+func logInfo(tag, format string, args ...any)  { logEmit("INFO", tag, format, args...) }
+func logWarn(tag, format string, args ...any)  { logEmit("WARN", tag, format, args...) }
+func logError(tag, format string, args ...any) { logEmit("ERROR", tag, format, args...) }
 
 type loggingConfigState struct {
 	enabled bool
@@ -76,8 +125,10 @@ func newLoggingManager(opts loggingOptions) (*loggingManager, error) {
 		defaultPathFn: opts.defaultPathFn,
 		currentWriter: io.Discard,
 	}
-	m.logger = log.New(m, "", log.LstdFlags)
+	m.logger = log.New(m, "", 0)
+	log.SetFlags(0)
 	log.SetOutput(m)
+	activeLogManager = m
 	return m, nil
 }
 
@@ -132,9 +183,13 @@ func (m *loggingManager) Apply(cfg loggingConfigState) error {
 }
 
 func (m *loggingManager) Write(p []byte) (int, error) {
+	line := formatLogLine(time.Now(), "INFO", "app", strings.TrimRight(string(p), "\n"))
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.currentWriter.Write(p)
+	if _, err := io.WriteString(m.currentWriter, line); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 func (m *loggingManager) Close() error {

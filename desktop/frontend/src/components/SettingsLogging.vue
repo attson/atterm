@@ -3,11 +3,16 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   getLogPreview,
   getLoggingConfig,
+  getPtyInputDebugEnabled,
   pickLogFilePath,
   setLoggingConfig,
+  setPtyInputDebugEnabled,
   type LogPreview,
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
+import LogLines from "./LogLines.vue";
+import SelectDropdown from "./SelectDropdown.vue";
+import { LEVEL_FILTER_OPTIONS, type LogLevel } from "../lib/parseLogLine";
 
 defineEmits<{
   (e: "open-log-viewer"): void;
@@ -18,6 +23,7 @@ const path = ref("");
 const effectivePath = ref("");
 const loading = ref(true);
 const error = ref("");
+const ptyInputDebug = ref(false);
 const { t } = useI18n();
 
 // Inline log tail: refresh every 3 s while the panel is mounted so the
@@ -26,10 +32,32 @@ const tail = ref<LogPreview | null>(null);
 const tailError = ref("");
 const tailLoading = ref(false);
 let tailTimer: number | null = null;
-const tailEl = ref<HTMLPreElement | null>(null);
+const tailEl = ref<any>(null);
+const tailMinLevel = ref<LogLevel>("DEBUG");
+// "following" tails the newest lines. It auto-pauses when the user scrolls
+// up to read, so the 3 s refresh never yanks the viewport or swaps content
+// out from under them; scrolling back to the bottom resumes the tail.
+const following = ref(true);
 
-async function refreshTail() {
+function tailScrollEl(): HTMLElement | undefined {
+  return (tailEl.value as any)?.$el as HTMLElement | undefined;
+}
+
+function atBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+}
+
+async function refreshTail(opts?: { force?: boolean }) {
   if (!enabled.value) return;
+  const el = tailScrollEl();
+  // While the user has scrolled up to read, skip the periodic refresh so the
+  // content under their cursor doesn't move or get replaced. A manual refresh
+  // (force) and the already-at-bottom case always run.
+  if (!opts?.force && el && !atBottom(el)) {
+    following.value = false;
+    return;
+  }
+  following.value = true;
   tailLoading.value = true;
   tailError.value = "";
   try {
@@ -40,12 +68,29 @@ async function refreshTail() {
     tailLoading.value = false;
   }
   await nextTick();
-  const el = tailEl.value;
-  if (el) el.scrollTop = el.scrollHeight;
+  const after = tailScrollEl();
+  if (after) after.scrollTop = after.scrollHeight;
 }
 
-watch(() => tail.value?.content, () => {
-  /* auto-scroll handled inside refreshTail */
+function onTailScroll() {
+  const el = tailScrollEl();
+  if (!el) return;
+  const pinned = atBottom(el);
+  if (pinned && !following.value) {
+    // Scrolled back to the bottom: resume following and catch up immediately.
+    void refreshTail();
+  } else {
+    following.value = pinned;
+  }
+}
+
+// Attach the scroll listener to the live LogLines element whenever it mounts
+// or unmounts (it exists only while logging is enabled and content is present).
+watch(tailEl, (cur, _prev, onCleanup) => {
+  const el = (cur as any)?.$el as HTMLElement | undefined;
+  if (!el) return;
+  el.addEventListener("scroll", onTailScroll, { passive: true });
+  onCleanup(() => el.removeEventListener("scroll", onTailScroll));
 });
 
 onMounted(async () => {
@@ -58,6 +103,11 @@ onMounted(async () => {
     error.value = e?.message ?? String(e);
   } finally {
     loading.value = false;
+  }
+  try {
+    ptyInputDebug.value = await getPtyInputDebugEnabled();
+  } catch {
+    /* leave default false */
   }
   await refreshTail();
   tailTimer = window.setInterval(refreshTail, 3000);
@@ -84,6 +134,18 @@ async function onToggle(e: Event) {
   } catch (e: any) {
     enabled.value = previous;
     error.value = e?.message ?? String(e);
+  }
+}
+
+async function onTogglePtyInputDebug(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previous = ptyInputDebug.value;
+  ptyInputDebug.value = target.checked;
+  try {
+    await setPtyInputDebugEnabled(target.checked);
+  } catch (err: any) {
+    ptyInputDebug.value = previous;
+    error.value = err?.message ?? String(err);
   }
 }
 
@@ -129,6 +191,19 @@ async function onResetPath() {
         {{ t("settings.logging.writeLogs") }}
       </label>
 
+      <div class="checkbox-row">
+        <label class="checkbox">
+          <input type="checkbox" :checked="ptyInputDebug" @change="onTogglePtyInputDebug" />
+          {{ t("settings.logging.ptyInputDebug") }}
+        </label>
+        <span
+          class="info-icon"
+          role="img"
+          :aria-label="t('settings.logging.ptyInputDebugHint')"
+          :title="t('settings.logging.ptyInputDebugHint')"
+        >i</span>
+      </div>
+
       <div class="kv">
         <span class="k">{{ t("settings.logging.currentFile") }}</span>
         <span class="v path" :title="effectivePath">{{ effectivePath }}</span>
@@ -145,7 +220,23 @@ async function onResetPath() {
       <section v-if="enabled" class="tail-wrap">
         <header class="tail-header">
           <span class="tail-label">{{ t("settings.logging.liveTail") }}</span>
-          <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail">
+          <button
+            v-if="!following"
+            class="tail-paused"
+            :title="t('settings.logging.tailPausedHint')"
+            @click="refreshTail({ force: true })"
+          >
+            {{ t("settings.logging.tailPaused") }}
+          </button>
+          <div class="tail-level">
+            <SelectDropdown
+              :modelValue="tailMinLevel"
+              :options="LEVEL_FILTER_OPTIONS"
+              :ariaLabel="t('settings.logging.levelFilter')"
+              @update:modelValue="(v) => (tailMinLevel = v as LogLevel)"
+            />
+          </div>
+          <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail({ force: true })">
             {{ t("common.refresh") }}
           </button>
         </header>
@@ -153,7 +244,7 @@ async function onResetPath() {
         <p v-else-if="!tail || !tail.exists" class="tail-empty">
           {{ t("settings.logging.noContent") }}
         </p>
-        <pre v-else ref="tailEl" class="tail-content">{{ tail.content }}</pre>
+        <LogLines v-else ref="tailEl" class="tail-content" :content="tail.content" :minLevel="tailMinLevel" />
       </section>
     </template>
   </div>
@@ -175,6 +266,30 @@ async function onResetPath() {
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--fg-dim);
+  border-radius: 50%;
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+}
+.info-icon:hover {
+  color: var(--fg);
+  border-color: var(--fg);
 }
 .kv {
   display: flex;
@@ -239,6 +354,15 @@ button:hover {
   padding: 2px 10px;
   font-size: 12px;
 }
+.tail-paused {
+  height: 24px;
+  padding: 2px 10px;
+  font-size: 12px;
+  flex: 0 0 auto;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.tail-level { width: 104px; flex: 0 0 auto; }
 .tail-empty {
   color: var(--fg-dim);
   font-size: 12px;

@@ -82,3 +82,21 @@ func TestSaveRelayPassword_EmptyPasswordDeletes(t *testing.T) {
 		t.Fatalf("slot not cleared: got %q", got)
 	}
 }
+
+func TestSaveRelayPassword_OverwritesExistingSlot(t *testing.T) {
+	const origin = "https://r.example.com"
+	const email = "u@example.com"
+	if err := saveRelayPassword(origin, email, "first"); err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+	if err := saveRelayPassword(origin, email, "second"); err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	got, err := loadRelayPassword(origin, email)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got != "second" {
+		t.Fatalf("got %q want %q after overwrite", got, "second")
+	}
+}

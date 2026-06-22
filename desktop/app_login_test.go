@@ -110,3 +110,85 @@ func TestRegisterRemoteRelay_PersistsAndUnlocksKey(t *testing.T) {
 		t.Fatalf("account_key not unlocked into App memory after register")
 	}
 }
+
+// TestLoginRemoteRelay_PersistsPassword: a successful login writes the
+// password to the safekeyring slot keyed by the persisted relay URL + email,
+// readable back through loadRelayPassword.
+func TestLoginRemoteRelay_PersistsPassword(t *testing.T) {
+	ts, _ := newOPAQUERelay(t)
+	a := newRelayTestApp(t)
+
+	if err := a.RegisterRemoteRelay(ts.URL, "u@example.com", "first-pw", "", false); err != nil {
+		t.Fatalf("RegisterRemoteRelay: %v", err)
+	}
+	a.setAccountKey(nil)
+
+	if err := a.LoginRemoteRelay(ts.URL, "u@example.com", "first-pw", false); err != nil {
+		t.Fatalf("LoginRemoteRelay: %v", err)
+	}
+
+	cfg := a.GetRelayConfig()
+	got, err := loadRelayPassword(cfg.URL, cfg.LastEmail)
+	if err != nil {
+		t.Fatalf("loadRelayPassword: %v", err)
+	}
+	if got != "first-pw" {
+		t.Fatalf("password slot: got %q want %q", got, "first-pw")
+	}
+}
+
+// TestLoginRemoteRelay_OverwritesPassword: a successful login overwrites a
+// stale password previously sitting in the same (relay-URL, email) slot. We
+// pre-seed the slot with a wrong value, then log in successfully — the slot
+// must reflect the password the login was actually performed with, not the
+// stale seed.
+func TestLoginRemoteRelay_OverwritesPassword(t *testing.T) {
+	ts, _ := newOPAQUERelay(t)
+	a := newRelayTestApp(t)
+
+	if err := a.RegisterRemoteRelay(ts.URL, "u@example.com", "real-pw", "", false); err != nil {
+		t.Fatalf("RegisterRemoteRelay: %v", err)
+	}
+
+	// Pre-seed the slot with a stale value, using the exact same key the
+	// login path writes (cfg.RelayURL holds the wsURL that LoginRemoteRelay
+	// normalizes to). LoginRemoteRelay must overwrite this seed.
+	cfg := a.GetRelayConfig()
+	if err := saveRelayPassword(cfg.URL, "u@example.com", "stale-seed"); err != nil {
+		t.Fatalf("seed slot: %v", err)
+	}
+	a.setAccountKey(nil)
+
+	if err := a.LoginRemoteRelay(ts.URL, "u@example.com", "real-pw", false); err != nil {
+		t.Fatalf("LoginRemoteRelay: %v", err)
+	}
+
+	got, err := loadRelayPassword(cfg.URL, "u@example.com")
+	if err != nil {
+		t.Fatalf("loadRelayPassword: %v", err)
+	}
+	if got != "real-pw" {
+		t.Fatalf("slot not overwritten: got %q want %q", got, "real-pw")
+	}
+}
+
+// TestLoginRemoteRelay_WrongPassword_PreservesStoredPassword: a failed
+// login (wrong password) must not corrupt the previously stored password.
+func TestLoginRemoteRelay_WrongPassword_PreservesStoredPassword(t *testing.T) {
+	ts, _ := newOPAQUERelay(t)
+	a := newRelayTestApp(t)
+
+	if err := a.RegisterRemoteRelay(ts.URL, "u@example.com", "correct-pw", "", false); err != nil {
+		t.Fatalf("RegisterRemoteRelay: %v", err)
+	}
+	cfg := a.GetRelayConfig()
+
+	if err := a.LoginRemoteRelay(ts.URL, "u@example.com", "wrong-pw", false); err == nil {
+		t.Fatalf("expected wrong-password error, got nil")
+	}
+
+	got, _ := loadRelayPassword(cfg.URL, "u@example.com")
+	if got != "correct-pw" {
+		t.Fatalf("stored password corrupted by failed login: got %q want %q", got, "correct-pw")
+	}
+}

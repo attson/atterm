@@ -192,3 +192,72 @@ func TestLoginRemoteRelay_WrongPassword_PreservesStoredPassword(t *testing.T) {
 		t.Fatalf("stored password corrupted by failed login: got %q want %q", got, "correct-pw")
 	}
 }
+
+// TestRememberRelayPassword_PersistsWithoutLogin: the user clicks Connect
+// with a non-empty password, but probe/login fails. RememberRelayPassword
+// should still persist the password so the next launch can prefill it.
+func TestRememberRelayPassword_PersistsWithoutLogin(t *testing.T) {
+	a := newRelayTestApp(t)
+	// Simulate the SettingsRelay flow's setRelayConfig call so the cfg has
+	// the URL + email the user typed (but no token — login never succeeded).
+	if err := a.SetRelayConfig(RelayConfig{
+		URL:                "wss://r.example.com",
+		LastEmail:          "u@example.com",
+		RemotePermission:   "full",
+		AllowInsecureRelay: false,
+	}); err != nil {
+		t.Fatalf("SetRelayConfig: %v", err)
+	}
+
+	if err := a.RememberRelayPassword("typed-pw"); err != nil {
+		t.Fatalf("RememberRelayPassword: %v", err)
+	}
+
+	got, _ := loadRelayPassword("wss://r.example.com", "u@example.com")
+	if got != "typed-pw" {
+		t.Fatalf("slot: got %q want %q", got, "typed-pw")
+	}
+}
+
+// TestRememberRelayPassword_EmptyPasswordIsNoop: an empty password must not
+// clear an existing stored value (guards a click-Connect-with-blank-field
+// regression).
+func TestRememberRelayPassword_EmptyPasswordIsNoop(t *testing.T) {
+	a := newRelayTestApp(t)
+	if err := a.SetRelayConfig(RelayConfig{
+		URL:              "wss://r.example.com",
+		LastEmail:        "u@example.com",
+		RemotePermission: "full",
+	}); err != nil {
+		t.Fatalf("SetRelayConfig: %v", err)
+	}
+	// Seed a stored password.
+	if err := saveRelayPassword("wss://r.example.com", "u@example.com", "keeper"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := a.RememberRelayPassword(""); err != nil {
+		t.Fatalf("RememberRelayPassword(empty): %v", err)
+	}
+
+	got, _ := loadRelayPassword("wss://r.example.com", "u@example.com")
+	if got != "keeper" {
+		t.Fatalf("empty-password call wiped the slot: got %q want %q", got, "keeper")
+	}
+}
+
+// TestRememberRelayPassword_NoEmailNoop: with no email cached in cfg, the
+// underlying key is empty so the call is a no-op (does not panic, does not
+// error).
+func TestRememberRelayPassword_NoEmailNoop(t *testing.T) {
+	a := newRelayTestApp(t)
+	if err := a.SetRelayConfig(RelayConfig{
+		URL:              "wss://r.example.com",
+		RemotePermission: "full",
+	}); err != nil {
+		t.Fatalf("SetRelayConfig: %v", err)
+	}
+	if err := a.RememberRelayPassword("anything"); err != nil {
+		t.Fatalf("RememberRelayPassword: %v", err)
+	}
+}

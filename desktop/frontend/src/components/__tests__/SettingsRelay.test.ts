@@ -101,3 +101,41 @@ describe('SettingsRelay post-login password retention', () => {
     expect(pw.value).toBe('hunter2')
   })
 })
+
+describe('SettingsRelay remembers password on failed connect', () => {
+  it('calls rememberRelayPassword when probe fails with a non-empty password', async () => {
+    vi.spyOn(api, 'loadSavedRelayPassword').mockResolvedValue('')
+    vi.spyOn(api, 'probeRelayVersion').mockRejectedValue(new Error('EOF'))
+    const remember = vi.spyOn(api, 'rememberRelayPassword').mockResolvedValue(undefined as never)
+    vi.spyOn(api, 'setRelayConfig').mockResolvedValue(undefined as never)
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+
+    await w.find('#relay-host').setValue('r.example.com')
+    await w.find('#relay-email').setValue('u@example.com')
+    await w.find('#relay-password').setValue('hunter2')
+    await (w.vm as unknown as { save: () => Promise<void> }).save()
+    await flushPromises()
+
+    expect(remember).toHaveBeenCalledWith('hunter2')
+  })
+
+  it('does not call rememberRelayPassword when probe fails with empty password', async () => {
+    vi.spyOn(api, 'loadSavedRelayPassword').mockResolvedValue('')
+    vi.spyOn(api, 'probeRelayVersion').mockRejectedValue(new Error('EOF'))
+    const remember = vi.spyOn(api, 'rememberRelayPassword').mockResolvedValue(undefined as never)
+    vi.spyOn(api, 'setRelayConfig').mockResolvedValue(undefined as never)
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+
+    await w.find('#relay-host').setValue('r.example.com')
+    await w.find('#relay-email').setValue('u@example.com')
+    // intentionally leave password empty
+    await (w.vm as unknown as { save: () => Promise<void> }).save()
+    await flushPromises()
+
+    expect(remember).not.toHaveBeenCalled()
+  })
+})

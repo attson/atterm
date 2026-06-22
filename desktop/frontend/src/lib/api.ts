@@ -247,6 +247,7 @@ interface AppBindings {
   HasAccountKey(): Promise<boolean>;
   GetAccountKey(): Promise<string>;
   LoadSavedRelayPassword(): Promise<string>;
+  RememberRelayPassword(password: string): Promise<void>;
   ProbeRelayVersion(arg1: string, arg2: boolean): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   CreatePairingToken(): Promise<PairingToken>;
@@ -455,6 +456,15 @@ export function getAccountKey(): Promise<string> {
 // SettingsRelay password field can default to empty without extra checks.
 export function loadSavedRelayPassword(): Promise<string> {
   return bindings().LoadSavedRelayPassword();
+}
+
+// rememberRelayPassword persists the typed-but-not-yet-verified password
+// into the safekeyring slot tied to the current (relay URL, email) pair.
+// Used by SettingsRelay's rememberInputs() on failed-connect paths so the
+// password field is prefilled on the next attempt. Best-effort on the Go
+// side — never throws even if the keychain is unavailable.
+export function rememberRelayPassword(password: string): Promise<void> {
+  return bindings().RememberRelayPassword(password);
 }
 
 // probeRelayVersion calls the Wails ProbeRelayVersion method on the Go side

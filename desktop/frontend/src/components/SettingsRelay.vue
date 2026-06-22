@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword } from "../lib/api";
+import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword, rememberRelayPassword } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import PairingPanel from "./PairingPanel.vue";
@@ -244,6 +244,17 @@ async function rememberInputs() {
     });
   } catch {
     /* ignore — the real failure is already surfaced */
+  }
+  // Persist the typed password too so the next attempt prefills it. The
+  // backend treats empty as a no-op (won't wipe an existing slot). Wrapped
+  // in its own try/catch because keychain writes can fail in dev builds
+  // and that must not mask the real connect error the caller will surface.
+  if (password.value) {
+    try {
+      await rememberRelayPassword(password.value);
+    } catch {
+      /* ignore — best-effort */
+    }
   }
 }
 

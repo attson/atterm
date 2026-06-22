@@ -29,7 +29,7 @@ var Version = "dev"
 
 func main() {
 	addr := flag.String("addr", ":8080", "plain HTTP listen address — for a reverse proxy / internal use (empty disables)")
-	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ":8443"), "HTTPS listen address — the browser-facing port; requires ATTERM_TLS_CERT+ATTERM_TLS_KEY (or ATTERM_HTTPS_ADDR; empty disables)")
+	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ""), "HTTPS listen address — opt-in; requires ATTERM_TLS_CERT+ATTERM_TLS_KEY (or ATTERM_HTTPS_ADDR, e.g. :8443). Empty (default) serves plain --addr only, for a TLS-terminating proxy. Without a cert there is no self-signed fallback, so this defaults off to avoid a fatal boot.")
 	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")

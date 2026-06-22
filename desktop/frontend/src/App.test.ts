@@ -214,10 +214,16 @@ describe("remote tab session retention", () => {
     user: "attson",
   };
 
+  let listRemoteSessionsMock: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     setActivePinia(createPinia());
     __setPlatformForTests(createFakePlatform());
+    // Remote list now arrives through the Go backend (App.ListRemoteSessions)
+    // — a JSON string of SessionInfo[] — rather than a webview WebSocket.
+    listRemoteSessionsMock = vi.fn().mockResolvedValue(JSON.stringify([]));
     __setBindingsForTest({
+      ListRemoteSessions: listRemoteSessionsMock,
       GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
       GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
       GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
@@ -253,12 +259,19 @@ describe("remote tab session retention", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     __setBindingsForTest(undefined);
     __setPlatformForTests(null);
   });
 
   it("keeps an opened remote pane attached when a transient list snapshot omits it", async () => {
+    // The remote list arrives via the Go-backed poll (2s interval). Drive it
+    // with real timers and a controllable snapshot rather than fake timers,
+    // which deadlock @vue/test-utils' setTimeout-based flushPromises.
+    let remoteSnapshot = JSON.stringify([remoteSession]);
+    listRemoteSessionsMock.mockImplementation(() => Promise.resolve(remoteSnapshot));
+
     const wrapper = mount(App, {
       global: {
         stubs: {
@@ -294,21 +307,23 @@ describe("remote tab session retention", () => {
       return pane?.attributes("data-session-id");
     };
 
-    const remoteSocket = FakeWebSocket.instances.find((ws) => ws.url === "ws://remote/client-sessions");
-    expect(remoteSocket).toBeTruthy();
-    remoteSocket!.emitSessions([remoteSession]);
-    await flushPromises();
+    // The remote list is delivered by polling App.ListRemoteSessions; the
+    // first snapshot (from the immediate poll on connect) lists remote-1.
+    expect(listRemoteSessionsMock).toHaveBeenCalled();
 
     await wrapper.get('[data-testid="open-remote"]').trigger("click");
     await flushPromises();
     expect(visiblePaneSessionId()).toBe("remote-1");
 
-    remoteSocket!.emitSessions([]);
+    // A later poll whose snapshot omits remote-1 must NOT tear down the
+    // already-open pane (sweepMissingSessions skips remote panes).
+    remoteSnapshot = JSON.stringify([]);
+    await new Promise((resolve) => setTimeout(resolve, 2100));
     await flushPromises();
 
     expect(visiblePaneSessionId()).toBe("remote-1");
     expect(wrapper.find('[data-testid="pane-empty"]').exists()).toBe(false);
-  });
+  }, 10000);
 });
 
 describe("App window title follows active AI session", () => {

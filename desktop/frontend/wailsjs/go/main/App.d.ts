@@ -87,6 +87,8 @@ export function HasAccountKey():Promise<boolean>;
 
 export function InstallUpdate():Promise<void>;
 
+export function ListRemoteSessions():Promise<string>;
+
 export function ListShells():Promise<Array<string>>;
 
 export function LoadRecoverySnapshot():Promise<main.RecoverySnapshot>;

@@ -38,6 +38,7 @@ import {
   listShells,
   newSession,
   markSessionsSeen,
+  listRemoteSessions,
   getTaskSidebarCollapsed,
   setTaskSidebarCollapsed,
   loadRecoverySnapshot,
@@ -197,7 +198,10 @@ const recoveryDialogState = ref<{ open: boolean; snapshot: RecoverySnapshot | nu
 let autoStarted = false;
 let toastHandle: number | null = null;
 let localSessionListConn: SessionListConnection | null = null;
-let remoteSessionListConn: SessionListConnection | null = null;
+let remotePollHandle: number | null = null;
+// Dedup key for refreshRelayConfig: "connected|attachUrl|token". Avoids
+// restarting the remote poll / re-setting the endpoint when nothing changed.
+let lastRemoteKey = "";
 
 // One-shot off-screen Terminal+FitAddon used as a measure probe. We resize
 // its parent div to a target cell size, call FitAddon.proposeDimensions(),
@@ -510,36 +514,64 @@ function connectLocalSessionList(endpoint: Endpoint) {
   localSessionListConn.attach();
 }
 
-function connectRemoteSessionList(endpoint: Endpoint | null) {
-  remoteSessionListConn?.detach();
-  remoteSessionListConn = null;
+function stopRemotePoll() {
+  if (remotePollHandle !== null) {
+    window.clearInterval(remotePollHandle);
+    remotePollHandle = null;
+  }
+}
+
+async function pollRemoteSessions() {
+  try {
+    applyRemoteSessions(await listRemoteSessions());
+  } catch {
+    // Transient relay/network error — keep the last known list rather than
+    // flashing it empty on a single failed poll.
+  }
+}
+
+// connectRemoteSessionList (re)starts the remote-session list poll and sets the
+// attach endpoint. Two independent concerns:
+//   - The LIST is read through the Go backend (App.ListRemoteSessions), polled
+//     whenever the relay is connected — some networks fingerprint-RST the
+//     WKWebView TLS handshake to the relay while Go's TLS passes.
+//   - The ATTACH endpoint is the Go loopback proxy (remoteProxy). When it's
+//     unavailable the list still shows; you just can't open a remote pane.
+function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpoint | null) {
+  stopRemotePoll();
   remoteRawList.value = [];
   remoteList.value = [];
-  remoteEndpoint.value = endpoint;
-  if (!endpoint) return;
-  remoteSessionListConn = new SessionListConnection(endpoint, {
-    onSessions: applyRemoteSessions,
-  });
-  remoteSessionListConn.attach();
+  remoteEndpoint.value = attachEndpoint;
+  if (!relayConnected) return;
+  void pollRemoteSessions();
+  remotePollHandle = window.setInterval(pollRemoteSessions, 2000);
 }
 
 async function refreshRelayConfig() {
-  let cfg = { url: "", token: "", connected: false };
+  let cfg: { url: string; token: string; connected: boolean; remote_proxy_url?: string } = {
+    url: "",
+    token: "",
+    connected: false,
+  };
   try {
     cfg = await getRelayConfig();
   } catch {
     /* keep last known */
   }
-  const next: Endpoint | null = cfg.connected && cfg.url
-    ? { url: cfg.url, session_token: cfg.token }
+  // Attach remote sessions through the Go loopback proxy (remote_proxy_url),
+  // not the relay URL directly: the WebView can't TLS-dial the relay on some
+  // networks. The token still authenticates the proxied /client stream. List
+  // polling is gated only on the relay being connected, independent of the
+  // proxy.
+  const relayConnected = !!(cfg.connected && cfg.url);
+  const proxyUrl = cfg.remote_proxy_url ?? "";
+  const attachEndpoint: Endpoint | null = relayConnected && proxyUrl
+    ? { url: proxyUrl, session_token: cfg.token }
     : null;
-  if (
-    remoteEndpoint.value?.url === next?.url &&
-    remoteEndpoint.value?.session_token === next?.session_token
-  ) {
-    return;
-  }
-  connectRemoteSessionList(next);
+  const key = `${relayConnected}|${attachEndpoint?.url ?? ""}|${attachEndpoint?.session_token ?? ""}`;
+  if (key === lastRemoteKey) return;
+  lastRemoteKey = key;
+  connectRemoteSessionList(relayConnected, attachEndpoint);
 }
 
 async function refreshTerminalTheme() {
@@ -1050,7 +1082,7 @@ onUnmounted(() => {
   quitListenerOff = null;
   window.removeEventListener("hashchange", syncRoute);
   localSessionListConn?.detach();
-  remoteSessionListConn?.detach();
+  stopRemotePoll();
   if (toastHandle !== null) window.clearTimeout(toastHandle);
   if (updatePollHandle !== null) window.clearInterval(updatePollHandle);
   teardownMeasureProbe();

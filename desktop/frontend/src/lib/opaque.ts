@@ -140,6 +140,58 @@ export function openSessionFields(
   return openSealedFields<SealedSessionFields>(sealed, accountKey, sessionUUID, SESSION_INFO_AAD_FRAME_TYPE)
 }
 
+/** AAD frame_type discriminator for live TypeOut stream envelopes (proto
+ * .TypeOut = 0x03). Unlike META/SessionInfo, an OUT frame's AAD also binds the
+ * monotonic seq so a chunk can't be replayed at a different position. */
+const OUT_AAD_FRAME_TYPE = 0x03
+
+/** openOutFrame decrypts a sealed TypeOut envelope for sequence `seq`, the
+ * inverse of the agent's e2eecrypto.SealOut. Returns the RAW plaintext bytes
+ * (terminal output — no JSON parse), or null on any structural/cipher error so
+ * the caller can drop the chunk instead of rendering ciphertext. Mirrors
+ * web/src/shared/lib/opaque.ts openOutFrame. */
+export function openOutFrame(
+  envelope: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+  seq: number,
+): Uint8Array | null {
+  if (!envelope) return null
+  const env = envelope instanceof Uint8Array ? envelope : new Uint8Array(envelope)
+  const minEnvelopeLen = 1 + 24 + 16
+  if (env.length < minEnvelopeLen) return null
+  if (env[0] !== CIPHER_ID_XCHACHA20_POLY1305) return null
+
+  let sk: Uint8Array
+  let uuidBytes: Uint8Array
+  try {
+    sk = deriveSessionKey(accountKey, sessionUUID)
+    uuidBytes = uuidStringToBytes(sessionUUID)
+  } catch {
+    return null
+  }
+
+  const nonce = env.subarray(1, 1 + 24)
+  const ciphertext = env.subarray(1 + 24)
+
+  const aad = new Uint8Array(uuidBytes.length + 1 + 8)
+  aad.set(uuidBytes, 0)
+  aad[uuidBytes.length] = OUT_AAD_FRAME_TYPE
+  // seq is a JS number (PTY chunk counter, < 2^53); write it big-endian to
+  // match Go's binary.BigEndian.PutUint64.
+  new DataView(aad.buffer, aad.byteOffset, aad.byteLength).setBigUint64(
+    uuidBytes.length + 1,
+    BigInt(seq),
+    false,
+  )
+
+  try {
+    return xchacha20poly1305(sk, nonce, aad).decrypt(ciphertext)
+  } catch {
+    return null
+  }
+}
+
 /** SealedMetaFields mirrors the Go agent's sealedMetaFields struct in
  * desktop/uplink.go (M5-meta-seal). Live TypeMeta envelope carries
  * only the three fields the relay was able to peek at as a session

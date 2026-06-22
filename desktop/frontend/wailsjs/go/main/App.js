@@ -166,6 +166,10 @@ export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
 
+export function ListRemoteSessions() {
+  return window['go']['main']['App']['ListRemoteSessions']();
+}
+
 export function ListShells() {
   return window['go']['main']['App']['ListShells']();
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -102,6 +103,11 @@ type RelayConfig struct {
 	// writes appConfig.RelayLastEmail.
 	LastEmail string `json:"last_email"`
 	Connected bool   `json:"connected"`
+	// RemoteProxyURL is the loopback ws:// base the frontend attaches remote
+	// sessions through (see remoteProxy). Read-only; empty if the proxy is
+	// unavailable. The WebView can't TLS-dial the relay directly on some
+	// networks, so remote /client attaches tunnel through Go via this URL.
+	RemoteProxyURL string `json:"remote_proxy_url"`
 	Paused    bool   `json:"paused"`
 }
 
@@ -121,10 +127,11 @@ type LogPreview struct {
 
 // App is the Wails-bound application surface.
 type App struct {
-	ctx      context.Context
-	host     *relayHost
-	cfgStore *configStore
-	logger   *loggingManager
+	ctx         context.Context
+	host        *relayHost
+	remoteProxy *remoteProxy
+	cfgStore    *configStore
+	logger      *loggingManager
 
 	mu           sync.Mutex
 	uplink       *uplink
@@ -215,6 +222,16 @@ func (a *App) startup(ctx context.Context) {
 		log.Fatalf("desktop: start relay host: %v", err)
 	}
 	a.host = h
+
+	// Loopback proxy for remote-session attaches: the WebView can't open a TLS
+	// WebSocket to the relay on networks that fingerprint-filter its handshake,
+	// so the frontend tunnels /client through Go (whose TLS passes). Non-fatal:
+	// remote viewing still works via ListRemoteSessions if this fails to bind.
+	if rp, err := startRemoteProxy(a.cfgStore); err != nil {
+		log.Printf("desktop: start remote proxy: %v", err)
+	} else {
+		a.remoteProxy = rp
+	}
 
 	if rs, err := NewRecoveryStore(a.host.hostID); err == nil {
 		a.recoveryStore = rs
@@ -313,6 +330,10 @@ func (a *App) shutdown(ctx context.Context) {
 		a.host.Stop()
 		a.host = nil
 	}
+	if a.remoteProxy != nil {
+		a.remoteProxy.Stop()
+		a.remoteProxy = nil
+	}
 	if err := feishu.DeleteEndpointFile(); err != nil {
 		log.Printf("desktop: delete feishu endpoint file: %v", err)
 	}
@@ -392,6 +413,7 @@ func (a *App) GetRelayConfig() RelayConfig {
 		LastEmail:          cfg.RelayLastEmail,
 		Connected:          connected,
 		Paused:             cfg.RelayPaused,
+		RemoteProxyURL:     a.remoteProxy.wsURL(),
 	}
 }
 
@@ -1139,6 +1161,45 @@ func (a *App) MarkSessionsSeen(ids []string, all bool) error {
 		return fmt.Errorf("relay /api/sessions/seen returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// ListRemoteSessions fetches the relay's owner-filtered session list over the
+// Go HTTP client (relayHTTPClient) instead of a direct webview WebSocket.
+//
+// Some networks fingerprint-filter the desktop WebView's TLS handshake to the
+// relay: WKWebView's fetch() and `new WebSocket()` to wss://relay are RST
+// before the ServerHello ("An SSL error has occurred"), while Go's TLS — the
+// same stack the uplink connects with successfully — passes. Routing the list
+// through Go is therefore the only reliable path for the desktop client.
+//
+// Returns the raw /api/sessions JSON body so the frontend parses the exact
+// same SessionInfo[] shape it would get over the WS LIST_RESP stream.
+func (a *App) ListRemoteSessions() (string, error) {
+	if a.cfgStore == nil {
+		return "", fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return "", fmt.Errorf("no relay configured")
+	}
+	req, err := http.NewRequest("GET", relayHTTPBase(cfg.RelayURL)+"/api/sessions", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.RelaySessionToken)
+	resp, err := relayHTTPClient(cfg.AllowInsecureRelay, 10*time.Second).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("relay /api/sessions returned status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 // NewSession spawns a local PTY child and adopts it as a relay session.

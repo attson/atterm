@@ -113,6 +113,10 @@ type appConfig struct {
 	// "never set" and defaults to true for existing installs.
 	NotificationsEnabled *bool `json:"notifications_enabled,omitempty"`
 
+	// PtyInputDebugEnabled logs every byte slice written into a session PTY
+	// (hex, tagged [pty-input] at DEBUG) for diagnosing stuck/dropped input.
+	PtyInputDebugEnabled *bool `json:"ptyInputDebugEnabled,omitempty"`
+
 	// ShellIntegrationEnabled controls whether atterm-spawned shells receive
 	// OSC 133 hook injection at spawn time. Nil means "never set" and
 	// defaults to true for existing installs. Only affects new sessions;
@@ -186,6 +190,13 @@ func (c appConfig) NotificationsEnabledOrDefault() bool {
 		return true
 	}
 	return *c.NotificationsEnabled
+}
+
+func (c appConfig) PtyInputDebugEnabledOrDefault() bool {
+	if c.PtyInputDebugEnabled == nil {
+		return false
+	}
+	return *c.PtyInputDebugEnabled
 }
 
 func (c appConfig) RecoveryDialogEnabledOrDefault() bool {

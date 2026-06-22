@@ -450,7 +450,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		StartedAt: time.Now().Unix(),
 	}
 
-	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty}, h.adminUserID)
+	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty, cfg: h.cfg}, h.adminUserID)
 
 	var cleanupOnce sync.Once
 	combinedCleanup := func() {

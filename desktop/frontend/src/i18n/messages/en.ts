@@ -229,6 +229,7 @@ export const en = {
       resetDefault: "reset default",
       viewLogs: "view logs",
       liveTail: "Live tail (auto-refreshes every 3s)",
+      levelFilter: "Level",
     },
     updates: {
       devDisabled: "development build - auto-update disabled",

@@ -8,6 +8,8 @@ import {
   type LogPreview,
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
+import LogLines from "./LogLines.vue";
+import type { LogLevel } from "../lib/parseLogLine";
 
 defineEmits<{
   (e: "open-log-viewer"): void;
@@ -26,7 +28,8 @@ const tail = ref<LogPreview | null>(null);
 const tailError = ref("");
 const tailLoading = ref(false);
 let tailTimer: number | null = null;
-const tailEl = ref<HTMLPreElement | null>(null);
+const tailEl = ref<any>(null);
+const tailMinLevel = ref<LogLevel>("DEBUG");
 
 async function refreshTail() {
   if (!enabled.value) return;
@@ -40,7 +43,7 @@ async function refreshTail() {
     tailLoading.value = false;
   }
   await nextTick();
-  const el = tailEl.value;
+  const el = (tailEl.value as any)?.$el as HTMLElement | undefined;
   if (el) el.scrollTop = el.scrollHeight;
 }
 
@@ -145,6 +148,12 @@ async function onResetPath() {
       <section v-if="enabled" class="tail-wrap">
         <header class="tail-header">
           <span class="tail-label">{{ t("settings.logging.liveTail") }}</span>
+          <select v-model="tailMinLevel" class="tail-level">
+            <option value="DEBUG">DEBUG+</option>
+            <option value="INFO">INFO+</option>
+            <option value="WARN">WARN+</option>
+            <option value="ERROR">ERROR</option>
+          </select>
           <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail">
             {{ t("common.refresh") }}
           </button>
@@ -153,7 +162,7 @@ async function onResetPath() {
         <p v-else-if="!tail || !tail.exists" class="tail-empty">
           {{ t("settings.logging.noContent") }}
         </p>
-        <pre v-else ref="tailEl" class="tail-content">{{ tail.content }}</pre>
+        <LogLines v-else ref="tailEl" class="tail-content" :content="tail.content" :minLevel="tailMinLevel" />
       </section>
     </template>
   </div>
@@ -239,6 +248,7 @@ button:hover {
   padding: 2px 10px;
   font-size: 12px;
 }
+.tail-level { height: 24px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
 .tail-empty {
   color: var(--fg-dim);
   font-size: 12px;

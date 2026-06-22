@@ -230,7 +230,8 @@ export const en = {
       viewLogs: "view logs",
       liveTail: "Live tail (auto-refreshes every 3s)",
       levelFilter: "Level",
-      ptyInputDebug: "Log terminal input bytes (diagnose stuck/dropped input)",
+      ptyInputDebug: "Log terminal input bytes",
+      ptyInputDebugHint: "Diagnose stuck or dropped input",
     },
     updates: {
       devDisabled: "development build - auto-update disabled",

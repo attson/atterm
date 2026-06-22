@@ -153,10 +153,18 @@ async function onResetPath() {
         {{ t("settings.logging.writeLogs") }}
       </label>
 
-      <label class="checkbox">
-        <input type="checkbox" :checked="ptyInputDebug" @change="onTogglePtyInputDebug" />
-        {{ t("settings.logging.ptyInputDebug") }}
-      </label>
+      <div class="checkbox-row">
+        <label class="checkbox">
+          <input type="checkbox" :checked="ptyInputDebug" @change="onTogglePtyInputDebug" />
+          {{ t("settings.logging.ptyInputDebug") }}
+        </label>
+        <span
+          class="info-icon"
+          role="img"
+          :aria-label="t('settings.logging.ptyInputDebugHint')"
+          :title="t('settings.logging.ptyInputDebugHint')"
+        >i</span>
+      </div>
 
       <div class="kv">
         <span class="k">{{ t("settings.logging.currentFile") }}</span>
@@ -212,6 +220,30 @@ async function onResetPath() {
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--fg-dim);
+  border-radius: 50%;
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+}
+.info-icon:hover {
+  color: var(--fg);
+  border-color: var(--fg);
 }
 .kv {
   display: flex;

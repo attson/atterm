@@ -4,6 +4,7 @@
 
 import { t } from "../i18n";
 import type { PresetId } from "./taskState";
+import type { SessionInfo } from "./connection";
 import {
   InitializeNotifications,
   IsNotificationAvailable,
@@ -99,6 +100,12 @@ export interface RelayConfig {
   // loginRemoteRelay writes it.
   last_email: string;
   connected: boolean;
+  // Loopback ws:// base the frontend attaches remote sessions through (the Go
+  // remoteProxy). Read-only; empty when unavailable. Remote /client attaches
+  // tunnel through Go because the WebView can't TLS-dial the relay directly on
+  // networks that fingerprint-filter its handshake. Optional so Capacitor
+  // fixtures may omit it.
+  remote_proxy_url?: string;
 }
 
 export interface RelayMe {
@@ -296,6 +303,7 @@ interface AppBindings {
   SetTaskSidebarWidth(px: number): Promise<void>;
   GetUserHomeDir(): Promise<string>;
   MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
+  ListRemoteSessions(): Promise<string>;
 }
 
 declare global {
@@ -710,6 +718,17 @@ export function markSessionsSeen(opts: MarkSessionsSeenOpts): Promise<void> {
     return bindings().MarkSessionsSeen([], true);
   }
   return bindings().MarkSessionsSeen((opts as { ids: string[] }).ids, false);
+}
+
+// listRemoteSessions fetches the relay's owner-filtered session list through
+// the Go backend (App.ListRemoteSessions) rather than a direct webview
+// WebSocket — the WKWebView TLS handshake to the relay is fingerprint-RST on
+// some networks while Go's TLS passes. The Go side returns the raw
+// /api/sessions JSON, the same SessionInfo[] shape the WS LIST_RESP carries.
+export async function listRemoteSessions(): Promise<SessionInfo[]> {
+  const raw = await bindings().ListRemoteSessions();
+  const parsed = JSON.parse(raw) as SessionInfo[] | null;
+  return parsed ?? [];
 }
 
 export function getFeishuStatus(): Promise<FeishuStatusResp> {

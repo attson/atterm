@@ -15,7 +15,7 @@ import {
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
-import { openMetaFields } from "./opaque";
+import { openMetaFields, openOutFrame } from "./opaque";
 
 export interface ClosePayload {
   exit_code: number;
@@ -63,6 +63,11 @@ export interface SessionConnectionOptions {
   // when this connection holds the driver role. Defaults to a generic
   // identifier derived from navigator.platform when omitted.
   clientName?: string;
+  // remote marks a connection to a session on another host (tunnelled through
+  // the desktop's loopback relay proxy). Such OUT frames are E2EE-sealed and
+  // must be decrypted before display; local sessions stream plaintext and are
+  // left untouched.
+  remote?: boolean;
 }
 
 export interface SessionListHandlers {
@@ -242,6 +247,8 @@ export class SessionConnection {
   // echoed back in META.driver_client_id when this connection is the driver.
   private clientID: string;
   private clientName: string;
+  // remote: see SessionConnectionOptions.remote. Gates OUT-frame decryption.
+  private remote: boolean;
   // currentDriverClientID is the last driver_client_id we observed in a META
   // frame. Used to detect transitions and decide whether to fire onDriverChange.
   private currentDriverClientID = "";
@@ -255,6 +262,21 @@ export class SessionConnection {
     this.sidBytes = uuidParse(sessionId);
     this.clientID = crypto.randomUUID();
     this.clientName = (options.clientName ?? "").trim() || defaultClientName();
+    this.remote = options.remote ?? false;
+  }
+
+  // decryptOut unseals a remote session's E2EE TypeOut envelope (the relay only
+  // carries ciphertext for cross-host sessions). Tolerant, mirroring the agent's
+  // openInboundFrame and the web client: non-envelope bytes pass through as
+  // plaintext; a sealed envelope is decrypted with the unlocked account_key; on
+  // any failure the chunk is dropped rather than written, so xterm never renders
+  // ciphertext garble. Only called for remote connections.
+  private decryptOut(data: Uint8Array, seq: number): Uint8Array | null {
+    const MIN_ENVELOPE = 1 + 24 + 16; // cipher_id + nonce + Poly1305 tag
+    if (data.length < MIN_ENVELOPE || data[0] !== 0x01) return data;
+    const accountKey = getCurrentAccountKey();
+    if (!accountKey) return null;
+    return openOutFrame(data, accountKey, this.sessionId, seq);
   }
 
   attach(): void {
@@ -383,7 +405,8 @@ export class SessionConnection {
       }
       if (f.type === TYPE.OUT) {
         const { seq, data } = decodeOutPayload(f.payload);
-        this.handlers.onOutput?.(data);
+        const out = this.remote ? this.decryptOut(data, seq) : data;
+        if (out) this.handlers.onOutput?.(out);
         if (seq > this.lastSeq) this.lastSeq = seq;
       } else if (f.type === TYPE.CLOSE) {
         try {

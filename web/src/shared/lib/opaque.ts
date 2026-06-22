@@ -213,6 +213,68 @@ export function openSessionFields(
   return openSealedFields<SealedSessionFields>(sealed, accountKey, sessionUUID, SESSION_INFO_AAD_FRAME_TYPE)
 }
 
+// ---- M2-web: live TypeOut stream decrypt ----
+//
+// The Go agent seals every TypeOut chunk (desktop/uplink.go sealOutFrame →
+// e2eecrypto.SealOut). Unlike the META/SessionInfo envelopes, an OUT frame's
+// AAD binds the monotonic seq, so a chunk cannot be replayed at a different
+// position: aad = uuid(16) || frame_type(0x03 = TypeOut) || seq(8B BE).
+// The envelope wire shape is the same: cipher_id(0x01) || nonce(24) ||
+// XChaCha20-Poly1305 ciphertext+tag. openOutFrame is the matching inverse and
+// returns the RAW plaintext bytes (no JSON parse — this is terminal output).
+
+/** AAD frame_type discriminator for live TypeOut stream envelopes. Matches
+ * proto.TypeOut (0x03) on the wire; distinct from the META (0x05) /
+ * SessionInfo (0x12) discriminators so a stream chunk cannot be replayed as
+ * a metadata blob and vice versa. */
+const OUT_AAD_FRAME_TYPE = 0x03
+
+/** openOutFrame decrypts a sealed TypeOut envelope for sequence `seq`.
+ * Returns null on any structural / cipher error (truncated, wrong
+ * cipher_id, wrong key/uuid/seq) so the caller can drop the chunk rather
+ * than render ciphertext. */
+export function openOutFrame(
+  envelope: Uint8Array | number[] | undefined | null,
+  accountKey: Uint8Array,
+  sessionUUID: string,
+  seq: number,
+): Uint8Array | null {
+  if (!envelope) return null
+  const env = envelope instanceof Uint8Array ? envelope : new Uint8Array(envelope)
+  const minEnvelopeLen = 1 + 24 + 16
+  if (env.length < minEnvelopeLen) return null
+  if (env[0] !== CIPHER_ID_XCHACHA20_POLY1305) return null
+
+  let sk: Uint8Array
+  let uuidBytes: Uint8Array
+  try {
+    sk = deriveSessionKey(accountKey, sessionUUID)
+    uuidBytes = uuidStringToBytes(sessionUUID)
+  } catch {
+    return null
+  }
+
+  const nonce = env.subarray(1, 1 + 24)
+  const ciphertext = env.subarray(1 + 24)
+
+  const aad = new Uint8Array(uuidBytes.length + 1 + 8)
+  aad.set(uuidBytes, 0)
+  aad[uuidBytes.length] = OUT_AAD_FRAME_TYPE
+  // seq is a JS number (PTY chunk counter, always < 2^53); write it as an
+  // 8-byte big-endian uint64 to match Go's binary.BigEndian.PutUint64.
+  new DataView(aad.buffer, aad.byteOffset, aad.byteLength).setBigUint64(
+    uuidBytes.length + 1,
+    BigInt(seq),
+    false,
+  )
+
+  try {
+    return xchacha20poly1305(sk, nonce, aad).decrypt(ciphertext)
+  } catch {
+    return null
+  }
+}
+
 /** SealedPushBody mirrors the Go agent's sealedPushBody struct in
  * desktop/uplink_seal_push.go. The CommandEvent envelope (M6-foundation,
  * v0.2.108) carries the three fields the service worker needs to

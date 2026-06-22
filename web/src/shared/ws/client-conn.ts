@@ -18,7 +18,7 @@ import {
 } from './protocol'
 import { isMobileApp, loadRelayConfig } from '../api/relay-config'
 import { loadAccountKey } from '../api/account-key'
-import { openMetaFields } from '../lib/opaque'
+import { openMetaFields, openOutFrame } from '../lib/opaque'
 import { ApiError } from '../api/client'
 import { Tracker, type ConnHealthSnapshot } from '../connhealth/connhealth'
 
@@ -174,6 +174,24 @@ export class SessionConnection {
     if (this.tickTimer !== null) { clearInterval(this.tickTimer); this.tickTimer = null }
   }
 
+  // decryptOut unseals an E2EE TypeOut envelope (M2-web). The agent seals
+  // every OUT chunk when an account_key is unlocked (desktop/uplink.go
+  // sealOutFrame); the relay only ever carries ciphertext. This mirrors the
+  // agent's tolerant openInboundFrame:
+  //   - bytes that don't look like an envelope (no cipher_id 0x01 prefix, or
+  //     too short to hold one) are treated as legacy/unsealed plaintext and
+  //     passed straight through;
+  //   - a sealed envelope is decrypted with the unlocked account_key;
+  //   - on any decrypt failure (wrong/missing key, replay, tamper) the chunk
+  //     is DROPPED, never written — so xterm can't render ciphertext garble.
+  private decryptOut(data: Uint8Array, seq: number): Uint8Array | null {
+    const MIN_ENVELOPE = 1 + 24 + 16 // cipher_id + nonce + Poly1305 tag
+    if (data.length < MIN_ENVELOPE || data[0] !== 0x01) return data
+    const accountKey = loadAccountKey()
+    if (!accountKey) return null
+    return openOutFrame(data, accountKey, this.sessionId, seq)
+  }
+
   private openWS(): void {
     if (this.detached) return
     const url = wsUrl('/client')
@@ -229,7 +247,8 @@ export class SessionConnection {
           }
           this.lastSeqForGap = seq
           if (seq > this.lastSeq) this.lastSeq = seq
-          this.handlers.onOutput?.(data, seq)
+          const out = this.decryptOut(data, seq)
+          if (out) this.handlers.onOutput?.(out, seq)
           break
         }
         case TYPE.PONG: {

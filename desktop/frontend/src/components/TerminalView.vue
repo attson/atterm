@@ -533,7 +533,7 @@ function startConnection() {
         }
       },
     },
-    { clientName: localHostname.value }
+    { clientName: localHostname.value, remote: !props.isLocalSession }
   );
   conn.attach();
   // Register a driver-side input sender for this session so plugins

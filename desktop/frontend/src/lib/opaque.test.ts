@@ -5,6 +5,7 @@ import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { utf8ToBytes, randomBytes } from '@noble/hashes/utils.js'
 import {
   openMetaFields,
+  openOutFrame,
   openSessionFields,
   type SealedMetaFields,
   type SealedSessionFields,
@@ -12,6 +13,7 @@ import {
 
 const AAD_FRAME_TYPE = 0x12
 const META_AAD_FRAME_TYPE = 0x05
+const OUT_AAD_FRAME_TYPE = 0x03
 const CIPHER_ID = 0x01
 
 function uuidStringToBytes(s: string): Uint8Array {
@@ -125,5 +127,49 @@ describe('openMetaFields (M5-meta-mobile)', () => {
     expect(openMetaFields(env, accountKey, uuid)).toBeNull()
     // Same envelope opens under openSessionFields.
     expect(openSessionFields(env, accountKey, uuid)).toEqual({ title: 'x' })
+  })
+})
+
+// sealOut mirrors internal/e2eecrypto.SealOut + the desktop agent's
+// sealOutFrame: AAD = uuid(16) || 0x03 || seq(8B BE), raw plaintext payload.
+function sealOut(accountKey: Uint8Array, uuid: string, seq: number, plaintext: Uint8Array): Uint8Array {
+  const uuidBytes = uuidStringToBytes(uuid)
+  const prefix = utf8ToBytes('atterm-session-v1')
+  const info = new Uint8Array(prefix.length + uuidBytes.length)
+  info.set(prefix, 0)
+  info.set(uuidBytes, prefix.length)
+  const sessionKey = hkdf(sha256, accountKey, undefined, info, 32)
+  const nonce = randomBytes(24)
+  const aad = new Uint8Array(uuidBytes.length + 1 + 8)
+  aad.set(uuidBytes, 0)
+  aad[uuidBytes.length] = OUT_AAD_FRAME_TYPE
+  new DataView(aad.buffer).setBigUint64(uuidBytes.length + 1, BigInt(seq), false)
+  const ct = xchacha20poly1305(sessionKey, nonce, aad).encrypt(plaintext)
+  const env = new Uint8Array(1 + 24 + ct.length)
+  env[0] = CIPHER_ID
+  env.set(nonce, 1)
+  env.set(ct, 1 + 24)
+  return env
+}
+
+describe('openOutFrame (remote TypeOut stream decrypt)', () => {
+  const uuid = 'a1b2c3d4-e5f6-7890-1234-567890abcdef'
+  const accountKey = new Uint8Array(32).map((_, i) => (i * 17) & 0xff)
+
+  it('round-trips a sealed OUT chunk to raw plaintext', () => {
+    const pt = new TextEncoder().encode('$ ls -la\r\ntotal 0\r\n')
+    const out = openOutFrame(sealOut(accountKey, uuid, 42, pt), accountKey, uuid, 42)
+    // Compare as plain arrays: noble returns a view whose backing buffer differs,
+    // which vitest 1.6's typed-array toEqual treats as unequal despite identical bytes.
+    expect(out && Array.from(out)).toEqual(Array.from(pt))
+  })
+
+  it('returns null when seq / uuid / key differ, or input is non-envelope', () => {
+    const env = sealOut(accountKey, uuid, 7, new Uint8Array([1, 2, 3]))
+    expect(openOutFrame(env, accountKey, uuid, 8)).toBeNull() // seq bound into AAD
+    expect(openOutFrame(env, accountKey, 'b1b2c3d4-e5f6-7890-1234-567890abcdef', 7)).toBeNull()
+    expect(openOutFrame(env, new Uint8Array(32), uuid, 7)).toBeNull()
+    expect(openOutFrame(new Uint8Array(40), accountKey, uuid, 7)).toBeNull() // too short
+    expect(openOutFrame(null, accountKey, uuid, 7)).toBeNull()
   })
 })

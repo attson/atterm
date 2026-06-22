@@ -772,6 +772,7 @@ export namespace main {
 	    remote_permission: string;
 	    last_email: string;
 	    connected: boolean;
+	    remote_proxy_url: string;
 	    paused: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -788,6 +789,7 @@ export namespace main {
 	        this.remote_permission = source["remote_permission"];
 	        this.last_email = source["last_email"];
 	        this.connected = source["connected"];
+	        this.remote_proxy_url = source["remote_proxy_url"];
 	        this.paused = source["paused"];
 	    }
 	}

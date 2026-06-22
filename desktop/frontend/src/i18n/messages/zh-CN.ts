@@ -234,6 +234,8 @@ export const zhCN = {
       levelFilter: "级别",
       ptyInputDebug: "记录终端输入字节",
       ptyInputDebugHint: "排查输入丢失 / 卡死",
+      tailPaused: "已暂停",
+      tailPausedHint: "向上滚动时已暂停跟随 —— 点此或滚动到底部恢复",
     },
     updates: {
       devDisabled: "开发构建 - 自动更新已禁用",

@@ -34,9 +34,30 @@ const tailLoading = ref(false);
 let tailTimer: number | null = null;
 const tailEl = ref<any>(null);
 const tailMinLevel = ref<LogLevel>("DEBUG");
+// "following" tails the newest lines. It auto-pauses when the user scrolls
+// up to read, so the 3 s refresh never yanks the viewport or swaps content
+// out from under them; scrolling back to the bottom resumes the tail.
+const following = ref(true);
 
-async function refreshTail() {
+function tailScrollEl(): HTMLElement | undefined {
+  return (tailEl.value as any)?.$el as HTMLElement | undefined;
+}
+
+function atBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+}
+
+async function refreshTail(opts?: { force?: boolean }) {
   if (!enabled.value) return;
+  const el = tailScrollEl();
+  // While the user has scrolled up to read, skip the periodic refresh so the
+  // content under their cursor doesn't move or get replaced. A manual refresh
+  // (force) and the already-at-bottom case always run.
+  if (!opts?.force && el && !atBottom(el)) {
+    following.value = false;
+    return;
+  }
+  following.value = true;
   tailLoading.value = true;
   tailError.value = "";
   try {
@@ -47,12 +68,29 @@ async function refreshTail() {
     tailLoading.value = false;
   }
   await nextTick();
-  const el = (tailEl.value as any)?.$el as HTMLElement | undefined;
-  if (el) el.scrollTop = el.scrollHeight;
+  const after = tailScrollEl();
+  if (after) after.scrollTop = after.scrollHeight;
 }
 
-watch(() => tail.value?.content, () => {
-  /* auto-scroll handled inside refreshTail */
+function onTailScroll() {
+  const el = tailScrollEl();
+  if (!el) return;
+  const pinned = atBottom(el);
+  if (pinned && !following.value) {
+    // Scrolled back to the bottom: resume following and catch up immediately.
+    void refreshTail();
+  } else {
+    following.value = pinned;
+  }
+}
+
+// Attach the scroll listener to the live LogLines element whenever it mounts
+// or unmounts (it exists only while logging is enabled and content is present).
+watch(tailEl, (cur, _prev, onCleanup) => {
+  const el = (cur as any)?.$el as HTMLElement | undefined;
+  if (!el) return;
+  el.addEventListener("scroll", onTailScroll, { passive: true });
+  onCleanup(() => el.removeEventListener("scroll", onTailScroll));
 });
 
 onMounted(async () => {
@@ -182,6 +220,14 @@ async function onResetPath() {
       <section v-if="enabled" class="tail-wrap">
         <header class="tail-header">
           <span class="tail-label">{{ t("settings.logging.liveTail") }}</span>
+          <button
+            v-if="!following"
+            class="tail-paused"
+            :title="t('settings.logging.tailPausedHint')"
+            @click="refreshTail({ force: true })"
+          >
+            {{ t("settings.logging.tailPaused") }}
+          </button>
           <div class="tail-level">
             <SelectDropdown
               :modelValue="tailMinLevel"
@@ -190,7 +236,7 @@ async function onResetPath() {
               @update:modelValue="(v) => (tailMinLevel = v as LogLevel)"
             />
           </div>
-          <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail">
+          <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail({ force: true })">
             {{ t("common.refresh") }}
           </button>
         </header>
@@ -307,6 +353,14 @@ button:hover {
   height: 24px;
   padding: 2px 10px;
   font-size: 12px;
+}
+.tail-paused {
+  height: 24px;
+  padding: 2px 10px;
+  font-size: 12px;
+  flex: 0 0 auto;
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .tail-level { width: 104px; flex: 0 0 auto; }
 .tail-empty {

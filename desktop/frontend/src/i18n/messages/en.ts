@@ -232,6 +232,8 @@ export const en = {
       levelFilter: "Level",
       ptyInputDebug: "Log terminal input bytes",
       ptyInputDebugHint: "Diagnose stuck or dropped input",
+      tailPaused: "Paused",
+      tailPausedHint: "Following paused while scrolled up — click or scroll to the bottom to resume",
     },
     updates: {
       devDisabled: "development build - auto-update disabled",

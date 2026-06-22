@@ -246,6 +246,7 @@ interface AppBindings {
   RegisterRemoteRelay(relayURL: string, email: string, password: string, claimToken: string, allowInsecure: boolean): Promise<void>;
   HasAccountKey(): Promise<boolean>;
   GetAccountKey(): Promise<string>;
+  LoadSavedRelayPassword(): Promise<string>;
   ProbeRelayVersion(arg1: string, arg2: boolean): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
   CreatePairingToken(): Promise<PairingToken>;
@@ -446,6 +447,14 @@ export function hasAccountKey(): Promise<boolean> {
 // path stays synchronous. See platform/wails.ts.
 export function getAccountKey(): Promise<string> {
   return bindings().GetAccountKey();
+}
+
+// loadSavedRelayPassword reads the OPAQUE password that the most recent
+// successful loginRemoteRelay / registerRemoteRelay persisted for the
+// current relay URL + email. Returns "" when nothing is stored so the
+// SettingsRelay password field can default to empty without extra checks.
+export function loadSavedRelayPassword(): Promise<string> {
+  return bindings().LoadSavedRelayPassword();
 }
 
 // probeRelayVersion calls the Wails ProbeRelayVersion method on the Go side

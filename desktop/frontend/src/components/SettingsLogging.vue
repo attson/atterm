@@ -3,8 +3,10 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   getLogPreview,
   getLoggingConfig,
+  getPtyInputDebugEnabled,
   pickLogFilePath,
   setLoggingConfig,
+  setPtyInputDebugEnabled,
   type LogPreview,
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
@@ -20,6 +22,7 @@ const path = ref("");
 const effectivePath = ref("");
 const loading = ref(true);
 const error = ref("");
+const ptyInputDebug = ref(false);
 const { t } = useI18n();
 
 // Inline log tail: refresh every 3 s while the panel is mounted so the
@@ -62,6 +65,11 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+  try {
+    ptyInputDebug.value = await getPtyInputDebugEnabled();
+  } catch {
+    /* leave default false */
+  }
   await refreshTail();
   tailTimer = window.setInterval(refreshTail, 3000);
 });
@@ -87,6 +95,18 @@ async function onToggle(e: Event) {
   } catch (e: any) {
     enabled.value = previous;
     error.value = e?.message ?? String(e);
+  }
+}
+
+async function onTogglePtyInputDebug(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const previous = ptyInputDebug.value;
+  ptyInputDebug.value = target.checked;
+  try {
+    await setPtyInputDebugEnabled(target.checked);
+  } catch (err: any) {
+    ptyInputDebug.value = previous;
+    error.value = err?.message ?? String(err);
   }
 }
 
@@ -130,6 +150,11 @@ async function onResetPath() {
           @change="onToggle"
         />
         {{ t("settings.logging.writeLogs") }}
+      </label>
+
+      <label class="checkbox">
+        <input type="checkbox" :checked="ptyInputDebug" @change="onTogglePtyInputDebug" />
+        {{ t("settings.logging.ptyInputDebug") }}
       </label>
 
       <div class="kv">

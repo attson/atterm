@@ -270,6 +270,8 @@ interface AppBindings {
   ConfirmQuit(): Promise<void>;
   GetNotificationsEnabled(): Promise<boolean>;
   SetNotificationsEnabled(enabled: boolean): Promise<void>;
+  GetPtyInputDebugEnabled(): Promise<boolean>;
+  SetPtyInputDebugEnabled(enabled: boolean): Promise<void>;
   ShowNotification(title: string, body: string): Promise<void>;
   GetShellIntegrationEnabled(): Promise<boolean>;
   SetShellIntegrationEnabled(enabled: boolean): Promise<void>;
@@ -574,6 +576,14 @@ export function getNotificationsEnabled(): Promise<boolean> {
 
 export function setNotificationsEnabled(enabled: boolean): Promise<void> {
   return bindings().SetNotificationsEnabled(enabled);
+}
+
+export function getPtyInputDebugEnabled(): Promise<boolean> {
+  return bindings().GetPtyInputDebugEnabled();
+}
+
+export function setPtyInputDebugEnabled(enabled: boolean): Promise<void> {
+  return bindings().SetPtyInputDebugEnabled(enabled);
 }
 
 export async function showNotification(title: string, body: string): Promise<void> {

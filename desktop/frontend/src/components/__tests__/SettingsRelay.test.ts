@@ -138,4 +138,27 @@ describe('SettingsRelay remembers password on failed connect', () => {
 
     expect(remember).not.toHaveBeenCalled()
   })
+
+  it('clears the dirty flag after a failed connect so closing Settings does not prompt', async () => {
+    vi.spyOn(api, 'loadSavedRelayPassword').mockResolvedValue('')
+    vi.spyOn(api, 'probeRelayVersion').mockRejectedValue(new Error('EOF'))
+    vi.spyOn(api, 'rememberRelayPassword').mockResolvedValue(undefined as never)
+    vi.spyOn(api, 'setRelayConfig').mockResolvedValue(undefined as never)
+
+    const w = mount(SettingsRelay)
+    await flushPromises()
+
+    // Type a new host different from the initial baseRelayConfig().url so the
+    // dirty computed would normally flip true.
+    await w.find('#relay-host').setValue('new-host.example.com')
+    await w.find('#relay-password').setValue('hunter2')
+    expect((w.vm as unknown as { dirty: boolean }).dirty).toBe(true)
+
+    await (w.vm as unknown as { save: () => Promise<void> }).save()
+    await flushPromises()
+
+    // After save() (which routed through rememberInputs on probe failure),
+    // the snapshot was refreshed, so dirty is back to false.
+    expect((w.vm as unknown as { dirty: boolean }).dirty).toBe(false)
+  })
 })

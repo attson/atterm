@@ -256,6 +256,12 @@ async function rememberInputs() {
       /* ignore — best-effort */
     }
   }
+  // The values we just persisted ARE the persisted state now — refresh the
+  // dirty snapshot so closing Settings doesn't pop a misleading "unsaved
+  // changes" prompt. Safe to call even if setRelayConfig errored above: at
+  // worst the snapshot equals the values the user sees, which is what dirty
+  // should compare against.
+  snapshotPersisted();
 }
 
 async function save() {
@@ -367,6 +373,7 @@ defineExpose({
   saveLabel,
   paused,
   saving,
+  dirty,
 });
 </script>
 

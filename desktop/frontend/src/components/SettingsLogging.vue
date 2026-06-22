@@ -11,7 +11,8 @@ import {
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
 import LogLines from "./LogLines.vue";
-import type { LogLevel } from "../lib/parseLogLine";
+import SelectDropdown from "./SelectDropdown.vue";
+import { LEVEL_FILTER_OPTIONS, type LogLevel } from "../lib/parseLogLine";
 
 defineEmits<{
   (e: "open-log-viewer"): void;
@@ -173,12 +174,14 @@ async function onResetPath() {
       <section v-if="enabled" class="tail-wrap">
         <header class="tail-header">
           <span class="tail-label">{{ t("settings.logging.liveTail") }}</span>
-          <select v-model="tailMinLevel" class="tail-level">
-            <option value="DEBUG">DEBUG+</option>
-            <option value="INFO">INFO+</option>
-            <option value="WARN">WARN+</option>
-            <option value="ERROR">ERROR</option>
-          </select>
+          <div class="tail-level">
+            <SelectDropdown
+              :modelValue="tailMinLevel"
+              :options="LEVEL_FILTER_OPTIONS"
+              :ariaLabel="t('settings.logging.levelFilter')"
+              @update:modelValue="(v) => (tailMinLevel = v as LogLevel)"
+            />
+          </div>
           <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail">
             {{ t("common.refresh") }}
           </button>
@@ -273,7 +276,7 @@ button:hover {
   padding: 2px 10px;
   font-size: 12px;
 }
-.tail-level { height: 24px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.tail-level { width: 104px; flex: 0 0 auto; }
 .tail-empty {
   color: var(--fg-dim);
   font-size: 12px;

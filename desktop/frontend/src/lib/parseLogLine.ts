@@ -29,3 +29,12 @@ export function parseLogLine(line: string): ParsedLogLine {
 export function levelAtLeast(level: LogLevel, min: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[min];
 }
+
+// Options for the log-level threshold filter, shared by the log viewers.
+// Shaped for SelectDropdown.vue ({ value, label }).
+export const LEVEL_FILTER_OPTIONS: { value: LogLevel; label: string }[] = [
+  { value: "DEBUG", label: "DEBUG+" },
+  { value: "INFO", label: "INFO+" },
+  { value: "WARN", label: "WARN+" },
+  { value: "ERROR", label: "ERROR" },
+];

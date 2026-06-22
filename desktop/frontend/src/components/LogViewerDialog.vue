@@ -3,7 +3,8 @@ import { nextTick, ref, watch } from "vue";
 import type { LogPreview } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
 import LogLines from "./LogLines.vue";
-import type { LogLevel } from "../lib/parseLogLine";
+import SelectDropdown from "./SelectDropdown.vue";
+import { LEVEL_FILTER_OPTIONS, type LogLevel } from "../lib/parseLogLine";
 
 const props = defineProps<{
   preview: LogPreview;
@@ -57,14 +58,17 @@ async function copyContent() {
       </div>
 
       <div class="row">
-        <label class="lvl-filter">{{ t("settings.logging.levelFilter") }}
-          <select v-model="minLevel">
-            <option value="DEBUG">DEBUG+</option>
-            <option value="INFO">INFO+</option>
-            <option value="WARN">WARN+</option>
-            <option value="ERROR">ERROR</option>
-          </select>
-        </label>
+        <div class="lvl-filter">
+          <span class="lvl-filter-label">{{ t("settings.logging.levelFilter") }}</span>
+          <div class="lvl-filter-select">
+            <SelectDropdown
+              :modelValue="minLevel"
+              :options="LEVEL_FILTER_OPTIONS"
+              :ariaLabel="t('settings.logging.levelFilter')"
+              @update:modelValue="(v) => (minLevel = v as LogLevel)"
+            />
+          </div>
+        </div>
         <button @click="emit('refresh')">{{ t("common.refresh") }}</button>
         <button @click="copyContent" :disabled="!props.preview.content">{{ t("common.copy") }}</button>
         <button class="primary" @click="emit('close')">{{ t("common.close") }}</button>
@@ -137,5 +141,5 @@ async function copyContent() {
   font-weight: 600;
 }
 .lvl-filter { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-dim); margin-right: auto; }
-.lvl-filter select { height: 26px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; }
+.lvl-filter-select { width: 104px; }
 </style>

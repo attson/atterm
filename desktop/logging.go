@@ -32,7 +32,7 @@ const logTimeLayout = "2006/01/02 15:04:05.000"
 //
 //	2006/01/02 15:04:05.000 LEVEL [tag] message\n
 //
-// LEVEL is left-padded to width 5 for column alignment.
+// LEVEL is right-padded to width 5 for column alignment.
 func formatLogLine(t time.Time, level, tag, msg string) string {
 	return t.Format(logTimeLayout) + " " + padLevel(level) + " [" + tag + "] " + msg + "\n"
 }

@@ -1490,6 +1490,8 @@ func (a *App) GetPtyInputDebugEnabled() bool {
 }
 
 // SetPtyInputDebugEnabled persists the PTY input debug logging toggle.
+// No markPrefDirtyAndPush: the setting is read live per-write in
+// desktopPtyHost.Write and has no reactive frontend consumer to push to.
 func (a *App) SetPtyInputDebugEnabled(enabled bool) error {
 	if a.cfgStore == nil {
 		return fmt.Errorf("config store unavailable")

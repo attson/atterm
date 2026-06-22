@@ -92,8 +92,10 @@ describe("SettingsRelay", () => {
     expect(source).toContain("loginRemoteRelay");
   });
 
-  test("clears password after successful login", () => {
-    expect(source).toContain("password.value = \"\"");
+  test("does not clear password after successful login (retained for prefill on reopen)", () => {
+    // password.value must NOT be reset on success — the field is kept so the
+    // user can see what they typed, matching the safekeyring prefill behaviour.
+    expect(source).not.toContain('password.value = ""');
   });
 
   test("renders Uplink ON/OFF toggle bound to RelayPaused", () => {

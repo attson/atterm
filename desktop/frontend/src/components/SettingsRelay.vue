@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion } from "../lib/api";
+import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import PairingPanel from "./PairingPanel.vue";
@@ -36,7 +36,7 @@ const togglingPause = ref(false);
 const error = ref("");
 const { t } = useI18n();
 
-// Login form state. Password lives only in memory and is cleared on success.
+// Login form state. Password is mirrored to the safekeyring slot by LoginRemoteRelay so it can be prefilled on subsequent launches.
 const email = ref("");
 const password = ref("");
 const showPassword = ref(false);
@@ -139,8 +139,20 @@ onMounted(async () => {
     snapshotPersisted();
 
     // Prefill email from persisted config (set by LoginRemoteRelay on
-    // last successful login). Password stays empty for security.
+    // last successful login).
     email.value = cfg.last_email ?? "";
+
+    // Prefill the password from the safekeyring slot the most recent
+    // successful login wrote. Empty when nothing is stored or when no
+    // email was cached.
+    if (email.value) {
+      try {
+        password.value = await loadSavedRelayPassword();
+      } catch {
+        // Treat any binding failure as "no stored password" — the user
+        // can still type one in.
+      }
+    }
 
     // Show the "logged in as X" pill immediately without waiting for the
     // uplink's relay:auth-info event. The event listener below stays
@@ -274,7 +286,6 @@ async function save() {
       saving.value = false;
       return;
     }
-    password.value = "";
     claimToken.value = "";
   } else if (hasExistingToken) {
     try {

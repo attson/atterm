@@ -409,6 +409,8 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	}
 
 	argv := append([]string{req.Command}, defaultShellArgs(req.Command, req.Args)...)
+	log.Printf("desktop-newsession: command=%q args=%v cwd=%q aiKind=%q -> argv=%v",
+		req.Command, req.Args, cwd, req.AIKind, argv)
 	env := terminalEnvForXterm(os.Environ())
 
 	enabled := true

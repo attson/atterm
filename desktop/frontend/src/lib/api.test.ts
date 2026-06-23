@@ -16,8 +16,11 @@ import {
   getTaskSidebarWidth,
   setTaskSidebarWidth,
   showNotification,
+  listShells,
+  setDefaultShell,
   __setBindingsForTest,
   __resetNotificationRuntimeForTest,
+  __resetShellsCacheForTest,
 } from "./api";
 
 vi.mock("../../wailsjs/runtime/runtime", () => ({
@@ -31,6 +34,7 @@ vi.mock("../../wailsjs/runtime/runtime", () => ({
 afterEach(() => {
   __setBindingsForTest(undefined);
   __resetNotificationRuntimeForTest();
+  __resetShellsCacheForTest();
   vi.clearAllMocks();
 });
 
@@ -86,6 +90,40 @@ describe("task display api wrappers", () => {
     __setBindingsForTest({ SetTaskSidebarWidth: fn } as any);
     await setTaskSidebarWidth(280);
     expect(fn).toHaveBeenCalledWith(280);
+  });
+});
+
+describe("listShells caching", () => {
+  test("caches the shell list so repeated calls hit the binding once", async () => {
+    const fn = vi.fn().mockResolvedValue(["/bin/zsh", "/bin/bash"]);
+    __setBindingsForTest({ ListShells: fn } as any);
+    expect(await listShells()).toEqual(["/bin/zsh", "/bin/bash"]);
+    expect(await listShells()).toEqual(["/bin/zsh", "/bin/bash"]);
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  test("setDefaultShell invalidates the cache (default reorders the list)", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(["/bin/zsh"])
+      .mockResolvedValueOnce(["/opt/homebrew/bin/fish", "/bin/zsh"]);
+    const set = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({ ListShells: list, SetDefaultShell: set } as any);
+    expect(await listShells()).toEqual(["/bin/zsh"]);
+    await setDefaultShell("/opt/homebrew/bin/fish");
+    expect(await listShells()).toEqual(["/opt/homebrew/bin/fish", "/bin/zsh"]);
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not cache a rejected lookup so it can be retried", async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("not ready"))
+      .mockResolvedValueOnce(["/bin/zsh"]);
+    __setBindingsForTest({ ListShells: fn } as any);
+    await expect(listShells()).rejects.toThrow("not ready");
+    expect(await listShells()).toEqual(["/bin/zsh"]);
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 });
 

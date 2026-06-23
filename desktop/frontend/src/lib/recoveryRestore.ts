@@ -1,8 +1,11 @@
 import type { RecoveryPaneSnapshot, NewSessionReq } from "./api";
 
 // buildRestoreSessionReq turns a snapshot pane into the NewSessionReq we'll
-// send to the Go side. Defaults: shell falls back to /bin/sh if the snapshot
-// didn't record one (shouldn't happen, but handle it).
+// send to the Go side. If the snapshot didn't record a shell (the pane's
+// SessionInfo wasn't resolved yet when the snapshot was saved), fall back to
+// the caller-supplied default shell — NOT a hardcoded /bin/sh, which would
+// drop the user into a bare sh-3.2$ prompt. /bin/sh is only the last resort
+// when no default shell could be resolved at all.
 //
 // AI panes carry ai_kind + initial_ai_session_id; the Go side injects the
 // resume command (e.g. `claude --resume <id>`) on the restored shell's first
@@ -11,9 +14,10 @@ export function buildRestoreSessionReq(
   pane: RecoveryPaneSnapshot,
   cols: number,
   rows: number,
+  defaultShell: string,
 ): NewSessionReq {
   return {
-    command: pane.shell || "/bin/sh",
+    command: pane.shell || defaultShell || "/bin/sh",
     args: pane.shell_args ?? [],
     cwd: pane.last_cwd ?? "",
     cols,

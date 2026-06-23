@@ -756,6 +756,10 @@ async function onRecoveryDiscard() {
 async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: string) {
   const newIds: string[] = [];
   let savedActiveIdx = -1;
+  // Resolve the user's real default shell once. Panes whose snapshot has an
+  // empty shell restore against this instead of /bin/sh — see
+  // buildRestoreSessionReq.
+  const defaultShell = (await listShells())[0] ?? "";
   for (let pickIdx = 0; pickIdx < picks.length; pickIdx++) {
     const tab = picks[pickIdx];
     const t: Tab = {
@@ -776,9 +780,28 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
       }
       try {
         const dims = predictCellDims(tab.layout);
-        const req = buildRestoreSessionReq(snap, dims.cols, dims.rows);
+        const req = buildRestoreSessionReq(snap, dims.cols, dims.rows, defaultShell);
         const resp = await newSession(req);
         t.panes[i] = { sessionId: resp.session_id, remote: false };
+        // Seed localList immediately (mirrors spawnLocalShell) so the recovery
+        // snapshot can resolve this pane's SessionInfo right away. Without this,
+        // the window before the relay's session-list push arrives would persist
+        // shell:"" / cwd:"" — corrupting recovery.json and making the NEXT
+        // restore fall back to /bin/sh (sh-3.2$).
+        localList.value = [
+          ...localList.value,
+          {
+            id: resp.session_id,
+            command: req.command,
+            cwd: req.cwd || "",
+            title: snap.title || req.command,
+            type: snap.session_type || "",
+            cols: dims.cols,
+            rows: dims.rows,
+            started_at: Math.floor(Date.now() / 1000),
+            host_id: localHostID.value,
+          },
+        ];
         // Resume injection is handled Go-side on the shell's first prompt
         // (see relay_host SetOnFirstPrompt) — reliable, no task-state poll.
       } catch (e) {

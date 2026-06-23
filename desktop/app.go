@@ -558,6 +558,13 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 			return err
 		}
 	}
+	// Persist the password so SettingsRelay can prefill the password
+	// field on subsequent launches. Failure is logged but does not fail
+	// the login: the user already has a valid session token and account_key.
+	// See docs/superpowers/specs/2026-06-23-desktop-relay-password-persistence-design.md.
+	if err := saveRelayPassword(wsURL, email, password); err != nil {
+		log.Printf("desktop: save relay password: %v", err)
+	}
 	if a.prefsSync != nil {
 		go func() {
 			if err := a.prefsSync.Pull(a.ctx); err != nil {
@@ -629,6 +636,13 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}
+	}
+	// Persist the password so SettingsRelay can prefill the password
+	// field on subsequent launches. Failure is logged but does not fail
+	// the registration: the user already has a valid session token and account_key.
+	// See docs/superpowers/specs/2026-06-23-desktop-relay-password-persistence-design.md.
+	if err := saveRelayPassword(wsURL, email, password); err != nil {
+		log.Printf("desktop: save relay password: %v", err)
 	}
 	return nil
 }
@@ -743,6 +757,53 @@ func (a *App) GetAccountKey() string {
 		return ""
 	}
 	return base64.StdEncoding.EncodeToString(key)
+}
+
+// LoadSavedRelayPassword reads the password persisted by the most recent
+// successful LoginRemoteRelay / RegisterRemoteRelay for the relay currently
+// in the persisted config. Returns "" (no error) when nothing is stored,
+// when RelayURL or RelayLastEmail is empty, or when the keychain entry is
+// absent. Keychain errors other than "not found" are logged and surfaced
+// as "" so the UI just shows an empty password field.
+//
+// Bound to the frontend's SettingsRelay onMounted prefill.
+func (a *App) LoadSavedRelayPassword() (string, error) {
+	if a.cfgStore == nil {
+		return "", nil
+	}
+	cfg := a.cfgStore.Get()
+	pw, err := loadRelayPassword(cfg.RelayURL, cfg.RelayLastEmail)
+	if err != nil {
+		log.Printf("desktop: load saved relay password: %v", err)
+		return "", nil
+	}
+	return pw, nil
+}
+
+// RememberRelayPassword writes password into the safekeyring slot for the
+// (RelayURL, RelayLastEmail) currently in cfgStore — used by the Settings
+// form's "remember inputs on failed connect" path so the user does not
+// have to retype the password after a probe failure / login failure /
+// network blip. Empty password is intentionally treated as a no-op rather
+// than a delete here, so a failure path with an empty password field
+// cannot wipe an existing stored value.
+//
+// Best-effort: errors are logged and not surfaced to the UI (the real
+// failure the user cares about is the underlying connect error). Caller
+// is expected to have already called SetRelayConfig with the new URL +
+// email so the slot key reflects the latest intent.
+func (a *App) RememberRelayPassword(password string) error {
+	if a.cfgStore == nil {
+		return nil
+	}
+	if password == "" {
+		return nil
+	}
+	cfg := a.cfgStore.Get()
+	if err := saveRelayPassword(cfg.RelayURL, cfg.RelayLastEmail, password); err != nil {
+		log.Printf("desktop: remember relay password: %v", err)
+	}
+	return nil
 }
 
 // ProbeRelayVersion does a lightweight GET <relayURL>/api/version to verify

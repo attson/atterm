@@ -102,6 +102,10 @@ export function GetPluginConfig() {
   return window['go']['main']['App']['GetPluginConfig']();
 }
 
+export function GetPtyInputDebugEnabled() {
+  return window['go']['main']['App']['GetPtyInputDebugEnabled']();
+}
+
 export function GetQuickTemplates() {
   return window['go']['main']['App']['GetQuickTemplates']();
 }
@@ -178,6 +182,10 @@ export function LoadRecoverySnapshot() {
   return window['go']['main']['App']['LoadRecoverySnapshot']();
 }
 
+export function LoadSavedRelayPassword() {
+  return window['go']['main']['App']['LoadSavedRelayPassword']();
+}
+
 export function LoginRemoteRelay(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LoginRemoteRelay'](arg1, arg2, arg3, arg4);
 }
@@ -204,6 +212,10 @@ export function ProbeRelayVersion(arg1, arg2) {
 
 export function RegisterRemoteRelay(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['RegisterRemoteRelay'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function RememberRelayPassword(arg1) {
+  return window['go']['main']['App']['RememberRelayPassword'](arg1);
 }
 
 export function SaveRecoverySnapshot(arg1) {
@@ -244,6 +256,10 @@ export function SetNotificationsEnabled(arg1) {
 
 export function SetPluginConfig(arg1) {
   return window['go']['main']['App']['SetPluginConfig'](arg1);
+}
+
+export function SetPtyInputDebugEnabled(arg1) {
+  return window['go']['main']['App']['SetPtyInputDebugEnabled'](arg1);
 }
 
 export function SetQuickTemplates(arg1) {

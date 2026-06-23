@@ -55,6 +55,8 @@ export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;
 
+export function GetPtyInputDebugEnabled():Promise<boolean>;
+
 export function GetQuickTemplates():Promise<Array<main.QuickTemplate>>;
 
 export function GetRecoveryDialogEnabled():Promise<boolean>;
@@ -93,6 +95,8 @@ export function ListShells():Promise<Array<string>>;
 
 export function LoadRecoverySnapshot():Promise<main.RecoverySnapshot>;
 
+export function LoadSavedRelayPassword():Promise<string>;
+
 export function LoginRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
 export function MarkCleanShutdown():Promise<void>;
@@ -106,6 +110,8 @@ export function PickLogFilePath():Promise<string>;
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
 export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
+
+export function RememberRelayPassword(arg1:string):Promise<void>;
 
 export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
@@ -126,6 +132,8 @@ export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 
 export function SetPluginConfig(arg1:main.PluginConfig):Promise<void>;
+
+export function SetPtyInputDebugEnabled(arg1:boolean):Promise<void>;
 
 export function SetQuickTemplates(arg1:Array<main.QuickTemplate>):Promise<void>;
 

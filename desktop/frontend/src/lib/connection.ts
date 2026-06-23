@@ -15,7 +15,7 @@ import {
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
-import { openMetaFields, openOutFrame } from "./opaque";
+import { openMetaFields, openOutFrame, openSessionFields } from "./opaque";
 
 export interface ClosePayload {
   exit_code: number;
@@ -493,7 +493,35 @@ export async function fetchSessions(endpoint: Endpoint): Promise<SessionInfo[]> 
     throw new Error(`fetch ${url}: ${e?.message ?? e}`);
   }
   if (!res.ok) throw new Error(`fetch ${url}: http ${res.status}`);
-  return (await res.json()) as SessionInfo[];
+  return decryptSessionFields((await res.json()) as SessionInfo[]);
+}
+
+// decryptSessionFields overlays the E2EE-sealed {title, cwd, command,
+// current_command} onto each SessionInfo when an account_key is unlocked.
+// The relay strips the plaintext for these fields once the agent seals them
+// (uplink M6-final), so without this the session list shows only the short
+// session id. Mirrors the Capacitor list path (platform/capacitor.ts) and the
+// WS META decrypt above. Sessions without a `sealed` envelope — or when the
+// key is locked or the cipher fails — pass through unchanged so the plaintext
+// fields an additive-rollout agent still ships keep working.
+export function decryptSessionFields(sessions: SessionInfo[]): SessionInfo[] {
+  const accountKey = getCurrentAccountKey();
+  if (!accountKey) return sessions;
+  return sessions.map((s) => {
+    if (!s.sealed) return s;
+    try {
+      const fields = openSessionFields(b64StdToBytes(s.sealed), accountKey, s.id);
+      if (!fields) return s;
+      const next: SessionInfo = { ...s };
+      if (fields.title !== undefined) next.title = fields.title;
+      if (fields.cwd !== undefined) next.cwd = fields.cwd;
+      if (fields.command !== undefined) next.command = fields.command;
+      if (fields.current_command !== undefined) next.current_command = fields.current_command;
+      return next;
+    } catch {
+      return s;
+    }
+  });
 }
 
 export interface SessionSummary {
@@ -524,6 +552,12 @@ export interface SessionInfo {
   type?: string; // "shell" | "ai" | "test" | "build" | "deploy" — absent on older publishers
   summary?: SessionSummary;
   unread?: boolean;
+  /** Base64 (std) AEAD envelope over {title, cwd, command, current_command}
+   *  sealed by the agent under HKDF(account_key, session_uuid). The relay
+   *  strips the matching plaintext once a session is sealed (uplink M6-final),
+   *  so a client MUST run decryptSessionFields to recover them. Empty/absent
+   *  for sessions whose agent had no unlocked account_key. */
+  sealed?: string;
 }
 
 export type TaskState =

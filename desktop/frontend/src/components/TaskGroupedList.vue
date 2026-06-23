@@ -240,9 +240,9 @@ function stateLabel(state: string | undefined): string {
 .host-header { display: flex; align-items: center; gap: 6px; font-weight: 500; padding: 4px 6px; cursor: pointer; user-select: none; }
 .host-header:hover { background: rgba(255, 255, 255, 0.04); border-radius: 4px; }
 .host-header .caret { font-size: 9px; opacity: 0.7; width: 9px; display: inline-block; }
-.host-name { flex: 0 0 auto; }
-.counts { margin-left: auto; display: inline-flex; gap: 2px; align-items: center; }
-.unread-badge { font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; }
+.host-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.counts { margin-left: auto; display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0; }
+.unread-badge { font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; white-space: nowrap; flex-shrink: 0; }
 .mark-all { background: none; border: none; cursor: pointer; padding: 0 4px; color: inherit; }
 .host-group { display: flex; flex-direction: column; gap: 4px; }
 .task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; }

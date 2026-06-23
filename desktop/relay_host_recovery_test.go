@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/attson/atterm/internal/session"
 )
 
 func TestRelayHost_NewSession_AIKindKicksSniff(t *testing.T) {
@@ -13,7 +15,7 @@ func TestRelayHost_NewSession_AIKindKicksSniff(t *testing.T) {
 	var mu sync.Mutex
 	var sniffStarted bool
 	var capturedKind string
-	h.startSniffFn = func(_ context.Context, _, kind string, _ func(string)) {
+	h.startSniffFn = func(_ context.Context, _ *session.Session, _, kind string, _ func(string)) {
 		mu.Lock()
 		defer mu.Unlock()
 		sniffStarted = true
@@ -24,7 +26,7 @@ func TestRelayHost_NewSession_AIKindKicksSniff(t *testing.T) {
 		Command: "/bin/sh",
 		Cwd:     t.TempDir(),
 		Cols:    80, Rows: 24,
-		AIKind:  "claude",
+		AIKind: "claude",
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -44,7 +46,7 @@ func TestRelayHost_NewSession_NoAIKind_NoSniff(t *testing.T) {
 	h := newTestRelayHost(t)
 	var mu sync.Mutex
 	var called bool
-	h.startSniffFn = func(_ context.Context, _, _ string, _ func(string)) {
+	h.startSniffFn = func(_ context.Context, _ *session.Session, _, _ string, _ func(string)) {
 		mu.Lock()
 		defer mu.Unlock()
 		called = true
@@ -68,7 +70,7 @@ func TestRelayHost_NewSession_OnAIClassified_StartsSniff(t *testing.T) {
 
 	var mu sync.Mutex
 	var captured []string
-	h.startSniffFn = func(_ context.Context, cwd, kind string, _ func(string)) {
+	h.startSniffFn = func(_ context.Context, _ *session.Session, cwd, kind string, _ func(string)) {
 		mu.Lock()
 		defer mu.Unlock()
 		captured = append(captured, kind+"@"+cwd)

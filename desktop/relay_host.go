@@ -51,9 +51,9 @@ type relayHost struct {
 	// that subscription to driver on the local session.
 	uplinkSubs map[uuid.UUID]*session.Subscriber
 
-	// startSniffFn launches an AI session-id sniff goroutine. Defaults to
-	// startAISniff in production; tests override with a stub.
-	startSniffFn func(ctx context.Context, cwd, kind string, onCapture func(sid string))
+	// startSniffFn launches an AI session-id resolution goroutine. Defaults
+	// to startAIResolve in production; tests override with a stub.
+	startSniffFn func(ctx context.Context, sess *session.Session, cwd, kind string, onCapture func(sid string))
 
 	// aiSidCallback is set by app.go after startRelayHost returns; it
 	// receives every captured AI session id and emits a Wails event. Nil
@@ -176,7 +176,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		sessions:     make(map[uuid.UUID]*activeSession),
 		changes:      make(chan struct{}, 1),
 		uplinkSubs:   make(map[uuid.UUID]*session.Subscriber),
-		startSniffFn: startAISniff,
+		startSniffFn: startAIResolve,
 	}, nil
 }
 
@@ -452,9 +452,21 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 
 	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty, cfg: h.cfg}, h.adminUserID)
 
+	// resolveCtx bounds the AI id-resolution goroutine to the session's
+	// lifetime: it tracks the active conversation continuously (so /resume
+	// switching to another conversation re-captures the new id) and must stop
+	// when the PTY exits. Cancelled from combinedCleanup.
+	resolveCtx, resolveCancel := context.WithCancel(ctx)
+
+	// resolveOnce ensures a single id-resolution goroutine per session: a
+	// restored session would otherwise start one here AND again when its
+	// injected `claude --resume` re-triggers SetOnAIClassified.
+	var resolveOnce sync.Once
+
 	var cleanupOnce sync.Once
 	combinedCleanup := func() {
 		cleanupOnce.Do(func() {
+			resolveCancel()
 			cleanup()
 			if plan.Cleanup != nil {
 				plan.Cleanup()
@@ -472,8 +484,11 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if kind == "" || h.startSniffFn == nil {
 				return
 			}
-			go h.startSniffFn(ctx, cwd, kind, func(aiSid string) {
-				h.onAISidCaptured(sidCopy, kind, aiSid)
+			resolveOnce.Do(func() {
+				log.Printf("recovery: ai classified session=%s kind=%s — start resolve", sidCopy, kind)
+				go h.startSniffFn(resolveCtx, sess, cwd, kind, func(aiSid string) {
+					h.onAISidCaptured(sidCopy, kind, aiSid)
+				})
 			})
 		})
 		sess.SetOnTaskStateChange(func(sid uuid.UUID, prev, next string, meta session.TaskMeta) {
@@ -500,14 +515,35 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		})
 	}
 
-	// AI session id sniff: snapshot the CLI's data dir before the PTY can
-	// write anything, then poll for a new file. The captured sid is round-
-	// tripped to the frontend over Wails events (see app.aiSidCallback).
-	if req.AIKind != "" && h.startSniffFn != nil {
-		sidCopy := id
-		go h.startSniffFn(ctx, cwd, req.AIKind, func(sid string) {
-			h.onAISidCaptured(sidCopy, req.AIKind, sid)
-		})
+	// Restored AI session: req.AIKind is known up front (the pane was AI
+	// before the crash). Two things:
+	//  1. If we have a precise resume id, inject `claude --resume <id>` once the
+	//     shell draws its first prompt (Go-side, written straight to the PTY —
+	//     reliable, no frontend task-state dependency which never fires for a
+	//     plain shell prompt).
+	//  2. Kick id resolution to re-capture the id for the NEXT crash (after
+	//     resume, claude appends to the same jsonl so the title match re-resolves
+	//     the same id).
+	if req.AIKind != "" {
+		if sess, ok := h.server.Registry().Get(id); ok {
+			sidCopy := id
+			if argv := computeResumeArgs(req.AIKind, req.InitialAISessionID, ""); argv != nil {
+				line := strings.Join(argv, " ") + "\n"
+				ptyCopy := pty
+				sess.SetOnFirstPrompt(func() {
+					log.Printf("recovery: restored ai session=%s — inject resume %q", sidCopy, strings.TrimSpace(line))
+					go func() { _, _ = ptyCopy.Write([]byte(line)) }()
+				})
+			}
+			if h.startSniffFn != nil {
+				resolveOnce.Do(func() {
+					log.Printf("recovery: restored ai session=%s kind=%s — start resolve", sidCopy, req.AIKind)
+					go h.startSniffFn(resolveCtx, sess, cwd, req.AIKind, func(sid string) {
+						h.onAISidCaptured(sidCopy, req.AIKind, sid)
+					})
+				})
+			}
+		}
 	}
 
 	h.mu.Lock()

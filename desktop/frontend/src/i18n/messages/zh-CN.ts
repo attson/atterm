@@ -575,7 +575,6 @@ export const zhCN = {
     },
     pane: {
       failed: "（已失败）",
-      resumeTimeout: "{kind} 自动续接超时，请按 ↑ 调出上次命令",
     },
   },
 } as const satisfies Messages;

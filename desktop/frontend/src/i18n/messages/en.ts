@@ -573,7 +573,6 @@ export const en = {
     },
     pane: {
       failed: "(failed)",
-      resumeTimeout: "{kind} resume timed out — press ↑ to recall the last command",
     },
   },
 };

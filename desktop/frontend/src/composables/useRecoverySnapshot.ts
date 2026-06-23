@@ -23,6 +23,9 @@ type AIState = {
 // flush at 500ms; cwd/title heartbeat at 5s.
 const STRUCTURAL_DEBOUNCE_MS = 500;
 const HEARTBEAT_DEBOUNCE_MS = 5000;
+// Periodic safety flush: if anything is dirty, persist at least this often so
+// sleep / force-quit loses at most a few seconds of recovery state.
+const SAFETY_FLUSH_MS = 10000;
 
 export interface UseRecoverySnapshotArgs {
   tabs: Ref<Tab[]>;
@@ -37,6 +40,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
   const aiBySid = new Map<string, AIState>();
   let structuralTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  let dirty = false;
 
   function buildSnapshot(): RecoverySnapshot {
     const tabs: RecoveryTabSnapshot[] = args.tabs.value
@@ -76,10 +80,12 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
   function flushNow() {
     if (structuralTimer) { clearTimeout(structuralTimer); structuralTimer = null; }
     if (heartbeatTimer)  { clearTimeout(heartbeatTimer);  heartbeatTimer = null; }
+    dirty = false;
     void saveRecoverySnapshot(buildSnapshot());
   }
 
   function scheduleStructural() {
+    dirty = true;
     if (structuralTimer) clearTimeout(structuralTimer);
     structuralTimer = setTimeout(() => {
       structuralTimer = null;
@@ -88,6 +94,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
   }
 
   function scheduleHeartbeat() {
+    dirty = true;
     if (heartbeatTimer) return; // first-write-wins
     heartbeatTimer = setTimeout(() => {
       heartbeatTimer = null;
@@ -116,6 +123,36 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     scheduleHeartbeat();
   });
 
+  // Per-pane META watcher: persist when a pane's recovery-relevant metadata
+  // changes — notably type shell→ai and the title (the key used to resolve the
+  // AI session id). Running `claude` inside an existing pane changes no
+  // structural field and does not alter sessionId, so without this watcher the
+  // AI classification would not be saved until some unrelated structural/tab
+  // event happened to flush. The getter returns a stable string so the watcher
+  // only fires on real metadata changes (not on every task_state tick).
+  watch(
+    () =>
+      args.tabs.value
+        .map((t) =>
+          t.panes
+            .map((p) => {
+              const i = p.sessionId ? args.sessionInfoFor(p.sessionId) : undefined;
+              return [
+                p.sessionId ?? "",
+                i?.type ?? "",
+                i?.title ?? "",
+                i?.current_command ?? "",
+                i?.cwd ?? "",
+              ].join("~");
+            })
+            .join("|"),
+        )
+        .join("||"),
+    () => {
+      scheduleStructural();
+    },
+  );
+
   // AI sid capture event subscription.
   const evtOn = args.onEvent ?? ((name, cb) => EventsOn(name, cb));
   const off = evtOn("recovery:ai-sid", (payload: any) => {
@@ -132,17 +169,21 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     scheduleStructural();
   });
 
+  // Periodic safety flush — backstop against sleep / force-quit. Only writes
+  // when something is dirty, so an idle workspace stays quiet.
+  const safetyTimer = setInterval(() => {
+    if (dirty) flushNow();
+  }, SAFETY_FLUSH_MS);
+
   onScopeDispose(() => {
     off?.();
     if (structuralTimer) clearTimeout(structuralTimer);
     if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    clearInterval(safetyTimer);
   });
 
   return {
     buildSnapshot,
     flushNow,
-    onMetaTouch() {
-      scheduleHeartbeat();
-    },
   };
 }

@@ -1,24 +1,12 @@
-import type { RecoveryAIInfo, RecoveryPaneSnapshot, NewSessionReq } from "./api";
-
-// computeResumeLine produces the exact text (including trailing newline)
-// to PTY.Write into a freshly forked shell so the AI session continues.
-// Returns null when no resume should be injected. Mirrors the Go-side
-// computeResumeArgs but expresses the result as a single line ready to
-// write to the PTY.
-export function computeResumeLine(
-  ai: RecoveryAIInfo | undefined,
-  lastCommandLine: string,
-): string | null {
-  if (!ai) return null;
-  if (ai.kind === "claude" && ai.session_id) return `claude --resume ${ai.session_id}\n`;
-  if (ai.kind === "codex" && ai.session_id) return `codex resume ${ai.session_id}\n`;
-  if (ai.kind === "aider" && lastCommandLine) return `${lastCommandLine}\n`;
-  return null;
-}
+import type { RecoveryPaneSnapshot, NewSessionReq } from "./api";
 
 // buildRestoreSessionReq turns a snapshot pane into the NewSessionReq we'll
 // send to the Go side. Defaults: shell falls back to /bin/sh if the snapshot
 // didn't record one (shouldn't happen, but handle it).
+//
+// AI panes carry ai_kind + initial_ai_session_id; the Go side injects the
+// resume command (e.g. `claude --resume <id>`) on the restored shell's first
+// prompt — see relay_host SetOnFirstPrompt. There is no frontend resume path.
 export function buildRestoreSessionReq(
   pane: RecoveryPaneSnapshot,
   cols: number,
@@ -33,31 +21,4 @@ export function buildRestoreSessionReq(
     ai_kind: (pane.ai?.kind ?? "") as NewSessionReq["ai_kind"],
     initial_ai_session_id: pane.ai?.session_id ?? "",
   };
-}
-
-// awaitFirstPromptReady waits for SessionInfo.task_state to become
-// `waiting_input` (post-OSC-133;A state). Returns "ready" on first
-// transition, "timeout" after timeoutMs. The caller's `get` reads task_state
-// out of whatever store/connection it owns; we don't bind to any specific
-// data source so the helper stays testable in isolation.
-export function awaitFirstPromptReady(
-  get: () => string | undefined,
-  timeoutMs: number = 5000,
-  intervalMs: number = 80,
-): Promise<"ready" | "timeout"> {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    const tick = () => {
-      if (get() === "waiting_input") {
-        resolve("ready");
-        return;
-      }
-      if (Date.now() - start >= timeoutMs) {
-        resolve("timeout");
-        return;
-      }
-      setTimeout(tick, intervalMs);
-    };
-    tick();
-  });
 }

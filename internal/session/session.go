@@ -144,6 +144,13 @@ type Session struct {
 	// NewSession's req.AIKind path).
 	onAIClassified func(commandLine, cwd string)
 
+	// onFirstPrompt fires once on the first OSC 133;A/B prompt marker — i.e.
+	// the shell has drawn its first prompt and is ready to accept input.
+	// Desktop uses it to inject a resume command into a restored AI pane.
+	// Runs while s.mu is held — keep it non-blocking.
+	onFirstPrompt    func()
+	firstPromptFired bool
+
 	// onTaskStateChange fires once per task-state transition observed within
 	// the session. The callback runs while the session mutex is held —
 	// implementers must NOT call back into Session methods that take s.mu.
@@ -313,6 +320,15 @@ func (s *Session) SetMetaChangedHook(fn func()) {
 func (s *Session) SetOnAIClassified(fn func(commandLine, cwd string)) {
 	s.mu.Lock()
 	s.onAIClassified = fn
+	s.mu.Unlock()
+}
+
+// SetOnFirstPrompt registers a callback fired once when the shell emits its
+// first OSC 133 prompt marker (ready for input). The callback runs while s.mu
+// is held — keep it non-blocking (typically `go ...`).
+func (s *Session) SetOnFirstPrompt(fn func()) {
+	s.mu.Lock()
+	s.onFirstPrompt = fn
 	s.mu.Unlock()
 }
 
@@ -888,6 +904,13 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			continue
 		}
 		switch payload[0] {
+		case 'A', 'B':
+			// Prompt start/end: the shell is ready for input. Fire the
+			// first-prompt hook once (used to inject a restored AI resume).
+			if !s.firstPromptFired && s.onFirstPrompt != nil {
+				s.firstPromptFired = true
+				s.onFirstPrompt()
+			}
 		case 'C':
 			command := strings.TrimSpace(strings.TrimPrefix(payload, "C;"))
 			exitNil := (*int)(nil)

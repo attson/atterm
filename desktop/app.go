@@ -23,6 +23,7 @@ import (
 
 	"github.com/attson/atterm/desktop/feishu"
 	"github.com/attson/atterm/desktop/hookinstall"
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/e2eeclient"
 	"github.com/attson/atterm/internal/prefssync"
@@ -56,10 +57,10 @@ type NewSessionReq struct {
 	AIKind string `json:"ai_kind,omitempty"`
 
 	// InitialAISessionID is the AI-side session id we captured before a
-	// previous crash. When non-empty, the frontend is responsible for
-	// PTY-writing the resume command after first prompt-ready; the Go side
-	// just round-trips this value through PaneSnapshot bookkeeping. We do
-	// NOT pass it as an arg to the spawned process.
+	// previous crash. When non-empty (with AIKind), the Go side injects the
+	// resume command (e.g. `claude --resume <id>`) straight into the PTY on the
+	// restored shell's first OSC 133 prompt — see relay_host SetOnFirstPrompt.
+	// It is NOT passed as an arg to the spawned shell.
 	InitialAISessionID string `json:"initial_ai_session_id,omitempty"`
 }
 
@@ -108,7 +109,7 @@ type RelayConfig struct {
 	// unavailable. The WebView can't TLS-dial the relay directly on some
 	// networks, so remote /client attaches tunnel through Go via this URL.
 	RemoteProxyURL string `json:"remote_proxy_url"`
-	Paused    bool   `json:"paused"`
+	Paused         bool   `json:"paused"`
 }
 
 type LoggingConfig struct {
@@ -1885,7 +1886,29 @@ func (a *App) SaveRecoverySnapshot(payload string) error {
 	a.mu.Lock()
 	a.lastSnapshot = snap
 	a.mu.Unlock()
+	if appdir.IsDev() {
+		log.Printf("recovery: save %s", summarizeRecoverySnapshot(snap))
+	}
 	return a.recoveryStore.Save(snap)
+}
+
+// summarizeRecoverySnapshot renders a one-line view of what's being persisted
+// — per pane: workload type, the atterm session id, and the captured AI
+// session id (or "-"). Used by the dev save log so recovery state can be
+// confirmed live (tail the log) without restarting.
+func summarizeRecoverySnapshot(snap RecoverySnapshot) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "tabs=%d", len(snap.Tabs))
+	for _, t := range snap.Tabs {
+		for _, p := range t.Panes {
+			ai := "-"
+			if p.AI != nil && p.AI.SessionID != "" {
+				ai = p.AI.SessionID
+			}
+			fmt.Fprintf(&b, " [type=%s ai=%s cwd=%s]", p.SessionType, ai, p.LastCwd)
+		}
+	}
+	return b.String()
 }
 
 // DiscardRecoverySnapshot removes recovery.json. Used by the dialog's

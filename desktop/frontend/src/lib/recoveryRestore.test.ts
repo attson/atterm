@@ -1,40 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
-import {
-  computeResumeLine,
-  buildRestoreSessionReq,
-  awaitFirstPromptReady,
-} from "./recoveryRestore";
-import type { RecoveryAIInfo, RecoveryPaneSnapshot } from "./api";
-
-describe("computeResumeLine", () => {
-  it("claude with sid", () => {
-    expect(
-      computeResumeLine({ kind: "claude", session_id: "abc" } as RecoveryAIInfo, ""),
-    ).toBe("claude --resume abc\n");
-  });
-  it("codex with sid", () => {
-    expect(
-      computeResumeLine({ kind: "codex", session_id: "xyz" } as RecoveryAIInfo, ""),
-    ).toBe("codex resume xyz\n");
-  });
-  it("aider sends last_command_line", () => {
-    expect(
-      computeResumeLine({ kind: "aider" } as RecoveryAIInfo, "aider --model gpt-4"),
-    ).toBe("aider --model gpt-4\n");
-  });
-  it("returns null when sid missing for claude", () => {
-    expect(computeResumeLine({ kind: "claude" } as RecoveryAIInfo, "")).toBeNull();
-  });
-  it("returns null when codex sid missing", () => {
-    expect(computeResumeLine({ kind: "codex" } as RecoveryAIInfo, "")).toBeNull();
-  });
-  it("returns null when aider has no last command", () => {
-    expect(computeResumeLine({ kind: "aider" } as RecoveryAIInfo, "")).toBeNull();
-  });
-  it("returns null when ai is undefined", () => {
-    expect(computeResumeLine(undefined, "anything")).toBeNull();
-  });
-});
+import { describe, it, expect } from "vitest";
+import { buildRestoreSessionReq } from "./recoveryRestore";
+import type { RecoveryPaneSnapshot } from "./api";
 
 describe("buildRestoreSessionReq", () => {
   it("forwards shell + ai_kind + initial_ai_session_id", () => {
@@ -64,27 +30,5 @@ describe("buildRestoreSessionReq", () => {
     expect(req.cwd).toBe("");
     expect(req.ai_kind).toBe("");
     expect(req.initial_ai_session_id).toBe("");
-  });
-});
-
-describe("awaitFirstPromptReady", () => {
-  it("resolves ready when waiting_input is observed", async () => {
-    vi.useFakeTimers();
-    let state: string | undefined = "running";
-    const promise = awaitFirstPromptReady(() => state, 1000, 50);
-    setTimeout(() => { state = "waiting_input"; }, 100);
-    await vi.advanceTimersByTimeAsync(160);
-    const result = await promise;
-    expect(result).toBe("ready");
-    vi.useRealTimers();
-  });
-
-  it("resolves timeout when never ready", async () => {
-    vi.useFakeTimers();
-    const promise = awaitFirstPromptReady(() => "running", 200, 50);
-    await vi.advanceTimersByTimeAsync(260);
-    const result = await promise;
-    expect(result).toBe("timeout");
-    vi.useRealTimers();
   });
 });

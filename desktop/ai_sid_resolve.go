@@ -1,0 +1,451 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/attson/atterm/internal/session"
+)
+
+// AI session-id resolution by title match.
+//
+// Restore needs the AI CLI's own session id so it can inject
+// `claude --resume <id>`. The old approach watched the data dir for a *.jsonl
+// whose mtime advanced (see the retired sniff in ai_sid_sniff.go) — it timed
+// out on resumed/idle sessions and aborted on same-cwd concurrency.
+//
+// Claude writes a record `{"type":"ai-title","aiTitle":"<title>","sessionId":
+// "<uuid>"}` into its jsonl; aiTitle is exactly the title atterm shows for the
+// pane. So we resolve the id by matching the pane's (normalized) title against
+// the aiTitle of every jsonl in the pane's cwd dir. This is robust to resumed
+// sessions (the file already exists — we don't care) and disambiguates
+// multiple claude sessions sharing a cwd (the title is the discriminator).
+
+// aiTitleEntry is one resolved jsonl: its session id, its latest aiTitle, and
+// the file's mtime (used only as a last-resort tiebreak).
+type aiTitleEntry struct {
+	SessionID string
+	AITitle   string
+	ModTime   time.Time
+}
+
+// cachedTitle memoizes a single jsonl's scan result, keyed by file mtime so an
+// unchanged file is never re-scanned across poll ticks.
+type cachedTitle struct {
+	mod   time.Time
+	sid   string
+	title string
+	has   bool
+}
+
+type titleCache map[string]cachedTitle
+
+// scanJsonlForAITitle scans one *.jsonl for ai-title records and returns the
+// LAST one's (sessionId, aiTitle) — the title evolves over a session, so the
+// most recent record reflects what the pane currently shows. ok is false when
+// no ai-title record with a non-empty title exists.
+//
+// A substring pre-filter avoids JSON-decoding every line; the scanner buffer
+// is enlarged because a single jsonl line can be megabytes.
+func scanJsonlForAITitle(path string) (sid, title string, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", false
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	needle := []byte(`"ai-title"`)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if !bytes.Contains(line, needle) {
+			continue
+		}
+		var rec struct {
+			Type      string `json:"type"`
+			AITitle   string `json:"aiTitle"`
+			SessionID string `json:"sessionId"`
+		}
+		if err := json.Unmarshal(line, &rec); err != nil || rec.Type != "ai-title" {
+			continue
+		}
+		if rec.AITitle == "" {
+			continue
+		}
+		sid, title, ok = rec.SessionID, rec.AITitle, true // last-wins
+	}
+	return sid, title, ok
+}
+
+// readClaudeTitleEntries returns one entry per *.jsonl in dir that has a
+// resolvable aiTitle. cache (may be nil) skips re-scanning files whose mtime
+// is unchanged. SessionID falls back to the filename stem when the ai-title
+// record omitted it.
+func readClaudeTitleEntries(dir string, cache titleCache) []aiTitleEntry {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []aiTitleEntry
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		mod := info.ModTime()
+
+		c, hit := cache[path]
+		if !hit || !c.mod.Equal(mod) {
+			sid, title, has := scanJsonlForAITitle(path)
+			if has && sid == "" {
+				if stem, ok := claudeParseSid(e.Name()); ok {
+					sid = stem
+				}
+			}
+			c = cachedTitle{mod: mod, sid: sid, title: title, has: has && sid != ""}
+			if cache != nil {
+				cache[path] = c
+			}
+		}
+		if !c.has || c.title == "" {
+			continue
+		}
+		out = append(out, aiTitleEntry{SessionID: c.sid, AITitle: c.title, ModTime: mod})
+	}
+	return out
+}
+
+// spinnerDecoration reports whether r is leading visual chrome claude prepends
+// to its title — Braille spinner frames (U+2800–U+28FF), sparkle/bullet
+// glyphs, or whitespace.
+func spinnerDecoration(r rune) bool {
+	if unicode.IsSpace(r) {
+		return true
+	}
+	if r >= 0x2800 && r <= 0x28FF {
+		return true
+	}
+	switch r {
+	case '✻', '✶', '✳', '✽', '✲', '✱', '✦', '✧', '⋆', '★', '☆', '·', '•', '◦', '▪', '▫', '*':
+		return true
+	}
+	return false
+}
+
+// normalizeAITitle canonicalizes a title for comparison: strip ANSI CSI runs
+// and C0/DEL control bytes, drop leading spinner/sparkle decoration, collapse
+// internal whitespace, trim. The generic "Claude Code" placeholder maps to ""
+// so it never matches any file.
+func normalizeAITitle(s string) string {
+	// Strip ANSI CSI escape sequences (ESC [ ... final-byte).
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] < 0x40 || s[j] > 0x7e) {
+				j++
+			}
+			if j < len(s) {
+				j++ // consume final byte
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	// Drop C0 controls and DEL.
+	cleaned := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, b.String())
+	// Drop leading spinner/sparkle decoration.
+	cleaned = strings.TrimLeftFunc(cleaned, spinnerDecoration)
+	// Collapse internal whitespace and trim.
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if strings.EqualFold(cleaned, "Claude Code") {
+		return ""
+	}
+	return cleaned
+}
+
+// resolveClaudeSessionID returns the session id whose aiTitle matches
+// paneTitle. Requires a unique non-empty match; >1 match falls back to the
+// newest mtime, but identical mtimes are treated as ambiguous (no result).
+func resolveClaudeSessionID(dir, paneTitle string, cache titleCache) (string, bool) {
+	want := normalizeAITitle(paneTitle)
+	if want == "" {
+		return "", false
+	}
+	entries := readClaudeTitleEntries(dir, cache)
+	var matches []aiTitleEntry
+	for _, e := range entries {
+		if normalizeAITitle(e.AITitle) == want {
+			matches = append(matches, e)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", false
+	case 1:
+		log.Printf("recovery: claude resolve title=%q → sid=%s", want, matches[0].SessionID)
+		return matches[0].SessionID, true
+	default:
+		sort.Slice(matches, func(i, j int) bool { return matches[i].ModTime.After(matches[j].ModTime) })
+		if matches[0].ModTime.Equal(matches[1].ModTime) {
+			log.Printf("recovery: claude resolve ambiguous title=%q (%d files, equal mtime) — skip", want, len(matches))
+			return "", false
+		}
+		log.Printf("recovery: claude resolve title=%q → sid=%s (newest of %d)", want, matches[0].SessionID, len(matches))
+		return matches[0].SessionID, true
+	}
+}
+
+// resolveFreshClaudeSessionID captures a brand-new session by its file: a
+// freshly launched claude creates a new <uuid>.jsonl in its cwd dir and keeps
+// writing startup records, so its mtime advances past `since`. If exactly one
+// jsonl is active since then, its filename stem IS the session id — available
+// immediately, before claude generates any ai-title. Returns false on zero (no
+// fresh file yet) or ≥2 active files (ambiguous — left to title matching to
+// disambiguate same-cwd concurrency). This must never guess: exactly-one only.
+func resolveFreshClaudeSessionID(dir string, since time.Time) (string, bool) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var sids []string
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().Before(since) {
+			continue
+		}
+		if sid, ok := claudeParseSid(e.Name()); ok {
+			sids = append(sids, sid)
+		}
+	}
+	if len(sids) == 1 {
+		return sids[0], true
+	}
+	return "", false
+}
+
+// readClaudeJsonlMtimes maps each <uuid>.jsonl's session id to its mtime.
+func readClaudeJsonlMtimes(dir string) map[string]time.Time {
+	out := map[string]time.Time{}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		sid, ok := claudeParseSid(e.Name())
+		if !ok {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			out[sid] = info.ModTime()
+		}
+	}
+	return out
+}
+
+// advancedSids returns the session ids whose jsonl was written (mtime advanced,
+// or the file newly appeared) between prev and cur — i.e. the conversation(s)
+// claude is actively writing right now. claude writes metadata (mode /
+// permission-mode / last-prompt) on a /resume switch even before the user
+// types, so this catches a conversation switch promptly.
+func advancedSids(prev, cur map[string]time.Time) []string {
+	var out []string
+	for sid, mt := range cur {
+		if p, ok := prev[sid]; !ok || mt.After(p) {
+			out = append(out, sid)
+		}
+	}
+	return out
+}
+
+// claudeResolveInterval is the poll cadence for the continuous tracker.
+// claudeFreshGrace widens the "active since" window slightly so a fresh file
+// whose creation burst started just before the goroutine was scheduled is
+// still seen.
+const (
+	claudeResolveInterval = 1 * time.Second
+	claudeFreshGrace      = 3 * time.Second
+)
+
+// startClaudeTitleResolve continuously tracks the session's ACTIVE claude
+// conversation id for the session's lifetime (until ctx is cancelled on PTY
+// exit), calling onCapture whenever it changes. Running once and stopping would
+// miss a /resume switch to another conversation within the same process — the
+// active jsonl changes and the captured id would go stale.
+//
+// Per tick:
+//   - Initial capture (nothing emitted yet): title match (precise) else
+//     fresh-file (a brand-new title-less session, by its just-created jsonl).
+//   - Then track the conversation claude is actively WRITING: the jsonl whose
+//     mtime advanced since the last tick. A single advancing file is the
+//     current conversation — this catches a /resume switch promptly (claude
+//     writes metadata to the switched file even before you type). If ≥2 files
+//     advanced (same-cwd concurrency), disambiguate by title; never guess.
+//
+// The watch dir is recomputed from the session's LIVE cwd each tick (meta.Cwd
+// can lag a recent `cd` at classification time).
+func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home string, onCapture func(sid string)) {
+	cache := titleCache{}
+	since := time.Now().Add(-claudeFreshGrace)
+	lastEmitted := ""
+	emit := func(sid string) {
+		if sid == "" || sid == lastEmitted {
+			return
+		}
+		lastEmitted = sid
+		log.Printf("recovery: claude active conversation → sid=%s", sid)
+		onCapture(sid)
+	}
+	var prev map[string]time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(claudeResolveInterval):
+		}
+		info := sess.Info()
+		if info.Cwd == "" {
+			continue
+		}
+		dir := claudeWatchDir(info.Cwd, time.Now(), home)
+		cur := readClaudeJsonlMtimes(dir)
+
+		if lastEmitted == "" {
+			if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
+				emit(sid)
+			} else if sid, ok := resolveFreshClaudeSessionID(dir, since); ok {
+				emit(sid)
+			}
+			prev = cur
+			continue
+		}
+
+		adv := advancedSids(prev, cur)
+		prev = cur
+		switch len(adv) {
+		case 1:
+			emit(adv[0])
+		case 0:
+			// idle — keep current conversation
+		default:
+			// ≥2 conversations being written (same-cwd concurrency): the active
+			// file is ambiguous; fall back to the precise title match.
+			if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
+				emit(sid)
+			}
+		}
+	}
+}
+
+// codexResolveInterval / codexResolveBudget bound the codex new-file watch.
+const (
+	codexResolveInterval = 200 * time.Millisecond
+	codexResolveBudget   = 30 * time.Second
+)
+
+// startCodexFileResolve keeps the filename heuristic for codex (its jsonl has
+// no ai-title record). It baselines the day-dir's rollout ids, then waits for a
+// single new one to appear. Ambiguous (≥2 new) aborts.
+func startCodexFileResolve(ctx context.Context, cwd string, onCapture func(sid string)) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("recovery: no home for codex resolve: %v", err)
+		return
+	}
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("recovery: mkdir %s: %v — skip codex resolve", dir, err)
+		return
+	}
+	before := codexRolloutSids(dir)
+	deadline := time.Now().Add(codexResolveBudget)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(codexResolveInterval):
+		}
+		var fresh []string
+		for sid := range codexRolloutSids(dir) {
+			if _, seen := before[sid]; !seen {
+				fresh = append(fresh, sid)
+			}
+		}
+		switch {
+		case len(fresh) == 1:
+			onCapture(fresh[0])
+			return
+		case len(fresh) >= 2:
+			log.Printf("recovery: codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
+			return
+		}
+	}
+	log.Printf("recovery: codex resolve timeout in %s", dir)
+}
+
+// codexRolloutSids returns the set of session ids parsed from rollout-*.jsonl
+// filenames in dir.
+func codexRolloutSids(dir string) map[string]struct{} {
+	out := map[string]struct{}{}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		if sid, ok := codexParseSid(e.Name()); ok {
+			out[sid] = struct{}{}
+		}
+	}
+	return out
+}
+
+// startAIResolve dispatches AI session-id resolution by CLI kind. claude uses
+// title matching; codex keeps the filename heuristic; aider is a no-op (it
+// resumes by cwd, no id involved).
+func startAIResolve(ctx context.Context, sess *session.Session, cwd, kind string, onCapture func(sid string)) {
+	switch kind {
+	case "claude":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Printf("recovery: no home for claude resolve: %v", err)
+			return
+		}
+		log.Printf("recovery: ai resolve start kind=claude (cwd tracked live, initial=%s)", cwd)
+		startClaudeTitleResolve(ctx, sess, home, onCapture)
+	case "codex":
+		log.Printf("recovery: ai resolve start kind=codex cwd=%s", cwd)
+		startCodexFileResolve(ctx, cwd, onCapture)
+	default:
+		// aider and unknown kinds: nothing to resolve.
+	}
+}

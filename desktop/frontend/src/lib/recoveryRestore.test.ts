@@ -9,30 +9,28 @@ import type { RecoveryAIInfo, RecoveryPaneSnapshot } from "./api";
 describe("computeResumeLine", () => {
   it("claude with sid", () => {
     expect(
-      computeResumeLine({ kind: "claude", session_id: "abc" } as RecoveryAIInfo, ""),
+      computeResumeLine({ kind: "claude", session_id: "abc" } as RecoveryAIInfo),
     ).toBe("claude --resume abc\n");
   });
   it("codex with sid", () => {
     expect(
-      computeResumeLine({ kind: "codex", session_id: "xyz" } as RecoveryAIInfo, ""),
+      computeResumeLine({ kind: "codex", session_id: "xyz" } as RecoveryAIInfo),
     ).toBe("codex resume xyz\n");
   });
-  it("aider sends last_command_line", () => {
+  it("no fallback: aider never resumes (no precise id)", () => {
+    expect(computeResumeLine({ kind: "aider" } as RecoveryAIInfo)).toBeNull();
     expect(
-      computeResumeLine({ kind: "aider" } as RecoveryAIInfo, "aider --model gpt-4"),
-    ).toBe("aider --model gpt-4\n");
+      computeResumeLine({ kind: "aider", session_id: "anything" } as RecoveryAIInfo),
+    ).toBeNull();
   });
   it("returns null when sid missing for claude", () => {
-    expect(computeResumeLine({ kind: "claude" } as RecoveryAIInfo, "")).toBeNull();
+    expect(computeResumeLine({ kind: "claude" } as RecoveryAIInfo)).toBeNull();
   });
   it("returns null when codex sid missing", () => {
-    expect(computeResumeLine({ kind: "codex" } as RecoveryAIInfo, "")).toBeNull();
-  });
-  it("returns null when aider has no last command", () => {
-    expect(computeResumeLine({ kind: "aider" } as RecoveryAIInfo, "")).toBeNull();
+    expect(computeResumeLine({ kind: "codex" } as RecoveryAIInfo)).toBeNull();
   });
   it("returns null when ai is undefined", () => {
-    expect(computeResumeLine(undefined, "anything")).toBeNull();
+    expect(computeResumeLine(undefined)).toBeNull();
   });
 });
 

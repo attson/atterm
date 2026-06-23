@@ -51,9 +51,9 @@ type relayHost struct {
 	// that subscription to driver on the local session.
 	uplinkSubs map[uuid.UUID]*session.Subscriber
 
-	// startSniffFn launches an AI session-id sniff goroutine. Defaults to
-	// startAISniff in production; tests override with a stub.
-	startSniffFn func(ctx context.Context, cwd, kind string, onCapture func(sid string))
+	// startSniffFn launches an AI session-id resolution goroutine. Defaults
+	// to startAIResolve in production; tests override with a stub.
+	startSniffFn func(ctx context.Context, sess *session.Session, cwd, kind string, onCapture func(sid string))
 
 	// aiSidCallback is set by app.go after startRelayHost returns; it
 	// receives every captured AI session id and emits a Wails event. Nil
@@ -176,7 +176,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		sessions:     make(map[uuid.UUID]*activeSession),
 		changes:      make(chan struct{}, 1),
 		uplinkSubs:   make(map[uuid.UUID]*session.Subscriber),
-		startSniffFn: startAISniff,
+		startSniffFn: startAIResolve,
 	}, nil
 }
 
@@ -472,7 +472,8 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if kind == "" || h.startSniffFn == nil {
 				return
 			}
-			go h.startSniffFn(ctx, cwd, kind, func(aiSid string) {
+			log.Printf("recovery: ai classified session=%s kind=%s — start resolve", sidCopy, kind)
+			go h.startSniffFn(ctx, sess, cwd, kind, func(aiSid string) {
 				h.onAISidCaptured(sidCopy, kind, aiSid)
 			})
 		})
@@ -500,14 +501,18 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		})
 	}
 
-	// AI session id sniff: snapshot the CLI's data dir before the PTY can
-	// write anything, then poll for a new file. The captured sid is round-
-	// tripped to the frontend over Wails events (see app.aiSidCallback).
+	// Restored AI session: req.AIKind is known up front (the pane was AI
+	// before the crash), so kick resolution immediately to re-capture the id
+	// for the next crash. After `claude --resume <id>` runs, claude appends to
+	// the same jsonl, so the title match re-resolves the same id.
 	if req.AIKind != "" && h.startSniffFn != nil {
-		sidCopy := id
-		go h.startSniffFn(ctx, cwd, req.AIKind, func(sid string) {
-			h.onAISidCaptured(sidCopy, req.AIKind, sid)
-		})
+		if sess, ok := h.server.Registry().Get(id); ok {
+			sidCopy := id
+			log.Printf("recovery: restored ai session=%s kind=%s — start resolve", sidCopy, req.AIKind)
+			go h.startSniffFn(ctx, sess, cwd, req.AIKind, func(sid string) {
+				h.onAISidCaptured(sidCopy, req.AIKind, sid)
+			})
+		}
 	}
 
 	h.mu.Lock()

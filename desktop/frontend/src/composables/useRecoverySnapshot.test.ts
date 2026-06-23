@@ -98,6 +98,64 @@ describe("useRecoverySnapshot", () => {
     scope.stop();
   });
 
+  it("persists a pane meta change (type shell→ai) with no structural change", async () => {
+    const info = ref<any>({
+      id: "s1", command: "zsh", cwd: "/x", title: "t", type: "shell",
+      cols: 80, rows: 24, started_at: 0, host_id: "h",
+    });
+    const tabs = ref<Tab[]>([
+      {
+        id: "t1",
+        layout: "single",
+        panes: [{ sessionId: "s1", remote: false }],
+        activePaneIdx: 0,
+        colRatio: 0.5,
+        rowRatio: 0.5,
+      },
+    ]);
+    const currentTabId = ref<string | null>("t1");
+    const sessionInfoFor = (sid: string) => (sid === "s1" ? info.value : undefined);
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent: () => () => {} });
+    });
+
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    const before = (api.saveRecoverySnapshot as any).mock.calls.length;
+
+    // Meta-only change: shell→ai. No tab/pane structural change, sessionId
+    // unchanged — only the per-pane meta watcher can catch this.
+    info.value = { ...info.value, type: "ai" };
+    await nextTick();
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+
+    const after = (api.saveRecoverySnapshot as any).mock.calls.length;
+    expect(after).toBeGreaterThan(before);
+    const lastCall = (api.saveRecoverySnapshot as any).mock.calls[after - 1][0];
+    expect(lastCall.tabs[0].panes[0].session_type).toBe("ai");
+    scope.stop();
+  });
+
+  it("periodic safety timer does not write when idle (clean)", async () => {
+    const tabs = ref<Tab[]>([]);
+    const currentTabId = ref<string | null>(null);
+    const sessionInfoFor = vi.fn().mockReturnValue(undefined);
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent: () => () => {} });
+    });
+
+    // No changes → nothing dirty. Several safety intervals must not spam saves.
+    vi.advanceTimersByTime(35000);
+    await Promise.resolve();
+    expect(api.saveRecoverySnapshot).not.toHaveBeenCalled();
+    scope.stop();
+  });
+
   it("ignores recovery:ai-sid payloads with missing fields", async () => {
     const tabs = ref<Tab[]>([
       {

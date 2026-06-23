@@ -5,14 +5,17 @@ import type { RecoveryAIInfo, RecoveryPaneSnapshot, NewSessionReq } from "./api"
 // Returns null when no resume should be injected. Mirrors the Go-side
 // computeResumeArgs but expresses the result as a single line ready to
 // write to the PTY.
+//
+// No fallback: we only resume when we have a precise captured session id.
+// Without one we do NOT re-run a recorded command (that would start a fresh
+// conversation, or — for cwd-based tools — risk resuming the wrong one); the
+// pane is restored as a plain shell instead.
 export function computeResumeLine(
   ai: RecoveryAIInfo | undefined,
-  lastCommandLine: string,
 ): string | null {
   if (!ai) return null;
   if (ai.kind === "claude" && ai.session_id) return `claude --resume ${ai.session_id}\n`;
   if (ai.kind === "codex" && ai.session_id) return `codex resume ${ai.session_id}\n`;
-  if (ai.kind === "aider" && lastCommandLine) return `${lastCommandLine}\n`;
   return null;
 }
 

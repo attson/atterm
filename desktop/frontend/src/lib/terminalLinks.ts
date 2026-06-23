@@ -94,6 +94,80 @@ export function detectLinks(line: string | null | undefined): LinkMatch[] {
   return out;
 }
 
+/** Minimal slice of xterm's IBufferCell the cell mapper needs. */
+export interface CellLike {
+  getChars(): string;
+  getWidth(): number;
+}
+
+/** Minimal slice of xterm's IBufferLine the cell mapper needs. */
+export interface BufferLineLike {
+  getCell(x: number): CellLike | undefined;
+}
+
+export interface MappedLine {
+  /** Visible text, one substring per non-spacer cell (a wide glyph -> its char). */
+  text: string;
+  /**
+   * cellStart[i] = 0-based terminal cell column where text[i] begins;
+   * cellStart[text.length] = the column just past the last cell. A link
+   * spanning text[a, b) therefore occupies cells [cellStart[a], cellStart[b]).
+   */
+  cellStart: number[];
+}
+
+/**
+ * Walk a terminal buffer line cell by cell, reproducing the visible string the
+ * way xterm's translateToString() does while recording which cell column each
+ * string char lands on.
+ *
+ * This is what lets us translate detectLinks()'s *string-index* spans into the
+ * *cell columns* that xterm's link ranges and mouse hit-testing speak. The two
+ * diverge whenever the line holds wide glyphs (CJK, emoji): a wide glyph is one
+ * string char but two cells, so without this mapping a link's underline drifts
+ * left one column per preceding wide glyph.
+ */
+export function mapBufferLineCells(
+  line: BufferLineLike,
+  cols: number,
+): MappedLine {
+  let text = "";
+  const cellStart: number[] = [];
+  let endExclusive = 0;
+  for (let x = 0; x < cols; x++) {
+    const cell = line.getCell(x);
+    if (!cell) continue;
+    const width = cell.getWidth();
+    if (width === 0) continue; // spacer cell trailing a wide glyph
+    const chars = cell.getChars() || " "; // an unwritten cell renders as a space
+    for (let k = 0; k < chars.length; k++) cellStart.push(x);
+    text += chars;
+    endExclusive = x + width;
+  }
+  cellStart.push(endExclusive);
+  return { text, cellStart };
+}
+
+/**
+ * 1-based, inclusive cell-column range for a detected link, in the shape
+ * xterm's ILink.range expects. `cellStart` comes from mapBufferLineCells().
+ */
+export function linkCellRange(
+  m: Pick<LinkMatch, "start" | "end">,
+  cellStart: number[],
+): { startX: number; endX: number } {
+  return { startX: cellStart[m.start] + 1, endX: cellStart[m.end] };
+}
+
+/** True when a 0-based cell column falls within a detected link's cell span. */
+export function cellInLink(
+  col: number,
+  m: Pick<LinkMatch, "start" | "end">,
+  cellStart: number[],
+): boolean {
+  return col >= cellStart[m.start] && col < cellStart[m.end];
+}
+
 export function isModClickEvent(e: MouseEvent, isMac: boolean): boolean {
   if (e.shiftKey || e.altKey) return false;
   return isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;

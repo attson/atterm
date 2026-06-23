@@ -2,6 +2,8 @@ import type { IDisposable, Terminal } from "xterm";
 import {
   detectLinks,
   isModClickEvent,
+  linkCellRange,
+  mapBufferLineCells,
   normalizeForOpen,
   type LinkMatch,
 } from "../lib/terminalLinks";
@@ -25,15 +27,23 @@ export function useTerminalLinkProvider(
 
   const provider = {
     provideLinks(y: number, callback: (links: unknown[] | undefined) => void) {
-      const line =
-        term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
-      const matches = detectLinks(line);
+      const line = term.buffer.active.getLine(y - 1);
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      // Map through cells so wide glyphs (CJK, emoji) don't shift the underline
+      // left of the actual link text.
+      const { text, cellStart } = mapBufferLineCells(line, term.cols);
+      const matches = detectLinks(text);
       if (matches.length === 0) {
         callback(undefined);
         return;
       }
       callback(
-        matches.map((m) => toILink(m, y, isMac, getHomeDir, openURL, onError)),
+        matches.map((m) =>
+          toILink(m, y, cellStart, isMac, getHomeDir, openURL, onError),
+        ),
       );
     },
   };
@@ -49,15 +59,17 @@ export function useTerminalLinkProvider(
 function toILink(
   m: LinkMatch,
   y: number,
+  cellStart: number[],
   isMac: boolean,
   getHomeDir: () => string,
   openURL: (url: string) => Promise<void>,
   onError: (key: LinkErrorKey) => void,
 ) {
+  const { startX, endX } = linkCellRange(m, cellStart);
   return {
     range: {
-      start: { x: m.start + 1, y },
-      end: { x: m.end, y },
+      start: { x: startX, y },
+      end: { x: endX, y },
     },
     text: m.text,
     decorations: { underline: true, pointerCursor: true },

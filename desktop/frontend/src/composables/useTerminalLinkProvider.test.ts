@@ -1,13 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 import { useTerminalLinkProvider } from "./useTerminalLinkProvider";
 
+// A char counts as 2 cells (wide) when it's in the CJK ideograph block — enough
+// for these tests; production width comes from xterm's real cell metadata.
+function cellWidth(ch: string): number {
+  const cp = ch.codePointAt(0) ?? 0;
+  return cp >= 0x1100 && cp <= 0x9fff ? 2 : 1;
+}
+
+// Build an xterm-like cell grid from a string: a wide glyph occupies one cell of
+// width 2 followed by a width-0 spacer cell, exactly like xterm's buffer.
+function cellsFromString(s: string): Array<{ chars: string; width: number }> {
+  const cells: Array<{ chars: string; width: number }> = [];
+  for (const ch of s) {
+    const w = cellWidth(ch);
+    cells.push({ chars: ch, width: w });
+    for (let i = 1; i < w; i++) cells.push({ chars: "", width: 0 });
+  }
+  return cells;
+}
+
 function makeFakeTerm(lineText: string) {
   let provider: {
     provideLinks: (y: number, cb: (links: unknown[] | undefined) => void) => void;
   } | null = null;
   const dispose = vi.fn();
+  const cells = cellsFromString(lineText);
   return {
     term: {
+      cols: cells.length,
       registerLinkProvider(p: typeof provider) {
         provider = p;
         return { dispose };
@@ -15,7 +36,14 @@ function makeFakeTerm(lineText: string) {
       buffer: {
         active: {
           getLine(_y: number) {
-            return { translateToString: (_trim: boolean) => lineText };
+            return {
+              translateToString: (_trim: boolean) => lineText,
+              getCell(x: number) {
+                const c = cells[x];
+                if (!c) return undefined;
+                return { getChars: () => c.chars, getWidth: () => c.width };
+              },
+            };
           },
         },
       },
@@ -43,7 +71,30 @@ describe("useTerminalLinkProvider", () => {
     expect(received![0].text).toBe("https://x.test");
     expect(received![0].range.start.y).toBe(1);
     expect(received![0].range.end.y).toBe(1);
+    // All-ASCII line: cell columns equal string indices (1-based, inclusive).
+    expect(received![0].range.start.x).toBe(5);
+    expect(received![0].range.end.x).toBe(18);
     expect(received![0].decorations).toEqual({ underline: true, pointerCursor: true });
+  });
+
+  it("places the link range at cell columns, not string indices, past wide glyphs", () => {
+    // "填" is a 2-cell CJK glyph: cells 0-1. Space at cell 2. The URL begins at
+    // string index 2 but cell 3, so the underline must start at 1-based col 4.
+    const f = makeFakeTerm("填 https://x.test");
+    useTerminalLinkProvider({
+      term: f.term,
+      isMac: true,
+      getHomeDir: () => "",
+      openURL: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    let received: any[] | undefined;
+    f.getProvider().provideLinks(1, (links) => (received = links as any[]));
+    expect(received).toHaveLength(1);
+    expect(received![0].text).toBe("https://x.test");
+    expect(received![0].range.start.x).toBe(4); // not 3 (the buggy string-index value)
+    expect(received![0].range.end.x).toBe(17); // 14 cells: columns 4..17 inclusive
   });
 
   it("activate ignores click without modifier", async () => {

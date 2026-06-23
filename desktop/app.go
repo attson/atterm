@@ -182,11 +182,21 @@ type App struct {
 	// only on relatively cold paths).
 	lastSnapshot RecoverySnapshot
 
+	// feishuMu guards feishuService / feishuMode, which are read from Wails
+	// methods and rebuilt by reconcileFeishuMode when the relay login state
+	// changes at runtime.
+	feishuMu sync.RWMutex
 	// feishuService is the top-level Feishu integration façade. Nil when
 	// feishu startup fails (non-fatal).
 	feishuService *feishu.Service
-	// feishuMode is "local" or "relay", set at startup alongside feishuService.
+	// feishuMode is "local" or "relay".
 	feishuMode string
+	// feishuHookSrv is the long-lived hook listener, started once and kept
+	// across mode switches so the ATTERM_HOOK_ENDPOINT baked into open PTYs
+	// stays valid; only its dispatcher is swapped on rebuild.
+	feishuHookSrv *feishu.HookServer
+	// feishuHookEndpoint is the stable hook URL written to the endpoint file.
+	feishuHookEndpoint string
 }
 
 // NewApp creates a new App application struct.
@@ -340,9 +350,19 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
-// applyRelayConfig (re)starts the uplink to match the given config. URL == ""
-// means "no uplink" — any running one is cancelled. Caller need not hold a.mu.
+// applyRelayConfig reconciles everything that depends on the relay login state:
+// the uplink and the Feishu integration mode. Caller need not hold a.mu.
 func (a *App) applyRelayConfig(cfg appConfig) {
+	a.applyRelayUplink(cfg)
+	// Feishu mode follows the relay login state: relay when logged in, local
+	// otherwise. Done outside a.mu (reconcile uses its own lock and may touch
+	// the long-conn). No-op until startFeishu has run.
+	a.reconcileFeishuMode(a.ctx, cfg)
+}
+
+// applyRelayUplink (re)starts the uplink to match the given config. URL == ""
+// means "no uplink" — any running one is cancelled.
+func (a *App) applyRelayUplink(cfg appConfig) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.uplinkCancel != nil {
@@ -2002,42 +2022,39 @@ func relayHTTPBase(relayURL string) string {
 	return strings.Replace(strings.Replace(relayURL, "wss://", "https://", 1), "ws://", "http://", 1)
 }
 
-// startFeishu constructs feishu.Service, starts the HookServer, writes the
-// endpoint file, and wires up the relayHost. Called once from startup().
-func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
-	isRelayMode := cfg.RelayURL != "" && cfg.RelaySessionToken != ""
-
-	var svcCfg feishu.ServiceConfig
-	if isRelayMode {
-		a.feishuMode = "relay"
+// feishuServiceConfig builds the ServiceConfig for the current relay login
+// state and returns it alongside the resolved mode ("relay" / "local"). Shared
+// by startFeishu (first init) and reconcileFeishuMode (runtime switch).
+func (a *App) feishuServiceConfig(cfg appConfig) (feishu.ServiceConfig, string) {
+	if cfg.RelayURL != "" && cfg.RelaySessionToken != "" {
 		// The stored relay URL is a WebSocket URL (wss://). The Feishu relay
 		// store/token source make plain HTTP REST calls, and http.Client rejects
 		// "wss"/"ws" ("unsupported protocol scheme"), so rewrite the scheme.
-		relayURL := relayHTTPBase(cfg.RelayURL)
-		// Capture token func at startup; reads cfgStore on each call so it
-		// stays current after token refresh.
-		svcCfg = feishu.ServiceConfig{
+		return feishu.ServiceConfig{
 			Mode:     feishu.ModeRelay,
-			RelayURL: relayURL,
+			RelayURL: relayHTTPBase(cfg.RelayURL),
+			// Reads cfgStore on each call so it stays current after token refresh.
 			RelayToken: func() string {
 				if a.cfgStore == nil {
 					return ""
 				}
 				return a.cfgStore.Get().RelaySessionToken
 			},
-			// Use the same client the rest of the app uses for the relay: it
-			// pins ALPN to http/1.1 and, when the user opted into
-			// AllowInsecureRelay, trusts the relay's self-signed certificate.
+			// Same client the rest of the app uses for the relay: pins ALPN to
+			// http/1.1 and trusts a self-signed relay when the user opted in.
 			RelayHTTPClient: relayHTTPClient(cfg.AllowInsecureRelay, 10*time.Second),
 			Sessions:        a.host,
-		}
-	} else {
-		a.feishuMode = "local"
-		svcCfg = feishu.ServiceConfig{
-			Mode:     feishu.ModeLocal,
-			Sessions: a.host,
-		}
+		}, "relay"
 	}
+	return feishu.ServiceConfig{Mode: feishu.ModeLocal, Sessions: a.host}, "local"
+}
+
+// startFeishu constructs feishu.Service, starts the HookServer, writes the
+// endpoint file, and wires up the relayHost. Called once from startup(); the
+// runtime mode switch is handled by reconcileFeishuMode, which reuses the
+// HookServer this starts.
+func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
+	svcCfg, mode := a.feishuServiceConfig(cfg)
 
 	svc, err := feishu.NewService(svcCfg)
 	if err != nil {
@@ -2066,18 +2083,63 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 
 	if a.host != nil {
 		a.host.FeishuHookEndpoint = hookEndpoint
-		a.host.FeishuDispatcher = svc.Dispatcher()
+		a.host.SetFeishuDispatcher(svc.Dispatcher())
 	}
 
-	if !isRelayMode {
+	if mode == "local" {
 		if err := svc.EnsureLongConn(ctx); err != nil {
 			// Not fatal — credentials may not be set yet.
 			log.Printf("desktop: feishu long-conn: %v", err)
 		}
 	}
 
+	a.feishuMu.Lock()
 	a.feishuService = svc
-	log.Printf("desktop: feishu service started (mode=%s endpoint=%s)", a.feishuMode, hookEndpoint)
+	a.feishuMode = mode
+	a.feishuHookSrv = svc.HookServer()
+	a.feishuHookEndpoint = hookEndpoint
+	a.feishuMu.Unlock()
+	log.Printf("desktop: feishu service started (mode=%s endpoint=%s)", mode, hookEndpoint)
+}
+
+// reconcileFeishuMode rebuilds the Feishu service when the relay login state no
+// longer matches the running mode (relay login/logout at runtime). The
+// long-lived HookServer/listener is kept — only the dispatcher, store, token
+// source and long-conn are swapped — so the ATTERM_HOOK_ENDPOINT already baked
+// into open PTYs stays valid. No-op before first init or when already correct.
+func (a *App) reconcileFeishuMode(ctx context.Context, cfg appConfig) {
+	a.feishuMu.Lock()
+	defer a.feishuMu.Unlock()
+	if a.feishuService == nil || a.feishuHookSrv == nil {
+		return // first init not done yet; startFeishu handles it
+	}
+	svcCfg, desired := a.feishuServiceConfig(cfg)
+	if desired == a.feishuMode {
+		return
+	}
+	newSvc, err := feishu.NewService(svcCfg)
+	if err != nil {
+		log.Printf("desktop: feishu reload (%s→%s): %v", a.feishuMode, desired, err)
+		return
+	}
+	// Stop the outgoing service's long-conn (relay mode has none).
+	if err := a.feishuService.CloseLongConn(ctx); err != nil {
+		log.Printf("desktop: feishu close long-conn: %v", err)
+	}
+	// Repoint the persistent hook server + host at the new dispatcher. The
+	// endpoint/port is unchanged, so already-spawned PTYs keep working.
+	a.feishuHookSrv.SetDispatcher(newSvc.Dispatcher())
+	if a.host != nil {
+		a.host.SetFeishuDispatcher(newSvc.Dispatcher())
+	}
+	a.feishuService = newSvc
+	a.feishuMode = desired
+	if desired == "local" {
+		if err := newSvc.EnsureLongConn(ctx); err != nil {
+			log.Printf("desktop: feishu long-conn after reload: %v", err)
+		}
+	}
+	log.Printf("desktop: feishu mode reconciled → %s (endpoint unchanged %s)", desired, a.feishuHookEndpoint)
 }
 
 // FeishuStatusResp is returned by GetFeishuStatus.
@@ -2124,31 +2186,32 @@ type FeishuStatusResp struct {
 // fails with "received 0 arguments, expected 1". Internal callers (long-conn,
 // store, dispatcher) get the lifecycle context via a.ctx.
 func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
-	if a.feishuService == nil {
+	svc, mode := a.currentFeishu()
+	if svc == nil {
 		return FeishuStatusResp{Enabled: false}, nil
 	}
-	v, err := a.feishuService.Store().Get(a.ctx)
+	v, err := svc.Store().Get(a.ctx)
 	if errors.Is(err, feishu.ErrLocalBindingNotFound) {
 		return FeishuStatusResp{
 			Enabled: true,
-			Mode:    a.feishuMode,
+			Mode:    mode,
 			Bound:   false,
 		}, nil
 	}
 	if errors.Is(err, feishu.ErrRelayFeishuDisabled) {
 		// The relay reachable but the admin turned Feishu off server-side.
-		return FeishuStatusResp{Mode: a.feishuMode, RelayDisabled: true}, nil
+		return FeishuStatusResp{Mode: mode, RelayDisabled: true}, nil
 	}
 	if err != nil {
 		// Status couldn't be fetched (network, keychain, relay error). Report
 		// it as a non-nil Error rather than returning a Go error: the latter
 		// surfaces as a rejected Promise that the UI silently swallowed, which
 		// is exactly what made a transient failure look like "not enabled".
-		return FeishuStatusResp{Mode: a.feishuMode, Error: err.Error()}, nil
+		return FeishuStatusResp{Mode: mode, Error: err.Error()}, nil
 	}
 	return FeishuStatusResp{
 		Enabled:     true,
-		Mode:        a.feishuMode,
+		Mode:        mode,
 		Bound:       v.OpenID != "",
 		OpenID:      v.OpenID,
 		Disabled:    v.DisabledAt != 0,
@@ -2159,33 +2222,44 @@ func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
 	}, nil
 }
 
+// currentFeishu returns the live service + mode under the read lock. Both may
+// be swapped at runtime by reconcileFeishuMode on a relay login/logout.
+func (a *App) currentFeishu() (*feishu.Service, string) {
+	a.feishuMu.RLock()
+	defer a.feishuMu.RUnlock()
+	return a.feishuService, a.feishuMode
+}
+
 // SetFeishuCredentials saves app credentials and (re)starts the long-conn.
 func (a *App) SetFeishuCredentials(c feishu.Credentials) error {
-	if a.feishuService == nil {
+	svc, _ := a.currentFeishu()
+	if svc == nil {
 		return errors.New("feishu disabled")
 	}
-	if err := a.feishuService.Store().SetCredentials(a.ctx, c); err != nil {
+	if err := svc.Store().SetCredentials(a.ctx, c); err != nil {
 		return err
 	}
-	return a.feishuService.EnsureLongConn(a.ctx)
+	return svc.EnsureLongConn(a.ctx)
 }
 
 // BeginFeishuPair issues a short-code that the user sends to the bot via
 // private chat to complete the bind flow. In relay mode the code is issued by
 // the relay; in local mode it is generated in-process.
 func (a *App) BeginFeishuPair() (string, error) {
-	if a.feishuService == nil {
+	svc, _ := a.currentFeishu()
+	if svc == nil {
 		return "", errors.New("feishu disabled")
 	}
-	return a.feishuService.BeginPair(a.ctx)
+	return svc.BeginPair(a.ctx)
 }
 
 // DeleteFeishuBinding removes the bound OpenID from the store.
 func (a *App) DeleteFeishuBinding() error {
-	if a.feishuService == nil {
+	svc, _ := a.currentFeishu()
+	if svc == nil {
 		return errors.New("feishu disabled")
 	}
-	return a.feishuService.Store().Delete(a.ctx)
+	return svc.Store().Delete(a.ctx)
 }
 
 // hookInstallLastAttempt tracks when we last auto-repaired so the UI

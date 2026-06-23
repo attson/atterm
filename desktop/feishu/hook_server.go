@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -26,7 +27,14 @@ type WaitingDispatcher interface {
 }
 
 // HookServer terminates POSTs from the atterm-hook CLI.
+//
+// disp is swappable (guarded by mu) so the listener can outlive a Feishu
+// service rebuild: when the relay login state changes the service is
+// reconstructed, but the same HookServer keeps running on the same port —
+// otherwise the ATTERM_HOOK_ENDPOINT baked into already-spawned PTYs would go
+// stale. Only the dispatcher it forwards to is replaced via SetDispatcher.
 type HookServer struct {
+	mu        sync.RWMutex
 	disp      WaitingDispatcher
 	sessions  SessionLookup
 	onSuspect func()
@@ -49,6 +57,21 @@ func NewHookServer(disp WaitingDispatcher, sessions SessionLookup) *HookServer {
 // Safe to call before or after Start.
 func (h *HookServer) SetSuspectCallback(fn func()) {
 	h.onSuspect = fn
+}
+
+// SetDispatcher swaps the dispatcher the server forwards hook events to.
+// Safe to call concurrently with serving (e.g. on a relay login/logout that
+// rebuilds the Feishu service). A nil dispatcher makes notifies a no-op.
+func (h *HookServer) SetDispatcher(d WaitingDispatcher) {
+	h.mu.Lock()
+	h.disp = d
+	h.mu.Unlock()
+}
+
+func (h *HookServer) dispatcher() WaitingDispatcher {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.disp
 }
 
 // Start binds a localhost listener on 127.0.0.1:0 and returns the chosen
@@ -121,12 +144,14 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.disp.DispatchWaitingInput(r.Context(), WaitingInputDispatchEvent{
-		SessionID:    sid,
-		Source:       WaitingSourceHook,
-		QuestionText: ev.QuestionText,
-		DedupKey:     ev.DedupKey,
-	})
+	if disp := h.dispatcher(); disp != nil {
+		disp.DispatchWaitingInput(r.Context(), WaitingInputDispatchEvent{
+			SessionID:    sid,
+			Source:       WaitingSourceHook,
+			QuestionText: ev.QuestionText,
+			DedupKey:     ev.DedupKey,
+		})
+	}
 
 	_ = errors.New
 	w.WriteHeader(http.StatusOK)

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/attson/atterm/desktop/feishu"
@@ -64,8 +65,18 @@ type relayHost struct {
 	// has bound a port. Empty when feishu is disabled or not yet started.
 	FeishuHookEndpoint string
 
-	// FeishuDispatcher is set by app.go at startup. nil → no-op.
-	FeishuDispatcher *feishu.Dispatcher
+	// feishuDispatcher is set by app.go and swapped at runtime when the relay
+	// login state changes (relay/local mode switch). Atomic because task-state
+	// callbacks read it from session goroutines while app.go may replace it.
+	// nil → no-op.
+	feishuDispatcher atomic.Pointer[feishu.Dispatcher]
+}
+
+// SetFeishuDispatcher atomically swaps the dispatcher used for command-finished
+// and waiting-input Feishu cards. Safe to call concurrently with session
+// callbacks. A nil dispatcher disables dispatch.
+func (h *relayHost) SetFeishuDispatcher(d *feishu.Dispatcher) {
+	h.feishuDispatcher.Store(d)
 }
 
 type activeSession struct {
@@ -501,12 +512,13 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			})
 		})
 		sess.SetOnTaskStateChange(func(sid uuid.UUID, prev, next string, meta session.TaskMeta) {
-			if h.FeishuDispatcher == nil {
+			disp := h.feishuDispatcher.Load()
+			if disp == nil {
 				return
 			}
 			switch next {
 			case proto.TaskStateCompleted, proto.TaskStateFailed:
-				go h.FeishuDispatcher.DispatchCommandFinished(context.Background(),
+				go disp.DispatchCommandFinished(context.Background(),
 					feishu.CommandFinishedEvent{
 						SessionID:  sid,
 						ExitCode:   meta.ExitCode,
@@ -515,7 +527,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 						SealedBody: meta.SealedBody,
 					})
 			case proto.TaskStateWaitingInput:
-				go h.FeishuDispatcher.DispatchWaitingInput(context.Background(),
+				go disp.DispatchWaitingInput(context.Background(),
 					feishu.WaitingInputDispatchEvent{
 						SessionID: sid,
 						Source:    feishu.WaitingSourceHeuristic,

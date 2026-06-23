@@ -61,6 +61,47 @@ func TestHookServer_HappyPath(t *testing.T) {
 	}
 }
 
+// TestHookServer_SetDispatcher verifies a runtime dispatcher swap (as happens
+// on a relay login/logout) routes subsequent hook events to the new dispatcher
+// without restarting the listener.
+func TestHookServer_SetDispatcher(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+	first := &recordingDispatcher{}
+	h := NewHookServer(first, sessions)
+
+	post := func() {
+		body := mustJSONBytes(t, hookNotifyRequest{
+			SessionID: sid.String(),
+			AgentKind: "claude-code",
+			HookInput: json.RawMessage(`{"matcher":{"type":"idle_prompt","tool":"AskUserQuestion"},"prompt_id":"p","context":{"tool_input":{"question":"go?"}}}`),
+		})
+		req := httptest.NewRequest("POST", "/atterm-hook/notify", bytes.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:5555"
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+		}
+	}
+
+	post()
+	second := &recordingDispatcher{}
+	h.SetDispatcher(second)
+	post()
+
+	first.mu.Lock()
+	defer first.mu.Unlock()
+	second.mu.Lock()
+	defer second.mu.Unlock()
+	if len(first.waiting) != 1 {
+		t.Fatalf("first dispatcher: want 1 event before swap, got %d", len(first.waiting))
+	}
+	if len(second.waiting) != 1 {
+		t.Fatalf("second dispatcher: want 1 event after swap, got %d", len(second.waiting))
+	}
+}
+
 func TestHookServer_UnknownSession(t *testing.T) {
 	disp := &recordingDispatcher{}
 	sessions := &sessionsFake{known: map[string]bool{}}

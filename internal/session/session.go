@@ -175,6 +175,22 @@ type Subscriber struct {
 	once       sync.Once
 	clientID   string // end-to-end ID echoed in META.driver_client_id when this sub is driver
 	clientName string // human-readable name (hostname) echoed in META.driver_client_name
+	// noAutoDrive, when set, keeps Subscribe from auto-promoting this subscriber
+	// to driver when the session has no driver. Set for the desktop uplink's
+	// proxy subscriber, which fans out to remote viewers: a remote becomes
+	// driver only via an explicit CLAIM_DRIVER, never because the uplink
+	// (re)subscribed. ClaimDriver still promotes it.
+	noAutoDrive bool
+}
+
+// SubscribeOption configures a subscription created by Subscribe.
+type SubscribeOption func(*Subscriber)
+
+// WithoutAutoDrive marks the subscriber as a passive proxy/fan-out that must
+// not be auto-promoted to driver when the session currently has no driver. The
+// driver role can still be assigned to it explicitly via ClaimDriver.
+func WithoutAutoDrive() SubscribeOption {
+	return func(sub *Subscriber) { sub.noAutoDrive = true }
 }
 
 // Out returns the channel this subscriber should be drained from.
@@ -588,12 +604,15 @@ func (s *Session) fanout(f proto.Frame) {
 // this subscriber is the active driver. clientName is the human-readable
 // hostname echoed in META.driver_client_name. Both may be empty.
 // Returns the subscriber and the largest seq replayed.
-func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string) (*Subscriber, uint64) {
+func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts ...SubscribeOption) (*Subscriber, uint64) {
 	sub := &Subscriber{
 		out:        make(chan proto.Frame, subscriberQueueDepth),
 		closed:     make(chan struct{}),
 		clientID:   clientID,
 		clientName: clientName,
+	}
+	for _, opt := range opts {
+		opt(sub)
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
@@ -651,7 +670,7 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string) (*Subs
 	if !closed && enqueueReplayProgress(sub, s.ID, proto.ReplayProgressEnd, replayedBytes, totalBytes, lastSeq) {
 		s.subs[sub] = struct{}{}
 		added = true
-		if !s.driverFromUpstream && s.driverSubscriber == nil {
+		if !s.driverFromUpstream && s.driverSubscriber == nil && !sub.noAutoDrive {
 			s.driverSubscriber = sub
 			s.driverClientID = sub.clientID
 			s.driverClientName = sub.clientName

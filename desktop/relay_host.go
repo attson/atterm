@@ -248,7 +248,14 @@ func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subs
 	// Pseudo-name for the uplink subscriber; the real per-remote-client name
 	// gets propagated via CLAIM_DRIVER end-to-end when a remote claims.
 	uplinkSubClientName := "remote"
-	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID, uplinkSubClientName)
+	// The uplink subscriber is a passive fan-out for remote viewers, not an
+	// interactive client. It must never auto-promote to driver: a stream
+	// restart (StreamStop→StreamRequest when an idle remote client reconnects)
+	// recreates this sub, and auto-promotion would seize the driver role as the
+	// placeholder "remote", spuriously kicking the real remote driver back to a
+	// viewer ("remote has taken control" with nobody actually there). A remote
+	// becomes driver only via an explicit end-to-end CLAIM_DRIVER → ClaimLocalDriver.
+	sub, replayToSeq := sess.Subscribe(sinceSeq, uplinkSubClientID, uplinkSubClientName, session.WithoutAutoDrive())
 	h.mu.Lock()
 	h.uplinkSubs[id] = sub
 	h.mu.Unlock()

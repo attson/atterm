@@ -345,6 +345,43 @@ func TestSubscribeSecondSubscriberIsViewer(t *testing.T) {
 	}
 }
 
+// A WithoutAutoDrive subscriber (the desktop uplink's proxy fan-out for remote
+// viewers) must never be auto-promoted to driver, even as the only subscriber.
+// Otherwise an uplink stream restart (StreamStop→StreamRequest on an idle
+// client reconnect) recreates the proxy sub and seizes the driver role as the
+// placeholder "remote", clobbering the genuine remote claimer.
+func TestSubscribeWithoutAutoDriveStaysViewer(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	sub, _ := s.Subscribe(0, "uplink:abc", "remote", WithoutAutoDrive())
+	defer s.Unsubscribe(sub)
+
+	if s.IsDriver(sub) {
+		t.Fatal("WithoutAutoDrive subscriber must not be auto-promoted to driver")
+	}
+	if got := s.DriverClientID(); got != "" {
+		t.Fatalf("driver client id = %q; want empty (no driver)", got)
+	}
+}
+
+// An explicit ClaimDriver still promotes a WithoutAutoDrive subscriber — that
+// is exactly how a remote attacher takes control end-to-end via the uplink.
+func TestClaimDriverPromotesWithoutAutoDriveSubscriber(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+
+	sub, _ := s.Subscribe(0, "uplink:abc", "remote", WithoutAutoDrive())
+	defer s.Unsubscribe(sub)
+
+	s.ClaimDriver(sub, "client-remote", "desktop-a")
+
+	if !s.IsDriver(sub) {
+		t.Fatal("ClaimDriver should promote even a WithoutAutoDrive subscriber")
+	}
+	if got := s.DriverClientID(); got != "client-remote" {
+		t.Fatalf("driver client id = %q; want client-remote", got)
+	}
+}
+
 func TestClaimDriverTransfersAndBroadcastsMeta(t *testing.T) {
 	id := uuid.New()
 	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})

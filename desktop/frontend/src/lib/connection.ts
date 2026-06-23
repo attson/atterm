@@ -252,6 +252,11 @@ export class SessionConnection {
   // currentDriverClientID is the last driver_client_id we observed in a META
   // frame. Used to detect transitions and decide whether to fire onDriverChange.
   private currentDriverClientID = "";
+  // isDriverRole tracks whether the authoritative META currently names us the
+  // driver. Persisted across reconnects so ws.onopen can re-assert the claim:
+  // after an idle reconnect the host recreates its uplink proxy subscriber with
+  // auto-promote suppressed, so the session has no driver until we re-claim.
+  private isDriverRole = false;
 
   constructor(
     private endpoint: Endpoint,
@@ -394,6 +399,10 @@ export class SessionConnection {
           ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
         }
       }
+      // Re-assert the driver claim if we held it before this (re)connect. The
+      // host suppresses auto-promote for its uplink proxy sub, so a stream
+      // restart leaves the session driverless until the real driver re-claims.
+      if (this.isDriverRole) this.claimDriver();
     };
 
     ws.onmessage = (ev: MessageEvent) => {
@@ -437,7 +446,9 @@ export class SessionConnection {
           const newDriverName = String(meta.driver_client_name ?? "");
           if (newDriver !== this.currentDriverClientID) {
             this.currentDriverClientID = newDriver;
-            this.handlers.onDriverChange?.(newDriver, newDriver !== "" && newDriver === this.clientID, newDriverName);
+            const isMe = newDriver !== "" && newDriver === this.clientID;
+            this.isDriverRole = isMe;
+            this.handlers.onDriverChange?.(newDriver, isMe, newDriverName);
           }
         } catch {
           /* ignore */

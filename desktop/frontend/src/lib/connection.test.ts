@@ -80,6 +80,22 @@ describe("SessionConnection client_name", () => {
   });
 });
 
+describe("SessionConnection re-claims driver across reconnect", () => {
+  // After an idle reconnect the host recreates its uplink proxy subscriber; with
+  // auto-promote suppressed the session has no driver until someone claims. The
+  // frontend must re-assert its claim on reconnect, or the user silently drops
+  // to viewer (and previously saw a spurious "remote has taken control").
+  test("tracks whether this connection currently holds the driver role", () => {
+    expect(source).toMatch(/this\.isDriverRole\s*=/);
+  });
+
+  test("re-sends CLAIM_DRIVER in SessionConnection.onopen when it held the driver role", () => {
+    const m = source.match(/class SessionConnection[\s\S]*?(?=\n}\n)/);
+    expect(m).not.toBeNull();
+    expect(m![0]).toMatch(/if\s*\(this\.isDriverRole\)\s*this\.claimDriver\(\)/);
+  });
+});
+
 describe("openWS sync-throw isolation", () => {
   // Regression: WebKit throws "The string did not match the expected pattern."
   // synchronously from new WebSocket(invalid). That used to unwind App.vue's

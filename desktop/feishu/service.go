@@ -56,7 +56,9 @@ type Service struct {
 	imClient   IMClient
 	dispatcher *Dispatcher
 	hookSrv    *HookServer
-	longConn   *LongConn
+
+	lcMu     sync.Mutex // guards longConn (EnsureLongConn / CloseLongConn)
+	longConn *LongConn
 }
 
 func NewService(cfg ServiceConfig) (*Service, error) {
@@ -130,6 +132,8 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 	if s.cfg.Mode != ModeLocal {
 		return nil
 	}
+	s.lcMu.Lock()
+	defer s.lcMu.Unlock()
 	v, err := s.store.Get(ctx)
 	if err != nil {
 		return err
@@ -159,6 +163,20 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 	}
 	s.longConn = lc
 	return nil
+}
+
+// CloseLongConn stops the long connection if one is running and clears it.
+// Safe to call in any mode (no-op when there is no long-conn, e.g. relay
+// mode). Used when the service is being replaced on a relay login/logout.
+func (s *Service) CloseLongConn(ctx context.Context) error {
+	s.lcMu.Lock()
+	defer s.lcMu.Unlock()
+	if s.longConn == nil {
+		return nil
+	}
+	err := s.longConn.Close(ctx)
+	s.longConn = nil
+	return err
 }
 
 // RenderAck returns the ack-update card the long-conn's card-action

@@ -176,3 +176,65 @@ func TestGetFeishuStatus_LocalConfigured(t *testing.T) {
 		t.Fatalf("want app_id_hash populated, got %+v", resp)
 	}
 }
+
+// TestReconcileFeishuMode_LocalToRelay: the Feishu mode follows the relay login
+// state at runtime. After startFeishu inits local mode, reconciling with a cfg
+// that has a relay URL + session token flips the mode to "relay" while reusing
+// the same HookServer + endpoint (so open PTYs keep working).
+func TestReconcileFeishuMode_LocalToRelay(t *testing.T) {
+	safekeyring.SetFileDirForTest(t.TempDir())
+	safekeyring.UseFileStore()
+	t.Cleanup(func() {
+		safekeyring.Reset()
+		safekeyring.SetFileDirForTest("")
+	})
+
+	a := &App{ctx: context.Background()}
+	a.startFeishu(a.ctx, appConfig{}) // no relay → local mode
+
+	svc0, mode0 := a.currentFeishu()
+	if mode0 != "local" || svc0 == nil {
+		t.Fatalf("want local mode after start, got mode=%q svc=%v", mode0, svc0)
+	}
+	hook0 := a.feishuHookSrv
+	endpoint0 := a.feishuHookEndpoint
+	if hook0 == nil || endpoint0 == "" {
+		t.Fatalf("want hook server + endpoint set, got %v %q", hook0, endpoint0)
+	}
+
+	// Simulate a relay login.
+	a.reconcileFeishuMode(a.ctx, appConfig{
+		RelayURL:          "wss://relay.example.com/ws",
+		RelaySessionToken: "tok",
+	})
+
+	svc1, mode1 := a.currentFeishu()
+	if mode1 != "relay" {
+		t.Fatalf("want relay mode after reconcile, got %q", mode1)
+	}
+	if svc1 == svc0 {
+		t.Fatalf("service should have been rebuilt")
+	}
+	if a.feishuHookSrv != hook0 {
+		t.Fatalf("hook server must be reused (stable endpoint), got a new one")
+	}
+	if a.feishuHookEndpoint != endpoint0 {
+		t.Fatalf("endpoint must be unchanged, was %q now %q", endpoint0, a.feishuHookEndpoint)
+	}
+
+	// Reconciling again with the same relay cfg is a no-op (no rebuild).
+	a.reconcileFeishuMode(a.ctx, appConfig{
+		RelayURL:          "wss://relay.example.com/ws",
+		RelaySessionToken: "tok",
+	})
+	svc2, _ := a.currentFeishu()
+	if svc2 != svc1 {
+		t.Fatalf("same-mode reconcile must not rebuild the service")
+	}
+
+	// Logout → back to local.
+	a.reconcileFeishuMode(a.ctx, appConfig{})
+	if _, mode3 := a.currentFeishu(); mode3 != "local" {
+		t.Fatalf("want local mode after logout, got %q", mode3)
+	}
+}

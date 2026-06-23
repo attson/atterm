@@ -377,8 +377,27 @@ export function closeSession(sessionId: string): Promise<void> {
   return bindings().CloseSession(sessionId);
 }
 
+// Cached shell list. ListShells shells out to exec.LookPath on the Go side;
+// the result is stable for a session and only changes when the user picks a
+// different default shell, so cache it to keep new-tab spawns off the IPC +
+// lookup path. Invalidated by setDefaultShell (the configured default reorders
+// the output) and by __resetShellsCacheForTest.
+let shellsCache: Promise<string[]> | null = null;
+
+export function __resetShellsCacheForTest(): void {
+  shellsCache = null;
+}
+
 export function listShells(): Promise<string[]> {
-  return bindings().ListShells();
+  if (!shellsCache) {
+    shellsCache = bindings()
+      .ListShells()
+      .catch((e) => {
+        shellsCache = null; // don't cache failures — allow retry
+        throw e;
+      });
+  }
+  return shellsCache;
 }
 
 export function getRelayConfig(): Promise<RelayConfig> {
@@ -546,8 +565,9 @@ export function getDefaultShell(): Promise<string> {
   return bindings().GetDefaultShell();
 }
 
-export function setDefaultShell(shell: string): Promise<void> {
-  return bindings().SetDefaultShell(shell);
+export async function setDefaultShell(shell: string): Promise<void> {
+  await bindings().SetDefaultShell(shell);
+  shellsCache = null; // the configured default reorders ListShells output
 }
 
 export function getHostInfo(): Promise<HostInfo> {

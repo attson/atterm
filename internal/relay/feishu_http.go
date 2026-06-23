@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -77,7 +78,41 @@ func (h *FeishuHTTPHandler) ServeHTTPEvents(w http.ResponseWriter, r *http.Reque
 		writeJSONStatus(w, http.StatusOK, resp.CardUpdate)
 		return
 	}
+	// The callback always 200s (Feishu retries on non-200), so a failed URL
+	// verification or dropped event is otherwise invisible. Log the short
+	// reason — no payload, no secrets — so misconfigured Encrypt Key / Verify
+	// Token / unknown-hash setups are diagnosable from the relay log.
+	logFeishuEventReject(hash, resp)
 	w.WriteHeader(http.StatusOK)
+}
+
+// feishuEventRejectReasons are the HandleEvent outcomes that mean the event was
+// dropped due to a (mis)configuration the operator needs to see. Benign
+// outcomes (dispatched / ignored-by-design) are deliberately not logged.
+var feishuEventRejectReasons = map[string]bool{
+	"unknown_app_id_hash":   true,
+	"store_error":           true,
+	"decrypt_failed":        true,
+	"parse_failed":          true,
+	"verify_token_mismatch": true,
+	"no_header":             true,
+}
+
+func logFeishuEventReject(hash string, resp *feishu.HandleResult) {
+	if resp == nil || !feishuEventRejectReasons[resp.Reason] {
+		return
+	}
+	// The hash is the public callback-URL suffix (not a secret); a prefix is
+	// enough to correlate with the configured URL without bloating the log.
+	hp := hash
+	if len(hp) > 16 {
+		hp = hp[:16] + "…"
+	}
+	if resp.LogError != nil {
+		log.Printf("relay: feishu event rejected: reason=%s hash=%s err=%v", resp.Reason, hp, resp.LogError)
+	} else {
+		log.Printf("relay: feishu event rejected: reason=%s hash=%s", resp.Reason, hp)
+	}
 }
 
 func (h *FeishuHTTPHandler) callbackURL(r *http.Request, hash string) string {

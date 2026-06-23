@@ -375,6 +375,10 @@ export namespace main {
 	    disabled: boolean;
 	    relay_disabled?: boolean;
 	    error?: string;
+	    configured?: boolean;
+	    app_id?: string;
+	    app_id_hash?: string;
+	    callback_url?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FeishuStatusResp(source);
@@ -389,6 +393,10 @@ export namespace main {
 	        this.disabled = source["disabled"];
 	        this.relay_disabled = source["relay_disabled"];
 	        this.error = source["error"];
+	        this.configured = source["configured"];
+	        this.app_id = source["app_id"];
+	        this.app_id_hash = source["app_id_hash"];
+	        this.callback_url = source["callback_url"];
 	    }
 	}
 	export class FileContent {

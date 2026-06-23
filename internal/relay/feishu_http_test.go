@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -249,6 +250,38 @@ func TestFeishuHTTP_EventCallback_UnknownHash(t *testing.T) {
 	h.ServeHTTPEvents(rr, req)
 	if rr.Code != 200 {
 		t.Fatalf("unknown hash should still 200, got %d", rr.Code)
+	}
+}
+
+// TestFeishuHTTP_EventCallback_LogsRejectReason: a misconfigured event (here a
+// plaintext body when the relay requires encryption) must still 200 but log the
+// short reject reason, so silent URL-verification failures are diagnosable.
+func TestFeishuHTTP_EventCallback_LogsRejectReason(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	u, _ := st.CreateOpaqueUser(ctx, "rej@example.com")
+	_ = st.UpsertFeishuBinding(ctx, u.ID, userstore.FeishuBindingCredentials{
+		AppID: "cli_rej", AppSecret: "s", EncryptKey: "ek-rej", VerifyToken: "vt-rej",
+	})
+	b, _ := st.GetFeishuBinding(ctx, u.ID)
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(old) })
+
+	// Plaintext url_verification (no "encrypt" field) → DecryptEnvelope rejects.
+	req := httptest.NewRequest("POST", "/v1/feishu/events/"+b.AppIDHash,
+		bytes.NewReader([]byte(`{"type":"url_verification","challenge":"x","token":"vt-rej"}`)))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPEvents(rr, req)
+
+	if rr.Code != 200 {
+		t.Fatalf("status=%d", rr.Code)
+	}
+	if got := buf.String(); !strings.Contains(got, "decrypt_failed") {
+		t.Fatalf("want decrypt_failed logged, got %q", got)
 	}
 }
 

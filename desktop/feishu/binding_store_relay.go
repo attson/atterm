@@ -98,9 +98,10 @@ func (s *RelayBackedBindingStore) Get(ctx context.Context) (*BindingView, error)
 		}
 	}
 	return &BindingView{
-		AppIDHash:  hash,
-		OpenID:     r.OpenID,
-		DisabledAt: r.DisabledAt,
+		AppIDHash:   hash,
+		OpenID:      r.OpenID,
+		DisabledAt:  r.DisabledAt,
+		CallbackURL: r.CallbackURL,
 	}, nil
 }
 

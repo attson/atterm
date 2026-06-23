@@ -38,6 +38,34 @@
         <p>{{ t('settings.feishu.bound', { open_id: status.open_id }) }}</p>
         <button type="button" class="btn-danger" @click="onDelete">{{ t('settings.feishu.delete') }}</button>
       </template>
+      <!-- Credentials stored but not yet bound. Show a "configured" view so a
+           reopened dialog reflects the saved state (secrets are never echoed
+           back, so the form would otherwise look blank) and let the user pair
+           or re-enter credentials. -->
+      <div v-else-if="status.configured && !editing" class="feishu-configured" data-test="feishu-configured">
+        <p class="configured-line">
+          <span class="configured-badge">{{ t('settings.feishu.configured') }}</span>
+          <span v-if="status.app_id" class="configured-appid">{{ t('settings.feishu.app_id_label') }}: {{ status.app_id }}</span>
+        </p>
+        <template v-if="status.callback_url">
+          <label class="field-label">{{ t('settings.feishu.callback_label') }}
+            <span class="callback-row">
+              <input :value="status.callback_url" readonly class="field-input" data-test="feishu-callback-url" />
+              <button type="button" class="btn-primary" @click="onCopyCallback" data-test="feishu-callback-copy">
+                {{ copied ? t('settings.feishu.copied') : t('settings.feishu.copy') }}
+              </button>
+            </span>
+          </label>
+          <p class="hint">{{ t('settings.feishu.callback_hint_relay') }}</p>
+        </template>
+        <p v-else class="hint" data-test="feishu-longconn-hint">{{ t('settings.feishu.longconn_hint_local') }}</p>
+        <div v-if="saveError" class="error">{{ saveError }}</div>
+        <div class="actions">
+          <button type="button" class="btn-primary" @click="onPair" data-test="feishu-begin-pair">{{ t('settings.feishu.begin_pair') }}</button>
+          <button type="button" class="btn-secondary" @click="onReconfigure">{{ t('settings.feishu.reconfigure') }}</button>
+        </div>
+        <p v-if="pairCode" class="pair-hint">{{ t('settings.feishu.pair_hint', { code: pairCode }) }}</p>
+      </div>
       <fieldset v-else class="feishu-fieldset">
         <label class="field-label">App ID
           <input v-model="creds.AppID" type="text" class="field-input" />
@@ -54,9 +82,7 @@
         <div v-if="saveError" class="error">{{ saveError }}</div>
         <div class="actions">
           <button type="button" class="btn-primary" @click="onSave">{{ t('settings.feishu.save') }}</button>
-          <button type="button" class="btn-primary" :disabled="!saved" @click="onPair">{{ t('settings.feishu.begin_pair') }}</button>
         </div>
-        <p v-if="pairCode" class="pair-hint">{{ t('settings.feishu.pair_hint', { code: pairCode }) }}</p>
       </fieldset>
     </template>
   </div>
@@ -93,8 +119,11 @@ const creds = ref<FeishuCredentials>({
   VerifyToken: '',
 })
 const pairCode = ref('')
-const saved = ref(false)
 const saveError = ref('')
+// editing forces the credentials form even when status.configured, so the user
+// can overwrite stored credentials from the "configured" view.
+const editing = ref(false)
+const copied = ref(false)
 
 const hookState = ref<HookInstallState>({
   enabled: true,
@@ -171,10 +200,28 @@ async function onSave() {
   saveError.value = ''
   try {
     await setFeishuCredentials(creds.value)
-    saved.value = true
+    editing.value = false
+    // refresh() flips status.configured → the configured view takes over.
     await refresh()
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function onReconfigure() {
+  saveError.value = ''
+  editing.value = true
+}
+
+async function onCopyCallback() {
+  if (!status.value.callback_url) return
+  try {
+    await navigator.clipboard.writeText(status.value.callback_url)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  } catch {
+    // Clipboard unavailable (non-secure context): leave the readonly input so
+    // the user can select-and-copy manually.
   }
 }
 
@@ -190,7 +237,7 @@ async function onDelete() {
   try {
     await deleteFeishuBinding()
     pairCode.value = ''
-    saved.value = false
+    editing.value = false
     await refresh()
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e)
@@ -226,6 +273,49 @@ async function onDelete() {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.25rem;
+}
+.feishu-configured {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.configured-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 13px;
+}
+.configured-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--good);
+  color: var(--bg);
+  font-size: 12px;
+}
+.configured-appid {
+  color: var(--fg-dim);
+  font-family: var(--mono, monospace);
+}
+.callback-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.callback-row .field-input {
+  flex: 1;
+  font-family: var(--mono, monospace);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
 }
 .error {
   color: #f87171;

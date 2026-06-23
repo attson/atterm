@@ -23,6 +23,7 @@ import {
 } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
+import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
@@ -103,6 +104,9 @@ const platform = usePlatform();
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
+// Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
+// doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
+let focusCoalescer: FocusReportCoalescer | null = null;
 
 // Map<sessionId, (text) => void> provided by App.vue. Plugins use it to
 // reuse the active driver SessionConnection for input. Absent (undefined)
@@ -433,6 +437,7 @@ async function ensureTerm() {
   keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
+  focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
   term.onData((data) => {
     const { cleaned, dropped } = stripC1Controls(data);
     if (dropped.length > 0) {
@@ -442,7 +447,7 @@ async function ensureTerm() {
         cleanedLength: cleaned.length,
       });
     }
-    if (cleaned) conn?.sendInput(cleaned);
+    if (cleaned) focusCoalescer?.handle(cleaned);
   });
   term.onResize(({ cols, rows }) => {
     if (!isDriver.value) return; // viewer's local resize is FitAddon-suppressed anyway
@@ -679,6 +684,8 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
   pluginInputSenders?.delete(props.sessionId);
+  focusCoalescer?.dispose();
+  focusCoalescer = null;
   conn?.detach();
   conn = null;
   resizeObserver?.disconnect();

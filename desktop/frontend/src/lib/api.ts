@@ -5,6 +5,7 @@
 import { t } from "../i18n";
 import type { PresetId } from "./taskState";
 import type { SessionInfo } from "./connection";
+import { decryptSessionFields } from "./connection";
 import {
   InitializeNotifications,
   IsNotificationAvailable,
@@ -757,7 +758,10 @@ export function markSessionsSeen(opts: MarkSessionsSeenOpts): Promise<void> {
 export async function listRemoteSessions(): Promise<SessionInfo[]> {
   const raw = await bindings().ListRemoteSessions();
   const parsed = JSON.parse(raw) as SessionInfo[] | null;
-  return parsed ?? [];
+  // The Go side returns the relay's raw JSON verbatim, so the E2EE-sealed
+  // title/cwd/command fields are still ciphertext here — decrypt them with the
+  // unlocked account_key the same way the WS META and Capacitor list paths do.
+  return decryptSessionFields(parsed ?? []);
 }
 
 export function getFeishuStatus(): Promise<FeishuStatusResp> {

@@ -1,5 +1,47 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { utf8ToBytes, randomBytes } from "@noble/hashes/utils.js";
 import source from "./connection.ts?raw";
+import { decryptSessionFields, type SessionInfo } from "./connection";
+import { setAccountKeyProvider } from "./account-key";
+import type { SealedSessionFields } from "./opaque";
+
+// --- Sealing helper (mirrors opaque.test.ts sealFields) ---------------------
+const SESSION_INFO_AAD_FRAME_TYPE = 0x12;
+function uuidStringToBytes(s: string): Uint8Array {
+  const hex = s.replace(/-/g, "");
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  return out;
+}
+function sealSessionFields(accountKey: Uint8Array, uuid: string, fields: SealedSessionFields): string {
+  const uuidBytes = uuidStringToBytes(uuid);
+  const prefix = utf8ToBytes("atterm-session-v1");
+  const info = new Uint8Array(prefix.length + uuidBytes.length);
+  info.set(prefix, 0);
+  info.set(uuidBytes, prefix.length);
+  const sessionKey = hkdf(sha256, accountKey, undefined, info, 32);
+  const nonce = randomBytes(24);
+  const aad = new Uint8Array(uuidBytes.length + 1);
+  aad.set(uuidBytes, 0);
+  aad[uuidBytes.length] = SESSION_INFO_AAD_FRAME_TYPE;
+  const aead = xchacha20poly1305(sessionKey, nonce, aad);
+  const ct = aead.encrypt(new TextEncoder().encode(JSON.stringify(fields)));
+  const env = new Uint8Array(1 + 24 + ct.length);
+  env[0] = 0x01;
+  env.set(nonce, 1);
+  env.set(ct, 1 + 24);
+  // base64-std encode
+  let bin = "";
+  for (const b of env) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+function baseSession(id: string, over: Partial<SessionInfo> = {}): SessionInfo {
+  return { id, command: "", cwd: "", title: "", cols: 80, rows: 24, started_at: 0, ...over };
+}
 
 describe("SessionConnection driver state", () => {
   test("generates and stores a clientID per instance", () => {
@@ -59,5 +101,48 @@ describe("openWS sync-throw isolation", () => {
     expect(source).toMatch(/handleOpenFailure\([\s\S]*?\)\s*:\s*void/);
     expect(source).toMatch(/onStatus\?\.\("error"\)/);
     expect(source).toMatch(/setTimeout\(\(\) => this\.openWS\(\), delay\)/);
+  });
+});
+
+describe("decryptSessionFields", () => {
+  const uuid = "a1b2c3d4-e5f6-7890-1234-567890abcdef";
+  const accountKey = new Uint8Array(32).map((_, i) => (i * 11) & 0xff);
+
+  afterEach(() => setAccountKeyProvider(null));
+
+  test("overlays sealed title/cwd/command/current_command when key is unlocked", () => {
+    setAccountKeyProvider(() => accountKey);
+    const sealed = sealSessionFields(accountKey, uuid, {
+      title: "atterm - claude",
+      cwd: "/Users/alice/proj",
+      command: "claude",
+      current_command: "rg api_key",
+    });
+    const [out] = decryptSessionFields([baseSession(uuid, { sealed })]);
+    expect(out.title).toBe("atterm - claude");
+    expect(out.cwd).toBe("/Users/alice/proj");
+    expect(out.command).toBe("claude");
+    expect(out.current_command).toBe("rg api_key");
+  });
+
+  test("passes sessions through unchanged when account key is locked", () => {
+    setAccountKeyProvider(() => null);
+    const sealed = sealSessionFields(accountKey, uuid, { title: "secret" });
+    const input = [baseSession(uuid, { sealed })];
+    const out = decryptSessionFields(input);
+    expect(out[0].title).toBe("");
+  });
+
+  test("leaves plaintext sessions (no sealed envelope) untouched", () => {
+    setAccountKeyProvider(() => accountKey);
+    const [out] = decryptSessionFields([baseSession(uuid, { title: "plain", command: "bash" })]);
+    expect(out.title).toBe("plain");
+    expect(out.command).toBe("bash");
+  });
+
+  test("keeps original fields when the sealed envelope fails to open", () => {
+    setAccountKeyProvider(() => accountKey);
+    const [out] = decryptSessionFields([baseSession(uuid, { title: "fallback", sealed: "bm90LXZhbGlk" })]);
+    expect(out.title).toBe("fallback");
   });
 });

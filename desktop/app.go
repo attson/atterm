@@ -464,6 +464,7 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 		return fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
+	prevURL := cfg.RelayURL
 	cfg.RelayURL = strings.TrimSpace(req.URL)
 	cfg.RelaySessionToken = strings.TrimSpace(req.Token)
 	cfg.RelaySessionExpiresAt = req.SessionExpiresAt
@@ -491,6 +492,24 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 		return err
 	}
 	a.applyRelayConfig(cfg)
+	// If the relay address changed while an account_key is unlocked, move the
+	// persisted key to the new origin. The keychain entry is origin-scoped, so
+	// reaching the SAME relay+account at a new address (e.g. IP:port → domain)
+	// would otherwise orphan the key under the old origin and the next launch
+	// would boot locked — leaving remote E2EE sessions undecryptable. Skipped
+	// during login/register (RelaySessionUserID is written after this call), which
+	// persist the key explicitly under the freshly-committed identity.
+	if prevURL != cfg.RelayURL && cfg.RelaySessionUserID != "" {
+		if key := a.accountKeySnapshot(); len(key) > 0 {
+			if err := saveAccountKey(cfg.RelayURL, cfg.RelaySessionUserID, key); err != nil {
+				log.Printf("desktop: re-persist account_key under new relay origin: %v", err)
+			} else if prevURL != "" {
+				if err := clearAccountKeyFor(prevURL, cfg.RelaySessionUserID); err != nil {
+					log.Printf("desktop: clear stale account_key under old relay origin: %v", err)
+				}
+			}
+		}
+	}
 	if priorDisableE2EE != cfg.DisableE2EE {
 		a.emitE2EEModeChanged(cfg.DisableE2EE)
 	}
@@ -531,7 +550,10 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	if err != nil {
 		return fmt.Errorf("relay OPAQUE login: %w", err)
 	}
-	a.setAccountKey(res.AccountKey)
+	// Set the in-memory key now so the uplink (started by SetRelayConfig below)
+	// seals its first announce. Persistence is deferred until the new relay URL
+	// and user id are committed to config — see persistAccountKey below.
+	a.setAccountKeyInMemory(res.AccountKey)
 	// RemotePermission is preserved from the persisted config (the login form
 	// doesn't surface it). AllowInsecureRelay comes from the call argument so
 	// the validator inside SetRelayConfig sees the form's current checkbox
@@ -559,6 +581,11 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 			return err
 		}
 	}
+	// Persist the account_key now that the relay URL + user id are committed,
+	// so the next launch's loadAccountKey(cfg.RelayURL, cfg.RelaySessionUserID)
+	// finds it. Done after the config write — persisting earlier wrote under the
+	// stale/empty user id and lost the key on relaunch.
+	a.persistAccountKey(res.AccountKey)
 	// Persist the password so SettingsRelay can prefill the password
 	// field on subsequent launches. Failure is logged but does not fail
 	// the login: the user already has a valid session token and account_key.
@@ -620,7 +647,9 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 	if err != nil {
 		return fmt.Errorf("relay OPAQUE register: %w", err)
 	}
-	a.setAccountKey(res.AccountKey)
+	// In-memory now (uplink seals first announce); persist after URL + user id
+	// are committed — see persistAccountKey below and LoginRemoteRelay.
+	a.setAccountKeyInMemory(res.AccountKey)
 	prev := a.GetRelayConfig()
 	if err := a.SetRelayConfig(RelayConfig{
 		URL:                wsURL,
@@ -638,6 +667,7 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 			return err
 		}
 	}
+	a.persistAccountKey(res.AccountKey)
 	// Persist the password so SettingsRelay can prefill the password
 	// field on subsequent launches. Failure is logged but does not fail
 	// the registration: the user already has a valid session token and account_key.
@@ -648,9 +678,23 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 	return nil
 }
 
-// setAccountKey stores key as the current in-memory account_key. Concurrent
-// callers see the most recent successful value via accountKeySnapshot.
+// setAccountKey stores key as the current in-memory account_key AND persists
+// it under the currently-configured (relay URL, user id). Used by callers
+// whose config already reflects the right identity (e.g. logout clearing with
+// nil). Login/register instead split the two steps — setAccountKeyInMemory
+// early (so the uplink seals on its first announce) then persistAccountKey
+// after the new URL + user id are committed — because persisting against the
+// stale identity would write the keychain entry under the wrong (or empty)
+// account name and lose it on the next launch.
 func (a *App) setAccountKey(key []byte) {
+	a.setAccountKeyInMemory(key)
+	a.persistAccountKey(key)
+}
+
+// setAccountKeyInMemory updates the in-memory account_key and notifies the
+// frontend WITHOUT touching the keychain. Concurrent callers see the most
+// recent value via accountKeySnapshot.
+func (a *App) setAccountKeyInMemory(key []byte) {
 	a.accountKeyMu.Lock()
 	if len(key) == 0 {
 		a.accountKey = nil
@@ -658,7 +702,6 @@ func (a *App) setAccountKey(key []byte) {
 		a.accountKey = append([]byte(nil), key...)
 	}
 	a.accountKeyMu.Unlock()
-	a.persistAccountKey(key)
 	a.emitAccountKeyChanged()
 }
 

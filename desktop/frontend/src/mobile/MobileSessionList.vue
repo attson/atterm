@@ -246,10 +246,10 @@ onMounted(async () => {
 .grouphdr { display: flex; align-items: center; gap: 6px; padding: 4px 2px 8px; font-size: 0.78rem; color: #c6cad5; font-family: var(--font-mono); cursor: pointer; user-select: none; -webkit-user-select: none; min-height: 32px; }
 .grouphdr:focus { outline: 1px solid rgba(255,255,255,0.18); outline-offset: 2px; border-radius: 3px; }
 .grouphdr .caret { font-size: 9px; color: #8d93a3; }
-.grouphdr .gname { flex: 0 0 auto; }
-.grouphdr .counts { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+.grouphdr .gname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grouphdr .counts { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .grouphdr .count { font-size: 0.72rem; color: #8d93a3; }
-.unread-badge { font-size: 10px; opacity: 0.9; background: rgba(255,255,255,0.06); border-radius: 3px; padding: 1px 4px; }
+.unread-badge { font-size: 10px; opacity: 0.9; background: rgba(255,255,255,0.06); border-radius: 3px; padding: 1px 4px; white-space: nowrap; flex-shrink: 0; }
 .group-mark-all { background: none; border: none; color: inherit; cursor: pointer; padding: 0 6px; font-size: 14px; min-width: 32px; min-height: 32px; }
 .completed-fold { border-top: 1px solid rgba(255,255,255,0.06); margin-top: 6px; padding-top: 4px; }
 .fold-toggle { background: none; border: none; cursor: pointer; padding: 8px 6px; width: 100%; text-align: left; color: inherit; opacity: 0.75; font-family: var(--font-mono); font-size: 0.78rem; }

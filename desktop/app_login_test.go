@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -40,25 +41,43 @@ func TestLoginRemoteRelay_PersistsSessionToken(t *testing.T) {
 	if err := a.RegisterRemoteRelay(ts.URL, "u@example.com", "pw-correct", "", false); err != nil {
 		t.Fatalf("RegisterRemoteRelay: %v", err)
 	}
+	// Simulate a relaunch / migrated config that lost the persisted user id
+	// (and in-memory key) but kept the relay URL — the state in which the
+	// account_key persist-ordering bug dropped the key (persistAccountKey ran
+	// before RelaySessionUserID was committed, so it saved under an empty id
+	// and the next launch booted locked → remote E2EE sessions undecryptable).
+	cfg := a.cfgStore.Get()
+	cfg.RelaySessionUserID = ""
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("clear user id: %v", err)
+	}
 	a.setAccountKey(nil) // simulate fresh session: no in-memory key yet
 
 	if err := a.LoginRemoteRelay(ts.URL, "u@example.com", "pw-correct", false); err != nil {
 		t.Fatalf("LoginRemoteRelay: %v", err)
 	}
 
-	cfg := a.GetRelayConfig()
-	if cfg.Token == "" {
+	rc := a.GetRelayConfig()
+	if rc.Token == "" {
 		t.Fatalf("session token not persisted")
 	}
-	if cfg.LastEmail != "u@example.com" {
-		t.Fatalf("email not persisted: got %q", cfg.LastEmail)
+	if rc.LastEmail != "u@example.com" {
+		t.Fatalf("email not persisted: got %q", rc.LastEmail)
 	}
 	wantURL := "ws://" + strings.TrimPrefix(ts.URL, "http://")
-	if cfg.URL != wantURL {
-		t.Fatalf("url: got %q want %q", cfg.URL, wantURL)
+	if rc.URL != wantURL {
+		t.Fatalf("url: got %q want %q", rc.URL, wantURL)
 	}
 	if !a.HasAccountKey() {
 		t.Fatalf("account_key not unlocked into App memory after login")
+	}
+	// The key the next launch reads back: loadAccountKey(persisted URL, user id).
+	// Must be non-empty — i.e. persisted under the identity boot looks up.
+	persisted := a.cfgStore.Get()
+	if k, err := loadAccountKey(persisted.RelayURL, persisted.RelaySessionUserID); err != nil {
+		t.Fatalf("loadAccountKey: %v", err)
+	} else if len(k) == 0 {
+		t.Fatal("account_key not persisted under the current (URL, user id) — would be lost on next launch")
 	}
 }
 
@@ -190,6 +209,54 @@ func TestLoginRemoteRelay_WrongPassword_PreservesStoredPassword(t *testing.T) {
 	got, _ := loadRelayPassword(cfg.URL, "u@example.com")
 	if got != "correct-pw" {
 		t.Fatalf("stored password corrupted by failed login: got %q want %q", got, "correct-pw")
+	}
+}
+
+// TestSetRelayConfig_MigratesAccountKeyOnURLChange covers the user's actual
+// failure: the relay was first reached at one address (e.g. wss://ip:port) and
+// later by another (e.g. wss://domain) for the SAME relay+account, without a
+// re-login. Because the keychain entry is origin-scoped, the key would orphan
+// under the old origin. SetRelayConfig must move it to the new origin while an
+// account_key is unlocked.
+func TestSetRelayConfig_MigratesAccountKeyOnURLChange(t *testing.T) {
+	a := newRelayTestApp(t)
+	// Stop the background uplink on cleanup so its retry loop doesn't starve
+	// the timing-sensitive uplink E2E test later in the package.
+	t.Cleanup(func() { _ = a.SetRelayConfig(RelayConfig{URL: "", RemotePermission: "full"}) })
+
+	// Seed the "already logged in at oldURL" state directly — no OPAQUE round
+	// trip needed, the migration logic only reads (RelayURL, user id) + the
+	// in-memory key. Both URLs are loopback so neither uplink dials externally.
+	const oldURL = "ws://127.0.0.1:59370"
+	const newURL = "ws://127.0.0.1:59371"
+	const uid = "user-abc"
+	key := bytes.Repeat([]byte{0xAB}, 32)
+	cfg := a.cfgStore.Get()
+	cfg.RelayURL = oldURL
+	cfg.RelaySessionToken = "tok"
+	cfg.RelaySessionUserID = uid
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("seed cfg: %v", err)
+	}
+	a.setAccountKeyInMemory(key)
+	if err := saveAccountKey(oldURL, uid, key); err != nil {
+		t.Fatalf("seed account_key: %v", err)
+	}
+
+	// User edits the relay address (same relay+account) without re-login.
+	if err := a.SetRelayConfig(RelayConfig{
+		URL:              newURL,
+		Token:            "tok",
+		RemotePermission: "full",
+	}); err != nil {
+		t.Fatalf("SetRelayConfig: %v", err)
+	}
+
+	if k, _ := loadAccountKey(newURL, uid); len(k) == 0 {
+		t.Fatal("account_key not migrated to the new relay origin")
+	}
+	if k, _ := loadAccountKey(oldURL, uid); len(k) != 0 {
+		t.Fatal("stale account_key under old origin not cleared")
 	}
 }
 

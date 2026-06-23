@@ -90,6 +90,68 @@ func TestResolveClaudeSessionID(t *testing.T) {
 	}
 }
 
+func TestResolveFreshClaudeSessionID(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "11111111-1111-1111-1111-111111111111.jsonl")
+	fresh := filepath.Join(dir, "22222222-2222-2222-2222-222222222222.jsonl")
+	writeJsonl(t, old, `{"type":"user"}`)
+	writeJsonl(t, fresh, `{"type":"user"}`)
+
+	now := time.Now()
+	if err := os.Chtimes(old, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	since := now.Add(-3 * time.Second)
+
+	if sid, ok := resolveFreshClaudeSessionID(dir, since); !ok || sid != "22222222-2222-2222-2222-222222222222" {
+		t.Fatalf("single fresh: got (%q,%v) want fresh uuid", sid, ok)
+	}
+
+	// A second active file → ambiguous (left to title matching).
+	fresh2 := filepath.Join(dir, "33333333-3333-3333-3333-333333333333.jsonl")
+	writeJsonl(t, fresh2, `{"type":"user"}`)
+	if _, ok := resolveFreshClaudeSessionID(dir, since); ok {
+		t.Fatal("two active files must be ambiguous (no result)")
+	}
+
+	// All old → no result.
+	if err := os.Chtimes(fresh, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(fresh2, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resolveFreshClaudeSessionID(dir, since); ok {
+		t.Fatal("no active file must yield no result")
+	}
+}
+
+func TestAdvancedSids(t *testing.T) {
+	t0 := time.Now()
+	prev := map[string]time.Time{"a": t0, "b": t0}
+
+	// b advanced, c newly appeared, a unchanged → {b, c}.
+	cur := map[string]time.Time{"a": t0, "b": t0.Add(time.Second), "c": t0.Add(time.Second)}
+	got := map[string]bool{}
+	for _, s := range advancedSids(prev, cur) {
+		got[s] = true
+	}
+	if len(got) != 2 || !got["b"] || !got["c"] {
+		t.Fatalf("advancedSids = %v, want {b,c}", got)
+	}
+
+	// nothing changed → empty (idle).
+	if a := advancedSids(prev, map[string]time.Time{"a": t0, "b": t0}); len(a) != 0 {
+		t.Fatalf("idle: advancedSids = %v, want empty", a)
+	}
+
+	// single switch: only the switched-to file advanced.
+	a := advancedSids(prev, map[string]time.Time{"a": t0, "b": t0.Add(2 * time.Second)})
+	if len(a) != 1 || a[0] != "b" {
+		t.Fatalf("single advance = %v, want [b]", a)
+	}
+}
+
 func TestResolveClaudeSessionID_AmbiguousNewestWins(t *testing.T) {
 	dir := t.TempDir()
 	older := filepath.Join(dir, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl")

@@ -217,33 +217,151 @@ func resolveClaudeSessionID(dir, paneTitle string, cache titleCache) (string, bo
 	}
 }
 
-// claudeResolveInterval / claudeResolveBudget bound the title poll. A freshly
-// launched claude has no ai-title record until it generates one, so we retry
-// as the title stabilizes.
+// resolveFreshClaudeSessionID captures a brand-new session by its file: a
+// freshly launched claude creates a new <uuid>.jsonl in its cwd dir and keeps
+// writing startup records, so its mtime advances past `since`. If exactly one
+// jsonl is active since then, its filename stem IS the session id — available
+// immediately, before claude generates any ai-title. Returns false on zero (no
+// fresh file yet) or ≥2 active files (ambiguous — left to title matching to
+// disambiguate same-cwd concurrency). This must never guess: exactly-one only.
+func resolveFreshClaudeSessionID(dir string, since time.Time) (string, bool) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var sids []string
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().Before(since) {
+			continue
+		}
+		if sid, ok := claudeParseSid(e.Name()); ok {
+			sids = append(sids, sid)
+		}
+	}
+	if len(sids) == 1 {
+		return sids[0], true
+	}
+	return "", false
+}
+
+// readClaudeJsonlMtimes maps each <uuid>.jsonl's session id to its mtime.
+func readClaudeJsonlMtimes(dir string) map[string]time.Time {
+	out := map[string]time.Time{}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		sid, ok := claudeParseSid(e.Name())
+		if !ok {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			out[sid] = info.ModTime()
+		}
+	}
+	return out
+}
+
+// advancedSids returns the session ids whose jsonl was written (mtime advanced,
+// or the file newly appeared) between prev and cur — i.e. the conversation(s)
+// claude is actively writing right now. claude writes metadata (mode /
+// permission-mode / last-prompt) on a /resume switch even before the user
+// types, so this catches a conversation switch promptly.
+func advancedSids(prev, cur map[string]time.Time) []string {
+	var out []string
+	for sid, mt := range cur {
+		if p, ok := prev[sid]; !ok || mt.After(p) {
+			out = append(out, sid)
+		}
+	}
+	return out
+}
+
+// claudeResolveInterval is the poll cadence for the continuous tracker.
+// claudeFreshGrace widens the "active since" window slightly so a fresh file
+// whose creation burst started just before the goroutine was scheduled is
+// still seen.
 const (
 	claudeResolveInterval = 1 * time.Second
-	claudeResolveBudget   = 60 * time.Second
+	claudeFreshGrace      = 3 * time.Second
 )
 
-// startClaudeTitleResolve polls the live pane title and resolves the claude
-// session id by aiTitle match. Calls onCapture once on success.
-func startClaudeTitleResolve(ctx context.Context, sess *session.Session, dir string, onCapture func(sid string)) {
+// startClaudeTitleResolve continuously tracks the session's ACTIVE claude
+// conversation id for the session's lifetime (until ctx is cancelled on PTY
+// exit), calling onCapture whenever it changes. Running once and stopping would
+// miss a /resume switch to another conversation within the same process — the
+// active jsonl changes and the captured id would go stale.
+//
+// Per tick:
+//   - Initial capture (nothing emitted yet): title match (precise) else
+//     fresh-file (a brand-new title-less session, by its just-created jsonl).
+//   - Then track the conversation claude is actively WRITING: the jsonl whose
+//     mtime advanced since the last tick. A single advancing file is the
+//     current conversation — this catches a /resume switch promptly (claude
+//     writes metadata to the switched file even before you type). If ≥2 files
+//     advanced (same-cwd concurrency), disambiguate by title; never guess.
+//
+// The watch dir is recomputed from the session's LIVE cwd each tick (meta.Cwd
+// can lag a recent `cd` at classification time).
+func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home string, onCapture func(sid string)) {
 	cache := titleCache{}
-	deadline := time.Now().Add(claudeResolveBudget)
-	lastTitle := ""
-	for time.Now().Before(deadline) {
+	since := time.Now().Add(-claudeFreshGrace)
+	lastEmitted := ""
+	emit := func(sid string) {
+		if sid == "" || sid == lastEmitted {
+			return
+		}
+		lastEmitted = sid
+		log.Printf("recovery: claude active conversation → sid=%s", sid)
+		onCapture(sid)
+	}
+	var prev map[string]time.Time
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(claudeResolveInterval):
 		}
-		lastTitle = sess.Info().Title
-		if sid, ok := resolveClaudeSessionID(dir, lastTitle, cache); ok {
-			onCapture(sid)
-			return
+		info := sess.Info()
+		if info.Cwd == "" {
+			continue
+		}
+		dir := claudeWatchDir(info.Cwd, time.Now(), home)
+		cur := readClaudeJsonlMtimes(dir)
+
+		if lastEmitted == "" {
+			if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
+				emit(sid)
+			} else if sid, ok := resolveFreshClaudeSessionID(dir, since); ok {
+				emit(sid)
+			}
+			prev = cur
+			continue
+		}
+
+		adv := advancedSids(prev, cur)
+		prev = cur
+		switch len(adv) {
+		case 1:
+			emit(adv[0])
+		case 0:
+			// idle — keep current conversation
+		default:
+			// ≥2 conversations being written (same-cwd concurrency): the active
+			// file is ambiguous; fall back to the precise title match.
+			if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
+				emit(sid)
+			}
 		}
 	}
-	log.Printf("recovery: claude resolve timeout in %s (last_title=%q)", dir, lastTitle)
 }
 
 // codexResolveInterval / codexResolveBudget bound the codex new-file watch.
@@ -322,9 +440,8 @@ func startAIResolve(ctx context.Context, sess *session.Session, cwd, kind string
 			log.Printf("recovery: no home for claude resolve: %v", err)
 			return
 		}
-		dir := claudeWatchDir(cwd, time.Now(), home)
-		log.Printf("recovery: ai resolve start kind=claude dir=%s", dir)
-		startClaudeTitleResolve(ctx, sess, dir, onCapture)
+		log.Printf("recovery: ai resolve start kind=claude (cwd tracked live, initial=%s)", cwd)
+		startClaudeTitleResolve(ctx, sess, home, onCapture)
 	case "codex":
 		log.Printf("recovery: ai resolve start kind=codex cwd=%s", cwd)
 		startCodexFileResolve(ctx, cwd, onCapture)

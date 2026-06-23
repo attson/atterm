@@ -12,26 +12,16 @@ import (
 
 // aiSniffSpec carries the resume invocation for one CLI.
 type aiSniffSpec struct {
-	Kind       string
 	ResumeArgs func(sid string) []string
 }
 
 var aiSniffers = map[string]aiSniffSpec{
-	"claude": {
-		Kind:       "claude",
-		ResumeArgs: func(sid string) []string { return []string{"--resume", sid} },
-	},
-	"codex": {
-		Kind:       "codex",
-		ResumeArgs: func(sid string) []string { return []string{"resume", sid} },
-	},
-	"aider": {
-		// aider resumes by cwd, not by id — and per the recovery design we do
-		// NOT fall back to re-running a recorded command, so there is nothing
-		// to resume without a precise id.
-		Kind:       "aider",
-		ResumeArgs: func(_ string) []string { return nil },
-	},
+	"claude": {ResumeArgs: func(sid string) []string { return []string{"--resume", sid} }},
+	"codex":  {ResumeArgs: func(sid string) []string { return []string{"resume", sid} }},
+	// aider resumes by cwd, not by id — and per the recovery design we do NOT
+	// fall back to re-running a recorded command, so there's nothing to resume
+	// without a precise id.
+	"aider": {ResumeArgs: func(_ string) []string { return nil }},
 }
 
 // computeResumeArgs picks the resume invocation for an AI pane. Returns nil

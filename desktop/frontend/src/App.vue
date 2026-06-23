@@ -56,11 +56,7 @@ import { RATIO_DEFAULT, closePane, focusNeighbor, transitionLayout } from "./lib
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
-import {
-  computeResumeLine,
-  buildRestoreSessionReq,
-  awaitFirstPromptReady,
-} from "./lib/recoveryRestore";
+import { buildRestoreSessionReq } from "./lib/recoveryRestore";
 import {
   DEFAULT_TERMINAL_THEME_ID,
   getTerminalTheme,
@@ -783,7 +779,8 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
         const req = buildRestoreSessionReq(snap, dims.cols, dims.rows);
         const resp = await newSession(req);
         t.panes[i] = { sessionId: resp.session_id, remote: false };
-        scheduleResumeInject(resp.session_id, snap);
+        // Resume injection is handled Go-side on the shell's first prompt
+        // (see relay_host SetOnFirstPrompt) — reliable, no task-state poll.
       } catch (e) {
         console.warn("[recovery] pane spawn failed", e);
         t.panes[i] = { sessionId: null, remote: false };
@@ -797,24 +794,6 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
   } else if (newIds.length > 0) {
     gotoTab(newIds[0]);
   }
-}
-
-// scheduleResumeInject waits for the first OSC-133;A prompt (task_state =
-// "waiting_input") and then writes the resume line into the PTY. Non-AI
-// snapshots and snapshots without enough info to resume are a no-op.
-function scheduleResumeInject(sessionId: string, snap: RecoveryTabSnapshot["panes"][number]) {
-  if (snap.session_type !== "ai") return;
-  const line = computeResumeLine(snap.ai);
-  if (!line) return;
-  const ep = localEndpoint.value;
-  if (!ep) return;
-  awaitFirstPromptReady(() => findSessionInfo(sessionId, false)?.task_state).then((result) => {
-    if (result === "timeout") {
-      showToast(i18nT("recovery.pane.resumeTimeout", { kind: snap.ai?.kind ?? "" }));
-      return;
-    }
-    sendInputToSession(ep, sessionId, line);
-  });
 }
 
 async function onClosePane() {

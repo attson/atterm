@@ -168,6 +168,18 @@ export interface FeishuStatusResp {
   // error: the status fetch failed; the real state is unknown. When set, the UI
   // must not claim the integration is disabled.
   error?: string;
+  // configured: app credentials are stored (regardless of bind state). Drives
+  // the "configured" view instead of an empty form — secrets are never echoed
+  // back, so without this the form looks blank on reopen.
+  configured?: boolean;
+  // app_id: stored (non-secret) App ID, echoed so the UI can show which app is
+  // configured. Present in local mode; empty in relay mode.
+  app_id?: string;
+  // app_id_hash: sha256(app_id) — suffix of the event callback URL.
+  app_id_hash?: string;
+  // callback_url: relay event endpoint to paste into the Feishu console. Set
+  // only in relay mode; empty in local mode (long-conn, no public URL).
+  callback_url?: string;
 }
 
 // HookInstallState mirrors desktop/hookinstall.State (json tags). Returned by

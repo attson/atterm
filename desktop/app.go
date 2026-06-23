@@ -2101,6 +2101,20 @@ type FeishuStatusResp struct {
 	// When set, the UI must NOT claim the integration is disabled — the real
 	// state is unknown. Empty on success.
 	Error string `json:"error,omitempty"`
+	// Configured reports that app credentials are stored (regardless of bind
+	// state). The UI uses it to render a "configured" view instead of an empty
+	// form — credentials persist but are never echoed back, so without this the
+	// form looks blank on reopen and reads as "not saved".
+	Configured bool `json:"configured,omitempty"`
+	// AppID echoes the stored (non-secret) App ID so the UI can show which app
+	// is configured. Available in local mode; empty in relay mode (the relay
+	// does not echo it back).
+	AppID string `json:"app_id,omitempty"`
+	// AppIDHash is sha256(AppID) — the suffix of the event callback URL.
+	AppIDHash string `json:"app_id_hash,omitempty"`
+	// CallbackURL is the relay event endpoint to paste into the Feishu console.
+	// Set only in relay mode; empty in local mode (long-conn, no public URL).
+	CallbackURL string `json:"callback_url,omitempty"`
 }
 
 // GetFeishuStatus returns the current Feishu integration state.
@@ -2133,11 +2147,15 @@ func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
 		return FeishuStatusResp{Mode: a.feishuMode, Error: err.Error()}, nil
 	}
 	return FeishuStatusResp{
-		Enabled:  true,
-		Mode:     a.feishuMode,
-		Bound:    v.OpenID != "",
-		OpenID:   v.OpenID,
-		Disabled: v.DisabledAt != 0,
+		Enabled:     true,
+		Mode:        a.feishuMode,
+		Bound:       v.OpenID != "",
+		OpenID:      v.OpenID,
+		Disabled:    v.DisabledAt != 0,
+		Configured:  true,
+		AppID:       v.AppID,
+		AppIDHash:   v.AppIDHash,
+		CallbackURL: v.CallbackURL,
 	}, nil
 }
 

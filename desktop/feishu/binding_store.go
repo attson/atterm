@@ -25,6 +25,10 @@ type BindingView struct {
 	OpenID                                    string
 	BoundAt                                   int64
 	DisabledAt                                int64
+	// CallbackURL is the relay-side event endpoint the user must paste into
+	// the Feishu console. Only set in relay mode; empty in local mode, where
+	// events arrive over the long connection and no public callback exists.
+	CallbackURL string
 }
 
 // ErrLocalBindingNotFound is the sentinel both local and relay-backed

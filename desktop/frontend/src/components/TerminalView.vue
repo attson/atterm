@@ -23,9 +23,10 @@ import {
 } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
 import { stripC1Controls } from "../lib/stripC1Controls";
+import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
-import { detectLinks, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
+import { cellInLink, detectLinks, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
 import { cellCoordsAt } from "../lib/terminalCellCoords";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import { descriptorsForSlot } from "../plugins/registry";
@@ -239,8 +240,12 @@ function computeLinkHit(e: MouseEvent): LinkMatch | null {
   if (!viewport) return null;
   const hit = cellCoordsAt(e.clientX, e.clientY, term, viewport);
   if (!hit) return null;
-  const line = term.buffer.active.getLine(hit.row)?.translateToString(true) ?? "";
-  return detectLinks(line).find((m) => hit.col >= m.start && hit.col < m.end) ?? null;
+  const line = term.buffer.active.getLine(hit.row);
+  if (!line) return null;
+  // hit.col is a cell column; map detected string-index spans to cell columns
+  // so wide glyphs (CJK, emoji) before the link don't throw off hit-testing.
+  const { text, cellStart } = mapBufferLineCells(line, term.cols);
+  return detectLinks(text).find((m) => cellInLink(hit.col, m, cellStart)) ?? null;
 }
 
 async function onMenuOpenLink() {
@@ -389,6 +394,10 @@ async function ensureTerm() {
   fit = new FitAddon();
   term.loadAddon(fit);
   term.open(termContainer.value!);
+  // Keep a bare Ctrl/⌘ press (e.g. to mod-click a link in the scrollback) from
+  // scrolling the viewport to the prompt. CJK IMEs deliver such keydowns as
+  // keyCode 229, which xterm 5.3 otherwise answers with scrollToBottom().
+  installModifierScrollGuard(term);
   // GPU-rasterized renderer eliminates the cell-ghosting the DOM renderer
   // shows on light terminal themes (most visible when remote TUIs like
   // Claude Code repaint dense RGB diff blocks). Load after open() so the

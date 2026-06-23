@@ -1,10 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  cellInLink,
   detectLinks,
   isModClickEvent,
+  linkCellRange,
+  mapBufferLineCells,
   normalizeForOpen,
+  type BufferLineLike,
   type LinkMatch,
 } from "./terminalLinks";
+
+// Build a BufferLineLike from a string; CJK ideographs count as 2-cell glyphs
+// (one width-2 cell + a width-0 spacer), mirroring xterm's buffer layout.
+function fakeLine(s: string): { line: BufferLineLike; cols: number } {
+  const cells: Array<{ chars: string; width: number }> = [];
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const w = cp >= 0x1100 && cp <= 0x9fff ? 2 : 1;
+    cells.push({ chars: ch, width: w });
+    for (let i = 1; i < w; i++) cells.push({ chars: "", width: 0 });
+  }
+  return {
+    cols: cells.length,
+    line: {
+      getCell(x: number) {
+        const c = cells[x];
+        if (!c) return undefined;
+        return { getChars: () => c.chars, getWidth: () => c.width };
+      },
+    },
+  };
+}
 
 describe("detectLinks — URL schemes", () => {
   it("matches a bare https URL", () => {
@@ -198,5 +224,55 @@ describe("isModClickEvent", () => {
   it("rejects when both ctrl and meta are pressed (ambiguous)", () => {
     expect(isModClickEvent(ev({ metaKey: true, ctrlKey: true }), true)).toBe(false);
     expect(isModClickEvent(ev({ metaKey: true, ctrlKey: true }), false)).toBe(false);
+  });
+});
+
+describe("mapBufferLineCells", () => {
+  it("maps string indices 1:1 to cells for an all-ASCII line", () => {
+    const { line, cols } = fakeLine("ab cd");
+    const { text, cellStart } = mapBufferLineCells(line, cols);
+    expect(text).toBe("ab cd");
+    expect(cellStart).toEqual([0, 1, 2, 3, 4, 5]); // includes the past-end sentinel
+  });
+
+  it("advances two cells per wide glyph", () => {
+    // 填(2) space(1) A(1)  ->  cells: 填@0, spacer@1, space@2, A@3
+    const { line, cols } = fakeLine("填 A");
+    const { text, cellStart } = mapBufferLineCells(line, cols);
+    expect(text).toBe("填 A");
+    // 填@cell0, space@cell2, A@cell3, sentinel past A = cell4
+    expect(cellStart).toEqual([0, 2, 3, 4]);
+  });
+
+  it("renders unwritten cells as spaces", () => {
+    const cells = [{ chars: "x", width: 1 }, { chars: "", width: 1 }];
+    const line: BufferLineLike = {
+      getCell(x) {
+        const c = cells[x];
+        return c ? { getChars: () => c.chars, getWidth: () => c.width } : undefined;
+      },
+    };
+    expect(mapBufferLineCells(line, 2).text).toBe("x ");
+  });
+});
+
+describe("linkCellRange / cellInLink past wide glyphs", () => {
+  it("shifts a link's cell range right by the wide glyphs before it", () => {
+    const { line, cols } = fakeLine("填 https://x.test");
+    const { text, cellStart } = mapBufferLineCells(line, cols);
+    const m = detectLinks(text)[0];
+    expect(m.text).toBe("https://x.test");
+    // string span [2,16) -> 1-based inclusive cells 4..17
+    expect(linkCellRange(m, cellStart)).toEqual({ startX: 4, endX: 17 });
+  });
+
+  it("hit-tests by cell column, not string index", () => {
+    const { line, cols } = fakeLine("填 https://x.test");
+    const { text, cellStart } = mapBufferLineCells(line, cols);
+    const m = detectLinks(text)[0];
+    expect(cellInLink(2, m, cellStart)).toBe(false); // would be a false hit pre-fix
+    expect(cellInLink(3, m, cellStart)).toBe(true); // first cell of the URL
+    expect(cellInLink(16, m, cellStart)).toBe(true); // last cell of the URL
+    expect(cellInLink(17, m, cellStart)).toBe(false); // just past the URL
   });
 });

@@ -101,8 +101,11 @@ describe("TerminalView right-click menu", () => {
     // closeContextMenu must clear it so the next right-click on plain text
     // doesn't carry over a stale hit.
     expect(source).toMatch(/menuLinkHit\.value\s*=\s*null/);
-    // computeLinkHit reuses the same detectLinks used by the hover provider.
-    expect(source).toMatch(/detectLinks\(line\)\.find/);
+    // computeLinkHit reuses the same detectLinks used by the hover provider,
+    // hit-testing by cell column (cellInLink) so wide glyphs don't skew it.
+    expect(source).toMatch(/detectLinks\(text\)\.find/);
+    expect(source).toContain("cellInLink(hit.col");
+    expect(source).toContain("mapBufferLineCells(line, term.cols)");
     expect(source).toContain("cellCoordsAt(");
   });
 });

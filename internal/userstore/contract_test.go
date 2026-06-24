@@ -121,6 +121,18 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		if len(out) != 1 || string(out[0].ValueJSON) != `"en"` || out[0].UpdatedAt != 100 {
 			t.Fatalf("stale write won: %+v (UpdatedAt=%d)", out, out[0].UpdatedAt)
 		}
+
+		// Regression: stale write must be rejected even when serverNowMs is a
+		// large value (guards the naive guard bug where bumped writeTs would
+		// wrongly pass the WHERE clause instead of it.UpdatedAt).
+		staleHighServerNow := []PreferenceItem{{Key: "locale_preference", ValueJSON: []byte(`"zh"`), UpdatedAt: 50}}
+		out2, err := st.SetUserPreferences(ctx, u.ID, 9_000_000_000_000, staleHighServerNow)
+		if err != nil {
+			t.Fatalf("set stale+highServerNow: %v", err)
+		}
+		if len(out2) != 1 || string(out2[0].ValueJSON) != `"en"` || out2[0].UpdatedAt != 100 {
+			t.Fatalf("stale write (high serverNowMs) won: %+v (UpdatedAt=%d)", out2, out2[0].UpdatedAt)
+		}
 	})
 
 	t.Run("account key wrap roundtrip", func(t *testing.T) {

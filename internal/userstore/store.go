@@ -92,6 +92,9 @@ func OpenPostgres(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open pgx: %w", err)
 	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping: %w", err)

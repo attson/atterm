@@ -18,7 +18,8 @@ import (
 
 // SQLiteStore is the production Store backed by a single SQLite file.
 type SQLiteStore struct {
-	db *sql.DB
+	db  *sql.DB
+	dia dialect
 	// cipher is the AEAD cipher for field-level secret encryption (Feishu
 	// app_secret etc.). It is settable after Open so the relay can enable
 	// Feishu at runtime without a restart; a nil pointer means Feishu CRUD
@@ -64,7 +65,7 @@ func Open(ctx context.Context, path string, opts ...OpenOption) (*SQLiteStore, e
 		db.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	s := &SQLiteStore{db: db}
+	s := &SQLiteStore{db: db, dia: dialectSQLite}
 	for _, o := range opts {
 		o(s)
 	}
@@ -160,13 +161,14 @@ type Store interface {
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		name TEXT PRIMARY KEY,
-		applied_at INTEGER NOT NULL
+		applied_at BIGINT NOT NULL
 	)`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	entries, err := migrationsFS.ReadDir("migrations")
+	dir := "migrations/" + s.dia.Name()
+	entries, err := migrationsFS.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("read embedded migrations: %w", err)
+		return fmt.Errorf("read embedded migrations %s: %w", dir, err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -178,14 +180,14 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	for _, name := range names {
 		var seen int
 		if err := s.db.QueryRowContext(ctx,
-			`SELECT count(*) FROM schema_migrations WHERE name=?`, name,
+			s.dia.Rebind(`SELECT count(*) FROM schema_migrations WHERE name=?`), name,
 		).Scan(&seen); err != nil {
 			return fmt.Errorf("check migration %s: %w", name, err)
 		}
 		if seen > 0 {
 			continue
 		}
-		body, err := migrationsFS.ReadFile("migrations/" + name)
+		body, err := migrationsFS.ReadFile(dir + "/" + name)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
@@ -198,8 +200,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("apply %s: %w", name, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO schema_migrations(name, applied_at) VALUES(?, strftime('%s','now'))`,
-			name); err != nil {
+			s.dia.Rebind(`INSERT INTO schema_migrations(name, applied_at) VALUES(?, ?)`),
+			name, time.Now().Unix()); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("record %s: %w", name, err)
 		}

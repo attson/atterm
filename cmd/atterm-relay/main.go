@@ -72,26 +72,15 @@ func main() {
 		log.Fatalf("create persist dir %s: %v", persistDir, err)
 	}
 
-	// Admin config persistence. Default the path under persistDir so runtime
-	// admin changes (Feishu integration, limits, origins) always have
-	// somewhere to land even when --config / ATTERM_RELAY_CONFIG is unset.
-	cfgFilePath := *configPath
-	if cfgFilePath == "" {
-		cfgFilePath = filepath.Join(persistDir, "relay.json")
-	}
-	adminCfg, err := relay.LoadAdminConfig(cfgFilePath)
-	if err != nil {
-		log.Fatalf("load relay config: %v", err)
-	}
-	adminStore := relay.NewAdminConfigStore(cfgFilePath, adminCfg)
+	// Admin config is now DB-backed; relay.json is no longer used. The
+	// --config / ATTERM_RELAY_CONFIG flags are retained for backward compat
+	// (they still affect persistDir resolution above) but no file is read.
 
-	// Open the user store WITHOUT a field-encryption cipher. Core relay
-	// (OPAQUE auth, sessions, web, push) needs no Feishu key; the cipher is
-	// attached later only if Feishu is enabled (env seed below, or via the
-	// admin API at runtime). This is what lets the relay boot with zero
-	// Feishu configuration instead of crash-looping.
 	dbPath := filepath.Join(persistDir, "users.db")
-	var store *userstore.DBStore
+	var (
+		store *userstore.DBStore
+		err   error
+	)
 	switch driver := strings.ToLower(strings.TrimSpace(os.Getenv("ATTERM_RELAY_DB_DRIVER"))); driver {
 	case "", "sqlite":
 		store, err = userstore.Open(ctx, dbPath)
@@ -121,9 +110,17 @@ func main() {
 		log.Fatalf("bootstrap admin: %v", err)
 	}
 
-	// One-time env → config seeding (config wins). Keeps existing
-	// env-configured deployments working while moving the source of truth
-	// into relay.json, which the admin UI then manages.
+	// Admin config — DB-backed. Load from DB (Version==0 means unconfigured).
+	adminStore := relay.NewAdminConfigStore(store, relay.AdminConfig{})
+	adminCfg, err := adminStore.LoadFromDB(ctx)
+	if err != nil {
+		log.Fatalf("load relay config: %v", err)
+	}
+
+	// One-time env → DB seeding. Keeps existing env-configured deployments
+	// working while the admin UI becomes the source of truth. Env/flags win
+	// at boot: read current DB snapshot, overlay any provided env values,
+	// then persist via Set (which bumps the version).
 	seeded := false
 	if v := os.Getenv("ATTERM_FEISHU_ENCRYPT_KEY"); v != "" && adminCfg.FeishuEncryptKey == "" {
 		adminCfg.FeishuEncryptKey = v
@@ -153,7 +150,7 @@ func main() {
 		seeded = true
 	}
 	if seeded {
-		if err := adminStore.Set(adminCfg); err != nil {
+		if err := adminStore.Set(ctx, adminCfg); err != nil {
 			log.Printf("WARN: persist seeded relay config: %v", err)
 		}
 		adminCfg = adminStore.Snapshot()
@@ -217,6 +214,10 @@ func main() {
 	}
 
 	srv := relay.NewServer(cfg)
+
+	// Start the cross-instance config refresher. Polls the DB every 10 s and
+	// hot-applies any changes made by another relay instance.
+	srv.StartConfigRefresher(ctx, 10*time.Second)
 
 	// Attach Feishu at boot if enabled with a usable key. Never fatal — a
 	// missing or bad key just leaves Feishu off; an admin can fix it in the

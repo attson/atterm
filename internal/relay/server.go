@@ -235,7 +235,7 @@ func NewServer(cfg Config) *Server {
 		// password fallback.
 		if cfg.OpaqueServer != nil {
 			if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
-				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer, cfg.BootstrapAdminEmail)
+				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer, cfg.BootstrapAdminEmail, cfg.RealmID)
 				opaqueAuth.Register(s.mux)
 			}
 		}

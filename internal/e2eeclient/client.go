@@ -99,6 +99,7 @@ type LoginResult struct {
 	SessionToken string
 	Email        string
 	AccountKey   []byte // 32 bytes
+	RealmID      string
 }
 
 // RegisterResult is the return value of Register.
@@ -107,6 +108,7 @@ type RegisterResult struct {
 	SessionToken string
 	Email        string
 	AccountKey   []byte // 32 bytes
+	RealmID      string
 }
 
 // Register completes a fresh OPAQUE registration against the relay, mints
@@ -173,6 +175,7 @@ func (c *Client) Register(ctx context.Context, email, password, claimToken strin
 		SessionToken: finResp.SessionToken,
 		Email:        email,
 		AccountKey:   accountKey,
+		RealmID:      finResp.RealmID,
 	}, nil
 }
 
@@ -235,6 +238,7 @@ func (c *Client) Login(ctx context.Context, email, password string) (*LoginResul
 		SessionToken: finResp.SessionToken,
 		Email:        email,
 		AccountKey:   accountKey,
+		RealmID:      finResp.RealmID,
 	}, nil
 }
 
@@ -409,6 +413,7 @@ type registerFinalizeRequest struct {
 type registerFinalizeResponse struct {
 	UserID       string `json:"user_id"`
 	SessionToken string `json:"session_token"`
+	RealmID      string `json:"realm_id"`
 }
 
 type loginInitRequest struct {
@@ -431,4 +436,5 @@ type loginFinalizeResponse struct {
 	UserID         string         `json:"user_id"`
 	SessionToken   string         `json:"session_token"`
 	AccountKeyWrap AccountKeyWrap `json:"account_key_wrap"`
+	RealmID        string         `json:"realm_id"`
 }

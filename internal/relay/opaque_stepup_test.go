@@ -27,7 +27,7 @@ func TestStepUp_FullRoundTripMintsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
-	h := NewOpaqueAuthHandler(store, srv, "")
+	h := NewOpaqueAuthHandler(store, srv, "", "")
 
 	const email = "alice@example.com"
 	const password = "hunter2-stepup"
@@ -84,7 +84,7 @@ func TestStepUp_WrongPasswordRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
-	h := NewOpaqueAuthHandler(store, srv, "")
+	h := NewOpaqueAuthHandler(store, srv, "", "")
 
 	const email = "alice@example.com"
 	registerForStepUp(t, h, email, "correct-password")
@@ -166,7 +166,7 @@ func TestStepUpInit_WrongEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
-	h := NewOpaqueAuthHandler(store, srv, "")
+	h := NewOpaqueAuthHandler(store, srv, "", "")
 
 	conf := defaultConfig()
 	cl, _ := conf.Client()
@@ -184,7 +184,7 @@ func TestStepUpInit_WrongEmail(t *testing.T) {
 func TestStepUp_RoutesRegistered(t *testing.T) {
 	store := userstore.NewInMemory(t)
 	srv, _ := LoadOrInitOpaqueServer(context.Background(), store)
-	h := NewOpaqueAuthHandler(store, srv, "")
+	h := NewOpaqueAuthHandler(store, srv, "", "")
 
 	mux := http.NewServeMux()
 	h.Register(mux)

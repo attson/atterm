@@ -13,6 +13,7 @@ import (
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
@@ -90,8 +91,18 @@ func waitForSessionOwner(t *testing.T, srv *Server, sid uuid.UUID, ownerUserID s
 }
 
 func TestUplinkCommandEventTriggersDispatchWhenSessionInManifest(t *testing.T) {
-	const ownerUserID = "user_uplink_test"
-	svc, _ := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	ctx := context.Background()
+	st, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("userstore.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	u, err := st.CreateOpaqueUser(ctx, "uplink-test@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	ownerUserID := u.ID
+	svc, _ := webpush.Open(st, "mailto:test@example.com")
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
 	srv := NewServer(Config{
@@ -136,7 +147,7 @@ func TestUplinkCommandEventTriggersDispatchWhenSessionInManifest(t *testing.T) {
 
 func TestUplinkWaitingInputStateTriggersWebPush(t *testing.T) {
 	store, userID, apiToken := newUplinkTestStore(t)
-	svc, _ := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	svc, _ := webpush.Open(store, "mailto:test@example.com")
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
 	addRelayWebPushSubscription(t, svc, userID)
@@ -167,7 +178,7 @@ func TestUplinkWaitingInputStateTriggersWebPush(t *testing.T) {
 
 func TestUplinkRunningSessionIdleTimeoutTriggersWebPush(t *testing.T) {
 	store, userID, apiToken := newUplinkTestStore(t)
-	svc, _ := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	svc, _ := webpush.Open(store, "mailto:test@example.com")
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
 	addRelayWebPushSubscription(t, svc, userID)
@@ -207,7 +218,7 @@ func TestUplinkRunningSessionIdleTimeoutTriggersWebPush(t *testing.T) {
 
 func TestUplinkDisconnectTriggersWebPush(t *testing.T) {
 	store, userID, apiToken := newUplinkTestStore(t)
-	svc, _ := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	svc, _ := webpush.Open(store, "mailto:test@example.com")
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
 	addRelayWebPushSubscription(t, svc, userID)
@@ -232,7 +243,17 @@ func TestUplinkDisconnectTriggersWebPush(t *testing.T) {
 }
 
 func TestUplinkCommandEventDropsUnknownSession(t *testing.T) {
-	svc, _ := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	ctx := context.Background()
+	st, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("userstore.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	u, err := st.CreateOpaqueUser(ctx, "drop-test@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	svc, _ := webpush.Open(st, "mailto:test@example.com")
 	rec := &recordingHTTPClientForRelayTest{}
 	webpush.InjectTransportForTesting(svc, rec)
 	srv := NewServer(Config{
@@ -241,7 +262,7 @@ func TestUplinkCommandEventDropsUnknownSession(t *testing.T) {
 	sub := webpush.Subscription{Endpoint: "https://push.example/abc"}
 	sub.Keys.P256dh = "BNNL5ZaTfK81qhXOx23-wewhigUeFb632jN6LvRWCFH1ubQr77FE_9qV1FuojuRmHP42zmf34rXgW80OvUVDgTk"
 	sub.Keys.Auth = "zqbxT6JKstKSY9JKibZLSQ"
-	_ = svc.AddSubscription("user_drop_test", sub)
+	_ = svc.AddSubscription(u.ID, sub)
 	// Mirrors map is empty (no sessions known to this uplink).
 	mirrors := map[uuid.UUID]*mirrorState{}
 	var mu sync.Mutex

@@ -33,7 +33,7 @@ func main() {
 	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
 	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
-	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for web-push.json etc. (or ATTERM_RELAY_CONFIG_DIR)")
+	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for the SQLite DB etc. (or ATTERM_RELAY_CONFIG_DIR)")
 	vapidSubject := flag.String("vapid-subject", envOr("ATTERM_VAPID_SUBJECT", "mailto:noreply@atterm.local"), "VAPID subject (mailto: or https: URL; advertised to push services)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
@@ -202,7 +202,7 @@ func main() {
 	if effectiveVapid == "" {
 		effectiveVapid = *vapidSubject
 	}
-	wpSvc, wpErr := webpush.Open(persistDir, effectiveVapid)
+	wpSvc, wpErr := webpush.Open(store, effectiveVapid)
 	if wpErr != nil {
 		log.Printf("WARN: web-push disabled: %v", wpErr)
 		wpSvc = nil
@@ -234,24 +234,6 @@ func main() {
 			}
 			log.Printf("feishu: app-mode integration enabled (base=%s)", base)
 		}
-	}
-
-	if wpSvc != nil {
-		// Schedule daily cleanup of legacy web-push subscription files.
-		go func() {
-			t := time.NewTicker(24 * time.Hour)
-			defer t.Stop()
-			for {
-				select {
-				case <-t.C:
-					if err := webpush.CleanupLegacy(ctx, persistDir); err != nil {
-						log.Printf("webpush: CleanupLegacy: %v", err)
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
 	}
 
 	// Schedule daily sweep of expired feishu pending bind tokens.

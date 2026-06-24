@@ -1,12 +1,26 @@
 package webpush
 
 import (
+	"context"
 	"testing"
+
+	"github.com/attson/atterm/internal/userstore"
 )
 
-func TestOpenFreshDirGeneratesKeysAndReturnsService(t *testing.T) {
-	dir := t.TempDir()
-	svc, err := Open(dir, "mailto:test@example.com")
+func newTestStore(t *testing.T) *userstore.DBStore {
+	t.Helper()
+	ctx := context.Background()
+	st, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("userstore.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+func TestOpenFreshStoreGeneratesKeysAndReturnsService(t *testing.T) {
+	st := newTestStore(t)
+	svc, err := Open(st, "mailto:test@example.com")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -19,13 +33,13 @@ func TestOpenFreshDirGeneratesKeysAndReturnsService(t *testing.T) {
 }
 
 func TestOpenLoadsExistingState(t *testing.T) {
-	dir := t.TempDir()
-	first, err := Open(dir, "mailto:test@example.com")
+	st := newTestStore(t)
+	first, err := Open(st, "mailto:test@example.com")
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
 	pubKey := first.PublicKey()
-	second, err := Open(dir, "mailto:test@example.com")
+	second, err := Open(st, "mailto:test@example.com")
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}
@@ -34,38 +48,36 @@ func TestOpenLoadsExistingState(t *testing.T) {
 	}
 }
 
-func TestOpenEmptyDirReturnsInMemoryService(t *testing.T) {
-	svc, err := Open("", "mailto:test@example.com")
-	if err != nil {
-		t.Fatalf("Open(empty dir): %v", err)
-	}
-	if svc == nil {
-		t.Fatal("Open(empty dir) returned nil; expected in-memory service")
-	}
-	if svc.PublicKey() == "" {
-		t.Fatal("in-memory service has no VAPID public key")
-	}
-}
-
 func TestServiceAddAndRemoveSubscriptionRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	svc, _ := Open(dir, "mailto:test@example.com")
-	sub := Subscription{Endpoint: "https://push.example/abc"}
+	ctx := context.Background()
+	st := newTestStore(t)
+	svc, _ := Open(st, "mailto:test@example.com")
+
+	// Need a real user since subscriptions FK to users(id).
+	u, err := st.CreateOpaqueUser(ctx, "sub-roundtrip@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+
+	var sub Subscription
+	sub.Endpoint = "https://push.example/abc"
 	sub.Keys.P256dh = "p"
 	sub.Keys.Auth = "a"
-	if err := svc.AddSubscription("user1", sub); err != nil {
+	if err := svc.AddSubscription(u.ID, sub); err != nil {
 		t.Fatalf("AddSubscription: %v", err)
 	}
-	// New Open should see the persisted subscription.
-	svc2, _ := Open(dir, "mailto:test@example.com")
-	if got := svc2.SubscriptionsForUser("user1"); len(got) != 1 || got[0].Endpoint != sub.Endpoint {
+
+	// Re-open with same store should see the persisted subscription.
+	svc2, _ := Open(st, "mailto:test@example.com")
+	if got := svc2.SubscriptionsForUser(u.ID); len(got) != 1 || got[0].Endpoint != sub.Endpoint {
 		t.Fatalf("persisted subs not loaded; got %v", got)
 	}
-	if err := svc.RemoveSubscription("user1", sub.Endpoint); err != nil {
+
+	if err := svc.RemoveSubscription(u.ID, sub.Endpoint); err != nil {
 		t.Fatalf("RemoveSubscription: %v", err)
 	}
-	svc3, _ := Open(dir, "mailto:test@example.com")
-	if got := svc3.SubscriptionsForUser("user1"); len(got) != 0 {
+	svc3, _ := Open(st, "mailto:test@example.com")
+	if got := svc3.SubscriptionsForUser(u.ID); len(got) != 0 {
 		t.Fatalf("subs not removed after persist; got %v", got)
 	}
 }

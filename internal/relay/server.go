@@ -83,6 +83,10 @@ type Config struct {
 	// email matches this is auto-promoted to admin (no claim token). Empty
 	// disables the email-gated path.
 	BootstrapAdminEmail string
+	// RealmID is the stable cluster realm identifier loaded by
+	// LoadOrInitRealm. Passed to OpaqueAuthHandler so tokens are
+	// realm-scoped.
+	RealmID string
 }
 
 // Server bundles the registry and HTTP handlers.

@@ -103,6 +103,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("opaque server init: %v", err)
 	}
+	realmID, err := relay.LoadOrInitRealm(ctx, store, os.Getenv("ATTERM_RELAY_REALM_ID"))
+	if err != nil {
+		log.Fatalf("init realm: %v", err)
+	}
 
 	if err := bootstrapAdmin(ctx, store, bootstrapEmail); err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
@@ -193,6 +197,7 @@ func main() {
 		Store:                store,
 		OpaqueServer:         opaqueSrv,
 		BootstrapAdminEmail:  bootstrapEmail,
+		RealmID:              realmID,
 	}
 
 	// VAPID subject is consumed once here; changing it later needs a restart.

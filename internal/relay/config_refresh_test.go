@@ -42,7 +42,9 @@ func TestConfigRefresherAppliesRemoteChange(t *testing.T) {
 	}
 
 	srv := newConfigRefreshTestServer(t, store) // see note below
-	if got := srv.currentAllowedOrigins(); len(got) != 1 || got[0] != "https://a.example" {
+	// OriginPatterns normalizes "https://a.example" → "a.example" and appends
+	// the desktop webview hosts. Check the host pattern, not the raw URL.
+	if got := srv.currentAllowedOrigins(); len(got) == 0 || got[0] != "a.example" {
 		t.Fatalf("initial origins = %v", got)
 	}
 
@@ -61,7 +63,8 @@ func TestConfigRefresherAppliesRemoteChange(t *testing.T) {
 	if !applied {
 		t.Fatalf("expected refresh to apply a version change")
 	}
-	if got := srv.currentAllowedOrigins(); len(got) != 2 || got[1] != "https://b.example" {
+	// After normalization: "https://a.example" → "a.example", "https://b.example" → "b.example".
+	if got := srv.currentAllowedOrigins(); len(got) < 2 || got[0] != "a.example" || got[1] != "b.example" {
 		t.Fatalf("after refresh origins = %v", got)
 	}
 }
@@ -89,6 +92,96 @@ func TestConfigRefresherNoOpWhenVersionUnchanged(t *testing.T) {
 	}
 	if applied {
 		t.Fatal("expected no-op refresh when version unchanged")
+	}
+}
+
+// TestOriginNormalizationThroughRefresh verifies that refreshConfigOnce passes
+// raw DB origins through OriginPatterns so only host patterns (not full URLs)
+// end up in the hot-cache. Fails before the Bug 2 fix.
+func TestOriginNormalizationThroughRefresh(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	// Seed initial config with a full URL origin.
+	if _, err := store.SetRelayConfig(ctx, userstore.RelayConfig{
+		AllowedOrigins: []string{"https://relay.example.com"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	srv := newConfigRefreshTestServer(t, store)
+
+	// Simulate a remote instance adding another URL origin via a new version.
+	if _, err := store.SetRelayConfig(ctx, userstore.RelayConfig{
+		AllowedOrigins: []string{"https://relay.example.com", "https://extra.example.com"},
+	}); err != nil {
+		t.Fatalf("remote change: %v", err)
+	}
+
+	applied, err := srv.refreshConfigOnce(ctx)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !applied {
+		t.Fatalf("expected refresh to apply a version change")
+	}
+
+	origins := srv.currentAllowedOrigins()
+	// OriginPatterns strips the scheme, so "https://relay.example.com" → "relay.example.com".
+	for _, o := range origins {
+		if o == "https://relay.example.com" || o == "https://extra.example.com" {
+			t.Errorf("raw URL %q found in allowed origins; want host-only patterns: %v", o, origins)
+		}
+	}
+	found := false
+	for _, o := range origins {
+		if o == "relay.example.com" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("normalized host pattern %q not found in origins: %v", "relay.example.com", origins)
+	}
+}
+
+// TestReadOnlyTokensSurviveLoadFromDB verifies that LoadFromDB does not wipe
+// the in-memory ReadOnlyTokens (which are never persisted to the DB).
+// Fails before the Bug 1 fix.
+func TestReadOnlyTokensSurviveLoadFromDB(t *testing.T) {
+	ctx := context.Background()
+	st := openMemStore(t)
+
+	tok := StoredToken{
+		ID:        "viewer",
+		Hash:      HashBearerToken("secret"),
+		CreatedAt: 123,
+	}
+	// Build a store that has a ReadOnlyToken in-memory but no DB config yet.
+	adminStore := NewAdminConfigStore(st, AdminConfig{
+		ReadOnlyTokens: []StoredToken{tok},
+	})
+
+	// Seed a DB config with version > 0 so LoadFromDB replaces in-memory cfg.
+	if _, err := st.SetRelayConfig(ctx, userstore.RelayConfig{
+		RateLimitPerMinute: 10,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if _, err := adminStore.LoadFromDB(ctx); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+
+	snap := adminStore.Snapshot()
+	if len(snap.ReadOnlyTokens) != 1 {
+		t.Fatalf("ReadOnlyTokens after LoadFromDB = %d; want 1 (tokens were wiped)", len(snap.ReadOnlyTokens))
+	}
+	if !tokenMatchesHash("secret", snap.ReadOnlyTokens[0].Hash) {
+		t.Fatalf("ReadOnlyToken hash mismatch after LoadFromDB: %+v", snap.ReadOnlyTokens)
 	}
 }
 
@@ -121,10 +214,14 @@ func TestStartConfigRefresherRunsInBackground(t *testing.T) {
 	}
 
 	// Wait for the refresher to pick it up.
+	// OriginPatterns normalizes URLs to host patterns and appends desktop webview
+	// hosts, so check that "b.example" appears rather than checking a raw count.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if got := srv.currentAllowedOrigins(); len(got) == 2 {
-			return
+		for _, o := range srv.currentAllowedOrigins() {
+			if o == "b.example" {
+				return
+			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

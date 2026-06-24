@@ -285,7 +285,7 @@ func (a *App) startup(ctx context.Context) {
 	// again. This MUST run before applyRelayConfig so the uplink picks
 	// up the unlocked key on the same boot.
 	if cfg.RelayURL != "" && cfg.RelaySessionUserID != "" {
-		if key, err := loadAccountKey(cfg.RelayURL, cfg.RelaySessionUserID); err != nil {
+		if key, err := loadAccountKey(cfg.RelayRealmID, cfg.RelaySessionUserID); err != nil {
 			log.Printf("desktop: load persisted account_key: %v", err)
 		} else if len(key) > 0 {
 			a.accountKeyMu.Lock()
@@ -493,7 +493,6 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 		return fmt.Errorf("config store not ready")
 	}
 	cfg := a.cfgStore.Get()
-	prevURL := cfg.RelayURL
 	cfg.RelayURL = strings.TrimSpace(req.URL)
 	cfg.RelaySessionToken = strings.TrimSpace(req.Token)
 	cfg.RelaySessionExpiresAt = req.SessionExpiresAt
@@ -521,24 +520,6 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 		return err
 	}
 	a.applyRelayConfig(cfg)
-	// If the relay address changed while an account_key is unlocked, move the
-	// persisted key to the new origin. The keychain entry is origin-scoped, so
-	// reaching the SAME relay+account at a new address (e.g. IP:port → domain)
-	// would otherwise orphan the key under the old origin and the next launch
-	// would boot locked — leaving remote E2EE sessions undecryptable. Skipped
-	// during login/register (RelaySessionUserID is written after this call), which
-	// persist the key explicitly under the freshly-committed identity.
-	if prevURL != cfg.RelayURL && cfg.RelaySessionUserID != "" {
-		if key := a.accountKeySnapshot(); len(key) > 0 {
-			if err := saveAccountKey(cfg.RelayURL, cfg.RelaySessionUserID, key); err != nil {
-				log.Printf("desktop: re-persist account_key under new relay origin: %v", err)
-			} else if prevURL != "" {
-				if err := clearAccountKeyFor(prevURL, cfg.RelaySessionUserID); err != nil {
-					log.Printf("desktop: clear stale account_key under old relay origin: %v", err)
-				}
-			}
-		}
-	}
 	if priorDisableE2EE != cfg.DisableE2EE {
 		a.emitE2EEModeChanged(cfg.DisableE2EE)
 	}
@@ -606,6 +587,7 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 		cfg := a.cfgStore.Get()
 		cfg.RelayLastEmail = email
 		cfg.RelaySessionUserID = res.UserID
+		cfg.RelayRealmID = res.RealmID
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}
@@ -692,6 +674,7 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 		cfg := a.cfgStore.Get()
 		cfg.RelayLastEmail = email
 		cfg.RelaySessionUserID = res.UserID
+		cfg.RelayRealmID = res.RealmID
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}
@@ -763,7 +746,7 @@ func (a *App) persistAccountKey(key []byte) {
 	if cfg.RelayURL == "" || cfg.RelaySessionUserID == "" {
 		return
 	}
-	if err := saveAccountKey(cfg.RelayURL, cfg.RelaySessionUserID, key); err != nil {
+	if err := saveAccountKey(cfg.RelayRealmID, cfg.RelaySessionUserID, key); err != nil {
 		log.Printf("desktop: persist account_key failed: %v", err)
 	}
 }

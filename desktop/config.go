@@ -59,6 +59,10 @@ type appConfig struct {
 	// stored here so the first-login seed mechanism can key its
 	// PrefsSeedMarkers entry by user id rather than email.
 	RelaySessionUserID string `json:"relay_session_user_id,omitempty"`
+	// RelayRealmID is the relay cluster's stable realm id (from the login
+	// response). The account_key is anchored to it in the keychain so it
+	// survives relay node/domain switches.
+	RelayRealmID string `json:"relay_realm_id,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`

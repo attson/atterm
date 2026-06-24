@@ -22,28 +22,27 @@ func accountKeyService() string {
 	return "com.atterm.account-key.v1" + appdir.KeychainSuffix()
 }
 
-// accountKeyAccount derives the keychain "account" name from the relay
-// origin and user ID. Multiple relays on the same desktop must not
-// share storage — e.g. testing against staging while production stays
-// logged in — so the origin is part of the key. user_id is included so
-// a future multi-account-per-relay flow doesn't require schema work.
+// accountKeyAccount derives the keychain "account" name from the cluster
+// realm id and user id. Anchoring on realm (not the physical relay origin)
+// lets the account_key survive node/domain switches. Multiple realms on the
+// same desktop stay isolated via the realm prefix.
 //
 // Returns empty string when either input is empty so callers can treat
 // that as "don't persist" without sprinkling guard clauses everywhere.
-func accountKeyAccount(relayOrigin, userID string) string {
-	relayOrigin = strings.TrimRight(strings.TrimSpace(relayOrigin), "/")
+func accountKeyAccount(realmID, userID string) string {
+	realmID = strings.TrimSpace(realmID)
 	userID = strings.TrimSpace(userID)
-	if relayOrigin == "" || userID == "" {
+	if realmID == "" || userID == "" {
 		return ""
 	}
-	return relayOrigin + "|" + userID
+	return realmID + "|" + userID
 }
 
 // errKeychainNotConfigured is the keyring-unconfigured error we surface
 // to callers as "no key persisted" rather than as a real failure.
 var errKeychainNotConfigured = safekeyring.ErrNotFound
 
-// loadAccountKey reads the persisted E2EE account key for (relayOrigin,
+// loadAccountKey reads the persisted E2EE account key for (realmID,
 // userID), or returns nil if nothing was stored. Any keychain-level
 // error other than "not found" surfaces verbatim so the caller can log
 // it and fall back to the in-memory state.
@@ -52,8 +51,8 @@ var errKeychainNotConfigured = safekeyring.ErrNotFound
 // a printable ASCII string (some backends — notably macOS' security CLI
 // — log secret values on certain code paths; printable bytes are less
 // likely to be misinterpreted as control sequences).
-func loadAccountKey(relayOrigin, userID string) ([]byte, error) {
-	account := accountKeyAccount(relayOrigin, userID)
+func loadAccountKey(realmID, userID string) ([]byte, error) {
+	account := accountKeyAccount(realmID, userID)
 	if account == "" {
 		return nil, nil
 	}
@@ -71,16 +70,16 @@ func loadAccountKey(relayOrigin, userID string) ([]byte, error) {
 	return raw, nil
 }
 
-// saveAccountKey persists key for (relayOrigin, userID). A nil or empty
+// saveAccountKey persists key for (realmID, userID). A nil or empty
 // key is treated as "delete" — same code path as clearAccountKey — so
 // callers can pipe the same setter through without a separate branch.
-func saveAccountKey(relayOrigin, userID string, key []byte) error {
-	account := accountKeyAccount(relayOrigin, userID)
+func saveAccountKey(realmID, userID string, key []byte) error {
+	account := accountKeyAccount(realmID, userID)
 	if account == "" {
 		return nil
 	}
 	if len(key) == 0 {
-		return clearAccountKeyFor(relayOrigin, userID)
+		return clearAccountKeyFor(realmID, userID)
 	}
 	encoded := base64.RawStdEncoding.EncodeToString(key)
 	if err := safekeyring.Set(accountKeyService(), account, encoded); err != nil {
@@ -89,10 +88,10 @@ func saveAccountKey(relayOrigin, userID string, key []byte) error {
 	return nil
 }
 
-// clearAccountKeyFor removes the persisted key for (relayOrigin,
+// clearAccountKeyFor removes the persisted key for (realmID,
 // userID). Returns nil when the entry was already absent.
-func clearAccountKeyFor(relayOrigin, userID string) error {
-	account := accountKeyAccount(relayOrigin, userID)
+func clearAccountKeyFor(realmID, userID string) error {
+	account := accountKeyAccount(realmID, userID)
 	if account == "" {
 		return nil
 	}

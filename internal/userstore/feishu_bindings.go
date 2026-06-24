@@ -95,6 +95,7 @@ func (s *SQLiteStore) UpsertFeishuBinding(ctx context.Context, userID string, c 
 		userID, hash, encA, encS, encK, encV, now,
 	)
 	if err != nil {
+		// Only an app_id_hash UNIQUE violation can reach here; a user_id PK conflict is consumed by ON CONFLICT(user_id) DO UPDATE.
 		if s.dia.IsUniqueViolation(err) {
 			return ErrFeishuAppIDConflict
 		}
@@ -106,7 +107,7 @@ func (s *SQLiteStore) UpsertFeishuBinding(ctx context.Context, userID string, c 
 func (s *SQLiteStore) GetFeishuBinding(ctx context.Context, userID string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
 		`SELECT user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc,
-		        IFNULL(open_id, ''), IFNULL(bound_at, 0), IFNULL(disabled_at, 0), created_at
+		        COALESCE(open_id, ''), COALESCE(bound_at, 0), COALESCE(disabled_at, 0), created_at
 		 FROM feishu_bindings WHERE user_id = ?`,
 		userID,
 	)
@@ -115,7 +116,7 @@ func (s *SQLiteStore) GetFeishuBinding(ctx context.Context, userID string) (*Fei
 func (s *SQLiteStore) GetFeishuBindingByAppIDHash(ctx context.Context, hash string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
 		`SELECT user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc,
-		        IFNULL(open_id, ''), IFNULL(bound_at, 0), IFNULL(disabled_at, 0), created_at
+		        COALESCE(open_id, ''), COALESCE(bound_at, 0), COALESCE(disabled_at, 0), created_at
 		 FROM feishu_bindings WHERE app_id_hash = ?`,
 		hash,
 	)

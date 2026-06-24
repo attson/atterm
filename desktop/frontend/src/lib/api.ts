@@ -36,6 +36,11 @@ export interface NewSessionReq {
   // Not used by Go to spawn the child — only the frontend injects the
   // resume command after prompt-ready.
   initial_ai_session_id?: string;
+  // Original full command line the AI CLI was launched with (snapshot
+  // last_command_line). Go merges claude's launch flags (e.g.
+  // --permission-mode) into the injected `claude --resume <id>` so recovery
+  // preserves them. Not passed as a spawn arg.
+  initial_ai_command_line?: string;
 }
 
 export interface NewSessionResp {

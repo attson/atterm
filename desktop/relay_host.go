@@ -548,7 +548,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	if req.AIKind != "" {
 		if sess, ok := h.server.Registry().Get(id); ok {
 			sidCopy := id
-			if argv := computeResumeArgs(req.AIKind, req.InitialAISessionID, ""); argv != nil {
+			if argv := computeResumeArgs(req.AIKind, req.InitialAISessionID, req.InitialAICommandLine); argv != nil {
 				line := strings.Join(argv, " ") + "\n"
 				ptyCopy := pty
 				sess.SetOnFirstPrompt(func() {

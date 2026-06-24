@@ -20,13 +20,13 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, userID string) error {
 	}()
 
 	if _, err = tx.ExecContext(ctx,
-		`UPDATE invitations SET consumed_by = NULL WHERE consumed_by = ?`,
+		s.dia.Rebind(`UPDATE invitations SET consumed_by = NULL WHERE consumed_by = ?`),
 		userID,
 	); err != nil {
 		return fmt.Errorf("null invitations.consumed_by: %w", err)
 	}
 	if _, err = tx.ExecContext(ctx,
-		`DELETE FROM users WHERE id = ?`,
+		s.dia.Rebind(`DELETE FROM users WHERE id = ?`),
 		userID,
 	); err != nil {
 		return fmt.Errorf("delete user: %w", err)

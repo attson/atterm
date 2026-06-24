@@ -48,8 +48,8 @@ func (s *SQLiteStore) GetAccountKeyWrap(ctx context.Context, userID, method stri
 		createdAt int64
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT user_id, method, wrapped, nonce, salt, kdf_params, created_at
-		 FROM user_account_key_wraps WHERE user_id = ? AND method = ?`,
+		s.dia.Rebind(`SELECT user_id, method, wrapped, nonce, salt, kdf_params, created_at
+		 FROM user_account_key_wraps WHERE user_id = ? AND method = ?`),
 		userID, method).Scan(&w.UserID, &w.Method, &w.Wrapped, &w.Nonce, &w.Salt, &w.KDFParams, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AccountKeyWrap{}, ErrAccountKeyWrapMissing
@@ -68,14 +68,14 @@ func (s *SQLiteStore) StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap)
 		w.CreatedAt = time.Now()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_account_key_wraps(user_id, method, wrapped, nonce, salt, kdf_params, created_at)
+		s.dia.Rebind(`INSERT INTO user_account_key_wraps(user_id, method, wrapped, nonce, salt, kdf_params, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id, method) DO UPDATE SET
 		     wrapped    = excluded.wrapped,
 		     nonce      = excluded.nonce,
 		     salt       = excluded.salt,
 		     kdf_params = excluded.kdf_params,
-		     created_at = excluded.created_at`,
+		     created_at = excluded.created_at`),
 		w.UserID, w.Method, w.Wrapped, w.Nonce, w.Salt, w.KDFParams, w.CreatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("upsert account key wrap: %w", err)
@@ -103,8 +103,8 @@ func (s *SQLiteStore) GetOpaqueServerState(ctx context.Context) (OpaqueServerSta
 		createdAt    int64
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT oprf_seed, server_ake_sk, server_ake_pk, suite, created_at
-		 FROM opaque_server_state WHERE id = 1`).
+		s.dia.Rebind(`SELECT oprf_seed, server_ake_sk, server_ake_pk, suite, created_at
+		 FROM opaque_server_state WHERE id = 1`)).
 		Scan(&seed, &sk, &pk, &suite, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OpaqueServerState{}, ErrOpaqueStateMissing
@@ -126,14 +126,14 @@ func (s *SQLiteStore) GetOpaqueServerState(ctx context.Context) (OpaqueServerSta
 // path for OPRF/AKE rotation in v1 (see feedback_no_backward_compat).
 func (s *SQLiteStore) StoreOpaqueServerState(ctx context.Context, st OpaqueServerState) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO opaque_server_state(id, oprf_seed, server_ake_sk, server_ake_pk, suite, created_at)
+		s.dia.Rebind(`INSERT INTO opaque_server_state(id, oprf_seed, server_ake_sk, server_ake_pk, suite, created_at)
 		 VALUES (1, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		     oprf_seed     = excluded.oprf_seed,
 		     server_ake_sk = excluded.server_ake_sk,
 		     server_ake_pk = excluded.server_ake_pk,
 		     suite         = excluded.suite,
-		     created_at    = excluded.created_at`,
+		     created_at    = excluded.created_at`),
 		st.OPRFSeed, st.AKEServerSecret, st.AKEServerPublic, st.Suite, st.CreatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("upsert opaque_server_state: %w", err)
@@ -148,7 +148,7 @@ func (s *SQLiteStore) StoreOpaqueServerState(ctx context.Context, st OpaqueServe
 func (s *SQLiteStore) GetOpaqueRecord(ctx context.Context, userID string) ([]byte, error) {
 	var rec []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT record FROM user_opaque_records WHERE user_id = ?`, userID).Scan(&rec)
+		s.dia.Rebind(`SELECT record FROM user_opaque_records WHERE user_id = ?`), userID).Scan(&rec)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrOpaqueRecordMissing
 	}
@@ -164,11 +164,11 @@ func (s *SQLiteStore) GetOpaqueRecord(ctx context.Context, userID string) ([]byt
 func (s *SQLiteStore) StoreOpaqueRecord(ctx context.Context, userID string, record []byte) error {
 	now := time.Now().Unix()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_opaque_records(user_id, record, created_at)
+		s.dia.Rebind(`INSERT INTO user_opaque_records(user_id, record, created_at)
 		 VALUES (?, ?, ?)
 		 ON CONFLICT(user_id) DO UPDATE SET
 		     record     = excluded.record,
-		     created_at = excluded.created_at`,
+		     created_at = excluded.created_at`),
 		userID, record, now)
 	if err != nil {
 		return fmt.Errorf("upsert opaque record: %w", err)

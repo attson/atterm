@@ -13,11 +13,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
-// SQLiteStore is the production Store backed by a single SQLite file.
-type SQLiteStore struct {
+// DBStore is the production Store backed by database/sql. It serves both
+// SQLite (single file) and Postgres, distinguished by its dialect.
+type DBStore struct {
 	db  *sql.DB
 	dia dialect
 	// cipher is the AEAD cipher for field-level secret encryption (Feishu
@@ -28,8 +30,13 @@ type SQLiteStore struct {
 	cipher atomic.Pointer[SecretCipher]
 }
 
+// SQLiteStore is the historical name for DBStore, kept as an alias so the
+// many callers that reference *userstore.SQLiteStore keep compiling.
+// TODO(cleanup): migrate callers to DBStore / the Store interface.
+type SQLiteStore = DBStore
+
 // OpenOption is a functional option for Open.
-type OpenOption func(*SQLiteStore)
+type OpenOption func(*DBStore)
 
 // WithSecretCipher sets the AEAD cipher used for field-level secret encryption
 // (e.g. Feishu app_secret). Must be set with a non-nil cipher before any
@@ -66,6 +73,30 @@ func Open(ctx context.Context, path string, opts ...OpenOption) (*SQLiteStore, e
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	s := &SQLiteStore{db: db, dia: dialectSQLite}
+	for _, o := range opts {
+		o(s)
+	}
+	if err := s.migrate(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenPostgres opens a Postgres-backed store at dsn (e.g.
+// "postgres://user:pass@host:5432/db?sslmode=disable") and runs pending
+// postgres migrations. Unlike SQLite, Postgres handles concurrent
+// connections, so the pool is not pinned to a single connection.
+func OpenPostgres(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("sql.Open pgx: %w", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping: %w", err)
+	}
+	s := &DBStore{db: db, dia: dialectPostgres}
 	for _, o := range opts {
 		o(s)
 	}

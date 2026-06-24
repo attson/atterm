@@ -41,10 +41,10 @@ func (s *SQLiteStore) CreateOpaqueUser(ctx context.Context, email string) (*User
 	id := defaultIDs.New()
 	now := time.Now()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users(id, email, is_admin, auth_mode, created_at) VALUES (?, ?, ?, ?, ?)`,
+		s.dia.Rebind(`INSERT INTO users(id, email, is_admin, auth_mode, created_at) VALUES (?, ?, ?, ?, ?)`),
 		id, email, 0, "opaque", now.Unix())
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.email") {
+		if s.dia.IsUniqueViolation(err) {
 			return nil, ErrEmailTaken
 		}
 		return nil, fmt.Errorf("insert user: %w", err)
@@ -73,8 +73,8 @@ func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*User, 
 		isAdmin    int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, auth_mode, created_at, disabled_at, is_admin
-		 FROM users WHERE email = ?`, email,
+		s.dia.Rebind(`SELECT id, auth_mode, created_at, disabled_at, is_admin
+		 FROM users WHERE email = ?`), email,
 	).Scan(&id, &authMode, &createdAt, &disabledAt, &isAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
@@ -103,8 +103,8 @@ func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 		isAdmin    int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT email, created_at, disabled_at, is_admin
-		 FROM users WHERE id = ?`, id,
+		s.dia.Rebind(`SELECT email, created_at, disabled_at, is_admin
+		 FROM users WHERE id = ?`), id,
 	).Scan(&email, &createdAt, &disabledAt, &isAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
@@ -126,15 +126,15 @@ func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 // DisableUser sets disabled_at = now. Idempotent.
 func (s *SQLiteStore) DisableUser(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET disabled_at = strftime('%s','now')
-		 WHERE id = ? AND disabled_at IS NULL`, id)
+		s.dia.Rebind(`UPDATE users SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL`),
+		time.Now().Unix(), id)
 	return err
 }
 
 // ListUsers returns all users ordered by created_at descending (newest first).
 func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, email, created_at, disabled_at, is_admin FROM users ORDER BY created_at DESC`)
+		s.dia.Rebind(`SELECT id, email, created_at, disabled_at, is_admin FROM users ORDER BY created_at DESC`))
 	if err != nil {
 		return nil, err
 	}

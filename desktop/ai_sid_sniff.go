@@ -28,7 +28,13 @@ var aiSniffers = map[string]aiSniffSpec{
 // when no resume should happen: unknown kind, aider (no id-based resume), or a
 // kind that needs a captured sid but doesn't have one. No command-replay
 // fallback (recovery design: never resume the wrong conversation).
-func computeResumeArgs(kind, sid, _ string) []string {
+//
+// commandLine is the original full command line the AI CLI was launched with
+// (the pane's last recorded command). For claude we preserve its launch flags
+// (e.g. --permission-mode bypassPermissions, --model) onto the resume command
+// so a recovered session keeps the user's original settings — see
+// claudePreservedFlags. codex/aider ignore it.
+func computeResumeArgs(kind, sid, commandLine string) []string {
 	spec, ok := aiSniffers[kind]
 	if !ok {
 		return nil
@@ -43,7 +49,57 @@ func computeResumeArgs(kind, sid, _ string) []string {
 	if args == nil {
 		return nil
 	}
-	return append([]string{kind}, args...)
+	out := append([]string{kind}, args...)
+	if kind == "claude" {
+		out = append(out, claudePreservedFlags(commandLine)...)
+	}
+	return out
+}
+
+// claudePreservedFlags extracts the launch flags worth carrying onto a claude
+// `--resume` from the original command line. It skips the same leading
+// env-assign / wrapper / binary tokens classifyAIKindFromCommand skips, then
+// drops the flags that would collide with the resume we inject ourselves:
+// `--resume`/`-r` (and a following non-flag id value), the `--resume=...` form,
+// and `--continue`/`-c`. Everything else (--permission-mode, --model,
+// --dangerously-skip-permissions, --add-dir, ...) is preserved verbatim.
+//
+// Tokenization mirrors classifyAIKindFromCommand (whitespace split): the source
+// is the OSC 133;C command line, already whitespace-joined, so flag values with
+// embedded spaces aren't representable here either — acceptable and consistent.
+func claudePreservedFlags(commandLine string) []string {
+	tokens := strings.Fields(commandLine)
+	// Skip env-assign prefixes and wrappers (env/sudo/...), then the binary.
+	for len(tokens) > 0 {
+		t := tokens[0]
+		if envAssignFromCommand(t) || isAIWrapper(t) {
+			tokens = tokens[1:]
+			continue
+		}
+		break
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+	tokens = tokens[1:] // drop the claude binary token
+	var out []string
+	for i := 0; i < len(tokens); i++ {
+		t := tokens[i]
+		switch {
+		case t == "--resume" || t == "-r":
+			// Drop the flag and its id value, but don't swallow a following flag.
+			if i+1 < len(tokens) && !strings.HasPrefix(tokens[i+1], "-") {
+				i++
+			}
+		case strings.HasPrefix(t, "--resume="):
+			// inline value form — drop the whole token
+		case t == "--continue" || t == "-c":
+			// no value to drop
+		default:
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // classifyAIKindFromCommand extracts the AI CLI kind from an OSC 133;C

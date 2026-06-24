@@ -517,6 +517,7 @@ export namespace main {
 	    rows?: number;
 	    ai_kind?: string;
 	    initial_ai_session_id?: string;
+	    initial_ai_command_line?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new NewSessionReq(source);
@@ -531,6 +532,7 @@ export namespace main {
 	        this.rows = source["rows"];
 	        this.ai_kind = source["ai_kind"];
 	        this.initial_ai_session_id = source["initial_ai_session_id"];
+	        this.initial_ai_command_line = source["initial_ai_command_line"];
 	    }
 	}
 	export class NewSessionResp {

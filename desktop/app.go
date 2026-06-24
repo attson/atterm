@@ -62,6 +62,15 @@ type NewSessionReq struct {
 	// restored shell's first OSC 133 prompt — see relay_host SetOnFirstPrompt.
 	// It is NOT passed as an arg to the spawned shell.
 	InitialAISessionID string `json:"initial_ai_session_id,omitempty"`
+
+	// InitialAICommandLine is the original full command line the AI CLI was
+	// launched with, round-tripped from the previous run's snapshot
+	// (last_command_line). For claude its launch flags (e.g.
+	// --permission-mode bypassPermissions, --model) are merged into the injected
+	// `claude --resume <id>` so the recovered session keeps the user's original
+	// settings — see computeResumeArgs / claudePreservedFlags. It is NOT passed
+	// as an arg to the spawned shell.
+	InitialAICommandLine string `json:"initial_ai_command_line,omitempty"`
 }
 
 // NewSessionResp is returned by NewSession.

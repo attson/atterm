@@ -22,6 +22,20 @@ describe("buildRestoreSessionReq", () => {
     expect(req.initial_ai_session_id).toBe("sid-1");
   });
 
+  it("forwards last_command_line as initial_ai_command_line so Go can preserve claude flags", () => {
+    const pane: RecoveryPaneSnapshot = {
+      slot: 0,
+      shell: "/bin/zsh",
+      session_type: "ai",
+      last_command_line: "claude --permission-mode bypassPermissions",
+      ai: { kind: "claude", session_id: "sid-1" },
+    };
+    const req = buildRestoreSessionReq(pane, 80, 24, "/bin/zsh");
+    expect(req.initial_ai_command_line).toBe(
+      "claude --permission-mode bypassPermissions",
+    );
+  });
+
   it("falls back to the user's default shell when the snapshot has no shell", () => {
     // Regression: a snapshot saved with an empty shell (the per-pane
     // SessionInfo wasn't resolved yet at save time) must NOT collapse to
@@ -33,6 +47,7 @@ describe("buildRestoreSessionReq", () => {
     expect(req.cwd).toBe("");
     expect(req.ai_kind).toBe("");
     expect(req.initial_ai_session_id).toBe("");
+    expect(req.initial_ai_command_line).toBe("");
   });
 
   it("falls back to /bin/sh only when no default shell is known", () => {

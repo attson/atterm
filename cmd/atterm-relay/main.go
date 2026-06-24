@@ -91,7 +91,19 @@ func main() {
 	// admin API at runtime). This is what lets the relay boot with zero
 	// Feishu configuration instead of crash-looping.
 	dbPath := filepath.Join(persistDir, "users.db")
-	store, err := userstore.Open(ctx, dbPath)
+	var store *userstore.DBStore
+	switch driver := strings.ToLower(strings.TrimSpace(os.Getenv("ATTERM_RELAY_DB_DRIVER"))); driver {
+	case "", "sqlite":
+		store, err = userstore.Open(ctx, dbPath)
+	case "postgres":
+		dsn := strings.TrimSpace(os.Getenv("ATTERM_RELAY_DB_DSN"))
+		if dsn == "" {
+			log.Fatal("ATTERM_RELAY_DB_DRIVER=postgres requires ATTERM_RELAY_DB_DSN")
+		}
+		store, err = userstore.OpenPostgres(ctx, dsn)
+	default:
+		log.Fatalf("unknown ATTERM_RELAY_DB_DRIVER %q (want sqlite|postgres)", driver)
+	}
 	if err != nil {
 		log.Fatalf("open userstore: %v", err)
 	}

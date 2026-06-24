@@ -193,8 +193,18 @@ type Store interface {
 	GetRelayConfig(ctx context.Context) (RelayConfig, error)
 	SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayConfig, error)
 
+	// Web Push: VAPID keypair singleton + per-user subscriptions (DB-backed
+	// replacement for web-push.json).
+	GetVAPIDKeys(ctx context.Context) (VAPIDKeys, bool, error)
+	SetVAPIDKeys(ctx context.Context, k VAPIDKeys) error
+	AddWebPushSubscription(ctx context.Context, userID string, sub WebPushSubscription) error
+	RemoveWebPushSubscription(ctx context.Context, userID, endpoint string) error
+	ListWebPushSubscriptions(ctx context.Context, userID string) ([]WebPushSubscription, error)
+
 	Close() error
 }
+
+func nowUnix() int64 { return time.Now().Unix() }
 
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (

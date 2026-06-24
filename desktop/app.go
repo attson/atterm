@@ -592,8 +592,8 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 			return err
 		}
 	}
-	// Persist the account_key now that the relay URL + user id are committed,
-	// so the next launch's loadAccountKey(cfg.RelayURL, cfg.RelaySessionUserID)
+	// Persist the account_key now that the realm id + user id are committed,
+	// so the next launch's loadAccountKey(cfg.RelayRealmID, cfg.RelaySessionUserID)
 	// finds it. Done after the config write — persisting earlier wrote under the
 	// stale/empty user id and lost the key on relaunch.
 	a.persistAccountKey(res.AccountKey)

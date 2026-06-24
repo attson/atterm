@@ -1,6 +1,7 @@
 package userstore
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"testing"
@@ -38,6 +39,21 @@ func seedSource(t *testing.T, st *DBStore) (userID string) {
 	}); err != nil {
 		t.Fatalf("add sub: %v", err)
 	}
+	// OPAQUE per-user record (0x00 byte ensures no null-truncation in BYTEA round-trip).
+	opaqueRec := []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01}
+	if err := st.StoreOpaqueRecord(ctx, u.ID, opaqueRec); err != nil {
+		t.Fatalf("store opaque record: %v", err)
+	}
+	// OPAQUE server state singleton (each field has a distinct byte incl. 0x00).
+	if err := st.StoreOpaqueServerState(ctx, OpaqueServerState{
+		OPRFSeed:        []byte{0x01, 0x00, 0x02},
+		AKEServerSecret: []byte{0x03, 0x00, 0x04},
+		AKEServerPublic: []byte{0x05, 0x00, 0x06},
+		Suite:           "ristretto255, SHA-512",
+		CreatedAt:       time.Unix(1700000000, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("store opaque server state: %v", err)
+	}
 	return u.ID
 }
 
@@ -64,6 +80,31 @@ func assertTarget(t *testing.T, dst *DBStore, userID string) {
 	if subs, err := dst.ListWebPushSubscriptions(ctx, userID); err != nil || len(subs) != 1 || subs[0].Endpoint != "https://push/ep" {
 		t.Fatalf("target subs: %v %+v", err, subs)
 	}
+	// OPAQUE per-user record: exact byte round-trip (incl. embedded 0x00).
+	gotRec, err := dst.GetOpaqueRecord(ctx, userID)
+	if err != nil {
+		t.Fatalf("target opaque record get: %v", err)
+	}
+	if wantRec := []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01}; !bytes.Equal(gotRec, wantRec) {
+		t.Fatalf("target opaque record mismatch: got %x want %x", gotRec, wantRec)
+	}
+	// OPAQUE server state singleton: each key field must survive the cross-backend copy intact.
+	gotSS, err := dst.GetOpaqueServerState(ctx)
+	if err != nil {
+		t.Fatalf("target opaque server state get: %v", err)
+	}
+	if !bytes.Equal(gotSS.OPRFSeed, []byte{0x01, 0x00, 0x02}) {
+		t.Fatalf("opaque server state OPRFSeed mismatch: got %x", gotSS.OPRFSeed)
+	}
+	if !bytes.Equal(gotSS.AKEServerSecret, []byte{0x03, 0x00, 0x04}) {
+		t.Fatalf("opaque server state AKEServerSecret mismatch: got %x", gotSS.AKEServerSecret)
+	}
+	if !bytes.Equal(gotSS.AKEServerPublic, []byte{0x05, 0x00, 0x06}) {
+		t.Fatalf("opaque server state AKEServerPublic mismatch: got %x", gotSS.AKEServerPublic)
+	}
+	if gotSS.Suite != "ristretto255, SHA-512" {
+		t.Fatalf("opaque server state Suite mismatch: got %q", gotSS.Suite)
+	}
 }
 
 func TestCopySQLiteToSQLite(t *testing.T) {
@@ -85,7 +126,8 @@ func TestCopySQLiteToSQLite(t *testing.T) {
 		t.Fatalf("copy: %v", err)
 	}
 	if counts["users"] != 1 || counts["sessions"] != 1 || counts["web_push_subscriptions"] != 1 ||
-		counts["relay_config"] != 1 || counts["web_push_keys"] != 1 || counts["user_account_key_wraps"] != 1 {
+		counts["relay_config"] != 1 || counts["web_push_keys"] != 1 || counts["user_account_key_wraps"] != 1 ||
+		counts["user_opaque_records"] != 1 || counts["opaque_server_state"] != 1 {
 		t.Fatalf("counts: %+v", counts)
 	}
 	assertTarget(t, dst, userID)

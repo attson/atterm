@@ -464,9 +464,9 @@ func (s *Server) feishuAdminResponse() feishuAdminResponse {
 }
 
 // handleAdminFeishuHTTP serves GET/PUT /admin/api/feishu — the admin UI's
-// Feishu integration panel. PUT persists to relay.json and hot-applies the
-// enable/disable transition (attach/detach the secret cipher + handler) with
-// no restart.
+// Feishu integration panel. PUT persists to the DB (relay_config) and
+// hot-applies the enable/disable transition (attach/detach the secret
+// cipher + handler) with no restart.
 func (s *Server) handleAdminFeishuHTTP(w http.ResponseWriter, r *http.Request) {
 	u, ok := UserFromContext(r.Context())
 	if !ok || u == nil || !u.IsAdmin {

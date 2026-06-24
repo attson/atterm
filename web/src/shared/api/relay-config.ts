@@ -10,6 +10,10 @@ export interface RelayConfig {
   sessionToken: string | null
   expiresAt: number | null
   allowInsecure: boolean
+  // realmId is populated from the login finalize response realm_id field.
+  // Used by subproject C for relay node selection. Not written by register
+  // (register finalize does not return realm_id yet).
+  realmId?: string
 }
 
 const STORAGE_KEY = 'atterm.relay'
@@ -52,6 +56,7 @@ export function loadRelayConfig(): RelayConfig | null {
       sessionToken: parsed.sessionToken ?? parsed.token ?? null,
       expiresAt: parsed.expiresAt ?? null,
       allowInsecure: parsed.allowInsecure ?? parsed.allow_insecure ?? false,
+      ...(parsed.realmId !== undefined ? { realmId: parsed.realmId } : {}),
     }
   } catch {
     return null

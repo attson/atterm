@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,7 +25,7 @@ func adminPutBearer(srv http.Handler, path string, body any, token string) *http
 	return w
 }
 
-// newFeishuAdminServer builds a Server with a file-backed admin config store so
+// newFeishuAdminServer builds a Server with a DB-backed admin config store so
 // the Feishu PUT path can persist + hot-apply.
 func newFeishuAdminServer(t *testing.T) (*Server, string) {
 	t.Helper()
@@ -44,7 +42,7 @@ func newFeishuAdminServer(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	adminStore := NewAdminConfigStore(filepath.Join(t.TempDir(), "relay.json"), AdminConfig{})
+	adminStore := NewAdminConfigStore(store, AdminConfig{})
 	srv := NewServer(Config{
 		Resolver:         NewIdentityResolver(store),
 		Store:            store,
@@ -153,8 +151,9 @@ func TestAdminConfig_DebugHotToggle(t *testing.T) {
 }
 
 func TestAdminConfig_FeishuRoundTripAndValidate(t *testing.T) {
-	// Round-trip new fields through Set/Load.
-	path := filepath.Join(t.TempDir(), "relay.json")
+	// Round-trip new fields through Set/LoadFromDB.
+	ctx := context.Background()
+	dbStore := userstore.NewInMemory(t)
 	in := AdminConfig{
 		FeishuEnabled:    true,
 		FeishuEncryptKey: key32(3),
@@ -162,13 +161,15 @@ func TestAdminConfig_FeishuRoundTripAndValidate(t *testing.T) {
 		AllowedOrigins:   []string{"https://relay.example.com"},
 		VAPIDSubject:     "mailto:ops@example.com",
 	}
-	st := NewAdminConfigStore(path, AdminConfig{})
-	if err := st.Set(in); err != nil {
+	st := NewAdminConfigStore(dbStore, AdminConfig{})
+	if err := st.Set(ctx, in); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	got, err := LoadAdminConfig(path)
+	// Load via a fresh store to verify DB round-trip.
+	st2 := NewAdminConfigStore(dbStore, AdminConfig{})
+	got, err := st2.LoadFromDB(ctx)
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatalf("LoadFromDB: %v", err)
 	}
 	if !got.FeishuEnabled || got.FeishuEncryptKey != in.FeishuEncryptKey || len(got.AllowedOrigins) != 1 || got.VAPIDSubject != in.VAPIDSubject {
 		t.Fatalf("round-trip mismatch: %+v", got)
@@ -180,12 +181,15 @@ func TestAdminConfig_FeishuRoundTripAndValidate(t *testing.T) {
 		t.Fatal("validate accepted enabled config with bad key")
 	}
 
-	// Old configs without the new fields still load (omitempty back-compat).
-	legacy := filepath.Join(t.TempDir(), "legacy.json")
-	if err := os.WriteFile(legacy, []byte(`{"rate_limit_per_minute":60,"max_connections_per_key":4}`), 0o600); err != nil {
-		t.Fatal(err)
+	// A fresh DB with no config written returns a zero AdminConfig (Version==0),
+	// which means the initial value is used (back-compat for empty-DB first-start).
+	emptyDB := userstore.NewInMemory(t)
+	st3 := NewAdminConfigStore(emptyDB, AdminConfig{RateLimitPerMinute: 60, MaxConnectionsPerKey: 4})
+	loaded, err := st3.LoadFromDB(ctx)
+	if err != nil {
+		t.Fatalf("empty DB LoadFromDB: %v", err)
 	}
-	if _, err := LoadAdminConfig(legacy); err != nil {
-		t.Fatalf("legacy config failed to load: %v", err)
+	if loaded.RateLimitPerMinute != 60 || loaded.MaxConnectionsPerKey != 4 {
+		t.Fatalf("empty DB should use initial: %+v", loaded)
 	}
 }

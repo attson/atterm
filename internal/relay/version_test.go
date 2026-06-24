@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -171,8 +170,7 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(t.TempDir(), "relay.json")
-	cfgStore := NewAdminConfigStore(path, AdminConfig{})
+	cfgStore := NewAdminConfigStore(store, AdminConfig{})
 	resolver := NewIdentityResolver(store)
 	srv := NewServer(Config{
 		Resolver:         resolver,
@@ -190,12 +188,10 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s; want 200", rec.Code, rec.Body.String())
 	}
-	cfg, err := LoadAdminConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.RateLimitPerMinute != 33 || cfg.MaxConnectionsPerKey != 4 {
-		t.Fatalf("persisted limits=%d/%d; want 33/4", cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
+	// Verify the config was persisted to the DB.
+	snap := cfgStore.Snapshot()
+	if snap.RateLimitPerMinute != 33 || snap.MaxConnectionsPerKey != 4 {
+		t.Fatalf("persisted limits=%d/%d; want 33/4", snap.RateLimitPerMinute, snap.MaxConnectionsPerKey)
 	}
 }
 

@@ -89,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from '../i18n/useI18n'
 import {
   getFeishuStatus,
@@ -225,9 +225,43 @@ async function onCopyCallback() {
   }
 }
 
+// Binding completes out-of-band: the user sends `/bind <code>` to the bot and
+// the relay writes open_id server-side. The dialog has no other signal, so
+// after issuing a pair code we poll the status until it flips to bound (or the
+// 15-min code window lapses), then the bound view takes over automatically.
+const PAIR_POLL_INTERVAL_MS = 2500
+const PAIR_POLL_MAX_MS = 15 * 60 * 1000
+let pairPollTimer: ReturnType<typeof setInterval> | null = null
+
+function stopPairPolling() {
+  if (pairPollTimer) {
+    clearInterval(pairPollTimer)
+    pairPollTimer = null
+  }
+}
+
+function startPairPolling() {
+  stopPairPolling()
+  const startedAt = Date.now()
+  pairPollTimer = setInterval(async () => {
+    await refresh()
+    if (status.value.bound) {
+      pairCode.value = ''
+      stopPairPolling()
+      return
+    }
+    if (Date.now() - startedAt >= PAIR_POLL_MAX_MS) {
+      stopPairPolling()
+    }
+  }, PAIR_POLL_INTERVAL_MS)
+}
+
+onBeforeUnmount(stopPairPolling)
+
 async function onPair() {
   try {
     pairCode.value = await beginFeishuPair()
+    startPairPolling()
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e)
   }
@@ -235,6 +269,7 @@ async function onPair() {
 
 async function onDelete() {
   try {
+    stopPairPolling()
     await deleteFeishuBinding()
     pairCode.value = ''
     editing.value = false

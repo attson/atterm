@@ -83,6 +83,43 @@ describe('SettingsFeishu configured view', () => {
     vi.unstubAllGlobals()
   })
 
+  it('after pairing, polls status and flips to the bound view once the relay binds', async () => {
+    vi.useFakeTimers()
+    const configured = {
+      enabled: true,
+      mode: 'relay',
+      bound: false,
+      open_id: '',
+      disabled: false,
+      configured: true,
+      callback_url: 'https://relay.example.com/v1/feishu/events/abc',
+      app_id_hash: 'abc',
+    }
+    const statusSpy = vi.spyOn(api, 'getFeishuStatus').mockResolvedValue(configured as never)
+    vi.spyOn(api, 'beginFeishuPair').mockResolvedValue('SNVXZU' as never)
+
+    const w = mount(SettingsFeishu)
+    await flushPromises()
+
+    await w.find('[data-test="feishu-begin-pair"]').trigger('click')
+    await flushPromises()
+    // Pair code is shown; not yet bound.
+    expect(w.text()).toContain('settings.feishu.pair_hint')
+    expect(w.find('[data-test="feishu-configured"]').exists()).toBe(true)
+
+    // The user sends /bind to the bot; the relay flips bound server-side.
+    statusSpy.mockResolvedValue({ ...configured, bound: true, open_id: 'ou_x' } as never)
+
+    await vi.advanceTimersByTimeAsync(2500)
+    await flushPromises()
+
+    // Bound view takes over without reopening the dialog.
+    expect(w.find('[data-test="feishu-configured"]').exists()).toBe(false)
+    expect(w.text()).toContain('settings.feishu.bound')
+
+    vi.useRealTimers()
+  })
+
   it('unconfigured: shows the empty credentials form', async () => {
     vi.spyOn(api, 'getFeishuStatus').mockResolvedValue({
       enabled: true,

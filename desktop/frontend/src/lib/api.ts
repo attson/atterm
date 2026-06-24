@@ -651,6 +651,17 @@ export function setPtyInputDebugEnabled(enabled: boolean): Promise<void> {
 }
 
 export async function showNotification(title: string, body: string): Promise<void> {
+  // Honor the user's "Show system notifications" toggle BEFORE we touch any
+  // notification backend. The Wails runtime's SendNotification (preferred
+  // path below) talks to macOS UserNotifications directly and would
+  // otherwise bypass NotificationsEnabledOrDefault — which only the Go
+  // fallback checks. A binding error (e.g. boot race before window.go is
+  // wired) defaults to "allow" so we don't silently drop notifications.
+  try {
+    if (!(await getNotificationsEnabled())) return;
+  } catch {
+    /* default-allow on lookup failure */
+  }
   if (await ensureNotificationRuntimeReady()) {
     try {
       notificationID += 1;

@@ -158,4 +158,37 @@ describe("notification api wrapper", () => {
     expect(SendNotification).not.toHaveBeenCalled();
     expect(fallback).toHaveBeenCalledWith("AT Term", "Bell in caiji2");
   });
+
+  test("skips both backends when the user disabled notifications", async () => {
+    // The Wails native path (SendNotification) talks to macOS directly and
+    // historically bypassed this toggle — only the Go fallback honored it.
+    // Make sure neither path runs when the preference is off.
+    const fallback = vi.fn().mockResolvedValue(undefined);
+    const getEnabled = vi.fn().mockResolvedValue(false);
+    __setBindingsForTest({
+      ShowNotification: fallback,
+      GetNotificationsEnabled: getEnabled,
+    } as any);
+
+    await showNotification("AT Term", "Bell in caiji2");
+
+    expect(getEnabled).toHaveBeenCalledOnce();
+    expect(SendNotification).not.toHaveBeenCalled();
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  test("defaults to allowing notifications if the toggle lookup throws", async () => {
+    // Boot race: window.go isn't wired yet so the binding throws. Better to
+    // surface a bell than to silently lose it (the Go fallback re-checks).
+    const fallback = vi.fn().mockResolvedValue(undefined);
+    const getEnabled = vi.fn().mockRejectedValue(new Error("not ready"));
+    __setBindingsForTest({
+      ShowNotification: fallback,
+      GetNotificationsEnabled: getEnabled,
+    } as any);
+
+    await showNotification("AT Term", "Bell in caiji2");
+
+    expect(SendNotification).toHaveBeenCalledOnce();
+  });
 });

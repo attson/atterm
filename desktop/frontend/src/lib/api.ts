@@ -119,6 +119,10 @@ export interface RelayConfig {
   // networks that fingerprint-filter its handshake. Optional so Capacitor
   // fixtures may omit it.
   remote_proxy_url?: string;
+  // realmId is the relay realm this session belongs to (from login finalize).
+  // Written by mobile on login; consumed by subproject C for node selection.
+  // Not present on desktop (Go manages realm identity there).
+  realmId?: string;
 }
 
 export interface RelayMe {

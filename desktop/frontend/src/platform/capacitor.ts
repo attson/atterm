@@ -54,7 +54,7 @@ async function opaqueLogin(
   base: string,
   email: string,
   password: string,
-): Promise<{ user_id: string; session_token: string; account_key: Uint8Array }> {
+): Promise<{ user_id: string; session_token: string; account_key: Uint8Array; realm_id: string }> {
   // ke1 / login_response / ke3 are all standard-base64 strings straight off the
   // WASM client; they go on the wire verbatim (no re-encode, no deserialize).
   let handle: number
@@ -109,9 +109,10 @@ async function opaqueLogin(
     user_id: string
     session_token: string
     account_key_wrap: AccountKeyWrap
+    realm_id: string
   }
   const accountKey = unwrapWithPassword(password, finBody.account_key_wrap)
-  return { user_id: finBody.user_id, session_token: finBody.session_token, account_key: accountKey }
+  return { user_id: finBody.user_id, session_token: finBody.session_token, account_key: accountKey, realm_id: finBody.realm_id }
 }
 
 // opaqueRegister mints a fresh account_key, wraps it, and runs the
@@ -382,6 +383,7 @@ export function createCapacitorPlatform(): Platform {
           remote_permission: 'full',
           last_email: email,
           connected: false,
+          realmId: result.realm_id,
         }
         await secureStorage.set(STORAGE_KEY, JSON.stringify(cfg))
         await secureStorage.set(PASSWORD_KEY, password)

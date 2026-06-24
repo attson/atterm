@@ -56,9 +56,10 @@ interface LoginFinalizeResp {
   user_id: string
   session_token: string
   account_key_wrap: AccountKeyWrap
+  realm_id: string
 }
 
-function persistSession(sessionToken: string): void {
+function persistSession(sessionToken: string, realmId?: string): void {
   const existing = loadRelayConfig()
   saveRelayConfig({
     baseURL: existing?.baseURL ?? '',
@@ -66,6 +67,7 @@ function persistSession(sessionToken: string): void {
     sessionToken,
     // OPAQUE login no longer returns an expiry; relay-side authoritative.
     expiresAt: null,
+    ...(realmId !== undefined ? { realmId } : {}),
   })
 }
 
@@ -108,7 +110,7 @@ export async function login(email: string, password: string): Promise<AuthResult
 
   const accountKey = unwrapWithPassword(password, final.account_key_wrap)
   saveAccountKey(accountKey)
-  persistSession(final.session_token)
+  persistSession(final.session_token, final.realm_id)
 
   return { user_id: final.user_id, email }
 }

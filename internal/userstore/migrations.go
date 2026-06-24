@@ -2,9 +2,10 @@ package userstore
 
 import "embed"
 
-// migrationsFS holds the embedded SQL migration files. Splitting this from
-// store.go keeps the embed directive co-located with what it represents
-// and keeps store.go focused on DB lifecycle and the migration runner.
+// migrationsFS holds the embedded SQL migration files, split by dialect
+// subdirectory: migrations/sqlite/*.sql and migrations/postgres/*.sql.
+// The migration runner reads the subdirectory named by the active
+// dialect (see DBStore.migrate).
 //
-//go:embed migrations/*.sql
+//go:embed migrations/sqlite/*.sql migrations/postgres/*.sql
 var migrationsFS embed.FS

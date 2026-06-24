@@ -111,7 +111,7 @@ func newTestOpaqueAuthHandlerEmail(t *testing.T, bootstrapEmail string) *OpaqueA
 	if err != nil {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
-	return NewOpaqueAuthHandler(store, srv, bootstrapEmail)
+	return NewOpaqueAuthHandler(store, srv, bootstrapEmail, "")
 }
 
 // TestRegisterInit_ReturnsKE2 drives the registerInit endpoint with a real

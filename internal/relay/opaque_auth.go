@@ -37,6 +37,10 @@ type OpaqueAuthHandler struct {
 	// (case-insensitive) AND no admin exists yet — no claim token needed.
 	// Empty disables the email-gated path (claim tokens still work).
 	bootstrapEmail string
+	// realmID is the realm this relay belongs to. It is echoed back in
+	// every auth-finalize response so clients can anchor their account_key
+	// to a (relay, realm) pair rather than just the origin URL.
+	realmID        string
 	loginSessions  sync.Map // session_id -> *loginPending
 	stepUpSessions sync.Map // session_id -> *stepUpPending (M1i)
 }
@@ -64,8 +68,8 @@ const loginSessionTTL = 30 * time.Second
 // NewOpaqueAuthHandler constructs the handler. Both store and srv must be
 // non-nil; the OpaqueServer is expected to have been initialized via
 // LoadOrInitOpaqueServer before this constructor is called.
-func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer, bootstrapEmail string) *OpaqueAuthHandler {
-	return &OpaqueAuthHandler{store: store, srv: srv, bootstrapEmail: strings.TrimSpace(bootstrapEmail)}
+func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer, bootstrapEmail, realmID string) *OpaqueAuthHandler {
+	return &OpaqueAuthHandler{store: store, srv: srv, bootstrapEmail: strings.TrimSpace(bootstrapEmail), realmID: realmID}
 }
 
 // ----- Wire types -----
@@ -101,6 +105,7 @@ type registerFinalizeResponse struct {
 	UserID       string `json:"user_id"`
 	SessionToken string `json:"session_token"`
 	IsAdmin      bool   `json:"is_admin"`
+	RealmID      string `json:"realm_id"`
 }
 
 type loginInitRequest struct {
@@ -123,6 +128,7 @@ type loginFinalizeResponse struct {
 	UserID         string                `json:"user_id"`
 	SessionToken   string                `json:"session_token"`
 	AccountKeyWrap accountKeyWrapPayload `json:"account_key_wrap"`
+	RealmID        string                `json:"realm_id"`
 }
 
 // ----- Handlers (stubs filled in by Tasks 7-10) -----
@@ -326,6 +332,7 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 		UserID:       user.ID,
 		SessionToken: tok,
 		IsAdmin:      isAdmin,
+		RealmID:      h.realmID,
 	})
 }
 
@@ -528,6 +535,7 @@ func (h *OpaqueAuthHandler) handleLoginFinalize(w http.ResponseWriter, r *http.R
 			Salt:      wrap.Salt,
 			KDFParams: wrap.KDFParams,
 		},
+		RealmID: h.realmID,
 	})
 }
 

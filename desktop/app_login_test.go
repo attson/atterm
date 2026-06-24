@@ -23,7 +23,7 @@ func newOPAQUERelay(t *testing.T) (*httptest.Server, *userstore.SQLiteStore) {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "", "").Register(mux)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts, store

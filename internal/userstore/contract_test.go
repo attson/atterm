@@ -2,6 +2,7 @@ package userstore
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -186,6 +187,84 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		got, err := st.GetAccountKeyWrap(ctx, u.ID, "password")
 		if err != nil || string(got.Wrapped) != "w" {
 			t.Fatalf("get wrap: %v %+v", err, got)
+		}
+	})
+
+	t.Run("webpush subscription cap", func(t *testing.T) {
+		st := open(t)
+		u, err := st.CreateOpaqueUser(ctx, "webcap@example.com")
+		if err != nil {
+			t.Fatalf("create user: %v", err)
+		}
+
+		// Add maxWebPushSubsPerUser distinct endpoints.
+		for i := 0; i < maxWebPushSubsPerUser; i++ {
+			sub := WebPushSubscription{
+				Endpoint:  fmt.Sprintf("https://push/ep%d", i),
+				P256dh:    fmt.Sprintf("p%d", i),
+				Auth:      fmt.Sprintf("a%d", i),
+				CreatedAt: int64(i + 1),
+			}
+			if err := st.AddWebPushSubscription(ctx, u.ID, sub); err != nil {
+				t.Fatalf("add sub %d: %v", i, err)
+			}
+		}
+
+		list, err := st.ListWebPushSubscriptions(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("list after filling cap: %v", err)
+		}
+		if len(list) != maxWebPushSubsPerUser {
+			t.Fatalf("expected %d subs after fill, got %d", maxWebPushSubsPerUser, len(list))
+		}
+
+		// Add a 17th NEW endpoint — must be silently dropped.
+		overflow := WebPushSubscription{
+			Endpoint:  "https://push/overflow",
+			P256dh:    "pX",
+			Auth:      "aX",
+			CreatedAt: 999,
+		}
+		if err := st.AddWebPushSubscription(ctx, u.ID, overflow); err != nil {
+			t.Fatalf("add overflow sub: %v", err)
+		}
+		list2, err := st.ListWebPushSubscriptions(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("list after overflow: %v", err)
+		}
+		if len(list2) != maxWebPushSubsPerUser {
+			t.Fatalf("expected %d subs after overflow drop, got %d", maxWebPushSubsPerUser, len(list2))
+		}
+
+		// Update one of the existing 16 endpoints — must succeed even at cap.
+		updated := WebPushSubscription{
+			Endpoint:  "https://push/ep0",
+			P256dh:    "p0-updated",
+			Auth:      "a0-updated",
+			CreatedAt: 1,
+		}
+		if err := st.AddWebPushSubscription(ctx, u.ID, updated); err != nil {
+			t.Fatalf("update existing sub at cap: %v", err)
+		}
+		list3, err := st.ListWebPushSubscriptions(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("list after update: %v", err)
+		}
+		if len(list3) != maxWebPushSubsPerUser {
+			t.Fatalf("expected %d subs after update, got %d", maxWebPushSubsPerUser, len(list3))
+		}
+		var updatedSub *WebPushSubscription
+		for i := range list3 {
+			if list3[i].Endpoint == "https://push/ep0" {
+				updatedSub = &list3[i]
+				break
+			}
+		}
+		if updatedSub == nil {
+			t.Fatalf("ep0 not found after update")
+		}
+		if updatedSub.P256dh != "p0-updated" {
+			t.Fatalf("ep0 p256dh not updated: got %q, want %q", updatedSub.P256dh, "p0-updated")
 		}
 	})
 

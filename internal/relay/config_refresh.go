@@ -25,6 +25,10 @@ func (s *Server) refreshConfigOnce(ctx context.Context) (bool, error) {
 
 // applyConfigToCaches pushes config values into the request-time atomic caches
 // and limiters. Safe to call repeatedly.
+//
+// NOTE: VAPIDSubject is deliberately NOT hot-applied here — it is consumed once
+// at webpush.Open and changing it requires restarting each instance; the
+// cross-instance config refresher does not propagate it live.
 func (s *Server) applyConfigToCaches(cfg AdminConfig) {
 	s.SetAllowedOrigins(OriginPatterns(cfg.AllowedOrigins))
 	s.SetDebug(cfg.Debug, cfg.DebugPayload)

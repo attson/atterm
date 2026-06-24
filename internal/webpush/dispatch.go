@@ -68,6 +68,7 @@ func (s *Service) DispatchCommandFinished(ownerUserID string, ev CommandFinished
 	if len(ev.Label) > maxLabelLen {
 		ev.Label = ev.Label[:maxLabelLen]
 	}
+	// dispatch intentionally reads subscriptions from the DB on each send for cross-instance freshness — do not reintroduce an in-memory cache
 	subs := s.SubscriptionsForUser(ownerUserID)
 	if len(subs) == 0 {
 		return

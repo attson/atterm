@@ -1,10 +1,5 @@
 package webpush
 
-// maxSubsPerUser caps how many endpoints a single user may register.
-// Beyond this, AddSubscription silently drops further endpoints to keep
-// client retries idempotent.
-const maxSubsPerUser = 16
-
 // Subscription is one browser's push endpoint. JSON shape is the same one
 // the Browser Push API hands to the page (endpoint + keys).
 type Subscription struct {

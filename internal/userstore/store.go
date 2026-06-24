@@ -209,6 +209,10 @@ type Store interface {
 	GetAccountKeyWrap(ctx context.Context, userID, method string) (AccountKeyWrap, error)
 	StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap) error
 
+	// Cluster realm identity (singleton); anchors E2EE keys across nodes.
+	GetRealmState(ctx context.Context) (RealmState, error)
+	EnsureRealmState(ctx context.Context, candidateRealmID string) (RealmState, error)
+
 	// Relay-wide singleton config (DB-backed replacement for relay.json).
 	GetRelayConfig(ctx context.Context) (RelayConfig, error)
 	SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayConfig, error)

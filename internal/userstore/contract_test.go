@@ -268,6 +268,26 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		}
 	})
 
+	t.Run("realm state ensure is first-writer-wins", func(t *testing.T) {
+		st := open(t)
+		if _, err := st.GetRealmState(ctx); err != ErrRealmStateMissing {
+			t.Fatalf("fresh realm: want ErrRealmStateMissing, got %v", err)
+		}
+		rs1, err := st.EnsureRealmState(ctx, "realm-A")
+		if err != nil || rs1.RealmID != "realm-A" {
+			t.Fatalf("ensure A: %v %+v", err, rs1)
+		}
+		// Second ensure with a different candidate must NOT overwrite.
+		rs2, err := st.EnsureRealmState(ctx, "realm-B")
+		if err != nil || rs2.RealmID != "realm-A" {
+			t.Fatalf("ensure B must keep A: %v %+v", err, rs2)
+		}
+		got, err := st.GetRealmState(ctx)
+		if err != nil || got.RealmID != "realm-A" {
+			t.Fatalf("get: %v %+v", err, got)
+		}
+	})
+
 	t.Run("vapid keys upsert + subscriptions crud", func(t *testing.T) {
 		st := open(t)
 		if _, ok, err := st.GetVAPIDKeys(ctx); err != nil || ok {

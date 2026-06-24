@@ -87,7 +87,9 @@ func (s *AdminConfigStore) LoadFromDB(ctx context.Context) (AdminConfig, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if rc.Version > 0 {
+		prev := s.cfg.ReadOnlyTokens
 		s.cfg = relayConfigToAdmin(rc)
+		s.cfg.ReadOnlyTokens = append([]StoredToken(nil), prev...)
 	}
 	return cloneAdminConfig(s.cfg), nil
 }

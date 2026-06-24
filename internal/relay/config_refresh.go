@@ -26,7 +26,7 @@ func (s *Server) refreshConfigOnce(ctx context.Context) (bool, error) {
 // applyConfigToCaches pushes config values into the request-time atomic caches
 // and limiters. Safe to call repeatedly.
 func (s *Server) applyConfigToCaches(cfg AdminConfig) {
-	s.SetAllowedOrigins(cfg.AllowedOrigins)
+	s.SetAllowedOrigins(OriginPatterns(cfg.AllowedOrigins))
 	s.SetDebug(cfg.Debug, cfg.DebugPayload)
 	s.applyRuntimeLimits(cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
 	if keyBytes, err := cfg.DecodeFeishuKey(); err == nil && cfg.FeishuEnabled {

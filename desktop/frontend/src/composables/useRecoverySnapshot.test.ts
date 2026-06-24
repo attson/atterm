@@ -25,6 +25,7 @@ describe("useRecoverySnapshot", () => {
         tabs,
         currentTabId,
         sessionInfoFor,
+        localHostID: ref(""),
         onEvent: () => () => {},
       });
     });
@@ -76,7 +77,7 @@ describe("useRecoverySnapshot", () => {
 
     const scope = effectScope();
     scope.run(() => {
-      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent });
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent });
     });
 
     // Flush the initial save triggered by the immediate ref setup.
@@ -118,7 +119,7 @@ describe("useRecoverySnapshot", () => {
 
     const scope = effectScope();
     scope.run(() => {
-      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent: () => () => {} });
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {} });
     });
 
     vi.advanceTimersByTime(600);
@@ -146,7 +147,7 @@ describe("useRecoverySnapshot", () => {
 
     const scope = effectScope();
     scope.run(() => {
-      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent: () => () => {} });
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {} });
     });
 
     // No changes → nothing dirty. Several safety intervals must not spam saves.
@@ -179,7 +180,7 @@ describe("useRecoverySnapshot", () => {
 
     const scope = effectScope();
     scope.run(() => {
-      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent: () => () => {} });
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {} });
     });
 
     tabs.value.push({
@@ -206,6 +207,65 @@ describe("useRecoverySnapshot", () => {
     scope.stop();
   });
 
+  it("persists a remote=true viewer pane as local when its host is the local host", async () => {
+    // Sidebar-opened local sessions get pane.remote=true (viewer mode), but the
+    // session itself lives on this host. Persisting it as remote bakes in a
+    // sessionID that dies on every dev restart; on restore executeRestore takes
+    // the rebind-no-spawn branch and the pane sticks to the dead sid forever,
+    // surfacing as "(空)". Snapshot must look-through info.host_id and save the
+    // pane as plain-local so restore re-spawns a fresh shell at last_cwd.
+    const localHostID = ref<string>("local-host");
+    const tabs = ref<Tab[]>([]);
+    const currentTabId = ref<string | null>(null);
+    const sessionInfoFor = (sid: string) =>
+      sid === "local-sid"
+        ? {
+            id: sid,
+            command: "zsh",
+            cwd: "/Users/u/proj",
+            title: "proj",
+            cols: 80,
+            rows: 24,
+            started_at: 0,
+            host_id: "local-host",
+          }
+        : undefined;
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({
+        tabs,
+        currentTabId,
+        sessionInfoFor,
+        localHostID,
+        onEvent: () => () => {},
+      });
+    });
+
+    tabs.value.push({
+      id: "t1",
+      layout: "single",
+      panes: [{ sessionId: "local-sid", remote: true }],
+      activePaneIdx: 0,
+      colRatio: 0.5,
+      rowRatio: 0.5,
+    });
+    await nextTick();
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+
+    const calls = (api.saveRecoverySnapshot as any).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const last = calls[calls.length - 1][0];
+    const pane = last.tabs[0].panes[0];
+    expect(pane.remote).toBeUndefined();
+    expect(pane.session_id).toBeUndefined();
+    expect(pane.host_id).toBeUndefined();
+    expect(pane.last_cwd).toBe("/Users/u/proj");
+    expect(pane.shell).toBe("zsh");
+    scope.stop();
+  });
+
   it("omits remote/host_id/session_id for local panes (keeps snapshot lean)", async () => {
     const tabs = ref<Tab[]>([]);
     const currentTabId = ref<string | null>(null);
@@ -225,7 +285,7 @@ describe("useRecoverySnapshot", () => {
 
     const scope = effectScope();
     scope.run(() => {
-      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent: () => () => {} });
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {} });
     });
 
     tabs.value.push({
@@ -271,7 +331,7 @@ describe("useRecoverySnapshot", () => {
 
     const scope = effectScope();
     scope.run(() => {
-      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, onEvent });
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent });
     });
 
     vi.advanceTimersByTime(600);

@@ -82,8 +82,13 @@ const pasteBusy = ref(false);
 const menuRef = ref<HTMLDivElement | null>(null);
 // Driver state: true = our IN/RESIZE go through, FitAddon sizes xterm to the
 // container. false = viewer: xterm.cols/rows locked to PTY's reported dims
-// from META. Starts optimistic; first META corrects it.
-const isDriver = ref(true);
+// from META. Local panes are always the driver. Remote panes start as viewer
+// so the overlay shows immediately — META corrects to driver if the relay
+// confirms us. Without this, a restored remote pane that the relay can't
+// auto-promote (e.g. uplink proxy sub left the session driverless) would
+// look like driver mode (no overlay) yet have every IN frame dropped by the
+// relay, stranding the user with no way to type and no hint to take control.
+const isDriver = ref(props.isLocalSession ?? true);
 const ptyCols = ref<number | null>(null);
 const ptyRows = ref<number | null>(null);
 // driverHostname is the human-readable name of whoever currently holds the
@@ -678,25 +683,40 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  // Drop every external callback that could re-enter the term BEFORE we
+  // touch conn / term. A queued ResizeObserver entry or a stray document
+  // listener firing in the same tick used to call safeFit() → fit.fit() on
+  // a half-disposed term, and the renderer race in xterm's RenderService
+  // would throw synchronously back into Vue's unmount hook.
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   templatesOff?.();
   templatesOff = null;
   document.removeEventListener("mousedown", onDocumentMouseDown);
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
-  pluginInputSenders?.delete(props.sessionId);
-  focusCoalescer?.dispose();
-  focusCoalescer = null;
-  conn?.detach();
-  conn = null;
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  linkProviderDisposer?.dispose();
-  linkProviderDisposer = null;
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
-  term?.dispose();
+  pluginInputSenders?.delete(props.sessionId);
+  focusCoalescer?.dispose();
+  focusCoalescer = null;
+  linkProviderDisposer?.dispose();
+  linkProviderDisposer = null;
+  conn?.detach();
+  conn = null;
+  // term.dispose() can throw from inside xterm: RenderService schedules a
+  // redraw via Promise.resolve().then(); if dispose interleaves with that
+  // tick, `this._renderer.value.onRequestRedraw` is undefined and throws.
+  // Letting that bubble out of beforeUnmount crashes Vue's update batch —
+  // every subsequent component update then errors on `null.emitsOptions`,
+  // local tabs go black, settings stops opening. Swallow it.
+  try {
+    term?.dispose();
+  } catch (e) {
+    console.warn("[AT Term] xterm dispose race (safe to ignore):", e);
+  }
   term = null;
   fit = null;
 });

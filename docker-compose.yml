@@ -3,10 +3,15 @@ services:
     image: ${ATTERM_RELAY_IMAGE:-attson/atterm-relay:latest}
     container_name: atterm-relay
     restart: unless-stopped
-    # Most settings now live in <config-dir>/relay.json and are managed at
-    # runtime under Admin → Config / Feishu (no restart). Only the essentials
-    # below are env; the optional ones are honored as a one-time seed into
-    # relay.json on first boot.
+    # All runtime settings are stored in the DB (ATTERM_RELAY_DB_DRIVER /
+    # ATTERM_RELAY_DB_DSN). relay.json and web-push.json are no longer written
+    # or read. The env vars below seed the DB on first boot only; afterwards
+    # the admin UI (Admin → Config / Feishu) is the source of truth.
+    #
+    # Multi-instance deployment: point all instances at the same Postgres DB
+    # (ATTERM_RELAY_DB_DRIVER=postgres + ATTERM_RELAY_DB_DSN). Admin config
+    # changes propagate to other instances within ~10 s (config refresher TTL).
+    # rate_limit_per_minute and max_connections_per_key remain per-instance.
     environment:
       # Bootstrap admin email. On boot the relay prints a single-use claim
       # token to the logs; complete OPAQUE registration (set your password in
@@ -15,15 +20,17 @@ services:
       # public relay unless started with --dev-insecure.
       ATTERM_BOOTSTRAP_ADMIN_EMAIL: ${ATTERM_BOOTSTRAP_ADMIN_EMAIL:-}
       # Browser Origin allow-list, e.g. https://relay.example.com. Required for
-      # a public relay (unless --dev-insecure). Seeds relay.json; editable later
-      # under Admin → Config.
+      # a public relay (unless --dev-insecure). Seeds the DB on first boot;
+      # editable later under Admin → Config.
       ATTERM_ORIGINS: ${ATTERM_ORIGINS:-http://localhost:8080}
-      # Persistent state dir: users.db (SQLite), relay.json (admin config),
-      # web-push.json. Must match the volume bind mount below so data survives
-      # restarts.
+      # Persistent state dir for the SQLite DB (users.db). Must match the
+      # volume bind mount below so data survives restarts. Unused when
+      # ATTERM_RELAY_DB_DRIVER=postgres (the DB is remote).
       ATTERM_RELAY_CONFIG_DIR: /etc/atterm
-      # Optional config-file path override (defaults to <config-dir>/relay.json).
-      ATTERM_RELAY_CONFIG: ${ATTERM_RELAY_CONFIG:-/etc/atterm/relay.json}
+      # ── DB backend (default: SQLite in ATTERM_RELAY_CONFIG_DIR) ───────────
+      # For Postgres (required for multi-instance):
+      #   ATTERM_RELAY_DB_DRIVER: postgres
+      #   ATTERM_RELAY_DB_DSN: postgres://user:pass@host:5432/dbname?sslmode=require
       # TLS: this compose serves plain HTTP on :8080 and expects a
       # TLS-terminating proxy (Cloudflare/Caddy/nginx/Tailscale) in front —
       # OPAQUE login REQUIRES a secure context (https or localhost), so the
@@ -34,13 +41,12 @@ services:
       #   ATTERM_TLS_CERT: /etc/atterm/tls/fullchain.pem
       #   ATTERM_TLS_KEY:  /etc/atterm/tls/privkey.pem
       # ── Optional (configure in the admin UI instead) ────────────────────
-      # All of the following are OPTIONAL and now managed under Admin →
-      # Config / Feishu. Set them here only to pre-seed relay.json on first
-      # boot; afterwards the admin UI is the source of truth:
+      # All of the following are OPTIONAL and managed under Admin → Config /
+      # Feishu. Set them here only to pre-seed the DB on first boot:
       #   ATTERM_FEISHU_ENCRYPT_KEY   (base64 32 bytes — admin UI can generate)
       #   ATTERM_FEISHU_BASE_URL
       #   ATTERM_VAPID_SUBJECT        (change needs a restart)
-      #   ATTERM_RATE_LIMIT_PER_MINUTE / ATTERM_MAX_CONNECTIONS_PER_KEY
+      #   ATTERM_RATE_LIMIT_PER_MINUTE / ATTERM_MAX_CONNECTIONS_PER_KEY (per-instance)
       #   ATTERM_RELAY_DEBUG / ATTERM_RELAY_DEBUG_PAYLOAD (verbose logging)
     ports:
       # Plain HTTP — put a TLS-terminating proxy (Cloudflare/Caddy/nginx) in

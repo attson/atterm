@@ -352,7 +352,6 @@ func TestDispatchNoOpWhenEmptyUserID(t *testing.T) {
 	if len(rec.requests) != 0 {
 		t.Fatalf("unexpected pushes with empty ownerUserID; %d requests", len(rec.requests))
 	}
-	_ = context.Background()
 }
 
 // TestDispatch_FilteredByOwner verifies that DispatchCommandFinished sends

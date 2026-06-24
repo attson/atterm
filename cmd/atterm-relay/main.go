@@ -32,8 +32,7 @@ func main() {
 	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ""), "HTTPS listen address — opt-in; requires ATTERM_TLS_CERT+ATTERM_TLS_KEY (or ATTERM_HTTPS_ADDR, e.g. :8443). Empty (default) serves plain --addr only, for a TLS-terminating proxy. Without a cert there is no self-signed fallback, so this defaults off to avoid a fatal boot.")
 	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
-	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
-	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for the SQLite DB etc. (or ATTERM_RELAY_CONFIG_DIR)")
+	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for the SQLite DB (users.db) etc. (or ATTERM_RELAY_CONFIG_DIR)")
 	vapidSubject := flag.String("vapid-subject", envOr("ATTERM_VAPID_SUBJECT", "mailto:noreply@atterm.local"), "VAPID subject (mailto: or https: URL; advertised to push services)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
@@ -52,11 +51,8 @@ func main() {
 		log.Fatal("ATTERM_BOOTSTRAP_ADMIN_EMAIL must be set for a public relay; pass --dev-insecure to skip (development only)")
 	}
 
-	// Resolve persistence directory.
+	// Resolve persistence directory (SQLite stores users.db here).
 	persistDir := *configDir
-	if persistDir == "" && *configPath != "" {
-		persistDir = filepath.Dir(*configPath)
-	}
 	if persistDir == "" {
 		persistDir = "./data/atterm-relay"
 	}
@@ -72,9 +68,8 @@ func main() {
 		log.Fatalf("create persist dir %s: %v", persistDir, err)
 	}
 
-	// Admin config is now DB-backed; relay.json is no longer used. The
-	// --config / ATTERM_RELAY_CONFIG flags are retained for backward compat
-	// (they still affect persistDir resolution above) but no file is read.
+	// Admin config is DB-backed. relay.json and web-push.json are no longer
+	// written or read; all config + web push state live in the DB.
 
 	dbPath := filepath.Join(persistDir, "users.db")
 	var (

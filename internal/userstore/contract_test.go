@@ -188,4 +188,42 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 			t.Fatalf("get wrap: %v %+v", err, got)
 		}
 	})
+
+	t.Run("vapid keys upsert + subscriptions crud", func(t *testing.T) {
+		st := open(t)
+		if _, ok, err := st.GetVAPIDKeys(ctx); err != nil || ok {
+			t.Fatalf("fresh vapid: ok=%v err=%v, want ok=false", ok, err)
+		}
+		if err := st.SetVAPIDKeys(ctx, VAPIDKeys{PrivateKey: "priv", PublicKey: "pub"}); err != nil {
+			t.Fatalf("set vapid: %v", err)
+		}
+		k, ok, err := st.GetVAPIDKeys(ctx)
+		if err != nil || !ok || k.PrivateKey != "priv" || k.PublicKey != "pub" {
+			t.Fatalf("get vapid: ok=%v err=%v k=%+v", ok, err, k)
+		}
+
+		u, err := st.CreateOpaqueUser(ctx, "push@example.com")
+		if err != nil {
+			t.Fatalf("create user: %v", err)
+		}
+		sub := WebPushSubscription{Endpoint: "https://push/ep1", P256dh: "p", Auth: "a", CreatedAt: 123}
+		if err := st.AddWebPushSubscription(ctx, u.ID, sub); err != nil {
+			t.Fatalf("add sub: %v", err)
+		}
+		// Upsert same endpoint is idempotent (no duplicate).
+		if err := st.AddWebPushSubscription(ctx, u.ID, sub); err != nil {
+			t.Fatalf("re-add sub: %v", err)
+		}
+		list, err := st.ListWebPushSubscriptions(ctx, u.ID)
+		if err != nil || len(list) != 1 || list[0].Endpoint != "https://push/ep1" {
+			t.Fatalf("list: err=%v list=%+v", err, list)
+		}
+		if err := st.RemoveWebPushSubscription(ctx, u.ID, "https://push/ep1"); err != nil {
+			t.Fatalf("remove: %v", err)
+		}
+		list2, _ := st.ListWebPushSubscriptions(ctx, u.ID)
+		if len(list2) != 0 {
+			t.Fatalf("after remove len = %d, want 0", len(list2))
+		}
+	})
 }

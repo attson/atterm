@@ -124,10 +124,48 @@ describe("TerminalView link provider wiring", () => {
   });
 });
 
+describe("TerminalView unmount safety", () => {
+  test("term.dispose is wrapped in try/catch so an xterm internal race doesn't break Vue's update batch", () => {
+    // xterm's RenderService can fire a redraw via Promise.resolve().then(...)
+    // during dispose; if the renderer is already half-torn-down,
+    // `this._renderer.value.onRequestRedraw` throws. When this surfaces
+    // synchronously inside onBeforeUnmount, Vue's update batch crashes mid-tick
+    // and every subsequent reactive update hits `null component.emitsOptions`
+    // — local tabs go black, the badge of the closed remote leaks onto them,
+    // settings can't open. Wrap dispose so a swallowed throw stays local.
+    const unmountMatch = source.match(/onBeforeUnmount\([^]*?\n\}\)/);
+    expect(unmountMatch).not.toBeNull();
+    const body = unmountMatch![0];
+    expect(body).toMatch(/try\s*\{[^}]*term[^}]*\.dispose\(\)/);
+    expect(body).toMatch(/catch/);
+  });
+
+  test("resizeObserver disconnects before conn.detach so no in-flight resize callback hits a tearing-down term", () => {
+    const unmountMatch = source.match(/onBeforeUnmount\([^]*?\n\}\)/);
+    expect(unmountMatch).not.toBeNull();
+    const body = unmountMatch![0];
+    const observerIdx = body.indexOf("resizeObserver?.disconnect");
+    const connIdx = body.indexOf("conn?.detach");
+    expect(observerIdx).toBeGreaterThan(-1);
+    expect(connIdx).toBeGreaterThan(-1);
+    expect(observerIdx).toBeLessThan(connIdx);
+  });
+});
+
 describe("TerminalView driver/viewer mode", () => {
   test("tracks isDriver ref from onDriverChange", () => {
     expect(source).toMatch(/const\s+isDriver\s*=\s*ref/);
     expect(source).toMatch(/onDriverChange/);
+  });
+
+  test("remote panes default to viewer (isDriver=false) until META confirms otherwise", () => {
+    // Hard-coding the default to `true` strands restored remote panes when no
+    // META arrives (e.g. session left driverless after the previous client
+    // disconnected): UI shows driver mode, but the relay drops IN frames, so
+    // the user sees "no overlay AND no input". Defaulting on isLocalSession
+    // shows the viewer overlay so the user can press Space → claimDriver().
+    expect(source).not.toMatch(/const\s+isDriver\s*=\s*ref\(\s*true\s*\)/);
+    expect(source).toMatch(/const\s+isDriver\s*=\s*ref\([^)]*isLocalSession[^)]*\)/);
   });
 
   test("locks term to META dims in viewer mode", () => {

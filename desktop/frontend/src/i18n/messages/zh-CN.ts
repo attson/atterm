@@ -133,6 +133,7 @@ export const zhCN = {
     closingWill: "关闭 AT Term 将会：",
     quit: "退出",
     unknownHost: "未知主机",
+    thisMachine: "本机",
   },
   settings: {
     title: "设置",

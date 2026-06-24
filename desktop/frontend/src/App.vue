@@ -56,7 +56,10 @@ import { RATIO_DEFAULT, closePane, focusNeighbor, transitionLayout } from "./lib
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
-import { buildRestoreSessionReq } from "./lib/recoveryRestore";
+import {
+  buildRestoreSessionReq,
+  synthSessionInfoFromSnapshot,
+} from "./lib/recoveryRestore";
 import {
   DEFAULT_TERMINAL_THEME_ID,
   getTerminalTheme,
@@ -778,6 +781,20 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
         t.panes[i] = { sessionId: null, remote: false };
         continue;
       }
+      // Remote panes: do NOT fork a new local shell. The session is still
+      // alive on the remote host (or will be when the relay reconnects);
+      // re-bind the pane to the same session_id and let the remote list
+      // push resolve SessionInfo. Until the relay catches up — or if the
+      // session is gone — lastSeenInfo keeps the tab label meaningful
+      // (matches the local-sweep "disconnected" display).
+      if (snap.remote && snap.session_id) {
+        t.panes[i] = {
+          sessionId: snap.session_id,
+          remote: true,
+          lastSeenInfo: synthSessionInfoFromSnapshot(snap),
+        };
+        continue;
+      }
       try {
         const dims = predictCellDims(tab.layout);
         const req = buildRestoreSessionReq(snap, dims.cols, dims.rows, defaultShell);
@@ -958,7 +975,11 @@ useTerminalShortcuts(
 const recovery = useRecoverySnapshot({
   tabs,
   currentTabId,
-  sessionInfoFor: (sid: string) => findSessionInfo(sid, false),
+  // Look up both lists — restricting to local would null out the host_id
+  // / title / cwd we need to persist for remote panes (so the next launch
+  // can re-bind them instead of forking a fresh local shell).
+  sessionInfoFor: (sid: string) =>
+    findSessionInfo(sid, false) ?? findSessionInfo(sid, true),
 });
 
 watch([tabs, currentTabId], () => {
@@ -1136,6 +1157,7 @@ onUnmounted(() => {
         :by-state-groups="sessions.byState.value"
         :unread-by-state-groups="sessions.unreadByState.value"
         :active-session-id="activePaneRef?.sessionId ?? null"
+        :local-host-id="localHostID"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @markSeen="onMarkSeen"

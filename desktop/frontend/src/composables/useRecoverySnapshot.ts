@@ -53,8 +53,15 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
         panes: t.panes.map((p, idx): RecoveryPaneSnapshot => {
           const info = p.sessionId ? args.sessionInfoFor(p.sessionId) : undefined;
           const ai = p.sessionId ? aiBySid.get(p.sessionId) : undefined;
+          // Remote panes save session_id + host_id so executeRestore can
+          // re-bind to the original remote session instead of spawning a
+          // fresh local shell (which would land in a cwd that doesn't exist
+          // on this machine — see bug-fix history).
           return {
             slot: idx,
+            remote: p.remote || undefined,
+            host_id: p.remote ? info?.host_id ?? "" : undefined,
+            session_id: p.remote && p.sessionId ? p.sessionId : undefined,
             shell: info?.command?.split(" ")[0] ?? "",
             shell_args: [],
             last_cwd: info?.cwd ?? "",

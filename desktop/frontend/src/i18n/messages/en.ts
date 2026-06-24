@@ -131,6 +131,7 @@ export const en = {
     closingWill: "Closing AT Term will:",
     quit: "quit",
     unknownHost: "unknown host",
+    thisMachine: "this machine",
   },
   settings: {
     title: "Settings",

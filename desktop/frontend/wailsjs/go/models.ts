@@ -563,6 +563,9 @@ export namespace main {
 	}
 	export class PaneSnapshot {
 	    slot: number;
+	    remote?: boolean;
+	    host_id?: string;
+	    session_id?: string;
 	    shell: string;
 	    shell_args?: string[];
 	    last_cwd?: string;
@@ -578,6 +581,9 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.slot = source["slot"];
+	        this.remote = source["remote"];
+	        this.host_id = source["host_id"];
+	        this.session_id = source["session_id"];
 	        this.shell = source["shell"];
 	        this.shell_args = source["shell_args"];
 	        this.last_cwd = source["last_cwd"];

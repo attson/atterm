@@ -21,11 +21,17 @@ const props = withDefaults(defineProps<{
   byState?: Record<string, RemoteSession[]>;
   unreadByState?: Record<string, number>;
   activeSessionId?: string | null;
+  // Local host_id (from GetHostInfo). When set and groupBy=host, the local
+  // group is pinned to the top of the list and tagged with a "本机" chip so
+  // users with several relay-attached hosts can spot their own machine at
+  // a glance. Empty string disables both behaviors.
+  localHostId?: string;
 }>(), {
   groupBy: "host",
   byState: () => ({}),
   unreadByState: () => ({}),
   activeSessionId: null,
+  localHostId: "",
 });
 
 const emit = defineEmits<{
@@ -56,7 +62,14 @@ const groupKeys = computed<string[]>(() => {
   if (props.groupBy === "state") {
     return STATE_ORDER.filter((s) => (groups.value[s] ?? []).length > 0);
   }
-  return Object.keys(groups.value).sort();
+  // Pin the local host to the top so the user's own machine is the first
+  // thing visible — the rest stays alphabetical for stability across
+  // relay churn (a remote dropping in/out shouldn't reshuffle the list).
+  const keys = Object.keys(groups.value).sort();
+  if (!props.localHostId) return keys;
+  const i = keys.indexOf(props.localHostId);
+  if (i <= 0) return keys;
+  return [props.localHostId, ...keys.slice(0, i), ...keys.slice(i + 1)];
 });
 const foldOpen = ref(false);
 // Per-group collapse state, in-memory only (matches `foldOpen`'s session-
@@ -138,6 +151,13 @@ function stateLabel(state: string | undefined): string {
       >
         <span class="caret">{{ isGroupCollapsed(key) ? '▶' : '▼' }}</span>
         <span class="host-name">{{ groupHeader(key) }}</span>
+        <span
+          v-if="groupBy === 'host' && localHostId && key === localHostId"
+          class="local-chip"
+          data-test="local-chip"
+        >
+          {{ t("sessions.thisMachine") }}
+        </span>
         <span class="counts">
           <TaskStateIcon :state="groupPrimaryState(key)" :size="10" />
           <span class="count">{{ (groups[key] ?? []).length }}</span>
@@ -243,6 +263,7 @@ function stateLabel(state: string | undefined): string {
 .host-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .counts { margin-left: auto; display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0; }
 .unread-badge { font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; white-space: nowrap; flex-shrink: 0; }
+.local-chip { font-size: 10px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 3px; padding: 0 4px; line-height: 1.3; white-space: nowrap; flex-shrink: 0; }
 .mark-all { background: none; border: none; cursor: pointer; padding: 0 4px; color: inherit; }
 .host-group { display: flex; flex-direction: column; gap: 4px; }
 .task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; }

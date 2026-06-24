@@ -33,8 +33,18 @@ type TabSnapshot struct {
 // NewSession time (i.e. the PTY child). `last_command_line` is the most
 // recent OSC 133;C payload — used by aider for resume and by the dialog
 // for display.
+//
+// Remote panes (Remote=true) skip the spawn path entirely: on restore the
+// pane is rebound to SessionID on the remote host so the same long-running
+// session resumes, instead of being replaced by a fresh local shell forked
+// against Shell/LastCwd (which would land in a directory that doesn't even
+// exist on the local machine). HostID is informational so the recovery
+// dialog can group restored panes by their origin host.
 type PaneSnapshot struct {
 	Slot            int      `json:"slot"`
+	Remote          bool     `json:"remote,omitempty"`
+	HostID          string   `json:"host_id,omitempty"`
+	SessionID       string   `json:"session_id,omitempty"`
 	Shell           string   `json:"shell"`
 	ShellArgs       []string `json:"shell_args,omitempty"`
 	LastCwd         string   `json:"last_cwd,omitempty"`

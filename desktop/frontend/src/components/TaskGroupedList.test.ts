@@ -155,6 +155,89 @@ describe("TaskGroupedList", () => {
   });
 });
 
+describe("TaskGroupedList local host", () => {
+  test("pins the local host group to the top, ignoring alphabetical order", () => {
+    const byHost = {
+      "zzz-remote": [mk({ session_id: "r1", host: "remote-z" })],
+      "aaa-remote": [mk({ session_id: "r2", host: "remote-a" })],
+      "mac-local": [mk({ session_id: "l1", host: "mac" })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        localHostId: "mac-local",
+      },
+    });
+    const headers = w.findAll('[data-test="host-header"]');
+    expect(headers[0].text()).toContain("mac");
+    // Remaining alphabetical: aaa- then zzz-.
+    expect(headers[1].text()).toContain("remote-a");
+    expect(headers[2].text()).toContain("remote-z");
+  });
+
+  test("shows the 'this machine' chip only on the local host header", () => {
+    const byHost = {
+      "mac-local": [mk({ session_id: "l1", host: "mac" })],
+      "remote": [mk({ session_id: "r1", host: "rem" })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        localHostId: "mac-local",
+      },
+    });
+    const chips = w.findAll('[data-test="local-chip"]');
+    expect(chips.length).toBe(1);
+    // The single chip is inside the first (local) host header.
+    const firstHeader = w.find('[data-test="host-header"]');
+    expect(firstHeader.find('[data-test="local-chip"]').exists()).toBe(true);
+  });
+
+  test("no chip and no reorder when localHostId is empty", () => {
+    const byHost = {
+      "zzz": [mk({ session_id: "z", host: "zzz-name" })],
+      "aaa": [mk({ session_id: "a", host: "aaa-name" })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        // localHostId omitted → default ""
+      },
+    });
+    expect(w.findAll('[data-test="local-chip"]').length).toBe(0);
+    const headers = w.findAll('[data-test="host-header"]');
+    expect(headers[0].text()).toContain("aaa-name");
+    expect(headers[1].text()).toContain("zzz-name");
+  });
+
+  test("no chip in state grouping mode even when localHostId matches a state name", () => {
+    // Defensive: if some user named a host "running" it'd collide, but the
+    // chip should only render under groupBy=host.
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: {},
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        groupBy: "state",
+        byState: { running: [mk({ session_id: "x", task_state: "running" })] },
+        unreadByState: { running: 0 },
+        localHostId: "running",
+      },
+    });
+    expect(w.findAll('[data-test="local-chip"]').length).toBe(0);
+  });
+});
+
 describe("TaskGroupedList AI title", () => {
   test("shows AI session OSC title in the row when present", () => {
     const sess = mk({

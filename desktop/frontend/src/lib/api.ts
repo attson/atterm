@@ -50,6 +50,13 @@ export interface RecoveryAIInfo {
 
 export interface RecoveryPaneSnapshot {
   slot: number;
+  // remote=true panes skip the spawn path on restore; the original session_id
+  // is re-bound to the pane so the existing remote session resumes instead of
+  // being replaced by a freshly forked local shell. host_id is informational
+  // (lets the recovery dialog show which host a pane came from).
+  remote?: boolean;
+  host_id?: string;
+  session_id?: string;
   shell: string;
   shell_args?: string[];
   last_cwd?: string;

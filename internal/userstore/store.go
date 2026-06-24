@@ -112,6 +112,26 @@ func OpenPostgres(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore
 
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
+// OpenFromDSN opens a store from a scheme-tagged DSN:
+//   - "postgres://..." or "postgresql://..."  → Postgres
+//   - "sqlite:<path>"                          → SQLite at <path>
+//   - anything else                            → SQLite, treating the DSN
+//     as a bare file path
+//
+// Used by the migrate subcommand for --from/--to.
+func OpenFromDSN(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore, error) {
+	switch {
+	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
+		return OpenPostgres(ctx, dsn, opts...)
+	case strings.HasPrefix(dsn, "sqlite:"):
+		path := strings.TrimPrefix(dsn, "sqlite:")
+		path = strings.TrimPrefix(path, "//")
+		return Open(ctx, path, opts...)
+	default:
+		return Open(ctx, dsn, opts...)
+	}
+}
+
 // DB returns the underlying sql.DB. Only used in tests that need direct
 // SQL access to verify internal state. Not part of the Store interface.
 func (s *SQLiteStore) DB() *sql.DB { return s.db }

@@ -78,6 +78,12 @@ func Copy(ctx context.Context, src, dst *DBStore) (map[string]int64, error) {
 	return counts, nil
 }
 
+// CopyTableOrder returns the table copy order (for callers that want to print
+// per-table results deterministically).
+func CopyTableOrder() []string {
+	return append([]string(nil), copyTablesInOrder...)
+}
+
 // copyTable streams every row of one table from src into dst's tx using a
 // generic SELECT */INSERT. Values scan into []interface{} as []byte/int64/
 // string/nil, which both modernc.org/sqlite and jackc/pgx/v5/stdlib accept

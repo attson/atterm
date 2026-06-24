@@ -28,6 +28,9 @@ import (
 var Version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(migrateCmd(os.Args[2:]))
+	}
 	addr := flag.String("addr", ":8080", "plain HTTP listen address — for a reverse proxy / internal use (empty disables)")
 	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ""), "HTTPS listen address — opt-in; requires ATTERM_TLS_CERT+ATTERM_TLS_KEY (or ATTERM_HTTPS_ADDR, e.g. :8443). Empty (default) serves plain --addr only, for a TLS-terminating proxy. Without a cert there is no self-signed fallback, so this defaults off to avoid a fatal boot.")
 	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")

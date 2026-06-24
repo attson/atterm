@@ -61,13 +61,14 @@ interface LoginFinalizeResp {
 
 function persistSession(sessionToken: string, realmId?: string): void {
   const existing = loadRelayConfig()
+  const effectiveRealmId = realmId ?? existing?.realmId
   saveRelayConfig({
     baseURL: existing?.baseURL ?? '',
     allowInsecure: existing?.allowInsecure ?? false,
     sessionToken,
     // OPAQUE login no longer returns an expiry; relay-side authoritative.
     expiresAt: null,
-    ...(realmId !== undefined ? { realmId } : {}),
+    ...(effectiveRealmId !== undefined ? { realmId: effectiveRealmId } : {}),
   })
 }
 

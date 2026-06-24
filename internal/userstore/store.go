@@ -189,6 +189,10 @@ type Store interface {
 	GetAccountKeyWrap(ctx context.Context, userID, method string) (AccountKeyWrap, error)
 	StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap) error
 
+	// Relay-wide singleton config (DB-backed replacement for relay.json).
+	GetRelayConfig(ctx context.Context) (RelayConfig, error)
+	SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayConfig, error)
+
 	Close() error
 }
 

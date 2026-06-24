@@ -135,6 +135,40 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		}
 	})
 
+	t.Run("relay_config get-default then set bumps version", func(t *testing.T) {
+		st := open(t)
+		got, err := st.GetRelayConfig(ctx)
+		if err != nil {
+			t.Fatalf("get default: %v", err)
+		}
+		if got.Version != 0 {
+			t.Fatalf("unconfigured version = %d, want 0", got.Version)
+		}
+		in := RelayConfig{
+			RateLimitPerMinute: 600, MaxConnectionsPerKey: 64,
+			AllowedOrigins: []string{"https://a.example", "https://b.example"},
+			VAPIDSubject:   "mailto:x@y.z", Debug: true,
+			FeishuEnabled:  true, FeishuEncryptKey: "k", FeishuBaseURL: "https://f",
+		}
+		w1, err := st.SetRelayConfig(ctx, in)
+		if err != nil {
+			t.Fatalf("set: %v", err)
+		}
+		if w1.Version != 1 {
+			t.Fatalf("first set version = %d, want 1", w1.Version)
+		}
+		got2, _ := st.GetRelayConfig(ctx)
+		if got2.RateLimitPerMinute != 600 || len(got2.AllowedOrigins) != 2 ||
+			got2.AllowedOrigins[0] != "https://a.example" || !got2.Debug ||
+			!got2.FeishuEnabled || got2.FeishuEncryptKey != "k" || got2.Version != 1 {
+			t.Fatalf("readback mismatch: %+v", got2)
+		}
+		w2, _ := st.SetRelayConfig(ctx, in)
+		if w2.Version != 2 {
+			t.Fatalf("second set version = %d, want 2", w2.Version)
+		}
+	})
+
 	t.Run("account key wrap roundtrip", func(t *testing.T) {
 		st := open(t)
 		u, err := st.CreateOpaqueUser(ctx, "dave@example.com")

@@ -82,7 +82,10 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 
 	t.Run("session lifecycle", func(t *testing.T) {
 		st := open(t)
-		u, _ := st.CreateOpaqueUser(ctx, "bob@example.com")
+		u, err := st.CreateOpaqueUser(ctx, "bob@example.com")
+		if err != nil {
+			t.Fatalf("create user: %v", err)
+		}
 		tok, sess, err := st.CreateSession(ctx, u.ID, "ua", "127.0.0", time.Hour)
 		if err != nil {
 			t.Fatalf("create session: %v", err)
@@ -101,7 +104,10 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 
 	t.Run("preferences LWW upsert", func(t *testing.T) {
 		st := open(t)
-		u, _ := st.CreateOpaqueUser(ctx, "carol@example.com")
+		u, err := st.CreateOpaqueUser(ctx, "carol@example.com")
+		if err != nil {
+			t.Fatalf("create user: %v", err)
+		}
 		items := []PreferenceItem{{Key: "locale_preference", ValueJSON: []byte(`"en"`), UpdatedAt: 100}}
 		if _, err := st.SetUserPreferences(ctx, u.ID, 0, items); err != nil {
 			t.Fatalf("set: %v", err)
@@ -112,14 +118,17 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		if err != nil {
 			t.Fatalf("set stale: %v", err)
 		}
-		if len(out) != 1 || string(out[0].ValueJSON) != `"en"` {
-			t.Fatalf("stale write won: %+v", out)
+		if len(out) != 1 || string(out[0].ValueJSON) != `"en"` || out[0].UpdatedAt != 100 {
+			t.Fatalf("stale write won: %+v (UpdatedAt=%d)", out, out[0].UpdatedAt)
 		}
 	})
 
 	t.Run("account key wrap roundtrip", func(t *testing.T) {
 		st := open(t)
-		u, _ := st.CreateOpaqueUser(ctx, "dave@example.com")
+		u, err := st.CreateOpaqueUser(ctx, "dave@example.com")
+		if err != nil {
+			t.Fatalf("create user: %v", err)
+		}
 		w := AccountKeyWrap{
 			UserID: u.ID, Method: "password",
 			Wrapped: []byte("w"), Nonce: []byte("n"), Salt: []byte("s"),

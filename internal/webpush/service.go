@@ -64,7 +64,8 @@ func Open(store userstore.Store, vapidSubject string) (*Service, error) {
 }
 
 // PublicKey returns the VAPID public key as a base64url string for the
-// browser's applicationServerKey.
+// browser's applicationServerKey. vapidPub is immutable after Open, so no
+// lock is needed.
 func (s *Service) PublicKey() string {
 	return s.vapidPub
 }

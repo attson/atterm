@@ -1,12 +1,14 @@
 package relay
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
 )
@@ -15,10 +17,20 @@ import (
 // while a session is being watched (≥1 subscriber) and fires once the last
 // subscriber leaves.
 func TestNotifSuppressWebPushWhenWatched(t *testing.T) {
-	const ownerUserID = "user_notify_suppress_test"
+	ctx := context.Background()
+	st, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("userstore.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	u, err := st.CreateOpaqueUser(ctx, "notify-suppress@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	ownerUserID := u.ID
 
 	// --- WebPush spy: real *webpush.Service with recording HTTP transport ---
-	svc, err := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	svc, err := webpush.Open(st, "mailto:test@example.com")
 	if err != nil {
 		t.Fatalf("webpush.Open: %v", err)
 	}

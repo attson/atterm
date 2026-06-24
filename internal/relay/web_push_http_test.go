@@ -19,11 +19,11 @@ import (
 // Returns the Server, the WebPush service, and a fresh user's session token.
 func newWebPushTestServer(t *testing.T) (*Server, *webpush.Service, string, string) {
 	t.Helper()
-	svc, err := webpush.Open(t.TempDir(), "mailto:test@example.com")
+	store := userstore.NewInMemory(t)
+	svc, err := webpush.Open(store, "mailto:test@example.com")
 	if err != nil {
 		t.Fatalf("webpush.Open: %v", err)
 	}
-	store := userstore.NewInMemory(t)
 	ctx := context.Background()
 	u, err := store.CreateOpaqueUser(ctx, "push@example.com")
 	if err != nil {

@@ -68,7 +68,7 @@ func (s *Service) DispatchCommandFinished(ownerUserID string, ev CommandFinished
 	if len(ev.Label) > maxLabelLen {
 		ev.Label = ev.Label[:maxLabelLen]
 	}
-	subs := s.subStore.ByUser(ownerUserID)
+	subs := s.SubscriptionsForUser(ownerUserID)
 	if len(subs) == 0 {
 		return
 	}
@@ -87,7 +87,7 @@ func (s *Service) DispatchSessionNotification(ownerUserID string, ev SessionNoti
 	if len(ev.Label) > maxLabelLen {
 		ev.Label = ev.Label[:maxLabelLen]
 	}
-	subs := s.subStore.ByUser(ownerUserID)
+	subs := s.SubscriptionsForUser(ownerUserID)
 	if len(subs) == 0 {
 		return
 	}
@@ -100,7 +100,7 @@ func (s *Service) DispatchSessionNotification(ownerUserID string, ev SessionNoti
 // SendTest dispatches a "test" notification to every subscription under
 // userID. Returns the number of pushes dispatched (not delivered).
 func (s *Service) SendTest(userID string) int {
-	subs := s.subStore.ByUser(userID)
+	subs := s.SubscriptionsForUser(userID)
 	body, _ := json.Marshal(map[string]interface{}{
 		"title": "AT Term test",
 		"body":  "It works.",
@@ -130,8 +130,9 @@ func (s *Service) sendOne(userID string, sub Subscription, body []byte) {
 		return
 	case resp.StatusCode == 404 || resp.StatusCode == 410:
 		log.Printf("webpush: endpoint %s gone (status %d); pruning", sub.Endpoint, resp.StatusCode)
-		s.subStore.Remove(userID, sub.Endpoint)
-		s.persistBestEffort()
+		if err := s.store.RemoveWebPushSubscription(ctx, userID, sub.Endpoint); err != nil {
+			log.Printf("webpush: prune subscription: %v", err)
+		}
 	default:
 		log.Printf("webpush: send non-2xx endpoint=%s status=%d", sub.Endpoint, resp.StatusCode)
 	}

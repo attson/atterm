@@ -66,8 +66,8 @@ func (s *SQLiteStore) CreateSession(ctx context.Context, userID, userAgent, ipPr
 	expiresMs := nowMs + ttl.Milliseconds()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions(id_hash, user_id, created_at, expires_at, user_agent, ip_prefix)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
+		s.dia.Rebind(`INSERT INTO sessions(id_hash, user_id, created_at, expires_at, user_agent, ip_prefix)
+		 VALUES(?, ?, ?, ?, ?, ?)`),
 		hash, userID, nowMs, expiresMs, userAgent, ipPrefix,
 	)
 	if err != nil {
@@ -110,11 +110,11 @@ func (s *SQLiteStore) LookupSession(ctx context.Context, plaintext string) (*Ses
 	)
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT s.id_hash, s.user_id, s.created_at, s.expires_at, s.last_seen_at, s.user_agent, s.ip_prefix,
+		s.dia.Rebind(`SELECT s.id_hash, s.user_id, s.created_at, s.expires_at, s.last_seen_at, s.user_agent, s.ip_prefix,
 		        u.id, u.email, u.is_admin, u.created_at, u.disabled_at
 		 FROM sessions s
 		 JOIN users u ON u.id = s.user_id
-		 WHERE s.id_hash = ? AND s.expires_at > ?`,
+		 WHERE s.id_hash = ? AND s.expires_at > ?`),
 		hash, nowMs,
 	).Scan(&idHash, &userID, &createdMs, &expiresMs, &lastSeenMs, &userAgent, &ipPrefix,
 		&uID, &uEmail, &uIsAdmin, &uCreatedAt, &uDisabledAt)
@@ -155,7 +155,7 @@ func (s *SQLiteStore) LookupSession(ctx context.Context, plaintext string) (*Ses
 func (s *SQLiteStore) DeleteSession(ctx context.Context, plaintext string) error {
 	hash := sessionHash(plaintext)
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM sessions WHERE id_hash = ?`, hash,
+		s.dia.Rebind(`DELETE FROM sessions WHERE id_hash = ?`), hash,
 	)
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
@@ -169,7 +169,7 @@ func (s *SQLiteStore) DeleteSession(ctx context.Context, plaintext string) error
 func (s *SQLiteStore) PurgeExpiredSessions(ctx context.Context) (int64, error) {
 	nowMs := time.Now().UnixMilli()
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM sessions WHERE expires_at < ?`, nowMs,
+		s.dia.Rebind(`DELETE FROM sessions WHERE expires_at < ?`), nowMs,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("purge expired sessions: %w", err)

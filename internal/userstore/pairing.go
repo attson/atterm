@@ -64,8 +64,8 @@ func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl
 	expires := now.Add(ttl)
 
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO pairing_tokens(token_hash, prefix, user_id, created_at, expires_at, consumed_at)
-		 VALUES(?, ?, ?, ?, ?, NULL)`,
+		s.dia.Rebind(`INSERT INTO pairing_tokens(token_hash, prefix, user_id, created_at, expires_at, consumed_at)
+		 VALUES(?, ?, ?, ?, ?, NULL)`),
 		hash, prefix, userID, now.Unix(), expires.Unix(),
 	)
 	if err != nil {
@@ -98,8 +98,8 @@ func (s *SQLiteStore) ConsumePairingToken(ctx context.Context, plaintext string)
 		consumedAt sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT user_id, expires_at, consumed_at
-		 FROM pairing_tokens WHERE token_hash = ?`, hash,
+		s.dia.Rebind(`SELECT user_id, expires_at, consumed_at
+		 FROM pairing_tokens WHERE token_hash = ?`), hash,
 	).Scan(&userID, &expiresAt, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrPairingNotFound
@@ -115,8 +115,8 @@ func (s *SQLiteStore) ConsumePairingToken(ctx context.Context, plaintext string)
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE pairing_tokens SET consumed_at = ?
-		 WHERE token_hash = ? AND consumed_at IS NULL`,
+		s.dia.Rebind(`UPDATE pairing_tokens SET consumed_at = ?
+		 WHERE token_hash = ? AND consumed_at IS NULL`),
 		time.Now().Unix(), hash,
 	)
 	if err != nil {

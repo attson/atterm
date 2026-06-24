@@ -51,8 +51,8 @@ func (s *SQLiteStore) CreateClaimToken(ctx context.Context, email, role string, 
 	now := time.Now()
 	expires := now.Add(ttl)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO claim_tokens(token_hash, email, role, expires_at, consumed_at)
-		 VALUES(?, ?, ?, ?, NULL)`,
+		s.dia.Rebind(`INSERT INTO claim_tokens(token_hash, email, role, expires_at, consumed_at)
+		 VALUES(?, ?, ?, ?, NULL)`),
 		hash, email, role, expires.Unix(),
 	)
 	if err != nil {
@@ -74,8 +74,8 @@ func (s *SQLiteStore) LookupClaimToken(ctx context.Context, plaintext string) (C
 		consumedAt  sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT email, role, expires_at, consumed_at
-		 FROM claim_tokens WHERE token_hash = ?`, hash,
+		s.dia.Rebind(`SELECT email, role, expires_at, consumed_at
+		 FROM claim_tokens WHERE token_hash = ?`), hash,
 	).Scan(&email, &role, &expiresAt, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ClaimToken{}, ErrClaimTokenNotFound
@@ -103,8 +103,8 @@ func (s *SQLiteStore) LookupClaimToken(ctx context.Context, plaintext string) (C
 func (s *SQLiteStore) ConsumeClaimToken(ctx context.Context, plaintext string) error {
 	hash := claimTokenHash(plaintext)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE claim_tokens SET consumed_at = ?
-		 WHERE token_hash = ? AND consumed_at IS NULL`,
+		s.dia.Rebind(`UPDATE claim_tokens SET consumed_at = ?
+		 WHERE token_hash = ? AND consumed_at IS NULL`),
 		time.Now().Unix(), hash,
 	)
 	if err != nil {

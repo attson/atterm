@@ -29,7 +29,7 @@ const (
 // rather than by an /agent connection.
 type mirrorState struct {
 	sess      *session.Session
-	fwdCancel context.CancelFunc // running inbound forwarder, nil when not streaming
+	streaming bool // true once StreamRequest has been sent (first subscriber)
 
 	idleCancel                 context.CancelFunc
 	idleNotifiedCommandStarted int64
@@ -108,18 +108,21 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		}
 	}
 
-	// startStream wires up an inbound forwarder for a mirror session. Called
-	// from the lifecycle hook when the first subscriber arrives.
+	// startStream asks the desktop to begin sending OUT bytes for a mirror
+	// session. Called from the lifecycle hook when the first subscriber
+	// arrives. This is intentionally gated on subscribers to save bandwidth
+	// (no remote viewer => no need to stream OUT). The inbound forwarder is
+	// NOT wired here — it runs unconditionally (see startInboundForwarder)
+	// so relay-injected IN frames (e.g. Feishu card buttons) reach the PTY
+	// even when no viewer is subscribed.
 	startStream := func(id uuid.UUID) {
 		mu.Lock()
 		ms, ok := mirrors[id]
-		if !ok || ms.fwdCancel != nil {
+		if !ok || ms.streaming {
 			mu.Unlock()
 			return
 		}
-		fwdCtx, cancelFwd := context.WithCancel(connCtx)
-		ms.fwdCancel = cancelFwd
-		sess := ms.sess
+		ms.streaming = true
 		mu.Unlock()
 
 		// notify uplink to start sending bytes
@@ -127,15 +130,37 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		frame := proto.Frame{Type: proto.TypeStreamRequest, SessionID: id, Payload: payload}
 		s.debugFrame("uplink", "enqueue", frame)
 		enqueue(frame)
+	}
 
-		// drain the mirror session's inbound (IN/RESIZE coming from web clients)
-		// and push them up the WS to the uplink, so the desktop can route them
-		// to the local PTY.
+	stopStream := func(id uuid.UUID) {
+		mu.Lock()
+		ms, ok := mirrors[id]
+		if !ok || !ms.streaming {
+			mu.Unlock()
+			return
+		}
+		ms.streaming = false
+		mu.Unlock()
+		payload, _ := json.Marshal(proto.StreamStopPayload{SessionID: id.String()})
+		frame := proto.Frame{Type: proto.TypeStreamStop, SessionID: id, Payload: payload}
+		s.debugFrame("uplink", "enqueue", frame)
+		enqueue(frame)
+	}
+
+	// startInboundForwarder runs a resident goroutine that drains a mirror
+	// session's inbound channel (IN/RESIZE frames pushed by web clients OR
+	// injected by the relay itself, e.g. Feishu card callbacks via
+	// SendInbound) and pushes them up the WS so the desktop routes them to
+	// the local PTY. Unlike OUT streaming, this is NOT gated on remote
+	// subscribers: a frame injected with no viewer present must still reach
+	// the PTY. The goroutine exits when the connection is torn down
+	// (connCtx done) or the session's inbound channel closes.
+	startInboundForwarder := func(sess *session.Session) {
 		go func() {
 			inbound := sess.Inbound()
 			for {
 				select {
-				case <-fwdCtx.Done():
+				case <-connCtx.Done():
 					return
 				case f, ok := <-inbound:
 					if !ok {
@@ -144,28 +169,12 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 					s.debugFrame("uplink", "enqueue", f)
 					select {
 					case uplinkOut <- f:
-					case <-fwdCtx.Done():
+					case <-connCtx.Done():
 						return
 					}
 				}
 			}
 		}()
-	}
-
-	stopStream := func(id uuid.UUID) {
-		mu.Lock()
-		ms, ok := mirrors[id]
-		if !ok || ms.fwdCancel == nil {
-			mu.Unlock()
-			return
-		}
-		ms.fwdCancel()
-		ms.fwdCancel = nil
-		mu.Unlock()
-		payload, _ := json.Marshal(proto.StreamStopPayload{SessionID: id.String()})
-		frame := proto.Frame{Type: proto.TypeStreamStop, SessionID: id, Payload: payload}
-		s.debugFrame("uplink", "enqueue", frame)
-		enqueue(frame)
 	}
 
 	notifySession := func(ms *mirrorState, info proto.SessionInfo, notificationType string, idleForSeconds int) {
@@ -324,6 +333,9 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			ms := &mirrorState{sess: sess}
 			mirrors[id] = ms
 			mu.Unlock()
+			// Resident inbound forwarder: must run regardless of remote
+			// subscribers so relay-injected IN frames reach the PTY.
+			startInboundForwarder(sess)
 			handleTaskNotifications(id, ms)
 			s.debugf("uplink mirror_add session=%s command=%q host_id=%q host=%q user=%q", id, info.Command, info.HostID, info.Host, info.User)
 		}
@@ -341,9 +353,6 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			ms := mirrors[id]
 			delete(mirrors, id)
 			mu.Unlock()
-			if ms != nil && ms.fwdCancel != nil {
-				ms.fwdCancel()
-			}
 			cancelIdleTimer(ms)
 			s.removeSession(id)
 			s.debugf("uplink mirror_remove session=%s reason=missing_from_announce", id)
@@ -467,9 +476,6 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			mu.Unlock()
 			if ms != nil {
 				ms.sess.Broadcast(f)
-				if ms.fwdCancel != nil {
-					ms.fwdCancel()
-				}
 				cancelIdleTimer(ms)
 				s.removeSession(f.SessionID)
 			}

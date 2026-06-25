@@ -535,17 +535,11 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			// runs after the lock is released.
 			switch next {
 			case proto.TaskStateCompleted, proto.TaskStateFailed:
-				sealed := len(meta.SealedBody) != 0
+				// meta.RecentOutput is the command summary computed at OSC 133;D
+				// (already ANSI-stripped + line-limited, empty for E2EE sessions).
+				tail := meta.RecentOutput
 				go func() {
 					info := sess.Info()
-					var tail string
-					// Never expose plaintext output for sealed (E2EE) sessions.
-					if !sealed {
-						// Scrollback is raw PTY bytes: strip ANSI/OSC escape
-						// sequences so the Feishu card shows clean text, not
-						// color codes and shell-integration markers.
-						tail = string(session.StripANSI(sess.TailOutput(512)))
-					}
 					disp.DispatchCommandFinished(context.Background(),
 						feishu.CommandFinishedEvent{
 							SessionID:    sid,

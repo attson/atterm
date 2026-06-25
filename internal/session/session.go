@@ -166,6 +166,10 @@ type TaskMeta struct {
 	ElapsedMS  int
 	Label      string
 	SealedBody []byte
+	// RecentOutput is the command's tail output, already ANSI-stripped and
+	// line-limited by computeSummary (the same summary clients render).
+	// Empty for non-D transitions and for content-opaque (E2EE) sessions.
+	RecentOutput string
 }
 
 // Subscriber is a client connection's outbox.
@@ -1039,10 +1043,15 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.silenceTimer = nil
 			}
 			changed = true
+			var recentOutput string
+			if s.meta.Summary != nil {
+				recentOutput = s.meta.Summary.RecentOutput
+			}
 			s.fireTaskStateLocked(prevStateD, state, TaskMeta{
-				ExitCode:  exitCode,
-				ElapsedMS: duration,
-				Label:     s.meta.CurrentCommand,
+				ExitCode:     exitCode,
+				ElapsedMS:    duration,
+				Label:        s.meta.CurrentCommand,
+				RecentOutput: recentOutput,
 			})
 		}
 	}

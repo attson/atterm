@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -126,6 +127,10 @@ func (s *Service) Token() TokenSource      { return s.tokenSrc }
 // callers pass an external SessionLookup via ServiceConfig.
 func (s *Service) Exists(uuid.UUID) bool { return true }
 
+// Inject satisfies SessionLookup for embedded use; production callers pass an
+// external SessionLookup via ServiceConfig.
+func (s *Service) Inject(uuid.UUID, string) error { return nil }
+
 // EnsureLongConn starts the long-conn lazily once credentials exist.
 // No-op in relay mode.
 func (s *Service) EnsureLongConn(ctx context.Context) error {
@@ -151,8 +156,8 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 		OnBindMessage: func(ctx context.Context, senderOpenID, text string) {
 			s.handleBindMessage(ctx, senderOpenID, text)
 		},
-		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID string) {
-			s.handleCardAction(ctx, sessionID, kind, event)
+		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
+			s.handleCardAction(ctx, sessionID, kind, event, text)
 		},
 		OnAuthClassFailure: func(ctx context.Context, _ error) {
 			_ = s.store.SetDisabled(ctx)
@@ -199,10 +204,17 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 	_ = s.store.SetBound(ctx, senderOpenID)
 }
 
-func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event string) {
-	_ = sessionID
-	_ = kind
-	_ = event
+func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, text string) {
+	if kind != "inject" || text == "" {
+		return
+	}
+	sid, err := uuid.Parse(sessionID)
+	if err != nil {
+		return
+	}
+	if err := s.cfg.Sessions.Inject(sid, text); err != nil {
+		log.Printf("feishu: card inject session=%s: %v", sid, err)
+	}
 }
 
 // In-memory short-code table for local mode.
@@ -283,7 +295,8 @@ func internalfeishuPairCode() string {
 
 type noOpSessionLookup struct{}
 
-func (noOpSessionLookup) Exists(uuid.UUID) bool { return true }
+func (noOpSessionLookup) Exists(uuid.UUID) bool          { return true }
+func (noOpSessionLookup) Inject(uuid.UUID, string) error { return nil }
 
 // authClassAdaptingClient promotes internal/feishu.AuthClassError to
 // satisfy the desktop dispatcher's IsFeishuAuthClassError contract.

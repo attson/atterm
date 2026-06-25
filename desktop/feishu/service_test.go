@@ -59,7 +59,8 @@ func TestService_HookServerExposed(t *testing.T) {
 // stubSessionLookup is the minimal SessionLookup used by the assembly tests.
 type stubSessionLookup struct{}
 
-func (stubSessionLookup) Exists(uuid.UUID) bool { return true }
+func (stubSessionLookup) Exists(uuid.UUID) bool          { return true }
+func (stubSessionLookup) Inject(uuid.UUID, string) error { return nil }
 
 var _ SessionLookup = stubSessionLookup{}
 
@@ -140,5 +141,36 @@ func TestService_BeginPair_LocalMode(t *testing.T) {
 	}
 	if len(code) != 6 {
 		t.Fatalf("expected 6-char code, got %q", code)
+	}
+}
+
+type fakeInjector struct {
+	gotSID  uuid.UUID
+	gotText string
+	err     error
+}
+
+func (f *fakeInjector) Exists(uuid.UUID) bool { return true }
+func (f *fakeInjector) Inject(sid uuid.UUID, text string) error {
+	f.gotSID, f.gotText = sid, text
+	return f.err
+}
+
+func TestHandleCardAction_InjectWritesText(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	sid := uuid.New()
+	s.handleCardAction(context.Background(), sid.String(), "inject", "", "1\n")
+	if inj.gotSID != sid || inj.gotText != "1\n" {
+		t.Fatalf("inject got sid=%s text=%q", inj.gotSID, inj.gotText)
+	}
+}
+
+func TestHandleCardAction_NonInjectIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "")
+	if inj.gotText != "" {
+		t.Fatalf("ack should not inject, got %q", inj.gotText)
 	}
 }

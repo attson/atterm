@@ -70,13 +70,13 @@ func TestLongConn_OnCardAction_RoutesAck(t *testing.T) {
 	gotSID := ""
 	cfg := LongConnConfig{
 		AppID: "x", AppSecret: "y",
-		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID string) {
+		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
 			called++
 			gotSID = sessionID
 		},
 	}
 	r := newTestableRuntime(cfg)
-	r.injectCardAction("ou_op", "sid-99", "ack", "command_finished")
+	r.injectCardAction("ou_op", "sid-99", "ack", "command_finished", "")
 	if called != 1 || gotSID != "sid-99" {
 		t.Fatalf("expected one card-action callback with sid-99, got %d / %q", called, gotSID)
 	}

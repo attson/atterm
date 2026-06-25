@@ -33,6 +33,8 @@ type sessionsFake struct {
 
 func (f *sessionsFake) Exists(sid uuid.UUID) bool { return f.known[sid.String()] }
 
+func (f *sessionsFake) Inject(uuid.UUID, string) error { return nil }
+
 func TestHookServer_HappyPath(t *testing.T) {
 	disp := &recordingDispatcher{}
 	sid := uuid.MustParse("00000000-0000-0000-0000-000000000099")

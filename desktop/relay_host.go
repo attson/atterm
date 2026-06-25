@@ -320,6 +320,16 @@ func (h *relayHost) SendLocalInbound(id uuid.UUID, f proto.Frame) error {
 	return nil
 }
 
+// Inject writes text into a local session's PTY by sending it as a TypeIn
+// frame down the same path remote-viewer keystrokes use.
+func (h *relayHost) Inject(id uuid.UUID, text string) error {
+	return h.SendLocalInbound(id, proto.Frame{
+		Type:      proto.TypeIn,
+		SessionID: id,
+		Payload:   []byte(text),
+	})
+}
+
 // RequestLocalRepaint nudges a full-screen terminal app to redraw after a
 // remote attach receives only a truncated alternate-screen replay. Many TUIs
 // repaint on SIGWINCH, which is the only reliable signal available outside

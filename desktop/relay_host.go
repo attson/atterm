@@ -526,25 +526,35 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if disp == nil {
 				return
 			}
+			// IMPORTANT: this callback runs while session.mu is held (see
+			// fireTaskStateLocked). Calling sess.Info() / sess.TailOutput()
+			// here would re-acquire that lock and deadlock the session
+			// goroutine — which stops its inbound pump, so keystrokes stop
+			// reaching the PTY (terminal appears frozen). Defer every call
+			// that touches the session lock to the goroutine below, which
+			// runs after the lock is released.
 			switch next {
 			case proto.TaskStateCompleted, proto.TaskStateFailed:
-				info := sess.Info()
-				var tail string
-				// Never expose plaintext output for sealed (E2EE) sessions.
-				if len(meta.SealedBody) == 0 {
-					tail = string(sess.TailOutput(512))
-				}
-				go disp.DispatchCommandFinished(context.Background(),
-					feishu.CommandFinishedEvent{
-						SessionID:    sid,
-						ExitCode:     meta.ExitCode,
-						ElapsedMS:    meta.ElapsedMS,
-						Label:        meta.Label,
-						SealedBody:   meta.SealedBody,
-						SessionTitle: info.Title,
-						Cwd:          info.Cwd,
-						OutputTail:   tail,
-					})
+				sealed := len(meta.SealedBody) != 0
+				go func() {
+					info := sess.Info()
+					var tail string
+					// Never expose plaintext output for sealed (E2EE) sessions.
+					if !sealed {
+						tail = string(sess.TailOutput(512))
+					}
+					disp.DispatchCommandFinished(context.Background(),
+						feishu.CommandFinishedEvent{
+							SessionID:    sid,
+							ExitCode:     meta.ExitCode,
+							ElapsedMS:    meta.ElapsedMS,
+							Label:        meta.Label,
+							SealedBody:   meta.SealedBody,
+							SessionTitle: info.Title,
+							Cwd:          info.Cwd,
+							OutputTail:   tail,
+						})
+				}()
 			case proto.TaskStateWaitingInput:
 				go disp.DispatchWaitingInput(context.Background(),
 					feishu.WaitingInputDispatchEvent{

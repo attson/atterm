@@ -915,6 +915,49 @@ func TestSession_OnTaskStateChange_FiresOnTransitions(t *testing.T) {
 	}
 }
 
+// TestSession_OnTaskStateChange_HeldLockContract documents (and guards) the
+// fact that the onTaskStateChange callback runs while s.mu is held. A caller
+// that calls a lock-taking method like s.Info() / s.TailOutput() directly in
+// the callback deadlocks the session goroutine — which froze the PTY input
+// pump in the field (terminal appeared frozen after a command finished). This
+// test proves the lock is held by showing that an Info() call issued from
+// inside the callback cannot complete until the callback returns (and the
+// lock is released). Callers must defer such calls to a goroutine.
+func TestSession_OnTaskStateChange_HeldLockContract(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	infoDone := make(chan struct{})
+	callbackReturned := make(chan struct{})
+	s.SetOnTaskStateChange(func(_ uuid.UUID, _, next string, _ TaskMeta) {
+		if next != proto.TaskStateCompleted {
+			return
+		}
+		// Issue a lock-taking call from a goroutine; it must block until the
+		// callback returns and s.mu is released.
+		go func() {
+			_ = s.Info()
+			close(infoDone)
+		}()
+		// Give the goroutine a chance to run and (correctly) block on s.mu.
+		select {
+		case <-infoDone:
+			t.Errorf("s.Info() completed while callback held s.mu — lock not held, contract broken")
+		case <-time.After(50 * time.Millisecond):
+			// Expected: Info() is still blocked on s.mu.
+		}
+		close(callbackReturned)
+	})
+
+	s.PushOut(1, []byte("$ \x1b]133;A\x07c\x1b]133;C\x07o\x1b]133;D;0\x07"))
+
+	<-callbackReturned
+	select {
+	case <-infoDone:
+		// Info() unblocked once the callback returned and the lock released.
+	case <-time.After(time.Second):
+		t.Fatal("s.Info() never completed after callback returned — deadlock")
+	}
+}
+
 func TestSession_OnTaskStateChange_FiresOnWaiting(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{})
 	fired := make(chan struct{}, 1)

@@ -106,10 +106,10 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		Now:   cfg.Now,
 	})
 
-	sessions := cfg.Sessions
-	if sessions == nil {
-		sessions = noOpSessionLookup{}
+	if cfg.Sessions == nil {
+		cfg.Sessions = noOpSessionLookup{}
 	}
+	sessions := cfg.Sessions
 	hookSrv := NewHookServer(d, sessions)
 
 	return &Service{
@@ -210,6 +210,7 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 	}
 	sid, err := uuid.Parse(sessionID)
 	if err != nil {
+		log.Printf("feishu: card inject bad session_id %q: %v", sessionID, err)
 		return
 	}
 	if err := s.cfg.Sessions.Inject(sid, text); err != nil {

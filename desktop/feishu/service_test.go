@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -172,5 +173,33 @@ func TestHandleCardAction_NonInjectIgnored(t *testing.T) {
 	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "")
 	if inj.gotText != "" {
 		t.Fatalf("ack should not inject, got %q", inj.gotText)
+	}
+}
+
+func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
+	inj := &fakeInjector{err: errors.New("inbound full")}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	// 不应 panic;错误被 log 吞掉。
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "x\n")
+	if inj.gotText != "x\n" {
+		t.Fatalf("inject should still be attempted, got %q", inj.gotText)
+	}
+}
+
+func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "x\n")
+	if inj.gotText != "" {
+		t.Fatalf("invalid uuid must not inject, got %q", inj.gotText)
+	}
+}
+
+func TestHandleCardAction_EmptyTextIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "")
+	if inj.gotText != "" {
+		t.Fatalf("empty text must not inject, got %q", inj.gotText)
 	}
 }

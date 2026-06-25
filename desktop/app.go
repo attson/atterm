@@ -677,6 +677,9 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 		cfg.RelayLastEmail = email
 		cfg.RelaySessionUserID = res.UserID
 		cfg.RelayRealmID = res.RealmID
+		// Register never assigns a home instance (the relay sets home on login only);
+		// clear any stale home from a prior account so the uplink falls back to RelayURL.
+		cfg.RelayHomeInstanceURL = ""
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}

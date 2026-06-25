@@ -90,6 +90,30 @@ func TestClaudeCodeAdapter_DedupFallback(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeAdapter_AskUserQuestionOptions(t *testing.T) {
+	raw := json.RawMessage(`{
+	  "matcher": {"type":"idle_prompt", "tool":"AskUserQuestion"},
+	  "prompt_id": "p1",
+	  "context": {"tool_input": {"questions": [
+	    {"question": "Deploy now?", "header": "Deploy", "multiSelect": false,
+	     "options": [
+	       {"label": "Yes, deploy", "description": "ship it"},
+	       {"label": "No, wait", "description": "hold"}
+	     ]}
+	  ]}}
+	}`)
+	ev, ok := (&claudeCodeAdapter{}).Parse(raw, "")
+	if !ok {
+		t.Fatal("expected emit")
+	}
+	if ev.QuestionText != "Deploy now?" {
+		t.Fatalf("QuestionText = %q", ev.QuestionText)
+	}
+	if len(ev.Options) != 2 || ev.Options[0].Label != "Yes, deploy" || ev.Options[1].Label != "No, wait" {
+		t.Fatalf("Options = %+v", ev.Options)
+	}
+}
+
 func TestRegistryLookup(t *testing.T) {
 	a, ok := LookupHookAdapter("claude-code")
 	if !ok || a == nil {

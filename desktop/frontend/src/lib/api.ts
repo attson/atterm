@@ -123,6 +123,10 @@ export interface RelayConfig {
   // Written by mobile on login; consumed by subproject C for node selection.
   // Not present on desktop (Go manages realm identity there).
   realmId?: string;
+  // homeInstanceURL is the user's home relay node for this realm (from login
+  // finalize `home_instance_url`). Written by mobile on login; consumed by
+  // subproject C for node selection. Empty/absent falls back to `url`.
+  homeInstanceURL?: string;
 }
 
 export interface RelayMe {

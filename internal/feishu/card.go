@@ -150,6 +150,61 @@ func RenderWaitingInputCard(in WaitingInputInput) Card {
 	}
 }
 
+type AskOption struct {
+	Label       string
+	Description string
+	InjectText  string // bytes to write into the PTY when this option is tapped
+}
+
+type AskQuestionInput struct {
+	SessionID uuid.UUID
+	Question  string
+	Options   []AskOption
+}
+
+func RenderAskQuestionCard(in AskQuestionInput) Card {
+	elements := []any{
+		map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "lark_md", "content": "**Agent 在向你提问:**\n" + in.Question},
+		},
+	}
+	if len(in.Options) > 0 {
+		var sb strings.Builder
+		for i, o := range in.Options {
+			if o.Description != "" {
+				fmt.Fprintf(&sb, "%d. **%s** — %s\n", i+1, o.Label, o.Description)
+			} else {
+				fmt.Fprintf(&sb, "%d. **%s**\n", i+1, o.Label)
+			}
+		}
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "lark_md", "content": sb.String()},
+		})
+	}
+	elements = append(elements, map[string]any{
+		"tag":      "note",
+		"elements": []any{map[string]any{"tag": "plain_text", "content": "或直接回复本消息以自由作答"}},
+	})
+	buttons := []map[string]any{jumpButton(in.SessionID)}
+	for _, o := range in.Options {
+		buttons = append(buttons, injectButton(in.SessionID, o.Label, o.InjectText))
+	}
+	elements = append(elements, actionRowOf(buttons...))
+	return Card{
+		MsgType: "interactive",
+		Card: map[string]any{
+			"config": map[string]any{"wide_screen_mode": true},
+			"header": map[string]any{
+				"title":    map[string]any{"tag": "plain_text", "content": "Agent 提问"},
+				"template": "blue",
+			},
+			"elements": elements,
+		},
+	}
+}
+
 func truncateQuestion(q string) (string, bool) {
 	const (
 		maxLines = 6

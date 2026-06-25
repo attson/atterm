@@ -214,3 +214,29 @@ func TestSealedCard_NoInjectButton(t *testing.T) {
 		}
 	}
 }
+
+func TestAskQuestionCard_OneButtonPerOption(t *testing.T) {
+	c := RenderAskQuestionCard(AskQuestionInput{
+		SessionID: uuid.New(),
+		Question:  "Deploy now?",
+		Options: []AskOption{
+			{Label: "Yes", InjectText: "1\n"},
+			{Label: "No", InjectText: "2\n"},
+		},
+	})
+	if c.Card["header"].(map[string]any)["template"] != "blue" {
+		t.Fatal("AskQuestion card must be blue")
+	}
+	var labels []string
+	for _, b := range actions(c) {
+		labels = append(labels, buttonText(b))
+	}
+	// 跳回 + Yes + No(自由回复用引导文本 note,不是按钮)。
+	if len(labels) != 3 || labels[1] != "Yes" || labels[2] != "No" {
+		t.Fatalf("labels = %v", labels)
+	}
+	yes := actions(c)[1].(map[string]any)["value"].(map[string]any)
+	if yes["kind"] != "inject" || yes["text"] != "1\n" {
+		t.Fatalf("yes value = %+v", yes)
+	}
+}

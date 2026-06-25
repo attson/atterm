@@ -72,6 +72,7 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 **桌面诊断 + 启动稳定性**
 
 - Settings → Diagnostics 一键导出脱敏的 app / OS / WebView / uplink / 配置摘要，方便贴 issue。
+- Settings → Logging 配 log level + 文件路径，内置 viewer + 3s 实时尾部预览，不用切到 Finder 找日志文件。
 - 启动链按 `bootStage` 分阶段，失败时 titlebar 直接显示 `connectLocalSessionList: SyntaxError: …`；`new WebSocket()` 同步异常被隔离重连，不会击穿 boot await chain。
 
 路线图未完成：桌面安装包 codesign / notarization（P1.8）、单 session 分享 + presence + 审计日志（P3）、可选持久化历史 + 命令级回放（P4）、E2EE 外部加密评审（M7-audit）。详见 [`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/spec/architecture.md`](docs/spec/architecture.md) §phase 完成度。
@@ -89,6 +90,18 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | 其他（`go test` / `docker build` / `kubectl` …） | ✅ 命令分类 | — | — | — |
 
 权限审批 / AskUserQuestion 等待这两条信号目前仅 Claude Code 走 Notification hook 路径；Codex 走 jsonl 监听是后续 spec。
+
+### 会话恢复
+
+桌面端把 tab / pane 结构 + 已捕获的 AI sid 持续写入 `~/.config/atterm/recovery.json`（dev 模式走 `<repo>/desktop/.atterm-dev/recovery.json`）。下次启动弹恢复对话框，可挑选恢复哪些 tab：
+
+- **本机 shell** — 用原 cwd 重 spawn 一个新 PTY。
+- **远端 pane** — 用旧 `session_id` 直接 rebind 到 relay；relay 上 session 还活就接回去，挂了就显示 `disconnected` 占位、保留标题。
+- **AI 会话** — Go 端在恢复 shell 第一次 prompt 时直接写 `claude --resume <sid>` / `codex resume <sid>`，不用你手敲；保留原启动命令的 flag（`--permission-mode` 等）。`aider` 无稳定 sid，改重放上次的整条 last command line。
+
+AI sid 抓取在 session 启动时自动进行（OSC 133 D 事件触发分类 + claude/codex 的 session jsonl 文件 mtime 跟踪），抓不到就退化为普通 shell 恢复、不注入 resume —— "抓不到" 优于 "抓错的对话"。
+
+对话框可在 Settings → General 关闭，关掉后下次启动直接走 startNewTab。
 
 ## 快速开始
 

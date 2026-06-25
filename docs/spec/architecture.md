@@ -139,6 +139,33 @@ app2 前端 → 拉 remote relay /api/sessions → 看到 app1 的 mirror sessio
 
 注意：app1 的 host_id 和 app2 相同（同机器），但 session_id 独立，去重按 session_id（详见 protocol.md §去重）。
 
+### 流 4：Driver / Viewer 角色协商
+
+同一 session 允许多端同时 attach（本机 desktop + 浏览器 + 另一台 desktop）。为避免多端写冲突，attach 默认进入 **viewer** —— relay 直接 drop 来自非 driver 的 `IN` / `RESIZE` 帧；某一端发 `CLAIM_DRIVER` 升 driver 后，relay 广播 META（`driver_client_id` + `driver_client_name`）让其他端落回 viewer。
+
+```
+client                       relay
+─────────────────────────────────────────────
+ATTACH(sid, client_id)  ───►
+                        ◄── META(driver_client_id=X, name=...)
+  isMe = (meta.driver_client_id === this.clientID)
+  → 设置 / 隐藏 viewer overlay
+
+用户在 viewer 模式按 Space：
+  CLAIM_DRIVER(client_id) ───►
+                        ◄── META(driver_client_id=this.clientID)
+  onDriverChange(isMe=true) → 升 driver
+  原 driver 收到同一帧 → 降 viewer
+```
+
+关键不变量：
+
+- **Viewer 锁尺寸**：viewer 不发 RESIZE，`onMeta { cols, rows }` 直接 `term.resize(cols, rows)` 跟 PTY 走；FitAddon 只在 driver 模式跑（见 `desktop/frontend/src/components/TerminalView.vue::safeFit` / `applyViewerSize`）。
+- **远端 pane 默认 viewer**：`TerminalView.isDriver = ref(props.isLocalSession ?? true)` —— 本机永远 driver，远端起始 viewer，等第一帧 META 校正。乐观默认 driver 会让 "看着能输入但 relay 在丢 IN 帧" 的状态难发现（PR #240）。
+- **恢复 attach 不复用旧 client_id**：每次 SessionConnection 都用新 `crypto.randomUUID()`，relay 视为新加入的 viewer。前任 driver 若已断开，session 进入 driverless 状态，任一端 `CLAIM_DRIVER` 都能拿到。但 **uplink-proxy sub 不会自动 promote 自身**（见 `internal/relay/uplink_conn.go` 注释 + `desktop/frontend/src/lib/connection.ts::openWS` "Re-assert the driver claim if we held it before this (re)connect"），避免桌面 mirror sub 误抢真用户的 driver。
+
+帧格式与字节级语义见 [protocol.md](./protocol.md) §Driver / Viewer 模型。前端实现在 `desktop/frontend/src/components/TerminalView.vue`（`isDriver` ref + `onDriverChange` handler + Space 拦截调 `claimDriver()`）和 `web/src/main/`（同语义，组件分布不同）。
+
 ## 会话生命周期
 
 ```

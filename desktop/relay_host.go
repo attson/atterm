@@ -541,7 +541,10 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 					var tail string
 					// Never expose plaintext output for sealed (E2EE) sessions.
 					if !sealed {
-						tail = string(sess.TailOutput(512))
+						// Scrollback is raw PTY bytes: strip ANSI/OSC escape
+						// sequences so the Feishu card shows clean text, not
+						// color codes and shell-integration markers.
+						tail = string(session.StripANSI(sess.TailOutput(512)))
 					}
 					disp.DispatchCommandFinished(context.Background(),
 						feishu.CommandFinishedEvent{

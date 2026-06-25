@@ -65,6 +65,50 @@ func TestLongConn_OnBindMessage_RoutesText(t *testing.T) {
 	}
 }
 
+func TestLongConn_OnReplyMessage_RoutesParentID(t *testing.T) {
+	replyCalled := 0
+	replySender := ""
+	replyParent := ""
+	replyText := ""
+	bindCalled := 0
+	bindText := ""
+	cfg := LongConnConfig{
+		AppID: "x", AppSecret: "y",
+		OnBindMessage: func(ctx context.Context, senderOpenID, text string) {
+			bindCalled++
+			bindText = text
+		},
+		OnReplyMessage: func(ctx context.Context, senderOpenID, parentID, text string) {
+			replyCalled++
+			replySender = senderOpenID
+			replyParent = parentID
+			replyText = text
+		},
+	}
+	r := newTestableRuntime(cfg)
+
+	// parentID != "" → both OnBindMessage and OnReplyMessage fire.
+	r.injectIMMessageReply("ou_x", "om_parent", "yes")
+	if replyCalled != 1 {
+		t.Fatalf("expected OnReplyMessage to fire once, got %d", replyCalled)
+	}
+	if replySender != "ou_x" || replyParent != "om_parent" || replyText != "yes" {
+		t.Fatalf("reply routed wrong: sender=%q parent=%q text=%q", replySender, replyParent, replyText)
+	}
+	if bindCalled != 1 || bindText != "yes" {
+		t.Fatalf("expected OnBindMessage to fire once with text=yes, got %d / %q", bindCalled, bindText)
+	}
+
+	// parentID == "" → gating blocks OnReplyMessage; OnBindMessage still fires.
+	r.injectIMMessageReply("ou_x", "", "hello")
+	if replyCalled != 1 {
+		t.Fatalf("expected OnReplyMessage NOT to fire for empty parentID, total calls=%d", replyCalled)
+	}
+	if bindCalled != 2 {
+		t.Fatalf("expected OnBindMessage to fire again, got %d", bindCalled)
+	}
+}
+
 func TestLongConn_OnCardAction_RoutesAck(t *testing.T) {
 	called := 0
 	gotSID := ""

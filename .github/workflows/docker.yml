@@ -35,19 +35,20 @@ jobs:
       - name: docker tags
         id: docker-tags
         shell: bash
-        # Releases (tag push) get :latest + :vX.Y.Z + :X.Y.Z.
-        # Manual dispatch from a non-tag ref gets :dev only — never touches
-        # :latest, so production watchtower deployments are not surprised
-        # by a non-release build.
+        # Releases (tag push) get :vX.Y.Z + :vX.Y (major.minor line).
+        # No :latest — ops pin a major.minor line (e.g. :v0.2) to lock a
+        # release line and still pick up patch updates automatically.
+        # Manual dispatch from a non-tag ref gets :dev only — never a release
+        # tag, so production deployments are not surprised by a non-release build.
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME}"
-            bare="${version#v}"
+            # Major.minor line, e.g. v0.2.1 -> v0.2 (assumes vX.Y.Z tags).
+            minor="v$(printf '%s' "${version#v}" | cut -d. -f1-2)"
             {
               echo "tags<<EOF"
-              echo "${DOCKER_IMAGE}:latest"
               echo "${DOCKER_IMAGE}:${version}"
-              echo "${DOCKER_IMAGE}:${bare}"
+              echo "${DOCKER_IMAGE}:${minor}"
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
           else

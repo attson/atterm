@@ -163,10 +163,14 @@ type AskQuestionInput struct {
 }
 
 func RenderAskQuestionCard(in AskQuestionInput) Card {
+	prompt := "**Agent 在向你提问：请选择一个选项**"
+	if q := strings.TrimSpace(in.Question); q != "" {
+		prompt = "**Agent 在向你提问：**\n" + q
+	}
 	elements := []any{
 		map[string]any{
 			"tag":  "div",
-			"text": map[string]any{"tag": "lark_md", "content": "**Agent 在向你提问:**\n" + in.Question},
+			"text": map[string]any{"tag": "lark_md", "content": prompt},
 		},
 	}
 	if len(in.Options) > 0 {

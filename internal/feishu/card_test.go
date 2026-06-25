@@ -240,3 +240,35 @@ func TestAskQuestionCard_OneButtonPerOption(t *testing.T) {
 		t.Fatalf("yes value = %+v", yes)
 	}
 }
+
+func TestAskQuestionCard_EmptyOptions(t *testing.T) {
+	c := RenderAskQuestionCard(AskQuestionInput{
+		SessionID: uuid.New(),
+		Question:  "Anything?",
+	})
+	// 无选项:只有跳回按钮一个。
+	if got := len(actions(c)); got != 1 {
+		t.Fatalf("empty-options buttons = %d, want 1 (跳回)", got)
+	}
+	if buttonText(actions(c)[0]) != "跳回打开 session" {
+		t.Fatalf("only button should be jump, got %q", buttonText(actions(c)[0]))
+	}
+}
+
+func TestAskQuestionCard_EmptyQuestionNoDanglingTitle(t *testing.T) {
+	c := RenderAskQuestionCard(AskQuestionInput{
+		SessionID: uuid.New(),
+		Question:  "",
+		Options:   []AskOption{{Label: "A", InjectText: "1\n"}},
+	})
+	// 第一个 div 正文不应以裸标题 + 空内容结尾。
+	els := c.Card["elements"].([]any)
+	first := els[0].(map[string]any)["text"].(map[string]any)["content"].(string)
+	if first == "**Agent 在向你提问：**\n" || first == "**Agent 在向你提问:**\n" {
+		t.Fatalf("dangling empty title: %q", first)
+	}
+	// 选项仍在。
+	if buttonText(actions(c)[1]) != "A" {
+		t.Fatalf("option button missing")
+	}
+}

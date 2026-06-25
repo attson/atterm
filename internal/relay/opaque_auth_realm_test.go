@@ -7,7 +7,7 @@ import "testing"
 // and checking it is stored; the full HTTP round-trip is covered by the
 // existing opaque auth tests once RealmID flows through.
 func TestOpaqueAuthHandlerCarriesRealmID(t *testing.T) {
-	h := NewOpaqueAuthHandler(nil, nil, "", "realm-xyz")
+	h := NewOpaqueAuthHandler(nil, nil, "", "realm-xyz", "")
 	if h.realmID != "realm-xyz" {
 		t.Fatalf("realmID not stored: %q", h.realmID)
 	}

@@ -197,6 +197,7 @@ func NewServer(cfg Config) *Server {
 	if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
 		s.mux.HandleFunc("/v1/feishu/bindings/me", s.requireSession(s.serveFeishuSession))
 		s.mux.HandleFunc("/v1/feishu/bindings/me/begin-pair", s.requireSession(s.serveFeishuSession))
+		s.mux.HandleFunc("/v1/feishu/relay-token/me", s.requireSession(s.serveFeishuSession))
 		s.mux.HandleFunc("/v1/feishu/events/", s.serveFeishuEvents)
 		if cfg.Feishu != nil {
 			s.feishu.handler.Store(NewFeishuHTTPHandler(sqliteStore, cfg.Feishu))

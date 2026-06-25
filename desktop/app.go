@@ -2271,6 +2271,20 @@ func (a *App) DeleteFeishuBinding() error {
 	return svc.Store().Delete(a.ctx)
 }
 
+// SendFeishuTestCard renders and sends one notification card to the bound
+// OpenID through the live token + IM path, so the user can verify delivery from
+// Settings without waiting for a real trigger. scenario is one of the
+// feishu.TestCard* values ("command_success", "command_failure",
+// "command_sealed", "waiting_input"). Any failure (not configured, disabled,
+// unbound, or send error) is returned verbatim for the UI to display.
+func (a *App) SendFeishuTestCard(scenario string) error {
+	svc, _ := a.currentFeishu()
+	if svc == nil {
+		return errors.New("feishu disabled")
+	}
+	return svc.SendTestCard(a.ctx, feishu.TestCardScenario(scenario))
+}
+
 // hookInstallLastAttempt tracks when we last auto-repaired so the UI
 // poll doesn't trigger a Check→Install loop while the underlying issue
 // is permanent (e.g. read-only mount).

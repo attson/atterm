@@ -36,6 +36,27 @@
       <p class="hint">{{ t('settings.feishu.mode') }}: {{ status.mode }}</p>
       <template v-if="status.bound">
         <p>{{ t('settings.feishu.bound', { open_id: status.open_id }) }}</p>
+        <section class="test-send" data-test="feishu-test-send">
+          <p class="test-send__title">{{ t('settings.feishu.test_send.title') }}</p>
+          <p class="hint">{{ t('settings.feishu.test_send.hint') }}</p>
+          <div class="test-send__buttons">
+            <button
+              v-for="s in testScenarios"
+              :key="s"
+              type="button"
+              class="btn-secondary"
+              :disabled="testSending !== ''"
+              @click="onTestSend(s)"
+              :data-test="'feishu-test-' + s"
+            >
+              {{ testSending === s ? t('settings.feishu.test_send.sending') : t(`settings.feishu.test_send.${s}`) }}
+            </button>
+          </div>
+          <p v-if="testResult.ok" class="test-send__ok" data-test="feishu-test-ok">{{ t('settings.feishu.test_send.sent') }}</p>
+          <p v-else-if="testResult.error" class="error" data-test="feishu-test-error">
+            {{ t('settings.feishu.test_send.failed', { error: testResult.error }) }}
+          </p>
+        </section>
         <button type="button" class="btn-danger" @click="onDelete">{{ t('settings.feishu.delete') }}</button>
       </template>
       <!-- Credentials stored but not yet bound. Show a "configured" view so a
@@ -96,6 +117,7 @@ import {
   setFeishuCredentials,
   beginFeishuPair,
   deleteFeishuBinding,
+  sendFeishuTestCard,
   getHookInstallState,
   setHookInstallEnabled,
   type FeishuStatusResp,
@@ -124,6 +146,27 @@ const saveError = ref('')
 // can overwrite stored credentials from the "configured" view.
 const editing = ref(false)
 const copied = ref(false)
+
+// Test-send state. testScenarios mirrors the feishu.TestCard* backend values
+// and the settings.feishu.test_send.<scenario> i18n keys. testSending holds the
+// scenario currently in flight ('' = idle) so its button shows a spinner label
+// and all buttons disable. testResult shows the last outcome.
+const testScenarios = ['command_success', 'command_failure', 'command_sealed', 'waiting_input'] as const
+const testSending = ref('')
+const testResult = ref<{ ok: boolean; error: string }>({ ok: false, error: '' })
+
+async function onTestSend(scenario: string) {
+  testSending.value = scenario
+  testResult.value = { ok: false, error: '' }
+  try {
+    await sendFeishuTestCard(scenario)
+    testResult.value = { ok: true, error: '' }
+  } catch (e) {
+    testResult.value = { ok: false, error: e instanceof Error ? e.message : String(e) }
+  } finally {
+    testSending.value = ''
+  }
+}
 
 const hookState = ref<HookInstallState>({
   enabled: true,
@@ -355,6 +398,39 @@ async function onDelete() {
 .error {
   color: #f87171;
   font-size: 13px;
+}
+.test-send {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.test-send__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0;
+}
+.test-send .hint {
+  margin: 0;
+}
+.test-send__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.test-send__buttons .btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.test-send__ok {
+  color: var(--good);
+  font-size: 13px;
+  margin: 0;
 }
 .pair-hint {
   font-size: 13px;

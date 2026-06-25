@@ -332,6 +332,17 @@ export const en = {
         needs_attention: "Hook needs attention",
         disabled: "Hook auto-install disabled",
       },
+      test_send: {
+        title: "Test send",
+        hint: "Send a sample card to your bound Feishu account to verify the notification path works.",
+        command_success: "Command finished (success)",
+        command_failure: "Command finished (failure)",
+        command_sealed: "Command finished (this device only)",
+        waiting_input: "Waiting for input",
+        sending: "Sending…",
+        sent: "Sent — check Feishu",
+        failed: "Send failed: {error}",
+      },
     },
     templates: {
       tab: "Templates",

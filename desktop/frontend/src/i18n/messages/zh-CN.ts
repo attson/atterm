@@ -334,6 +334,17 @@ export const zhCN = {
         needs_attention: "Hook 需要修复",
         disabled: "Hook 自动安装已关闭",
       },
+      test_send: {
+        title: "测试发送",
+        hint: "向已绑定的飞书账号发送一张测试卡片，验证通知链路是否打通。",
+        command_success: "命令完成（成功）",
+        command_failure: "命令完成（失败）",
+        command_sealed: "命令完成（仅本机可见）",
+        waiting_input: "等待输入",
+        sending: "发送中…",
+        sent: "已发送，请在飞书查看",
+        failed: "发送失败：{error}",
+      },
     },
     templates: {
       tab: "快捷模板",

@@ -222,6 +222,10 @@ export function SaveRecoverySnapshot(arg1) {
   return window['go']['main']['App']['SaveRecoverySnapshot'](arg1);
 }
 
+export function SendFeishuTestCard(arg1) {
+  return window['go']['main']['App']['SendFeishuTestCard'](arg1);
+}
+
 export function SetAutoCheckUpdates(arg1) {
   return window['go']['main']['App']['SetAutoCheckUpdates'](arg1);
 }

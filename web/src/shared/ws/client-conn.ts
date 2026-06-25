@@ -347,14 +347,23 @@ export class SessionConnection {
   }
 }
 
+// wsFromHttpURL converts an http(s) base URL to a ws(s) URL for the given path.
+function wsFromHttpURL(httpURL: string, path: string): string {
+  const u = new URL(httpURL)
+  const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${u.host}${path}`
+}
+
 export function wsUrl(path: string): string {
+  const cfg = loadRelayConfig()
+  // Route the stateful WS to the user's home node when set (multi-instance).
+  if (cfg?.homeInstanceURL) {
+    return wsFromHttpURL(cfg.homeInstanceURL, path)
+  }
   if (isMobileApp()) {
-    const cfg = loadRelayConfig()
     const baseStr = cfg?.baseURL
     if (!baseStr) throw new ApiError(0, 'relay_not_configured', null)
-    const u = new URL(baseStr)
-    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${u.host}${path}`
+    return wsFromHttpURL(baseStr, path)
   }
   if (typeof location === 'undefined') return `ws://localhost${path}`
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'

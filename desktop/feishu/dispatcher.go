@@ -46,6 +46,10 @@ type WaitingInputDispatchEvent struct {
 	QuestionText   string
 	DedupKey       string
 	Options        []QuestionOption // non-empty → render AskQuestion card
+	SessionTitle   string           // optional context for the heuristic card
+	Cwd            string
+	CurrentCommand string
+	RecentOutput   string
 }
 
 // optionInjectText maps an AskUserQuestion option to the bytes injected into
@@ -205,6 +209,10 @@ func (d *Dispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDi
 				SessionID:      ev.SessionID,
 				IdleForSeconds: ev.IdleForSeconds,
 				QuestionText:   ev.QuestionText,
+				SessionTitle:   ev.SessionTitle,
+				Cwd:            ev.Cwd,
+				CurrentCommand: ev.CurrentCommand,
+				RecentOutput:   ev.RecentOutput,
 			})
 		}
 		return json.Marshal(card)

@@ -553,11 +553,24 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 						})
 				}()
 			case proto.TaskStateWaitingInput:
-				go disp.DispatchWaitingInput(context.Background(),
-					feishu.WaitingInputDispatchEvent{
-						SessionID: sid,
-						Source:    feishu.WaitingSourceHeuristic,
-					})
+				sealed := len(meta.SealedBody) != 0
+				go func() {
+					// Run outside the lock-held callback (see deadlock note above).
+					info := sess.Info()
+					var recent string
+					if !sealed {
+						recent = string(session.StripANSI(sess.TailOutput(512)))
+					}
+					disp.DispatchWaitingInput(context.Background(),
+						feishu.WaitingInputDispatchEvent{
+							SessionID:      sid,
+							Source:         feishu.WaitingSourceHeuristic,
+							SessionTitle:   info.Title,
+							Cwd:            info.Cwd,
+							CurrentCommand: info.CurrentCommand,
+							RecentOutput:   recent,
+						})
+				}()
 			}
 		})
 	}

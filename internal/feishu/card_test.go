@@ -112,6 +112,41 @@ func TestRenderWaitingInputCard_WithQuestion(t *testing.T) {
 	}
 }
 
+func TestRenderWaitingInputCard_ContextAndRecentOutput(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-000000000011")
+	card := RenderWaitingInputCard(WaitingInputInput{
+		SessionID:      sid,
+		IdleForSeconds: 30,
+		SessionTitle:   "atterm",
+		Cwd:            "~/atterm",
+		CurrentCommand: "claude",
+		RecentOutput:   "Waiting for your input on the plan…",
+	})
+	s := mustJSON(t, card)
+	for _, want := range []string{"atterm", "~/atterm", "当前命令", "claude", "Waiting for your input"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("waiting card missing %q in %s", want, s)
+		}
+	}
+}
+
+// QuestionText takes precedence over RecentOutput when both are present.
+func TestRenderWaitingInputCard_QuestionBeatsRecentOutput(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-000000000012")
+	card := RenderWaitingInputCard(WaitingInputInput{
+		SessionID:    sid,
+		QuestionText: "Proceed? (y/N)",
+		RecentOutput: "some noisy tail output",
+	})
+	s := mustJSON(t, card)
+	if !strings.Contains(s, "Proceed? (y/N)") {
+		t.Fatalf("expected question text, got %s", s)
+	}
+	if strings.Contains(s, "some noisy tail output") {
+		t.Fatalf("recent output should be suppressed when a question exists: %s", s)
+	}
+}
+
 func TestRenderWaitingInputCard_QuestionTruncation(t *testing.T) {
 	long := strings.Repeat("x", 2000)
 	card := RenderWaitingInputCard(WaitingInputInput{

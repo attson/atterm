@@ -35,6 +35,10 @@ type WaitingInputInput struct {
 	SessionID      uuid.UUID
 	IdleForSeconds int
 	QuestionText   string // optional; populated by hook adapters
+	SessionTitle   string // optional; session friendly name
+	Cwd            string // optional; working directory
+	CurrentCommand string // optional; the command the agent is running
+	RecentOutput   string // optional; last lines of output (ANSI-stripped)
 }
 
 type AckUpdateInput struct {
@@ -167,17 +171,35 @@ func contextLine(title, cwd string) string {
 }
 
 func RenderWaitingInputCard(in WaitingInputInput) Card {
-	elements := []any{
-		map[string]any{
-			"tag": "div",
-			"text": map[string]any{
-				"tag":     "lark_md",
-				"content": fmt.Sprintf("Agent 在等待你回复（已闲置 %ds）", in.IdleForSeconds),
-			},
-		},
+	var elements []any
+	if ctx := contextLine(in.SessionTitle, in.Cwd); ctx != "" {
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "lark_md", "content": ctx},
+		})
 	}
+	header := fmt.Sprintf("Agent 在等待你回复（已闲置 %ds）", in.IdleForSeconds)
+	if cmd := strings.TrimSpace(in.CurrentCommand); cmd != "" {
+		header += fmt.Sprintf("\n当前命令：`%s`", cmd)
+	}
+	elements = append(elements, map[string]any{
+		"tag":  "div",
+		"text": map[string]any{"tag": "lark_md", "content": header},
+	})
+	// Prefer an explicit agent question (hook path); otherwise show recent
+	// output so the user knows what the session was doing when it went idle.
 	if q := strings.TrimSpace(in.QuestionText); q != "" {
 		body, truncated := truncateQuestion(q)
+		content := "```\n" + body + "\n```"
+		if truncated {
+			content += "\n_（已截断）_"
+		}
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "lark_md", "content": content},
+		})
+	} else if out := strings.TrimSpace(in.RecentOutput); out != "" {
+		body, truncated := truncateQuestion(out)
 		content := "```\n" + body + "\n```"
 		if truncated {
 			content += "\n_（已截断）_"

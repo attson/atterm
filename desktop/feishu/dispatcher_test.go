@@ -22,19 +22,19 @@ type capturingIM struct {
 	authFail bool
 }
 
-func (c *capturingIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) error {
+func (c *capturingIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.authFail {
-		return &authError{}
+		return "", &authError{}
 	}
 	if c.err != nil {
-		return c.err
+		return "", c.err
 	}
 	c.tokens = append(c.tokens, token)
 	c.openIDs = append(c.openIDs, openID)
 	c.bodies = append(c.bodies, string(body))
-	return nil
+	return "om_test", nil
 }
 func (c *capturingIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
 	return nil

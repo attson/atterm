@@ -17,7 +17,7 @@ import (
 
 // IMClient is the subset of internal/feishu.Client the dispatcher uses.
 type IMClient interface {
-	SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) error
+	SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) (string, error)
 	SendTextToOpenID(ctx context.Context, token, openID, text string) error
 }
 
@@ -73,6 +73,41 @@ type DispatcherConfig struct {
 	Now func() int64
 }
 
+// cardMsgMap maps a sent card's message_id → session id, so a user replying to
+// the card in Feishu can be routed back to the right session (handled in 9B).
+// It is bounded (FIFO eviction) to cap memory for long-lived processes.
+type cardMsgMap struct {
+	mu    sync.Mutex
+	m     map[string]uuid.UUID
+	order []string
+}
+
+func (c *cardMsgMap) remember(msgID string, sid uuid.UUID) {
+	if msgID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = map[string]uuid.UUID{}
+	}
+	if _, ok := c.m[msgID]; !ok {
+		c.order = append(c.order, msgID)
+		if len(c.order) > 512 {
+			delete(c.m, c.order[0])
+			c.order = c.order[1:]
+		}
+	}
+	c.m[msgID] = sid
+}
+
+func (c *cardMsgMap) lookup(msgID string) (uuid.UUID, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sid, ok := c.m[msgID]
+	return sid, ok
+}
+
 // Dispatcher merges trigger streams into Feishu IM sends. Safe for concurrent use.
 type Dispatcher struct {
 	cfg DispatcherConfig
@@ -81,6 +116,14 @@ type Dispatcher struct {
 	lastDispatch map[string]int64
 	failCounts   map[string]int // per-session consecutive command failures
 	authFailures int            // global auth-class failure count
+
+	cardMsgs cardMsgMap
+}
+
+// LookupCardSession returns the session id a previously sent card's message_id
+// was bound to, for routing direct replies back to that session (9B).
+func (d *Dispatcher) LookupCardSession(msgID string) (uuid.UUID, bool) {
+	return d.cardMsgs.lookup(msgID)
 }
 
 const (
@@ -207,10 +250,12 @@ func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKe
 		return
 	}
 
-	if err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body); err != nil {
+	mid, err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body)
+	if err != nil {
 		d.recordSendError(ctx, sid, err)
 		return
 	}
+	d.cardMsgs.remember(mid, sid)
 
 	d.muD.Lock()
 	d.lastDispatch[dedupKey] = now
@@ -250,10 +295,12 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 		return
 	}
 
-	if err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body); err != nil {
+	mid, err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body)
+	if err != nil {
 		d.recordSendError(ctx, sid, err)
 		return
 	}
+	d.cardMsgs.remember(mid, sid)
 
 	d.muD.Lock()
 	d.lastDispatch[dedupKey] = now

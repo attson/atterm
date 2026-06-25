@@ -50,7 +50,7 @@ type BindingStore interface {
 
 // IMClient is what the service needs from the HTTP client.
 type IMClient interface {
-	SendInteractiveToOpenID(ctx context.Context, token, openID string, cardBody []byte) error
+	SendInteractiveToOpenID(ctx context.Context, token, openID string, cardBody []byte) (string, error)
 	SendTextToOpenID(ctx context.Context, token, openID, text string) error
 }
 

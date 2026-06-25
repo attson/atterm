@@ -305,8 +305,9 @@ type authClassAdaptingClient struct {
 	inner *internalfeishu.Client
 }
 
-func (c *authClassAdaptingClient) SendInteractiveToOpenID(ctx context.Context, tok, open string, body []byte) error {
-	return c.adapt(c.inner.SendInteractiveToOpenID(ctx, tok, open, body))
+func (c *authClassAdaptingClient) SendInteractiveToOpenID(ctx context.Context, tok, open string, body []byte) (string, error) {
+	mid, err := c.inner.SendInteractiveToOpenID(ctx, tok, open, body)
+	return mid, c.adapt(err)
 }
 func (c *authClassAdaptingClient) SendTextToOpenID(ctx context.Context, tok, open, text string) error {
 	return c.adapt(c.inner.SendTextToOpenID(ctx, tok, open, text))

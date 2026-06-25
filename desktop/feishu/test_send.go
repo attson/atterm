@@ -95,7 +95,7 @@ func (s *Service) SendTestCard(ctx context.Context, scenario TestCardScenario) e
 		return fmt.Errorf("feishu test send: no bound open_id")
 	}
 
-	if err := s.imClient.SendInteractiveToOpenID(ctx, tok, openID, body); err != nil {
+	if _, err := s.imClient.SendInteractiveToOpenID(ctx, tok, openID, body); err != nil {
 		return fmt.Errorf("feishu test send: %w", err)
 	}
 	return nil

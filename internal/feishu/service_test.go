@@ -73,17 +73,17 @@ type fakeIM struct {
 	err      error
 }
 
-func (f *fakeIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) error {
+func (f *fakeIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
-		return f.err
+		return "", f.err
 	}
 	f.sentInteractive = append(f.sentInteractive, struct {
 		Token, OpenID string
 		Body          []byte
 	}{token, openID, body})
-	return nil
+	return "om_test", nil
 }
 func (f *fakeIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
 	f.mu.Lock()

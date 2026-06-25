@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -293,6 +294,58 @@ func TestDispatch_AskQuestionOptionInjectText(t *testing.T) {
 		if val["text"] != w {
 			t.Fatalf("inject button %d: expected value.text %q, got %v", i+1, w, val["text"])
 		}
+	}
+}
+
+func TestDispatch_CommandFailureCount(t *testing.T) {
+	now := newAtomicTime(1_000_000)
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    im,
+		Now:   now.read,
+	})
+	sid := uuid.New()
+
+	// First failure: count == 1, no "连续第 N 次" banner.
+	d.DispatchCommandFinished(context.Background(), CommandFinishedEvent{
+		SessionID: sid, ExitCode: 1, Label: "go test",
+	})
+	// Advance past the dedup window so the second send is not suppressed.
+	now.advance(dedupWindowSeconds + 1)
+	// Second consecutive failure: count == 2 → banner present.
+	d.DispatchCommandFinished(context.Background(), CommandFinishedEvent{
+		SessionID: sid, ExitCode: 1, Label: "go test",
+	})
+	if len(im.bodies) != 2 {
+		t.Fatalf("expected 2 sends, got %d", len(im.bodies))
+	}
+	if strings.Contains(im.bodies[0], "连续第") {
+		t.Fatalf("first failure must not show a streak banner: %s", im.bodies[0])
+	}
+	if !strings.Contains(im.bodies[1], "连续第 2 次") {
+		t.Fatalf("second failure should show 连续第 2 次: %s", im.bodies[1])
+	}
+
+	// A success resets the streak counter.
+	now.advance(dedupWindowSeconds + 1)
+	d.DispatchCommandFinished(context.Background(), CommandFinishedEvent{
+		SessionID: sid, ExitCode: 0, Label: "go test",
+	})
+	// Next failure should be back to count == 1 (no banner).
+	now.advance(dedupWindowSeconds + 1)
+	d.DispatchCommandFinished(context.Background(), CommandFinishedEvent{
+		SessionID: sid, ExitCode: 1, Label: "go test",
+	})
+	if len(im.bodies) != 4 {
+		t.Fatalf("expected 4 sends, got %d", len(im.bodies))
+	}
+	if strings.Contains(im.bodies[3], "连续第") {
+		t.Fatalf("failure after a success must reset the streak: %s", im.bodies[3])
 	}
 }
 

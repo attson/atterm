@@ -528,13 +528,22 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			}
 			switch next {
 			case proto.TaskStateCompleted, proto.TaskStateFailed:
+				info := sess.Info()
+				var tail string
+				// Never expose plaintext output for sealed (E2EE) sessions.
+				if len(meta.SealedBody) == 0 {
+					tail = string(sess.TailOutput(512))
+				}
 				go disp.DispatchCommandFinished(context.Background(),
 					feishu.CommandFinishedEvent{
-						SessionID:  sid,
-						ExitCode:   meta.ExitCode,
-						ElapsedMS:  meta.ElapsedMS,
-						Label:      meta.Label,
-						SealedBody: meta.SealedBody,
+						SessionID:    sid,
+						ExitCode:     meta.ExitCode,
+						ElapsedMS:    meta.ElapsedMS,
+						Label:        meta.Label,
+						SealedBody:   meta.SealedBody,
+						SessionTitle: info.Title,
+						Cwd:          info.Cwd,
+						OutputTail:   tail,
 					})
 			case proto.TaskStateWaitingInput:
 				go disp.DispatchWaitingInput(context.Background(),

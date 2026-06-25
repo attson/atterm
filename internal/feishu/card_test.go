@@ -163,6 +163,42 @@ func TestRenderWaitingInputCard_EmptyQuestionStillRenders(t *testing.T) {
 	}
 }
 
+func mustCardJSON(t *testing.T, c Card) string {
+	t.Helper()
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestCommandFinishedCard_ContextAndSummary(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), ExitCode: 1, ElapsedMS: 2000, Label: "go test",
+		SessionTitle: "atterm", Cwd: "~/atterm", FailureCount: 3,
+		OutputTail: "FAIL: foo_test.go:12\n",
+	})
+	blob := mustCardJSON(t, c)
+	for _, want := range []string{"atterm", "~/atterm", "连续第 3 次", "FAIL: foo_test.go:12"} {
+		if !strings.Contains(blob, want) {
+			t.Fatalf("card missing %q in %s", want, blob)
+		}
+	}
+}
+
+func TestCommandFinishedCard_SealedNoContext(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), SealedBody: []byte("x"),
+		SessionTitle: "secret-proj", OutputTail: "secret output",
+	})
+	blob := mustCardJSON(t, c)
+	for _, leak := range []string{"secret-proj", "secret output"} {
+		if strings.Contains(blob, leak) {
+			t.Fatalf("sealed card leaked %q", leak)
+		}
+	}
+}
+
 func actions(c Card) []any {
 	els := c.Card["elements"].([]any)
 	last := els[len(els)-1].(map[string]any)

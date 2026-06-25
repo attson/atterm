@@ -19,6 +19,14 @@ type CommandFinishedInput struct {
 	Label       string
 	LastCommand string // for the retry button; empty disables retry
 	SealedBody  []byte
+
+	// Context fields rendered ONLY in the non-sealed variant. They MUST NOT
+	// leak into the sealed card (E2EE: title/cwd/output are plaintext the
+	// relay is structurally unable to read).
+	SessionTitle string
+	Cwd          string
+	FailureCount int    // consecutive failures for this session; >1 → shown
+	OutputTail   string // last lines of scrollback; empty disables summary
 }
 
 func (in CommandFinishedInput) sealed() bool { return len(in.SealedBody) > 0 }
@@ -93,6 +101,41 @@ func RenderCommandFinishedCard(in CommandFinishedInput) Card {
 		buttons = append(buttons, injectButton(in.SessionID, "重试", in.LastCommand+"\n"))
 	}
 	buttons = append(buttons, ackButton(in.SessionID, "command_finished"))
+
+	elements := []any{}
+
+	// Context line: session title and/or cwd. Skip when both are empty so we
+	// never emit a dangling " · " separator.
+	if ctx := contextLine(in.SessionTitle, in.Cwd); ctx != "" {
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "lark_md", "content": ctx},
+		})
+	}
+
+	statusLine := fmt.Sprintf("**`%s`** 退出码 `%d` · 用时 %s", label, in.ExitCode, formatElapsed(in.ElapsedMS))
+	if in.ExitCode != 0 && in.FailureCount > 1 {
+		statusLine += fmt.Sprintf(" · 连续第 %d 次失败", in.FailureCount)
+	}
+	elements = append(elements, map[string]any{
+		"tag":  "div",
+		"text": map[string]any{"tag": "lark_md", "content": statusLine},
+	})
+
+	if in.OutputTail != "" {
+		body, truncated := truncateQuestion(in.OutputTail)
+		content := "```\n" + body + "\n```"
+		if truncated {
+			content += "\n_（已截断）_"
+		}
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]any{"tag": "lark_md", "content": content},
+		})
+	}
+
+	elements = append(elements, actionRowOf(buttons...))
+
 	return Card{
 		MsgType: "interactive",
 		Card: map[string]any{
@@ -101,17 +144,25 @@ func RenderCommandFinishedCard(in CommandFinishedInput) Card {
 				"title":    map[string]any{"tag": "plain_text", "content": "命令完成"},
 				"template": template,
 			},
-			"elements": []any{
-				map[string]any{
-					"tag": "div",
-					"text": map[string]any{
-						"tag":     "lark_md",
-						"content": fmt.Sprintf("**`%s`** 退出码 `%d` · 用时 %s", label, in.ExitCode, formatElapsed(in.ElapsedMS)),
-					},
-				},
-				actionRowOf(buttons...),
-			},
+			"elements": elements,
 		},
+	}
+}
+
+// contextLine renders the session-identity line for the command-finished card.
+// Returns "" when both inputs are empty so callers can omit the div entirely.
+func contextLine(title, cwd string) string {
+	title = strings.TrimSpace(title)
+	cwd = strings.TrimSpace(cwd)
+	switch {
+	case title != "" && cwd != "":
+		return fmt.Sprintf("`%s` · %s", title, cwd)
+	case title != "":
+		return fmt.Sprintf("`%s`", title)
+	case cwd != "":
+		return cwd
+	default:
+		return ""
 	}
 }
 

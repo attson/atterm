@@ -28,6 +28,12 @@ type CommandFinishedEvent struct {
 	ElapsedMS  int
 	Label      string
 	SealedBody []byte
+
+	// Context fields enrich the non-sealed card. The relay_host dispatch point
+	// leaves SessionTitle/Cwd/OutputTail empty for sealed (E2EE) sessions.
+	SessionTitle string
+	Cwd          string
+	OutputTail   string
 }
 
 // WaitingInputDispatchEvent feeds the dispatcher from both hook + heuristic paths.
@@ -73,7 +79,8 @@ type Dispatcher struct {
 
 	muD          sync.Mutex
 	lastDispatch map[string]int64
-	authFailures int // global auth-class failure count
+	failCounts   map[string]int // per-session consecutive command failures
+	authFailures int            // global auth-class failure count
 }
 
 const (
@@ -88,17 +95,35 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 	return &Dispatcher{
 		cfg:          cfg,
 		lastDispatch: map[string]int64{},
+		failCounts:   map[string]int{},
 	}
 }
 
 func (d *Dispatcher) DispatchCommandFinished(ctx context.Context, ev CommandFinishedEvent) {
-	d.dispatch(ctx, ev.SessionID, "cmd:"+ev.SessionID.String(), func() ([]byte, error) {
+	// Maintain the per-session consecutive-failure streak. A non-zero exit
+	// increments it; a success resets it. Guarded by muD.
+	sidStr := ev.SessionID.String()
+	d.muD.Lock()
+	var failCount int
+	if ev.ExitCode != 0 {
+		d.failCounts[sidStr]++
+		failCount = d.failCounts[sidStr]
+	} else {
+		delete(d.failCounts, sidStr)
+	}
+	d.muD.Unlock()
+
+	d.dispatch(ctx, ev.SessionID, "cmd:"+sidStr, func() ([]byte, error) {
 		card := internalfeishu.RenderCommandFinishedCard(internalfeishu.CommandFinishedInput{
-			SessionID:  ev.SessionID,
-			ExitCode:   ev.ExitCode,
-			ElapsedMS:  ev.ElapsedMS,
-			Label:      ev.Label,
-			SealedBody: ev.SealedBody,
+			SessionID:    ev.SessionID,
+			ExitCode:     ev.ExitCode,
+			ElapsedMS:    ev.ElapsedMS,
+			Label:        ev.Label,
+			SealedBody:   ev.SealedBody,
+			SessionTitle: ev.SessionTitle,
+			Cwd:          ev.Cwd,
+			FailureCount: failCount,
+			OutputTail:   ev.OutputTail,
 		})
 		return json.Marshal(card)
 	})

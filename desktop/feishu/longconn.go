@@ -28,7 +28,11 @@ type LongConnConfig struct {
 	Backoff   BackoffConfig
 
 	OnBindMessage func(ctx context.Context, senderOpenID, text string)
-	OnCardAction  func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string)
+	// OnReplyMessage fires for the same IM message events as OnBindMessage, but
+	// carries parentID (the replied-to message's message_id). It is used to route
+	// a Feishu reply quoting a previously sent card back to its session (9B).
+	OnReplyMessage func(ctx context.Context, senderOpenID, parentID, text string)
+	OnCardAction   func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string)
 
 	// OnAuthClassFailure fires once when the SDK returns an auth-class
 	// error (invalid app secret, app disabled, etc.). The reconnect loop
@@ -204,9 +208,10 @@ func extractCardActionFields(ev *callback.CardActionTriggerEvent) (sessionID, ki
 func newLarkRuntime(cfg LongConnConfig) (longConnRuntime, error) {
 	disp := dispatcher.NewEventDispatcher("", "")
 
-	// IM message handler → cfg.OnBindMessage
+	// IM message handler → cfg.OnBindMessage (/bind) + cfg.OnReplyMessage (reply).
+	// Both callbacks fire for every IM message; each decides whether to act.
 	disp.OnP2MessageReceiveV1(func(ctx context.Context, ev *larkim.P2MessageReceiveV1) error {
-		if cfg.OnBindMessage == nil {
+		if cfg.OnBindMessage == nil && cfg.OnReplyMessage == nil {
 			return nil
 		}
 		var senderOpenID string
@@ -214,11 +219,22 @@ func newLarkRuntime(cfg LongConnConfig) (longConnRuntime, error) {
 			ev.Event.Sender.SenderId != nil && ev.Event.Sender.SenderId.OpenId != nil {
 			senderOpenID = *ev.Event.Sender.SenderId.OpenId
 		}
-		var text string
+		var text, parentID string
 		if ev.Event != nil {
 			text = extractIMText(ev.Event.Message)
+			// ParentId is the message_id of the message this one replies to
+			// (the original card, for a reply-to-card). It is nil for a fresh
+			// top-level message; guard the deref.
+			if ev.Event.Message != nil && ev.Event.Message.ParentId != nil {
+				parentID = *ev.Event.Message.ParentId
+			}
 		}
-		cfg.OnBindMessage(ctx, senderOpenID, text)
+		if cfg.OnBindMessage != nil {
+			cfg.OnBindMessage(ctx, senderOpenID, text)
+		}
+		if cfg.OnReplyMessage != nil && parentID != "" {
+			cfg.OnReplyMessage(ctx, senderOpenID, parentID, text)
+		}
 		return nil
 	})
 
@@ -255,8 +271,17 @@ type testableRuntime struct{ cfg LongConnConfig }
 func newTestableRuntime(cfg LongConnConfig) *testableRuntime { return &testableRuntime{cfg: cfg} }
 
 func (r *testableRuntime) injectIMMessage(senderOpenID, text string) {
+	r.injectIMMessageReply(senderOpenID, "", text)
+}
+
+// injectIMMessageReply mirrors the production OnP2MessageReceiveV1 routing: both
+// OnBindMessage and (when parentID is set) OnReplyMessage fire for one message.
+func (r *testableRuntime) injectIMMessageReply(senderOpenID, parentID, text string) {
 	if r.cfg.OnBindMessage != nil {
 		r.cfg.OnBindMessage(context.Background(), senderOpenID, text)
+	}
+	if r.cfg.OnReplyMessage != nil && parentID != "" {
+		r.cfg.OnReplyMessage(context.Background(), senderOpenID, parentID, text)
 	}
 }
 func (r *testableRuntime) injectCardAction(operatorOpenID, sessionID, kind, event, text string) {

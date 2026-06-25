@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,44 @@ import (
 
 	"github.com/google/uuid"
 )
+
+func TestCardMsgMap_FIFOEviction(t *testing.T) {
+	var m cardMsgMap
+	first := uuid.New()
+	m.remember("om_first", first)
+	// Fill past the 512 cap to evict the oldest (om_first).
+	for i := 0; i < 512; i++ {
+		m.remember(fmt.Sprintf("om_%d", i), uuid.New())
+	}
+	if _, ok := m.lookup("om_first"); ok {
+		t.Fatal("om_first should have been evicted by FIFO")
+	}
+	if _, ok := m.lookup("om_511"); !ok {
+		t.Fatal("recent key should be present")
+	}
+	// Empty msgID must not be stored.
+	m.remember("", uuid.New())
+	if _, ok := m.lookup(""); ok {
+		t.Fatal("empty msgID must not be stored")
+	}
+}
+
+func TestCardMsgMap_RememberLookupRoundTrip(t *testing.T) {
+	var m cardMsgMap
+	sid := uuid.New()
+	m.remember("om_x", sid)
+	got, ok := m.lookup("om_x")
+	if !ok || got != sid {
+		t.Fatalf("lookup om_x = (%s,%v), want (%s,true)", got, ok, sid)
+	}
+	// Re-remember updates the mapping without growing order (idempotent key).
+	sid2 := uuid.New()
+	m.remember("om_x", sid2)
+	got, _ = m.lookup("om_x")
+	if got != sid2 {
+		t.Fatalf("re-remember should update mapping, got %s want %s", got, sid2)
+	}
+}
 
 type capturingIM struct {
 	mu       sync.Mutex

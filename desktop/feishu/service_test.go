@@ -157,6 +157,63 @@ func (f *fakeInjector) Inject(sid uuid.UUID, text string) error {
 	return f.err
 }
 
+func TestHandleReplyMessage_InjectsToMappedSession(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	sid := uuid.New()
+	d.cardMsgs.remember("om_card1", sid)
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "om_card1", "looks good")
+
+	if inj.gotSID != sid {
+		t.Fatalf("inject sid = %s, want %s", inj.gotSID, sid)
+	}
+	if inj.gotText != "looks good\n" {
+		t.Fatalf("inject text = %q, want %q", inj.gotText, "looks good\n")
+	}
+}
+
+func TestHandleReplyMessage_UnknownParentIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "om_unknown", "hi")
+	if inj.gotText != "" {
+		t.Fatalf("unmapped parent must not inject, got %q", inj.gotText)
+	}
+}
+
+func TestHandleReplyMessage_BindCommandIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	d.cardMsgs.remember("om_card1", uuid.New())
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "om_card1", "/bind ABC123")
+	if inj.gotText != "" {
+		t.Fatalf("/bind must not be injected as a reply, got %q", inj.gotText)
+	}
+}
+
+func TestHandleReplyMessage_EmptyParentOrTextIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	sid := uuid.New()
+	d.cardMsgs.remember("om_card1", sid)
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "", "looks good")
+	if inj.gotText != "" {
+		t.Fatalf("empty parent must not inject, got %q", inj.gotText)
+	}
+	s.handleReplyMessage(context.Background(), "ou_op", "om_card1", "   ")
+	if inj.gotText != "" {
+		t.Fatalf("blank text must not inject, got %q", inj.gotText)
+	}
+}
+
 func TestHandleCardAction_InjectWritesText(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}

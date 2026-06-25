@@ -156,6 +156,9 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 		OnBindMessage: func(ctx context.Context, senderOpenID, text string) {
 			s.handleBindMessage(ctx, senderOpenID, text)
 		},
+		OnReplyMessage: func(ctx context.Context, senderOpenID, parentID, text string) {
+			s.handleReplyMessage(ctx, senderOpenID, parentID, text)
+		},
 		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
 			s.handleCardAction(ctx, sessionID, kind, event, text)
 		},
@@ -202,6 +205,33 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 		return
 	}
 	_ = s.store.SetBound(ctx, senderOpenID)
+}
+
+// handleReplyMessage routes a Feishu reply (quoting a previously sent card) back
+// into the originating session's PTY. parentID is the replied-to card's
+// message_id, looked up in the dispatcher's message→session map.
+//
+// ModeLocal only: ModeRelay free-text reply is not yet wired (cross-process map).
+// The relay process holds no copy of this in-process cardMsgs map, so relay users
+// must use the card's quick-action buttons instead.
+func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentID, text string) {
+	t := strings.TrimSpace(text)
+	if parentID == "" || t == "" {
+		return
+	}
+	if strings.HasPrefix(t, "/bind ") {
+		return // a bind command, not a reply-to-card
+	}
+	if s.dispatcher == nil {
+		return
+	}
+	sid, ok := s.dispatcher.LookupCardSession(parentID)
+	if !ok {
+		return
+	}
+	if err := s.cfg.Sessions.Inject(sid, text+"\n"); err != nil {
+		log.Printf("feishu: reply inject session=%s: %v", sid, err)
+	}
 }
 
 func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, text string) {

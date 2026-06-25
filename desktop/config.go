@@ -63,6 +63,10 @@ type appConfig struct {
 	// response). The account_key is anchored to it in the keychain so it
 	// survives relay node/domain switches.
 	RelayRealmID string `json:"relay_realm_id,omitempty"`
+	// RelayHomeInstanceURL is the user's home relay node for this realm
+	// (from the login response home_instance_url). The stateful /uplink WS
+	// dials this node; empty falls back to RelayURL (single-instance).
+	RelayHomeInstanceURL string `json:"relay_home_instance_url,omitempty"`
 	// AllowInsecureRelay lets users opt into ws:// relays outside loopback.
 	// It is off by default because ws:// exposes the bearer token and PTY data.
 	AllowInsecureRelay bool `json:"allow_insecure_relay,omitempty"`

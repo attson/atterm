@@ -398,9 +398,10 @@ func (a *App) applyRelayUplink(cfg appConfig) {
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
 	a.uplinkCancel = cancel
-	a.uplink = newUplink(cfg.RelayURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey, cfg.AllowInsecureRelay)
+	dialURL := uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
+	a.uplink = newUplink(dialURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey, cfg.AllowInsecureRelay)
 	go a.uplink.Run(uplinkCtx)
-	log.Printf("desktop: uplink configured for %s", cfg.RelayURL)
+	log.Printf("desktop: uplink configured for %s", dialURL)
 }
 
 // GetHostInfo returns this machine's identity. Used for deduping remote
@@ -588,6 +589,7 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 		cfg.RelayLastEmail = email
 		cfg.RelaySessionUserID = res.UserID
 		cfg.RelayRealmID = res.RealmID
+		cfg.RelayHomeInstanceURL = res.HomeInstanceURL
 		if err := a.cfgStore.Set(cfg); err != nil {
 			return err
 		}

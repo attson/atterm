@@ -37,8 +37,12 @@ func TestZshSnippetHasGuardAndHookRegistration(t *testing.T) {
 	if !strings.Contains(zshSnippet, `\033]133`) && !strings.Contains(zshSnippet, `\x1b]133`) {
 		t.Fatalf("zsh snippet does not emit OSC 133 sequences")
 	}
-	if !strings.Contains(zshSnippet, "133;C;%s") || !strings.Contains(zshSnippet, `${2:-$1}`) {
-		t.Fatalf("zsh snippet must emit the alias-expanded preexec command in OSC 133;C")
+	// Must emit the FULL command line ($3), not zsh's size-truncated $2 form.
+	// $2 drops the trailing token (e.g. loses "bypassPermissions" from
+	// "claude --permission-mode bypassPermissions"), which broke AI-session
+	// resume flag preservation. $3 is the complete, alias-expanded command.
+	if !strings.Contains(zshSnippet, "133;C;%s") || !strings.Contains(zshSnippet, `${3:-`) {
+		t.Fatalf("zsh snippet must emit the full ($3) preexec command in OSC 133;C, not the truncated $2 form")
 	}
 }
 

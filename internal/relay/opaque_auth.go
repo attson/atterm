@@ -523,15 +523,15 @@ func (h *OpaqueAuthHandler) handleLoginFinalize(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	tok, _, err := h.store.CreateSession(ctx, pending.userID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
-	if err != nil {
-		http.Error(w, "internal: create session", http.StatusInternalServerError)
-		return
-	}
-
 	homeURL, err := resolveHomeInstanceURL(ctx, h.store, pending.userID, h.instancePublicURL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	tok, _, err := h.store.CreateSession(ctx, pending.userID, r.UserAgent(), ipPrefix(r), userstore.DefaultSessionTTL)
+	if err != nil {
+		http.Error(w, "internal: create session", http.StatusInternalServerError)
 		return
 	}
 

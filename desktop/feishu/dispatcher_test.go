@@ -199,6 +199,103 @@ func TestDispatch_AskQuestionRendersBlueCard(t *testing.T) {
 	}
 }
 
+func TestDispatch_NoOptionsRendersOrangeCard(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	ts := &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"}
+	d := NewDispatcher(DispatcherConfig{Store: store, Token: ts, IM: im})
+
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID:    uuid.New(),
+		Source:       WaitingSourceHook,
+		QuestionText: "Deploy?",
+	})
+	if len(im.bodies) != 1 {
+		t.Fatalf("expected 1 send, got %d", len(im.bodies))
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(im.bodies[0]), &m); err != nil {
+		t.Fatalf("unmarshal card body: %v", err)
+	}
+	card, ok := m["card"].(map[string]any)
+	if !ok {
+		t.Fatalf("card body missing card key: %v", m)
+	}
+	header, ok := card["header"].(map[string]any)
+	if !ok {
+		t.Fatalf("card missing header: %v", card)
+	}
+	if header["template"] != "orange" {
+		t.Fatalf("expected orange header template, got %v", header["template"])
+	}
+}
+
+func TestDispatch_AskQuestionOptionInjectText(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	ts := &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"}
+	d := NewDispatcher(DispatcherConfig{Store: store, Token: ts, IM: im})
+
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID:    uuid.New(),
+		Source:       WaitingSourceHook,
+		QuestionText: "Deploy?",
+		Options: []QuestionOption{
+			{Label: "Yes", Description: "go"},
+			{Label: "No", Description: "stop"},
+		},
+	})
+	if len(im.bodies) != 1 {
+		t.Fatalf("expected 1 send, got %d", len(im.bodies))
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(im.bodies[0]), &m); err != nil {
+		t.Fatalf("unmarshal card body: %v", err)
+	}
+	card, ok := m["card"].(map[string]any)
+	if !ok {
+		t.Fatalf("card body missing card key: %v", m)
+	}
+	elements, ok := card["elements"].([]any)
+	if !ok || len(elements) == 0 {
+		t.Fatalf("card missing elements: %v", card)
+	}
+	actionRow, ok := elements[len(elements)-1].(map[string]any)
+	if !ok {
+		t.Fatalf("last element not an object: %v", elements[len(elements)-1])
+	}
+	if actionRow["tag"] != "action" {
+		t.Fatalf("expected last element to be an action row, got tag %v", actionRow["tag"])
+	}
+	actions, ok := actionRow["actions"].([]any)
+	if !ok {
+		t.Fatalf("action row missing actions: %v", actionRow)
+	}
+	// actions[0] is the jump (url) button with no value.text; the inject
+	// option buttons follow.
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 action buttons (jump + 2 inject), got %d", len(actions))
+	}
+	want := []string{"1\n", "2\n"}
+	for i, w := range want {
+		btn, ok := actions[i+1].(map[string]any)
+		if !ok {
+			t.Fatalf("inject button %d not an object: %v", i+1, actions[i+1])
+		}
+		val, ok := btn["value"].(map[string]any)
+		if !ok {
+			t.Fatalf("inject button %d missing value: %v", i+1, btn)
+		}
+		if val["text"] != w {
+			t.Fatalf("inject button %d: expected value.text %q, got %v", i+1, w, val["text"])
+		}
+	}
+}
+
 // atomicTime is a tiny test clock used by the dedup window test.
 type atomicTime struct {
 	v atomic.Int64

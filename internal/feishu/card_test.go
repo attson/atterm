@@ -162,3 +162,55 @@ func TestRenderWaitingInputCard_EmptyQuestionStillRenders(t *testing.T) {
 		t.Fatalf("generic waiting copy still expected: %s", s)
 	}
 }
+
+func actions(c Card) []any {
+	els := c.Card["elements"].([]any)
+	last := els[len(els)-1].(map[string]any)
+	return last["actions"].([]any)
+}
+
+func buttonText(b any) string {
+	m := b.(map[string]any)
+	return m["text"].(map[string]any)["content"].(string)
+}
+
+func TestCommandFinishedCard_FailureHasRetry(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), ExitCode: 1, ElapsedMS: 2000, Label: "go test",
+		LastCommand: "go test ./...",
+	})
+	var labels []string
+	for _, b := range actions(c) {
+		labels = append(labels, buttonText(b))
+	}
+	want := []string{"跳回打开 session", "重试", "确认"}
+	if len(labels) != 3 || labels[0] != want[0] || labels[1] != want[1] || labels[2] != want[2] {
+		t.Fatalf("buttons = %v, want %v", labels, want)
+	}
+	retry := actions(c)[1].(map[string]any)["value"].(map[string]any)
+	if retry["kind"] != "inject" || retry["text"] != "go test ./...\n" {
+		t.Fatalf("retry value = %+v", retry)
+	}
+}
+
+func TestCommandFinishedCard_SuccessNoRetry(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), ExitCode: 0, ElapsedMS: 1000, Label: "ls",
+	})
+	if got := len(actions(c)); got != 2 {
+		t.Fatalf("success buttons = %d, want 2 (跳回/确认)", got)
+	}
+}
+
+func TestSealedCard_NoInjectButton(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), SealedBody: []byte("x"),
+	})
+	for _, b := range actions(c) {
+		if v, ok := b.(map[string]any)["value"].(map[string]any); ok {
+			if v["kind"] == "inject" {
+				t.Fatal("sealed card must not contain inject buttons")
+			}
+		}
+	}
+}

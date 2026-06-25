@@ -13,11 +13,12 @@ import (
 // non-empty we render the E2EE-safe variant — no exit code, no label,
 // no elapsed, only a generic "see your device" body.
 type CommandFinishedInput struct {
-	SessionID  uuid.UUID
-	ExitCode   int
-	ElapsedMS  int
-	Label      string
-	SealedBody []byte
+	SessionID   uuid.UUID
+	ExitCode    int
+	ElapsedMS   int
+	Label       string
+	LastCommand string // for the retry button; empty disables retry
+	SealedBody  []byte
 }
 
 func (in CommandFinishedInput) sealed() bool { return len(in.SealedBody) > 0 }
@@ -74,7 +75,7 @@ func RenderCommandFinishedCard(in CommandFinishedInput) Card {
 						"tag":  "div",
 						"text": map[string]any{"tag": "lark_md", "content": "命令详情仅本机可见 · 用本机端打开查看"},
 					},
-					actionRow(in.SessionID, "command_finished"),
+					actionRowOf(jumpButton(in.SessionID), ackButton(in.SessionID, "command_finished")),
 				},
 			},
 		}
@@ -87,6 +88,11 @@ func RenderCommandFinishedCard(in CommandFinishedInput) Card {
 	if label == "" {
 		label = "command"
 	}
+	buttons := []map[string]any{jumpButton(in.SessionID)}
+	if in.ExitCode != 0 && in.LastCommand != "" {
+		buttons = append(buttons, injectButton(in.SessionID, "重试", in.LastCommand+"\n"))
+	}
+	buttons = append(buttons, ackButton(in.SessionID, "command_finished"))
 	return Card{
 		MsgType: "interactive",
 		Card: map[string]any{
@@ -103,7 +109,7 @@ func RenderCommandFinishedCard(in CommandFinishedInput) Card {
 						"content": fmt.Sprintf("**`%s`** 退出码 `%d` · 用时 %s", label, in.ExitCode, formatElapsed(in.ElapsedMS)),
 					},
 				},
-				actionRow(in.SessionID, "command_finished"),
+				actionRowOf(buttons...),
 			},
 		},
 	}
@@ -130,7 +136,7 @@ func RenderWaitingInputCard(in WaitingInputInput) Card {
 			"text": map[string]any{"tag": "lark_md", "content": content},
 		})
 	}
-	elements = append(elements, actionRow(in.SessionID, "waiting_input"))
+	elements = append(elements, actionRowOf(jumpButton(in.SessionID), injectButton(in.SessionID, "继续", "\n"), ackButton(in.SessionID, "waiting_input")))
 	return Card{
 		MsgType: "interactive",
 		Card: map[string]any{
@@ -163,28 +169,50 @@ func truncateQuestion(q string) (string, bool) {
 	return body, truncated
 }
 
-func actionRow(sessionID uuid.UUID, event string) map[string]any {
+// injectButton builds a card button whose tap injects text verbatim into the
+// session's PTY (handled in the card.action.trigger consumer). A trailing "\n"
+// in text submits the line — e.g. "重试" sends LastCommand+"\n", "继续" sends "\n".
+func injectButton(sessionID uuid.UUID, label, text string) map[string]any {
 	return map[string]any{
-		"tag": "action",
-		"actions": []any{
-			map[string]any{
-				"tag":  "button",
-				"text": map[string]any{"tag": "plain_text", "content": "跳回打开 session"},
-				"type": "primary",
-				"url":  deepLink(sessionID),
-			},
-			map[string]any{
-				"tag":  "button",
-				"text": map[string]any{"tag": "plain_text", "content": "确认"},
-				"type": "default",
-				"value": map[string]any{
-					"kind":       "ack",
-					"session_id": sessionID.String(),
-					"event":      event,
-				},
-			},
+		"tag":  "button",
+		"text": map[string]any{"tag": "plain_text", "content": label},
+		"type": "default",
+		"value": map[string]any{
+			"kind":       "inject",
+			"session_id": sessionID.String(),
+			"text":       text,
 		},
 	}
+}
+
+func jumpButton(sessionID uuid.UUID) map[string]any {
+	return map[string]any{
+		"tag":  "button",
+		"text": map[string]any{"tag": "plain_text", "content": "跳回打开 session"},
+		"type": "primary",
+		"url":  deepLink(sessionID),
+	}
+}
+
+func ackButton(sessionID uuid.UUID, event string) map[string]any {
+	return map[string]any{
+		"tag":  "button",
+		"text": map[string]any{"tag": "plain_text", "content": "确认"},
+		"type": "default",
+		"value": map[string]any{
+			"kind":       "ack",
+			"session_id": sessionID.String(),
+			"event":      event,
+		},
+	}
+}
+
+func actionRowOf(buttons ...map[string]any) map[string]any {
+	acts := make([]any, 0, len(buttons))
+	for _, b := range buttons {
+		acts = append(acts, b)
+	}
+	return map[string]any{"tag": "action", "actions": acts}
 }
 
 func RenderAckUpdateCard(in AckUpdateInput) AckResponse {

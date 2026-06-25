@@ -99,6 +99,27 @@ func TestComputeResumeArgs_ClaudePreservesFlags(t *testing.T) {
 			[]string{"claude", "--resume", "id1", "--model", "opus"},
 		},
 		{
+			// Bug: a value-taking flag left without its value (corrupted /
+			// self-propagated command line) must be dropped, not re-injected —
+			// otherwise claude exits with "option '--permission-mode <mode>'
+			// argument missing" and recovery fails on every restart.
+			"drop value-flag missing its value at end",
+			"claude --permission-mode",
+			[]string{"claude", "--resume", "id1"},
+		},
+		{
+			"drop value-flag when followed by another flag",
+			"claude --permission-mode --dangerously-skip-permissions",
+			[]string{"claude", "--resume", "id1", "--dangerously-skip-permissions"},
+		},
+		{
+			// The self-propagation case from the field: a prior corrupted resume
+			// line. Strip the old --resume, drop the valueless --permission-mode.
+			"strip prior resume and drop valueless flag",
+			"claude --resume oldsid --permission-mode",
+			[]string{"claude", "--resume", "id1"},
+		},
+		{
 			"no flags",
 			"claude",
 			[]string{"claude", "--resume", "id1"},

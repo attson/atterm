@@ -320,6 +320,16 @@ func (h *relayHost) SendLocalInbound(id uuid.UUID, f proto.Frame) error {
 	return nil
 }
 
+// Inject writes text into a local session's PTY by sending it as a TypeIn
+// frame down the same path remote-viewer keystrokes use.
+func (h *relayHost) Inject(id uuid.UUID, text string) error {
+	return h.SendLocalInbound(id, proto.Frame{
+		Type:      proto.TypeIn,
+		SessionID: id,
+		Payload:   []byte(text),
+	})
+}
+
 // RequestLocalRepaint nudges a full-screen terminal app to redraw after a
 // remote attach receives only a truncated alternate-screen replay. Many TUIs
 // repaint on SIGWINCH, which is the only reliable signal available outside
@@ -516,22 +526,51 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if disp == nil {
 				return
 			}
+			// IMPORTANT: this callback runs while session.mu is held (see
+			// fireTaskStateLocked). Calling sess.Info() / sess.TailOutput()
+			// here would re-acquire that lock and deadlock the session
+			// goroutine — which stops its inbound pump, so keystrokes stop
+			// reaching the PTY (terminal appears frozen). Defer every call
+			// that touches the session lock to the goroutine below, which
+			// runs after the lock is released.
 			switch next {
 			case proto.TaskStateCompleted, proto.TaskStateFailed:
-				go disp.DispatchCommandFinished(context.Background(),
-					feishu.CommandFinishedEvent{
-						SessionID:  sid,
-						ExitCode:   meta.ExitCode,
-						ElapsedMS:  meta.ElapsedMS,
-						Label:      meta.Label,
-						SealedBody: meta.SealedBody,
-					})
+				// meta.RecentOutput is the command summary computed at OSC 133;D
+				// (already ANSI-stripped + line-limited, empty for E2EE sessions).
+				tail := meta.RecentOutput
+				go func() {
+					info := sess.Info()
+					disp.DispatchCommandFinished(context.Background(),
+						feishu.CommandFinishedEvent{
+							SessionID:    sid,
+							ExitCode:     meta.ExitCode,
+							ElapsedMS:    meta.ElapsedMS,
+							Label:        meta.Label,
+							SealedBody:   meta.SealedBody,
+							SessionTitle: info.Title,
+							Cwd:          info.Cwd,
+							OutputTail:   tail,
+						})
+				}()
 			case proto.TaskStateWaitingInput:
-				go disp.DispatchWaitingInput(context.Background(),
-					feishu.WaitingInputDispatchEvent{
-						SessionID: sid,
-						Source:    feishu.WaitingSourceHeuristic,
-					})
+				sealed := len(meta.SealedBody) != 0
+				go func() {
+					// Run outside the lock-held callback (see deadlock note above).
+					info := sess.Info()
+					var recent string
+					if !sealed {
+						recent = string(session.StripANSI(sess.TailOutput(512)))
+					}
+					disp.DispatchWaitingInput(context.Background(),
+						feishu.WaitingInputDispatchEvent{
+							SessionID:      sid,
+							Source:         feishu.WaitingSourceHeuristic,
+							SessionTitle:   info.Title,
+							Cwd:            info.Cwd,
+							CurrentCommand: info.CurrentCommand,
+							RecentOutput:   recent,
+						})
+				}()
 			}
 		})
 	}

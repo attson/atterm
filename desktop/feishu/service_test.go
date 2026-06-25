@@ -3,6 +3,7 @@ package feishu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,7 +60,8 @@ func TestService_HookServerExposed(t *testing.T) {
 // stubSessionLookup is the minimal SessionLookup used by the assembly tests.
 type stubSessionLookup struct{}
 
-func (stubSessionLookup) Exists(uuid.UUID) bool { return true }
+func (stubSessionLookup) Exists(uuid.UUID) bool          { return true }
+func (stubSessionLookup) Inject(uuid.UUID, string) error { return nil }
 
 var _ SessionLookup = stubSessionLookup{}
 
@@ -140,5 +142,121 @@ func TestService_BeginPair_LocalMode(t *testing.T) {
 	}
 	if len(code) != 6 {
 		t.Fatalf("expected 6-char code, got %q", code)
+	}
+}
+
+type fakeInjector struct {
+	gotSID  uuid.UUID
+	gotText string
+	err     error
+}
+
+func (f *fakeInjector) Exists(uuid.UUID) bool { return true }
+func (f *fakeInjector) Inject(sid uuid.UUID, text string) error {
+	f.gotSID, f.gotText = sid, text
+	return f.err
+}
+
+func TestHandleReplyMessage_InjectsToMappedSession(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	sid := uuid.New()
+	d.cardMsgs.remember("om_card1", sid)
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "om_card1", "looks good")
+
+	if inj.gotSID != sid {
+		t.Fatalf("inject sid = %s, want %s", inj.gotSID, sid)
+	}
+	if inj.gotText != "looks good\n" {
+		t.Fatalf("inject text = %q, want %q", inj.gotText, "looks good\n")
+	}
+}
+
+func TestHandleReplyMessage_UnknownParentIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "om_unknown", "hi")
+	if inj.gotText != "" {
+		t.Fatalf("unmapped parent must not inject, got %q", inj.gotText)
+	}
+}
+
+func TestHandleReplyMessage_BindCommandIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	d.cardMsgs.remember("om_card1", uuid.New())
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "om_card1", "/bind ABC123")
+	if inj.gotText != "" {
+		t.Fatalf("/bind must not be injected as a reply, got %q", inj.gotText)
+	}
+}
+
+func TestHandleReplyMessage_EmptyParentOrTextIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	d := NewDispatcher(DispatcherConfig{})
+	sid := uuid.New()
+	d.cardMsgs.remember("om_card1", sid)
+	s := &Service{cfg: ServiceConfig{Sessions: inj}, dispatcher: d}
+
+	s.handleReplyMessage(context.Background(), "ou_op", "", "looks good")
+	if inj.gotText != "" {
+		t.Fatalf("empty parent must not inject, got %q", inj.gotText)
+	}
+	s.handleReplyMessage(context.Background(), "ou_op", "om_card1", "   ")
+	if inj.gotText != "" {
+		t.Fatalf("blank text must not inject, got %q", inj.gotText)
+	}
+}
+
+func TestHandleCardAction_InjectWritesText(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	sid := uuid.New()
+	s.handleCardAction(context.Background(), sid.String(), "inject", "", "1\n")
+	if inj.gotSID != sid || inj.gotText != "1\n" {
+		t.Fatalf("inject got sid=%s text=%q", inj.gotSID, inj.gotText)
+	}
+}
+
+func TestHandleCardAction_NonInjectIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "")
+	if inj.gotText != "" {
+		t.Fatalf("ack should not inject, got %q", inj.gotText)
+	}
+}
+
+func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
+	inj := &fakeInjector{err: errors.New("inbound full")}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	// 不应 panic;错误被 log 吞掉。
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "x\n")
+	if inj.gotText != "x\n" {
+		t.Fatalf("inject should still be attempted, got %q", inj.gotText)
+	}
+}
+
+func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "x\n")
+	if inj.gotText != "" {
+		t.Fatalf("invalid uuid must not inject, got %q", inj.gotText)
+	}
+}
+
+func TestHandleCardAction_EmptyTextIgnored(t *testing.T) {
+	inj := &fakeInjector{}
+	s := &Service{cfg: ServiceConfig{Sessions: inj}}
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "")
+	if inj.gotText != "" {
+		t.Fatalf("empty text must not inject, got %q", inj.gotText)
 	}
 }

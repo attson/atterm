@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -105,10 +106,10 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		Now:   cfg.Now,
 	})
 
-	sessions := cfg.Sessions
-	if sessions == nil {
-		sessions = noOpSessionLookup{}
+	if cfg.Sessions == nil {
+		cfg.Sessions = noOpSessionLookup{}
 	}
+	sessions := cfg.Sessions
 	hookSrv := NewHookServer(d, sessions)
 
 	return &Service{
@@ -125,6 +126,10 @@ func (s *Service) Token() TokenSource      { return s.tokenSrc }
 // Exists makes Service satisfy SessionLookup for embedded use; production
 // callers pass an external SessionLookup via ServiceConfig.
 func (s *Service) Exists(uuid.UUID) bool { return true }
+
+// Inject satisfies SessionLookup for embedded use; production callers pass an
+// external SessionLookup via ServiceConfig.
+func (s *Service) Inject(uuid.UUID, string) error { return nil }
 
 // EnsureLongConn starts the long-conn lazily once credentials exist.
 // No-op in relay mode.
@@ -151,8 +156,11 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 		OnBindMessage: func(ctx context.Context, senderOpenID, text string) {
 			s.handleBindMessage(ctx, senderOpenID, text)
 		},
-		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID string) {
-			s.handleCardAction(ctx, sessionID, kind, event)
+		OnReplyMessage: func(ctx context.Context, senderOpenID, parentID, text string) {
+			s.handleReplyMessage(ctx, senderOpenID, parentID, text)
+		},
+		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
+			s.handleCardAction(ctx, sessionID, kind, event, text)
 		},
 		OnAuthClassFailure: func(ctx context.Context, _ error) {
 			_ = s.store.SetDisabled(ctx)
@@ -199,10 +207,45 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 	_ = s.store.SetBound(ctx, senderOpenID)
 }
 
-func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event string) {
-	_ = sessionID
-	_ = kind
-	_ = event
+// handleReplyMessage routes a Feishu reply (quoting a previously sent card) back
+// into the originating session's PTY. parentID is the replied-to card's
+// message_id, looked up in the dispatcher's message→session map.
+//
+// ModeLocal only: ModeRelay free-text reply is not yet wired (cross-process map).
+// The relay process holds no copy of this in-process cardMsgs map, so relay users
+// must use the card's quick-action buttons instead.
+func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentID, text string) {
+	t := strings.TrimSpace(text)
+	if parentID == "" || t == "" {
+		return
+	}
+	if strings.HasPrefix(t, "/bind ") {
+		return // a bind command, not a reply-to-card
+	}
+	if s.dispatcher == nil {
+		return
+	}
+	sid, ok := s.dispatcher.LookupCardSession(parentID)
+	if !ok {
+		return
+	}
+	if err := s.cfg.Sessions.Inject(sid, text+"\n"); err != nil {
+		log.Printf("feishu: reply inject session=%s: %v", sid, err)
+	}
+}
+
+func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, text string) {
+	if kind != "inject" || text == "" {
+		return
+	}
+	sid, err := uuid.Parse(sessionID)
+	if err != nil {
+		log.Printf("feishu: card inject bad session_id %q: %v", sessionID, err)
+		return
+	}
+	if err := s.cfg.Sessions.Inject(sid, text); err != nil {
+		log.Printf("feishu: card inject session=%s: %v", sid, err)
+	}
 }
 
 // In-memory short-code table for local mode.
@@ -283,7 +326,8 @@ func internalfeishuPairCode() string {
 
 type noOpSessionLookup struct{}
 
-func (noOpSessionLookup) Exists(uuid.UUID) bool { return true }
+func (noOpSessionLookup) Exists(uuid.UUID) bool          { return true }
+func (noOpSessionLookup) Inject(uuid.UUID, string) error { return nil }
 
 // authClassAdaptingClient promotes internal/feishu.AuthClassError to
 // satisfy the desktop dispatcher's IsFeishuAuthClassError contract.
@@ -291,8 +335,9 @@ type authClassAdaptingClient struct {
 	inner *internalfeishu.Client
 }
 
-func (c *authClassAdaptingClient) SendInteractiveToOpenID(ctx context.Context, tok, open string, body []byte) error {
-	return c.adapt(c.inner.SendInteractiveToOpenID(ctx, tok, open, body))
+func (c *authClassAdaptingClient) SendInteractiveToOpenID(ctx context.Context, tok, open string, body []byte) (string, error) {
+	mid, err := c.inner.SendInteractiveToOpenID(ctx, tok, open, body)
+	return mid, c.adapt(err)
 }
 func (c *authClassAdaptingClient) SendTextToOpenID(ctx context.Context, tok, open, text string) error {
 	return c.adapt(c.inner.SendTextToOpenID(ctx, tok, open, text))

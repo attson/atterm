@@ -29,7 +29,9 @@ func NewClient(baseURL string, httpC *http.Client) *Client {
 // cardBody must be a JSON object with at least {"msg_type":"interactive","card":...}.
 // The function wraps it with receive_id + msg_type + content per
 // Feishu's im/v1/messages contract.
-func (c *Client) SendInteractiveToOpenID(ctx context.Context, tenantToken, openID string, cardBody []byte) error {
+// It returns the Feishu message_id of the sent card, which callers use to
+// route a user's reply back to the originating session.
+func (c *Client) SendInteractiveToOpenID(ctx context.Context, tenantToken, openID string, cardBody []byte) (string, error) {
 	// The Feishu API expects:
 	//   { receive_id, msg_type:"interactive", content: <stringified card JSON> }
 	// We unmarshal cardBody to extract the card sub-object so it can be
@@ -38,7 +40,7 @@ func (c *Client) SendInteractiveToOpenID(ctx context.Context, tenantToken, openI
 		Card json.RawMessage `json:"card"`
 	}
 	if err := json.Unmarshal(cardBody, &c0); err != nil {
-		return fmt.Errorf("parse card body: %w", err)
+		return "", fmt.Errorf("parse card body: %w", err)
 	}
 	wrapper := map[string]any{
 		"receive_id": openID,
@@ -55,10 +57,12 @@ func (c *Client) SendTextToOpenID(ctx context.Context, tenantToken, openID, text
 		"msg_type":   "text",
 		"content":    string(content),
 	}
-	return c.postIM(ctx, tenantToken, wrapper)
+	_, err := c.postIM(ctx, tenantToken, wrapper)
+	return err
 }
 
-func (c *Client) postIM(ctx context.Context, tenantToken string, wrapper map[string]any) error {
+// postIM posts a message wrapper and returns the resulting message_id.
+func (c *Client) postIM(ctx context.Context, tenantToken string, wrapper map[string]any) (string, error) {
 	body, _ := json.Marshal(wrapper)
 	req, _ := http.NewRequestWithContext(ctx, "POST",
 		c.baseURL+"/open-apis/im/v1/messages?receive_id_type=open_id",
@@ -67,19 +71,22 @@ func (c *Client) postIM(ctx context.Context, tenantToken string, wrapper map[str
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	resp, err := c.httpC.Do(req)
 	if err != nil {
-		return fmt.Errorf("im POST: %w", err)
+		return "", fmt.Errorf("im POST: %w", err)
 	}
 	defer resp.Body.Close()
 	var r struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
+		Data struct {
+			MessageID string `json:"message_id"`
+		} `json:"data"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&r)
 	if r.Code != 0 {
 		if authClassCodes[r.Code] {
-			return &AuthClassError{Code: r.Code, Msg: r.Msg}
+			return "", &AuthClassError{Code: r.Code, Msg: r.Msg}
 		}
-		return fmt.Errorf("feishu im send: code=%d msg=%s", r.Code, r.Msg)
+		return "", fmt.Errorf("feishu im send: code=%d msg=%s", r.Code, r.Msg)
 	}
-	return nil
+	return r.Data.MessageID, nil
 }

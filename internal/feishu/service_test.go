@@ -73,17 +73,17 @@ type fakeIM struct {
 	err      error
 }
 
-func (f *fakeIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) error {
+func (f *fakeIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
-		return f.err
+		return "", f.err
 	}
 	f.sentInteractive = append(f.sentInteractive, struct {
 		Token, OpenID string
 		Body          []byte
 	}{token, openID, body})
-	return nil
+	return "om_test", nil
 }
 func (f *fakeIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
 	f.mu.Lock()
@@ -200,6 +200,32 @@ func TestService_HandleEvent_CardAck(t *testing.T) {
 	}
 	if resp.CardUpdate == nil {
 		t.Fatalf("expected card update response")
+	}
+}
+
+func TestService_HandleEvent_CardInject(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{UserID: "u1", EncryptKey: "kk", VerifyToken: "vv", AppIDHash: "h"})
+	svc := newSvc(st, &fakeIM{}, &fakeToken{tok: "tt"})
+
+	plain := []byte(`{"header":{"event_type":"card.action.trigger","token":"vv","app_id":"a"},"event":{"action":{"value":{"kind":"inject","session_id":"sid-1","text":"1\n"}},"operator":{"open_id":"ou_x"}}}`)
+	body := feishuTestEncrypt(t, "kk", plain)
+	res, err := svc.HandleEvent(context.Background(), "h", body)
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if res.Inject == nil {
+		t.Fatal("expected Inject to be surfaced")
+	}
+	if res.Inject.SessionID != "sid-1" {
+		t.Fatalf("Inject.SessionID = %q", res.Inject.SessionID)
+	}
+	if res.Inject.Text != "1\n" {
+		t.Fatalf("Inject.Text = %q", res.Inject.Text)
+	}
+	// Still should echo / update the card.
+	if res.CardUpdate == nil {
+		t.Fatal("inject should still update card")
 	}
 }
 

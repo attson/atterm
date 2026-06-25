@@ -12,7 +12,14 @@ import (
 // on the user. The dispatcher uses this to render + send a Feishu card.
 type WaitingInputEvent struct {
 	QuestionText string
+	Options      []QuestionOption // populated only for AskUserQuestion idle_prompt
 	DedupKey     string
+}
+
+// QuestionOption is one selectable answer from an AskUserQuestion tool call.
+type QuestionOption struct {
+	Label       string
+	Description string
 }
 
 // HookAdapter parses an agent-specific hook payload into a normalized
@@ -62,11 +69,13 @@ func (a *claudeCodeAdapter) Parse(raw json.RawMessage, _ string) (WaitingInputEv
 		if in.Matcher.Tool != "AskUserQuestion" {
 			return WaitingInputEvent{}, false
 		}
-		q := extractAskUserQuestion(in.Context)
+		q, opts := extractAskUserQuestion(in.Context)
 		if q == "" {
 			q = "Claude is waiting on a question."
 		}
-		return mkEvent(in, q), true
+		ev := mkEvent(in, q)
+		ev.Options = opts
+		return ev, true
 	default:
 		return WaitingInputEvent{}, false
 	}
@@ -103,20 +112,37 @@ func summarizePermissionContext(ctx json.RawMessage) string {
 	return fmt.Sprintf("%s wants to:\n%s", tool, argsLine)
 }
 
-func extractAskUserQuestion(ctx json.RawMessage) string {
+func extractAskUserQuestion(ctx json.RawMessage) (string, []QuestionOption) {
 	var p struct {
 		ToolInput struct {
-			Question string `json:"question"`
+			Question  string `json:"question"`
+			Questions []struct {
+				Question string `json:"question"`
+				Options  []struct {
+					Label       string `json:"label"`
+					Description string `json:"description"`
+				} `json:"options"`
+			} `json:"questions"`
 		} `json:"tool_input"`
 	}
-	if err := json.Unmarshal(ctx, &p); err == nil && p.ToolInput.Question != "" {
-		return p.ToolInput.Question
+	if err := json.Unmarshal(ctx, &p); err == nil {
+		if len(p.ToolInput.Questions) > 0 {
+			q0 := p.ToolInput.Questions[0]
+			opts := make([]QuestionOption, 0, len(q0.Options))
+			for _, o := range q0.Options {
+				opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
+			}
+			return q0.Question, opts
+		}
+		if p.ToolInput.Question != "" {
+			return p.ToolInput.Question, nil
+		}
 	}
 	var fallback struct {
 		ToolInput json.RawMessage `json:"tool_input"`
 	}
 	_ = json.Unmarshal(ctx, &fallback)
-	return compactJSONOneLine(fallback.ToolInput)
+	return compactJSONOneLine(fallback.ToolInput), nil
 }
 
 func compactJSONOneLine(raw json.RawMessage) string {

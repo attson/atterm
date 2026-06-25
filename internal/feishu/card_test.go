@@ -112,6 +112,41 @@ func TestRenderWaitingInputCard_WithQuestion(t *testing.T) {
 	}
 }
 
+func TestRenderWaitingInputCard_ContextAndRecentOutput(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-000000000011")
+	card := RenderWaitingInputCard(WaitingInputInput{
+		SessionID:      sid,
+		IdleForSeconds: 30,
+		SessionTitle:   "atterm",
+		Cwd:            "~/atterm",
+		CurrentCommand: "claude",
+		RecentOutput:   "Waiting for your input on the plan…",
+	})
+	s := mustJSON(t, card)
+	for _, want := range []string{"atterm", "~/atterm", "当前命令", "claude", "Waiting for your input"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("waiting card missing %q in %s", want, s)
+		}
+	}
+}
+
+// QuestionText takes precedence over RecentOutput when both are present.
+func TestRenderWaitingInputCard_QuestionBeatsRecentOutput(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-000000000012")
+	card := RenderWaitingInputCard(WaitingInputInput{
+		SessionID:    sid,
+		QuestionText: "Proceed? (y/N)",
+		RecentOutput: "some noisy tail output",
+	})
+	s := mustJSON(t, card)
+	if !strings.Contains(s, "Proceed? (y/N)") {
+		t.Fatalf("expected question text, got %s", s)
+	}
+	if strings.Contains(s, "some noisy tail output") {
+		t.Fatalf("recent output should be suppressed when a question exists: %s", s)
+	}
+}
+
 func TestRenderWaitingInputCard_QuestionTruncation(t *testing.T) {
 	long := strings.Repeat("x", 2000)
 	card := RenderWaitingInputCard(WaitingInputInput{
@@ -160,5 +195,151 @@ func TestRenderWaitingInputCard_EmptyQuestionStillRenders(t *testing.T) {
 	}
 	if !strings.Contains(s, "已闲置") {
 		t.Fatalf("generic waiting copy still expected: %s", s)
+	}
+}
+
+func mustCardJSON(t *testing.T, c Card) string {
+	t.Helper()
+	b, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestCommandFinishedCard_ContextAndSummary(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), ExitCode: 1, ElapsedMS: 2000, Label: "go test",
+		SessionTitle: "atterm", Cwd: "~/atterm", FailureCount: 3,
+		OutputTail: "FAIL: foo_test.go:12\n",
+	})
+	blob := mustCardJSON(t, c)
+	for _, want := range []string{"atterm", "~/atterm", "连续第 3 次", "FAIL: foo_test.go:12"} {
+		if !strings.Contains(blob, want) {
+			t.Fatalf("card missing %q in %s", want, blob)
+		}
+	}
+}
+
+func TestCommandFinishedCard_SealedNoContext(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), SealedBody: []byte("x"),
+		SessionTitle: "secret-proj", OutputTail: "secret output",
+	})
+	blob := mustCardJSON(t, c)
+	for _, leak := range []string{"secret-proj", "secret output"} {
+		if strings.Contains(blob, leak) {
+			t.Fatalf("sealed card leaked %q", leak)
+		}
+	}
+}
+
+func actions(c Card) []any {
+	els := c.Card["elements"].([]any)
+	last := els[len(els)-1].(map[string]any)
+	return last["actions"].([]any)
+}
+
+func buttonText(b any) string {
+	m := b.(map[string]any)
+	return m["text"].(map[string]any)["content"].(string)
+}
+
+func TestCommandFinishedCard_FailureHasRetry(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), ExitCode: 1, ElapsedMS: 2000, Label: "go test",
+		LastCommand: "go test ./...",
+	})
+	var labels []string
+	for _, b := range actions(c) {
+		labels = append(labels, buttonText(b))
+	}
+	want := []string{"跳回打开 session", "重试", "确认"}
+	if len(labels) != 3 || labels[0] != want[0] || labels[1] != want[1] || labels[2] != want[2] {
+		t.Fatalf("buttons = %v, want %v", labels, want)
+	}
+	retry := actions(c)[1].(map[string]any)["value"].(map[string]any)
+	if retry["kind"] != "inject" || retry["text"] != "go test ./...\n" {
+		t.Fatalf("retry value = %+v", retry)
+	}
+}
+
+func TestCommandFinishedCard_SuccessNoRetry(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), ExitCode: 0, ElapsedMS: 1000, Label: "ls",
+	})
+	if got := len(actions(c)); got != 2 {
+		t.Fatalf("success buttons = %d, want 2 (跳回/确认)", got)
+	}
+}
+
+func TestSealedCard_NoInjectButton(t *testing.T) {
+	c := RenderCommandFinishedCard(CommandFinishedInput{
+		SessionID: uuid.New(), SealedBody: []byte("x"),
+	})
+	for _, b := range actions(c) {
+		if v, ok := b.(map[string]any)["value"].(map[string]any); ok {
+			if v["kind"] == "inject" {
+				t.Fatal("sealed card must not contain inject buttons")
+			}
+		}
+	}
+}
+
+func TestAskQuestionCard_OneButtonPerOption(t *testing.T) {
+	c := RenderAskQuestionCard(AskQuestionInput{
+		SessionID: uuid.New(),
+		Question:  "Deploy now?",
+		Options: []AskOption{
+			{Label: "Yes", InjectText: "1\n"},
+			{Label: "No", InjectText: "2\n"},
+		},
+	})
+	if c.Card["header"].(map[string]any)["template"] != "blue" {
+		t.Fatal("AskQuestion card must be blue")
+	}
+	var labels []string
+	for _, b := range actions(c) {
+		labels = append(labels, buttonText(b))
+	}
+	// 跳回 + Yes + No(自由回复用引导文本 note,不是按钮)。
+	if len(labels) != 3 || labels[1] != "Yes" || labels[2] != "No" {
+		t.Fatalf("labels = %v", labels)
+	}
+	yes := actions(c)[1].(map[string]any)["value"].(map[string]any)
+	if yes["kind"] != "inject" || yes["text"] != "1\n" {
+		t.Fatalf("yes value = %+v", yes)
+	}
+}
+
+func TestAskQuestionCard_EmptyOptions(t *testing.T) {
+	c := RenderAskQuestionCard(AskQuestionInput{
+		SessionID: uuid.New(),
+		Question:  "Anything?",
+	})
+	// 无选项:只有跳回按钮一个。
+	if got := len(actions(c)); got != 1 {
+		t.Fatalf("empty-options buttons = %d, want 1 (跳回)", got)
+	}
+	if buttonText(actions(c)[0]) != "跳回打开 session" {
+		t.Fatalf("only button should be jump, got %q", buttonText(actions(c)[0]))
+	}
+}
+
+func TestAskQuestionCard_EmptyQuestionNoDanglingTitle(t *testing.T) {
+	c := RenderAskQuestionCard(AskQuestionInput{
+		SessionID: uuid.New(),
+		Question:  "",
+		Options:   []AskOption{{Label: "A", InjectText: "1\n"}},
+	})
+	// 第一个 div 正文不应以裸标题 + 空内容结尾。
+	els := c.Card["elements"].([]any)
+	first := els[0].(map[string]any)["text"].(map[string]any)["content"].(string)
+	if first == "**Agent 在向你提问：**\n" || first == "**Agent 在向你提问:**\n" {
+		t.Fatalf("dangling empty title: %q", first)
+	}
+	// 选项仍在。
+	if buttonText(actions(c)[1]) != "A" {
+		t.Fatalf("option button missing")
 	}
 }

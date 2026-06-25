@@ -166,6 +166,10 @@ type TaskMeta struct {
 	ElapsedMS  int
 	Label      string
 	SealedBody []byte
+	// RecentOutput is the command's tail output, already ANSI-stripped and
+	// line-limited by computeSummary (the same summary clients render).
+	// Empty for non-D transitions and for content-opaque (E2EE) sessions.
+	RecentOutput string
 }
 
 // Subscriber is a client connection's outbox.
@@ -298,6 +302,12 @@ func (s *Session) Info() proto.SessionInfo {
 	info.ID = s.ID.String()
 	info.StartedAt = s.StartedAt.Unix()
 	return info
+}
+
+// TailOutput returns up to the last n bytes of scrollback. Used to attach a
+// short output summary to Feishu cards. Returns nil when n <= 0 or empty.
+func (s *Session) TailOutput(n int) []byte {
+	return s.scroll.TailBytes(n)
 }
 
 // SetSubscriberLifecycle registers callbacks fired when the subscriber count
@@ -1033,10 +1043,15 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.silenceTimer = nil
 			}
 			changed = true
+			var recentOutput string
+			if s.meta.Summary != nil {
+				recentOutput = s.meta.Summary.RecentOutput
+			}
 			s.fireTaskStateLocked(prevStateD, state, TaskMeta{
-				ExitCode:  exitCode,
-				ElapsedMS: duration,
-				Label:     s.meta.CurrentCommand,
+				ExitCode:     exitCode,
+				ElapsedMS:    duration,
+				Label:        s.meta.CurrentCommand,
+				RecentOutput: recentOutput,
 			})
 		}
 	}

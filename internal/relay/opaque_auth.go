@@ -40,8 +40,12 @@ type OpaqueAuthHandler struct {
 	// realmID is the realm this relay belongs to. It is echoed back in
 	// every auth-finalize response so clients can anchor their account_key
 	// to a (relay, realm) pair rather than just the origin URL.
-	realmID        string
-	loginSessions  sync.Map // session_id -> *loginPending
+	realmID           string
+	// instancePublicURL is this relay node's public URL (empty for
+	// single-instance / dev). It is used in resolveHomeInstanceURL to
+	// treat the serving node as live even before its heartbeat row exists.
+	instancePublicURL string
+	loginSessions     sync.Map // session_id -> *loginPending
 	stepUpSessions sync.Map // session_id -> *stepUpPending (M1i)
 }
 
@@ -68,8 +72,8 @@ const loginSessionTTL = 30 * time.Second
 // NewOpaqueAuthHandler constructs the handler. Both store and srv must be
 // non-nil; the OpaqueServer is expected to have been initialized via
 // LoadOrInitOpaqueServer before this constructor is called.
-func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer, bootstrapEmail, realmID string) *OpaqueAuthHandler {
-	return &OpaqueAuthHandler{store: store, srv: srv, bootstrapEmail: strings.TrimSpace(bootstrapEmail), realmID: realmID}
+func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer, bootstrapEmail, realmID, instancePublicURL string) *OpaqueAuthHandler {
+	return &OpaqueAuthHandler{store: store, srv: srv, bootstrapEmail: strings.TrimSpace(bootstrapEmail), realmID: realmID, instancePublicURL: instancePublicURL}
 }
 
 // ----- Wire types -----
@@ -125,10 +129,11 @@ type loginFinalizeRequest struct {
 }
 
 type loginFinalizeResponse struct {
-	UserID         string                `json:"user_id"`
-	SessionToken   string                `json:"session_token"`
-	AccountKeyWrap accountKeyWrapPayload `json:"account_key_wrap"`
-	RealmID        string                `json:"realm_id"`
+	UserID          string                `json:"user_id"`
+	SessionToken    string                `json:"session_token"`
+	AccountKeyWrap  accountKeyWrapPayload `json:"account_key_wrap"`
+	RealmID         string                `json:"realm_id"`
+	HomeInstanceURL string                `json:"home_instance_url"`
 }
 
 // ----- Handlers (stubs filled in by Tasks 7-10) -----
@@ -524,6 +529,12 @@ func (h *OpaqueAuthHandler) handleLoginFinalize(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	homeURL, err := resolveHomeInstanceURL(ctx, h.store, pending.userID, h.instancePublicURL)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(loginFinalizeResponse{
 		UserID:       pending.userID,
@@ -535,7 +546,8 @@ func (h *OpaqueAuthHandler) handleLoginFinalize(w http.ResponseWriter, r *http.R
 			Salt:      wrap.Salt,
 			KDFParams: wrap.KDFParams,
 		},
-		RealmID: h.realmID,
+		RealmID:         h.realmID,
+		HomeInstanceURL: homeURL,
 	})
 }
 

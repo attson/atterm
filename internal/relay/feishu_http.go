@@ -82,11 +82,14 @@ func (h *FeishuHTTPHandler) ServeHTTPEvents(w http.ResponseWriter, r *http.Reque
 	if resp.Inject != nil && h.registry != nil {
 		if sid, err := uuid.Parse(resp.Inject.SessionID); err == nil {
 			if sess, ok := h.registry.Get(sid); ok {
-				_ = sess.SendInbound(proto.Frame{
-					Type:      proto.TypeIn,
-					SessionID: sid,
-					Payload:   []byte(resp.Inject.Text),
-				})
+				// Owner isolation (mirrors client_conn.go attach check): only an
+				// owned session whose owner differs from the binding owner is
+				// rejected. Empty on either side is legacy/local and allowed.
+				if sess.OwnerUserID != "" && sess.OwnerUserID != resp.Inject.OwnerUserID {
+					log.Printf("relay: feishu inject denied: session=%s owner mismatch", sid)
+				} else if !sess.SendInbound(proto.Frame{Type: proto.TypeIn, SessionID: sid, Payload: []byte(resp.Inject.Text)}) {
+					log.Printf("relay: feishu inject dropped: session=%s inbound_full", sid)
+				}
 			}
 		}
 		// Fall through: the card echo (CardUpdate) is still rendered below.

@@ -15,7 +15,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 )
@@ -306,6 +309,100 @@ func TestFeishuHTTP_EventCallback_CardAckUpdates(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "已确认") || !strings.Contains(rr.Body.String(), `"update_multi":true`) {
 		t.Fatalf("expected update card in body: %s", rr.Body.String())
+	}
+}
+
+// registerOwnedSession adds a live session with the given owner to the
+// handler's registry and returns it. Used by the inject owner-isolation tests.
+func registerOwnedSession(t *testing.T, h *FeishuHTTPHandler, id uuid.UUID, owner string) *session.Session {
+	t.Helper()
+	sess := session.New(id, proto.SessionInfo{})
+	sess.OwnerUserID = owner
+	got, err := h.registry.Add(sess)
+	if err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+	return got
+}
+
+// injectCardBody builds an encrypted card.action inject callback body.
+func injectCardBody(t *testing.T, encryptKey, appID, verifyToken, sid, text string) []byte {
+	t.Helper()
+	plain := []byte(`{"header":{"event_type":"card.action.trigger","token":"` + verifyToken +
+		`","app_id":"` + appID + `"},"event":{"action":{"value":{"kind":"inject","session_id":"` +
+		sid + `","text":"` + text + `"}},"operator":{"open_id":"ou_x"}}}`)
+	return feishuEncryptForTest(t, encryptKey, plain)
+}
+
+// TestFeishuHTTP_EventCallback_Inject_OwnerMatch proves the full inject link:
+// a card callback whose binding owner matches the target session's owner lands
+// a TypeIn frame on the session's inbound channel.
+func TestFeishuHTTP_EventCallback_Inject_OwnerMatch(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	u, _ := st.CreateOpaqueUser(ctx, "inj-ok@example.com")
+	_ = st.UpsertFeishuBinding(ctx, u.ID, userstore.FeishuBindingCredentials{
+		AppID: "cli_inj", AppSecret: "s", EncryptKey: "ek-inj", VerifyToken: "vt-inj",
+	})
+	b, _ := st.GetFeishuBinding(ctx, u.ID)
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	// Session owned by the same user that owns the binding (b.UserID == u.ID).
+	sid := uuid.New()
+	sess := registerOwnedSession(t, h, sid, u.ID)
+
+	body := injectCardBody(t, "ek-inj", "cli_inj", "vt-inj", sid.String(), "hello")
+	req := httptest.NewRequest("POST", "/v1/feishu/events/"+b.AppIDHash, bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPEvents(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case f := <-sess.Inbound():
+		if f.Type != proto.TypeIn {
+			t.Fatalf("frame type=%v, want TypeIn", f.Type)
+		}
+		if string(f.Payload) != "hello" {
+			t.Fatalf("payload=%q, want %q", f.Payload, "hello")
+		}
+	default:
+		t.Fatalf("expected an inbound frame on the owned session, got none")
+	}
+}
+
+// TestFeishuHTTP_EventCallback_Inject_OwnerMismatch is the security regression:
+// a card callback from binding owner user-B must NOT inject into a session owned
+// by user-A. The inbound channel stays empty.
+func TestFeishuHTTP_EventCallback_Inject_OwnerMismatch(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	// user-B owns the binding that fires the callback.
+	uB, _ := st.CreateOpaqueUser(ctx, "inj-attacker@example.com")
+	_ = st.UpsertFeishuBinding(ctx, uB.ID, userstore.FeishuBindingCredentials{
+		AppID: "cli_inj2", AppSecret: "s", EncryptKey: "ek-inj2", VerifyToken: "vt-inj2",
+	})
+	b, _ := st.GetFeishuBinding(ctx, uB.ID)
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	// Session owned by a different user (user-A). uB.ID != "user-A".
+	sid := uuid.New()
+	sess := registerOwnedSession(t, h, sid, "user-A")
+
+	body := injectCardBody(t, "ek-inj2", "cli_inj2", "vt-inj2", sid.String(), "evil")
+	req := httptest.NewRequest("POST", "/v1/feishu/events/"+b.AppIDHash, bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPEvents(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case f := <-sess.Inbound():
+		t.Fatalf("owner mismatch: inject must be denied, but got frame %+v", f)
+	default:
+		// Expected: no frame delivered.
 	}
 }
 

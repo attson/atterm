@@ -112,8 +112,9 @@ const (
 // internal/feishu stays a pure render/parse package: it never touches the
 // session registry. The relay HTTP layer consumes this and performs the inject.
 type Injection struct {
-	SessionID string
-	Text      string
+	SessionID   string
+	Text        string
+	OwnerUserID string // binding owner, for relay-side session ownership check
 }
 
 // HandleResult is what HandleEvent returns; the HTTP handler always
@@ -177,7 +178,7 @@ func (s *Service) HandleEvent(ctx context.Context, appIDHash string, body []byte
 			ack := RenderAckUpdateCard(AckUpdateInput{Event: "inject", SessionID: env.CardAction.SessionID})
 			return &HandleResult{
 				CardUpdate: &ack,
-				Inject:     &Injection{SessionID: env.CardAction.SessionID, Text: env.CardAction.Text},
+				Inject:     &Injection{SessionID: env.CardAction.SessionID, Text: env.CardAction.Text, OwnerUserID: b.UserID},
 				Reason:     "card_inject",
 			}, nil
 		default:

@@ -213,6 +213,12 @@ type Store interface {
 	GetRealmState(ctx context.Context) (RealmState, error)
 	EnsureRealmState(ctx context.Context, candidateRealmID string) (RealmState, error)
 
+	// Instance registry + account-level home node (phase 2 node selection).
+	UpsertInstanceHeartbeat(ctx context.Context, instanceID, publicURL string, nowUnix int64) error
+	ListLiveInstances(ctx context.Context, minHeartbeat int64) ([]RelayInstance, error)
+	GetUserHome(ctx context.Context, userID string) (string, bool, error)
+	SetUserHome(ctx context.Context, userID, instanceID string) error
+
 	// Relay-wide singleton config (DB-backed replacement for relay.json).
 	GetRelayConfig(ctx context.Context) (RelayConfig, error)
 	SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayConfig, error)

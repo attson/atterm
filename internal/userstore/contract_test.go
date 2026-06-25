@@ -288,6 +288,52 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 		}
 	})
 
+	t.Run("instance heartbeat + live list", func(t *testing.T) {
+		st := open(t)
+		if err := st.UpsertInstanceHeartbeat(ctx, "https://a.example", "https://a.example", 1000); err != nil {
+			t.Fatalf("upsert a: %v", err)
+		}
+		if err := st.UpsertInstanceHeartbeat(ctx, "https://b.example", "https://b.example", 500); err != nil {
+			t.Fatalf("upsert b: %v", err)
+		}
+		// Re-heartbeat a (upsert updates last_heartbeat).
+		if err := st.UpsertInstanceHeartbeat(ctx, "https://a.example", "https://a.example", 2000); err != nil {
+			t.Fatalf("re-upsert a: %v", err)
+		}
+		live, err := st.ListLiveInstances(ctx, 1000) // cutoff excludes b (500)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(live) != 1 || live[0].InstanceID != "https://a.example" || live[0].LastHeartbeat != 2000 {
+			t.Fatalf("live = %+v", live)
+		}
+	})
+
+	t.Run("user home get/set", func(t *testing.T) {
+		st := open(t)
+		u, err := st.CreateOpaqueUser(ctx, "home@example.com")
+		if err != nil {
+			t.Fatalf("user: %v", err)
+		}
+		if _, ok, err := st.GetUserHome(ctx, u.ID); err != nil || ok {
+			t.Fatalf("fresh home: ok=%v err=%v", ok, err)
+		}
+		if err := st.SetUserHome(ctx, u.ID, "https://a.example"); err != nil {
+			t.Fatalf("set: %v", err)
+		}
+		id, ok, err := st.GetUserHome(ctx, u.ID)
+		if err != nil || !ok || id != "https://a.example" {
+			t.Fatalf("get: id=%q ok=%v err=%v", id, ok, err)
+		}
+		if err := st.SetUserHome(ctx, u.ID, "https://b.example"); err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		id2, _, _ := st.GetUserHome(ctx, u.ID)
+		if id2 != "https://b.example" {
+			t.Fatalf("reset home = %q", id2)
+		}
+	})
+
 	t.Run("vapid keys upsert + subscriptions crud", func(t *testing.T) {
 		st := open(t)
 		if _, ok, err := st.GetVAPIDKeys(ctx); err != nil || ok {

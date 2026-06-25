@@ -11,10 +11,27 @@ import (
 
 // claudeWatchDir returns ~/.claude/projects/<cwd-encoded>/ where Claude
 // Code writes one <UUID>.jsonl per conversation. cwd-encoded replaces
-// every '/' with '-'. home is injected for tests; production uses
-// os.UserHomeDir().
+// every non-alphanumeric character with '-' (so '/', '.', '_', '+' etc.
+// all collapse to '-') — this mirrors Claude Code's own project-dir
+// encoding. A git-worktree cwd like ".../.claude/worktrees/feat+a_b" thus
+// maps to "...--claude-worktrees-feat-a-b"; the earlier "only replace '/'"
+// form missed such dirs entirely, so the AI session id never resolved
+// (ai=- in logs) and the worktree pane could not be --resumed on restart.
+// home is injected for tests; production uses os.UserHomeDir().
 func claudeWatchDir(cwd string, _ time.Time, home string) string {
-	return filepath.Join(home, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
+	return filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(cwd))
+}
+
+// encodeClaudeProjectDir replaces every non-alphanumeric rune in p with '-',
+// matching Claude Code's project-directory naming. Runs of specials each map
+// to their own '-' (no collapsing), e.g. "/.claude" → "--claude".
+func encodeClaudeProjectDir(p string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, p)
 }
 
 // codexWatchDir returns ~/.codex/sessions/YYYY/MM/DD/ keyed by the wall

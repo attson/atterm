@@ -20,7 +20,7 @@ func newRelay(t *testing.T) (*httptest.Server, *userstore.SQLiteStore) {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv, "", "test-realm", "").Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "", "test-realm", "https://node-1.example").Register(mux)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts, store
@@ -90,6 +90,9 @@ func TestClient_RegisterAndLogin(t *testing.T) {
 	}
 	if lg.RealmID != "test-realm" {
 		t.Fatalf("Login: expected RealmID %q, got %q", "test-realm", lg.RealmID)
+	}
+	if lg.HomeInstanceURL != "https://node-1.example" {
+		t.Fatalf("login HomeInstanceURL = %q, want https://node-1.example", lg.HomeInstanceURL)
 	}
 }
 

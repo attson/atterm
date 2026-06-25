@@ -95,11 +95,12 @@ func (c *Client) http() *http.Client {
 // AccountKey is 32 random bytes used to derive per-session keys via HKDF
 // (see spec §5). Email is echoed back so the caller can persist it.
 type LoginResult struct {
-	UserID       string
-	SessionToken string
-	Email        string
-	AccountKey   []byte // 32 bytes
-	RealmID      string
+	UserID          string
+	SessionToken    string
+	Email           string
+	AccountKey      []byte // 32 bytes
+	RealmID         string
+	HomeInstanceURL string
 }
 
 // RegisterResult is the return value of Register.
@@ -234,11 +235,12 @@ func (c *Client) Login(ctx context.Context, email, password string) (*LoginResul
 	}
 
 	return &LoginResult{
-		UserID:       finResp.UserID,
-		SessionToken: finResp.SessionToken,
-		Email:        email,
-		AccountKey:   accountKey,
-		RealmID:      finResp.RealmID,
+		UserID:          finResp.UserID,
+		SessionToken:    finResp.SessionToken,
+		Email:           email,
+		AccountKey:      accountKey,
+		RealmID:         finResp.RealmID,
+		HomeInstanceURL: finResp.HomeInstanceURL,
 	}, nil
 }
 
@@ -433,8 +435,9 @@ type loginFinalizeRequest struct {
 }
 
 type loginFinalizeResponse struct {
-	UserID         string         `json:"user_id"`
-	SessionToken   string         `json:"session_token"`
-	AccountKeyWrap AccountKeyWrap `json:"account_key_wrap"`
-	RealmID        string         `json:"realm_id"`
+	UserID          string         `json:"user_id"`
+	SessionToken    string         `json:"session_token"`
+	AccountKeyWrap  AccountKeyWrap `json:"account_key_wrap"`
+	RealmID         string         `json:"realm_id"`
+	HomeInstanceURL string         `json:"home_instance_url"`
 }

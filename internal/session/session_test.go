@@ -934,3 +934,18 @@ func TestSession_OnTaskStateChange_FiresOnWaiting(t *testing.T) {
 		t.Fatalf("expected WaitingInput transition")
 	}
 }
+
+func TestSession_TailOutput(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	s.PushOut(1, []byte("line one\n"))
+	s.PushOut(2, []byte("line two\n"))
+	// Buffer content is "line one\nline two\n"; the last 5 bytes are " two\n".
+	got := string(s.TailOutput(5))
+	if got != " two\n" {
+		t.Fatalf("TailOutput(5) = %q, want %q", got, " two\n")
+	}
+	all := string(s.TailOutput(1000))
+	if all != "line one\nline two\n" {
+		t.Fatalf("TailOutput(1000) = %q, want full buffer", all)
+	}
+}

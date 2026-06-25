@@ -300,6 +300,12 @@ func (s *Session) Info() proto.SessionInfo {
 	return info
 }
 
+// TailOutput returns up to the last n bytes of scrollback. Used to attach a
+// short output summary to Feishu cards. Returns nil when n <= 0 or empty.
+func (s *Session) TailOutput(n int) []byte {
+	return s.scroll.TailBytes(n)
+}
+
 // SetSubscriberLifecycle registers callbacks fired when the subscriber count
 // transitions 0→1 (first) and N→0 (last). Both fire asynchronously to avoid
 // holding session locks. Pass nil for either to disable that hook. Replaces

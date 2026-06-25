@@ -108,6 +108,14 @@ const (
 	HandleStatusOK HandleStatus = iota
 )
 
+// Injection is surfaced when a card button asks to inject text into a session.
+// internal/feishu stays a pure render/parse package: it never touches the
+// session registry. The relay HTTP layer consumes this and performs the inject.
+type Injection struct {
+	SessionID string
+	Text      string
+}
+
 // HandleResult is what HandleEvent returns; the HTTP handler always
 // replies 200 but inspects fields to emit the right body.
 type HandleResult struct {
@@ -115,6 +123,7 @@ type HandleResult struct {
 	Reason       string       // short tag for logs
 	URLChallenge string       // non-empty → reply { "challenge": ... }
 	CardUpdate   *AckResponse // non-nil → reply JSON of this object
+	Inject       *Injection   // non-nil → relay layer injects text into session
 	LogError     error        // attached for tests; HTTP handler logs it
 }
 
@@ -157,11 +166,23 @@ func (s *Service) HandleEvent(ctx context.Context, appIDHash string, body []byte
 		go s.handleBindMessage(context.WithoutCancel(ctx), b, env.Message)
 		return &HandleResult{Reason: "im_message_dispatched"}, nil
 	case "card.action.trigger":
-		if env.CardAction == nil || env.CardAction.Kind != "ack" {
+		if env.CardAction == nil {
 			return &HandleResult{Reason: "ignored_card_action"}, nil
 		}
-		ack := RenderAckUpdateCard(AckUpdateInput{Event: env.CardAction.Event, SessionID: env.CardAction.SessionID})
-		return &HandleResult{CardUpdate: &ack, Reason: "card_ack"}, nil
+		switch env.CardAction.Kind {
+		case "ack":
+			ack := RenderAckUpdateCard(AckUpdateInput{Event: env.CardAction.Event, SessionID: env.CardAction.SessionID})
+			return &HandleResult{CardUpdate: &ack, Reason: "card_ack"}, nil
+		case "inject":
+			ack := RenderAckUpdateCard(AckUpdateInput{Event: "inject", SessionID: env.CardAction.SessionID})
+			return &HandleResult{
+				CardUpdate: &ack,
+				Inject:     &Injection{SessionID: env.CardAction.SessionID, Text: env.CardAction.Text},
+				Reason:     "card_inject",
+			}, nil
+		default:
+			return &HandleResult{Reason: "ignored_card_action"}, nil
+		}
 	default:
 		return &HandleResult{Reason: "ignored_event_type"}, nil
 	}

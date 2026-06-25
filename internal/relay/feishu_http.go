@@ -11,18 +11,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 )
 
 // FeishuHTTPHandler exposes /v1/feishu/* routes.
 type FeishuHTTPHandler struct {
-	store *userstore.SQLiteStore
-	svc   *feishu.Service
+	store    *userstore.SQLiteStore
+	svc      *feishu.Service
+	registry *session.Registry
 }
 
-func NewFeishuHTTPHandler(store *userstore.SQLiteStore, svc *feishu.Service) *FeishuHTTPHandler {
-	return &FeishuHTTPHandler{store: store, svc: svc}
+func NewFeishuHTTPHandler(store *userstore.SQLiteStore, svc *feishu.Service, registry *session.Registry) *FeishuHTTPHandler {
+	return &FeishuHTTPHandler{store: store, svc: svc, registry: registry}
 }
 
 // ServeHTTPSession is the handler registered behind requireSession.
@@ -73,6 +78,18 @@ func (h *FeishuHTTPHandler) ServeHTTPEvents(w http.ResponseWriter, r *http.Reque
 	if resp.URLChallenge != "" {
 		writeJSONStatus(w, http.StatusOK, map[string]string{"challenge": resp.URLChallenge})
 		return
+	}
+	if resp.Inject != nil && h.registry != nil {
+		if sid, err := uuid.Parse(resp.Inject.SessionID); err == nil {
+			if sess, ok := h.registry.Get(sid); ok {
+				_ = sess.SendInbound(proto.Frame{
+					Type:      proto.TypeIn,
+					SessionID: sid,
+					Payload:   []byte(resp.Inject.Text),
+				})
+			}
+		}
+		// Fall through: the card echo (CardUpdate) is still rendered below.
 	}
 	if resp.CardUpdate != nil {
 		writeJSONStatus(w, http.StatusOK, resp.CardUpdate)

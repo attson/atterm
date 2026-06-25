@@ -203,6 +203,32 @@ func TestService_HandleEvent_CardAck(t *testing.T) {
 	}
 }
 
+func TestService_HandleEvent_CardInject(t *testing.T) {
+	st := newFakeStore()
+	st.addBinding(&Binding{UserID: "u1", EncryptKey: "kk", VerifyToken: "vv", AppIDHash: "h"})
+	svc := newSvc(st, &fakeIM{}, &fakeToken{tok: "tt"})
+
+	plain := []byte(`{"header":{"event_type":"card.action.trigger","token":"vv","app_id":"a"},"event":{"action":{"value":{"kind":"inject","session_id":"sid-1","text":"1\n"}},"operator":{"open_id":"ou_x"}}}`)
+	body := feishuTestEncrypt(t, "kk", plain)
+	res, err := svc.HandleEvent(context.Background(), "h", body)
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if res.Inject == nil {
+		t.Fatal("expected Inject to be surfaced")
+	}
+	if res.Inject.SessionID != "sid-1" {
+		t.Fatalf("Inject.SessionID = %q", res.Inject.SessionID)
+	}
+	if res.Inject.Text != "1\n" {
+		t.Fatalf("Inject.Text = %q", res.Inject.Text)
+	}
+	// Still should echo / update the card.
+	if res.CardUpdate == nil {
+		t.Fatal("inject should still update card")
+	}
+}
+
 func TestService_HandleEvent_DecryptFailure(t *testing.T) {
 	st := newFakeStore()
 	st.addBinding(&Binding{UserID: "u1", EncryptKey: "right-key", VerifyToken: "vv", AppIDHash: "h"})

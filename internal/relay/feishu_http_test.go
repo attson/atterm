@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -72,7 +73,7 @@ func newFeishuTestHandler(t *testing.T, st *userstore.SQLiteStore, tokenCode int
 		IM:    feishu.NewClient(stub.URL, stub.Client()),
 		Token: feishu.NewTenantTokenCache(stub.URL, stub.Client(), nil),
 	})
-	return NewFeishuHTTPHandler(st, svc), stub
+	return NewFeishuHTTPHandler(st, svc, session.NewRegistry()), stub
 }
 
 func TestFeishuHTTP_UpsertBinding_GoodCreds(t *testing.T) {

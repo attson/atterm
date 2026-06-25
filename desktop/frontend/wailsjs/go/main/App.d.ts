@@ -115,6 +115,8 @@ export function RememberRelayPassword(arg1:string):Promise<void>;
 
 export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
+export function SendFeishuTestCard(arg1:string):Promise<void>;
+
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
 export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;

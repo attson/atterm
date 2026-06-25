@@ -318,6 +318,7 @@ interface AppBindings {
   SetFeishuCredentials(c: FeishuCredentials): Promise<void>;
   BeginFeishuPair(): Promise<string>;
   DeleteFeishuBinding(): Promise<void>;
+  SendFeishuTestCard(scenario: string): Promise<void>;
   GetHookInstallState(): Promise<HookInstallState>;
   SetHookInstallEnabled(on: boolean): Promise<void>;
   GetQuickTemplates(): Promise<import('./templates').QuickTemplate[]>;
@@ -833,6 +834,14 @@ export function beginFeishuPair(): Promise<string> {
 
 export function deleteFeishuBinding(): Promise<void> {
   return bindings().DeleteFeishuBinding();
+}
+
+// sendFeishuTestCard renders and sends one notification card to the bound
+// OpenID through the live token + IM path, so the user can confirm delivery
+// from Settings. scenario ∈ {command_success, command_failure, command_sealed,
+// waiting_input}. Rejects with the backend error message on any failure.
+export function sendFeishuTestCard(scenario: string): Promise<void> {
+  return bindings().SendFeishuTestCard(scenario);
 }
 
 // getHookInstallState returns the current Claude Code hook auto-install

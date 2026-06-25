@@ -409,3 +409,43 @@ func TestFeishuHTTP_RelayToken_Unauthorized(t *testing.T) {
 		t.Fatalf("expected 401, got %d", rr.Code)
 	}
 }
+
+// TestFeishuRoutesRegisteredOnMux is the regression test for the missing
+// /v1/feishu/relay-token/me route registration. The other RelayToken tests
+// call h.ServeHTTPSession directly, bypassing the server mux — so they stayed
+// green even while the route was never mounted, and the client's token-borrow
+// POST hit Go's default mux and got a bare 404 "page not found" (mapped to
+// ErrTokenNotConfigured → dispatch silently dropped → no Feishu card ever sent).
+//
+// This drives requests through the real Server.ServeHTTP so an unregistered
+// path is observably different: a mounted-but-unauthenticated route returns
+// 401 (requireSession), whereas an unmounted path returns 404 (mux miss). We
+// assert every authenticated session route — including relay-token — is
+// mounted by checking none of them 404 without a token.
+func TestFeishuRoutesRegisteredOnMux(t *testing.T) {
+	srv, _, _ := serverWithSessionAndUser(t) // Store is *SQLiteStore → feishu routes register
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/v1/feishu/bindings/me"},
+		{http.MethodPost, "/v1/feishu/bindings/me"},
+		{http.MethodDelete, "/v1/feishu/bindings/me"},
+		{http.MethodPost, "/v1/feishu/bindings/me/begin-pair"},
+		{http.MethodPost, "/v1/feishu/relay-token/me"},
+	}
+	for _, rt := range routes {
+		// No Authorization header: a registered route is gated by
+		// requireSession → 401; an unregistered path → mux 404.
+		req := httptest.NewRequest(rt.method, rt.path, nil)
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		if rr.Code == http.StatusNotFound {
+			t.Fatalf("%s %s not registered on mux (got 404 — route missing)", rt.method, rt.path)
+		}
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401 (registered, unauthenticated), got %d", rt.method, rt.path, rr.Code)
+		}
+	}
+}

@@ -55,6 +55,13 @@ export interface RecoveryAIInfo {
 
 export interface RecoveryPaneSnapshot {
   slot: number;
+  // remote=true panes skip the spawn path on restore; the original session_id
+  // is re-bound to the pane so the existing remote session resumes instead of
+  // being replaced by a freshly forked local shell. host_id is informational
+  // (lets the recovery dialog show which host a pane came from).
+  remote?: boolean;
+  host_id?: string;
+  session_id?: string;
   shell: string;
   shell_args?: string[];
   last_cwd?: string;
@@ -112,6 +119,14 @@ export interface RelayConfig {
   // networks that fingerprint-filter its handshake. Optional so Capacitor
   // fixtures may omit it.
   remote_proxy_url?: string;
+  // realmId is the relay realm this session belongs to (from login finalize).
+  // Written by mobile on login; consumed by subproject C for node selection.
+  // Not present on desktop (Go manages realm identity there).
+  realmId?: string;
+  // homeInstanceURL is the user's home relay node for this realm (from login
+  // finalize `home_instance_url`). Written by mobile on login; consumed by
+  // subproject C for node selection. Empty/absent falls back to `url`.
+  homeInstanceURL?: string;
 }
 
 export interface RelayMe {
@@ -644,6 +659,17 @@ export function setPtyInputDebugEnabled(enabled: boolean): Promise<void> {
 }
 
 export async function showNotification(title: string, body: string): Promise<void> {
+  // Honor the user's "Show system notifications" toggle BEFORE we touch any
+  // notification backend. The Wails runtime's SendNotification (preferred
+  // path below) talks to macOS UserNotifications directly and would
+  // otherwise bypass NotificationsEnabledOrDefault — which only the Go
+  // fallback checks. A binding error (e.g. boot race before window.go is
+  // wired) defaults to "allow" so we don't silently drop notifications.
+  try {
+    if (!(await getNotificationsEnabled())) return;
+  } catch {
+    /* default-allow on lookup failure */
+  }
   if (await ensureNotificationRuntimeReady()) {
     try {
       notificationID += 1;

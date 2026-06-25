@@ -10,6 +10,14 @@ export interface RelayConfig {
   sessionToken: string | null
   expiresAt: number | null
   allowInsecure: boolean
+  // realmId is populated from the login finalize response realm_id field.
+  // Used by subproject C for relay node selection. Not written by register
+  // (register finalize does not return realm_id yet).
+  realmId?: string
+  // homeInstanceURL is the user's home relay node for this realm (from the
+  // login response home_instance_url). The stateful /client WS routes here
+  // when set; empty falls back to baseURL/location. Not written by register.
+  homeInstanceURL?: string
 }
 
 const STORAGE_KEY = 'atterm.relay'
@@ -52,6 +60,8 @@ export function loadRelayConfig(): RelayConfig | null {
       sessionToken: parsed.sessionToken ?? parsed.token ?? null,
       expiresAt: parsed.expiresAt ?? null,
       allowInsecure: parsed.allowInsecure ?? parsed.allow_insecure ?? false,
+      ...(parsed.realmId !== undefined ? { realmId: parsed.realmId } : {}),
+      ...(parsed.homeInstanceURL !== undefined ? { homeInstanceURL: parsed.homeInstanceURL } : {}),
     }
   } catch {
     return null

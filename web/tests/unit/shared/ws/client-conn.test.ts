@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { SessionConnection } from '@shared/ws/client-conn'
+import { SessionConnection, wsUrl } from '@shared/ws/client-conn'
 import { TYPE, decodeFrame, encodeFrame, encodeOut, encodeResize, uuidToBytes } from '@shared/ws/protocol'
 import { saveRelayConfig, clearRelayConfig } from '@shared/api/relay-config'
 
@@ -266,5 +266,19 @@ describe('SessionConnection', () => {
     conn.attach()
     const ws = createdSockets[0]!
     expect(ws.protocols).toEqual([])
+  })
+})
+
+describe('wsUrl home routing', () => {
+  it('routes to homeInstanceURL when set', () => {
+    saveRelayConfig({ baseURL: 'https://relay.example', sessionToken: 't', expiresAt: null, allowInsecure: false, homeInstanceURL: 'https://node-1.example' })
+    expect(wsUrl('/client')).toBe('wss://node-1.example/client')
+  })
+
+  it('falls back to baseURL/location when home unset', () => {
+    saveRelayConfig({ baseURL: 'https://relay.example', sessionToken: 't', expiresAt: null, allowInsecure: false })
+    // In happy-dom, location.host drives the non-mobile branch; assert it does NOT use a home node.
+    expect(wsUrl('/client').endsWith('/client')).toBe(true)
+    expect(wsUrl('/client')).not.toContain('node-1.example')
   })
 })

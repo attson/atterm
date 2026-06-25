@@ -38,11 +38,11 @@ func GenerateFeishuPairCode() string {
 // expiresAt is unix seconds.
 func (s *SQLiteStore) PutFeishuPendingBind(ctx context.Context, userID, code string, expiresAt int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO feishu_pending_binds(user_id, code, expires_at)
+		s.dia.Rebind(`INSERT INTO feishu_pending_binds(user_id, code, expires_at)
 		 VALUES(?, ?, ?)
 		 ON CONFLICT(user_id) DO UPDATE SET
 		   code = excluded.code,
-		   expires_at = excluded.expires_at`,
+		   expires_at = excluded.expires_at`),
 		userID, code, expiresAt,
 	)
 	if err != nil {
@@ -58,9 +58,9 @@ func (s *SQLiteStore) ConsumeFeishuPendingBind(ctx context.Context, code string)
 	now := time.Now().Unix()
 	var userID string
 	err := s.db.QueryRowContext(ctx,
-		`DELETE FROM feishu_pending_binds
+		s.dia.Rebind(`DELETE FROM feishu_pending_binds
 		 WHERE code = ? AND expires_at > ?
-		 RETURNING user_id`,
+		 RETURNING user_id`),
 		code, now,
 	).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -75,7 +75,7 @@ func (s *SQLiteStore) ConsumeFeishuPendingBind(ctx context.Context, code string)
 // SweepExpiredFeishuPendingBinds deletes all expired rows. Returns count.
 func (s *SQLiteStore) SweepExpiredFeishuPendingBinds(ctx context.Context) (int, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM feishu_pending_binds WHERE expires_at <= ?`,
+		s.dia.Rebind(`DELETE FROM feishu_pending_binds WHERE expires_at <= ?`),
 		time.Now().Unix(),
 	)
 	if err != nil {

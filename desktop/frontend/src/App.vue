@@ -51,12 +51,16 @@ import {
 import type { Endpoint, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionInfo } from "./lib/connection";
+import { mergeLocalSessions } from "./lib/localListMerge";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
 import { RATIO_DEFAULT, closePane, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
-import { buildRestoreSessionReq } from "./lib/recoveryRestore";
+import {
+  buildRestoreSessionReq,
+  synthSessionInfoFromSnapshot,
+} from "./lib/recoveryRestore";
 import {
   DEFAULT_TERMINAL_THEME_ID,
   getTerminalTheme,
@@ -100,6 +104,12 @@ const localHostID = ref<string>("");
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
 const remoteRawList = ref<SessionInfo[]>([]);
+// IDs of local sessions we just spawned (spawnLocalShell / executeRestore) but
+// whose presence Go has not yet echoed back in a LIST_RESP. While here, the
+// session is exempt from applyLocalSessions' overwrite and from sweep — see
+// mergeLocalSessions. Drained as Go acknowledges each id, or when the pane
+// holding it is closed.
+const pendingLocalIds = new Set<string>();
 
 // Adapt SessionInfo (uses `id`) → RemoteSession (uses `session_id`) for useSessions.
 function adaptSession(s: SessionInfo): RemoteSession {
@@ -491,7 +501,15 @@ function refreshVisibleRemoteSessions() {
 
 function applyLocalSessions(sessions: SessionInfo[]) {
   const snap = snapshotKnownSessions();
-  localList.value = sessions;
+  // Merge instead of overwrite so an early/stale LIST_RESP frame (e.g. the
+  // first frame after executeRestore spawns N sessions but Go has only
+  // broadcast the first one) doesn't drop seeded sessions that the sweep
+  // would then null. mergeLocalSessions also drains pendingLocalIds for
+  // ids Go has now confirmed.
+  const merged = mergeLocalSessions(sessions, localList.value, pendingLocalIds);
+  localList.value = merged.localList;
+  pendingLocalIds.clear();
+  for (const id of merged.pending) pendingLocalIds.add(id);
   refreshVisibleRemoteSessions();
   sweepMissingSessions(snap);
   if (status.value !== "ready") status.value = "ready";
@@ -618,6 +636,9 @@ async function spawnLocalShell(
     rows: dims.rows,
   });
   // Reflect immediately so PaneGrid finds the endpoint without poll lag.
+  // pendingLocalIds keeps this seed alive across an early/stale LIST_RESP
+  // frame from Go (see mergeLocalSessions).
+  pendingLocalIds.add(resp.session_id);
   localList.value = [
     ...localList.value,
     {
@@ -778,6 +799,20 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
         t.panes[i] = { sessionId: null, remote: false };
         continue;
       }
+      // Remote panes: do NOT fork a new local shell. The session is still
+      // alive on the remote host (or will be when the relay reconnects);
+      // re-bind the pane to the same session_id and let the remote list
+      // push resolve SessionInfo. Until the relay catches up — or if the
+      // session is gone — lastSeenInfo keeps the tab label meaningful
+      // (matches the local-sweep "disconnected" display).
+      if (snap.remote && snap.session_id) {
+        t.panes[i] = {
+          sessionId: snap.session_id,
+          remote: true,
+          lastSeenInfo: synthSessionInfoFromSnapshot(snap),
+        };
+        continue;
+      }
       try {
         const dims = predictCellDims(tab.layout);
         const req = buildRestoreSessionReq(snap, dims.cols, dims.rows, defaultShell);
@@ -787,7 +822,10 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
         // snapshot can resolve this pane's SessionInfo right away. Without this,
         // the window before the relay's session-list push arrives would persist
         // shell:"" / cwd:"" — corrupting recovery.json and making the NEXT
-        // restore fall back to /bin/sh (sh-3.2$).
+        // restore fall back to /bin/sh (sh-3.2$). pendingLocalIds protects the
+        // seed from being dropped by the FIRST (still-stale) LIST_RESP frame
+        // that arrives after a multi-spawn restore.
+        pendingLocalIds.add(resp.session_id);
         localList.value = [
           ...localList.value,
           {
@@ -828,6 +866,7 @@ async function onClosePane() {
 async function closePaneAt(t: Tab, idx: number) {
   const target = t.panes[idx];
   if (target?.sessionId && !target.remote) {
+    pendingLocalIds.delete(target.sessionId);
     try { await closeSession(target.sessionId); } catch { /* sweep cleans up */ }
   }
   const r = closePane(t.layout, t.panes, idx, t.colRatio, t.rowRatio);
@@ -847,6 +886,7 @@ async function closeTab(id: string) {
   const closures: Promise<void>[] = [];
   for (const p of t.panes) {
     if (p.sessionId && !p.remote) {
+      pendingLocalIds.delete(p.sessionId);
       closures.push(closeSession(p.sessionId).catch(() => undefined));
     }
   }
@@ -958,7 +998,12 @@ useTerminalShortcuts(
 const recovery = useRecoverySnapshot({
   tabs,
   currentTabId,
-  sessionInfoFor: (sid: string) => findSessionInfo(sid, false),
+  localHostID,
+  // Look up both lists — restricting to local would null out the host_id
+  // / title / cwd we need to persist for remote panes (so the next launch
+  // can re-bind them instead of forking a fresh local shell).
+  sessionInfoFor: (sid: string) =>
+    findSessionInfo(sid, false) ?? findSessionInfo(sid, true),
 });
 
 watch([tabs, currentTabId], () => {
@@ -1136,6 +1181,7 @@ onUnmounted(() => {
         :by-state-groups="sessions.byState.value"
         :unread-by-state-groups="sessions.unreadByState.value"
         :active-session-id="activePaneRef?.sessionId ?? null"
+        :local-host-id="localHostID"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @markSeen="onMarkSeen"

@@ -76,20 +76,15 @@ func TestClearAccountKeyFor_MissingIsNoOp(t *testing.T) {
 	}
 }
 
-func TestAccountKeyAccount_NamespacesByRelayAndUser(t *testing.T) {
-	setupMockKeyring(t)
-	key1 := []byte("key-for-relay-A")
-	key2 := []byte("key-for-relay-B")
-	if err := saveAccountKey("https://a.example.com", "u1", key1); err != nil {
-		t.Fatalf("save A: %v", err)
+func TestAccountKeyAccount_NamespacesByRealmAndUser(t *testing.T) {
+	a := accountKeyAccount("realm-1", "user-1")
+	b := accountKeyAccount("realm-2", "user-1")
+	c := accountKeyAccount("realm-1", "user-2")
+	if a == b || a == c || b == c {
+		t.Fatalf("expected distinct account names, got %q %q %q", a, b, c)
 	}
-	if err := saveAccountKey("https://b.example.com", "u1", key2); err != nil {
-		t.Fatalf("save B: %v", err)
-	}
-	gotA, _ := loadAccountKey("https://a.example.com", "u1")
-	gotB, _ := loadAccountKey("https://b.example.com", "u1")
-	if !bytes.Equal(gotA, key1) || !bytes.Equal(gotB, key2) {
-		t.Fatalf("relay-scoped storage leaked across origins: A=%x B=%x", gotA, gotB)
+	if a != "realm-1|user-1" {
+		t.Fatalf("account name = %q, want realm-1|user-1", a)
 	}
 }
 

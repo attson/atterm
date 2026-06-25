@@ -31,6 +31,13 @@ export interface UseRecoverySnapshotArgs {
   tabs: Ref<Tab[]>;
   currentTabId: Ref<string | null>;
   sessionInfoFor: (sid: string) => SessionInfo | undefined;
+  // Used to look through a `remote: true` viewer pane whose session actually
+  // lives on this machine (sidebar-opened local session). Persisting such a
+  // pane as remote bakes in a sessionID that dies on every restart, and
+  // executeRestore's rebind-only branch then strands the pane on the dead sid.
+  // When info.host_id matches, the pane is saved as plain-local so restore
+  // re-spawns a fresh shell at last_cwd.
+  localHostID: Ref<string>;
   // Test seam — production code calls Wails EventsOn. Returns an off()
   // function the composable calls on scope dispose.
   onEvent?: (name: string, cb: (payload: any) => void) => () => void;
@@ -53,8 +60,17 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
         panes: t.panes.map((p, idx): RecoveryPaneSnapshot => {
           const info = p.sessionId ? args.sessionInfoFor(p.sessionId) : undefined;
           const ai = p.sessionId ? aiBySid.get(p.sessionId) : undefined;
+          // A sidebar-opened local session has pane.remote=true but lives on
+          // this host; persist it as plain-local so restore re-spawns at the
+          // saved cwd. Genuinely remote panes still save session_id+host_id so
+          // executeRestore can re-bind without forking a fresh local shell.
+          const persistAsRemote =
+            !!p.remote && (!info || info.host_id !== args.localHostID.value);
           return {
             slot: idx,
+            remote: persistAsRemote || undefined,
+            host_id: persistAsRemote ? info?.host_id ?? "" : undefined,
+            session_id: persistAsRemote && p.sessionId ? p.sessionId : undefined,
             shell: info?.command?.split(" ")[0] ?? "",
             shell_args: [],
             last_cwd: info?.cwd ?? "",

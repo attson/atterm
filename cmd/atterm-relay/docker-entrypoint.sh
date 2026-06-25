@@ -2,7 +2,7 @@
 #
 # Entrypoint for the atterm-relay docker image. Runs as root, takes
 # ownership of the bind-mounted persistence directory so the relay can
-# create users.db / web-push.json / relay.json inside it, then drops
+# create users.db (the SQLite backend) inside it, then drops
 # privileges to the unprivileged 'atterm' user before exec'ing the
 # relay binary.
 #

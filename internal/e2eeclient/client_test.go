@@ -20,7 +20,7 @@ func newRelay(t *testing.T) (*httptest.Server, *userstore.SQLiteStore) {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "", "test-realm", "https://node-1.example").Register(mux)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts, store
@@ -70,6 +70,9 @@ func TestClient_RegisterAndLogin(t *testing.T) {
 	if len(reg.AccountKey) != 32 {
 		t.Fatalf("account_key wrong size: %d", len(reg.AccountKey))
 	}
+	if reg.RealmID != "test-realm" {
+		t.Fatalf("Register: expected RealmID %q, got %q", "test-realm", reg.RealmID)
+	}
 
 	// Different login session, same account_key
 	lg, err := c.Login(context.Background(), "alice@example.com", "hunter2")
@@ -84,6 +87,12 @@ func TestClient_RegisterAndLogin(t *testing.T) {
 	}
 	if lg.SessionToken == reg.SessionToken {
 		t.Fatalf("expected a fresh session token at login")
+	}
+	if lg.RealmID != "test-realm" {
+		t.Fatalf("Login: expected RealmID %q, got %q", "test-realm", lg.RealmID)
+	}
+	if lg.HomeInstanceURL != "https://node-1.example" {
+		t.Fatalf("login HomeInstanceURL = %q, want https://node-1.example", lg.HomeInstanceURL)
 	}
 }
 
@@ -105,7 +114,7 @@ func TestClient_GetKeyWrap(t *testing.T) {
 	store := userstore.NewInMemory(t)
 	opaqueSrv, _ := relay.LoadOrInitOpaqueServer(context.Background(), store)
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "", "test-realm", "").Register(mux)
 	// Bring up the full server (with the session middleware) and use its
 	// ServeHTTP as the test transport so /api/me/key routes through
 	// requireSession.
@@ -192,7 +201,7 @@ func TestClient_Register_ClaimToken_PromotesAdmin(t *testing.T) {
 	store := userstore.NewInMemory(t)
 	opaqueSrv, _ := relay.LoadOrInitOpaqueServer(context.Background(), store)
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "", "test-realm", "").Register(mux)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 

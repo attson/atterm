@@ -66,8 +66,8 @@ func (s *SQLiteStore) CreateInvitation(ctx context.Context, expiresAt *time.Time
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO invitations(code_hash, created_by, created_at, expires_at, consumed_at, consumed_by, note)
-		 VALUES(?, 'admin', ?, ?, NULL, NULL, ?)`,
+		s.dia.Rebind(`INSERT INTO invitations(code_hash, created_by, created_at, expires_at, consumed_at, consumed_by, note)
+		 VALUES(?, 'admin', ?, ?, NULL, NULL, ?)`),
 		hash, nowUnix, expiresUnix, note,
 	)
 	if err != nil {
@@ -99,11 +99,11 @@ func (s *SQLiteStore) ConsumeInvitation(ctx context.Context, plaintext string, u
 	now := time.Now().Unix()
 
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE invitations
+		s.dia.Rebind(`UPDATE invitations
 		 SET consumed_at = ?, consumed_by = ?
 		 WHERE code_hash = ?
 		   AND consumed_at IS NULL
-		   AND (expires_at IS NULL OR expires_at > ?)`,
+		   AND (expires_at IS NULL OR expires_at > ?)`),
 		now, userID, hash, now,
 	)
 	if err != nil {
@@ -123,9 +123,9 @@ func (s *SQLiteStore) ConsumeInvitation(ctx context.Context, plaintext string, u
 // UI can derive status from (consumed_at, expires_at) fields.
 func (s *SQLiteStore) ListInvitations(ctx context.Context) ([]Invitation, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT code_hash, note, created_at, expires_at, consumed_at, consumed_by
+		s.dia.Rebind(`SELECT code_hash, note, created_at, expires_at, consumed_at, consumed_by
 		 FROM invitations
-		 ORDER BY created_at DESC`,
+		 ORDER BY created_at DESC`),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list invitations: %w", err)

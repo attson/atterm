@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -84,7 +83,7 @@ func (s *SQLiteStore) UpsertFeishuBinding(ctx context.Context, userID string, c 
 
 	now := time.Now().Unix()
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO feishu_bindings(user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc, created_at)
+		s.dia.Rebind(`INSERT INTO feishu_bindings(user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc, created_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id) DO UPDATE SET
 		   app_id_hash      = excluded.app_id_hash,
@@ -92,11 +91,12 @@ func (s *SQLiteStore) UpsertFeishuBinding(ctx context.Context, userID string, c 
 		   app_secret_enc   = excluded.app_secret_enc,
 		   encrypt_key_enc  = excluded.encrypt_key_enc,
 		   verify_token_enc = excluded.verify_token_enc,
-		   disabled_at      = NULL`,
+		   disabled_at      = NULL`),
 		userID, hash, encA, encS, encK, encV, now,
 	)
 	if err != nil {
-		if isUniqueViolation(err, "feishu_bindings.app_id_hash") {
+		// Only an app_id_hash UNIQUE violation can reach here; a user_id PK conflict is consumed by ON CONFLICT(user_id) DO UPDATE.
+		if s.dia.IsUniqueViolation(err) {
 			return ErrFeishuAppIDConflict
 		}
 		return fmt.Errorf("upsert feishu binding: %w", err)
@@ -104,21 +104,10 @@ func (s *SQLiteStore) UpsertFeishuBinding(ctx context.Context, userID string, c 
 	return nil
 }
 
-// isUniqueViolation detects modernc.org/sqlite UNIQUE constraint errors.
-// The driver surfaces them in the error message text; we match on the
-// table.column substring for stability.
-func isUniqueViolation(err error, qualifiedCol string) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "UNIQUE constraint failed: "+qualifiedCol)
-}
-
 func (s *SQLiteStore) GetFeishuBinding(ctx context.Context, userID string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
 		`SELECT user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc,
-		        IFNULL(open_id, ''), IFNULL(bound_at, 0), IFNULL(disabled_at, 0), created_at
+		        COALESCE(open_id, ''), COALESCE(bound_at, 0), COALESCE(disabled_at, 0), created_at
 		 FROM feishu_bindings WHERE user_id = ?`,
 		userID,
 	)
@@ -127,7 +116,7 @@ func (s *SQLiteStore) GetFeishuBinding(ctx context.Context, userID string) (*Fei
 func (s *SQLiteStore) GetFeishuBindingByAppIDHash(ctx context.Context, hash string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
 		`SELECT user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc,
-		        IFNULL(open_id, ''), IFNULL(bound_at, 0), IFNULL(disabled_at, 0), created_at
+		        COALESCE(open_id, ''), COALESCE(bound_at, 0), COALESCE(disabled_at, 0), created_at
 		 FROM feishu_bindings WHERE app_id_hash = ?`,
 		hash,
 	)
@@ -138,7 +127,7 @@ func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string
 	if err != nil {
 		return nil, err
 	}
-	row := s.db.QueryRowContext(ctx, q, arg)
+	row := s.db.QueryRowContext(ctx, s.dia.Rebind(q), arg)
 	var b FeishuBinding
 	var encA, encS, encK, encV []byte
 	err = row.Scan(&b.UserID, &b.AppIDHash, &encA, &encS, &encK, &encV,
@@ -175,7 +164,7 @@ func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string
 func (s *SQLiteStore) MarkFeishuBindingBound(ctx context.Context, userID, openID string) error {
 	now := time.Now().Unix()
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE feishu_bindings SET open_id = ?, bound_at = ? WHERE user_id = ?`,
+		s.dia.Rebind(`UPDATE feishu_bindings SET open_id = ?, bound_at = ? WHERE user_id = ?`),
 		openID, now, userID,
 	)
 	if err != nil {
@@ -191,7 +180,7 @@ func (s *SQLiteStore) MarkFeishuBindingBound(ctx context.Context, userID, openID
 func (s *SQLiteStore) MarkFeishuBindingDisabled(ctx context.Context, userID string) error {
 	now := time.Now().Unix()
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE feishu_bindings SET disabled_at = ? WHERE user_id = ?`, now, userID)
+		s.dia.Rebind(`UPDATE feishu_bindings SET disabled_at = ? WHERE user_id = ?`), now, userID)
 	if err != nil {
 		return fmt.Errorf("mark disabled: %w", err)
 	}
@@ -200,7 +189,7 @@ func (s *SQLiteStore) MarkFeishuBindingDisabled(ctx context.Context, userID stri
 
 func (s *SQLiteStore) ClearFeishuBindingDisabled(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE feishu_bindings SET disabled_at = NULL WHERE user_id = ?`, userID)
+		s.dia.Rebind(`UPDATE feishu_bindings SET disabled_at = NULL WHERE user_id = ?`), userID)
 	if err != nil {
 		return fmt.Errorf("clear disabled: %w", err)
 	}
@@ -209,7 +198,7 @@ func (s *SQLiteStore) ClearFeishuBindingDisabled(ctx context.Context, userID str
 
 func (s *SQLiteStore) DeleteFeishuBinding(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM feishu_bindings WHERE user_id = ?`, userID)
+		s.dia.Rebind(`DELETE FROM feishu_bindings WHERE user_id = ?`), userID)
 	if err != nil {
 		return fmt.Errorf("delete: %w", err)
 	}

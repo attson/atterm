@@ -28,12 +28,14 @@ import (
 var Version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(migrateCmd(os.Args[2:]))
+	}
 	addr := flag.String("addr", ":8080", "plain HTTP listen address — for a reverse proxy / internal use (empty disables)")
 	httpsAddr := flag.String("https-addr", envOr("ATTERM_HTTPS_ADDR", ""), "HTTPS listen address — opt-in; requires ATTERM_TLS_CERT+ATTERM_TLS_KEY (or ATTERM_HTTPS_ADDR, e.g. :8443). Empty (default) serves plain --addr only, for a TLS-terminating proxy. Without a cert there is no self-signed fallback, so this defaults off to avoid a fatal boot.")
 	webDir := flag.String("web", "", "static web client directory; empty uses the embedded FS (production default)")
 	origins := flag.String("origins", os.Getenv("ATTERM_ORIGINS"), "comma-separated allowed Origin hosts or URLs (or ATTERM_ORIGINS; empty = allow any only with --dev-insecure)")
-	configPath := flag.String("config", os.Getenv("ATTERM_RELAY_CONFIG"), "persistent relay admin config path (or ATTERM_RELAY_CONFIG)")
-	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for web-push.json etc. (or ATTERM_RELAY_CONFIG_DIR)")
+	configDir := flag.String("config-dir", envOr("ATTERM_RELAY_CONFIG_DIR", ""), "persistent relay state directory for the SQLite DB (users.db) etc. (or ATTERM_RELAY_CONFIG_DIR)")
 	vapidSubject := flag.String("vapid-subject", envOr("ATTERM_VAPID_SUBJECT", "mailto:noreply@atterm.local"), "VAPID subject (mailto: or https: URL; advertised to push services)")
 	debugDefault := envEnabled("ATTERM_RELAY_DEBUG")
 	debugPayloadDefault := envEnabled("ATTERM_RELAY_DEBUG_PAYLOAD") || envEnabled("ATTERM_RELAY_DEBUG_PAYLOADS")
@@ -52,11 +54,8 @@ func main() {
 		log.Fatal("ATTERM_BOOTSTRAP_ADMIN_EMAIL must be set for a public relay; pass --dev-insecure to skip (development only)")
 	}
 
-	// Resolve persistence directory.
+	// Resolve persistence directory (SQLite stores users.db here).
 	persistDir := *configDir
-	if persistDir == "" && *configPath != "" {
-		persistDir = filepath.Dir(*configPath)
-	}
 	if persistDir == "" {
 		persistDir = "./data/atterm-relay"
 	}
@@ -72,26 +71,26 @@ func main() {
 		log.Fatalf("create persist dir %s: %v", persistDir, err)
 	}
 
-	// Admin config persistence. Default the path under persistDir so runtime
-	// admin changes (Feishu integration, limits, origins) always have
-	// somewhere to land even when --config / ATTERM_RELAY_CONFIG is unset.
-	cfgFilePath := *configPath
-	if cfgFilePath == "" {
-		cfgFilePath = filepath.Join(persistDir, "relay.json")
-	}
-	adminCfg, err := relay.LoadAdminConfig(cfgFilePath)
-	if err != nil {
-		log.Fatalf("load relay config: %v", err)
-	}
-	adminStore := relay.NewAdminConfigStore(cfgFilePath, adminCfg)
+	// Admin config is DB-backed. relay.json and web-push.json are no longer
+	// written or read; all config + web push state live in the DB.
 
-	// Open the user store WITHOUT a field-encryption cipher. Core relay
-	// (OPAQUE auth, sessions, web, push) needs no Feishu key; the cipher is
-	// attached later only if Feishu is enabled (env seed below, or via the
-	// admin API at runtime). This is what lets the relay boot with zero
-	// Feishu configuration instead of crash-looping.
 	dbPath := filepath.Join(persistDir, "users.db")
-	store, err := userstore.Open(ctx, dbPath)
+	var (
+		store *userstore.DBStore
+		err   error
+	)
+	switch driver := strings.ToLower(strings.TrimSpace(os.Getenv("ATTERM_RELAY_DB_DRIVER"))); driver {
+	case "", "sqlite":
+		store, err = userstore.Open(ctx, dbPath)
+	case "postgres":
+		dsn := strings.TrimSpace(os.Getenv("ATTERM_RELAY_DB_DSN"))
+		if dsn == "" {
+			log.Fatal("ATTERM_RELAY_DB_DRIVER=postgres requires ATTERM_RELAY_DB_DSN")
+		}
+		store, err = userstore.OpenPostgres(ctx, dsn)
+	default:
+		log.Fatalf("unknown ATTERM_RELAY_DB_DRIVER %q (want sqlite|postgres)", driver)
+	}
 	if err != nil {
 		log.Fatalf("open userstore: %v", err)
 	}
@@ -104,14 +103,27 @@ func main() {
 	if err != nil {
 		log.Fatalf("opaque server init: %v", err)
 	}
+	realmID, err := relay.LoadOrInitRealm(ctx, store, os.Getenv("ATTERM_RELAY_REALM_ID"))
+	if err != nil {
+		log.Fatalf("init realm: %v", err)
+	}
+	instancePublicURL := strings.TrimSpace(os.Getenv("ATTERM_RELAY_INSTANCE_PUBLIC_URL"))
 
 	if err := bootstrapAdmin(ctx, store, bootstrapEmail); err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
 	}
 
-	// One-time env → config seeding (config wins). Keeps existing
-	// env-configured deployments working while moving the source of truth
-	// into relay.json, which the admin UI then manages.
+	// Admin config — DB-backed. Load from DB (Version==0 means unconfigured).
+	adminStore := relay.NewAdminConfigStore(store, relay.AdminConfig{})
+	adminCfg, err := adminStore.LoadFromDB(ctx)
+	if err != nil {
+		log.Fatalf("load relay config: %v", err)
+	}
+
+	// One-time env → DB seeding. Keeps existing env-configured deployments
+	// working while the admin UI becomes the source of truth. Env/flags win
+	// at boot: read current DB snapshot, overlay any provided env values,
+	// then persist via Set (which bumps the version).
 	seeded := false
 	if v := os.Getenv("ATTERM_FEISHU_ENCRYPT_KEY"); v != "" && adminCfg.FeishuEncryptKey == "" {
 		adminCfg.FeishuEncryptKey = v
@@ -141,7 +153,7 @@ func main() {
 		seeded = true
 	}
 	if seeded {
-		if err := adminStore.Set(adminCfg); err != nil {
+		if err := adminStore.Set(ctx, adminCfg); err != nil {
 			log.Printf("WARN: persist seeded relay config: %v", err)
 		}
 		adminCfg = adminStore.Snapshot()
@@ -186,6 +198,8 @@ func main() {
 		Store:                store,
 		OpaqueServer:         opaqueSrv,
 		BootstrapAdminEmail:  bootstrapEmail,
+		RealmID:              realmID,
+		InstancePublicURL:    instancePublicURL,
 	}
 
 	// VAPID subject is consumed once here; changing it later needs a restart.
@@ -193,7 +207,7 @@ func main() {
 	if effectiveVapid == "" {
 		effectiveVapid = *vapidSubject
 	}
-	wpSvc, wpErr := webpush.Open(persistDir, effectiveVapid)
+	wpSvc, wpErr := webpush.Open(store, effectiveVapid)
 	if wpErr != nil {
 		log.Printf("WARN: web-push disabled: %v", wpErr)
 		wpSvc = nil
@@ -205,6 +219,10 @@ func main() {
 	}
 
 	srv := relay.NewServer(cfg)
+
+	// Start the cross-instance config refresher. Polls the DB every 10 s and
+	// hot-applies any changes made by another relay instance.
+	srv.StartConfigRefresher(ctx, 10*time.Second)
 
 	// Attach Feishu at boot if enabled with a usable key. Never fatal — a
 	// missing or bad key just leaves Feishu off; an admin can fix it in the
@@ -221,24 +239,6 @@ func main() {
 			}
 			log.Printf("feishu: app-mode integration enabled (base=%s)", base)
 		}
-	}
-
-	if wpSvc != nil {
-		// Schedule daily cleanup of legacy web-push subscription files.
-		go func() {
-			t := time.NewTicker(24 * time.Hour)
-			defer t.Stop()
-			for {
-				select {
-				case <-t.C:
-					if err := webpush.CleanupLegacy(ctx, persistDir); err != nil {
-						log.Printf("webpush: CleanupLegacy: %v", err)
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
 	}
 
 	// Schedule daily sweep of expired feishu pending bind tokens.
@@ -258,6 +258,27 @@ func main() {
 			}
 		}
 	}()
+
+	if instancePublicURL != "" {
+		// Immediate first heartbeat so the node is selectable without a 30s wait.
+		if err := store.UpsertInstanceHeartbeat(ctx, instancePublicURL, instancePublicURL, time.Now().Unix()); err != nil {
+			log.Printf("relay: initial instance heartbeat: %v", err)
+		}
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					if err := store.UpsertInstanceHeartbeat(ctx, instancePublicURL, instancePublicURL, time.Now().Unix()); err != nil {
+						log.Printf("relay: instance heartbeat: %v", err)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// Build the TLS config for the HTTPS listener. OPAQUE needs a secure
 	// browser context (WebCrypto), so browser-facing traffic must be HTTPS —

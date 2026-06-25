@@ -11,7 +11,7 @@ import (
 func (s *SQLiteStore) AdminExists(ctx context.Context) (bool, error) {
 	var exists int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM users WHERE is_admin = 1 AND disabled_at IS NULL)`,
+		s.dia.Rebind(`SELECT EXISTS(SELECT 1 FROM users WHERE is_admin = 1 AND disabled_at IS NULL)`),
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("admin exists: %w", err)
@@ -27,7 +27,7 @@ func (s *SQLiteStore) SetUserAdmin(ctx context.Context, userID string, admin boo
 		v = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET is_admin = ? WHERE id = ?`, v, userID)
+		s.dia.Rebind(`UPDATE users SET is_admin = ? WHERE id = ?`), v, userID)
 	if err != nil {
 		return fmt.Errorf("set is_admin: %w", err)
 	}

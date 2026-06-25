@@ -1,9 +1,13 @@
 package webpush
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
-	"sync"
+	"time"
+
+	"github.com/attson/atterm/internal/userstore"
 )
 
 // HTTPClient mirrors webpush-go's HTTPClient interface (single Do method)
@@ -20,100 +24,88 @@ func InjectTransportForTesting(s *Service, hc HTTPClient) {
 
 // Service is the public face of the webpush package. One per relay process.
 type Service struct {
-	subject string
-	dir     string
-
-	mu        sync.Mutex
+	subject   string
+	store     userstore.Store
 	vapidPriv string
 	vapidPub  string
-
-	subStore *subStore
-	tr       *transport
+	tr        *transport
 }
 
-// Open initializes the service. Recoverable conditions (missing file,
-// corrupt state, unwritable dir) are downgraded to in-memory mode + a
-// one-time WARN log. A non-nil error is returned only when even the
-// in-memory fallback cannot be constructed (e.g., crypto generation fails).
-func Open(dir, vapidSubject string) (*Service, error) {
+// Open initializes the service. On first open, if no VAPID keys exist in the
+// DB, a fresh keypair is generated and persisted. Returns a non-nil error only
+// when key generation or DB operations fail.
+func Open(store userstore.Store, vapidSubject string) (*Service, error) {
 	if vapidSubject == "" {
 		vapidSubject = "mailto:noreply@atterm.local"
 	}
-	svc := &Service{
-		subject:  vapidSubject,
-		dir:      dir,
-		subStore: newSubStore(),
+	ctx := context.Background()
+	keys, ok, err := store.GetVAPIDKeys(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load vapid keys: %w", err)
 	}
-	if dir == "" {
-		priv, pub, err := generateVAPIDKeypair()
-		if err != nil {
-			return nil, err
+	if !ok {
+		priv, pub, gerr := generateVAPIDKeypair()
+		if gerr != nil {
+			return nil, fmt.Errorf("generate vapid: %w", gerr)
 		}
-		svc.vapidPriv = priv
-		svc.vapidPub = pub
-		log.Printf("webpush: running in-memory (no config dir); subscriptions will be lost on restart")
-	} else {
-		state, err := loadOrInitState(dir)
-		if err != nil {
-			// Fall back to in-memory.
-			log.Printf("webpush: persistence unavailable (%v); running in-memory", err)
-			priv, pub, genErr := generateVAPIDKeypair()
-			if genErr != nil {
-				return nil, genErr
-			}
-			svc.vapidPriv = priv
-			svc.vapidPub = pub
-			svc.dir = ""
-		} else {
-			svc.vapidPriv = state.PrivateKey
-			svc.vapidPub = state.PublicKey
-			svc.subStore.load(state.Subscriptions)
+		keys = userstore.VAPIDKeys{PrivateKey: priv, PublicKey: pub}
+		if serr := store.SetVAPIDKeys(ctx, keys); serr != nil {
+			return nil, fmt.Errorf("persist vapid: %w", serr)
 		}
 	}
-	svc.tr = newTransport(svc.vapidPriv, svc.vapidPub, svc.subject, nil)
-	return svc, nil
+	s := &Service{
+		subject:   vapidSubject,
+		store:     store,
+		vapidPriv: keys.PrivateKey,
+		vapidPub:  keys.PublicKey,
+	}
+	s.tr = newTransport(s.vapidPriv, s.vapidPub, s.subject, nil)
+	return s, nil
 }
 
 // PublicKey returns the VAPID public key as a base64url string for the
-// browser's applicationServerKey.
+// browser's applicationServerKey. vapidPub is immutable after Open, so no
+// lock is needed.
 func (s *Service) PublicKey() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.vapidPub
 }
 
-// AddSubscription registers a subscription and persists state.
+// AddSubscription registers a subscription in the DB.
 func (s *Service) AddSubscription(userID string, sub Subscription) error {
-	if err := s.subStore.Add(userID, sub); err != nil {
-		return err
+	ctx := context.Background()
+	dbSub := userstore.WebPushSubscription{
+		Endpoint:  sub.Endpoint,
+		P256dh:    sub.Keys.P256dh,
+		Auth:      sub.Keys.Auth,
+		CreatedAt: sub.CreatedAt,
 	}
-	s.persistBestEffort()
-	return nil
+	if dbSub.CreatedAt == 0 {
+		dbSub.CreatedAt = time.Now().Unix()
+	}
+	return s.store.AddWebPushSubscription(ctx, userID, dbSub)
 }
 
-// RemoveSubscription deregisters an endpoint and persists state.
+// RemoveSubscription deregisters an endpoint from the DB.
 func (s *Service) RemoveSubscription(userID, endpoint string) error {
-	s.subStore.Remove(userID, endpoint)
-	s.persistBestEffort()
-	return nil
+	return s.store.RemoveWebPushSubscription(context.Background(), userID, endpoint)
 }
 
-// SubscriptionsForUser is a test-only helper. Returns subscriptions for the
-// given user ID without exposing internal types in production callers.
+// SubscriptionsForUser returns subscriptions for the given user ID.
+// Used by tests and the HTTP layer to verify state.
 func (s *Service) SubscriptionsForUser(userID string) []Subscription {
-	return s.subStore.ByUser(userID)
-}
-
-func (s *Service) persistBestEffort() {
-	if s.dir == "" {
-		return
+	subs, err := s.store.ListWebPushSubscriptions(context.Background(), userID)
+	if err != nil {
+		log.Printf("webpush: SubscriptionsForUser(%s): %v", userID, err)
+		return nil
 	}
-	state := persistedState{
-		PrivateKey:    s.vapidPriv,
-		PublicKey:     s.vapidPub,
-		Subscriptions: s.subStore.snapshot(),
+	out := make([]Subscription, len(subs))
+	for i, dbSub := range subs {
+		var ws Subscription
+		ws.Endpoint = dbSub.Endpoint
+		ws.Keys.P256dh = dbSub.P256dh
+		ws.Keys.Auth = dbSub.Auth
+		ws.CreatedAt = dbSub.CreatedAt
+		out[i] = ws
 	}
-	if err := saveState(s.dir, state); err != nil {
-		log.Printf("webpush: persistBestEffort: %v", err)
-	}
+	return out
 }

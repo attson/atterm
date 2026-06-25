@@ -11,10 +11,10 @@ import (
 func (s *SQLiteStore) ListSessions(ctx context.Context, userID string) ([]Session, error) {
 	nowMs := time.Now().UnixMilli()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id_hash, user_id, COALESCE(user_agent, ''), COALESCE(ip_prefix, ''), created_at, expires_at, last_seen_at
+		s.dia.Rebind(`SELECT id_hash, user_id, COALESCE(user_agent, ''), COALESCE(ip_prefix, ''), created_at, expires_at, last_seen_at
 		 FROM sessions
 		 WHERE user_id = ? AND expires_at >= ?
-		 ORDER BY created_at DESC`,
+		 ORDER BY created_at DESC`),
 		userID, nowMs,
 	)
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, userID string) ([]Sessio
 // The (user_id, id_hash) WHERE clause is the security boundary.
 func (s *SQLiteStore) DeleteSessionByIDHash(ctx context.Context, userID, idHash string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM sessions WHERE user_id = ? AND id_hash = ?`,
+		s.dia.Rebind(`DELETE FROM sessions WHERE user_id = ? AND id_hash = ?`),
 		userID, idHash,
 	)
 	if err != nil {
@@ -70,7 +70,7 @@ func (s *SQLiteStore) DeleteSessionByIDHash(ctx context.Context, userID, idHash 
 // request's session id_hash so the operator stays signed in.
 func (s *SQLiteStore) DeleteOtherSessionsForUser(ctx context.Context, userID, exceptIDHash string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM sessions WHERE user_id = ? AND id_hash != ?`,
+		s.dia.Rebind(`DELETE FROM sessions WHERE user_id = ? AND id_hash != ?`),
 		userID, exceptIDHash,
 	)
 	if err != nil {

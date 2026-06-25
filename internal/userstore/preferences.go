@@ -45,7 +45,7 @@ var ErrInvalidPreferenceValue = fmt.Errorf("invalid preference value")
 // slice if the user has never synced. Order is unspecified.
 func (s *SQLiteStore) GetUserPreferences(ctx context.Context, userID string) ([]PreferenceItem, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT key, value_json, updated_at FROM user_preferences WHERE user_id = ?`,
+		s.dia.Rebind(`SELECT key, value_json, updated_at FROM user_preferences WHERE user_id = ?`),
 		userID,
 	)
 	if err != nil { return nil, fmt.Errorf("query: %w", err) }
@@ -93,24 +93,18 @@ func (s *SQLiteStore) SetUserPreferences(
 	defer tx.Rollback()
 
 	for _, it := range items {
-		var existing int64
-		err := tx.QueryRowContext(ctx,
-			`SELECT updated_at FROM user_preferences WHERE user_id = ? AND key = ?`,
-			userID, it.Key,
-		).Scan(&existing)
-		newerOrEqual := err == nil && existing >= it.UpdatedAt
-		if newerOrEqual { continue }
-
 		writeTs := it.UpdatedAt
-		if serverNowMs > writeTs { writeTs = serverNowMs }
-
-		if _, err := tx.ExecContext(ctx,
+		if serverNowMs > writeTs {
+			writeTs = serverNowMs
+		}
+		if _, err := tx.ExecContext(ctx, s.dia.Rebind(
 			`INSERT INTO user_preferences(user_id, key, value_json, updated_at)
-			 VALUES(?, ?, ?, ?)
-			 ON CONFLICT(user_id, key) DO UPDATE SET
-			   value_json = excluded.value_json,
-			   updated_at = excluded.updated_at`,
-			userID, it.Key, string(it.ValueJSON), writeTs,
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(user_id, key) DO UPDATE SET
+           value_json = excluded.value_json,
+           updated_at = excluded.updated_at
+         WHERE ? > user_preferences.updated_at`),
+			userID, it.Key, string(it.ValueJSON), writeTs, it.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("upsert %s: %w", it.Key, err)
 		}

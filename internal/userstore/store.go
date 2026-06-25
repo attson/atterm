@@ -13,12 +13,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
-// SQLiteStore is the production Store backed by a single SQLite file.
-type SQLiteStore struct {
-	db *sql.DB
+// DBStore is the production Store backed by database/sql. It serves both
+// SQLite (single file) and Postgres, distinguished by its dialect.
+type DBStore struct {
+	db  *sql.DB
+	dia dialect
 	// cipher is the AEAD cipher for field-level secret encryption (Feishu
 	// app_secret etc.). It is settable after Open so the relay can enable
 	// Feishu at runtime without a restart; a nil pointer means Feishu CRUD
@@ -27,8 +30,13 @@ type SQLiteStore struct {
 	cipher atomic.Pointer[SecretCipher]
 }
 
+// SQLiteStore is the historical name for DBStore, kept as an alias so the
+// many callers that reference *userstore.SQLiteStore keep compiling.
+// TODO(cleanup): migrate callers to DBStore / the Store interface.
+type SQLiteStore = DBStore
+
 // OpenOption is a functional option for Open.
-type OpenOption func(*SQLiteStore)
+type OpenOption func(*DBStore)
 
 // WithSecretCipher sets the AEAD cipher used for field-level secret encryption
 // (e.g. Feishu app_secret). Must be set with a non-nil cipher before any
@@ -64,7 +72,34 @@ func Open(ctx context.Context, path string, opts ...OpenOption) (*SQLiteStore, e
 		db.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	s := &SQLiteStore{db: db}
+	s := &SQLiteStore{db: db, dia: dialectSQLite}
+	for _, o := range opts {
+		o(s)
+	}
+	if err := s.migrate(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenPostgres opens a Postgres-backed store at dsn (e.g.
+// "postgres://user:pass@host:5432/db?sslmode=disable") and runs pending
+// postgres migrations. Unlike SQLite, Postgres handles concurrent
+// connections, so the pool is not pinned to a single connection.
+func OpenPostgres(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("sql.Open pgx: %w", err)
+	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping: %w", err)
+	}
+	s := &DBStore{db: db, dia: dialectPostgres}
 	for _, o := range opts {
 		o(s)
 	}
@@ -76,6 +111,26 @@ func Open(ctx context.Context, path string, opts ...OpenOption) (*SQLiteStore, e
 }
 
 func (s *SQLiteStore) Close() error { return s.db.Close() }
+
+// OpenFromDSN opens a store from a scheme-tagged DSN:
+//   - "postgres://..." or "postgresql://..."  → Postgres
+//   - "sqlite:<path>"                          → SQLite at <path>
+//   - anything else                            → SQLite, treating the DSN
+//     as a bare file path
+//
+// Used by the migrate subcommand for --from/--to.
+func OpenFromDSN(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore, error) {
+	switch {
+	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
+		return OpenPostgres(ctx, dsn, opts...)
+	case strings.HasPrefix(dsn, "sqlite:"):
+		path := strings.TrimPrefix(dsn, "sqlite:")
+		path = strings.TrimPrefix(path, "//")
+		return Open(ctx, path, opts...)
+	default:
+		return Open(ctx, dsn, opts...)
+	}
+}
 
 // DB returns the underlying sql.DB. Only used in tests that need direct
 // SQL access to verify internal state. Not part of the Store interface.
@@ -154,19 +209,44 @@ type Store interface {
 	GetAccountKeyWrap(ctx context.Context, userID, method string) (AccountKeyWrap, error)
 	StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap) error
 
+	// Cluster realm identity (singleton); anchors E2EE keys across nodes.
+	GetRealmState(ctx context.Context) (RealmState, error)
+	EnsureRealmState(ctx context.Context, candidateRealmID string) (RealmState, error)
+
+	// Instance registry + account-level home node (phase 2 node selection).
+	UpsertInstanceHeartbeat(ctx context.Context, instanceID, publicURL string, nowUnix int64) error
+	ListLiveInstances(ctx context.Context, minHeartbeat int64) ([]RelayInstance, error)
+	GetUserHome(ctx context.Context, userID string) (string, bool, error)
+	SetUserHome(ctx context.Context, userID, instanceID string) error
+
+	// Relay-wide singleton config (DB-backed replacement for relay.json).
+	GetRelayConfig(ctx context.Context) (RelayConfig, error)
+	SetRelayConfig(ctx context.Context, cfg RelayConfig) (RelayConfig, error)
+
+	// Web Push: VAPID keypair singleton + per-user subscriptions (DB-backed
+	// replacement for web-push.json).
+	GetVAPIDKeys(ctx context.Context) (VAPIDKeys, bool, error)
+	SetVAPIDKeys(ctx context.Context, k VAPIDKeys) error
+	AddWebPushSubscription(ctx context.Context, userID string, sub WebPushSubscription) error
+	RemoveWebPushSubscription(ctx context.Context, userID, endpoint string) error
+	ListWebPushSubscriptions(ctx context.Context, userID string) ([]WebPushSubscription, error)
+
 	Close() error
 }
+
+func nowUnix() int64 { return time.Now().Unix() }
 
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		name TEXT PRIMARY KEY,
-		applied_at INTEGER NOT NULL
+		applied_at BIGINT NOT NULL
 	)`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	entries, err := migrationsFS.ReadDir("migrations")
+	dir := "migrations/" + s.dia.Name()
+	entries, err := migrationsFS.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("read embedded migrations: %w", err)
+		return fmt.Errorf("read embedded migrations %s: %w", dir, err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -178,14 +258,14 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	for _, name := range names {
 		var seen int
 		if err := s.db.QueryRowContext(ctx,
-			`SELECT count(*) FROM schema_migrations WHERE name=?`, name,
+			s.dia.Rebind(`SELECT count(*) FROM schema_migrations WHERE name=?`), name,
 		).Scan(&seen); err != nil {
 			return fmt.Errorf("check migration %s: %w", name, err)
 		}
 		if seen > 0 {
 			continue
 		}
-		body, err := migrationsFS.ReadFile("migrations/" + name)
+		body, err := migrationsFS.ReadFile(dir + "/" + name)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
@@ -198,8 +278,8 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("apply %s: %w", name, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO schema_migrations(name, applied_at) VALUES(?, strftime('%s','now'))`,
-			name); err != nil {
+			s.dia.Rebind(`INSERT INTO schema_migrations(name, applied_at) VALUES(?, ?)`),
+			name, time.Now().Unix()); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("record %s: %w", name, err)
 		}

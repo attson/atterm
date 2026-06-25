@@ -1,15 +1,15 @@
 package relay
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/attson/atterm/internal/userstore"
 )
 
 const tokenHashPrefix = "sha256:"
@@ -44,6 +44,11 @@ type AdminConfig struct {
 	// DebugPayload also logs PTY byte contents (terminal in/out) — sensitive.
 	Debug        bool `json:"debug,omitempty"`
 	DebugPayload bool `json:"debug_payload,omitempty"`
+
+	// version is the DB relay_config.version; 0 = unconfigured. Unexported
+	// so it is never marshalled to JSON or surfaced directly; consumers use
+	// AdminConfigStore.Version().
+	version int64 `json:"-"` //nolint:unused
 }
 
 // DecodeFeishuKey decodes FeishuEncryptKey to its 32 raw bytes, or returns
@@ -63,42 +68,30 @@ func (c AdminConfig) DecodeFeishuKey() ([]byte, error) {
 }
 
 type AdminConfigStore struct {
-	mu   sync.Mutex
-	path string
-	cfg  AdminConfig
+	mu    sync.Mutex
+	store userstore.Store
+	cfg   AdminConfig
 }
 
-func NewAdminConfigStore(path string, initial AdminConfig) *AdminConfigStore {
-	return &AdminConfigStore{path: path, cfg: initial}
+func NewAdminConfigStore(store userstore.Store, initial AdminConfig) *AdminConfigStore {
+	return &AdminConfigStore{store: store, cfg: initial}
 }
 
-func LoadAdminConfig(path string) (AdminConfig, error) {
-	data, err := os.ReadFile(path)
+// LoadFromDB reads relay_config and replaces the in-memory cfg. If the DB has
+// no config yet (Version==0), the in-memory cfg is left as the seeded initial.
+func (s *AdminConfigStore) LoadFromDB(ctx context.Context) (AdminConfig, error) {
+	rc, err := s.store.GetRelayConfig(ctx)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return AdminConfig{}, nil
-		}
 		return AdminConfig{}, err
 	}
-	var cfg AdminConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return AdminConfig{}, err
-	}
-	if err := cfg.validate(); err != nil {
-		return AdminConfig{}, err
-	}
-	return cfg, nil
-}
-
-func (s *AdminConfigStore) Load() (AdminConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cfg, err := LoadAdminConfig(s.path)
-	if err != nil {
-		return AdminConfig{}, err
+	if rc.Version > 0 {
+		prev := s.cfg.ReadOnlyTokens
+		s.cfg = relayConfigToAdmin(rc)
+		s.cfg.ReadOnlyTokens = append([]StoredToken(nil), prev...)
 	}
-	s.cfg = cfg
-	return cfg, nil
+	return cloneAdminConfig(s.cfg), nil
 }
 
 func (s *AdminConfigStore) Snapshot() AdminConfig {
@@ -107,43 +100,57 @@ func (s *AdminConfigStore) Snapshot() AdminConfig {
 	return cloneAdminConfig(s.cfg)
 }
 
-func (s *AdminConfigStore) Set(cfg AdminConfig) error {
-	if err := cfg.validate(); err != nil {
-		return err
-	}
+func (s *AdminConfigStore) Version() int64 {
 	s.mu.Lock()
-	s.cfg = cloneAdminConfig(cfg)
-	s.mu.Unlock()
-	return s.Save()
+	defer s.mu.Unlock()
+	return s.cfg.version
 }
 
-func (s *AdminConfigStore) Save() error {
-	s.mu.Lock()
-	cfg := cloneAdminConfig(s.cfg)
-	path := s.path
-	s.mu.Unlock()
-	if path == "" {
-		return errors.New("admin config path is empty")
-	}
+// Set validates, writes to the DB (bumping version), and updates the cache.
+func (s *AdminConfigStore) Set(ctx context.Context, cfg AdminConfig) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	written, err := s.store.SetRelayConfig(ctx, adminToRelayConfig(cfg))
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
+	applied := relayConfigToAdmin(written)
+	// Preserve ReadOnlyTokens since they are not stored in the DB.
+	applied.ReadOnlyTokens = append([]StoredToken(nil), cfg.ReadOnlyTokens...)
+	s.mu.Lock()
+	s.cfg = applied
+	s.mu.Unlock()
+	return nil
+}
+
+func relayConfigToAdmin(rc userstore.RelayConfig) AdminConfig {
+	return AdminConfig{
+		RateLimitPerMinute:   rc.RateLimitPerMinute,
+		MaxConnectionsPerKey: rc.MaxConnectionsPerKey,
+		AllowedOrigins:       append([]string(nil), rc.AllowedOrigins...),
+		VAPIDSubject:         rc.VAPIDSubject,
+		Debug:                rc.Debug,
+		DebugPayload:         rc.DebugPayload,
+		FeishuEnabled:        rc.FeishuEnabled,
+		FeishuEncryptKey:     rc.FeishuEncryptKey,
+		FeishuBaseURL:        rc.FeishuBaseURL,
+		version:              rc.Version,
 	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
-		_ = os.Remove(tmp)
-		return err
+}
+
+func adminToRelayConfig(c AdminConfig) userstore.RelayConfig {
+	return userstore.RelayConfig{
+		RateLimitPerMinute:   c.RateLimitPerMinute,
+		MaxConnectionsPerKey: c.MaxConnectionsPerKey,
+		AllowedOrigins:       append([]string(nil), c.AllowedOrigins...),
+		VAPIDSubject:         c.VAPIDSubject,
+		Debug:                c.Debug,
+		DebugPayload:         c.DebugPayload,
+		FeishuEnabled:        c.FeishuEnabled,
+		FeishuEncryptKey:     c.FeishuEncryptKey,
+		FeishuBaseURL:        c.FeishuBaseURL,
 	}
-	return os.Rename(tmp, path)
 }
 
 func (c AdminConfig) validate() error {

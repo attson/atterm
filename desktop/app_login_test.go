@@ -12,6 +12,9 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 )
 
+// testRealmID is the stable realm id used by all in-process test relays.
+const testRealmID = "test-realm-desktop"
+
 // newOPAQUERelay spins up an in-process atterm-relay HTTP server with the
 // OPAQUE endpoints wired. The desktop's LoginRemoteRelay calls into this
 // server via the e2eeclient SDK.
@@ -23,7 +26,7 @@ func newOPAQUERelay(t *testing.T) (*httptest.Server, *userstore.SQLiteStore) {
 		t.Fatalf("LoadOrInitOpaqueServer: %v", err)
 	}
 	mux := http.NewServeMux()
-	relay.NewOpaqueAuthHandler(store, opaqueSrv, "").Register(mux)
+	relay.NewOpaqueAuthHandler(store, opaqueSrv, "", testRealmID, "").Register(mux)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts, store
@@ -71,10 +74,13 @@ func TestLoginRemoteRelay_PersistsSessionToken(t *testing.T) {
 	if !a.HasAccountKey() {
 		t.Fatalf("account_key not unlocked into App memory after login")
 	}
-	// The key the next launch reads back: loadAccountKey(persisted URL, user id).
-	// Must be non-empty — i.e. persisted under the identity boot looks up.
+	// The key the next launch reads back: loadAccountKey(realmID, user id).
+	// Must be non-empty — i.e. persisted under the realm identity boot looks up.
 	persisted := a.cfgStore.Get()
-	if k, err := loadAccountKey(persisted.RelayURL, persisted.RelaySessionUserID); err != nil {
+	if persisted.RelayRealmID != testRealmID {
+		t.Fatalf("RelayRealmID not persisted: got %q want %q", persisted.RelayRealmID, testRealmID)
+	}
+	if k, err := loadAccountKey(persisted.RelayRealmID, persisted.RelaySessionUserID); err != nil {
 		t.Fatalf("loadAccountKey: %v", err)
 	} else if len(k) == 0 {
 		t.Fatal("account_key not persisted under the current (URL, user id) — would be lost on next launch")
@@ -212,38 +218,37 @@ func TestLoginRemoteRelay_WrongPassword_PreservesStoredPassword(t *testing.T) {
 	}
 }
 
-// TestSetRelayConfig_MigratesAccountKeyOnURLChange covers the user's actual
-// failure: the relay was first reached at one address (e.g. wss://ip:port) and
-// later by another (e.g. wss://domain) for the SAME relay+account, without a
-// re-login. Because the keychain entry is origin-scoped, the key would orphan
-// under the old origin. SetRelayConfig must move it to the new origin while an
-// account_key is unlocked.
-func TestSetRelayConfig_MigratesAccountKeyOnURLChange(t *testing.T) {
+// TestSetRelayConfig_URLChangePreservesRealmKey covers the realm-anchored
+// account_key invariant: changing the relay URL (same realm+account, different
+// node/domain) must NOT move or clear the keychain entry, because the entry is
+// now keyed by (realmID, userID) — not by the physical relay URL. The key
+// survives the URL change untouched under the original realm anchor.
+func TestSetRelayConfig_URLChangePreservesRealmKey(t *testing.T) {
 	a := newRelayTestApp(t)
 	// Stop the background uplink on cleanup so its retry loop doesn't starve
 	// the timing-sensitive uplink E2E test later in the package.
 	t.Cleanup(func() { _ = a.SetRelayConfig(RelayConfig{URL: "", RemotePermission: "full"}) })
 
-	// Seed the "already logged in at oldURL" state directly — no OPAQUE round
-	// trip needed, the migration logic only reads (RelayURL, user id) + the
-	// in-memory key. Both URLs are loopback so neither uplink dials externally.
+	// Seed the "already logged in" state: realm-anchored key.
 	const oldURL = "ws://127.0.0.1:59370"
 	const newURL = "ws://127.0.0.1:59371"
+	const realm = "realm-xyz"
 	const uid = "user-abc"
 	key := bytes.Repeat([]byte{0xAB}, 32)
 	cfg := a.cfgStore.Get()
 	cfg.RelayURL = oldURL
 	cfg.RelaySessionToken = "tok"
 	cfg.RelaySessionUserID = uid
+	cfg.RelayRealmID = realm
 	if err := a.cfgStore.Set(cfg); err != nil {
 		t.Fatalf("seed cfg: %v", err)
 	}
 	a.setAccountKeyInMemory(key)
-	if err := saveAccountKey(oldURL, uid, key); err != nil {
+	if err := saveAccountKey(realm, uid, key); err != nil {
 		t.Fatalf("seed account_key: %v", err)
 	}
 
-	// User edits the relay address (same relay+account) without re-login.
+	// User edits the relay address (same realm+account) without re-login.
 	if err := a.SetRelayConfig(RelayConfig{
 		URL:              newURL,
 		Token:            "tok",
@@ -252,11 +257,9 @@ func TestSetRelayConfig_MigratesAccountKeyOnURLChange(t *testing.T) {
 		t.Fatalf("SetRelayConfig: %v", err)
 	}
 
-	if k, _ := loadAccountKey(newURL, uid); len(k) == 0 {
-		t.Fatal("account_key not migrated to the new relay origin")
-	}
-	if k, _ := loadAccountKey(oldURL, uid); len(k) != 0 {
-		t.Fatal("stale account_key under old origin not cleared")
+	// Key must still be present under the realm anchor (URL change is irrelevant).
+	if k, _ := loadAccountKey(realm, uid); len(k) == 0 {
+		t.Fatal("realm-anchored account_key disappeared after URL change")
 	}
 }
 

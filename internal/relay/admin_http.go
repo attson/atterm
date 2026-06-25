@@ -372,7 +372,7 @@ func (s *Server) handleAdminConfigHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		if err := s.updateAdminConfig(func(cfg AdminConfig) AdminConfig {
+		if err := s.updateAdminConfig(r.Context(), func(cfg AdminConfig) AdminConfig {
 			cfg.RateLimitPerMinute = req.RateLimitPerMinute
 			cfg.MaxConnectionsPerKey = req.MaxConnectionsPerKey
 			if req.AllowedOrigins != nil {
@@ -426,13 +426,13 @@ func (s *Server) adminConfigResponse() adminConfigResponse {
 	}
 }
 
-func (s *Server) updateAdminConfig(update func(AdminConfig) AdminConfig) error {
+func (s *Server) updateAdminConfig(ctx context.Context, update func(AdminConfig) AdminConfig) error {
 	if s.cfg.AdminConfigStore == nil {
 		return errors.New("admin config path is not configured")
 	}
 	cfg := s.cfg.AdminConfigStore.Snapshot()
 	cfg = update(cfg)
-	return s.cfg.AdminConfigStore.Set(cfg)
+	return s.cfg.AdminConfigStore.Set(ctx, cfg)
 }
 
 // feishuAdminResponse is the masked Feishu integration view returned to the
@@ -464,9 +464,9 @@ func (s *Server) feishuAdminResponse() feishuAdminResponse {
 }
 
 // handleAdminFeishuHTTP serves GET/PUT /admin/api/feishu — the admin UI's
-// Feishu integration panel. PUT persists to relay.json and hot-applies the
-// enable/disable transition (attach/detach the secret cipher + handler) with
-// no restart.
+// Feishu integration panel. PUT persists to the DB (relay_config) and
+// hot-applies the enable/disable transition (attach/detach the secret
+// cipher + handler) with no restart.
 func (s *Server) handleAdminFeishuHTTP(w http.ResponseWriter, r *http.Request) {
 	u, ok := UserFromContext(r.Context())
 	if !ok || u == nil || !u.IsAdmin {
@@ -518,7 +518,7 @@ func (s *Server) handleAdminFeishuHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			keyBytes = b
 		}
-		if err := s.updateAdminConfig(func(cfg AdminConfig) AdminConfig {
+		if err := s.updateAdminConfig(r.Context(), func(cfg AdminConfig) AdminConfig {
 			cfg.FeishuEnabled = req.Enabled
 			cfg.FeishuEncryptKey = effectiveKey
 			cfg.FeishuBaseURL = baseURL

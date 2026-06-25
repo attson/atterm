@@ -83,6 +83,14 @@ type Config struct {
 	// email matches this is auto-promoted to admin (no claim token). Empty
 	// disables the email-gated path.
 	BootstrapAdminEmail string
+	// RealmID is the stable cluster realm identifier loaded by
+	// LoadOrInitRealm. Passed to OpaqueAuthHandler so tokens are
+	// realm-scoped.
+	RealmID string
+	// InstancePublicURL is this node's client-reachable URL (also its
+	// instance_id in the relay_instances registry). Empty disables node
+	// registration / selection (single-instance/dev).
+	InstancePublicURL string
 }
 
 // Server bundles the registry and HTTP handlers.
@@ -223,6 +231,8 @@ func NewServer(cfg Config) *Server {
 		authSrv.RegisterInto(s.mux, s.requireSession)
 		adminSrv.RegisterInto(s.mux, s.requireSession)
 		s.mux.HandleFunc("POST /api/sessions/seen", s.requireSession(s.handleSessionsSeenHTTP))
+		s.mux.HandleFunc("GET /api/nodes", s.requireSession(s.handleNodesHTTP))
+		s.mux.HandleFunc("PUT /api/me/home", s.requireSession(s.handleSetHomeHTTP))
 
 		// OPAQUE auth: wire only when both the singleton was built
 		// upstream and the store is the concrete SQLite one the handler
@@ -231,7 +241,7 @@ func NewServer(cfg Config) *Server {
 		// password fallback.
 		if cfg.OpaqueServer != nil {
 			if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
-				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer, cfg.BootstrapAdminEmail)
+				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer, cfg.BootstrapAdminEmail, cfg.RealmID, cfg.InstancePublicURL)
 				opaqueAuth.Register(s.mux)
 			}
 		}

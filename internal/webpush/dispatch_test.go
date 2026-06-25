@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/userstore"
 	"github.com/google/uuid"
 )
 
@@ -40,14 +41,30 @@ func (c *recordingHTTPClient) Do(req *http.Request) (*http.Response, error) {
 
 func newServiceWithFakeTransport(t *testing.T, statuses ...int) (*Service, *recordingHTTPClient) {
 	t.Helper()
-	dir := t.TempDir()
-	svc, err := Open(dir, "mailto:test@example.com")
+	svc, _, rec := newServiceWithStore(t, statuses...)
+	return svc, rec
+}
+
+func newServiceWithStore(t *testing.T, statuses ...int) (*Service, *userstore.DBStore, *recordingHTTPClient) {
+	t.Helper()
+	st := newTestStore(t)
+	svc, err := Open(st, "mailto:test@example.com")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	rec := &recordingHTTPClient{statuses: statuses}
 	svc.tr = newTransport(svc.vapidPriv, svc.vapidPub, svc.subject, rec)
-	return svc, rec
+	return svc, st, rec
+}
+
+// mustCreateUser creates a user in the store and returns its ID.
+func mustCreateUser(t *testing.T, st *userstore.DBStore, email string) string {
+	t.Helper()
+	u, err := st.CreateOpaqueUser(context.Background(), email)
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser(%s): %v", email, err)
+	}
+	return u.ID
 }
 
 // validP256SubKey is a real P-256 public key (base64url) usable as a
@@ -65,11 +82,12 @@ func subWithEndpoint(endpoint string) Subscription {
 }
 
 func TestDispatchCommandFinishedFansOutToAllSubscriptions(t *testing.T) {
-	svc, rec := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
-	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/b"))
+	svc, st, rec := newServiceWithStore(t)
+	userID := mustCreateUser(t, st, "fanout@example.com")
+	_ = svc.AddSubscription(userID, subWithEndpoint("https://push.example/a"))
+	_ = svc.AddSubscription(userID, subWithEndpoint("https://push.example/b"))
 	sid := uuid.New()
-	svc.DispatchCommandFinished("user1", CommandFinished{
+	svc.DispatchCommandFinished(userID, CommandFinished{
 		SessionID: sid,
 		HostID:    uuid.New(),
 		ExitCode:  0,
@@ -96,36 +114,39 @@ func TestDispatchCommandFinishedFansOutToAllSubscriptions(t *testing.T) {
 }
 
 func TestDispatchCommandFinishedReturnsImmediately(t *testing.T) {
-	svc, _ := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
+	svc, st, _ := newServiceWithStore(t)
+	userID := mustCreateUser(t, st, "immediate@example.com")
+	_ = svc.AddSubscription(userID, subWithEndpoint("https://push.example/a"))
 	start := time.Now()
-	svc.DispatchCommandFinished("user1", CommandFinished{SessionID: uuid.New()})
+	svc.DispatchCommandFinished(userID, CommandFinished{SessionID: uuid.New()})
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
 		t.Fatalf("DispatchCommandFinished took %v; expected to return immediately", elapsed)
 	}
 }
 
 func TestDispatch410PrunesSubscription(t *testing.T) {
-	svc, _ := newServiceWithFakeTransport(t, 410)
-	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/gone"))
-	svc.DispatchCommandFinished("user1", CommandFinished{SessionID: uuid.New()})
+	svc, st, _ := newServiceWithStore(t, 410)
+	userID := mustCreateUser(t, st, "prune410@example.com")
+	_ = svc.AddSubscription(userID, subWithEndpoint("https://push.example/gone"))
+	svc.DispatchCommandFinished(userID, CommandFinished{SessionID: uuid.New()})
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(svc.subStore.ByUser("user1")) == 0 {
+		if len(svc.SubscriptionsForUser(userID)) == 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("subscription not pruned after 410; got %v", svc.subStore.ByUser("user1"))
+	t.Fatalf("subscription not pruned after 410; got %v", svc.SubscriptionsForUser(userID))
 }
 
 func TestDispatch429KeepsSubscription(t *testing.T) {
-	svc, _ := newServiceWithFakeTransport(t, 429)
-	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/throttled"))
-	svc.DispatchCommandFinished("user1", CommandFinished{SessionID: uuid.New()})
+	svc, st, _ := newServiceWithStore(t, 429)
+	userID := mustCreateUser(t, st, "throttled@example.com")
+	_ = svc.AddSubscription(userID, subWithEndpoint("https://push.example/throttled"))
+	svc.DispatchCommandFinished(userID, CommandFinished{SessionID: uuid.New()})
 	// Give the goroutine a moment then assert sub still present.
 	time.Sleep(150 * time.Millisecond)
-	if len(svc.subStore.ByUser("user1")) != 1 {
+	if len(svc.SubscriptionsForUser(userID)) != 1 {
 		t.Fatalf("subscription was pruned on 429; want kept")
 	}
 }
@@ -299,9 +320,10 @@ func TestDispatchTruncatesLabelTo256(t *testing.T) {
 }
 
 func TestDispatchSendTest(t *testing.T) {
-	svc, rec := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
-	n := svc.SendTest("user1")
+	svc, st, rec := newServiceWithStore(t)
+	userID := mustCreateUser(t, st, "sendtest@example.com")
+	_ = svc.AddSubscription(userID, subWithEndpoint("https://push.example/a"))
+	n := svc.SendTest(userID)
 	if n != 1 {
 		t.Fatalf("SendTest returned %d; want 1", n)
 	}
@@ -319,8 +341,9 @@ func TestDispatchSendTest(t *testing.T) {
 }
 
 func TestDispatchNoOpWhenEmptyUserID(t *testing.T) {
-	svc, rec := newServiceWithFakeTransport(t)
-	_ = svc.AddSubscription("user1", subWithEndpoint("https://push.example/a"))
+	svc, st, rec := newServiceWithStore(t)
+	userID := mustCreateUser(t, st, "noop@example.com")
+	_ = svc.AddSubscription(userID, subWithEndpoint("https://push.example/a"))
 	// Dispatch with empty ownerUserID — no subscribers matched, no push.
 	svc.DispatchCommandFinished("", CommandFinished{SessionID: uuid.New()})
 	time.Sleep(100 * time.Millisecond)
@@ -329,13 +352,14 @@ func TestDispatchNoOpWhenEmptyUserID(t *testing.T) {
 	if len(rec.requests) != 0 {
 		t.Fatalf("unexpected pushes with empty ownerUserID; %d requests", len(rec.requests))
 	}
-	_ = context.Background()
 }
 
 // TestDispatch_FilteredByOwner verifies that DispatchCommandFinished sends
 // pushes only to the ownerUserID's subscriptions and not to other users'.
 func TestDispatch_FilteredByOwner(t *testing.T) {
-	svc, _ := newServiceWithFakeTransport(t)
+	svc, st, _ := newServiceWithStore(t)
+	userAID := mustCreateUser(t, st, "usera@example.com")
+	userBID := mustCreateUser(t, st, "userb@example.com")
 
 	// Per-user atomic counters.
 	var userACount, userBCount atomic.Int64
@@ -377,11 +401,11 @@ func TestDispatch_FilteredByOwner(t *testing.T) {
 	// Register one sub each for userA and userB.
 	endpointA := "https://push.example/userA"
 	endpointB := "https://push.example/userB"
-	_ = svc.AddSubscription("u_A", subWithEndpoint(endpointA))
-	_ = svc.AddSubscription("u_B", subWithEndpoint(endpointB))
+	_ = svc.AddSubscription(userAID, subWithEndpoint(endpointA))
+	_ = svc.AddSubscription(userBID, subWithEndpoint(endpointB))
 
 	// Dispatch for userA only.
-	svc.DispatchCommandFinished("u_A", CommandFinished{
+	svc.DispatchCommandFinished(userAID, CommandFinished{
 		SessionID: uuid.New(),
 		HostID:    uuid.New(),
 		ExitCode:  0,

@@ -32,6 +32,8 @@ const (
 	// TestCardWaitingInput renders the orange waiting-for-input card, with a
 	// representative question body so the truncation/codeblock path is exercised.
 	TestCardWaitingInput TestCardScenario = "waiting_input"
+	// TestCardAskQuestion renders the blue Agent-question card with option buttons.
+	TestCardAskQuestion TestCardScenario = "ask_question"
 )
 
 // testSessionID is a fixed, obviously-fake UUID used as the deep-link target
@@ -54,10 +56,15 @@ func renderTestCard(scenario TestCardScenario) ([]byte, error) {
 		})
 	case TestCardCommandFailure:
 		card = internalfeishu.RenderCommandFinishedCard(internalfeishu.CommandFinishedInput{
-			SessionID: testSessionID,
-			ExitCode:  1,
-			ElapsedMS: 73_000,
-			Label:     "测试命令",
+			SessionID:    testSessionID,
+			ExitCode:     1,
+			ElapsedMS:    73_000,
+			Label:        "测试命令",
+			LastCommand:  "go test ./...",
+			SessionTitle: "atterm",
+			Cwd:          "~/atterm",
+			FailureCount: 2,
+			OutputTail:   "--- FAIL: TestFoo (0.01s)\n    foo_test.go:12: boom\n",
 		})
 	case TestCardCommandSealed:
 		card = internalfeishu.RenderCommandFinishedCard(internalfeishu.CommandFinishedInput{
@@ -69,6 +76,15 @@ func renderTestCard(scenario TestCardScenario) ([]byte, error) {
 			SessionID:      testSessionID,
 			IdleForSeconds: 42,
 			QuestionText:   "这是一条测试通知。\nAgent 想确认是否继续执行某个操作?",
+		})
+	case TestCardAskQuestion:
+		card = internalfeishu.RenderAskQuestionCard(internalfeishu.AskQuestionInput{
+			SessionID: testSessionID,
+			Question:  "这是一条测试提问。\nAgent 想知道你选哪个选项?",
+			Options: []internalfeishu.AskOption{
+				{Label: "继续执行", Description: "按默认方式继续", InjectText: "1\n"},
+				{Label: "停止", Description: "中止当前操作", InjectText: "2\n"},
+			},
 		})
 	default:
 		return nil, fmt.Errorf("feishu: unknown test card scenario %q", scenario)

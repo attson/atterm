@@ -14,9 +14,10 @@ func TestRenderTestCard_AllScenarios(t *testing.T) {
 		wants []string
 	}{
 		{TestCardCommandSuccess, []string{`"命令完成"`, `"green"`, "退出码", "测试命令"}},
-		{TestCardCommandFailure, []string{`"命令完成"`, `"red"`, "退出码"}},
+		{TestCardCommandFailure, []string{`"命令完成"`, `"red"`, "退出码", "重试", "连续第 2 次", "FAIL"}},
 		{TestCardCommandSealed, []string{"仅本机可见", `"grey"`}},
 		{TestCardWaitingInput, []string{"等待输入", `"orange"`, "测试通知"}},
+		{TestCardAskQuestion, []string{"Agent 提问", `"blue"`, "继续执行", "停止"}},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.scenario), func(t *testing.T) {

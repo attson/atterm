@@ -107,6 +107,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("init realm: %v", err)
 	}
+	instancePublicURL := strings.TrimSpace(os.Getenv("ATTERM_RELAY_INSTANCE_PUBLIC_URL"))
 
 	if err := bootstrapAdmin(ctx, store, bootstrapEmail); err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
@@ -198,6 +199,7 @@ func main() {
 		OpaqueServer:         opaqueSrv,
 		BootstrapAdminEmail:  bootstrapEmail,
 		RealmID:              realmID,
+		InstancePublicURL:    instancePublicURL,
 	}
 
 	// VAPID subject is consumed once here; changing it later needs a restart.
@@ -256,6 +258,27 @@ func main() {
 			}
 		}
 	}()
+
+	if instancePublicURL != "" {
+		// Immediate first heartbeat so the node is selectable without a 30s wait.
+		if err := store.UpsertInstanceHeartbeat(ctx, instancePublicURL, instancePublicURL, time.Now().Unix()); err != nil {
+			log.Printf("relay: initial instance heartbeat: %v", err)
+		}
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					if err := store.UpsertInstanceHeartbeat(ctx, instancePublicURL, instancePublicURL, time.Now().Unix()); err != nil {
+						log.Printf("relay: instance heartbeat: %v", err)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// Build the TLS config for the HTTPS listener. OPAQUE needs a secure
 	// browser context (WebCrypto), so browser-facing traffic must be HTTPS —

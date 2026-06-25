@@ -51,10 +51,36 @@ func TestCodexParseSid(t *testing.T) {
 }
 
 func TestClaudeWatchDir(t *testing.T) {
-	got := claudeWatchDir("/Users/me/code/foo", time.Now(), "/HOME")
-	want := "/HOME/.claude/projects/-Users-me-code-foo"
-	if got != want {
-		t.Fatalf("got %q want %q", got, want)
+	cases := []struct {
+		name string
+		cwd  string
+		want string
+	}{
+		{
+			// Plain path: only '/' separators to encode.
+			name: "plain",
+			cwd:  "/Users/me/code/foo",
+			want: "/HOME/.claude/projects/-Users-me-code-foo",
+		},
+		{
+			// Real git-worktree path. Claude Code encodes EVERY non-alphanumeric
+			// char to '-', not just '/'. So the dot in "/.claude" becomes a
+			// double dash, and '_' / '+' in the branch name also become '-'.
+			// The old "ReplaceAll('/', '-')" only handled separators and missed
+			// this dir entirely → AI session id never resolved (ai=- in logs)
+			// and the worktree pane could not be --resumed after a restart.
+			name: "worktree with dot underscore plus",
+			cwd:  "/home/attson/GolandProjects/ad-ai-toolkit/.claude/worktrees/feature+edits_multi_image_20260624",
+			want: "/HOME/.claude/projects/-home-attson-GolandProjects-ad-ai-toolkit--claude-worktrees-feature-edits-multi-image-20260624",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := claudeWatchDir(tc.cwd, time.Now(), "/HOME")
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
 	}
 }
 

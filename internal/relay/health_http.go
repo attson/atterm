@@ -125,8 +125,9 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":      true,
-		"version": s.cfg.Version,
+		"ok":          true,
+		"version":     s.cfg.Version,
+		"instance_id": s.cfg.InstancePublicURL,
 	})
 }
 

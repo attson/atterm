@@ -87,6 +87,10 @@ type Config struct {
 	// LoadOrInitRealm. Passed to OpaqueAuthHandler so tokens are
 	// realm-scoped.
 	RealmID string
+	// InstancePublicURL is this node's client-reachable URL (also its
+	// instance_id in the relay_instances registry). Empty disables node
+	// registration / selection (single-instance/dev).
+	InstancePublicURL string
 }
 
 // Server bundles the registry and HTTP handlers.

@@ -30,7 +30,9 @@ type CommandFinishedEvent struct {
 	SealedBody []byte
 
 	// Context fields enrich the non-sealed card. The relay_host dispatch point
-	// leaves SessionTitle/Cwd/OutputTail empty for sealed (E2EE) sessions.
+	// leaves OutputTail empty for sealed (E2EE) sessions; SessionTitle/Cwd are
+	// dropped by the sealed render branch (RenderCommandFinishedCard), which
+	// never reads them when the card is sealed.
 	SessionTitle string
 	Cwd          string
 	OutputTail   string

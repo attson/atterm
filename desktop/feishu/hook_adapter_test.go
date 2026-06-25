@@ -114,6 +114,26 @@ func TestClaudeCodeAdapter_AskUserQuestionOptions(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeAdapter_OptionsKeptWhenQuestionEmpty(t *testing.T) {
+	raw := json.RawMessage(`{
+	  "matcher": {"type":"idle_prompt", "tool":"AskUserQuestion"},
+	  "prompt_id": "p2",
+	  "context": {"tool_input": {"questions": [
+	    {"question": "", "options": [{"label":"A","description":"a"}]}
+	  ]}}
+	}`)
+	ev, ok := (&claudeCodeAdapter{}).Parse(raw, "")
+	if !ok {
+		t.Fatal("expected emit")
+	}
+	if len(ev.Options) != 1 || ev.Options[0].Label != "A" {
+		t.Fatalf("options dropped: %+v", ev.Options)
+	}
+	if ev.QuestionText != "Claude is waiting on a question." {
+		t.Fatalf("expected placeholder question, got %q", ev.QuestionText)
+	}
+}
+
 func TestRegistryLookup(t *testing.T) {
 	a, ok := LookupHookAdapter("claude-code")
 	if !ok || a == nil {

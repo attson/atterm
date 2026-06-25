@@ -132,9 +132,7 @@ func extractAskUserQuestion(ctx json.RawMessage) (string, []QuestionOption) {
 			for _, o := range q0.Options {
 				opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
 			}
-			if q0.Question != "" {
-				return q0.Question, opts
-			}
+			return q0.Question, opts
 		}
 		if p.ToolInput.Question != "" {
 			return p.ToolInput.Question, nil

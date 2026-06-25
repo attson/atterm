@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -36,6 +37,18 @@ type WaitingInputDispatchEvent struct {
 	Source         WaitingSource
 	QuestionText   string
 	DedupKey       string
+	Options        []QuestionOption // non-empty → render AskQuestion card
+}
+
+// optionInjectText maps an AskUserQuestion option to the bytes injected into
+// the PTY when its Feishu button is tapped.
+//
+// R1: how claude's TUI accepts an option selection is not yet verified against
+// a live session. Default = the 1-based option number + Enter. If a live test
+// shows the TUI needs arrow keys instead, change ONLY this function, e.g.
+// `strings.Repeat("\x1b[B", i) + "\r"`.
+func optionInjectText(i int, _ QuestionOption) string {
+	return fmt.Sprintf("%d\n", i+1)
 }
 
 type WaitingSource int
@@ -102,11 +115,28 @@ func (d *Dispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDi
 	}
 
 	d.dispatchWaiting(ctx, ev.SessionID, key, sessionKey, func() ([]byte, error) {
-		card := internalfeishu.RenderWaitingInputCard(internalfeishu.WaitingInputInput{
-			SessionID:      ev.SessionID,
-			IdleForSeconds: ev.IdleForSeconds,
-			QuestionText:   ev.QuestionText,
-		})
+		var card internalfeishu.Card
+		if len(ev.Options) > 0 {
+			opts := make([]internalfeishu.AskOption, 0, len(ev.Options))
+			for i, o := range ev.Options {
+				opts = append(opts, internalfeishu.AskOption{
+					Label:       o.Label,
+					Description: o.Description,
+					InjectText:  optionInjectText(i, o),
+				})
+			}
+			card = internalfeishu.RenderAskQuestionCard(internalfeishu.AskQuestionInput{
+				SessionID: ev.SessionID,
+				Question:  ev.QuestionText,
+				Options:   opts,
+			})
+		} else {
+			card = internalfeishu.RenderWaitingInputCard(internalfeishu.WaitingInputInput{
+				SessionID:      ev.SessionID,
+				IdleForSeconds: ev.IdleForSeconds,
+				QuestionText:   ev.QuestionText,
+			})
+		}
 		return json.Marshal(card)
 	})
 }

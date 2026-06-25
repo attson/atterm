@@ -3,6 +3,7 @@ package feishu
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -158,6 +159,43 @@ func TestDispatcher_DedupExpires(t *testing.T) {
 	})
 	if len(im.bodies) != 2 {
 		t.Fatalf("expected 2 sends after window expiry; got %d", len(im.bodies))
+	}
+}
+
+func TestDispatch_AskQuestionRendersBlueCard(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	ts := &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"}
+	d := NewDispatcher(DispatcherConfig{Store: store, Token: ts, IM: im})
+
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID:    uuid.New(),
+		Source:       WaitingSourceHook,
+		QuestionText: "Deploy?",
+		Options: []QuestionOption{
+			{Label: "Yes", Description: "go"},
+			{Label: "No", Description: "stop"},
+		},
+	})
+	if len(im.bodies) != 1 {
+		t.Fatalf("expected 1 send, got %d", len(im.bodies))
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(im.bodies[0]), &m); err != nil {
+		t.Fatalf("unmarshal card body: %v", err)
+	}
+	card, ok := m["card"].(map[string]any)
+	if !ok {
+		t.Fatalf("card body missing card key: %v", m)
+	}
+	header, ok := card["header"].(map[string]any)
+	if !ok {
+		t.Fatalf("card missing header: %v", card)
+	}
+	if header["template"] != "blue" {
+		t.Fatalf("expected blue header template, got %v", header["template"])
 	}
 }
 

@@ -152,6 +152,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Source:       WaitingSourceHook,
 			QuestionText: ev.QuestionText,
 			DedupKey:     ev.DedupKey,
+			Options:      ev.Options,
 		})
 	}
 

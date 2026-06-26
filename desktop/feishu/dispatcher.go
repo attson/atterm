@@ -237,25 +237,46 @@ func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKe
 			return
 		}
 	}
+	// Stamp eagerly — under the same lock as the check — so a concurrent
+	// caller (e.g. hook + heuristic racing for the same WaitingInput
+	// event) sees us as in-flight and bails. We may roll back below if
+	// the send turns out to be impossible (no token).
+	d.lastDispatch[dedupKey] = now
+	if sessionKey != dedupKey {
+		d.lastDispatch[sessionKey] = now
+	}
 	d.muD.Unlock()
+
+	rollback := func() {
+		d.muD.Lock()
+		defer d.muD.Unlock()
+		// Only roll back our own stamp — a newer dispatch may have replaced it.
+		if d.lastDispatch[dedupKey] == now {
+			delete(d.lastDispatch, dedupKey)
+		}
+		if sessionKey != dedupKey && d.lastDispatch[sessionKey] == now {
+			delete(d.lastDispatch, sessionKey)
+		}
+	}
 
 	tok, openID, _, err := d.cfg.Token.Get(ctx)
 	if err != nil {
-		if errors.Is(err, ErrTokenNotConfigured) {
-			return
-		}
-		if errors.Is(err, ErrTokenDisabled) {
+		rollback()
+		if errors.Is(err, ErrTokenNotConfigured) || errors.Is(err, ErrTokenDisabled) {
 			return
 		}
 		log.Printf("feishu: dispatch token: %v", err)
 		return
 	}
 	if openID == "" {
+		rollback()
 		return
 	}
 
 	body, err := render()
 	if err != nil {
+		// Render errors are programming bugs, not transient — keep the
+		// stamp so we don't retry-storm on the same broken event.
 		log.Printf("feishu: render card: %v", err)
 		return
 	}
@@ -263,15 +284,10 @@ func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKe
 	mid, err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body)
 	if err != nil {
 		d.recordSendError(ctx, sid, err)
+		// Keep the stamp — gate retries to the dedup window.
 		return
 	}
 	d.cardMsgs.remember(mid, sid)
-
-	d.muD.Lock()
-	d.lastDispatch[dedupKey] = now
-	// Always stamp the session-level key too so heuristic fallbacks are gated.
-	d.lastDispatch[sessionKey] = now
-	d.muD.Unlock()
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey string, render func() ([]byte, error)) {
@@ -282,20 +298,28 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 		d.muD.Unlock()
 		return
 	}
+	d.lastDispatch[dedupKey] = now
 	d.muD.Unlock()
+
+	rollback := func() {
+		d.muD.Lock()
+		defer d.muD.Unlock()
+		if d.lastDispatch[dedupKey] == now {
+			delete(d.lastDispatch, dedupKey)
+		}
+	}
 
 	tok, openID, _, err := d.cfg.Token.Get(ctx)
 	if err != nil {
-		if errors.Is(err, ErrTokenNotConfigured) {
-			return
-		}
-		if errors.Is(err, ErrTokenDisabled) {
+		rollback()
+		if errors.Is(err, ErrTokenNotConfigured) || errors.Is(err, ErrTokenDisabled) {
 			return
 		}
 		log.Printf("feishu: dispatch token: %v", err)
 		return
 	}
 	if openID == "" {
+		rollback()
 		return
 	}
 
@@ -311,10 +335,6 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 		return
 	}
 	d.cardMsgs.remember(mid, sid)
-
-	d.muD.Lock()
-	d.lastDispatch[dedupKey] = now
-	d.muD.Unlock()
 }
 
 type feishuAuthClass interface {

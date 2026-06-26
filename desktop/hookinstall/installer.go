@@ -42,12 +42,13 @@ func installAt(home string) error {
 		return err
 	}
 
-	desired := desiredEntries(link)
-	merged := mergeAttermEntries(cfg.Hooks.Notification, desired, isAttermHookCommand)
-	if entriesEqual(cfg.Hooks.Notification, merged) {
+	mergedNotif := mergeAttermEntries(cfg.Hooks.Notification, desiredNotificationEntries(link), isAttermHookCommand)
+	mergedPre := mergeAttermEntries(cfg.Hooks.PreToolUse, desiredPreToolUseEntries(link), isAttermHookCommand)
+	if entriesEqual(cfg.Hooks.Notification, mergedNotif) && entriesEqual(cfg.Hooks.PreToolUse, mergedPre) {
 		return nil
 	}
-	cfg.Hooks.Notification = merged
+	cfg.Hooks.Notification = mergedNotif
+	cfg.Hooks.PreToolUse = mergedPre
 
 	return writeClaudeSettings(home, cfg)
 }
@@ -67,27 +68,42 @@ func uninstallAt(home string) error {
 		}
 		return err
 	}
-	filtered := make([]HookEntry, 0, len(cfg.Hooks.Notification))
-	for _, e := range cfg.Hooks.Notification {
-		if !isAttermHookCommand(e) {
-			filtered = append(filtered, e)
-		}
-	}
-	if entriesEqual(cfg.Hooks.Notification, filtered) {
+	filteredNotif := stripAttermEntries(cfg.Hooks.Notification)
+	filteredPre := stripAttermEntries(cfg.Hooks.PreToolUse)
+	if entriesEqual(cfg.Hooks.Notification, filteredNotif) && entriesEqual(cfg.Hooks.PreToolUse, filteredPre) {
 		return nil
 	}
-	cfg.Hooks.Notification = filtered
+	cfg.Hooks.Notification = filteredNotif
+	cfg.Hooks.PreToolUse = filteredPre
 	return writeClaudeSettings(home, cfg)
 }
 
-// desiredEntries returns the single Notification entry we own. The
-// matcher is empty (match all notifications) and the command relays the
-// full hook payload to the atterm desktop process, which discriminates
-// the event kind itself — so one schema-valid entry replaces what used
-// to be two object-matcher entries.
-func desiredEntries(link string) []HookEntry {
+func stripAttermEntries(in []HookEntry) []HookEntry {
+	out := make([]HookEntry, 0, len(in))
+	for _, e := range in {
+		if !isAttermHookCommand(e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// desiredNotificationEntries returns the Notification entry we own. The
+// matcher is empty (match all notification_type values) — the desktop
+// adapter discriminates by notification_type itself.
+func desiredNotificationEntries(link string) []HookEntry {
 	return []HookEntry{
 		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+	}
+}
+
+// desiredPreToolUseEntries returns the PreToolUse entry we own. Matched
+// strictly on AskUserQuestion — claude-code's Notification hook does NOT
+// fire for that tool, so PreToolUse is the only place to learn the
+// questions/options payload and render a button-bearing card.
+func desiredPreToolUseEntries(link string) []HookEntry {
+	return []HookEntry{
+		{Matcher: "AskUserQuestion", Hooks: []HookCommand{{Type: "command", Command: link}}},
 	}
 }
 

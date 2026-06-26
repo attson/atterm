@@ -327,6 +327,15 @@ export const en = {
       copied: "Copied",
       reconfigure: "Re-enter credentials",
       aiOnlyNotifications: "Notify for AI sessions only",
+      remoteTerminal: {
+        enable: "Enable Feishu remote terminal",
+        autoAttachLabel: "Auto-attach sessions",
+        autoAttach: {
+          ai: "AI sessions only",
+          all: "All sessions",
+          none: "Never (manual attach)",
+        },
+      },
       hook_install: {
         enable: "Auto-install Claude Code hook",
         retry: "Retry",

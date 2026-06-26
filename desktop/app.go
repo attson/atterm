@@ -1648,6 +1648,63 @@ func (a *App) SetAINotificationsOnly(enabled bool) error {
 	return nil
 }
 
+// FeishuRemoteTerminalSettings is returned by GetFeishuRemoteTerminalSettings.
+type FeishuRemoteTerminalSettings struct {
+	Enabled    bool   `json:"enabled"`
+	AutoAttach string `json:"auto_attach"`
+}
+
+// GetFeishuRemoteTerminalSettings returns the current binding's remote
+// terminal settings. Returns defaults (false, "ai") when the relay host is
+// unavailable or no binding exists.
+//
+// Wails-bound methods must not declare context.Context in their signature.
+func (a *App) GetFeishuRemoteTerminalSettings() (FeishuRemoteTerminalSettings, error) {
+	defaults := FeishuRemoteTerminalSettings{Enabled: false, AutoAttach: "ai"}
+	if a.host == nil || a.host.sqliteStore == nil {
+		return defaults, nil
+	}
+	if a.ctx == nil {
+		return defaults, nil
+	}
+	b, err := a.host.sqliteStore.GetFeishuBinding(a.ctx, a.host.adminUserID)
+	if err != nil {
+		// Binding not yet created → return defaults, not an error.
+		return defaults, nil
+	}
+	autoAttach := b.SessionAutoAttach
+	if autoAttach == "" {
+		autoAttach = "ai"
+	}
+	return FeishuRemoteTerminalSettings{
+		Enabled:    b.RemoteTerminalEnabled,
+		AutoAttach: autoAttach,
+	}, nil
+}
+
+// SetFeishuRemoteTerminalSettings updates the remote terminal toggle and
+// autoAttach mode for the current user's Feishu binding. If the enabled flag
+// flipped, OnRemoteTerminalToggle is called to tear down (or arm) active
+// subscribers.
+//
+// Wails-bound methods must not declare context.Context in their signature.
+func (a *App) SetFeishuRemoteTerminalSettings(enabled bool, autoAttach string) error {
+	if a.host == nil || a.host.sqliteStore == nil {
+		return fmt.Errorf("relay host unavailable")
+	}
+	if a.ctx == nil {
+		return fmt.Errorf("app not ready")
+	}
+	prev, _ := a.host.sqliteStore.GetFeishuBinding(a.ctx, a.host.adminUserID)
+	if err := a.host.sqliteStore.SetRemoteTerminalSettings(a.ctx, a.host.adminUserID, enabled, autoAttach); err != nil {
+		return err
+	}
+	if prev != nil && prev.RemoteTerminalEnabled != enabled {
+		a.host.OnRemoteTerminalToggle(enabled)
+	}
+	return nil
+}
+
 // GetPtyInputDebugEnabled reports whether PTY input debug logging is on.
 func (a *App) GetPtyInputDebugEnabled() bool {
 	if a.cfgStore == nil {

@@ -98,6 +98,14 @@ export function GetAINotificationsOnly() {
   return window['go']['main']['App']['GetAINotificationsOnly']();
 }
 
+export function GetFeishuRemoteTerminalSettings() {
+  return window['go']['main']['App']['GetFeishuRemoteTerminalSettings']();
+}
+
+export function SetFeishuRemoteTerminalSettings(arg1, arg2) {
+  return window['go']['main']['App']['SetFeishuRemoteTerminalSettings'](arg1, arg2);
+}
+
 export function GetNotificationsEnabled() {
   return window['go']['main']['App']['GetNotificationsEnabled']();
 }

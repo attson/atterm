@@ -329,6 +329,15 @@ export const zhCN = {
       copied: "已复制",
       reconfigure: "重新配置凭据",
       aiOnlyNotifications: "仅 AI 会话通知",
+      remoteTerminal: {
+        enable: "启用飞书远程接管",
+        autoAttachLabel: "自动接管会话",
+        autoAttach: {
+          ai: "仅 AI 会话",
+          all: "所有会话",
+          none: "不自动接管",
+        },
+      },
       hook_install: {
         enable: "自动安装 Claude Code Hook",
         retry: "重试",

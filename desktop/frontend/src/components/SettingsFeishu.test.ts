@@ -19,4 +19,27 @@ describe("SettingsFeishu", () => {
     expect(source).toContain(":checked=\"aiOnlyNotifications\"");
     expect(source).toContain("onToggleAIOnly");
   });
+
+  test("imports the remote terminal bindings from the api layer", () => {
+    expect(source).toContain("getFeishuRemoteTerminalSettings");
+    expect(source).toContain("setFeishuRemoteTerminalSettings");
+  });
+
+  test("tracks remote terminal state with refs and reads them on mount", () => {
+    expect(source).toContain("remoteTerminalEnabled");
+    expect(source).toMatch(/remoteTerminalEnabled\s*=\s*ref\(false\)/);
+    expect(source).toContain("sessionAutoAttach");
+    expect(source).toMatch(/sessionAutoAttach\s*=\s*ref\('ai'\)/);
+    expect(source).toContain("getFeishuRemoteTerminalSettings()");
+  });
+
+  test("renders the remote terminal checkbox toggle and autoAttach select", () => {
+    expect(source).toContain("settings.feishu.remoteTerminal.enable");
+    expect(source).toContain(":checked=\"remoteTerminalEnabled\"");
+    expect(source).toContain("onRemoteTerminalToggleChange");
+    expect(source).toContain("settings.feishu.remoteTerminal.autoAttach.ai");
+    expect(source).toContain("settings.feishu.remoteTerminal.autoAttach.all");
+    expect(source).toContain("settings.feishu.remoteTerminal.autoAttach.none");
+    expect(source).toContain("onAutoAttachChange");
+  });
 });

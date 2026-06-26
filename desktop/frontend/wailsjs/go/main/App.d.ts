@@ -53,6 +53,10 @@ export function GetLoggingConfig():Promise<main.LoggingConfig>;
 
 export function GetAINotificationsOnly():Promise<boolean>;
 
+export function GetFeishuRemoteTerminalSettings():Promise<main.FeishuRemoteTerminalSettings>;
+
+export function SetFeishuRemoteTerminalSettings(arg1:boolean,arg2:string):Promise<void>;
+
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;

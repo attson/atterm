@@ -934,9 +934,6 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 // themselves are unaffected. When flipped on, no bulk re-attach — new
 // sessions pick up via autoAttach; pre-existing sessions need to recreate
 // (P2 — explicit /attach command).
-//
-// TODO(task-20): call this from the admin HTTP handler that calls
-// SetRemoteTerminalSettings, once that handler is added.
 func (h *relayHost) OnRemoteTerminalToggle(enabled bool) {
 	if enabled {
 		return // No bulk re-attach on enable; new sessions pick up naturally.

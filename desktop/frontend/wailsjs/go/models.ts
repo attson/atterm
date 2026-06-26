@@ -399,6 +399,20 @@ export namespace main {
 	        this.callback_url = source["callback_url"];
 	    }
 	}
+	export class FeishuRemoteTerminalSettings {
+		enabled: boolean;
+		auto_attach: string;
+
+		static createFrom(source: any = {}) {
+			return new FeishuRemoteTerminalSettings(source);
+		}
+
+		constructor(source: any = {}) {
+			if ('string' === typeof source) source = JSON.parse(source);
+			this.enabled = source["enabled"];
+			this.auto_attach = source["auto_attach"];
+		}
+	}
 	export class FileContent {
 	    path: string;
 	    data: number[];

@@ -28,6 +28,20 @@
         <span>{{ t('settings.feishu.aiOnlyNotifications') }}</span>
       </label>
     </section>
+    <section class="remote-terminal" data-test="feishu-remote-terminal">
+      <label class="remote-terminal__toggle">
+        <input type="checkbox" :checked="remoteTerminalEnabled" @change="onRemoteTerminalToggleChange" />
+        <span>{{ t('settings.feishu.remoteTerminal.enable') }}</span>
+      </label>
+      <label v-if="remoteTerminalEnabled" class="remote-terminal__attach-label">
+        <span>{{ t('settings.feishu.remoteTerminal.autoAttachLabel') }}</span>
+        <select :value="sessionAutoAttach" @change="onAutoAttachChange" class="remote-terminal__attach-select" data-test="feishu-auto-attach">
+          <option value="ai">{{ t('settings.feishu.remoteTerminal.autoAttach.ai') }}</option>
+          <option value="all">{{ t('settings.feishu.remoteTerminal.autoAttach.all') }}</option>
+          <option value="none">{{ t('settings.feishu.remoteTerminal.autoAttach.none') }}</option>
+        </select>
+      </label>
+    </section>
     <div v-if="status.error" class="hint feishu-status-error" data-test="feishu-load-error">
       <span>{{ t('settings.feishu.load_error', { error: status.error }) }}</span>
       <button type="button" class="hook-install__retry" @click="refresh" data-test="feishu-status-retry">
@@ -128,6 +142,8 @@ import {
   setHookInstallEnabled,
   getAINotificationsOnly,
   setAINotificationsOnly,
+  getFeishuRemoteTerminalSettings,
+  setFeishuRemoteTerminalSettings,
   type FeishuStatusResp,
   type FeishuCredentials,
   type HookInstallState,
@@ -163,6 +179,44 @@ async function onToggleAIOnly(e: Event) {
     // Persist failed: re-read so the checkbox reflects the actual backend state.
     try {
       aiOnlyNotifications.value = await getAINotificationsOnly()
+    } catch {
+      /* leave the optimistic value */
+    }
+  }
+}
+
+// Remote terminal toggle + autoAttach dropdown. Default to off/"ai" so the UI
+// matches the backend default before onMounted reads the persisted value.
+const remoteTerminalEnabled = ref(false)
+const sessionAutoAttach = ref('ai')
+
+async function onRemoteTerminalToggleChange(e: Event) {
+  const on = (e.target as HTMLInputElement).checked
+  try {
+    await setFeishuRemoteTerminalSettings(on, sessionAutoAttach.value)
+    remoteTerminalEnabled.value = on
+  } catch {
+    // Persist failed: re-read so the checkbox reflects the actual backend state.
+    try {
+      const s = await getFeishuRemoteTerminalSettings()
+      remoteTerminalEnabled.value = s.enabled
+      sessionAutoAttach.value = s.auto_attach
+    } catch {
+      /* leave the optimistic value */
+    }
+  }
+}
+
+async function onAutoAttachChange(e: Event) {
+  const mode = (e.target as HTMLSelectElement).value
+  try {
+    await setFeishuRemoteTerminalSettings(remoteTerminalEnabled.value, mode)
+    sessionAutoAttach.value = mode
+  } catch {
+    try {
+      const s = await getFeishuRemoteTerminalSettings()
+      remoteTerminalEnabled.value = s.enabled
+      sessionAutoAttach.value = s.auto_attach
     } catch {
       /* leave the optimistic value */
     }
@@ -267,6 +321,13 @@ onMounted(async () => {
     aiOnlyNotifications.value = await getAINotificationsOnly()
   } catch {
     // non-fatal; keep the default-on value.
+  }
+  try {
+    const rts = await getFeishuRemoteTerminalSettings()
+    remoteTerminalEnabled.value = rts.enabled
+    sessionAutoAttach.value = rts.auto_attach
+  } catch {
+    // non-fatal; keep the defaults (false / "ai").
   }
 })
 
@@ -508,4 +569,29 @@ async function onDelete() {
   margin-bottom: 12px;
 }
 .ai-only__toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.remote-terminal {
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.remote-terminal__toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.remote-terminal__attach-label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--fg-dim);
+  padding-left: 22px;
+}
+.remote-terminal__attach-select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+}
 </style>

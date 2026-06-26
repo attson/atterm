@@ -96,3 +96,16 @@ export function coResidentIndex(
   localHostIds.forEach((hid, i) => out.set(hid, i + 1))
   return out
 }
+
+// hostNameWithIndex wraps hostName() and appends a "#N" co-residence suffix
+// when an index is provided. Index 0 / undefined → no suffix (the helper
+// stays no-op for the single-instance default).
+export function hostNameWithIndex(
+  hostId: string,
+  list: { host?: string }[] | undefined,
+  unknownHost: string,
+  index: number | undefined,
+): string {
+  const base = hostName(hostId, list, unknownHost)
+  return index && index >= 1 ? `${base} #${index}` : base
+}

@@ -5,6 +5,7 @@ import {
   fullCommand,
   rowTitle,
   hostName,
+  hostNameWithIndex,
   coResidentIndex,
   taskStateLabel,
 } from './sessionLabel'
@@ -146,5 +147,25 @@ describe('sessionLabel.coResidentIndex', () => {
       'h-b': [{ host: 'mac' }],
     }
     expect(coResidentIndex(byHost, 'mac').size).toBe(0)
+  })
+})
+
+describe('sessionLabel.hostNameWithIndex', () => {
+  it('returns the base name when index is undefined', () => {
+    expect(hostNameWithIndex('h-1', [{ host: 'mac' }], 'unknown', undefined))
+      .toBe('mac')
+  })
+  it('returns the base name when index is 0 (treated as absent)', () => {
+    expect(hostNameWithIndex('h-1', [{ host: 'mac' }], 'unknown', 0))
+      .toBe('mac')
+  })
+  it('appends "#N" suffix when index >= 1', () => {
+    expect(hostNameWithIndex('h-1', [{ host: 'mac' }], 'unknown', 1))
+      .toBe('mac #1')
+    expect(hostNameWithIndex('h-2', [{ host: 'mac' }], 'unknown', 2))
+      .toBe('mac #2')
+  })
+  it('appends suffix even when falling back to host_id', () => {
+    expect(hostNameWithIndex('h-1', [], 'unknown', 1)).toBe('h-1 #1')
   })
 })

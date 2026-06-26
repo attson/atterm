@@ -179,6 +179,34 @@ func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string
 	return &b, nil
 }
 
+// SetRemoteTerminalSettings updates the master switch and autoAttach mode
+// for an existing binding. autoAttach must be one of "ai", "all", "none".
+func (s *SQLiteStore) SetRemoteTerminalSettings(ctx context.Context, userID string, enabled bool, autoAttach string) error {
+	switch autoAttach {
+	case "ai", "all", "none":
+	default:
+		return fmt.Errorf("userstore: invalid session_auto_attach %q (want ai|all|none)", autoAttach)
+	}
+	enabledInt := 0
+	if enabled {
+		enabledInt = 1
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE feishu_bindings
+		 SET remote_terminal_enabled = ?, session_auto_attach = ?
+		 WHERE user_id = ?`,
+		enabledInt, autoAttach, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("set remote terminal settings: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrFeishuBindingNotFound
+	}
+	return nil
+}
+
 func (s *SQLiteStore) MarkFeishuBindingBound(ctx context.Context, userID, openID string) error {
 	now := time.Now().Unix()
 	res, err := s.db.ExecContext(ctx,

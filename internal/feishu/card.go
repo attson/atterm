@@ -347,6 +347,16 @@ func actionRowOf(buttons ...map[string]any) map[string]any {
 	return map[string]any{"tag": "action", "actions": acts}
 }
 
+// RenderToastUpdate produces a card.action callback response that shows a
+// toast to the user without rewriting the card body. Used to surface reject
+// reasons from the inbound router.
+func RenderToastUpdate(toast string) AckResponse {
+	return AckResponse{
+		Toast: map[string]any{"type": "error", "content": toast},
+		Card:  map[string]any{},
+	}
+}
+
 func RenderAckUpdateCard(in AckUpdateInput) AckResponse {
 	shortID := in.SessionID
 	if len(shortID) > 8 {

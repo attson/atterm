@@ -93,6 +93,7 @@ type EnvelopeHeader struct {
 type MessageReceive struct {
 	SenderOpenID string
 	Text         string
+	ReplyToMsgID string // parent_id when this is a reply to another message
 }
 
 type CardActionTrigger struct {
@@ -101,6 +102,7 @@ type CardActionTrigger struct {
 	SessionID      string
 	Event          string
 	Text           string
+	CardToken      string // CardKit card token from the event envelope (may be empty)
 }
 
 // ParseEnvelope inspects plaintext (already decrypted) and routes it to
@@ -137,6 +139,7 @@ func ParseEnvelope(plaintext []byte) (*Envelope, error) {
 			Message struct {
 				Content     string `json:"content"`
 				MessageType string `json:"message_type"`
+				ParentID    string `json:"parent_id"` // set when this message quotes/replies to another
 			} `json:"message"`
 		}
 		if err := json.Unmarshal(probe.Event, &ev); err != nil {
@@ -150,6 +153,7 @@ func ParseEnvelope(plaintext []byte) (*Envelope, error) {
 		env.Message = &MessageReceive{
 			SenderOpenID: ev.Sender.SenderID.OpenID,
 			Text:         inner.Text,
+			ReplyToMsgID: ev.Message.ParentID,
 		}
 	case "card.action.trigger":
 		var ev struct {
@@ -164,6 +168,7 @@ func ParseEnvelope(plaintext []byte) (*Envelope, error) {
 			Operator struct {
 				OpenID string `json:"open_id"`
 			} `json:"operator"`
+			Token string `json:"token"` // CardKit card token (Feishu places it here in card.action.trigger)
 		}
 		if err := json.Unmarshal(probe.Event, &ev); err != nil {
 			return nil, fmt.Errorf("feishu: parse card.action: %w", err)
@@ -174,6 +179,7 @@ func ParseEnvelope(plaintext []byte) (*Envelope, error) {
 			SessionID:      ev.Action.Value.SessionID,
 			Event:          ev.Action.Value.Event,
 			Text:           ev.Action.Value.Text,
+			CardToken:      ev.Token,
 		}
 	}
 	return env, nil

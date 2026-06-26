@@ -26,6 +26,7 @@ import (
 	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/e2eeclient"
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
@@ -2127,6 +2128,18 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	if a.host != nil {
 		a.host.FeishuHookEndpoint = hookEndpoint
 		a.host.SetFeishuDispatcher(svc.Dispatcher())
+		// Wire the inbound router so LongConn card actions and reply messages
+		// are routed through the CardIndex + FeishuSubscriber registry.
+		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
+			a.host.feishuSubsMu.Lock()
+			defer a.host.feishuSubsMu.Unlock()
+			fs, ok := a.host.feishuSubs[sessionID]
+			if !ok || fs == nil {
+				return nil
+			}
+			return fs
+		})
+		svc.SetRouter(router)
 	}
 
 	if mode == "local" {
@@ -2174,6 +2187,18 @@ func (a *App) reconcileFeishuMode(ctx context.Context, cfg appConfig) {
 	a.feishuHookSrv.SetDispatcher(newSvc.Dispatcher())
 	if a.host != nil {
 		a.host.SetFeishuDispatcher(newSvc.Dispatcher())
+		// Rebuild the inbound router for the new service so LongConn events
+		// are routed through the same CardIndex + FeishuSubscriber registry.
+		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
+			a.host.feishuSubsMu.Lock()
+			defer a.host.feishuSubsMu.Unlock()
+			fs, ok := a.host.feishuSubs[sessionID]
+			if !ok || fs == nil {
+				return nil
+			}
+			return fs
+		})
+		newSvc.SetRouter(router)
 	}
 	a.feishuService = newSvc
 	a.feishuMode = desired

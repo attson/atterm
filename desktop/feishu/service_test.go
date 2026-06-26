@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/google/uuid"
 	"github.com/zalando/go-keyring"
 )
@@ -218,7 +219,7 @@ func TestHandleCardAction_InjectWritesText(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
 	sid := uuid.New()
-	s.handleCardAction(context.Background(), sid.String(), "inject", "", "1\n")
+	s.handleCardAction(context.Background(), sid.String(), "inject", "", "", "1\n")
 	if inj.gotSID != sid || inj.gotText != "1\n" {
 		t.Fatalf("inject got sid=%s text=%q", inj.gotSID, inj.gotText)
 	}
@@ -227,7 +228,7 @@ func TestHandleCardAction_InjectWritesText(t *testing.T) {
 func TestHandleCardAction_NonInjectIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "")
+	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "", "")
 	if inj.gotText != "" {
 		t.Fatalf("ack should not inject, got %q", inj.gotText)
 	}
@@ -237,7 +238,7 @@ func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
 	inj := &fakeInjector{err: errors.New("inbound full")}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
 	// 不应 panic;错误被 log 吞掉。
-	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "x\n")
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "x\n")
 	if inj.gotText != "x\n" {
 		t.Fatalf("inject should still be attempted, got %q", inj.gotText)
 	}
@@ -246,7 +247,7 @@ func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
 func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "x\n")
+	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "", "x\n")
 	if inj.gotText != "" {
 		t.Fatalf("invalid uuid must not inject, got %q", inj.gotText)
 	}
@@ -255,8 +256,85 @@ func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
 func TestHandleCardAction_EmptyTextIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "")
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "")
 	if inj.gotText != "" {
 		t.Fatalf("empty text must not inject, got %q", inj.gotText)
+	}
+}
+
+// stubRouterSubscriber is a minimal internalfeishu.Subscriber for router tests.
+type stubRouterSubscriber struct {
+	sentInput []byte
+	owner     string
+}
+
+func (s *stubRouterSubscriber) ClaimDriver()            {}
+func (s *stubRouterSubscriber) OwnerOpenID() string     { return s.owner }
+func (s *stubRouterSubscriber) SendInput(b []byte) bool { s.sentInput = b; return true }
+
+// TestHandleCardAction_RouterInput verifies that handleCardAction with kind="input"
+// routes through the router and delivers the payload to the subscriber.
+func TestHandleCardAction_RouterInput(t *testing.T) {
+	const ownerOpenID = "ou_owner"
+	sessID := uuid.New().String()
+
+	stub := &stubRouterSubscriber{owner: ownerOpenID}
+
+	idx := internalfeishu.NewCardIndex()
+	idx.Put(&internalfeishu.CardAnchor{
+		SessionID:   sessID,
+		CardMsgID:   "msg_test",
+		CardToken:   "tok_test",
+		OwnerOpenID: ownerOpenID,
+	})
+
+	router := internalfeishu.NewRouter(idx, func(sessionID string) internalfeishu.Subscriber {
+		if sessionID == sessID {
+			return stub
+		}
+		return nil
+	})
+
+	s := &Service{cfg: ServiceConfig{Sessions: &fakeInjector{}}}
+	s.SetRouter(router)
+
+	s.handleCardAction(context.Background(), sessID, "input", "", ownerOpenID, "ls")
+
+	want := []byte("ls\n")
+	if string(stub.sentInput) != string(want) {
+		t.Fatalf("SendInput got %q, want %q", stub.sentInput, want)
+	}
+}
+
+// TestHandleCardAction_RouterInputWrongOwner verifies that handleCardAction
+// rejects input from an operator who is not the anchor owner.
+func TestHandleCardAction_RouterInputWrongOwner(t *testing.T) {
+	const ownerOpenID = "ou_owner"
+	sessID := uuid.New().String()
+
+	stub := &stubRouterSubscriber{owner: ownerOpenID}
+
+	idx := internalfeishu.NewCardIndex()
+	idx.Put(&internalfeishu.CardAnchor{
+		SessionID:   sessID,
+		CardMsgID:   "msg_test2",
+		CardToken:   "tok_test2",
+		OwnerOpenID: ownerOpenID,
+	})
+
+	router := internalfeishu.NewRouter(idx, func(sessionID string) internalfeishu.Subscriber {
+		if sessionID == sessID {
+			return stub
+		}
+		return nil
+	})
+
+	s := &Service{cfg: ServiceConfig{Sessions: &fakeInjector{}}}
+	s.SetRouter(router)
+
+	s.handleCardAction(context.Background(), sessID, "input", "", "ou_intruder", "rm -rf /")
+
+	if len(stub.sentInput) != 0 {
+		t.Fatalf("wrong owner must not inject, got %q", stub.sentInput)
 	}
 }

@@ -60,6 +60,42 @@ type Service struct {
 
 	lcMu     sync.Mutex // guards longConn (EnsureLongConn / CloseLongConn)
 	longConn *LongConn
+
+	routerMu sync.RWMutex
+	router   *internalfeishu.Router
+}
+
+// SetRouter installs the inbound router used by handleReplyMessage and
+// handleCardAction. Called by relay_host (via app.go) once the CardIndex and
+// FeishuSubscriber registry are built. Safe to call concurrently; nil clears
+// the router so anchor card actions are no longer routed (existing inject/ack
+// paths in handleCardAction are unaffected).
+func (s *Service) SetRouter(r *internalfeishu.Router) {
+	s.routerMu.Lock()
+	s.router = r
+	s.routerMu.Unlock()
+}
+
+func (s *Service) getRouter() *internalfeishu.Router {
+	s.routerMu.RLock()
+	defer s.routerMu.RUnlock()
+	return s.router
+}
+
+// replyText sends a plain text message back to openID using the dispatcher's
+// token source and IM client. Best-effort: errors are logged and swallowed.
+func (s *Service) replyText(ctx context.Context, openID, text string) {
+	if s.dispatcher == nil {
+		return
+	}
+	tok, _, err := s.dispatcher.GetToken(ctx)
+	if err != nil {
+		log.Printf("feishu: replyText get token: %v", err)
+		return
+	}
+	if err := s.imClient.SendTextToOpenID(ctx, tok, openID, text); err != nil {
+		log.Printf("feishu: replyText send to %s: %v", openID, err)
+	}
 }
 
 func NewService(cfg ServiceConfig) (*Service, error) {
@@ -161,7 +197,7 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 			s.handleReplyMessage(ctx, senderOpenID, parentID, text)
 		},
 		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
-			s.handleCardAction(ctx, sessionID, kind, event, text)
+			s.handleCardAction(ctx, sessionID, kind, event, operatorOpenID, text)
 		},
 		OnAuthClassFailure: func(ctx context.Context, _ error) {
 			_ = s.store.SetDisabled(ctx)
@@ -215,7 +251,7 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 // ModeLocal only: ModeRelay free-text reply is not yet wired (cross-process map).
 // The relay process holds no copy of this in-process cardMsgs map, so relay users
 // must use the card's quick-action buttons instead.
-func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentID, text string) {
+func (s *Service) handleReplyMessage(ctx context.Context, senderOpenID, parentID, text string) {
 	t := strings.TrimSpace(text)
 	if parentID == "" || t == "" {
 		return
@@ -223,6 +259,34 @@ func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentI
 	if strings.HasPrefix(t, "/bind ") {
 		return // a bind command, not a reply-to-card
 	}
+
+	// Anchor card routing takes precedence: if a Router is installed and the
+	// replied-to message is an anchor card, let the router handle it (permission
+	// gate + subscriber inject). Fall through to the legacy cardMsgs path only
+	// when the router is nil or doesn't know the card.
+	if r := s.getRouter(); r != nil {
+		decision := r.RouteReply(parentID, senderOpenID, t)
+		switch decision.Action {
+		case internalfeishu.ActionInject:
+			return // router handled it; done
+		case internalfeishu.ActionReject:
+			if decision.Toast != "" {
+				s.replyText(ctx, senderOpenID, decision.Toast)
+			}
+			return
+		case internalfeishu.ActionPreempt:
+			// Phase 2; treat as reject with toast for now.
+			if decision.Toast != "" {
+				s.replyText(ctx, senderOpenID, decision.Toast)
+			}
+			return
+		}
+		// If the router returned an unknown action (shouldn't happen), fall through.
+	}
+
+	// Legacy fallback: look up the card in the dispatcher's in-process map and
+	// inject directly via Sessions. This path covers local-mode non-anchor cards
+	// (e.g. WaitingInput cards sent before anchor cards were introduced).
 	if s.dispatcher == nil {
 		return
 	}
@@ -235,17 +299,44 @@ func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentI
 	}
 }
 
-func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, text string) {
-	if kind != "inject" || text == "" {
-		return
-	}
-	sid, err := uuid.Parse(sessionID)
-	if err != nil {
-		log.Printf("feishu: card inject bad session_id %q: %v", sessionID, err)
-		return
-	}
-	if err := s.cfg.Sessions.Inject(sid, text); err != nil {
-		log.Printf("feishu: card inject session=%s: %v", sid, err)
+func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
+	switch kind {
+	case "input", "key", "end":
+		// Anchor card actions: route through the inbound router.
+		r := s.getRouter()
+		if r == nil {
+			return // anchor card routing not configured; drop silently
+		}
+		decision := r.RouteCardActionBySession(sessionID, operatorOpenID, kind, event, text)
+		switch decision.Action {
+		case internalfeishu.ActionInject:
+			// Happy path; no response needed for LongConn card actions.
+		case internalfeishu.ActionReject:
+			if decision.Toast != "" && operatorOpenID != "" {
+				s.replyText(ctx, operatorOpenID, decision.Toast)
+			}
+		case internalfeishu.ActionPreempt:
+			// Phase 2; treat as reject with toast for now.
+			if decision.Toast != "" && operatorOpenID != "" {
+				s.replyText(ctx, operatorOpenID, decision.Toast)
+			}
+		}
+	case "inject":
+		// Legacy AskQuestion inject path (PR #250): inject text directly into
+		// the session via SessionLookup. Keep existing behaviour intact.
+		if text == "" {
+			return
+		}
+		sid, err := uuid.Parse(sessionID)
+		if err != nil {
+			log.Printf("feishu: card inject bad session_id %q: %v", sessionID, err)
+			return
+		}
+		if err := s.cfg.Sessions.Inject(sid, text); err != nil {
+			log.Printf("feishu: card inject session=%s: %v", sid, err)
+		}
+	default:
+		// Unknown kind; ignore.
 	}
 }
 

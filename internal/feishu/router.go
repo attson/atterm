@@ -71,6 +71,23 @@ func (r *Router) RouteCardAction(cardToken, operatorOpenID, kind, event, text st
 	if anchor == nil {
 		return Decision{Action: ActionReject, Toast: "卡片已过期，请通过新指令重启"}
 	}
+	return r.routeCardActionWith(anchor, operatorOpenID, kind, event, text)
+}
+
+// RouteCardActionBySession handles a card.action.trigger event using the
+// action's session_id to look up the anchor. This is the preferred path
+// when the CardToken from the envelope is empty or doesn't match our index
+// (e.g. old-style cards whose CardToken was set to msg_id).
+func (r *Router) RouteCardActionBySession(sessionID, operatorOpenID, kind, event, text string) Decision {
+	anchor := r.idx.BySessionID(sessionID)
+	if anchor == nil {
+		return Decision{Action: ActionReject, Toast: "卡片已过期，请通过新指令重启"}
+	}
+	return r.routeCardActionWith(anchor, operatorOpenID, kind, event, text)
+}
+
+// routeCardActionWith dispatches a card action against a resolved anchor.
+func (r *Router) routeCardActionWith(anchor *CardAnchor, operatorOpenID, kind, event, text string) Decision {
 	switch kind {
 	case "input":
 		if text == "" {

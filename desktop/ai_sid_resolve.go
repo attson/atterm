@@ -294,6 +294,45 @@ const (
 	claudeFreshGrace      = 3 * time.Second
 )
 
+// chooseNextSidContinuous picks the sid to emit on a continuous-tracking tick
+// (the pane already has lastEmitted != ""). Returns "" to keep the current sid.
+//
+//   - adv         — session ids whose jsonl mtime advanced since the last tick
+//   - titleMatch  — sid resolved by the pane's current OSC title, or "" if
+//     the title didn't yield a unique match
+//   - lastEmitted — the sid this pane most recently committed to
+//
+// The tricky case is "exactly one jsonl advanced and it isn't ours." It could
+// be a /resume on THIS pane (claude writes metadata into the switched-to file
+// even before the user types), OR it could be cross-talk from another claude
+// pane in the same cwd writing into ITS own conversation. The first version of
+// this tracker emitted unconditionally on a single advance, which under
+// same-cwd concurrency overwrote pane B's tracked sid with pane A's writes —
+// after a restart both panes resumed pane A's conversation. We now require the
+// pane's title to also resolve to the advanced sid; a same-cwd peer's write
+// doesn't touch this pane's title, so the switch is rejected. A real /resume
+// updates the OSC title to the new conversation's title, so the switch
+// completes within ~one tick.
+//
+// Multiple simultaneous advances (≥2) means concurrent writes from same-cwd
+// peers — fall back to title match, which is the only authoritative signal.
+func chooseNextSidContinuous(adv []string, titleMatch, lastEmitted string) string {
+	switch len(adv) {
+	case 0:
+		return ""
+	case 1:
+		if adv[0] == lastEmitted {
+			return ""
+		}
+		if adv[0] != "" && adv[0] == titleMatch {
+			return adv[0]
+		}
+		return ""
+	default:
+		return titleMatch
+	}
+}
+
 // startClaudeTitleResolve continuously tracks the session's ACTIVE claude
 // conversation id for the session's lifetime (until ctx is cancelled on PTY
 // exit), calling onCapture whenever it changes. Running once and stopping would
@@ -304,10 +343,9 @@ const (
 //   - Initial capture (nothing emitted yet): title match (precise) else
 //     fresh-file (a brand-new title-less session, by its just-created jsonl).
 //   - Then track the conversation claude is actively WRITING: the jsonl whose
-//     mtime advanced since the last tick. A single advancing file is the
-//     current conversation — this catches a /resume switch promptly (claude
-//     writes metadata to the switched file even before you type). If ≥2 files
-//     advanced (same-cwd concurrency), disambiguate by title; never guess.
+//     mtime advanced since the last tick. See chooseNextSidContinuous for the
+//     decision rules — in particular, same-cwd cross-talk is rejected by
+//     requiring the OSC title to agree before switching.
 //
 // The watch dir is recomputed from the session's LIVE cwd each tick (meta.Cwd
 // can lag a recent `cd` at classification time).
@@ -349,17 +387,12 @@ func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home st
 
 		adv := advancedSids(prev, cur)
 		prev = cur
-		switch len(adv) {
-		case 1:
-			emit(adv[0])
-		case 0:
-			// idle — keep current conversation
-		default:
-			// ≥2 conversations being written (same-cwd concurrency): the active
-			// file is ambiguous; fall back to the precise title match.
-			if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
-				emit(sid)
-			}
+		titleMatch := ""
+		if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
+			titleMatch = sid
+		}
+		if sid := chooseNextSidContinuous(adv, titleMatch, lastEmitted); sid != "" {
+			emit(sid)
 		}
 	}
 }

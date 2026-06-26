@@ -178,3 +178,72 @@ func TestResolveClaudeSessionID_AmbiguousNewestWins(t *testing.T) {
 		t.Fatal("equal-mtime collision must be ambiguous (no result)")
 	}
 }
+
+func TestChooseNextSidContinuous(t *testing.T) {
+	cases := []struct {
+		name        string
+		adv         []string
+		titleMatch  string
+		lastEmitted string
+		want        string
+	}{
+		{
+			name:        "idle: no advances, no switch",
+			adv:         nil,
+			titleMatch:  "",
+			lastEmitted: "sid-a",
+			want:        "",
+		},
+		{
+			name:        "heartbeat: only our own jsonl advanced",
+			adv:         []string{"sid-a"},
+			titleMatch:  "sid-a",
+			lastEmitted: "sid-a",
+			want:        "",
+		},
+		{
+			name:        "resume: single advance to a different sid AND title agrees → switch",
+			adv:         []string{"sid-c"},
+			titleMatch:  "sid-c",
+			lastEmitted: "sid-a",
+			want:        "sid-c",
+		},
+		{
+			name:        "cross-talk: peer's jsonl advanced but our title hasn't moved → no switch",
+			adv:         []string{"sid-b"},
+			titleMatch:  "sid-a",
+			lastEmitted: "sid-a",
+			want:        "",
+		},
+		{
+			name:        "cross-talk: peer's jsonl advanced and title is ambiguous → no switch",
+			adv:         []string{"sid-b"},
+			titleMatch:  "",
+			lastEmitted: "sid-a",
+			want:        "",
+		},
+		{
+			name:        "ambiguous: multiple advances → fall back to title match",
+			adv:         []string{"sid-b", "sid-c"},
+			titleMatch:  "sid-c",
+			lastEmitted: "sid-a",
+			want:        "sid-c",
+		},
+		{
+			name:        "ambiguous: multiple advances and title fails → no switch",
+			adv:         []string{"sid-b", "sid-c"},
+			titleMatch:  "",
+			lastEmitted: "sid-a",
+			want:        "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := chooseNextSidContinuous(tc.adv, tc.titleMatch, tc.lastEmitted)
+			if got != tc.want {
+				t.Errorf("chooseNextSidContinuous(%v, %q, %q) = %q, want %q",
+					tc.adv, tc.titleMatch, tc.lastEmitted, got, tc.want)
+			}
+		})
+	}
+}

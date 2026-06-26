@@ -162,9 +162,16 @@ func TestNormalizeUpdateGHProxyURL(t *testing.T) {
 func fakeGitHub(t *testing.T, payload any) (string, *int) {
 	t.Helper()
 	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// The releases-list endpoint (used by refreshLines) returns a JSON
+		// array and deliberately does NOT count toward hits, so existing
+		// latest-release hit assertions (cache/force) stay accurate.
+		if strings.HasSuffix(r.URL.Path, "/releases") {
+			_ = json.NewEncoder(w).Encode([]any{payload})
+			return
+		}
+		hits++
 		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	t.Cleanup(srv.Close)
@@ -210,9 +217,10 @@ func releasePayload(tag string, prerelease bool) map[string]any {
 func TestUpdater_Check_NewVersionAvailable(t *testing.T) {
 	apiURL, _ := fakeGitHub(t, releasePayload("v0.2.0", false))
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
 	})
 	if err := u.Check(context.Background(), true); err != nil {
 		t.Fatalf("Check err: %v", err)
@@ -249,6 +257,7 @@ func TestUpdater_Check_ClearsReadyWhenDownloadedAssetIsForOlderVersion(t *testin
 	u.state.DownloadPct = 100
 	u.state.DownloadPath = oldPath
 	u.cfg.releaseURL = apiURL
+	u.cfg.releasesURL = apiURL + "/releases"
 
 	if err := u.Check(context.Background(), true); err != nil {
 		t.Fatalf("Check err: %v", err)
@@ -268,9 +277,10 @@ func TestUpdater_Check_ClearsReadyWhenDownloadedAssetIsForOlderVersion(t *testin
 func TestUpdater_Check_UpToDate(t *testing.T) {
 	apiURL, _ := fakeGitHub(t, releasePayload("v0.1.0", false))
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
 	})
 	_ = u.Check(context.Background(), true)
 	st := u.State()
@@ -282,9 +292,10 @@ func TestUpdater_Check_UpToDate(t *testing.T) {
 func TestUpdater_Check_PrereleaseSkipped(t *testing.T) {
 	apiURL, _ := fakeGitHub(t, releasePayload("v0.2.0", true))
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
 	})
 	_ = u.Check(context.Background(), true)
 	st := u.State()
@@ -297,10 +308,11 @@ func TestUpdater_Check_CacheRespected(t *testing.T) {
 	apiURL, hits := fakeGitHub(t, releasePayload("v0.2.0", false))
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
-		now:        func() time.Time { return now },
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
+		now:         func() time.Time { return now },
 	})
 	_ = u.Check(context.Background(), false)
 	_ = u.Check(context.Background(), false) // within cache window
@@ -313,10 +325,11 @@ func TestUpdater_Check_ForceBypassesCache(t *testing.T) {
 	apiURL, hits := fakeGitHub(t, releasePayload("v0.2.0", false))
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
-		now:        func() time.Time { return now },
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
+		now:         func() time.Time { return now },
 	})
 	_ = u.Check(context.Background(), true)
 	_ = u.Check(context.Background(), true) // force=true bypasses cache
@@ -337,6 +350,11 @@ func TestUpdater_Check_FallsBackToLatestRedirectOnGitHubForbidden(t *testing.T) 
 			http.Redirect(w, r, "/attson/atterm/releases/tag/v0.2.0", http.StatusFound)
 		case "/attson/atterm/releases/tag/v0.2.0":
 			w.WriteHeader(http.StatusOK)
+		case "/releases":
+			// refreshLines list endpoint; empty array keeps this test
+			// offline without affecting the redirect-fallback assertions.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -344,10 +362,11 @@ func TestUpdater_Check_FallsBackToLatestRedirectOnGitHubForbidden(t *testing.T) 
 	defer srv.Close()
 
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: srv.URL + "/api",
-		latestURL:  srv.URL + "/attson/atterm/releases/latest",
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  srv.URL + "/api",
+		releasesURL: srv.URL + "/releases",
+		latestURL:   srv.URL + "/attson/atterm/releases/latest",
 	})
 	if err := u.Check(context.Background(), true); err != nil {
 		t.Fatalf("Check err: %v", err)

@@ -33,10 +33,12 @@ type FeishuBinding struct {
 	UserID    string
 	AppIDHash string
 	FeishuBindingCredentials
-	OpenID     string
-	BoundAt    int64 // unix seconds, 0 if not bound
-	DisabledAt int64 // unix seconds, 0 if not disabled
-	CreatedAt  int64
+	OpenID                string
+	BoundAt               int64 // unix seconds, 0 if not bound
+	DisabledAt            int64 // unix seconds, 0 if not disabled
+	CreatedAt             int64
+	RemoteTerminalEnabled bool   // whether Feishu DM acts as a terminal attachment point
+	SessionAutoAttach     string // "ai" | "all" | "none"; default "ai"
 }
 
 func hashAppID(appID string) string {
@@ -115,20 +117,20 @@ func isUniqueViolation(err error, qualifiedCol string) bool {
 	return strings.Contains(msg, "UNIQUE constraint failed: "+qualifiedCol)
 }
 
+const feishuBindingSelectCols = `user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc,
+        IFNULL(open_id, ''), IFNULL(bound_at, 0), IFNULL(disabled_at, 0), created_at,
+        IFNULL(remote_terminal_enabled, 0), IFNULL(session_auto_attach, 'ai')`
+
 func (s *SQLiteStore) GetFeishuBinding(ctx context.Context, userID string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
-		`SELECT user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc,
-		        IFNULL(open_id, ''), IFNULL(bound_at, 0), IFNULL(disabled_at, 0), created_at
-		 FROM feishu_bindings WHERE user_id = ?`,
+		`SELECT `+feishuBindingSelectCols+` FROM feishu_bindings WHERE user_id = ?`,
 		userID,
 	)
 }
 
 func (s *SQLiteStore) GetFeishuBindingByAppIDHash(ctx context.Context, hash string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
-		`SELECT user_id, app_id_hash, app_id_enc, app_secret_enc, encrypt_key_enc, verify_token_enc,
-		        IFNULL(open_id, ''), IFNULL(bound_at, 0), IFNULL(disabled_at, 0), created_at
-		 FROM feishu_bindings WHERE app_id_hash = ?`,
+		`SELECT `+feishuBindingSelectCols+` FROM feishu_bindings WHERE app_id_hash = ?`,
 		hash,
 	)
 }
@@ -141,8 +143,11 @@ func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string
 	row := s.db.QueryRowContext(ctx, q, arg)
 	var b FeishuBinding
 	var encA, encS, encK, encV []byte
+	var remoteEnabled int64
+	var autoAttach string
 	err = row.Scan(&b.UserID, &b.AppIDHash, &encA, &encS, &encK, &encV,
-		&b.OpenID, &b.BoundAt, &b.DisabledAt, &b.CreatedAt)
+		&b.OpenID, &b.BoundAt, &b.DisabledAt, &b.CreatedAt,
+		&remoteEnabled, &autoAttach)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrFeishuBindingNotFound
 	}
@@ -169,6 +174,8 @@ func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string
 	} else {
 		b.VerifyToken = string(plain)
 	}
+	b.RemoteTerminalEnabled = remoteEnabled != 0
+	b.SessionAutoAttach = autoAttach
 	return &b, nil
 }
 

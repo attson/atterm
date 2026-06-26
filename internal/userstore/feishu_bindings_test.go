@@ -146,3 +146,27 @@ func TestFeishuBinding_RequiresCipher(t *testing.T) {
 		t.Fatalf("expected cipher-required error, got %v", err)
 	}
 }
+
+func TestFeishuBindingRemoteTerminalDefaults(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, err := s.CreateOpaqueUser(ctx, "rmt@example.com")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := s.UpsertFeishuBinding(ctx, u.ID, FeishuBindingCredentials{
+		AppID: "cli_abc", AppSecret: "s", EncryptKey: "k", VerifyToken: "v",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	b, err := s.GetFeishuBinding(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if b.RemoteTerminalEnabled != false {
+		t.Errorf("RemoteTerminalEnabled default = %v, want false", b.RemoteTerminalEnabled)
+	}
+	if b.SessionAutoAttach != "ai" {
+		t.Errorf("SessionAutoAttach default = %q, want %q", b.SessionAutoAttach, "ai")
+	}
+}

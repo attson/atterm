@@ -25,6 +25,8 @@ vi.mock('@shared/ws/client-conn', () => ({
 }))
 
 import App from '@/main/App.vue'
+import PasteFallback from '@/main/components/PasteFallback.vue'
+import { pasteImageBus } from '@/main/lib/pasteImageBus'
 import { installI18nTestHooks } from '../i18n-test-helper'
 
 installI18nTestHooks()
@@ -85,5 +87,27 @@ describe('Main (home) App.vue', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="status-line"]').exists()).toBe(true)
+  })
+
+  it('emits pasteImageBus when a pasted image is dispatched via PasteFallback', async () => {
+    const emitSpy = vi.spyOn(pasteImageBus, 'emit')
+
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, hash: '#/s/11111111-2222-3333-4444-555555555555' },
+      writable: true,
+    })
+    const wrapper = mount(App, { attachTo: document.body })
+    await flushPromises()
+
+    const fallback = wrapper.findComponent(PasteFallback)
+    const file = new File([new Uint8Array([1, 2])], 'pasted.png', { type: 'image/png' })
+    fallback.vm.$emit('paste-image', file)
+    await flushPromises()
+
+    expect(emitSpy).toHaveBeenCalledTimes(1)
+    const [blob, name] = emitSpy.mock.calls[0]!
+    expect(blob).toBe(file)
+    expect(name).toBe('pasted.png')
+    emitSpy.mockRestore()
   })
 })

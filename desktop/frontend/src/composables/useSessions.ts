@@ -64,19 +64,16 @@ export function useSessions(
       const k = s.host_id || "";
       (out[k] ||= []).push(s);
     }
+    // Sort by started_at ascending (oldest first), with session_id as the
+    // tiebreaker for determinism. Both keys are immutable for the lifetime
+    // of a session, so rows stay put — no jumping when task_state changes
+    // or the PTY writes output. Attention-worthy state still surfaces via
+    // the row's color and the per-row unread dot.
     for (const k of Object.keys(out)) {
       out[k].sort((a, b) => {
-        // Unread sessions are promoted to at most "failed" urgency (index 1),
-        // so they surface above running/completed but below waiting_input.
-        const UNREAD_MAX = 1; // urgencyIndex("failed")
-        const ai = a.unread
-          ? Math.min(urgencyIndex(a.task_state), UNREAD_MAX)
-          : urgencyIndex(a.task_state);
-        const bi = b.unread
-          ? Math.min(urgencyIndex(b.task_state), UNREAD_MAX)
-          : urgencyIndex(b.task_state);
-        if (ai !== bi) return ai - bi;
-        return (b.last_output_at ?? 0) - (a.last_output_at ?? 0);
+        const da = (a.started_at ?? 0) - (b.started_at ?? 0);
+        if (da !== 0) return da;
+        return a.session_id.localeCompare(b.session_id);
       });
     }
     return out;

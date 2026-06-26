@@ -85,6 +85,10 @@ export interface RemoteSession {
   cwd?: string
   cols: number
   rows: number
+  /** Unix seconds when the session was first opened (PTY fork time).
+   *  Stable for the lifetime of the session. Used as the primary sort key
+   *  in the host group list so rows don't reshuffle as activity changes. */
+  started_at?: number
   remote_permission?: string
   task_state?: 'idle' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'disconnected' | 'closed'
   current_command?: string

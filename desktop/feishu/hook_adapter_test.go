@@ -210,3 +210,87 @@ func TestRegistryLookup(t *testing.T) {
 		t.Fatalf("unknown agent_kind must return ok=false")
 	}
 }
+
+func TestClaudeCodeParseTurn_UserPrompt(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"UserPromptSubmit","prompt":"fix the bug"}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok {
+		t.Fatal("expected ParseTurn to recognize UserPromptSubmit")
+	}
+	if ev.Kind != TurnUserPrompt {
+		t.Errorf("kind = %v, want TurnUserPrompt", ev.Kind)
+	}
+	if ev.Text != "fix the bug" {
+		t.Errorf("text = %q, want %q", ev.Text, "fix the bug")
+	}
+}
+
+func TestClaudeCodeParseTurn_Stop(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"done."}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok {
+		t.Fatal("expected ParseTurn to recognize Stop")
+	}
+	if ev.Kind != TurnAssistantFinal {
+		t.Errorf("kind = %v, want TurnAssistantFinal", ev.Kind)
+	}
+	if ev.Text != "done." {
+		t.Errorf("text = %q, want %q", ev.Text, "done.")
+	}
+}
+
+func TestClaudeCodeParseTurn_PreToolUse(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok {
+		t.Fatal("expected ParseTurn to recognize PreToolUse")
+	}
+	if ev.Kind != TurnToolStart {
+		t.Errorf("kind = %v, want TurnToolStart", ev.Kind)
+	}
+	if ev.ToolName != "Bash" {
+		t.Errorf("toolName = %q", ev.ToolName)
+	}
+}
+
+func TestClaudeCodeParseTurn_PostToolUse(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":"output here"}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok {
+		t.Fatal("expected ParseTurn to recognize PostToolUse")
+	}
+	if ev.Kind != TurnToolEnd {
+		t.Errorf("kind = %v, want TurnToolEnd", ev.Kind)
+	}
+}
+
+func TestClaudeCodeParseTurn_AskUserQuestionStaysOnAskPath(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{}}`)
+	_, ok := a.ParseTurn(raw, "")
+	if ok {
+		t.Errorf("ParseTurn should not emit a TurnEvent for AskUserQuestion (existing AskQuestion path handles it)")
+	}
+}
+
+func TestClaudeCodeParseTurn_UserPromptEmpty(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"UserPromptSubmit","prompt":""}`)
+	_, ok := a.ParseTurn(raw, "")
+	if ok {
+		t.Error("ParseTurn should return (zero, false) for UserPromptSubmit with empty prompt")
+	}
+}
+
+func TestClaudeCodeParseTurn_AskUserQuestionPostToolUseSkip(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion","tool_response":"unused"}`)
+	_, ok := a.ParseTurn(raw, "")
+	if ok {
+		t.Error("ParseTurn should not emit a TurnEvent for AskUserQuestion PostToolUse")
+	}
+}

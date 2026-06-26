@@ -118,6 +118,68 @@ func dedupKey(scope string, content []byte) string {
 	return "claude-code:" + scope + ":" + hex.EncodeToString(sum[:8])
 }
 
+// TurnKind enumerates the AI streaming event types the chunker consumes.
+type TurnKind int
+
+const (
+	TurnUserPrompt     TurnKind = iota // user submitted a prompt
+	TurnAssistantFinal                 // assistant finished a turn
+	TurnToolStart                      // tool call about to start
+	TurnToolEnd                        // tool call returned
+)
+
+// TurnEvent is the normalized AI-streaming event a HookAdapter emits via
+// ParseTurn. Separate from WaitingInputEvent because the consumer (outbound
+// chunker) needs different shape than the AskQuestion card renderer.
+type TurnEvent struct {
+	Kind     TurnKind
+	Text     string // for UserPrompt / AssistantFinal
+	ToolName string // for ToolStart / ToolEnd
+	ToolBody string // for ToolEnd (tool response preview)
+}
+
+// ParseTurn extends HookAdapter for the AI streaming path. Returns (event, true)
+// when the hook is a per-turn streaming signal; (zero, false) otherwise.
+// AskUserQuestion is intentionally skipped — the existing Parse method handles
+// it via the AskQuestion card, which is a separate UX from the anchor stream.
+func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent, bool) {
+	var p struct {
+		HookEventName    string          `json:"hook_event_name"`
+		ToolName         string          `json:"tool_name"`
+		ToolInput        json.RawMessage `json:"tool_input"`
+		ToolResponse     string          `json:"tool_response"`
+		Prompt           string          `json:"prompt"`
+		AssistantMessage string          `json:"assistant_message"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return TurnEvent{}, false
+	}
+	switch p.HookEventName {
+	case "UserPromptSubmit":
+		if p.Prompt == "" {
+			return TurnEvent{}, false
+		}
+		return TurnEvent{Kind: TurnUserPrompt, Text: p.Prompt}, true
+	case "Stop":
+		if p.AssistantMessage == "" {
+			return TurnEvent{Kind: TurnAssistantFinal, Text: ""}, true
+		}
+		return TurnEvent{Kind: TurnAssistantFinal, Text: p.AssistantMessage}, true
+	case "PreToolUse":
+		if p.ToolName == "AskUserQuestion" {
+			return TurnEvent{}, false
+		}
+		return TurnEvent{Kind: TurnToolStart, ToolName: p.ToolName}, true
+	case "PostToolUse":
+		if p.ToolName == "AskUserQuestion" {
+			return TurnEvent{}, false
+		}
+		return TurnEvent{Kind: TurnToolEnd, ToolName: p.ToolName, ToolBody: p.ToolResponse}, true
+	default:
+		return TurnEvent{}, false
+	}
+}
+
 func extractAskUserQuestion(rawToolInput json.RawMessage) (string, []QuestionOption) {
 	if len(rawToolInput) == 0 {
 		return "", nil

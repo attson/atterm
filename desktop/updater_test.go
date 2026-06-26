@@ -826,6 +826,54 @@ func assetExtForRuntime(t *testing.T) string {
 	return strings.TrimPrefix(name, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH)
 }
 
+func TestCheck_PopulatesLines(t *testing.T) {
+	asset, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no asset for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	listJSON := `[
+	  {"tag_name":"v0.3.0","body":"n30","prerelease":false,"draft":false,
+	   "assets":[{"name":"ASSET_NAME","browser_download_url":"https://x/v0.3.0","size":10}]},
+	  {"tag_name":"v0.2.155","body":"n2155","prerelease":false,"draft":false,
+	   "assets":[{"name":"ASSET_NAME","browser_download_url":"https://x/v0.2.155","size":20}]},
+	  {"tag_name":"v0.2.154","body":"n2154","prerelease":false,"draft":false,
+	   "assets":[{"name":"ASSET_NAME","browser_download_url":"https://x/v0.2.154","size":30}]}
+	]`
+	listJSON = strings.ReplaceAll(listJSON, "ASSET_NAME", asset)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			w.Write([]byte(`{"tag_name":"v0.3.0","prerelease":false,"assets":[]}`))
+			return
+		}
+		w.Write([]byte(listJSON))
+	}))
+	defer srv.Close()
+
+	u := newUpdater(updaterConfig{
+		current:    "v0.2.154",
+		repo:       "attson/atterm",
+		releaseURL: srv.URL + "/releases/latest",
+		client:     srv.Client(),
+		now:        time.Now,
+	})
+	u.cfg.releasesURL = srv.URL + "/releases"
+
+	if err := u.Check(context.Background(), true); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	lines := u.State().Lines
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %+v", len(lines), lines)
+	}
+	if lines[0].Minor != "v0.3" || lines[1].Minor != "v0.2" {
+		t.Fatalf("line order = %q,%q", lines[0].Minor, lines[1].Minor)
+	}
+	if lines[1].Latest != "v0.2.155" || lines[1].AssetURL != "https://x/v0.2.155" {
+		t.Fatalf("v0.2 line = %+v, want v0.2.155 / https://x/v0.2.155", lines[1])
+	}
+}
+
 func TestParseVersionTag(t *testing.T) {
 	cases := []struct {
 		tag   string

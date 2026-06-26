@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,6 +53,8 @@ type UpdateState struct {
 	AssetSize    int64  `json:"asset_size"`
 	DownloadDir  string `json:"download_dir"`
 	DownloadPath string `json:"download_path"`
+
+	Lines []VersionLine `json:"lines"`
 }
 
 // updaterConfig is the constructor-time bag for Updater. Test code
@@ -61,6 +64,7 @@ type updaterConfig struct {
 	current          string
 	repo             string // e.g. "attson/atterm"
 	releaseURL       string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
+	releasesURL      string // override of https://api.github.com/repos/<repo>/releases, for tests
 	latestURL        string // override of https://github.com/<repo>/releases/latest, for tests
 	cacheDir         string // overrides os.UserCacheDir(); for tests
 	client           *http.Client
@@ -237,6 +241,14 @@ func (u *Updater) githubReleaseAPI() string {
 	return "https://api.github.com/repos/" + u.cfg.repo + "/releases/latest"
 }
 
+// githubReleasesAPI returns the URL to fetch the full releases list.
+func (u *Updater) githubReleasesAPI() string {
+	if u.cfg.releasesURL != "" {
+		return u.cfg.releasesURL
+	}
+	return "https://api.github.com/repos/" + u.cfg.repo + "/releases"
+}
+
 // githubLatestURL returns the browser endpoint whose redirect target carries
 // the latest tag without consuming GitHub's unauthenticated API quota.
 func (u *Updater) githubLatestURL() string {
@@ -258,6 +270,7 @@ type githubRelease struct {
 	TagName    string        `json:"tag_name"`
 	Body       string        `json:"body"`
 	Prerelease bool          `json:"prerelease"`
+	Draft      bool          `json:"draft"`
 	Assets     []githubAsset `json:"assets"`
 }
 
@@ -279,6 +292,10 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 
 	checkCtx, cancelCheck := context.WithTimeout(ctx, updaterCheckTimeout)
 	rel, err := u.fetchLatest(checkCtx)
+	// refreshLines issues its own HTTP request; call it here while NOT holding
+	// u.mu so the slow network round-trip never blocks other goroutines. It
+	// returns nil on any failure (graceful degradation).
+	lines := u.refreshLines(checkCtx)
 	cancelCheck()
 
 	u.mu.Lock()
@@ -294,6 +311,8 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 	u.checksumSigURL = ""
 	u.state.AssetURL = ""
 	u.state.AssetSize = 0
+	// lines was fetched above without holding the lock; assign under the lock.
+	u.state.Lines = lines
 
 	if rel.Prerelease {
 		// Don't expose pre-releases as "available" in v0.
@@ -390,6 +409,65 @@ func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {
 		return nil, err
 	}
 	return &rel, nil
+}
+
+// fetchReleases fetches the full releases list from GitHub. Mirrors
+// fetchLatest's header/decode shape, decoding into a slice.
+func (u *Updater) fetchReleases(ctx context.Context) ([]githubRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u.githubReleasesAPI(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "AT-Term/"+u.cfg.current)
+	resp, err := u.cfg.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("github releases list http %d", resp.StatusCode)
+	}
+	var rels []githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
+		return nil, err
+	}
+	return rels, nil
+}
+
+// refreshLines fetches the releases list and groups it into version lines.
+// It only reads u.cfg and issues HTTP — it MUST NOT be called while holding
+// u.mu (it would hold the lock across a slow network call). Returns nil on
+// any failure so callers can degrade gracefully without disturbing the
+// existing latest-release state.
+func (u *Updater) refreshLines(ctx context.Context) []VersionLine {
+	rels, err := u.fetchReleases(ctx)
+	if err != nil {
+		log.Printf("updater: fetch releases list: %v", err)
+		return nil
+	}
+	assetName, perr := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if perr != nil {
+		return nil
+	}
+	var cands []lineCandidate
+	for _, rel := range rels {
+		if rel.Prerelease || rel.Draft {
+			continue
+		}
+		var assetURL string
+		for _, a := range rel.Assets {
+			if a.Name == assetName {
+				assetURL = a.DownloadURL
+				break
+			}
+		}
+		if assetURL == "" {
+			continue
+		}
+		cands = append(cands, lineCandidate{tag: rel.TagName, assetURL: assetURL, notes: rel.Body})
+	}
+	return groupLines(cands, u.cfg.current)
 }
 
 func (u *Updater) fetchLatestViaRedirect(ctx context.Context) (*githubRelease, error) {

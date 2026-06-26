@@ -26,6 +26,7 @@ type SessionLookup interface {
 // WaitingDispatcher is the subset of *Dispatcher the hook server uses.
 type WaitingDispatcher interface {
 	DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent)
+	DispatchTurn(sessionID string, ev TurnEvent)
 }
 
 // HookServer terminates POSTs from the atterm-hook CLI.
@@ -135,25 +136,34 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+
+	// WaitingInput path: Parse returns emit=true for AskUserQuestion /
+	// permission_prompt / idle_prompt events. emit=false is normal for any
+	// hook event type that is not a waiting-on-user signal.
 	ev, emit := adapter.Parse(req.HookInput, req.HookVersion)
-	if !emit {
-		// emit=false is a normal "this event isn't a question we route"
-		// signal (e.g. unrelated matcher type). Intentionally NOT
-		// invoking onSuspect here — that callback exists for "the hook
-		// is mis-wired" signals (unknown agent_kind), not for routine
-		// per-event filtering.
-		w.WriteHeader(http.StatusOK)
-		return
+	if emit {
+		if disp := h.dispatcher(); disp != nil {
+			disp.DispatchWaitingInput(r.Context(), WaitingInputDispatchEvent{
+				SessionID:    sid,
+				Source:       WaitingSourceHook,
+				QuestionText: ev.QuestionText,
+				DedupKey:     ev.DedupKey,
+				Options:      ev.Options,
+			})
+		}
 	}
 
-	if disp := h.dispatcher(); disp != nil {
-		disp.DispatchWaitingInput(r.Context(), WaitingInputDispatchEvent{
-			SessionID:    sid,
-			Source:       WaitingSourceHook,
-			QuestionText: ev.QuestionText,
-			DedupKey:     ev.DedupKey,
-			Options:      ev.Options,
-		})
+	// AI streaming path: ParseTurn is independent of Parse — a hook event may
+	// match the streaming path (UserPromptSubmit, Stop, Pre/PostToolUse) without
+	// matching the WaitingInput path, and vice versa. Type-assert to
+	// *claudeCodeAdapter since only that adapter has ParseTurn today; unknown
+	// adapters fall through silently.
+	if ccAdapter, ok := adapter.(*claudeCodeAdapter); ok {
+		if turn, hasTurn := ccAdapter.ParseTurn(req.HookInput, req.HookVersion); hasTurn {
+			if disp := h.dispatcher(); disp != nil {
+				disp.DispatchTurn(sid.String(), turn)
+			}
+		}
 	}
 
 	_ = errors.New

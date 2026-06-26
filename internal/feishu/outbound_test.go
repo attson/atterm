@@ -1,7 +1,10 @@
 package feishu
 
 import (
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -173,4 +176,26 @@ func TestAIChunker_FlushesUserPrompt(t *testing.T) {
 	if !strings.Contains(lastBody, "hi") {
 		t.Errorf("body missing 'hi': %q", lastBody)
 	}
+}
+
+func TestAIChunker_ConcurrentPushTickRaceClean(t *testing.T) {
+	clock := newFakeClock()
+	var calls int32
+	ch := NewAIChunkerWithClock(func(body string) { atomic.AddInt32(&calls, 1) }, clock)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			ch.PushTurn(TurnUserPromptEvent{Text: "p" + strconv.Itoa(i)})
+		}(i)
+		go func() {
+			defer wg.Done()
+			ch.Tick()
+		}()
+	}
+	wg.Wait()
+	// We don't assert call count — just that no race detector trips.
+	_ = calls
 }

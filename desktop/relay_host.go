@@ -890,6 +890,28 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	h.feishuSubs[sessionIDStr] = sub
 	h.feishuSubsMu.Unlock()
 
+	// AI session only: wire a per-session AIChunker into the dispatcher so
+	// per-turn hook events stream into the same anchor card. The chunker
+	// shares the flush closure (same anchor + token path). The tick goroutine
+	// keeps the chunker flushing on idle; it exits cleanly via fs.Done().
+	info := sess.Info()
+	if info.Type == session.SessionTypeAI {
+		aiChunker := internalfeishu.NewAIChunker(flush)
+		disp.AttachAIChunker(sessionIDStr, aiChunker)
+		go func() {
+			t := time.NewTicker(100 * time.Millisecond)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					aiChunker.Tick()
+				case <-sub.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	log.Printf("feishu-anchor: attached session=%s card_msg_id=%s", sessID, msgID)
 }
 
@@ -902,6 +924,13 @@ func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
 	sub := h.feishuSubs[sessionIDStr]
 	delete(h.feishuSubs, sessionIDStr)
 	h.feishuSubsMu.Unlock()
+
+	// Detach the AIChunker BEFORE sub.Detach() so in-flight hook events do not
+	// push turns into a chunker whose tick goroutine is already exiting.
+	disp := h.feishuDispatcher.Load()
+	if disp != nil {
+		disp.DetachAIChunker(sessionIDStr)
+	}
 
 	if sub != nil {
 		sub.Detach()

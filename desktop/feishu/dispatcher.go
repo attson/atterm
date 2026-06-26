@@ -133,6 +133,9 @@ type Dispatcher struct {
 	authFailures int            // global auth-class failure count
 
 	cardMsgs cardMsgMap
+
+	aiMu       sync.Mutex
+	aiChunkers map[string]*internalfeishu.AIChunker
 }
 
 // LookupCardSession returns the session id a previously sent card's message_id
@@ -385,6 +388,48 @@ func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bo
 func (d *Dispatcher) GetToken(ctx context.Context) (tenantToken, openID string, err error) {
 	tok, oid, _, e := d.cfg.Token.Get(ctx)
 	return tok, oid, e
+}
+
+// AttachAIChunker registers a chunker for streaming AI turn events for the
+// given session. Called by relay_host when a FeishuSubscriber attaches to
+// an AI session. Replaces any existing chunker for the session.
+func (d *Dispatcher) AttachAIChunker(sessionID string, ch *internalfeishu.AIChunker) {
+	d.aiMu.Lock()
+	defer d.aiMu.Unlock()
+	if d.aiChunkers == nil {
+		d.aiChunkers = map[string]*internalfeishu.AIChunker{}
+	}
+	d.aiChunkers[sessionID] = ch
+}
+
+// DetachAIChunker removes the chunker for the session. Safe when none exists.
+func (d *Dispatcher) DetachAIChunker(sessionID string) {
+	d.aiMu.Lock()
+	defer d.aiMu.Unlock()
+	delete(d.aiChunkers, sessionID)
+}
+
+// DispatchTurn forwards a parsed TurnEvent into the per-session AIChunker.
+// Silently no-ops when no chunker is attached (the session may be shell-only,
+// or remote-terminal may be disabled). Translates TurnKind into the
+// internalfeishu.Turn*Event types AIChunker.PushTurn expects.
+func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
+	d.aiMu.Lock()
+	chunker := d.aiChunkers[sessionID]
+	d.aiMu.Unlock()
+	if chunker == nil {
+		return
+	}
+	switch ev.Kind {
+	case TurnUserPrompt:
+		chunker.PushTurn(internalfeishu.TurnUserPromptEvent{Text: ev.Text})
+	case TurnAssistantFinal:
+		chunker.PushTurn(internalfeishu.TurnAssistantFinalEvent{Text: ev.Text})
+	case TurnToolStart:
+		chunker.PushTurn(internalfeishu.TurnToolStartEvent{ToolName: ev.ToolName})
+	case TurnToolEnd:
+		chunker.PushTurn(internalfeishu.TurnToolEndEvent{ToolName: ev.ToolName, ToolBody: ev.ToolBody})
+	}
 }
 
 type feishuAuthClass interface {

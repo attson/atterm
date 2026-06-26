@@ -135,6 +135,10 @@ func (f *FeishuSubscriber) SendInput(data []byte) bool {
 // permission gate).
 func (f *FeishuSubscriber) OwnerOpenID() string { return f.openID }
 
+// Done returns a channel that closes when Detach is called.
+// Used by external lifecycle owners to react to subscriber shutdown.
+func (f *FeishuSubscriber) Done() <-chan struct{} { return f.done }
+
 // Detach unsubscribes from the session and stops goroutines. Idempotent.
 func (f *FeishuSubscriber) Detach() {
 	if !f.closed.CompareAndSwap(false, true) {

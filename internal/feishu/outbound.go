@@ -12,6 +12,7 @@ package feishu
 
 import (
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/attson/atterm/internal/session"
@@ -281,9 +282,11 @@ func (r *AIRoller) Render() string {
 }
 
 // AIChunker is the AI-side analogue of Chunker; it owns an AIRoller and
-// applies the same 100ms throttle + diff-skip rules. Not goroutine-safe;
-// the caller (dispatcher) must serialize PushTurn/Tick calls.
+// applies the same 100ms throttle + diff-skip rules. Goroutine-safe: a
+// sync.Mutex protects all mutable fields, and the flush callback is invoked
+// without holding the lock to avoid serialising HTTP PATCH calls.
 type AIChunker struct {
+	mu        sync.Mutex
 	roller    *AIRoller
 	flush     FlushFunc
 	clock     Clock
@@ -306,6 +309,7 @@ func NewAIChunkerWithClock(flush FlushFunc, clk Clock) *AIChunker {
 }
 
 func (c *AIChunker) PushTurn(ev any) {
+	c.mu.Lock()
 	switch e := ev.(type) {
 	case TurnUserPromptEvent:
 		c.roller.OnUserPrompt(e.Text)
@@ -316,34 +320,46 @@ func (c *AIChunker) PushTurn(ev any) {
 	case TurnAssistantFinalEvent:
 		c.roller.OnAssistantFinal(e.Text)
 	default:
+		c.mu.Unlock()
 		return
 	}
 	c.dirty = true
-	c.maybeFlush()
+	body, shouldFlush := c.computeFlushLocked()
+	c.mu.Unlock()
+	if shouldFlush {
+		c.flush(body)
+	}
 }
 
 func (c *AIChunker) Tick() {
+	c.mu.Lock()
 	if !c.dirty {
+		c.mu.Unlock()
 		return
 	}
-	c.maybeFlush()
+	body, shouldFlush := c.computeFlushLocked()
+	c.mu.Unlock()
+	if shouldFlush {
+		c.flush(body)
+	}
 }
 
-func (c *AIChunker) maybeFlush() {
+// computeFlushLocked decides whether to flush and, if so, returns the body to
+// send. Caller must hold c.mu. Updates lastFlush, lastBody, and dirty
+// regardless of whether the flush callback will actually be invoked.
+func (c *AIChunker) computeFlushLocked() (body string, shouldFlush bool) {
 	now := c.clock.Now()
 	if now.Sub(c.lastFlush) < chunkerFlushPeriod {
-		return
+		return "", false
 	}
-	body := c.roller.Render()
-	if body == c.lastBody {
-		c.lastFlush = now
-		c.dirty = false
-		return
-	}
-	c.lastBody = body
+	rendered := c.roller.Render()
 	c.lastFlush = now
 	c.dirty = false
-	c.flush(body)
+	if rendered == c.lastBody {
+		return "", false // diff-skip: no change since last flush
+	}
+	c.lastBody = rendered
+	return rendered, true
 }
 
 // Per-turn dispatch types so PushTurn doesn't depend on the desktop/feishu

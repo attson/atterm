@@ -10,7 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/google/uuid"
 )
 
@@ -504,3 +506,36 @@ func (a *atomicTime) advance(s int64)         { a.v.Add(s) }
 
 // Force errors import; required by the auth-error helper.
 var _ = errors.New
+
+func TestDispatcher_DispatchTurnRoutesToChunker(t *testing.T) {
+	var got string
+	aiChunker := internalfeishu.NewAIChunker(func(body string) { got = body })
+
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	d.AttachAIChunker("sess1", aiChunker)
+	d.DispatchTurn("sess1", TurnEvent{Kind: TurnUserPrompt, Text: "hello"})
+
+	// The chunker uses a 100ms throttle window; sleep past it then Tick.
+	time.Sleep(150 * time.Millisecond)
+	aiChunker.Tick()
+
+	if !strings.Contains(got, "hello") {
+		t.Errorf("got = %q, want it to contain 'hello'", got)
+	}
+}
+
+func TestDispatcher_DispatchTurnNoChunker(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	// No AttachAIChunker call — should not panic or error.
+	d.DispatchTurn("missing", TurnEvent{Kind: TurnUserPrompt, Text: "x"})
+}

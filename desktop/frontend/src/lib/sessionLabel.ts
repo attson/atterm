@@ -72,3 +72,27 @@ export function hostName(
   const first = list?.[0]
   return first?.host || hostId || unknownHost
 }
+
+// coResidentIndex assigns 1-based numbers to host_ids that physically live on
+// the same machine as the caller (`localHost` = this machine's OS hostname).
+// Returns an empty map when localHost is empty or when fewer than 2 local
+// host_ids exist — callers render the bare host name in those cases.
+// Order is lexicographic by host_id so every window sees the same numbering.
+export function coResidentIndex(
+  byHost: Record<string, { host?: string }[]>,
+  localHost: string,
+): Map<string, number> {
+  if (!localHost) return new Map()
+  const localHostIds: string[] = []
+  for (const hid of Object.keys(byHost)) {
+    const list = byHost[hid]
+    if (list && list.length > 0 && (list[0]?.host ?? '') === localHost) {
+      localHostIds.push(hid)
+    }
+  }
+  if (localHostIds.length < 2) return new Map()
+  localHostIds.sort()
+  const out = new Map<string, number>()
+  localHostIds.forEach((hid, i) => out.set(hid, i + 1))
+  return out
+}

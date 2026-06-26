@@ -5,6 +5,7 @@ import {
   fullCommand,
   rowTitle,
   hostName,
+  coResidentIndex,
   taskStateLabel,
 } from './sessionLabel'
 
@@ -103,5 +104,47 @@ describe('sessionLabel.aiTitleOrCommand', () => {
       current_command: 'zsh',
       title: 'something',
     })).toBe('zsh')
+  })
+})
+
+describe('sessionLabel.coResidentIndex', () => {
+  it('returns an empty map when localHost is empty', () => {
+    const byHost = { 'h-a': [{ host: 'mac' }], 'h-b': [{ host: 'mac' }] }
+    expect(coResidentIndex(byHost, '').size).toBe(0)
+  })
+  it('returns an empty map when only one local host_id is present', () => {
+    const byHost = { 'h-a': [{ host: 'mac' }], 'remote': [{ host: 'other' }] }
+    const out = coResidentIndex(byHost, 'mac')
+    expect(out.size).toBe(0)
+  })
+  it('numbers two local host_ids in lexicographic order', () => {
+    const byHost = {
+      'h-b': [{ host: 'mac' }],
+      'h-a': [{ host: 'mac' }],
+    }
+    const out = coResidentIndex(byHost, 'mac')
+    expect(out.get('h-a')).toBe(1)
+    expect(out.get('h-b')).toBe(2)
+  })
+  it('numbers three local host_ids and excludes remote ones', () => {
+    const byHost = {
+      'h-c': [{ host: 'mac' }],
+      'h-a': [{ host: 'mac' }],
+      'h-b': [{ host: 'mac' }],
+      'remote-1': [{ host: 'other' }],
+    }
+    const out = coResidentIndex(byHost, 'mac')
+    expect(out.size).toBe(3)
+    expect(out.get('h-a')).toBe(1)
+    expect(out.get('h-b')).toBe(2)
+    expect(out.get('h-c')).toBe(3)
+    expect(out.has('remote-1')).toBe(false)
+  })
+  it('ignores entries with empty session list', () => {
+    const byHost: Record<string, { host?: string }[]> = {
+      'h-a': [],
+      'h-b': [{ host: 'mac' }],
+    }
+    expect(coResidentIndex(byHost, 'mac').size).toBe(0)
   })
 })

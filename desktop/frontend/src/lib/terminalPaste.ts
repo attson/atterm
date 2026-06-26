@@ -4,6 +4,30 @@ import type { MessageKey } from "../i18n";
 import { pasteImageBus } from "./pasteImageBus";
 import { effectiveRemotePermission, isPasteAllowed } from "./terminalContextMenu";
 
+export type PastePlatform = "mac" | "other";
+
+function currentPastePlatform(): PastePlatform {
+  if (typeof navigator === "undefined") return "other";
+  return navigator.platform?.toLowerCase().includes("mac") ? "mac" : "other";
+}
+
+// macOS does not fire the browser `paste` event for Ctrl+V (that key is not
+// the OS paste shortcut). xterm forwards the raw `\x16` byte to the PTY,
+// and the TUI (Claude Code, Codex, ...) intercepts it to read the system
+// clipboard itself — so the image lands but our preview toast never fires.
+// This helper detects that exact gap so the keydown handler in TerminalView
+// can route Ctrl+V through pasteFromClipboard (which emits pasteImageBus).
+// Cmd+V on mac and Ctrl+V on Win/Linux already fire the native paste event
+// and are handled there — those return false here to avoid double-paste.
+export function isMacCtrlVPaste(
+  e: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  platform: PastePlatform = currentPastePlatform(),
+): boolean {
+  if (platform !== "mac") return false;
+  if (!e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return false;
+  return e.code === "KeyV" || e.key.toLowerCase() === "v";
+}
+
 interface TerminalLike {
   paste: (text: string) => void;
 }

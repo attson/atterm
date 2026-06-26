@@ -97,6 +97,16 @@ func appendFeishuHookEnv(env []string, sessionID, hookEndpoint string) []string 
 	return env
 }
 
+// shouldNotifySession reports whether a Feishu notification should fire for a
+// session of the given workload type, honoring the "AI sessions only"
+// preference. aiOnly=false → always notify; aiOnly=true → only ai sessions.
+func shouldNotifySession(sessionType string, aiOnly bool) bool {
+	if !aiOnly {
+		return true
+	}
+	return sessionType == session.SessionTypeAI
+}
+
 // startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
 // admin (creating the user on first launch, generating LocalAdminPassword if
 // the persisted config doesn't have one yet), mints a session token for that
@@ -540,6 +550,9 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				tail := meta.RecentOutput
 				go func() {
 					info := sess.Info()
+					if !shouldNotifySession(info.Type, h.cfg.Get().AINotificationsOnlyOrDefault()) {
+						return
+					}
 					disp.DispatchCommandFinished(context.Background(),
 						feishu.CommandFinishedEvent{
 							SessionID:    sid,
@@ -557,6 +570,9 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				go func() {
 					// Run outside the lock-held callback (see deadlock note above).
 					info := sess.Info()
+					if !shouldNotifySession(info.Type, h.cfg.Get().AINotificationsOnlyOrDefault()) {
+						return
+					}
 					var recent string
 					if !sealed {
 						recent = string(session.StripANSI(sess.TailOutput(512)))

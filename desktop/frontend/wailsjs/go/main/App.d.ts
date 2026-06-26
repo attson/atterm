@@ -51,6 +51,8 @@ export function GetLogPreview():Promise<main.LogPreview>;
 
 export function GetLoggingConfig():Promise<main.LoggingConfig>;
 
+export function GetAINotificationsOnly():Promise<boolean>;
+
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;
@@ -130,6 +132,8 @@ export function SetHookInstallEnabled(arg1:boolean):Promise<void>;
 export function SetLocalePreference(arg1:string):Promise<void>;
 
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
+
+export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 

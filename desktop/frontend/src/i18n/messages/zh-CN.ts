@@ -328,6 +328,7 @@ export const zhCN = {
       copy: "复制",
       copied: "已复制",
       reconfigure: "重新配置凭据",
+      aiOnlyNotifications: "仅 AI 会话通知",
       hook_install: {
         enable: "自动安装 Claude Code Hook",
         retry: "重试",

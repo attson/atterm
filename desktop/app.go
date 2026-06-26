@@ -1624,6 +1624,29 @@ func (a *App) SetNotificationsEnabled(enabled bool) error {
 	return nil
 }
 
+// GetAINotificationsOnly returns the current persisted preference.
+// Defaults to true for fresh installs.
+func (a *App) GetAINotificationsOnly() bool {
+	if a.cfgStore == nil {
+		return true
+	}
+	return a.cfgStore.Get().AINotificationsOnlyOrDefault()
+}
+
+// SetAINotificationsOnly persists the user's toggle.
+func (a *App) SetAINotificationsOnly(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.AINotificationsOnly = &enabled
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("ai_notifications_only")
+	return nil
+}
+
 // GetPtyInputDebugEnabled reports whether PTY input debug logging is on.
 func (a *App) GetPtyInputDebugEnabled() bool {
 	if a.cfgStore == nil {
@@ -1913,6 +1936,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return len(c.QuickTemplates) > 0
 		case "notifications_enabled":
 			return c.NotificationsEnabled != nil
+		case "ai_notifications_only":
+			return c.AINotificationsOnly != nil
 		case "command_notify_threshold_seconds":
 			return c.CommandNotifyThresholdSeconds != nil
 		case "shell_integration_enabled":

@@ -24,3 +24,17 @@ func TestNotificationsEnabledRoundtripTrue(t *testing.T) {
 		t.Fatal("explicit true should be preserved")
 	}
 }
+
+func TestAINotificationsOnlyOrDefault(t *testing.T) {
+	if got := (appConfig{}).AINotificationsOnlyOrDefault(); !got {
+		t.Errorf("nil AINotificationsOnly = %v, want true (default on)", got)
+	}
+	f := false
+	if got := (appConfig{AINotificationsOnly: &f}).AINotificationsOnlyOrDefault(); got {
+		t.Errorf("&false = %v, want false", got)
+	}
+	tr := true
+	if got := (appConfig{AINotificationsOnly: &tr}).AINotificationsOnlyOrDefault(); !got {
+		t.Errorf("&true = %v, want true", got)
+	}
+}

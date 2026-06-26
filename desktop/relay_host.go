@@ -550,6 +550,9 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				tail := meta.RecentOutput
 				go func() {
 					info := sess.Info()
+					if !shouldNotifySession(info.Type, h.cfg.Get().AINotificationsOnlyOrDefault()) {
+						return
+					}
 					disp.DispatchCommandFinished(context.Background(),
 						feishu.CommandFinishedEvent{
 							SessionID:    sid,
@@ -567,6 +570,9 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				go func() {
 					// Run outside the lock-held callback (see deadlock note above).
 					info := sess.Info()
+					if !shouldNotifySession(info.Type, h.cfg.Get().AINotificationsOnlyOrDefault()) {
+						return
+					}
 					var recent string
 					if !sealed {
 						recent = string(session.StripANSI(sess.TailOutput(512)))

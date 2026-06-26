@@ -766,6 +766,23 @@ watch(
   }
 );
 
+// Pane swap inside an already-active tab: the active-watch above doesn't fire
+// (props.active stayed true), so xterm never learns the focus moved. A manual
+// mousedown on the pane goes via the DOM and lands focus on xterm's textarea
+// naturally; a programmatic set-active-pane (e.g. sidebar click on a session
+// living in a multi-pane tab) doesn't. Watch `focused` independently so the
+// new active pane's xterm always gets keystrokes.
+watch(
+  () => props.focused,
+  (isFocused) => {
+    if (isFocused) {
+      nextTick(() => {
+        term?.focus();
+      });
+    }
+  }
+);
+
 watch(
   () => props.theme,
   (theme) => {

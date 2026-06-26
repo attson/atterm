@@ -205,9 +205,10 @@ func NewServer(cfg Config) *Server {
 	if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
 		s.mux.HandleFunc("/v1/feishu/bindings/me", s.requireSession(s.serveFeishuSession))
 		s.mux.HandleFunc("/v1/feishu/bindings/me/begin-pair", s.requireSession(s.serveFeishuSession))
+		s.mux.HandleFunc("/v1/feishu/relay-token/me", s.requireSession(s.serveFeishuSession))
 		s.mux.HandleFunc("/v1/feishu/events/", s.serveFeishuEvents)
 		if cfg.Feishu != nil {
-			s.feishu.handler.Store(NewFeishuHTTPHandler(sqliteStore, cfg.Feishu))
+			s.feishu.handler.Store(NewFeishuHTTPHandler(sqliteStore, cfg.Feishu, s.registry))
 		}
 	}
 	if cfg.WebFS != nil {
@@ -440,7 +441,7 @@ func (s *Server) ApplyFeishuConfig(enabled bool, key []byte, baseURL string) err
 		return err
 	}
 	store.SetSecretCipher(cipher)
-	s.feishu.handler.Store(NewFeishuHTTPHandler(store, buildFeishuService(store, baseURL)))
+	s.feishu.handler.Store(NewFeishuHTTPHandler(store, buildFeishuService(store, baseURL), s.registry))
 	return nil
 }
 

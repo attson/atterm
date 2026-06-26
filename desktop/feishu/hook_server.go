@@ -19,6 +19,8 @@ const maxHookBody = 128 * 1024
 // SessionLookup is the subset of session bookkeeping the hook server needs.
 type SessionLookup interface {
 	Exists(sid uuid.UUID) bool
+	// Inject writes text into the session's PTY as if typed by the user.
+	Inject(sid uuid.UUID, text string) error
 }
 
 // WaitingDispatcher is the subset of *Dispatcher the hook server uses.

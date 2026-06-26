@@ -51,6 +51,8 @@ export function GetLogPreview():Promise<main.LogPreview>;
 
 export function GetLoggingConfig():Promise<main.LoggingConfig>;
 
+export function GetAINotificationsOnly():Promise<boolean>;
+
 export function GetNotificationsEnabled():Promise<boolean>;
 
 export function GetPluginConfig():Promise<main.PluginConfig>;
@@ -115,6 +117,8 @@ export function RememberRelayPassword(arg1:string):Promise<void>;
 
 export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
+export function SendFeishuTestCard(arg1:string):Promise<void>;
+
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
 export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
@@ -128,6 +132,8 @@ export function SetHookInstallEnabled(arg1:boolean):Promise<void>;
 export function SetLocalePreference(arg1:string):Promise<void>;
 
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
+
+export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 
@@ -162,5 +168,7 @@ export function SetUplinkPaused(arg1:boolean):Promise<void>;
 export function SetWebglRendererEnabled(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
+
+export function DownloadVersion(arg1:string):Promise<void>;
 
 export function StartDownload():Promise<void>;

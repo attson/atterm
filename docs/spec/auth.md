@@ -609,7 +609,13 @@ step-up（DELETE /api/me 等特权操作）：
 | Web | `web/src/shared/lib/opaque.ts`（cloudflare/opaque-ts + noble/argon2id + noble/xchacha20-poly1305） | `sessionStorage["atterm.account-key"]`，tab 关掉就丢 |
 | iOS Capacitor | `desktop/frontend/src/lib/opaque.ts`（同 web） | `mobile/ios/.../AttermSecureStorage.swift` Keychain plugin（红线 #15：plugin 必须装在 `mobile/package.json`） |
 
-跨平台都遵守同一份 cache 注册表 `desktop/frontend/src/lib/account-key.ts`：上层模块 `setAccountKeyProvider()` 注册取 key 的函数，业务代码用 `getCurrentAccountKey()` 同步拿，避免每次解密都 round-trip 到 platform layer。`account-key-changed` 事件在 key 解锁 / 锁定时广播，订阅方刷新 UI（比如 `web/src/shared/ws/client-conn.ts` 在 META 帧 sealed 解开失败时立刻 retry）。
+跨平台都遵守同一份 cache 注册表 `desktop/frontend/src/lib/account-key.ts`：上层模块 `setAccountKeyProvider()` 注册取 key 的函数，业务代码用 `getCurrentAccountKey()` 同步拿，避免每次解密都 round-trip 到 platform layer。
+
+平台特异 fallback：
+
+- **Desktop**（`desktop/account_key_store.go`）：`zalando/go-keyring` 调系统 Secret Service（macOS Keychain / Linux libsecret / Windows Credential Manager）。注册/登录成功后 `saveAccountKey(relayOrigin, userID, key)` 写入；boot 时 `loadAccountKey` 读出装到 `App.accountKey`（受 `accountKeyMu` 互斥保护），前端通过 `GetAccountKey` Wails binding 同步取。容器内无 D-Bus、钥匙串临时锁、Linux 桌面缺 `gnome-keyring-daemon` 等失败路径，按 `account_key_store.go:49` 注释「fall back to the in-memory state」处理——`account_key` 本次进程内继续可用，下次启动钥匙串不可用时则要求重新登录，但不会让 app 启动失败。
+- **iOS**（`mobile/ios/App/App/Plugins/SecureStorage/AttermSecureStorage.swift`）：自定义 Capacitor plugin 用 `SecItemAdd` / `kSecAttrAccessibleAfterFirstUnlock`。**必须**按 [AGENTS.md](../../AGENTS.md) §15 在 `MainViewController.capacitorDidLoad()` 里 `bridge?.registerPluginInstance(...)` 注册；漏注册时 `desktop/frontend/src/platform/capacitor.ts` 检测到 `PLUGIN_NOT_AVAILABLE` 同样降级为 in-memory（行为同 Desktop fallback：本次可用，重启即丢）。CI 不构建 iOS，这条只能在真机 / 模拟器复测（参见 v0.2.36 / PR #101 修复）。
+- **Web**：`sessionStorage["atterm.account-key"]` 写完即可用，无失败路径；tab close 自然清空，符合 §12.6 「不持久化到 IndexedDB」的红线。
 
 ### 12.8 已知 gap
 

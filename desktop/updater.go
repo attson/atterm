@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +53,8 @@ type UpdateState struct {
 	AssetSize    int64  `json:"asset_size"`
 	DownloadDir  string `json:"download_dir"`
 	DownloadPath string `json:"download_path"`
+
+	Lines []VersionLine `json:"lines"`
 }
 
 // updaterConfig is the constructor-time bag for Updater. Test code
@@ -60,6 +64,7 @@ type updaterConfig struct {
 	current          string
 	repo             string // e.g. "attson/atterm"
 	releaseURL       string // override of https://api.github.com/repos/<repo>/releases/latest, for tests
+	releasesURL      string // override of https://api.github.com/repos/<repo>/releases, for tests
 	latestURL        string // override of https://github.com/<repo>/releases/latest, for tests
 	cacheDir         string // overrides os.UserCacheDir(); for tests
 	client           *http.Client
@@ -133,6 +138,95 @@ func assetNameForPlatform(goos, goarch string) (string, error) {
 	return "", fmt.Errorf("no atterm build for %s/%s", goos, goarch)
 }
 
+// parseVersionTag splits a "vMAJOR.MINOR.PATCH" tag into its minor line
+// ("vMAJOR.MINOR") and patch number. ok is false for any tag that is not a
+// well-formed three-part v-prefixed version (dev, drafts, malformed).
+func parseVersionTag(tag string) (minor string, patch int, ok bool) {
+	if !strings.HasPrefix(tag, "v") {
+		return "", 0, false
+	}
+	parts := strings.Split(tag[1:], ".")
+	if len(parts) != 3 {
+		return "", 0, false
+	}
+	p, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return "", 0, false
+	}
+	if _, err := strconv.Atoi(parts[0]); err != nil {
+		return "", 0, false
+	}
+	if _, err := strconv.Atoi(parts[1]); err != nil {
+		return "", 0, false
+	}
+	return "v" + parts[0] + "." + parts[1], p, true
+}
+
+// VersionLine is one update line (minor version) the user can choose, with
+// the latest release on that line. JSON tags mirror the frontend binding.
+type VersionLine struct {
+	Minor    string `json:"minor"`  // "v0.2"
+	Latest   string `json:"latest"` // "v0.2.155"
+	Notes    string `json:"notes"`
+	AssetURL string `json:"asset_url"`
+}
+
+// lineCandidate is an intermediate fetched-release tuple fed to groupLines.
+type lineCandidate struct {
+	tag      string
+	assetURL string
+	notes    string
+}
+
+// groupLines applies the "upgrade-only" rule:
+//   - group candidates by minor line, keep the highest patch per line
+//   - keep a line iff its minor > current's minor, OR (same minor AND its
+//     latest patch > current's patch)
+//   - when current is dev/unparseable, every line's latest is kept
+//
+// Result is sorted by minor descending (highest line first).
+func groupLines(cands []lineCandidate, current string) []VersionLine {
+	type best struct {
+		patch    int
+		tag      string
+		assetURL string
+		notes    string
+	}
+	byMinor := map[string]best{}
+	for _, c := range cands {
+		minor, patch, ok := parseVersionTag(c.tag)
+		if !ok {
+			continue
+		}
+		if b, exists := byMinor[minor]; !exists || patch > b.patch {
+			byMinor[minor] = best{patch: patch, tag: c.tag, assetURL: c.assetURL, notes: c.notes}
+		}
+	}
+
+	curMinor, curPatch, curOK := parseVersionTag(current)
+
+	var out []VersionLine
+	for minor, b := range byMinor {
+		keep := false
+		if !curOK {
+			keep = true // dev / unparseable current: show everything
+		} else if semver.Compare(minor, curMinor) > 0 {
+			keep = true // higher line
+		} else if minor == curMinor && b.patch > curPatch {
+			keep = true // same line, newer patch
+		}
+		if keep {
+			out = append(out, VersionLine{
+				Minor: minor, Latest: b.tag, Notes: b.notes, AssetURL: b.assetURL,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return semver.Compare(out[i].Minor, out[j].Minor) > 0
+	})
+	return out
+}
+
 const (
 	releaseCacheTTL        = 1 * time.Hour
 	updaterCheckTimeout    = 15 * time.Second
@@ -145,6 +239,14 @@ func (u *Updater) githubReleaseAPI() string {
 		return u.cfg.releaseURL
 	}
 	return "https://api.github.com/repos/" + u.cfg.repo + "/releases/latest"
+}
+
+// githubReleasesAPI returns the URL to fetch the full releases list.
+func (u *Updater) githubReleasesAPI() string {
+	if u.cfg.releasesURL != "" {
+		return u.cfg.releasesURL
+	}
+	return "https://api.github.com/repos/" + u.cfg.repo + "/releases"
 }
 
 // githubLatestURL returns the browser endpoint whose redirect target carries
@@ -168,6 +270,7 @@ type githubRelease struct {
 	TagName    string        `json:"tag_name"`
 	Body       string        `json:"body"`
 	Prerelease bool          `json:"prerelease"`
+	Draft      bool          `json:"draft"`
 	Assets     []githubAsset `json:"assets"`
 }
 
@@ -189,6 +292,10 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 
 	checkCtx, cancelCheck := context.WithTimeout(ctx, updaterCheckTimeout)
 	rel, err := u.fetchLatest(checkCtx)
+	// refreshLines issues its own HTTP request; call it here while NOT holding
+	// u.mu so the slow network round-trip never blocks other goroutines. It
+	// returns nil on any failure (graceful degradation).
+	lines := u.refreshLines(checkCtx)
 	cancelCheck()
 
 	u.mu.Lock()
@@ -200,6 +307,19 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 		return err
 	}
 	u.cachedAt = u.cfg.now()
+	// lines was fetched above without holding the lock; assign under the lock.
+	u.state.Lines = lines
+	u.applyReleaseLocked(rel)
+	return nil
+}
+
+// applyReleaseLocked maps a single *githubRelease into state: clearing the
+// previous asset/checksum URLs, then (for non-prereleases) recording
+// Latest/Notes/Available, the SHA256SUMS verification URLs, and the
+// platform asset URL/size. Pre-releases clear Latest/Available/Notes and
+// return early. Used by both Check (latest release) and prepareVersion (a
+// specific tag). Caller must hold u.mu.
+func (u *Updater) applyReleaseLocked(rel *githubRelease) {
 	u.checksumURL = ""
 	u.checksumSigURL = ""
 	u.state.AssetURL = ""
@@ -210,7 +330,7 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 		u.state.Latest = ""
 		u.state.Available = false
 		u.state.Notes = ""
-		return nil
+		return
 	}
 
 	u.state.Latest = rel.TagName
@@ -240,7 +360,6 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 		}
 	}
 	u.clearStaleReadyLocked()
-	return nil
 }
 
 func (u *Updater) clearStaleReadyLocked() {
@@ -300,6 +419,65 @@ func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {
 		return nil, err
 	}
 	return &rel, nil
+}
+
+// fetchReleases fetches the full releases list from GitHub. Mirrors
+// fetchLatest's header/decode shape, decoding into a slice.
+func (u *Updater) fetchReleases(ctx context.Context) ([]githubRelease, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u.githubReleasesAPI(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "AT-Term/"+u.cfg.current)
+	resp, err := u.cfg.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("github releases list http %d", resp.StatusCode)
+	}
+	var rels []githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
+		return nil, err
+	}
+	return rels, nil
+}
+
+// refreshLines fetches the releases list and groups it into version lines.
+// It only reads u.cfg and issues HTTP — it MUST NOT be called while holding
+// u.mu (it would hold the lock across a slow network call). Returns nil on
+// any failure so callers can degrade gracefully without disturbing the
+// existing latest-release state.
+func (u *Updater) refreshLines(ctx context.Context) []VersionLine {
+	rels, err := u.fetchReleases(ctx)
+	if err != nil {
+		log.Printf("updater: fetch releases list: %v", err)
+		return nil
+	}
+	assetName, perr := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if perr != nil {
+		return nil
+	}
+	var cands []lineCandidate
+	for _, rel := range rels {
+		if rel.Prerelease || rel.Draft {
+			continue
+		}
+		var assetURL string
+		for _, a := range rel.Assets {
+			if a.Name == assetName {
+				assetURL = a.DownloadURL
+				break
+			}
+		}
+		if assetURL == "" {
+			continue
+		}
+		cands = append(cands, lineCandidate{tag: rel.TagName, assetURL: assetURL, notes: rel.Body})
+	}
+	return groupLines(cands, u.cfg.current)
 }
 
 func (u *Updater) fetchLatestViaRedirect(ctx context.Context) (*githubRelease, error) {
@@ -515,6 +693,39 @@ func (u *Updater) Download(ctx context.Context) error {
 	u.state.Error = ""
 	u.mu.Unlock()
 	return nil
+}
+
+// prepareVersion fetches the releases list, finds the given tag, and applies
+// its asset/checksum/notes into state so a subsequent Download targets that
+// exact version (the chosen line's latest). Used by DownloadVersion.
+func (u *Updater) prepareVersion(ctx context.Context, tag string) error {
+	rels, err := u.fetchReleases(ctx) // not under lock; issues HTTP
+	if err != nil {
+		return err
+	}
+	var found *githubRelease
+	for i := range rels {
+		if rels[i].TagName == tag {
+			found = &rels[i]
+			break
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("version %s not found in releases", tag)
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.applyReleaseLocked(found)
+	return nil
+}
+
+// DownloadVersion prepares the given tag (the chosen update line's latest)
+// then starts the download for it instead of the default latest.
+func (u *Updater) DownloadVersion(ctx context.Context, tag string) error {
+	if err := u.prepareVersion(ctx, tag); err != nil {
+		return err
+	}
+	return u.Download(ctx)
 }
 
 func (u *Updater) copyWithProgress(dst io.Writer, src io.Reader, expectedSize int64) (int64, error) {

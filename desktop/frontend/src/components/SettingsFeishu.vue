@@ -22,6 +22,12 @@
         {{ hookState.last_error }}
       </p>
     </section>
+    <section class="ai-only" data-test="feishu-ai-only">
+      <label class="ai-only__toggle">
+        <input type="checkbox" :checked="aiOnlyNotifications" @change="onToggleAIOnly" />
+        <span>{{ t('settings.feishu.aiOnlyNotifications') }}</span>
+      </label>
+    </section>
     <div v-if="status.error" class="hint feishu-status-error" data-test="feishu-load-error">
       <span>{{ t('settings.feishu.load_error', { error: status.error }) }}</span>
       <button type="button" class="hook-install__retry" @click="refresh" data-test="feishu-status-retry">
@@ -36,6 +42,27 @@
       <p class="hint">{{ t('settings.feishu.mode') }}: {{ status.mode }}</p>
       <template v-if="status.bound">
         <p>{{ t('settings.feishu.bound', { open_id: status.open_id }) }}</p>
+        <section class="test-send" data-test="feishu-test-send">
+          <p class="test-send__title">{{ t('settings.feishu.test_send.title') }}</p>
+          <p class="hint">{{ t('settings.feishu.test_send.hint') }}</p>
+          <div class="test-send__buttons">
+            <button
+              v-for="s in testScenarios"
+              :key="s"
+              type="button"
+              class="btn-secondary"
+              :disabled="testSending !== ''"
+              @click="onTestSend(s)"
+              :data-test="'feishu-test-' + s"
+            >
+              {{ testSending === s ? t('settings.feishu.test_send.sending') : t(`settings.feishu.test_send.${s}`) }}
+            </button>
+          </div>
+          <p v-if="testResult.ok" class="test-send__ok" data-test="feishu-test-ok">{{ t('settings.feishu.test_send.sent') }}</p>
+          <p v-else-if="testResult.error" class="error" data-test="feishu-test-error">
+            {{ t('settings.feishu.test_send.failed', { error: testResult.error }) }}
+          </p>
+        </section>
         <button type="button" class="btn-danger" @click="onDelete">{{ t('settings.feishu.delete') }}</button>
       </template>
       <!-- Credentials stored but not yet bound. Show a "configured" view so a
@@ -96,8 +123,11 @@ import {
   setFeishuCredentials,
   beginFeishuPair,
   deleteFeishuBinding,
+  sendFeishuTestCard,
   getHookInstallState,
   setHookInstallEnabled,
+  getAINotificationsOnly,
+  setAINotificationsOnly,
   type FeishuStatusResp,
   type FeishuCredentials,
   type HookInstallState,
@@ -120,10 +150,49 @@ const creds = ref<FeishuCredentials>({
 })
 const pairCode = ref('')
 const saveError = ref('')
+// "Notify for AI sessions only" toggle. Defaults to true (on) so the UI matches
+// the backend default before onMounted reads the persisted value.
+const aiOnlyNotifications = ref(true)
+
+async function onToggleAIOnly(e: Event) {
+  const on = (e.target as HTMLInputElement).checked
+  try {
+    await setAINotificationsOnly(on)
+    aiOnlyNotifications.value = on
+  } catch {
+    // Persist failed: re-read so the checkbox reflects the actual backend state.
+    try {
+      aiOnlyNotifications.value = await getAINotificationsOnly()
+    } catch {
+      /* leave the optimistic value */
+    }
+  }
+}
 // editing forces the credentials form even when status.configured, so the user
 // can overwrite stored credentials from the "configured" view.
 const editing = ref(false)
 const copied = ref(false)
+
+// Test-send state. testScenarios mirrors the feishu.TestCard* backend values
+// and the settings.feishu.test_send.<scenario> i18n keys. testSending holds the
+// scenario currently in flight ('' = idle) so its button shows a spinner label
+// and all buttons disable. testResult shows the last outcome.
+const testScenarios = ['command_success', 'command_failure', 'command_sealed', 'waiting_input'] as const
+const testSending = ref('')
+const testResult = ref<{ ok: boolean; error: string }>({ ok: false, error: '' })
+
+async function onTestSend(scenario: string) {
+  testSending.value = scenario
+  testResult.value = { ok: false, error: '' }
+  try {
+    await sendFeishuTestCard(scenario)
+    testResult.value = { ok: true, error: '' }
+  } catch (e) {
+    testResult.value = { ok: false, error: e instanceof Error ? e.message : String(e) }
+  } finally {
+    testSending.value = ''
+  }
+}
 
 const hookState = ref<HookInstallState>({
   enabled: true,
@@ -194,6 +263,11 @@ async function onRetryHook() {
 onMounted(async () => {
   await refresh()
   await refreshHook()
+  try {
+    aiOnlyNotifications.value = await getAINotificationsOnly()
+  } catch {
+    // non-fatal; keep the default-on value.
+  }
 })
 
 async function onSave() {
@@ -356,6 +430,39 @@ async function onDelete() {
   color: #f87171;
   font-size: 13px;
 }
+.test-send {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.test-send__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0;
+}
+.test-send .hint {
+  margin: 0;
+}
+.test-send__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.test-send__buttons .btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.test-send__ok {
+  color: var(--good);
+  font-size: 13px;
+  margin: 0;
+}
 .pair-hint {
   font-size: 13px;
   color: var(--fg-dim);
@@ -395,4 +502,10 @@ async function onDelete() {
 .hook-install__toggle { display: flex; gap: 4px; align-items: center; font-size: 12px; }
 .hook-install__retry { font-size: 12px; padding: 2px 8px; }
 .hook-install__error { font-size: 12px; color: var(--warn); margin: 6px 0 0; }
+.ai-only {
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.ai-only__toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 </style>

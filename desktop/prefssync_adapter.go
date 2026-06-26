@@ -34,6 +34,12 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 		}
 		b, _ := json.Marshal(*c.NotificationsEnabled)
 		return b, true
+	case "ai_notifications_only":
+		if c.AINotificationsOnly == nil {
+			return nil, false
+		}
+		b, _ := json.Marshal(*c.AINotificationsOnly)
+		return b, true
 	case "command_notify_threshold_seconds":
 		if c.CommandNotifyThresholdSeconds == nil {
 			return nil, false
@@ -71,6 +77,12 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 			return err
 		}
 		c.NotificationsEnabled = &b
+	case "ai_notifications_only":
+		var b bool
+		if err := json.Unmarshal(value, &b); err != nil {
+			return err
+		}
+		c.AINotificationsOnly = &b
 	case "command_notify_threshold_seconds":
 		var n int
 		if err := json.Unmarshal(value, &n); err != nil {

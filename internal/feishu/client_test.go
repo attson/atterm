@@ -27,8 +27,12 @@ func TestClient_SendInteractiveToOpenID(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, srv.Client())
-	if err := c.SendInteractiveToOpenID(context.Background(), "tt_token", "ou_dest", []byte(`{"msg_type":"interactive","card":{"x":1}}`)); err != nil {
+	mid, err := c.SendInteractiveToOpenID(context.Background(), "tt_token", "ou_dest", []byte(`{"msg_type":"interactive","card":{"x":1}}`))
+	if err != nil {
 		t.Fatalf("send: %v", err)
+	}
+	if mid != "om_xxx" {
+		t.Fatalf("message_id: got %q want om_xxx", mid)
 	}
 	if !strings.HasPrefix(gotPath, "/open-apis/im/v1/messages?") {
 		t.Fatalf("path: %s", gotPath)
@@ -52,7 +56,7 @@ func TestClient_SendInteractive_FeishuError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	c := NewClient(srv.URL, srv.Client())
-	err := c.SendInteractiveToOpenID(context.Background(), "tt", "ou", []byte(`{}`))
+	_, err := c.SendInteractiveToOpenID(context.Background(), "tt", "ou", []byte(`{}`))
 	if err == nil {
 		t.Fatalf("expected error")
 	}

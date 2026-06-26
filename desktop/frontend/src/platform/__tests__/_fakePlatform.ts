@@ -24,6 +24,7 @@ export function createFakePlatform(): Platform {
     asset_size: 0,
     download_dir: '',
     download_path: '',
+    lines: [],
   }
 
   return {
@@ -85,6 +86,7 @@ export function createFakePlatform(): Platform {
       getState: vi.fn().mockResolvedValue(fakeUpdateState),
       checkUpdate: vi.fn().mockResolvedValue(undefined),
       startDownload: vi.fn().mockResolvedValue(undefined),
+      downloadVersion: vi.fn().mockResolvedValue(undefined),
       installUpdate: vi.fn().mockResolvedValue(undefined),
     },
     pluginHost: {

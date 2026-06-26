@@ -94,6 +94,10 @@ export function GetLoggingConfig() {
   return window['go']['main']['App']['GetLoggingConfig']();
 }
 
+export function GetAINotificationsOnly() {
+  return window['go']['main']['App']['GetAINotificationsOnly']();
+}
+
 export function GetNotificationsEnabled() {
   return window['go']['main']['App']['GetNotificationsEnabled']();
 }
@@ -222,6 +226,10 @@ export function SaveRecoverySnapshot(arg1) {
   return window['go']['main']['App']['SaveRecoverySnapshot'](arg1);
 }
 
+export function SendFeishuTestCard(arg1) {
+  return window['go']['main']['App']['SendFeishuTestCard'](arg1);
+}
+
 export function SetAutoCheckUpdates(arg1) {
   return window['go']['main']['App']['SetAutoCheckUpdates'](arg1);
 }
@@ -248,6 +256,10 @@ export function SetLocalePreference(arg1) {
 
 export function SetLoggingConfig(arg1) {
   return window['go']['main']['App']['SetLoggingConfig'](arg1);
+}
+
+export function SetAINotificationsOnly(arg1) {
+  return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
 }
 
 export function SetNotificationsEnabled(arg1) {
@@ -316,6 +328,10 @@ export function SetWebglRendererEnabled(arg1) {
 
 export function ShowNotification(arg1, arg2) {
   return window['go']['main']['App']['ShowNotification'](arg1, arg2);
+}
+
+export function DownloadVersion(arg1) {
+  return window['go']['main']['App']['DownloadVersion'](arg1);
 }
 
 export function StartDownload() {

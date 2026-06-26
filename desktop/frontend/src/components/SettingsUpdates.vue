@@ -1,7 +1,8 @@
 <script lang="ts" setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   checkUpdate,
+  downloadVersion,
   getAutoCheckUpdates,
   getUpdateGHProxyURL,
   getUpdateState,
@@ -23,8 +24,39 @@ const checkingNow = ref(false);
 const savingProxy = ref(false);
 const loading = ref(true);
 const error = ref("");
+const selectedLine = ref("");
 let pollHandle: number | null = null;
 const { t } = useI18n();
+
+// Extracts the minor line (e.g. "v0.2") from a version/tag like "v0.2.3".
+// Matches the backend VersionLine.Minor format, which keeps the "v" prefix.
+function minorOf(version: string): string {
+  const parts = version.replace(/^v/, "").split(".");
+  if (parts.length < 2) return "";
+  return `v${parts[0]}.${parts[1]}`;
+}
+
+// Default the selected line to the line matching the current install's minor;
+// for dev builds (no matching minor) fall back to the first/highest line.
+watch(
+  () => state.value?.lines,
+  (lines) => {
+    if (!lines || lines.length === 0) return;
+    if (selectedLine.value && lines.some((l) => l.minor === selectedLine.value)) {
+      return;
+    }
+    const currentMinor = minorOf(state.value?.current ?? "");
+    const match = lines.find((l) => l.minor === currentMinor);
+    selectedLine.value = match ? match.minor : lines[0].minor;
+  },
+  { immediate: true },
+);
+
+const selectedLatest = computed(() => {
+  const lines = state.value?.lines ?? [];
+  const line = lines.find((l) => l.minor === selectedLine.value);
+  return line?.latest ?? "";
+});
 
 onMounted(async () => {
   try {
@@ -73,6 +105,15 @@ async function onDownload() {
   }
 }
 
+async function onDownloadSelected() {
+  if (!selectedLatest.value) return;
+  try {
+    await downloadVersion(selectedLatest.value);
+  } catch {
+    /* state.error reflects in poll */
+  }
+}
+
 async function onAutoCheckToggle(e: Event) {
   const target = e.target as HTMLInputElement;
   autoCheck.value = target.checked;
@@ -94,6 +135,10 @@ async function onSaveProxy() {
 
 const isDev = computed(
   () => state.value?.current === "dev" || state.value?.current === "",
+);
+
+const hasMultipleLines = computed(
+  () => (state.value?.lines?.length ?? 0) >= 2,
 );
 
 const statusLine = computed(() => {
@@ -177,13 +222,39 @@ function formatAgo(unixSec: number) {
         <pre>{{ state.notes }}</pre>
       </details>
 
+      <div
+        v-if="!isDev && hasMultipleLines && state.lines && !state.ready"
+        class="version-lines"
+      >
+        <div
+          v-for="line in state.lines"
+          :key="line.minor"
+          class="version-line"
+        >
+          <label>
+            <input
+              type="radio"
+              :value="line.minor"
+              v-model="selectedLine"
+            />
+            {{ t("settings.updates.versionLine", { minor: line.minor }) }} → {{ line.latest }}
+          </label>
+        </div>
+      </div>
+
       <div v-if="!isDev" class="actions">
         <button
           @click="onCheckNow"
           :disabled="checkingNow || state.checking"
         >{{ t("settings.updates.checkNow") }}</button>
         <button
-          v-if="state.available && !state.ready && !state.downloading"
+          v-if="hasMultipleLines && !state.ready && !state.downloading"
+          class="primary"
+          :disabled="state.downloading || !selectedLatest"
+          @click="onDownloadSelected"
+        >{{ t("settings.updates.downloadVersion", { version: selectedLatest }) }}</button>
+        <button
+          v-if="!hasMultipleLines && state.available && !state.ready && !state.downloading"
           class="primary"
           @click="onDownload"
         >{{ t("settings.updates.downloadVersion", { version: state.latest }) }}</button>
@@ -292,6 +363,18 @@ function formatAgo(unixSec: number) {
   max-height: 160px;
   overflow-y: auto;
   font-size: 11px;
+}
+.version-lines {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.version-line label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
 }
 .actions {
   display: flex;

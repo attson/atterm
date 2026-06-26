@@ -56,13 +56,34 @@ func computeResumeArgs(kind, sid, commandLine string) []string {
 	return out
 }
 
+// claudeValueFlags are claude launch flags that REQUIRE a following value
+// (separate-token form, e.g. `--permission-mode plan`). When such a flag
+// appears without its value — last token, or immediately followed by another
+// flag — the command line is corrupted; re-injecting the valueless flag makes
+// claude exit with "option '--X <...>' argument missing", which then fails
+// recovery on every restart (the broken line is captured and re-propagated).
+// We drop the valueless flag to break that cycle. The inline `--flag=value`
+// form is unaffected (it carries its own value as one token). Boolean flags
+// (--dangerously-skip-permissions, --continue, --debug, ...) are NOT listed
+// here, so they are always preserved.
+var claudeValueFlags = map[string]bool{
+	"--permission-mode":      true,
+	"--model":                true,
+	"--add-dir":              true,
+	"--mcp-config":           true,
+	"--settings":             true,
+	"--append-system-prompt": true,
+}
+
 // claudePreservedFlags extracts the launch flags worth carrying onto a claude
 // `--resume` from the original command line. It skips the same leading
 // env-assign / wrapper / binary tokens classifyAIKindFromCommand skips, then
 // drops the flags that would collide with the resume we inject ourselves:
 // `--resume`/`-r` (and a following non-flag id value), the `--resume=...` form,
-// and `--continue`/`-c`. Everything else (--permission-mode, --model,
-// --dangerously-skip-permissions, --add-dir, ...) is preserved verbatim.
+// and `--continue`/`-c`. A value-taking flag (claudeValueFlags) left without
+// its value is dropped to avoid re-injecting a broken `--X` (see that var).
+// Everything else (--permission-mode <v>, --model <v>, --dangerously-skip-
+// permissions, --add-dir <v>, ...) is preserved verbatim.
 //
 // Tokenization mirrors classifyAIKindFromCommand (whitespace split): the source
 // is the OSC 133;C command line, already whitespace-joined, so flag values with
@@ -95,6 +116,14 @@ func claudePreservedFlags(commandLine string) []string {
 			// inline value form — drop the whole token
 		case t == "--continue" || t == "-c":
 			// no value to drop
+		case claudeValueFlags[t]:
+			// Value-taking flag: keep it WITH its value, but drop it when the
+			// value is missing (last token, or next token is another flag) so we
+			// never re-inject a broken `--X` that crashes claude on resume.
+			if i+1 < len(tokens) && !strings.HasPrefix(tokens[i+1], "-") {
+				out = append(out, t, tokens[i+1])
+				i++
+			}
 		default:
 			out = append(out, t)
 		}

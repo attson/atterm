@@ -100,6 +100,7 @@ type CardActionTrigger struct {
 	Kind           string
 	SessionID      string
 	Event          string
+	Text           string
 }
 
 // ParseEnvelope inspects plaintext (already decrypted) and routes it to
@@ -157,6 +158,7 @@ func ParseEnvelope(plaintext []byte) (*Envelope, error) {
 					Kind      string `json:"kind"`
 					SessionID string `json:"session_id"`
 					Event     string `json:"event"`
+					Text      string `json:"text"`
 				} `json:"value"`
 			} `json:"action"`
 			Operator struct {
@@ -171,6 +173,7 @@ func ParseEnvelope(plaintext []byte) (*Envelope, error) {
 			Kind:           ev.Action.Value.Kind,
 			SessionID:      ev.Action.Value.SessionID,
 			Event:          ev.Action.Value.Event,
+			Text:           ev.Action.Value.Text,
 		}
 	}
 	return env, nil

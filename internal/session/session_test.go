@@ -915,6 +915,49 @@ func TestSession_OnTaskStateChange_FiresOnTransitions(t *testing.T) {
 	}
 }
 
+// TestSession_OnTaskStateChange_HeldLockContract documents (and guards) the
+// fact that the onTaskStateChange callback runs while s.mu is held. A caller
+// that calls a lock-taking method like s.Info() / s.TailOutput() directly in
+// the callback deadlocks the session goroutine — which froze the PTY input
+// pump in the field (terminal appeared frozen after a command finished). This
+// test proves the lock is held by showing that an Info() call issued from
+// inside the callback cannot complete until the callback returns (and the
+// lock is released). Callers must defer such calls to a goroutine.
+func TestSession_OnTaskStateChange_HeldLockContract(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	infoDone := make(chan struct{})
+	callbackReturned := make(chan struct{})
+	s.SetOnTaskStateChange(func(_ uuid.UUID, _, next string, _ TaskMeta) {
+		if next != proto.TaskStateCompleted {
+			return
+		}
+		// Issue a lock-taking call from a goroutine; it must block until the
+		// callback returns and s.mu is released.
+		go func() {
+			_ = s.Info()
+			close(infoDone)
+		}()
+		// Give the goroutine a chance to run and (correctly) block on s.mu.
+		select {
+		case <-infoDone:
+			t.Errorf("s.Info() completed while callback held s.mu — lock not held, contract broken")
+		case <-time.After(50 * time.Millisecond):
+			// Expected: Info() is still blocked on s.mu.
+		}
+		close(callbackReturned)
+	})
+
+	s.PushOut(1, []byte("$ \x1b]133;A\x07c\x1b]133;C\x07o\x1b]133;D;0\x07"))
+
+	<-callbackReturned
+	select {
+	case <-infoDone:
+		// Info() unblocked once the callback returned and the lock released.
+	case <-time.After(time.Second):
+		t.Fatal("s.Info() never completed after callback returned — deadlock")
+	}
+}
+
 func TestSession_OnTaskStateChange_FiresOnWaiting(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{})
 	fired := make(chan struct{}, 1)
@@ -932,5 +975,20 @@ func TestSession_OnTaskStateChange_FiresOnWaiting(t *testing.T) {
 	case <-fired:
 	case <-time.After(time.Second):
 		t.Fatalf("expected WaitingInput transition")
+	}
+}
+
+func TestSession_TailOutput(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	s.PushOut(1, []byte("line one\n"))
+	s.PushOut(2, []byte("line two\n"))
+	// Buffer content is "line one\nline two\n"; the last 5 bytes are " two\n".
+	got := string(s.TailOutput(5))
+	if got != " two\n" {
+		t.Fatalf("TailOutput(5) = %q, want %q", got, " two\n")
+	}
+	all := string(s.TailOutput(1000))
+	if all != "line one\nline two\n" {
+		t.Fatalf("TailOutput(1000) = %q, want full buffer", all)
 	}
 }

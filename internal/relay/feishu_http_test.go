@@ -15,7 +15,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -72,7 +76,7 @@ func newFeishuTestHandler(t *testing.T, st *userstore.SQLiteStore, tokenCode int
 		IM:    feishu.NewClient(stub.URL, stub.Client()),
 		Token: feishu.NewTenantTokenCache(stub.URL, stub.Client(), nil),
 	})
-	return NewFeishuHTTPHandler(st, svc), stub
+	return NewFeishuHTTPHandler(st, svc, session.NewRegistry()), stub
 }
 
 func TestFeishuHTTP_UpsertBinding_GoodCreds(t *testing.T) {
@@ -308,6 +312,100 @@ func TestFeishuHTTP_EventCallback_CardAckUpdates(t *testing.T) {
 	}
 }
 
+// registerOwnedSession adds a live session with the given owner to the
+// handler's registry and returns it. Used by the inject owner-isolation tests.
+func registerOwnedSession(t *testing.T, h *FeishuHTTPHandler, id uuid.UUID, owner string) *session.Session {
+	t.Helper()
+	sess := session.New(id, proto.SessionInfo{})
+	sess.OwnerUserID = owner
+	got, err := h.registry.Add(sess)
+	if err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+	return got
+}
+
+// injectCardBody builds an encrypted card.action inject callback body.
+func injectCardBody(t *testing.T, encryptKey, appID, verifyToken, sid, text string) []byte {
+	t.Helper()
+	plain := []byte(`{"header":{"event_type":"card.action.trigger","token":"` + verifyToken +
+		`","app_id":"` + appID + `"},"event":{"action":{"value":{"kind":"inject","session_id":"` +
+		sid + `","text":"` + text + `"}},"operator":{"open_id":"ou_x"}}}`)
+	return feishuEncryptForTest(t, encryptKey, plain)
+}
+
+// TestFeishuHTTP_EventCallback_Inject_OwnerMatch proves the full inject link:
+// a card callback whose binding owner matches the target session's owner lands
+// a TypeIn frame on the session's inbound channel.
+func TestFeishuHTTP_EventCallback_Inject_OwnerMatch(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	u, _ := st.CreateOpaqueUser(ctx, "inj-ok@example.com")
+	_ = st.UpsertFeishuBinding(ctx, u.ID, userstore.FeishuBindingCredentials{
+		AppID: "cli_inj", AppSecret: "s", EncryptKey: "ek-inj", VerifyToken: "vt-inj",
+	})
+	b, _ := st.GetFeishuBinding(ctx, u.ID)
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	// Session owned by the same user that owns the binding (b.UserID == u.ID).
+	sid := uuid.New()
+	sess := registerOwnedSession(t, h, sid, u.ID)
+
+	body := injectCardBody(t, "ek-inj", "cli_inj", "vt-inj", sid.String(), "hello")
+	req := httptest.NewRequest("POST", "/v1/feishu/events/"+b.AppIDHash, bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPEvents(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case f := <-sess.Inbound():
+		if f.Type != proto.TypeIn {
+			t.Fatalf("frame type=%v, want TypeIn", f.Type)
+		}
+		if string(f.Payload) != "hello" {
+			t.Fatalf("payload=%q, want %q", f.Payload, "hello")
+		}
+	default:
+		t.Fatalf("expected an inbound frame on the owned session, got none")
+	}
+}
+
+// TestFeishuHTTP_EventCallback_Inject_OwnerMismatch is the security regression:
+// a card callback from binding owner user-B must NOT inject into a session owned
+// by user-A. The inbound channel stays empty.
+func TestFeishuHTTP_EventCallback_Inject_OwnerMismatch(t *testing.T) {
+	ctx := context.Background()
+	st := newTestUserStoreWithCipher(t)
+	// user-B owns the binding that fires the callback.
+	uB, _ := st.CreateOpaqueUser(ctx, "inj-attacker@example.com")
+	_ = st.UpsertFeishuBinding(ctx, uB.ID, userstore.FeishuBindingCredentials{
+		AppID: "cli_inj2", AppSecret: "s", EncryptKey: "ek-inj2", VerifyToken: "vt-inj2",
+	})
+	b, _ := st.GetFeishuBinding(ctx, uB.ID)
+	h, _ := newFeishuTestHandler(t, st, 0, "tt")
+
+	// Session owned by a different user (user-A). uB.ID != "user-A".
+	sid := uuid.New()
+	sess := registerOwnedSession(t, h, sid, "user-A")
+
+	body := injectCardBody(t, "ek-inj2", "cli_inj2", "vt-inj2", sid.String(), "evil")
+	req := httptest.NewRequest("POST", "/v1/feishu/events/"+b.AppIDHash, bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTPEvents(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case f := <-sess.Inbound():
+		t.Fatalf("owner mismatch: inject must be denied, but got frame %+v", f)
+	default:
+		// Expected: no frame delivered.
+	}
+}
+
 func TestFeishuHTTP_RelayToken_Success(t *testing.T) {
 	ctx := context.Background()
 	st := newTestUserStoreWithCipher(t)
@@ -407,5 +505,45 @@ func TestFeishuHTTP_RelayToken_Unauthorized(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+// TestFeishuRoutesRegisteredOnMux is the regression test for the missing
+// /v1/feishu/relay-token/me route registration. The other RelayToken tests
+// call h.ServeHTTPSession directly, bypassing the server mux — so they stayed
+// green even while the route was never mounted, and the client's token-borrow
+// POST hit Go's default mux and got a bare 404 "page not found" (mapped to
+// ErrTokenNotConfigured → dispatch silently dropped → no Feishu card ever sent).
+//
+// This drives requests through the real Server.ServeHTTP so an unregistered
+// path is observably different: a mounted-but-unauthenticated route returns
+// 401 (requireSession), whereas an unmounted path returns 404 (mux miss). We
+// assert every authenticated session route — including relay-token — is
+// mounted by checking none of them 404 without a token.
+func TestFeishuRoutesRegisteredOnMux(t *testing.T) {
+	srv, _, _ := serverWithSessionAndUser(t) // Store is *SQLiteStore → feishu routes register
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/v1/feishu/bindings/me"},
+		{http.MethodPost, "/v1/feishu/bindings/me"},
+		{http.MethodDelete, "/v1/feishu/bindings/me"},
+		{http.MethodPost, "/v1/feishu/bindings/me/begin-pair"},
+		{http.MethodPost, "/v1/feishu/relay-token/me"},
+	}
+	for _, rt := range routes {
+		// No Authorization header: a registered route is gated by
+		// requireSession → 401; an unregistered path → mux 404.
+		req := httptest.NewRequest(rt.method, rt.path, nil)
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		if rr.Code == http.StatusNotFound {
+			t.Fatalf("%s %s not registered on mux (got 404 — route missing)", rt.method, rt.path)
+		}
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401 (registered, unauthenticated), got %d", rt.method, rt.path, rr.Code)
+		}
 	}
 }

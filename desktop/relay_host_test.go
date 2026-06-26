@@ -109,3 +109,24 @@ func TestStartRelayHost_PersistsAdminPasswordAcrossRestarts(t *testing.T) {
 		t.Fatal("expected a fresh session token on relaunch, got the same one")
 	}
 }
+
+func TestShouldNotifySession(t *testing.T) {
+	cases := []struct {
+		name        string
+		sessionType string
+		aiOnly      bool
+		want        bool
+	}{
+		{"ai session, ai-only on", "ai", true, true},
+		{"shell session, ai-only on", "shell", true, false},
+		{"ai session, ai-only off", "ai", false, true},
+		{"shell session, ai-only off", "shell", false, true},
+		{"empty type, ai-only on", "", true, false},
+	}
+	for _, c := range cases {
+		if got := shouldNotifySession(c.sessionType, c.aiOnly); got != c.want {
+			t.Errorf("%s: shouldNotifySession(%q, %v) = %v, want %v",
+				c.name, c.sessionType, c.aiOnly, got, c.want)
+		}
+	}
+}

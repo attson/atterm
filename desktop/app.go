@@ -1433,6 +1433,15 @@ func (a *App) StartDownload() error {
 	return a.updater.Download(a.ctx)
 }
 
+// DownloadVersion downloads a specific version (the chosen update line's
+// latest tag) instead of the default latest.
+func (a *App) DownloadVersion(tag string) error {
+	if a.updater == nil {
+		return nil
+	}
+	return a.updater.DownloadVersion(a.ctx, tag)
+}
+
 // InstallUpdate spawns the install helper detached and quits the app.
 // The helper waits for our PID to exit then replaces the install and
 // relaunches.
@@ -1600,6 +1609,29 @@ func (a *App) SetNotificationsEnabled(enabled bool) error {
 		return err
 	}
 	a.markPrefDirtyAndPush("notifications_enabled")
+	return nil
+}
+
+// GetAINotificationsOnly returns the current persisted preference.
+// Defaults to true for fresh installs.
+func (a *App) GetAINotificationsOnly() bool {
+	if a.cfgStore == nil {
+		return true
+	}
+	return a.cfgStore.Get().AINotificationsOnlyOrDefault()
+}
+
+// SetAINotificationsOnly persists the user's toggle.
+func (a *App) SetAINotificationsOnly(enabled bool) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	cfg.AINotificationsOnly = &enabled
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("ai_notifications_only")
 	return nil
 }
 
@@ -1892,6 +1924,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return len(c.QuickTemplates) > 0
 		case "notifications_enabled":
 			return c.NotificationsEnabled != nil
+		case "ai_notifications_only":
+			return c.AINotificationsOnly != nil
 		case "command_notify_threshold_seconds":
 			return c.CommandNotifyThresholdSeconds != nil
 		case "shell_integration_enabled":
@@ -2257,6 +2291,20 @@ func (a *App) DeleteFeishuBinding() error {
 		return errors.New("feishu disabled")
 	}
 	return svc.Store().Delete(a.ctx)
+}
+
+// SendFeishuTestCard renders and sends one notification card to the bound
+// OpenID through the live token + IM path, so the user can verify delivery from
+// Settings without waiting for a real trigger. scenario is one of the
+// feishu.TestCard* values ("command_success", "command_failure",
+// "command_sealed", "waiting_input"). Any failure (not configured, disabled,
+// unbound, or send error) is returned verbatim for the UI to display.
+func (a *App) SendFeishuTestCard(scenario string) error {
+	svc, _ := a.currentFeishu()
+	if svc == nil {
+		return errors.New("feishu disabled")
+	}
+	return svc.SendTestCard(a.ctx, feishu.TestCardScenario(scenario))
 }
 
 // hookInstallLastAttempt tracks when we last auto-repaired so the UI

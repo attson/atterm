@@ -827,6 +827,24 @@ export namespace main {
 	
 	
 	
+	export class VersionLine {
+	    minor: string;
+	    latest: string;
+	    notes: string;
+	    asset_url: string;
+
+	    static createFrom(source: any = {}) {
+	        return new VersionLine(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.minor = source["minor"];
+	        this.latest = source["latest"];
+	        this.notes = source["notes"];
+	        this.asset_url = source["asset_url"];
+	    }
+	}
 	export class UpdateState {
 	    current: string;
 	    latest: string;
@@ -842,7 +860,8 @@ export namespace main {
 	    asset_size: number;
 	    download_dir: string;
 	    download_path: string;
-	
+	    lines: VersionLine[];
+
 	    static createFrom(source: any = {}) {
 	        return new UpdateState(source);
 	    }
@@ -863,7 +882,26 @@ export namespace main {
 	        this.asset_size = source["asset_size"];
 	        this.download_dir = source["download_dir"];
 	        this.download_path = source["download_path"];
+	        this.lines = this.convertValues(source["lines"], VersionLine);
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

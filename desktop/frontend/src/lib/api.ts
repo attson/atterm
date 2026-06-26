@@ -244,6 +244,14 @@ export interface ClipboardPastePayload {
   reason?: string;
 }
 
+// Mirrors desktop/updater.go VersionLine. One available minor-version line.
+export interface VersionLine {
+  minor: string;
+  latest: string;
+  notes: string;
+  asset_url: string;
+}
+
 // Mirrors desktop/updater.go UpdateState. Field names are snake_case from
 // Wails JSON marshaling; we match exactly.
 export interface UpdateState {
@@ -261,6 +269,7 @@ export interface UpdateState {
   asset_size: number;
   download_dir: string;
   download_path: string;
+  lines: VersionLine[];
 }
 
 interface AppBindings {
@@ -297,6 +306,7 @@ interface AppBindings {
   GetUpdateState(): Promise<UpdateState>;
   CheckUpdate(): Promise<void>;
   StartDownload(): Promise<void>;
+  DownloadVersion(tag: string): Promise<void>;
   InstallUpdate(): Promise<void>;
   GetAutoCheckUpdates(): Promise<boolean>;
   SetAutoCheckUpdates(enabled: boolean): Promise<void>;
@@ -305,6 +315,8 @@ interface AppBindings {
   ConfirmQuit(): Promise<void>;
   GetNotificationsEnabled(): Promise<boolean>;
   SetNotificationsEnabled(enabled: boolean): Promise<void>;
+  GetAINotificationsOnly(): Promise<boolean>;
+  SetAINotificationsOnly(enabled: boolean): Promise<void>;
   GetPtyInputDebugEnabled(): Promise<boolean>;
   SetPtyInputDebugEnabled(enabled: boolean): Promise<void>;
   ShowNotification(title: string, body: string): Promise<void>;
@@ -326,6 +338,7 @@ interface AppBindings {
   SetFeishuCredentials(c: FeishuCredentials): Promise<void>;
   BeginFeishuPair(): Promise<string>;
   DeleteFeishuBinding(): Promise<void>;
+  SendFeishuTestCard(scenario: string): Promise<void>;
   GetHookInstallState(): Promise<HookInstallState>;
   SetHookInstallEnabled(on: boolean): Promise<void>;
   GetQuickTemplates(): Promise<import('./templates').QuickTemplate[]>;
@@ -618,6 +631,10 @@ export function startDownload(): Promise<void> {
   return bindings().StartDownload();
 }
 
+export function downloadVersion(tag: string): Promise<void> {
+  return bindings().DownloadVersion(tag);
+}
+
 export function installUpdate(): Promise<void> {
   return bindings().InstallUpdate();
 }
@@ -648,6 +665,14 @@ export function getNotificationsEnabled(): Promise<boolean> {
 
 export function setNotificationsEnabled(enabled: boolean): Promise<void> {
   return bindings().SetNotificationsEnabled(enabled);
+}
+
+export function getAINotificationsOnly(): Promise<boolean> {
+  return bindings().GetAINotificationsOnly();
+}
+
+export function setAINotificationsOnly(enabled: boolean): Promise<void> {
+  return bindings().SetAINotificationsOnly(enabled);
 }
 
 export function getPtyInputDebugEnabled(): Promise<boolean> {
@@ -841,6 +866,14 @@ export function beginFeishuPair(): Promise<string> {
 
 export function deleteFeishuBinding(): Promise<void> {
   return bindings().DeleteFeishuBinding();
+}
+
+// sendFeishuTestCard renders and sends one notification card to the bound
+// OpenID through the live token + IM path, so the user can confirm delivery
+// from Settings. scenario ∈ {command_success, command_failure, command_sealed,
+// waiting_input}. Rejects with the backend error message on any failure.
+export function sendFeishuTestCard(scenario: string): Promise<void> {
+  return bindings().SendFeishuTestCard(scenario);
 }
 
 // getHookInstallState returns the current Claude Code hook auto-install

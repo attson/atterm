@@ -146,6 +146,7 @@ export interface UpdaterBridge {
   getState(): Promise<_UpdateState>
   checkUpdate(): Promise<void>
   startDownload(): Promise<void>
+  downloadVersion(tag: string): Promise<void>
   installUpdate(): Promise<void>
 }
 

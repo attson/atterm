@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -864,7 +865,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	h.feishuCards.Put(anchor)
 
 	// flush is the Chunker callback: gets the current body markdown and
-	// PATCHes the anchor card asynchronously.
+	// PATCHes the anchor card asynchronously with retry policy.
 	flush := func(body string) {
 		go func() {
 			tok, _, err := disp.GetToken(context.Background())
@@ -873,14 +874,26 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 				return
 			}
 			seq := atomic.AddInt64(&anchor.PatchSeq, 1)
-			if err := disp.PatchAnchor(context.Background(), tok, anchor.CardToken, body, seq); err != nil {
-				if internalfeishu.IsCardGoneError(err) {
-					log.Printf("feishu-anchor: card gone session=%s — detaching", sessID)
-					h.detachFeishuSubscriber(sessID)
-					return
-				}
-				log.Printf("feishu-anchor: patch failed session=%s: %v", sessID, err)
+			err = internalfeishu.PatchWithRetry(func() error {
+				return disp.PatchAnchor(context.Background(), tok, anchor.CardToken, body, seq)
+			})
+			if err == nil {
+				return
 			}
+			if internalfeishu.IsCardGoneError(err) {
+				log.Printf("feishu-anchor: card gone session=%s — detaching", sessID)
+				h.feishuCards.RemoveBySessionID(sessID.String())
+				h.detachFeishuSubscriber(sessID)
+				return
+			}
+			var ace *internalfeishu.AuthClassError
+			if errors.As(err, &ace) {
+				// Tenant token expired; rely on the existing TenantTokenCache
+				// refresh path — next flush will see a fresh token.
+				log.Printf("feishu-anchor: auth refresh needed session=%s (%v)", sessID, err)
+				return
+			}
+			log.Printf("feishu-anchor: patch gave up after retry session=%s: %v", sessID, err)
 		}()
 	}
 

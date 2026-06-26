@@ -11,6 +11,7 @@
 package feishu
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -368,3 +369,23 @@ type TurnUserPromptEvent struct{ Text string }
 type TurnToolStartEvent struct{ ToolName string }
 type TurnToolEndEvent struct{ ToolName, ToolBody string }
 type TurnAssistantFinalEvent struct{ Text string }
+
+// PatchWithRetry runs patch once, retries once after a 1s backoff on
+// transient errors (5xx). card-gone errors and auth-class errors return
+// immediately so the caller can take terminal action (drop from index /
+// refresh token). The function returns the last error encountered.
+func PatchWithRetry(patch func() error) error {
+	err := patch()
+	if err == nil {
+		return nil
+	}
+	if IsCardGoneError(err) {
+		return err
+	}
+	var ace *AuthClassError
+	if errors.As(err, &ace) {
+		return err
+	}
+	time.Sleep(time.Second)
+	return patch()
+}

@@ -1,6 +1,7 @@
 package feishu
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,4 +199,49 @@ func TestAIChunker_ConcurrentPushTickRaceClean(t *testing.T) {
 	wg.Wait()
 	// We don't assert call count — just that no race detector trips.
 	_ = calls
+}
+
+func TestPatchWithRetry_OneBackoffOn5xx(t *testing.T) {
+	calls := 0
+	patch := func() error {
+		calls++
+		if calls == 1 {
+			return fmt.Errorf("cardkit patch: code=500 msg=server error")
+		}
+		return nil
+	}
+	err := PatchWithRetry(patch)
+	if err != nil {
+		t.Fatalf("expected success on retry, got %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2 (initial + 1 retry)", calls)
+	}
+}
+
+func TestPatchWithRetry_GivesUpAfterRetry(t *testing.T) {
+	calls := 0
+	patch := func() error {
+		calls++
+		return fmt.Errorf("cardkit patch: code=500 msg=server error")
+	}
+	err := PatchWithRetry(patch)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2 (initial + 1 retry)", calls)
+	}
+}
+
+func TestPatchWithRetry_NoRetryOnCardGone(t *testing.T) {
+	calls := 0
+	patch := func() error {
+		calls++
+		return fmt.Errorf("cardkit patch: code=230030 msg=card not found")
+	}
+	_ = PatchWithRetry(patch)
+	if calls != 1 {
+		t.Errorf("should not retry on card-gone error, calls = %d", calls)
+	}
 }

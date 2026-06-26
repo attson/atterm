@@ -113,6 +113,11 @@ type appConfig struct {
 	// "never set" and defaults to true for existing installs.
 	NotificationsEnabled *bool `json:"notifications_enabled,omitempty"`
 
+	// AINotificationsOnly, when true, limits Feishu notifications to AI
+	// sessions (shell sessions are skipped). Nil means "never set" and
+	// defaults to true.
+	AINotificationsOnly *bool `json:"ai_notifications_only,omitempty"`
+
 	// PtyInputDebugEnabled logs every byte slice written into a session PTY
 	// (hex, tagged [pty-input] at DEBUG) for diagnosing stuck/dropped input.
 	PtyInputDebugEnabled *bool `json:"ptyInputDebugEnabled,omitempty"`
@@ -190,6 +195,15 @@ func (c appConfig) NotificationsEnabledOrDefault() bool {
 		return true
 	}
 	return *c.NotificationsEnabled
+}
+
+// AINotificationsOnlyOrDefault returns the user's preference, defaulting to
+// true (only AI sessions notify) when unset.
+func (c appConfig) AINotificationsOnlyOrDefault() bool {
+	if c.AINotificationsOnly == nil {
+		return true
+	}
+	return *c.AINotificationsOnly
 }
 
 func (c appConfig) PtyInputDebugEnabledOrDefault() bool {

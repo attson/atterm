@@ -94,6 +94,10 @@ export function GetLoggingConfig() {
   return window['go']['main']['App']['GetLoggingConfig']();
 }
 
+export function GetAINotificationsOnly() {
+  return window['go']['main']['App']['GetAINotificationsOnly']();
+}
+
 export function GetNotificationsEnabled() {
   return window['go']['main']['App']['GetNotificationsEnabled']();
 }
@@ -252,6 +256,10 @@ export function SetLocalePreference(arg1) {
 
 export function SetLoggingConfig(arg1) {
   return window['go']['main']['App']['SetLoggingConfig'](arg1);
+}
+
+export function SetAINotificationsOnly(arg1) {
+  return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
 }
 
 export function SetNotificationsEnabled(arg1) {

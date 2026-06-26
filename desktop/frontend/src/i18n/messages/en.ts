@@ -326,6 +326,7 @@ export const en = {
       copy: "Copy",
       copied: "Copied",
       reconfigure: "Re-enter credentials",
+      aiOnlyNotifications: "Notify for AI sessions only",
       hook_install: {
         enable: "Auto-install Claude Code hook",
         retry: "Retry",

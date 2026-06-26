@@ -22,6 +22,12 @@
         {{ hookState.last_error }}
       </p>
     </section>
+    <section class="ai-only" data-test="feishu-ai-only">
+      <label class="ai-only__toggle">
+        <input type="checkbox" :checked="aiOnlyNotifications" @change="onToggleAIOnly" />
+        <span>{{ t('settings.feishu.aiOnlyNotifications') }}</span>
+      </label>
+    </section>
     <div v-if="status.error" class="hint feishu-status-error" data-test="feishu-load-error">
       <span>{{ t('settings.feishu.load_error', { error: status.error }) }}</span>
       <button type="button" class="hook-install__retry" @click="refresh" data-test="feishu-status-retry">
@@ -120,6 +126,8 @@ import {
   sendFeishuTestCard,
   getHookInstallState,
   setHookInstallEnabled,
+  getAINotificationsOnly,
+  setAINotificationsOnly,
   type FeishuStatusResp,
   type FeishuCredentials,
   type HookInstallState,
@@ -142,6 +150,24 @@ const creds = ref<FeishuCredentials>({
 })
 const pairCode = ref('')
 const saveError = ref('')
+// "Notify for AI sessions only" toggle. Defaults to true (on) so the UI matches
+// the backend default before onMounted reads the persisted value.
+const aiOnlyNotifications = ref(true)
+
+async function onToggleAIOnly(e: Event) {
+  const on = (e.target as HTMLInputElement).checked
+  try {
+    await setAINotificationsOnly(on)
+    aiOnlyNotifications.value = on
+  } catch {
+    // Persist failed: re-read so the checkbox reflects the actual backend state.
+    try {
+      aiOnlyNotifications.value = await getAINotificationsOnly()
+    } catch {
+      /* leave the optimistic value */
+    }
+  }
+}
 // editing forces the credentials form even when status.configured, so the user
 // can overwrite stored credentials from the "configured" view.
 const editing = ref(false)
@@ -237,6 +263,11 @@ async function onRetryHook() {
 onMounted(async () => {
   await refresh()
   await refreshHook()
+  try {
+    aiOnlyNotifications.value = await getAINotificationsOnly()
+  } catch {
+    // non-fatal; keep the default-on value.
+  }
 })
 
 async function onSave() {
@@ -471,4 +502,10 @@ async function onDelete() {
 .hook-install__toggle { display: flex; gap: 4px; align-items: center; font-size: 12px; }
 .hook-install__retry { font-size: 12px; padding: 2px 8px; }
 .hook-install__error { font-size: 12px; color: var(--warn); margin: 6px 0 0; }
+.ai-only {
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.ai-only__toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 </style>

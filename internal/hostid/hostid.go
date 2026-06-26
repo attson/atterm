@@ -1,10 +1,19 @@
 // Package hostid resolves a stable, per-machine UUID that atterm uses to
 // identify a host across renames, reboots, and container restarts. The id
-// is generated once and persisted to the user config dir; subsequent calls
-// return the same value.
+// is generated once and persisted to the app's config dir (production:
+// <UserConfigDir>/atterm; development: <cwd>/.atterm-dev); subsequent
+// calls return the same value.
 //
 // The ATTERM_HOST_ID environment variable, if set, overrides the file —
 // useful for containerized deployments where the config dir is ephemeral.
+//
+// The dev/prod split is honored via internal/appdir: a dev build that called
+// appdir.UseDev() in main() will land here with appdir.ConfigDir() pointing
+// at the project-local data root, so dev and prod end up with DISTINCT
+// host_ids on the same machine. Without this, two atterm processes (e.g. the
+// installed app + `wails dev`) would share one host_id and the relay would
+// merge their session lists into a single host group, defeating multi-instance
+// distinction in the session bar.
 package hostid
 
 import (
@@ -12,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/attson/atterm/internal/appdir"
 	"github.com/google/uuid"
 )
 
@@ -25,11 +35,11 @@ func Get() string {
 	if v := strings.TrimSpace(os.Getenv(envOverride)); v != "" {
 		return v
 	}
-	dir, err := os.UserConfigDir()
+	dir, err := appdir.ConfigDir()
 	if err != nil {
 		return ""
 	}
-	path := filepath.Join(dir, "atterm", "host_id")
+	path := filepath.Join(dir, "host_id")
 	if data, err := os.ReadFile(path); err == nil {
 		id := strings.TrimSpace(string(data))
 		if _, err := uuid.Parse(id); err == nil {
@@ -37,9 +47,6 @@ func Get() string {
 		}
 	}
 	id := uuid.New().String()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return ""
-	}
 	if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
 		return ""
 	}
@@ -50,9 +57,9 @@ func Get() string {
 // config dir is unavailable). Useful for diagnostics and the Phase 1 desktop
 // settings UI.
 func Path() string {
-	dir, err := os.UserConfigDir()
+	dir, err := appdir.ConfigDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "atterm", "host_id")
+	return filepath.Join(dir, "host_id")
 }

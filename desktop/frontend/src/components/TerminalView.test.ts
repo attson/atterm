@@ -383,3 +383,17 @@ describe("TerminalView resize-suspended", () => {
     expect(source).toMatch(/watch\(\s*\(\)\s*=>\s*props\.resizeSuspended,[\s\S]*?prev\s*&&\s*!next[\s\S]*?conn\.sendResize\(term\.cols,\s*term\.rows\)/);
   });
 });
+
+describe("TerminalView programmatic focus", () => {
+  test("watches props.focused so pane-swap inside an active tab refocuses xterm", () => {
+    // Without this watch, programmatic set-active-pane (e.g. sidebar click on
+    // a session that lives in a multi-pane tab) only updates activePaneIdx —
+    // there's no DOM mousedown to land natural focus on xterm's textarea, so
+    // the user has to click the pane manually to type. The watch must call
+    // term?.focus() inside a nextTick so it runs after Vue rerenders the
+    // newly-focused pane.
+    expect(source).toMatch(
+      /watch\(\s*\(\)\s*=>\s*props\.focused,[\s\S]*?if\s*\(\s*isFocused\s*\)[\s\S]*?nextTick\([\s\S]*?term\?\.focus\(\)/,
+    );
+  });
+});

@@ -97,6 +97,16 @@ func appendFeishuHookEnv(env []string, sessionID, hookEndpoint string) []string 
 	return env
 }
 
+// shouldNotifySession reports whether a Feishu notification should fire for a
+// session of the given workload type, honoring the "AI sessions only"
+// preference. aiOnly=false → always notify; aiOnly=true → only ai sessions.
+func shouldNotifySession(sessionType string, aiOnly bool) bool {
+	if !aiOnly {
+		return true
+	}
+	return sessionType == session.SessionTypeAI
+}
+
 // startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
 // admin (creating the user on first launch, generating LocalAdminPassword if
 // the persisted config doesn't have one yet), mints a session token for that

@@ -7,7 +7,13 @@ import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
 import { useTaskPreset } from "../composables/useTaskPreset";
-import { aiTitleOrCommand, rowTitle, hostName as hostNameHelper, taskStateLabel } from "../lib/sessionLabel";
+import {
+  aiTitleOrCommand,
+  rowTitle,
+  hostNameWithIndex,
+  coResidentIndex,
+  taskStateLabel,
+} from "../lib/sessionLabel";
 
 const preset = useTaskPreset();
 const showStateLabel = computed(() => preset.active.value.showLabel);
@@ -26,12 +32,18 @@ const props = withDefaults(defineProps<{
   // users with several relay-attached hosts can spot their own machine at
   // a glance. Empty string disables both behaviors.
   localHostId?: string;
+  // Local OS hostname (from GetHostInfo). When ≥2 host_ids in byHost share
+  // this hostname, those groups get a "#N" suffix (lex order by host_id) so
+  // dev + prod (or future profiles) on the same machine become distinguishable.
+  // Empty string disables the suffix entirely.
+  localHost?: string;
 }>(), {
   groupBy: "host",
   byState: () => ({}),
   unreadByState: () => ({}),
   activeSessionId: null,
   localHostId: "",
+  localHost: "",
 });
 
 const emit = defineEmits<{
@@ -96,8 +108,17 @@ onMounted(async () => {
   } catch { /* leave empty — helper still truncates */ }
 });
 
+const coResidentMap = computed<Map<string, number>>(() =>
+  coResidentIndex(props.byHost, props.localHost ?? ""),
+);
+
 function hostName(hostId: string): string {
-  return hostNameHelper(hostId, groups.value[hostId], t("sessions.unknownHost"));
+  return hostNameWithIndex(
+    hostId,
+    groups.value[hostId],
+    t("sessions.unknownHost"),
+    coResidentMap.value.get(hostId),
+  );
 }
 
 function groupHeader(key: string): string {

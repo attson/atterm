@@ -162,9 +162,16 @@ func TestNormalizeUpdateGHProxyURL(t *testing.T) {
 func fakeGitHub(t *testing.T, payload any) (string, *int) {
 	t.Helper()
 	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// The releases-list endpoint (used by refreshLines) returns a JSON
+		// array and deliberately does NOT count toward hits, so existing
+		// latest-release hit assertions (cache/force) stay accurate.
+		if strings.HasSuffix(r.URL.Path, "/releases") {
+			_ = json.NewEncoder(w).Encode([]any{payload})
+			return
+		}
+		hits++
 		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	t.Cleanup(srv.Close)
@@ -210,9 +217,10 @@ func releasePayload(tag string, prerelease bool) map[string]any {
 func TestUpdater_Check_NewVersionAvailable(t *testing.T) {
 	apiURL, _ := fakeGitHub(t, releasePayload("v0.2.0", false))
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
 	})
 	if err := u.Check(context.Background(), true); err != nil {
 		t.Fatalf("Check err: %v", err)
@@ -249,6 +257,7 @@ func TestUpdater_Check_ClearsReadyWhenDownloadedAssetIsForOlderVersion(t *testin
 	u.state.DownloadPct = 100
 	u.state.DownloadPath = oldPath
 	u.cfg.releaseURL = apiURL
+	u.cfg.releasesURL = apiURL + "/releases"
 
 	if err := u.Check(context.Background(), true); err != nil {
 		t.Fatalf("Check err: %v", err)
@@ -268,9 +277,10 @@ func TestUpdater_Check_ClearsReadyWhenDownloadedAssetIsForOlderVersion(t *testin
 func TestUpdater_Check_UpToDate(t *testing.T) {
 	apiURL, _ := fakeGitHub(t, releasePayload("v0.1.0", false))
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
 	})
 	_ = u.Check(context.Background(), true)
 	st := u.State()
@@ -282,9 +292,10 @@ func TestUpdater_Check_UpToDate(t *testing.T) {
 func TestUpdater_Check_PrereleaseSkipped(t *testing.T) {
 	apiURL, _ := fakeGitHub(t, releasePayload("v0.2.0", true))
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
 	})
 	_ = u.Check(context.Background(), true)
 	st := u.State()
@@ -297,10 +308,11 @@ func TestUpdater_Check_CacheRespected(t *testing.T) {
 	apiURL, hits := fakeGitHub(t, releasePayload("v0.2.0", false))
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
-		now:        func() time.Time { return now },
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
+		now:         func() time.Time { return now },
 	})
 	_ = u.Check(context.Background(), false)
 	_ = u.Check(context.Background(), false) // within cache window
@@ -313,10 +325,11 @@ func TestUpdater_Check_ForceBypassesCache(t *testing.T) {
 	apiURL, hits := fakeGitHub(t, releasePayload("v0.2.0", false))
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: apiURL,
-		now:        func() time.Time { return now },
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  apiURL,
+		releasesURL: apiURL + "/releases",
+		now:         func() time.Time { return now },
 	})
 	_ = u.Check(context.Background(), true)
 	_ = u.Check(context.Background(), true) // force=true bypasses cache
@@ -337,6 +350,11 @@ func TestUpdater_Check_FallsBackToLatestRedirectOnGitHubForbidden(t *testing.T) 
 			http.Redirect(w, r, "/attson/atterm/releases/tag/v0.2.0", http.StatusFound)
 		case "/attson/atterm/releases/tag/v0.2.0":
 			w.WriteHeader(http.StatusOK)
+		case "/releases":
+			// refreshLines list endpoint; empty array keeps this test
+			// offline without affecting the redirect-fallback assertions.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -344,10 +362,11 @@ func TestUpdater_Check_FallsBackToLatestRedirectOnGitHubForbidden(t *testing.T) 
 	defer srv.Close()
 
 	u := newUpdater(updaterConfig{
-		current:    "v0.1.0",
-		repo:       "attson/atterm",
-		releaseURL: srv.URL + "/api",
-		latestURL:  srv.URL + "/attson/atterm/releases/latest",
+		current:     "v0.1.0",
+		repo:        "attson/atterm",
+		releaseURL:  srv.URL + "/api",
+		releasesURL: srv.URL + "/releases",
+		latestURL:   srv.URL + "/attson/atterm/releases/latest",
 	})
 	if err := u.Check(context.Background(), true); err != nil {
 		t.Fatalf("Check err: %v", err)
@@ -824,4 +843,144 @@ func assetExtForRuntime(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return strings.TrimPrefix(name, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH)
+}
+
+func TestCheck_PopulatesLines(t *testing.T) {
+	asset, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no asset for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	listJSON := `[
+	  {"tag_name":"v0.3.0","body":"n30","prerelease":false,"draft":false,
+	   "assets":[{"name":"ASSET_NAME","browser_download_url":"https://x/v0.3.0","size":10}]},
+	  {"tag_name":"v0.2.155","body":"n2155","prerelease":false,"draft":false,
+	   "assets":[{"name":"ASSET_NAME","browser_download_url":"https://x/v0.2.155","size":20}]},
+	  {"tag_name":"v0.2.154","body":"n2154","prerelease":false,"draft":false,
+	   "assets":[{"name":"ASSET_NAME","browser_download_url":"https://x/v0.2.154","size":30}]}
+	]`
+	listJSON = strings.ReplaceAll(listJSON, "ASSET_NAME", asset)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			w.Write([]byte(`{"tag_name":"v0.3.0","prerelease":false,"assets":[]}`))
+			return
+		}
+		w.Write([]byte(listJSON))
+	}))
+	defer srv.Close()
+
+	u := newUpdater(updaterConfig{
+		current:    "v0.2.154",
+		repo:       "attson/atterm",
+		releaseURL: srv.URL + "/releases/latest",
+		client:     srv.Client(),
+		now:        time.Now,
+	})
+	u.cfg.releasesURL = srv.URL + "/releases"
+
+	if err := u.Check(context.Background(), true); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	lines := u.State().Lines
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %+v", len(lines), lines)
+	}
+	if lines[0].Minor != "v0.3" || lines[1].Minor != "v0.2" {
+		t.Fatalf("line order = %q,%q", lines[0].Minor, lines[1].Minor)
+	}
+	if lines[1].Latest != "v0.2.155" || lines[1].AssetURL != "https://x/v0.2.155" {
+		t.Fatalf("v0.2 line = %+v, want v0.2.155 / https://x/v0.2.155", lines[1])
+	}
+}
+
+func TestParseVersionTag(t *testing.T) {
+	cases := []struct {
+		tag   string
+		minor string
+		patch int
+		ok    bool
+	}{
+		{"v0.2.155", "v0.2", 155, true},
+		{"v0.3.0", "v0.3", 0, true},
+		{"v1.10.3", "v1.10", 3, true},
+		{"0.2.155", "", 0, false},
+		{"v0.2", "", 0, false},
+		{"dev", "", 0, false},
+		{"", "", 0, false},
+	}
+	for _, c := range cases {
+		minor, patch, ok := parseVersionTag(c.tag)
+		if ok != c.ok || minor != c.minor || patch != c.patch {
+			t.Errorf("parseVersionTag(%q) = (%q,%d,%v), want (%q,%d,%v)",
+				c.tag, minor, patch, ok, c.minor, c.patch, c.ok)
+		}
+	}
+}
+
+func TestGroupLines(t *testing.T) {
+	releases := []lineCandidate{
+		{tag: "v0.2.155", assetURL: "u-2-155", notes: "n2155"},
+		{tag: "v0.2.154", assetURL: "u-2-154", notes: "n2154"},
+		{tag: "v0.3.0", assetURL: "u-3-0", notes: "n30"},
+		{tag: "v0.2.153", assetURL: "u-2-153", notes: "n2153"},
+	}
+
+	// current = v0.2.154 → v0.2 线最新(v0.2.155, >current) + v0.3(高线)
+	got := groupLines(releases, "v0.2.154")
+	if len(got) != 2 {
+		t.Fatalf("current v0.2.154: got %d lines, want 2: %+v", len(got), got)
+	}
+	// 按 minor 降序(高线在前)
+	if got[0].Minor != "v0.3" || got[0].Latest != "v0.3.0" {
+		t.Errorf("line[0] = %+v, want v0.3 → v0.3.0", got[0])
+	}
+	if got[1].Minor != "v0.2" || got[1].Latest != "v0.2.155" || got[1].AssetURL != "u-2-155" {
+		t.Errorf("line[1] = %+v, want v0.2 → v0.2.155 (u-2-155)", got[1])
+	}
+
+	// current = v0.3.0 → 只有 v0.3 线,其最新 v0.3.0 == current 故不显示
+	got = groupLines(releases, "v0.3.0")
+	if len(got) != 0 {
+		t.Fatalf("current v0.3.0 (already highest+latest): got %d lines, want 0: %+v", len(got), got)
+	}
+
+	// current = dev → 显示所有线最新
+	got = groupLines(releases, "dev")
+	if len(got) != 2 {
+		t.Fatalf("current dev: got %d lines, want 2: %+v", len(got), got)
+	}
+	if got[0].Minor != "v0.3" || got[1].Minor != "v0.2" {
+		t.Errorf("dev lines order = %q,%q want v0.3,v0.2", got[0].Minor, got[1].Minor)
+	}
+}
+
+func TestDownloadVersion_SetsAssetForTag(t *testing.T) {
+	asset, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no asset for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	listJSON := `[
+	  {"tag_name":"v0.3.0","prerelease":false,"draft":false,
+	   "assets":[{"name":"` + asset + `","browser_download_url":"https://x/v0.3.0","size":10}]},
+	  {"tag_name":"v0.2.155","prerelease":false,"draft":false,
+	   "assets":[{"name":"` + asset + `","browser_download_url":"https://x/v0.2.155","size":20},
+	             {"name":"SHA256SUMS","browser_download_url":"https://x/sums-2-155","size":1},
+	             {"name":"SHA256SUMS.sig","browser_download_url":"https://x/sig-2-155","size":1}]}
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(listJSON))
+	}))
+	defer srv.Close()
+	u := newUpdater(updaterConfig{current: "v0.2.154", repo: "attson/atterm",
+		releasesURL: srv.URL + "/releases", client: srv.Client(), now: time.Now})
+
+	if err := u.prepareVersion(context.Background(), "v0.2.155"); err != nil {
+		t.Fatalf("prepareVersion: %v", err)
+	}
+	if u.state.AssetURL != "https://x/v0.2.155" {
+		t.Fatalf("AssetURL = %q, want https://x/v0.2.155", u.state.AssetURL)
+	}
+	if u.checksumURL != "https://x/sums-2-155" || u.checksumSigURL != "https://x/sig-2-155" {
+		t.Fatalf("checksum URLs not set: %q / %q", u.checksumURL, u.checksumSigURL)
+	}
 }

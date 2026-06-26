@@ -1445,6 +1445,15 @@ func (a *App) StartDownload() error {
 	return a.updater.Download(a.ctx)
 }
 
+// DownloadVersion downloads a specific version (the chosen update line's
+// latest tag) instead of the default latest.
+func (a *App) DownloadVersion(tag string) error {
+	if a.updater == nil {
+		return nil
+	}
+	return a.updater.DownloadVersion(a.ctx, tag)
+}
+
 // InstallUpdate spawns the install helper detached and quits the app.
 // The helper waits for our PID to exit then replaces the install and
 // relaunches.

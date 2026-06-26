@@ -165,4 +165,6 @@ export function SetWebglRendererEnabled(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 
+export function DownloadVersion(arg1:string):Promise<void>;
+
 export function StartDownload():Promise<void>;

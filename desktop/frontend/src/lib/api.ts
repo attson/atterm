@@ -236,6 +236,14 @@ export interface ClipboardPastePayload {
   reason?: string;
 }
 
+// Mirrors desktop/updater.go VersionLine. One available minor-version line.
+export interface VersionLine {
+  minor: string;
+  latest: string;
+  notes: string;
+  asset_url: string;
+}
+
 // Mirrors desktop/updater.go UpdateState. Field names are snake_case from
 // Wails JSON marshaling; we match exactly.
 export interface UpdateState {
@@ -253,6 +261,7 @@ export interface UpdateState {
   asset_size: number;
   download_dir: string;
   download_path: string;
+  lines: VersionLine[];
 }
 
 interface AppBindings {
@@ -289,6 +298,7 @@ interface AppBindings {
   GetUpdateState(): Promise<UpdateState>;
   CheckUpdate(): Promise<void>;
   StartDownload(): Promise<void>;
+  DownloadVersion(tag: string): Promise<void>;
   InstallUpdate(): Promise<void>;
   GetAutoCheckUpdates(): Promise<boolean>;
   SetAutoCheckUpdates(enabled: boolean): Promise<void>;
@@ -609,6 +619,10 @@ export function checkUpdate(): Promise<void> {
 
 export function startDownload(): Promise<void> {
   return bindings().StartDownload();
+}
+
+export function downloadVersion(tag: string): Promise<void> {
+  return bindings().DownloadVersion(tag);
 }
 
 export function installUpdate(): Promise<void> {

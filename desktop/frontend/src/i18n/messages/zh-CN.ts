@@ -258,6 +258,7 @@ export const zhCN = {
       proxyHint: "可选。只有 GitHub Release 文件下载会使用此代理；更新检查与签名验证保持不变。",
       releaseNotes: "发布说明",
       checkNow: "立即检查",
+      versionLine: "{minor} 线",
       downloadVersion: "下载 {version}",
       downloadingButton: "下载中... {pct}%",
       forceInstallRestart: "强制安装并重启",

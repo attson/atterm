@@ -928,6 +928,35 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	log.Printf("feishu-anchor: attached session=%s card_msg_id=%s", sessID, msgID)
 }
 
+// OnRemoteTerminalToggle reacts to changes in the binding's
+// RemoteTerminalEnabled flag. When flipped off, detach every active
+// FeishuSubscriber and PATCH each anchor to its archived state. Sessions
+// themselves are unaffected. When flipped on, no bulk re-attach — new
+// sessions pick up via autoAttach; pre-existing sessions need to recreate
+// (P2 — explicit /attach command).
+//
+// TODO(task-20): call this from the admin HTTP handler that calls
+// SetRemoteTerminalSettings, once that handler is added.
+func (h *relayHost) OnRemoteTerminalToggle(enabled bool) {
+	if enabled {
+		return // No bulk re-attach on enable; new sessions pick up naturally.
+	}
+	// Snapshot the current session IDs under the lock, then release before
+	// calling detachFeishuSubscriber (which re-acquires the lock for each
+	// entry and removes it atomically).
+	h.feishuSubsMu.Lock()
+	sids := make([]string, 0, len(h.feishuSubs))
+	for sid := range h.feishuSubs {
+		sids = append(sids, sid)
+	}
+	h.feishuSubsMu.Unlock()
+	for _, sid := range sids {
+		if id, err := uuid.Parse(sid); err == nil {
+			h.detachFeishuSubscriber(id)
+		}
+	}
+}
+
 // detachFeishuSubscriber removes and stops the FeishuSubscriber for sessID,
 // then PATCHes the anchor card to archived state. Idempotent.
 func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {

@@ -110,6 +110,52 @@ func TestStartRelayHost_PersistsAdminPasswordAcrossRestarts(t *testing.T) {
 	}
 }
 
+// TestOnRemoteTerminalToggle_FalseEmptiesMap verifies that
+// OnRemoteTerminalToggle(false) drains h.feishuSubs. The subscribers in the
+// map are nil (no real session), so sub.Detach() is skipped by
+// detachFeishuSubscriber's nil-guard — but the map-drain and archive paths
+// are exercised without requiring a full PTY stack.
+func TestOnRemoteTerminalToggle_FalseEmptiesMap(t *testing.T) {
+	h := newTestRelayHost(t)
+
+	// Inject two sentinel nil entries — realistic keys, no real subscriber needed.
+	sid1 := "11111111-1111-1111-1111-111111111111"
+	sid2 := "22222222-2222-2222-2222-222222222222"
+	h.feishuSubsMu.Lock()
+	h.feishuSubs[sid1] = nil
+	h.feishuSubs[sid2] = nil
+	h.feishuSubsMu.Unlock()
+
+	h.OnRemoteTerminalToggle(false)
+
+	h.feishuSubsMu.Lock()
+	remaining := len(h.feishuSubs)
+	h.feishuSubsMu.Unlock()
+	if remaining != 0 {
+		t.Errorf("feishuSubs has %d entries after toggle-off, want 0", remaining)
+	}
+}
+
+// TestOnRemoteTerminalToggle_TrueIsNoop verifies that
+// OnRemoteTerminalToggle(true) does not touch the subscriber map.
+func TestOnRemoteTerminalToggle_TrueIsNoop(t *testing.T) {
+	h := newTestRelayHost(t)
+
+	sid := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	h.feishuSubsMu.Lock()
+	h.feishuSubs[sid] = nil
+	h.feishuSubsMu.Unlock()
+
+	h.OnRemoteTerminalToggle(true)
+
+	h.feishuSubsMu.Lock()
+	remaining := len(h.feishuSubs)
+	h.feishuSubsMu.Unlock()
+	if remaining != 1 {
+		t.Errorf("feishuSubs has %d entries after toggle-on, want 1", remaining)
+	}
+}
+
 func TestShouldNotifySession(t *testing.T) {
 	cases := []struct {
 		name        string

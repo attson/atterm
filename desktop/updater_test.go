@@ -953,3 +953,34 @@ func TestGroupLines(t *testing.T) {
 		t.Errorf("dev lines order = %q,%q want v0.3,v0.2", got[0].Minor, got[1].Minor)
 	}
 }
+
+func TestDownloadVersion_SetsAssetForTag(t *testing.T) {
+	asset, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Skipf("no asset for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	listJSON := `[
+	  {"tag_name":"v0.3.0","prerelease":false,"draft":false,
+	   "assets":[{"name":"` + asset + `","browser_download_url":"https://x/v0.3.0","size":10}]},
+	  {"tag_name":"v0.2.155","prerelease":false,"draft":false,
+	   "assets":[{"name":"` + asset + `","browser_download_url":"https://x/v0.2.155","size":20},
+	             {"name":"SHA256SUMS","browser_download_url":"https://x/sums-2-155","size":1},
+	             {"name":"SHA256SUMS.sig","browser_download_url":"https://x/sig-2-155","size":1}]}
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(listJSON))
+	}))
+	defer srv.Close()
+	u := newUpdater(updaterConfig{current: "v0.2.154", repo: "attson/atterm",
+		releasesURL: srv.URL + "/releases", client: srv.Client(), now: time.Now})
+
+	if err := u.prepareVersion(context.Background(), "v0.2.155"); err != nil {
+		t.Fatalf("prepareVersion: %v", err)
+	}
+	if u.state.AssetURL != "https://x/v0.2.155" {
+		t.Fatalf("AssetURL = %q, want https://x/v0.2.155", u.state.AssetURL)
+	}
+	if u.checksumURL != "https://x/sums-2-155" || u.checksumSigURL != "https://x/sig-2-155" {
+		t.Fatalf("checksum URLs not set: %q / %q", u.checksumURL, u.checksumSigURL)
+	}
+}

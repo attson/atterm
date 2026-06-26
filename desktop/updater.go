@@ -307,19 +307,30 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 		return err
 	}
 	u.cachedAt = u.cfg.now()
+	// lines was fetched above without holding the lock; assign under the lock.
+	u.state.Lines = lines
+	u.applyReleaseLocked(rel)
+	return nil
+}
+
+// applyReleaseLocked maps a single *githubRelease into state: clearing the
+// previous asset/checksum URLs, then (for non-prereleases) recording
+// Latest/Notes/Available, the SHA256SUMS verification URLs, and the
+// platform asset URL/size. Pre-releases clear Latest/Available/Notes and
+// return early. Used by both Check (latest release) and prepareVersion (a
+// specific tag). Caller must hold u.mu.
+func (u *Updater) applyReleaseLocked(rel *githubRelease) {
 	u.checksumURL = ""
 	u.checksumSigURL = ""
 	u.state.AssetURL = ""
 	u.state.AssetSize = 0
-	// lines was fetched above without holding the lock; assign under the lock.
-	u.state.Lines = lines
 
 	if rel.Prerelease {
 		// Don't expose pre-releases as "available" in v0.
 		u.state.Latest = ""
 		u.state.Available = false
 		u.state.Notes = ""
-		return nil
+		return
 	}
 
 	u.state.Latest = rel.TagName
@@ -349,7 +360,6 @@ func (u *Updater) Check(ctx context.Context, force bool) error {
 		}
 	}
 	u.clearStaleReadyLocked()
-	return nil
 }
 
 func (u *Updater) clearStaleReadyLocked() {
@@ -683,6 +693,39 @@ func (u *Updater) Download(ctx context.Context) error {
 	u.state.Error = ""
 	u.mu.Unlock()
 	return nil
+}
+
+// prepareVersion fetches the releases list, finds the given tag, and applies
+// its asset/checksum/notes into state so a subsequent Download targets that
+// exact version (the chosen line's latest). Used by DownloadVersion.
+func (u *Updater) prepareVersion(ctx context.Context, tag string) error {
+	rels, err := u.fetchReleases(ctx) // not under lock; issues HTTP
+	if err != nil {
+		return err
+	}
+	var found *githubRelease
+	for i := range rels {
+		if rels[i].TagName == tag {
+			found = &rels[i]
+			break
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("version %s not found in releases", tag)
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.applyReleaseLocked(found)
+	return nil
+}
+
+// DownloadVersion prepares the given tag (the chosen update line's latest)
+// then starts the download for it instead of the default latest.
+func (u *Updater) DownloadVersion(ctx context.Context, tag string) error {
+	if err := u.prepareVersion(ctx, tag); err != nil {
+		return err
+	}
+	return u.Download(ctx)
 }
 
 func (u *Updater) copyWithProgress(dst io.Writer, src io.Reader, expectedSize int64) (int64, error) {

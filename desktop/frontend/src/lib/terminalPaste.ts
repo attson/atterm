@@ -1,6 +1,7 @@
 import { getClipboardPastePayload, type ClipboardPastePayload } from "./api";
 import type { SessionConnection, Status } from "./connection";
 import type { MessageKey } from "../i18n";
+import { pasteImageBus } from "./pasteImageBus";
 import { effectiveRemotePermission, isPasteAllowed } from "./terminalContextMenu";
 
 interface TerminalLike {
@@ -49,10 +50,10 @@ export async function pasteFromClipboard(opts: PasteFromClipboardOptions): Promi
     if (effectiveRemotePermission(opts.remotePermission) === "control") {
       return { ok: false, reasonKey: "terminal.imagePasteRequiresFull" };
     }
-    await opts.conn.sendPasteImage(
-      base64ToBlob(payload.data_base64, payload.content_type),
-      payload.filename || "clipboard-image",
-    );
+    const blob = base64ToBlob(payload.data_base64, payload.content_type);
+    const name = payload.filename || "clipboard-image";
+    pasteImageBus.emit(blob, name);
+    await opts.conn.sendPasteImage(blob, name);
     return { ok: true, kind: "image" };
   }
 

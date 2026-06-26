@@ -136,4 +136,50 @@ describe("pasteFromClipboard", () => {
     expect(conn.sendPasteImage).toHaveBeenCalledTimes(1);
     expect(term.paste).not.toHaveBeenCalled();
   });
+
+  it("emits pasteImageBus before sending the image", async () => {
+    const { pasteImageBus } = await import("./pasteImageBus");
+    const emitSpy = vi.spyOn(pasteImageBus, "emit");
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({
+        kind: "image",
+        filename: "clipboard-image.png",
+        content_type: "image/png",
+        data_base64: "iVBORw0K",
+      }),
+    });
+
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+    const [blob, name] = emitSpy.mock.calls[0];
+    expect(blob).toBeInstanceOf(Blob);
+    expect((blob as Blob).type).toBe("image/png");
+    expect(name).toBe("clipboard-image.png");
+    expect(conn.sendPasteImage).toHaveBeenCalledTimes(1);
+    emitSpy.mockRestore();
+  });
+
+  it("does not emit pasteImageBus on text paste", async () => {
+    const { pasteImageBus } = await import("./pasteImageBus");
+    const emitSpy = vi.spyOn(pasteImageBus, "emit");
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({ kind: "text", text: "hello" }),
+    });
+
+    expect(emitSpy).not.toHaveBeenCalled();
+    emitSpy.mockRestore();
+  });
 });

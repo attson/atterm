@@ -849,3 +849,40 @@ func TestParseVersionTag(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupLines(t *testing.T) {
+	releases := []lineCandidate{
+		{tag: "v0.2.155", assetURL: "u-2-155", notes: "n2155"},
+		{tag: "v0.2.154", assetURL: "u-2-154", notes: "n2154"},
+		{tag: "v0.3.0", assetURL: "u-3-0", notes: "n30"},
+		{tag: "v0.2.153", assetURL: "u-2-153", notes: "n2153"},
+	}
+
+	// current = v0.2.154 → v0.2 线最新(v0.2.155, >current) + v0.3(高线)
+	got := groupLines(releases, "v0.2.154")
+	if len(got) != 2 {
+		t.Fatalf("current v0.2.154: got %d lines, want 2: %+v", len(got), got)
+	}
+	// 按 minor 降序(高线在前)
+	if got[0].Minor != "v0.3" || got[0].Latest != "v0.3.0" {
+		t.Errorf("line[0] = %+v, want v0.3 → v0.3.0", got[0])
+	}
+	if got[1].Minor != "v0.2" || got[1].Latest != "v0.2.155" || got[1].AssetURL != "u-2-155" {
+		t.Errorf("line[1] = %+v, want v0.2 → v0.2.155 (u-2-155)", got[1])
+	}
+
+	// current = v0.3.0 → 只有 v0.3 线,其最新 v0.3.0 == current 故不显示
+	got = groupLines(releases, "v0.3.0")
+	if len(got) != 0 {
+		t.Fatalf("current v0.3.0 (already highest+latest): got %d lines, want 0: %+v", len(got), got)
+	}
+
+	// current = dev → 显示所有线最新
+	got = groupLines(releases, "dev")
+	if len(got) != 2 {
+		t.Fatalf("current dev: got %d lines, want 2: %+v", len(got), got)
+	}
+	if got[0].Minor != "v0.3" || got[1].Minor != "v0.2" {
+		t.Errorf("dev lines order = %q,%q want v0.3,v0.2", got[0].Minor, got[1].Minor)
+	}
+}

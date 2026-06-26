@@ -12,6 +12,7 @@ import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import RecoveryDialog from "./components/RecoveryDialog.vue";
 import ShortcutHints from "./components/ShortcutHints.vue";
+import PasteImagePreviewHost from "./components/PasteImagePreviewHost.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
@@ -1154,6 +1155,7 @@ onUnmounted(() => {
       @open-remote="openRemoteFromTitleBar"
       @open-settings="showSettings = true"
     />
+    <PasteImagePreviewHost />
 
     <div v-if="authError" class="auth-error-banner" role="alert">
       <span class="auth-error-msg">{{ authErrorMessage }}</span>

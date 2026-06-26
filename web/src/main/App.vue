@@ -7,6 +7,8 @@ import SessionList from './components/SessionList.vue'
 import TerminalView from './components/TerminalView.vue'
 import ShortcutBar from './components/ShortcutBar.vue'
 import PasteFallback from './components/PasteFallback.vue'
+import PasteImagePreviewHost from './components/PasteImagePreviewHost.vue'
+import { pasteImageBus } from './lib/pasteImageBus'
 import InstallHint from './components/InstallHint.vue'
 import ConnHealthPill from '@shared/components/ConnHealthPill.vue'
 import ConnHealthDrawer from '@shared/components/ConnHealthDrawer.vue'
@@ -96,6 +98,7 @@ function onPasteText(text: string) {
 }
 
 function onPasteImage(file: File) {
+  pasteImageBus.emit(file, file.name)
   void termRef.value?.sendPasteImage(file, file.name)
 }
 
@@ -124,6 +127,7 @@ onUnmounted(() => {
     :date-locale="naiveLocale.dateLocale"
   >
     <n-message-provider>
+      <PasteImagePreviewHost />
       <Topbar active="home" />
       <div v-if="inSession && connHealth" class="conn-health-anchor">
         <ConnHealthPill

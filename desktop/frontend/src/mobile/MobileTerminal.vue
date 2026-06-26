@@ -18,6 +18,7 @@ import { cellCoordsAt, readXtermCellSize } from '../lib/terminalCellCoords'
 import MobileSelectionPopover from './MobileSelectionPopover.vue'
 import { copyTerminalSelection } from '../lib/terminalCopy'
 import { prepareSendPayload } from '../lib/terminalContextMenu'
+import { pasteImageBus } from '../lib/pasteImageBus'
 
 const props = defineProps<{
   endpoint: Endpoint
@@ -217,6 +218,7 @@ async function openImagePicker() {
     if (!photo.base64String || !canSend.value) return
     const ext = photo.format || 'jpeg'
     const file = base64ToFile(photo.base64String, `image/${ext}`, `mobile-image.${ext}`)
+    pasteImageBus.emit(file, file.name);
     await conn?.sendPasteImage(file, file.name)
   } catch (e) {
     // Dismissing the picker rejects with a "cancel" message — not an error.

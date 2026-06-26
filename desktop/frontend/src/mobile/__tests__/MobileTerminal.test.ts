@@ -129,6 +129,7 @@ vi.mock('@capacitor/keyboard', () => ({
 
 import MobileTerminal from '../MobileTerminal.vue'
 import type { RemoteSession } from '../../platform/types'
+import { pasteImageBus } from '../../lib/pasteImageBus'
 
 const info: RemoteSession = { session_id: 's1', host_id: 'h', host: 'box', user: 'me', title: 't', cols: 80, rows: 24 }
 
@@ -255,6 +256,7 @@ describe('MobileTerminal', () => {
 
   it('image button sends the picked photo via sendPasteImage when in control mode', async () => {
     getPhoto.mockResolvedValue({ base64String: btoa('PNGDATA'), format: 'png' })
+    const emitSpy = vi.spyOn(pasteImageBus, 'emit')
     const w = mount(MobileTerminal, { props: { endpoint: { url: 'wss://r', session_token: 'atk_t' }, sessionId: 's1', info, active: true } })
     await flushPromises()
     await w.find('[data-testid="mobile-control-toggle"]').setValue(true)
@@ -271,6 +273,12 @@ describe('MobileTerminal', () => {
     const [file, name] = (sendPasteImage as ReturnType<typeof vi.fn>).mock.calls.at(-1)!
     expect(name).toBe('mobile-image.png')
     expect(file).toBeInstanceOf(File)
+
+    expect(emitSpy).toHaveBeenCalledTimes(1)
+    const [emittedBlob, emittedName] = emitSpy.mock.calls[0]
+    expect(emittedBlob).toBe(file)
+    expect(emittedName).toBe('mobile-image.png')
+    emitSpy.mockRestore()
   })
 
   it('image button does not invoke the camera when not in control mode', async () => {

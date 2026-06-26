@@ -75,6 +75,17 @@ atterm/
 
 28. **AI 会话恢复 "never resume the wrong conversation"**：`desktop/recovery_store.go` + `recovery_types.go` 的 `RecoverySnapshot` 记每个 pane 的 `ai.{kind,session_id,captured_at_unix}` / `last_command_line` / `last_cwd` / `title`；只有 `ai.session_id` 是真凭据，`aider` 无 sid 时改重放整条 `last_command_line`。sid 来自 `desktop/ai_sid_sniff.go`（session 首次 spawn 后由 OSC 133 D 触发分类 + 对应 jsonl 文件 mtime 监听）+ `desktop/ai_sid_resolve.go`（cwd 切换后按新 cwd 重试）；claude 走 `~/.claude/projects/<sanitized-cwd>/<sid>.jsonl`，codex 走 `~/.codex/sessions/YYYY/MM/DD/rollout-*-<sid>.jsonl`。**抓不到优于抓错**：抓不到就让 ai badge 留空、恢复时不注入 resume、用户得到普通 shell；抓错会把另一个对话的历史 leak 进恢复后的 agent。恢复时 resume 注入由 Go 侧 `desktop/relay_host.go::SetOnFirstPrompt` 直接写 PTY，保留原启动命令的 flag（`--permission-mode` 等），**不要**移回前端用 `sendInput` 一次发完整 `"<cmd>\r"` —— Codex 会把 CR 当 paste 解（同类教训 PR #63 → #110 → #129 来回三次）。前端 `useRecoverySnapshot` 写盘 + `App.vue::pendingLocalIds` + `lib/localListMerge.ts` 三件套保护刚 seed 的 sid 不被 stale `LIST_RESP` 推翻（PR #240）；恢复 attach 给远端 pane 默认 `isDriver = props.isLocalSession ?? true` —— 本机本地 driver，远端 viewer，避免乐观默认 driver 但 relay drop IN 帧的「看着能输入但不通」。
 
+29. **发布分支与 tag 路线分线管理**：仓库当前并行两条发布线 —— `main` 是 **v0.2.x**，`v0.3-dev` 是 **v0.3.x**，每条线的 patch 版本独立递增。**算下一个 tag 必须按"reachable from 当前分支"过滤**：
+
+    ```bash
+    # main → next v0.2.(Z+1)
+    git tag --list 'v0.2.*' --merged main     --sort=-v:refname | head -1
+    # v0.3-dev → next v0.3.(Z+1)
+    git tag --list 'v0.3.*' --merged v0.3-dev --sort=-v:refname | head -1
+    ```
+
+    **不要**用全局 `git tag --sort=-v:refname | head -1` —— 它会把另一条线的 tag 排进来，在 main 上误推 v0.3.x 当场触发 release CI、要 cancel + `git push --delete origin <tag>` + 重打的事故（v0.3.2 误推教训）。`ship-release` skill 默认是单条主线假设，在这个仓库里**必须**手动校正：发布前先 `git rev-parse --abbrev-ref HEAD` 确认当前分支属于哪条线，再按该线过滤算 next。release CI（`.github/workflows/build.yml` 的 release job）在 `v*` tag push 时触发，不区分版本线，所以 tag 错就立刻有 artifact 错。删 tag 是 destructive 操作，未经用户确认不得执行。
+
 ## 开发命令
 
 ```bash

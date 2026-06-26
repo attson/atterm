@@ -176,3 +176,179 @@ func (c *Chunker) flushNow(now time.Time) {
 	c.lastFlush = now
 	c.flush(body)
 }
+
+const aiRollerMaxTurns = 5
+
+// AIRoller assembles a markdown body from per-turn hook events. Each
+// "turn" is one assistant response, optionally with nested tool calls.
+// The roller keeps the last aiRollerMaxTurns turns; older turns roll off.
+// Not goroutine-safe; the AIChunker owns one.
+type AIRoller struct {
+	turns []*aiTurn
+}
+
+type aiTurn struct {
+	userPrompt   string
+	tools        []aiTool
+	assistantMsg string
+	completed    bool
+}
+
+type aiTool struct {
+	name string
+	body string
+}
+
+func NewAIRoller() *AIRoller {
+	return &AIRoller{}
+}
+
+// currentTurn returns the in-progress turn, allocating one if needed.
+func (r *AIRoller) currentTurn() *aiTurn {
+	if len(r.turns) == 0 || r.turns[len(r.turns)-1].completed {
+		r.turns = append(r.turns, &aiTurn{})
+		if len(r.turns) > aiRollerMaxTurns {
+			r.turns = r.turns[len(r.turns)-aiRollerMaxTurns:]
+		}
+	}
+	return r.turns[len(r.turns)-1]
+}
+
+func (r *AIRoller) OnUserPrompt(text string) {
+	t := r.currentTurn()
+	t.userPrompt = text
+}
+
+func (r *AIRoller) OnToolStart(name string) {
+	t := r.currentTurn()
+	t.tools = append(t.tools, aiTool{name: name})
+}
+
+func (r *AIRoller) OnToolEnd(name, body string) {
+	t := r.currentTurn()
+	// Match by last open tool with this name; tolerate out-of-order arrivals.
+	for i := len(t.tools) - 1; i >= 0; i-- {
+		if t.tools[i].name == name && t.tools[i].body == "" {
+			t.tools[i].body = body
+			return
+		}
+	}
+	// No matching open tool — append as-is.
+	t.tools = append(t.tools, aiTool{name: name, body: body})
+}
+
+func (r *AIRoller) OnAssistantFinal(text string) {
+	t := r.currentTurn()
+	t.assistantMsg = text
+	t.completed = true
+}
+
+func (r *AIRoller) Render() string {
+	if len(r.turns) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, t := range r.turns {
+		if t.userPrompt != "" {
+			sb.WriteString("👤 ")
+			sb.WriteString(t.userPrompt)
+			sb.WriteString("\n\n")
+		}
+		if t.assistantMsg != "" || t.completed {
+			sb.WriteString("🤖 ")
+			sb.WriteString(t.assistantMsg)
+			sb.WriteString("\n")
+		}
+		for _, tool := range t.tools {
+			sb.WriteString("  ▸ ")
+			sb.WriteString(tool.name)
+			sb.WriteString("\n")
+			if tool.body != "" {
+				sb.WriteString("    ```\n    ")
+				// Indent each line in the tool body by 4 spaces.
+				sb.WriteString(strings.ReplaceAll(tool.body, "\n", "\n    "))
+				sb.WriteString("\n    ```\n")
+			}
+		}
+		sb.WriteString("\n")
+	}
+	out := sb.String()
+	// Cap at rollerMaxBytes the same way ShellRoller does, from the front.
+	if len(out) > rollerMaxBytes {
+		out = out[len(out)-rollerMaxBytes:]
+	}
+	return out
+}
+
+// AIChunker is the AI-side analogue of Chunker; it owns an AIRoller and
+// applies the same 100ms throttle + diff-skip rules. Not goroutine-safe;
+// the caller (dispatcher) must serialize PushTurn/Tick calls.
+type AIChunker struct {
+	roller    *AIRoller
+	flush     FlushFunc
+	clock     Clock
+	lastFlush time.Time
+	dirty     bool
+	lastBody  string
+}
+
+func NewAIChunker(flush FlushFunc) *AIChunker {
+	return NewAIChunkerWithClock(flush, realClock{})
+}
+
+func NewAIChunkerWithClock(flush FlushFunc, clk Clock) *AIChunker {
+	return &AIChunker{
+		roller:    NewAIRoller(),
+		flush:     flush,
+		clock:     clk,
+		lastFlush: clk.Now(), // same init-fix as Chunker (Task 6)
+	}
+}
+
+func (c *AIChunker) PushTurn(ev any) {
+	switch e := ev.(type) {
+	case TurnUserPromptEvent:
+		c.roller.OnUserPrompt(e.Text)
+	case TurnToolStartEvent:
+		c.roller.OnToolStart(e.ToolName)
+	case TurnToolEndEvent:
+		c.roller.OnToolEnd(e.ToolName, e.ToolBody)
+	case TurnAssistantFinalEvent:
+		c.roller.OnAssistantFinal(e.Text)
+	default:
+		return
+	}
+	c.dirty = true
+	c.maybeFlush()
+}
+
+func (c *AIChunker) Tick() {
+	if !c.dirty {
+		return
+	}
+	c.maybeFlush()
+}
+
+func (c *AIChunker) maybeFlush() {
+	now := c.clock.Now()
+	if now.Sub(c.lastFlush) < chunkerFlushPeriod {
+		return
+	}
+	body := c.roller.Render()
+	if body == c.lastBody {
+		c.lastFlush = now
+		c.dirty = false
+		return
+	}
+	c.lastBody = body
+	c.lastFlush = now
+	c.dirty = false
+	c.flush(body)
+}
+
+// Per-turn dispatch types so PushTurn doesn't depend on the desktop/feishu
+// TurnEvent (this package is internal to relay, not desktop).
+type TurnUserPromptEvent struct{ Text string }
+type TurnToolStartEvent struct{ ToolName string }
+type TurnToolEndEvent struct{ ToolName, ToolBody string }
+type TurnAssistantFinalEvent struct{ Text string }

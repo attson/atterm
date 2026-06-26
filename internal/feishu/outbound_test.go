@@ -124,3 +124,53 @@ func newFakeClock() *fakeClock {
 
 func (f *fakeClock) Now() time.Time { return f.now }
 func (f *fakeClock) advance(ms int) { f.now = f.now.Add(time.Duration(ms) * time.Millisecond) }
+
+func TestAIRoller_KeepsLast5Turns(t *testing.T) {
+	r := NewAIRoller()
+	for i := 0; i < 8; i++ {
+		r.OnUserPrompt("prompt " + string(rune('A'+i)))
+		r.OnAssistantFinal("reply " + string(rune('A'+i)))
+	}
+	out := r.Render()
+	// 5 turn pairs ~ 10 sections. Specifically: prompt D..H should remain;
+	// A..C should have rolled off.
+	if strings.Contains(out, "prompt A") {
+		t.Errorf("prompt A should have rolled off")
+	}
+	if !strings.Contains(out, "prompt H") {
+		t.Errorf("prompt H should be present")
+	}
+}
+
+func TestAIRoller_NestsToolCalls(t *testing.T) {
+	r := NewAIRoller()
+	r.OnUserPrompt("fix it")
+	r.OnToolStart("Bash")
+	r.OnToolEnd("Bash", "exit code 0")
+	r.OnAssistantFinal("done")
+	out := r.Render()
+	if !strings.Contains(out, "Bash") {
+		t.Errorf("missing tool name in output: %q", out)
+	}
+	if !strings.Contains(out, "exit code 0") {
+		t.Errorf("missing tool body: %q", out)
+	}
+}
+
+func TestAIChunker_FlushesUserPrompt(t *testing.T) {
+	clock := newFakeClock()
+	calls := 0
+	var lastBody string
+	ch := NewAIChunkerWithClock(func(body string) { calls++; lastBody = body }, clock)
+	ch.PushTurn(TurnUserPromptEvent{Text: "hi"})
+	// Pushing alone doesn't satisfy the 100ms window since lastFlush was
+	// initialized to clk.Now() — Tick after advancing should flush.
+	clock.advance(110)
+	ch.Tick()
+	if calls != 1 {
+		t.Errorf("expected 1 flush, got %d", calls)
+	}
+	if !strings.Contains(lastBody, "hi") {
+		t.Errorf("body missing 'hi': %q", lastBody)
+	}
+}

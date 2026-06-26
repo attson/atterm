@@ -22,6 +22,7 @@ import {
   prepareSendPayload,
 } from "../lib/terminalContextMenu";
 import { pasteFromClipboard } from "../lib/terminalPaste";
+import { pasteImageBus } from "../lib/pasteImageBus";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
@@ -181,6 +182,7 @@ async function handleImagePaste(e: ClipboardEvent) {
   if (!file) return;
   e.preventDefault();
   e.stopPropagation();
+  pasteImageBus.emit(file, file.name || "clipboard-image");
   try {
     await conn?.sendPasteImage(file, file.name || "clipboard-image");
   } catch (err) {

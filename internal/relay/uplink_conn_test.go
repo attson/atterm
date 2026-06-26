@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
@@ -409,6 +410,84 @@ func TestUplink_EchoesPingPayloadAsPong(t *testing.T) {
 		}
 		if got != wantTS {
 			t.Fatalf("PONG ts = 0x%x, want 0x%x", got, wantTS)
+		}
+		return
+	}
+}
+
+// TestUplink_InboundForwardedWithoutSubscriber reproduces the Feishu-card bug:
+// a mirror session created via ANNOUNCE must forward inbound (IN/RESIZE) frames
+// down the uplink to the desktop EVEN WHEN no remote viewer is subscribed.
+// Feishu callbacks inject a TypeIn frame via registry.Get(sid).SendInbound; if
+// the inbound forwarder only runs while a viewer is subscribed, that frame is
+// stranded in the mirror's inbound channel and never reaches the PTY.
+func TestUplink_InboundForwardedWithoutSubscriber(t *testing.T) {
+	store, _, apiToken := newUplinkTestStore(t)
+
+	srv := newUplinkTestServer(t, store)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := dialUplinkWS(t, dialCtx, httpSrv, "Bearer "+apiToken)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Publish a single mirror session. No remote viewer ever subscribes.
+	sid := uuid.New()
+	sendAnnounce(t, dialCtx, conn, sid)
+
+	// Wait for the mirror session to land in the registry.
+	var sess *session.Session
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s, ok := srv.Registry().Get(sid)
+		if ok {
+			sess = s
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if sess == nil {
+		t.Fatal("mirror session not found in registry after ANNOUNCE")
+	}
+
+	// Simulate the Feishu callback path: inject an IN frame straight into the
+	// mirror session's inbound channel, with NO subscriber present.
+	payload := []byte("hello\n")
+	if !sess.SendInbound(proto.Frame{Type: proto.TypeIn, SessionID: sid, Payload: payload}) {
+		t.Fatal("SendInbound returned false (inbound queue full)")
+	}
+
+	// The desktop downlink must receive that IN frame. Skip the admin frames
+	// (AUTH_INFO, VIEWERS, etc.) the uplink may interleave on connect.
+	readDeadline := time.Now().Add(3 * time.Second)
+	for {
+		if time.Now().After(readDeadline) {
+			t.Fatal("timeout: IN frame was not forwarded down the uplink without a subscriber (bug)")
+		}
+		readCtx, readCancel := context.WithTimeout(dialCtx, time.Until(readDeadline))
+		_, data, err := conn.Read(readCtx)
+		readCancel()
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		f, err := proto.Unmarshal(data)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if f.Type != proto.TypeIn {
+			continue
+		}
+		if f.SessionID != sid {
+			t.Fatalf("IN frame session = %s; want %s", f.SessionID, sid)
+		}
+		if string(f.Payload) != string(payload) {
+			t.Fatalf("IN frame payload = %q; want %q", f.Payload, payload)
 		}
 		return
 	}

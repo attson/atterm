@@ -12,3 +12,17 @@ if (!globalThis.crypto?.subtle) {
     configurable: true,
   });
 }
+
+// jsdom does not implement URL.createObjectURL / revokeObjectURL. Components
+// that preview pasted images (PasteImagePreviewHost) call these for blob URLs;
+// real browsers and the Capacitor WebView ship both. Provide no-op defaults so
+// component tests can `vi.spyOn(URL, "createObjectURL")` without first having
+// to define the method.
+if (typeof URL.createObjectURL !== "function") {
+  // @ts-expect-error - augmenting jsdom's URL constructor for parity with browsers
+  URL.createObjectURL = () => "blob:jsdom/stub";
+}
+if (typeof URL.revokeObjectURL !== "function") {
+  // @ts-expect-error - augmenting jsdom's URL constructor for parity with browsers
+  URL.revokeObjectURL = () => {};
+}

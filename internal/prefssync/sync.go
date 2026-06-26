@@ -52,6 +52,7 @@ var syncedKeys = []string{
 	"locale_preference",
 	"quick_templates",
 	"notifications_enabled",
+	"ai_notifications_only",
 	"command_notify_threshold_seconds",
 	"shell_integration_enabled",
 }
@@ -84,15 +85,21 @@ func NewEngine(a Adapter, r RelayClient) *Engine {
 //   - key absent on server: leave local untouched
 func (e *Engine) Pull(ctx context.Context) error {
 	items, err := e.relay.Get(ctx)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	for _, it := range items {
 		local := e.adapter.ReadMeta(it.Key)
 		if it.UpdatedAt > local.UpdatedAtLocal {
 			if local.Dirty {
 				continue
 			}
-			if err := e.adapter.WriteValue(it.Key, it.Value); err != nil { return err }
-			if err := e.adapter.WriteMeta(it.Key, Meta{UpdatedAtLocal: it.UpdatedAt, Dirty: false}); err != nil { return err }
+			if err := e.adapter.WriteValue(it.Key, it.Value); err != nil {
+				return err
+			}
+			if err := e.adapter.WriteMeta(it.Key, Meta{UpdatedAtLocal: it.UpdatedAt, Dirty: false}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -110,14 +117,21 @@ func (e *Engine) MarkDirty(key string, updatedAtLocalMs int64) {
 //   - has a value in the local adapter, AND
 //   - is reported as non-default by isCustomized, AND
 //   - has Meta{Dirty: false} currently
+//
 // Intended to run once per (relay user, device) after the first PULL,
 // to carry pre-sync customizations up to the server.
 func (e *Engine) SeedFromLocal(isCustomized func(key string) bool, updatedAtLocalMs int64) {
 	for _, k := range e.adapter.Keys() {
-		if _, ok := e.adapter.ReadValue(k); !ok { continue }
-		if !isCustomized(k) { continue }
+		if _, ok := e.adapter.ReadValue(k); !ok {
+			continue
+		}
+		if !isCustomized(k) {
+			continue
+		}
 		m := e.adapter.ReadMeta(k)
-		if m.Dirty { continue }
+		if m.Dirty {
+			continue
+		}
 		e.adapter.WriteMeta(k, Meta{UpdatedAtLocal: updatedAtLocalMs, Dirty: true})
 	}
 }
@@ -129,23 +143,35 @@ func (e *Engine) Push(ctx context.Context) error {
 	var items []ClientItem
 	for _, k := range e.adapter.Keys() {
 		m := e.adapter.ReadMeta(k)
-		if !m.Dirty { continue }
+		if !m.Dirty {
+			continue
+		}
 		v, ok := e.adapter.ReadValue(k)
-		if !ok { continue }
+		if !ok {
+			continue
+		}
 		items = append(items, ClientItem{
 			Key: k, Value: v, ClientUpdatedAt: m.UpdatedAtLocal,
 		})
 	}
-	if len(items) == 0 { return nil }
+	if len(items) == 0 {
+		return nil
+	}
 
 	resp, err := e.relay.Put(ctx, items)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	for _, it := range resp {
 		// Always trust server's updated_at; if it accepted our push, server.value == ours.
 		// If server rejected (server newer), server.value overrides ours.
-		if err := e.adapter.WriteValue(it.Key, it.Value); err != nil { return err }
-		if err := e.adapter.WriteMeta(it.Key, Meta{UpdatedAtLocal: it.UpdatedAt, Dirty: false}); err != nil { return err }
+		if err := e.adapter.WriteValue(it.Key, it.Value); err != nil {
+			return err
+		}
+		if err := e.adapter.WriteMeta(it.Key, Meta{UpdatedAtLocal: it.UpdatedAt, Dirty: false}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

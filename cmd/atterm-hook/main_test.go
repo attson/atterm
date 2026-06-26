@@ -60,7 +60,10 @@ func TestHook_HappyPath(t *testing.T) {
 		"ATTERM_SESSION_ID=00000000-0000-0000-0000-000000000001",
 		"ATTERM_HOOK_ENDPOINT="+srv.URL,
 	)
-	stdin := `{"matcher":{"type":"idle_prompt"},"prompt_id":"p1"}`
+	// The CLI is schema-agnostic — it just relays stdin verbatim. We use
+	// a realistic claude-code Notification payload here so the fixture
+	// matches what production sees, but any well-formed JSON would do.
+	stdin := `{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"hi"}`
 	_, stderr, exit := runHook(t, bin, env, stdin)
 	if exit != 0 {
 		t.Fatalf("exit=%d stderr=%s", exit, stderr)

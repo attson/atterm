@@ -18,10 +18,13 @@ type ClaudeSettings struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ClaudeHooks is the "hooks" object. We only own the Notification slot.
-// Other hook lists (e.g. PreToolUse) are passed through unmodified.
+// ClaudeHooks is the "hooks" object. We own the Notification slot AND
+// the PreToolUse slot (the latter is how we hear about AskUserQuestion
+// — claude-code's Notification hook does not fire for that tool).
+// Other hook lists are passed through unmodified.
 type ClaudeHooks struct {
 	Notification []HookEntry                `json:"Notification,omitempty"`
+	PreToolUse   []HookEntry                `json:"PreToolUse,omitempty"`
 	Extra        map[string]json.RawMessage `json:"-"`
 }
 
@@ -62,6 +65,12 @@ func (h *ClaudeHooks) UnmarshalJSON(data []byte) error {
 		}
 		delete(raw, "Notification")
 	}
+	if p, ok := raw["PreToolUse"]; ok {
+		if err := json.Unmarshal(p, &h.PreToolUse); err != nil {
+			return err
+		}
+		delete(raw, "PreToolUse")
+	}
 	h.Extra = raw
 	return nil
 }
@@ -73,6 +82,9 @@ func (h ClaudeHooks) MarshalJSON() ([]byte, error) {
 	}
 	if h.Notification != nil {
 		out["Notification"] = h.Notification
+	}
+	if h.PreToolUse != nil {
+		out["PreToolUse"] = h.PreToolUse
 	}
 	return json.Marshal(out)
 }

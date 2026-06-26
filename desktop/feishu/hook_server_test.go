@@ -44,7 +44,7 @@ func TestHookServer_HappyPath(t *testing.T) {
 	body := mustJSONBytes(t, hookNotifyRequest{
 		SessionID: sid.String(),
 		AgentKind: "claude-code",
-		HookInput: json.RawMessage(`{"matcher":{"type":"idle_prompt","tool":"AskUserQuestion"},"prompt_id":"p","context":{"tool_input":{"question":"go?"}}}`),
+		HookInput: json.RawMessage(`{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"go?","options":[]}]}}`),
 	})
 	req := httptest.NewRequest("POST", "/atterm-hook/notify", bytes.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:5555"
@@ -63,6 +63,45 @@ func TestHookServer_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHookServer_ForwardsOptionsToDispatcher(t *testing.T) {
+	disp := &recordingDispatcher{}
+	sid := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+	h := NewHookServer(disp, sessions)
+
+	body := mustJSONBytes(t, hookNotifyRequest{
+		SessionID: sid.String(),
+		AgentKind: "claude-code",
+		HookInput: json.RawMessage(`{
+		  "hook_event_name": "PreToolUse",
+		  "tool_name": "AskUserQuestion",
+		  "tool_input": {"questions": [{
+		    "question": "Pick one",
+		    "options": [
+		      {"label":"A","description":"alpha"},
+		      {"label":"B","description":"beta"}
+		    ]
+		  }]}
+		}`),
+	})
+	req := httptest.NewRequest("POST", "/atterm-hook/notify", bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:5555"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	disp.mu.Lock()
+	defer disp.mu.Unlock()
+	if len(disp.waiting) != 1 {
+		t.Fatalf("expected 1 dispatch, got %d", len(disp.waiting))
+	}
+	got := disp.waiting[0]
+	if len(got.Options) != 2 || got.Options[0].Label != "A" || got.Options[1].Label != "B" {
+		t.Fatalf("Options dropped on the way to dispatcher: %+v", got.Options)
+	}
+}
+
 // TestHookServer_SetDispatcher verifies a runtime dispatcher swap (as happens
 // on a relay login/logout) routes subsequent hook events to the new dispatcher
 // without restarting the listener.
@@ -76,7 +115,7 @@ func TestHookServer_SetDispatcher(t *testing.T) {
 		body := mustJSONBytes(t, hookNotifyRequest{
 			SessionID: sid.String(),
 			AgentKind: "claude-code",
-			HookInput: json.RawMessage(`{"matcher":{"type":"idle_prompt","tool":"AskUserQuestion"},"prompt_id":"p","context":{"tool_input":{"question":"go?"}}}`),
+			HookInput: json.RawMessage(`{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"question":"go?"}}`),
 		})
 		req := httptest.NewRequest("POST", "/atterm-hook/notify", bytes.NewReader(body))
 		req.RemoteAddr = "127.0.0.1:5555"

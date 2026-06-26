@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"strings"
 )
 
 // WaitingInputEvent is the normalized payload a HookAdapter emits when
@@ -12,7 +12,7 @@ import (
 // on the user. The dispatcher uses this to render + send a Feishu card.
 type WaitingInputEvent struct {
 	QuestionText string
-	Options      []QuestionOption // populated only for AskUserQuestion idle_prompt
+	Options      []QuestionOption // populated only for AskUserQuestion PreToolUse events
 	DedupKey     string
 }
 
@@ -39,123 +39,112 @@ func LookupHookAdapter(kind string) (HookAdapter, bool) {
 	return a, ok
 }
 
-// claudeCodeAdapter parses claude-code's NotificationHookInput schema.
+// claudeCodeAdapter parses claude-code's real hook payloads. Two shapes:
+//
+//   - PreToolUse(AskUserQuestion): {hook_event_name:"PreToolUse",
+//     tool_name:"AskUserQuestion", tool_input:{questions:[{question,options}]}}.
+//     This is the ONLY place we learn about AskUserQuestion — claude-code's
+//     Notification hook does NOT fire for this tool (anthropics/claude-code#13830).
+//
+//   - Notification: {hook_event_name:"Notification",
+//     notification_type:"permission_prompt"|"idle_prompt"|…, message, title}.
 type claudeCodeAdapter struct{}
 
 func (*claudeCodeAdapter) AgentKind() string { return "claude-code" }
 
-type ccNotificationHookInput struct {
-	Matcher  ccMatcher       `json:"matcher"`
-	PromptID string          `json:"prompt_id"`
-	Context  json.RawMessage `json:"context"`
-}
-
-type ccMatcher struct {
-	Type string `json:"type"`
-	Tool string `json:"tool"`
+type ccHookPayload struct {
+	HookEventName    string          `json:"hook_event_name"`
+	NotificationType string          `json:"notification_type"`
+	Message          string          `json:"message"`
+	Title            string          `json:"title"`
+	ToolName         string          `json:"tool_name"`
+	ToolInput        json.RawMessage `json:"tool_input"`
 }
 
 func (a *claudeCodeAdapter) Parse(raw json.RawMessage, _ string) (WaitingInputEvent, bool) {
-	var in ccNotificationHookInput
-	if err := json.Unmarshal(raw, &in); err != nil {
+	var p ccHookPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
 		return WaitingInputEvent{}, false
 	}
 
-	switch in.Matcher.Type {
-	case "permission_prompt":
-		q := summarizePermissionContext(in.Context)
-		return mkEvent(in, q), true
-	case "idle_prompt":
-		if in.Matcher.Tool != "AskUserQuestion" {
+	switch p.HookEventName {
+	case "PreToolUse":
+		if p.ToolName != "AskUserQuestion" {
 			return WaitingInputEvent{}, false
 		}
-		q, opts := extractAskUserQuestion(in.Context)
+		q, opts := extractAskUserQuestion(p.ToolInput)
+		// Emit even if the question text is empty, as long as we have
+		// options to render — the card title carries the intent.
+		if q == "" && len(opts) == 0 {
+			return WaitingInputEvent{}, false
+		}
 		if q == "" {
 			q = "Claude is waiting on a question."
 		}
-		ev := mkEvent(in, q)
-		ev.Options = opts
-		return ev, true
+		return WaitingInputEvent{
+			QuestionText: q,
+			Options:      opts,
+			DedupKey:     dedupKey("pretooluse:askuserquestion", p.ToolInput),
+		}, true
+
+	case "Notification":
+		switch p.NotificationType {
+		case "permission_prompt", "idle_prompt":
+			msg := strings.TrimSpace(p.Message)
+			if msg == "" {
+				msg = "Claude is waiting on you."
+			}
+			return WaitingInputEvent{
+				QuestionText: msg,
+				DedupKey:     dedupKey("notification:"+p.NotificationType, []byte(p.Message)),
+			}, true
+		default:
+			// auth_success, elicitation_*, anything unknown — not a
+			// waiting-on-user signal, so don't render a card.
+			return WaitingInputEvent{}, false
+		}
+
 	default:
 		return WaitingInputEvent{}, false
 	}
 }
 
-func mkEvent(in ccNotificationHookInput, q string) WaitingInputEvent {
-	dedup := "claude-code:" + in.PromptID
-	if in.PromptID == "" {
-		sum := sha256.Sum256([]byte(q))
-		dedup = "claude-code:hash:" + hex.EncodeToString(sum[:8])
-	}
-	return WaitingInputEvent{
-		QuestionText: q,
-		DedupKey:     dedup,
-	}
+// dedupKey produces a stable per-event key. claude-code does not give
+// hooks a stable identifier across retries, so we hash the content. The
+// 8-byte prefix is enough to disambiguate concurrent prompts in the same
+// session within the dedup window.
+func dedupKey(scope string, content []byte) string {
+	sum := sha256.Sum256(content)
+	return "claude-code:" + scope + ":" + hex.EncodeToString(sum[:8])
 }
 
-func summarizePermissionContext(ctx json.RawMessage) string {
+func extractAskUserQuestion(rawToolInput json.RawMessage) (string, []QuestionOption) {
+	if len(rawToolInput) == 0 {
+		return "", nil
+	}
 	var p struct {
-		ToolName  string          `json:"tool_name"`
-		ToolInput json.RawMessage `json:"tool_input"`
+		Question  string `json:"question"`
+		Questions []struct {
+			Question string `json:"question"`
+			Options  []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
 	}
-	if err := json.Unmarshal(ctx, &p); err != nil {
-		return "Claude wants permission for an action."
+	if err := json.Unmarshal(rawToolInput, &p); err != nil {
+		return "", nil
 	}
-	tool := p.ToolName
-	if tool == "" {
-		tool = "Tool"
-	}
-	argsLine := compactJSONOneLine(p.ToolInput)
-	if argsLine == "" {
-		return tool + " requested approval."
-	}
-	return fmt.Sprintf("%s wants to:\n%s", tool, argsLine)
-}
-
-func extractAskUserQuestion(ctx json.RawMessage) (string, []QuestionOption) {
-	var p struct {
-		ToolInput struct {
-			Question  string `json:"question"`
-			Questions []struct {
-				Question string `json:"question"`
-				Options  []struct {
-					Label       string `json:"label"`
-					Description string `json:"description"`
-				} `json:"options"`
-			} `json:"questions"`
-		} `json:"tool_input"`
-	}
-	if err := json.Unmarshal(ctx, &p); err == nil {
-		if len(p.ToolInput.Questions) > 0 {
-			q0 := p.ToolInput.Questions[0]
-			opts := make([]QuestionOption, 0, len(q0.Options))
-			for _, o := range q0.Options {
-				opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
-			}
-			return q0.Question, opts
+	if len(p.Questions) > 0 {
+		q0 := p.Questions[0]
+		opts := make([]QuestionOption, 0, len(q0.Options))
+		for _, o := range q0.Options {
+			opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
 		}
-		if p.ToolInput.Question != "" {
-			return p.ToolInput.Question, nil
-		}
+		return q0.Question, opts
 	}
-	var fallback struct {
-		ToolInput json.RawMessage `json:"tool_input"`
+	if p.Question != "" {
+		return p.Question, nil
 	}
-	_ = json.Unmarshal(ctx, &fallback)
-	return compactJSONOneLine(fallback.ToolInput), nil
-}
-
-func compactJSONOneLine(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return ""
-	}
-	out, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return string(out)
+	return "", nil
 }

@@ -97,6 +97,27 @@ func TestCheck_SettingsMissingMarkerEntries(t *testing.T) {
 	}
 }
 
+func TestCheck_PreToolUseMissing(t *testing.T) {
+	home := t.TempDir()
+	if err := installAt(home); err != nil {
+		t.Fatal(err)
+	}
+	// Manually strip the atterm-owned PreToolUse entry. Settings should
+	// then fail health-check with a PreToolUse-specific reason — Install
+	// is what restores it on next launch.
+	cfg, _ := readClaudeSettings(home)
+	cfg.Hooks.PreToolUse = nil
+	writeClaudeSettings(home, cfg)
+
+	s := checkAt(home, true)
+	if s.SettingsOK {
+		t.Errorf("SettingsOK = true; want false when PreToolUse entry is missing")
+	}
+	if !strings.Contains(s.LastError, "PreToolUse") {
+		t.Errorf("LastError should mention PreToolUse; got %q", s.LastError)
+	}
+}
+
 func TestCheck_SettingsCommandPathStale(t *testing.T) {
 	home := t.TempDir()
 	if err := installAt(home); err != nil {

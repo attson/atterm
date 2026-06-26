@@ -388,6 +388,111 @@ func TestDispatch_CommandFailureCount(t *testing.T) {
 	}
 }
 
+// blockingIM lets a test gate when SendInteractiveToOpenID returns, so
+// concurrent dispatch attempts can be observed in flight at the same time.
+type blockingIM struct {
+	mu      sync.Mutex
+	bodies  []string
+	release chan struct{}
+	entered chan struct{} // closed when the FIRST send call enters
+	once    sync.Once
+}
+
+func newBlockingIM() *blockingIM {
+	return &blockingIM{
+		release: make(chan struct{}),
+		entered: make(chan struct{}),
+	}
+}
+
+func (b *blockingIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) (string, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.release
+	b.mu.Lock()
+	b.bodies = append(b.bodies, string(body))
+	b.mu.Unlock()
+	return "om_blocking", nil
+}
+
+func (b *blockingIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
+	return nil
+}
+
+// TestDispatcher_ConcurrentWaitingInputOnlyOneSend covers the dedup race
+// between the hook path and the heuristic path firing for the same
+// session within the dedup window. Before the eager-stamp fix, both
+// goroutines could pass the check-then-IO interval and double-send.
+func TestDispatcher_ConcurrentWaitingInputOnlyOneSend(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := newBlockingIM()
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    im,
+	})
+
+	sid := uuid.New()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+				SessionID:    sid,
+				Source:       WaitingSourceHeuristic,
+				QuestionText: "Q",
+			})
+		}()
+	}
+
+	// Wait until the (single) in-flight send has started before releasing.
+	<-im.entered
+	close(im.release)
+	wg.Wait()
+
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	if len(im.bodies) != 1 {
+		t.Fatalf("expected 1 send across 8 concurrent dispatches; got %d", len(im.bodies))
+	}
+}
+
+// TestDispatcher_RollsBackStampOnTokenUnavailable verifies that when a
+// dispatch bails because no token is configured, the eager stamp is
+// withdrawn so a subsequent dispatch (after a token becomes available)
+// is not gated by a leftover stamp from the failed attempt.
+func TestDispatcher_RollsBackStampOnTokenUnavailable(t *testing.T) {
+	store := &inMemBindingStore{}
+	im := &capturingIM{}
+	ts := &stubTokenSource{err: ErrTokenNotConfigured}
+	d := NewDispatcher(DispatcherConfig{Store: store, Token: ts, IM: im})
+
+	sid := uuid.New()
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q",
+	})
+	if len(im.bodies) != 0 {
+		t.Fatalf("expected 0 sends with no token; got %d", len(im.bodies))
+	}
+
+	// Token becomes available. The next event in the same dedup window
+	// must NOT be gated by the previous (rolled-back) stamp.
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	ts.err = nil
+	ts.tok = "tt"
+	ts.openID = "ou_x"
+
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q2",
+	})
+	if len(im.bodies) != 1 {
+		t.Fatalf("expected 1 send after token recovered; got %d", len(im.bodies))
+	}
+}
+
 // atomicTime is a tiny test clock used by the dedup window test.
 type atomicTime struct {
 	v atomic.Int64

@@ -322,6 +322,10 @@ export function ShowNotification(arg1, arg2) {
   return window['go']['main']['App']['ShowNotification'](arg1, arg2);
 }
 
+export function DownloadVersion(arg1) {
+  return window['go']['main']['App']['DownloadVersion'](arg1);
+}
+
 export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
 }

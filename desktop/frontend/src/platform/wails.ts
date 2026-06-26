@@ -162,6 +162,7 @@ export function createWailsPlatform(): Platform {
       getState: api.getUpdateState,
       checkUpdate: api.checkUpdate,
       startDownload: api.startDownload,
+      downloadVersion: api.downloadVersion,
       installUpdate: api.installUpdate,
     },
     pluginHost: {

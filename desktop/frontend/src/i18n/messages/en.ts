@@ -256,6 +256,7 @@ export const en = {
       proxyHint: "Optional. Only GitHub Release file downloads use this proxy; update checks and signature verification stay unchanged.",
       releaseNotes: "release notes",
       checkNow: "check now",
+      versionLine: "{minor} line",
       downloadVersion: "download {version}",
       downloadingButton: "downloading... {pct}%",
       forceInstallRestart: "force install & restart",

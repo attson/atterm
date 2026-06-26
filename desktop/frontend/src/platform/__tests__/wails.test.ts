@@ -15,6 +15,7 @@ vi.mock('../../lib/api', () => ({
   getUpdateState: vi.fn().mockResolvedValue({ state: 'idle' }),
   checkUpdate: vi.fn().mockResolvedValue(undefined),
   startDownload: vi.fn().mockResolvedValue(undefined),
+  downloadVersion: vi.fn().mockResolvedValue(undefined),
   installUpdate: vi.fn().mockResolvedValue(undefined),
   markSessionsSeen: vi.fn().mockResolvedValue(undefined),
 }))

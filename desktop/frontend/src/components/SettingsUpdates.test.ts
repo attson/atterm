@@ -31,4 +31,27 @@ describe("SettingsUpdates", () => {
     expect(source).toContain("onBeforeUnmount");
     expect(source).toContain("clearInterval");
   });
+
+  test("renders a version-line radio selector when multiple lines exist", () => {
+    // Radio group only shows when there are >= 2 version lines.
+    expect(source).toMatch(/lines\??\.length.*>=\s*2/s);
+    expect(source).toContain("hasMultipleLines");
+    expect(source).toContain('type="radio"');
+    expect(source).toContain('v-for="line in state.lines"');
+    expect(source).toContain('v-model="selectedLine"');
+    // Each option shows the minor line label and its latest version.
+    expect(source).toContain("settings.updates.versionLine");
+    expect(source).toContain("line.latest");
+  });
+
+  test("downloads the selected line's latest version via downloadVersion", () => {
+    expect(source).toContain("downloadVersion");
+    expect(source).toContain("onDownloadSelected");
+    expect(source).toContain("selectedLatest");
+  });
+
+  test("defaults the selected line and tracks it reactively", () => {
+    expect(source).toContain("selectedLine");
+    expect(source).toContain("watch");
+  });
 });

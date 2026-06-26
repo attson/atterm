@@ -36,6 +36,9 @@ type Subscriber interface {
 	ClaimDriver()
 	SendInput([]byte) bool
 	OwnerOpenID() string
+	// CurrentDriverName returns the human-readable name of the session's
+	// current driver, or "" when there's no driver / Feishu is already driver.
+	CurrentDriverName() string
 }
 
 // SubscriberLookup returns the FeishuSubscriber currently attached to a
@@ -118,8 +121,9 @@ func (r *Router) injectInto(anchor *CardAnchor, operatorOpenID string, payload [
 	if sub == nil {
 		return Decision{Action: ActionReject, Toast: "会话已结束"}
 	}
-	// In Phase 1 we always claim driver on first input — preempt protocol
-	// arrives in Task 16 (Phase 2). For now any input promotes Feishu.
+	if name := sub.CurrentDriverName(); name != "" {
+		return Decision{Action: ActionPreempt, PreemptDriverName: name}
+	}
 	sub.ClaimDriver()
 	if !sub.SendInput(payload) {
 		return Decision{Action: ActionReject, Toast: "输入未被接收（队列已满）"}

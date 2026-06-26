@@ -135,6 +135,18 @@ func (f *FeishuSubscriber) SendInput(data []byte) bool {
 // permission gate).
 func (f *FeishuSubscriber) OwnerOpenID() string { return f.openID }
 
+// CurrentDriverName returns the session's current driver's display name, or
+// "" when Feishu is already the driver / no driver is set. Used by the
+// router to decide whether to ActionInject or ActionPreempt.
+func (f *FeishuSubscriber) CurrentDriverName() string {
+	if f.sess.DriverClientID() == f.clientID {
+		return "" // Feishu is already driver — no preempt needed
+	}
+	// No driver at all (DriverClientID is ""), or a different driver.
+	// DriverClientName is "" when no driver is set, which also means "".
+	return f.sess.DriverClientName()
+}
+
 // Done returns a channel that closes when Detach is called.
 // Used by external lifecycle owners to react to subscriber shutdown.
 func (f *FeishuSubscriber) Done() <-chan struct{} { return f.done }

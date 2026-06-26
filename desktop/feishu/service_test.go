@@ -268,9 +268,10 @@ type stubRouterSubscriber struct {
 	owner     string
 }
 
-func (s *stubRouterSubscriber) ClaimDriver()            {}
-func (s *stubRouterSubscriber) OwnerOpenID() string     { return s.owner }
-func (s *stubRouterSubscriber) SendInput(b []byte) bool { s.sentInput = b; return true }
+func (s *stubRouterSubscriber) ClaimDriver()              {}
+func (s *stubRouterSubscriber) OwnerOpenID() string       { return s.owner }
+func (s *stubRouterSubscriber) SendInput(b []byte) bool   { s.sentInput = b; return true }
+func (s *stubRouterSubscriber) CurrentDriverName() string { return "" }
 
 // TestHandleCardAction_RouterInput verifies that handleCardAction with kind="input"
 // routes through the router and delivers the payload to the subscriber.

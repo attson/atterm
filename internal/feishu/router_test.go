@@ -17,7 +17,8 @@ func (s *stubSubscriber) SendInput(b []byte) bool {
 	s.sentIn = append(s.sentIn, append([]byte(nil), b...))
 	return true
 }
-func (s *stubSubscriber) OwnerOpenID() string { return s.openID }
+func (s *stubSubscriber) OwnerOpenID() string      { return s.openID }
+func (s *stubSubscriber) CurrentDriverName() string { return "" }
 
 func TestRouter_ReplyHappyPath(t *testing.T) {
 	idx := NewCardIndex()
@@ -95,5 +96,33 @@ func TestRouter_500msBudget(t *testing.T) {
 	elapsed := time.Since(start)
 	if elapsed > 500*time.Millisecond {
 		t.Errorf("route took %v, want ≤500ms", elapsed)
+	}
+}
+
+type stubSubscriberDriverAware struct {
+	stubSubscriber
+	currentDriverName string
+}
+
+func (s *stubSubscriberDriverAware) CurrentDriverName() string { return s.currentDriverName }
+
+func TestRouter_PreemptToastWhenNonFeishuDriver(t *testing.T) {
+	idx := NewCardIndex()
+	idx.Put(&CardAnchor{SessionID: "s", CardMsgID: "m", CardToken: "t", OwnerOpenID: "ou_owner"})
+	stub := &stubSubscriberDriverAware{
+		stubSubscriber:    stubSubscriber{openID: "ou_owner"},
+		currentDriverName: "local-terminal",
+	}
+	r := NewRouter(idx, func(string) Subscriber { return stub })
+
+	dec := r.RouteReply("m", "ou_owner", "go test")
+	if dec.Action != ActionPreempt {
+		t.Fatalf("action = %v, want preempt", dec.Action)
+	}
+	if dec.PreemptDriverName != "local-terminal" {
+		t.Errorf("preempt driver name = %q, want local-terminal", dec.PreemptDriverName)
+	}
+	if len(stub.sentIn) != 0 {
+		t.Errorf("should NOT inject during preempt: %q", stub.sentIn)
 	}
 }

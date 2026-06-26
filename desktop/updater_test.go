@@ -825,3 +825,27 @@ func assetExtForRuntime(t *testing.T) string {
 	}
 	return strings.TrimPrefix(name, "AT-Term-"+runtime.GOOS+"-"+runtime.GOARCH)
 }
+
+func TestParseVersionTag(t *testing.T) {
+	cases := []struct {
+		tag   string
+		minor string
+		patch int
+		ok    bool
+	}{
+		{"v0.2.155", "v0.2", 155, true},
+		{"v0.3.0", "v0.3", 0, true},
+		{"v1.10.3", "v1.10", 3, true},
+		{"0.2.155", "", 0, false},
+		{"v0.2", "", 0, false},
+		{"dev", "", 0, false},
+		{"", "", 0, false},
+	}
+	for _, c := range cases {
+		minor, patch, ok := parseVersionTag(c.tag)
+		if ok != c.ok || minor != c.minor || patch != c.patch {
+			t.Errorf("parseVersionTag(%q) = (%q,%d,%v), want (%q,%d,%v)",
+				c.tag, minor, patch, ok, c.minor, c.patch, c.ok)
+		}
+	}
+}

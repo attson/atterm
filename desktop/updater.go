@@ -133,6 +133,30 @@ func assetNameForPlatform(goos, goarch string) (string, error) {
 	return "", fmt.Errorf("no atterm build for %s/%s", goos, goarch)
 }
 
+// parseVersionTag splits a "vMAJOR.MINOR.PATCH" tag into its minor line
+// ("vMAJOR.MINOR") and patch number. ok is false for any tag that is not a
+// well-formed three-part v-prefixed version (dev, drafts, malformed).
+func parseVersionTag(tag string) (minor string, patch int, ok bool) {
+	if !strings.HasPrefix(tag, "v") {
+		return "", 0, false
+	}
+	parts := strings.Split(tag[1:], ".")
+	if len(parts) != 3 {
+		return "", 0, false
+	}
+	p, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return "", 0, false
+	}
+	if _, err := strconv.Atoi(parts[0]); err != nil {
+		return "", 0, false
+	}
+	if _, err := strconv.Atoi(parts[1]); err != nil {
+		return "", 0, false
+	}
+	return "v" + parts[0] + "." + parts[1], p, true
+}
+
 const (
 	releaseCacheTTL        = 1 * time.Hour
 	updaterCheckTimeout    = 15 * time.Second

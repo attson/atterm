@@ -17,6 +17,7 @@ import (
 	"github.com/attson/atterm/desktop/feishu"
 	"github.com/attson/atterm/desktop/shellintegration"
 	"github.com/attson/atterm/internal/appdir"
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/hostid"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ptyhost"
@@ -35,7 +36,8 @@ type relayHost struct {
 	adminUserID  string // owner ULID for sessions adopted into the mini-relay
 	server       *relay.Server
 	httpSrv      *http.Server
-	store        userstore.Store // closed on Stop()
+	store        userstore.Store        // closed on Stop()
+	sqliteStore  *userstore.SQLiteStore // concrete type for Feishu binding lookup
 
 	hostID string
 	host   string
@@ -70,6 +72,17 @@ type relayHost struct {
 	// callbacks read it from session goroutines while app.go may replace it.
 	// nil → no-op.
 	feishuDispatcher atomic.Pointer[feishu.Dispatcher]
+
+	// feishuCards is the in-process registry of live anchor cards keyed by
+	// atterm session ID string. Guarded indirectly by the CardIndex's own
+	// RWMutex; initialized lazily but always non-nil after startRelayHost.
+	feishuCards *internalfeishu.CardIndex
+
+	// feishuSubs and feishuSubsMu guard the set of live FeishuSubscribers,
+	// keyed by session ID string. A subscriber is added on attach and removed
+	// on detach (session close or manual disconnect).
+	feishuSubsMu sync.Mutex
+	feishuSubs   map[string]*internalfeishu.FeishuSubscriber
 }
 
 // SetFeishuDispatcher atomically swaps the dispatcher used for command-finished
@@ -190,6 +203,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		server:       srv,
 		httpSrv:      httpSrv,
 		store:        store,
+		sqliteStore:  store,
 		hostID:       hostid.Get(),
 		host:         hostnameOrUnknown(),
 		user:         usernameOrUid(),
@@ -198,6 +212,8 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		changes:      make(chan struct{}, 1),
 		uplinkSubs:   make(map[uuid.UUID]*session.Subscriber),
 		startSniffFn: startAIResolve,
+		feishuCards:  internalfeishu.NewCardIndex(),
+		feishuSubs:   make(map[string]*internalfeishu.FeishuSubscriber),
 	}, nil
 }
 
@@ -403,6 +419,9 @@ func (h *relayHost) CloseSession(id uuid.UUID) error {
 	// AdoptSession's cleanup is sync.Once-guarded; calling it here is safe
 	// even if the watcher goroutine also reaches it later.
 	s.cleanup()
+	// Detach the Feishu subscriber for this session (idempotent; the PTY
+	// watcher goroutine will also call this after pty.Wait() returns).
+	h.detachFeishuSubscriber(id)
 	h.notifyChange()
 	return err
 }
@@ -530,6 +549,10 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 					h.onAISidCaptured(sidCopy, kind, aiSid)
 				})
 			})
+			// autoAttach="ai": attach the Feishu subscriber now that we know
+			// this is an AI session. Use background context (not the session's
+			// resolveCtx) so the anchor survives beyond the sniff lifetime.
+			go h.attachFeishuSubscriberForAutoAttach(context.Background(), sess, sidCopy, "ai")
 		})
 		sess.SetOnTaskStateChange(func(sid uuid.UUID, prev, next string, meta session.TaskMeta) {
 			disp := h.feishuDispatcher.Load()
@@ -633,6 +656,13 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	h.mu.Unlock()
 	h.notifyChange()
 
+	// autoAttach="all": attach the Feishu subscriber immediately for every
+	// new session regardless of session type. Run in a goroutine so Feishu
+	// I/O never blocks PTY creation.
+	if sess, ok := h.server.Registry().Get(id); ok {
+		go h.attachFeishuSubscriberForAutoAttach(ctx, sess, id, "all")
+	}
+
 	done := make(chan struct{})
 	go h.watchCwd(id, pty, cwd, done)
 
@@ -644,6 +674,9 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		h.mu.Lock()
 		delete(h.sessions, id)
 		h.mu.Unlock()
+		// Detach and archive the Feishu anchor card (if any). Must run after
+		// combinedCleanup so the subscriber's drain loop is stopped first.
+		h.detachFeishuSubscriber(id)
 		h.notifyChange()
 	}()
 
@@ -742,4 +775,170 @@ func (h *relayHost) onAISidCaptured(localSessionID uuid.UUID, kind, aiSid string
 	if h.aiSidCallback != nil {
 		h.aiSidCallback(localSessionID, kind, aiSid)
 	}
+}
+
+// attachFeishuSubscriberForAutoAttach is called either immediately on session
+// creation (triggerMode="all") or from the AI-classified callback
+// (triggerMode="ai"). It checks whether the user's binding allows the attach
+// given the configured SessionAutoAttach value, then posts an anchor card and
+// starts the subscriber. All Feishu I/O is error-swallowed and non-blocking
+// with respect to the session lifecycle.
+func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, sess *session.Session, sessID uuid.UUID, triggerMode string) {
+	disp := h.feishuDispatcher.Load()
+	if disp == nil {
+		return
+	}
+	if h.sqliteStore == nil {
+		return
+	}
+	b, err := h.sqliteStore.GetFeishuBinding(ctx, h.adminUserID)
+	if err != nil {
+		// Binding not found or store error — silently skip.
+		return
+	}
+	if !b.RemoteTerminalEnabled {
+		return
+	}
+	if b.OpenID == "" {
+		return
+	}
+	// Gate on autoAttach: "ai" triggers only fire from the AI-classified
+	// callback; "all" triggers fire immediately. "none" never auto-attaches.
+	switch b.SessionAutoAttach {
+	case "none":
+		return
+	case "ai":
+		if triggerMode != "ai" {
+			return
+		}
+	case "all":
+		// always proceed regardless of triggerMode
+	default:
+		// unknown value — skip
+		return
+	}
+
+	sessionIDStr := sessID.String()
+
+	// Guard against double-attach: if a subscriber is already registered for this
+	// session (e.g. autoAttach="all" already attached at NewSession time, then
+	// SetOnAIClassified fires later and re-enters this function), bail.
+	h.feishuSubsMu.Lock()
+	if _, exists := h.feishuSubs[sessionIDStr]; exists {
+		h.feishuSubsMu.Unlock()
+		return
+	}
+	h.feishuSubsMu.Unlock()
+
+	// Short label: first 8 chars of UUID
+	label := sessionIDStr
+	if len(label) > 8 {
+		label = label[:8]
+	}
+
+	cardBody, err := internalfeishu.RenderAnchorCreate(internalfeishu.AnchorState{
+		SessionID:    sessionIDStr,
+		SessionLabel: label,
+		StatusText:   "running",
+		BodyMarkdown: "",
+		Template:     "blue",
+	})
+	if err != nil {
+		log.Printf("feishu-anchor: render create failed session=%s: %v", sessID, err)
+		return
+	}
+
+	msgID, cardToken, _, err := disp.SendAnchorCard(ctx, cardBody)
+	if err != nil {
+		log.Printf("feishu-anchor: send anchor card failed session=%s: %v", sessID, err)
+		return
+	}
+
+	anchor := &internalfeishu.CardAnchor{
+		SessionID:   sessionIDStr,
+		CardMsgID:   msgID,
+		CardToken:   cardToken,
+		OwnerOpenID: b.OpenID,
+		CreatedAt:   time.Now(),
+	}
+	h.feishuCards.Put(anchor)
+
+	// flush is the Chunker callback: gets the current body markdown and
+	// PATCHes the anchor card asynchronously.
+	flush := func(body string) {
+		go func() {
+			tok, _, err := disp.GetToken(context.Background())
+			if err != nil {
+				log.Printf("feishu-anchor: patch token failed session=%s: %v", sessID, err)
+				return
+			}
+			seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+			if err := disp.PatchAnchor(context.Background(), tok, anchor.CardToken, body, seq); err != nil {
+				if internalfeishu.IsCardGoneError(err) {
+					log.Printf("feishu-anchor: card gone session=%s — detaching", sessID)
+					h.detachFeishuSubscriber(sessID)
+					return
+				}
+				log.Printf("feishu-anchor: patch failed session=%s: %v", sessID, err)
+			}
+		}()
+	}
+
+	sub := internalfeishu.AttachFeishuSubscriber(sess, b.OpenID, flush)
+
+	h.feishuSubsMu.Lock()
+	h.feishuSubs[sessionIDStr] = sub
+	h.feishuSubsMu.Unlock()
+
+	log.Printf("feishu-anchor: attached session=%s card_msg_id=%s", sessID, msgID)
+}
+
+// detachFeishuSubscriber removes and stops the FeishuSubscriber for sessID,
+// then PATCHes the anchor card to archived state. Idempotent.
+func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
+	sessionIDStr := sessID.String()
+
+	h.feishuSubsMu.Lock()
+	sub := h.feishuSubs[sessionIDStr]
+	delete(h.feishuSubs, sessionIDStr)
+	h.feishuSubsMu.Unlock()
+
+	if sub != nil {
+		sub.Detach()
+	}
+
+	anchor := h.feishuCards.BySessionID(sessionIDStr)
+	h.feishuCards.RemoveBySessionID(sessionIDStr)
+
+	if anchor == nil {
+		return
+	}
+
+	// Archive the anchor card in a goroutine; session close must not block.
+	go func() {
+		disp := h.feishuDispatcher.Load()
+		if disp == nil {
+			return
+		}
+		tok, _, err := disp.GetToken(context.Background())
+		if err != nil {
+			log.Printf("feishu-anchor: archive token failed session=%s: %v", sessID, err)
+			return
+		}
+		// Build the archive body markdown: last shell output + footer line.
+		footer := "**已结束 at " + time.Now().Format("15:04:05") + "**"
+		lastBody := anchor.LastBody
+		archiveMD := lastBody
+		if archiveMD != "" {
+			archiveMD += "\n" + footer
+		} else {
+			archiveMD = footer
+		}
+		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+		if err := disp.PatchAnchor(context.Background(), tok, anchor.CardToken, archiveMD, seq); err != nil {
+			if !internalfeishu.IsCardGoneError(err) {
+				log.Printf("feishu-anchor: archive patch failed session=%s: %v", sessID, err)
+			}
+		}
+	}()
 }

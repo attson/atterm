@@ -100,10 +100,11 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	im := &authClassAdaptingClient{inner: internalfeishu.NewClient(cfg.FeishuBase, cfg.HTTPClient)}
 
 	d := NewDispatcher(DispatcherConfig{
-		Store: store,
-		Token: ts,
-		IM:    im,
-		Now:   cfg.Now,
+		Store:   store,
+		Token:   ts,
+		IM:      im,
+		CardKit: im,
+		Now:     cfg.Now,
 	})
 
 	if cfg.Sessions == nil {
@@ -341,6 +342,13 @@ func (c *authClassAdaptingClient) SendInteractiveToOpenID(ctx context.Context, t
 }
 func (c *authClassAdaptingClient) SendTextToOpenID(ctx context.Context, tok, open, text string) error {
 	return c.adapt(c.inner.SendTextToOpenID(ctx, tok, open, text))
+}
+func (c *authClassAdaptingClient) SendAnchorCard(ctx context.Context, tok, openID string, cardBody []byte) (string, string, error) {
+	mid, token, err := c.inner.SendAnchorCard(ctx, tok, openID, cardBody)
+	return mid, token, c.adapt(err)
+}
+func (c *authClassAdaptingClient) PatchCard(ctx context.Context, tok, cardToken, bodyMarkdown string, sequence int64) error {
+	return c.adapt(c.inner.PatchCard(ctx, tok, cardToken, bodyMarkdown, sequence))
 }
 func (c *authClassAdaptingClient) adapt(err error) error {
 	if err == nil {

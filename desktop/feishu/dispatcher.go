@@ -21,6 +21,14 @@ type IMClient interface {
 	SendTextToOpenID(ctx context.Context, token, openID, text string) error
 }
 
+// CardKitClient is the subset of internal/feishu.Client used for anchor card
+// operations (send + streaming PATCH). Stored separately in DispatcherConfig
+// so tests can stub it without affecting the IM send path.
+type CardKitClient interface {
+	SendAnchorCard(ctx context.Context, tenantToken, openID string, cardBody []byte) (msgID, cardToken string, err error)
+	PatchCard(ctx context.Context, tenantToken, cardToken, bodyMarkdown string, sequence int64) error
+}
+
 // CommandFinishedEvent feeds the dispatcher from the heuristic OSC 133 D path.
 type CommandFinishedEvent struct {
 	SessionID  uuid.UUID
@@ -72,9 +80,10 @@ const (
 
 // DispatcherConfig holds the wired-in dependencies.
 type DispatcherConfig struct {
-	Store BindingStore
-	Token TokenSource
-	IM    IMClient
+	Store   BindingStore
+	Token   TokenSource
+	IM      IMClient
+	CardKit CardKitClient // optional; nil disables anchor card send/patch
 	// Now returns Unix seconds. Default = time.Now().Unix.
 	Now func() int64
 }
@@ -335,6 +344,47 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 		return
 	}
 	d.cardMsgs.remember(mid, sid)
+}
+
+// SendAnchorCard POSTs the given card body to the configured open_id and
+// returns (msgID, cardToken, openID, error). It resolves the tenant token via
+// the configured TokenSource so callers do not need to manage credentials.
+// Returns ErrTokenNotConfigured / ErrTokenDisabled transparently.
+func (d *Dispatcher) SendAnchorCard(ctx context.Context, cardBody []byte) (msgID, cardToken, openID string, err error) {
+	if d.cfg.CardKit == nil {
+		return "", "", "", fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	tok, oid, _, err := d.cfg.Token.Get(ctx)
+	if err != nil {
+		return "", "", "", err
+	}
+	if oid == "" {
+		return "", "", "", fmt.Errorf("feishu dispatcher: open_id empty (not bound)")
+	}
+	mid, tok2, err := d.cfg.CardKit.SendAnchorCard(ctx, tok, oid, cardBody)
+	if err != nil {
+		return "", "", "", err
+	}
+	return mid, tok2, oid, nil
+}
+
+// PatchAnchor patches the live body of an anchor card. tenantToken must be a
+// valid tenant_access_token; callers should obtain it via SendAnchorCard's
+// returned triple or refresh via the TokenSource. sequence is strictly
+// increasing per card (use CardAnchor.PatchSeq).
+func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bodyMarkdown string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, bodyMarkdown, sequence)
+}
+
+// GetToken returns a fresh (tenantToken, openID) pair via the configured
+// TokenSource. Used by relay_host when it needs to PATCH an anchor card
+// and must refresh the token independently of a SendAnchorCard call.
+func (d *Dispatcher) GetToken(ctx context.Context) (tenantToken, openID string, err error) {
+	tok, oid, _, e := d.cfg.Token.Get(ctx)
+	return tok, oid, e
 }
 
 type feishuAuthClass interface {

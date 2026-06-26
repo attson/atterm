@@ -129,6 +129,18 @@ func (c *Client) SendAnchorCard(ctx context.Context, tenantToken, openID string,
 	return msgID, msgID, nil // initial impl: use msg_id as token (Feishu accepts both for cards created via im.v1)
 }
 
+// IsCardGoneError reports whether err signals that the target card no longer
+// exists on the Feishu platform (e.g. the session card was deleted by the
+// user, or the card_token was never valid). Callers use this to stop
+// patching a dead anchor instead of logging repeated errors.
+func IsCardGoneError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "code=230030") || strings.Contains(msg, "code=404")
+}
+
 // postIM posts a message wrapper and returns the resulting message_id.
 func (c *Client) postIM(ctx context.Context, tenantToken string, wrapper map[string]any) (string, error) {
 	body, _ := json.Marshal(wrapper)

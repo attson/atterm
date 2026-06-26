@@ -14,8 +14,8 @@ import (
 )
 
 // CardAnchor is a single live anchor card. The fields are all immutable
-// after creation EXCEPT LastPatchAt and LastBody, which the chunker
-// updates under its own lock (not this index's lock).
+// after creation EXCEPT LastPatchAt, LastBody, and PatchSeq, which the
+// chunker updates under its own lock (not this index's lock).
 type CardAnchor struct {
 	SessionID   string
 	CardMsgID   string
@@ -27,6 +27,12 @@ type CardAnchor struct {
 	// because the chunker holds the only writer to a given session's anchor.
 	LastPatchAt time.Time
 	LastBody    string
+
+	// PatchSeq is atomically incremented on each PATCH call so Feishu can
+	// drop out-of-order updates. The chunker increments it before every
+	// PatchCard call; only the chunker goroutine writes it, so atomic ops
+	// are sufficient without a mutex.
+	PatchSeq int64
 }
 
 type CardIndex struct {

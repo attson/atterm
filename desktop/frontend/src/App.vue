@@ -54,7 +54,7 @@ import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
-import { RATIO_DEFAULT, closePane, focusNeighbor, transitionLayout } from "./lib/layout";
+import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
@@ -916,14 +916,17 @@ function onSwitchTab(delta: number) {
 }
 
 function openRemoteAsTab(sessionId: string) {
-  // If any tab already holds a pane for this session, just switch to it.
-  // Keep one tab per session so the clicked sidebar row maps to a single
-  // terminal tab instead of duplicating the same remote session.
-  const existing = tabs.value.find((t) =>
-    t.panes.some((p) => p.sessionId === sessionId),
-  );
-  if (existing) {
-    gotoTab(existing.id);
+  // If any tab already holds a pane for this session, switch to it and
+  // focus the EXACT pane — sidebar clicks on a session in a multi-pane
+  // tab should land focus on that pane, not on whichever pane was active
+  // in the tab before.
+  const loc = findPaneLocation(tabs.value, sessionId);
+  if (loc) {
+    const t = tabs.value.find((tab) => tab.id === loc.tabId);
+    if (t && t.activePaneIdx !== loc.paneIdx) {
+      t.activePaneIdx = loc.paneIdx;
+    }
+    gotoTab(loc.tabId);
     return;
   }
   const id = newId();

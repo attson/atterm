@@ -5,6 +5,7 @@ import {
   RATIO_MIN,
   clampRatio,
   closePane,
+  findPaneLocation,
   focusNeighbor,
   transitionLayout,
 } from "./layout";
@@ -354,6 +355,51 @@ describe("ratio threading", () => {
     it("falls back to default on NaN/Infinity", () => {
       expect(clampRatio(Number.NaN)).toBe(RATIO_DEFAULT);
       expect(clampRatio(Number.POSITIVE_INFINITY)).toBe(RATIO_DEFAULT);
+    });
+  });
+});
+
+describe("findPaneLocation", () => {
+  const tab = (id: string, ...sids: (string | null)[]) => ({
+    id,
+    panes: sids.map((sessionId) => ({ sessionId })),
+  });
+
+  it("returns null for an empty tab list", () => {
+    expect(findPaneLocation([], "anything")).toBeNull();
+  });
+
+  it("returns null when no pane holds the session", () => {
+    expect(findPaneLocation([tab("t1", "a", "b")], "missing")).toBeNull();
+  });
+
+  it("finds a session in a single-pane tab at idx 0", () => {
+    expect(findPaneLocation([tab("t1", "a")], "a")).toEqual({
+      tabId: "t1",
+      paneIdx: 0,
+    });
+  });
+
+  it("finds a session in the second pane of a multi-pane tab", () => {
+    expect(findPaneLocation([tab("t1", "a", "b")], "b")).toEqual({
+      tabId: "t1",
+      paneIdx: 1,
+    });
+  });
+
+  it("returns the first matching tab when the session appears in multiple", () => {
+    // openRemoteAsTab dedupes at insert time, so this case shouldn't happen
+    // in practice — but the contract is "first match wins" for determinism.
+    expect(findPaneLocation([tab("t1", "x"), tab("t2", "x")], "x")).toEqual({
+      tabId: "t1",
+      paneIdx: 0,
+    });
+  });
+
+  it("skips empty (null sessionId) pane slots", () => {
+    expect(findPaneLocation([tab("t1", null, "found")], "found")).toEqual({
+      tabId: "t1",
+      paneIdx: 1,
     });
   });
 });

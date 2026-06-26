@@ -329,3 +329,90 @@ describe("TaskGroupedList AI title", () => {
     expect(w.emitted("markSeen")?.[0]).toEqual([{ ids: ["s1"] }]);
   });
 });
+
+describe("TaskGroupedList co-resident numbering", () => {
+  test("appends #N to local-host groups when 2+ host_ids share the local hostname", () => {
+    const byHost = {
+      "h-b": [mk({ session_id: "s1", host: "mac" })],
+      "h-a": [mk({ session_id: "s2", host: "mac" })],
+      "remote-x": [mk({ session_id: "s3", host: "other-mac" })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        localHostId: "h-b",
+        localHost: "mac",
+      },
+    });
+    const headers = w.findAll('[data-test="host-header"]');
+    // localHostId is pinned to top: h-b (#2) first.
+    expect(headers[0].text()).toContain("mac #2");
+    expect(headers[1].text()).toContain("mac #1");
+    expect(headers[2].text()).toContain("other-mac");
+    expect(headers[2].text()).not.toContain("#");
+  });
+
+  test("no #N suffix when only one local host_id is present", () => {
+    const byHost = {
+      "h-a": [mk({ session_id: "s1", host: "mac" })],
+      "remote": [mk({ session_id: "s2", host: "other" })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        localHostId: "h-a",
+        localHost: "mac",
+      },
+    });
+    const headers = w.findAll('[data-test="host-header"]');
+    expect(headers[0].text()).toContain("mac");
+    expect(headers[0].text()).not.toContain("#");
+  });
+
+  test("'this machine' chip stays on current-process group only, even with #N suffix", () => {
+    const byHost = {
+      "h-a": [mk({ session_id: "s1", host: "mac" })],
+      "h-b": [mk({ session_id: "s2", host: "mac" })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        localHostId: "h-b",
+        localHost: "mac",
+      },
+    });
+    const chips = w.findAll('[data-test="local-chip"]');
+    expect(chips.length).toBe(1);
+  });
+
+  test("remote machines with multiple host_ids are NOT renumbered", () => {
+    const byHost = {
+      "h-local": [mk({ session_id: "l", host: "my-mac" })],
+      "h-r1": [mk({ session_id: "r1", host: "other-mac" })],
+      "h-r2": [mk({ session_id: "r2", host: "other-mac" })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost,
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        localHostId: "h-local",
+        localHost: "my-mac",
+      },
+    });
+    const headers = w.findAll('[data-test="host-header"]');
+    for (const h of headers) {
+      expect(h.text()).not.toContain("#");
+    }
+  });
+});

@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { pasteFromClipboard } from "./terminalPaste";
+import { isMacCtrlVPaste, pasteFromClipboard } from "./terminalPaste";
+
+function ev(parts: Partial<Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">>) {
+  return {
+    altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+    code: "KeyV", key: "v",
+    ...parts,
+  };
+}
 
 describe("pasteFromClipboard", () => {
   it("routes text payloads through term.paste", async () => {
@@ -181,5 +189,39 @@ describe("pasteFromClipboard", () => {
 
     expect(emitSpy).not.toHaveBeenCalled();
     emitSpy.mockRestore();
+  });
+});
+
+describe("isMacCtrlVPaste", () => {
+  it("matches Ctrl+V on mac (closes the gap where browser paste event does not fire)", () => {
+    expect(isMacCtrlVPaste(ev({ ctrlKey: true }), "mac")).toBe(true);
+  });
+
+  it("does not match Cmd+V on mac (browser already fires paste event)", () => {
+    expect(isMacCtrlVPaste(ev({ metaKey: true }), "mac")).toBe(false);
+  });
+
+  it("does not match Ctrl+Shift+V on mac (different shortcut, often a side-paste)", () => {
+    expect(isMacCtrlVPaste(ev({ ctrlKey: true, shiftKey: true }), "mac")).toBe(false);
+  });
+
+  it("does not match Ctrl+Alt+V on mac", () => {
+    expect(isMacCtrlVPaste(ev({ ctrlKey: true, altKey: true }), "mac")).toBe(false);
+  });
+
+  it("does not match Ctrl+Cmd+V on mac", () => {
+    expect(isMacCtrlVPaste(ev({ ctrlKey: true, metaKey: true }), "mac")).toBe(false);
+  });
+
+  it("does not match Ctrl+V on non-mac (Win/Linux already get paste event natively)", () => {
+    expect(isMacCtrlVPaste(ev({ ctrlKey: true }), "other")).toBe(false);
+  });
+
+  it("does not match other keys with Ctrl on mac", () => {
+    expect(isMacCtrlVPaste(ev({ ctrlKey: true, code: "KeyC", key: "c" }), "mac")).toBe(false);
+  });
+
+  it("recognizes the v key regardless of letter case", () => {
+    expect(isMacCtrlVPaste(ev({ ctrlKey: true, key: "V" }), "mac")).toBe(true);
   });
 });

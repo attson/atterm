@@ -53,7 +53,7 @@
     </p>
     <p v-else-if="!status.enabled" class="hint">{{ t('settings.feishu.disabled') }}</p>
     <template v-else>
-      <p class="hint">{{ t('settings.feishu.mode') }}: {{ status.mode }}</p>
+      <p class="hint">{{ t('settings.feishu.mode.label') }}: {{ status.mode }}</p>
       <template v-if="status.bound">
         <p>{{ t('settings.feishu.bound', { open_id: status.open_id }) }}</p>
         <section class="test-send" data-test="feishu-test-send">

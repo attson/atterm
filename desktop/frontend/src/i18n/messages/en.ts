@@ -312,7 +312,19 @@ export const en = {
       relay_disabled: "The server (relay) has Feishu integration turned off.",
       load_error: "Couldn't fetch Feishu status: {error}",
       retry_status: "Retry",
-      mode: "Mode",
+      mode: {
+        label: 'Mode',
+        options: {
+          auto:  'Auto (follow Relay login)',
+          local: 'Force Local (local LongConn)',
+          relay: 'Force Relay (depend on Relay)',
+        },
+        effective: {
+          label: 'Effective mode',
+          relayLoggedAs: 'connected as {email}',
+          fallbackWarn: 'Relay requested but not effectively logged in',
+        },
+      },
       bound: "Bound to open_id: {open_id}",
       save: "Save Credentials",
       begin_pair: "Start Pair",

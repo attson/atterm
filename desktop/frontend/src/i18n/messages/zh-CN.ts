@@ -314,7 +314,19 @@ export const zhCN = {
       relay_disabled: "服务端（relay）已关闭飞书集成。",
       load_error: "无法获取飞书状态：{error}",
       retry_status: "重试",
-      mode: "模式",
+      mode: {
+        label: '模式',
+        options: {
+          auto:  '自动（跟随 Relay 登录态）',
+          local: '强制 Local（本机 LongConn）',
+          relay: '强制 Relay（依赖 Relay 转发）',
+        },
+        effective: {
+          label: '生效模式',
+          relayLoggedAs: '已连接 {email}',
+          fallbackWarn: '已请求 relay 但未登录 / UPLINK 关闭',
+        },
+      },
       bound: "已绑定到 open_id：{open_id}",
       save: "保存凭据",
       begin_pair: "开始绑定",

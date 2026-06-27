@@ -239,9 +239,17 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 	}
 	code := strings.TrimSpace(strings.TrimPrefix(t, "/bind "))
 	if !s.consumePending(code) {
+		// Mirror the relay path's user feedback (internal/feishu/service.go) so
+		// local-mode binds aren't silent on an invalid/expired short code.
+		s.replyText(ctx, senderOpenID, "❌ 短码无效或已过期")
 		return
 	}
-	_ = s.store.SetBound(ctx, senderOpenID)
+	if err := s.store.SetBound(ctx, senderOpenID); err != nil {
+		log.Printf("feishu: bind SetBound: %v", err)
+		s.replyText(ctx, senderOpenID, "❌ 服务端错误,请稍后再试")
+		return
+	}
+	s.replyText(ctx, senderOpenID, "✅ 已绑定到 atterm")
 }
 
 // handleReplyMessage routes a Feishu reply (quoting a previously sent card) back

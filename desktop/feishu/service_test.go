@@ -339,3 +339,60 @@ func TestHandleCardAction_RouterInputWrongOwner(t *testing.T) {
 		t.Fatalf("wrong owner must not inject, got %q", stub.sentInput)
 	}
 }
+
+// bindReplyService wires a Service whose replyText path is fully stubbed: an
+// in-memory store with saved credentials, a fixed token source, and a
+// capturing IM so tests can assert the confirmation text sent back to Feishu.
+func bindReplyService(store *inMemBindingStore, im *capturingIM) *Service {
+	ts := &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"}
+	d := NewDispatcher(DispatcherConfig{Store: store, Token: ts, IM: im})
+	return &Service{cfg: ServiceConfig{Mode: ModeLocal}, store: store, dispatcher: d, imClient: im}
+}
+
+func TestHandleBindMessage_SuccessRepliesConfirmation(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s"})
+	im := &capturingIM{}
+	s := bindReplyService(store, im)
+	code := s.IssuePending()
+
+	s.handleBindMessage(context.Background(), "ou_user", "/bind "+code)
+
+	if store.view.OpenID != "ou_user" {
+		t.Fatalf("bind must persist OpenID, got %q", store.view.OpenID)
+	}
+	if len(im.texts) != 1 || im.texts[0] != "✅ 已绑定到 atterm" {
+		t.Fatalf("want one success reply, got %v", im.texts)
+	}
+}
+
+func TestHandleBindMessage_InvalidCodeRepliesError(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s"})
+	im := &capturingIM{}
+	s := bindReplyService(store, im)
+
+	s.handleBindMessage(context.Background(), "ou_user", "/bind NOPE12")
+
+	if store.view.OpenID != "" {
+		t.Fatalf("invalid code must not bind, got %q", store.view.OpenID)
+	}
+	if len(im.texts) != 1 || im.texts[0] != "❌ 短码无效或已过期" {
+		t.Fatalf("want one invalid-code reply, got %v", im.texts)
+	}
+}
+
+func TestHandleBindMessage_SetBoundErrorRepliesError(t *testing.T) {
+	// Empty store: a valid code consumes, but SetBound returns
+	// ErrLocalBindingNotFound (no credentials blob yet) → server-error reply.
+	store := &inMemBindingStore{}
+	im := &capturingIM{}
+	s := bindReplyService(store, im)
+	code := s.IssuePending()
+
+	s.handleBindMessage(context.Background(), "ou_user", "/bind "+code)
+
+	if len(im.texts) != 1 || im.texts[0] != "❌ 服务端错误,请稍后再试" {
+		t.Fatalf("want one server-error reply, got %v", im.texts)
+	}
+}

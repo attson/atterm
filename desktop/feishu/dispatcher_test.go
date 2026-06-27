@@ -57,6 +57,7 @@ func TestCardMsgMap_RememberLookupRoundTrip(t *testing.T) {
 type capturingIM struct {
 	mu       sync.Mutex
 	bodies   []string
+	texts    []string
 	openIDs  []string
 	tokens   []string
 	err      error
@@ -78,6 +79,14 @@ func (c *capturingIM) SendInteractiveToOpenID(ctx context.Context, token, openID
 	return "om_test", nil
 }
 func (c *capturingIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	c.tokens = append(c.tokens, token)
+	c.openIDs = append(c.openIDs, openID)
+	c.texts = append(c.texts, text)
 	return nil
 }
 

@@ -21,9 +21,13 @@ export function DeleteFeishuBinding():Promise<void>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
 
+export function DownloadVersion(arg1:string):Promise<void>;
+
 export function ExportDiagnostics(arg1:string):Promise<string>;
 
 export function FetchRelayMe():Promise<main.RelayMe>;
+
+export function GetAINotificationsOnly():Promise<boolean>;
 
 export function GetAccountKey():Promise<string>;
 
@@ -39,7 +43,15 @@ export function GetDiagnostics(arg1:string):Promise<main.DiagnosticsPayload>;
 
 export function GetEndpoint():Promise<main.Endpoint>;
 
+export function GetFeishuRemoteTerminalSettings():Promise<main.FeishuRemoteTerminalSettings>;
+
 export function GetFeishuStatus():Promise<main.FeishuStatusResp>;
+
+export function GetFeishuModePref():Promise<string>;
+
+export function SetFeishuModePref(arg1:string):Promise<void>;
+
+export function GetFeishuEffectiveMode():Promise<string>;
 
 export function GetHookInstallState():Promise<hookinstall.State>;
 
@@ -50,12 +62,6 @@ export function GetLocalePreference():Promise<string>;
 export function GetLogPreview():Promise<main.LogPreview>;
 
 export function GetLoggingConfig():Promise<main.LoggingConfig>;
-
-export function GetAINotificationsOnly():Promise<boolean>;
-
-export function GetFeishuRemoteTerminalSettings():Promise<main.FeishuRemoteTerminalSettings>;
-
-export function SetFeishuRemoteTerminalSettings(arg1:boolean,arg2:string):Promise<void>;
 
 export function GetNotificationsEnabled():Promise<boolean>;
 
@@ -123,6 +129,8 @@ export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
 export function SendFeishuTestCard(arg1:string):Promise<void>;
 
+export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
+
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
 export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
@@ -131,13 +139,13 @@ export function SetDefaultShell(arg1:string):Promise<void>;
 
 export function SetFeishuCredentials(arg1:feishu.Credentials):Promise<void>;
 
+export function SetFeishuRemoteTerminalSettings(arg1:boolean,arg2:string):Promise<void>;
+
 export function SetHookInstallEnabled(arg1:boolean):Promise<void>;
 
 export function SetLocalePreference(arg1:string):Promise<void>;
 
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
-
-export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 
@@ -172,7 +180,5 @@ export function SetUplinkPaused(arg1:boolean):Promise<void>;
 export function SetWebglRendererEnabled(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
-
-export function DownloadVersion(arg1:string):Promise<void>;
 
 export function StartDownload():Promise<void>;

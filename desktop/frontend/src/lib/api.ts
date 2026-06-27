@@ -309,6 +309,9 @@ interface AppBindings {
   SetNotificationsEnabled(enabled: boolean): Promise<void>;
   GetAINotificationsOnly(): Promise<boolean>;
   SetAINotificationsOnly(enabled: boolean): Promise<void>;
+  GetFeishuModePref(): Promise<string>;
+  SetFeishuModePref(pref: string): Promise<void>;
+  GetFeishuEffectiveMode(): Promise<string>;
   GetFeishuRemoteTerminalSettings(): Promise<FeishuRemoteTerminalSettings>;
   SetFeishuRemoteTerminalSettings(enabled: boolean, autoAttach: string): Promise<void>;
   GetPtyInputDebugEnabled(): Promise<boolean>;
@@ -667,6 +670,18 @@ export function getAINotificationsOnly(): Promise<boolean> {
 
 export function setAINotificationsOnly(enabled: boolean): Promise<void> {
   return bindings().SetAINotificationsOnly(enabled);
+}
+
+export function getFeishuModePref(): Promise<string> {
+  return bindings().GetFeishuModePref();
+}
+
+export function setFeishuModePref(pref: string): Promise<void> {
+  return bindings().SetFeishuModePref(pref);
+}
+
+export function getFeishuEffectiveMode(): Promise<string> {
+  return bindings().GetFeishuEffectiveMode();
 }
 
 export interface FeishuRemoteTerminalSettings {

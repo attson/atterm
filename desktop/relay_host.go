@@ -74,6 +74,11 @@ type relayHost struct {
 	// nil → no-op.
 	feishuDispatcher atomic.Pointer[feishu.Dispatcher]
 
+	// feishuRemoteTermState reports the remote-terminal gate state for the live
+	// Feishu mode. Injected by app.go so the guard does not bind to a concrete
+	// store. ok=false means "no binding / not ready" → skip auto-attach.
+	feishuRemoteTermState func(ctx context.Context) (enabled bool, openID, autoAttach string, ok bool)
+
 	// feishuCards is the in-process registry of live anchor cards keyed by
 	// atterm session ID string. Guarded indirectly by the CardIndex's own
 	// RWMutex; initialized lazily but always non-nil after startRelayHost.
@@ -91,6 +96,12 @@ type relayHost struct {
 // callbacks. A nil dispatcher disables dispatch.
 func (h *relayHost) SetFeishuDispatcher(d *feishu.Dispatcher) {
 	h.feishuDispatcher.Store(d)
+}
+
+// SetFeishuRemoteTermState installs the callback the anchor-card guard uses to
+// read remote-terminal gate state for the current mode.
+func (h *relayHost) SetFeishuRemoteTermState(fn func(ctx context.Context) (bool, string, string, bool)) {
+	h.feishuRemoteTermState = fn
 }
 
 type activeSession struct {
@@ -789,23 +800,23 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	if disp == nil {
 		return
 	}
-	if h.sqliteStore == nil {
+	if h.feishuRemoteTermState == nil {
 		return
 	}
-	b, err := h.sqliteStore.GetFeishuBinding(ctx, h.adminUserID)
-	if err != nil {
-		// Binding not found or store error — silently skip.
+	enabled, openID, autoAttach, ok := h.feishuRemoteTermState(ctx)
+	if !ok {
+		// No binding / not ready — silently skip.
 		return
 	}
-	if !b.RemoteTerminalEnabled {
+	if !enabled {
 		return
 	}
-	if b.OpenID == "" {
+	if openID == "" {
 		return
 	}
 	// Gate on autoAttach: "ai" triggers only fire from the AI-classified
 	// callback; "all" triggers fire immediately. "none" never auto-attaches.
-	switch b.SessionAutoAttach {
+	switch autoAttach {
 	case "none":
 		return
 	case "ai":
@@ -859,7 +870,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		SessionID:   sessionIDStr,
 		CardMsgID:   msgID,
 		CardToken:   cardToken,
-		OwnerOpenID: b.OpenID,
+		OwnerOpenID: openID,
 		CreatedAt:   time.Now(),
 	}
 	h.feishuCards.Put(anchor)
@@ -897,7 +908,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		}()
 	}
 
-	sub := internalfeishu.AttachFeishuSubscriber(sess, b.OpenID, flush)
+	sub := internalfeishu.AttachFeishuSubscriber(sess, openID, flush)
 
 	h.feishuSubsMu.Lock()
 	h.feishuSubs[sessionIDStr] = sub

@@ -2278,6 +2278,7 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	if a.host != nil {
 		a.host.FeishuHookEndpoint = hookEndpoint
 		a.host.SetFeishuDispatcher(svc.Dispatcher())
+		a.host.SetFeishuRemoteTermState(a.feishuRemoteTermState)
 		// Wire the inbound router so LongConn card actions and reply messages
 		// are routed through the CardIndex + FeishuSubscriber registry.
 		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
@@ -2337,6 +2338,7 @@ func (a *App) reconcileFeishuMode(ctx context.Context, cfg appConfig) {
 	a.feishuHookSrv.SetDispatcher(newSvc.Dispatcher())
 	if a.host != nil {
 		a.host.SetFeishuDispatcher(newSvc.Dispatcher())
+		a.host.SetFeishuRemoteTermState(a.feishuRemoteTermState)
 		// Rebuild the inbound router for the new service so LongConn events
 		// are routed through the same CardIndex + FeishuSubscriber registry.
 		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
@@ -2471,6 +2473,35 @@ func (a *App) localBindingStore() *feishu.LocalKeychainBindingStore {
 	}
 	ls, _ := svc.Store().(*feishu.LocalKeychainBindingStore)
 	return ls
+}
+
+// feishuRemoteTermState reads the remote-terminal gate state for the live mode:
+// the keychain blob in local mode, the embedded sqlite binding in relay mode.
+// Returns ok=false when no binding exists yet or the store is unavailable.
+func (a *App) feishuRemoteTermState(ctx context.Context) (enabled bool, openID, autoAttach string, ok bool) {
+	if ls := a.localBindingStore(); ls != nil {
+		v, err := ls.Get(ctx)
+		if err != nil {
+			return false, "", "", false
+		}
+		aa := v.SessionAutoAttach
+		if aa == "" {
+			aa = "ai"
+		}
+		return v.RemoteTerminalEnabled, v.OpenID, aa, true
+	}
+	if a.host == nil || a.host.sqliteStore == nil {
+		return false, "", "", false
+	}
+	b, err := a.host.sqliteStore.GetFeishuBinding(ctx, a.host.adminUserID)
+	if err != nil {
+		return false, "", "", false
+	}
+	aa := b.SessionAutoAttach
+	if aa == "" {
+		aa = "ai"
+	}
+	return b.RemoteTerminalEnabled, b.OpenID, aa, true
 }
 
 // SetFeishuCredentials saves app credentials and (re)starts the long-conn.

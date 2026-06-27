@@ -134,6 +134,42 @@ func TestLocalStore_RemoteTerminalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLocalStore_SetBoundPreservesRemoteTerminalSettings(t *testing.T) {
+	safekeyring.SetFileDirForTest(t.TempDir())
+	safekeyring.UseFileStore()
+	t.Cleanup(func() {
+		safekeyring.Reset()
+		safekeyring.SetFileDirForTest("")
+	})
+	s := NewLocalKeychainBindingStore()
+	ctx := context.Background()
+
+	// Step 1: write remote-terminal settings to a fresh store (creates the blob).
+	if err := s.SetRemoteTerminalSettings(ctx, true, "all"); err != nil {
+		t.Fatalf("SetRemoteTerminalSettings: %v", err)
+	}
+
+	// Step 2: SetBound must succeed because the blob already exists.
+	if err := s.SetBound(ctx, "ou_user"); err != nil {
+		t.Fatalf("SetBound after SetRemoteTerminalSettings: %v", err)
+	}
+
+	// Step 3: both fields must survive the read-modify-write inside SetBound.
+	v, err := s.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !v.RemoteTerminalEnabled {
+		t.Errorf("RemoteTerminalEnabled: want true, got false")
+	}
+	if v.SessionAutoAttach != "all" {
+		t.Errorf("SessionAutoAttach: want %q, got %q", "all", v.SessionAutoAttach)
+	}
+	if v.OpenID != "ou_user" {
+		t.Errorf("OpenID: want %q, got %q", "ou_user", v.OpenID)
+	}
+}
+
 func TestLocalStore_RemoteTerminalRejectsInvalidAutoAttach(t *testing.T) {
 	safekeyring.SetFileDirForTest(t.TempDir())
 	safekeyring.UseFileStore()

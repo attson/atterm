@@ -118,6 +118,12 @@ type appConfig struct {
 	// defaults to true.
 	AINotificationsOnly *bool `json:"ai_notifications_only,omitempty"`
 
+	// FeishuModePref is the user's explicit choice for Feishu integration
+	// mode. "auto" (default) follows the relay login state; "local" forces
+	// the local LongConn path; "relay" requests relay-borrowed mode and
+	// falls back to local when not effectively logged in.
+	FeishuModePref string `json:"feishu_mode_pref,omitempty"`
+
 	// PtyInputDebugEnabled logs every byte slice written into a session PTY
 	// (hex, tagged [pty-input] at DEBUG) for diagnosing stuck/dropped input.
 	PtyInputDebugEnabled *bool `json:"ptyInputDebugEnabled,omitempty"`
@@ -204,6 +210,18 @@ func (c appConfig) AINotificationsOnlyOrDefault() bool {
 		return true
 	}
 	return *c.AINotificationsOnly
+}
+
+// FeishuModePrefOrDefault returns the persisted preference, normalizing
+// unset / unknown values to "auto" (preserves the historical auto-resolve
+// behavior).
+func (c appConfig) FeishuModePrefOrDefault() string {
+	switch c.FeishuModePref {
+	case "auto", "local", "relay":
+		return c.FeishuModePref
+	default:
+		return "auto"
+	}
 }
 
 func (c appConfig) PtyInputDebugEnabledOrDefault() bool {

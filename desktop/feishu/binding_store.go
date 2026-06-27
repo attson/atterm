@@ -25,6 +25,10 @@ type BindingView struct {
 	OpenID                                    string
 	BoundAt                                   int64
 	DisabledAt                                int64
+	// Remote-terminal settings (local mode only; relay mode manages these in
+	// the embedded sqlite store, not through this view).
+	RemoteTerminalEnabled bool
+	SessionAutoAttach     string
 	// CallbackURL is the relay-side event endpoint the user must paste into
 	// the Feishu console. Only set in relay mode; empty in local mode, where
 	// events arrive over the long connection and no public callback exists.

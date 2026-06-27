@@ -110,3 +110,39 @@ func TestLocalKeychainBindingStore_CredentialUpsertPreservesBoundState(t *testin
 		t.Fatalf("re-Upsert must update secrets; got %+v", v)
 	}
 }
+
+func TestLocalStore_RemoteTerminalRoundTrip(t *testing.T) {
+	safekeyring.SetFileDirForTest(t.TempDir())
+	safekeyring.UseFileStore()
+	t.Cleanup(func() {
+		safekeyring.Reset()
+		safekeyring.SetFileDirForTest("")
+	})
+	s := NewLocalKeychainBindingStore()
+	ctx := context.Background()
+
+	// Settings persist even with no prior credentials blob.
+	if err := s.SetRemoteTerminalSettings(ctx, true, "all"); err != nil {
+		t.Fatalf("SetRemoteTerminalSettings (fresh): %v", err)
+	}
+	v, err := s.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !v.RemoteTerminalEnabled || v.SessionAutoAttach != "all" {
+		t.Fatalf("want enabled+all, got %+v", v)
+	}
+}
+
+func TestLocalStore_RemoteTerminalRejectsInvalidAutoAttach(t *testing.T) {
+	safekeyring.SetFileDirForTest(t.TempDir())
+	safekeyring.UseFileStore()
+	t.Cleanup(func() {
+		safekeyring.Reset()
+		safekeyring.SetFileDirForTest("")
+	})
+	s := NewLocalKeychainBindingStore()
+	if err := s.SetRemoteTerminalSettings(context.Background(), true, "bogus"); err == nil {
+		t.Fatal("want error for invalid autoAttach, got nil")
+	}
+}

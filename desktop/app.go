@@ -1701,10 +1701,26 @@ type FeishuRemoteTerminalSettings struct {
 // Wails-bound methods must not declare context.Context in their signature.
 func (a *App) GetFeishuRemoteTerminalSettings() (FeishuRemoteTerminalSettings, error) {
 	defaults := FeishuRemoteTerminalSettings{Enabled: false, AutoAttach: "ai"}
-	if a.host == nil || a.host.sqliteStore == nil {
+	if a.ctx == nil {
 		return defaults, nil
 	}
-	if a.ctx == nil {
+	// Local mode: read the keychain blob.
+	if ls := a.localBindingStore(); ls != nil {
+		v, err := ls.Get(a.ctx)
+		if err != nil {
+			return defaults, nil // no blob yet → defaults
+		}
+		autoAttach := v.SessionAutoAttach
+		if autoAttach == "" {
+			autoAttach = "ai"
+		}
+		return FeishuRemoteTerminalSettings{
+			Enabled:    v.RemoteTerminalEnabled,
+			AutoAttach: autoAttach,
+		}, nil
+	}
+	// Relay mode: read the embedded sqlite binding (unchanged).
+	if a.host == nil || a.host.sqliteStore == nil {
 		return defaults, nil
 	}
 	b, err := a.host.sqliteStore.GetFeishuBinding(a.ctx, a.host.adminUserID)
@@ -1729,11 +1745,27 @@ func (a *App) GetFeishuRemoteTerminalSettings() (FeishuRemoteTerminalSettings, e
 //
 // Wails-bound methods must not declare context.Context in their signature.
 func (a *App) SetFeishuRemoteTerminalSettings(enabled bool, autoAttach string) error {
-	if a.host == nil || a.host.sqliteStore == nil {
-		return fmt.Errorf("relay host unavailable")
-	}
 	if a.ctx == nil {
 		return fmt.Errorf("app not ready")
+	}
+	// Local mode: write the keychain blob; the toggle side effect still runs
+	// against the in-memory subscriber map below.
+	if ls := a.localBindingStore(); ls != nil {
+		prevEnabled := false
+		if v, err := ls.Get(a.ctx); err == nil {
+			prevEnabled = v.RemoteTerminalEnabled
+		}
+		if err := ls.SetRemoteTerminalSettings(a.ctx, enabled, autoAttach); err != nil {
+			return err
+		}
+		if a.host != nil && prevEnabled != enabled {
+			a.host.OnRemoteTerminalToggle(enabled)
+		}
+		return nil
+	}
+	// Relay mode: write the embedded sqlite binding (unchanged).
+	if a.host == nil || a.host.sqliteStore == nil {
+		return fmt.Errorf("relay host unavailable")
 	}
 	prev, _ := a.host.sqliteStore.GetFeishuBinding(a.ctx, a.host.adminUserID)
 	if err := a.host.sqliteStore.SetRemoteTerminalSettings(a.ctx, a.host.adminUserID, enabled, autoAttach); err != nil {
@@ -2395,6 +2427,19 @@ func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
 		// is exactly what made a transient failure look like "not enabled".
 		return FeishuStatusResp{Mode: mode, Error: err.Error()}, nil
 	}
+	// Local mode keeps full credentials in the keychain; a blob with an OpenID
+	// but no AppSecret (e.g. a stale bind left over after switching modes) is
+	// effectively unconfigured — the long-conn and token mint both need the
+	// secret. Treat it as "not configured" so the UI shows the credentials
+	// form instead of a misleading "bound" view that can't actually send.
+	// Relay mode never echoes the secret back, so this check is local-only.
+	if mode == "local" && v.AppSecret == "" {
+		return FeishuStatusResp{
+			Enabled: true,
+			Mode:    mode,
+			Bound:   false,
+		}, nil
+	}
 	return FeishuStatusResp{
 		Enabled:     true,
 		Mode:        mode,
@@ -2414,6 +2459,18 @@ func (a *App) currentFeishu() (*feishu.Service, string) {
 	a.feishuMu.RLock()
 	defer a.feishuMu.RUnlock()
 	return a.feishuService, a.feishuMode
+}
+
+// localBindingStore returns the keychain-backed store when Feishu is running in
+// local mode, or nil otherwise. Used to route remote-terminal settings to the
+// keychain (relay mode keeps them in the embedded sqlite store).
+func (a *App) localBindingStore() *feishu.LocalKeychainBindingStore {
+	svc, mode := a.currentFeishu()
+	if svc == nil || mode != "local" {
+		return nil
+	}
+	ls, _ := svc.Store().(*feishu.LocalKeychainBindingStore)
+	return ls
 }
 
 // SetFeishuCredentials saves app credentials and (re)starts the long-conn.

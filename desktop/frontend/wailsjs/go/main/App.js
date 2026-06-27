@@ -78,24 +78,20 @@ export function GetEndpoint() {
   return window['go']['main']['App']['GetEndpoint']();
 }
 
-export function GetFeishuRemoteTerminalSettings() {
-  return window['go']['main']['App']['GetFeishuRemoteTerminalSettings']();
-}
-
-export function GetFeishuStatus() {
-  return window['go']['main']['App']['GetFeishuStatus']();
+export function GetFeishuEffectiveMode() {
+  return window['go']['main']['App']['GetFeishuEffectiveMode']();
 }
 
 export function GetFeishuModePref() {
   return window['go']['main']['App']['GetFeishuModePref']();
 }
 
-export function SetFeishuModePref(arg1) {
-  return window['go']['main']['App']['SetFeishuModePref'](arg1);
+export function GetFeishuRemoteTerminalSettings() {
+  return window['go']['main']['App']['GetFeishuRemoteTerminalSettings']();
 }
 
-export function GetFeishuEffectiveMode() {
-  return window['go']['main']['App']['GetFeishuEffectiveMode']();
+export function GetFeishuStatus() {
+  return window['go']['main']['App']['GetFeishuStatus']();
 }
 
 export function GetHookInstallState() {
@@ -268,6 +264,10 @@ export function SetDefaultShell(arg1) {
 
 export function SetFeishuCredentials(arg1) {
   return window['go']['main']['App']['SetFeishuCredentials'](arg1);
+}
+
+export function SetFeishuModePref(arg1) {
+  return window['go']['main']['App']['SetFeishuModePref'](arg1);
 }
 
 export function SetFeishuRemoteTerminalSettings(arg1, arg2) {

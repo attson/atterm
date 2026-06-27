@@ -43,15 +43,13 @@ export function GetDiagnostics(arg1:string):Promise<main.DiagnosticsPayload>;
 
 export function GetEndpoint():Promise<main.Endpoint>;
 
-export function GetFeishuRemoteTerminalSettings():Promise<main.FeishuRemoteTerminalSettings>;
-
-export function GetFeishuStatus():Promise<main.FeishuStatusResp>;
+export function GetFeishuEffectiveMode():Promise<string>;
 
 export function GetFeishuModePref():Promise<string>;
 
-export function SetFeishuModePref(arg1:string):Promise<void>;
+export function GetFeishuRemoteTerminalSettings():Promise<main.FeishuRemoteTerminalSettings>;
 
-export function GetFeishuEffectiveMode():Promise<string>;
+export function GetFeishuStatus():Promise<main.FeishuStatusResp>;
 
 export function GetHookInstallState():Promise<hookinstall.State>;
 
@@ -138,6 +136,8 @@ export function SetCommandNotifyThresholdSeconds(arg1:number):Promise<void>;
 export function SetDefaultShell(arg1:string):Promise<void>;
 
 export function SetFeishuCredentials(arg1:feishu.Credentials):Promise<void>;
+
+export function SetFeishuModePref(arg1:string):Promise<void>;
 
 export function SetFeishuRemoteTerminalSettings(arg1:boolean,arg2:string):Promise<void>;
 

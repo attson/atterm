@@ -367,6 +367,20 @@ export namespace main {
 	        this.session_token = source["session_token"];
 	    }
 	}
+	export class FeishuRemoteTerminalSettings {
+	    enabled: boolean;
+	    auto_attach: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FeishuRemoteTerminalSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.auto_attach = source["auto_attach"];
+	    }
+	}
 	export class FeishuStatusResp {
 	    enabled: boolean;
 	    mode: string;
@@ -398,20 +412,6 @@ export namespace main {
 	        this.app_id_hash = source["app_id_hash"];
 	        this.callback_url = source["callback_url"];
 	    }
-	}
-	export class FeishuRemoteTerminalSettings {
-		enabled: boolean;
-		auto_attach: string;
-
-		static createFrom(source: any = {}) {
-			return new FeishuRemoteTerminalSettings(source);
-		}
-
-		constructor(source: any = {}) {
-			if ('string' === typeof source) source = JSON.parse(source);
-			this.enabled = source["enabled"];
-			this.auto_attach = source["auto_attach"];
-		}
 	}
 	export class FileContent {
 	    path: string;
@@ -846,11 +846,11 @@ export namespace main {
 	    latest: string;
 	    notes: string;
 	    asset_url: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new VersionLine(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.minor = source["minor"];
@@ -875,7 +875,7 @@ export namespace main {
 	    download_dir: string;
 	    download_path: string;
 	    lines: VersionLine[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpdateState(source);
 	    }
@@ -898,7 +898,7 @@ export namespace main {
 	        this.download_path = source["download_path"];
 	        this.lines = this.convertValues(source["lines"], VersionLine);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;

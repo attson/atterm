@@ -21,7 +21,7 @@ import {
   isPasteAllowed,
   prepareSendPayload,
 } from "../lib/terminalContextMenu";
-import { isMacCtrlVPaste, pasteFromClipboard } from "../lib/terminalPaste";
+import { isCtrlVKeydownPaste, pasteFromClipboard } from "../lib/terminalPaste";
 import { pasteImageBus } from "../lib/pasteImageBus";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
@@ -175,8 +175,8 @@ async function handleCopyShortcut(e: KeyboardEvent) {
   }
 }
 
-async function handleMacCtrlVPaste(e: KeyboardEvent) {
-  if (!term || !conn || !isMacCtrlVPaste(e)) return;
+async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
+  if (!term || !conn || !isCtrlVKeydownPaste(e)) return;
   // Stop xterm from also forwarding `\x16` to the PTY (the TUI would
   // otherwise also read the clipboard and we'd double-paste).
   e.preventDefault();
@@ -194,7 +194,7 @@ async function handleMacCtrlVPaste(e: KeyboardEvent) {
       emit("toast", result.reasonKey ? t(result.reasonKey) : result.reason!);
     }
   } catch (err) {
-    console.warn("[AT Term] failed to paste on mac Ctrl+V", err);
+    console.warn("[AT Term] failed to paste on Ctrl+V", err);
   } finally {
     pasteBusy.value = false;
   }
@@ -466,7 +466,7 @@ async function ensureTerm() {
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
-  keyTarget.addEventListener("keydown", handleMacCtrlVPaste, { capture: true });
+  keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
   keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
@@ -724,7 +724,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
-  copyKeyTarget?.removeEventListener("keydown", handleMacCtrlVPaste, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;

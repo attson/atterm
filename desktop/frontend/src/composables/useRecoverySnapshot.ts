@@ -146,6 +146,12 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
   // AI classification would not be saved until some unrelated structural/tab
   // event happened to flush. The getter returns a stable string so the watcher
   // only fires on real metadata changes (not on every task_state tick).
+  //
+  // current_command is deliberately NOT in this watcher: it is the live OSC 133
+  // command line, which an AI session (Claude Code spinner/status) rewrites
+  // every second. Routing it through the 500ms structural debounce made
+  // recovery fsync the snapshot to disk once a second; it rides the 5s
+  // heartbeat watcher below instead.
   watch(
     () =>
       args.tabs.value
@@ -157,7 +163,6 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
                 p.sessionId ?? "",
                 i?.type ?? "",
                 i?.title ?? "",
-                i?.current_command ?? "",
                 i?.cwd ?? "",
               ].join("~");
             })
@@ -166,6 +171,27 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
         .join("||"),
     () => {
       scheduleStructural();
+    },
+  );
+
+  // Per-pane current_command watcher: rides the 5s heartbeat, not the immediate
+  // structural debounce, because this field churns every second on a running AI
+  // session. The captured value is still useful on restore, just not worth an
+  // fsync per spinner tick.
+  watch(
+    () =>
+      args.tabs.value
+        .map((t) =>
+          t.panes
+            .map((p) => {
+              const i = p.sessionId ? args.sessionInfoFor(p.sessionId) : undefined;
+              return i?.current_command ?? "";
+            })
+            .join("|"),
+        )
+        .join("||"),
+    () => {
+      scheduleHeartbeat();
     },
   );
 

@@ -204,15 +204,12 @@ func resolveClaudeSessionID(dir, paneTitle string, cache titleCache) (string, bo
 	case 0:
 		return "", false
 	case 1:
-		log.Printf("recovery: claude resolve title=%q → sid=%s", want, matches[0].SessionID)
 		return matches[0].SessionID, true
 	default:
 		sort.Slice(matches, func(i, j int) bool { return matches[i].ModTime.After(matches[j].ModTime) })
 		if matches[0].ModTime.Equal(matches[1].ModTime) {
-			log.Printf("recovery: claude resolve ambiguous title=%q (%d files, equal mtime) — skip", want, len(matches))
 			return "", false
 		}
-		log.Printf("recovery: claude resolve title=%q → sid=%s (newest of %d)", want, matches[0].SessionID, len(matches))
 		return matches[0].SessionID, true
 	}
 }
@@ -358,8 +355,20 @@ func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home st
 			return
 		}
 		lastEmitted = sid
-		log.Printf("recovery: claude active conversation → sid=%s", sid)
+		logInfo("recovery", "claude active conversation → sid=%s", sid)
 		onCapture(sid)
+	}
+	// resolveLogged de-dupes the per-tick title→sid resolve trace: the tracker
+	// polls once a second and resolveClaudeSessionID re-derives the same sid
+	// every tick, so log only when the resolved sid actually changes. DEBUG
+	// because it is diagnostic, not an event the user needs at INFO.
+	lastResolved := ""
+	resolveLogged := func(sid string) {
+		if sid == lastResolved {
+			return
+		}
+		lastResolved = sid
+		logDebug("recovery", "claude resolve → sid=%s", sid)
 	}
 	var prev map[string]time.Time
 	for {
@@ -377,6 +386,7 @@ func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home st
 
 		if lastEmitted == "" {
 			if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
+				resolveLogged(sid)
 				emit(sid)
 			} else if sid, ok := resolveFreshClaudeSessionID(dir, since); ok {
 				emit(sid)
@@ -389,6 +399,7 @@ func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home st
 		prev = cur
 		titleMatch := ""
 		if sid, ok := resolveClaudeSessionID(dir, info.Title, cache); ok {
+			resolveLogged(sid)
 			titleMatch = sid
 		}
 		if sid := chooseNextSidContinuous(adv, titleMatch, lastEmitted); sid != "" {

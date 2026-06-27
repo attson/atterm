@@ -4,26 +4,35 @@ import type { MessageKey } from "../i18n";
 import { pasteImageBus } from "./pasteImageBus";
 import { effectiveRemotePermission, isPasteAllowed } from "./terminalContextMenu";
 
-export type PastePlatform = "mac" | "other";
+export type PastePlatform = "mac" | "linux" | "other";
 
 function currentPastePlatform(): PastePlatform {
   if (typeof navigator === "undefined") return "other";
-  return navigator.platform?.toLowerCase().includes("mac") ? "mac" : "other";
+  const p = navigator.platform?.toLowerCase() ?? "";
+  if (p.includes("mac")) return "mac";
+  if (p.includes("linux")) return "linux";
+  return "other";
 }
 
-// macOS does not fire the browser `paste` event for Ctrl+V (that key is not
-// the OS paste shortcut). xterm forwards the raw `\x16` byte to the PTY,
-// and the TUI (Claude Code, Codex, ...) intercepts it to read the system
-// clipboard itself — so the image lands but our preview toast never fires.
-// This helper detects that exact gap so the keydown handler in TerminalView
-// can route Ctrl+V through pasteFromClipboard (which emits pasteImageBus).
-// Cmd+V on mac and Ctrl+V on Win/Linux already fire the native paste event
-// and are handled there — those return false here to avoid double-paste.
-export function isMacCtrlVPaste(
+// Neither macOS nor Wails-on-Linux (WebKit2GTK) reliably fires the browser
+// `paste` event for Ctrl+V: it is not the OS paste shortcut on mac, and
+// WebKit2GTK only fires it sporadically and never exposes the bitmap when it
+// does. In both cases xterm forwards the raw `\x16` byte to the PTY and the TUI
+// (Claude Code, Codex, ...) reads the system clipboard itself — so the image
+// lands in the TUI but our preview toast never fires. This helper detects that
+// gap so the keydown handler in TerminalView can intercept Ctrl+V and route it
+// through pasteFromClipboard (which reads the clipboard via the backend, emits
+// pasteImageBus for the preview, and sends the image once). The handler
+// preventDefault()s the keydown so xterm does NOT also forward `\x16`, which
+// would make the TUI read the clipboard a second time and double-paste.
+//
+// Cmd+V on mac and Ctrl+V on Windows already fire a working native paste event,
+// so those return false here and are handled by the paste-event listener.
+export function isCtrlVKeydownPaste(
   e: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform: PastePlatform = currentPastePlatform(),
 ): boolean {
-  if (platform !== "mac") return false;
+  if (platform !== "mac" && platform !== "linux") return false;
   if (!e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return false;
   return e.code === "KeyV" || e.key.toLowerCase() === "v";
 }

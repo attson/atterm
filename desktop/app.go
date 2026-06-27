@@ -2127,7 +2127,28 @@ func relayHTTPBase(relayURL string) string {
 // state and returns it alongside the resolved mode ("relay" / "local"). Shared
 // by startFeishu (first init) and reconcileFeishuMode (runtime switch).
 func (a *App) feishuServiceConfig(cfg appConfig) (feishu.ServiceConfig, string) {
-	if cfg.RelayURL != "" && cfg.RelaySessionToken != "" {
+	loggedIn := cfg.RelayURL != "" && cfg.RelaySessionToken != "" && !cfg.RelayPaused
+
+	effective := "local"
+	switch cfg.FeishuModePrefOrDefault() {
+	case "local":
+		effective = "local"
+	case "relay":
+		if loggedIn {
+			effective = "relay"
+		} else {
+			effective = "local"
+			log.Printf("desktop: feishu mode=relay requested but not effectively logged in (RelayPaused=%v); falling back to local", cfg.RelayPaused)
+		}
+	default: // "auto"
+		if loggedIn {
+			effective = "relay"
+		} else {
+			effective = "local"
+		}
+	}
+
+	if effective == "relay" {
 		// The stored relay URL is a WebSocket URL (wss://). The Feishu relay
 		// store/token source make plain HTTP REST calls, and http.Client rejects
 		// "wss"/"ws" ("unsupported protocol scheme"), so rewrite the scheme.

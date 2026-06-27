@@ -24,3 +24,41 @@ func TestFeishuModePrefOrDefault_UnknownFallsBackToAuto(t *testing.T) {
 		t.Errorf("FeishuModePrefOrDefault() = %q; want %q (defensive default)", got, "auto")
 	}
 }
+
+func TestFeishuServiceConfig_TruthTable(t *testing.T) {
+	cases := []struct {
+		name        string
+		pref        string
+		relayURL    string
+		relayToken  string
+		relayPaused bool
+		want        string // expected effective mode
+	}{
+		{"default empty no login", "", "", "", true, "local"},
+		{"auto + logged in + uplink on", "auto", "wss://r", "tok", false, "relay"},
+		{"auto + logged in + uplink paused", "auto", "wss://r", "tok", true, "local"},
+		{"auto + no creds", "auto", "", "", false, "local"},
+		{"local override while logged in", "local", "wss://r", "tok", false, "local"},
+		{"local override no creds", "local", "", "", true, "local"},
+		{"relay + logged in + uplink on", "relay", "wss://r", "tok", false, "relay"},
+		{"relay fallback when uplink paused", "relay", "wss://r", "tok", true, "local"},
+		{"relay fallback when no creds", "relay", "", "", false, "local"},
+		{"unknown pref treated as auto", "garbage", "wss://r", "tok", false, "relay"},
+	}
+
+	a := newAppWithTempCfg(t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := appConfig{
+				FeishuModePref:    tc.pref,
+				RelayURL:          tc.relayURL,
+				RelaySessionToken: tc.relayToken,
+				RelayPaused:       tc.relayPaused,
+			}
+			_, mode := a.feishuServiceConfig(cfg)
+			if mode != tc.want {
+				t.Errorf("mode = %q; want %q", mode, tc.want)
+			}
+		})
+	}
+}

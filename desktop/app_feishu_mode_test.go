@@ -62,3 +62,41 @@ func TestFeishuServiceConfig_TruthTable(t *testing.T) {
 		})
 	}
 }
+
+func TestGetFeishuModePref_DefaultsToAuto(t *testing.T) {
+	a := newAppWithTempCfg(t)
+	if got := a.GetFeishuModePref(); got != "auto" {
+		t.Errorf("GetFeishuModePref() = %q; want %q", got, "auto")
+	}
+}
+
+func TestSetFeishuModePref_PersistsAndRoundTrips(t *testing.T) {
+	a := newAppWithTempCfg(t)
+	for _, v := range []string{"local", "relay", "auto"} {
+		if err := a.SetFeishuModePref(v); err != nil {
+			t.Fatalf("SetFeishuModePref(%q): %v", v, err)
+		}
+		if got := a.GetFeishuModePref(); got != v {
+			t.Errorf("after Set(%q), Get() = %q", v, got)
+		}
+	}
+}
+
+func TestSetFeishuModePref_RejectsInvalid(t *testing.T) {
+	a := newAppWithTempCfg(t)
+	if err := a.SetFeishuModePref("garbage"); err == nil {
+		t.Fatal("expected error for invalid pref; got nil")
+	}
+	// Persisted value untouched.
+	if got := a.GetFeishuModePref(); got != "auto" {
+		t.Errorf("after rejected Set, Get() = %q; want %q", got, "auto")
+	}
+}
+
+func TestGetFeishuEffectiveMode_EmptyBeforeInit(t *testing.T) {
+	a := newAppWithTempCfg(t)
+	// startFeishu / reconcileFeishuMode have not run, so feishuMode is unset.
+	if got := a.GetFeishuEffectiveMode(); got != "" {
+		t.Errorf("GetFeishuEffectiveMode() before init = %q; want %q", got, "")
+	}
+}

@@ -1648,6 +1648,46 @@ func (a *App) SetAINotificationsOnly(enabled bool) error {
 	return nil
 }
 
+// GetFeishuModePref returns the persisted Feishu mode preference
+// ("auto" | "local" | "relay"). Empty / unknown values resolve to "auto".
+func (a *App) GetFeishuModePref() string {
+	if a.cfgStore == nil {
+		return "auto"
+	}
+	return a.cfgStore.Get().FeishuModePrefOrDefault()
+}
+
+// SetFeishuModePref persists the new preference and triggers a hot
+// reconcile of the running Feishu service. Validates against the three
+// known values; rejects anything else without mutating state.
+func (a *App) SetFeishuModePref(pref string) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	switch pref {
+	case "auto", "local", "relay":
+	default:
+		return fmt.Errorf("invalid feishu mode preference %q (want auto|local|relay)", pref)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.FeishuModePref = pref
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("feishu_mode_pref")
+	a.reconcileFeishuMode(a.ctx, cfg)
+	return nil
+}
+
+// GetFeishuEffectiveMode returns the currently-running Feishu mode
+// ("local" | "relay"), or "" before startFeishu has run. Independent
+// of the persisted preference — reflects the actual swapped state.
+func (a *App) GetFeishuEffectiveMode() string {
+	a.feishuMu.RLock()
+	defer a.feishuMu.RUnlock()
+	return a.feishuMode
+}
+
 // FeishuRemoteTerminalSettings is returned by GetFeishuRemoteTerminalSettings.
 type FeishuRemoteTerminalSettings struct {
 	Enabled    bool   `json:"enabled"`

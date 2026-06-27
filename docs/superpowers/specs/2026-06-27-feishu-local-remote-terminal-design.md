@@ -60,24 +60,33 @@ SessionAutoAttach     string `json:"session_auto_attach,omitempty"`
 `BindingView` (`desktop/feishu/binding_store.go`) gains the same two fields so
 readers see them uniformly.
 
-A new method on the `BindingStore` interface:
+A new method on the **concrete** `LocalKeychainBindingStore` (not on the
+`BindingStore` interface):
 
 ```go
-SetRemoteTerminalSettings(ctx context.Context, enabled bool, autoAttach string) error
+func (s *LocalKeychainBindingStore) SetRemoteTerminalSettings(
+    ctx context.Context, enabled bool, autoAttach string) error
 ```
 
-- **Local store**: validate `autoAttach ∈ {ai, all, none}`; read the current
-  blob (create an empty one if none exists); set the two fields; write back.
-  Does **not** depend on credentials being present — the remote-terminal setting
+- validates `autoAttach ∈ {ai, all, none}`; reads the current blob (creates an
+  empty one if none exists); sets the two fields; writes back.
+- does **not** depend on credentials being present — the remote-terminal setting
   is logically independent of whether AppID/AppSecret are filled in.
-- **Relay store**: keep current behavior (HTTP → relay → sqlite `UPDATE`). The
-  relay store's method wraps the existing relay endpoint.
 
-`app.go` `SetFeishuRemoteTerminalSettings` changes from calling
-`sqliteStore.SetRemoteTerminalSettings(...)` directly to calling
-`svc.Store().SetRemoteTerminalSettings(...)` — automatically dispatched by the
-live mode. `GetFeishuRemoteTerminalSettings` reads the two new fields off
-`svc.Store().Get()` instead of `sqliteStore.GetFeishuBinding`.
+**Why not on the interface:** the relay store's state-mutating methods
+(`SetBound`, `SetDisabled`, …) already return `ErrRelayManagedBoundState`
+because relay-side state is managed elsewhere (the embedded sqlite), not through
+the store. Remote-terminal settings follow the same split. Adding the method to
+the interface would force the relay store to return "unsupported" and `app.go`
+to special-case relay anyway — so `app.go` dispatches by mode directly instead:
+
+- **local**: type-assert `svc.Store()` to `*feishu.LocalKeychainBindingStore`
+  and call the new method (keychain).
+- **relay**: keep current behavior — write/read `a.host.sqliteStore`
+  (`SetRemoteTerminalSettings` / `GetFeishuBinding`), unchanged.
+
+`GetFeishuRemoteTerminalSettings` reads the two new fields off the local blob in
+local mode, and off `sqliteStore.GetFeishuBinding` in relay mode (unchanged).
 
 ### 2. Anchor guard: inject state by mode
 
@@ -110,10 +119,10 @@ touches no store and is mode-agnostic, so it is reused without modification.
 **Save (user clicks the toggle)**
 ```
 frontend onRemoteTerminalToggleChange
-  → SetFeishuRemoteTerminalSettings(enabled, autoAttach)   [app.go]
-  → svc.Store().SetRemoteTerminalSettings(...)             [dispatched by mode]
-      ├─ local:  write keychain blob fields (create blob if absent)
-      └─ relay:  relay HTTP → sqlite UPDATE (unchanged)
+  → SetFeishuRemoteTerminalSettings(enabled, autoAttach)   [app.go, dispatch by mode]
+      ├─ local:  LocalKeychainBindingStore.SetRemoteTerminalSettings(...)
+      │            → write keychain blob fields (create blob if absent)
+      └─ relay:  a.host.sqliteStore.SetRemoteTerminalSettings(...) (unchanged)
   → if enabled flipped, h.OnRemoteTerminalToggle(enabled)  [mode-agnostic, reused]
 ```
 

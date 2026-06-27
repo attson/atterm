@@ -53,7 +53,30 @@
     </p>
     <p v-else-if="!status.enabled" class="hint">{{ t('settings.feishu.disabled') }}</p>
     <template v-else>
-      <p class="hint">{{ t('settings.feishu.mode.label') }}: {{ status.mode }}</p>
+      <div class="feishu-mode">
+        <label class="feishu-mode__label">
+          {{ t('settings.feishu.mode.label') }}
+          <select
+            class="feishu-mode__select"
+            :value="feishuModePref"
+            @change="onFeishuModeChange"
+          >
+            <option value="auto">{{ t('settings.feishu.mode.options.auto') }}</option>
+            <option value="local">{{ t('settings.feishu.mode.options.local') }}</option>
+            <option value="relay">{{ t('settings.feishu.mode.options.relay') }}</option>
+          </select>
+        </label>
+        <p class="feishu-mode__effective">
+          <span>{{ t('settings.feishu.mode.effective.label') }}:</span>
+          <strong>{{ feishuEffectiveMode || '—' }}</strong>
+          <span
+            v-if="feishuModePref === 'relay' && feishuEffectiveMode === 'local'"
+            class="feishu-mode__warn"
+          >
+            ⚠ {{ t('settings.feishu.mode.effective.fallbackWarn') }}
+          </span>
+        </p>
+      </div>
       <template v-if="status.bound">
         <p>{{ t('settings.feishu.bound', { open_id: status.open_id }) }}</p>
         <section class="test-send" data-test="feishu-test-send">
@@ -144,6 +167,9 @@ import {
   setAINotificationsOnly,
   getFeishuRemoteTerminalSettings,
   setFeishuRemoteTerminalSettings,
+  getFeishuModePref,
+  setFeishuModePref,
+  getFeishuEffectiveMode,
   type FeishuStatusResp,
   type FeishuCredentials,
   type HookInstallState,
@@ -170,6 +196,10 @@ const saveError = ref('')
 // the backend default before onMounted reads the persisted value.
 const aiOnlyNotifications = ref(true)
 
+// Feishu mode preference + effective mode display.
+const feishuModePref = ref<'auto' | 'local' | 'relay'>('auto')
+const feishuEffectiveMode = ref('')
+
 async function onToggleAIOnly(e: Event) {
   const on = (e.target as HTMLInputElement).checked
   try {
@@ -182,6 +212,20 @@ async function onToggleAIOnly(e: Event) {
     } catch {
       /* leave the optimistic value */
     }
+  }
+}
+
+async function onFeishuModeChange(e: Event) {
+  const next = (e.target as HTMLSelectElement).value
+  try {
+    await setFeishuModePref(next)
+    feishuModePref.value = next as 'auto' | 'local' | 'relay'
+    // Reconcile may have swapped the running mode synchronously; refresh.
+    feishuEffectiveMode.value = await getFeishuEffectiveMode()
+  } catch (err) {
+    // Rollback the dropdown to the persisted value on failure.
+    feishuModePref.value = (await getFeishuModePref()) as 'auto' | 'local' | 'relay'
+    console.error('SetFeishuModePref failed', err)
   }
 }
 
@@ -328,6 +372,12 @@ onMounted(async () => {
     sessionAutoAttach.value = rts.auto_attach
   } catch {
     // non-fatal; keep the defaults (false / "ai").
+  }
+  try {
+    feishuModePref.value = (await getFeishuModePref()) as 'auto' | 'local' | 'relay'
+    feishuEffectiveMode.value = await getFeishuEffectiveMode()
+  } catch {
+    // non-fatal; keep the defaults ('auto' / '').
   }
 })
 
@@ -594,4 +644,9 @@ async function onDelete() {
   padding: 2px 6px;
   font-size: 13px;
 }
+.feishu-mode { margin: 8px 0; }
+.feishu-mode__label { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.feishu-mode__select { padding: 2px 6px; }
+.feishu-mode__effective { margin: 4px 0 0; font-size: 12px; color: var(--fg-dim, #999); }
+.feishu-mode__warn { color: var(--warn, #d89614); margin-left: 8px; }
 </style>

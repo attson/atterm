@@ -42,4 +42,20 @@ describe("SettingsFeishu", () => {
     expect(source).toContain("settings.feishu.remoteTerminal.autoAttach.none");
     expect(source).toContain("onAutoAttachChange");
   });
+
+  test("renders Feishu mode dropdown with all three options", () => {
+    expect(source).toContain("settings.feishu.mode.options.auto");
+    expect(source).toContain("settings.feishu.mode.options.local");
+    expect(source).toContain("settings.feishu.mode.options.relay");
+  });
+
+  test("binds Feishu mode dropdown to setFeishuModePref via a change handler", () => {
+    expect(source).toContain("onFeishuModeChange");
+    expect(source).toContain("setFeishuModePref");
+  });
+
+  test("renders effective-mode line and a fallback warning", () => {
+    expect(source).toContain("settings.feishu.mode.effective.label");
+    expect(source).toContain("settings.feishu.mode.effective.fallbackWarn");
+  });
 });

@@ -146,13 +146,13 @@ type TurnEvent struct {
 // it via the AskQuestion card, which is a separate UX from the anchor stream.
 func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent, bool) {
 	var p struct {
-		HookEventName    string          `json:"hook_event_name"`
-		ToolName         string          `json:"tool_name"`
-		ToolInput        json.RawMessage `json:"tool_input"`
-		ToolResponse     string          `json:"tool_response"`
-		Prompt           string          `json:"prompt"`
-		AssistantMessage string          `json:"assistant_message"`
-		TranscriptPath   string          `json:"transcript_path"`
+		HookEventName        string          `json:"hook_event_name"`
+		ToolName             string          `json:"tool_name"`
+		ToolInput            json.RawMessage `json:"tool_input"`
+		ToolResponse         string          `json:"tool_response"`
+		Prompt               string          `json:"prompt"`
+		LastAssistantMessage string          `json:"last_assistant_message"`
+		TranscriptPath       string          `json:"transcript_path"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return TurnEvent{}, false
@@ -164,11 +164,12 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 		}
 		return TurnEvent{Kind: TurnUserPrompt, Text: p.Prompt}, true
 	case "Stop":
-		text := p.AssistantMessage
+		// claude-code 2.1.x puts the final assistant reply in
+		// `last_assistant_message` directly. Older / partial payloads may omit
+		// it; the transcript JSONL is the documented authoritative source so
+		// we fall back to scanning that.
+		text := p.LastAssistantMessage
 		if text == "" && p.TranscriptPath != "" {
-			// claude-code 2.1.x leaves assistant_message empty here; the real
-			// reply lives in the transcript JSONL. Best-effort: failures and
-			// missing-text both fall through to the bare 🤖 marker.
 			text = lastAssistantTextFromTranscript(p.TranscriptPath)
 		}
 		return TurnEvent{Kind: TurnAssistantFinal, Text: text}, true

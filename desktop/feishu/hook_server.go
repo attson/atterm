@@ -175,6 +175,17 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if turn, hasTurn := ccAdapter.ParseTurn(req.HookInput, req.HookVersion); hasTurn {
 			log.Printf("feishu-hook: parse=turn sid=%s kind=%v tool=%q text_len=%d",
 				sid, turn.Kind, turn.ToolName, len(turn.Text))
+			// Stop kind=1 with empty text means our transcript fallback didn't
+			// recover a body. Surface the raw payload (truncated) once per
+			// occurrence so we can see whether claude omitted transcript_path
+			// or it points somewhere we couldn't read.
+			if turn.Kind == TurnAssistantFinal && len(turn.Text) == 0 {
+				preview := string(req.HookInput)
+				if len(preview) > 400 {
+					preview = preview[:400] + "…"
+				}
+				log.Printf("feishu-hook: stop_empty_body sid=%s payload=%s", sid, preview)
+			}
 			if disp := h.dispatcher(); disp != nil {
 				disp.DispatchTurn(sid.String(), turn)
 				dispatchedTurn = true

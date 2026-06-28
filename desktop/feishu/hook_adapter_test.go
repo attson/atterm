@@ -230,7 +230,11 @@ func TestClaudeCodeParseTurn_UserPrompt(t *testing.T) {
 
 func TestClaudeCodeParseTurn_Stop(t *testing.T) {
 	a := &claudeCodeAdapter{}
-	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"done."}`)
+	// Mirrors the real claude-code 2.1.168 payload — the field name is
+	// `last_assistant_message`, not the `assistant_message` an earlier guess
+	// targeted. Re-check against captured `feishu-hook: stop_empty_body`
+	// payloads if claude changes its hook contract again.
+	raw := json.RawMessage(`{"hook_event_name":"Stop","last_assistant_message":"Hello! How can I help you today?"}`)
 	ev, ok := a.ParseTurn(raw, "")
 	if !ok {
 		t.Fatal("expected ParseTurn to recognize Stop")
@@ -238,8 +242,8 @@ func TestClaudeCodeParseTurn_Stop(t *testing.T) {
 	if ev.Kind != TurnAssistantFinal {
 		t.Errorf("kind = %v, want TurnAssistantFinal", ev.Kind)
 	}
-	if ev.Text != "done." {
-		t.Errorf("text = %q, want %q", ev.Text, "done.")
+	if ev.Text != "Hello! How can I help you today?" {
+		t.Errorf("text = %q, want assistant reply from last_assistant_message", ev.Text)
 	}
 }
 
@@ -263,7 +267,7 @@ func TestClaudeCodeParseTurn_StopFallsBackToTranscript(t *testing.T) {
 	}
 
 	a := &claudeCodeAdapter{}
-	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"","transcript_path":"` + path + `"}`)
+	raw := json.RawMessage(`{"hook_event_name":"Stop","last_assistant_message":"","transcript_path":"` + path + `"}`)
 	ev, ok := a.ParseTurn(raw, "")
 	if !ok || ev.Kind != TurnAssistantFinal {
 		t.Fatalf("got (%v, %v); want TurnAssistantFinal", ev, ok)
@@ -278,7 +282,7 @@ func TestClaudeCodeParseTurn_StopFallsBackToTranscript(t *testing.T) {
 // can render the 🤖 marker. Better an empty marker than a swallowed event.
 func TestClaudeCodeParseTurn_StopEmitsEvenWhenTranscriptMissing(t *testing.T) {
 	a := &claudeCodeAdapter{}
-	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"","transcript_path":"/does/not/exist.jsonl"}`)
+	raw := json.RawMessage(`{"hook_event_name":"Stop","last_assistant_message":"","transcript_path":"/does/not/exist.jsonl"}`)
 	ev, ok := a.ParseTurn(raw, "")
 	if !ok || ev.Kind != TurnAssistantFinal {
 		t.Fatalf("got (%v, %v); want TurnAssistantFinal", ev, ok)
@@ -303,7 +307,7 @@ func TestClaudeCodeParseTurn_StopSurvivesGarbageLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &claudeCodeAdapter{}
-	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"","transcript_path":"` + path + `"}`)
+	raw := json.RawMessage(`{"hook_event_name":"Stop","last_assistant_message":"","transcript_path":"` + path + `"}`)
 	ev, _ := a.ParseTurn(raw, "")
 	if ev.Text != "good text" {
 		t.Errorf("text = %q; want %q", ev.Text, "good text")

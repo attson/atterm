@@ -197,40 +197,54 @@ func bodyMarkdown(content string) map[string]any {
 }
 
 func inputElement(sessionID string) map[string]any {
+	// V2 schema requires the callback payload to live inside behaviors[0].value
+	// — not as a top-level `value` field. Top-level value is silently ignored,
+	// no card.action.trigger fires, the textarea looks "dead" on submit.
 	return map[string]any{
 		"tag":         "input",
 		"element_id":  AnchorInputElementID,
 		"placeholder": map[string]any{"tag": "plain_text", "content": "Type here…"},
-		"value": map[string]any{
-			"kind":       "input",
-			"session_id": sessionID,
-		},
+		"behaviors": []any{map[string]any{
+			"type": "callback",
+			"value": map[string]any{
+				"kind":       "input",
+				"session_id": sessionID,
+			},
+		}},
 	}
 }
 
 func buttonsRow(sessionID string) map[string]any {
+	// V2 callback contract: the click payload sits inside behaviors[0].value.
+	// A top-level `value` on the button is silently ignored — no
+	// card.action.trigger fires, the click looks dead. (Verified against the
+	// "Configuring card interactions" V2 doc.)
 	makeBtn := func(label, event string) map[string]any {
 		return map[string]any{
-			"tag":       "button",
-			"text":      map[string]any{"tag": "plain_text", "content": label},
-			"type":      "default",
-			"behaviors": []any{map[string]any{"type": "callback"}},
-			"value": map[string]any{
-				"kind":       "key",
-				"session_id": sessionID,
-				"event":      event,
-			},
+			"tag":  "button",
+			"text": map[string]any{"tag": "plain_text", "content": label},
+			"type": "default",
+			"behaviors": []any{map[string]any{
+				"type": "callback",
+				"value": map[string]any{
+					"kind":       "key",
+					"session_id": sessionID,
+					"event":      event,
+				},
+			}},
 		}
 	}
 	endBtn := map[string]any{
-		"tag":       "button",
-		"text":      map[string]any{"tag": "plain_text", "content": "结束"},
-		"type":      "danger",
-		"behaviors": []any{map[string]any{"type": "callback"}},
-		"value": map[string]any{
-			"kind":       "end",
-			"session_id": sessionID,
-		},
+		"tag":  "button",
+		"text": map[string]any{"tag": "plain_text", "content": "结束"},
+		"type": "danger",
+		"behaviors": []any{map[string]any{
+			"type": "callback",
+			"value": map[string]any{
+				"kind":       "end",
+				"session_id": sessionID,
+			},
+		}},
 	}
 	column := func(btn map[string]any) map[string]any {
 		return map[string]any{
@@ -260,16 +274,21 @@ func buttonsRow(sessionID string) map[string]any {
 func AskOptionsColumnSet(sessionID string, optionLabels []string) map[string]any {
 	cols := make([]any, 0, len(optionLabels))
 	for _, label := range optionLabels {
+		// V2 schema requires the callback `value` to live inside the
+		// behaviors entry, not at the button's top level. See buttonsRow
+		// for the same fix on the default keystroke row.
 		btn := map[string]any{
-			"tag":       "button",
-			"text":      map[string]any{"tag": "plain_text", "content": label},
-			"type":      "primary",
-			"behaviors": []any{map[string]any{"type": "callback"}},
-			"value": map[string]any{
-				"kind":       "input",
-				"session_id": sessionID,
-				"text":       label,
-			},
+			"tag":  "button",
+			"text": map[string]any{"tag": "plain_text", "content": label},
+			"type": "primary",
+			"behaviors": []any{map[string]any{
+				"type": "callback",
+				"value": map[string]any{
+					"kind":       "input",
+					"session_id": sessionID,
+					"text":       label,
+				},
+			}},
 		}
 		cols = append(cols, map[string]any{
 			"tag":      "column",

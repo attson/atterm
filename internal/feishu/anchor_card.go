@@ -12,7 +12,9 @@ package feishu
 //	         live by the outbound chunker
 //	input:   single-line text element; submits card.action.trigger with
 //	         value.kind="input"
-//	actions: five button row (^C, ^D, Esc, Enter, 结束)
+//	buttons: five-column column_set (^C, ^D, Esc, Enter, 结束) — schema V2
+//	         rejects the legacy `tag:"action"` container, so each button gets
+//	         its own column.
 //
 // The archive variant strips the input element and action buttons, sets
 // the template to grey, and appends a footer line.
@@ -21,6 +23,13 @@ import (
 	"encoding/json"
 	"fmt"
 )
+
+// AnchorBodyElementID is the stable element_id assigned to the anchor card's
+// body markdown element. PatchCard targets the element-level endpoint
+// (/cards/{card_id}/elements/{element_id}); without an explicit element_id
+// on the element at create time, V2 PATCHes silently no-op even when the
+// open API returns code=0.
+const AnchorBodyElementID = "anchor_body_md"
 
 // AnchorState is the renderer input. The chunker keeps the latest snapshot
 // per session and passes a fresh AnchorState on every PATCH.
@@ -99,8 +108,9 @@ func bodyMarkdown(content string) map[string]any {
 		content = "_(waiting for output)_"
 	}
 	return map[string]any{
-		"tag":     "markdown",
-		"content": content,
+		"tag":        "markdown",
+		"element_id": AnchorBodyElementID,
+		"content":    content,
 	}
 }
 
@@ -139,14 +149,23 @@ func buttonsRow(sessionID string) map[string]any {
 			"session_id": sessionID,
 		},
 	}
+	column := func(btn map[string]any) map[string]any {
+		return map[string]any{
+			"tag":      "column",
+			"width":    "weighted",
+			"weight":   1,
+			"elements": []any{btn},
+		}
+	}
 	return map[string]any{
-		"tag": "action",
-		"actions": []any{
-			makeBtn("^C", "ctrl_c"),
-			makeBtn("^D", "ctrl_d"),
-			makeBtn("Esc", "esc"),
-			makeBtn("Enter", "enter"),
-			endBtn,
+		"tag":                "column_set",
+		"horizontal_spacing": "small",
+		"columns": []any{
+			column(makeBtn("^C", "ctrl_c")),
+			column(makeBtn("^D", "ctrl_d")),
+			column(makeBtn("Esc", "esc")),
+			column(makeBtn("Enter", "enter")),
+			column(endBtn),
 		},
 	}
 }

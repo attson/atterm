@@ -22,7 +22,7 @@ func TestFeishuSubscriber_DrainsOutToChunker(t *testing.T) {
 		mu.Unlock()
 	}
 
-	sub := AttachFeishuSubscriber(sess, "ou_owner", flush)
+	sub := AttachFeishuSubscriber(sess, "ou_owner", true /*pumpPTYBytes*/, flush)
 	defer sub.Detach()
 
 	sess.PushOut(1, []byte("hello world\n"))
@@ -40,9 +40,38 @@ func TestFeishuSubscriber_DrainsOutToChunker(t *testing.T) {
 	}
 }
 
+// AI sessions rely on AIChunker (👤/🤖/🛠 turn events) as the body source.
+// pumpPTYBytes=false must suppress the shell roller's flush entirely, or the
+// claude TUI's per-frame ANSI noise overwrites the AI body on every PATCH.
+func TestFeishuSubscriber_PumpPTYBytesFalse_SuppressesShellFlush(t *testing.T) {
+	sess := session.New(uuid.New(), proto.SessionInfo{Type: session.SessionTypeAI})
+
+	var mu sync.Mutex
+	flushed := 0
+	flush := func(string) {
+		mu.Lock()
+		flushed++
+		mu.Unlock()
+	}
+
+	sub := AttachFeishuSubscriber(sess, "ou_owner", false /*pumpPTYBytes*/, flush)
+	defer sub.Detach()
+
+	// Pump shell-shaped noise; with pumpPTYBytes=false the drain loop must
+	// not feed the chunker, so no flush should ever fire from this side.
+	sess.PushOut(1, []byte("noise that would otherwise overwrite the AI body\n"))
+	time.Sleep(250 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if flushed != 0 {
+		t.Errorf("flush fired %d times; want 0 when pumpPTYBytes=false", flushed)
+	}
+}
+
 func TestFeishuSubscriber_DoesNotAutoClaimDriver(t *testing.T) {
 	sess := session.New(uuid.New(), proto.SessionInfo{Type: session.SessionTypeShell})
-	sub := AttachFeishuSubscriber(sess, "ou_owner", func(string) {})
+	sub := AttachFeishuSubscriber(sess, "ou_owner", true, func(string) {})
 	defer sub.Detach()
 
 	if sess.DriverClientID() != "" {
@@ -52,7 +81,7 @@ func TestFeishuSubscriber_DoesNotAutoClaimDriver(t *testing.T) {
 
 func TestFeishuSubscriber_ClaimDriverPromotes(t *testing.T) {
 	sess := session.New(uuid.New(), proto.SessionInfo{Type: session.SessionTypeShell})
-	sub := AttachFeishuSubscriber(sess, "ou_owner", func(string) {})
+	sub := AttachFeishuSubscriber(sess, "ou_owner", true, func(string) {})
 	defer sub.Detach()
 
 	sub.ClaimDriver()

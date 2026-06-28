@@ -446,8 +446,8 @@ func (c *authClassAdaptingClient) SendAnchorCard(ctx context.Context, tok, openI
 	mid, token, err := c.inner.SendAnchorCard(ctx, tok, openID, cardBody)
 	return mid, token, c.adapt(err)
 }
-func (c *authClassAdaptingClient) PatchCard(ctx context.Context, tok, cardToken, bodyMarkdown string, sequence int64) error {
-	return c.adapt(c.inner.PatchCard(ctx, tok, cardToken, bodyMarkdown, sequence))
+func (c *authClassAdaptingClient) PatchCard(ctx context.Context, tok, cardToken, elementID, bodyMarkdown string, sequence int64) error {
+	return c.adapt(c.inner.PatchCard(ctx, tok, cardToken, elementID, bodyMarkdown, sequence))
 }
 func (c *authClassAdaptingClient) adapt(err error) error {
 	if err == nil {

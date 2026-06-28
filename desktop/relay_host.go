@@ -878,6 +878,11 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	// flush is the Chunker callback: gets the current body markdown and
 	// PATCHes the anchor card asynchronously with retry policy.
 	flush := func(body string) {
+		bodyPreview := body
+		if len(bodyPreview) > 60 {
+			bodyPreview = bodyPreview[:60]
+		}
+		log.Printf("feishu-anchor: flush session=%s body_len=%d preview=%q", sessID, len(body), bodyPreview)
 		go func() {
 			tok, _, err := disp.GetToken(context.Background())
 			if err != nil {
@@ -889,6 +894,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 				return disp.PatchAnchor(context.Background(), tok, anchor.CardToken, body, seq)
 			})
 			if err == nil {
+				log.Printf("feishu-anchor: patch ok session=%s seq=%d", sessID, seq)
 				return
 			}
 			if internalfeishu.IsCardGoneError(err) {
@@ -908,7 +914,12 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		}()
 	}
 
-	sub := internalfeishu.AttachFeishuSubscriber(sess, openID, flush)
+	// AI sessions render their anchor card body from per-turn AIChunker events
+	// (👤/🤖/🛠), not from raw PTY bytes. Shell sessions still need the PTY
+	// roller because there are no hook events to fall back on.
+	info := sess.Info()
+	pumpPTYBytes := info.Type != session.SessionTypeAI
+	sub := internalfeishu.AttachFeishuSubscriber(sess, openID, pumpPTYBytes, flush)
 
 	h.feishuSubsMu.Lock()
 	h.feishuSubs[sessionIDStr] = sub
@@ -918,7 +929,6 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	// per-turn hook events stream into the same anchor card. The chunker
 	// shares the flush closure (same anchor + token path). The tick goroutine
 	// keeps the chunker flushing on idle; it exits cleanly via fs.Done().
-	info := sess.Info()
 	if info.Type == session.SessionTypeAI {
 		aiChunker := internalfeishu.NewAIChunker(flush)
 		disp.AttachAIChunker(sessionIDStr, aiChunker)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -118,18 +119,28 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One INFO line per incoming POST, before validation gates. Volume is low
+	// (a handful per AI turn) and the trail is invaluable when diagnosing
+	// "card body not updating" — distinguishes "claude never called the hook"
+	// from "we got it but dropped it downstream". Keep this BEFORE the
+	// sessions.Exists / adapter lookup so we still see misrouted POSTs.
+	log.Printf("feishu-hook: arrive sid_raw=%q agent=%q body_len=%d",
+		req.SessionID, req.AgentKind, len(req.HookInput))
+
 	sid, err := uuid.Parse(strings.TrimSpace(req.SessionID))
 	if err != nil || sid == uuid.Nil {
 		http.Error(w, "bad session id", http.StatusBadRequest)
 		return
 	}
 	if h.sessions != nil && !h.sessions.Exists(sid) {
+		log.Printf("feishu-hook: drop reason=session-unknown sid=%s", sid)
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
 	}
 
 	adapter, ok := LookupHookAdapter(req.AgentKind)
 	if !ok {
+		log.Printf("feishu-hook: drop reason=unknown-agent agent=%q sid=%s", req.AgentKind, sid)
 		if h.onSuspect != nil {
 			h.onSuspect()
 		}
@@ -142,6 +153,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hook event type that is not a waiting-on-user signal.
 	ev, emit := adapter.Parse(req.HookInput, req.HookVersion)
 	if emit {
+		log.Printf("feishu-hook: parse=waiting sid=%s dedup=%q", sid, ev.DedupKey)
 		if disp := h.dispatcher(); disp != nil {
 			disp.DispatchWaitingInput(r.Context(), WaitingInputDispatchEvent{
 				SessionID:    sid,
@@ -158,12 +170,25 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// matching the WaitingInput path, and vice versa. Type-assert to
 	// *claudeCodeAdapter since only that adapter has ParseTurn today; unknown
 	// adapters fall through silently.
+	dispatchedTurn := false
 	if ccAdapter, ok := adapter.(*claudeCodeAdapter); ok {
 		if turn, hasTurn := ccAdapter.ParseTurn(req.HookInput, req.HookVersion); hasTurn {
+			log.Printf("feishu-hook: parse=turn sid=%s kind=%v tool=%q text_len=%d",
+				sid, turn.Kind, turn.ToolName, len(turn.Text))
 			if disp := h.dispatcher(); disp != nil {
 				disp.DispatchTurn(sid.String(), turn)
+				dispatchedTurn = true
 			}
 		}
+	}
+	if !emit && !dispatchedTurn {
+		// Body for diagnosing why claude payload yielded neither path. Truncate
+		// so a 100KB notification body doesn't blow up the log line.
+		preview := string(req.HookInput)
+		if len(preview) > 200 {
+			preview = preview[:200] + "…"
+		}
+		log.Printf("feishu-hook: parse=none sid=%s body=%s", sid, preview)
 	}
 
 	_ = errors.New

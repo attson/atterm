@@ -42,6 +42,67 @@ func TestRenderAnchorCreate_HasRequiredStructure(t *testing.T) {
 	}
 }
 
+// V2 schema rejects the legacy `tag:"action"` button container with
+// 230099 / "cards of schema V2 no longer support this capability". The
+// renderer must avoid it entirely; buttons live in a column_set instead.
+func TestRenderAnchorCreate_NoLegacyActionTag(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(string(body), `"tag":"action"`) {
+		t.Errorf("body contains forbidden V2 tag `action`: %s", body)
+	}
+}
+
+// All five button labels (^C, ^D, Esc, Enter, 结束) and their event payloads
+// must round-trip through the renderer regardless of container shape.
+func TestRenderAnchorCreate_ContainsAllButtons(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := string(body)
+	for _, want := range []string{
+		`"content":"^C"`, `"event":"ctrl_c"`,
+		`"content":"^D"`, `"event":"ctrl_d"`,
+		`"content":"Esc"`, `"event":"esc"`,
+		`"content":"Enter"`, `"event":"enter"`,
+		`"content":"结束"`, `"kind":"end"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("body missing %q: %s", want, s)
+		}
+	}
+}
+
+// V2 streaming-mode PATCH targets elements by element_id (the JSON-path
+// "body.elements[0].content" shape is silently no-op in V2). The body
+// markdown element must carry a stable element_id so the chunker's flush
+// path can address it.
+func TestRenderAnchorCreate_BodyMarkdownHasElementID(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(string(body), `"element_id":"`+AnchorBodyElementID+`"`) {
+		t.Errorf("body markdown missing element_id=%q: %s", AnchorBodyElementID, body)
+	}
+}
+
+// The schema V2 button container must be column_set (per Feishu's V2 card
+// docs); regress-guard so a future refactor can't silently fall back to a
+// shape the open API rejects.
+func TestRenderAnchorCreate_UsesColumnSetContainer(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(string(body), `"tag":"column_set"`) {
+		t.Errorf("body missing column_set button container: %s", body)
+	}
+}
+
 func TestRenderAnchorArchive_Greys(t *testing.T) {
 	body, err := RenderAnchorArchive(AnchorState{
 		SessionID:    "abc",

@@ -29,14 +29,20 @@ func TestPhase1_ShellAttachOutputReplyInject(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/cardkit/v1/cards"):
+			// Step 1 of send: CardKit entity create. Returns card_id.
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"card_id":"card_xyz"}}`))
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/im/v1/messages"):
+			// Step 2 of send: IM delivery referencing card_id.
 			_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"message_id":"om_xyz"}}`))
 		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/cardkit/v1/cards/"):
 			b, _ := io.ReadAll(r.Body)
 			var payload map[string]any
 			_ = json.Unmarshal(b, &payload)
-			if pu, ok := payload["partial_update_setting"].(map[string]any); ok {
-				if v, ok := pu["value"].(string); ok {
+			if pe, ok := payload["partial_element"].(string); ok {
+				var inner map[string]any
+				_ = json.Unmarshal([]byte(pe), &inner)
+				if v, ok := inner["content"].(string); ok {
 					lastPatchBody = v
 				}
 			}
@@ -61,9 +67,9 @@ func TestPhase1_ShellAttachOutputReplyInject(t *testing.T) {
 	anchor := &CardAnchor{SessionID: sess.ID.String(), CardMsgID: msgID, CardToken: cardToken, OwnerOpenID: "ou_owner", CreatedAt: time.Now()}
 	idx.Put(anchor)
 
-	fs := AttachFeishuSubscriber(sess, "ou_owner", func(body string) {
+	fs := AttachFeishuSubscriber(sess, "ou_owner", true /*pumpPTYBytes — shell e2e*/, func(body string) {
 		go func() {
-			_ = client.PatchCard(context.Background(), "tenant_tok", anchor.CardToken, body, time.Now().UnixNano())
+			_ = client.PatchCard(context.Background(), "tenant_tok", anchor.CardToken, AnchorBodyElementID, body, time.Now().UnixNano())
 		}()
 	})
 	defer fs.Detach()

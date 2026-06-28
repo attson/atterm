@@ -104,11 +104,11 @@ func checkSettings(home string, wantCommand string) (ok bool, errStr string) {
 	if err != nil {
 		return false, fmt.Sprintf("Claude settings.json invalid JSON: %v", err)
 	}
-	if ok, msg := checkHookKind("Notification", cfg.Hooks.Notification, wantCommand); !ok {
-		return false, msg
-	}
-	if ok, msg := checkHookKind("PreToolUse", cfg.Hooks.PreToolUse, wantCommand); !ok {
-		return false, msg
+	for _, s := range ownedSlots {
+		entries := *s.field(&cfg.Hooks)
+		if ok, msg := checkHookKind(s.name, entries, wantCommand); !ok {
+			return false, msg
+		}
 	}
 	return true, ""
 }

@@ -118,6 +118,39 @@ func TestCheck_PreToolUseMissing(t *testing.T) {
 	}
 }
 
+// Each owned streaming slot independently breaks the SettingsOK gate when
+// stripped — without this guard, a half-installed settings.json would render
+// "healthy" even though the anchor card body never fills in.
+func TestCheck_StreamingHookSlotMissing(t *testing.T) {
+	cases := []struct {
+		name  string
+		strip func(*ClaudeHooks)
+	}{
+		{"UserPromptSubmit", func(h *ClaudeHooks) { h.UserPromptSubmit = nil }},
+		{"Stop", func(h *ClaudeHooks) { h.Stop = nil }},
+		{"PostToolUse", func(h *ClaudeHooks) { h.PostToolUse = nil }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := installAt(home); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _ := readClaudeSettings(home)
+			c.strip(&cfg.Hooks)
+			writeClaudeSettings(home, cfg)
+
+			s := checkAt(home, true)
+			if s.SettingsOK {
+				t.Errorf("SettingsOK = true; want false when %s is missing", c.name)
+			}
+			if !strings.Contains(s.LastError, c.name) {
+				t.Errorf("LastError should mention %s; got %q", c.name, s.LastError)
+			}
+		})
+	}
+}
+
 func TestCheck_SettingsCommandPathStale(t *testing.T) {
 	home := t.TempDir()
 	if err := installAt(home); err != nil {

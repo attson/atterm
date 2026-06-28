@@ -26,7 +26,7 @@ type IMClient interface {
 // so tests can stub it without affecting the IM send path.
 type CardKitClient interface {
 	SendAnchorCard(ctx context.Context, tenantToken, openID string, cardBody []byte) (msgID, cardToken string, err error)
-	PatchCard(ctx context.Context, tenantToken, cardToken, bodyMarkdown string, sequence int64) error
+	PatchCard(ctx context.Context, tenantToken, cardToken, elementID, bodyMarkdown string, sequence int64) error
 }
 
 // CommandFinishedEvent feeds the dispatcher from the heuristic OSC 133 D path.
@@ -371,15 +371,16 @@ func (d *Dispatcher) SendAnchorCard(ctx context.Context, cardBody []byte) (msgID
 	return mid, tok2, oid, nil
 }
 
-// PatchAnchor patches the live body of an anchor card. tenantToken must be a
-// valid tenant_access_token; callers should obtain it via SendAnchorCard's
-// returned triple or refresh via the TokenSource. sequence is strictly
-// increasing per card (use CardAnchor.PatchSeq).
+// PatchAnchor patches the live body markdown of an anchor card. tenantToken
+// must be a valid tenant_access_token; callers should obtain it via
+// SendAnchorCard's returned triple or refresh via the TokenSource. sequence
+// is strictly increasing per card (use CardAnchor.PatchSeq). Always targets
+// the body markdown element identified by internalfeishu.AnchorBodyElementID.
 func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bodyMarkdown string, sequence int64) error {
 	if d.cfg.CardKit == nil {
 		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
 	}
-	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, bodyMarkdown, sequence)
+	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, internalfeishu.AnchorBodyElementID, bodyMarkdown, sequence)
 }
 
 // GetToken returns a fresh (tenantToken, openID) pair via the configured
@@ -416,10 +417,13 @@ func (d *Dispatcher) DetachAIChunker(sessionID string) {
 func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 	d.aiMu.Lock()
 	chunker := d.aiChunkers[sessionID]
+	known := len(d.aiChunkers)
 	d.aiMu.Unlock()
 	if chunker == nil {
+		log.Printf("feishu-turn: no chunker sid=%s kind=%v known_chunkers=%d", sessionID, ev.Kind, known)
 		return
 	}
+	log.Printf("feishu-turn: route sid=%s kind=%v text_len=%d", sessionID, ev.Kind, len(ev.Text))
 	switch ev.Kind {
 	case TurnUserPrompt:
 		chunker.PushTurn(internalfeishu.TurnUserPromptEvent{Text: ev.Text})

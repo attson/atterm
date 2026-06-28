@@ -30,6 +30,11 @@ type FeishuSubscriber struct {
 	sub   *session.Subscriber
 	chunk *Chunker
 
+	// pumpPTYBytes — when false, drainLoop drops TypeOut frames instead of
+	// pushing them to chunk. Set false for AI sessions so the AIChunker is
+	// the sole body source; see AttachFeishuSubscriber for the full rationale.
+	pumpPTYBytes bool
+
 	openID     string // anchor owner, recorded for permission gate at attach
 	clientID   string // unique per attach, used in driver meta
 	clientName string
@@ -46,20 +51,29 @@ type FeishuSubscriber struct {
 // post the actual HTTP call asynchronously (the chunker runs on the drain
 // goroutine and blocking would back-pressure PTY fan-out).
 //
+// pumpPTYBytes selects the body source for flush:
+//   - true  (shell sessions): drainLoop feeds PTY frames into the shell roller;
+//     flush carries the rolling tail of command output.
+//   - false (AI sessions):    drainLoop drains frames but discards them; the
+//     AIChunker (wired separately by the caller) becomes the sole flush
+//     source. Without this, the claude TUI's per-frame ANSI noise PATCHes the
+//     anchor card faster than AI turn events, burying the 👤/🤖/🛠 body.
+//
 // The Chunker is not goroutine-safe; all PushBytes and Tick calls are
 // serialized on a single drainLoop goroutine. A separate tickLoop sends
 // signals to drainLoop over a buffered channel so the timer never blocks.
-func AttachFeishuSubscriber(sess *session.Session, ownerOpenID string, flush FlushFunc) *FeishuSubscriber {
+func AttachFeishuSubscriber(sess *session.Session, ownerOpenID string, pumpPTYBytes bool, flush FlushFunc) *FeishuSubscriber {
 	sub, _ := sess.Subscribe(0, "feishu:"+sess.ID.String(), "feishu-bot", session.WithoutAutoDrive())
 	fs := &FeishuSubscriber{
-		sess:       sess,
-		sub:        sub,
-		chunk:      NewChunker(flush),
-		openID:     ownerOpenID,
-		clientID:   "feishu:" + sess.ID.String(),
-		clientName: "feishu-bot",
-		tick:       make(chan struct{}, 1),
-		done:       make(chan struct{}),
+		sess:         sess,
+		sub:          sub,
+		chunk:        NewChunker(flush),
+		pumpPTYBytes: pumpPTYBytes,
+		openID:       ownerOpenID,
+		clientID:     "feishu:" + sess.ID.String(),
+		clientName:   "feishu-bot",
+		tick:         make(chan struct{}, 1),
+		done:         make(chan struct{}),
 	}
 	fs.wg.Add(2)
 	go fs.drainLoop()
@@ -83,7 +97,7 @@ func (f *FeishuSubscriber) drainLoop() {
 			if !ok {
 				return
 			}
-			if frame.Type == proto.TypeOut {
+			if frame.Type == proto.TypeOut && f.pumpPTYBytes {
 				f.chunk.PushBytes(frame.Payload)
 			}
 		}

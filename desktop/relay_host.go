@@ -109,9 +109,55 @@ type anchorRuntime struct {
 
 // SetFeishuDispatcher atomically swaps the dispatcher used for command-finished
 // and waiting-input Feishu cards. Safe to call concurrently with session
-// callbacks. A nil dispatcher disables dispatch.
+// callbacks. A nil dispatcher disables dispatch. Also wires the per-session
+// anchor-button-swap callback so AskUserQuestion can flip the keystroke row
+// to option buttons.
 func (h *relayHost) SetFeishuDispatcher(d *feishu.Dispatcher) {
 	h.feishuDispatcher.Store(d)
+	if d != nil {
+		d.SetOnAnchorButtons(h.swapAnchorButtons)
+	}
+}
+
+// swapAnchorButtons PATCHes the anchor card's button row. options nil →
+// restore the default keystroke row (^C/^D/Esc/Enter/结束); options non-empty
+// → render one primary button per option label (clicking submits the label
+// as if typed into the input box). Best-effort: errors logged, never bubble.
+func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
+	disp := h.feishuDispatcher.Load()
+	if disp == nil {
+		return
+	}
+	anchor := h.feishuCards.BySessionID(sessionIDStr)
+	if anchor == nil {
+		return
+	}
+	var partial map[string]any
+	if len(options) > 0 {
+		partial = internalfeishu.AskOptionsColumnSet(sessionIDStr, options)
+	} else {
+		partial = internalfeishu.DefaultButtonsColumnSet(sessionIDStr)
+	}
+	// PATCH the column_set element; `tag` is immutable per V2 contract so
+	// strip it from the partial body.
+	delete(partial, "tag")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		tok, _, err := disp.GetToken(ctx)
+		if err != nil {
+			log.Printf("feishu-anchor-buttons: token failed session=%s: %v", sessionIDStr, err)
+			return
+		}
+		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+		err = disp.PatchAnchorElement(ctx, tok, anchor.CardToken,
+			internalfeishu.AnchorButtonsElementID, partial, seq)
+		if err != nil {
+			log.Printf("feishu-anchor-buttons: PATCH failed session=%s opts=%d: %v", sessionIDStr, len(options), err)
+			return
+		}
+		log.Printf("feishu-anchor-buttons: swapped session=%s opts=%d seq=%d", sessionIDStr, len(options), seq)
+	}()
 }
 
 // SetFeishuRemoteTermState installs the callback the anchor-card guard uses to

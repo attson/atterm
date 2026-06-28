@@ -110,6 +110,24 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 	}
 	t.Logf("OK: input clear PATCH applied")
 
+	time.Sleep(500 * time.Millisecond)
+
+	t.Log("=== step 5: PATCH column_set with new columns (option buttons) ===")
+	askOpts := internalfeishu.AskOptionsColumnSet("manual-probe-sid", []string{"写代码", "代码审查", "研究"})
+	delete(askOpts, "tag")     // partial_element shouldn't restate tag (immutable)
+	err = client.PatchCardElement(ctx, tok, cardID, internalfeishu.AnchorButtonsElementID,
+		askOpts, 4)
+	if err != nil {
+		t.Fatalf("PatchCardElement columns swap FAILED: %v", err)
+	}
+	t.Logf("OK: column_set columns swapped to option buttons — check Feishu: bottom row should show 3 primary buttons")
+
+	// (Restore step intentionally skipped for visual verification — leaves
+	// the final card showing the option buttons so the user can confirm
+	// step 5 took effect by just looking at the latest probe card in
+	// Feishu. Re-enable in a later probe iteration to also verify restore.)
+	_ = internalfeishu.DefaultButtonsColumnSet // silence unused
+
 	fmt.Printf("\n\n=== VERDICT ===\n")
 	fmt.Printf("CardKit card_id: %s\n", cardID)
 	fmt.Printf("IM message_id:   %s\n", msgID)

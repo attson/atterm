@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -138,6 +139,11 @@ type TurnEvent struct {
 	Text     string // for UserPrompt / AssistantFinal
 	ToolName string // for ToolStart / ToolEnd
 	ToolBody string // for ToolEnd (tool response preview)
+	// Options is populated when Kind=TurnAssistantFinal carries an
+	// AskUserQuestion payload — the dispatcher uses this to swap the anchor
+	// card's button row from the default keystrokes (^C/^D/Esc/Enter/结束) to
+	// clickable option buttons. Empty for normal Stop / other events.
+	Options []string
 }
 
 // ParseTurn extends HookAdapter for the AI streaming path. Returns (event, true)
@@ -175,14 +181,25 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 		return TurnEvent{Kind: TurnAssistantFinal, Text: text}, true
 	case "PreToolUse":
 		if p.ToolName == "AskUserQuestion" {
-			// The dedicated AskQuestion card carries the clickable options;
-			// the anchor mirrors the question text (❓ prefix) so the anchor
-			// stays a self-contained conversation log.
-			question, _ := extractAskUserQuestion(p.ToolInput)
+			// Anchor mirrors the question + options text (❓ prefix). Option
+			// LABELS are also handed to the dispatcher via Options so the
+			// dispatcher can swap the anchor's button row to clickable
+			// option buttons. The dedicated AskQuestion card still ships
+			// separately as a backup.
+			question, opts := extractAskUserQuestion(p.ToolInput)
 			if question == "" {
 				return TurnEvent{}, false
 			}
-			return TurnEvent{Kind: TurnAssistantFinal, Text: "❓ " + question}, true
+			text := "❓ " + question
+			labels := make([]string, 0, len(opts))
+			for i, opt := range opts {
+				text += fmt.Sprintf("\n%d. %s", i+1, opt.Label)
+				if opt.Description != "" {
+					text += " — " + opt.Description
+				}
+				labels = append(labels, opt.Label)
+			}
+			return TurnEvent{Kind: TurnAssistantFinal, Text: text, Options: labels}, true
 		}
 		return TurnEvent{Kind: TurnToolStart, ToolName: p.ToolName}, true
 	case "PostToolUse":

@@ -135,8 +135,9 @@ type Dispatcher struct {
 
 	cardMsgs cardMsgMap
 
-	aiMu       sync.Mutex
-	aiChunkers map[string]*internalfeishu.AIChunker
+	aiMu            sync.Mutex
+	aiChunkers      map[string]*internalfeishu.AIChunker
+	onAnchorButtons func(sessionID string, options []string) // nil opts → restore defaults
 }
 
 // LookupCardSession returns the session id a previously sent card's message_id
@@ -396,6 +397,17 @@ func (d *Dispatcher) ClearAnchorInput(ctx context.Context, tenantToken, cardToke
 		map[string]any{"default_value": ""}, sequence)
 }
 
+// PatchAnchorElement is the generic element-PATCH passthrough — used by the
+// anchor button-row swap (AskUserQuestion options ↔ default keystrokes).
+// Other call sites should prefer the typed helpers (PatchAnchor /
+// ClearAnchorInput) when one fits.
+func (d *Dispatcher) PatchAnchorElement(ctx context.Context, tenantToken, cardToken, elementID string, partial map[string]any, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.PatchCardElement(ctx, tenantToken, cardToken, elementID, partial, sequence)
+}
+
 // GetToken returns a fresh (tenantToken, openID) pair via the configured
 // TokenSource. Used by relay_host when it needs to PATCH an anchor card
 // and must refresh the token independently of a SendAnchorCard call.
@@ -431,12 +443,13 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 	d.aiMu.Lock()
 	chunker := d.aiChunkers[sessionID]
 	known := len(d.aiChunkers)
+	onButtons := d.onAnchorButtons
 	d.aiMu.Unlock()
 	if chunker == nil {
 		log.Printf("feishu-turn: no chunker sid=%s kind=%v known_chunkers=%d", sessionID, ev.Kind, known)
 		return
 	}
-	log.Printf("feishu-turn: route sid=%s kind=%v text_len=%d", sessionID, ev.Kind, len(ev.Text))
+	log.Printf("feishu-turn: route sid=%s kind=%v text_len=%d opts=%d", sessionID, ev.Kind, len(ev.Text), len(ev.Options))
 	switch ev.Kind {
 	case TurnUserPrompt:
 		chunker.PushTurn(internalfeishu.TurnUserPromptEvent{Text: ev.Text})
@@ -447,6 +460,23 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 	case TurnToolEnd:
 		chunker.PushTurn(internalfeishu.TurnToolEndEvent{ToolName: ev.ToolName, ToolBody: ev.ToolBody})
 	}
+	// Anchor button-row swap: AskUserQuestion (TurnAssistantFinal with
+	// Options) replaces the default keystroke buttons with clickable option
+	// buttons. Any other AssistantFinal — i.e. a regular Stop — restores the
+	// default buttons (no-op when already default; cost is one PATCH per
+	// turn end, acceptable).
+	if onButtons != nil && ev.Kind == TurnAssistantFinal {
+		onButtons(sessionID, ev.Options)
+	}
+}
+
+// SetOnAnchorButtons registers the per-session button-swap callback.
+// relay_host wires this to its PATCH path: non-nil options → option buttons;
+// nil options → restore default keystroke row.
+func (d *Dispatcher) SetOnAnchorButtons(fn func(sessionID string, options []string)) {
+	d.aiMu.Lock()
+	d.onAnchorButtons = fn
+	d.aiMu.Unlock()
 }
 
 type feishuAuthClass interface {

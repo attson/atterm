@@ -37,6 +37,11 @@ const AnchorBodyElementID = "anchor_body_md"
 // keep the previous reply visible after the user hits send.
 const AnchorInputElementID = "anchor_input"
 
+// AnchorButtonsElementID is the stable element_id on the bottom buttons row
+// (the column_set). PATCHed at runtime to swap the default 5 keystroke
+// buttons (^C ^D Esc Enter 结束) for AskUserQuestion option buttons.
+const AnchorButtonsElementID = "anchor_buttons"
+
 // AnchorState is the renderer input. The chunker keeps the latest snapshot
 // per session and passes a fresh AnchorState on every PATCH.
 type AnchorState struct {
@@ -237,6 +242,7 @@ func buttonsRow(sessionID string) map[string]any {
 	}
 	return map[string]any{
 		"tag":                "column_set",
+		"element_id":         AnchorButtonsElementID,
 		"horizontal_spacing": "small",
 		"columns": []any{
 			column(makeBtn("^C", "ctrl_c")),
@@ -246,6 +252,48 @@ func buttonsRow(sessionID string) map[string]any {
 			column(endBtn),
 		},
 	}
+}
+
+// AskOptionsColumnSet builds the column_set payload that replaces the default
+// buttons row when claude fires AskUserQuestion. Each button submits the
+// option label as if the user typed it into the input box.
+func AskOptionsColumnSet(sessionID string, optionLabels []string) map[string]any {
+	cols := make([]any, 0, len(optionLabels))
+	for _, label := range optionLabels {
+		btn := map[string]any{
+			"tag":       "button",
+			"text":      map[string]any{"tag": "plain_text", "content": label},
+			"type":      "primary",
+			"behaviors": []any{map[string]any{"type": "callback"}},
+			"value": map[string]any{
+				"kind":       "input",
+				"session_id": sessionID,
+				"text":       label,
+			},
+		}
+		cols = append(cols, map[string]any{
+			"tag":      "column",
+			"width":    "weighted",
+			"weight":   1,
+			"elements": []any{btn},
+		})
+	}
+	return map[string]any{
+		"tag":                "column_set",
+		"horizontal_spacing": "small",
+		"columns":            cols,
+	}
+}
+
+// DefaultButtonsColumnSet returns the default keystroke buttons (^C ^D Esc
+// Enter 结束). PATCH-set back into the anchor after AskUserQuestion resolves.
+func DefaultButtonsColumnSet(sessionID string) map[string]any {
+	// Reuse the same renderer used at card create time so the two stay in
+	// sync; just drop the element_id field (PATCH addresses by element_id
+	// already, no need to repeat it in the partial body).
+	cs := buttonsRow(sessionID)
+	delete(cs, "element_id")
+	return cs
 }
 
 func marshalCard(card map[string]any) ([]byte, error) {

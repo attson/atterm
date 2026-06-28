@@ -325,7 +325,11 @@ func TestClaudeCodeParseTurn_AskUserQuestionEmitsForAnchor(t *testing.T) {
 	raw := json.RawMessage(`{
 		"hook_event_name":"PreToolUse",
 		"tool_name":"AskUserQuestion",
-		"tool_input":{"questions":[{"question":"你今天想做什么类型的任务?","options":[{"label":"写代码"}]}]}
+		"tool_input":{"questions":[{"question":"你今天想做什么类型的任务?","options":[
+			{"label":"写代码","description":"实现新功能、修复 bug"},
+			{"label":"代码审查"},
+			{"label":"研究"}
+		]}]}
 	}`)
 	ev, ok := a.ParseTurn(raw, "")
 	if !ok {
@@ -339,6 +343,16 @@ func TestClaudeCodeParseTurn_AskUserQuestionEmitsForAnchor(t *testing.T) {
 	}
 	if !strings.Contains(ev.Text, "❓") {
 		t.Errorf("text = %q, want a ❓ marker so the anchor reader can tell it's a question", ev.Text)
+	}
+	// Options must show up so the anchor reader can see the full question
+	// without flipping to the separate AskQuestion card.
+	for _, want := range []string{"写代码", "代码审查", "研究"} {
+		if !strings.Contains(ev.Text, want) {
+			t.Errorf("text = %q, missing option label %q", ev.Text, want)
+		}
+	}
+	if !strings.Contains(ev.Text, "实现新功能") {
+		t.Errorf("text = %q, missing option description", ev.Text)
 	}
 }
 

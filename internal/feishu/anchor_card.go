@@ -22,6 +22,7 @@ package feishu
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // AnchorBodyElementID is the stable element_id assigned to the anchor card's
@@ -79,6 +80,49 @@ func initialBodyContent(s AnchorState) string {
 		return "_(已恢复 · 等你说话)_"
 	}
 	return ""
+}
+
+// PrependStatus wraps a body markdown string with a one-line status preamble
+// that telegraphs the session's TaskState + elapsed runtime. The header can't
+// be live-PATCHed at element granularity in V2 schema cards, so the body
+// element doubles as a status surface.
+//
+// elapsed=0 omits the "· 已 …" suffix; unknown taskState falls through to
+// "活跃" so the line always renders rather than vanishing.
+func PrependStatus(taskState string, elapsed time.Duration, body string) string {
+	label := statusLabel(taskState)
+	header := "> " + label
+	if elapsed > 0 {
+		header += " · 已 " + formatElapsedDuration(elapsed)
+	}
+	if body == "" {
+		return header + "\n"
+	}
+	return header + "\n\n" + body
+}
+
+func statusLabel(taskState string) string {
+	switch taskState {
+	case "running":
+		return "🤖 处理中"
+	case "waiting_input":
+		return "⏸ 等待输入"
+	case "completed":
+		return "✓ 完成"
+	case "failed":
+		return "✗ 错误"
+	default:
+		return "▸ 活跃"
+	}
+}
+
+func formatElapsedDuration(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	mins := int((d - time.Duration(hours)*time.Hour).Minutes())
+	return fmt.Sprintf("%dh%dm", hours, mins)
 }
 
 // RenderAnchorArchive returns a final-state card with input/buttons stripped

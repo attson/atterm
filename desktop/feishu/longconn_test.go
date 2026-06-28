@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
 
 func TestLongConn_NewAndClose(t *testing.T) {
@@ -177,3 +179,53 @@ type flakyRuntime struct{ returns error }
 
 func (r *flakyRuntime) Run(ctx context.Context) error { return r.returns }
 func (r *flakyRuntime) Close(_ context.Context) error { return nil }
+
+// V2 schema card input puts user-typed text in CallBackAction.InputValue,
+// not in CallBackAction.Value["text"]. Reading the wrong slot makes every
+// Feishu reply silently fail the router's empty-text gate. Regression
+// guard.
+func TestExtractCardActionFields_InputValueWins(t *testing.T) {
+	ev := &callback.CardActionTriggerEvent{
+		Event: &callback.CardActionTriggerRequest{
+			Operator: &callback.Operator{OpenID: "ou_owner"},
+			Action: &callback.CallBackAction{
+				Value: map[string]interface{}{
+					"kind":       "input",
+					"session_id": "sid-42",
+				},
+				InputValue: "user typed this",
+			},
+		},
+	}
+	sid, kind, _, op, text := extractCardActionFields(ev)
+	if sid != "sid-42" || kind != "input" || op != "ou_owner" {
+		t.Errorf("metadata wrong: sid=%q kind=%q op=%q", sid, kind, op)
+	}
+	if text != "user typed this" {
+		t.Errorf("text = %q; want %q from InputValue", text, "user typed this")
+	}
+}
+
+// Buttons (kind=key) carry their event name in Value["event"]; InputValue
+// is empty. Make sure that path still works after the InputValue fix.
+func TestExtractCardActionFields_KeyButtonStillWorks(t *testing.T) {
+	ev := &callback.CardActionTriggerEvent{
+		Event: &callback.CardActionTriggerRequest{
+			Operator: &callback.Operator{OpenID: "ou_owner"},
+			Action: &callback.CallBackAction{
+				Value: map[string]interface{}{
+					"kind":       "key",
+					"session_id": "sid-42",
+					"event":      "ctrl_c",
+				},
+			},
+		},
+	}
+	_, kind, eventStr, _, text := extractCardActionFields(ev)
+	if kind != "key" || eventStr != "ctrl_c" {
+		t.Errorf("kind=%q event=%q; want key+ctrl_c", kind, eventStr)
+	}
+	if text != "" {
+		t.Errorf("text = %q; want empty for key buttons", text)
+	}
+}

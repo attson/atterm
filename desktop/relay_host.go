@@ -89,6 +89,22 @@ type relayHost struct {
 	// on detach (session close or manual disconnect).
 	feishuSubsMu sync.Mutex
 	feishuSubs   map[string]*internalfeishu.FeishuSubscriber
+
+	// feishuAnchorRuntimes carries the live status state (task state + last
+	// body) per anchor so SetOnTaskStateChange and the elapsed-time ticker can
+	// re-render the status preamble. Keyed by session ID string. Same lock
+	// discipline as feishuSubs (parallel map, same lifetime).
+	feishuAnchorRuntimes map[string]*anchorRuntime
+}
+
+// anchorRuntime is the per-session live state the anchor card's status
+// preamble depends on: task state, elapsed time, and the last inner body we
+// flushed (so a status-only refresh can re-emit without losing the AI body).
+type anchorRuntime struct {
+	createdAt time.Time
+	taskState atomic.Value // string (proto.TaskState*)
+	lastInner atomic.Value // string
+	render    func()       // re-build wrapper from current state + re-PATCH
 }
 
 // SetFeishuDispatcher atomically swaps the dispatcher used for command-finished
@@ -225,8 +241,9 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		changes:      make(chan struct{}, 1),
 		uplinkSubs:   make(map[uuid.UUID]*session.Subscriber),
 		startSniffFn: startAIResolve,
-		feishuCards:  internalfeishu.NewCardIndex(),
-		feishuSubs:   make(map[string]*internalfeishu.FeishuSubscriber),
+		feishuCards:          internalfeishu.NewCardIndex(),
+		feishuSubs:           make(map[string]*internalfeishu.FeishuSubscriber),
+		feishuAnchorRuntimes: make(map[string]*anchorRuntime),
 	}, nil
 }
 
@@ -572,6 +589,17 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if disp == nil {
 				return
 			}
+			// Anchor status preamble: update the per-session runtime so the
+			// next render() shows the new label. Done synchronously (no
+			// session.mu re-entry — only touches atomic.Value), then a
+			// goroutine re-PATCHes to avoid blocking the session callback.
+			h.feishuSubsMu.Lock()
+			rt := h.feishuAnchorRuntimes[sid.String()]
+			h.feishuSubsMu.Unlock()
+			if rt != nil {
+				rt.taskState.Store(next)
+				go rt.render()
+			}
 			// IMPORTANT: this callback runs while session.mu is held (see
 			// fireTaskStateLocked). Calling sess.Info() / sess.TailOutput()
 			// here would re-acquire that lock and deadlock the session
@@ -862,7 +890,11 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		SessionLabel: label,
 		Title:        info.Title,
 		Cwd:          info.Cwd,
-		StatusText:   "running",
+		// StatusText intentionally empty — the body element's PrependStatus
+		// preamble carries live state instead. The subtitle is fixed-at-send
+		// in V2 (no element-level PATCH for header), so a stale "running"
+		// there is worse than just the cwd alone.
+		StatusText:   "",
 		BodyMarkdown: "",
 		Template:     "blue",
 		Restored:     restored,
@@ -887,14 +919,16 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	}
 	h.feishuCards.Put(anchor)
 
-	// flush is the Chunker callback: gets the current body markdown and
-	// PATCHes the anchor card asynchronously with retry policy.
-	flush := func(body string) {
-		bodyPreview := body
-		if len(bodyPreview) > 60 {
-			bodyPreview = bodyPreview[:60]
-		}
-		log.Printf("feishu-anchor: flush session=%s body_len=%d preview=%q", sessID, len(body), bodyPreview)
+	// rt threads the live status state. Updated by SetOnTaskStateChange and
+	// re-rendered on a 30s ticker so elapsed time refreshes even when the AI
+	// is idle. render() composes the wrapper (status preamble + inner body)
+	// from current state and PATCHes; everyone (chunker flush, state callback,
+	// ticker) goes through it so the wire body stays consistent.
+	rt := &anchorRuntime{createdAt: time.Now()}
+	rt.taskState.Store("")
+	rt.lastInner.Store("")
+
+	patchWrapped := func(wrapped string) {
 		go func() {
 			tok, _, err := disp.GetToken(context.Background())
 			if err != nil {
@@ -903,7 +937,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 			}
 			seq := atomic.AddInt64(&anchor.PatchSeq, 1)
 			err = internalfeishu.PatchWithRetry(func() error {
-				return disp.PatchAnchor(context.Background(), tok, anchor.CardToken, body, seq)
+				return disp.PatchAnchor(context.Background(), tok, anchor.CardToken, wrapped, seq)
 			})
 			if err == nil {
 				log.Printf("feishu-anchor: patch ok session=%s seq=%d", sessID, seq)
@@ -917,14 +951,34 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 			}
 			var ace *internalfeishu.AuthClassError
 			if errors.As(err, &ace) {
-				// Tenant token expired; rely on the existing TenantTokenCache
-				// refresh path — next flush will see a fresh token.
 				log.Printf("feishu-anchor: auth refresh needed session=%s (%v)", sessID, err)
 				return
 			}
 			log.Printf("feishu-anchor: patch gave up after retry session=%s: %v", sessID, err)
 		}()
 	}
+
+	rt.render = func() {
+		state, _ := rt.taskState.Load().(string)
+		inner, _ := rt.lastInner.Load().(string)
+		wrapped := internalfeishu.PrependStatus(state, time.Since(rt.createdAt), inner)
+		patchWrapped(wrapped)
+	}
+
+	// flush is the Chunker callback — stash the latest inner body and re-render.
+	flush := func(body string) {
+		preview := body
+		if len(preview) > 60 {
+			preview = preview[:60]
+		}
+		log.Printf("feishu-anchor: flush session=%s body_len=%d preview=%q", sessID, len(body), preview)
+		rt.lastInner.Store(body)
+		rt.render()
+	}
+
+	h.feishuSubsMu.Lock()
+	h.feishuAnchorRuntimes[sessionIDStr] = rt
+	h.feishuSubsMu.Unlock()
 
 	// AI sessions render their anchor card body from per-turn AIChunker events
 	// (👤/🤖/🛠), not from raw PTY bytes. Shell sessions still need the PTY
@@ -957,6 +1011,22 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 			}
 		}()
 	}
+
+	// Status preamble refresher: re-render every 30s so elapsed time bumps
+	// even when the AI is idle (no body change means flush is never called
+	// otherwise). Exits with sub.Done() so detach kills it cleanly.
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				rt.render()
+			case <-sub.Done():
+				return
+			}
+		}
+	}()
 
 	log.Printf("feishu-anchor: attached session=%s card_msg_id=%s", sessID, msgID)
 }
@@ -995,6 +1065,7 @@ func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
 	h.feishuSubsMu.Lock()
 	sub := h.feishuSubs[sessionIDStr]
 	delete(h.feishuSubs, sessionIDStr)
+	delete(h.feishuAnchorRuntimes, sessionIDStr)
 	h.feishuSubsMu.Unlock()
 
 	// Detach the AIChunker BEFORE sub.Detach() so in-flight hook events do not

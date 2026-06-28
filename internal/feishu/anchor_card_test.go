@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderAnchorCreate_HasRequiredStructure(t *testing.T) {
@@ -147,6 +148,73 @@ func TestRenderAnchorCreate_UsesColumnSetContainer(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"tag":"column_set"`) {
 		t.Errorf("body missing column_set button container: %s", body)
+	}
+}
+
+// The status preamble is a short markdown line at the top of body[0] that
+// telegraphs the session's TaskState + how long it's been running. Header
+// can't be PATCHed at element-level granularity in V2, so the body element
+// is the only live surface. Helper is pure so it's the canonical place to
+// pin emoji choices + elapsed-time formatting.
+func TestPrependStatus_RunningWithElapsed(t *testing.T) {
+	got := PrependStatus("running", 90*time.Second, "👤 hi\n\n🤖 hello\n")
+	if !strings.HasPrefix(got, "> 🤖 处理中 · 已 1m") {
+		t.Errorf("missing running status prefix: %q", got)
+	}
+	if !strings.Contains(got, "👤 hi") {
+		t.Errorf("inner body lost: %q", got)
+	}
+}
+
+func TestPrependStatus_TaskStateMapping(t *testing.T) {
+	cases := []struct {
+		state string
+		want  string
+	}{
+		{"running", "🤖 处理中"},
+		{"waiting_input", "⏸ 等待输入"},
+		{"completed", "✓ 完成"},
+		{"failed", "✗ 错误"},
+		{"", "▸ 活跃"}, // unknown / pre-classified
+	}
+	for _, c := range cases {
+		got := PrependStatus(c.state, 0, "")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("state=%q: missing label %q in %q", c.state, c.want, got)
+		}
+	}
+}
+
+func TestPrependStatus_ElapsedFormatting(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{30 * time.Second, "已 0m"},
+		{90 * time.Second, "已 1m"},
+		{2*time.Hour + 5*time.Minute, "已 2h5m"},
+		{0, ""}, // zero elapsed → omit "已 ..." suffix entirely
+	}
+	for _, c := range cases {
+		got := PrependStatus("running", c.d, "")
+		if c.want == "" {
+			if strings.Contains(got, "已 ") {
+				t.Errorf("d=%v: expected no elapsed suffix, got %q", c.d, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("d=%v: missing %q in %q", c.d, c.want, got)
+		}
+	}
+}
+
+func TestPrependStatus_EmptyBodyKeepsRestoredHint(t *testing.T) {
+	// When inner is "" and we're not in a fresh stream, status preamble
+	// still renders + a marker line stays below it so the card isn't blank.
+	got := PrependStatus("waiting_input", 0, "")
+	if !strings.Contains(got, "⏸ 等待输入") {
+		t.Errorf("status missing: %q", got)
 	}
 }
 

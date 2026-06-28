@@ -13,7 +13,10 @@
 // window is reserved for the async anchor PATCH on the caller side.
 package feishu
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // Action is what the router decided to do.
 type Action int
@@ -146,6 +149,27 @@ func (r *Router) injectInto(anchor *CardAnchor, operatorOpenID string, payload [
 		}()
 	}
 	return Decision{Action: ActionInject}
+}
+
+// CardTokenFor returns the live CardKit card_token for a session, or "" when
+// no anchor is registered. Exposed so the post-input-submit clear flow can
+// look up the token without duplicating the index dependency.
+func (r *Router) CardTokenFor(sessionID string) string {
+	a := r.idx.BySessionID(sessionID)
+	if a == nil {
+		return ""
+	}
+	return a.CardToken
+}
+
+// NextPatchSeq atomically bumps the per-anchor sequence counter and returns
+// the new value. Returns 0 (and is a no-op) when no anchor matches.
+func (r *Router) NextPatchSeq(sessionID string) int64 {
+	a := r.idx.BySessionID(sessionID)
+	if a == nil {
+		return 0
+	}
+	return atomic.AddInt64(&a.PatchSeq, 1)
 }
 
 // keyBytes maps button event names to the raw bytes injected to the PTY.

@@ -32,6 +32,11 @@ import (
 // open API returns code=0.
 const AnchorBodyElementID = "anchor_body_md"
 
+// AnchorInputElementID is the stable element_id on the input box. Used by
+// the post-submit clear (PATCH default_value to "") so the textarea doesn't
+// keep the previous reply visible after the user hits send.
+const AnchorInputElementID = "anchor_input"
+
 // AnchorState is the renderer input. The chunker keeps the latest snapshot
 // per session and passes a fresh AnchorState on every PATCH.
 type AnchorState struct {
@@ -189,6 +194,7 @@ func bodyMarkdown(content string) map[string]any {
 func inputElement(sessionID string) map[string]any {
 	return map[string]any{
 		"tag":         "input",
+		"element_id":  AnchorInputElementID,
 		"placeholder": map[string]any{"tag": "plain_text", "content": "Type here…"},
 		"value": map[string]any{
 			"kind":       "input",

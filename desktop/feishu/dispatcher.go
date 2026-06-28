@@ -27,6 +27,7 @@ type IMClient interface {
 type CardKitClient interface {
 	SendAnchorCard(ctx context.Context, tenantToken, openID string, cardBody []byte) (msgID, cardToken string, err error)
 	PatchCard(ctx context.Context, tenantToken, cardToken, elementID, bodyMarkdown string, sequence int64) error
+	PatchCardElement(ctx context.Context, tenantToken, cardToken, elementID string, partial map[string]any, sequence int64) error
 }
 
 // CommandFinishedEvent feeds the dispatcher from the heuristic OSC 133 D path.
@@ -381,6 +382,18 @@ func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bo
 		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
 	}
 	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, internalfeishu.AnchorBodyElementID, bodyMarkdown, sequence)
+}
+
+// ClearAnchorInput resets the anchor card's input element's default_value to
+// "" so the next user reply starts with an empty textarea. Called after each
+// successful inject from kind=input so the previous text doesn't linger.
+func (d *Dispatcher) ClearAnchorInput(ctx context.Context, tenantToken, cardToken string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.PatchCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorInputElementID,
+		map[string]any{"default_value": ""}, sequence)
 }
 
 // GetToken returns a fresh (tenantToken, openID) pair via the configured

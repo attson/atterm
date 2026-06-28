@@ -318,7 +318,16 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 		decision := r.RouteCardActionBySession(sessionID, operatorOpenID, kind, event, text)
 		switch decision.Action {
 		case internalfeishu.ActionInject:
-			// Happy path; no response needed for LongConn card actions.
+			// Happy path. For input submissions, fire a follow-up PATCH that
+			// resets the input textarea's default_value to "" so the next
+			// reply starts blank — Feishu V2 input elements don't auto-clear.
+			if kind == "input" {
+				cardToken := r.CardTokenFor(sessionID)
+				if cardToken != "" {
+					seq := r.NextPatchSeq(sessionID)
+					go s.clearAnchorInput(cardToken, seq)
+				}
+			}
 		case internalfeishu.ActionReject:
 			if decision.Toast != "" && operatorOpenID != "" {
 				s.replyText(ctx, operatorOpenID, decision.Toast)
@@ -345,6 +354,25 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 		}
 	default:
 		// Unknown kind; ignore.
+	}
+}
+
+// clearAnchorInput PATCHes the anchor card's input element back to empty so
+// the user's just-submitted reply doesn't linger in the textbox. Best-effort:
+// errors logged, never bubble up (the inject itself already succeeded).
+func (s *Service) clearAnchorInput(cardToken string, sequence int64) {
+	if s.dispatcher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tok, _, err := s.dispatcher.GetToken(ctx)
+	if err != nil {
+		log.Printf("feishu: clear input get token: %v", err)
+		return
+	}
+	if err := s.dispatcher.ClearAnchorInput(ctx, tok, cardToken, sequence); err != nil {
+		log.Printf("feishu: clear input PATCH card=%s seq=%d: %v", cardToken, sequence, err)
 	}
 }
 
@@ -448,6 +476,9 @@ func (c *authClassAdaptingClient) SendAnchorCard(ctx context.Context, tok, openI
 }
 func (c *authClassAdaptingClient) PatchCard(ctx context.Context, tok, cardToken, elementID, bodyMarkdown string, sequence int64) error {
 	return c.adapt(c.inner.PatchCard(ctx, tok, cardToken, elementID, bodyMarkdown, sequence))
+}
+func (c *authClassAdaptingClient) PatchCardElement(ctx context.Context, tok, cardToken, elementID string, partial map[string]any, sequence int64) error {
+	return c.adapt(c.inner.PatchCardElement(ctx, tok, cardToken, elementID, partial, sequence))
 }
 func (c *authClassAdaptingClient) adapt(err error) error {
 	if err == nil {

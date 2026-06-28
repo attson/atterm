@@ -100,9 +100,20 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 	}
 	t.Logf("OK: patch #2 applied")
 
+	time.Sleep(500 * time.Millisecond)
+
+	t.Log("=== step 4: ClearInputElement (PATCH default_value to \"\") ===")
+	err = client.PatchCardElement(ctx, tok, cardID, internalfeishu.AnchorInputElementID,
+		map[string]any{"default_value": ""}, 3)
+	if err != nil {
+		t.Fatalf("PatchCardElement input clear FAILED: %v", err)
+	}
+	t.Logf("OK: input clear PATCH applied")
+
 	fmt.Printf("\n\n=== VERDICT ===\n")
 	fmt.Printf("CardKit card_id: %s\n", cardID)
 	fmt.Printf("IM message_id:   %s\n", msgID)
 	fmt.Printf("Look at the Feishu DM for the bound user — the card body should\n")
 	fmt.Printf("show '🤖 second patch reached the card' if streaming PATCH works.\n")
+	fmt.Printf("The input textbox should be empty (we just sent a clear PATCH).\n")
 }

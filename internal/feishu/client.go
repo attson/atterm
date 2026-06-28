@@ -78,14 +78,19 @@ func (c *Client) SendTextToOpenID(ctx context.Context, tenantToken, openID, text
 //   - auth-class codes (token expired etc) returned as *AuthClassError so the
 //     caller can refresh the tenant token and retry.
 func (c *Client) PatchCard(ctx context.Context, tenantToken, cardToken, elementID, bodyMarkdown string, sequence int64) error {
-	// `partial_element` carries the element's new partial config as a JSON
-	// STRING (not a nested object) — that's the wire shape the Patch element
-	// endpoint expects per the Feishu Go SDK (cardkit.v1 PatchCardElement).
-	// Anything else fails server-side with code=99992402 "field validation
-	// failed".
-	partialElement, _ := json.Marshal(map[string]any{"content": bodyMarkdown})
+	return c.PatchCardElement(ctx, tenantToken, cardToken, elementID,
+		map[string]any{"content": bodyMarkdown}, sequence)
+}
+
+// PatchCardElement is the generic partial-update primitive: send any
+// element-config fragment (e.g. {"content": "..."} for markdown,
+// {"default_value": ""} to reset an input). Wraps the fragment as a JSON
+// STRING in `partial_element` — that's the Feishu wire shape, NOT a nested
+// object; using an object yields code=99992402 "field validation failed".
+func (c *Client) PatchCardElement(ctx context.Context, tenantToken, cardToken, elementID string, partial map[string]any, sequence int64) error {
+	partialElement, _ := json.Marshal(partial)
 	payload := map[string]any{
-		"uuid":            fmt.Sprintf("%s-%d", cardToken, sequence),
+		"uuid":            fmt.Sprintf("%s-%s-%d", cardToken, elementID, sequence),
 		"sequence":        sequence,
 		"partial_element": string(partialElement),
 	}

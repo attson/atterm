@@ -121,9 +121,12 @@ func (r *Router) injectInto(anchor *CardAnchor, operatorOpenID string, payload [
 	if sub == nil {
 		return Decision{Action: ActionReject, Toast: "会话已结束"}
 	}
-	if name := sub.CurrentDriverName(); name != "" {
-		return Decision{Action: ActionPreempt, PreemptDriverName: name}
-	}
+	// Silent takeover: previously a non-empty CurrentDriverName returned
+	// ActionPreempt without claiming, but handleCardAction never surfaced
+	// preempt as a user-visible toast — so Feishu replies silently vanished
+	// whenever the local atterm window was the driver. Until a real multi-
+	// driver UX ships, treat Feishu input as "the user is in Feishu because
+	// they aren't at the desk; take over".
 	sub.ClaimDriver()
 	if !sub.SendInput(payload) {
 		return Decision{Action: ActionReject, Toast: "输入未被接收（队列已满）"}

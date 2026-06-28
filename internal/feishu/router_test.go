@@ -106,7 +106,13 @@ type stubSubscriberDriverAware struct {
 
 func (s *stubSubscriberDriverAware) CurrentDriverName() string { return s.currentDriverName }
 
-func TestRouter_PreemptToastWhenNonFeishuDriver(t *testing.T) {
+// Single-user atterm has no multi-driver UX yet, and the previous preempt-
+// gate dropped Feishu replies on the floor whenever the local terminal was
+// the active driver (handleCardAction never surfaced the ActionPreempt path
+// as a user-visible toast, so the reply just vanished). Until a real
+// multi-driver flow ships, treat Feishu input as "take over silently" —
+// the user is in Feishu because they aren't at the local terminal.
+func TestRouter_TakesOverFromExistingDriver(t *testing.T) {
 	idx := NewCardIndex()
 	idx.Put(&CardAnchor{SessionID: "s", CardMsgID: "m", CardToken: "t", OwnerOpenID: "ou_owner"})
 	stub := &stubSubscriberDriverAware{
@@ -116,13 +122,13 @@ func TestRouter_PreemptToastWhenNonFeishuDriver(t *testing.T) {
 	r := NewRouter(idx, func(string) Subscriber { return stub })
 
 	dec := r.RouteReply("m", "ou_owner", "go test")
-	if dec.Action != ActionPreempt {
-		t.Fatalf("action = %v, want preempt", dec.Action)
+	if dec.Action != ActionInject {
+		t.Fatalf("action = %v, want inject (silent takeover)", dec.Action)
 	}
-	if dec.PreemptDriverName != "local-terminal" {
-		t.Errorf("preempt driver name = %q, want local-terminal", dec.PreemptDriverName)
+	if !stub.claimed {
+		t.Errorf("ClaimDriver should have been called to seize driver from local-terminal")
 	}
-	if len(stub.sentIn) != 0 {
-		t.Errorf("should NOT inject during preempt: %q", stub.sentIn)
+	if len(stub.sentIn) != 1 || string(stub.sentIn[0]) != "go test\n" {
+		t.Errorf("sentIn = %q, want one entry %q", stub.sentIn, "go test\n")
 	}
 }

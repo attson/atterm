@@ -90,6 +90,53 @@ func TestRenderAnchorCreate_BodyMarkdownHasElementID(t *testing.T) {
 	}
 }
 
+// Restored AI sessions never replay history, so the anchor body stays empty
+// until the user sends a fresh prompt. Telegraphing this with a "已恢复"
+// hint avoids the "card is broken?" confusion that the bare
+// "(waiting for output)" produces.
+func TestRenderAnchorCreate_RestoredHintWhenBodyEmpty(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc", Restored: true})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(string(body), "已恢复") {
+		t.Errorf("body should carry restored hint, got: %s", body)
+	}
+	if strings.Contains(string(body), "waiting for output") {
+		t.Errorf("body should drop default fresh hint when restored, got: %s", body)
+	}
+}
+
+func TestRenderAnchorCreate_FreshShowsWaitingForOutput(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{SessionID: "abc"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(string(body), "waiting for output") {
+		t.Errorf("body should show waiting for output, got: %s", body)
+	}
+}
+
+// The header should surface enough context (title + cwd) that the user can
+// identify a session at a glance, instead of staring at an 8-char UUID prefix.
+func TestRenderAnchorCreate_HeaderRendersTitleAndCwd(t *testing.T) {
+	body, err := RenderAnchorCreate(AnchorState{
+		SessionID: "abc",
+		Title:     "Claude Code",
+		Cwd:       "/Users/x/projects/foo",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "Claude Code") {
+		t.Errorf("header should contain Title, got: %s", s)
+	}
+	if !strings.Contains(s, "/Users/x/projects/foo") {
+		t.Errorf("header should contain Cwd, got: %s", s)
+	}
+}
+
 // The schema V2 button container must be column_set (per Feishu's V2 card
 // docs); regress-guard so a future refactor can't silently fall back to a
 // shape the open API rejects.

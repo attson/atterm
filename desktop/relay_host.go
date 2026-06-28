@@ -105,8 +105,9 @@ func (h *relayHost) SetFeishuRemoteTermState(fn func(ctx context.Context) (bool,
 }
 
 type activeSession struct {
-	host    *ptyhost.Host
-	cleanup func()
+	host     *ptyhost.Host
+	cleanup  func()
+	restored bool // true when NewSession was invoked with AIKind set (recovery path)
 }
 
 // appendFeishuHookEnv adds ATTERM_SESSION_ID + ATTERM_HOOK_ENDPOINT to
@@ -664,7 +665,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		_ = pty.Close()
 		return uuid.Nil, fmt.Errorf("relay host stopped")
 	}
-	h.sessions[id] = &activeSession{host: pty, cleanup: combinedCleanup}
+	h.sessions[id] = &activeSession{host: pty, cleanup: combinedCleanup, restored: req.AIKind != ""}
 	h.mu.Unlock()
 	h.notifyChange()
 
@@ -842,18 +843,29 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	}
 	h.feishuSubsMu.Unlock()
 
-	// Short label: first 8 chars of UUID
+	// Short label fallback when Info().Title is empty: first 8 chars of UUID.
 	label := sessionIDStr
 	if len(label) > 8 {
 		label = label[:8]
 	}
 
+	info := sess.Info()
+	h.mu.Lock()
+	restored := false
+	if as, ok := h.sessions[sessID]; ok {
+		restored = as.restored
+	}
+	h.mu.Unlock()
+
 	cardBody, err := internalfeishu.RenderAnchorCreate(internalfeishu.AnchorState{
 		SessionID:    sessionIDStr,
 		SessionLabel: label,
+		Title:        info.Title,
+		Cwd:          info.Cwd,
 		StatusText:   "running",
 		BodyMarkdown: "",
 		Template:     "blue",
+		Restored:     restored,
 	})
 	if err != nil {
 		log.Printf("feishu-anchor: render create failed session=%s: %v", sessID, err)
@@ -916,8 +928,8 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 
 	// AI sessions render their anchor card body from per-turn AIChunker events
 	// (👤/🤖/🛠), not from raw PTY bytes. Shell sessions still need the PTY
-	// roller because there are no hook events to fall back on.
-	info := sess.Info()
+	// roller because there are no hook events to fall back on. `info` was
+	// captured above for header rendering — reuse it here.
 	pumpPTYBytes := info.Type != session.SessionTypeAI
 	sub := internalfeishu.AttachFeishuSubscriber(sess, openID, pumpPTYBytes, flush)
 

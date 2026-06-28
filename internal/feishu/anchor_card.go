@@ -35,10 +35,13 @@ const AnchorBodyElementID = "anchor_body_md"
 // per session and passes a fresh AnchorState on every PATCH.
 type AnchorState struct {
 	SessionID    string // atterm session UUID
-	SessionLabel string // short identifier shown in title (cwd basename or command)
-	StatusText   string // subtitle: "running · driver: me · 2m13s" etc.
+	SessionLabel string // fallback identifier when Title is empty
+	Title        string // human-facing session title (claude resume conversation, etc.)
+	Cwd          string // working directory; shown in the subtitle
+	StatusText   string // subtitle status: "running" / "ended" / etc. joined with Cwd
 	BodyMarkdown string // streaming tail body
 	Template     string // "blue" | "green" | "grey" | "red"
+	Restored     bool   // true for AI sessions revived via --resume; swaps the empty-body hint
 }
 
 // RenderAnchorCreate returns the full create-card POST body for SendInteractiveToOpenID.
@@ -56,13 +59,26 @@ func RenderAnchorCreate(s AnchorState) ([]byte, error) {
 		"body": map[string]any{
 			"direction": "vertical",
 			"elements": []any{
-				bodyMarkdown(s.BodyMarkdown),
+				bodyMarkdown(initialBodyContent(s)),
 				inputElement(s.SessionID),
 				buttonsRow(s.SessionID),
 			},
 		},
 	}
 	return marshalCard(card)
+}
+
+// initialBodyContent picks the seed shown in body[0] when BodyMarkdown is
+// empty. Restored AI sessions don't replay history, so the bare "waiting
+// for output" reads as broken; flag them explicitly.
+func initialBodyContent(s AnchorState) string {
+	if s.BodyMarkdown != "" {
+		return s.BodyMarkdown
+	}
+	if s.Restored {
+		return "_(已恢复 · 等你说话)_"
+	}
+	return ""
 }
 
 // RenderAnchorArchive returns a final-state card with input/buttons stripped
@@ -90,15 +106,27 @@ func RenderAnchorArchive(s AnchorState, footer string) ([]byte, error) {
 }
 
 func anchorHeader(s AnchorState) map[string]any {
+	title := s.Title
+	if title == "" {
+		title = "session · " + s.SessionLabel
+	}
+	subtitle := s.StatusText
+	if s.Cwd != "" {
+		if subtitle != "" {
+			subtitle = s.Cwd + " · " + subtitle
+		} else {
+			subtitle = s.Cwd
+		}
+	}
 	return map[string]any{
 		"template": s.Template,
 		"title": map[string]any{
 			"tag":     "plain_text",
-			"content": fmt.Sprintf("▸ session · %s", s.SessionLabel),
+			"content": "▸ " + title,
 		},
 		"subtitle": map[string]any{
 			"tag":     "plain_text",
-			"content": s.StatusText,
+			"content": subtitle,
 		},
 	}
 }

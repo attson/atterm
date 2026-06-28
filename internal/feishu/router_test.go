@@ -35,8 +35,9 @@ func TestRouter_ReplyHappyPath(t *testing.T) {
 	if !stub.claimed {
 		t.Errorf("expected ClaimDriver call when no current driver (router should call it)")
 	}
-	if len(stub.sentIn) != 1 || string(stub.sentIn[0]) != "go test ./...\n" {
-		t.Errorf("sentIn = %q, want one entry with trailing newline", stub.sentIn)
+	time.Sleep(80 * time.Millisecond) // CR is sent on a delayed goroutine
+	if len(stub.sentIn) != 2 || string(stub.sentIn[0]) != "go test ./..." || stub.sentIn[1][0] != 0x0d {
+		t.Errorf("sentIn = %q, want [text, {0x0d}] split", stub.sentIn)
 	}
 }
 
@@ -112,6 +113,54 @@ func (s *stubSubscriberDriverAware) CurrentDriverName() string { return s.curren
 // as a user-visible toast, so the reply just vanished). Until a real
 // multi-driver flow ships, treat Feishu input as "take over silently" —
 // the user is in Feishu because they aren't at the local terminal.
+// Bundling "text\r" or "text\n" into one SendInput call reads as a paste in
+// claude/codex TUIs — the trailing CR/LF lands in the input buffer but never
+// triggers submit (memory: see feedback_template_send_split_cr). The router
+// must split text replies into two SendInput calls: the text first, then a
+// bare CR (0x0d) after a short delay.
+func TestRouter_InputSubmitSplitsTextAndEnter(t *testing.T) {
+	idx := NewCardIndex()
+	idx.Put(&CardAnchor{SessionID: "s", CardMsgID: "m", CardToken: "t", OwnerOpenID: "ou_owner"})
+	stub := &stubSubscriber{openID: "ou_owner"}
+	r := NewRouter(idx, func(string) Subscriber { return stub })
+
+	dec := r.RouteCardAction("t", "ou_owner", "input", "", "say hi")
+	if dec.Action != ActionInject {
+		t.Fatalf("action = %v, want inject", dec.Action)
+	}
+	// The CR send is scheduled on a goroutine with ~16ms delay; give it time.
+	time.Sleep(80 * time.Millisecond)
+
+	if len(stub.sentIn) != 2 {
+		t.Fatalf("sentIn count = %d, want 2 (text + CR): %q", len(stub.sentIn), stub.sentIn)
+	}
+	if string(stub.sentIn[0]) != "say hi" {
+		t.Errorf("sentIn[0] = %q, want %q (text without trailing CR/LF)", stub.sentIn[0], "say hi")
+	}
+	if len(stub.sentIn[1]) != 1 || stub.sentIn[1][0] != 0x0d {
+		t.Errorf("sentIn[1] = %v, want one byte 0x0d (Enter)", stub.sentIn[1])
+	}
+}
+
+// Same split for IM-message replies (user typed text in a Feishu DM thread)
+// — same TUI, same bundling-as-paste issue.
+func TestRouter_ReplySubmitSplitsTextAndEnter(t *testing.T) {
+	idx := NewCardIndex()
+	idx.Put(&CardAnchor{SessionID: "s", CardMsgID: "m", CardToken: "t", OwnerOpenID: "ou_owner"})
+	stub := &stubSubscriber{openID: "ou_owner"}
+	r := NewRouter(idx, func(string) Subscriber { return stub })
+
+	r.RouteReply("m", "ou_owner", "go test")
+	time.Sleep(80 * time.Millisecond)
+
+	if len(stub.sentIn) != 2 {
+		t.Fatalf("sentIn count = %d, want 2: %q", len(stub.sentIn), stub.sentIn)
+	}
+	if string(stub.sentIn[0]) != "go test" || stub.sentIn[1][0] != 0x0d {
+		t.Errorf("split shape wrong: %q", stub.sentIn)
+	}
+}
+
 func TestRouter_TakesOverFromExistingDriver(t *testing.T) {
 	idx := NewCardIndex()
 	idx.Put(&CardAnchor{SessionID: "s", CardMsgID: "m", CardToken: "t", OwnerOpenID: "ou_owner"})
@@ -128,7 +177,8 @@ func TestRouter_TakesOverFromExistingDriver(t *testing.T) {
 	if !stub.claimed {
 		t.Errorf("ClaimDriver should have been called to seize driver from local-terminal")
 	}
-	if len(stub.sentIn) != 1 || string(stub.sentIn[0]) != "go test\n" {
-		t.Errorf("sentIn = %q, want one entry %q", stub.sentIn, "go test\n")
+	time.Sleep(80 * time.Millisecond) // CR is sent on a delayed goroutine
+	if len(stub.sentIn) != 2 || string(stub.sentIn[0]) != "go test" || stub.sentIn[1][0] != 0x0d {
+		t.Errorf("sentIn = %q, want [text, {0x0d}] split", stub.sentIn)
 	}
 }

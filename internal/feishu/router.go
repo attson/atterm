@@ -13,6 +13,8 @@
 // window is reserved for the async anchor PATCH on the caller side.
 package feishu
 
+import "time"
+
 // Action is what the router decided to do.
 type Action int
 
@@ -63,7 +65,7 @@ func (r *Router) RouteReply(msgID, operatorOpenID, text string) Decision {
 	if anchor == nil {
 		return Decision{Action: ActionReject, Toast: "找不到对应会话，请通过新锚卡操作"}
 	}
-	return r.injectInto(anchor, operatorOpenID, []byte(text+"\n"))
+	return r.injectInto(anchor, operatorOpenID, []byte(text), true /*submitAfter*/)
 }
 
 // RouteCardAction handles a card.action.trigger event. kind is the value
@@ -96,13 +98,13 @@ func (r *Router) routeCardActionWith(anchor *CardAnchor, operatorOpenID, kind, e
 		if text == "" {
 			return Decision{Action: ActionReject, Toast: ""}
 		}
-		return r.injectInto(anchor, operatorOpenID, []byte(text+"\n"))
+		return r.injectInto(anchor, operatorOpenID, []byte(text), true /*submitAfter*/)
 	case "key":
 		b := keyBytes(event)
 		if b == nil {
 			return Decision{Action: ActionReject, Toast: "未知按键"}
 		}
-		return r.injectInto(anchor, operatorOpenID, b)
+		return r.injectInto(anchor, operatorOpenID, b, false /*submitAfter*/)
 	case "end":
 		if operatorOpenID != anchor.OwnerOpenID {
 			return Decision{Action: ActionReject, Toast: "无权限"}
@@ -113,7 +115,7 @@ func (r *Router) routeCardActionWith(anchor *CardAnchor, operatorOpenID, kind, e
 	}
 }
 
-func (r *Router) injectInto(anchor *CardAnchor, operatorOpenID string, payload []byte) Decision {
+func (r *Router) injectInto(anchor *CardAnchor, operatorOpenID string, payload []byte, submitAfter bool) Decision {
 	if operatorOpenID != anchor.OwnerOpenID {
 		return Decision{Action: ActionReject, Toast: "无权限"}
 	}
@@ -130,6 +132,18 @@ func (r *Router) injectInto(anchor *CardAnchor, operatorOpenID string, payload [
 	sub.ClaimDriver()
 	if !sub.SendInput(payload) {
 		return Decision{Action: ActionReject, Toast: "输入未被接收（队列已满）"}
+	}
+	// AI TUIs (claude/codex) read a bundled "text\r" or "text\n" as a PASTE,
+	// not as type-then-submit — the text lands in the input buffer but is
+	// never committed. The fix is to send the CR as a second, delayed
+	// SendInput so the TUI's input loop sees it as a discrete "Enter"
+	// keystroke. 16ms matches the proven split in the desktop template flow
+	// (see feedback_template_send_split_cr).
+	if submitAfter {
+		go func() {
+			time.Sleep(16 * time.Millisecond)
+			sub.SendInput([]byte{0x0d})
+		}()
 	}
 	return Decision{Action: ActionInject}
 }

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/google/uuid"
@@ -263,15 +265,30 @@ func TestHandleCardAction_EmptyTextIgnored(t *testing.T) {
 }
 
 // stubRouterSubscriber is a minimal internalfeishu.Subscriber for router tests.
+// sentInputs accumulates every SendInput call so tests can assert the new
+// text/CR split (one call per chunk, instead of bundled text+\n).
 type stubRouterSubscriber struct {
-	sentInput []byte
-	owner     string
+	mu         sync.Mutex
+	sentInputs [][]byte
+	owner      string
 }
 
-func (s *stubRouterSubscriber) ClaimDriver()              {}
-func (s *stubRouterSubscriber) OwnerOpenID() string       { return s.owner }
-func (s *stubRouterSubscriber) SendInput(b []byte) bool   { s.sentInput = b; return true }
+func (s *stubRouterSubscriber) ClaimDriver()        {}
+func (s *stubRouterSubscriber) OwnerOpenID() string { return s.owner }
+func (s *stubRouterSubscriber) SendInput(b []byte) bool {
+	s.mu.Lock()
+	s.sentInputs = append(s.sentInputs, append([]byte(nil), b...))
+	s.mu.Unlock()
+	return true
+}
 func (s *stubRouterSubscriber) CurrentDriverName() string { return "" }
+func (s *stubRouterSubscriber) snapshotInputs() [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([][]byte, len(s.sentInputs))
+	copy(out, s.sentInputs)
+	return out
+}
 
 // TestHandleCardAction_RouterInput verifies that handleCardAction with kind="input"
 // routes through the router and delivers the payload to the subscriber.
@@ -301,9 +318,11 @@ func TestHandleCardAction_RouterInput(t *testing.T) {
 
 	s.handleCardAction(context.Background(), sessID, "input", "", ownerOpenID, "ls")
 
-	want := []byte("ls\n")
-	if string(stub.sentInput) != string(want) {
-		t.Fatalf("SendInput got %q, want %q", stub.sentInput, want)
+	// Router splits into two SendInput calls (text, then CR after 16ms).
+	time.Sleep(80 * time.Millisecond)
+	got := stub.snapshotInputs()
+	if len(got) != 2 || string(got[0]) != "ls" || got[1][0] != 0x0d {
+		t.Fatalf("sentInputs = %q, want [text, {0x0d}] split", got)
 	}
 }
 
@@ -335,8 +354,8 @@ func TestHandleCardAction_RouterInputWrongOwner(t *testing.T) {
 
 	s.handleCardAction(context.Background(), sessID, "input", "", "ou_intruder", "rm -rf /")
 
-	if len(stub.sentInput) != 0 {
-		t.Fatalf("wrong owner must not inject, got %q", stub.sentInput)
+	if got := stub.snapshotInputs(); len(got) != 0 {
+		t.Fatalf("wrong owner must not inject, got %q", got)
 	}
 }
 

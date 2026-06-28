@@ -1,9 +1,11 @@
 package feishu
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"strings"
 )
 
@@ -150,6 +152,7 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 		ToolResponse     string          `json:"tool_response"`
 		Prompt           string          `json:"prompt"`
 		AssistantMessage string          `json:"assistant_message"`
+		TranscriptPath   string          `json:"transcript_path"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return TurnEvent{}, false
@@ -161,10 +164,14 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 		}
 		return TurnEvent{Kind: TurnUserPrompt, Text: p.Prompt}, true
 	case "Stop":
-		if p.AssistantMessage == "" {
-			return TurnEvent{Kind: TurnAssistantFinal, Text: ""}, true
+		text := p.AssistantMessage
+		if text == "" && p.TranscriptPath != "" {
+			// claude-code 2.1.x leaves assistant_message empty here; the real
+			// reply lives in the transcript JSONL. Best-effort: failures and
+			// missing-text both fall through to the bare 🤖 marker.
+			text = lastAssistantTextFromTranscript(p.TranscriptPath)
 		}
-		return TurnEvent{Kind: TurnAssistantFinal, Text: p.AssistantMessage}, true
+		return TurnEvent{Kind: TurnAssistantFinal, Text: text}, true
 	case "PreToolUse":
 		if p.ToolName == "AskUserQuestion" {
 			return TurnEvent{}, false
@@ -178,6 +185,65 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 	default:
 		return TurnEvent{}, false
 	}
+}
+
+// lastAssistantTextFromTranscript scans a claude-code transcript JSONL and
+// returns the text from the latest assistant entry's last text-type content
+// block. Returns "" on any failure (missing file, unreadable, no qualifying
+// entry, partial last line) — the Stop handler treats every error as
+// "fall back to empty body" since the 🤖 marker is the floor, not the goal.
+//
+// Each JSONL line looks like:
+//
+//	{"message":{"role":"assistant","content":[{"type":"text","text":"..."}, {"type":"tool_use",...}]}}
+//
+// Assistant entries can interleave text + tool_use blocks; tool_use rows on
+// their own are skipped, and within a multi-block assistant entry the last
+// text block wins (matches what the user actually sees in the TUI).
+func lastAssistantTextFromTranscript(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	// claude assistant text can be large; bump the scan buffer well past the
+	// 64KB default. 4MB matches the platform-wide message ceiling.
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+
+	var lastText string
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var obj struct {
+			Message struct {
+				Role    string            `json:"role"`
+				Content []json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &obj) != nil {
+			continue // skip partial / garbage lines
+		}
+		if obj.Message.Role != "assistant" {
+			continue
+		}
+		for _, c := range obj.Message.Content {
+			var elem struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(c, &elem) != nil {
+				continue
+			}
+			if elem.Type == "text" && elem.Text != "" {
+				lastText = elem.Text
+			}
+		}
+	}
+	return lastText
 }
 
 func extractAskUserQuestion(rawToolInput json.RawMessage) (string, []QuestionOption) {

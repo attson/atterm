@@ -3,6 +3,8 @@ package feishu
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -238,6 +240,73 @@ func TestClaudeCodeParseTurn_Stop(t *testing.T) {
 	}
 	if ev.Text != "done." {
 		t.Errorf("text = %q, want %q", ev.Text, "done.")
+	}
+}
+
+// claude-code 2.1.x leaves `assistant_message` empty in the Stop hook payload;
+// the real reply lives in the transcript JSONL at `transcript_path`. When
+// only the transcript path is present, ParseTurn must read the last
+// assistant text-content block out of that file. Otherwise the anchor card
+// renders 🤖 with no body.
+func TestClaudeCodeParseTurn_StopFallsBackToTranscript(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "transcript.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"first reply"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash"}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"final reply with the actual answer"}]}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"","transcript_path":"` + path + `"}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok || ev.Kind != TurnAssistantFinal {
+		t.Fatalf("got (%v, %v); want TurnAssistantFinal", ev, ok)
+	}
+	if ev.Text != "final reply with the actual answer" {
+		t.Errorf("text = %q; want last assistant text from transcript", ev.Text)
+	}
+}
+
+// When neither assistant_message nor a readable transcript_path is present,
+// ParseTurn still emits the Stop event (with empty Text) so downstream UI
+// can render the 🤖 marker. Better an empty marker than a swallowed event.
+func TestClaudeCodeParseTurn_StopEmitsEvenWhenTranscriptMissing(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"","transcript_path":"/does/not/exist.jsonl"}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok || ev.Kind != TurnAssistantFinal {
+		t.Fatalf("got (%v, %v); want TurnAssistantFinal", ev, ok)
+	}
+	if ev.Text != "" {
+		t.Errorf("text = %q; want empty when transcript unreadable", ev.Text)
+	}
+}
+
+// Malformed JSONL lines must not abort the scan — claude has been known to
+// emit partial lines mid-write. The reader skips garbage and returns the
+// best assistant text it could find.
+func TestClaudeCodeParseTurn_StopSurvivesGarbageLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.jsonl")
+	body := strings.Join([]string{
+		`not even json`,
+		`{"message":{"role":"assistant","content":[{"type":"text","text":"good text"}]}}`,
+		`{partial`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{"hook_event_name":"Stop","assistant_message":"","transcript_path":"` + path + `"}`)
+	ev, _ := a.ParseTurn(raw, "")
+	if ev.Text != "good text" {
+		t.Errorf("text = %q; want %q", ev.Text, "good text")
 	}
 }
 

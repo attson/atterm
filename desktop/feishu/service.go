@@ -308,6 +308,8 @@ func (s *Service) handleReplyMessage(ctx context.Context, senderOpenID, parentID
 }
 
 func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
+	textLen := len(text)
+	log.Printf("feishu-card-action: sid=%s kind=%s event=%q op=%s text_len=%d", sessionID, kind, event, operatorOpenID, textLen)
 	switch kind {
 	case "input", "key", "end":
 		// Anchor card actions: route through the inbound router.

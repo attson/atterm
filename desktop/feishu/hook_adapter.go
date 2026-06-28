@@ -175,11 +175,20 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 		return TurnEvent{Kind: TurnAssistantFinal, Text: text}, true
 	case "PreToolUse":
 		if p.ToolName == "AskUserQuestion" {
-			return TurnEvent{}, false
+			// The dedicated AskQuestion card carries the clickable options;
+			// the anchor mirrors the question text (❓ prefix) so the anchor
+			// stays a self-contained conversation log.
+			question, _ := extractAskUserQuestion(p.ToolInput)
+			if question == "" {
+				return TurnEvent{}, false
+			}
+			return TurnEvent{Kind: TurnAssistantFinal, Text: "❓ " + question}, true
 		}
 		return TurnEvent{Kind: TurnToolStart, ToolName: p.ToolName}, true
 	case "PostToolUse":
 		if p.ToolName == "AskUserQuestion" {
+			// The user's pick lands as a UserPromptSubmit shortly after; no
+			// need to noise up the anchor with a duplicate "tool ended".
 			return TurnEvent{}, false
 		}
 		return TurnEvent{Kind: TurnToolEnd, ToolName: p.ToolName, ToolBody: p.ToolResponse}, true

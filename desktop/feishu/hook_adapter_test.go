@@ -314,6 +314,34 @@ func TestClaudeCodeParseTurn_StopSurvivesGarbageLines(t *testing.T) {
 	}
 }
 
+// PreToolUse(AskUserQuestion) used to silent-skip the anchor stream entirely
+// — only the separate "AskQuestion" card surfaced the question. That left
+// the anchor body stuck mid-conversation with no hint about what the AI was
+// waiting on. Anchor now gets the question text too (with a ❓ prefix), so
+// the conversation in the anchor stays self-explanatory; the AskQuestion
+// card still ships the clickable options separately.
+func TestClaudeCodeParseTurn_AskUserQuestionEmitsForAnchor(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{
+		"hook_event_name":"PreToolUse",
+		"tool_name":"AskUserQuestion",
+		"tool_input":{"questions":[{"question":"你今天想做什么类型的任务?","options":[{"label":"写代码"}]}]}
+	}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok {
+		t.Fatal("AskUserQuestion should now emit into the anchor stream")
+	}
+	if ev.Kind != TurnAssistantFinal {
+		t.Errorf("kind = %v, want TurnAssistantFinal", ev.Kind)
+	}
+	if !strings.Contains(ev.Text, "你今天想做什么类型的任务?") {
+		t.Errorf("text = %q, want it to include the question", ev.Text)
+	}
+	if !strings.Contains(ev.Text, "❓") {
+		t.Errorf("text = %q, want a ❓ marker so the anchor reader can tell it's a question", ev.Text)
+	}
+}
+
 func TestClaudeCodeParseTurn_PreToolUse(t *testing.T) {
 	a := &claudeCodeAdapter{}
 	raw := json.RawMessage(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}`)
@@ -341,12 +369,15 @@ func TestClaudeCodeParseTurn_PostToolUse(t *testing.T) {
 	}
 }
 
-func TestClaudeCodeParseTurn_AskUserQuestionStaysOnAskPath(t *testing.T) {
+// AskUserQuestion with no question text (empty tool_input) is a degenerate
+// payload — nothing to render in the anchor — so ParseTurn drops it instead
+// of emitting an empty-text TurnAssistantFinal that would render as a bare
+// 🤖 with nothing after.
+func TestClaudeCodeParseTurn_AskUserQuestionEmptyDrops(t *testing.T) {
 	a := &claudeCodeAdapter{}
 	raw := json.RawMessage(`{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{}}`)
-	_, ok := a.ParseTurn(raw, "")
-	if ok {
-		t.Errorf("ParseTurn should not emit a TurnEvent for AskUserQuestion (existing AskQuestion path handles it)")
+	if _, ok := a.ParseTurn(raw, ""); ok {
+		t.Errorf("ParseTurn should drop AskUserQuestion when no question text is present")
 	}
 }
 

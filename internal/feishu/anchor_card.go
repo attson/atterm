@@ -200,10 +200,16 @@ func inputElement(sessionID string) map[string]any {
 	// V2 schema requires the callback payload to live inside behaviors[0].value
 	// — not as a top-level `value` field. Top-level value is silently ignored,
 	// no card.action.trigger fires, the textarea looks "dead" on submit.
+	//
+	// default_value is explicitly "" so that when this element is re-sent via
+	// UpdateCardElement (post-submit clear path), the client re-renders with
+	// an empty textbox. Leaving it unset was a client-side no-op — Feishu
+	// only clears the visible value when default_value is present.
 	return map[string]any{
-		"tag":         "input",
-		"element_id":  AnchorInputElementID,
-		"placeholder": map[string]any{"tag": "plain_text", "content": "Type here…"},
+		"tag":           "input",
+		"element_id":    AnchorInputElementID,
+		"placeholder":   map[string]any{"tag": "plain_text", "content": "Type here…"},
+		"default_value": "",
 		"behaviors": []any{map[string]any{
 			"type": "callback",
 			"value": map[string]any{

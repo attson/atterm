@@ -102,13 +102,13 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	t.Log("=== step 4: ClearInputElement (PATCH default_value to \"\") ===")
-	err = client.PatchCardElement(ctx, tok, cardID, internalfeishu.AnchorInputElementID,
-		map[string]any{"default_value": ""}, 3)
+	t.Log("=== step 4a: PUT full input replace (visual reset) ===")
+	fresh := internalfeishu.NewInputElement("manual-probe-sid")
+	err = client.UpdateCardElement(ctx, tok, cardID, internalfeishu.AnchorInputElementID, fresh, 3)
 	if err != nil {
-		t.Fatalf("PatchCardElement input clear FAILED: %v", err)
+		t.Fatalf("UpdateCardElement input replace FAILED: %v", err)
 	}
-	t.Logf("OK: input clear PATCH applied")
+	t.Logf("OK: input full-replace PUT applied")
 
 	time.Sleep(500 * time.Millisecond)
 

@@ -268,6 +268,15 @@ func buttonsRow(sessionID string) map[string]any {
 	}
 }
 
+// NewInputElement builds a fresh input element definition (with element_id
+// pre-set). Exposed so callers can pass a full input JSON to
+// UpdateCardElement — that's the only mechanism V2 gives us to clear the
+// user-typed value after submit (PATCH default_value leaves the visible
+// value untouched once the user has typed in the field).
+func NewInputElement(sessionID string) map[string]any {
+	return inputElement(sessionID)
+}
+
 // AskOptionsColumnSet builds the column_set payload that replaces the default
 // buttons row when claude fires AskUserQuestion. Each button submits the
 // option label as if the user typed it into the input box.

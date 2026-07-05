@@ -28,6 +28,7 @@ type CardKitClient interface {
 	SendAnchorCard(ctx context.Context, tenantToken, openID string, cardBody []byte) (msgID, cardToken string, err error)
 	PatchCard(ctx context.Context, tenantToken, cardToken, elementID, bodyMarkdown string, sequence int64) error
 	PatchCardElement(ctx context.Context, tenantToken, cardToken, elementID string, partial map[string]any, sequence int64) error
+	UpdateCardElement(ctx context.Context, tenantToken, cardToken, elementID string, element map[string]any, sequence int64) error
 }
 
 // CommandFinishedEvent feeds the dispatcher from the heuristic OSC 133 D path.
@@ -385,16 +386,21 @@ func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bo
 	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, internalfeishu.AnchorBodyElementID, bodyMarkdown, sequence)
 }
 
-// ClearAnchorInput resets the anchor card's input element's default_value to
-// "" so the next user reply starts with an empty textarea. Called after each
-// successful inject from kind=input so the previous text doesn't linger.
-func (d *Dispatcher) ClearAnchorInput(ctx context.Context, tenantToken, cardToken string, sequence int64) error {
+// ClearAnchorInput full-replaces the anchor card's input element with a
+// fresh definition so the visible textbox resets. sessionID is needed to
+// rebuild the input's behaviors[0].value payload.
+//
+// The obvious PATCH default_value:"" no-ops client-side once the user has
+// typed in the field — Feishu accepts it with code=0 but the textarea keeps
+// showing the last submitted text. Full element replace via the PUT
+// endpoint forces a re-render.
+func (d *Dispatcher) ClearAnchorInput(ctx context.Context, tenantToken, cardToken, sessionID string, sequence int64) error {
 	if d.cfg.CardKit == nil {
 		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
 	}
-	return d.cfg.CardKit.PatchCardElement(ctx, tenantToken, cardToken,
+	return d.cfg.CardKit.UpdateCardElement(ctx, tenantToken, cardToken,
 		internalfeishu.AnchorInputElementID,
-		map[string]any{"default_value": ""}, sequence)
+		internalfeishu.NewInputElement(sessionID), sequence)
 }
 
 // PatchAnchorElement is the generic element-PATCH passthrough — used by the

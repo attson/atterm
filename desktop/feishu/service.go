@@ -320,14 +320,15 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 		decision := r.RouteCardActionBySession(sessionID, operatorOpenID, kind, event, text)
 		switch decision.Action {
 		case internalfeishu.ActionInject:
-			// Happy path. For input submissions, fire a follow-up PATCH that
-			// resets the input textarea's default_value to "" so the next
-			// reply starts blank — Feishu V2 input elements don't auto-clear.
+			// Happy path. For input submissions, PUT a fresh input element
+			// so the visible textbox clears — Feishu V2 input doesn't
+			// auto-clear, and a PATCH default_value:"" is a client-side
+			// no-op once user has typed. See Dispatcher.ClearAnchorInput.
 			if kind == "input" {
 				cardToken := r.CardTokenFor(sessionID)
 				if cardToken != "" {
 					seq := r.NextPatchSeq(sessionID)
-					go s.clearAnchorInput(cardToken, seq)
+					go s.clearAnchorInput(cardToken, sessionID, seq)
 				}
 			}
 		case internalfeishu.ActionReject:
@@ -362,7 +363,7 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 // clearAnchorInput PATCHes the anchor card's input element back to empty so
 // the user's just-submitted reply doesn't linger in the textbox. Best-effort:
 // errors logged, never bubble up (the inject itself already succeeded).
-func (s *Service) clearAnchorInput(cardToken string, sequence int64) {
+func (s *Service) clearAnchorInput(cardToken, sessionID string, sequence int64) {
 	log.Printf("feishu: clear input entered card=%s seq=%d disp_nil=%v", cardToken, sequence, s.dispatcher == nil)
 	if s.dispatcher == nil {
 		return
@@ -374,11 +375,11 @@ func (s *Service) clearAnchorInput(cardToken string, sequence int64) {
 		log.Printf("feishu: clear input get token: %v", err)
 		return
 	}
-	if err := s.dispatcher.ClearAnchorInput(ctx, tok, cardToken, sequence); err != nil {
-		log.Printf("feishu: clear input PATCH card=%s seq=%d: %v", cardToken, sequence, err)
+	if err := s.dispatcher.ClearAnchorInput(ctx, tok, cardToken, sessionID, sequence); err != nil {
+		log.Printf("feishu: clear input PUT card=%s seq=%d: %v", cardToken, sequence, err)
 		return
 	}
-	log.Printf("feishu: clear input PATCH ok card=%s seq=%d", cardToken, sequence)
+	log.Printf("feishu: clear input PUT ok card=%s seq=%d", cardToken, sequence)
 }
 
 // In-memory short-code table for local mode.
@@ -484,6 +485,9 @@ func (c *authClassAdaptingClient) PatchCard(ctx context.Context, tok, cardToken,
 }
 func (c *authClassAdaptingClient) PatchCardElement(ctx context.Context, tok, cardToken, elementID string, partial map[string]any, sequence int64) error {
 	return c.adapt(c.inner.PatchCardElement(ctx, tok, cardToken, elementID, partial, sequence))
+}
+func (c *authClassAdaptingClient) UpdateCardElement(ctx context.Context, tok, cardToken, elementID string, element map[string]any, sequence int64) error {
+	return c.adapt(c.inner.UpdateCardElement(ctx, tok, cardToken, elementID, element, sequence))
 }
 func (c *authClassAdaptingClient) adapt(err error) error {
 	if err == nil {

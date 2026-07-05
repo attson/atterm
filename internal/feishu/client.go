@@ -82,6 +82,48 @@ func (c *Client) PatchCard(ctx context.Context, tenantToken, cardToken, elementI
 		map[string]any{"content": bodyMarkdown}, sequence)
 }
 
+// UpdateCardElement PUTs a full replacement element via
+// /open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}. Use this
+// when a PATCH won't take effect client-side — the canonical case is the
+// input textbox: PATCH default_value:"" is accepted (code=0) but doesn't
+// clear the visible value once the user has typed; a full-element replace
+// forces a re-render.
+//
+// element is the new element definition (tag + element_id + fields); wire
+// shape is `{"uuid": ..., "element": "<JSON string>", "sequence": N}`.
+func (c *Client) UpdateCardElement(ctx context.Context, tenantToken, cardToken, elementID string, element map[string]any, sequence int64) error {
+	elementJSON, _ := json.Marshal(element)
+	payload := map[string]any{
+		"uuid":     fmt.Sprintf("%s-%s-%d", cardToken, elementID, sequence),
+		"sequence": sequence,
+		"element":  string(elementJSON),
+	}
+	body, _ := json.Marshal(payload)
+	url := fmt.Sprintf("%s/open-apis/cardkit/v1/cards/%s/elements/%s", c.baseURL, cardToken, elementID)
+	req, _ := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tenantToken)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := c.httpC.Do(req)
+	if err != nil {
+		return fmt.Errorf("card PUT: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	var r struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	_ = json.Unmarshal(respBody, &r)
+	if r.Code != 0 {
+		if authClassCodes[r.Code] {
+			return &AuthClassError{Code: r.Code, Msg: r.Msg}
+		}
+		return fmt.Errorf("cardkit update: code=%d msg=%s url=%s req=%s resp=%s",
+			r.Code, r.Msg, url, string(body), string(respBody))
+	}
+	return nil
+}
+
 // PatchCardElement is the generic partial-update primitive: send any
 // element-config fragment (e.g. {"content": "..."} for markdown,
 // {"default_value": ""} to reset an input). Wraps the fragment as a JSON

@@ -363,6 +363,7 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 // the user's just-submitted reply doesn't linger in the textbox. Best-effort:
 // errors logged, never bubble up (the inject itself already succeeded).
 func (s *Service) clearAnchorInput(cardToken string, sequence int64) {
+	log.Printf("feishu: clear input entered card=%s seq=%d disp_nil=%v", cardToken, sequence, s.dispatcher == nil)
 	if s.dispatcher == nil {
 		return
 	}
@@ -375,7 +376,9 @@ func (s *Service) clearAnchorInput(cardToken string, sequence int64) {
 	}
 	if err := s.dispatcher.ClearAnchorInput(ctx, tok, cardToken, sequence); err != nil {
 		log.Printf("feishu: clear input PATCH card=%s seq=%d: %v", cardToken, sequence, err)
+		return
 	}
+	log.Printf("feishu: clear input PATCH ok card=%s seq=%d", cardToken, sequence)
 }
 
 // In-memory short-code table for local mode.

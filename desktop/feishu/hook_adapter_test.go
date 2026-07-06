@@ -383,6 +383,63 @@ func TestClaudeCodeParseTurn_PostToolUse(t *testing.T) {
 	}
 }
 
+// claude-code's AskUserQuestion can bundle N questions in one hook
+// invocation — a mix of radio-choice and multi-select checkbox groups.
+// Previously ParseTurn kept only questions[0]; the rest were silently
+// dropped from the anchor, leaving the reader unaware of the follow-up
+// choices claude wanted answered.
+//
+// Multi-question payload: body renders every question + its options with
+// numbered labels; Options[] stays empty because the single button row on
+// the anchor can't represent multiple radio groups (users answer via the
+// separate AskQuestion card / typing in the input).
+func TestClaudeCodeParseTurn_AskUserQuestionMultiQuestion(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{
+		"hook_event_name":"PreToolUse",
+		"tool_name":"AskUserQuestion",
+		"tool_input":{"questions":[
+			{"question":"行为选哪个?","options":[
+				{"label":"只报告","description":"最安全"},
+				{"label":"交互确认删除"}
+			]},
+			{"question":"包含哪些高级选项?","options":[
+				{"label":"支持排除目录"},
+				{"label":"按大小预筛选"}
+			]}
+		]}
+	}`)
+	ev, ok := a.ParseTurn(raw, "")
+	if !ok || ev.Kind != TurnAssistantFinal {
+		t.Fatalf("expected TurnAssistantFinal, got (%+v, %v)", ev, ok)
+	}
+	for _, want := range []string{"行为选哪个?", "包含哪些高级选项?", "只报告", "支持排除目录"} {
+		if !strings.Contains(ev.Text, want) {
+			t.Errorf("text = %q; missing %q", ev.Text, want)
+		}
+	}
+	if len(ev.Options) != 0 {
+		t.Errorf("Options = %v; want empty (multi-question can't collapse to one button row)", ev.Options)
+	}
+}
+
+// Single-question is still the common case (one radio group); Options
+// remains populated so the anchor button row swaps to option buttons.
+func TestClaudeCodeParseTurn_AskUserQuestionSingleStillSwapsButtons(t *testing.T) {
+	a := &claudeCodeAdapter{}
+	raw := json.RawMessage(`{
+		"hook_event_name":"PreToolUse",
+		"tool_name":"AskUserQuestion",
+		"tool_input":{"questions":[
+			{"question":"选一个语言","options":[{"label":"Python"},{"label":"Go"}]}
+		]}
+	}`)
+	ev, _ := a.ParseTurn(raw, "")
+	if len(ev.Options) != 2 || ev.Options[0] != "Python" || ev.Options[1] != "Go" {
+		t.Errorf("Options = %v; want [Python Go] on single-question", ev.Options)
+	}
+}
+
 // AskUserQuestion with no question text (empty tool_input) is a degenerate
 // payload — nothing to render in the anchor — so ParseTurn drops it instead
 // of emitting an empty-text TurnAssistantFinal that would render as a bare

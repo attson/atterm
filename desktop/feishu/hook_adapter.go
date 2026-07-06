@@ -181,23 +181,37 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 		return TurnEvent{Kind: TurnAssistantFinal, Text: text}, true
 	case "PreToolUse":
 		if p.ToolName == "AskUserQuestion" {
-			// Anchor mirrors the question + options text (❓ prefix). Option
-			// LABELS are also handed to the dispatcher via Options so the
-			// dispatcher can swap the anchor's button row to clickable
-			// option buttons. The dedicated AskQuestion card still ships
-			// separately as a backup.
-			question, opts := extractAskUserQuestion(p.ToolInput)
-			if question == "" {
+			// Anchor mirrors every question + options block (❓ prefix). A
+			// single-question payload also hands the option labels to the
+			// dispatcher so the anchor's button row swaps to clickable
+			// buttons; multi-question payloads leave Options empty because
+			// one row of buttons can't represent N radio groups — users
+			// answer those via the separate AskQuestion card or by typing
+			// in the input box. The dedicated AskQuestion card always ships
+			// too as a backup path.
+			questions := extractAllAskUserQuestions(p.ToolInput)
+			if len(questions) == 0 {
 				return TurnEvent{}, false
 			}
-			text := "❓ " + question
-			labels := make([]string, 0, len(opts))
-			for i, opt := range opts {
-				text += fmt.Sprintf("\n%d. %s", i+1, opt.Label)
-				if opt.Description != "" {
-					text += " — " + opt.Description
+			var text string
+			for qi, q := range questions {
+				if qi > 0 {
+					text += "\n\n"
 				}
-				labels = append(labels, opt.Label)
+				text += "❓ " + q.Question
+				for i, opt := range q.Options {
+					text += fmt.Sprintf("\n%d. %s", i+1, opt.Label)
+					if opt.Description != "" {
+						text += " — " + opt.Description
+					}
+				}
+			}
+			var labels []string
+			if len(questions) == 1 {
+				labels = make([]string, 0, len(questions[0].Options))
+				for _, opt := range questions[0].Options {
+					labels = append(labels, opt.Label)
+				}
 			}
 			return TurnEvent{Kind: TurnAssistantFinal, Text: text, Options: labels}, true
 		}
@@ -274,8 +288,24 @@ func lastAssistantTextFromTranscript(path string) string {
 }
 
 func extractAskUserQuestion(rawToolInput json.RawMessage) (string, []QuestionOption) {
-	if len(rawToolInput) == 0 {
+	qs := extractAllAskUserQuestions(rawToolInput)
+	if len(qs) == 0 {
 		return "", nil
+	}
+	return qs[0].Question, qs[0].Options
+}
+
+// AskUserQuestionEntry is one question + its options from a
+// PreToolUse(AskUserQuestion) payload. AskUserQuestion may bundle multiple
+// (radio + multi-select) in a single hook call — each becomes one entry.
+type AskUserQuestionEntry struct {
+	Question string
+	Options  []QuestionOption
+}
+
+func extractAllAskUserQuestions(rawToolInput json.RawMessage) []AskUserQuestionEntry {
+	if len(rawToolInput) == 0 {
+		return nil
 	}
 	var p struct {
 		Question  string `json:"question"`
@@ -288,18 +318,21 @@ func extractAskUserQuestion(rawToolInput json.RawMessage) (string, []QuestionOpt
 		} `json:"questions"`
 	}
 	if err := json.Unmarshal(rawToolInput, &p); err != nil {
-		return "", nil
+		return nil
 	}
 	if len(p.Questions) > 0 {
-		q0 := p.Questions[0]
-		opts := make([]QuestionOption, 0, len(q0.Options))
-		for _, o := range q0.Options {
-			opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
+		out := make([]AskUserQuestionEntry, 0, len(p.Questions))
+		for _, q := range p.Questions {
+			opts := make([]QuestionOption, 0, len(q.Options))
+			for _, o := range q.Options {
+				opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
+			}
+			out = append(out, AskUserQuestionEntry{Question: q.Question, Options: opts})
 		}
-		return q0.Question, opts
+		return out
 	}
 	if p.Question != "" {
-		return p.Question, nil
+		return []AskUserQuestionEntry{{Question: p.Question}}
 	}
-	return "", nil
+	return nil
 }

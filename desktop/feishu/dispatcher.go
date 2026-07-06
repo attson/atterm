@@ -194,6 +194,19 @@ func (d *Dispatcher) DispatchCommandFinished(ctx context.Context, ev CommandFini
 }
 
 func (d *Dispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent) {
+	// Anchor supersedes standalone WaitingInput: when a live AIChunker is
+	// attached for this session, the anchor card's status preamble
+	// (⏸ 等待输入 · 已 Nm) + fully interactive body already carries the
+	// signal. A second card would duplicate the notification in the same DM.
+	// Non-AI sessions and detached-anchor cases still fall through — the
+	// WaitingInput card is the fallback notification surface for those.
+	d.aiMu.Lock()
+	hasAnchor := d.aiChunkers[ev.SessionID.String()] != nil
+	d.aiMu.Unlock()
+	if hasAnchor {
+		return
+	}
+
 	// The session-level key gates all waiting-input sends for this session,
 	// regardless of whether the trigger came from the hook or heuristic path.
 	sessionKey := "waiting:" + ev.SessionID.String()

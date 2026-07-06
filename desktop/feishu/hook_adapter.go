@@ -213,12 +213,17 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 					}
 				}
 			}
-			var labels []string
-			if len(questions) == 1 {
-				labels = make([]string, 0, len(questions[0].Options))
-				for _, opt := range questions[0].Options {
-					labels = append(labels, opt.Label)
-				}
+			// Anchor button row always swaps to the FIRST question's options
+			// so users have at least one clickable answer even in multi-
+			// question payloads. For multi-question, add a hint that the
+			// remaining questions need the input box (the anchor can only
+			// carry one button row per the current V2 layout).
+			labels := make([]string, 0, len(questions[0].Options))
+			for _, opt := range questions[0].Options {
+				labels = append(labels, opt.Label)
+			}
+			if len(questions) > 1 {
+				text += "\n\n_按钮对应问题 1;其余问题请在输入框中作答_"
 			}
 			return TurnEvent{Kind: TurnAssistantFinal, Text: text, Options: labels}, true
 		}

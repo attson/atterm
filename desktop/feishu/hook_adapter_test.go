@@ -418,8 +418,14 @@ func TestClaudeCodeParseTurn_AskUserQuestionMultiQuestion(t *testing.T) {
 			t.Errorf("text = %q; missing %q", ev.Text, want)
 		}
 	}
-	if len(ev.Options) != 0 {
-		t.Errorf("Options = %v; want empty (multi-question can't collapse to one button row)", ev.Options)
+	// Multi-question: at least the FIRST question's options become clickable
+	// buttons on the anchor. Answering the rest still needs the input box,
+	// but "click one of question 1's options" beats "no widgets at all".
+	if len(ev.Options) == 0 {
+		t.Errorf("Options empty; want first-question options so users can click at least one answer")
+	}
+	if len(ev.Options) > 0 && ev.Options[0] != "只报告" {
+		t.Errorf("Options[0] = %q; want first-question label %q", ev.Options[0], "只报告")
 	}
 }
 

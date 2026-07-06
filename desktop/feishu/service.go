@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -325,11 +326,13 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 			// auto-clear, and a PATCH default_value:"" is a client-side
 			// no-op once user has typed. See Dispatcher.ClearAnchorInput.
 			if kind == "input" {
-				cardToken := r.CardTokenFor(sessionID)
-				if cardToken != "" {
-					// Reserve 2 seq slots — DELETE uses seqBase, CREATE uses seqBase+1.
-					seqBase := r.ReservePatchSeqs(sessionID, 2)
-					go s.clearAnchorInput(cardToken, sessionID, seqBase)
+				// Grab the anchor directly so clearAnchorInput can hold the
+				// per-anchor SendMu across DELETE + CREATE — seq allocation
+				// alone isn't enough, we also need to keep other body/button
+				// flushes from squeezing between the two ops and bumping
+				// the "last seen" sequence past our reserved slots.
+				if a := r.AnchorBySession(sessionID); a != nil {
+					go s.clearAnchorInput(a, sessionID)
 				}
 			}
 		case internalfeishu.ActionReject:
@@ -364,8 +367,8 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 // clearAnchorInput PATCHes the anchor card's input element back to empty so
 // the user's just-submitted reply doesn't linger in the textbox. Best-effort:
 // errors logged, never bubble up (the inject itself already succeeded).
-func (s *Service) clearAnchorInput(cardToken, sessionID string, sequence int64) {
-	log.Printf("feishu: clear input entered card=%s seq=%d disp_nil=%v", cardToken, sequence, s.dispatcher == nil)
+func (s *Service) clearAnchorInput(anchor *internalfeishu.CardAnchor, sessionID string) {
+	log.Printf("feishu: clear input entered card=%s disp_nil=%v", anchor.CardToken, s.dispatcher == nil)
 	if s.dispatcher == nil {
 		return
 	}
@@ -376,11 +379,18 @@ func (s *Service) clearAnchorInput(cardToken, sessionID string, sequence int64) 
 		log.Printf("feishu: clear input get token: %v", err)
 		return
 	}
-	if err := s.dispatcher.ClearAnchorInput(ctx, tok, cardToken, sessionID, sequence); err != nil {
-		log.Printf("feishu: clear input PUT card=%s seq=%d: %v", cardToken, sequence, err)
+	// Hold SendMu across DELETE + CREATE so nothing else can send an op
+	// with a higher seq in between — Feishu enforces strict monotonicity
+	// (code=300317 "sequence compare failed" if it's violated).
+	anchor.SendMu.Lock()
+	defer anchor.SendMu.Unlock()
+	seqDel := atomic.AddInt64(&anchor.PatchSeq, 1)
+	seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
+	if err := s.dispatcher.ClearAnchorInputWithSeqs(ctx, tok, anchor.CardToken, sessionID, seqDel, seqCre); err != nil {
+		log.Printf("feishu: clear input DELETE+CREATE card=%s seq=%d/%d: %v", anchor.CardToken, seqDel, seqCre, err)
 		return
 	}
-	log.Printf("feishu: clear input PUT ok card=%s seq=%d", cardToken, sequence)
+	log.Printf("feishu: clear input ok card=%s seq=%d/%d", anchor.CardToken, seqDel, seqCre)
 }
 
 // In-memory short-code table for local mode.

@@ -28,11 +28,21 @@ type CardAnchor struct {
 	LastPatchAt time.Time
 	LastBody    string
 
-	// PatchSeq is atomically incremented on each PATCH call so Feishu can
-	// drop out-of-order updates. The chunker increments it before every
-	// PatchCard call; only the chunker goroutine writes it, so atomic ops
-	// are sufficient without a mutex.
+	// PatchSeq is bumped on every send. Reads/writes should happen under
+	// SendMu so allocation and network dispatch stay atomic per anchor.
 	PatchSeq int64
+
+	// SendMu serializes ALL Feishu-side sends against this card. Feishu
+	// enforces strict monotonicity: op with seq=N is rejected if any op
+	// with seq >= N has already been received. Concurrent goroutines
+	// bumping PatchSeq atomically is not enough — they can still SEND out
+	// of order (a body-flush goroutine using seq=8 winning the race
+	// against a clear-input goroutine that already dispatched DELETE
+	// seq=6 → CREATE seq=7 makes Feishu reject the CREATE with code=
+	// 300317 "sequence compare failed"). Every send path acquires SendMu,
+	// bumps PatchSeq under it, and holds the lock across the HTTP round-
+	// trip so nothing interleaves.
+	SendMu sync.Mutex
 }
 
 type CardIndex struct {

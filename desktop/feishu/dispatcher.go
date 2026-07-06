@@ -401,28 +401,28 @@ func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bo
 	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, internalfeishu.AnchorBodyElementID, bodyMarkdown, sequence)
 }
 
-// ClearAnchorInput removes the current input element then re-inserts a
-// fresh one after the body markdown. This is the only reliable way to
-// clear the visible textbox after submit — Feishu's client caches the
-// user-typed value against the element_id, and neither PATCH default_value
-// nor PUT full-replace invalidate that cache. DELETE + POST forces the
-// client to unmount the old textbox entirely and mount a new instance.
+// ClearAnchorInputWithSeqs removes the current input element then re-inserts
+// a fresh one after the body markdown. Caller must have already reserved
+// two consecutive sequence slots (seqDel < seqCre) and be holding the
+// per-anchor SendMu across the call so no other send can slip a higher-seq
+// op between DELETE and CREATE — Feishu enforces strict monotonicity and
+// rejects out-of-order arrivals with code=300317.
 //
-// Two sequential ops → two sequence numbers. Caller passes sequence for
-// the DELETE; sequence+1 is used for the CREATE. Both must be strictly
-// increasing across all ops against this card.
-func (d *Dispatcher) ClearAnchorInput(ctx context.Context, tenantToken, cardToken, sessionID string, sequence int64) error {
+// DELETE + POST is the only reliable clear: Feishu's client caches the
+// user-typed value against the element_id, and neither PATCH default_value
+// nor PUT full-replace invalidate that cache.
+func (d *Dispatcher) ClearAnchorInputWithSeqs(ctx context.Context, tenantToken, cardToken, sessionID string, seqDel, seqCre int64) error {
 	if d.cfg.CardKit == nil {
 		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
 	}
 	if err := d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
-		internalfeishu.AnchorInputElementID, sequence); err != nil {
+		internalfeishu.AnchorInputElementID, seqDel); err != nil {
 		return err
 	}
 	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
 		internalfeishu.AnchorBodyElementID, "insert_after",
 		[]map[string]any{internalfeishu.NewInputElement(sessionID)},
-		sequence+1)
+		seqCre)
 }
 
 // PatchAnchorElement is the generic element-PATCH passthrough — used by the

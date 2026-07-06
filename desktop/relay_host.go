@@ -149,9 +149,11 @@ func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
 			log.Printf("feishu-anchor-buttons: token failed session=%s: %v", sessionIDStr, err)
 			return
 		}
+		anchor.SendMu.Lock()
 		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
 		err = disp.PatchAnchorElement(ctx, tok, anchor.CardToken,
 			internalfeishu.AnchorButtonsElementID, partial, seq)
+		anchor.SendMu.Unlock()
 		if err != nil {
 			log.Printf("feishu-anchor-buttons: PATCH failed session=%s opts=%d: %v", sessionIDStr, len(options), err)
 			return
@@ -981,10 +983,12 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 				log.Printf("feishu-anchor: patch token failed session=%s: %v", sessID, err)
 				return
 			}
+			anchor.SendMu.Lock()
 			seq := atomic.AddInt64(&anchor.PatchSeq, 1)
 			err = internalfeishu.PatchWithRetry(func() error {
 				return disp.PatchAnchor(context.Background(), tok, anchor.CardToken, wrapped, seq)
 			})
+			anchor.SendMu.Unlock()
 			if err == nil {
 				log.Printf("feishu-anchor: patch ok session=%s seq=%d", sessID, seq)
 				return
@@ -1152,10 +1156,13 @@ func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
 		} else {
 			archiveMD = footer
 		}
+		anchor.SendMu.Lock()
 		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
-		if err := disp.PatchAnchor(context.Background(), tok, anchor.CardToken, archiveMD, seq); err != nil {
-			if !internalfeishu.IsCardGoneError(err) {
-				log.Printf("feishu-anchor: archive patch failed session=%s: %v", sessID, err)
+		perr := disp.PatchAnchor(context.Background(), tok, anchor.CardToken, archiveMD, seq)
+		anchor.SendMu.Unlock()
+		if perr != nil {
+			if !internalfeishu.IsCardGoneError(perr) {
+				log.Printf("feishu-anchor: archive patch failed session=%s: %v", sessID, perr)
 			}
 		}
 	}()

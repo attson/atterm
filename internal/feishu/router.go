@@ -172,18 +172,11 @@ func (r *Router) NextPatchSeq(sessionID string) int64 {
 	return atomic.AddInt64(&a.PatchSeq, 1)
 }
 
-// ReservePatchSeqs atomically bumps the per-anchor sequence counter by n and
-// returns the FIRST reserved value; the range [first, first+n) is caller-
-// owned. Used by multi-step ops (DELETE + CREATE for the input reset) that
-// must present strictly-increasing sequence numbers without other flushes
-// intercalating in between.
-func (r *Router) ReservePatchSeqs(sessionID string, n int64) int64 {
-	a := r.idx.BySessionID(sessionID)
-	if a == nil {
-		return 0
-	}
-	last := atomic.AddInt64(&a.PatchSeq, n)
-	return last - n + 1
+// AnchorBySession returns the *CardAnchor for a session, or nil if none.
+// Exposed so callers that need to hold the per-anchor SendMu across a
+// multi-step op (e.g. clear-input's DELETE + CREATE) can do so directly.
+func (r *Router) AnchorBySession(sessionID string) *CardAnchor {
+	return r.idx.BySessionID(sessionID)
 }
 
 // keyBytes maps button event names to the raw bytes injected to the PTY.

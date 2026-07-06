@@ -225,6 +225,11 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 			if len(questions) > 1 {
 				text += "\n\n_按钮对应问题 1;其余问题请在输入框中作答_"
 			}
+			// Custom / free-form answer: users can always type any text into
+			// the input box regardless of the offered options. claude accepts
+			// arbitrary text as the "Type something" answer natively, but the
+			// UX isn't obvious from the card alone — spell it out.
+			text += "\n\n_💡 想自定义?直接在下方输入框输入答案_"
 			return TurnEvent{Kind: TurnAssistantFinal, Text: text, Options: labels}, true
 		}
 		return TurnEvent{Kind: TurnToolStart, ToolName: p.ToolName}, true

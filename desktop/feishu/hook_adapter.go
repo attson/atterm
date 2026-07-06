@@ -149,6 +149,13 @@ type TurnEvent struct {
 	// session (e.g. user exits claude then runs it again) and reset the
 	// roller so old turns don't blur into fresh dialog.
 	TranscriptPath string
+	// FormQuestions carries the full AskUserQuestion payload (N questions
+	// each with options) so relay_host can insert an interactive form
+	// container on the anchor. Set only when Kind=TurnAssistantFinal
+	// carries an AskUserQuestion; empty for regular Stop / other events.
+	// Distinct from Options (single-question button swap) since forms
+	// need per-question structure that a flat label list can't carry.
+	FormQuestions []AskUserQuestionEntry
 }
 
 // ParseTurn extends HookAdapter for the AI streaming path. Returns (event, true)
@@ -213,24 +220,14 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 					}
 				}
 			}
-			// Anchor button row always swaps to the FIRST question's options
-			// so users have at least one clickable answer even in multi-
-			// question payloads. For multi-question, add a hint that the
-			// remaining questions need the input box (the anchor can only
-			// carry one button row per the current V2 layout).
-			labels := make([]string, 0, len(questions[0].Options))
-			for _, opt := range questions[0].Options {
-				labels = append(labels, opt.Label)
-			}
-			if len(questions) > 1 {
-				text += "\n\n_按钮对应问题 1;其余问题请在输入框中作答_"
-			}
-			// Custom / free-form answer: users can always type any text into
-			// the input box regardless of the offered options. claude accepts
-			// arbitrary text as the "Type something" answer natively, but the
-			// UX isn't obvious from the card alone — spell it out.
-			text += "\n\n_💡 想自定义?直接在下方输入框输入答案_"
-			return TurnEvent{Kind: TurnAssistantFinal, Text: text, Options: labels}, true
+			// Body still lists every question — it's the fallback readable
+			// summary when the form UX doesn't render (older client, etc.).
+			// FormQuestions carries the same data structured so relay_host
+			// can build the interactive form. Options stays empty because
+			// AskUserQuestion now always renders via the form container, no
+			// button swap needed.
+			text += "\n\n_💡 想自定义?在提交按钮下方或表单里的自定义输入框中输入答案_"
+			return TurnEvent{Kind: TurnAssistantFinal, Text: text, FormQuestions: questions}, true
 		}
 		return TurnEvent{Kind: TurnToolStart, ToolName: p.ToolName}, true
 	case "PostToolUse":

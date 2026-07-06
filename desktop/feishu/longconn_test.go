@@ -116,7 +116,7 @@ func TestLongConn_OnCardAction_RoutesAck(t *testing.T) {
 	gotSID := ""
 	cfg := LongConnConfig{
 		AppID: "x", AppSecret: "y",
-		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
+		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any) {
 			called++
 			gotSID = sessionID
 		},

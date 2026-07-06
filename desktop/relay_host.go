@@ -111,12 +111,96 @@ type anchorRuntime struct {
 // and waiting-input Feishu cards. Safe to call concurrently with session
 // callbacks. A nil dispatcher disables dispatch. Also wires the per-session
 // anchor-button-swap callback so AskUserQuestion can flip the keystroke row
-// to option buttons.
+// to option buttons, and the AskUserQuestion form-insert callback.
 func (h *relayHost) SetFeishuDispatcher(d *feishu.Dispatcher) {
 	h.feishuDispatcher.Store(d)
 	if d != nil {
 		d.SetOnAnchorButtons(h.swapAnchorButtons)
+		d.SetOnAskForm(h.updateAnchorAskForm)
 	}
+}
+
+// updateAnchorAskForm inserts an AskUserQuestion form container after the
+// body markdown (questions non-empty), or removes it (questions nil).
+// Best-effort: errors logged, never bubble up.
+func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.AskUserQuestionEntry) {
+	disp := h.feishuDispatcher.Load()
+	if disp == nil {
+		return
+	}
+	anchor := h.feishuCards.BySessionID(sessionIDStr)
+	if anchor == nil {
+		return
+	}
+	if len(questions) == 0 {
+		go h.deleteAnchorForm(anchor)
+		return
+	}
+	// Insert (or replace) the form: DELETE any existing first, then CREATE.
+	// Both steps under SendMu so seq stays contiguous.
+	specs := make([]internalfeishu.AskFormQuestion, 0, len(questions))
+	for _, q := range questions {
+		opts := make([]internalfeishu.AskFormOpt, 0, len(q.Options))
+		for _, o := range q.Options {
+			opts = append(opts, internalfeishu.AskFormOpt{Label: o.Label})
+		}
+		specs = append(specs, internalfeishu.AskFormQuestion{Question: q.Question, Options: opts})
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		tok, _, err := disp.GetToken(ctx)
+		if err != nil {
+			log.Printf("feishu-anchor-form: token failed session=%s: %v", sessionIDStr, err)
+			return
+		}
+		anchor.SendMu.Lock()
+		defer anchor.SendMu.Unlock()
+		if anchor.FormMounted {
+			seqDel := atomic.AddInt64(&anchor.PatchSeq, 1)
+			if err := disp.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seqDel); err != nil {
+				log.Printf("feishu-anchor-form: pre-DELETE failed session=%s: %v", sessionIDStr, err)
+				return
+			}
+			anchor.FormMounted = false
+		}
+		seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
+		form := internalfeishu.RenderAskQuestionForm(sessionIDStr, specs)
+		if err := disp.InsertAnchorFormWithSeq(ctx, tok, anchor.CardToken, form, seqCre); err != nil {
+			log.Printf("feishu-anchor-form: CREATE failed session=%s q=%d: %v", sessionIDStr, len(questions), err)
+			return
+		}
+		anchor.FormMounted = true
+		log.Printf("feishu-anchor-form: inserted session=%s q=%d seq=%d", sessionIDStr, len(questions), seqCre)
+	}()
+}
+
+// deleteAnchorForm removes the currently-mounted form if any. Acquires
+// SendMu itself; no-op when no form is mounted.
+func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
+	disp := h.feishuDispatcher.Load()
+	if disp == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tok, _, err := disp.GetToken(ctx)
+	if err != nil {
+		log.Printf("feishu-anchor-form: token failed session=%s: %v", anchor.SessionID, err)
+		return
+	}
+	anchor.SendMu.Lock()
+	defer anchor.SendMu.Unlock()
+	if !anchor.FormMounted {
+		return
+	}
+	seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+	if err := disp.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seq); err != nil {
+		log.Printf("feishu-anchor-form: DELETE failed session=%s: %v", anchor.SessionID, err)
+		return
+	}
+	anchor.FormMounted = false
+	log.Printf("feishu-anchor-form: removed session=%s seq=%d", anchor.SessionID, seq)
 }
 
 // swapAnchorButtons PATCHes the anchor card's button row. options nil →

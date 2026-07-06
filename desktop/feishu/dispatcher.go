@@ -141,6 +141,10 @@ type Dispatcher struct {
 	aiMu            sync.Mutex
 	aiChunkers      map[string]*internalfeishu.AIChunker
 	onAnchorButtons func(sessionID string, options []string) // nil opts → restore defaults
+	// onAskForm fires when claude's AskUserQuestion payload should surface
+	// as an interactive form container on the anchor. Non-empty questions
+	// → insert form; nil questions → remove form (claude moved on).
+	onAskForm func(sessionID string, questions []AskUserQuestionEntry)
 }
 
 // LookupCardSession returns the session id a previously sent card's message_id
@@ -437,6 +441,27 @@ func (d *Dispatcher) PatchAnchorElement(ctx context.Context, tenantToken, cardTo
 	return d.cfg.CardKit.PatchCardElement(ctx, tenantToken, cardToken, elementID, partial, sequence)
 }
 
+// InsertAnchorFormWithSeq inserts the AskUserQuestion form container after
+// the body markdown. Caller allocates sequence under the anchor's SendMu.
+func (d *Dispatcher) InsertAnchorFormWithSeq(ctx context.Context, tenantToken, cardToken string, form map[string]any, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{form}, sequence)
+}
+
+// DeleteAnchorFormWithSeq removes the AskUserQuestion form container.
+// Caller allocates sequence under the anchor's SendMu.
+func (d *Dispatcher) DeleteAnchorFormWithSeq(ctx context.Context, tenantToken, cardToken string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorAskFormElementID, sequence)
+}
+
 // GetToken returns a fresh (tenantToken, openID) pair via the configured
 // TokenSource. Used by relay_host when it needs to PATCH an anchor card
 // and must refresh the token independently of a SendAnchorCard call.
@@ -497,6 +522,17 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 	if onButtons != nil && ev.Kind == TurnAssistantFinal {
 		onButtons(sessionID, ev.Options)
 	}
+	// AskUserQuestion form: FormQuestions non-empty on TurnAssistantFinal
+	// → insert form container; Stop with no questions → remove any
+	// mounted form (claude moved on).
+	if ev.Kind == TurnAssistantFinal {
+		d.aiMu.Lock()
+		onForm := d.onAskForm
+		d.aiMu.Unlock()
+		if onForm != nil {
+			onForm(sessionID, ev.FormQuestions)
+		}
+	}
 }
 
 // SetOnAnchorButtons registers the per-session button-swap callback.
@@ -505,6 +541,16 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 func (d *Dispatcher) SetOnAnchorButtons(fn func(sessionID string, options []string)) {
 	d.aiMu.Lock()
 	d.onAnchorButtons = fn
+	d.aiMu.Unlock()
+}
+
+// SetOnAskForm registers the AskUserQuestion form callback. relay_host
+// wires this to its CreateCardElement / DeleteCardElement path so a form
+// container gets inserted (non-nil questions) or removed (nil questions)
+// as claude cycles through AskUserQuestion turns.
+func (d *Dispatcher) SetOnAskForm(fn func(sessionID string, questions []AskUserQuestionEntry)) {
+	d.aiMu.Lock()
+	d.onAskForm = fn
 	d.aiMu.Unlock()
 }
 

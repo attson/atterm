@@ -221,7 +221,7 @@ func TestHandleCardAction_InjectWritesText(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
 	sid := uuid.New()
-	s.handleCardAction(context.Background(), sid.String(), "inject", "", "", "1\n")
+	s.handleCardAction(context.Background(), sid.String(), "inject", "", "", "1\n", nil)
 	if inj.gotSID != sid || inj.gotText != "1\n" {
 		t.Fatalf("inject got sid=%s text=%q", inj.gotSID, inj.gotText)
 	}
@@ -230,7 +230,7 @@ func TestHandleCardAction_InjectWritesText(t *testing.T) {
 func TestHandleCardAction_NonInjectIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "", "")
+	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "", "", nil)
 	if inj.gotText != "" {
 		t.Fatalf("ack should not inject, got %q", inj.gotText)
 	}
@@ -240,7 +240,7 @@ func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
 	inj := &fakeInjector{err: errors.New("inbound full")}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
 	// 不应 panic;错误被 log 吞掉。
-	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "x\n")
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "x\n", nil)
 	if inj.gotText != "x\n" {
 		t.Fatalf("inject should still be attempted, got %q", inj.gotText)
 	}
@@ -249,7 +249,7 @@ func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
 func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "", "x\n")
+	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "", "x\n", nil)
 	if inj.gotText != "" {
 		t.Fatalf("invalid uuid must not inject, got %q", inj.gotText)
 	}
@@ -258,7 +258,7 @@ func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
 func TestHandleCardAction_EmptyTextIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "")
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "", nil)
 	if inj.gotText != "" {
 		t.Fatalf("empty text must not inject, got %q", inj.gotText)
 	}
@@ -316,7 +316,7 @@ func TestHandleCardAction_RouterInput(t *testing.T) {
 	s := &Service{cfg: ServiceConfig{Sessions: &fakeInjector{}}}
 	s.SetRouter(router)
 
-	s.handleCardAction(context.Background(), sessID, "input", "", ownerOpenID, "ls")
+	s.handleCardAction(context.Background(), sessID, "input", "", ownerOpenID, "ls", nil)
 
 	// Router splits into two SendInput calls (text, then CR after 16ms).
 	time.Sleep(80 * time.Millisecond)
@@ -352,7 +352,7 @@ func TestHandleCardAction_RouterInputWrongOwner(t *testing.T) {
 	s := &Service{cfg: ServiceConfig{Sessions: &fakeInjector{}}}
 	s.SetRouter(router)
 
-	s.handleCardAction(context.Background(), sessID, "input", "", "ou_intruder", "rm -rf /")
+	s.handleCardAction(context.Background(), sessID, "input", "", "ou_intruder", "rm -rf /", nil)
 
 	if got := stub.snapshotInputs(); len(got) != 0 {
 		t.Fatalf("wrong owner must not inject, got %q", got)

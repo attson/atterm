@@ -418,20 +418,21 @@ func TestClaudeCodeParseTurn_AskUserQuestionMultiQuestion(t *testing.T) {
 			t.Errorf("text = %q; missing %q", ev.Text, want)
 		}
 	}
-	// Multi-question: at least the FIRST question's options become clickable
-	// buttons on the anchor. Answering the rest still needs the input box,
-	// but "click one of question 1's options" beats "no widgets at all".
-	if len(ev.Options) == 0 {
-		t.Errorf("Options empty; want first-question options so users can click at least one answer")
+	// AskUserQuestion now always ships FormQuestions so relay_host can build
+	// the interactive form. Multi-question is exactly the case where the
+	// form UX beats a single button row.
+	if len(ev.FormQuestions) != 2 {
+		t.Errorf("FormQuestions len = %d; want 2 for the two-question payload", len(ev.FormQuestions))
 	}
-	if len(ev.Options) > 0 && ev.Options[0] != "只报告" {
-		t.Errorf("Options[0] = %q; want first-question label %q", ev.Options[0], "只报告")
+	if len(ev.Options) != 0 {
+		t.Errorf("Options = %v; want empty (form path replaces button-row swap for AskUserQuestion)", ev.Options)
 	}
 }
 
-// Single-question is still the common case (one radio group); Options
-// remains populated so the anchor button row swaps to option buttons.
-func TestClaudeCodeParseTurn_AskUserQuestionSingleStillSwapsButtons(t *testing.T) {
+// Single-question also flows through the form path — the anchor renders a
+// one-question form container, not a button-row swap. Options stays empty
+// so the default keystroke row (^C/^D/Esc/Enter/结束) sticks around.
+func TestClaudeCodeParseTurn_AskUserQuestionSingleUsesForm(t *testing.T) {
 	a := &claudeCodeAdapter{}
 	raw := json.RawMessage(`{
 		"hook_event_name":"PreToolUse",
@@ -441,8 +442,11 @@ func TestClaudeCodeParseTurn_AskUserQuestionSingleStillSwapsButtons(t *testing.T
 		]}
 	}`)
 	ev, _ := a.ParseTurn(raw, "")
-	if len(ev.Options) != 2 || ev.Options[0] != "Python" || ev.Options[1] != "Go" {
-		t.Errorf("Options = %v; want [Python Go] on single-question", ev.Options)
+	if len(ev.FormQuestions) != 1 || len(ev.FormQuestions[0].Options) != 2 {
+		t.Errorf("FormQuestions = %+v; want 1 question with 2 options", ev.FormQuestions)
+	}
+	if len(ev.Options) != 0 {
+		t.Errorf("Options = %v; want empty (form path always used for AskUserQuestion)", ev.Options)
 	}
 }
 

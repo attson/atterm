@@ -42,6 +42,106 @@ const AnchorInputElementID = "anchor_input"
 // buttons (^C ^D Esc Enter 结束) for AskUserQuestion option buttons.
 const AnchorButtonsElementID = "anchor_buttons"
 
+// AnchorAskFormElementID is the element_id for the AskUserQuestion form
+// container that gets inserted after the body markdown when claude fires
+// AskUserQuestion. Removed on form submit or when claude moves on.
+const AnchorAskFormElementID = "anchor_askform"
+
+// AskFormQuestion is one question to render in an AskUserQuestion form.
+// The full list becomes N dropdowns + a custom-text input inside the form
+// container. Kept in internal/feishu (not desktop/feishu) so the renderer
+// stays close to the anchor JSON.
+type AskFormQuestion struct {
+	Question string        // human-facing question text; shown as dropdown placeholder
+	Options  []AskFormOpt  // radio-style choices
+}
+
+// AskFormOpt is one selectable option in a question.
+type AskFormOpt struct {
+	Label string // display label + callback value (we identify options by label)
+}
+
+// RenderAskQuestionForm builds the form container element that captures a
+// full AskUserQuestion payload in a single interactive widget: one
+// select_static dropdown per question, one custom-text input, plus 提交 /
+// 重置 buttons. Fields use q_<idx> naming so the form callback carries a
+// stable key set the service can parse.
+func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[string]any {
+	elements := make([]any, 0, len(questions)+2)
+	for i, q := range questions {
+		opts := make([]any, 0, len(q.Options))
+		for _, opt := range q.Options {
+			opts = append(opts, map[string]any{
+				"text":  map[string]any{"tag": "plain_text", "content": opt.Label},
+				"value": opt.Label,
+			})
+		}
+		placeholder := "❓ " + q.Question
+		elements = append(elements, map[string]any{
+			"tag":         "select_static",
+			"element_id":  fmt.Sprintf("askform_q%d", i),
+			"name":        fmt.Sprintf("q_%d", i),
+			"required":    false,
+			"placeholder": map[string]any{"tag": "plain_text", "content": placeholder},
+			"options":     opts,
+		})
+	}
+	// Free-form custom answer — anything typed here gets appended to the
+	// text sent to claude, so users can override or supplement the choices.
+	elements = append(elements, map[string]any{
+		"tag":         "input",
+		"element_id":  "askform_custom",
+		"name":        "custom",
+		"required":    false,
+		"placeholder": map[string]any{"tag": "plain_text", "content": "或直接输入自定义答案"},
+	})
+	// Submit + Reset row.
+	elements = append(elements, map[string]any{
+		"tag":                "column_set",
+		"horizontal_spacing": "small",
+		"columns": []any{
+			map[string]any{
+				"tag": "column", "width": "auto",
+				"elements": []any{
+					map[string]any{
+						"tag":              "button",
+						"type":             "primary",
+						"text":             map[string]any{"tag": "plain_text", "content": "提交"},
+						"form_action_type": "submit",
+						"name":             "submit_btn",
+						"behaviors": []any{
+							map[string]any{"type": "callback", "value": map[string]any{
+								"kind":       "form",
+								"session_id": sessionID,
+							}},
+						},
+					},
+				},
+			},
+			map[string]any{
+				"tag": "column", "width": "auto",
+				"elements": []any{
+					map[string]any{
+						"tag":              "button",
+						"type":             "default",
+						"text":             map[string]any{"tag": "plain_text", "content": "重置"},
+						"form_action_type": "reset",
+						"name":             "reset_btn",
+					},
+				},
+			},
+		},
+	})
+	return map[string]any{
+		"tag":              "form",
+		"element_id":       AnchorAskFormElementID,
+		"name":             "askform",
+		"vertical_spacing": "8px",
+		"padding":          "8px 0px 8px 0px",
+		"elements":         elements,
+	}
+}
+
 // AnchorState is the renderer input. The chunker keeps the latest snapshot
 // per session and passes a fresh AnchorState on every PATCH.
 type AnchorState struct {

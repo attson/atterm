@@ -134,6 +134,99 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 	// Feishu. Re-enable in a later probe iteration to also verify restore.)
 	_ = internalfeishu.DefaultButtonsColumnSet // silence unused
 
+	time.Sleep(500 * time.Millisecond)
+
+	t.Log("=== step 6: CREATE form container (AskUserQuestion multi-question form) ===")
+	form := map[string]any{
+		"tag":              "form",
+		"element_id":       "probe_askform",
+		"name":             "probe_askform",
+		"vertical_spacing": "8px",
+		"padding":          "8px 0px 8px 0px",
+		"elements": []any{
+			// Question 1 — single-select via select_static
+			map[string]any{
+				"tag":         "select_static",
+				"element_id":  "probe_q1",
+				"name":        "q_0",
+				"required":    false,
+				"placeholder": map[string]any{"tag": "plain_text", "content": "❓ 用什么语言?"},
+				"options": []any{
+					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "Python"}, "value": "Python"},
+					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "Go"}, "value": "Go"},
+					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "Rust"}, "value": "Rust"},
+				},
+			},
+			// Question 2 — multi-select via multi_select_static
+			map[string]any{
+				"tag":         "multi_select_static",
+				"element_id":  "probe_q2",
+				"name":        "q_1",
+				"required":    false,
+				"placeholder": map[string]any{"tag": "plain_text", "content": "❓ 包含哪些功能?"},
+				"options": []any{
+					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "数据库"}, "value": "数据库"},
+					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "用户认证"}, "value": "用户认证"},
+					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "CI/CD"}, "value": "CI/CD"},
+				},
+			},
+			// Custom-text row
+			map[string]any{
+				"tag":         "input",
+				"element_id":  "probe_qcustom",
+				"name":        "custom",
+				"required":    false,
+				"placeholder": map[string]any{"tag": "plain_text", "content": "或直接输入自定义答案"},
+			},
+			// Submit + Cancel row
+			map[string]any{
+				"tag":                "column_set",
+				"horizontal_spacing": "small",
+				"columns": []any{
+					map[string]any{
+						"tag": "column", "width": "auto",
+						"elements": []any{
+							map[string]any{
+								"tag":              "button",
+								"element_id":       "probe_submit",
+								"type":             "primary",
+								"text":             map[string]any{"tag": "plain_text", "content": "提交"},
+								"form_action_type": "submit",
+								"name":             "submit_btn",
+								"behaviors": []any{
+									map[string]any{"type": "callback", "value": map[string]any{
+										"kind":       "form",
+										"session_id": "manual-probe-sid",
+									}},
+								},
+							},
+						},
+					},
+					map[string]any{
+						"tag": "column", "width": "auto",
+						"elements": []any{
+							map[string]any{
+								"tag":        "button",
+								"element_id": "probe_reset",
+								"type":       "default",
+								"text":       map[string]any{"tag": "plain_text", "content": "重置"},
+								"form_action_type": "reset",
+								"name":       "reset_btn",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	err = client.CreateCardElement(ctx, tok, cardID,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{form}, 6)
+	if err != nil {
+		t.Fatalf("CreateCardElement form FAILED: %v", err)
+	}
+	t.Logf("OK: form container inserted — check Feishu: two dropdowns + custom input + 提交/重置")
+
 	fmt.Printf("\n\n=== VERDICT ===\n")
 	fmt.Printf("CardKit card_id: %s\n", cardID)
 	fmt.Printf("IM message_id:   %s\n", msgID)

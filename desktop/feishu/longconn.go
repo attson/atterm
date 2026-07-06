@@ -33,7 +33,7 @@ type LongConnConfig struct {
 	// carries parentID (the replied-to message's message_id). It is used to route
 	// a Feishu reply quoting a previously sent card back to its session (9B).
 	OnReplyMessage func(ctx context.Context, senderOpenID, parentID, text string)
-	OnCardAction   func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string)
+	OnCardAction   func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any)
 
 	// OnAuthClassFailure fires once when the SDK returns an auth-class
 	// error (invalid app secret, app disabled, etc.). The reconnect loop
@@ -262,7 +262,11 @@ func newLarkRuntime(cfg LongConnConfig) (longConnRuntime, error) {
 			hasAction, tag, cfg.OnCardAction != nil)
 		if cfg.OnCardAction != nil {
 			sessionID, kind, eventStr, operatorOpenID, text := extractCardActionFields(ev)
-			cfg.OnCardAction(ctx, sessionID, kind, eventStr, operatorOpenID, text)
+			var formValue map[string]any
+			if ev != nil && ev.Event != nil && ev.Event.Action != nil {
+				formValue = ev.Event.Action.FormValue
+			}
+			cfg.OnCardAction(ctx, sessionID, kind, eventStr, operatorOpenID, text, formValue)
 		}
 		return nil, nil
 	})
@@ -306,6 +310,6 @@ func (r *testableRuntime) injectIMMessageReply(senderOpenID, parentID, text stri
 }
 func (r *testableRuntime) injectCardAction(operatorOpenID, sessionID, kind, event, text string) {
 	if r.cfg.OnCardAction != nil {
-		r.cfg.OnCardAction(context.Background(), sessionID, kind, event, operatorOpenID, text)
+		r.cfg.OnCardAction(context.Background(), sessionID, kind, event, operatorOpenID, text, nil)
 	}
 }

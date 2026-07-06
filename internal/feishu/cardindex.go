@@ -51,6 +51,13 @@ type CardAnchor struct {
 	// reusing the same id would leak the last value through DELETE+CREATE.
 	// Only touched under SendMu.
 	CurrentInputID string
+
+	// FormMounted tracks whether an AskUserQuestion form container is
+	// currently inserted on the card. Set true after successful CREATE
+	// and cleared on DELETE (form submit or claude-moved-on cleanup).
+	// Guards against duplicate inserts and orphan DELETEs. Only touched
+	// under SendMu.
+	FormMounted bool
 }
 
 type CardIndex struct {

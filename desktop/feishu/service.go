@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -197,8 +198,8 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 		OnReplyMessage: func(ctx context.Context, senderOpenID, parentID, text string) {
 			s.handleReplyMessage(ctx, senderOpenID, parentID, text)
 		},
-		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
-			s.handleCardAction(ctx, sessionID, kind, event, operatorOpenID, text)
+		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any) {
+			s.handleCardAction(ctx, sessionID, kind, event, operatorOpenID, text, formValue)
 		},
 		OnAuthClassFailure: func(ctx context.Context, _ error) {
 			_ = s.store.SetDisabled(ctx)
@@ -308,10 +309,13 @@ func (s *Service) handleReplyMessage(ctx context.Context, senderOpenID, parentID
 	}
 }
 
-func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
+func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any) {
 	textLen := len(text)
-	log.Printf("feishu-card-action: sid=%s kind=%s event=%q op=%s text_len=%d", sessionID, kind, event, operatorOpenID, textLen)
+	log.Printf("feishu-card-action: sid=%s kind=%s event=%q op=%s text_len=%d form_fields=%d",
+		sessionID, kind, event, operatorOpenID, textLen, len(formValue))
 	switch kind {
+	case "form":
+		s.handleAskFormSubmit(ctx, sessionID, operatorOpenID, formValue)
 	case "input", "key", "end":
 		// Anchor card actions: route through the inbound router.
 		r := s.getRouter()
@@ -362,6 +366,129 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 	default:
 		// Unknown kind; ignore.
 	}
+}
+
+// handleAskFormSubmit routes an AskUserQuestion form submit event: parse
+// the form_value map into readable multi-line text and inject through the
+// router (same path as typed input). Also DELETEs the mounted form so the
+// card returns to the normal input+buttons view.
+func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOpenID string, formValue map[string]any) {
+	r := s.getRouter()
+	if r == nil {
+		return
+	}
+	answer := formatAskFormAnswer(formValue)
+	if answer == "" {
+		// Nothing picked and no custom text — silently drop; user can try again.
+		log.Printf("feishu: askform empty submit sid=%s", sessionID)
+		return
+	}
+	decision := r.RouteCardActionBySession(sessionID, operatorOpenID, "input", "", answer)
+	log.Printf("feishu: askform submit sid=%s answer_len=%d action=%d", sessionID, len(answer), decision.Action)
+	// Remove the form once injected — success or reject, the form has done
+	// its job (a rejected submit indicates a permission / session issue,
+	// not a bad form; leaving the form up would just confuse).
+	if a := r.AnchorBySession(sessionID); a != nil {
+		go func() {
+			// Delete on a fresh goroutine so we don't block LongConn's
+			// 3-second callback window.
+			if s.dispatcher == nil {
+				return
+			}
+			// deleteAnchorForm lives on relay_host; we don't have direct
+			// access. Just call ClearAnchorInput semantics: DELETE the form
+			// element via the CardKit client directly.
+			s.deleteAnchorForm(a)
+		}()
+	}
+}
+
+// formatAskFormAnswer joins form_value into a multi-line text answer.
+// Question fields are named q_N (in order), the free-form custom field
+// is named "custom". A single-select question returns a string; a
+// multi-select returns a []string.
+func formatAskFormAnswer(formValue map[string]any) string {
+	// Deterministic q_N ordering by numeric suffix — Feishu's map key
+	// ordering isn't guaranteed, and users expect the answer to follow
+	// question order.
+	type kv struct {
+		idx int
+		val any
+	}
+	entries := make([]kv, 0, len(formValue))
+	custom := ""
+	for k, v := range formValue {
+		if k == "custom" {
+			if s, ok := v.(string); ok {
+				custom = strings.TrimSpace(s)
+			}
+			continue
+		}
+		if !strings.HasPrefix(k, "q_") {
+			continue
+		}
+		var idx int
+		if _, err := fmt.Sscanf(k[2:], "%d", &idx); err != nil {
+			continue
+		}
+		entries = append(entries, kv{idx: idx, val: v})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].idx < entries[j].idx })
+	var parts []string
+	for _, e := range entries {
+		switch t := e.val.(type) {
+		case string:
+			if strings.TrimSpace(t) != "" {
+				parts = append(parts, fmt.Sprintf("%d. %s", e.idx+1, t))
+			}
+		case []any:
+			labels := make([]string, 0, len(t))
+			for _, li := range t {
+				if s, ok := li.(string); ok && strings.TrimSpace(s) != "" {
+					labels = append(labels, s)
+				}
+			}
+			if len(labels) > 0 {
+				parts = append(parts, fmt.Sprintf("%d. %s", e.idx+1, strings.Join(labels, ", ")))
+			}
+		}
+	}
+	answer := strings.Join(parts, "\n")
+	if custom != "" {
+		if answer != "" {
+			answer += "\n"
+		}
+		answer += custom
+	}
+	return answer
+}
+
+// deleteAnchorForm removes a currently-mounted AskUserQuestion form via the
+// CardKit DELETE endpoint. Wrapper around Dispatcher.DeleteAnchorFormWithSeq
+// that acquires SendMu and refreshes a token first.
+func (s *Service) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
+	if s.dispatcher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tok, _, err := s.dispatcher.GetToken(ctx)
+	if err != nil {
+		log.Printf("feishu: askform DELETE token failed: %v", err)
+		return
+	}
+	anchor.SendMu.Lock()
+	defer anchor.SendMu.Unlock()
+	if !anchor.FormMounted {
+		return
+	}
+	seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+	if err := s.dispatcher.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seq); err != nil {
+		log.Printf("feishu: askform DELETE failed session=%s: %v", anchor.SessionID, err)
+		return
+	}
+	anchor.FormMounted = false
+	log.Printf("feishu: askform DELETE ok session=%s seq=%d", anchor.SessionID, seq)
 }
 
 // clearAnchorInput PATCHes the anchor card's input element back to empty so

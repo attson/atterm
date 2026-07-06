@@ -29,6 +29,8 @@ type CardKitClient interface {
 	PatchCard(ctx context.Context, tenantToken, cardToken, elementID, bodyMarkdown string, sequence int64) error
 	PatchCardElement(ctx context.Context, tenantToken, cardToken, elementID string, partial map[string]any, sequence int64) error
 	UpdateCardElement(ctx context.Context, tenantToken, cardToken, elementID string, element map[string]any, sequence int64) error
+	DeleteCardElement(ctx context.Context, tenantToken, cardToken, elementID string, sequence int64) error
+	CreateCardElement(ctx context.Context, tenantToken, cardToken, targetElementID, insertType string, elements []map[string]any, sequence int64) error
 }
 
 // CommandFinishedEvent feeds the dispatcher from the heuristic OSC 133 D path.
@@ -399,21 +401,28 @@ func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bo
 	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, internalfeishu.AnchorBodyElementID, bodyMarkdown, sequence)
 }
 
-// ClearAnchorInput full-replaces the anchor card's input element with a
-// fresh definition so the visible textbox resets. sessionID is needed to
-// rebuild the input's behaviors[0].value payload.
+// ClearAnchorInput removes the current input element then re-inserts a
+// fresh one after the body markdown. This is the only reliable way to
+// clear the visible textbox after submit — Feishu's client caches the
+// user-typed value against the element_id, and neither PATCH default_value
+// nor PUT full-replace invalidate that cache. DELETE + POST forces the
+// client to unmount the old textbox entirely and mount a new instance.
 //
-// The obvious PATCH default_value:"" no-ops client-side once the user has
-// typed in the field — Feishu accepts it with code=0 but the textarea keeps
-// showing the last submitted text. Full element replace via the PUT
-// endpoint forces a re-render.
+// Two sequential ops → two sequence numbers. Caller passes sequence for
+// the DELETE; sequence+1 is used for the CREATE. Both must be strictly
+// increasing across all ops against this card.
 func (d *Dispatcher) ClearAnchorInput(ctx context.Context, tenantToken, cardToken, sessionID string, sequence int64) error {
 	if d.cfg.CardKit == nil {
 		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
 	}
-	return d.cfg.CardKit.UpdateCardElement(ctx, tenantToken, cardToken,
-		internalfeishu.AnchorInputElementID,
-		internalfeishu.NewInputElement(sessionID), sequence)
+	if err := d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorInputElementID, sequence); err != nil {
+		return err
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{internalfeishu.NewInputElement(sessionID)},
+		sequence+1)
 }
 
 // PatchAnchorElement is the generic element-PATCH passthrough — used by the

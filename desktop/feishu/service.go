@@ -327,8 +327,9 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 			if kind == "input" {
 				cardToken := r.CardTokenFor(sessionID)
 				if cardToken != "" {
-					seq := r.NextPatchSeq(sessionID)
-					go s.clearAnchorInput(cardToken, sessionID, seq)
+					// Reserve 2 seq slots — DELETE uses seqBase, CREATE uses seqBase+1.
+					seqBase := r.ReservePatchSeqs(sessionID, 2)
+					go s.clearAnchorInput(cardToken, sessionID, seqBase)
 				}
 			}
 		case internalfeishu.ActionReject:
@@ -488,6 +489,12 @@ func (c *authClassAdaptingClient) PatchCardElement(ctx context.Context, tok, car
 }
 func (c *authClassAdaptingClient) UpdateCardElement(ctx context.Context, tok, cardToken, elementID string, element map[string]any, sequence int64) error {
 	return c.adapt(c.inner.UpdateCardElement(ctx, tok, cardToken, elementID, element, sequence))
+}
+func (c *authClassAdaptingClient) DeleteCardElement(ctx context.Context, tok, cardToken, elementID string, sequence int64) error {
+	return c.adapt(c.inner.DeleteCardElement(ctx, tok, cardToken, elementID, sequence))
+}
+func (c *authClassAdaptingClient) CreateCardElement(ctx context.Context, tok, cardToken, targetElementID, insertType string, elements []map[string]any, sequence int64) error {
+	return c.adapt(c.inner.CreateCardElement(ctx, tok, cardToken, targetElementID, insertType, elements, sequence))
 }
 func (c *authClassAdaptingClient) adapt(err error) error {
 	if err == nil {

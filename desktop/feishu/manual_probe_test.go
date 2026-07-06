@@ -102,13 +102,19 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	t.Log("=== step 4a: PUT full input replace (visual reset) ===")
-	fresh := internalfeishu.NewInputElement("manual-probe-sid")
-	err = client.UpdateCardElement(ctx, tok, cardID, internalfeishu.AnchorInputElementID, fresh, 3)
+	t.Log("=== step 4b: DELETE + POST re-create input (visual reset) ===")
+	err = client.DeleteCardElement(ctx, tok, cardID, internalfeishu.AnchorInputElementID, 3)
 	if err != nil {
-		t.Fatalf("UpdateCardElement input replace FAILED: %v", err)
+		t.Fatalf("DeleteCardElement FAILED: %v", err)
 	}
-	t.Logf("OK: input full-replace PUT applied")
+	fresh := internalfeishu.NewInputElement("manual-probe-sid")
+	err = client.CreateCardElement(ctx, tok, cardID,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{fresh}, 4)
+	if err != nil {
+		t.Fatalf("CreateCardElement FAILED: %v", err)
+	}
+	t.Logf("OK: input DELETE+POST re-create applied (check Feishu: input should be visually empty)")
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -116,7 +122,7 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 	askOpts := internalfeishu.AskOptionsColumnSet("manual-probe-sid", []string{"写代码", "代码审查", "研究"})
 	delete(askOpts, "tag")     // partial_element shouldn't restate tag (immutable)
 	err = client.PatchCardElement(ctx, tok, cardID, internalfeishu.AnchorButtonsElementID,
-		askOpts, 4)
+		askOpts, 5)
 	if err != nil {
 		t.Fatalf("PatchCardElement columns swap FAILED: %v", err)
 	}

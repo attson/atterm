@@ -124,6 +124,81 @@ func (c *Client) UpdateCardElement(ctx context.Context, tenantToken, cardToken, 
 	return nil
 }
 
+// DeleteCardElement removes an element by id from a live cardkit entity.
+// Used together with CreateCardElement to force a full re-mount of an
+// element whose client-side state (e.g. input textarea value) needs to be
+// discarded — both PATCH and PUT leave that cache untouched.
+func (c *Client) DeleteCardElement(ctx context.Context, tenantToken, cardToken, elementID string, sequence int64) error {
+	payload := map[string]any{
+		"uuid":     fmt.Sprintf("%s-del-%s-%d", cardToken, elementID, sequence),
+		"sequence": sequence,
+	}
+	body, _ := json.Marshal(payload)
+	url := fmt.Sprintf("%s/open-apis/cardkit/v1/cards/%s/elements/%s", c.baseURL, cardToken, elementID)
+	req, _ := http.NewRequestWithContext(ctx, "DELETE", url, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tenantToken)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := c.httpC.Do(req)
+	if err != nil {
+		return fmt.Errorf("card DELETE: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	var r struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	_ = json.Unmarshal(respBody, &r)
+	if r.Code != 0 {
+		if authClassCodes[r.Code] {
+			return &AuthClassError{Code: r.Code, Msg: r.Msg}
+		}
+		return fmt.Errorf("cardkit delete: code=%d msg=%s url=%s resp=%s",
+			r.Code, r.Msg, url, string(respBody))
+	}
+	return nil
+}
+
+// CreateCardElement inserts one or more new elements relative to
+// target_element_id. insertType is "insert_after" | "insert_before" |
+// "append". elements is the list of element definitions (each a normal
+// element map) — this helper marshals them to the JSON-string wire shape
+// Feishu wants.
+func (c *Client) CreateCardElement(ctx context.Context, tenantToken, cardToken, targetElementID, insertType string, elements []map[string]any, sequence int64) error {
+	elementsJSON, _ := json.Marshal(elements)
+	payload := map[string]any{
+		"type":              insertType,
+		"target_element_id": targetElementID,
+		"uuid":              fmt.Sprintf("%s-add-%s-%d", cardToken, targetElementID, sequence),
+		"sequence":          sequence,
+		"elements":          string(elementsJSON),
+	}
+	body, _ := json.Marshal(payload)
+	url := fmt.Sprintf("%s/open-apis/cardkit/v1/cards/%s/elements", c.baseURL, cardToken)
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tenantToken)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := c.httpC.Do(req)
+	if err != nil {
+		return fmt.Errorf("card POST elements: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	var r struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	_ = json.Unmarshal(respBody, &r)
+	if r.Code != 0 {
+		if authClassCodes[r.Code] {
+			return &AuthClassError{Code: r.Code, Msg: r.Msg}
+		}
+		return fmt.Errorf("cardkit create element: code=%d msg=%s url=%s req=%s resp=%s",
+			r.Code, r.Msg, url, string(body), string(respBody))
+	}
+	return nil
+}
+
 // PatchCardElement is the generic partial-update primitive: send any
 // element-config fragment (e.g. {"content": "..."} for markdown,
 // {"default_value": ""} to reset an input). Wraps the fragment as a JSON

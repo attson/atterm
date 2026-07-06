@@ -226,7 +226,7 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 			// can build the interactive form. Options stays empty because
 			// AskUserQuestion now always renders via the form container, no
 			// button swap needed.
-			text += "\n\n_💡 想自定义?在提交按钮下方或表单里的自定义输入框中输入答案_"
+			text += "\n\n_💡 每道题下方都有输入框,填了就用你填的_"
 			return TurnEvent{Kind: TurnAssistantFinal, Text: text, FormQuestions: questions}, true
 		}
 		return TurnEvent{Kind: TurnToolStart, ToolName: p.ToolName}, true

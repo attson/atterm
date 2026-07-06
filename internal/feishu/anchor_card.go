@@ -62,12 +62,14 @@ type AskFormOpt struct {
 }
 
 // RenderAskQuestionForm builds the form container element that captures a
-// full AskUserQuestion payload in a single interactive widget: one
-// select_static dropdown per question, one custom-text input, plus 提交 /
-// 重置 buttons. Fields use q_<idx> naming so the form callback carries a
-// stable key set the service can parse.
+// full AskUserQuestion payload in a single interactive widget. Each question
+// gets TWO widgets — a select_static for the offered options and a text
+// input for a per-question custom answer — mirroring claude-code's native
+// TUI where every question also exposes "Type something." as a choice.
+// Field naming: q_<idx>_sel for the dropdown, q_<idx>_txt for the custom
+// input. formatAskFormAnswer prefers _txt over _sel per question.
 func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[string]any {
-	elements := make([]any, 0, len(questions)+2)
+	elements := make([]any, 0, len(questions)*2+1)
 	for i, q := range questions {
 		opts := make([]any, 0, len(q.Options))
 		for _, opt := range q.Options {
@@ -79,22 +81,23 @@ func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[st
 		placeholder := "❓ " + q.Question
 		elements = append(elements, map[string]any{
 			"tag":         "select_static",
-			"element_id":  fmt.Sprintf("askform_q%d", i),
-			"name":        fmt.Sprintf("q_%d", i),
+			"element_id":  fmt.Sprintf("askform_q%d_sel", i),
+			"name":        fmt.Sprintf("q_%d_sel", i),
 			"required":    false,
 			"placeholder": map[string]any{"tag": "plain_text", "content": placeholder},
 			"options":     opts,
 		})
+		// Per-question custom input — non-empty text here wins over the
+		// dropdown for this question. Mirrors "Type something." being an
+		// option inside every question in claude-code's native TUI.
+		elements = append(elements, map[string]any{
+			"tag":         "input",
+			"element_id":  fmt.Sprintf("askform_q%d_txt", i),
+			"name":        fmt.Sprintf("q_%d_txt", i),
+			"required":    false,
+			"placeholder": map[string]any{"tag": "plain_text", "content": "或直接输入自定义答案"},
+		})
 	}
-	// Free-form custom answer — anything typed here gets appended to the
-	// text sent to claude, so users can override or supplement the choices.
-	elements = append(elements, map[string]any{
-		"tag":         "input",
-		"element_id":  "askform_custom",
-		"name":        "custom",
-		"required":    false,
-		"placeholder": map[string]any{"tag": "plain_text", "content": "或直接输入自定义答案"},
-	})
 	// Submit + Reset row.
 	elements = append(elements, map[string]any{
 		"tag":                "column_set",

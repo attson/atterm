@@ -404,63 +404,81 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 }
 
 // formatAskFormAnswer joins form_value into a multi-line text answer.
-// Question fields are named q_N (in order), the free-form custom field
-// is named "custom". A single-select question returns a string; a
-// multi-select returns a []string.
+// Each question exposes TWO fields — q_<idx>_sel (dropdown choice) and
+// q_<idx>_txt (per-question custom input). If _txt is non-empty for a
+// question we use that, otherwise the _sel choice. A multi-select returns
+// a []string on _sel; we join with ", ".
 func formatAskFormAnswer(formValue map[string]any) string {
-	// Deterministic q_N ordering by numeric suffix — Feishu's map key
-	// ordering isn't guaranteed, and users expect the answer to follow
-	// question order.
-	type kv struct {
-		idx int
-		val any
+	type slot struct {
+		sel any
+		txt string
 	}
-	entries := make([]kv, 0, len(formValue))
-	custom := ""
-	for k, v := range formValue {
-		if k == "custom" {
-			if s, ok := v.(string); ok {
-				custom = strings.TrimSpace(s)
-			}
-			continue
+	slots := make(map[int]*slot)
+	getSlot := func(idx int) *slot {
+		if s, ok := slots[idx]; ok {
+			return s
 		}
+		s := &slot{}
+		slots[idx] = s
+		return s
+	}
+	for k, v := range formValue {
 		if !strings.HasPrefix(k, "q_") {
 			continue
 		}
-		var idx int
-		if _, err := fmt.Sscanf(k[2:], "%d", &idx); err != nil {
+		// q_<idx>_<sel|txt>
+		rest := k[2:]
+		underscore := strings.LastIndex(rest, "_")
+		if underscore <= 0 {
 			continue
 		}
-		entries = append(entries, kv{idx: idx, val: v})
+		var idx int
+		if _, err := fmt.Sscanf(rest[:underscore], "%d", &idx); err != nil {
+			continue
+		}
+		suffix := rest[underscore+1:]
+		switch suffix {
+		case "sel":
+			getSlot(idx).sel = v
+		case "txt":
+			if s, ok := v.(string); ok {
+				getSlot(idx).txt = strings.TrimSpace(s)
+			}
+		}
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].idx < entries[j].idx })
+	// Deterministic q_N ordering — Feishu's map key ordering isn't
+	// guaranteed, and users expect the answer to follow question order.
+	idxs := make([]int, 0, len(slots))
+	for i := range slots {
+		idxs = append(idxs, i)
+	}
+	sort.Ints(idxs)
 	var parts []string
-	for _, e := range entries {
-		switch t := e.val.(type) {
+	for _, i := range idxs {
+		s := slots[i]
+		// Per-question custom input wins over the dropdown.
+		if s.txt != "" {
+			parts = append(parts, fmt.Sprintf("%d. %s", i+1, s.txt))
+			continue
+		}
+		switch t := s.sel.(type) {
 		case string:
 			if strings.TrimSpace(t) != "" {
-				parts = append(parts, fmt.Sprintf("%d. %s", e.idx+1, t))
+				parts = append(parts, fmt.Sprintf("%d. %s", i+1, t))
 			}
 		case []any:
 			labels := make([]string, 0, len(t))
 			for _, li := range t {
-				if s, ok := li.(string); ok && strings.TrimSpace(s) != "" {
-					labels = append(labels, s)
+				if str, ok := li.(string); ok && strings.TrimSpace(str) != "" {
+					labels = append(labels, str)
 				}
 			}
 			if len(labels) > 0 {
-				parts = append(parts, fmt.Sprintf("%d. %s", e.idx+1, strings.Join(labels, ", ")))
+				parts = append(parts, fmt.Sprintf("%d. %s", i+1, strings.Join(labels, ", ")))
 			}
 		}
 	}
-	answer := strings.Join(parts, "\n")
-	if custom != "" {
-		if answer != "" {
-			answer += "\n"
-		}
-		answer += custom
-	}
-	return answer
+	return strings.Join(parts, "\n")
 }
 
 // deleteAnchorForm removes a currently-mounted AskUserQuestion form via the

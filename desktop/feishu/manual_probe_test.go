@@ -107,7 +107,7 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteCardElement FAILED: %v", err)
 	}
-	fresh := internalfeishu.NewInputElement("manual-probe-sid")
+	fresh := internalfeishu.NewInputElement("manual-probe-sid", "anchor_input_reset")
 	err = client.CreateCardElement(ctx, tok, cardID,
 		internalfeishu.AnchorBodyElementID, "insert_after",
 		[]map[string]any{fresh}, 4)

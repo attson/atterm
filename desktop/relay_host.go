@@ -959,11 +959,12 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	}
 
 	anchor := &internalfeishu.CardAnchor{
-		SessionID:   sessionIDStr,
-		CardMsgID:   msgID,
-		CardToken:   cardToken,
-		OwnerOpenID: openID,
-		CreatedAt:   time.Now(),
+		SessionID:      sessionIDStr,
+		CardMsgID:      msgID,
+		CardToken:      cardToken,
+		OwnerOpenID:    openID,
+		CreatedAt:      time.Now(),
+		CurrentInputID: internalfeishu.AnchorInputElementID,
 	}
 	h.feishuCards.Put(anchor)
 

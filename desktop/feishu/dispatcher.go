@@ -401,27 +401,28 @@ func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bo
 	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, internalfeishu.AnchorBodyElementID, bodyMarkdown, sequence)
 }
 
-// ClearAnchorInputWithSeqs removes the current input element then re-inserts
-// a fresh one after the body markdown. Caller must have already reserved
-// two consecutive sequence slots (seqDel < seqCre) and be holding the
-// per-anchor SendMu across the call so no other send can slip a higher-seq
-// op between DELETE and CREATE — Feishu enforces strict monotonicity and
-// rejects out-of-order arrivals with code=300317.
+// ClearAnchorInputWithSeqs removes the input element with the given
+// oldElementID then inserts a fresh one after the body markdown with the
+// given newElementID. Caller owns two consecutive seq slots (seqDel <
+// seqCre) and holds the per-anchor SendMu across the call so no other send
+// can slip a higher-seq op between the two — Feishu enforces strict
+// monotonicity and rejects out-of-order arrivals with code=300317.
 //
-// DELETE + POST is the only reliable clear: Feishu's client caches the
-// user-typed value against the element_id, and neither PATCH default_value
-// nor PUT full-replace invalidate that cache.
-func (d *Dispatcher) ClearAnchorInputWithSeqs(ctx context.Context, tenantToken, cardToken, sessionID string, seqDel, seqCre int64) error {
+// The element_id MUST change on every cycle: Feishu's client caches the
+// user-typed value keyed by element_id, and reusing the same id would leak
+// the last value straight through the DELETE + POST. Caller is responsible
+// for tracking the current id (e.g. on the anchor) and generating a new one.
+func (d *Dispatcher) ClearAnchorInputWithSeqs(ctx context.Context, tenantToken, cardToken, sessionID, oldElementID, newElementID string, seqDel, seqCre int64) error {
 	if d.cfg.CardKit == nil {
 		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
 	}
 	if err := d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
-		internalfeishu.AnchorInputElementID, seqDel); err != nil {
+		oldElementID, seqDel); err != nil {
 		return err
 	}
 	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
 		internalfeishu.AnchorBodyElementID, "insert_after",
-		[]map[string]any{internalfeishu.NewInputElement(sessionID)},
+		[]map[string]any{internalfeishu.NewInputElement(sessionID, newElementID)},
 		seqCre)
 }
 

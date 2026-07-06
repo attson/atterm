@@ -386,11 +386,19 @@ func (s *Service) clearAnchorInput(anchor *internalfeishu.CardAnchor, sessionID 
 	defer anchor.SendMu.Unlock()
 	seqDel := atomic.AddInt64(&anchor.PatchSeq, 1)
 	seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
-	if err := s.dispatcher.ClearAnchorInputWithSeqs(ctx, tok, anchor.CardToken, sessionID, seqDel, seqCre); err != nil {
-		log.Printf("feishu: clear input DELETE+CREATE card=%s seq=%d/%d: %v", anchor.CardToken, seqDel, seqCre, err)
+	// New element_id every cycle — Feishu's client caches typed values by
+	// element_id even across DELETE + POST, so reusing the same id would
+	// leak the last value straight through. seq is monotonic and unique
+	// per anchor, making it a natural unique suffix.
+	newInputID := fmt.Sprintf("anchor_input_%d", seqCre)
+	if err := s.dispatcher.ClearAnchorInputWithSeqs(ctx, tok, anchor.CardToken, sessionID,
+		anchor.CurrentInputID, newInputID, seqDel, seqCre); err != nil {
+		log.Printf("feishu: clear input DELETE+CREATE card=%s seq=%d/%d id_old=%s id_new=%s: %v",
+			anchor.CardToken, seqDel, seqCre, anchor.CurrentInputID, newInputID, err)
 		return
 	}
-	log.Printf("feishu: clear input ok card=%s seq=%d/%d", anchor.CardToken, seqDel, seqCre)
+	anchor.CurrentInputID = newInputID
+	log.Printf("feishu: clear input ok card=%s seq=%d/%d new_id=%s", anchor.CardToken, seqDel, seqCre, newInputID)
 }
 
 // In-memory short-code table for local mode.

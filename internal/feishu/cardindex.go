@@ -43,6 +43,14 @@ type CardAnchor struct {
 	// bumps PatchSeq under it, and holds the lock across the HTTP round-
 	// trip so nothing interleaves.
 	SendMu sync.Mutex
+
+	// CurrentInputID is the element_id of the input textbox currently mounted
+	// on the card. Starts as AnchorInputElementID at card create; each
+	// input-clear cycle DELETEs it and CREATEs a fresh input with a new id
+	// (seq-suffixed). Feishu's client caches typed values by element_id, so
+	// reusing the same id would leak the last value through DELETE+CREATE.
+	// Only touched under SendMu.
+	CurrentInputID string
 }
 
 type CardIndex struct {

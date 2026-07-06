@@ -144,6 +144,11 @@ type TurnEvent struct {
 	// card's button row from the default keystrokes (^C/^D/Esc/Enter/结束) to
 	// clickable option buttons. Empty for normal Stop / other events.
 	Options []string
+	// TranscriptPath is claude's per-conversation JSONL path. The chunker
+	// uses it to detect a new claude conversation on the same atterm
+	// session (e.g. user exits claude then runs it again) and reset the
+	// roller so old turns don't blur into fresh dialog.
+	TranscriptPath string
 }
 
 // ParseTurn extends HookAdapter for the AI streaming path. Returns (event, true)
@@ -168,7 +173,9 @@ func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent,
 		if p.Prompt == "" {
 			return TurnEvent{}, false
 		}
-		return TurnEvent{Kind: TurnUserPrompt, Text: p.Prompt}, true
+		// TranscriptPath is carried through so the chunker can detect a new
+		// claude conversation (different jsonl path) and reset stale turns.
+		return TurnEvent{Kind: TurnUserPrompt, Text: p.Prompt, TranscriptPath: p.TranscriptPath}, true
 	case "Stop":
 		// claude-code 2.1.x puts the final assistant reply in
 		// `last_assistant_message` directly. Older / partial payloads may omit

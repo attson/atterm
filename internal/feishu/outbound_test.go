@@ -179,6 +179,59 @@ func TestAIChunker_FlushesUserPrompt(t *testing.T) {
 	}
 }
 
+// A single atterm session can run multiple back-to-back claude conversations
+// (user exits claude, then runs it again in the same PTY). Without a reset
+// signal, AIRoller would accumulate old turns across conversations and the
+// anchor body would blur old + new content together. Each new conversation
+// has its own transcript JSONL path; when the path changes on
+// UserPromptSubmit, the roller drops old turns and starts fresh.
+func TestAIChunker_ResetsOnTranscriptPathChange(t *testing.T) {
+	clock := newFakeClock()
+	var lastBody string
+	ch := NewAIChunkerWithClock(func(body string) { lastBody = body }, clock)
+
+	// First conversation: two turns
+	ch.PushTurn(TurnUserPromptEvent{Text: "first prompt", TranscriptPath: "/x/a.jsonl"})
+	ch.PushTurn(TurnAssistantFinalEvent{Text: "first reply"})
+	clock.advance(110)
+	ch.Tick()
+	if !strings.Contains(lastBody, "first prompt") || !strings.Contains(lastBody, "first reply") {
+		t.Fatalf("first conversation didn't render: %q", lastBody)
+	}
+
+	// New conversation begins — transcript path changes. Old turns must drop.
+	ch.PushTurn(TurnUserPromptEvent{Text: "second prompt", TranscriptPath: "/x/b.jsonl"})
+	clock.advance(110)
+	ch.Tick()
+	if strings.Contains(lastBody, "first prompt") || strings.Contains(lastBody, "first reply") {
+		t.Errorf("expected roller reset on transcript change; still see first-round content: %q", lastBody)
+	}
+	if !strings.Contains(lastBody, "second prompt") {
+		t.Errorf("second-round prompt missing: %q", lastBody)
+	}
+}
+
+// The reset must NOT fire when transcript path is empty (older payloads /
+// events without the field) or unchanged.
+func TestAIChunker_KeepsRollerWhenTranscriptPathStable(t *testing.T) {
+	clock := newFakeClock()
+	var lastBody string
+	ch := NewAIChunkerWithClock(func(body string) { lastBody = body }, clock)
+
+	ch.PushTurn(TurnUserPromptEvent{Text: "first", TranscriptPath: "/x/a.jsonl"})
+	ch.PushTurn(TurnAssistantFinalEvent{Text: "reply-a"})
+	ch.PushTurn(TurnUserPromptEvent{Text: "second", TranscriptPath: "/x/a.jsonl"}) // same path — no reset
+	ch.PushTurn(TurnAssistantFinalEvent{Text: "reply-b"})
+	ch.PushTurn(TurnUserPromptEvent{Text: "third"}) // empty path — no reset (backward compat with older events)
+	clock.advance(110)
+	ch.Tick()
+	for _, want := range []string{"first", "reply-a", "second", "reply-b", "third"} {
+		if !strings.Contains(lastBody, want) {
+			t.Errorf("stable-path run should keep %q, got: %q", want, lastBody)
+		}
+	}
+}
+
 func TestAIChunker_ConcurrentPushTickRaceClean(t *testing.T) {
 	clock := newFakeClock()
 	var calls int32

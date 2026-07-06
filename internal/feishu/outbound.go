@@ -287,13 +287,14 @@ func (r *AIRoller) Render() string {
 // sync.Mutex protects all mutable fields, and the flush callback is invoked
 // without holding the lock to avoid serialising HTTP PATCH calls.
 type AIChunker struct {
-	mu        sync.Mutex
-	roller    *AIRoller
-	flush     FlushFunc
-	clock     Clock
-	lastFlush time.Time
-	dirty     bool
-	lastBody  string
+	mu                 sync.Mutex
+	roller             *AIRoller
+	flush              FlushFunc
+	clock              Clock
+	lastFlush          time.Time
+	dirty              bool
+	lastBody           string
+	lastTranscriptPath string // most recent non-empty transcript_path seen; change → reset roller
 }
 
 func NewAIChunker(flush FlushFunc) *AIChunker {
@@ -311,6 +312,14 @@ func NewAIChunkerWithClock(flush FlushFunc, clk Clock) *AIChunker {
 
 func (c *AIChunker) PushTurn(ev any) {
 	c.mu.Lock()
+	// Conversation boundary: a UserPromptSubmit with a transcript_path
+	// different from the last one signals a new claude conversation on the
+	// same atterm session (e.g. user exited claude and ran it again). Reset
+	// the roller so old turns roll off cleanly instead of piling up.
+	if e, ok := ev.(TurnUserPromptEvent); ok && e.TranscriptPath != "" && e.TranscriptPath != c.lastTranscriptPath {
+		c.roller = NewAIRoller()
+		c.lastTranscriptPath = e.TranscriptPath
+	}
 	switch e := ev.(type) {
 	case TurnUserPromptEvent:
 		c.roller.OnUserPrompt(e.Text)
@@ -365,7 +374,14 @@ func (c *AIChunker) computeFlushLocked() (body string, shouldFlush bool) {
 
 // Per-turn dispatch types so PushTurn doesn't depend on the desktop/feishu
 // TurnEvent (this package is internal to relay, not desktop).
-type TurnUserPromptEvent struct{ Text string }
+// TurnUserPromptEvent is the roller's view of a user-submitted prompt. The
+// optional TranscriptPath field carries claude's per-conversation JSONL
+// path — a change signals a new conversation, which the AIChunker uses
+// to reset the roller so old turns don't blur into the fresh dialog.
+type TurnUserPromptEvent struct {
+	Text           string
+	TranscriptPath string
+}
 type TurnToolStartEvent struct{ ToolName string }
 type TurnToolEndEvent struct{ ToolName, ToolBody string }
 type TurnAssistantFinalEvent struct{ Text string }

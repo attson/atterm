@@ -458,7 +458,7 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 	log.Printf("feishu-turn: route sid=%s kind=%v text_len=%d opts=%d", sessionID, ev.Kind, len(ev.Text), len(ev.Options))
 	switch ev.Kind {
 	case TurnUserPrompt:
-		chunker.PushTurn(internalfeishu.TurnUserPromptEvent{Text: ev.Text})
+		chunker.PushTurn(internalfeishu.TurnUserPromptEvent{Text: ev.Text, TranscriptPath: ev.TranscriptPath})
 	case TurnAssistantFinal:
 		chunker.PushTurn(internalfeishu.TurnAssistantFinalEvent{Text: ev.Text})
 	case TurnToolStart:

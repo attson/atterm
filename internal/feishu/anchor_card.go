@@ -63,13 +63,13 @@ type AskFormOpt struct {
 
 // RenderAskQuestionForm builds the form container element that captures a
 // full AskUserQuestion payload in a single interactive widget. Each question
-// gets TWO widgets — a select_static for the offered options and a text
-// input for a per-question custom answer — mirroring claude-code's native
-// TUI where every question also exposes "Type something." as a choice.
-// Field naming: q_<idx>_sel for the dropdown, q_<idx>_txt for the custom
-// input. formatAskFormAnswer prefers _txt over _sel per question.
+// renders as ONE row (column_set): select_static on the left, input on the
+// right, mirroring claude-code's native TUI where every question exposes
+// "Type something." as a per-question choice. Field naming: q_<idx>_sel for
+// the dropdown, q_<idx>_txt for the custom input. formatAskFormAnswer
+// prefers _txt over _sel per question.
 func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[string]any {
-	elements := make([]any, 0, len(questions)*2+1)
+	elements := make([]any, 0, len(questions)+1)
 	for i, q := range questions {
 		opts := make([]any, 0, len(q.Options))
 		for _, opt := range q.Options {
@@ -79,23 +79,30 @@ func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[st
 			})
 		}
 		placeholder := "❓ " + q.Question
-		elements = append(elements, map[string]any{
+		sel := map[string]any{
 			"tag":         "select_static",
 			"element_id":  fmt.Sprintf("askform_q%d_sel", i),
 			"name":        fmt.Sprintf("q_%d_sel", i),
 			"required":    false,
 			"placeholder": map[string]any{"tag": "plain_text", "content": placeholder},
 			"options":     opts,
-		})
-		// Per-question custom input — non-empty text here wins over the
-		// dropdown for this question. Mirrors "Type something." being an
-		// option inside every question in claude-code's native TUI.
-		elements = append(elements, map[string]any{
+		}
+		// Per-question custom input on the right — non-empty text here wins
+		// over the dropdown for this question.
+		txt := map[string]any{
 			"tag":         "input",
 			"element_id":  fmt.Sprintf("askform_q%d_txt", i),
 			"name":        fmt.Sprintf("q_%d_txt", i),
 			"required":    false,
-			"placeholder": map[string]any{"tag": "plain_text", "content": "或直接输入自定义答案"},
+			"placeholder": map[string]any{"tag": "plain_text", "content": "自定义答案"},
+		}
+		elements = append(elements, map[string]any{
+			"tag":                "column_set",
+			"horizontal_spacing": "small",
+			"columns": []any{
+				map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": []any{sel}},
+				map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": []any{txt}},
+			},
 		})
 	}
 	// Submit + Reset row.
@@ -386,6 +393,13 @@ func NewInputElement(sessionID, elementID string) map[string]any {
 	el := inputElement(sessionID)
 	el["element_id"] = elementID
 	return el
+}
+
+// NewDefaultButtonsElement returns the full default buttons row (^C ^D Esc
+// Enter 结束) with its element_id, ready to POST via CreateCardElement.
+// Used to restore the buttons when an AskUserQuestion form gets torn down.
+func NewDefaultButtonsElement(sessionID string) map[string]any {
+	return buttonsRow(sessionID)
 }
 
 // AskOptionsColumnSet builds the column_set payload that replaces the default

@@ -136,7 +136,60 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	t.Log("=== step 6: CREATE form container (AskUserQuestion multi-question form) ===")
+	// step 5b — remove the standalone Type-here input before mounting the
+	// AskUserQuestion form. Real flow does this so the per-question inputs
+	// aren't competing for attention with the anchor's own input.
+	t.Log("=== step 5b: DELETE standalone input (Type-here) before form mount ===")
+	if err := client.DeleteCardElement(ctx, tok, cardID, "anchor_input_reset", 6); err != nil {
+		t.Fatalf("DeleteCardElement (Type-here) FAILED: %v", err)
+	}
+	t.Logf("OK: standalone input removed — check Feishu: 'Type here…' gone")
+
+	time.Sleep(500 * time.Millisecond)
+
+	// step 5c — also remove the buttons row before the form goes up. Real
+	// flow does this to keep the form as the only interactive surface.
+	t.Log("=== step 5c: DELETE anchor buttons row before form mount ===")
+	if err := client.DeleteCardElement(ctx, tok, cardID, internalfeishu.AnchorButtonsElementID, 7); err != nil {
+		t.Fatalf("DeleteCardElement (buttons) FAILED: %v", err)
+	}
+	t.Logf("OK: buttons row removed — check Feishu: bottom row gone")
+
+	time.Sleep(500 * time.Millisecond)
+
+	t.Log("=== step 6: CREATE form container (per-question row: select + input) ===")
+	mkRow := func(idx int, question string, opts []string) map[string]any {
+		optElems := make([]any, 0, len(opts))
+		for _, o := range opts {
+			optElems = append(optElems, map[string]any{
+				"text":  map[string]any{"tag": "plain_text", "content": o},
+				"value": o,
+			})
+		}
+		sel := map[string]any{
+			"tag":         "select_static",
+			"element_id":  fmt.Sprintf("probe_q%d_sel", idx),
+			"name":        fmt.Sprintf("q_%d_sel", idx),
+			"required":    false,
+			"placeholder": map[string]any{"tag": "plain_text", "content": "❓ " + question},
+			"options":     optElems,
+		}
+		txt := map[string]any{
+			"tag":         "input",
+			"element_id":  fmt.Sprintf("probe_q%d_txt", idx),
+			"name":        fmt.Sprintf("q_%d_txt", idx),
+			"required":    false,
+			"placeholder": map[string]any{"tag": "plain_text", "content": "自定义答案"},
+		}
+		return map[string]any{
+			"tag":                "column_set",
+			"horizontal_spacing": "small",
+			"columns": []any{
+				map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": []any{sel}},
+				map[string]any{"tag": "column", "width": "weighted", "weight": 1, "elements": []any{txt}},
+			},
+		}
+	}
 	form := map[string]any{
 		"tag":              "form",
 		"element_id":       "probe_askform",
@@ -144,40 +197,8 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 		"vertical_spacing": "8px",
 		"padding":          "8px 0px 8px 0px",
 		"elements": []any{
-			// Question 1 — single-select via select_static
-			map[string]any{
-				"tag":         "select_static",
-				"element_id":  "probe_q1",
-				"name":        "q_0",
-				"required":    false,
-				"placeholder": map[string]any{"tag": "plain_text", "content": "❓ 用什么语言?"},
-				"options": []any{
-					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "Python"}, "value": "Python"},
-					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "Go"}, "value": "Go"},
-					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "Rust"}, "value": "Rust"},
-				},
-			},
-			// Question 2 — multi-select via multi_select_static
-			map[string]any{
-				"tag":         "multi_select_static",
-				"element_id":  "probe_q2",
-				"name":        "q_1",
-				"required":    false,
-				"placeholder": map[string]any{"tag": "plain_text", "content": "❓ 包含哪些功能?"},
-				"options": []any{
-					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "数据库"}, "value": "数据库"},
-					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "用户认证"}, "value": "用户认证"},
-					map[string]any{"text": map[string]any{"tag": "plain_text", "content": "CI/CD"}, "value": "CI/CD"},
-				},
-			},
-			// Custom-text row
-			map[string]any{
-				"tag":         "input",
-				"element_id":  "probe_qcustom",
-				"name":        "custom",
-				"required":    false,
-				"placeholder": map[string]any{"tag": "plain_text", "content": "或直接输入自定义答案"},
-			},
+			mkRow(0, "用什么语言?", []string{"Python", "Go", "Rust"}),
+			mkRow(1, "包含哪些功能?", []string{"数据库", "用户认证", "CI/CD"}),
 			// Submit + Cancel row
 			map[string]any{
 				"tag":                "column_set",
@@ -221,11 +242,11 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 	}
 	err = client.CreateCardElement(ctx, tok, cardID,
 		internalfeishu.AnchorBodyElementID, "insert_after",
-		[]map[string]any{form}, 6)
+		[]map[string]any{form}, 8)
 	if err != nil {
 		t.Fatalf("CreateCardElement form FAILED: %v", err)
 	}
-	t.Logf("OK: form container inserted — check Feishu: two dropdowns + custom input + 提交/重置")
+	t.Logf("OK: form container inserted — check Feishu: form only, no input, no buttons row")
 
 	fmt.Printf("\n\n=== VERDICT ===\n")
 	fmt.Printf("CardKit card_id: %s\n", cardID)

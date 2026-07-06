@@ -58,6 +58,12 @@ type CardAnchor struct {
 	// Guards against duplicate inserts and orphan DELETEs. Only touched
 	// under SendMu.
 	FormMounted bool
+
+	// ButtonsMounted tracks whether the anchor buttons row (^C/^D/Esc/
+	// Enter/结束 or AskOptions swap) is currently on the card. Torn down
+	// while an AskUserQuestion form is up (form has its own submit/reset)
+	// and rebuilt when the form goes away. Only touched under SendMu.
+	ButtonsMounted bool
 }
 
 type CardIndex struct {

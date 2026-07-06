@@ -164,6 +164,29 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 			}
 			anchor.FormMounted = false
 		}
+		// Also strip the standalone Type-here input while the form is up —
+		// each question already has its own custom input, so keeping the
+		// original input around just crowds the card. CurrentInputID == ""
+		// means "no input currently mounted"; deleteAnchorForm restores it.
+		if anchor.CurrentInputID != "" {
+			seqInp := atomic.AddInt64(&anchor.PatchSeq, 1)
+			if err := disp.DeleteAnchorInputWithSeq(ctx, tok, anchor.CardToken, anchor.CurrentInputID, seqInp); err != nil {
+				log.Printf("feishu-anchor-form: input DELETE failed session=%s: %v", sessionIDStr, err)
+				// Non-fatal — keep going and mount the form anyway.
+			} else {
+				anchor.CurrentInputID = ""
+			}
+		}
+		// Same for the buttons row (^C/^D/Esc/Enter/结束). The form has its
+		// own 提交/重置 buttons; the keystroke row on top of that is noise.
+		if anchor.ButtonsMounted {
+			seqBtn := atomic.AddInt64(&anchor.PatchSeq, 1)
+			if err := disp.DeleteAnchorButtonsWithSeq(ctx, tok, anchor.CardToken, seqBtn); err != nil {
+				log.Printf("feishu-anchor-form: buttons DELETE failed session=%s: %v", sessionIDStr, err)
+			} else {
+				anchor.ButtonsMounted = false
+			}
+		}
 		seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
 		form := internalfeishu.RenderAskQuestionForm(sessionIDStr, specs)
 		if err := disp.InsertAnchorFormWithSeq(ctx, tok, anchor.CardToken, form, seqCre); err != nil {
@@ -201,6 +224,36 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 	}
 	anchor.FormMounted = false
 	log.Printf("feishu-anchor-form: removed session=%s seq=%d", anchor.SessionID, seq)
+	// Restore the standalone Type-here input we tore down when the form went
+	// up. New element_id every time — Feishu's client caches by id and would
+	// otherwise resurrect stale value even across DELETE+CREATE.
+	if anchor.CurrentInputID == "" {
+		seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
+		newID := fmt.Sprintf("anchor_input_%d", seqCre)
+		if err := disp.CreateAnchorInputWithSeq(ctx, tok, anchor.CardToken, anchor.SessionID, newID, seqCre); err != nil {
+			log.Printf("feishu-anchor-form: input CREATE (restore) failed session=%s: %v", anchor.SessionID, err)
+			return
+		}
+		anchor.CurrentInputID = newID
+		log.Printf("feishu-anchor-form: input restored session=%s seq=%d new_id=%s", anchor.SessionID, seqCre, newID)
+	}
+	// Restore the keystroke buttons row after the input so the on-card
+	// element order stays: body → input → buttons. CurrentInputID is the
+	// insert-after anchor when present; when input somehow failed to
+	// restore, fall back to inserting after the body.
+	if !anchor.ButtonsMounted {
+		seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
+		target := anchor.CurrentInputID
+		if target == "" {
+			target = internalfeishu.AnchorBodyElementID
+		}
+		if err := disp.CreateAnchorButtonsWithSeq(ctx, tok, anchor.CardToken, anchor.SessionID, target, seqCre); err != nil {
+			log.Printf("feishu-anchor-form: buttons CREATE (restore) failed session=%s: %v", anchor.SessionID, err)
+			return
+		}
+		anchor.ButtonsMounted = true
+		log.Printf("feishu-anchor-form: buttons restored session=%s seq=%d", anchor.SessionID, seqCre)
+	}
 }
 
 // swapAnchorButtons PATCHes the anchor card's button row. options nil →
@@ -1049,6 +1102,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		OwnerOpenID:    openID,
 		CreatedAt:      time.Now(),
 		CurrentInputID: internalfeishu.AnchorInputElementID,
+		ButtonsMounted: true,
 	}
 	h.feishuCards.Put(anchor)
 

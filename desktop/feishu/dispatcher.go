@@ -462,6 +462,54 @@ func (d *Dispatcher) DeleteAnchorFormWithSeq(ctx context.Context, tenantToken, c
 		internalfeishu.AnchorAskFormElementID, sequence)
 }
 
+// DeleteAnchorInputWithSeq removes the anchor's Type-here input element.
+// Used when an AskUserQuestion form goes up: the per-question inputs make
+// the standalone input redundant and visually noisy. Caller allocates
+// sequence under the anchor's SendMu.
+func (d *Dispatcher) DeleteAnchorInputWithSeq(ctx context.Context, tenantToken, cardToken, elementID string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken, elementID, sequence)
+}
+
+// CreateAnchorInputWithSeq re-inserts the anchor input element after the body
+// markdown. Used to restore the input when the AskUserQuestion form is torn
+// down. Caller allocates sequence under the anchor's SendMu.
+func (d *Dispatcher) CreateAnchorInputWithSeq(ctx context.Context, tenantToken, cardToken, sessionID, elementID string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{internalfeishu.NewInputElement(sessionID, elementID)},
+		sequence)
+}
+
+// DeleteAnchorButtonsWithSeq removes the anchor buttons row. Used when an
+// AskUserQuestion form goes up: the form has its own submit/reset buttons,
+// the default keystroke row would just clutter the space below.
+func (d *Dispatcher) DeleteAnchorButtonsWithSeq(ctx context.Context, tenantToken, cardToken string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorButtonsElementID, sequence)
+}
+
+// CreateAnchorButtonsWithSeq re-inserts the default keystroke buttons row
+// (^C/^D/Esc/Enter/结束) after the input element. Used to restore the row
+// when an AskUserQuestion form is torn down.
+func (d *Dispatcher) CreateAnchorButtonsWithSeq(ctx context.Context, tenantToken, cardToken, sessionID, targetElementID string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		targetElementID, "insert_after",
+		[]map[string]any{internalfeishu.NewDefaultButtonsElement(sessionID)},
+		sequence)
+}
+
 // GetToken returns a fresh (tenantToken, openID) pair via the configured
 // TokenSource. Used by relay_host when it needs to PATCH an anchor card
 // and must refresh the token independently of a SendAnchorCard call.

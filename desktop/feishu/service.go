@@ -426,17 +426,20 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 			return
 		}
 	}
-	// Build the stroke list. Empirically, claude's AskUserQuestion TUI
-	// treats digit keys as cursor moves (highlight option N) and Enter as
-	// confirm-and-advance. So each question is TWO strokes: <digit><\r>.
-	// The last question's <\r> lands on Submit (or auto-fires); no extra
-	// trailing key — the previous "extra \r for Submit" version leaked
-	// that byte into chat when confirm-final-question auto-submitted, and
-	// the resulting empty user prompt wedged claude on the next turn.
-	// Every stroke goes as its own SendInput with an inter-key delay — a
-	// single bundled payload reads as paste in raw-mode TUIs (\r becomes
-	// literal \n, never commits).
-	strokes := make([][]byte, 0, len(slots)*2)
+	// Build the stroke list. Empirically, claude's AskUserQuestion TUI:
+	//   - digit key highlights option N (does NOT confirm)
+	//   - Enter (\r) confirms current highlight and auto-advances to the
+	//     next question, then to Submit
+	//   - on the LAST question, confirming (or highlighting-then-holding)
+	//     triggers auto-submit; a trailing \r after that ends up on the
+	//     chat prompt as a bare Enter → "1" leaks into the queued-message
+	//     buffer (verified against session b03cfefc: stroke plan was
+	//     "1\r3\r1\r", tool got 3 answers, chat wound up with pending "1")
+	//
+	// So per question: <digit><\r>. On the LAST question, skip the
+	// trailing <\r> — the digit alone is enough for claude to
+	// auto-select-and-submit.
+	strokes := make([][]byte, 0, len(slots)*2-1)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
 			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
@@ -456,6 +459,10 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		}
 		strokes = append(strokes, []byte{'0' + byte(optIdx)})
 		strokes = append(strokes, []byte{'\r'})
+	}
+	// Drop the trailing \r — see the block comment above for the reason.
+	if len(strokes) > 0 {
+		strokes = strokes[:len(strokes)-1]
 	}
 	// 80ms between strokes: claude's AskUserQuestion (ink) needs ~50-70ms to
 	// re-render on tab-advance, and a stroke that arrives during the re-

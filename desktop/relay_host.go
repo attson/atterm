@@ -194,6 +194,7 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 			return
 		}
 		anchor.FormMounted = true
+		anchor.PendingForm = specs
 		log.Printf("feishu-anchor-form: inserted session=%s q=%d seq=%d", sessionIDStr, len(questions), seqCre)
 	}()
 }
@@ -223,6 +224,7 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 		return
 	}
 	anchor.FormMounted = false
+	anchor.PendingForm = nil
 	log.Printf("feishu-anchor-form: removed session=%s seq=%d", anchor.SessionID, seq)
 	// Restore the standalone Type-here input we tore down when the form went
 	// up. New element_id every time — Feishu's client caches by id and would

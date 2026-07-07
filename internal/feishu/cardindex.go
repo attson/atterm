@@ -64,6 +64,13 @@ type CardAnchor struct {
 	// while an AskUserQuestion form is up (form has its own submit/reset)
 	// and rebuilt when the form goes away. Only touched under SendMu.
 	ButtonsMounted bool
+
+	// PendingForm is the AskUserQuestion payload the mounted form is
+	// asking about — captured at form-mount time so handleAskFormSubmit
+	// can turn a submitted label into the option's 1-based index for
+	// key-sequence injection. nil when no form is mounted.
+	// Only touched under SendMu.
+	PendingForm []AskFormQuestion
 }
 
 type CardIndex struct {

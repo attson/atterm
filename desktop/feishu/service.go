@@ -368,117 +368,165 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 	}
 }
 
-// handleAskFormSubmit routes an AskUserQuestion form submit event: parse
-// the form_value map into readable multi-line text and inject through the
-// router (same path as typed input). Also DELETEs the mounted form so the
-// card returns to the normal input+buttons view.
+// handleAskFormSubmit turns an AskUserQuestion form submit into the exact
+// key sequence claude's TUI expects, then injects it via the router. The
+// TUI is keyboard-driven — "Enter to select · Tab/Arrow keys to navigate"
+// — so pasting the answer as text just makes claude accept the first
+// keystroke ('1') as Q1's selection and drop everything after. What works
+// is the actual key sequence a human would type: digit-key per question,
+// Tab to move to the next question / to Submit, Enter to commit.
+//
+// Custom text ("Type something." in the native TUI) is a nested modal we
+// haven't reverse-engineered yet; if the user typed anything into a
+// per-question txt input we reply-message a "not supported" note back and
+// leave the form up so they can re-pick from the dropdown.
 func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOpenID string, formValue map[string]any) {
 	r := s.getRouter()
 	if r == nil {
 		return
 	}
-	answer := formatAskFormAnswer(formValue)
-	if answer == "" {
-		// Nothing picked and no custom text — silently drop; user can try again.
+	anchor := r.AnchorBySession(sessionID)
+	if anchor == nil {
+		log.Printf("feishu: askform submit no-anchor sid=%s", sessionID)
+		return
+	}
+	// Snapshot the questions the mounted form was asking about — writer
+	// (relay_host.updateAnchorAskForm) holds SendMu across the CREATE, so
+	// this read races only with a concurrent form tear-down, which would
+	// have DELETEd the form on the Feishu side too. Copy to avoid holding
+	// the lock while we do the label→index math.
+	anchor.SendMu.Lock()
+	questions := anchor.PendingForm
+	anchor.SendMu.Unlock()
+	if len(questions) == 0 {
+		log.Printf("feishu: askform submit no-pending-form sid=%s (form was probably already dismissed)", sessionID)
+		return
+	}
+	slots := parseAskFormSlots(formValue)
+	if len(slots) == 0 {
 		log.Printf("feishu: askform empty submit sid=%s", sessionID)
 		return
 	}
-	decision := r.RouteCardActionBySession(sessionID, operatorOpenID, "input", "", answer)
-	log.Printf("feishu: askform submit sid=%s answer_len=%d action=%d", sessionID, len(answer), decision.Action)
+	// Any per-question custom text present → refuse for now with a hint.
+	// The alternative — picking "Type something." + injecting the text — is
+	// a second modal in claude's TUI that we haven't reverse-engineered yet.
+	for _, sl := range slots {
+		if sl.txt != "" {
+			log.Printf("feishu: askform custom-text unsupported sid=%s q=%d", sessionID, sl.idx)
+			s.replyText(ctx, operatorOpenID, "❌ 自定义答案暂不支持,请从下拉选一个选项后再提交")
+			return
+		}
+	}
+	// Build the key sequence: for each question, the option's 1-based
+	// index (single digit — claude's TUI numbers options 1..N), then Tab
+	// to advance to the next question / to Submit. Router.injectInto
+	// appends the final \r 16ms later to press Enter on Submit.
+	var buf bytes.Buffer
+	for _, sl := range slots {
+		if sl.idx >= len(questions) {
+			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
+			return
+		}
+		q := questions[sl.idx]
+		optIdx := 0
+		for i, opt := range q.Options {
+			if opt.Label == sl.sel {
+				optIdx = i + 1
+				break
+			}
+		}
+		if optIdx == 0 || optIdx > 9 {
+			log.Printf("feishu: askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
+			return
+		}
+		buf.WriteByte('0' + byte(optIdx))
+		buf.WriteByte('\t')
+	}
+	payload := buf.String()
+	decision := r.RouteCardActionBySession(sessionID, operatorOpenID, "input", "", payload)
+	log.Printf("feishu: askform submit sid=%s keys=%q q=%d action=%d", sessionID, payload, len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
 	// not a bad form; leaving the form up would just confuse).
-	if a := r.AnchorBySession(sessionID); a != nil {
-		go func() {
-			// Delete on a fresh goroutine so we don't block LongConn's
-			// 3-second callback window.
-			if s.dispatcher == nil {
-				return
-			}
-			// deleteAnchorForm lives on relay_host; we don't have direct
-			// access. Just call ClearAnchorInput semantics: DELETE the form
-			// element via the CardKit client directly.
-			s.deleteAnchorForm(a)
-		}()
-	}
+	go func() {
+		if s.dispatcher == nil {
+			return
+		}
+		s.deleteAnchorForm(anchor)
+	}()
 }
 
-// formatAskFormAnswer joins form_value into a multi-line text answer.
-// Each question exposes TWO fields — q_<idx>_sel (dropdown choice) and
-// q_<idx>_txt (per-question custom input). If _txt is non-empty for a
-// question we use that, otherwise the _sel choice. A multi-select returns
-// a []string on _sel; we join with ", ".
-func formatAskFormAnswer(formValue map[string]any) string {
-	type slot struct {
-		sel any
-		txt string
-	}
-	slots := make(map[int]*slot)
-	getSlot := func(idx int) *slot {
-		if s, ok := slots[idx]; ok {
-			return s
+// askFormSlot is one question's parsed answer: the dropdown label (sel)
+// and the per-question custom input (txt). Empty for questions the user
+// didn't touch — only rows with either sel or txt present are returned.
+type askFormSlot struct {
+	idx int
+	sel string
+	txt string
+}
+
+// parseAskFormSlots pulls q_<idx>_sel / q_<idx>_txt out of Feishu's form
+// submission map and returns them sorted by question index. Multi-select
+// isn't currently rendered on the form, so []any sel values are joined
+// with ", " defensively — future proofing, not a used path.
+func parseAskFormSlots(formValue map[string]any) []askFormSlot {
+	byIdx := map[int]*askFormSlot{}
+	get := func(i int) *askFormSlot {
+		s := byIdx[i]
+		if s == nil {
+			s = &askFormSlot{idx: i}
+			byIdx[i] = s
 		}
-		s := &slot{}
-		slots[idx] = s
 		return s
 	}
 	for k, v := range formValue {
 		if !strings.HasPrefix(k, "q_") {
 			continue
 		}
-		// q_<idx>_<sel|txt>
 		rest := k[2:]
-		underscore := strings.LastIndex(rest, "_")
-		if underscore <= 0 {
+		under := strings.LastIndex(rest, "_")
+		if under <= 0 {
 			continue
 		}
-		var idx int
-		if _, err := fmt.Sscanf(rest[:underscore], "%d", &idx); err != nil {
+		var i int
+		if _, err := fmt.Sscanf(rest[:under], "%d", &i); err != nil {
 			continue
 		}
-		suffix := rest[underscore+1:]
-		switch suffix {
+		s := get(i)
+		switch rest[under+1:] {
 		case "sel":
-			getSlot(idx).sel = v
+			switch t := v.(type) {
+			case string:
+				s.sel = strings.TrimSpace(t)
+			case []any:
+				labels := make([]string, 0, len(t))
+				for _, li := range t {
+					if str, ok := li.(string); ok && strings.TrimSpace(str) != "" {
+						labels = append(labels, str)
+					}
+				}
+				s.sel = strings.Join(labels, ", ")
+			}
 		case "txt":
-			if s, ok := v.(string); ok {
-				getSlot(idx).txt = strings.TrimSpace(s)
+			if str, ok := v.(string); ok {
+				s.txt = strings.TrimSpace(str)
 			}
 		}
 	}
-	// Deterministic q_N ordering — Feishu's map key ordering isn't
-	// guaranteed, and users expect the answer to follow question order.
-	idxs := make([]int, 0, len(slots))
-	for i := range slots {
+	idxs := make([]int, 0, len(byIdx))
+	for i := range byIdx {
 		idxs = append(idxs, i)
 	}
 	sort.Ints(idxs)
-	var parts []string
+	out := make([]askFormSlot, 0, len(idxs))
 	for _, i := range idxs {
-		s := slots[i]
-		// Per-question custom input wins over the dropdown.
-		if s.txt != "" {
-			parts = append(parts, fmt.Sprintf("%d. %s", i+1, s.txt))
+		s := byIdx[i]
+		if s.sel == "" && s.txt == "" {
 			continue
 		}
-		switch t := s.sel.(type) {
-		case string:
-			if strings.TrimSpace(t) != "" {
-				parts = append(parts, fmt.Sprintf("%d. %s", i+1, t))
-			}
-		case []any:
-			labels := make([]string, 0, len(t))
-			for _, li := range t {
-				if str, ok := li.(string); ok && strings.TrimSpace(str) != "" {
-					labels = append(labels, str)
-				}
-			}
-			if len(labels) > 0 {
-				parts = append(parts, fmt.Sprintf("%d. %s", i+1, strings.Join(labels, ", ")))
-			}
-		}
+		out = append(out, *s)
 	}
-	return strings.Join(parts, "\n")
+	return out
 }
 
 // deleteAnchorForm removes a currently-mounted AskUserQuestion form via the

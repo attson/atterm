@@ -293,6 +293,16 @@ func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
 			return
 		}
 		anchor.SendMu.Lock()
+		// Skip when the buttons element isn't on the card: an
+		// AskUserQuestion form-mount tears down anchor_buttons, and the
+		// PATCH here would then hit Feishu's 300313 "elementID not found".
+		// The form tear-down path is responsible for CREATE-ing the row
+		// back; we shouldn't step on it with a PATCH that can't work.
+		if !anchor.ButtonsMounted {
+			anchor.SendMu.Unlock()
+			log.Printf("feishu-anchor-buttons: skip (buttons not mounted) session=%s opts=%d", sessionIDStr, len(options))
+			return
+		}
 		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
 		err = disp.PatchAnchorElement(ctx, tok, anchor.CardToken,
 			internalfeishu.AnchorButtonsElementID, partial, seq)

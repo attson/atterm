@@ -420,11 +420,14 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	// Build the stroke list. Empirically, claude's AskUserQuestion TUI
 	// treats digit keys as cursor moves (highlight option N) and Enter as
 	// confirm-and-advance. So each question is TWO strokes: <digit><\r>.
-	// After the last question the cursor lands on the Submit tab; one
-	// final <\r> fires the form. Every stroke goes as its own SendInput
-	// with an inter-key delay — a single bundled payload reads as paste
-	// in raw-mode TUIs (\r becomes literal \n, never commits).
-	strokes := make([][]byte, 0, len(slots)*2+1)
+	// The last question's <\r> lands on Submit (or auto-fires); no extra
+	// trailing key — the previous "extra \r for Submit" version leaked
+	// that byte into chat when confirm-final-question auto-submitted, and
+	// the resulting empty user prompt wedged claude on the next turn.
+	// Every stroke goes as its own SendInput with an inter-key delay — a
+	// single bundled payload reads as paste in raw-mode TUIs (\r becomes
+	// literal \n, never commits).
+	strokes := make([][]byte, 0, len(slots)*2)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
 			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
@@ -445,7 +448,6 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		strokes = append(strokes, []byte{'0' + byte(optIdx)})
 		strokes = append(strokes, []byte{'\r'})
 	}
-	strokes = append(strokes, []byte{'\r'}) // Submit tab press
 	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 30*time.Millisecond)
 	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done

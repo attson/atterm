@@ -557,6 +557,7 @@ func (s *Service) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 		return
 	}
 	anchor.FormMounted = false
+	anchor.PendingForm = nil
 	log.Printf("feishu: askform DELETE ok session=%s seq=%d", anchor.SessionID, seq)
 }
 

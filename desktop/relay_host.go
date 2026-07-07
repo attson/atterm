@@ -199,8 +199,13 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 	}()
 }
 
-// deleteAnchorForm removes the currently-mounted form if any. Acquires
-// SendMu itself; no-op when no form is mounted.
+// deleteAnchorForm removes the currently-mounted form (if still there) and
+// restores the standalone input + buttons row that were torn down when the
+// form went up. Independent state checks — the service layer's
+// handleAskFormSubmit ALSO calls a variant of this that flips FormMounted
+// as soon as the form's DELETEd, so this path routinely arrives with the
+// form already gone; it must still restore input/buttons in that case.
+// Safe to call repeatedly: each of the three fixups is guarded on state.
 func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 	disp := h.feishuDispatcher.Load()
 	if disp == nil {
@@ -215,17 +220,16 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 	}
 	anchor.SendMu.Lock()
 	defer anchor.SendMu.Unlock()
-	if !anchor.FormMounted {
-		return
+	if anchor.FormMounted {
+		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+		if err := disp.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seq); err != nil {
+			log.Printf("feishu-anchor-form: DELETE failed session=%s: %v", anchor.SessionID, err)
+			return
+		}
+		anchor.FormMounted = false
+		anchor.PendingForm = nil
+		log.Printf("feishu-anchor-form: removed session=%s seq=%d", anchor.SessionID, seq)
 	}
-	seq := atomic.AddInt64(&anchor.PatchSeq, 1)
-	if err := disp.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seq); err != nil {
-		log.Printf("feishu-anchor-form: DELETE failed session=%s: %v", anchor.SessionID, err)
-		return
-	}
-	anchor.FormMounted = false
-	anchor.PendingForm = nil
-	log.Printf("feishu-anchor-form: removed session=%s seq=%d", anchor.SessionID, seq)
 	// Restore the standalone Type-here input we tore down when the form went
 	// up. New element_id every time — Feishu's client caches by id and would
 	// otherwise resurrect stale value even across DELETE+CREATE.

@@ -417,13 +417,14 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 			return
 		}
 	}
-	// Build the key sequence: for each question, the option's 1-based
-	// index digit. claude's AskUserQuestion TUI numbers options 1..N;
-	// pressing a digit selects that option AND auto-advances to the next
-	// question (no Tab needed — confirmed empirically after Tab-based
-	// sequences dismissed the TUI mid-run). Router.injectInto appends the
-	// final \r 16ms later to press Enter on Submit.
-	var buf bytes.Buffer
+	// Build the stroke list. Empirically, claude's AskUserQuestion TUI
+	// treats digit keys as cursor moves (highlight option N) and Enter as
+	// confirm-and-advance. So each question is TWO strokes: <digit><\r>.
+	// After the last question the cursor lands on the Submit tab; one
+	// final <\r> fires the form. Every stroke goes as its own SendInput
+	// with an inter-key delay — a single bundled payload reads as paste
+	// in raw-mode TUIs (\r becomes literal \n, never commits).
+	strokes := make([][]byte, 0, len(slots)*2+1)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
 			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
@@ -441,11 +442,12 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 			log.Printf("feishu: askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
 			return
 		}
-		buf.WriteByte('0' + byte(optIdx))
+		strokes = append(strokes, []byte{'0' + byte(optIdx)})
+		strokes = append(strokes, []byte{'\r'})
 	}
-	payload := buf.String()
-	decision := r.RouteCardActionBySession(sessionID, operatorOpenID, "input", "", payload)
-	log.Printf("feishu: askform submit sid=%s keys=%q bytes=%x q=%d action=%d", sessionID, payload, []byte(payload), len(slots), decision.Action)
+	strokes = append(strokes, []byte{'\r'}) // Submit tab press
+	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 30*time.Millisecond)
+	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
 	// not a bad form; leaving the form up would just confuse).

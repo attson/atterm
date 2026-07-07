@@ -151,6 +151,49 @@ func (r *Router) injectInto(anchor *CardAnchor, operatorOpenID string, payload [
 	return Decision{Action: ActionInject}
 }
 
+// InjectKeystrokesBySession fires a sequence of SendInput calls spaced by
+// interKeyDelay so the receiving TUI reads each stroke as a discrete key
+// event. A bundled payload (single SendInput with multiple bytes) reads as
+// a paste in claude/codex — the \r inside becomes literal \n and never
+// commits, so multi-step flows (AskUserQuestion, TUI menus) need every key
+// on its own SendInput. Ownership + take-over match injectInto.
+//
+// Sequencing is asynchronous: the function returns after ClaimDriver + the
+// first SendInput queues, and the rest fire from a goroutine. Callers that
+// need to know the whole sequence landed have to observe pty output.
+func (r *Router) InjectKeystrokesBySession(sessionID, operatorOpenID string, strokes [][]byte, interKeyDelay time.Duration) Decision {
+	anchor := r.idx.BySessionID(sessionID)
+	if anchor == nil {
+		return Decision{Action: ActionReject, Toast: "卡片已过期，请通过新指令重启"}
+	}
+	if operatorOpenID != anchor.OwnerOpenID {
+		return Decision{Action: ActionReject, Toast: "无权限"}
+	}
+	sub := r.lookup(anchor.SessionID)
+	if sub == nil {
+		return Decision{Action: ActionReject, Toast: "会话已结束"}
+	}
+	sub.ClaimDriver()
+	if len(strokes) == 0 {
+		return Decision{Action: ActionInject}
+	}
+	// Send the first stroke inline so a caller-visible error surfaces if the
+	// PTY inbound queue is completely full at this instant.
+	if !sub.SendInput(strokes[0]) {
+		return Decision{Action: ActionReject, Toast: "输入未被接收（队列已满）"}
+	}
+	if len(strokes) == 1 {
+		return Decision{Action: ActionInject}
+	}
+	go func(rest [][]byte) {
+		for _, s := range rest {
+			time.Sleep(interKeyDelay)
+			sub.SendInput(s)
+		}
+	}(strokes[1:])
+	return Decision{Action: ActionInject}
+}
+
 // CardTokenFor returns the live CardKit card_token for a session, or "" when
 // no anchor is registered. Exposed so the post-input-submit clear flow can
 // look up the token without duplicating the index dependency.

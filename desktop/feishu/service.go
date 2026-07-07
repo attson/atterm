@@ -418,9 +418,11 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		}
 	}
 	// Build the key sequence: for each question, the option's 1-based
-	// index (single digit — claude's TUI numbers options 1..N), then Tab
-	// to advance to the next question / to Submit. Router.injectInto
-	// appends the final \r 16ms later to press Enter on Submit.
+	// index digit. claude's AskUserQuestion TUI numbers options 1..N;
+	// pressing a digit selects that option AND auto-advances to the next
+	// question (no Tab needed — confirmed empirically after Tab-based
+	// sequences dismissed the TUI mid-run). Router.injectInto appends the
+	// final \r 16ms later to press Enter on Submit.
 	var buf bytes.Buffer
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
@@ -440,11 +442,10 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 			return
 		}
 		buf.WriteByte('0' + byte(optIdx))
-		buf.WriteByte('\t')
 	}
 	payload := buf.String()
 	decision := r.RouteCardActionBySession(sessionID, operatorOpenID, "input", "", payload)
-	log.Printf("feishu: askform submit sid=%s keys=%q q=%d action=%d", sessionID, payload, len(slots), decision.Action)
+	log.Printf("feishu: askform submit sid=%s keys=%q bytes=%x q=%d action=%d", sessionID, payload, []byte(payload), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
 	// not a bad form; leaving the form up would just confuse).

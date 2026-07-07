@@ -383,15 +383,6 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		log.Printf("feishu: askform empty submit sid=%s", sessionID)
 		return
 	}
-	// Multi-question answers contain \n — a bare "\n" is a submit key in
-	// raw-mode TUIs (claude/codex), so sending "1. a\n2. b\n3. c" would make
-	// claude accept just "1. a" and treat "2. b" + "3. c" as fresh prompts.
-	// Wrap in bracketed paste (ESC[200~ … ESC[201~) so the whole answer lands
-	// in the input buffer as one paste; the follow-up \r from injectInto
-	// then commits it as a single message.
-	if strings.Contains(answer, "\n") {
-		answer = "\x1b[200~" + answer + "\x1b[201~"
-	}
 	decision := r.RouteCardActionBySession(sessionID, operatorOpenID, "input", "", answer)
 	log.Printf("feishu: askform submit sid=%s answer_len=%d action=%d", sessionID, len(answer), decision.Action)
 	// Remove the form once injected — success or reject, the form has done

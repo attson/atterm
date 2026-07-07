@@ -398,6 +398,15 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	anchor.SendMu.Lock()
 	questions := anchor.PendingForm
 	anchor.SendMu.Unlock()
+	// Log the exact questions we mounted vs. what the user picked, so a
+	// "stroke count doesn't match claude's tab count" mismatch is visible
+	// in the log next to the stroke plan.
+	for i, q := range questions {
+		log.Printf("feishu: askform pending sid=%s q[%d]=%q opts=%d", sessionID, i, q.Question, len(q.Options))
+	}
+	for k, v := range formValue {
+		log.Printf("feishu: askform formvalue sid=%s field=%q value=%v", sessionID, k, v)
+	}
 	if len(questions) == 0 {
 		log.Printf("feishu: askform submit no-pending-form sid=%s (form was probably already dismissed)", sessionID)
 		return

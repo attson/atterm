@@ -452,6 +452,16 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	// re-render on tab-advance, and a stroke that arrives during the re-
 	// render can land in the wrong tab (or leak into chat as a queued
 	// message). 30ms was tight enough to leave the trailing digit in chat.
+	// Log the full stroke plan (byte-for-byte) so misfires are debuggable
+	// without another manual capture.
+	var dbg strings.Builder
+	for i, s := range strokes {
+		if i > 0 {
+			dbg.WriteByte(' ')
+		}
+		fmt.Fprintf(&dbg, "%x", s)
+	}
+	log.Printf("feishu: askform plan sid=%s slots=%d strokes=%d bytes=[%s]", sessionID, len(slots), len(strokes), dbg.String())
 	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 80*time.Millisecond)
 	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done

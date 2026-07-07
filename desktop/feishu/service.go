@@ -448,7 +448,11 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		strokes = append(strokes, []byte{'0' + byte(optIdx)})
 		strokes = append(strokes, []byte{'\r'})
 	}
-	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 30*time.Millisecond)
+	// 80ms between strokes: claude's AskUserQuestion (ink) needs ~50-70ms to
+	// re-render on tab-advance, and a stroke that arrives during the re-
+	// render can land in the wrong tab (or leak into chat as a queued
+	// message). 30ms was tight enough to leave the trailing digit in chat.
+	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 80*time.Millisecond)
 	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,

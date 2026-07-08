@@ -556,8 +556,25 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		out = append(out, []byte(sl.txt))
 	}
 
-	// Multi-select and Type-something both need Tab (\t) to advance.
-	out = append(out, []byte{0x09})
+	// Advance key depends on the branch:
+	//   - Multi-select (with or without custom text): Tab (\t / 0x09).
+	//     Confirmed to fire "confirm this multi-tab + advance" both when
+	//     the cursor is on a checkbox row and when it's on Type-something.
+	//   - Single-select + custom text: Enter (\r / 0x0d). Type-something
+	//     on a single-select tab drops into a text-input widget that
+	//     SWALLOWS Tab as a literal character (0x09 written into the
+	//     input). Enter is the confirm-and-advance key for that widget.
+	//     Verified against session c027e30a: sending Tab left "随便"
+	//     in the input, then subsequent '1' bytes appended into it
+	//     ("随便11"), and the tab bar never advanced past Q2.
+	//
+	// Single-select without custom text doesn't reach this line — it
+	// returned early after the single-digit stroke that already advanced.
+	if q.MultiSelect {
+		out = append(out, []byte{0x09})
+	} else {
+		out = append(out, []byte{0x0d})
+	}
 	return out, true
 }
 

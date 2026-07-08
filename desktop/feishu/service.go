@@ -558,22 +558,27 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 
 	// Advance key depends on the branch:
 	//   - Multi-select (with or without custom text): Tab (\t / 0x09).
-	//     Confirmed to fire "confirm this multi-tab + advance" both when
-	//     the cursor is on a checkbox row and when it's on Type-something.
-	//   - Single-select + custom text: Enter (\r / 0x0d). Type-something
-	//     on a single-select tab drops into a text-input widget that
-	//     SWALLOWS Tab as a literal character (0x09 written into the
-	//     input). Enter is the confirm-and-advance key for that widget.
-	//     Verified against session c027e30a: sending Tab left "随便"
-	//     in the input, then subsequent '1' bytes appended into it
-	//     ("随便11"), and the tab bar never advanced past Q2.
+	//     Confirmed to fire "confirm this multi-tab + advance" when the
+	//     cursor is on a checkbox row.
+	//   - Single-select + custom text: press the typeIdx digit AGAIN.
+	//     Reading claude's source (askUserQuestion single-select digit
+	//     handler): if the pressed digit maps to an `input` option AND
+	//     that option's current text is non-empty, the handler calls
+	//     `onChange(k.value)` — the advance callback. First typeIdx press
+	//     focused the input; second press (after we've typed the text)
+	//     advances with the typed value as the answer. This dodges the
+	//     Enter/Tab race entirely — no need to guess whether the input
+	//     widget's onSubmit sees the fresh value.
+	//     (Verified from binary: `if ((A?.get(k.value) ?? "").trim())
+	//     q.onChange?.(k.value); return;`.)
 	//
 	// Single-select without custom text doesn't reach this line — it
 	// returned early after the single-digit stroke that already advanced.
 	if q.MultiSelect {
 		out = append(out, []byte{0x09})
-	} else {
-		out = append(out, []byte{0x0d})
+	} else if hasCustom {
+		typeIdx := len(q.Options) + 1
+		out = append(out, []byte{'0' + byte(typeIdx)})
 	}
 	return out, true
 }

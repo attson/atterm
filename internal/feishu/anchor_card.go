@@ -52,8 +52,9 @@ const AnchorAskFormElementID = "anchor_askform"
 // container. Kept in internal/feishu (not desktop/feishu) so the renderer
 // stays close to the anchor JSON.
 type AskFormQuestion struct {
-	Question string        // human-facing question text; shown as dropdown placeholder
-	Options  []AskFormOpt  // radio-style choices
+	Question    string       // human-facing question text; shown as dropdown placeholder
+	Options     []AskFormOpt // radio-style choices
+	MultiSelect bool         // true → render as multi_select_static so users can pick several
 }
 
 // AskFormOpt is one selectable option in a question.
@@ -79,8 +80,12 @@ func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[st
 			})
 		}
 		placeholder := "❓ " + q.Question
+		selTag := "select_static"
+		if q.MultiSelect {
+			selTag = "multi_select_static"
+		}
 		sel := map[string]any{
-			"tag":         "select_static",
+			"tag":         selTag,
 			"element_id":  fmt.Sprintf("askform_q%d_sel", i),
 			"name":        fmt.Sprintf("q_%d_sel", i),
 			"required":    false,

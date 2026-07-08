@@ -144,7 +144,7 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 		for _, o := range q.Options {
 			opts = append(opts, internalfeishu.AskFormOpt{Label: o.Label})
 		}
-		specs = append(specs, internalfeishu.AskFormQuestion{Question: q.Question, Options: opts})
+		specs = append(specs, internalfeishu.AskFormQuestion{Question: q.Question, Options: opts, MultiSelect: q.MultiSelect})
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -416,54 +416,35 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		log.Printf("feishu: askform empty submit sid=%s", sessionID)
 		return
 	}
-	// Any per-question custom text present → refuse for now with a hint.
-	// The alternative — picking "Type something." + injecting the text — is
-	// a second modal in claude's TUI that we haven't reverse-engineered yet.
-	for _, sl := range slots {
-		if sl.txt != "" {
-			log.Printf("feishu: askform custom-text unsupported sid=%s q=%d", sessionID, sl.idx)
-			s.replyText(ctx, operatorOpenID, "❌ 自定义答案暂不支持,请从下拉选一个选项后再提交")
-			return
-		}
-	}
-	// Reverse-engineered from hand-testing claude's AskUserQuestion TUI:
+	// Reverse-engineered key model (2026-07-08, feedback_askform_key_model.md):
 	//
-	//   - Digit key `N` = select option N + confirm this question +
-	//     auto-advance to the next tab (or to the Review page after the
-	//     last question). ONE stroke per question — no Enter needed.
-	//   - After the last question, the TUI shows a Review page with
-	//     "1. Submit answers / 2. Cancel". Pressing `1` fires the form.
+	//   Single-select tab:
+	//     digit N = pick option N + confirm + auto-advance. ONE stroke.
 	//
-	// So an N-question form takes exactly N+1 digit strokes: one per
-	// question (mapping the picked label to its 1-based index) plus a
-	// trailing `1` to fire Submit on the Review page. No `\r`, no
-	// trailing race — every keystroke lands on a real target.
+	//   Multi-select tab:
+	//     digit N = toggle checkbox N (does NOT advance)
+	//     Tab (\t) or → = confirm this question + advance
 	//
-	// Earlier attempts sent `<digit>\r` pairs, which happened to work
-	// because Enter on a question tab is equivalent to "confirm the
-	// default (option 1) and advance" — but every extra stroke past the
-	// Submit was a byte leaked into chat as a queued message. See
-	// session e4b7e468 (plan "1\r1\r1", 5 strokes): strokes 1-4
-	// completed the form and fired Submit; the 5th "1" landed on chat.
-	strokes := make([][]byte, 0, len(slots)+1)
+	//   Type-something (custom text) branch (present on every question,
+	//   position = len(Options)+1):
+	//     digit typeIdx only ticks the box, does NOT focus the input.
+	//     Need ↓ (\x1b[B) × (typeIdx-1) to move the cursor down to the
+	//     Type-something row before typing takes effect. Then Tab advances.
+	//
+	//   After the last question, Review page: "1. Submit answers /
+	//   2. Cancel". Digit `1` fires.
+	strokes := make([][]byte, 0)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
 			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
 			return
 		}
 		q := questions[sl.idx]
-		optIdx := 0
-		for i, opt := range q.Options {
-			if opt.Label == sl.sel {
-				optIdx = i + 1
-				break
-			}
-		}
-		if optIdx == 0 || optIdx > 9 {
-			log.Printf("feishu: askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
+		qStrokes, ok := buildQuestionStrokes(q, sl, sessionID)
+		if !ok {
 			return
 		}
-		strokes = append(strokes, []byte{'0' + byte(optIdx)})
+		strokes = append(strokes, qStrokes...)
 	}
 	// Review page: "Submit answers" is option 1.
 	strokes = append(strokes, []byte{'1'})
@@ -494,19 +475,102 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	}()
 }
 
-// askFormSlot is one question's parsed answer: the dropdown label (sel)
-// and the per-question custom input (txt). Empty for questions the user
-// didn't touch — only rows with either sel or txt present are returned.
+// buildQuestionStrokes assembles the keypress sequence for one question of
+// an AskUserQuestion form based on its slot (what the user picked in Feishu)
+// and its shape (single vs multi select). Returns (strokes, false) with an
+// error logged if something is off (label not found, index > 9, etc.); the
+// caller aborts the whole submit on false.
+//
+// Branches:
+//   - Single-select, no custom text: one digit does everything (select +
+//     confirm + advance). Do NOT add Tab.
+//   - Multi-select, no custom text: digit for each checked label (toggle),
+//     then Tab to advance.
+//   - Any + custom text: (if multi, toggle other checkboxes first,) then
+//     the Type-something checkbox digit, then ↓ × (typeIdx-1) to move
+//     cursor onto the Type-something row, then the text bytes, then Tab.
+func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sessionID string) ([][]byte, bool) {
+	var out [][]byte
+	findOptIdx := func(label string) int {
+		for i, opt := range q.Options {
+			if opt.Label == label {
+				return i + 1
+			}
+		}
+		return 0
+	}
+	hasCustom := sl.txt != ""
+
+	// Single-select fast path (one keystroke handles everything).
+	if !q.MultiSelect && !hasCustom {
+		if sl.sel == "" {
+			log.Printf("feishu: askform single-select empty sid=%s q=%d", sessionID, sl.idx)
+			return nil, false
+		}
+		optIdx := findOptIdx(sl.sel)
+		if optIdx == 0 || optIdx > 9 {
+			log.Printf("feishu: askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
+			return nil, false
+		}
+		out = append(out, []byte{'0' + byte(optIdx)})
+		return out, true
+	}
+
+	// Multi-select: toggle each selected label with its digit.
+	if q.MultiSelect {
+		for _, label := range sl.selMulti {
+			optIdx := findOptIdx(label)
+			if optIdx == 0 || optIdx > 9 {
+				log.Printf("feishu: askform multi label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, label)
+				return nil, false
+			}
+			out = append(out, []byte{'0' + byte(optIdx)})
+		}
+	}
+
+	// Custom text: tick the Type-something box, then ↓ onto its row, then
+	// type. Type-something's 1-based index is len(Options)+1 — it's always
+	// the option right after the last real option and before "Chat about
+	// this".
+	if hasCustom {
+		typeIdx := len(q.Options) + 1
+		if typeIdx > 9 {
+			log.Printf("feishu: askform typeIdx=%d exceeds single-digit range sid=%s q=%d", typeIdx, sessionID, sl.idx)
+			return nil, false
+		}
+		out = append(out, []byte{'0' + byte(typeIdx)})
+		// ↓ (\x1b[B) × (typeIdx-1): cursor starts on option 1, needs to
+		// walk down to option typeIdx.
+		for i := 0; i < typeIdx-1; i++ {
+			out = append(out, []byte{0x1b, 0x5b, 0x42})
+		}
+		out = append(out, []byte(sl.txt))
+	}
+
+	// Multi-select and Type-something both need Tab (\t) to advance.
+	out = append(out, []byte{0x09})
+	return out, true
+}
+
+// askFormSlot is one question's parsed answer. Exactly one of sel (single-
+// select dropdown label), selMulti (multi_select_static labels), or txt
+// (per-question custom-text input) is populated per typical submission,
+// though nothing prevents the user from filling both a dropdown AND the
+// txt field — handleAskFormSubmit treats txt as an override on top of
+// whatever's selected. Empty slots (nothing picked, nothing typed) are
+// dropped by parseAskFormSlots before return.
 type askFormSlot struct {
-	idx int
-	sel string
-	txt string
+	idx      int
+	sel      string   // single-select chosen label
+	selMulti []string // multi-select chosen labels
+	txt      string   // custom-text input for this question
 }
 
 // parseAskFormSlots pulls q_<idx>_sel / q_<idx>_txt out of Feishu's form
-// submission map and returns them sorted by question index. Multi-select
-// isn't currently rendered on the form, so []any sel values are joined
-// with ", " defensively — future proofing, not a used path.
+// submission map and returns them sorted by question index. sel values
+// come in as either string (single_select_static) or []any (multi_select_
+// static); the two land in different fields so the stroke planner can
+// tell the two branches apart.
 func parseAskFormSlots(formValue map[string]any) []askFormSlot {
 	byIdx := map[int]*askFormSlot{}
 	get := func(i int) *askFormSlot {
@@ -537,13 +601,11 @@ func parseAskFormSlots(formValue map[string]any) []askFormSlot {
 			case string:
 				s.sel = strings.TrimSpace(t)
 			case []any:
-				labels := make([]string, 0, len(t))
 				for _, li := range t {
 					if str, ok := li.(string); ok && strings.TrimSpace(str) != "" {
-						labels = append(labels, str)
+						s.selMulti = append(s.selMulti, strings.TrimSpace(str))
 					}
 				}
-				s.sel = strings.Join(labels, ", ")
 			}
 		case "txt":
 			if str, ok := v.(string); ok {
@@ -559,7 +621,7 @@ func parseAskFormSlots(formValue map[string]any) []askFormSlot {
 	out := make([]askFormSlot, 0, len(idxs))
 	for _, i := range idxs {
 		s := byIdx[i]
-		if s.sel == "" && s.txt == "" {
+		if s.sel == "" && len(s.selMulti) == 0 && s.txt == "" {
 			continue
 		}
 		out = append(out, *s)

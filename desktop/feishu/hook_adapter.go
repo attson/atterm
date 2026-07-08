@@ -313,8 +313,9 @@ func extractAskUserQuestion(rawToolInput json.RawMessage) (string, []QuestionOpt
 // PreToolUse(AskUserQuestion) payload. AskUserQuestion may bundle multiple
 // (radio + multi-select) in a single hook call — each becomes one entry.
 type AskUserQuestionEntry struct {
-	Question string
-	Options  []QuestionOption
+	Question    string
+	Options     []QuestionOption
+	MultiSelect bool
 }
 
 func extractAllAskUserQuestions(rawToolInput json.RawMessage) []AskUserQuestionEntry {
@@ -324,8 +325,9 @@ func extractAllAskUserQuestions(rawToolInput json.RawMessage) []AskUserQuestionE
 	var p struct {
 		Question  string `json:"question"`
 		Questions []struct {
-			Question string `json:"question"`
-			Options  []struct {
+			Question    string `json:"question"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
 				Label       string `json:"label"`
 				Description string `json:"description"`
 			} `json:"options"`
@@ -341,7 +343,7 @@ func extractAllAskUserQuestions(rawToolInput json.RawMessage) []AskUserQuestionE
 			for _, o := range q.Options {
 				opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
 			}
-			out = append(out, AskUserQuestionEntry{Question: q.Question, Options: opts})
+			out = append(out, AskUserQuestionEntry{Question: q.Question, Options: opts, MultiSelect: q.MultiSelect})
 		}
 		return out
 	}

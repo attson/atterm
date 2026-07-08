@@ -212,6 +212,12 @@ export const zhCN = {
       disableE2EEWarning: "会话内容（终端输出、标题 / cwd / 当前命令、命令完成通知）将不经端到端封装直接发送给 relay，relay 服务器本身即可读取。传输层 TLS（若启用）仍然生效。账号密钥仍保留，仅暂停本机出站封装。开启期间标题栏会持续显示 ⚠ Plaintext 提醒。",
       saving: "保存中...",
       saveConnect: "保存并连接",
+      clearTitle: '清理 relay 信息',
+      clearHint: '这将清除本机保存的 relay 地址、账号和登录信息。已经打开的本地终端不受影响。',
+      clearAction: '清理',
+      clearing: '清理中…',
+      clearConfirm: '确定要清除本机保存的 relay 信息吗？',
+      clearFailed: '清理失败：{reason}',
       pairing: {
         title: "移动端配对",
         hint: "生成一次性二维码，让手机无需复制 token 即可接入此 relay。",

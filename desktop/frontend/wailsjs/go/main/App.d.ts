@@ -147,6 +147,8 @@ export function SetRecoveryDialogEnabled(arg1:boolean):Promise<void>;
 
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 
+export function ClearRelayConfig():Promise<void>;
+
 export function SetRelayDisableE2EE(arg1:boolean):Promise<void>;
 
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;

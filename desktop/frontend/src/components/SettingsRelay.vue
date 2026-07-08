@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword, rememberRelayPassword } from "../lib/api";
+import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword, rememberRelayPassword, clearRelayConfig } from "../lib/api";
 import { usePlatform } from '../platform'
 const platform = usePlatform()
 import PairingPanel from "./PairingPanel.vue";
@@ -32,6 +32,7 @@ const disableE2EE = ref(false);
 const paused = ref(false);
 const loading = ref(true);
 const saving = ref(false);
+const clearing = ref(false);
 const togglingPause = ref(false);
 const error = ref("");
 const { t } = useI18n();
@@ -128,7 +129,8 @@ const statusPill = computed(() => {
   return { text: t("settings.relay.connecting"), cls: "warn" };
 });
 
-onMounted(async () => {
+async function reload() {
+  loading.value = true;
   try {
     const cfg = await getRelayConfig();
     allowInsecureRelay.value = cfg.allow_insecure_relay;
@@ -138,35 +140,26 @@ onMounted(async () => {
     paused.value = (cfg as any).paused ?? false;
     snapshotPersisted();
 
-    // Prefill email from persisted config (set by LoginRemoteRelay on
-    // last successful login).
     email.value = cfg.last_email ?? "";
-
-    // Prefill the password from the safekeyring slot the most recent
-    // successful login wrote. Empty when nothing is stored or when no
-    // email was cached.
     if (email.value) {
       try {
         password.value = await loadSavedRelayPassword();
       } catch {
-        // Treat any binding failure as "no stored password" — the user
-        // can still type one in.
+        // Treat any binding failure as "no stored password".
       }
+    } else {
+      password.value = '';
     }
 
-    // Show the "logged in as X" pill immediately without waiting for the
-    // uplink's relay:auth-info event. The event listener below stays
-    // registered as a fallback (covers identity changes during the dialog
-    // session — e.g., login from another device, admin promotion).
+    connectedUserID.value = "";
+    connectedEmail.value = "";
     if (cfg.token) {
       try {
         const me = await fetchRelayMe();
         connectedEmail.value = me.email || "";
         connectedUserID.value = me.user_id || "";
       } catch {
-        // Token rejected (401) or network error — pill stays empty; the
-        // uplink event stream and apiFetch's 401 interceptor will produce
-        // an accurate state if/when the session is actually invalid.
+        // Token rejected or network error — pill stays empty.
       }
     }
   } catch (e: any) {
@@ -174,10 +167,18 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+}
+
+onMounted(async () => {
+  await reload();
 
   platform.events.on('relay:auth-info', async (data) => {
     const { user_id } = data as { user_id: string };
     connectedUserID.value = user_id || "";
+    if (!user_id) {
+      connectedEmail.value = "";
+      return;
+    }
     try {
       const me = await fetchRelayMe();
       connectedEmail.value = me.email || "";
@@ -364,6 +365,24 @@ async function handleTogglePaused() {
   }
 }
 
+async function handleClear() {
+  if (!window.confirm(t('settings.relay.clearConfirm'))) return;
+  clearing.value = true;
+  error.value = "";
+  try {
+    await clearRelayConfig();
+    await reload();
+    snapshotPersisted();
+    emit("relay-config-changed");
+  } catch (e: any) {
+    error.value = t('settings.relay.clearFailed', {
+      reason: e?.message ?? String(e),
+    });
+  } finally {
+    clearing.value = false;
+  }
+}
+
 const canSave = computed(() => !saving.value && !!stripScheme(host.value));
 const saveLabel = computed(() => (saving.value ? t("settings.relay.saving") : t("settings.relay.saveConnect")));
 
@@ -538,6 +557,21 @@ defineExpose({
       <p v-if="error" class="error">{{ error }}</p>
 
       <PairingPanel />
+
+      <div class="danger-zone">
+        <div class="danger-zone-text">
+          <div class="field-label">{{ t('settings.relay.clearTitle') }}</div>
+          <p class="hint">{{ t('settings.relay.clearHint') }}</p>
+        </div>
+        <button
+          type="button"
+          class="danger-btn"
+          :disabled="saving || clearing || loading"
+          @click="handleClear"
+        >
+          {{ clearing ? t('settings.relay.clearing') : t('settings.relay.clearAction') }}
+        </button>
+      </div>
     </template>
   </div>
 </template>
@@ -808,4 +842,29 @@ input:focus {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+.danger-zone {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.danger-zone-text { flex: 1; min-width: 0; }
+.danger-btn {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--bad);
+  border: 1px solid var(--bad);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.danger-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bad) 8%, transparent 92%);
+}
+.danger-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

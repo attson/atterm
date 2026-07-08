@@ -273,6 +273,7 @@ interface AppBindings {
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
+  ClearRelayConfig(): Promise<void>;
   SetRelayDisableE2EE(disabled: boolean): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
   GetUplinkHealth(): Promise<ConnHealthSnapshot>;
@@ -462,6 +463,10 @@ export function setRelayConfig(cfg: {
     last_email: cfg.last_email ?? "",
     connected: false,
   });
+}
+
+export function clearRelayConfig(): Promise<void> {
+  return bindings().ClearRelayConfig();
 }
 
 // setRelayDisableE2EE flips the agent-side seal toggle directly without

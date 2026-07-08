@@ -210,6 +210,12 @@ export const en = {
       disableE2EEWarning: "Session content (terminal output, session title / cwd / current command, command-finished notifications) is sent to the relay without end-to-end sealing, so the relay server itself can read it. Transport TLS (if enabled) still applies. Your account key stays loaded — only outbound sealing is paused. The title bar keeps a ⚠ Plaintext indicator while this is on.",
       saving: "saving...",
       saveConnect: "save & connect",
+      clearTitle: 'Clear relay info',
+      clearHint: 'Removes the saved relay address, account, and login info from this device. Open terminals are not affected.',
+      clearAction: 'Clear',
+      clearing: 'Clearing…',
+      clearConfirm: 'Clear all relay info saved on this device?',
+      clearFailed: 'Clear failed: {reason}',
       pairing: {
         title: "Mobile pairing",
         hint: "Generate a single-use QR code so a phone can attach to this relay without copy-pasting tokens.",

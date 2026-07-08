@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
 
 const { fake } = vi.hoisted(() => ({
   fake: {
@@ -103,7 +103,9 @@ describe('SettingsRelay post-login password retention', () => {
 })
 
 describe('SettingsRelay clear relay info', () => {
-  let confirmSpy: ReturnType<typeof vi.spyOn>
+  // Pin MockInstance to the confirm() signature — the bare `ReturnType<typeof vi.spyOn>`
+  // form drops the specific overload and trips vue-tsc (see PasteImagePreviewHost.test.ts).
+  let confirmSpy: MockInstance<[message?: string], boolean>
 
   beforeEach(() => {
     confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)

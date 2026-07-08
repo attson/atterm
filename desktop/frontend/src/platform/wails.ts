@@ -78,15 +78,7 @@ export function createWailsPlatform(): Platform {
           remote_permission: cfg.remote_permission,
         })
       },
-      clear: async () => {
-        await api.setRelayConfig({
-          url: '',
-          token: '',
-          allow_insecure_relay: false,
-          disable_e2ee: false,
-          remote_permission: 'full',
-        })
-      },
+      clear: () => api.clearRelayConfig(),
       fetchMe: () => api.fetchRelayMe(),
       setUplinkPaused: (paused: boolean) => api.setUplinkPaused(paused),
     },

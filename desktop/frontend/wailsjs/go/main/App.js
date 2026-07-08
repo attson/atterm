@@ -286,6 +286,10 @@ export function SetRelayConfig(arg1) {
   return window['go']['main']['App']['SetRelayConfig'](arg1);
 }
 
+export function ClearRelayConfig() {
+  return window['go']['main']['App']['ClearRelayConfig']();
+}
+
 export function SetRelayDisableE2EE(arg1) {
   return window['go']['main']['App']['SetRelayDisableE2EE'](arg1);
 }

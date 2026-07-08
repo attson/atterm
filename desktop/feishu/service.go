@@ -426,20 +426,26 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 			return
 		}
 	}
-	// Build the stroke list. Empirically, claude's AskUserQuestion TUI:
-	//   - digit key highlights option N (does NOT confirm)
-	//   - Enter (\r) confirms current highlight and auto-advances to the
-	//     next question, then to Submit
-	//   - on the LAST question, confirming (or highlighting-then-holding)
-	//     triggers auto-submit; a trailing \r after that ends up on the
-	//     chat prompt as a bare Enter → "1" leaks into the queued-message
-	//     buffer (verified against session b03cfefc: stroke plan was
-	//     "1\r3\r1\r", tool got 3 answers, chat wound up with pending "1")
+	// Reverse-engineered from hand-testing claude's AskUserQuestion TUI:
 	//
-	// So per question: <digit><\r>. On the LAST question, skip the
-	// trailing <\r> — the digit alone is enough for claude to
-	// auto-select-and-submit.
-	strokes := make([][]byte, 0, len(slots)*2-1)
+	//   - Digit key `N` = select option N + confirm this question +
+	//     auto-advance to the next tab (or to the Review page after the
+	//     last question). ONE stroke per question — no Enter needed.
+	//   - After the last question, the TUI shows a Review page with
+	//     "1. Submit answers / 2. Cancel". Pressing `1` fires the form.
+	//
+	// So an N-question form takes exactly N+1 digit strokes: one per
+	// question (mapping the picked label to its 1-based index) plus a
+	// trailing `1` to fire Submit on the Review page. No `\r`, no
+	// trailing race — every keystroke lands on a real target.
+	//
+	// Earlier attempts sent `<digit>\r` pairs, which happened to work
+	// because Enter on a question tab is equivalent to "confirm the
+	// default (option 1) and advance" — but every extra stroke past the
+	// Submit was a byte leaked into chat as a queued message. See
+	// session e4b7e468 (plan "1\r1\r1", 5 strokes): strokes 1-4
+	// completed the form and fired Submit; the 5th "1" landed on chat.
+	strokes := make([][]byte, 0, len(slots)+1)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
 			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
@@ -458,12 +464,9 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 			return
 		}
 		strokes = append(strokes, []byte{'0' + byte(optIdx)})
-		strokes = append(strokes, []byte{'\r'})
 	}
-	// Drop the trailing \r — see the block comment above for the reason.
-	if len(strokes) > 0 {
-		strokes = strokes[:len(strokes)-1]
-	}
+	// Review page: "Submit answers" is option 1.
+	strokes = append(strokes, []byte{'1'})
 	// 80ms between strokes: claude's AskUserQuestion (ink) needs ~50-70ms to
 	// re-render on tab-advance, and a stroke that arrives during the re-
 	// render can land in the wrong tab (or leak into chat as a queued

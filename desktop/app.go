@@ -545,6 +545,65 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	return nil
 }
 
+// ClearRelayConfig removes every persisted relay identifier from this
+// desktop: the 9 Relay* fields on appConfig, the OS-keychain password slot
+// (origin+email), and the OS-keychain account_key slot (origin+userID).
+// The in-memory account_key is zeroed too, so this desktop stops sealing /
+// decrypting frames for the just-forgotten identity. The uplink is stopped
+// as part of applyRelayConfig (empty URL takes the "no uplink" branch).
+//
+// Local terminal sessions, pairing peer records, and every non-relay
+// setting are left untouched.
+func (a *App) ClearRelayConfig() error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	oldURL := cfg.RelayURL
+	oldEmail := cfg.RelayLastEmail
+
+	// Clear the E2EE account_key BEFORE zeroing cfg. setAccountKey(nil)
+	// routes through persistAccountKey which reads cfg.RelayURL /
+	// cfg.RelaySessionUserID; if we cleared cfg first, persistAccountKey
+	// early-returns on the empty URL and the keychain slot is orphaned.
+	a.setAccountKey(nil)
+
+	cfg.RelayURL = ""
+	cfg.RelaySessionToken = ""
+	cfg.RelaySessionExpiresAt = 0
+	cfg.RelayLastEmail = ""
+	cfg.RelaySessionUserID = ""
+	cfg.AllowInsecureRelay = false
+	cfg.DisableE2EE = false
+	cfg.RemotePermission = ""
+	cfg.RelayPaused = false
+
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+
+	// Best-effort keychain delete for the password slot. clearRelayPasswordFor
+	// swallows ErrNotFound; other errors are logged and swallowed because the
+	// persisted config is already gone — "cleared with a stray keychain
+	// entry" is strictly better than "aborted midway".
+	if err := clearRelayPasswordFor(oldURL, oldEmail); err != nil {
+		log.Printf("desktop: clear relay password keychain slot: %v", err)
+	}
+
+	a.applyRelayConfig(cfg)
+
+	// emitE2EEModeChanged pushes e2ee-mode-changed unconditionally; the
+	// existing helper does not skip when the value is already false, which
+	// is what we want after a clear (the Settings checkbox needs the sync).
+	a.emitE2EEModeChanged(false)
+
+	if a.ctx != nil && a.eventsEmitter != nil {
+		a.eventsEmitter(a.ctx, "relay:auth-info", map[string]any{"user_id": ""})
+		a.eventsEmitter(a.ctx, "relay-config-changed")
+	}
+	return nil
+}
+
 // LoginRemoteRelay calls POST /api/auth/login on the given relay URL with the
 // supplied credentials, parses the returned {session_token, expires_at, user}
 // envelope, and persists (relayURL, session_token) to local config via

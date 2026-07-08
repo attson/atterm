@@ -528,10 +528,19 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		}
 	}
 
-	// Custom text: tick the Type-something box, then ↓ onto its row, then
-	// type. Type-something's 1-based index is len(Options)+1 — it's always
-	// the option right after the last real option and before "Chat about
-	// this".
+	// Custom text: press the Type-something digit, then type. Type-something
+	// lives at len(Options)+1 (right after the last real option, before
+	// "Chat about this").
+	//
+	// Single vs multi differs sharply here:
+	//   - Single-select: digit typeIdx MOVES the cursor onto the Type-
+	//     something row AND drops into text-entry mode. Just type; no ↓
+	//     needed. (Verified via image #79/#80: pressing '4' put the cursor
+	//     on "▸ 4. Type something." with an inline caret, then typing
+	//     "badka" filled it inline.)
+	//   - Multi-select: digit typeIdx only TICKS the checkbox; cursor
+	//     stays on option 1. Have to ↓ × (typeIdx-1) to walk down to the
+	//     Type-something row before typing takes effect.
 	if hasCustom {
 		typeIdx := len(q.Options) + 1
 		if typeIdx > 9 {
@@ -539,10 +548,10 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 			return nil, false
 		}
 		out = append(out, []byte{'0' + byte(typeIdx)})
-		// ↓ (\x1b[B) × (typeIdx-1): cursor starts on option 1, needs to
-		// walk down to option typeIdx.
-		for i := 0; i < typeIdx-1; i++ {
-			out = append(out, []byte{0x1b, 0x5b, 0x42})
+		if q.MultiSelect {
+			for i := 0; i < typeIdx-1; i++ {
+				out = append(out, []byte{0x1b, 0x5b, 0x42})
+			}
 		}
 		out = append(out, []byte(sl.txt))
 	}

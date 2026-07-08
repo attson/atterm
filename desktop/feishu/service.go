@@ -540,7 +540,14 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 	//     "badka" filled it inline.)
 	//   - Multi-select: digit typeIdx only TICKS the checkbox; cursor
 	//     stays on option 1. Have to ↓ × (typeIdx-1) to walk down to the
-	//     Type-something row before typing takes effect.
+	//     Type-something row before typing takes effect. THEN one more ↓
+	//     to reach "Chat about this" (the last option) — Tab only
+	//     advances the tab when the cursor sits on the last option.
+	//     Verified from binary section 18 multi-select handler:
+	//       if (C.key === "tab" && !C.shift) {
+	//         if (y.focusedValue === b /* b = last option */) P(!0);  // advance
+	//         else y.focusNextOption();                               // just move
+	//       }
 	if hasCustom {
 		typeIdx := len(q.Options) + 1
 		if typeIdx > 9 {
@@ -554,6 +561,11 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 			}
 		}
 		out = append(out, []byte(sl.txt))
+		if q.MultiSelect {
+			// One more ↓ so the cursor lands on "Chat about this" — Tab
+			// only advances the tab from the last option's row.
+			out = append(out, []byte{0x1b, 0x5b, 0x42})
+		}
 	}
 
 	// Advance key depends on the branch:

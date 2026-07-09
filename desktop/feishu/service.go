@@ -398,17 +398,8 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	anchor.SendMu.Lock()
 	questions := anchor.PendingForm
 	anchor.SendMu.Unlock()
-	// Log the exact questions we mounted vs. what the user picked, so a
-	// "stroke count doesn't match claude's tab count" mismatch is visible
-	// in the log next to the stroke plan.
-	for i, q := range questions {
-		log.Printf("feishu: askform pending sid=%s q[%d]=%q opts=%d", sessionID, i, q.Question, len(q.Options))
-	}
-	for k, v := range formValue {
-		log.Printf("feishu: askform formvalue sid=%s field=%q value=%v", sessionID, k, v)
-	}
 	if len(questions) == 0 {
-		log.Printf("feishu: askform submit no-pending-form sid=%s (form was probably already dismissed)", sessionID)
+		log.Printf("feishu: askform submit no-pending-form sid=%s", sessionID)
 		return
 	}
 	slots := parseAskFormSlots(formValue)
@@ -416,23 +407,9 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		log.Printf("feishu: askform empty submit sid=%s", sessionID)
 		return
 	}
-	// Reverse-engineered key model (2026-07-08, feedback_askform_key_model.md):
-	//
-	//   Single-select tab:
-	//     digit N = pick option N + confirm + auto-advance. ONE stroke.
-	//
-	//   Multi-select tab:
-	//     digit N = toggle checkbox N (does NOT advance)
-	//     Tab (\t) or → = confirm this question + advance
-	//
-	//   Type-something (custom text) branch (present on every question,
-	//   position = len(Options)+1):
-	//     digit typeIdx only ticks the box, does NOT focus the input.
-	//     Need ↓ (\x1b[B) × (typeIdx-1) to move the cursor down to the
-	//     Type-something row before typing takes effect. Then Tab advances.
-	//
-	//   After the last question, Review page: "1. Submit answers /
-	//   2. Cancel". Digit `1` fires.
+	// Stroke sequence assembled per question via buildQuestionStrokes;
+	// the full key model lives in feedback_askform_key_model.md so this
+	// file doesn't rot every time claude's TUI shifts.
 	strokes := make([][]byte, 0)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
@@ -448,29 +425,8 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	}
 	// Review page: "Submit answers" is option 1.
 	strokes = append(strokes, []byte{'1'})
-	// 80ms between strokes: claude's AskUserQuestion (ink) needs ~50-70ms to
-	// re-render on tab-advance, and a stroke that arrives during the re-
-	// render can land in the wrong tab (or leak into chat as a queued
-	// message). 30ms was tight enough to leave the trailing digit in chat.
-	// Log the full stroke plan (byte-for-byte) so misfires are debuggable
-	// without another manual capture.
-	var dbg strings.Builder
-	for i, s := range strokes {
-		if i > 0 {
-			dbg.WriteByte(' ')
-		}
-		fmt.Fprintf(&dbg, "%x", s)
-	}
-	log.Printf("feishu: askform plan sid=%s slots=%d strokes=%d bytes=[%s]", sessionID, len(slots), len(strokes), dbg.String())
-	// 350ms inter-key delay. Enough for the sync-required cases (single
-	// + custom's Enter reads siH's local synchronous state; multi +
-	// custom now uses Ctrl+Return which stays on siH — no blur race).
-	// A previous 700ms bump was chasing a race that couldn't be fixed
-	// by delay (session e38a4b41 lost ASCII "codex" → "code" at 700ms);
-	// swapping the advance mechanism removed the race outright, so we
-	// don't need the slow delay.
 	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 350*time.Millisecond)
-	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
+	log.Printf("feishu: askform submit sid=%s q=%d strokes=%d action=%d", sessionID, len(slots), len(strokes), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
 	// not a bad form; leaving the form up would just confuse).
@@ -535,26 +491,10 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		}
 	}
 
-	// Custom text: press the Type-something digit, then type. Type-something
-	// lives at len(Options)+1 (right after the last real option, before
-	// "Chat about this").
-	//
-	// Single vs multi differs sharply here:
-	//   - Single-select: digit typeIdx MOVES the cursor onto the Type-
-	//     something row AND drops into text-entry mode. Just type; no ↓
-	//     needed. (Verified via image #79/#80: pressing '4' put the cursor
-	//     on "▸ 4. Type something." with an inline caret, then typing
-	//     "badka" filled it inline.)
-	//   - Multi-select: digit typeIdx only TICKS the checkbox; cursor
-	//     stays on option 1. Have to ↓ × (typeIdx-1) to walk down to the
-	//     Type-something row before typing takes effect. THEN one more ↓
-	//     to reach "Chat about this" (the last option) — Tab only
-	//     advances the tab when the cursor sits on the last option.
-	//     Verified from binary section 18 multi-select handler:
-	//       if (C.key === "tab" && !C.shift) {
-	//         if (y.focusedValue === b /* b = last option */) P(!0);  // advance
-	//         else y.focusNextOption();                               // just move
-	//       }
+	// Custom text lands in "Type something" at option typeIdx = len(Options)+1.
+	// Multi vs single Type-something behaviour differs; see
+	// feedback_askform_key_model.md for the full model + why the trailing
+	// space is required.
 	if hasCustom {
 		typeIdx := len(q.Options) + 1
 		if typeIdx > 9 {
@@ -563,41 +503,30 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		}
 		out = append(out, []byte{'0' + byte(typeIdx)})
 		if q.MultiSelect {
+			// Multi: digit typeIdx only ticks the checkbox — cursor stays.
+			// Walk down to the Type-something row before typing.
 			for i := 0; i < typeIdx-1; i++ {
 				out = append(out, []byte{0x1b, 0x5b, 0x42})
 			}
 		}
-		// Sacrificial trailing space: claude's AskUserQuestion TUI
-		// consistently drops the LAST character of custom-text input —
-		// verified by manual typing (not just automation), so it's a
-		// claude-side bug, not something delay/pumps/Ctrl+Return can
-		// fix from our side. Adding a trailing space means the char
-		// claude drops is the space; the user's actual text survives.
+		// Trailing space is a sacrificial char: claude's AskUserQuestion
+		// TUI consistently drops the last character of custom text (bug
+		// confirmed with manual typing).
 		text := sl.txt + " "
 		for _, r := range text {
 			out = append(out, []byte(string(r)))
 		}
 		if q.MultiSelect {
-			// ↓ moves cursor from Type-something to the Submit button
-			// where Enter fires the container's `if (X && Y) { Y(D);
-			// return; }` — form submit. The trailing-space workaround
-			// above makes the (siH.onBlur → stale controlled prop) race
-			// benign: the char that gets stale-committed is the space.
+			// One more ↓ so cursor lands on the Submit button; Enter fires
+			// it via the container's `if (X && Y) { Y(D); return; }` path.
 			out = append(out, []byte{0x1b, 0x5b, 0x42})
 		}
 	}
 
-	// Advance key depends on the branch:
-	//   - Multi-select, no custom text: Tab (\t / 0x09).
-	//   - Single-select + custom text: Enter (0x0d) on siH → siH.onSubmit
-	//     fires with siH's local (synchronous) value → Y = onChange =
-	//     advance.
-	//   - Multi-select + custom text: Enter (0x0d) after the ↓ (added
-	//     above). Cursor is now on the Submit button; Enter fires the
-	//     container's `if (X && Y) { Y(D); return; }` branch → submits
-	//     form. The Right-arrow pumps preceding the ↓ give React time to
-	//     propagate the last rune's setState to the controlled prop
-	//     before siH.onBlur triggers on cursor move.
+	// Advance key: multi (no custom) uses Tab from a checkbox row;
+	// any-branch with custom text uses Enter (siH.onSubmit for single,
+	// Submit button fire for multi). Single-select without custom already
+	// returned early — its digit is self-advancing.
 	if q.MultiSelect && !hasCustom {
 		out = append(out, []byte{0x09})
 	} else if hasCustom {
@@ -716,7 +645,6 @@ func (s *Service) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 // the user's just-submitted reply doesn't linger in the textbox. Best-effort:
 // errors logged, never bubble up (the inject itself already succeeded).
 func (s *Service) clearAnchorInput(anchor *internalfeishu.CardAnchor, sessionID string) {
-	log.Printf("feishu: clear input entered card=%s disp_nil=%v", anchor.CardToken, s.dispatcher == nil)
 	if s.dispatcher == nil {
 		return
 	}

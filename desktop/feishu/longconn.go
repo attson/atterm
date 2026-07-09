@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"sync"
 	"time"
 
@@ -250,16 +249,6 @@ func newLarkRuntime(cfg LongConnConfig) (longConnRuntime, error) {
 
 	// Card action handler → cfg.OnCardAction
 	disp.OnP2CardActionTrigger(func(ctx context.Context, ev *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
-		// Unconditional ingress log so we can tell whether Feishu is even
-		// delivering card.action events to LongConn (separate question from
-		// "did our extractor / router parse them correctly").
-		hasAction := ev != nil && ev.Event != nil && ev.Event.Action != nil
-		var tag string
-		if hasAction {
-			tag = ev.Event.Action.Tag
-		}
-		log.Printf("feishu-longconn: card_action ingress has_action=%v tag=%q has_cb=%v",
-			hasAction, tag, cfg.OnCardAction != nil)
 		if cfg.OnCardAction != nil {
 			sessionID, kind, eventStr, operatorOpenID, text := extractCardActionFields(ev)
 			var formValue map[string]any

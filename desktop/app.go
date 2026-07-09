@@ -1880,6 +1880,51 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 	return out, nil
 }
 
+// ListRelaySessions returns every active session for the currently
+// logged-in relay account. Bound to Settings → Signed-in Devices tab.
+func (a *App) ListRelaySessions() ([]RelaySessionRow, error) {
+	if a.cfgStore == nil {
+		return nil, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return nil, fmt.Errorf("not authenticated")
+	}
+	return a.meSessionsGET(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
+}
+
+// RevokeRelaySession revokes one session by id_hash. The current
+// session cannot be revoked through this method (the relay endpoint
+// itself refuses to revoke the caller's own session, so no extra
+// guard is needed here).
+func (a *App) RevokeRelaySession(idHash string) error {
+	idHash = strings.TrimSpace(idHash)
+	if idHash == "" {
+		return fmt.Errorf("id_hash is empty")
+	}
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return fmt.Errorf("not authenticated")
+	}
+	return a.meSessionDELETE(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, idHash, cfg.AllowInsecureRelay)
+}
+
+// SignOutOtherRelaySessions revokes every session except the current
+// one. Returns the number of sessions revoked.
+func (a *App) SignOutOtherRelaySessions() (SignOutOthersResult, error) {
+	if a.cfgStore == nil {
+		return SignOutOthersResult{}, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return SignOutOthersResult{}, fmt.Errorf("not authenticated")
+	}
+	return a.meSessionsSignOutOthers(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
+}
+
 // PairingTokenResponse is what the renderer receives when generating a QR code.
 // Mirrors the relay's /api/pair/create response body.
 type PairingTokenResponse struct {

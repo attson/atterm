@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -48,6 +49,12 @@ type UpdateState struct {
 	Downloading  bool   `json:"downloading"`
 	DownloadPct  int    `json:"download_pct"`
 	Ready        bool   `json:"ready"`
+	// DownloadedExists signals that the most recent DownloadVersion /
+	// StartDownload call short-circuited to Ready because a validated
+	// archive was already on disk. The frontend watches false→true to
+	// decide whether to prompt "redownload?" Cleared at Download's HTTP
+	// entry and by ForceRedownload. Never touched by Cancel.
+	DownloadedExists bool `json:"downloaded_exists,omitempty"`
 	Error        string `json:"error"`
 	AssetURL     string `json:"asset_url"`
 	AssetSize    int64  `json:"asset_size"`
@@ -81,6 +88,10 @@ type Updater struct {
 	state      UpdateState
 	cachedAt   time.Time // when we last fetched the latest-release manifest
 	cancelLoop context.CancelFunc
+	// cancelDownload interrupts an in-flight Download. Set at Download's
+	// HTTP entry, cleared on Download return, called by Cancel(). nil when
+	// no download is running.
+	cancelDownload context.CancelFunc
 
 	checksumURL    string
 	checksumSigURL string
@@ -389,6 +400,42 @@ func (u *Updater) clearStaleReadyLocked() {
 	u.state.DownloadPath = ""
 }
 
+// tryClaimExistingArchive checks whether the target archive for latest
+// already exists on disk and verifies OK. Returns (hit=true, nil) if
+// state was updated to Ready and no HTTP download is needed. Returns
+// (hit=false, nil) if there is nothing on disk or the file exists but
+// fails verification (in which case the corrupted file is removed).
+// Returns (hit=false, err) only for infrastructure errors (updatesDir
+// lookup, platform asset name lookup).
+func (u *Updater) tryClaimExistingArchive(ctx context.Context, latest string) (bool, error) {
+	dir, err := u.updatesDir()
+	if err != nil {
+		return false, err
+	}
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return false, err
+	}
+	final := filepath.Join(dir, latest+"-"+name)
+	if _, err := os.Stat(final); err != nil {
+		return false, nil // not on disk — miss
+	}
+	if verifyErr := u.verifyDownloadedArchive(ctx, final, name); verifyErr != nil {
+		_ = os.Remove(final) // corrupted; treat as miss
+		return false, nil
+	}
+	u.mu.Lock()
+	u.state.Downloading = false
+	u.state.Ready = true
+	u.state.DownloadPct = 100
+	u.state.DownloadDir = dir
+	u.state.DownloadPath = final
+	u.state.DownloadedExists = true
+	u.state.Error = ""
+	u.mu.Unlock()
+	return true, nil
+}
+
 func (u *Updater) fetchLatest(ctx context.Context) (*githubRelease, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", u.githubReleaseAPI(), nil)
 	if err != nil {
@@ -592,9 +639,6 @@ func (u *Updater) updatesDir() (string, error) {
 // streaming through a .partial file before atomic-renaming on success.
 // Reports size-mismatch errors loudly so the UI can offer Retry.
 func (u *Updater) Download(ctx context.Context) error {
-	downloadCtx, cancelDownload := context.WithTimeout(ctx, updaterDownloadTimeout)
-	defer cancelDownload()
-
 	u.mu.Lock()
 	url := u.state.AssetURL
 	expectedSize := u.state.AssetSize
@@ -603,6 +647,36 @@ func (u *Updater) Download(ctx context.Context) error {
 	if url == "" {
 		return fmt.Errorf("no asset URL — Check first")
 	}
+
+	// Lazy-hit: if the target archive is already on disk and validates,
+	// short-circuit to Ready without any HTTP traffic. Must run BEFORE
+	// setting up the cancellable context so idle-Download-with-hit never
+	// touches u.cancelDownload.
+	if hit, err := u.tryClaimExistingArchive(ctx, latest); err != nil {
+		u.recordError(err)
+		return err
+	} else if hit {
+		return nil
+	}
+
+	// Nested contexts distinguish cancel vs timeout. External Cancel()
+	// produces context.Canceled; timeout produces context.DeadlineExceeded.
+	// recordError swallows only Canceled.
+	cancelCtx, cancelDownload := context.WithCancel(ctx)
+	downloadCtx, timeoutCancel := context.WithTimeout(cancelCtx, updaterDownloadTimeout)
+	defer timeoutCancel()
+	defer cancelDownload()
+
+	u.mu.Lock()
+	u.cancelDownload = cancelDownload
+	u.state.DownloadedExists = false
+	u.mu.Unlock()
+
+	defer func() {
+		u.mu.Lock()
+		u.cancelDownload = nil
+		u.mu.Unlock()
+	}()
 
 	dir, err := u.updatesDir()
 	if err != nil {
@@ -695,6 +769,34 @@ func (u *Updater) Download(ctx context.Context) error {
 	return nil
 }
 
+// Cancel interrupts an in-flight Download (if any). Idempotent: does
+// nothing when no download is running. The .partial file is removed
+// best-effort so the next download restarts cleanly. State fields
+// touched: Downloading, DownloadPct, Error. Does NOT touch
+// DownloadedExists (that field's lifecycle is scoped to Download
+// entry and ForceRedownload).
+func (u *Updater) Cancel() {
+	u.mu.Lock()
+	cancel := u.cancelDownload
+	downloadPath := u.state.DownloadPath
+	u.mu.Unlock()
+
+	if cancel == nil {
+		return
+	}
+	cancel()
+
+	if downloadPath != "" {
+		_ = os.Remove(downloadPath + ".partial")
+	}
+
+	u.mu.Lock()
+	u.state.Downloading = false
+	u.state.DownloadPct = 0
+	u.state.Error = ""
+	u.mu.Unlock()
+}
+
 // prepareVersion fetches the releases list, finds the given tag, and applies
 // its asset/checksum/notes into state so a subsequent Download targets that
 // exact version (the chosen line's latest). Used by DownloadVersion.
@@ -725,6 +827,36 @@ func (u *Updater) DownloadVersion(ctx context.Context, tag string) error {
 	if err := u.prepareVersion(ctx, tag); err != nil {
 		return err
 	}
+	return u.Download(ctx)
+}
+
+// ForceRedownload skips the lazy-hit path by removing any existing
+// archive for tag, then delegates to the standard Download flow.
+// Used when the user has explicitly asked to redownload (either
+// from the "Redownload" button in the Ready state, or from the
+// confirm prompt after a lazy-hit).
+func (u *Updater) ForceRedownload(ctx context.Context, tag string) error {
+	if err := u.prepareVersion(ctx, tag); err != nil {
+		return err
+	}
+	u.mu.Lock()
+	latest := u.state.Latest
+	u.state.Ready = false
+	u.state.DownloadedExists = false
+	u.state.DownloadPct = 0
+	u.mu.Unlock()
+
+	dir, err := u.updatesDir()
+	if err != nil {
+		u.recordError(err)
+		return err
+	}
+	name, err := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		u.recordError(err)
+		return err
+	}
+	_ = os.Remove(filepath.Join(dir, latest+"-"+name))
 	return u.Download(ctx)
 }
 
@@ -865,6 +997,14 @@ func parseUpdateVerifyPublicKey(encoded string) ed25519.PublicKey {
 }
 
 func (u *Updater) recordError(err error) {
+	// User-initiated Cancel() sends ctx.Cancel through the copy loop; the
+	// resulting error wraps context.Canceled. Cancel() itself has already
+	// cleared state.Error, so overwriting it here would clobber the
+	// intended "no error, we cancelled cleanly" outcome. context.DeadlineExceeded
+	// (timeout) is a distinct sentinel and still falls through.
+	if errors.Is(err, context.Canceled) {
+		return
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.state.Error = err.Error()

@@ -583,40 +583,28 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		for _, r := range sl.txt {
 			out = append(out, []byte(string(r)))
 		}
-		if q.MultiSelect {
-			// One more ↓ so the cursor lands on "Chat about this" — Tab
-			// only advances the tab from the last option's row.
-			out = append(out, []byte{0x1b, 0x5b, 0x42})
-		}
 	}
 
 	// Advance key depends on the branch:
 	//   - Multi-select, no custom text: Tab (\t / 0x09). Cursor is still
 	//     on option 1 (a checkbox row) — Tab from a checkbox row advances
-	//     the tab. Verified session 4bc54767 Q1: stroke "1 2 Tab" from
-	//     opt-1 checkbox landed Q1 as ⨯ successfully.
-	//   - Multi-select + custom text: Enter (\r / 0x0d). By this point
-	//     the extra ↓ has walked the cursor onto the Next/Submit button
-	//     that ink renders BELOW the Type-something row (between opt-
-	//     typeIdx and opt-typeIdx+1 "Chat about this"). Tab from that
-	//     button does NOT fire it; Enter does. Verified session
-	//     4bc54767 Q3: stroke "... 随便 ↓ Tab" left the cursor sitting
-	//     on the Submit button (image #94) without ever advancing.
-	//   - Single-select + custom text: Enter (\r / 0x0d). Once cursor
-	//     focuses Type-something, siH (ink's TextInput) captures ALL
-	//     subsequent keys as text — including digits — so the container-
-	//     level digit handler that checks A.get(k.value) never fires. The
-	//     only way out of siH is siH's own onSubmit, which is triggered
-	//     by Enter and reads the current controlled prop value (parent's
-	//     React state map). Per-rune stroke split + 200ms inter-key delay
-	//     ensures the state map is up-to-date by the time Enter lands.
+	//     the tab. Verified session 4bc54767 Q1.
+	//   - Any + custom text: Enter (\r / 0x0d) directly on siH.
+	//     siH's onSubmit fires and calls Y?.(aH.value / vH.value) which
+	//     is the advance callback in both single- and multi-select
+	//     rendering. Critically, we do NOT walk the cursor off siH
+	//     first — moving off Type-something before the last rune's
+	//     setState propagates to the controlled prop makes siH.onBlur
+	//     commit stale text. Session 01441a16: "优雅美感" + ↓ + Enter
+	//     at 350ms committed "优雅美" because ↓ moved cursor off siH
+	//     before "感"'s setState flushed to the prop. Keeping cursor on
+	//     siH sidesteps that race — siH's onSubmit reads its own local
+	//     input value, which is synchronous with keystrokes.
 	//
 	// Single-select without custom text doesn't reach this line — it
 	// returned early after the single-digit stroke that already advanced.
 	if q.MultiSelect && !hasCustom {
 		out = append(out, []byte{0x09})
-	} else if q.MultiSelect && hasCustom {
-		out = append(out, []byte{0x0d})
 	} else if hasCustom {
 		out = append(out, []byte{0x0d})
 	}

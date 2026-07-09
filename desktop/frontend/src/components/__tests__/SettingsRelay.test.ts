@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
 
 const { fake } = vi.hoisted(() => ({
   fake: {
@@ -99,6 +99,74 @@ describe('SettingsRelay post-login password retention', () => {
 
     const pw = w.find('#relay-password').element as HTMLInputElement
     expect(pw.value).toBe('hunter2')
+  })
+})
+
+describe('SettingsRelay clear relay info', () => {
+  // Pin MockInstance to the confirm() signature — the bare `ReturnType<typeof vi.spyOn>`
+  // form drops the specific overload and trips vue-tsc (see PasteImagePreviewHost.test.ts).
+  let confirmSpy: MockInstance<[message?: string], boolean>
+
+  beforeEach(() => {
+    confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  })
+
+  afterEach(() => {
+    confirmSpy.mockRestore()
+  })
+
+  it('renders the clear button in the danger zone', async () => {
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    const btn = w.find('.danger-btn')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('settings.relay.clearAction')
+  })
+
+  it('cancelling the confirm does not call clearRelayConfig', async () => {
+    confirmSpy.mockReturnValue(false)
+    const clearSpy = vi.spyOn(api, 'clearRelayConfig').mockResolvedValue()
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    await w.find('.danger-btn').trigger('click')
+    await flushPromises()
+    expect(clearSpy).not.toHaveBeenCalled()
+  })
+
+  it('confirming calls clearRelayConfig then reloads to a not-configured state', async () => {
+    const clearSpy = vi.spyOn(api, 'clearRelayConfig').mockResolvedValue()
+    // First getRelayConfig (onMounted) returns the seeded config; the second
+    // call — after clear — returns an empty one so the form goes blank.
+    const empty = {
+      url: '', token: '', session_expires_at: 0,
+      allow_insecure_relay: false, disable_e2ee: false,
+      remote_permission: 'full' as const, last_email: '', connected: false,
+    }
+    ;(api.getRelayConfig as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(baseRelayConfig() as never)
+      .mockResolvedValueOnce(empty as never)
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    await w.find('.danger-btn').trigger('click')
+    await flushPromises()
+    expect(clearSpy).toHaveBeenCalledTimes(1)
+    const host = w.find('#relay-host').element as HTMLInputElement
+    expect(host.value).toBe('')
+    const email = w.find('#relay-email').element as HTMLInputElement
+    expect(email.value).toBe('')
+    expect(w.text()).toContain('settings.relay.notConfigured')
+    expect(w.find('.error').exists()).toBe(false)
+  })
+
+  it('surfaces a backend error via .error', async () => {
+    vi.spyOn(api, 'clearRelayConfig').mockRejectedValue(new Error('boom'))
+    const w = mount(SettingsRelay)
+    await flushPromises()
+    await w.find('.danger-btn').trigger('click')
+    await flushPromises()
+    const err = w.find('.error')
+    expect(err.exists()).toBe(true)
+    expect(err.text()).toContain('settings.relay.clearFailed')
   })
 })
 

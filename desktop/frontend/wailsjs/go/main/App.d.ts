@@ -29,6 +29,12 @@ export function FetchRelayMe():Promise<main.RelayMe>;
 
 export function GetAINotificationsOnly():Promise<boolean>;
 
+export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
+
+export function RevokeRelaySession(arg1:string):Promise<void>;
+
+export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
+
 export function GetAccountKey():Promise<string>;
 
 export function GetAutoCheckUpdates():Promise<boolean>;
@@ -159,6 +165,8 @@ export function SetRecoveryDialogEnabled(arg1:boolean):Promise<void>;
 
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 
+export function ClearRelayConfig():Promise<void>;
+
 export function SetRelayDisableE2EE(arg1:boolean):Promise<void>;
 
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
@@ -180,5 +188,11 @@ export function SetUplinkPaused(arg1:boolean):Promise<void>;
 export function SetWebglRendererEnabled(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
+
+export function DownloadVersion(arg1:string):Promise<void>;
+
+export function CancelDownload():Promise<void>;
+
+export function ForceRedownload(arg1:string):Promise<void>;
 
 export function StartDownload():Promise<void>;

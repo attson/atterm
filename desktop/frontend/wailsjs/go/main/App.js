@@ -50,6 +50,18 @@ export function GetAINotificationsOnly() {
   return window['go']['main']['App']['GetAINotificationsOnly']();
 }
 
+export function ListRelaySessions() {
+  return window['go']['main']['App']['ListRelaySessions']();
+}
+
+export function RevokeRelaySession(arg1) {
+  return window['go']['main']['App']['RevokeRelaySession'](arg1);
+}
+
+export function SignOutOtherRelaySessions() {
+  return window['go']['main']['App']['SignOutOtherRelaySessions']();
+}
+
 export function GetAccountKey() {
   return window['go']['main']['App']['GetAccountKey']();
 }
@@ -310,6 +322,10 @@ export function SetRelayConfig(arg1) {
   return window['go']['main']['App']['SetRelayConfig'](arg1);
 }
 
+export function ClearRelayConfig() {
+  return window['go']['main']['App']['ClearRelayConfig']();
+}
+
 export function SetRelayDisableE2EE(arg1) {
   return window['go']['main']['App']['SetRelayDisableE2EE'](arg1);
 }
@@ -352,6 +368,18 @@ export function SetWebglRendererEnabled(arg1) {
 
 export function ShowNotification(arg1, arg2) {
   return window['go']['main']['App']['ShowNotification'](arg1, arg2);
+}
+
+export function DownloadVersion(arg1) {
+  return window['go']['main']['App']['DownloadVersion'](arg1);
+}
+
+export function CancelDownload() {
+  return window['go']['main']['App']['CancelDownload']();
+}
+
+export function ForceRedownload(arg1) {
+  return window['go']['main']['App']['ForceRedownload'](arg1);
 }
 
 export function StartDownload() {

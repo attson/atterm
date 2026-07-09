@@ -9,6 +9,8 @@ import {
   setAutoCheckUpdates,
   setUpdateGHProxyURL,
   startDownload,
+  cancelDownload,
+  forceRedownload,
   type UpdateState,
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
@@ -25,6 +27,9 @@ const savingProxy = ref(false);
 const loading = ref(true);
 const error = ref("");
 const selectedLine = ref("");
+const clickInFlight = ref(false);
+const confirmingRedownload = ref(false);
+const cancelling = ref(false);
 let pollHandle: number | null = null;
 const { t } = useI18n();
 
@@ -98,6 +103,7 @@ async function onCheckNow() {
 }
 
 async function onDownload() {
+  clickInFlight.value = true;
   try {
     await startDownload();
   } catch {
@@ -107,10 +113,57 @@ async function onDownload() {
 
 async function onDownloadSelected() {
   if (!selectedLatest.value) return;
+  clickInFlight.value = true;
   try {
     await downloadVersion(selectedLatest.value);
   } catch {
     /* state.error reflects in poll */
+  }
+}
+
+watch(
+  () => state.value?.downloaded_exists,
+  async (now, was) => {
+    if (!now || was) return;
+    if (!clickInFlight.value) return;
+    if (confirmingRedownload.value) return;
+    const tag = state.value?.latest ?? "";
+    clickInFlight.value = false;
+    confirmingRedownload.value = true;
+    try {
+      if (window.confirm(t("settings.updates.redownloadPrompt", { version: tag }))) {
+        try {
+          await forceRedownload(tag);
+        } catch {
+          /* poll surfaces error */
+        }
+      }
+      // Cancel branch: nothing. state.ready is already true; the Install &
+      // Restart button and the Redownload button are already rendered.
+    } finally {
+      confirmingRedownload.value = false;
+    }
+  },
+);
+
+async function onCancelDownload() {
+  cancelling.value = true;
+  try {
+    await cancelDownload();
+  } catch {
+    /* poll surfaces error */
+  } finally {
+    cancelling.value = false;
+  }
+}
+
+async function onRedownload() {
+  const tag = state.value?.latest ?? "";
+  if (!tag) return;
+  try {
+    await forceRedownload(tag);
+  } catch {
+    /* poll surfaces error */
   }
 }
 
@@ -260,14 +313,22 @@ function formatAgo(unixSec: number) {
         >{{ t("settings.updates.downloadVersion", { version: state.latest }) }}</button>
         <button
           v-if="state.downloading"
-          class="primary"
-          disabled
-        >{{ t("settings.updates.downloadingButton", { pct: state.download_pct }) }}</button>
+          class="primary danger"
+          :disabled="cancelling"
+          @click="onCancelDownload"
+        >{{ cancelling
+            ? t('settings.updates.cancelling')
+            : t('settings.updates.cancelDownload', { pct: state.download_pct }) }}</button>
         <button
           v-if="state.ready"
           class="primary danger"
           @click="$emit('request-install', state.latest)"
-        >{{ t("settings.updates.forceInstallRestart") }}</button>
+        >{{ t('settings.updates.forceInstallRestart') }}</button>
+        <button
+          v-if="state.ready"
+          class="secondary"
+          @click="onRedownload"
+        >{{ t('settings.updates.redownload') }}</button>
       </div>
 
       <p v-if="error" class="error">{{ error }}</p>
@@ -420,5 +481,14 @@ button.primary.danger {
 button.primary.danger:hover:not(:disabled) {
   background: #ff6f6a;
   border-color: #ff6f6a;
+}
+button.secondary {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+}
+button.secondary:hover:not(:disabled) {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.04);
 }
 </style>

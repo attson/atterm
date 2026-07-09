@@ -546,6 +546,65 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	return nil
 }
 
+// ClearRelayConfig removes every persisted relay identifier from this
+// desktop: the 9 Relay* fields on appConfig, the OS-keychain password slot
+// (origin+email), and the OS-keychain account_key slot (origin+userID).
+// The in-memory account_key is zeroed too, so this desktop stops sealing /
+// decrypting frames for the just-forgotten identity. The uplink is stopped
+// as part of applyRelayConfig (empty URL takes the "no uplink" branch).
+//
+// Local terminal sessions, pairing peer records, and every non-relay
+// setting are left untouched.
+func (a *App) ClearRelayConfig() error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	oldURL := cfg.RelayURL
+	oldEmail := cfg.RelayLastEmail
+
+	// Clear the E2EE account_key BEFORE zeroing cfg. setAccountKey(nil)
+	// routes through persistAccountKey which reads cfg.RelayURL /
+	// cfg.RelaySessionUserID; if we cleared cfg first, persistAccountKey
+	// early-returns on the empty URL and the keychain slot is orphaned.
+	a.setAccountKey(nil)
+
+	cfg.RelayURL = ""
+	cfg.RelaySessionToken = ""
+	cfg.RelaySessionExpiresAt = 0
+	cfg.RelayLastEmail = ""
+	cfg.RelaySessionUserID = ""
+	cfg.AllowInsecureRelay = false
+	cfg.DisableE2EE = false
+	cfg.RemotePermission = ""
+	cfg.RelayPaused = false
+
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+
+	// Best-effort keychain delete for the password slot. clearRelayPasswordFor
+	// swallows ErrNotFound; other errors are logged and swallowed because the
+	// persisted config is already gone — "cleared with a stray keychain
+	// entry" is strictly better than "aborted midway".
+	if err := clearRelayPasswordFor(oldURL, oldEmail); err != nil {
+		log.Printf("desktop: clear relay password keychain slot: %v", err)
+	}
+
+	a.applyRelayConfig(cfg)
+
+	// emitE2EEModeChanged pushes e2ee-mode-changed unconditionally; the
+	// existing helper does not skip when the value is already false, which
+	// is what we want after a clear (the Settings checkbox needs the sync).
+	a.emitE2EEModeChanged(false)
+
+	if a.ctx != nil && a.eventsEmitter != nil {
+		a.eventsEmitter(a.ctx, "relay:auth-info", map[string]any{"user_id": ""})
+		a.eventsEmitter(a.ctx, "relay-config-changed")
+	}
+	return nil
+}
+
 // LoginRemoteRelay calls POST /api/auth/login on the given relay URL with the
 // supplied credentials, parses the returned {session_token, expires_at, user}
 // envelope, and persists (relayURL, session_token) to local config via
@@ -1455,6 +1514,26 @@ func (a *App) DownloadVersion(tag string) error {
 	return a.updater.DownloadVersion(a.ctx, tag)
 }
 
+// CancelDownload interrupts an in-flight update download (if any) and
+// clears the download state so the UI reverts to the pre-download
+// primary button. Bound to Settings → Updates "Cancel (N%)" button.
+func (a *App) CancelDownload() {
+	if a.updater == nil {
+		return
+	}
+	a.updater.Cancel()
+}
+
+// ForceRedownload deletes any existing archive for tag and downloads
+// fresh. Bound to Settings → Updates "Redownload" button and the
+// "redownload?" confirm prompt.
+func (a *App) ForceRedownload(tag string) error {
+	if a.updater == nil {
+		return nil
+	}
+	return a.updater.ForceRedownload(a.ctx, tag)
+}
+
 // InstallUpdate spawns the install helper detached and quits the app.
 // The helper waits for our PID to exit then replaces the install and
 // relaunches.
@@ -1929,6 +2008,51 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 		return RelayMe{}, err
 	}
 	return out, nil
+}
+
+// ListRelaySessions returns every active session for the currently
+// logged-in relay account. Bound to Settings → Signed-in Devices tab.
+func (a *App) ListRelaySessions() ([]RelaySessionRow, error) {
+	if a.cfgStore == nil {
+		return nil, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return nil, fmt.Errorf("not authenticated")
+	}
+	return a.meSessionsGET(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
+}
+
+// RevokeRelaySession revokes one session by id_hash. The current
+// session cannot be revoked through this method (the relay endpoint
+// itself refuses to revoke the caller's own session, so no extra
+// guard is needed here).
+func (a *App) RevokeRelaySession(idHash string) error {
+	idHash = strings.TrimSpace(idHash)
+	if idHash == "" {
+		return fmt.Errorf("id_hash is empty")
+	}
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return fmt.Errorf("not authenticated")
+	}
+	return a.meSessionDELETE(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, idHash, cfg.AllowInsecureRelay)
+}
+
+// SignOutOtherRelaySessions revokes every session except the current
+// one. Returns the number of sessions revoked.
+func (a *App) SignOutOtherRelaySessions() (SignOutOthersResult, error) {
+	if a.cfgStore == nil {
+		return SignOutOthersResult{}, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return SignOutOthersResult{}, fmt.Errorf("not authenticated")
+	}
+	return a.meSessionsSignOutOthers(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
 }
 
 // PairingTokenResponse is what the renderer receives when generating a QR code.

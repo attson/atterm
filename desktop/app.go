@@ -1513,6 +1513,26 @@ func (a *App) DownloadVersion(tag string) error {
 	return a.updater.DownloadVersion(a.ctx, tag)
 }
 
+// CancelDownload interrupts an in-flight update download (if any) and
+// clears the download state so the UI reverts to the pre-download
+// primary button. Bound to Settings → Updates "Cancel (N%)" button.
+func (a *App) CancelDownload() {
+	if a.updater == nil {
+		return
+	}
+	a.updater.Cancel()
+}
+
+// ForceRedownload deletes any existing archive for tag and downloads
+// fresh. Bound to Settings → Updates "Redownload" button and the
+// "redownload?" confirm prompt.
+func (a *App) ForceRedownload(tag string) error {
+	if a.updater == nil {
+		return nil
+	}
+	return a.updater.ForceRedownload(a.ctx, tag)
+}
+
 // InstallUpdate spawns the install helper detached and quits the app.
 // The helper waits for our PID to exit then replaces the install and
 // relaunches.

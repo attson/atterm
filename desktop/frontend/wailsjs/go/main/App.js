@@ -338,6 +338,14 @@ export function DownloadVersion(arg1) {
   return window['go']['main']['App']['DownloadVersion'](arg1);
 }
 
+export function CancelDownload() {
+  return window['go']['main']['App']['CancelDownload']();
+}
+
+export function ForceRedownload(arg1) {
+  return window['go']['main']['App']['ForceRedownload'](arg1);
+}
+
 export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
 }

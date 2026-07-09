@@ -262,6 +262,11 @@ export interface UpdateState {
   download_dir: string;
   download_path: string;
   lines: VersionLine[];
+  // downloaded_exists is true when the most recent DownloadVersion /
+  // StartDownload call short-circuited to Ready because the archive was
+  // already on disk. The frontend watches false→true to prompt the user
+  // whether to redownload.
+  downloaded_exists: boolean;
 }
 
 interface AppBindings {
@@ -300,6 +305,8 @@ interface AppBindings {
   CheckUpdate(): Promise<void>;
   StartDownload(): Promise<void>;
   DownloadVersion(tag: string): Promise<void>;
+  CancelDownload(): Promise<void>;
+  ForceRedownload(tag: string): Promise<void>;
   InstallUpdate(): Promise<void>;
   GetAutoCheckUpdates(): Promise<boolean>;
   SetAutoCheckUpdates(enabled: boolean): Promise<void>;
@@ -630,6 +637,13 @@ export function startDownload(): Promise<void> {
 
 export function downloadVersion(tag: string): Promise<void> {
   return bindings().DownloadVersion(tag);
+}
+
+export function cancelDownload(): Promise<void> {
+  return bindings().CancelDownload();
+}
+export function forceRedownload(tag: string): Promise<void> {
+  return bindings().ForceRedownload(tag);
 }
 
 export function installUpdate(): Promise<void> {

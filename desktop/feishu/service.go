@@ -462,7 +462,14 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		fmt.Fprintf(&dbg, "%x", s)
 	}
 	log.Printf("feishu: askform plan sid=%s slots=%d strokes=%d bytes=[%s]", sessionID, len(slots), len(strokes), dbg.String())
-	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 80*time.Millisecond)
+	// 200ms inter-key delay: siH (Type-something's TextInput) uses a
+	// controlled input pattern — its onSubmit reads the current controlled
+	// prop value, which is parent React state. Ink re-registers the stdin
+	// listener on each React re-render; if the delay is too short, the
+	// Enter after the last text rune may fire while the state map still
+	// carries the previous value. 80ms was too tight — session d334d437
+	// still saw text captured but advance not firing.
+	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 200*time.Millisecond)
 	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
@@ -581,27 +588,27 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 
 	// Advance key depends on the branch:
 	//   - Multi-select (with or without custom text): Tab (\t / 0x09).
-	//     Confirmed to fire "confirm this multi-tab + advance" when the
-	//     cursor is on a checkbox row.
-	//   - Single-select + custom text: press the typeIdx digit AGAIN.
-	//     Reading claude's source (askUserQuestion single-select digit
-	//     handler): if the pressed digit maps to an `input` option AND
-	//     that option's current text is non-empty, the handler calls
-	//     `onChange(k.value)` — the advance callback. First typeIdx press
-	//     focused the input; second press (after we've typed the text)
-	//     advances with the typed value as the answer. This dodges the
-	//     Enter/Tab race entirely — no need to guess whether the input
-	//     widget's onSubmit sees the fresh value.
-	//     (Verified from binary: `if ((A?.get(k.value) ?? "").trim())
-	//     q.onChange?.(k.value); return;`.)
+	//     Cursor already on the last row (Chat about this) — Tab from the
+	//     last row is the advance signal in the multi-select tab handler.
+	//   - Single-select + custom text: Enter (\r / 0x0d). Once cursor
+	//     focuses Type-something, siH (ink's TextInput) captures ALL
+	//     subsequent keys as text — including digits — so the container-
+	//     level digit handler that checks A.get(k.value) never fires. The
+	//     only way out of siH is siH's own onSubmit, which is triggered
+	//     by Enter and reads the current controlled prop value (parent's
+	//     React state map). With per-rune stroke split + 200ms inter-key
+	//     delay upstream, the state map is up-to-date by the time Enter
+	//     lands, so onSubmit sees the text and calls the advance callback.
+	//     (An earlier "press typeIdx twice" attempt in session d334d437
+	//     failed exactly because siH ate the second '4' as text — Q2's
+	//     Type-something ended up as "中文4215" instead of advancing.)
 	//
 	// Single-select without custom text doesn't reach this line — it
 	// returned early after the single-digit stroke that already advanced.
 	if q.MultiSelect {
 		out = append(out, []byte{0x09})
 	} else if hasCustom {
-		typeIdx := len(q.Options) + 1
-		out = append(out, []byte{'0' + byte(typeIdx)})
+		out = append(out, []byte{0x0d})
 	}
 	return out, true
 }

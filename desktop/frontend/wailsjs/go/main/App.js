@@ -42,6 +42,18 @@ export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
 }
 
+export function ListRelaySessions() {
+  return window['go']['main']['App']['ListRelaySessions']();
+}
+
+export function RevokeRelaySession(arg1) {
+  return window['go']['main']['App']['RevokeRelaySession'](arg1);
+}
+
+export function SignOutOtherRelaySessions() {
+  return window['go']['main']['App']['SignOutOtherRelaySessions']();
+}
+
 export function GetAccountKey() {
   return window['go']['main']['App']['GetAccountKey']();
 }

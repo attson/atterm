@@ -126,6 +126,18 @@ export interface RelayMe {
   email: string;
 }
 
+export interface RelaySessionRow {
+  id_hash: string;
+  user_agent: string;
+  ip_prefix: string;
+  created_at: number;   // unix ms
+  expires_at: number;   // unix ms
+  is_current: boolean;
+}
+
+export interface SignOutOthersResult {
+  deleted: number;
+}
 
 export interface DiagnosticsPayload {
   generated_at: string;
@@ -290,6 +302,9 @@ interface AppBindings {
   RememberRelayPassword(password: string): Promise<void>;
   ProbeRelayVersion(arg1: string, arg2: boolean): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
+  ListRelaySessions(): Promise<RelaySessionRow[]>;
+  RevokeRelaySession(idHash: string): Promise<void>;
+  SignOutOtherRelaySessions(): Promise<SignOutOthersResult>;
   CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
@@ -780,6 +795,18 @@ export function broadcastCommandFinished(
 // token. The returned email is held in memory only (SEC-1 — not persisted).
 export function fetchRelayMe(): Promise<RelayMe> {
   return bindings().FetchRelayMe();
+}
+
+export function listRelaySessions(): Promise<RelaySessionRow[]> {
+  return bindings().ListRelaySessions();
+}
+
+export function revokeRelaySession(idHash: string): Promise<void> {
+  return bindings().RevokeRelaySession(idHash);
+}
+
+export function signOutOtherRelaySessions(): Promise<SignOutOthersResult> {
+  return bindings().SignOutOtherRelaySessions();
 }
 
 // createPairingToken asks the relay to mint a 5-minute single-use pairing

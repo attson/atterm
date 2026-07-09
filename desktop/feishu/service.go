@@ -573,8 +573,21 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		for _, r := range sl.txt {
 			out = append(out, []byte(string(r)))
 		}
-		// (Multi + custom no longer walks cursor off siH — see the advance
-		// block below.)
+		if q.MultiSelect {
+			// Right-arrow × 2 as no-op "state pumps". Inside siH, Right
+			// arrow is text-cursor navigation (moves right if not at end,
+			// otherwise no-op). Each stroke triggers a keypress event and
+			// forces React to render/settle any pending setState from the
+			// preceding text runes. The Ctrl+Return attempt via LF (0x0a)
+			// didn't work — ink treats 0x0a as plain return. And bare
+			// ↓+Enter loses the trailing char (session e38a4b41: "codex"
+			// → "code" at 700ms). The Right-arrow pumps give the last
+			// rune's setState a fair chance to reach the controlled prop
+			// before the ↓ triggers siH.onBlur.
+			out = append(out, []byte{0x1b, 0x5b, 0x43})
+			out = append(out, []byte{0x1b, 0x5b, 0x43})
+			out = append(out, []byte{0x1b, 0x5b, 0x42})
+		}
 	}
 
 	// Advance key depends on the branch:
@@ -582,28 +595,14 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 	//   - Single-select + custom text: Enter (0x0d) on siH → siH.onSubmit
 	//     fires with siH's local (synchronous) value → Y = onChange =
 	//     advance.
-	//   - Multi-select + custom text: LF (0x0a). From the decompiled
-	//     container return handler:
-	//         if (C.ctrl && C.key === "return" && m && Y) { Y(D); return; }
-	//     `m` = cursor on input widget, Y = form-submit callback. Ink's
-	//     stdin key parser identifies 0x0a as `key: "return"` with
-	//     `ctrl: true` (Ctrl+J = Ctrl+Return in most terminal encodings),
-	//     which hits this branch — Y(D) submits the form WITHOUT moving
-	//     cursor off siH. No blur, no controlled-prop race, no trailing-
-	//     char loss.
-	//
-	//     Previous attempts:
-	//       - ↓ + Enter: blur race → last rune lost even at 700ms
-	//         (sessions 6913ef94 / 01441a16 / e38a4b41).
-	//       - Enter directly on siH: siH.onSubmit's Y in multi-select
-	//         only adds to selected, no advance (session 6d561353).
-	//
-	// Single-select without custom text doesn't reach this line — it
-	// returned early after the single-digit stroke that already advanced.
+	//   - Multi-select + custom text: Enter (0x0d) after the ↓ (added
+	//     above). Cursor is now on the Submit button; Enter fires the
+	//     container's `if (X && Y) { Y(D); return; }` branch → submits
+	//     form. The Right-arrow pumps preceding the ↓ give React time to
+	//     propagate the last rune's setState to the controlled prop
+	//     before siH.onBlur triggers on cursor move.
 	if q.MultiSelect && !hasCustom {
 		out = append(out, []byte{0x09})
-	} else if q.MultiSelect && hasCustom {
-		out = append(out, []byte{0x0a})
 	} else if hasCustom {
 		out = append(out, []byte{0x0d})
 	}

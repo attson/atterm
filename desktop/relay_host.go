@@ -188,7 +188,12 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 			}
 		}
 		seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
-		form := internalfeishu.RenderAskQuestionForm(sessionIDStr, specs)
+		// Pass seqCre as the mount seq so widget element_ids get a fresh
+		// suffix each time the form remounts on the same anchor card.
+		// Otherwise the Feishu client caches widget state by element_id
+		// and reloads the previous submission's dropdowns/inputs on
+		// subsequent AskUserQuestion cycles (image #107).
+		form := internalfeishu.RenderAskQuestionForm(sessionIDStr, specs, seqCre)
 		if err := disp.InsertAnchorFormWithSeq(ctx, tok, anchor.CardToken, form, seqCre); err != nil {
 			log.Printf("feishu-anchor-form: CREATE failed session=%s q=%d: %v", sessionIDStr, len(questions), err)
 			return

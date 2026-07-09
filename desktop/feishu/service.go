@@ -567,25 +567,22 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 				out = append(out, []byte{0x1b, 0x5b, 0x42})
 			}
 		}
-		// Split the text into per-rune strokes. Each rune is a separate
-		// SendInput so ink processes each keypress → setState → the state
-		// Map re-renders before the next stroke.
-		for _, r := range sl.txt {
+		// Sacrificial trailing space: claude's AskUserQuestion TUI
+		// consistently drops the LAST character of custom-text input —
+		// verified by manual typing (not just automation), so it's a
+		// claude-side bug, not something delay/pumps/Ctrl+Return can
+		// fix from our side. Adding a trailing space means the char
+		// claude drops is the space; the user's actual text survives.
+		text := sl.txt + " "
+		for _, r := range text {
 			out = append(out, []byte(string(r)))
 		}
 		if q.MultiSelect {
-			// Right-arrow × 2 as no-op "state pumps". Inside siH, Right
-			// arrow is text-cursor navigation (moves right if not at end,
-			// otherwise no-op). Each stroke triggers a keypress event and
-			// forces React to render/settle any pending setState from the
-			// preceding text runes. The Ctrl+Return attempt via LF (0x0a)
-			// didn't work — ink treats 0x0a as plain return. And bare
-			// ↓+Enter loses the trailing char (session e38a4b41: "codex"
-			// → "code" at 700ms). The Right-arrow pumps give the last
-			// rune's setState a fair chance to reach the controlled prop
-			// before the ↓ triggers siH.onBlur.
-			out = append(out, []byte{0x1b, 0x5b, 0x43})
-			out = append(out, []byte{0x1b, 0x5b, 0x43})
+			// ↓ moves cursor from Type-something to the Submit button
+			// where Enter fires the container's `if (X && Y) { Y(D);
+			// return; }` — form submit. The trailing-space workaround
+			// above makes the (siH.onBlur → stale controlled prop) race
+			// benign: the char that gets stale-committed is the space.
 			out = append(out, []byte{0x1b, 0x5b, 0x42})
 		}
 	}

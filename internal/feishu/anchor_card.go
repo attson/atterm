@@ -69,7 +69,13 @@ type AskFormOpt struct {
 // "Type something." as a per-question choice. Field naming: q_<idx>_sel for
 // the dropdown, q_<idx>_txt for the custom input. formatAskFormAnswer
 // prefers _txt over _sel per question.
-func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[string]any {
+//
+// `mountSeq` is appended to every widget element_id (askform_q0_sel_15
+// etc.) so remounts on the same anchor card produce fresh widgets — the
+// Feishu client otherwise caches widget state by element_id, so a second
+// AskUserQuestion on the same card would load the previous submission's
+// dropdowns and inputs (verified image #107).
+func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion, mountSeq int64) map[string]any {
 	elements := make([]any, 0, len(questions)+1)
 	for i, q := range questions {
 		opts := make([]any, 0, len(q.Options))
@@ -86,7 +92,7 @@ func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[st
 		}
 		sel := map[string]any{
 			"tag":         selTag,
-			"element_id":  fmt.Sprintf("askform_q%d_sel", i),
+			"element_id":  fmt.Sprintf("askform_q%d_sel_%d", i, mountSeq),
 			"name":        fmt.Sprintf("q_%d_sel", i),
 			"required":    false,
 			"placeholder": map[string]any{"tag": "plain_text", "content": placeholder},
@@ -96,7 +102,7 @@ func RenderAskQuestionForm(sessionID string, questions []AskFormQuestion) map[st
 		// over the dropdown for this question.
 		txt := map[string]any{
 			"tag":         "input",
-			"element_id":  fmt.Sprintf("askform_q%d_txt", i),
+			"element_id":  fmt.Sprintf("askform_q%d_txt_%d", i, mountSeq),
 			"name":        fmt.Sprintf("q_%d_txt", i),
 			"required":    false,
 			"placeholder": map[string]any{"tag": "plain_text", "content": "自定义答案"},

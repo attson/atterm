@@ -462,18 +462,19 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		fmt.Fprintf(&dbg, "%x", s)
 	}
 	log.Printf("feishu: askform plan sid=%s slots=%d strokes=%d bytes=[%s]", sessionID, len(slots), len(strokes), dbg.String())
-	// 350ms inter-key delay. siH (Type-something's TextInput) uses a
-	// controlled input pattern — its onSubmit reads the current controlled
-	// prop value, which is parent React state. Ink re-registers the stdin
-	// listener on each React re-render; if the delay is too short, the
-	// keystroke after the last text rune may fire before parent state has
-	// flushed the last rune's setState. In multi + custom, that shows up
-	// as a lost trailing char: session 6913ef94 sent "后 端 ↓ Enter"
-	// at 200ms and Q3's answer was "后" (image #96) — the ↓ moved cursor
-	// off siH before "端"'s setState propagated, and siH's onBlur
-	// committed the stale value. 350ms gives React state + re-render +
-	// prop update headroom, even for UTF-8 (3-byte) runes.
-	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 350*time.Millisecond)
+	// 700ms inter-key delay. Multi + custom's advance is `text + ↓ +
+	// Enter`; the ↓ moves cursor off siH which triggers siH.onBlur to
+	// commit siH's controlled prop (parent React state). The controlled
+	// prop lags the local input by one full React cycle
+	// (setState → re-render → new prop delivered → siH syncs). 350ms
+	// wasn't enough — session 01441a16 lost the trailing "感" of "优雅
+	// 美感"; 200ms lost "端" from "后端" (session 6913ef94). At 700ms the
+	// window is generous enough for UTF-8 (3-byte) runes even under
+	// slow re-render (React 18 auto-batching + ink stdin polling
+	// batches can each add a tick or two). Higher would be safer but
+	// makes typical 4-question forms feel sluggish; 700ms is the
+	// compromise.
+	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 700*time.Millisecond)
 	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
@@ -573,15 +574,20 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		}
 		// Split the text into per-rune strokes. Each rune is a separate
 		// SendInput so ink processes each keypress → setState → the state
-		// Map re-renders before the next stroke. Sending all bytes at
-		// once collapses N onInputChange calls into a single render tick,
-		// and the following advance keystroke reads a stale (empty) Map
-		// via `A?.get(k.value)`. Verified against session 793480af:
-		// "架构师" as one stroke + second-typeIdx-immediately left the
-		// input showing "架构师5125" because the advance didn't fire and
-		// the subsequent digits piled onto the input widget.
+		// Map re-renders before the next stroke.
 		for _, r := range sl.txt {
 			out = append(out, []byte(string(r)))
+		}
+		if q.MultiSelect {
+			// Multi-select needs cursor OFF siH to reach the Submit button
+			// where Enter fires Y(D) (form submit). ↓ moves cursor to
+			// Submit button, and siH.onBlur commits the controlled prop.
+			// The controlled prop lags the local input by one React
+			// re-render cycle — 700ms inter-key delay (see plan-time
+			// comment) gives that cycle time to complete before the ↓
+			// steals focus. Sent separately so pty timing between text
+			// and ↓ is a full delay tick.
+			out = append(out, []byte{0x1b, 0x5b, 0x42})
 		}
 	}
 
@@ -589,17 +595,18 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 	//   - Multi-select, no custom text: Tab (\t / 0x09). Cursor is still
 	//     on option 1 (a checkbox row) — Tab from a checkbox row advances
 	//     the tab. Verified session 4bc54767 Q1.
-	//   - Any + custom text: Enter (\r / 0x0d) directly on siH.
-	//     siH's onSubmit fires and calls Y?.(aH.value / vH.value) which
-	//     is the advance callback in both single- and multi-select
-	//     rendering. Critically, we do NOT walk the cursor off siH
-	//     first — moving off Type-something before the last rune's
-	//     setState propagates to the controlled prop makes siH.onBlur
-	//     commit stale text. Session 01441a16: "优雅美感" + ↓ + Enter
-	//     at 350ms committed "优雅美" because ↓ moved cursor off siH
-	//     before "感"'s setState flushed to the prop. Keeping cursor on
-	//     siH sidesteps that race — siH's onSubmit reads its own local
-	//     input value, which is synchronous with keystrokes.
+	//   - Single-select + custom text: Enter directly on siH. siH's own
+	//     onSubmit fires with siH's local (synchronous) value, calling
+	//     Y?.(aH.value) which is onChange = advance.
+	//   - Multi-select + custom text: cursor is now on the Submit button
+	//     (the extra ↓ above walked us there); Enter fires the
+	//     `if (X && Y) { Y(D); return; }` branch of the container's
+	//     return handler — Y(D) submits the whole form. This is the ONLY
+	//     way to trigger the form-submit path in multi-select from
+	//     within the input widget's tab; siH.onSubmit in multi-select
+	//     only adds the input to selected (does NOT advance) —
+	//     verified by session 6d561353 which stalled with `[✓]
+	//     找别人支付1` and the Review "1" leaking into the input.
 	//
 	// Single-select without custom text doesn't reach this line — it
 	// returned early after the single-digit stroke that already advanced.

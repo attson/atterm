@@ -813,20 +813,56 @@ export namespace main {
 	export class RelayMe {
 	    user_id: string;
 	    email: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RelayMe(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.user_id = source["user_id"];
 	        this.email = source["email"];
 	    }
 	}
-	
-	
-	
+
+	export class RelaySessionRow {
+	    id_hash: string;
+	    user_agent: string;
+	    ip_prefix: string;
+	    created_at: number;
+	    expires_at: number;
+	    is_current: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new RelaySessionRow(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id_hash = source["id_hash"];
+	        this.user_agent = source["user_agent"];
+	        this.ip_prefix = source["ip_prefix"];
+	        this.created_at = source["created_at"];
+	        this.expires_at = source["expires_at"];
+	        this.is_current = source["is_current"];
+	    }
+	}
+
+	export class SignOutOthersResult {
+	    deleted: number;
+
+	    static createFrom(source: any = {}) {
+	        return new SignOutOthersResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deleted = source["deleted"];
+	    }
+	}
+
+
+
 	export class VersionLine {
 	    minor: string;
 	    latest: string;

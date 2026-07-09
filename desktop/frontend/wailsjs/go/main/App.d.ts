@@ -25,6 +25,12 @@ export function ExportDiagnostics(arg1:string):Promise<string>;
 
 export function FetchRelayMe():Promise<main.RelayMe>;
 
+export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
+
+export function RevokeRelaySession(arg1:string):Promise<void>;
+
+export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
+
 export function GetAccountKey():Promise<string>;
 
 export function GetAutoCheckUpdates():Promise<boolean>;

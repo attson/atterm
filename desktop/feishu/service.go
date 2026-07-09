@@ -462,14 +462,18 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		fmt.Fprintf(&dbg, "%x", s)
 	}
 	log.Printf("feishu: askform plan sid=%s slots=%d strokes=%d bytes=[%s]", sessionID, len(slots), len(strokes), dbg.String())
-	// 200ms inter-key delay: siH (Type-something's TextInput) uses a
+	// 350ms inter-key delay. siH (Type-something's TextInput) uses a
 	// controlled input pattern — its onSubmit reads the current controlled
 	// prop value, which is parent React state. Ink re-registers the stdin
 	// listener on each React re-render; if the delay is too short, the
-	// Enter after the last text rune may fire while the state map still
-	// carries the previous value. 80ms was too tight — session d334d437
-	// still saw text captured but advance not firing.
-	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 200*time.Millisecond)
+	// keystroke after the last text rune may fire before parent state has
+	// flushed the last rune's setState. In multi + custom, that shows up
+	// as a lost trailing char: session 6913ef94 sent "后 端 ↓ Enter"
+	// at 200ms and Q3's answer was "后" (image #96) — the ↓ moved cursor
+	// off siH before "端"'s setState propagated, and siH's onBlur
+	// committed the stale value. 350ms gives React state + re-render +
+	// prop update headroom, even for UTF-8 (3-byte) runes.
+	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 350*time.Millisecond)
 	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,

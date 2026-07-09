@@ -560,7 +560,18 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 				out = append(out, []byte{0x1b, 0x5b, 0x42})
 			}
 		}
-		out = append(out, []byte(sl.txt))
+		// Split the text into per-rune strokes. Each rune is a separate
+		// SendInput so ink processes each keypress → setState → the state
+		// Map re-renders before the next stroke. Sending all bytes at
+		// once collapses N onInputChange calls into a single render tick,
+		// and the following advance keystroke reads a stale (empty) Map
+		// via `A?.get(k.value)`. Verified against session 793480af:
+		// "架构师" as one stroke + second-typeIdx-immediately left the
+		// input showing "架构师5125" because the advance didn't fire and
+		// the subsequent digits piled onto the input widget.
+		for _, r := range sl.txt {
+			out = append(out, []byte(string(r)))
+		}
 		if q.MultiSelect {
 			// One more ↓ so the cursor lands on "Chat about this" — Tab
 			// only advances the tab from the last option's row.

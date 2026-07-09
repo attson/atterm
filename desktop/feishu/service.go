@@ -587,26 +587,32 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 	}
 
 	// Advance key depends on the branch:
-	//   - Multi-select (with or without custom text): Tab (\t / 0x09).
-	//     Cursor already on the last row (Chat about this) — Tab from the
-	//     last row is the advance signal in the multi-select tab handler.
+	//   - Multi-select, no custom text: Tab (\t / 0x09). Cursor is still
+	//     on option 1 (a checkbox row) — Tab from a checkbox row advances
+	//     the tab. Verified session 4bc54767 Q1: stroke "1 2 Tab" from
+	//     opt-1 checkbox landed Q1 as ⨯ successfully.
+	//   - Multi-select + custom text: Enter (\r / 0x0d). By this point
+	//     the extra ↓ has walked the cursor onto the Next/Submit button
+	//     that ink renders BELOW the Type-something row (between opt-
+	//     typeIdx and opt-typeIdx+1 "Chat about this"). Tab from that
+	//     button does NOT fire it; Enter does. Verified session
+	//     4bc54767 Q3: stroke "... 随便 ↓ Tab" left the cursor sitting
+	//     on the Submit button (image #94) without ever advancing.
 	//   - Single-select + custom text: Enter (\r / 0x0d). Once cursor
 	//     focuses Type-something, siH (ink's TextInput) captures ALL
 	//     subsequent keys as text — including digits — so the container-
 	//     level digit handler that checks A.get(k.value) never fires. The
 	//     only way out of siH is siH's own onSubmit, which is triggered
 	//     by Enter and reads the current controlled prop value (parent's
-	//     React state map). With per-rune stroke split + 200ms inter-key
-	//     delay upstream, the state map is up-to-date by the time Enter
-	//     lands, so onSubmit sees the text and calls the advance callback.
-	//     (An earlier "press typeIdx twice" attempt in session d334d437
-	//     failed exactly because siH ate the second '4' as text — Q2's
-	//     Type-something ended up as "中文4215" instead of advancing.)
+	//     React state map). Per-rune stroke split + 200ms inter-key delay
+	//     ensures the state map is up-to-date by the time Enter lands.
 	//
 	// Single-select without custom text doesn't reach this line — it
 	// returned early after the single-digit stroke that already advanced.
-	if q.MultiSelect {
+	if q.MultiSelect && !hasCustom {
 		out = append(out, []byte{0x09})
+	} else if q.MultiSelect && hasCustom {
+		out = append(out, []byte{0x0d})
 	} else if hasCustom {
 		out = append(out, []byte{0x0d})
 	}

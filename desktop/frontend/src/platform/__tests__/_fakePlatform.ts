@@ -25,6 +25,7 @@ export function createFakePlatform(): Platform {
     download_dir: '',
     download_path: '',
     lines: [],
+    downloaded_exists: false,
   }
 
   return {

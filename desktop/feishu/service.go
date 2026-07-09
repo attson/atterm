@@ -462,19 +462,14 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 		fmt.Fprintf(&dbg, "%x", s)
 	}
 	log.Printf("feishu: askform plan sid=%s slots=%d strokes=%d bytes=[%s]", sessionID, len(slots), len(strokes), dbg.String())
-	// 700ms inter-key delay. Multi + custom's advance is `text + ↓ +
-	// Enter`; the ↓ moves cursor off siH which triggers siH.onBlur to
-	// commit siH's controlled prop (parent React state). The controlled
-	// prop lags the local input by one full React cycle
-	// (setState → re-render → new prop delivered → siH syncs). 350ms
-	// wasn't enough — session 01441a16 lost the trailing "感" of "优雅
-	// 美感"; 200ms lost "端" from "后端" (session 6913ef94). At 700ms the
-	// window is generous enough for UTF-8 (3-byte) runes even under
-	// slow re-render (React 18 auto-batching + ink stdin polling
-	// batches can each add a tick or two). Higher would be safer but
-	// makes typical 4-question forms feel sluggish; 700ms is the
-	// compromise.
-	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 700*time.Millisecond)
+	// 350ms inter-key delay. Enough for the sync-required cases (single
+	// + custom's Enter reads siH's local synchronous state; multi +
+	// custom now uses Ctrl+Return which stays on siH — no blur race).
+	// A previous 700ms bump was chasing a race that couldn't be fixed
+	// by delay (session e38a4b41 lost ASCII "codex" → "code" at 700ms);
+	// swapping the advance mechanism removed the race outright, so we
+	// don't need the slow delay.
+	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 350*time.Millisecond)
 	log.Printf("feishu: askform submit sid=%s strokes=%d q=%d action=%d", sessionID, len(strokes), len(slots), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
@@ -578,40 +573,37 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		for _, r := range sl.txt {
 			out = append(out, []byte(string(r)))
 		}
-		if q.MultiSelect {
-			// Multi-select needs cursor OFF siH to reach the Submit button
-			// where Enter fires Y(D) (form submit). ↓ moves cursor to
-			// Submit button, and siH.onBlur commits the controlled prop.
-			// The controlled prop lags the local input by one React
-			// re-render cycle — 700ms inter-key delay (see plan-time
-			// comment) gives that cycle time to complete before the ↓
-			// steals focus. Sent separately so pty timing between text
-			// and ↓ is a full delay tick.
-			out = append(out, []byte{0x1b, 0x5b, 0x42})
-		}
+		// (Multi + custom no longer walks cursor off siH — see the advance
+		// block below.)
 	}
 
 	// Advance key depends on the branch:
-	//   - Multi-select, no custom text: Tab (\t / 0x09). Cursor is still
-	//     on option 1 (a checkbox row) — Tab from a checkbox row advances
-	//     the tab. Verified session 4bc54767 Q1.
-	//   - Single-select + custom text: Enter directly on siH. siH's own
-	//     onSubmit fires with siH's local (synchronous) value, calling
-	//     Y?.(aH.value) which is onChange = advance.
-	//   - Multi-select + custom text: cursor is now on the Submit button
-	//     (the extra ↓ above walked us there); Enter fires the
-	//     `if (X && Y) { Y(D); return; }` branch of the container's
-	//     return handler — Y(D) submits the whole form. This is the ONLY
-	//     way to trigger the form-submit path in multi-select from
-	//     within the input widget's tab; siH.onSubmit in multi-select
-	//     only adds the input to selected (does NOT advance) —
-	//     verified by session 6d561353 which stalled with `[✓]
-	//     找别人支付1` and the Review "1" leaking into the input.
+	//   - Multi-select, no custom text: Tab (\t / 0x09).
+	//   - Single-select + custom text: Enter (0x0d) on siH → siH.onSubmit
+	//     fires with siH's local (synchronous) value → Y = onChange =
+	//     advance.
+	//   - Multi-select + custom text: LF (0x0a). From the decompiled
+	//     container return handler:
+	//         if (C.ctrl && C.key === "return" && m && Y) { Y(D); return; }
+	//     `m` = cursor on input widget, Y = form-submit callback. Ink's
+	//     stdin key parser identifies 0x0a as `key: "return"` with
+	//     `ctrl: true` (Ctrl+J = Ctrl+Return in most terminal encodings),
+	//     which hits this branch — Y(D) submits the form WITHOUT moving
+	//     cursor off siH. No blur, no controlled-prop race, no trailing-
+	//     char loss.
+	//
+	//     Previous attempts:
+	//       - ↓ + Enter: blur race → last rune lost even at 700ms
+	//         (sessions 6913ef94 / 01441a16 / e38a4b41).
+	//       - Enter directly on siH: siH.onSubmit's Y in multi-select
+	//         only adds to selected, no advance (session 6d561353).
 	//
 	// Single-select without custom text doesn't reach this line — it
 	// returned early after the single-digit stroke that already advanced.
 	if q.MultiSelect && !hasCustom {
 		out = append(out, []byte{0x09})
+	} else if q.MultiSelect && hasCustom {
+		out = append(out, []byte{0x0a})
 	} else if hasCustom {
 		out = append(out, []byte{0x0d})
 	}

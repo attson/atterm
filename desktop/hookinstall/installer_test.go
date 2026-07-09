@@ -37,11 +37,61 @@ func TestInstall_FreshHome(t *testing.T) {
 		}
 	}
 	pre := c.Hooks.PreToolUse[0]
-	if pre.Matcher != "AskUserQuestion" {
-		t.Errorf("PreToolUse matcher = %q; want AskUserQuestion", pre.Matcher)
+	if pre.Matcher != "" {
+		t.Errorf("PreToolUse matcher = %q; want \"\" (one entry covers AskUserQuestion + streaming)", pre.Matcher)
 	}
 	if len(pre.Hooks) != 1 || pre.Hooks[0].Command != link {
 		t.Errorf("PreToolUse hooks = %+v; want one command pointing at %q", pre.Hooks, link)
+	}
+}
+
+// The AI streaming card needs four claude-code hook events to populate body
+// content: UserPromptSubmit (👤), Stop (🤖 final), PreToolUse + PostToolUse
+// (🛠 calls). The installer must own all four slots; without them the anchor
+// card stays stuck on "(waiting for output)" even after the user types.
+func TestInstall_PopulatesAllStreamingHookSlots(t *testing.T) {
+	home := t.TempDir()
+	if err := installAt(home); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(claudeSettingsPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, slot := range []string{
+		`"Notification"`,
+		`"PreToolUse"`,
+		`"UserPromptSubmit"`,
+		`"Stop"`,
+		`"PostToolUse"`,
+	} {
+		if !strings.Contains(string(data), slot) {
+			t.Errorf("settings.json missing %s slot: %s", slot, data)
+		}
+	}
+	link := attermHookSymlink(home)
+	// Each owned slot must point at the atterm-hook symlink.
+	count := strings.Count(string(data), link)
+	if count < 5 {
+		t.Errorf("settings.json references atterm-hook %d times; want >=5: %s", count, data)
+	}
+}
+
+// Uninstall must strip the atterm-owned entry from every owned slot, not just
+// the original two — otherwise the user is left with dead UserPromptSubmit/
+// Stop/PostToolUse entries pointing at a removed symlink.
+func TestUninstall_StripsAllStreamingHookSlots(t *testing.T) {
+	home := t.TempDir()
+	if err := installAt(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := uninstallAt(home); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(claudeSettingsPath(home))
+	link := attermHookSymlink(home)
+	if strings.Contains(string(data), link) {
+		t.Errorf("uninstall left atterm-hook path in settings.json: %s", data)
 	}
 }
 
@@ -119,8 +169,8 @@ func TestInstall_PreservesOtherHookKinds(t *testing.T) {
 	if c.Hooks.PreToolUse[0].Hooks[0].Command != "/u/y" {
 		t.Errorf("external PreToolUse hook lost: %+v", c.Hooks.PreToolUse[0])
 	}
-	if c.Hooks.PreToolUse[1].Matcher != "AskUserQuestion" {
-		t.Errorf("atterm PreToolUse entry not appended: %+v", c.Hooks.PreToolUse[1])
+	if c.Hooks.PreToolUse[1].Matcher != "" {
+		t.Errorf("atterm PreToolUse entry should use empty matcher: %+v", c.Hooks.PreToolUse[1])
 	}
 }
 

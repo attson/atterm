@@ -32,7 +32,7 @@ type LongConnConfig struct {
 	// carries parentID (the replied-to message's message_id). It is used to route
 	// a Feishu reply quoting a previously sent card back to its session (9B).
 	OnReplyMessage func(ctx context.Context, senderOpenID, parentID, text string)
-	OnCardAction   func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string)
+	OnCardAction   func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any)
 
 	// OnAuthClassFailure fires once when the SDK returns an auth-class
 	// error (invalid app secret, app disabled, etc.). The reconnect loop
@@ -181,7 +181,10 @@ func extractIMText(msg *larkim.EventMessage) string {
 }
 
 // extractCardActionFields pulls session_id, kind, event, operator open_id, and
-// text from the card action event's Value map.
+// text from the card action event. V2 schema input elements deliver the
+// user-typed text on CallBackAction.InputValue (a top-level string), NOT in
+// Value["text"]; reading the wrong slot makes every Feishu reply silently
+// fail the router's empty-text gate.
 func extractCardActionFields(ev *callback.CardActionTriggerEvent) (sessionID, kind, eventStr, operatorOpenID, text string) {
 	if ev.Event != nil && ev.Event.Operator != nil {
 		operatorOpenID = ev.Event.Operator.OpenID
@@ -197,8 +200,14 @@ func extractCardActionFields(ev *callback.CardActionTriggerEvent) (sessionID, ki
 		if s, ok := v["event"].(string); ok {
 			eventStr = s
 		}
-		if s, ok := v["text"].(string); ok {
-			text = s
+		// V2 input element: typed text lives here.
+		text = ev.Event.Action.InputValue
+		// Defensive fallback for any older card flavour that still sets text
+		// inside the value map.
+		if text == "" {
+			if s, ok := v["text"].(string); ok {
+				text = s
+			}
 		}
 	}
 	return
@@ -242,7 +251,11 @@ func newLarkRuntime(cfg LongConnConfig) (longConnRuntime, error) {
 	disp.OnP2CardActionTrigger(func(ctx context.Context, ev *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
 		if cfg.OnCardAction != nil {
 			sessionID, kind, eventStr, operatorOpenID, text := extractCardActionFields(ev)
-			cfg.OnCardAction(ctx, sessionID, kind, eventStr, operatorOpenID, text)
+			var formValue map[string]any
+			if ev != nil && ev.Event != nil && ev.Event.Action != nil {
+				formValue = ev.Event.Action.FormValue
+			}
+			cfg.OnCardAction(ctx, sessionID, kind, eventStr, operatorOpenID, text, formValue)
 		}
 		return nil, nil
 	})
@@ -286,6 +299,6 @@ func (r *testableRuntime) injectIMMessageReply(senderOpenID, parentID, text stri
 }
 func (r *testableRuntime) injectCardAction(operatorOpenID, sessionID, kind, event, text string) {
 	if r.cfg.OnCardAction != nil {
-		r.cfg.OnCardAction(context.Background(), sessionID, kind, event, operatorOpenID, text)
+		r.cfg.OnCardAction(context.Background(), sessionID, kind, event, operatorOpenID, text, nil)
 	}
 }

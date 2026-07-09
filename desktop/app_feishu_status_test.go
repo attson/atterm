@@ -177,6 +177,45 @@ func TestGetFeishuStatus_LocalConfigured(t *testing.T) {
 	}
 }
 
+// TestGetFeishuStatus_LocalStaleBindWithoutSecret: a keychain blob carrying an
+// OpenID but no AppSecret (e.g. a stale bind left over after switching away from
+// and back to local) is effectively unconfigured — the long-conn and token mint
+// both need the secret. Status must report unbound + unconfigured so the UI
+// shows the credentials form instead of a "bound" view that can't send.
+func TestGetFeishuStatus_LocalStaleBindWithoutSecret(t *testing.T) {
+	safekeyring.SetFileDirForTest(t.TempDir())
+	safekeyring.UseFileStore()
+	t.Cleanup(func() {
+		safekeyring.Reset()
+		safekeyring.SetFileDirForTest("")
+	})
+
+	svc, err := feishu.NewService(feishu.ServiceConfig{Mode: feishu.ModeLocal})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	ctx := context.Background()
+	// Write an empty-credential blob, then a bind: OpenID present, AppSecret empty.
+	if err := svc.Store().SetCredentials(ctx, feishu.Credentials{}); err != nil {
+		t.Fatalf("SetCredentials: %v", err)
+	}
+	if err := svc.Store().SetBound(ctx, "ou_stale"); err != nil {
+		t.Fatalf("SetBound: %v", err)
+	}
+
+	a := &App{feishuService: svc, feishuMode: "local", ctx: ctx}
+	resp, err := a.GetFeishuStatus()
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if !resp.Enabled {
+		t.Fatalf("want enabled, got %+v", resp)
+	}
+	if resp.Bound || resp.Configured {
+		t.Fatalf("stale bind without secret must read as unbound+unconfigured, got %+v", resp)
+	}
+}
+
 // TestReconcileFeishuMode_LocalToRelay: the Feishu mode follows the relay login
 // state at runtime. After startFeishu inits local mode, reconciling with a cfg
 // that has a relay URL + session token flips the mode to "relay" while reusing

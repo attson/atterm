@@ -34,12 +34,20 @@ export function DiscardRecoverySnapshot() {
   return window['go']['main']['App']['DiscardRecoverySnapshot']();
 }
 
+export function DownloadVersion(arg1) {
+  return window['go']['main']['App']['DownloadVersion'](arg1);
+}
+
 export function ExportDiagnostics(arg1) {
   return window['go']['main']['App']['ExportDiagnostics'](arg1);
 }
 
 export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
+}
+
+export function GetAINotificationsOnly() {
+  return window['go']['main']['App']['GetAINotificationsOnly']();
 }
 
 export function ListRelaySessions() {
@@ -82,6 +90,18 @@ export function GetEndpoint() {
   return window['go']['main']['App']['GetEndpoint']();
 }
 
+export function GetFeishuEffectiveMode() {
+  return window['go']['main']['App']['GetFeishuEffectiveMode']();
+}
+
+export function GetFeishuModePref() {
+  return window['go']['main']['App']['GetFeishuModePref']();
+}
+
+export function GetFeishuRemoteTerminalSettings() {
+  return window['go']['main']['App']['GetFeishuRemoteTerminalSettings']();
+}
+
 export function GetFeishuStatus() {
   return window['go']['main']['App']['GetFeishuStatus']();
 }
@@ -104,10 +124,6 @@ export function GetLogPreview() {
 
 export function GetLoggingConfig() {
   return window['go']['main']['App']['GetLoggingConfig']();
-}
-
-export function GetAINotificationsOnly() {
-  return window['go']['main']['App']['GetAINotificationsOnly']();
 }
 
 export function GetNotificationsEnabled() {
@@ -242,6 +258,10 @@ export function SendFeishuTestCard(arg1) {
   return window['go']['main']['App']['SendFeishuTestCard'](arg1);
 }
 
+export function SetAINotificationsOnly(arg1) {
+  return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
+}
+
 export function SetAutoCheckUpdates(arg1) {
   return window['go']['main']['App']['SetAutoCheckUpdates'](arg1);
 }
@@ -258,6 +278,14 @@ export function SetFeishuCredentials(arg1) {
   return window['go']['main']['App']['SetFeishuCredentials'](arg1);
 }
 
+export function SetFeishuModePref(arg1) {
+  return window['go']['main']['App']['SetFeishuModePref'](arg1);
+}
+
+export function SetFeishuRemoteTerminalSettings(arg1, arg2) {
+  return window['go']['main']['App']['SetFeishuRemoteTerminalSettings'](arg1, arg2);
+}
+
 export function SetHookInstallEnabled(arg1) {
   return window['go']['main']['App']['SetHookInstallEnabled'](arg1);
 }
@@ -268,10 +296,6 @@ export function SetLocalePreference(arg1) {
 
 export function SetLoggingConfig(arg1) {
   return window['go']['main']['App']['SetLoggingConfig'](arg1);
-}
-
-export function SetAINotificationsOnly(arg1) {
-  return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
 }
 
 export function SetNotificationsEnabled(arg1) {
@@ -344,10 +368,6 @@ export function SetWebglRendererEnabled(arg1) {
 
 export function ShowNotification(arg1, arg2) {
   return window['go']['main']['App']['ShowNotification'](arg1, arg2);
-}
-
-export function DownloadVersion(arg1) {
-  return window['go']['main']['App']['DownloadVersion'](arg1);
 }
 
 export function CancelDownload() {

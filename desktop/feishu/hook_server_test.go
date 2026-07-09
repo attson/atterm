@@ -19,12 +19,19 @@ import (
 type recordingDispatcher struct {
 	mu      sync.Mutex
 	waiting []WaitingInputDispatchEvent
+	turns   []TurnEvent
 }
 
 func (r *recordingDispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.waiting = append(r.waiting, ev)
+}
+
+func (r *recordingDispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.turns = append(r.turns, ev)
 }
 
 type sessionsFake struct {

@@ -325,7 +325,19 @@ export const zhCN = {
       relay_disabled: "服务端（relay）已关闭飞书集成。",
       load_error: "无法获取飞书状态：{error}",
       retry_status: "重试",
-      mode: "模式",
+      mode: {
+        label: '模式',
+        options: {
+          auto:  '自动（跟随 Relay 登录态）',
+          local: '强制 Local（本机 LongConn）',
+          relay: '强制 Relay（依赖 Relay 转发）',
+        },
+        effective: {
+          label: '生效模式',
+          relayLoggedAs: '已连接 {email}',
+          fallbackWarn: '已请求 relay 但未登录 / UPLINK 关闭',
+        },
+      },
       bound: "已绑定到 open_id：{open_id}",
       save: "保存凭据",
       begin_pair: "开始绑定",
@@ -340,6 +352,15 @@ export const zhCN = {
       copied: "已复制",
       reconfigure: "重新配置凭据",
       aiOnlyNotifications: "仅 AI 会话通知",
+      remoteTerminal: {
+        enable: "启用飞书远程接管",
+        autoAttachLabel: "自动接管会话",
+        autoAttach: {
+          ai: "仅 AI 会话",
+          all: "所有会话",
+          none: "不自动接管",
+        },
+      },
       hook_install: {
         enable: "自动安装 Claude Code Hook",
         retry: "重试",

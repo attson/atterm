@@ -323,7 +323,19 @@ export const en = {
       relay_disabled: "The server (relay) has Feishu integration turned off.",
       load_error: "Couldn't fetch Feishu status: {error}",
       retry_status: "Retry",
-      mode: "Mode",
+      mode: {
+        label: 'Mode',
+        options: {
+          auto:  'Auto (follow Relay login)',
+          local: 'Force Local (local LongConn)',
+          relay: 'Force Relay (depend on Relay)',
+        },
+        effective: {
+          label: 'Effective mode',
+          relayLoggedAs: 'connected as {email}',
+          fallbackWarn: 'Relay requested but not effectively logged in',
+        },
+      },
       bound: "Bound to open_id: {open_id}",
       save: "Save Credentials",
       begin_pair: "Start Pair",
@@ -338,6 +350,15 @@ export const en = {
       copied: "Copied",
       reconfigure: "Re-enter credentials",
       aiOnlyNotifications: "Notify for AI sessions only",
+      remoteTerminal: {
+        enable: "Enable Feishu remote terminal",
+        autoAttachLabel: "Auto-attach sessions",
+        autoAttach: {
+          ai: "AI sessions only",
+          all: "All sessions",
+          none: "Never (manual attach)",
+        },
+      },
       hook_install: {
         enable: "Auto-install Claude Code hook",
         retry: "Retry",

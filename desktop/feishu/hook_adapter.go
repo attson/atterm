@@ -1,9 +1,12 @@
 package feishu
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 )
 
@@ -118,33 +121,234 @@ func dedupKey(scope string, content []byte) string {
 	return "claude-code:" + scope + ":" + hex.EncodeToString(sum[:8])
 }
 
+// TurnKind enumerates the AI streaming event types the chunker consumes.
+type TurnKind int
+
+const (
+	TurnUserPrompt     TurnKind = iota // user submitted a prompt
+	TurnAssistantFinal                 // assistant finished a turn
+	TurnToolStart                      // tool call about to start
+	TurnToolEnd                        // tool call returned
+)
+
+// TurnEvent is the normalized AI-streaming event a HookAdapter emits via
+// ParseTurn. Separate from WaitingInputEvent because the consumer (outbound
+// chunker) needs different shape than the AskQuestion card renderer.
+type TurnEvent struct {
+	Kind     TurnKind
+	Text     string // for UserPrompt / AssistantFinal
+	ToolName string // for ToolStart / ToolEnd
+	ToolBody string // for ToolEnd (tool response preview)
+	// Options is populated when Kind=TurnAssistantFinal carries an
+	// AskUserQuestion payload — the dispatcher uses this to swap the anchor
+	// card's button row from the default keystrokes (^C/^D/Esc/Enter/结束) to
+	// clickable option buttons. Empty for normal Stop / other events.
+	Options []string
+	// TranscriptPath is claude's per-conversation JSONL path. The chunker
+	// uses it to detect a new claude conversation on the same atterm
+	// session (e.g. user exits claude then runs it again) and reset the
+	// roller so old turns don't blur into fresh dialog.
+	TranscriptPath string
+	// FormQuestions carries the full AskUserQuestion payload (N questions
+	// each with options) so relay_host can insert an interactive form
+	// container on the anchor. Set only when Kind=TurnAssistantFinal
+	// carries an AskUserQuestion; empty for regular Stop / other events.
+	// Distinct from Options (single-question button swap) since forms
+	// need per-question structure that a flat label list can't carry.
+	FormQuestions []AskUserQuestionEntry
+}
+
+// ParseTurn extends HookAdapter for the AI streaming path. Returns (event, true)
+// when the hook is a per-turn streaming signal; (zero, false) otherwise.
+// AskUserQuestion is intentionally skipped — the existing Parse method handles
+// it via the AskQuestion card, which is a separate UX from the anchor stream.
+func (a *claudeCodeAdapter) ParseTurn(raw json.RawMessage, _ string) (TurnEvent, bool) {
+	var p struct {
+		HookEventName        string          `json:"hook_event_name"`
+		ToolName             string          `json:"tool_name"`
+		ToolInput            json.RawMessage `json:"tool_input"`
+		ToolResponse         string          `json:"tool_response"`
+		Prompt               string          `json:"prompt"`
+		LastAssistantMessage string          `json:"last_assistant_message"`
+		TranscriptPath       string          `json:"transcript_path"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return TurnEvent{}, false
+	}
+	switch p.HookEventName {
+	case "UserPromptSubmit":
+		if p.Prompt == "" {
+			return TurnEvent{}, false
+		}
+		// TranscriptPath is carried through so the chunker can detect a new
+		// claude conversation (different jsonl path) and reset stale turns.
+		return TurnEvent{Kind: TurnUserPrompt, Text: p.Prompt, TranscriptPath: p.TranscriptPath}, true
+	case "Stop":
+		// claude-code 2.1.x puts the final assistant reply in
+		// `last_assistant_message` directly. Older / partial payloads may omit
+		// it; the transcript JSONL is the documented authoritative source so
+		// we fall back to scanning that.
+		text := p.LastAssistantMessage
+		if text == "" && p.TranscriptPath != "" {
+			text = lastAssistantTextFromTranscript(p.TranscriptPath)
+		}
+		return TurnEvent{Kind: TurnAssistantFinal, Text: text}, true
+	case "PreToolUse":
+		if p.ToolName == "AskUserQuestion" {
+			// Anchor mirrors every question + options block (❓ prefix). A
+			// single-question payload also hands the option labels to the
+			// dispatcher so the anchor's button row swaps to clickable
+			// buttons; multi-question payloads leave Options empty because
+			// one row of buttons can't represent N radio groups — users
+			// answer those via the separate AskQuestion card or by typing
+			// in the input box. The dedicated AskQuestion card always ships
+			// too as a backup path.
+			questions := extractAllAskUserQuestions(p.ToolInput)
+			if len(questions) == 0 {
+				return TurnEvent{}, false
+			}
+			var text string
+			for qi, q := range questions {
+				if qi > 0 {
+					text += "\n\n"
+				}
+				text += "❓ " + q.Question
+				for i, opt := range q.Options {
+					text += fmt.Sprintf("\n%d. %s", i+1, opt.Label)
+					if opt.Description != "" {
+						text += " — " + opt.Description
+					}
+				}
+			}
+			// Body still lists every question — it's the fallback readable
+			// summary when the form UX doesn't render (older client, etc.).
+			// FormQuestions carries the same data structured so relay_host
+			// can build the interactive form. Options stays empty because
+			// AskUserQuestion now always renders via the form container, no
+			// button swap needed.
+			text += "\n\n_💡 每道题下方都有输入框,填了就用你填的_"
+			return TurnEvent{Kind: TurnAssistantFinal, Text: text, FormQuestions: questions}, true
+		}
+		return TurnEvent{Kind: TurnToolStart, ToolName: p.ToolName}, true
+	case "PostToolUse":
+		if p.ToolName == "AskUserQuestion" {
+			// The user's pick lands as a UserPromptSubmit shortly after; no
+			// need to noise up the anchor with a duplicate "tool ended".
+			return TurnEvent{}, false
+		}
+		return TurnEvent{Kind: TurnToolEnd, ToolName: p.ToolName, ToolBody: p.ToolResponse}, true
+	default:
+		return TurnEvent{}, false
+	}
+}
+
+// lastAssistantTextFromTranscript scans a claude-code transcript JSONL and
+// returns the text from the latest assistant entry's last text-type content
+// block. Returns "" on any failure (missing file, unreadable, no qualifying
+// entry, partial last line) — the Stop handler treats every error as
+// "fall back to empty body" since the 🤖 marker is the floor, not the goal.
+//
+// Each JSONL line looks like:
+//
+//	{"message":{"role":"assistant","content":[{"type":"text","text":"..."}, {"type":"tool_use",...}]}}
+//
+// Assistant entries can interleave text + tool_use blocks; tool_use rows on
+// their own are skipped, and within a multi-block assistant entry the last
+// text block wins (matches what the user actually sees in the TUI).
+func lastAssistantTextFromTranscript(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	// claude assistant text can be large; bump the scan buffer well past the
+	// 64KB default. 4MB matches the platform-wide message ceiling.
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+
+	var lastText string
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var obj struct {
+			Message struct {
+				Role    string            `json:"role"`
+				Content []json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &obj) != nil {
+			continue // skip partial / garbage lines
+		}
+		if obj.Message.Role != "assistant" {
+			continue
+		}
+		for _, c := range obj.Message.Content {
+			var elem struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(c, &elem) != nil {
+				continue
+			}
+			if elem.Type == "text" && elem.Text != "" {
+				lastText = elem.Text
+			}
+		}
+	}
+	return lastText
+}
+
 func extractAskUserQuestion(rawToolInput json.RawMessage) (string, []QuestionOption) {
-	if len(rawToolInput) == 0 {
+	qs := extractAllAskUserQuestions(rawToolInput)
+	if len(qs) == 0 {
 		return "", nil
+	}
+	return qs[0].Question, qs[0].Options
+}
+
+// AskUserQuestionEntry is one question + its options from a
+// PreToolUse(AskUserQuestion) payload. AskUserQuestion may bundle multiple
+// (radio + multi-select) in a single hook call — each becomes one entry.
+type AskUserQuestionEntry struct {
+	Question    string
+	Options     []QuestionOption
+	MultiSelect bool
+}
+
+func extractAllAskUserQuestions(rawToolInput json.RawMessage) []AskUserQuestionEntry {
+	if len(rawToolInput) == 0 {
+		return nil
 	}
 	var p struct {
 		Question  string `json:"question"`
 		Questions []struct {
-			Question string `json:"question"`
-			Options  []struct {
+			Question    string `json:"question"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
 				Label       string `json:"label"`
 				Description string `json:"description"`
 			} `json:"options"`
 		} `json:"questions"`
 	}
 	if err := json.Unmarshal(rawToolInput, &p); err != nil {
-		return "", nil
+		return nil
 	}
 	if len(p.Questions) > 0 {
-		q0 := p.Questions[0]
-		opts := make([]QuestionOption, 0, len(q0.Options))
-		for _, o := range q0.Options {
-			opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
+		out := make([]AskUserQuestionEntry, 0, len(p.Questions))
+		for _, q := range p.Questions {
+			opts := make([]QuestionOption, 0, len(q.Options))
+			for _, o := range q.Options {
+				opts = append(opts, QuestionOption{Label: o.Label, Description: o.Description})
+			}
+			out = append(out, AskUserQuestionEntry{Question: q.Question, Options: opts, MultiSelect: q.MultiSelect})
 		}
-		return q0.Question, opts
+		return out
 	}
 	if p.Question != "" {
-		return p.Question, nil
+		return []AskUserQuestionEntry{{Question: p.Question}}
 	}
-	return "", nil
+	return nil
 }

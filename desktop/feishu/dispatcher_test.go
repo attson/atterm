@@ -10,7 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/google/uuid"
 )
 
@@ -55,6 +57,7 @@ func TestCardMsgMap_RememberLookupRoundTrip(t *testing.T) {
 type capturingIM struct {
 	mu       sync.Mutex
 	bodies   []string
+	texts    []string
 	openIDs  []string
 	tokens   []string
 	err      error
@@ -76,6 +79,14 @@ func (c *capturingIM) SendInteractiveToOpenID(ctx context.Context, token, openID
 	return "om_test", nil
 }
 func (c *capturingIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	c.tokens = append(c.tokens, token)
+	c.openIDs = append(c.openIDs, openID)
+	c.texts = append(c.texts, text)
 	return nil
 }
 
@@ -153,6 +164,53 @@ func TestDispatcher_DedupWindowSuppressesSecondWaiting(t *testing.T) {
 	})
 	if len(im.bodies) != 1 {
 		t.Fatalf("expected 1 send, got %d", len(im.bodies))
+	}
+}
+
+// When an anchor is live for the session (AIChunker attached), the standalone
+// WaitingInput card is redundant — the anchor already surfaces the "waiting"
+// state via its status preamble and is fully interactive. Suppress it so the
+// DM doesn't get two cards for the same event.
+func TestDispatcher_WaitingInputSuppressedWhenChunkerAttached(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    im,
+	})
+	sid := uuid.New()
+	// Attach a chunker to simulate a live anchor for this session.
+	d.AttachAIChunker(sid.String(), internalfeishu.NewAIChunker(func(string) {}))
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q1", DedupKey: "k1",
+	})
+	if len(im.bodies) != 0 {
+		t.Errorf("expected 0 sends when anchor is live; got %d", len(im.bodies))
+	}
+}
+
+// Sanity check: when no chunker is attached (shell session, or AI anchor
+// already archived), WaitingInput still fires — it's the notification
+// fallback that doesn't have another surface.
+func TestDispatcher_WaitingInputStillFiresWithoutChunker(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    im,
+	})
+	sid := uuid.New()
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q1", DedupKey: "k1",
+	})
+	if len(im.bodies) != 1 {
+		t.Errorf("expected 1 send when no anchor; got %d", len(im.bodies))
 	}
 }
 
@@ -504,3 +562,36 @@ func (a *atomicTime) advance(s int64)         { a.v.Add(s) }
 
 // Force errors import; required by the auth-error helper.
 var _ = errors.New
+
+func TestDispatcher_DispatchTurnRoutesToChunker(t *testing.T) {
+	var got string
+	aiChunker := internalfeishu.NewAIChunker(func(body string) { got = body })
+
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	d.AttachAIChunker("sess1", aiChunker)
+	d.DispatchTurn("sess1", TurnEvent{Kind: TurnUserPrompt, Text: "hello"})
+
+	// The chunker uses a 100ms throttle window; sleep past it then Tick.
+	time.Sleep(150 * time.Millisecond)
+	aiChunker.Tick()
+
+	if !strings.Contains(got, "hello") {
+		t.Errorf("got = %q, want it to contain 'hello'", got)
+	}
+}
+
+func TestDispatcher_DispatchTurnNoChunker(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	// No AttachAIChunker call — should not panic or error.
+	d.DispatchTurn("missing", TurnEvent{Kind: TurnUserPrompt, Text: "x"})
+}

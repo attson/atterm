@@ -31,6 +31,23 @@ func Uninstall(_ context.Context) error {
 	return uninstallAt(homeOrDie())
 }
 
+// ownedSlot wires one hook slot's lifecycle (read → merge/strip → write back)
+// through a single ClaudeHooks pointer field, so install/uninstall stay one
+// switch-case instead of five copies of the same three lines.
+type ownedSlot struct {
+	name    string
+	field   func(*ClaudeHooks) *[]HookEntry
+	desired func(link string) []HookEntry
+}
+
+var ownedSlots = []ownedSlot{
+	{"Notification", func(h *ClaudeHooks) *[]HookEntry { return &h.Notification }, desiredNotificationEntries},
+	{"PreToolUse", func(h *ClaudeHooks) *[]HookEntry { return &h.PreToolUse }, desiredPreToolUseEntries},
+	{"UserPromptSubmit", func(h *ClaudeHooks) *[]HookEntry { return &h.UserPromptSubmit }, desiredUserPromptSubmitEntries},
+	{"Stop", func(h *ClaudeHooks) *[]HookEntry { return &h.Stop }, desiredStopEntries},
+	{"PostToolUse", func(h *ClaudeHooks) *[]HookEntry { return &h.PostToolUse }, desiredPostToolUseEntries},
+}
+
 func installAt(home string) error {
 	link, _, err := ensureBinary(home)
 	if err != nil {
@@ -42,14 +59,21 @@ func installAt(home string) error {
 		return err
 	}
 
-	mergedNotif := mergeAttermEntries(cfg.Hooks.Notification, desiredNotificationEntries(link), isAttermHookCommand)
-	mergedPre := mergeAttermEntries(cfg.Hooks.PreToolUse, desiredPreToolUseEntries(link), isAttermHookCommand)
-	if entriesEqual(cfg.Hooks.Notification, mergedNotif) && entriesEqual(cfg.Hooks.PreToolUse, mergedPre) {
+	merged := make([][]HookEntry, len(ownedSlots))
+	allEqual := true
+	for i, s := range ownedSlots {
+		cur := *s.field(&cfg.Hooks)
+		merged[i] = mergeAttermEntries(cur, s.desired(link), isAttermHookCommand)
+		if !entriesEqual(cur, merged[i]) {
+			allEqual = false
+		}
+	}
+	if allEqual {
 		return nil
 	}
-	cfg.Hooks.Notification = mergedNotif
-	cfg.Hooks.PreToolUse = mergedPre
-
+	for i, s := range ownedSlots {
+		*s.field(&cfg.Hooks) = merged[i]
+	}
 	return writeClaudeSettings(home, cfg)
 }
 
@@ -68,13 +92,21 @@ func uninstallAt(home string) error {
 		}
 		return err
 	}
-	filteredNotif := stripAttermEntries(cfg.Hooks.Notification)
-	filteredPre := stripAttermEntries(cfg.Hooks.PreToolUse)
-	if entriesEqual(cfg.Hooks.Notification, filteredNotif) && entriesEqual(cfg.Hooks.PreToolUse, filteredPre) {
+	filtered := make([][]HookEntry, len(ownedSlots))
+	allEqual := true
+	for i, s := range ownedSlots {
+		cur := *s.field(&cfg.Hooks)
+		filtered[i] = stripAttermEntries(cur)
+		if !entriesEqual(cur, filtered[i]) {
+			allEqual = false
+		}
+	}
+	if allEqual {
 		return nil
 	}
-	cfg.Hooks.Notification = filteredNotif
-	cfg.Hooks.PreToolUse = filteredPre
+	for i, s := range ownedSlots {
+		*s.field(&cfg.Hooks) = filtered[i]
+	}
 	return writeClaudeSettings(home, cfg)
 }
 
@@ -97,13 +129,38 @@ func desiredNotificationEntries(link string) []HookEntry {
 	}
 }
 
-// desiredPreToolUseEntries returns the PreToolUse entry we own. Matched
-// strictly on AskUserQuestion — claude-code's Notification hook does NOT
-// fire for that tool, so PreToolUse is the only place to learn the
-// questions/options payload and render a button-bearing card.
+// desiredPreToolUseEntries returns the PreToolUse entry we own. The matcher
+// is empty so a single entry covers both the WaitingInput path (AskUserQuestion
+// — claude-code's Notification hook does NOT fire for that tool) and the
+// streaming anchor-card path (other tool uses → 🛠 calls in the card body).
+// The dispatcher's claudeCodeAdapter.Parse / ParseTurn route by tool_name.
 func desiredPreToolUseEntries(link string) []HookEntry {
 	return []HookEntry{
-		{Matcher: "AskUserQuestion", Hooks: []HookCommand{{Type: "command", Command: link}}},
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+	}
+}
+
+// desiredUserPromptSubmitEntries returns the UserPromptSubmit entry we own.
+// claudeCodeAdapter.ParseTurn emits TurnUserPrompt → 👤 in the anchor card.
+func desiredUserPromptSubmitEntries(link string) []HookEntry {
+	return []HookEntry{
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+	}
+}
+
+// desiredStopEntries returns the Stop entry we own. claudeCodeAdapter.ParseTurn
+// emits TurnAssistantFinal → 🤖 in the anchor card.
+func desiredStopEntries(link string) []HookEntry {
+	return []HookEntry{
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+	}
+}
+
+// desiredPostToolUseEntries returns the PostToolUse entry we own.
+// claudeCodeAdapter.ParseTurn emits TurnToolEnd → 🛠 result in the card.
+func desiredPostToolUseEntries(link string) []HookEntry {
+	return []HookEntry{
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
 	}
 }
 

@@ -6,8 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/google/uuid"
 	"github.com/zalando/go-keyring"
 )
@@ -218,7 +221,7 @@ func TestHandleCardAction_InjectWritesText(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
 	sid := uuid.New()
-	s.handleCardAction(context.Background(), sid.String(), "inject", "", "1\n")
+	s.handleCardAction(context.Background(), sid.String(), "inject", "", "", "1\n", nil)
 	if inj.gotSID != sid || inj.gotText != "1\n" {
 		t.Fatalf("inject got sid=%s text=%q", inj.gotSID, inj.gotText)
 	}
@@ -227,7 +230,7 @@ func TestHandleCardAction_InjectWritesText(t *testing.T) {
 func TestHandleCardAction_NonInjectIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "")
+	s.handleCardAction(context.Background(), uuid.New().String(), "ack", "command_finished", "", "", nil)
 	if inj.gotText != "" {
 		t.Fatalf("ack should not inject, got %q", inj.gotText)
 	}
@@ -237,7 +240,7 @@ func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
 	inj := &fakeInjector{err: errors.New("inbound full")}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
 	// 不应 panic;错误被 log 吞掉。
-	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "x\n")
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "x\n", nil)
 	if inj.gotText != "x\n" {
 		t.Fatalf("inject should still be attempted, got %q", inj.gotText)
 	}
@@ -246,7 +249,7 @@ func TestHandleCardAction_InjectErrorDoesNotPanic(t *testing.T) {
 func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "x\n")
+	s.handleCardAction(context.Background(), "not-a-uuid", "inject", "", "", "x\n", nil)
 	if inj.gotText != "" {
 		t.Fatalf("invalid uuid must not inject, got %q", inj.gotText)
 	}
@@ -255,8 +258,160 @@ func TestHandleCardAction_InvalidSessionIDIgnored(t *testing.T) {
 func TestHandleCardAction_EmptyTextIgnored(t *testing.T) {
 	inj := &fakeInjector{}
 	s := &Service{cfg: ServiceConfig{Sessions: inj}}
-	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "")
+	s.handleCardAction(context.Background(), uuid.New().String(), "inject", "", "", "", nil)
 	if inj.gotText != "" {
 		t.Fatalf("empty text must not inject, got %q", inj.gotText)
+	}
+}
+
+// stubRouterSubscriber is a minimal internalfeishu.Subscriber for router tests.
+// sentInputs accumulates every SendInput call so tests can assert the new
+// text/CR split (one call per chunk, instead of bundled text+\n).
+type stubRouterSubscriber struct {
+	mu         sync.Mutex
+	sentInputs [][]byte
+	owner      string
+}
+
+func (s *stubRouterSubscriber) ClaimDriver()        {}
+func (s *stubRouterSubscriber) OwnerOpenID() string { return s.owner }
+func (s *stubRouterSubscriber) SendInput(b []byte) bool {
+	s.mu.Lock()
+	s.sentInputs = append(s.sentInputs, append([]byte(nil), b...))
+	s.mu.Unlock()
+	return true
+}
+func (s *stubRouterSubscriber) CurrentDriverName() string { return "" }
+func (s *stubRouterSubscriber) snapshotInputs() [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([][]byte, len(s.sentInputs))
+	copy(out, s.sentInputs)
+	return out
+}
+
+// TestHandleCardAction_RouterInput verifies that handleCardAction with kind="input"
+// routes through the router and delivers the payload to the subscriber.
+func TestHandleCardAction_RouterInput(t *testing.T) {
+	const ownerOpenID = "ou_owner"
+	sessID := uuid.New().String()
+
+	stub := &stubRouterSubscriber{owner: ownerOpenID}
+
+	idx := internalfeishu.NewCardIndex()
+	idx.Put(&internalfeishu.CardAnchor{
+		SessionID:   sessID,
+		CardMsgID:   "msg_test",
+		CardToken:   "tok_test",
+		OwnerOpenID: ownerOpenID,
+	})
+
+	router := internalfeishu.NewRouter(idx, func(sessionID string) internalfeishu.Subscriber {
+		if sessionID == sessID {
+			return stub
+		}
+		return nil
+	})
+
+	s := &Service{cfg: ServiceConfig{Sessions: &fakeInjector{}}}
+	s.SetRouter(router)
+
+	s.handleCardAction(context.Background(), sessID, "input", "", ownerOpenID, "ls", nil)
+
+	// Router splits into two SendInput calls (text, then CR after 16ms).
+	time.Sleep(80 * time.Millisecond)
+	got := stub.snapshotInputs()
+	if len(got) != 2 || string(got[0]) != "ls" || got[1][0] != 0x0d {
+		t.Fatalf("sentInputs = %q, want [text, {0x0d}] split", got)
+	}
+}
+
+// TestHandleCardAction_RouterInputWrongOwner verifies that handleCardAction
+// rejects input from an operator who is not the anchor owner.
+func TestHandleCardAction_RouterInputWrongOwner(t *testing.T) {
+	const ownerOpenID = "ou_owner"
+	sessID := uuid.New().String()
+
+	stub := &stubRouterSubscriber{owner: ownerOpenID}
+
+	idx := internalfeishu.NewCardIndex()
+	idx.Put(&internalfeishu.CardAnchor{
+		SessionID:   sessID,
+		CardMsgID:   "msg_test2",
+		CardToken:   "tok_test2",
+		OwnerOpenID: ownerOpenID,
+	})
+
+	router := internalfeishu.NewRouter(idx, func(sessionID string) internalfeishu.Subscriber {
+		if sessionID == sessID {
+			return stub
+		}
+		return nil
+	})
+
+	s := &Service{cfg: ServiceConfig{Sessions: &fakeInjector{}}}
+	s.SetRouter(router)
+
+	s.handleCardAction(context.Background(), sessID, "input", "", "ou_intruder", "rm -rf /", nil)
+
+	if got := stub.snapshotInputs(); len(got) != 0 {
+		t.Fatalf("wrong owner must not inject, got %q", got)
+	}
+}
+
+// bindReplyService wires a Service whose replyText path is fully stubbed: an
+// in-memory store with saved credentials, a fixed token source, and a
+// capturing IM so tests can assert the confirmation text sent back to Feishu.
+func bindReplyService(store *inMemBindingStore, im *capturingIM) *Service {
+	ts := &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"}
+	d := NewDispatcher(DispatcherConfig{Store: store, Token: ts, IM: im})
+	return &Service{cfg: ServiceConfig{Mode: ModeLocal}, store: store, dispatcher: d, imClient: im}
+}
+
+func TestHandleBindMessage_SuccessRepliesConfirmation(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s"})
+	im := &capturingIM{}
+	s := bindReplyService(store, im)
+	code := s.IssuePending()
+
+	s.handleBindMessage(context.Background(), "ou_user", "/bind "+code)
+
+	if store.view.OpenID != "ou_user" {
+		t.Fatalf("bind must persist OpenID, got %q", store.view.OpenID)
+	}
+	if len(im.texts) != 1 || im.texts[0] != "✅ 已绑定到 atterm" {
+		t.Fatalf("want one success reply, got %v", im.texts)
+	}
+}
+
+func TestHandleBindMessage_InvalidCodeRepliesError(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s"})
+	im := &capturingIM{}
+	s := bindReplyService(store, im)
+
+	s.handleBindMessage(context.Background(), "ou_user", "/bind NOPE12")
+
+	if store.view.OpenID != "" {
+		t.Fatalf("invalid code must not bind, got %q", store.view.OpenID)
+	}
+	if len(im.texts) != 1 || im.texts[0] != "❌ 短码无效或已过期" {
+		t.Fatalf("want one invalid-code reply, got %v", im.texts)
+	}
+}
+
+func TestHandleBindMessage_SetBoundErrorRepliesError(t *testing.T) {
+	// Empty store: a valid code consumes, but SetBound returns
+	// ErrLocalBindingNotFound (no credentials blob yet) → server-error reply.
+	store := &inMemBindingStore{}
+	im := &capturingIM{}
+	s := bindReplyService(store, im)
+	code := s.IssuePending()
+
+	s.handleBindMessage(context.Background(), "ou_user", "/bind "+code)
+
+	if len(im.texts) != 1 || im.texts[0] != "❌ 服务端错误,请稍后再试" {
+		t.Fatalf("want one server-error reply, got %v", im.texts)
 	}
 }

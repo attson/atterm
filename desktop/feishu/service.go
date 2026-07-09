@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,6 +62,42 @@ type Service struct {
 
 	lcMu     sync.Mutex // guards longConn (EnsureLongConn / CloseLongConn)
 	longConn *LongConn
+
+	routerMu sync.RWMutex
+	router   *internalfeishu.Router
+}
+
+// SetRouter installs the inbound router used by handleReplyMessage and
+// handleCardAction. Called by relay_host (via app.go) once the CardIndex and
+// FeishuSubscriber registry are built. Safe to call concurrently; nil clears
+// the router so anchor card actions are no longer routed (existing inject/ack
+// paths in handleCardAction are unaffected).
+func (s *Service) SetRouter(r *internalfeishu.Router) {
+	s.routerMu.Lock()
+	s.router = r
+	s.routerMu.Unlock()
+}
+
+func (s *Service) getRouter() *internalfeishu.Router {
+	s.routerMu.RLock()
+	defer s.routerMu.RUnlock()
+	return s.router
+}
+
+// replyText sends a plain text message back to openID using the dispatcher's
+// token source and IM client. Best-effort: errors are logged and swallowed.
+func (s *Service) replyText(ctx context.Context, openID, text string) {
+	if s.dispatcher == nil {
+		return
+	}
+	tok, _, err := s.dispatcher.GetToken(ctx)
+	if err != nil {
+		log.Printf("feishu: replyText get token: %v", err)
+		return
+	}
+	if err := s.imClient.SendTextToOpenID(ctx, tok, openID, text); err != nil {
+		log.Printf("feishu: replyText send to %s: %v", openID, err)
+	}
 }
 
 func NewService(cfg ServiceConfig) (*Service, error) {
@@ -100,10 +138,11 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	im := &authClassAdaptingClient{inner: internalfeishu.NewClient(cfg.FeishuBase, cfg.HTTPClient)}
 
 	d := NewDispatcher(DispatcherConfig{
-		Store: store,
-		Token: ts,
-		IM:    im,
-		Now:   cfg.Now,
+		Store:   store,
+		Token:   ts,
+		IM:      im,
+		CardKit: im,
+		Now:     cfg.Now,
 	})
 
 	if cfg.Sessions == nil {
@@ -159,8 +198,8 @@ func (s *Service) EnsureLongConn(ctx context.Context) error {
 		OnReplyMessage: func(ctx context.Context, senderOpenID, parentID, text string) {
 			s.handleReplyMessage(ctx, senderOpenID, parentID, text)
 		},
-		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string) {
-			s.handleCardAction(ctx, sessionID, kind, event, text)
+		OnCardAction: func(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any) {
+			s.handleCardAction(ctx, sessionID, kind, event, operatorOpenID, text, formValue)
 		},
 		OnAuthClassFailure: func(ctx context.Context, _ error) {
 			_ = s.store.SetDisabled(ctx)
@@ -202,9 +241,17 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 	}
 	code := strings.TrimSpace(strings.TrimPrefix(t, "/bind "))
 	if !s.consumePending(code) {
+		// Mirror the relay path's user feedback (internal/feishu/service.go) so
+		// local-mode binds aren't silent on an invalid/expired short code.
+		s.replyText(ctx, senderOpenID, "❌ 短码无效或已过期")
 		return
 	}
-	_ = s.store.SetBound(ctx, senderOpenID)
+	if err := s.store.SetBound(ctx, senderOpenID); err != nil {
+		log.Printf("feishu: bind SetBound: %v", err)
+		s.replyText(ctx, senderOpenID, "❌ 服务端错误,请稍后再试")
+		return
+	}
+	s.replyText(ctx, senderOpenID, "✅ 已绑定到 atterm")
 }
 
 // handleReplyMessage routes a Feishu reply (quoting a previously sent card) back
@@ -214,7 +261,7 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 // ModeLocal only: ModeRelay free-text reply is not yet wired (cross-process map).
 // The relay process holds no copy of this in-process cardMsgs map, so relay users
 // must use the card's quick-action buttons instead.
-func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentID, text string) {
+func (s *Service) handleReplyMessage(ctx context.Context, senderOpenID, parentID, text string) {
 	t := strings.TrimSpace(text)
 	if parentID == "" || t == "" {
 		return
@@ -222,6 +269,34 @@ func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentI
 	if strings.HasPrefix(t, "/bind ") {
 		return // a bind command, not a reply-to-card
 	}
+
+	// Anchor card routing takes precedence: if a Router is installed and the
+	// replied-to message is an anchor card, let the router handle it (permission
+	// gate + subscriber inject). Fall through to the legacy cardMsgs path only
+	// when the router is nil or doesn't know the card.
+	if r := s.getRouter(); r != nil {
+		decision := r.RouteReply(parentID, senderOpenID, t)
+		switch decision.Action {
+		case internalfeishu.ActionInject:
+			return // router handled it; done
+		case internalfeishu.ActionReject:
+			if decision.Toast != "" {
+				s.replyText(ctx, senderOpenID, decision.Toast)
+			}
+			return
+		case internalfeishu.ActionPreempt:
+			// Phase 2; treat as reject with toast for now.
+			if decision.Toast != "" {
+				s.replyText(ctx, senderOpenID, decision.Toast)
+			}
+			return
+		}
+		// If the router returned an unknown action (shouldn't happen), fall through.
+	}
+
+	// Legacy fallback: look up the card in the dispatcher's in-process map and
+	// inject directly via Sessions. This path covers local-mode non-anchor cards
+	// (e.g. WaitingInput cards sent before anchor cards were introduced).
 	if s.dispatcher == nil {
 		return
 	}
@@ -234,18 +309,372 @@ func (s *Service) handleReplyMessage(ctx context.Context, _senderOpenID, parentI
 	}
 }
 
-func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, text string) {
-	if kind != "inject" || text == "" {
+func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any) {
+	textLen := len(text)
+	log.Printf("feishu-card-action: sid=%s kind=%s event=%q op=%s text_len=%d form_fields=%d",
+		sessionID, kind, event, operatorOpenID, textLen, len(formValue))
+	switch kind {
+	case "form":
+		s.handleAskFormSubmit(ctx, sessionID, operatorOpenID, formValue)
+	case "input", "key", "end":
+		// Anchor card actions: route through the inbound router.
+		r := s.getRouter()
+		if r == nil {
+			return // anchor card routing not configured; drop silently
+		}
+		decision := r.RouteCardActionBySession(sessionID, operatorOpenID, kind, event, text)
+		switch decision.Action {
+		case internalfeishu.ActionInject:
+			// Happy path. For input submissions, PUT a fresh input element
+			// so the visible textbox clears — Feishu V2 input doesn't
+			// auto-clear, and a PATCH default_value:"" is a client-side
+			// no-op once user has typed. See Dispatcher.ClearAnchorInput.
+			if kind == "input" {
+				// Grab the anchor directly so clearAnchorInput can hold the
+				// per-anchor SendMu across DELETE + CREATE — seq allocation
+				// alone isn't enough, we also need to keep other body/button
+				// flushes from squeezing between the two ops and bumping
+				// the "last seen" sequence past our reserved slots.
+				if a := r.AnchorBySession(sessionID); a != nil {
+					go s.clearAnchorInput(a, sessionID)
+				}
+			}
+		case internalfeishu.ActionReject:
+			if decision.Toast != "" && operatorOpenID != "" {
+				s.replyText(ctx, operatorOpenID, decision.Toast)
+			}
+		case internalfeishu.ActionPreempt:
+			// Phase 2; treat as reject with toast for now.
+			if decision.Toast != "" && operatorOpenID != "" {
+				s.replyText(ctx, operatorOpenID, decision.Toast)
+			}
+		}
+	case "inject":
+		// Legacy AskQuestion inject path (PR #250): inject text directly into
+		// the session via SessionLookup. Keep existing behaviour intact.
+		if text == "" {
+			return
+		}
+		sid, err := uuid.Parse(sessionID)
+		if err != nil {
+			log.Printf("feishu: card inject bad session_id %q: %v", sessionID, err)
+			return
+		}
+		if err := s.cfg.Sessions.Inject(sid, text); err != nil {
+			log.Printf("feishu: card inject session=%s: %v", sid, err)
+		}
+	default:
+		// Unknown kind; ignore.
+	}
+}
+
+// handleAskFormSubmit turns an AskUserQuestion form submit into the exact
+// key sequence claude's TUI expects, then injects it via the router. The
+// TUI is keyboard-driven — "Enter to select · Tab/Arrow keys to navigate"
+// — so pasting the answer as text just makes claude accept the first
+// keystroke ('1') as Q1's selection and drop everything after. What works
+// is the actual key sequence a human would type: digit-key per question,
+// Tab to move to the next question / to Submit, Enter to commit.
+//
+// Custom text ("Type something." in the native TUI) is a nested modal we
+// haven't reverse-engineered yet; if the user typed anything into a
+// per-question txt input we reply-message a "not supported" note back and
+// leave the form up so they can re-pick from the dropdown.
+func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOpenID string, formValue map[string]any) {
+	r := s.getRouter()
+	if r == nil {
 		return
 	}
-	sid, err := uuid.Parse(sessionID)
+	anchor := r.AnchorBySession(sessionID)
+	if anchor == nil {
+		log.Printf("feishu: askform submit no-anchor sid=%s", sessionID)
+		return
+	}
+	// Snapshot the questions the mounted form was asking about — writer
+	// (relay_host.updateAnchorAskForm) holds SendMu across the CREATE, so
+	// this read races only with a concurrent form tear-down, which would
+	// have DELETEd the form on the Feishu side too. Copy to avoid holding
+	// the lock while we do the label→index math.
+	anchor.SendMu.Lock()
+	questions := anchor.PendingForm
+	anchor.SendMu.Unlock()
+	if len(questions) == 0 {
+		log.Printf("feishu: askform submit no-pending-form sid=%s", sessionID)
+		return
+	}
+	slots := parseAskFormSlots(formValue)
+	if len(slots) == 0 {
+		log.Printf("feishu: askform empty submit sid=%s", sessionID)
+		return
+	}
+	// Stroke sequence assembled per question via buildQuestionStrokes;
+	// the full key model lives in feedback_askform_key_model.md so this
+	// file doesn't rot every time claude's TUI shifts.
+	strokes := make([][]byte, 0)
+	for _, sl := range slots {
+		if sl.idx >= len(questions) {
+			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
+			return
+		}
+		q := questions[sl.idx]
+		qStrokes, ok := buildQuestionStrokes(q, sl, sessionID)
+		if !ok {
+			return
+		}
+		strokes = append(strokes, qStrokes...)
+	}
+	// Review page: "Submit answers" is option 1.
+	strokes = append(strokes, []byte{'1'})
+	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 350*time.Millisecond)
+	log.Printf("feishu: askform submit sid=%s q=%d strokes=%d action=%d", sessionID, len(slots), len(strokes), decision.Action)
+	// Remove the form once injected — success or reject, the form has done
+	// its job (a rejected submit indicates a permission / session issue,
+	// not a bad form; leaving the form up would just confuse).
+	go func() {
+		if s.dispatcher == nil {
+			return
+		}
+		s.deleteAnchorForm(anchor)
+	}()
+}
+
+// buildQuestionStrokes assembles the keypress sequence for one question of
+// an AskUserQuestion form based on its slot (what the user picked in Feishu)
+// and its shape (single vs multi select). Returns (strokes, false) with an
+// error logged if something is off (label not found, index > 9, etc.); the
+// caller aborts the whole submit on false.
+//
+// Branches:
+//   - Single-select, no custom text: one digit does everything (select +
+//     confirm + advance). Do NOT add Tab.
+//   - Multi-select, no custom text: digit for each checked label (toggle),
+//     then Tab to advance.
+//   - Any + custom text: (if multi, toggle other checkboxes first,) then
+//     the Type-something checkbox digit, then ↓ × (typeIdx-1) to move
+//     cursor onto the Type-something row, then the text bytes, then Tab.
+func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sessionID string) ([][]byte, bool) {
+	var out [][]byte
+	findOptIdx := func(label string) int {
+		for i, opt := range q.Options {
+			if opt.Label == label {
+				return i + 1
+			}
+		}
+		return 0
+	}
+	hasCustom := sl.txt != ""
+
+	// Single-select fast path (one keystroke handles everything).
+	if !q.MultiSelect && !hasCustom {
+		if sl.sel == "" {
+			log.Printf("feishu: askform single-select empty sid=%s q=%d", sessionID, sl.idx)
+			return nil, false
+		}
+		optIdx := findOptIdx(sl.sel)
+		if optIdx == 0 || optIdx > 9 {
+			log.Printf("feishu: askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
+			return nil, false
+		}
+		out = append(out, []byte{'0' + byte(optIdx)})
+		return out, true
+	}
+
+	// Multi-select: toggle each selected label with its digit.
+	if q.MultiSelect {
+		for _, label := range sl.selMulti {
+			optIdx := findOptIdx(label)
+			if optIdx == 0 || optIdx > 9 {
+				log.Printf("feishu: askform multi label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, label)
+				return nil, false
+			}
+			out = append(out, []byte{'0' + byte(optIdx)})
+		}
+	}
+
+	// Custom text lands in "Type something" at option typeIdx = len(Options)+1.
+	// Multi vs single Type-something behaviour differs; see
+	// feedback_askform_key_model.md for the full model + why the trailing
+	// space is required.
+	if hasCustom {
+		typeIdx := len(q.Options) + 1
+		if typeIdx > 9 {
+			log.Printf("feishu: askform typeIdx=%d exceeds single-digit range sid=%s q=%d", typeIdx, sessionID, sl.idx)
+			return nil, false
+		}
+		out = append(out, []byte{'0' + byte(typeIdx)})
+		if q.MultiSelect {
+			// Multi: digit typeIdx only ticks the checkbox — cursor stays.
+			// Walk down to the Type-something row before typing.
+			for i := 0; i < typeIdx-1; i++ {
+				out = append(out, []byte{0x1b, 0x5b, 0x42})
+			}
+		}
+		// Trailing space is a sacrificial char: claude's AskUserQuestion
+		// TUI consistently drops the last character of custom text (bug
+		// confirmed with manual typing).
+		text := sl.txt + " "
+		for _, r := range text {
+			out = append(out, []byte(string(r)))
+		}
+		if q.MultiSelect {
+			// One more ↓ so cursor lands on the Submit button; Enter fires
+			// it via the container's `if (X && Y) { Y(D); return; }` path.
+			out = append(out, []byte{0x1b, 0x5b, 0x42})
+		}
+	}
+
+	// Advance key: multi (no custom) uses Tab from a checkbox row;
+	// any-branch with custom text uses Enter (siH.onSubmit for single,
+	// Submit button fire for multi). Single-select without custom already
+	// returned early — its digit is self-advancing.
+	if q.MultiSelect && !hasCustom {
+		out = append(out, []byte{0x09})
+	} else if hasCustom {
+		out = append(out, []byte{0x0d})
+	}
+	return out, true
+}
+
+// askFormSlot is one question's parsed answer. Exactly one of sel (single-
+// select dropdown label), selMulti (multi_select_static labels), or txt
+// (per-question custom-text input) is populated per typical submission,
+// though nothing prevents the user from filling both a dropdown AND the
+// txt field — handleAskFormSubmit treats txt as an override on top of
+// whatever's selected. Empty slots (nothing picked, nothing typed) are
+// dropped by parseAskFormSlots before return.
+type askFormSlot struct {
+	idx      int
+	sel      string   // single-select chosen label
+	selMulti []string // multi-select chosen labels
+	txt      string   // custom-text input for this question
+}
+
+// parseAskFormSlots pulls q_<idx>_sel / q_<idx>_txt out of Feishu's form
+// submission map and returns them sorted by question index. sel values
+// come in as either string (single_select_static) or []any (multi_select_
+// static); the two land in different fields so the stroke planner can
+// tell the two branches apart.
+func parseAskFormSlots(formValue map[string]any) []askFormSlot {
+	byIdx := map[int]*askFormSlot{}
+	get := func(i int) *askFormSlot {
+		s := byIdx[i]
+		if s == nil {
+			s = &askFormSlot{idx: i}
+			byIdx[i] = s
+		}
+		return s
+	}
+	for k, v := range formValue {
+		if !strings.HasPrefix(k, "q_") {
+			continue
+		}
+		rest := k[2:]
+		under := strings.LastIndex(rest, "_")
+		if under <= 0 {
+			continue
+		}
+		var i int
+		if _, err := fmt.Sscanf(rest[:under], "%d", &i); err != nil {
+			continue
+		}
+		s := get(i)
+		switch rest[under+1:] {
+		case "sel":
+			switch t := v.(type) {
+			case string:
+				s.sel = strings.TrimSpace(t)
+			case []any:
+				for _, li := range t {
+					if str, ok := li.(string); ok && strings.TrimSpace(str) != "" {
+						s.selMulti = append(s.selMulti, strings.TrimSpace(str))
+					}
+				}
+			}
+		case "txt":
+			if str, ok := v.(string); ok {
+				s.txt = strings.TrimSpace(str)
+			}
+		}
+	}
+	idxs := make([]int, 0, len(byIdx))
+	for i := range byIdx {
+		idxs = append(idxs, i)
+	}
+	sort.Ints(idxs)
+	out := make([]askFormSlot, 0, len(idxs))
+	for _, i := range idxs {
+		s := byIdx[i]
+		if s.sel == "" && len(s.selMulti) == 0 && s.txt == "" {
+			continue
+		}
+		out = append(out, *s)
+	}
+	return out
+}
+
+// deleteAnchorForm removes a currently-mounted AskUserQuestion form via the
+// CardKit DELETE endpoint. Wrapper around Dispatcher.DeleteAnchorFormWithSeq
+// that acquires SendMu and refreshes a token first.
+func (s *Service) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
+	if s.dispatcher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tok, _, err := s.dispatcher.GetToken(ctx)
 	if err != nil {
-		log.Printf("feishu: card inject bad session_id %q: %v", sessionID, err)
+		log.Printf("feishu: askform DELETE token failed: %v", err)
 		return
 	}
-	if err := s.cfg.Sessions.Inject(sid, text); err != nil {
-		log.Printf("feishu: card inject session=%s: %v", sid, err)
+	anchor.SendMu.Lock()
+	defer anchor.SendMu.Unlock()
+	if !anchor.FormMounted {
+		return
 	}
+	seq := atomic.AddInt64(&anchor.PatchSeq, 1)
+	if err := s.dispatcher.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seq); err != nil {
+		log.Printf("feishu: askform DELETE failed session=%s: %v", anchor.SessionID, err)
+		return
+	}
+	anchor.FormMounted = false
+	anchor.PendingForm = nil
+	log.Printf("feishu: askform DELETE ok session=%s seq=%d", anchor.SessionID, seq)
+}
+
+// clearAnchorInput PATCHes the anchor card's input element back to empty so
+// the user's just-submitted reply doesn't linger in the textbox. Best-effort:
+// errors logged, never bubble up (the inject itself already succeeded).
+func (s *Service) clearAnchorInput(anchor *internalfeishu.CardAnchor, sessionID string) {
+	if s.dispatcher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tok, _, err := s.dispatcher.GetToken(ctx)
+	if err != nil {
+		log.Printf("feishu: clear input get token: %v", err)
+		return
+	}
+	// Hold SendMu across DELETE + CREATE so nothing else can send an op
+	// with a higher seq in between — Feishu enforces strict monotonicity
+	// (code=300317 "sequence compare failed" if it's violated).
+	anchor.SendMu.Lock()
+	defer anchor.SendMu.Unlock()
+	seqDel := atomic.AddInt64(&anchor.PatchSeq, 1)
+	seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
+	// New element_id every cycle — Feishu's client caches typed values by
+	// element_id even across DELETE + POST, so reusing the same id would
+	// leak the last value straight through. seq is monotonic and unique
+	// per anchor, making it a natural unique suffix.
+	newInputID := fmt.Sprintf("anchor_input_%d", seqCre)
+	if err := s.dispatcher.ClearAnchorInputWithSeqs(ctx, tok, anchor.CardToken, sessionID,
+		anchor.CurrentInputID, newInputID, seqDel, seqCre); err != nil {
+		log.Printf("feishu: clear input DELETE+CREATE card=%s seq=%d/%d id_old=%s id_new=%s: %v",
+			anchor.CardToken, seqDel, seqCre, anchor.CurrentInputID, newInputID, err)
+		return
+	}
+	anchor.CurrentInputID = newInputID
+	log.Printf("feishu: clear input ok card=%s seq=%d/%d new_id=%s", anchor.CardToken, seqDel, seqCre, newInputID)
 }
 
 // In-memory short-code table for local mode.
@@ -341,6 +770,25 @@ func (c *authClassAdaptingClient) SendInteractiveToOpenID(ctx context.Context, t
 }
 func (c *authClassAdaptingClient) SendTextToOpenID(ctx context.Context, tok, open, text string) error {
 	return c.adapt(c.inner.SendTextToOpenID(ctx, tok, open, text))
+}
+func (c *authClassAdaptingClient) SendAnchorCard(ctx context.Context, tok, openID string, cardBody []byte) (string, string, error) {
+	mid, token, err := c.inner.SendAnchorCard(ctx, tok, openID, cardBody)
+	return mid, token, c.adapt(err)
+}
+func (c *authClassAdaptingClient) PatchCard(ctx context.Context, tok, cardToken, elementID, bodyMarkdown string, sequence int64) error {
+	return c.adapt(c.inner.PatchCard(ctx, tok, cardToken, elementID, bodyMarkdown, sequence))
+}
+func (c *authClassAdaptingClient) PatchCardElement(ctx context.Context, tok, cardToken, elementID string, partial map[string]any, sequence int64) error {
+	return c.adapt(c.inner.PatchCardElement(ctx, tok, cardToken, elementID, partial, sequence))
+}
+func (c *authClassAdaptingClient) UpdateCardElement(ctx context.Context, tok, cardToken, elementID string, element map[string]any, sequence int64) error {
+	return c.adapt(c.inner.UpdateCardElement(ctx, tok, cardToken, elementID, element, sequence))
+}
+func (c *authClassAdaptingClient) DeleteCardElement(ctx context.Context, tok, cardToken, elementID string, sequence int64) error {
+	return c.adapt(c.inner.DeleteCardElement(ctx, tok, cardToken, elementID, sequence))
+}
+func (c *authClassAdaptingClient) CreateCardElement(ctx context.Context, tok, cardToken, targetElementID, insertType string, elements []map[string]any, sequence int64) error {
+	return c.adapt(c.inner.CreateCardElement(ctx, tok, cardToken, targetElementID, insertType, elements, sequence))
 }
 func (c *authClassAdaptingClient) adapt(err error) error {
 	if err == nil {

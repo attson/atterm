@@ -40,26 +40,26 @@ var UpdateVerifyPublicKey string
 // UpdateState is the observable view of the auto-update subsystem.
 // Mirrored as a TypeScript interface in desktop/frontend/src/lib/api.ts.
 type UpdateState struct {
-	Current      string `json:"current"`
-	Latest       string `json:"latest"`
-	Available    bool   `json:"available"`
-	Notes        string `json:"notes"`
-	Checking     bool   `json:"checking"`
-	LastCheckAt  int64  `json:"last_check_at"`
-	Downloading  bool   `json:"downloading"`
-	DownloadPct  int    `json:"download_pct"`
-	Ready        bool   `json:"ready"`
+	Current     string `json:"current"`
+	Latest      string `json:"latest"`
+	Available   bool   `json:"available"`
+	Notes       string `json:"notes"`
+	Checking    bool   `json:"checking"`
+	LastCheckAt int64  `json:"last_check_at"`
+	Downloading bool   `json:"downloading"`
+	DownloadPct int    `json:"download_pct"`
+	Ready       bool   `json:"ready"`
 	// DownloadedExists signals that the most recent DownloadVersion /
 	// StartDownload call short-circuited to Ready because a validated
 	// archive was already on disk. The frontend watches false→true to
 	// decide whether to prompt "redownload?" Cleared at Download's HTTP
 	// entry and by ForceRedownload. Never touched by Cancel.
-	DownloadedExists bool `json:"downloaded_exists,omitempty"`
-	Error        string `json:"error"`
-	AssetURL     string `json:"asset_url"`
-	AssetSize    int64  `json:"asset_size"`
-	DownloadDir  string `json:"download_dir"`
-	DownloadPath string `json:"download_path"`
+	DownloadedExists bool   `json:"downloaded_exists"`
+	Error            string `json:"error"`
+	AssetURL         string `json:"asset_url"`
+	AssetSize        int64  `json:"asset_size"`
+	DownloadDir      string `json:"download_dir"`
+	DownloadPath     string `json:"download_path"`
 
 	Lines []VersionLine `json:"lines"`
 }

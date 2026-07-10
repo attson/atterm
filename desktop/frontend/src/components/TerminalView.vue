@@ -23,6 +23,7 @@ import {
 } from "../lib/terminalContextMenu";
 import { isCtrlVKeydownPaste, pasteFromClipboard } from "../lib/terminalPaste";
 import { pasteImageBus } from "../lib/pasteImageBus";
+import { pasteFileBus } from "../lib/pasteFileBus";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
@@ -201,17 +202,35 @@ async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
 }
 
 async function handleImagePaste(e: ClipboardEvent) {
-  const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
-  if (!item) return;
-  const file = item.getAsFile();
+  const items = Array.from(e.clipboardData?.items || []);
+  // Prefer an image item if present (aligns with legacy Cmd+V paste-image
+  // path). Otherwise pick the first non-string file item to send as a
+  // generic PASTE_FILE.
+  const imageItem = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
+  const anyFileItem = imageItem ?? items.find((i) => i.kind === "file");
+  if (!anyFileItem) return;
+  const file = anyFileItem.getAsFile();
   if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    console.warn("[AT Term] pasted file too large", file.name, file.size);
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
-  pasteImageBus.emit(file, file.name || "clipboard-image");
-  try {
-    await conn?.sendPasteImage(file, file.name || "clipboard-image");
-  } catch (err) {
-    console.warn("[AT Term] failed to paste terminal image", err);
+  if (imageItem && anyFileItem === imageItem) {
+    pasteImageBus.emit(file, file.name || "clipboard-image");
+    try {
+      await conn?.sendPasteImage(file, file.name || "clipboard-image");
+    } catch (err) {
+      console.warn("[AT Term] failed to paste terminal image", err);
+    }
+  } else {
+    pasteFileBus.emit(file.name || "file", file.size);
+    try {
+      await conn?.sendPasteFile(file, file.name || "file");
+    } catch (err) {
+      console.warn("[AT Term] failed to paste terminal file", err);
+    }
   }
 }
 

@@ -78,6 +78,13 @@ func main() {
 			Filename: "shot.png", ContentType: "image/png", Data: []byte{1, 2, 3, 4},
 		}),
 	})
+	emit("paste-file.bin", proto.Frame{
+		Type:      proto.TypePasteFile,
+		SessionID: sid,
+		Payload: mustMarshal(proto.PasteFilePayload{
+			Filename: "notes.pdf", ContentType: "application/pdf", Data: []byte("hello"),
+		}),
+	})
 	emit("list.bin", proto.Frame{Type: proto.TypeList})  // no session id, no payload
 	emit("ping.bin", proto.Frame{Type: proto.TypePing})  // empty frame
 }

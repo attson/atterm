@@ -2,10 +2,13 @@
 import { ref, watch } from 'vue'
 import { useI18n } from '@shared/i18n/useI18n'
 
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024
+
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{
   (e: 'paste-text', text: string): void
   (e: 'paste-image', file: File): void
+  (e: 'paste-file', file: File): void
   (e: 'close'): void
 }>()
 
@@ -29,13 +32,36 @@ function onCancel() {
   emit('close')
 }
 
-function onFileChange(e: Event) {
+function dispatchFile(file: File) {
+  if (file.size > MAX_ATTACH_BYTES) {
+    // Keep the failure visible in devtools; App.vue's paste-image handler
+    // already covers user-facing feedback for image paste, and file toasts
+    // come from pasteFileBus after a successful send. Silent oversize drop
+    // is acceptable for now.
+    console.warn('[PasteFallback] file too large, dropping', file.name, file.size)
+    return
+  }
+  if (file.type.startsWith('image/')) {
+    emit('paste-image', file)
+  } else {
+    emit('paste-file', file)
+  }
+}
+
+function onImageChange(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
-  if (!file.type.startsWith('image/')) return
-  emit('paste-image', file)
+  dispatchFile(file)
+}
+
+function onAnyFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  dispatchFile(file)
 }
 </script>
 
@@ -50,7 +76,16 @@ function onFileChange(e: Event) {
         accept="image/*"
         hidden
         data-testid="paste-image-file"
-        @change="onFileChange"
+        @change="onImageChange"
+      />
+      <label class="paste-image-pick" for="paste-file-file">{{ t('terminal.pickFile') }}</label>
+      <input
+        id="paste-file-file"
+        type="file"
+        accept="*/*"
+        hidden
+        data-testid="paste-file-file"
+        @change="onAnyFileChange"
       />
       <button type="button" data-testid="paste-cancel" @click="onCancel">{{ t('common.cancel') }}</button>
       <button type="submit">{{ t('common.send') }}</button>

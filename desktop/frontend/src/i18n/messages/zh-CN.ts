@@ -145,6 +145,7 @@ export const zhCN = {
       plugins: "插件",
       shortcuts: "快捷键",
       devices: '已登录设备',
+      receivedFiles: '接收文件',
     },
     discardRelayTitle: "放弃未保存的 relay 更改？",
     discardRelayBody: "你对 relay URL、token、权限或 insecure mode 的编辑尚未保存。",

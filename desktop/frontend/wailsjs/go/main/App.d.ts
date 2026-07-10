@@ -194,3 +194,13 @@ export function CancelDownload():Promise<void>;
 export function ForceRedownload(arg1:string):Promise<void>;
 
 export function StartDownload():Promise<void>;
+
+export function ReceivedFilesList():Promise<main.ReceivedFilesSummary>;
+
+export function ReceivedFilesClearAll():Promise<void>;
+
+export function ReceivedFilesClearSession(arg1:string):Promise<void>;
+
+export function ReceivedFilesDelete(arg1:string,arg2:string):Promise<void>;
+
+export function ReceivedFilesOpenDir():Promise<void>;

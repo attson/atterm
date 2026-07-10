@@ -381,3 +381,23 @@ export function ForceRedownload(arg1) {
 export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
 }
+
+export function ReceivedFilesList() {
+  return window['go']['main']['App']['ReceivedFilesList']();
+}
+
+export function ReceivedFilesClearAll() {
+  return window['go']['main']['App']['ReceivedFilesClearAll']();
+}
+
+export function ReceivedFilesClearSession(arg1) {
+  return window['go']['main']['App']['ReceivedFilesClearSession'](arg1);
+}
+
+export function ReceivedFilesDelete(arg1, arg2) {
+  return window['go']['main']['App']['ReceivedFilesDelete'](arg1, arg2);
+}
+
+export function ReceivedFilesOpenDir() {
+  return window['go']['main']['App']['ReceivedFilesOpenDir']();
+}

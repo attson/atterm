@@ -30,6 +30,15 @@ type ImagePasteHost interface {
 	PasteImage(ctx context.Context, sessionID uuid.UUID, payload proto.PasteImagePayload) error
 }
 
+// FilePasteHost is implemented by desktop PTY wrappers that can accept a
+// remote client's file attachment: sanitize+dedup the filename, write the
+// bytes to a session-scoped inbox, and inject the resulting absolute
+// path into the PTY master. Symmetric to ImagePasteHost but for arbitrary
+// files (no clipboard bridging).
+type FilePasteHost interface {
+	PasteFile(ctx context.Context, sessionID uuid.UUID, payload proto.PasteFilePayload) error
+}
+
 // AdoptSession registers an in-process PTY as a relay session, bypassing the
 // /agent WebSocket entirely. It is the desktop app's hook for surfacing
 // locally-spawned PTYs to the same xterm.js code path that handles remote
@@ -140,6 +149,20 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 					}
 					if err := pasteHost.PasteImage(loopCtx, f.SessionID, p); err != nil {
 						log.Printf("adopt: paste image failed session=%s filename=%q content_type=%q image_bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
+					}
+				case proto.TypePasteFile:
+					pasteHost, ok := host.(FilePasteHost)
+					if !ok {
+						log.Printf("adopt: paste file unavailable session=%s", f.SessionID)
+						continue
+					}
+					var p proto.PasteFilePayload
+					if err := json.Unmarshal(f.Payload, &p); err != nil {
+						log.Printf("adopt: bad paste file payload session=%s payload_bytes=%d error=%v", f.SessionID, len(f.Payload), err)
+						continue
+					}
+					if err := pasteHost.PasteFile(loopCtx, f.SessionID, p); err != nil {
+						log.Printf("adopt: paste file failed session=%s filename=%q content_type=%q bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
 					}
 				}
 			}

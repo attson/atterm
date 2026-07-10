@@ -21,6 +21,7 @@ export const TYPE = {
   PONG: 0x21,
   PASTE_IMAGE: 0x33,
   CLAIM_DRIVER: 0x34,
+  PASTE_FILE: 0x37,
 } as const;
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE];

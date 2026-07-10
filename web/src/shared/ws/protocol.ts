@@ -30,6 +30,7 @@ export const TYPE = {
   PASTE_IMAGE:      0x33,
   CLAIM_DRIVER:     0x34,
   COMMAND_EVENT:    0x35,
+  PASTE_FILE:       0x37,
 } as const
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE]

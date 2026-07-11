@@ -267,4 +267,31 @@ describe('SessionConnection', () => {
     const ws = createdSockets[0]!
     expect(ws.protocols).toEqual([])
   })
+
+  it('sendPasteFile encodes a PASTE_FILE frame with base64 data', async () => {
+    const conn = new SessionConnection(SID)
+    conn.attach()
+    const ws = createdSockets[0]!
+    ws.fireOpen()
+    const beforeLen = ws.sent.length
+
+    const blob = new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'application/pdf' })
+    const ok = await conn.sendPasteFile(blob, 'notes.pdf')
+    expect(ok).toBe(true)
+    expect(ws.sent.length).toBe(beforeLen + 1)
+    const frame = decodeFrame(ws.sent[ws.sent.length - 1]!)
+    expect(frame.type).toBe(TYPE.PASTE_FILE)
+    const body = JSON.parse(new TextDecoder().decode(frame.payload))
+    expect(body.filename).toBe('notes.pdf')
+    expect(body.content_type).toBe('application/pdf')
+    expect(body.data).toBe('AQIDBA==')
+  })
+
+  it('sendPasteFile returns false when the socket is not OPEN', async () => {
+    const conn = new SessionConnection(SID)
+    conn.attach()
+    // Do not fireOpen — remains CONNECTING.
+    const ok = await conn.sendPasteFile(new Blob(['x']), 'x.txt')
+    expect(ok).toBe(false)
+  })
 })

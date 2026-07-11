@@ -61,6 +61,7 @@ const (
     TypeClaimDriver     Type = 0x34  // client → relay (viewer claims driver role)
     TypeCommandEvent    Type = 0x35  // uplink → relay (Web Push notification trigger)
     TypeViewers         Type = 0x36  // relay → uplink (mirror remote subscriber count)
+    TypePasteFile       Type = 0x37  // client → relay → desktop PTY host (generic file attachment)
 
     // Auth frames (server → client).
     TypeAuthInfo        Type = 0x40  // relay → uplink; UTF-8 JSON {user_id}
@@ -211,9 +212,9 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
 
 | 值 | 远程允许 | relay/host 拦截 |
 |----|----------|-----------------|
-| `view` | list / attach / 接收输出与历史 | `IN` / `RESIZE` / `PASTE_IMAGE` |
-| `control` | `view` + `IN` + `RESIZE` | `PASTE_IMAGE` |
-| `full` 或空 | `control` + `PASTE_IMAGE` | 无 |
+| `view` | list / attach / 接收输出与历史 | `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` |
+| `control` | `view` + `IN` + `RESIZE` | `PASTE_IMAGE` / `PASTE_FILE` |
+| `full` 或空 | `control` + `PASTE_IMAGE` + `PASTE_FILE` | 无 |
 
 实践中很少用（前端走 REST `/api/sessions` 更直接）。
 
@@ -319,6 +320,29 @@ payload = JSON：
 
 `data` 解码后最大 10 MiB（JSON/base64 后仍需低于协议 16 MiB payload 上限）。`content_type` 必须是 `image/*`。
 
+### `PASTE_FILE` (0x37) — client → relay → desktop PTY host
+
+远程 client 显式选择/拖入的通用文件（PDF / log / diff / 任意二进制），路由与 `PASTE_IMAGE` 同构：driver + `full` 权限方可发送，非 driver 或不足权限静默 drop（日志 `not_driver` / `permission_denied`）。desktop 收到后 sanitize filename（strip 目录部分/控制字符、NFC normalize、≤128 字符、Windows 保留名前缀 `_`），落盘到 `<cache-root>/paste-files/<sid>/<safe-name>`（冲名追加 ` (N)`，`O_EXCL` 原子创建），然后把结果**绝对路径**直接 `Write` 进 PTY 主端（**无 CR，无引号**）。
+
+payload = JSON：
+
+```json
+{
+  "filename": "notes.pdf",
+  "content_type": "application/pdf",
+  "data": "<base64 file bytes>"
+}
+```
+
+- `filename`：用户可见文件名（不含目录）。wire 值可以脏，desktop 强制 sanitize + dedup 才落盘。
+- `content_type`：客户端 best-effort，服务器不校验、不据此路由。允许任意 mime（含 `application/octet-stream`）。
+- `data`：原始字节。解码后 `≤ 10 MiB`（`maxPasteFileBytes`）；desktop 侧 backstop 与前端预检同数值。协议层仍受 payload 16 MiB 上限约束。
+- **E2EE**：当持有 `account_key` 时，整个 `PasteFilePayload` JSON 走 [§E2EE 信封](#e2ee-信封) 加密，AAD 鉴别字节 = `0x37`。**当前 Go 侧 attach 客户端已支持**（另一台 atterm desktop attach 时）；`web` / `Capacitor` 前端与 PASTE_IMAGE 同 posture 尚未 seal（独立 spec）。
+- **权限**：`remote_permission = "full"` 才允许；`view` / `control` 被 relay 拒绝，同 PASTE_IMAGE。
+- **driver-only**：非当前 driver subscriber 的 PASTE_FILE 被 relay 静默 drop。
+
+区别于 PASTE_IMAGE：不塞 native clipboard、不发 `Ctrl-V`；文件名对 AI/shell 可见（保留 sanitized 原名，方便后续读取时通过 mime 或后缀推断类型）。
+
 ### `CLAIM_DRIVER` (0x34) — client → relay
 
 viewer 想接管成为 driver 时发。payload = JSON：
@@ -399,7 +423,7 @@ Payload (UTF-8 JSON):
 
 ## Driver / Viewer 模型
 
-每个 session 在任意时刻最多有一个 driver subscriber。driver 是唯一允许把 `IN` / `RESIZE` / `PASTE_IMAGE` 转发到 PTY 的连接；其它都是 viewer（只收 `OUT` / `META` / `CLOSE` / `REPLAY_PROGRESS`）。
+每个 session 在任意时刻最多有一个 driver subscriber。driver 是唯一允许把 `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` 转发到 PTY 的连接；其它都是 viewer（只收 `OUT` / `META` / `CLOSE` / `REPLAY_PROGRESS`）。
 
 - **自动晋升**：第一个 `Subscribe` 上来的 subscriber（不论 loopback 还是 uplink）自动 driver。
 - **接管**：viewer 端按空格 → `CLAIM_DRIVER` → relay 切 driver → META 广播。

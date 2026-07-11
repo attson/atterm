@@ -129,6 +129,7 @@ export const zhCN = {
     loadingHistory: '正在加载历史... {percent}%',
     paste: '粘贴',
     pickImage: '选择图片',
+    pickFile: '选择文件',
     remoteControl: '远端已接管控制',
     statuses: {
       attached: '已连接',

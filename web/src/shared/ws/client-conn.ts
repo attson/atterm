@@ -153,6 +153,27 @@ export class SessionConnection {
     })()
   }
 
+  // sendPasteFile is the generic-file counterpart of sendPasteImage. The
+  // desktop side sanitizes the filename, writes the bytes into a session-
+  // scoped inbox, and injects the resulting absolute path (no CR, no
+  // quoting) into the PTY.
+  sendPasteFile(blob: Blob, filename: string): Promise<boolean> {
+    return (async () => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false
+      const buf = await blob.arrayBuffer()
+      const data = btoaBytes(new Uint8Array(buf))
+      const payload = new TextEncoder().encode(JSON.stringify({
+        filename,
+        content_type: blob.type || 'application/octet-stream',
+        data,
+      }))
+      const frame = encodeFrame(TYPE.PASTE_FILE, this.sidBytes, payload)
+      this.ws.send(frame)
+      this.health.onBytesOut(frame.byteLength, Date.now())
+      return true
+    })()
+  }
+
   private startHealthLoops(ws: WebSocket): void {
     this.stopHealthLoops()
     this.tickTimer = setInterval(() => { this.health.tick(Date.now()) }, TICK_INTERVAL_MS)

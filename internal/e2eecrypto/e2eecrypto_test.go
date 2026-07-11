@@ -194,6 +194,30 @@ func TestUnsequenced_NoSeqBinding(t *testing.T) {
 	}
 }
 
+// TestUnsequenced_PasteFileAAD proves the AAD binds the PASTE_FILE frame
+// type: sealing with 0x37 and opening with 0x33 (PasteImage) must fail,
+// otherwise a compromised relay could re-tag a paste-file envelope as a
+// paste-image and slip content past mime-typed frontend paths.
+func TestUnsequenced_PasteFileAAD(t *testing.T) {
+	key := mustKey(t)
+	sid := uuid.New()
+	pt := []byte(`{"filename":"foo.pdf","content_type":"application/pdf","data":"aGk="}`)
+	env, err := SealUnsequenced(key, sid, 0x37 /* TypePasteFile */, pt)
+	if err != nil {
+		t.Fatalf("SealUnsequenced: %v", err)
+	}
+	got, err := OpenUnsequenced(key, sid, 0x37, env)
+	if err != nil {
+		t.Fatalf("OpenUnsequenced matching AAD: %v", err)
+	}
+	if !bytes.Equal(got, pt) {
+		t.Fatalf("plaintext mismatch")
+	}
+	if _, err := OpenUnsequenced(key, sid, 0x33 /* TypePasteImage */, env); err == nil {
+		t.Fatalf("open with mismatched frame_type AAD should fail")
+	}
+}
+
 // TestNonceUniquenessProbability is a sanity check that two consecutive
 // seals of the same plaintext produce different envelopes (different
 // nonce bytes). Without this, a buggy rand source would silently break

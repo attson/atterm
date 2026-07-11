@@ -164,7 +164,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 			startWriter()
 
-		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
+		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage, proto.TypePasteFile:
 			if sess == nil {
 				s.debugf("client drop frame=%s reason=not_attached", frameTypeName(f.Type))
 				continue

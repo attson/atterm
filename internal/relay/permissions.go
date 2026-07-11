@@ -36,7 +36,7 @@ func sessionRemotePermission(sess *session.Session) remotePermission {
 func frameAllowedByPermission(scope authScope, perm remotePermission, typ proto.Type) bool {
 	if scope == authRead {
 		switch typ {
-		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
+		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage, proto.TypePasteFile:
 			return false
 		default:
 			return true
@@ -45,7 +45,7 @@ func frameAllowedByPermission(scope authScope, perm remotePermission, typ proto.
 	switch typ {
 	case proto.TypeIn, proto.TypeResize:
 		return perm >= permControl
-	case proto.TypePasteImage:
+	case proto.TypePasteImage, proto.TypePasteFile:
 		return perm >= permFull
 	default:
 		return true

@@ -50,6 +50,7 @@ const (
 	TypeClaimDriver   Type = 0x34 // client -> relay (viewer claims driver role)
 	TypeCommandEvent  Type = 0x35 // uplink -> relay (Web Push trigger)
 	TypeViewers       Type = 0x36 // relay -> uplink; mirror's remote subscriber count
+	TypePasteFile     Type = 0x37 // client -> relay -> desktop PTY host (generic file attachment)
 
 	// Auth frames (server → client).
 	TypeAuthInfo Type = 0x40 // relay -> uplink; UTF-8 JSON {user_id}
@@ -203,6 +204,19 @@ type StreamStopPayload struct {
 // wire via Go's []byte JSON encoding.
 type PasteImagePayload struct {
 	Filename    string `json:"filename,omitempty"`
+	ContentType string `json:"content_type"`
+	Data        []byte `json:"data"`
+}
+
+// PasteFilePayload carries a generic file attachment from a remote client
+// to the desktop that owns the PTY. Structurally identical to
+// PasteImagePayload but semantically distinct: PASTE_IMAGE is clipboard
+// image data (silent, filename synthesized); PASTE_FILE is an explicit
+// user-picked attachment (filename is user-visible). The desktop
+// sanitizes/dedups Filename before writing, and injects the resulting
+// absolute path into the PTY master (no CR, no quoting).
+type PasteFilePayload struct {
+	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
 	Data        []byte `json:"data"`
 }

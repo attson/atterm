@@ -9,6 +9,8 @@ import ShortcutBar from './components/ShortcutBar.vue'
 import PasteFallback from './components/PasteFallback.vue'
 import PasteImagePreviewHost from './components/PasteImagePreviewHost.vue'
 import { pasteImageBus } from './lib/pasteImageBus'
+import PasteFilePreviewHost from './components/PasteFilePreviewHost.vue'
+import { pasteFileBus } from './lib/pasteFileBus'
 import InstallHint from './components/InstallHint.vue'
 import ConnHealthPill from '@shared/components/ConnHealthPill.vue'
 import ConnHealthDrawer from '@shared/components/ConnHealthDrawer.vue'
@@ -102,6 +104,11 @@ function onPasteImage(file: File) {
   void termRef.value?.sendPasteImage(file, file.name)
 }
 
+function onPasteFile(file: File) {
+  pasteFileBus.emit(file.name, file.size)
+  void termRef.value?.sendPasteFile(file, file.name)
+}
+
 const overrides = getNaiveOverrides()
 
 const inSession = computed(() => Boolean(sessionId.value))
@@ -128,6 +135,7 @@ onUnmounted(() => {
   >
     <n-message-provider>
       <PasteImagePreviewHost />
+      <PasteFilePreviewHost />
       <Topbar active="home" />
       <div v-if="inSession && connHealth" class="conn-health-anchor">
         <ConnHealthPill
@@ -180,6 +188,7 @@ onUnmounted(() => {
             :open="pasteOpen"
             @paste-text="onPasteText"
             @paste-image="onPasteImage"
+            @paste-file="onPasteFile"
             @close="pasteOpen = false"
           />
         </template>

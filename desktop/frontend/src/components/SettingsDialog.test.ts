@@ -147,7 +147,7 @@ function navLabels(w: ReturnType<typeof mount>) {
 }
 
 describe("SettingsDialog caps gating", () => {
-  it("renders all 10 tabs with full desktop caps (Logging folded into Diagnostics)", () => {
+  it("renders all 11 tabs with full desktop caps (Logging folded into Diagnostics)", () => {
     const w = mountDialog();
     expect(navLabels(w)).toEqual([
       en.settings.tabs.general,
@@ -160,6 +160,7 @@ describe("SettingsDialog caps gating", () => {
       en.settings.tabs.updates,
       en.settings.diagnostics.tab,
       en.settings.feishu.title,
+      en.settings.tabs.receivedFiles,
     ]);
     // Logging is no longer a standalone nav item.
     expect(navLabels(w)).not.toContain(en.settings.tabs.logging);
@@ -195,7 +196,7 @@ describe("SettingsDialog caps gating", () => {
     expect(source).toContain('<section v-if="caps.fileDialog" class="merged-section">');
   });
 
-  it("with capacitor-style caps shows General + Task display + Relay + Devices + Templates + Diagnostics + Feishu", () => {
+  it("with capacitor-style caps shows General + Task display + Relay + Devices + Templates + Diagnostics + Feishu + Received files", () => {
     platform.caps = { ...platform.caps, autoUpdate: false, pluginHost: false, fileDialog: false };
     __setPlatformForTests(platform);
     expect(navLabels(mountDialog())).toEqual([
@@ -206,6 +207,7 @@ describe("SettingsDialog caps gating", () => {
       en.settings.templates.tab,
       en.settings.diagnostics.tab,
       en.settings.feishu.title,
+      en.settings.tabs.receivedFiles,
     ]);
   });
 

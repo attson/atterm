@@ -344,6 +344,32 @@ export class SessionConnection {
     return true;
   }
 
+  // sendPasteFile is the generic-file counterpart of sendPasteImage. The
+  // desktop receiver sanitizes the filename, writes bytes into a session-
+  // scoped inbox, and injects the resulting absolute path (no CR, no
+  // quoting) into the PTY. Reuses PASTE_IMAGE's block reason for the
+  // ≤10 MiB size cap since the wire limit is identical.
+  async sendPasteFile(blob: Blob, filename: string): Promise<boolean> {
+    const ws = this.ws;
+    const blocked = pasteImageBlockReason(ws?.readyState, blob.size);
+    if (blocked || !ws) {
+      this.handlers.onStatus?.("error");
+      throw new Error(blocked ?? "websocket is not open");
+    }
+    const payload = encodeText(JSON.stringify({
+      filename,
+      content_type: blob.type || "application/octet-stream",
+      data: arrayBufferToBase64(await blob.arrayBuffer()),
+    }));
+    console.info("[AT Term] sending paste file", {
+      filename,
+      contentType: blob.type || "application/octet-stream",
+      bytes: blob.size,
+    });
+    ws.send(encodeFrame(TYPE.PASTE_FILE, this.sidBytes, payload));
+    return true;
+  }
+
   sendResize(cols: number, rows: number): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(encodeFrame(TYPE.RESIZE, this.sidBytes, encodeResize(cols, rows)));

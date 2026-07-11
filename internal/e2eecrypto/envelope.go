@@ -55,8 +55,9 @@ func OpenOut(sessionKey []byte, sessionID uuid.UUID, frameType byte, seq uint64,
 }
 
 // SealUnsequenced encrypts a frame that is not bound to a monotonic seq —
-// currently TypeIn and TypePasteImage. The AAD is session_uuid || frame_type
-// only; per-frame uniqueness is delegated to the 24-byte random nonce.
+// currently TypeIn, TypePasteImage, and TypePasteFile. The AAD is
+// session_uuid || frame_type only; per-frame uniqueness is delegated to
+// the 24-byte random nonce.
 func SealUnsequenced(sessionKey []byte, sessionID uuid.UUID, frameType byte, plaintext []byte) ([]byte, error) {
 	aad := unsequencedAAD(sessionID, frameType)
 	return seal(sessionKey, aad, plaintext)

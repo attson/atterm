@@ -143,6 +143,7 @@ export const en = {
       plugins: "Plugins",
       shortcuts: "Shortcuts",
       devices: 'Signed-in devices',
+      receivedFiles: 'Received files',
     },
     discardRelayTitle: "Discard unsaved relay changes?",
     discardRelayBody: "Your edits to relay URL, token, permissions, or insecure mode are not saved yet.",

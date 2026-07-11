@@ -19,6 +19,7 @@ import SettingsTemplates from "./SettingsTemplates.vue";
 import SettingsTasks from "./SettingsTasks.vue";
 import SettingsFeishu from "./SettingsFeishu.vue";
 import SettingsDevices from "./SettingsDevices.vue";
+import SettingsReceivedFiles from "./SettingsReceivedFiles.vue";
 import ConfirmInstallDialog from "./ConfirmInstallDialog.vue";
 import LogViewerDialog from "./LogViewerDialog.vue";
 import { useI18n } from "../i18n/useI18n";
@@ -32,7 +33,7 @@ const { t, resolvedLocale } = useI18n();
 // UI is in Chinese (CodeIsland-style "通用 General preferences" anchor).
 // English locale skips the subtitle to avoid duplicate text.
 type SettingsTabId = "general" | "tasks" | "relay" | "plugins"
-  | "shortcuts" | "templates" | "logging" | "updates" | "diagnostics" | "feishu" | "devices";
+  | "shortcuts" | "templates" | "logging" | "updates" | "diagnostics" | "feishu" | "devices" | "received-files";
 
 const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> = {
   general:     { labelKey: "settings.tabs.general",        english: "General preferences" },
@@ -46,6 +47,7 @@ const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> 
   diagnostics: { labelKey: "settings.diagnostics.tab",     english: "Diagnostics" },
   feishu:      { labelKey: "settings.feishu.title",        english: "Feishu integration" },
   devices:     { labelKey: "settings.tabs.devices",       english: "Signed-in devices" },
+  "received-files": { labelKey: "settings.tabs.receivedFiles", english: "Received files" },
 };
 
 const activeTabLabel = computed(() => t(tabMeta[activeTab.value].labelKey));
@@ -69,6 +71,7 @@ const tabIcons: Record<SettingsTabId, string> = {
   diagnostics: `<svg ${icoBase}><circle cx="7.2" cy="7.2" r="4.4"/><path d="m10.4 10.4 3 3"/></svg>`,
   feishu:      `<svg ${icoBase}><path d="M3.5 4.5h6l2 2v5a1.5 1.5 0 0 1-1.5 1.5h-6.5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1Z"/><path d="M9.5 4.5v2h2"/></svg>`,
   devices:     `<svg ${icoBase}><rect x="1.6" y="2.4" width="12.8" height="8" rx="1.4"/><path d="M4.8 14h6.4M8 10.4V14"/></svg>`,
+  "received-files": `<svg ${icoBase}><path d="M3 3.5h4l1.5 2H13v6.5H3z"/><path d="M8 8v3.5M6 10l2 2 2-2"/></svg>`,
 };
 
 const props = defineProps<{
@@ -89,7 +92,7 @@ const emit = defineEmits<{
 // pane. Map any legacy `initialTab: 'logging'` onto diagnostics so deep links
 // keep working.
 const initialTab = props.initialTab === "logging" ? "diagnostics" : (props.initialTab ?? "general");
-const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices">(initialTab);
+const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files">(initialTab);
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
@@ -100,7 +103,7 @@ const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | null>(null);
+const pendingTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -120,7 +123,7 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices") {
+function switchTab(next: "general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -296,6 +299,14 @@ function onSaveClick() {
             <span class="nav-icon" v-html="tabIcons.feishu"></span>
             <span class="nav-label">{{ t("settings.feishu.title") }}</span>
           </button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'received-files' }"
+            @click="switchTab('received-files')"
+          >
+            <span class="nav-icon" v-html="tabIcons['received-files']"></span>
+            <span class="nav-label">{{ t("settings.tabs.receivedFiles") }}</span>
+          </button>
         </aside>
 
         <section class="settings-pane">
@@ -336,6 +347,7 @@ function onSaveClick() {
           </div>
           <SettingsFeishu v-if="activeTab === 'feishu'" />
           <SettingsDevices v-if="activeTab === 'devices'" />
+          <SettingsReceivedFiles v-if="activeTab === 'received-files'" />
         </section>
       </div>
 

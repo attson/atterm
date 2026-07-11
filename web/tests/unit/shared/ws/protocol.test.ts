@@ -89,6 +89,15 @@ describe('protocol — round-trip against Go-emitted fixtures', () => {
     expect(body.content_type).toBe('image/png')
   })
 
+  it('PASTE_FILE: payload is JSON with base64 data', () => {
+    const f = decodeFrame(load('paste-file.bin'))
+    expect(f.type).toBe(TYPE.PASTE_FILE)
+    const body = JSON.parse(new TextDecoder().decode(f.payload))
+    expect(body.filename).toBe('notes.pdf')
+    expect(body.content_type).toBe('application/pdf')
+    expect(body.data).toBe('aGVsbG8=')
+  })
+
   it('LIST: zero session id + empty payload', () => {
     const f = decodeFrame(load('list.bin'))
     expect(f.type).toBe(TYPE.LIST)

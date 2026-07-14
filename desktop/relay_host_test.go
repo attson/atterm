@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -153,6 +155,102 @@ func TestOnRemoteTerminalToggle_TrueIsNoop(t *testing.T) {
 	h.feishuSubsMu.Unlock()
 	if remaining != 1 {
 		t.Errorf("feishuSubs has %d entries after toggle-on, want 1", remaining)
+	}
+}
+
+// Lazy anchor backfill: when the user toggles Feishu remote-terminal on
+// mid-session, the next AI activity (task-state change or hook TurnEvent)
+// must trigger attachFeishuSubscriberForAutoAttach exactly once per
+// session even under concurrent bursts. The gate lives in
+// tryStartLazyAttach / clearLazyAttachInFlight — this suite covers it.
+
+func TestTryStartLazyAttach_SkipsWhenSubscriberExists(t *testing.T) {
+	h := newTestRelayHost(t)
+	sid := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	h.feishuSubsMu.Lock()
+	h.feishuSubs[sid] = nil
+	h.feishuSubsMu.Unlock()
+
+	if got := h.tryStartLazyAttach(sid); got {
+		t.Fatalf("tryStartLazyAttach = true when subscriber already exists")
+	}
+	h.feishuSubsMu.Lock()
+	_, in := h.lazyAttachInFlight[sid]
+	h.feishuSubsMu.Unlock()
+	if in {
+		t.Fatalf("in-flight slot claimed despite gate returning false")
+	}
+}
+
+func TestTryStartLazyAttach_TriggersWhenMissing(t *testing.T) {
+	h := newTestRelayHost(t)
+	sid := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+	if got := h.tryStartLazyAttach(sid); !got {
+		t.Fatalf("tryStartLazyAttach = false when no subscriber and no in-flight")
+	}
+	h.feishuSubsMu.Lock()
+	in := h.lazyAttachInFlight[sid]
+	h.feishuSubsMu.Unlock()
+	if !in {
+		t.Fatalf("in-flight slot not claimed after gate returned true")
+	}
+}
+
+func TestTryStartLazyAttach_SkipsWhenAlreadyInFlight(t *testing.T) {
+	h := newTestRelayHost(t)
+	sid := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+
+	if !h.tryStartLazyAttach(sid) {
+		t.Fatalf("first call: gate rejected")
+	}
+	if h.tryStartLazyAttach(sid) {
+		t.Fatalf("second call: gate must reject while in-flight")
+	}
+}
+
+func TestClearLazyAttachInFlight_ReleasesSlot(t *testing.T) {
+	h := newTestRelayHost(t)
+	sid := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+
+	if !h.tryStartLazyAttach(sid) {
+		t.Fatalf("first call: gate rejected")
+	}
+	h.clearLazyAttachInFlight(sid)
+	if !h.tryStartLazyAttach(sid) {
+		t.Fatalf("after clear: gate must allow re-entry")
+	}
+}
+
+func TestTryStartLazyAttach_ConcurrentBurstCollapsesToOne(t *testing.T) {
+	h := newTestRelayHost(t)
+	sid := "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+
+	const N = 32
+	var wg sync.WaitGroup
+	var winners atomic.Int32
+	start := make(chan struct{})
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if h.tryStartLazyAttach(sid) {
+				winners.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if winners.Load() != 1 {
+		t.Fatalf("winners = %d, want exactly 1 across %d concurrent callers", winners.Load(), N)
+	}
+	h.feishuSubsMu.Lock()
+	in := h.lazyAttachInFlight[sid]
+	h.feishuSubsMu.Unlock()
+	if !in {
+		t.Fatalf("in-flight slot lost after single winner claimed it")
 	}
 }
 

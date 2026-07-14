@@ -95,6 +95,13 @@ type relayHost struct {
 	// re-render the status preamble. Keyed by session ID string. Same lock
 	// discipline as feishuSubs (parallel map, same lifetime).
 	feishuAnchorRuntimes map[string]*anchorRuntime
+
+	// lazyAttachInFlight tracks per-session lazy-backfill attempts kicked
+	// off by SetOnTaskStateChange or Dispatcher.SetOnTurnMissingChunker.
+	// Collapses a burst of concurrent events on the same session into a
+	// single attachFeishuSubscriberForAutoAttach goroutine. Guarded by
+	// feishuSubsMu (same map lifetime; keeps lock discipline minimal).
+	lazyAttachInFlight map[string]bool
 }
 
 // anchorRuntime is the per-session live state the anchor card's status
@@ -117,6 +124,7 @@ func (h *relayHost) SetFeishuDispatcher(d *feishu.Dispatcher) {
 	if d != nil {
 		d.SetOnAnchorButtons(h.swapAnchorButtons)
 		d.SetOnAskForm(h.updateAnchorAskForm)
+		d.SetOnTurnMissingChunker(h.onTurnMissingChunker)
 	}
 }
 
@@ -450,6 +458,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		feishuCards:          internalfeishu.NewCardIndex(),
 		feishuSubs:           make(map[string]*internalfeishu.FeishuSubscriber),
 		feishuAnchorRuntimes: make(map[string]*anchorRuntime),
+		lazyAttachInFlight:   make(map[string]bool),
 	}, nil
 }
 
@@ -795,6 +804,12 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			if disp == nil {
 				return
 			}
+			// Lazy backfill: if the user toggled remote-terminal on after
+			// this AI session started, no subscriber was registered at
+			// NewSession time. Piggyback on the next task-state change to
+			// attach the anchor now. Idempotent (gate + attach's own
+			// double-attach guard) and non-blocking (goroutine inside).
+			h.lazyAttachIfMissing(context.Background(), sess, sid)
 			// Anchor status preamble: update the per-session runtime so the
 			// next render() shows the new label. Done synchronously (no
 			// session.mu re-entry — only touches atomic.Value), then a
@@ -1022,6 +1037,74 @@ func (h *relayHost) onAISidCaptured(localSessionID uuid.UUID, kind, aiSid string
 	if h.aiSidCallback != nil {
 		h.aiSidCallback(localSessionID, kind, aiSid)
 	}
+}
+
+// tryStartLazyAttach acquires the per-session lazy-backfill slot for sid
+// iff the session has no live FeishuSubscriber and no backfill goroutine
+// is already running. Returns true when the caller now owns the slot and
+// MUST release it via clearLazyAttachInFlight once the attach path exits.
+// Under a concurrent burst of turn/state events on the same session (e.g.
+// after the user toggles remote-terminal on and claude spits back a few
+// hook events in quick succession), only one caller wins; the rest bail.
+func (h *relayHost) tryStartLazyAttach(sidStr string) bool {
+	h.feishuSubsMu.Lock()
+	defer h.feishuSubsMu.Unlock()
+	if _, exists := h.feishuSubs[sidStr]; exists {
+		return false
+	}
+	if h.lazyAttachInFlight == nil {
+		h.lazyAttachInFlight = map[string]bool{}
+	}
+	if h.lazyAttachInFlight[sidStr] {
+		return false
+	}
+	h.lazyAttachInFlight[sidStr] = true
+	return true
+}
+
+// clearLazyAttachInFlight releases the slot claimed by tryStartLazyAttach.
+// Safe to call on a sid that was never claimed (delete on a missing key
+// is a no-op).
+func (h *relayHost) clearLazyAttachInFlight(sidStr string) {
+	h.feishuSubsMu.Lock()
+	delete(h.lazyAttachInFlight, sidStr)
+	h.feishuSubsMu.Unlock()
+}
+
+// lazyAttachIfMissing gates on tryStartLazyAttach and, on success, kicks
+// off attachFeishuSubscriberForAutoAttach in a goroutine (attach performs
+// a network round-trip so callers — task-state callbacks, hook HTTP
+// handlers — must not block). triggerMode "ai" is used so
+// SessionAutoAttach="ai" bindings also honor the lazy path; "all" bindings
+// still attach because their switch case is unconditional. Callers pass
+// a nil-safe context (attach's own guards handle a nil dispatcher etc.,
+// so a stale session that closed mid-flight is not a panic risk).
+func (h *relayHost) lazyAttachIfMissing(ctx context.Context, sess *session.Session, sid uuid.UUID) {
+	sidStr := sid.String()
+	if !h.tryStartLazyAttach(sidStr) {
+		return
+	}
+	go func() {
+		defer h.clearLazyAttachInFlight(sidStr)
+		h.attachFeishuSubscriberForAutoAttach(ctx, sess, sid, "ai")
+	}()
+}
+
+// onTurnMissingChunker is registered with the Dispatcher so a TurnEvent
+// arriving for a session with no AIChunker (i.e. the user toggled
+// remote-terminal on after this AI session started) triggers a lazy
+// backfill. The current turn's body is lost because attach runs
+// asynchronously; the anchor card is in place for the next turn.
+func (h *relayHost) onTurnMissingChunker(sessionIDStr string) {
+	sid, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		return
+	}
+	sess, ok := h.server.Registry().Get(sid)
+	if !ok {
+		return
+	}
+	h.lazyAttachIfMissing(context.Background(), sess, sid)
 }
 
 // attachFeishuSubscriberForAutoAttach is called either immediately on session

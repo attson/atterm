@@ -145,6 +145,10 @@ type Dispatcher struct {
 	// as an interactive form container on the anchor. Non-empty questions
 	// → insert form; nil questions → remove form (claude moved on).
 	onAskForm func(sessionID string, questions []AskUserQuestionEntry)
+	// onTurnMissingChunker fires when a TurnEvent arrives for a session
+	// with no AIChunker attached. The host uses it to lazily backfill an
+	// anchor when remote-terminal was toggled on after the session started.
+	onTurnMissingChunker func(sessionID string)
 }
 
 // LookupCardSession returns the session id a previously sent card's message_id
@@ -546,9 +550,17 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 	chunker := d.aiChunkers[sessionID]
 	known := len(d.aiChunkers)
 	onButtons := d.onAnchorButtons
+	onMissing := d.onTurnMissingChunker
 	d.aiMu.Unlock()
 	if chunker == nil {
 		log.Printf("feishu-turn: no chunker sid=%s kind=%v known_chunkers=%d", sessionID, ev.Kind, known)
+		if onMissing != nil {
+			// Fire-and-forget: the host performs a network round-trip to
+			// SendAnchorCard, which we must not block the hook HTTP handler
+			// on. This turn's body is lost — the anchor is in place for the
+			// next turn ("lazy backfill on next event" semantics).
+			onMissing(sessionID)
+		}
 		return
 	}
 	log.Printf("feishu-turn: route sid=%s kind=%v text_len=%d opts=%d", sessionID, ev.Kind, len(ev.Text), len(ev.Options))
@@ -599,6 +611,16 @@ func (d *Dispatcher) SetOnAnchorButtons(fn func(sessionID string, options []stri
 func (d *Dispatcher) SetOnAskForm(fn func(sessionID string, questions []AskUserQuestionEntry)) {
 	d.aiMu.Lock()
 	d.onAskForm = fn
+	d.aiMu.Unlock()
+}
+
+// SetOnTurnMissingChunker registers a callback that fires when DispatchTurn
+// arrives for a session with no AIChunker attached. relay_host uses this to
+// lazily backfill an anchor card when the user toggled remote-terminal on
+// after the session was created.
+func (d *Dispatcher) SetOnTurnMissingChunker(fn func(sessionID string)) {
+	d.aiMu.Lock()
+	d.onTurnMissingChunker = fn
 	d.aiMu.Unlock()
 }
 

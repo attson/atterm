@@ -595,3 +595,60 @@ func TestDispatcher_DispatchTurnNoChunker(t *testing.T) {
 	// No AttachAIChunker call — should not panic or error.
 	d.DispatchTurn("missing", TurnEvent{Kind: TurnUserPrompt, Text: "x"})
 }
+
+// Lazy-attach hook: when DispatchTurn arrives for a session with no
+// AIChunker, fire the SetOnTurnMissingChunker callback with that session
+// id so the host can backfill an anchor (used when remote-terminal is
+// toggled on mid-session).
+func TestDispatcher_DispatchTurn_NoChunker_FiresMissingCallback(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	var got []string
+	var mu sync.Mutex
+	d.SetOnTurnMissingChunker(func(sid string) {
+		mu.Lock()
+		got = append(got, sid)
+		mu.Unlock()
+	})
+	d.DispatchTurn("sess-lazy", TurnEvent{Kind: TurnUserPrompt, Text: "hello"})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "sess-lazy" {
+		t.Fatalf("expected callback with 'sess-lazy'; got %v", got)
+	}
+}
+
+// When an AIChunker is already attached, DispatchTurn must NOT fire the
+// missing-chunker callback (it exists only for the lazy backfill path).
+func TestDispatcher_DispatchTurn_WithChunker_SkipsMissingCallback(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	d.AttachAIChunker("sess-live", internalfeishu.NewAIChunker(func(string) {}))
+	var fired atomic.Bool
+	d.SetOnTurnMissingChunker(func(string) { fired.Store(true) })
+	d.DispatchTurn("sess-live", TurnEvent{Kind: TurnUserPrompt, Text: "hi"})
+	if fired.Load() {
+		t.Fatalf("callback fired despite chunker being attached")
+	}
+}
+
+// Nil callback (setter never called) must not panic when a turn arrives
+// with no chunker attached.
+func TestDispatcher_DispatchTurn_NoChunker_NilCallbackSafe(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	// No SetOnTurnMissingChunker call; must not panic.
+	d.DispatchTurn("nobody", TurnEvent{Kind: TurnUserPrompt, Text: "x"})
+}

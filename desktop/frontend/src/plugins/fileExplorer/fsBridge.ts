@@ -11,7 +11,7 @@ export interface FileSystemBridge {
   assetUrlFor(path: string): Promise<string>;
   onDirChanged(handler: (path: string) => void): () => void;
   revokeAssetUrl?(path: string): void;
-  dispose(): void;
+  dispose?(): void;
 }
 
 export function createLocalFSBridge(pluginHost: PluginHostBridge, events?: EventBus): FileSystemBridge {

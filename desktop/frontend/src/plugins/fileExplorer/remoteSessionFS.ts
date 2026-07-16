@@ -10,6 +10,7 @@ const DEFAULT_ASSET_CONTENT_TYPE = "application/octet-stream";
 export interface RemoteFileSystemBridge extends FileSystemBridge {
   assetUrlFor(path: string): Promise<string>;
   revokeAssetUrl(path: string): void;
+  dispose(): void;
 }
 
 function ensureOK(resp: FSResponse): FSResponse {

@@ -76,7 +76,9 @@ describe("RemoteFileSystemBridge", () => {
     await expect(fs.assetUrlFor("/image.png")).resolves.toBe("blob:asset");
     await expect(fs.assetUrlFor("/image.png")).resolves.toBe("blob:asset");
     expect(createObjectURL).toHaveBeenCalledTimes(1);
-    expect(createObjectURL.mock.calls[0][0]).toMatchObject({ type: "image/png", size: 3 });
+    const imageBlob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(imageBlob.type).toBe("image/png");
+    expect(imageBlob.size).toBe(3);
     expect(conn.sendFSRequest).toHaveBeenNthCalledWith(1, { op: "read_chunk", path: "/image.png", offset: 0, length: 256 * 1024 });
     expect(conn.sendFSRequest).toHaveBeenNthCalledWith(2, { op: "read_chunk", path: "/image.png", offset: 2, length: 256 * 1024 });
 
@@ -114,9 +116,20 @@ describe("RemoteFileSystemBridge", () => {
     fs.revokeAssetUrl("/slow.png");
     resolveRequest(response({ chunk: { path: "/slow.png", data: "aGk=", offset: 0, length: 2, eof: true } }));
 
-    await expect(pending).resolves.toBe("blob:slow");
+    await expect(pending).rejects.toThrow(/invalidated/i);
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:slow");
+  });
+
+  it("uses the default MIME type when the first chunk omits it", async () => {
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:default-type");
+    const conn = connection([
+      response({ chunk: { path: "/unknown", data: "aGk=", offset: 0, length: 2, eof: false } }),
+      response({ chunk: { path: "/unknown", data: "IQ==", offset: 2, length: 1, eof: true, contentType: "image/png" } }),
+    ]);
+
+    await createRemoteSessionFS(conn as unknown as SessionConnection).assetUrlFor("/unknown");
+    expect((createObjectURL.mock.calls[0][0] as Blob).type).toBe("application/octet-stream");
   });
 
   it("forwards changed filesystem events and unsubscribes when unused", () => {
@@ -135,5 +148,65 @@ describe("RemoteFileSystemBridge", () => {
     expect(conn.fsEventUnsubscribes[0]).toHaveBeenCalledTimes(1);
     conn.emitFSEvent({ watch_id: "watch-1", path: "/project", event: "changed" });
     expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps duplicate directory-change subscriptions independent", () => {
+    const conn = connection([]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    const changed = vi.fn();
+    const first = fs.onDirChanged(changed);
+    const second = fs.onDirChanged(changed);
+
+    first();
+    conn.emitFSEvent({ watch_id: "watch-1", path: "/project", event: "changed" });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(conn.fsEventUnsubscribes[0]).not.toHaveBeenCalled();
+
+    second();
+    expect(conn.fsEventUnsubscribes[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it("isolates throwing directory-change handlers", () => {
+    const conn = connection([]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    const throwing = vi.fn(() => { throw new Error("handler failed"); });
+    const later = vi.fn();
+    fs.onDirChanged(throwing);
+    fs.onDirChanged(later);
+
+    conn.emitFSEvent({ watch_id: "watch-1", path: "/project", event: "changed" });
+    expect(throwing).toHaveBeenCalledTimes(1);
+    expect(later).toHaveBeenCalledWith("/project");
+  });
+
+  it("disposes cached and pending assets and stops filesystem events", async () => {
+    const createObjectURL = vi.spyOn(URL, "createObjectURL")
+      .mockReturnValueOnce("blob:cached")
+      .mockReturnValueOnce("blob:pending");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const conn = connection([
+      response({ chunk: { path: "/cached", data: "aGk=", offset: 0, length: 2, eof: true } }),
+    ]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    const changed = vi.fn();
+    fs.onDirChanged(changed);
+    await fs.assetUrlFor("/cached");
+
+    let resolveRequest!: (value: FSResponse) => void;
+    conn.sendFSRequest.mockImplementationOnce(
+      () => new Promise<FSResponse>((resolve) => { resolveRequest = resolve; }),
+    );
+    const pending = fs.assetUrlFor("/pending");
+    fs.dispose();
+    resolveRequest(response({ chunk: { path: "/pending", data: "aGk=", offset: 0, length: 2, eof: true } }));
+
+    await expect(pending).rejects.toThrow(/disposed/i);
+    await expect(fs.assetUrlFor("/after-dispose")).rejects.toThrow(/disposed/i);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:cached");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:pending");
+    expect(conn.fsEventUnsubscribes[0]).toHaveBeenCalledTimes(1);
+    conn.emitFSEvent({ watch_id: "watch-1", path: "/project", event: "changed" });
+    expect(changed).not.toHaveBeenCalled();
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
   });
 });

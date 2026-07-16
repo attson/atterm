@@ -8,9 +8,10 @@ export interface FileSystemBridge {
   readFile(path: string, maxBytes?: number): Promise<FileContent>;
   fileMeta(path: string): Promise<FileMetaInfo>;
   openExternal(path: string): Promise<void>;
-  assetUrlFor(path: string): string | Promise<string>;
+  assetUrlFor(path: string): Promise<string>;
   onDirChanged(handler: (path: string) => void): () => void;
   revokeAssetUrl?(path: string): void;
+  dispose(): void;
 }
 
 export function createLocalFSBridge(pluginHost: PluginHostBridge, events?: EventBus): FileSystemBridge {
@@ -25,9 +26,10 @@ export function createLocalFSBridge(pluginHost: PluginHostBridge, events?: Event
     readFile: (path, maxBytes) => pluginHost.fs.readFile(path, maxBytes),
     fileMeta: (path) => pluginHost.fs.fileMeta(path),
     openExternal: (path) => pluginHost.fs.openExternal(path),
-    assetUrlFor: (path) => pluginHost.fs.assetUrlFor(path),
+    assetUrlFor: (path) => Promise.resolve(pluginHost.fs.assetUrlFor(path)),
     onDirChanged: (handler) => events?.on("plugin-fs:dir-changed", (data) => {
       if (typeof data === "string") handler(data);
     }) ?? (() => {}),
+    dispose: () => {},
   };
 }

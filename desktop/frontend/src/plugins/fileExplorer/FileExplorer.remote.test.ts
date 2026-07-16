@@ -119,4 +119,42 @@ describe("FileExplorer filesystem bridge", () => {
     expect(platform.pluginHost!.fs.listDir).toHaveBeenCalledTimes(1);
     expect(platform.events.on).toHaveBeenCalledTimes(1);
   });
+
+  it("does not reuse a local cwd while a remote bridge has no cwd", async () => {
+    const activeIsRemote = ref(false);
+    const activeSessionID = ref<string | null>("local-session");
+    const activeCwd = ref<string | null>("/local");
+    const remoteSendFSRequest = vi.fn();
+    const remoteConnection = {
+      sendFSRequest: remoteSendFSRequest,
+      onFSEvent: vi.fn(() => () => {}),
+    } as unknown as SessionConnection;
+    const activeConnection = shallowRef<SessionConnection | null>(null);
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => activeSessionID.value),
+      activeIsRemote: computed(() => activeIsRemote.value),
+      activeSessionConnection: computed(() => activeConnection.value),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => activeCwd.value),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+
+    const wrapper = mount(FileExplorer, { props: { context } });
+    await flushPromises();
+    expect(platform.pluginHost!.fs.listDir).toHaveBeenCalledWith("/local");
+
+    activeCwd.value = null;
+    activeSessionID.value = "remote-session";
+    activeConnection.value = remoteConnection;
+    activeIsRemote.value = true;
+    await flushPromises();
+
+    expect(remoteSendFSRequest).not.toHaveBeenCalled();
+    expect(wrapper.find(".tree-scroll .placeholder").exists()).toBe(true);
+    expect(wrapper.find(".root-path").text()).not.toBe("/local");
+  });
 });

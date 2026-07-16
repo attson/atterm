@@ -99,6 +99,7 @@ watch(
     fs.value = next;
     fsGeneration.value++;
     pinned.value = null;
+    lastCwd.value = "";
     tabsState.value = { tabs: [], activeIdx: -1 };
     await nextTick();
     previous?.dispose?.();

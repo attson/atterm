@@ -73,4 +73,24 @@ describe("CodeViewer", () => {
     expect(w.text()).toContain("new content");
     expect(w.text()).not.toContain("Binary file");
   });
+
+  it("ignores a delayed readFile result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; data: string; isBinary: boolean; truncatedAt: number }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) =>
+      Promise.resolve({ path, size: 10, modTime: 1, isBinary: false }),
+    );
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/old.txt") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, data: "bmV3IGNvbnRlbnQ=", isBinary: false, truncatedAt: 0 });
+    });
+    const w = mount(CodeViewer, { props: { fs, path: "/old.txt", showLineNumbers: false, theme: "dimmed" } });
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.readFile).toHaveBeenCalledWith("/old.txt", 2 * 1024 * 1024));
+    await w.setProps({ path: "/new.txt" });
+    await flushPromises();
+    resolveOld({ path: "/old.txt", data: "b2xkIGNvbnRlbnQ=", isBinary: false, truncatedAt: 0 });
+    await flushPromises();
+
+    expect(w.text()).toContain("new content");
+    expect(w.text()).not.toContain("old content");
+  });
 });

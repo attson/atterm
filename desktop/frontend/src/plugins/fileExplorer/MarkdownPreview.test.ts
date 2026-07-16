@@ -113,4 +113,24 @@ describe("MarkdownPreview", () => {
     expect(w.html()).toContain("<h1>New file</h1>");
     expect(w.text()).not.toContain("Inline preview unavailable");
   });
+
+  it("ignores a delayed readFile result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; data: string; isBinary: boolean; truncatedAt: number }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) =>
+      Promise.resolve({ path, size: 10, modTime: 1, isBinary: false }),
+    );
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/x/old.md") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, data: "IyBOZXcgZmlsZQ==", isBinary: false, truncatedAt: 0 });
+    });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/old.md", theme: "dimmed" } });
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.readFile).toHaveBeenCalledWith("/x/old.md", 2 * 1024 * 1024));
+    await w.setProps({ path: "/x/new.md" });
+    await flushPromises();
+    resolveOld({ path: "/x/old.md", data: "IyBPbGQgZmlsZQ==", isBinary: false, truncatedAt: 0 });
+    await flushPromises();
+
+    expect(w.html()).toContain("<h1>New file</h1>");
+    expect(w.html()).not.toContain("<h1>Old file</h1>");
+  });
 });

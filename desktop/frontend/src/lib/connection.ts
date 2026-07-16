@@ -29,6 +29,42 @@ export interface Endpoint {
   session_token: string;
 }
 
+export type FSRequestOp =
+  | "list_dir"
+  | "file_meta"
+  | "read_file"
+  | "read_chunk"
+  | "watch_dir"
+  | "unwatch_dir"
+  | "open_external";
+
+export interface FSRequest {
+  op: FSRequestOp;
+  request_id?: string;
+  path?: string;
+  max_bytes?: number;
+  offset?: number;
+  length?: number;
+  watch_id?: string;
+}
+
+export interface FSResponse {
+  request_id: string;
+  ok: boolean;
+  error?: string;
+  entries?: unknown;
+  meta?: unknown;
+  content?: string;
+  chunk?: string;
+  watch_id?: string;
+}
+
+export interface FSEvent {
+  watch_id: string;
+  path: string;
+  event: "changed" | string;
+}
+
 export interface ConnectionHandlers {
   onOutput?: (data: Uint8Array) => void;
   onClose?: (info: ClosePayload) => void;
@@ -77,6 +113,7 @@ export interface SessionListHandlers {
 
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
 
 export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {
   if (wsReadyState !== WebSocket.OPEN) return t("terminal.websocketNotOpen");
@@ -257,6 +294,15 @@ export class SessionConnection {
   // after an idle reconnect the host recreates its uplink proxy subscriber with
   // auto-promote suppressed, so the session has no driver until we re-claim.
   private isDriverRole = false;
+  private pendingFSRequests = new Map<
+    string,
+    {
+      resolve: (response: FSResponse) => void;
+      reject: (err: Error) => void;
+      timer: number;
+    }
+  >();
+  private fsEventHandlers = new Set<(event: FSEvent) => void>();
 
   constructor(
     private endpoint: Endpoint,
@@ -291,6 +337,7 @@ export class SessionConnection {
 
   detach(): void {
     this.detached = true;
+    this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -303,6 +350,38 @@ export class SessionConnection {
       }
       this.ws = null;
     }
+  }
+
+  sendFSRequest(req: FSRequest, timeoutMs = DEFAULT_FS_REQUEST_TIMEOUT_MS): Promise<FSResponse> {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("filesystem request failed: websocket is not open"));
+    }
+    const requestID = req.request_id || this.newFSRequestID();
+    const payload: FSRequest = { ...req, request_id: requestID };
+    const encoded = encodeText(JSON.stringify(payload));
+
+    return new Promise<FSResponse>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingFSRequests.delete(requestID);
+        reject(new Error(`filesystem request timed out: ${requestID}`));
+      }, timeoutMs);
+      this.pendingFSRequests.set(requestID, { resolve, reject, timer });
+      try {
+        ws.send(encodeFrame(TYPE.FS_REQUEST, this.sidBytes, encoded));
+      } catch (e) {
+        window.clearTimeout(timer);
+        this.pendingFSRequests.delete(requestID);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  }
+
+  onFSEvent(handler: (event: FSEvent) => void): () => void {
+    this.fsEventHandlers.add(handler);
+    return () => {
+      this.fsEventHandlers.delete(handler);
+    };
   }
 
   sendInput(s: string): void {
@@ -485,11 +564,16 @@ export class SessionConnection {
         } catch {
           /* ignore */
         }
+      } else if (f.type === TYPE.FS_RESPONSE) {
+        this.handleFSResponse(f.payload);
+      } else if (f.type === TYPE.FS_EVENT) {
+        this.handleFSEvent(f.payload);
       }
     };
 
     ws.onclose = () => {
       this.ws = null;
+      this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
       if (this.detached) return;
       this.handlers.onStatus?.("reconnecting");
       const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
@@ -515,6 +599,58 @@ export class SessionConnection {
     if (this.detached) return;
     const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
     this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
+  }
+
+  private newFSRequestID(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `fs-${crypto.randomUUID()}`;
+    }
+    return `fs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  private handleFSResponse(payload: Uint8Array): void {
+    let response: FSResponse;
+    try {
+      const parsed = JSON.parse(decodeText(payload)) as Partial<FSResponse>;
+      if (!parsed || typeof parsed.request_id !== "string" || typeof parsed.ok !== "boolean") return;
+      response = parsed as FSResponse;
+    } catch {
+      return;
+    }
+    const pending = this.pendingFSRequests.get(response.request_id);
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    this.pendingFSRequests.delete(response.request_id);
+    pending.resolve(response);
+  }
+
+  private handleFSEvent(payload: Uint8Array): void {
+    let event: FSEvent;
+    try {
+      const parsed = JSON.parse(decodeText(payload)) as Partial<FSEvent>;
+      if (
+        !parsed ||
+        typeof parsed.watch_id !== "string" ||
+        typeof parsed.path !== "string" ||
+        typeof parsed.event !== "string"
+      ) {
+        return;
+      }
+      event = parsed as FSEvent;
+    } catch {
+      return;
+    }
+    for (const handler of this.fsEventHandlers) handler(event);
+  }
+
+  private rejectPendingFSRequests(err: Error): void {
+    if (this.pendingFSRequests.size === 0) return;
+    const pending = Array.from(this.pendingFSRequests.values());
+    this.pendingFSRequests.clear();
+    for (const item of pending) {
+      window.clearTimeout(item.timer);
+      item.reject(err);
+    }
   }
 }
 

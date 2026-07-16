@@ -111,6 +111,7 @@ const platform = usePlatform();
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
+let pluginInputSender: ((text: string) => void) | null = null;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
@@ -612,7 +613,8 @@ function startConnection() {
   // (Quick Input) can pipe text through this same driver connection.
   // A fresh SessionConnection would attach as a viewer and have its
   // IN frames dropped by the relay.
-  pluginInputSenders?.set(props.sessionId, (text: string) => conn?.sendInput(text));
+  pluginInputSender = (text: string) => conn?.sendInput(text);
+  pluginInputSenders?.set(props.sessionId, pluginInputSender);
   // Skip the no-op RESIZE if our fit landed on the same size the relay
   // already knows about. Net effect: locally-spawned shells (PTY born at
   // predicted dims) and cross-attached shells whose owner happens to be
@@ -753,7 +755,10 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
-  pluginInputSenders?.delete(props.sessionId);
+  if (pluginInputSenders?.get(props.sessionId) === pluginInputSender) {
+    pluginInputSenders?.delete(props.sessionId);
+  }
+  pluginInputSender = null;
   if (pluginSessionConnections?.get(props.sessionId) === conn) {
     pluginSessionConnections?.delete(props.sessionId);
   }

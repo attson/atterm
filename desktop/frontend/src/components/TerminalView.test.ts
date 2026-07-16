@@ -14,10 +14,15 @@ function styleBlockFor(selector: string): string {
 describe("TerminalView plugin connection registry", () => {
   test("registers its live SessionConnection and only removes its own entry", () => {
     expect(appSource).toMatch(/reactive\(new Map<string, SessionConnection>\(\)\)/);
+    expect(appSource).toMatch(/const selectedPane = computed<Pane \| null>/);
+    expect(appSource).toMatch(/watch\(selectedPane,/);
     expect(source).toContain('"atterm:pluginSessionConnections"');
     expect(source).toMatch(/pluginSessionConnections\?\.set\(props\.sessionId, conn\)/);
     expect(source).toMatch(/pluginSessionConnections\?\.get\(props\.sessionId\) === conn/);
     expect(source).toMatch(/pluginSessionConnections\?\.delete\(props\.sessionId\)/);
+    expect(source).toMatch(/pluginInputSenders\?\.set\(props\.sessionId, pluginInputSender\)/);
+    expect(source).toMatch(/pluginInputSenders\?\.get\(props\.sessionId\) === pluginInputSender/);
+    expect(source).toMatch(/pluginInputSenders\?\.delete\(props\.sessionId\)/);
   });
 });
 

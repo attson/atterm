@@ -303,14 +303,13 @@ const currentTab = computed<Tab | null>(
 
 // Keep a Ref (not ComputedRef) so it satisfies PluginContextInputs.activePane.
 const activePaneRef = ref<Pane | null>(null);
-watch(
-  [() => currentTab.value, () => currentTab.value?.activePaneIdx],
-  () => {
-    const t = currentTab.value;
-    activePaneRef.value = t ? t.panes[t.activePaneIdx] ?? null : null;
-  },
-  { immediate: true, deep: false },
-);
+const selectedPane = computed<Pane | null>(() => {
+  const tab = currentTab.value;
+  return tab?.panes[tab.activePaneIdx] ?? null;
+});
+watch(selectedPane, (pane) => {
+  activePaneRef.value = pane;
+}, { immediate: true });
 
 // Drive the OS window title from the active tab's AI session OSC title.
 // claude / codex prefix their OSC title with status glyphs (● / ✻) already,

@@ -25,5 +25,9 @@ describe("createPluginContext", () => {
     connections.set("remote-session", markRaw(connection) as SessionConnection);
     await nextTick();
     expect(context.activeSessionConnection.value).toBe(connection);
+
+    connections.delete("remote-session");
+    await nextTick();
+    expect(context.activeSessionConnection.value).toBeNull();
   });
 });

@@ -245,7 +245,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "invalid_request")
 				continue
 			}
-			if sessionRemotePermission(sess) != permFull {
+			if sess.Info().RemotePermission != proto.RemotePermissionFull {
 				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "permission_denied")
 				continue
 			}

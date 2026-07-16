@@ -413,6 +413,29 @@ func TestClientFSRequestRejectsInsufficientPermission(t *testing.T) {
 	assertNoFSInbound(t, sess)
 }
 
+func TestClientFSRequestRejectsEmptyRemotePermission(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "client")
+	defer client.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, client)
+	requestPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "empty-permission", Op: "list_dir", Path: "/tmp"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, requestPayload)
+	assertFSClientError(t, ctx, client, "empty-permission", "permission_denied")
+	assertNoFSInbound(t, sess)
+
+	responsePayload, _ := json.Marshal(proto.FSResponsePayload{RequestID: "empty-permission", OK: true})
+	if srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: responsePayload}) {
+		t.Fatal("empty-permission request left a route behind")
+	}
+}
+
 func TestClientFSOpenExternalRequiresDriver(t *testing.T) {
 	srv, token, userID := serverWithSessionAndUser(t)
 	httpSrv := newRelayHTTPServer(t, srv)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,143 @@ func TestFSAccessReadChunkCapsLength(t *testing.T) {
 	if chunk.EOF {
 		t.Fatal("expected EOF=false for capped chunk before file end")
 	}
+	if string(chunk.Data[:8]) != "xxxxxxxx" {
+		t.Fatalf("unexpected capped chunk prefix %q", string(chunk.Data[:8]))
+	}
+}
+
+func TestFSAccessReadFileRejectsNegativeMaxBytes(t *testing.T) {
+	access, home := makeFSAccess(t)
+	path := filepath.Join(home, "note.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("readFile panicked for negative maxBytes: %v", r)
+		}
+	}()
+	if _, err := access.readFile(path, -1); err == nil {
+		t.Fatal("expected negative maxBytes to return an error")
+	}
+}
+
+func TestFSAccessReadFileUsesActualShortReadLength(t *testing.T) {
+	access, home := makeFSAccess(t)
+	path := filepath.Join(home, "shrinks.txt")
+	if err := os.WriteFile(path, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origStat := osStat
+	origOpen := osOpenFile
+	t.Cleanup(func() {
+		osStat = origStat
+		osOpenFile = origOpen
+	})
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	osStat = func(name string) (os.FileInfo, error) {
+		if name == resolvedPath {
+			return fakeFileInfo{FileInfo: info, size: 10}, nil
+		}
+		return origStat(name)
+	}
+	osOpenFile = func(name string) (fsReadFile, error) {
+		if name == resolvedPath {
+			return &shortReadFile{data: []byte("abc")}, nil
+		}
+		return origOpen(name)
+	}
+
+	content, err := access.readFile(path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content.Data) != "abc" {
+		t.Fatalf("expected short read data without zero padding, got %q", string(content.Data))
+	}
+	if content.IsBinary {
+		t.Fatal("zero padding should not be included in binary detection")
+	}
+}
+
+func TestFSAccessReadChunkBoundaryAndInvalidInputs(t *testing.T) {
+	access, home := makeFSAccess(t)
+	path := filepath.Join(home, "note.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := access.readChunk(path, -1, 1); err == nil {
+		t.Fatal("expected negative offset error")
+	}
+	if _, err := access.readChunk(path, 0, -1); err == nil {
+		t.Fatal("expected negative length error")
+	}
+	if _, err := access.readChunk(dir, 0, 1); err == nil {
+		t.Fatal("expected directory input error")
+	}
+
+	chunk, err := access.readChunk(path, 99, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.Data) != 0 || !chunk.EOF {
+		t.Fatalf("expected empty EOF chunk beyond file end, got %+v", chunk)
+	}
+}
+
+type fakeFileInfo struct {
+	os.FileInfo
+	size int64
+}
+
+func (f fakeFileInfo) Size() int64 {
+	return f.size
+}
+
+type shortReadFile struct {
+	data []byte
+}
+
+func (f *shortReadFile) Read(p []byte) (int, error) {
+	n := copy(p, f.data)
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func (f *shortReadFile) ReadAt(p []byte, off int64) (int, error) {
+	if off >= int64(len(f.data)) {
+		return 0, io.EOF
+	}
+	n := copy(p, f.data[off:])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func (f *shortReadFile) Seek(offset int64, whence int) (int64, error) {
+	return offset, nil
+}
+
+func (f *shortReadFile) Close() error {
+	return nil
 }
 
 func TestFSAccessWatcherLifecycleAndDebounce(t *testing.T) {

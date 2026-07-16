@@ -136,6 +136,18 @@ var osReadDir = func(name string) ([]os.DirEntry, error) {
 	return os.ReadDir(name)
 }
 
+var osStat = os.Stat
+
+type fsReadFile interface {
+	io.Reader
+	io.ReaderAt
+	io.Closer
+}
+
+var osOpenFile = func(name string) (fsReadFile, error) {
+	return os.Open(name)
+}
+
 // DirEntry is a serialized representation of one directory entry.
 type DirEntry struct {
 	Name    string `json:"name"`
@@ -170,6 +182,9 @@ func (a *fsAccess) listDir(path string) ([]DirEntry, error) {
 }
 
 func (a *fsAccess) readFile(path string, maxBytes int64) (FileContent, error) {
+	if maxBytes < 0 {
+		return FileContent{}, fmt.Errorf("plugin_fs: maxBytes must be non-negative")
+	}
 	if maxBytes > maxReadBytesHard {
 		return FileContent{}, fmt.Errorf("plugin_fs: maxBytes %d exceeds hard cap %d", maxBytes, maxReadBytesHard)
 	}
@@ -177,14 +192,14 @@ func (a *fsAccess) readFile(path string, maxBytes int64) (FileContent, error) {
 	if err != nil {
 		return FileContent{}, err
 	}
-	info, err := os.Stat(resolved)
+	info, err := osStat(resolved)
 	if err != nil {
 		return FileContent{}, err
 	}
 	if info.IsDir() {
 		return FileContent{}, fmt.Errorf("plugin_fs: %s is a directory", resolved)
 	}
-	f, err := os.Open(resolved)
+	f, err := osOpenFile(resolved)
 	if err != nil {
 		return FileContent{}, err
 	}
@@ -198,9 +213,11 @@ func (a *fsAccess) readFile(path string, maxBytes int64) (FileContent, error) {
 		truncated = size
 	}
 	data := make([]byte, readLen)
-	if _, err := io.ReadFull(f, data); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	n, err := io.ReadFull(f, data)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return FileContent{}, err
 	}
+	data = data[:n]
 	return FileContent{Path: resolved, Data: data, IsBinary: isBinary(data), TruncatedAt: truncated}, nil
 }
 
@@ -209,13 +226,13 @@ func (a *fsAccess) fileMeta(path string) (FileMetaInfo, error) {
 	if err != nil {
 		return FileMetaInfo{}, err
 	}
-	info, err := os.Stat(resolved)
+	info, err := osStat(resolved)
 	if err != nil {
 		return FileMetaInfo{}, err
 	}
 	isBin := false
 	if !info.IsDir() {
-		f, err := os.Open(resolved)
+		f, err := osOpenFile(resolved)
 		if err == nil {
 			probe := make([]byte, binaryProbeBytes)
 			n, _ := f.Read(probe)
@@ -245,23 +262,20 @@ func (a *fsAccess) readChunk(path string, offset int64, length int64) (fileChunk
 	if err != nil {
 		return fileChunk{}, err
 	}
-	info, err := os.Stat(resolved)
+	info, err := osStat(resolved)
 	if err != nil {
 		return fileChunk{}, err
 	}
 	if info.IsDir() {
 		return fileChunk{}, fmt.Errorf("plugin_fs: %s is a directory", resolved)
 	}
-	f, err := os.Open(resolved)
+	f, err := osOpenFile(resolved)
 	if err != nil {
 		return fileChunk{}, err
 	}
 	defer f.Close()
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return fileChunk{}, err
-	}
 	data := make([]byte, length)
-	n, err := f.Read(data)
+	n, err := readFullAt(f, data, offset)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fileChunk{}, err
 	}
@@ -275,8 +289,25 @@ func (a *fsAccess) readChunk(path string, offset int64, length int64) (fileChunk
 		Offset:      offset,
 		Data:        data,
 		ContentType: contentType,
-		EOF:         offset+int64(n) >= info.Size(),
+		EOF:         errors.Is(err, io.EOF) || offset+int64(n) >= info.Size(),
 	}, nil
+}
+
+func readFullAt(r io.ReaderAt, data []byte, offset int64) (int, error) {
+	total := 0
+	for total < len(data) {
+		n, err := r.ReadAt(data[total:], offset+int64(total))
+		if n > 0 {
+			total += n
+		}
+		if err != nil {
+			return total, err
+		}
+		if n == 0 {
+			return total, io.ErrNoProgress
+		}
+	}
+	return total, nil
 }
 
 func isBinary(data []byte) bool {

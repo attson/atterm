@@ -51,30 +51,6 @@ const { onMouseDown: onDividerDown } = useResizer({
   },
 });
 
-// lastCwd retains the last non-empty cwd we've seen so the panel keeps a
-// stable root during the brief window when a freshly-spawned session's
-// optimistic SessionInfo entry has been overwritten by a stale server
-// listing push, or when the active pane is empty (pre-fill split).
-const lastCwd = ref<string>("");
-watch(
-  () => props.context.activeCwd.value,
-  (val) => {
-    if (val) lastCwd.value = val;
-  },
-  { immediate: true },
-);
-
-const root = computed<string | null>(() => {
-  if (pinned.value) return pinned.value;
-  const cur = props.context.activeCwd.value;
-  if (cur) return cur;
-  return lastCwd.value || null;
-});
-
-const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
-const fs = shallowRef<FileSystemBridge | null>(null);
-const fsGeneration = ref(0);
-
 const bridgeOwner = computed(() => {
   if (!props.context.activeIsRemote.value) {
     return { identity: platform.pluginHost ? "local" : null, connection: null };
@@ -83,6 +59,31 @@ const bridgeOwner = computed(() => {
   const connection = props.context.activeSessionConnection.value;
   return { identity: sessionID && connection ? `remote:${sessionID}` : null, connection };
 });
+
+// Preserve an optimistic cwd only for the filesystem that reported it. A
+// stale/null update from one bridge must never become another bridge's root.
+const lastCwds = ref<Record<string, string>>({});
+watch(
+  () => [props.context.activeCwd.value, bridgeOwner.value.identity] as const,
+  ([cwd, identity]) => {
+    if (cwd && identity) {
+      lastCwds.value = { ...lastCwds.value, [identity]: cwd };
+    }
+  },
+  { immediate: true },
+);
+
+const root = computed<string | null>(() => {
+  if (pinned.value) return pinned.value;
+  const cur = props.context.activeCwd.value;
+  if (cur) return cur;
+  const identity = bridgeOwner.value.identity;
+  return identity ? lastCwds.value[identity] ?? null : null;
+});
+
+const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
+const fs = shallowRef<FileSystemBridge | null>(null);
+const fsGeneration = ref(0);
 
 watch(
   () => [bridgeOwner.value.identity, bridgeOwner.value.connection] as const,
@@ -99,7 +100,6 @@ watch(
     fs.value = next;
     fsGeneration.value++;
     pinned.value = null;
-    lastCwd.value = "";
     tabsState.value = { tabs: [], activeIdx: -1 };
     await nextTick();
     previous?.dispose?.();

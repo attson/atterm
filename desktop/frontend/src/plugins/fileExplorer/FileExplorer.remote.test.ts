@@ -157,4 +157,33 @@ describe("FileExplorer filesystem bridge", () => {
     expect(wrapper.find(".tree-scroll .placeholder").exists()).toBe(true);
     expect(wrapper.find(".root-path").text()).not.toBe("/local");
   });
+
+  it("keeps a remote cwd fallback when that same remote identity briefly has no cwd", async () => {
+    const activeCwd = ref<string | null>("/remote");
+    const sendFSRequest = vi.fn().mockResolvedValue({ request_id: "root", ok: true, entries: [] });
+    const connection = {
+      sendFSRequest,
+      onFSEvent: vi.fn(() => () => {}),
+    } as unknown as SessionConnection;
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "remote-session"),
+      activeIsRemote: computed(() => true),
+      activeSessionConnection: computed(() => connection),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => activeCwd.value),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+
+    const wrapper = mount(FileExplorer, { props: { context } });
+    await flushPromises();
+    activeCwd.value = null;
+    await flushPromises();
+
+    expect(wrapper.find(".root-path").text()).toBe("/remote");
+    expect(wrapper.find(".tree-scroll .placeholder").exists()).toBe(false);
+    expect(sendFSRequest).toHaveBeenCalledWith({ op: "list_dir", path: "/remote" });
+  });
 });

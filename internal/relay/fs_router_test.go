@@ -104,6 +104,37 @@ func TestFSRouterUnregisterSessionRemovesOnlyItsRoutes(t *testing.T) {
 	}
 }
 
+func TestFSRouterRemoveSessionRemovesOnlyItsRoutes(t *testing.T) {
+	srv := &Server{registry: session.NewRegistry()}
+	removedSessionID := uuid.New()
+	keptSessionID := uuid.New()
+	removed := make(chan proto.Frame, 2)
+	kept := make(chan proto.Frame, 2)
+	if !srv.fsRoutes().registerRequest(removedSessionID, "request", removed) {
+		t.Fatal("removed-session request route was not registered")
+	}
+	srv.fsRoutes().registerWatch(removedSessionID, "watch", removed)
+	if !srv.fsRoutes().registerRequest(keptSessionID, "request", kept) {
+		t.Fatal("kept-session request route was not registered")
+	}
+	srv.fsRoutes().registerWatch(keptSessionID, "watch", kept)
+
+	srv.removeSession(removedSessionID)
+
+	if srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: removedSessionID, Payload: []byte(`{"request_id":"request","ok":true}`)}) {
+		t.Fatal("removed-session response was routed")
+	}
+	if srv.fsRoutes().routeEvent(proto.Frame{Type: proto.TypeFSEvent, SessionID: removedSessionID, Payload: []byte(`{"watch_id":"watch"}`)}) {
+		t.Fatal("removed-session event was routed")
+	}
+	if !srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: keptSessionID, Payload: []byte(`{"request_id":"request","ok":true}`)}) {
+		t.Fatal("kept-session response was not routed")
+	}
+	if !srv.fsRoutes().routeEvent(proto.Frame{Type: proto.TypeFSEvent, SessionID: keptSessionID, Payload: []byte(`{"watch_id":"watch"}`)}) {
+		t.Fatal("kept-session event was not routed")
+	}
+}
+
 func TestFSRouterRegistersWatchAfterSuccessfulResponse(t *testing.T) {
 	r := newFSRouter()
 	sessionID := uuid.New()
@@ -268,6 +299,51 @@ func TestClientFSReadScopeRejectsOpenExternal(t *testing.T) {
 	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, requestPayload)
 	assertFSClientError(t, ctx, client, "open-read", "permission_denied")
 	assertNoFSInbound(t, sess)
+}
+
+func TestClientFSReadScopeRejectsUnknownOperation(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newReadScopeClientHTTPServer(t, srv, userID)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "read-client")
+	defer client.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, client)
+	requestPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "unknown", Op: "remove_file", Path: "/tmp/a"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, requestPayload)
+	assertFSClientError(t, ctx, client, "unknown", "invalid_request")
+	assertNoFSInbound(t, sess)
+}
+
+func TestClientFSRequestRejectsNonMirrorSession(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := session.New(sessionID, proto.SessionInfo{Command: "bash", Cols: 80, Rows: 24, RemotePermission: proto.RemotePermissionFull})
+	sess.OwnerUserID = userID
+	if _, err := srv.registry.Add(sess); err != nil {
+		t.Fatalf("add local session: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "client")
+	defer client.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, client)
+	requestPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "local", Op: "list_dir", Path: "/tmp"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, requestPayload)
+	assertFSClientError(t, ctx, client, "local", "upstream_unavailable")
+	assertNoFSInbound(t, sess)
+
+	responsePayload, _ := json.Marshal(proto.FSResponsePayload{RequestID: "local", OK: true})
+	if srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: responsePayload}) {
+		t.Fatal("non-mirror request left a route behind")
+	}
 }
 
 func TestClientFSDuplicateRequestRejectsLaterRequester(t *testing.T) {
@@ -445,8 +521,7 @@ func newReadScopeClientHTTPServer(t *testing.T, srv *Server, ownerUserID string)
 
 func newClientSession(t *testing.T, srv *Server, sessionID uuid.UUID, ownerUserID, permission string) *session.Session {
 	t.Helper()
-	sess := session.New(sessionID, proto.SessionInfo{Command: "bash", Cols: 80, Rows: 24, RemotePermission: permission})
-	sess.OwnerUserID = ownerUserID
+	sess := newMirrorSession(sessionID, proto.SessionInfo{Command: "bash", Cols: 80, Rows: 24, RemotePermission: permission}, ownerUserID)
 	if _, err := srv.registry.Add(sess); err != nil {
 		t.Fatalf("add session: %v", err)
 	}

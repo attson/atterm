@@ -241,8 +241,16 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "invalid_request")
 				continue
 			}
+			if request.Op != "open_external" && !isReadOnlyFSOperation(request.Op) {
+				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "invalid_request")
+				continue
+			}
 			if sessionRemotePermission(sess) != permFull {
 				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "permission_denied")
+				continue
+			}
+			if !sess.DriverFromUpstream() {
+				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "upstream_unavailable")
 				continue
 			}
 			if request.Op == "open_external" {
@@ -287,6 +295,15 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		default:
 			log.Printf("client: unexpected frame type 0x%02x", f.Type)
 		}
+	}
+}
+
+func isReadOnlyFSOperation(op string) bool {
+	switch op {
+	case "list_dir", "file_meta", "read_file", "read_chunk", "watch_dir", "unwatch_dir":
+		return true
+	default:
+		return false
 	}
 }
 

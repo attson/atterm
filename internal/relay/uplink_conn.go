@@ -354,7 +354,6 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			delete(mirrors, id)
 			mu.Unlock()
 			cancelIdleTimer(ms)
-			s.fsRoutes().unregisterSession(id)
 			s.removeSession(id)
 			s.debugf("uplink mirror_remove session=%s reason=missing_from_announce", id)
 		}
@@ -369,7 +368,6 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		mirrors = make(map[uuid.UUID]*mirrorState)
 		mu.Unlock()
 		for id, ms := range gone {
-			s.fsRoutes().unregisterSession(id)
 			s.removeSession(id)
 			if ms != nil {
 				cancelIdleTimer(ms)
@@ -479,7 +477,6 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			if ms != nil {
 				ms.sess.Broadcast(f)
 				cancelIdleTimer(ms)
-				s.fsRoutes().unregisterSession(f.SessionID)
 				s.removeSession(f.SessionID)
 			}
 		case proto.TypeCommandEvent:

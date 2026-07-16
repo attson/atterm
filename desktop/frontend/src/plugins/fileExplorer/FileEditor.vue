@@ -1,6 +1,5 @@
 <script lang="ts" setup>
 import { ref, watch } from "vue";
-import { usePlatform } from "../../platform";
 import { previewKind, type PreviewKind } from "./previewKind";
 import CodeViewer from "./CodeViewer.vue";
 import ImagePreview from "./ImagePreview.vue";
@@ -8,9 +7,11 @@ import MediaPreview from "./MediaPreview.vue";
 import PdfPreview from "./PdfPreview.vue";
 import MarkdownPreview from "./MarkdownPreview.vue";
 import BinaryBanner from "./BinaryBanner.vue";
+import type { FileSystemBridge } from "./fsBridge";
 import { useI18n } from "../../i18n/useI18n";
 
 const props = defineProps<{
+  fs: FileSystemBridge;
   path: string;
   showLineNumbers: boolean;
   theme: "dimmed" | "light";
@@ -20,8 +21,6 @@ const props = defineProps<{
   viewMode: "code" | "render";
 }>();
 
-const platform = usePlatform();
-const fs = platform.pluginHost!.fs;
 const { t } = useI18n();
 
 const kind = ref<PreviewKind | null>(null);
@@ -31,14 +30,14 @@ async function resolveKind() {
   kind.value = null;
   error.value = "";
   try {
-    const meta = (await fs.fileMeta(props.path)) as { isBinary: boolean };
+    const meta = (await props.fs.fileMeta(props.path)) as { isBinary: boolean };
     kind.value = previewKind(props.path, meta.isBinary);
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
 
-watch(() => props.path, () => { void resolveKind(); }, { immediate: true });
+watch(() => [props.path, props.fs.identity], () => { void resolveKind(); }, { immediate: true });
 </script>
 
 <template>
@@ -48,25 +47,26 @@ watch(() => props.path, () => { void resolveKind(); }, { immediate: true });
     </div>
     <template v-else-if="kind === 'code' || ((kind === 'svg' || kind === 'markdown') && viewMode === 'code')">
       <CodeViewer
+        :fs="fs"
         :path="path"
         :show-line-numbers="showLineNumbers"
         :theme="theme"
       />
     </template>
     <template v-else-if="kind === 'image' || (kind === 'svg' && viewMode === 'render')">
-      <ImagePreview :path="path" :theme="theme" />
+      <ImagePreview :fs="fs" :path="path" :theme="theme" />
     </template>
     <template v-else-if="kind === 'markdown' && viewMode === 'render'">
-      <MarkdownPreview :path="path" :theme="theme" />
+      <MarkdownPreview :fs="fs" :path="path" :theme="theme" />
     </template>
     <template v-else-if="kind === 'video' || kind === 'audio'">
-      <MediaPreview :path="path" :kind="kind" />
+      <MediaPreview :fs="fs" :path="path" :kind="kind" />
     </template>
     <template v-else-if="kind === 'pdf'">
-      <PdfPreview :path="path" />
+      <PdfPreview :fs="fs" :path="path" />
     </template>
     <template v-else-if="kind === 'binary-unknown'">
-      <BinaryBanner :path="path" />
+      <BinaryBanner :fs="fs" :path="path" />
     </template>
   </div>
 </template>

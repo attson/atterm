@@ -2,18 +2,17 @@
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { usePlatform } from "../../platform";
 import { languageForPath } from "./languageMap";
 import { highlightExtensionFor } from "./highlight";
 import { useI18n } from "../../i18n/useI18n";
+import type { FileSystemBridge } from "./fsBridge";
 
-const platform = usePlatform();
-const fs = platform.pluginHost!.fs;
 const { t } = useI18n();
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
 const props = defineProps<{
+  fs: FileSystemBridge;
   path: string;
   showLineNumbers: boolean;
   theme: "dimmed" | "light";
@@ -82,12 +81,12 @@ async function load() {
   view?.destroy();
   view = null;
   try {
-    const meta = (await fs.fileMeta(props.path)) as any;
+    const meta = (await props.fs.fileMeta(props.path)) as any;
     loadedAt.value = meta.modTime;
     reloadPending.value = false;
     if (meta.isBinary) { state.value = "binary"; return; }
     if (meta.size > MAX_BYTES_FRONTEND) { state.value = "tooLarge"; return; }
-    const result = (await fs.readFile(props.path, MAX_BYTES_FRONTEND)) as any;
+    const result = (await props.fs.readFile(props.path, MAX_BYTES_FRONTEND)) as any;
     const text = decodeFileBytes(result.data);
     state.value = "ok";
 
@@ -114,11 +113,10 @@ async function load() {
 
 onMounted(() => {
   void load();
-  off = platform.events.on("plugin-fs:dir-changed", async (data: unknown) => {
-    const dir = data as string;
+  off = props.fs.onDirChanged(async (dir) => {
     if (!props.path.startsWith(dir + "/") && props.path !== dir) return;
     try {
-      const meta = (await fs.fileMeta(props.path)) as any;
+      const meta = (await props.fs.fileMeta(props.path)) as any;
       if (loadedAt.value && meta.modTime > loadedAt.value) {
         reloadPending.value = true;
       }
@@ -127,7 +125,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [props.path, props.showLineNumbers, props.theme],
+  () => [props.path, props.fs.identity, props.showLineNumbers, props.theme],
   () => { void load(); },
 );
 

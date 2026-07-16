@@ -1,18 +1,54 @@
 <script lang="ts" setup>
-import { ref, computed } from "vue";
-import { usePlatform } from "../../platform";
+import { onBeforeUnmount, ref, watch } from "vue";
 import BinaryBanner from "./BinaryBanner.vue";
+import type { FileSystemBridge } from "./fsBridge";
 
-const props = defineProps<{ path: string; kind: "audio" | "video" }>();
-const platform = usePlatform();
-const src = computed(() => platform.pluginHost!.fs.assetUrlFor(props.path));
+const props = defineProps<{ fs: FileSystemBridge; path: string; kind: "audio" | "video" }>();
+const src = ref("");
 
 const failed = ref(false);
+let active = true;
+let request = 0;
+let requested: { fs: FileSystemBridge; path: string } | null = null;
+
+function releaseAsset() {
+  if (!requested) return;
+  requested.fs.revokeAssetUrl?.(requested.path);
+  requested = null;
+}
+
+async function loadAsset() {
+  const fs = props.fs;
+  const path = props.path;
+  const currentRequest = ++request;
+  releaseAsset();
+  requested = { fs, path };
+  src.value = "";
+  failed.value = false;
+  try {
+    const url = await fs.assetUrlFor(path);
+    if (!active || currentRequest !== request || props.fs !== fs || props.path !== path) {
+      fs.revokeAssetUrl?.(path);
+      return;
+    }
+    src.value = url;
+  } catch {
+    if (active && currentRequest === request && props.fs === fs && props.path === path) failed.value = true;
+  }
+}
+
+watch(() => [props.path, props.fs.identity], () => { void loadAsset(); }, { immediate: true });
+onBeforeUnmount(() => {
+  active = false;
+  request++;
+  releaseAsset();
+});
+
 function onError() { failed.value = true; }
 </script>
 
 <template>
-  <BinaryBanner v-if="failed" :path="path" />
+  <BinaryBanner v-if="failed" :fs="fs" :path="path" />
   <div v-else class="media-host">
     <video
       v-if="kind === 'video'"

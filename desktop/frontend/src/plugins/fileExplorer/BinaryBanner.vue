@@ -1,14 +1,13 @@
 <script lang="ts" setup>
-import { usePlatform } from "../../platform";
 import { useI18n } from "../../i18n/useI18n";
+import type { FileSystemBridge } from "./fsBridge";
 
-const props = defineProps<{ path: string; message?: string }>();
-const platform = usePlatform();
+const props = defineProps<{ fs: FileSystemBridge; path: string; message?: string }>();
 const { t } = useI18n();
 
 async function openExternal() {
   try {
-    await platform.pluginHost!.fs.openExternal(props.path);
+    await props.fs.openExternal(props.path);
   } catch {
     // The user already sees an error banner; nothing else useful to do here.
   }

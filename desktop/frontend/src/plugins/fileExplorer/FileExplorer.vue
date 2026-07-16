@@ -1,6 +1,7 @@
 <script lang="ts" setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { Pin, PinOff } from "lucide-vue-next";
+import { usePlatform } from "../../platform";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
 import { isLightTerminalTheme } from "../../lib/terminalThemes";
@@ -8,12 +9,15 @@ import FileTree from "./FileTree.vue";
 import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
 import { openPath, closeTab, setViewMode, type TabsState } from "./tabsModel";
+import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
+import { createRemoteSessionFS } from "./remoteSessionFS";
 import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 // theme.css is loaded once from App.vue so its --ed-* vars are available
 // even before this lazy chunk is fetched.
 
 const props = defineProps<{ context: PluginContext }>();
+const platform = usePlatform();
 const store = usePluginConfigStore();
 const { t } = useI18n();
 
@@ -68,6 +72,40 @@ const root = computed<string | null>(() => {
 });
 
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
+const fs = shallowRef<FileSystemBridge | null>(null);
+const fsGeneration = ref(0);
+
+watch(
+  () => [
+    props.context.activeIsRemote.value,
+    props.context.activeSessionId.value,
+    props.context.activeSessionConnection.value,
+    platform.pluginHost,
+  ] as const,
+  async ([remote, sessionID, connection, pluginHost]) => {
+    const next = remote
+      ? connection && sessionID
+        ? createRemoteSessionFS(connection, `remote:${sessionID}`)
+        : null
+      : pluginHost
+        ? createLocalFSBridge(pluginHost, platform.events)
+        : null;
+    const previous = fs.value;
+
+    fs.value = next;
+    fsGeneration.value++;
+    pinned.value = null;
+    tabsState.value = { tabs: [], activeIdx: -1 };
+    await nextTick();
+    previous?.dispose?.();
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  fs.value?.dispose?.();
+  fs.value = null;
+});
 
 function onFileClick(path: string) {
   tabsState.value = openPath(tabsState.value, path, "preview");
@@ -128,7 +166,9 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         </header>
         <div class="tree-scroll">
           <FileTree
-            v-if="root"
+            v-if="root && fs"
+            :key="fsGeneration"
+            :fs="fs"
             :root="root"
             :show-hidden="showHidden"
             @file-clicked="onFileClick"
@@ -149,7 +189,9 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         />
         <div class="editor-area">
           <FileEditor
-            v-if="activePath"
+            v-if="activePath && fs"
+            :key="fsGeneration"
+            :fs="fs"
             :path="activePath"
             :show-line-numbers="showLineNumbers"
             :theme="explorerTheme"

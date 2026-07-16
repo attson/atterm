@@ -3,13 +3,16 @@ import { mount, flushPromises } from "@vue/test-utils";
 import FileEditor from "./FileEditor.vue";
 import { __setPlatformForTests } from "../../platform";
 import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
+import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
 
 let platform: ReturnType<typeof createFakePlatform>;
+let fs: FileSystemBridge;
 
 beforeEach(() => {
   vi.clearAllMocks();
   platform = createFakePlatform();
   __setPlatformForTests(platform);
+  fs = createLocalFSBridge(platform.pluginHost!, platform.events);
 });
 afterEach(() => __setPlatformForTests(null));
 
@@ -18,7 +21,7 @@ function mountFE(path: string, meta: { size: number; isBinary: boolean }) {
     path, size: meta.size, modTime: 1, isBinary: meta.isBinary,
   });
   return mount(FileEditor, {
-    props: { path, showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+    props: { fs, path, showLineNumbers: false, theme: "dimmed", viewMode: "code" },
     global: {
       stubs: {
         CodeViewer: { template: '<div data-test="kind-code" />' },
@@ -80,7 +83,7 @@ describe("FileEditor (dispatcher)", () => {
       path: "/x/README.md", size: 500, modTime: 1, isBinary: false,
     });
     const w = mount(FileEditor, {
-      props: { path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
+      props: { fs, path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
       global: {
         stubs: {
           CodeViewer: { template: '<div data-test="kind-code" />' },
@@ -101,7 +104,7 @@ describe("FileEditor (dispatcher)", () => {
       path: "/x/README.md", size: 500, modTime: 1, isBinary: false,
     });
     const w = mount(FileEditor, {
-      props: { path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+      props: { fs, path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
       global: {
         stubs: {
           CodeViewer: { template: '<div data-test="kind-code" />' },
@@ -122,7 +125,7 @@ describe("FileEditor (dispatcher)", () => {
       path: "/x/logo.svg", size: 200, modTime: 1, isBinary: false,
     });
     const w = mount(FileEditor, {
-      props: { path: "/x/logo.svg", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
+      props: { fs, path: "/x/logo.svg", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
       global: {
         stubs: {
           CodeViewer: { template: '<div data-test="kind-code" />' },
@@ -142,7 +145,7 @@ describe("FileEditor (dispatcher)", () => {
       new Error("fs broken"),
     );
     const w = mount(FileEditor, {
-      props: { path: "/x/main.go", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+      props: { fs, path: "/x/main.go", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
       global: {
         stubs: {
           CodeViewer: { template: '<div data-test="kind-code" />' },

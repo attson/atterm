@@ -1,10 +1,7 @@
 <script lang="ts" setup>
 import { ref, watch, onMounted, onBeforeUnmount } from "vue";
-import { usePlatform } from '../../platform';
 import FileTreeNode from "./FileTreeNode.vue";
-
-const platform = usePlatform();
-const fs = platform.pluginHost!.fs;  // file explorer requires pluginHost; guarded upstream by caps.pluginHost
+import type { FileSystemBridge } from "./fsBridge";
 
 interface DirEntry {
   name: string;
@@ -22,6 +19,7 @@ interface TreeNode {
 }
 
 const props = defineProps<{
+  fs: FileSystemBridge;
   root: string;
   showHidden: boolean;
 }>();
@@ -34,10 +32,10 @@ const emit = defineEmits<{
 
 const rootNodes = ref<TreeNode[]>([]);
 const selectedPath = ref<string>("");
-const watchHandles = new Map<string, number>();
+const watchHandles = new Map<string, number | string>();
 
 async function loadDir(path: string): Promise<TreeNode[]> {
-  const entries = (await fs.listDir(path)) as DirEntry[];
+  const entries = (await props.fs.listDir(path)) as DirEntry[];
   return entries
     .filter((e) => props.showHidden || !e.name.startsWith("."))
     .map((e) => ({
@@ -76,15 +74,15 @@ async function toggle(n: TreeNode) {
     if (n.children === null) n.children = await loadDir(n.path);
     n.expanded = true;
     try {
-      const id = await fs.watchDir(n.path);
+      const id = await props.fs.watchDir(n.path);
       watchHandles.set(n.path, id);
     } catch (err) {
       console.warn("plugin-fs: watcher unavailable or cap reached for", n.path, err);
     }
   } else {
     const id = watchHandles.get(n.path);
-    if (id) {
-      await fs.unwatchDir(id);
+    if (id !== undefined) {
+      await props.fs.unwatchDir(id);
       watchHandles.delete(n.path);
     }
     n.expanded = false;
@@ -103,8 +101,7 @@ function findNode(nodes: TreeNode[], path: string): TreeNode | null {
   return null;
 }
 
-const off = platform.events.on("plugin-fs:dir-changed", async (data) => {
-  const dir = data as string;
+const off = props.fs.onDirChanged(async (dir) => {
   if (dir === props.root) {
     rootNodes.value = await loadDir(props.root);
     return;
@@ -117,7 +114,7 @@ const off = platform.events.on("plugin-fs:dir-changed", async (data) => {
 
 onBeforeUnmount(async () => {
   for (const id of watchHandles.values()) {
-    try { await fs.unwatchDir(id); } catch { /* ignore */ }
+    try { await props.fs.unwatchDir(id); } catch { /* ignore */ }
   }
   watchHandles.clear();
   off();

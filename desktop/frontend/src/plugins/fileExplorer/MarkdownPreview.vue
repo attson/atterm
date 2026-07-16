@@ -2,12 +2,12 @@
 import { onMounted, ref, watch } from "vue";
 import { usePlatform } from "../../platform";
 import BinaryBanner from "./BinaryBanner.vue";
+import type { FileSystemBridge } from "./fsBridge";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
-const props = defineProps<{ path: string; theme: "dimmed" | "light" }>();
+const props = defineProps<{ fs: FileSystemBridge; path: string; theme: "dimmed" | "light" }>();
 const platform = usePlatform();
-const fs = platform.pluginHost!.fs;
 
 const html = ref<string>("");
 const state = ref<"loading" | "ok" | "error">("loading");
@@ -34,9 +34,9 @@ function decodeFileBytes(data: unknown): string {
 async function load() {
   state.value = "loading";
   try {
-    const meta = (await fs.fileMeta(props.path)) as { size: number; isBinary: boolean };
+    const meta = (await props.fs.fileMeta(props.path)) as { size: number; isBinary: boolean };
     if (meta.size > MAX_BYTES) { state.value = "error"; return; }
-    const result = (await fs.readFile(props.path, MAX_BYTES)) as { data: unknown };
+    const result = (await props.fs.readFile(props.path, MAX_BYTES)) as { data: unknown };
     const text = decodeFileBytes(result.data);
     // Lazy-load the parser so it joins this component's own chunk only when
     // the user actually opens a markdown file.
@@ -65,11 +65,11 @@ function onContainerClick(ev: MouseEvent) {
 }
 
 onMounted(() => { void load(); });
-watch(() => props.path, () => { void load(); });
+watch(() => [props.path, props.fs.identity], () => { void load(); });
 </script>
 
 <template>
-  <BinaryBanner v-if="state === 'error'" :path="path" />
+  <BinaryBanner v-if="state === 'error'" :fs="fs" :path="path" />
   <div
     v-else-if="state === 'ok'"
     class="md-host"

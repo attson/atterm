@@ -29,6 +29,16 @@ afterEach(() => {
   __setPlatformForTests(null);
 });
 
+function installDirChangeEmitter() {
+  const handlers = new Set<(data: unknown) => void>();
+  (platform.events.on as ReturnType<typeof vi.fn>).mockImplementation((event: string, handler: (data: unknown) => void) => {
+    if (event !== "plugin-fs:dir-changed") return () => {};
+    handlers.add(handler);
+    return () => handlers.delete(handler);
+  });
+  return (path: string) => handlers.forEach((handler) => handler(path));
+}
+
 describe("FileTree", () => {
   it("lists root entries on mount; filters hidden by default", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
@@ -129,5 +139,65 @@ describe("FileTree", () => {
     w.unmount();
     await flushPromises();
     expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(12);
+  });
+
+  it("unwatches expanded descendants removed by a parent refresh", async () => {
+    const emitDirChanged = installDirChangeEmitter();
+    let parentReads = 0;
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/proj") return Promise.resolve([{ name: "parent", isDir: true }]);
+      if (path === "/proj/parent") {
+        parentReads++;
+        return Promise.resolve(parentReads === 1
+          ? [{ name: "child", isDir: true }]
+          : [{ name: "replacement.txt", isDir: false }]);
+      }
+      return Promise.resolve([]);
+    });
+    (platform.pluginHost!.fs.watchDir as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(10)
+      .mockResolvedValueOnce(20);
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/parent"]').trigger("click");
+    await flushPromises();
+    await w.find('.node[title="/proj/parent/child"]').trigger("click");
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(2));
+
+    emitDirChanged("/proj/parent");
+    await flushPromises();
+
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(20);
+    expect(w.text()).toContain("replacement.txt");
+  });
+
+  it("keeps the latest parent refresh when directory reads resolve out of order", async () => {
+    const emitDirChanged = installDirChangeEmitter();
+    const refreshResolvers: Array<(entries: Array<{ name: string; isDir: boolean }>) => void> = [];
+    let parentReads = 0;
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/proj") return Promise.resolve([{ name: "parent", isDir: true }]);
+      if (path === "/proj/parent") {
+        parentReads++;
+        if (parentReads === 1) return Promise.resolve([]);
+        return new Promise((resolve) => { refreshResolvers.push(resolve); });
+      }
+      return Promise.resolve([]);
+    });
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/parent"]').trigger("click");
+    await flushPromises();
+
+    emitDirChanged("/proj/parent");
+    emitDirChanged("/proj/parent");
+    await vi.waitFor(() => expect(refreshResolvers).toHaveLength(2));
+    refreshResolvers[1]([{ name: "new.txt", isDir: false }]);
+    await flushPromises();
+    refreshResolvers[0]([{ name: "old.txt", isDir: false }]);
+    await flushPromises();
+
+    expect(w.text()).toContain("new.txt");
+    expect(w.text()).not.toContain("old.txt");
   });
 });

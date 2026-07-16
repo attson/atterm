@@ -35,6 +35,7 @@ const selectedPath = ref<string>("");
 const watchHandles = new Map<string, { fs: FileSystemBridge; id: number | string }>();
 const pendingExpands = new Map<string, number>();
 const watchGenerations = new Map<string, number>();
+const refreshGenerations = new Map<string, number>();
 let disposed = false;
 let generation = 0;
 let offDirChanged: () => void = () => {};
@@ -75,9 +76,36 @@ function releaseWatches() {
   for (const { fs, id } of handles) void unwatch(fs, id);
 }
 
+function isDescendant(path: string, parent: string): boolean {
+  return path.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
+}
+
+function releaseDescendantState(parent: string) {
+  for (const [path, handle] of Array.from(watchHandles)) {
+    if (!isDescendant(path, parent)) continue;
+    watchHandles.delete(path);
+    void unwatch(handle.fs, handle.id);
+  }
+  for (const path of Array.from(pendingExpands.keys())) {
+    if (isDescendant(path, parent)) pendingExpands.delete(path);
+  }
+  for (const path of Array.from(watchGenerations.keys())) {
+    if (isDescendant(path, parent)) watchGenerations.delete(path);
+  }
+  for (const path of Array.from(refreshGenerations.keys())) {
+    if (isDescendant(path, parent)) refreshGenerations.delete(path);
+  }
+}
+
 function advanceWatchGeneration(path: string): number {
   const next = (watchGenerations.get(path) ?? 0) + 1;
   watchGenerations.set(path, next);
+  return next;
+}
+
+function advanceRefreshGeneration(path: string): number {
+  const next = (refreshGenerations.get(path) ?? 0) + 1;
+  refreshGenerations.set(path, next);
   return next;
 }
 
@@ -87,12 +115,16 @@ function stopCurrentGeneration() {
   offDirChanged = () => {};
   pendingExpands.clear();
   watchGenerations.clear();
+  refreshGenerations.clear();
   releaseWatches();
 }
 
 async function refreshRoot(fs: FileSystemBridge, root: string, showHidden: boolean, request: number) {
+  const refreshRequest = advanceRefreshGeneration(root);
   const nodes = await loadDir(fs, root, showHidden);
-  if (isCurrent(fs, root, showHidden, request)) rootNodes.value = nodes;
+  if (!isCurrent(fs, root, showHidden, request) || refreshGenerations.get(root) !== refreshRequest) return;
+  releaseDescendantState(root);
+  rootNodes.value = nodes;
 }
 
 async function refreshChanged(
@@ -109,8 +141,16 @@ async function refreshChanged(
   }
   const node = findNode(rootNodes.value, dir);
   if (!node || !node.expanded) return;
+  const refreshRequest = advanceRefreshGeneration(node.path);
   const children = await loadDir(fs, node.path, showHidden);
-  if (isCurrent(fs, root, showHidden, request) && node.expanded) node.children = children;
+  if (
+    !isCurrent(fs, root, showHidden, request)
+    || !node.expanded
+    || findNode(rootNodes.value, dir) !== node
+    || refreshGenerations.get(node.path) !== refreshRequest
+  ) return;
+  releaseDescendantState(node.path);
+  node.children = children;
 }
 
 function startGeneration() {
@@ -146,8 +186,13 @@ async function toggle(n: TreeNode) {
     pendingExpands.set(n.path, watchRequest);
     try {
       if (n.children === null) {
+        const refreshRequest = advanceRefreshGeneration(n.path);
         const children = await loadDir(fs, n.path, showHidden);
-        if (!isCurrent(fs, root, showHidden, request) || watchGenerations.get(n.path) !== watchRequest) return;
+        if (
+          !isCurrent(fs, root, showHidden, request)
+          || watchGenerations.get(n.path) !== watchRequest
+          || refreshGenerations.get(n.path) !== refreshRequest
+        ) return;
         n.children = children;
       }
       if (!isCurrent(fs, root, showHidden, request) || watchGenerations.get(n.path) !== watchRequest) return;

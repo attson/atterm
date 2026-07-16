@@ -1,6 +1,7 @@
 import { describe, expect, it, test, vi } from "vitest";
 import source from "./TerminalView.vue?raw";
 import paneSource from "./PaneGrid.vue?raw";
+import appSource from "../App.vue?raw";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import type { ContextMenuPlugin } from "../plugins/types";
 
@@ -12,6 +13,7 @@ function styleBlockFor(selector: string): string {
 
 describe("TerminalView plugin connection registry", () => {
   test("registers its live SessionConnection and only removes its own entry", () => {
+    expect(appSource).toMatch(/reactive\(new Map<string, SessionConnection>\(\)\)/);
     expect(source).toContain('"atterm:pluginSessionConnections"');
     expect(source).toMatch(/pluginSessionConnections\?\.set\(props\.sessionId, conn\)/);
     expect(source).toMatch(/pluginSessionConnections\?\.get\(props\.sessionId\) === conn/);

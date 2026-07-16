@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
@@ -571,7 +571,7 @@ async function ensureTerm() {
 
 function startConnection() {
   if (!term) return;
-  conn = new SessionConnection(
+  conn = markRaw(new SessionConnection(
     props.endpoint,
     props.sessionId,
     {
@@ -605,7 +605,7 @@ function startConnection() {
       },
     },
     { clientName: localHostname.value, remote: !props.isLocalSession }
-  );
+  ));
   conn.attach();
   pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins

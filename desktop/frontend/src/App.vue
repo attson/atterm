@@ -369,7 +369,7 @@ provide("atterm:pluginInputSenders", pluginInputSenders);
 
 // TerminalView owns these connections. Plugins must reuse an entry instead of
 // opening another /client attachment for the active session.
-const pluginSessionConnections = new Map<string, SessionConnection>();
+const pluginSessionConnections = reactive(new Map<string, SessionConnection>()) as Map<string, SessionConnection>;
 provide("atterm:pluginSessionConnections", pluginSessionConnections);
 
 const pluginContext = createPluginContext({

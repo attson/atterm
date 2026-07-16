@@ -39,18 +39,19 @@ describe("ImagePreview", () => {
     expect(w.text()).toContain("Inline preview unavailable");
   });
 
-  it("ignores an error from a stale image URL", async () => {
+  it("ignores a queued error from the old image element after a new src is assigned", async () => {
     (platform.pluginHost!.fs.assetUrlFor as ReturnType<typeof vi.fn>)
       .mockReturnValueOnce("blob:old")
       .mockReturnValueOnce("blob:new");
     const w = mount(ImagePreview, { props: { fs, path: "/x/old.png", theme: "dimmed" } });
     await flushPromises();
+    const oldImage = w.find("img").element;
     await w.setProps({ path: "/x/new.png" });
     await flushPromises();
+    expect(w.find("img").element).not.toBe(oldImage);
 
-    const image = w.find("img");
-    image.element.setAttribute("src", "blob:old");
-    await image.trigger("error");
+    oldImage.dispatchEvent(new Event("error"));
+    await flushPromises();
 
     expect(w.text()).not.toContain("Inline preview unavailable");
   });

@@ -5,6 +5,7 @@ import type { FileSystemBridge } from "./fsBridge";
 
 const props = defineProps<{ fs: FileSystemBridge; path: string; kind: "audio" | "video" }>();
 const src = ref("");
+const assetKey = ref(0);
 
 const failed = ref(false);
 let active = true;
@@ -21,6 +22,7 @@ async function loadAsset() {
   const fs = props.fs;
   const path = props.path;
   const currentRequest = ++request;
+  assetKey.value = currentRequest;
   releaseAsset();
   requested = { fs, path };
   src.value = "";
@@ -45,8 +47,8 @@ onBeforeUnmount(() => {
 });
 
 function onError(event: Event) {
-  const target = event.currentTarget as HTMLMediaElement | null;
-  if (!target || !src.value || target.getAttribute("src") !== src.value) return;
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target || target.dataset.assetRequest !== String(assetKey.value)) return;
   failed.value = true;
 }
 </script>
@@ -56,6 +58,8 @@ function onError(event: Event) {
   <div v-else class="media-host">
     <video
       v-if="kind === 'video'"
+      :key="assetKey"
+      :data-asset-request="assetKey"
       :src="src"
       controls
       preload="metadata"
@@ -63,6 +67,8 @@ function onError(event: Event) {
     />
     <audio
       v-else
+      :key="assetKey"
+      :data-asset-request="assetKey"
       :src="src"
       controls
       preload="metadata"

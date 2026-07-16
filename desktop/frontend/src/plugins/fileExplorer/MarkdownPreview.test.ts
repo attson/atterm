@@ -93,4 +93,24 @@ describe("MarkdownPreview", () => {
     await w.find("a").trigger("click");
     expect(platform.system.openExternalURL).not.toHaveBeenCalled();
   });
+
+  it("ignores a delayed fileMeta result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; size: number; modTime: number; isBinary: boolean }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/x/old.md") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, size: 9, modTime: 2, isBinary: false });
+    });
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: "/x/new.md", data: new TextEncoder().encode("# New file"), isBinary: false, truncatedAt: 0,
+    });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/old.md", theme: "dimmed" } });
+    await flushPromises();
+    await w.setProps({ path: "/x/new.md" });
+    await flushPromises();
+    resolveOld({ path: "/x/old.md", size: 3 * 1024 * 1024, modTime: 1, isBinary: false });
+    await flushPromises();
+
+    expect(w.html()).toContain("<h1>New file</h1>");
+    expect(w.text()).not.toContain("Inline preview unavailable");
+  });
 });

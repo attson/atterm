@@ -53,4 +53,24 @@ describe("CodeViewer", () => {
     expect(w.text()).not.toContain("File too large");
     expect(w.text()).not.toContain("Binary file");
   });
+
+  it("ignores a delayed fileMeta result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; size: number; modTime: number; isBinary: boolean }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/old.bin") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, size: 3, modTime: 2, isBinary: false });
+    });
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: "/new.txt", data: "bmV3IGNvbnRlbnQ=", isBinary: false, truncatedAt: 0,
+    });
+    const w = mount(CodeViewer, { props: { fs, path: "/old.bin", showLineNumbers: false, theme: "dimmed" } });
+    await flushPromises();
+    await w.setProps({ path: "/new.txt" });
+    await flushPromises();
+    resolveOld({ path: "/old.bin", size: 3, modTime: 1, isBinary: true });
+    await flushPromises();
+
+    expect(w.text()).toContain("new content");
+    expect(w.text()).not.toContain("Binary file");
+  });
 });

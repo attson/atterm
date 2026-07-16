@@ -5,6 +5,7 @@ import type { FileSystemBridge } from "./fsBridge";
 
 const props = defineProps<{ fs: FileSystemBridge; path: string; theme: "dimmed" | "light" }>();
 const src = ref("");
+const assetKey = ref(0);
 
 const mode = ref<"fit" | "native">("fit");
 const failed = ref(false);
@@ -22,6 +23,7 @@ async function loadAsset() {
   const fs = props.fs;
   const path = props.path;
   const currentRequest = ++request;
+  assetKey.value = currentRequest;
   releaseAsset();
   requested = { fs, path };
   src.value = "";
@@ -47,8 +49,8 @@ onBeforeUnmount(() => {
 
 function toggle() { mode.value = mode.value === "fit" ? "native" : "fit"; }
 function onError(event: Event) {
-  const target = event.currentTarget as HTMLImageElement | null;
-  if (!target || !src.value || target.getAttribute("src") !== src.value) return;
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target || target.dataset.assetRequest !== String(assetKey.value)) return;
   failed.value = true;
 }
 </script>
@@ -56,7 +58,7 @@ function onError(event: Event) {
 <template>
   <BinaryBanner v-if="failed" :fs="fs" :path="path" />
   <div v-else class="img-host" :class="mode">
-    <img :src="src" alt="" @click="toggle" @error="onError" />
+    <img :key="assetKey" :data-asset-request="assetKey" :src="src" alt="" @click="toggle" @error="onError" />
   </div>
 </template>
 

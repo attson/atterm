@@ -39,4 +39,21 @@ describe("MediaPreview", () => {
     await w.find("video").trigger("error");
     expect(w.text()).toContain("Inline preview unavailable");
   });
+
+  it("ignores a queued error from the old video element after a new src is assigned", async () => {
+    (platform.pluginHost!.fs.assetUrlFor as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce("blob:old")
+      .mockReturnValueOnce("blob:new");
+    const w = mount(MediaPreview, { props: { fs, path: "/x/old.mp4", kind: "video" } });
+    await flushPromises();
+    const oldVideo = w.find("video").element;
+    await w.setProps({ path: "/x/new.mp4" });
+    await flushPromises();
+    expect(w.find("video").element).not.toBe(oldVideo);
+
+    oldVideo.dispatchEvent(new Event("error"));
+    await flushPromises();
+
+    expect(w.text()).not.toContain("Inline preview unavailable");
+  });
 });

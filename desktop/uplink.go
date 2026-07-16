@@ -263,6 +263,9 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		u.outMu.Unlock()
 	}()
 
+	remoteFS := newRemoteFS(newFSAccess(remoteFSAllowRoots()))
+	defer remoteFS.close()
+
 	// Send first ANNOUNCE so the relay registers the host immediately.
 	if err := u.writeAnnounce(connCtx, conn); err != nil {
 		return err
@@ -347,6 +350,23 @@ func (u *uplink) runOnce(ctx context.Context) error {
 					return
 				default:
 					// Channel full — skip; next tick will retry.
+				}
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-connCtx.Done():
+				return
+			case f := <-remoteFS.events():
+				select {
+				case out <- f:
+				case <-connCtx.Done():
+					return
+				default:
+					log.Printf("uplink: out chan full; dropping remote fs event session=%s", f.SessionID)
 				}
 			}
 		}
@@ -474,6 +494,14 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				log.Printf("desktop-uplink: inbound_forward_failed type=%s %s error=%v", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f), err)
 			} else {
 				log.Printf("desktop-uplink: inbound_forward_ok type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
+			}
+		case proto.TypeFSRequest:
+			var req proto.FSRequestPayload
+			if err := json.Unmarshal(f.Payload, &req); err != nil {
+				continue
+			}
+			if !handleRemoteFSRequest(connCtx, out, f.SessionID, u.remotePermission, remoteFS, req) {
+				return nil
 			}
 		case proto.TypeClaimDriver:
 			log.Printf("desktop-uplink: inbound_recv type=CLAIM_DRIVER %s", desktopUplinkFrameLogDetails(f))

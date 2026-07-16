@@ -78,6 +78,10 @@ func (p *PluginFS) OpenExternal(path string) error {
 	if err != nil {
 		return err
 	}
+	return openExternalPath(resolved)
+}
+
+var openExternalPath = func(resolved string) error {
 	switch stdruntime.GOOS {
 	case "darwin":
 		return exec.Command("open", resolved).Start()

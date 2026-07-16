@@ -481,6 +481,24 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			}
 		case proto.TypeCommandEvent:
 			s.handleUplinkCommandEvent(f, mirrors, &mu)
+		case proto.TypeFSResponse:
+			mu.Lock()
+			ms := mirrors[f.SessionID]
+			mu.Unlock()
+			if ms == nil {
+				s.debugf("uplink fs_response_drop reason=unknown_session session=%s", f.SessionID)
+				continue
+			}
+			s.fsRoutes().routeResponse(f)
+		case proto.TypeFSEvent:
+			mu.Lock()
+			ms := mirrors[f.SessionID]
+			mu.Unlock()
+			if ms == nil {
+				s.debugf("uplink fs_event_drop reason=unknown_session session=%s", f.SessionID)
+				continue
+			}
+			s.fsRoutes().routeEvent(f)
 		case proto.TypePing:
 			// Echo the payload back as PONG. Clients use this to measure
 			// application-level RTT (their PING carries an 8B timestamp;

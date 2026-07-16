@@ -28,6 +28,8 @@ var (
 // ownerUserID, when non-empty, restricts ATTACH to sessions owned by that user.
 func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string) {
 	c.SetReadLimit(clientReadLimit)
+	targetedOut := make(chan proto.Frame, 16)
+	defer s.fsRoutes().unregisterClient(targetedOut)
 
 	var (
 		sess *session.Session
@@ -55,6 +57,16 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				case <-sub.Done():
 					_ = c.Close(websocket.StatusGoingAway, "session ended")
 					return
+				case f := <-targetedOut:
+					s.debugFrame("client", "send", f)
+					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
+					cancel()
+					if err != nil {
+						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
+						_ = c.CloseNow()
+						return
+					}
 				case <-ticker.C:
 					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
 					err := c.Ping(ctx)
@@ -219,6 +231,33 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
 
+		case proto.TypeFSRequest:
+			if sess == nil {
+				s.debugf("client drop frame=FS_REQUEST reason=not_attached")
+				continue
+			}
+			var request proto.FSRequestPayload
+			if err := json.Unmarshal(f.Payload, &request); err != nil || request.RequestID == "" || request.Op == "" || f.SessionID != sess.ID {
+				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "invalid_request")
+				continue
+			}
+			if scope != authWrite || sessionRemotePermission(sess) != permFull {
+				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "permission_denied")
+				continue
+			}
+			if request.Op == "open_external" && !sess.IsDriver(sub) {
+				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "driver_required")
+				continue
+			}
+
+			routes := s.fsRoutes()
+			routes.registerRequest(sess.ID, request.RequestID, targetedOut)
+			if !sess.SendInbound(f) {
+				routes.unregisterRequest(sess.ID, request.RequestID, targetedOut)
+				s.debugf("client fs_request_drop reason=inbound_full session=%s request_id=%s", sess.ID, request.RequestID)
+				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "upstream_unavailable")
+			}
+
 		case proto.TypePing:
 			// Echo PING payload as PONG so the client can compute RTT
 			// without trusting the server clock. nhooyr Conn.Write is
@@ -239,5 +278,18 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		default:
 			log.Printf("client: unexpected frame type 0x%02x", f.Type)
 		}
+	}
+}
+
+func (s *Server) sendFSClientError(out chan<- proto.Frame, sessionID uuid.UUID, requestID, message string) {
+	payload, err := json.Marshal(proto.FSResponsePayload{
+		RequestID: requestID,
+		Error:     message,
+	})
+	if err != nil {
+		return
+	}
+	if !sendFSFrame(out, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
+		s.debugf("client fs_error_drop session=%s request_id=%s", sessionID, requestID)
 	}
 }

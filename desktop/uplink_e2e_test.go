@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 )
 
@@ -462,6 +463,111 @@ func TestUplink_Viewers_EmitsCount(t *testing.T) {
 	}
 	if m["count"] != 2 {
 		t.Errorf("count = %v; want 2", m["count"])
+	}
+}
+
+func TestUplinkRemoteFSGateUsesRawRemotePermission(t *testing.T) {
+	for _, configuredPermission := range []string{"", "bogus"} {
+		t.Run(fmt.Sprintf("configured_%q", configuredPermission), func(t *testing.T) {
+			sessionID := uuid.New()
+			requestID := "fs-permission"
+			responseCh := make(chan proto.FSResponsePayload, 1)
+			announceCh := make(chan proto.AnnouncePayload, 1)
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/uplink", func(w http.ResponseWriter, r *http.Request) {
+				c, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer c.Close(websocket.StatusNormalClosure, "")
+
+				_, announceData, err := c.Read(r.Context())
+				if err != nil {
+					return
+				}
+				announceFrame, err := proto.Unmarshal(announceData)
+				if err != nil {
+					return
+				}
+				var announce proto.AnnouncePayload
+				if err := json.Unmarshal(announceFrame.Payload, &announce); err != nil {
+					return
+				}
+				announceCh <- announce
+
+				reqPayload, _ := json.Marshal(proto.FSRequestPayload{
+					RequestID: requestID,
+					Op:        "list_dir",
+					Path:      "/tmp",
+				})
+				req := proto.Frame{Type: proto.TypeFSRequest, SessionID: sessionID, Payload: reqPayload}
+				if err := c.Write(r.Context(), websocket.MessageBinary, proto.Marshal(req)); err != nil {
+					return
+				}
+
+				_, responseData, err := c.Read(r.Context())
+				if err != nil {
+					return
+				}
+				responseFrame, err := proto.Unmarshal(responseData)
+				if err != nil || responseFrame.Type != proto.TypeFSResponse {
+					return
+				}
+				var response proto.FSResponsePayload
+				if err := json.Unmarshal(responseFrame.Payload, &response); err != nil {
+					return
+				}
+				responseCh <- response
+			})
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := &http.Server{Handler: mux}
+			go func() { _ = srv.Serve(ln) }()
+			defer srv.Close()
+
+			host := newTestRelayHost(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			u := newUplink("ws://"+ln.Addr().String(), "tok", configuredPermission, host, nil, nil, false)
+			u.eventsEmit = func(context.Context, string, ...interface{}) {}
+			if u.remotePermission != proto.RemotePermissionFull {
+				t.Fatalf("normalized remotePermission = %q, want %q", u.remotePermission, proto.RemotePermissionFull)
+			}
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_ = u.runOnce(ctx)
+			}()
+
+			select {
+			case announce := <-announceCh:
+				if len(announce.Sessions) != 0 {
+					t.Fatalf("announce sessions = %d, want 0", len(announce.Sessions))
+				}
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for ANNOUNCE")
+			}
+
+			select {
+			case response := <-responseCh:
+				if response.OK || response.RequestID != requestID || !strings.Contains(response.Error, "full") {
+					t.Fatalf("unexpected FS response for configured permission %q: %+v", configuredPermission, response)
+				}
+				if strings.Contains(response.Error, "unavailable") {
+					t.Fatalf("FS request reached filesystem availability check for configured permission %q: %+v", configuredPermission, response)
+				}
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for FS_RESPONSE")
+			}
+
+			cancel()
+			<-done
+		})
 	}
 }
 

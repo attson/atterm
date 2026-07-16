@@ -37,10 +37,11 @@ const (
 
 // uplink runs the desktop side of the lazy mirror. One instance per desktop app.
 type uplink struct {
-	relayURL         string
-	token            string
-	remotePermission string
-	host             *relayHost
+	relayURL            string
+	token               string
+	rawRemotePermission string
+	remotePermission    string
+	host                *relayHost
 
 	announced announceCache
 
@@ -84,16 +85,17 @@ type uplink struct {
 
 func newUplink(relayURL, token, remotePermission string, host *relayHost, recordError func(error), accountKey func() []byte, allowInsecure bool) *uplink {
 	return &uplink{
-		relayURL:         strings.TrimRight(relayURL, "/"),
-		token:            token,
-		remotePermission: normalizeRemotePermission(remotePermission),
-		host:             host,
-		eventsEmit:       wailsruntime.EventsEmit,
-		recordError:      recordError,
-		tracker:          connhealth.New(),
-		startMono:        time.Now(),
-		accountKey:       accountKey,
-		allowInsecure:    allowInsecure,
+		relayURL:            strings.TrimRight(relayURL, "/"),
+		token:               token,
+		rawRemotePermission: remotePermission,
+		remotePermission:    normalizeRemotePermission(remotePermission),
+		host:                host,
+		eventsEmit:          wailsruntime.EventsEmit,
+		recordError:         recordError,
+		tracker:             connhealth.New(),
+		startMono:           time.Now(),
+		accountKey:          accountKey,
+		allowInsecure:       allowInsecure,
 	}
 }
 
@@ -501,7 +503,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			if err := json.Unmarshal(f.Payload, &req); err != nil {
 				continue
 			}
-			if !handleRemoteFSRequest(connCtx, out, f.SessionID, u.remotePermission, remoteFS, req) {
+			if !handleRemoteFSRequest(connCtx, out, f.SessionID, u.rawRemotePermission, remoteFS, req) {
 				return nil
 			}
 		case proto.TypeClaimDriver:

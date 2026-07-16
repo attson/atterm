@@ -49,6 +49,7 @@ onBeforeUnmount(() => {
 function onError(event: Event) {
   const target = event.currentTarget as HTMLElement | null;
   if (!src.value || !target || target.dataset.assetRequest !== String(assetKey.value)) return;
+  releaseAsset();
   failed.value = true;
 }
 </script>

@@ -34,10 +34,13 @@ describe("MediaPreview", () => {
   });
 
   it("falls back to BinaryBanner on media error", async () => {
+    const revokeAssetUrl = vi.fn();
+    fs.revokeAssetUrl = revokeAssetUrl;
     const w = mount(MediaPreview, { props: { fs, path: "/x/c.mp4", kind: "video" } });
     await flushPromises();
     await w.find("video").trigger("error");
     expect(w.text()).toContain("Inline preview unavailable");
+    expect(revokeAssetUrl).toHaveBeenCalledWith("/x/c.mp4");
   });
 
   it("ignores an error while the asset URL is still pending", async () => {

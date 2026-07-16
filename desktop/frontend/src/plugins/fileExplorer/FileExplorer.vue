@@ -96,11 +96,14 @@ watch(
         ? createRemoteSessionFS(connection, identity)
         : null;
     const previous = fs.value;
+    const identityChanged = previous?.identity !== next?.identity;
 
     fs.value = next;
     fsGeneration.value++;
-    pinned.value = null;
-    tabsState.value = { tabs: [], activeIdx: -1 };
+    if (identityChanged) {
+      pinned.value = null;
+      tabsState.value = { tabs: [], activeIdx: -1 };
+    }
     await nextTick();
     previous?.dispose?.();
   },

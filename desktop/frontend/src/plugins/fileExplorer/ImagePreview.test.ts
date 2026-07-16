@@ -33,10 +33,13 @@ describe("ImagePreview", () => {
   });
 
   it("falls back to BinaryBanner on <img> error", async () => {
+    const revokeAssetUrl = vi.fn();
+    fs.revokeAssetUrl = revokeAssetUrl;
     const w = mount(ImagePreview, { props: { fs, path: "/x/broken.png", theme: "dimmed" } });
     await flushPromises();
     await w.find("img").trigger("error");
     expect(w.text()).toContain("Inline preview unavailable");
+    expect(revokeAssetUrl).toHaveBeenCalledWith("/x/broken.png");
   });
 
   it("ignores an error while the asset URL is still pending", async () => {

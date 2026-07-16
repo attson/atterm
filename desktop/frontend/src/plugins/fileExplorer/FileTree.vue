@@ -121,6 +121,8 @@ function stopCurrentGeneration() {
   offDirChanged();
   offDirChanged = () => {};
   pendingExpands.clear();
+  watchGenerations.clear();
+  refreshGenerations.clear();
   releaseWatches();
 }
 

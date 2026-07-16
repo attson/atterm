@@ -89,6 +89,40 @@ describe("FileExplorer filesystem bridge", () => {
     expect(wrapper.text()).toContain("second.txt");
   });
 
+  it("preserves a pinned root when the same remote session reconnects", async () => {
+    const activeCwd = ref<string | null>("/remote");
+    const first = {
+      sendFSRequest: vi.fn().mockResolvedValue({ request_id: "first", ok: true, entries: [] }),
+      onFSEvent: vi.fn(() => () => {}),
+    } as unknown as SessionConnection;
+    const second = {
+      sendFSRequest: vi.fn().mockResolvedValue({ request_id: "second", ok: true, entries: [] }),
+      onFSEvent: vi.fn(() => () => {}),
+    } as unknown as SessionConnection;
+    const activeConnection = shallowRef<SessionConnection | null>(first);
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "remote-session"),
+      activeIsRemote: computed(() => true),
+      activeSessionConnection: computed(() => activeConnection.value),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => activeCwd.value),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+
+    const wrapper = mount(FileExplorer, { props: { context } });
+    await flushPromises();
+    await wrapper.find(".pin").trigger("click");
+    activeCwd.value = "/new-cwd";
+    activeConnection.value = second;
+    await flushPromises();
+
+    expect(wrapper.find(".pin").classes()).toContain("pinned");
+    expect(wrapper.find(".root-path").text()).toBe("/remote");
+  });
+
   it("keeps the local bridge and pinned root when switching local sessions", async () => {
     const activeSessionID = ref<string | null>("local-one");
     const activeConnection = shallowRef<SessionConnection | null>({} as SessionConnection);

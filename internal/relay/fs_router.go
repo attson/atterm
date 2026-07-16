@@ -42,13 +42,18 @@ func newFSRouter() *fsRouter {
 	}
 }
 
-func (r *fsRouter) registerRequest(sessionID uuid.UUID, requestID string, out chan<- proto.Frame) {
+func (r *fsRouter) registerRequest(sessionID uuid.UUID, requestID string, out chan<- proto.Frame) bool {
 	if requestID == "" || out == nil {
-		return
+		return false
 	}
 	r.mu.Lock()
-	r.requests[fsRouteKey{sessionID: sessionID, id: requestID}] = out
-	r.mu.Unlock()
+	defer r.mu.Unlock()
+	key := fsRouteKey{sessionID: sessionID, id: requestID}
+	if _, exists := r.requests[key]; exists {
+		return false
+	}
+	r.requests[key] = out
+	return true
 }
 
 func (r *fsRouter) unregisterRequest(sessionID uuid.UUID, requestID string, out chan<- proto.Frame) {

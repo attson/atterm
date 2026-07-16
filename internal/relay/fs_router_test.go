@@ -42,6 +42,36 @@ func TestFSRouterRoutesResponseToRequesterOnly(t *testing.T) {
 	}
 }
 
+func TestFSRouterDuplicateRequestPreservesOriginalRequester(t *testing.T) {
+	r := newFSRouter()
+	sessionID := uuid.New()
+	first := make(chan proto.Frame, 1)
+	second := make(chan proto.Frame, 1)
+	if !r.registerRequest(sessionID, "duplicate", first) {
+		t.Fatal("first request route was not registered")
+	}
+	if r.registerRequest(sessionID, "duplicate", second) {
+		t.Fatal("duplicate request route was registered")
+	}
+
+	r.routeResponse(proto.Frame{
+		Type:      proto.TypeFSResponse,
+		SessionID: sessionID,
+		Payload:   []byte(`{"request_id":"duplicate","ok":true}`),
+	})
+
+	select {
+	case <-first:
+	default:
+		t.Fatal("original requester did not receive response")
+	}
+	select {
+	case got := <-second:
+		t.Fatalf("duplicate requester received response: %+v", got)
+	default:
+	}
+}
+
 func TestFSRouterRegistersWatchAfterSuccessfulResponse(t *testing.T) {
 	r := newFSRouter()
 	sessionID := uuid.New()
@@ -162,6 +192,54 @@ func TestClientFSRequestForwardsReadOnlyFullPermission(t *testing.T) {
 	}
 	if got.Type != proto.TypeFSResponse {
 		t.Fatalf("requester frame type = %v, want FS_RESPONSE", got.Type)
+	}
+}
+
+func TestClientFSDuplicateRequestRejectsLaterRequester(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	first := dialClientAttach(t, ctx, httpSrv, token, sessionID, "first")
+	defer first.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, first)
+	second := dialClientAttach(t, ctx, httpSrv, token, sessionID, "second")
+	defer second.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, second)
+
+	requestPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "duplicate", Op: "list_dir", Path: "/tmp"})
+	writeClientFrame(t, ctx, first, proto.TypeFSRequest, sessionID, requestPayload)
+	select {
+	case got := <-sess.Inbound():
+		if got.Type != proto.TypeFSRequest {
+			t.Fatalf("first inbound type = %v, want FS_REQUEST", got.Type)
+		}
+	case <-ctx.Done():
+		t.Fatal("first FS request was not forwarded")
+	}
+
+	writeClientFrame(t, ctx, second, proto.TypeFSRequest, sessionID, requestPayload)
+	assertFSClientError(t, ctx, second, "duplicate", "duplicate_request_id")
+	assertNoFSInbound(t, sess)
+
+	responsePayload, _ := json.Marshal(proto.FSResponsePayload{RequestID: "duplicate", OK: true})
+	if !srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: responsePayload}) {
+		t.Fatal("original request route was removed")
+	}
+	_, data, err := first.Read(ctx)
+	if err != nil {
+		t.Fatalf("read original requester response: %v", err)
+	}
+	frame, err := proto.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal original requester response: %v", err)
+	}
+	if frame.Type != proto.TypeFSResponse {
+		t.Fatalf("original requester frame type = %v, want FS_RESPONSE", frame.Type)
 	}
 }
 

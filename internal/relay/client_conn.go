@@ -251,7 +251,10 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 
 			routes := s.fsRoutes()
-			routes.registerRequest(sess.ID, request.RequestID, targetedOut)
+			if !routes.registerRequest(sess.ID, request.RequestID, targetedOut) {
+				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "duplicate_request_id")
+				continue
+			}
 			if !sess.SendInbound(f) {
 				routes.unregisterRequest(sess.ID, request.RequestID, targetedOut)
 				s.debugf("client fs_request_drop reason=inbound_full session=%s request_id=%s", sess.ID, request.RequestID)

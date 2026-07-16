@@ -333,6 +333,38 @@ func TestClientFSRequestForwardsReadOnlyFullPermission(t *testing.T) {
 	}
 }
 
+func TestClientFSRequestInjectsSubscriberClientID(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "actual-client")
+	defer client.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, client)
+
+	requestPayload := []byte(`{"request_id":"inject-client","op":"list_dir","path":"/tmp","client_id":"forged-client"}`)
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, requestPayload)
+	select {
+	case got := <-sess.Inbound():
+		if got.Type != proto.TypeFSRequest {
+			t.Fatalf("inbound type = %v, want FS_REQUEST", got.Type)
+		}
+		var forwarded map[string]any
+		if err := json.Unmarshal(got.Payload, &forwarded); err != nil {
+			t.Fatalf("decode forwarded FS_REQUEST: %v", err)
+		}
+		if forwarded["client_id"] != "actual-client" {
+			t.Fatalf("forwarded client_id = %v, want actual-client", forwarded["client_id"])
+		}
+	case <-ctx.Done():
+		t.Fatal("FS request was not forwarded")
+	}
+}
+
 func TestClientFSReadScopeForwardsReadOnlyFullPermission(t *testing.T) {
 	srv, token, userID := serverWithSessionAndUser(t)
 	httpSrv := newReadScopeClientHTTPServer(t, srv, userID)
@@ -568,6 +600,84 @@ func TestClientFSOwnerUnwatchSuccessRemovesWatchRoute(t *testing.T) {
 	}
 }
 
+func TestClientFSDisconnectSendsUnwatchForOwnedWatches(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "owner")
+	drainAttachIntro(t, ctx, client)
+	registerClientWatch(t, ctx, srv, sess, client, sessionID, "watch-request", "watch-1")
+
+	_ = client.Close(websocket.StatusNormalClosure, "")
+	got := readNextFSInbound(t, ctx, sess)
+	var request proto.FSRequestPayload
+	if err := json.Unmarshal(got.Payload, &request); err != nil {
+		t.Fatalf("decode cleanup FS_REQUEST: %v", err)
+	}
+	if request.Op != "unwatch_dir" || request.WatchID != "watch-1" || request.RequestID == "" {
+		t.Fatalf("cleanup request = %+v, want unwatch_dir watch-1 with generated request_id", request)
+	}
+
+	responsePayload, _ := json.Marshal(proto.FSResponsePayload{RequestID: request.RequestID, OK: true})
+	if srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: responsePayload}) {
+		t.Fatal("cleanup unwatch left a response route")
+	}
+}
+
+func TestClientFSDisconnectDoesNotUnwatchOtherClientWatches(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	owner := dialClientAttach(t, ctx, httpSrv, token, sessionID, "owner")
+	drainAttachIntro(t, ctx, owner)
+	other := dialClientAttach(t, ctx, httpSrv, token, sessionID, "other")
+	defer other.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, other)
+
+	registerClientWatch(t, ctx, srv, sess, owner, sessionID, "owner-watch", "watch-owned")
+	registerClientWatch(t, ctx, srv, sess, other, sessionID, "other-watch", "watch-other")
+
+	_ = owner.Close(websocket.StatusNormalClosure, "")
+	got := readNextFSInbound(t, ctx, sess)
+	var request proto.FSRequestPayload
+	if err := json.Unmarshal(got.Payload, &request); err != nil {
+		t.Fatalf("decode cleanup FS_REQUEST: %v", err)
+	}
+	if request.Op != "unwatch_dir" || request.WatchID != "watch-owned" {
+		t.Fatalf("cleanup request = %+v, want only owner watch", request)
+	}
+	assertNoFSInbound(t, sess)
+
+	if !srv.fsRoutes().routeEvent(proto.Frame{
+		Type:      proto.TypeFSEvent,
+		SessionID: sessionID,
+		Payload:   []byte(`{"watch_id":"watch-other","path":"/tmp","event":"dir_changed"}`),
+	}) {
+		t.Fatal("other client's watch route was removed")
+	}
+	_, data, err := other.Read(ctx)
+	if err != nil {
+		t.Fatalf("read other client FS event: %v", err)
+	}
+	frame, err := proto.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal other client FS event: %v", err)
+	}
+	if frame.Type != proto.TypeFSEvent {
+		t.Fatalf("other client frame type = %v, want FS_EVENT", frame.Type)
+	}
+}
+
 func TestClientFSRequestRejectsInsufficientPermission(t *testing.T) {
 	srv, token, userID := serverWithSessionAndUser(t)
 	httpSrv := newRelayHTTPServer(t, srv)
@@ -753,6 +863,37 @@ func assertNoFSInbound(t *testing.T, sess *session.Session) {
 	case got := <-sess.Inbound():
 		t.Fatalf("unexpected FS inbound frame: %+v", got)
 	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func readNextFSInbound(t *testing.T, ctx context.Context, sess *session.Session) proto.Frame {
+	t.Helper()
+	for {
+		select {
+		case got := <-sess.Inbound():
+			if got.Type == proto.TypeFSRequest {
+				return got
+			}
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for FS_REQUEST inbound")
+		}
+	}
+}
+
+func registerClientWatch(t *testing.T, ctx context.Context, srv *Server, sess *session.Session, client *websocket.Conn, sessionID uuid.UUID, requestID, watchID string) {
+	t.Helper()
+	watchPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: requestID, Op: "watch_dir", Path: "/tmp"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, watchPayload)
+	got := readNextFSInbound(t, ctx, sess)
+	if got.SessionID != sessionID {
+		t.Fatalf("watch inbound session = %s, want %s", got.SessionID, sessionID)
+	}
+	watchResponse, _ := json.Marshal(proto.FSResponsePayload{RequestID: requestID, OK: true, WatchID: watchID})
+	if !srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: watchResponse}) {
+		t.Fatalf("watch response %q was not routed", requestID)
+	}
+	if _, _, err := client.Read(ctx); err != nil {
+		t.Fatalf("read watch response %q: %v", requestID, err)
 	}
 }
 

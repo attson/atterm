@@ -142,7 +142,15 @@ func TestRemoteFSOpenExternalResolvesBeforeHelper(t *testing.T) {
 	}
 	t.Cleanup(func() { openExternalPath = orig })
 
-	frame := fs.handle(uuid.New(), proto.FSRequestPayload{RequestID: "open-1", Op: "open_external", Path: linkPath})
+	sessionID := uuid.New()
+	req := proto.FSRequestPayload{RequestID: "open-1", ClientID: "driver-1", Op: "open_external", Path: linkPath}
+	fs.driverClientID = func(id uuid.UUID) (string, bool) {
+		if id != sessionID {
+			return "", false
+		}
+		return "driver-1", true
+	}
+	frame := fs.handle(sessionID, req)
 	resp := decodeFSResponse(t, frame)
 	if !resp.OK {
 		t.Fatalf("open_external failed: %s", resp.Error)
@@ -151,13 +159,67 @@ func TestRemoteFSOpenExternalResolvesBeforeHelper(t *testing.T) {
 		t.Fatalf("openExternalPath calls = %+v, want [%q]", opened, resolvedRealPath)
 	}
 
-	frame = fs.handle(uuid.New(), proto.FSRequestPayload{RequestID: "open-denied", Op: "open_external", Path: t.TempDir()})
+	deniedReq := proto.FSRequestPayload{RequestID: "open-denied", ClientID: "driver-1", Op: "open_external", Path: t.TempDir()}
+	frame = fs.handle(sessionID, deniedReq)
 	resp = decodeFSResponse(t, frame)
 	if resp.OK {
 		t.Fatalf("expected forbidden response, got %+v", resp)
 	}
 	if len(opened) != 1 {
 		t.Fatalf("openExternalPath called after failed resolve: %+v", opened)
+	}
+}
+
+func TestRemoteFSOpenExternalRequiresCurrentDriverClientID(t *testing.T) {
+	fs, _, root := makeRemoteFS(t)
+	path := filepath.Join(root, "open.txt")
+	if err := os.WriteFile(path, []byte("open me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := uuid.New()
+	fs.driverClientID = func(id uuid.UUID) (string, bool) {
+		if id != sessionID {
+			return "", false
+		}
+		return "driver-1", true
+	}
+
+	var opened []string
+	orig := openExternalPath
+	openExternalPath = func(path string) error {
+		opened = append(opened, path)
+		return nil
+	}
+	t.Cleanup(func() { openExternalPath = orig })
+
+	cases := []struct {
+		name     string
+		clientID string
+		wantErr  string
+	}{
+		{name: "missing", clientID: "", wantErr: "driver_required"},
+		{name: "mismatch", clientID: "viewer-1", wantErr: "driver_required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := proto.FSRequestPayload{RequestID: tc.name, ClientID: tc.clientID, Op: "open_external", Path: path}
+			resp := decodeFSResponse(t, fs.handle(sessionID, req))
+			if resp.OK || resp.Error != tc.wantErr {
+				t.Fatalf("open_external response = %+v, want error %q", resp, tc.wantErr)
+			}
+		})
+	}
+	if len(opened) != 0 {
+		t.Fatalf("openExternalPath called for non-driver request: %+v", opened)
+	}
+
+	req := proto.FSRequestPayload{RequestID: "driver", ClientID: "driver-1", Op: "open_external", Path: path}
+	resp := decodeFSResponse(t, fs.handle(sessionID, req))
+	if !resp.OK {
+		t.Fatalf("driver open_external failed: %s", resp.Error)
+	}
+	if len(opened) != 1 {
+		t.Fatalf("openExternalPath calls = %+v, want one call", opened)
 	}
 }
 
@@ -219,5 +281,28 @@ func TestRemoteFSPermissionGateRequiresFullPermission(t *testing.T) {
 	resp := decodeFSResponse(t, <-out)
 	if resp.OK || resp.RequestID != "permission-1" || !strings.Contains(resp.Error, "full") {
 		t.Fatalf("unexpected permission response: %+v", resp)
+	}
+}
+
+func TestRemoteFSPermissionGateRejectsEmptyAndUnknownPermissionBeforeFSWork(t *testing.T) {
+	for _, remotePermission := range []string{"", "bogus"} {
+		t.Run("permission_"+remotePermission, func(t *testing.T) {
+			out := make(chan proto.Frame, 1)
+			ok := handleRemoteFSRequest(context.Background(), out, uuid.New(), remotePermission, nil, proto.FSRequestPayload{
+				RequestID: "permission",
+				Op:        "list_dir",
+				Path:      "/tmp",
+			})
+			if !ok {
+				t.Fatal("expected permission response to be queued")
+			}
+			resp := decodeFSResponse(t, <-out)
+			if resp.OK || resp.RequestID != "permission" || !strings.Contains(resp.Error, "full") {
+				t.Fatalf("unexpected permission response for %q: %+v", remotePermission, resp)
+			}
+			if strings.Contains(resp.Error, "unavailable") {
+				t.Fatalf("permission %q reached fs availability check: %+v", remotePermission, resp)
+			}
+		})
 	}
 }

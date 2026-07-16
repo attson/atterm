@@ -20,6 +20,11 @@ type fsClientRoute struct {
 	onOverflow func()
 }
 
+type fsOwnedWatch struct {
+	sessionID uuid.UUID
+	watchID   string
+}
+
 // fsRouter keeps the per-client routes needed by remote filesystem RPC. FS
 // frames cannot use Session.Broadcast because every response and watch event
 // belongs to its original requesting client only.
@@ -116,6 +121,21 @@ func (r *fsRouter) unregisterClient(out chan<- proto.Frame) {
 			delete(r.watches, key)
 		}
 	}
+}
+
+func (r *fsRouter) clientWatches(out chan<- proto.Frame) []fsOwnedWatch {
+	if out == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	watches := make([]fsOwnedWatch, 0)
+	for key, route := range r.watches {
+		if route.out == out {
+			watches = append(watches, fsOwnedWatch{sessionID: key.sessionID, watchID: key.id})
+		}
+	}
+	return watches
 }
 
 func (r *fsRouter) unregisterSession(sessionID uuid.UUID) {

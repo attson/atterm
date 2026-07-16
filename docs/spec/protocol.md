@@ -371,6 +371,7 @@ payload = JSON：
 ```json
 {
   "request_id": "uuid-or-random-string",
+  "client_id": "relay-injected-attacher-client-id",
   "op": "list_dir",
   "path": "/Users/alice/project",
   "max_bytes": 2097152,
@@ -381,6 +382,7 @@ payload = JSON：
 ```
 
 - `request_id`：client 生成的关联 ID；desktop 原样带回。
+- `client_id`：relay 转发前按已 attach subscriber 的身份注入/覆盖；浏览器传入的值不可信且会被忽略。desktop host 只用它对 `open_external` 做当前 driver 二次校验，普通浏览器 client 不需要也不应该自行设置。
 - `op`：`list_dir` / `file_meta` / `read_file` / `read_chunk` / `watch_dir` / `unwatch_dir` / `open_external`。
 - `path`：owner 机器上的路径；desktop 必须走本地 allow-root/path-clean 校验。
 - `max_bytes`：`read_file` 的最大返回字节数，host 仍有 hard cap。

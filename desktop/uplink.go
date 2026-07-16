@@ -264,6 +264,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	}()
 
 	remoteFS := newRemoteFS(newFSAccess(remoteFSAllowRoots()))
+	remoteFS.driverClientID = u.host.DriverClientID
 	defer remoteFS.close()
 
 	// Send first ANNOUNCE so the relay registers the host immediately.

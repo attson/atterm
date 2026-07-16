@@ -17,6 +17,10 @@ type remoteFS struct {
 	eventCh chan proto.Frame
 
 	cancel context.CancelFunc
+	// driverClientID returns the current local driver client id for a session.
+	// It is required for open_external because that op triggers owner-machine OS
+	// behavior rather than a read-only filesystem response.
+	driverClientID func(uuid.UUID) (string, bool)
 
 	mu             sync.Mutex
 	watchesByID    map[string]remoteFSWatch
@@ -114,7 +118,9 @@ func (fs *remoteFS) handle(sessionID uuid.UUID, req proto.FSRequestPayload) prot
 	case "unwatch_dir":
 		err = fs.unwatchDir(req.WatchID)
 	case "open_external":
-		err = fs.openExternal(req.Path)
+		if err = fs.requireOpenExternalDriver(sessionID, req.ClientID); err == nil {
+			err = fs.openExternal(req.Path)
+		}
 	default:
 		err = fmt.Errorf("remote_fs: unsupported op %q", req.Op)
 	}
@@ -191,6 +197,17 @@ func (fs *remoteFS) openExternal(path string) error {
 	return openExternalPath(resolved)
 }
 
+func (fs *remoteFS) requireOpenExternalDriver(sessionID uuid.UUID, clientID string) error {
+	if clientID == "" || fs.driverClientID == nil {
+		return fmt.Errorf("driver_required")
+	}
+	driverID, ok := fs.driverClientID(sessionID)
+	if !ok || driverID == "" || driverID != clientID {
+		return fmt.Errorf("driver_required")
+	}
+	return nil
+}
+
 func (fs *remoteFS) onDirChanged(path string) {
 	fs.mu.Lock()
 	watches := make([]remoteFSWatch, 0, len(fs.watchIDsByPath[path]))
@@ -232,7 +249,7 @@ func remoteFSResponseFrame(sessionID uuid.UUID, payload proto.FSResponsePayload)
 
 func handleRemoteFSRequest(ctx context.Context, out chan<- proto.Frame, sessionID uuid.UUID, remotePermission string, fs *remoteFS, req proto.FSRequestPayload) bool {
 	var frame proto.Frame
-	if normalizeRemotePermission(remotePermission) != proto.RemotePermissionFull {
+	if remotePermission != proto.RemotePermissionFull {
 		frame = remoteFSResponseFrame(sessionID, proto.FSResponsePayload{
 			RequestID: req.RequestID,
 			OK:        false,

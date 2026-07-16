@@ -251,6 +251,7 @@ type FileMetaInfo struct {
 // FSRequestPayload is the JSON body of TypeFSRequest.
 type FSRequestPayload struct {
 	RequestID string `json:"request_id"`
+	ClientID  string `json:"client_id,omitempty"`
 	Op        string `json:"op"`
 	Path      string `json:"path,omitempty"`
 	MaxBytes  int64  `json:"max_bytes,omitempty"`

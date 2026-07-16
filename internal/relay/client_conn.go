@@ -29,16 +29,39 @@ var (
 func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string) {
 	c.SetReadLimit(clientReadLimit)
 	targetedOut := make(chan proto.Frame, 16)
-	defer s.fsRoutes().unregisterClient(targetedOut)
 
 	var (
-		sess *session.Session
-		sub  *session.Subscriber
+		sess     *session.Session
+		sub      *session.Subscriber
+		clientID string
 	)
 	defer func() {
 		if sess != nil && sub != nil {
 			sess.Unsubscribe(sub)
 		}
+	}()
+	defer func() {
+		routes := s.fsRoutes()
+		if sess != nil && sess.DriverFromUpstream() {
+			for _, watch := range routes.clientWatches(targetedOut) {
+				if watch.sessionID != sess.ID {
+					continue
+				}
+				request := proto.FSRequestPayload{
+					RequestID: "cleanup-unwatch-" + uuid.NewString(),
+					Op:        "unwatch_dir",
+					WatchID:   watch.watchID,
+				}
+				payload, err := json.Marshal(request)
+				if err != nil {
+					continue
+				}
+				if !sess.SendInbound(proto.Frame{Type: proto.TypeFSRequest, SessionID: sess.ID, Payload: payload}) {
+					s.debugf("client fs_cleanup_drop reason=inbound_full session=%s watch_id=%s", sess.ID, watch.watchID)
+				}
+			}
+		}
+		routes.unregisterClient(targetedOut)
 	}()
 
 	// Outgoing pump (started after ATTACH).
@@ -171,6 +194,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				return
 			}
 			sess = target
+			clientID = ap.ClientID
 			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID, ap.ClientName)
 			s.debugf("client attached session=%s since_seq=%d client_id=%q client_name=%q", id, ap.SinceSeq, ap.ClientID, ap.ClientName)
 			if ownerUserID != "" && s.cfg.Store != nil {
@@ -280,6 +304,13 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					continue
 				}
 			}
+			request.ClientID = clientID
+			payload, err := json.Marshal(request)
+			if err != nil {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
+				continue
+			}
+			f.Payload = payload
 			if !routes.registerRequestRoute(sess.ID, request, targetedOut, targetedOverflow) {
 				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "duplicate_request_id")
 				continue

@@ -359,13 +359,12 @@ payload = JSON：
 
 #### Permissions
 
-文件浏览会读取 owner 机器上的路径，权限必须不低于远程控制语义。relay 和 desktop host 都必须按当前 session 的 `remote_permission` 拦截：
+文件浏览会读取 owner 机器上的路径，权限必须是 owner 显式发布的 `remote_permission = "full"`。relay 和 desktop host 都必须按当前 session 的 `remote_permission` 拦截：
 
-- `view`：不允许 `FS_REQUEST`。
-- `control` / `full`：允许只读浏览、预览、分块读取、目录 watch。
-- `open_external` 会在 owner 机器触发 OS 打开动作，必须由 desktop host 再次按本地策略校验；如果实现选择只允许 `full`，应在对应任务同步更新本文档。
+- `view` / `control`：不允许浏览或读取远程文件，所有 `FS_REQUEST` 都必须拒绝。
+- `full`：允许只读浏览、预览、分块读取、目录 watch。
 
-非当前 driver 的 client 不应获得文件系统操作权；relay 侧需先按 session driver 状态拒绝，desktop uplink 写本机前再拦一次，保持与 `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` 的双层防线一致。
+只读操作不要求当前 driver 状态：`list_dir` / `file_meta` / `read_file` / `read_chunk` / `watch_dir` / `unwatch_dir` 在 `remote_permission = "full"` 下可由已授权 client 发起。`open_external` 会在 owner 机器触发 OS 打开动作，因此额外要求发送方是当前 driver；relay 侧需按 session driver 状态拒绝，desktop uplink 执行前再拦一次，保持与 `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` 的本机动作防线一致。
 
 #### `FS_REQUEST` payload
 

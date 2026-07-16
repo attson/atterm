@@ -39,6 +39,21 @@ describe("ImagePreview", () => {
     expect(w.text()).toContain("Inline preview unavailable");
   });
 
+  it("ignores an error while the asset URL is still pending", async () => {
+    let resolveAsset!: (url: string) => void;
+    (platform.pluginHost!.fs.assetUrlFor as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<string>((resolve) => { resolveAsset = resolve; }),
+    );
+    const w = mount(ImagePreview, { props: { fs, path: "/x/pending.png", theme: "dimmed" } });
+    await flushPromises();
+    await w.find("img").trigger("error");
+    resolveAsset("blob:ready");
+    await flushPromises();
+
+    expect(w.find("img").attributes("src")).toBe("blob:ready");
+    expect(w.text()).not.toContain("Inline preview unavailable");
+  });
+
   it("ignores a queued error from the old image element after a new src is assigned", async () => {
     (platform.pluginHost!.fs.assetUrlFor as ReturnType<typeof vi.fn>)
       .mockReturnValueOnce("blob:old")

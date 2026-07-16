@@ -97,6 +97,13 @@ function releaseDescendantState(parent: string) {
   }
 }
 
+function collapseDescendants(node: TreeNode) {
+  for (const child of node.children ?? []) {
+    child.expanded = false;
+    collapseDescendants(child);
+  }
+}
+
 function advanceWatchGeneration(path: string): number {
   const next = (watchGenerations.get(path) ?? 0) + 1;
   watchGenerations.set(path, next);
@@ -179,7 +186,12 @@ async function toggle(n: TreeNode) {
   if (!isCurrentNode(fs, root, showHidden, request, n)) return;
   selectedPath.value = n.path;
   if (!n.expanded) {
-    if (pendingExpands.has(n.path)) return;
+    if (pendingExpands.has(n.path)) {
+      advanceWatchGeneration(n.path);
+      advanceRefreshGeneration(n.path);
+      pendingExpands.delete(n.path);
+      return;
+    }
     const watchRequest = advanceWatchGeneration(n.path);
     pendingExpands.set(n.path, watchRequest);
     try {
@@ -224,6 +236,8 @@ async function toggle(n: TreeNode) {
   } else {
     advanceWatchGeneration(n.path);
     pendingExpands.delete(n.path);
+    releaseDescendantState(n.path);
+    collapseDescendants(n);
     n.expanded = false;
     const handle = watchHandles.get(n.path);
     if (handle) {

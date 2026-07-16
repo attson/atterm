@@ -189,6 +189,77 @@ function tokenSubprotocol(token: string): string | undefined {
   return `atterm-token-b64.${stringToBase64URL(token)}`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isFSDirEntry(value: unknown): value is FSDirEntry {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.name === "string" &&
+    typeof value.isDir === "boolean" &&
+    isOptionalNumber(value.size) &&
+    isOptionalNumber(value.modTime)
+  );
+}
+
+function isFSFileMetaInfo(value: unknown): value is FSFileMetaInfo {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.path === "string" &&
+    typeof value.size === "number" &&
+    Number.isFinite(value.size) &&
+    typeof value.modTime === "number" &&
+    Number.isFinite(value.modTime) &&
+    typeof value.isBinary === "boolean"
+  );
+}
+
+function isFSFileContent(value: unknown): value is FSFileContent {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.path === "string" &&
+    typeof value.data === "string" &&
+    typeof value.isBinary === "boolean" &&
+    isOptionalNumber(value.truncatedAt)
+  );
+}
+
+function isFSChunkPayload(value: unknown): value is FSChunkPayload {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.path === "string" &&
+    typeof value.data === "string" &&
+    typeof value.offset === "number" &&
+    Number.isFinite(value.offset) &&
+    typeof value.length === "number" &&
+    Number.isFinite(value.length) &&
+    typeof value.eof === "boolean" &&
+    isOptionalString(value.contentType)
+  );
+}
+
+function isFSResponse(value: unknown): value is FSResponse {
+  if (!isRecord(value)) return false;
+  if (typeof value.request_id !== "string" || typeof value.ok !== "boolean") return false;
+  if (!isOptionalString(value.error) || !isOptionalString(value.watch_id)) return false;
+  if (value.entries !== undefined && (!Array.isArray(value.entries) || !value.entries.every(isFSDirEntry))) {
+    return false;
+  }
+  if (value.meta !== undefined && !isFSFileMetaInfo(value.meta)) return false;
+  if (value.content !== undefined && !isFSFileContent(value.content)) return false;
+  if (value.chunk !== undefined && !isFSChunkPayload(value.chunk)) return false;
+  return true;
+}
+
 export function webSocketAuth(endpoint: Endpoint, path: string): { url: string; protocols?: string[] } {
   const base = endpoint.url.replace(/\/$/, "");
   const protocol = tokenSubprotocol(endpoint.session_token);
@@ -389,7 +460,10 @@ export class SessionConnection {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("filesystem request failed: websocket is not open"));
     }
-    const requestID = req.request_id || this.newFSRequestID();
+    const requestID = req.request_id || this.newUniqueFSRequestID();
+    if (this.pendingFSRequests.has(requestID)) {
+      return Promise.reject(new Error(`duplicate filesystem request_id: ${requestID}`));
+    }
     const payload: FSRequest = { ...req, request_id: requestID };
     const encoded = encodeText(JSON.stringify(payload));
 
@@ -640,12 +714,20 @@ export class SessionConnection {
     return `fs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
 
+  private newUniqueFSRequestID(): string {
+    for (let i = 0; i < 5; i++) {
+      const requestID = this.newFSRequestID();
+      if (!this.pendingFSRequests.has(requestID)) return requestID;
+    }
+    return `fs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+
   private handleFSResponse(payload: Uint8Array): void {
     let response: FSResponse;
     try {
-      const parsed = JSON.parse(decodeText(payload)) as Partial<FSResponse>;
-      if (!parsed || typeof parsed.request_id !== "string" || typeof parsed.ok !== "boolean") return;
-      response = parsed as FSResponse;
+      const parsed = JSON.parse(decodeText(payload));
+      if (!isFSResponse(parsed)) return;
+      response = parsed;
     } catch {
       return;
     }
@@ -672,7 +754,13 @@ export class SessionConnection {
     } catch {
       return;
     }
-    for (const handler of this.fsEventHandlers) handler(event);
+    for (const handler of this.fsEventHandlers) {
+      try {
+        handler(event);
+      } catch {
+        /* keep later handlers isolated */
+      }
+    }
   }
 
   private rejectPendingFSRequests(err: Error): void {

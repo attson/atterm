@@ -57,6 +57,7 @@ describe("SessionConnection FS RPC", () => {
     readyState = FakeWebSocket.CONNECTING;
     binaryType = "";
     sent: Uint8Array[] = [];
+    throwOnSend = false;
     onopen: (() => void) | null = null;
     onmessage: ((event: MessageEvent) => void) | null = null;
     onclose: (() => void) | null = null;
@@ -70,6 +71,7 @@ describe("SessionConnection FS RPC", () => {
     }
 
     send(data: Uint8Array) {
+      if (this.throwOnSend) throw new Error("send failed");
       this.sent.push(data);
     }
 
@@ -95,6 +97,7 @@ describe("SessionConnection FS RPC", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -120,13 +123,25 @@ describe("SessionConnection FS RPC", () => {
       request_id: "fs-test-1",
     });
 
-    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-test-1", ok: true, entries: [{ name: "a.txt" }] });
+    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-test-1", ok: true, entries: [{ name: "a.txt", isDir: false }] });
 
     await expect(responsePromise).resolves.toEqual({
       request_id: "fs-test-1",
       ok: true,
-      entries: [{ name: "a.txt" }],
+      entries: [{ name: "a.txt", isDir: false }],
     });
+  });
+
+  test("generates fs-prefixed request IDs when absent", async () => {
+    const { conn, ws } = openConnection();
+
+    const responsePromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp" });
+    const frame = decodeFrame(ws.sent[1]);
+    const payload = JSON.parse(decodeText(frame.payload));
+    expect(payload.request_id).toMatch(/^fs-/);
+
+    ws.emit(TYPE.FS_RESPONSE, { request_id: payload.request_id, ok: true, entries: [] });
+    await expect(responsePromise).resolves.toMatchObject({ request_id: payload.request_id, ok: true });
   });
 
   test("exports structured FS_RESPONSE result types matching the wire schema", () => {
@@ -172,8 +187,87 @@ describe("SessionConnection FS RPC", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-test-2", ok: true, meta: { size: 12 } });
-    await expect(responsePromise).resolves.toEqual({ request_id: "fs-test-2", ok: true, meta: { size: 12 } });
+    ws.emit(TYPE.FS_RESPONSE, {
+      request_id: "fs-test-2",
+      ok: true,
+      meta: { path: "/tmp/a.txt", size: 12, modTime: 1, isBinary: false },
+    });
+    await expect(responsePromise).resolves.toEqual({
+      request_id: "fs-test-2",
+      ok: true,
+      meta: { path: "/tmp/a.txt", size: 12, modTime: 1, isBinary: false },
+    });
+  });
+
+  test("malformed matching FS_RESPONSE is ignored until a valid matching response arrives", async () => {
+    const { conn, ws } = openConnection();
+    let settled = false;
+    const responsePromise = conn
+      .sendFSRequest({ op: "read_file", path: "/tmp/a.txt", request_id: "fs-malformed" })
+      .then((res) => {
+        settled = true;
+        return res;
+      });
+
+    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-malformed", ok: true, content: { data: false } });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    ws.emit(TYPE.FS_RESPONSE, {
+      request_id: "fs-malformed",
+      ok: true,
+      content: { path: "/tmp/a.txt", data: "aGVsbG8=", isBinary: false, truncatedAt: 0 },
+    });
+    await expect(responsePromise).resolves.toEqual({
+      request_id: "fs-malformed",
+      ok: true,
+      content: { path: "/tmp/a.txt", data: "aGVsbG8=", isBinary: false, truncatedAt: 0 },
+    });
+  });
+
+  test("duplicate request_id is rejected before sending and the original remains resolvable", async () => {
+    const { conn, ws } = openConnection();
+    const firstPromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-duplicate" });
+    const duplicatePromise = conn.sendFSRequest(
+      { op: "file_meta", path: "/tmp/a.txt", request_id: "fs-duplicate" },
+      1,
+    );
+
+    await expect(duplicatePromise).rejects.toThrow(/duplicate/i);
+    expect(ws.sent).toHaveLength(2);
+
+    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-duplicate", ok: true, entries: [] });
+    await expect(firstPromise).resolves.toEqual({ request_id: "fs-duplicate", ok: true, entries: [] });
+  });
+
+  test("timed out FS request is cleaned up and a late response is ignored", async () => {
+    vi.useFakeTimers();
+    const { conn, ws } = openConnection();
+    const firstPromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-timeout" }, 10);
+    const firstRejection = expect(firstPromise).rejects.toThrow(/timed out/i);
+
+    await vi.advanceTimersByTimeAsync(10);
+    await firstRejection;
+
+    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-timeout", ok: true, entries: [] });
+    const secondPromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-timeout" }, 10);
+    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-timeout", ok: true, entries: [] });
+    await expect(secondPromise).resolves.toEqual({ request_id: "fs-timeout", ok: true, entries: [] });
+  });
+
+  test("ws.send exception rejects and clears the pending FS request", async () => {
+    const { conn, ws } = openConnection();
+    ws.throwOnSend = true;
+
+    await expect(conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-send-fail" })).rejects.toThrow(
+      /send failed/i,
+    );
+    expect(ws.sent).toHaveLength(1);
+
+    ws.throwOnSend = false;
+    const retryPromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-send-fail" });
+    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-send-fail", ok: true, entries: [] });
+    await expect(retryPromise).resolves.toEqual({ request_id: "fs-send-fail", ok: true, entries: [] });
   });
 
   test("FS_EVENT invokes registered handlers and unsubscribe removes them", () => {
@@ -188,6 +282,31 @@ describe("SessionConnection FS RPC", () => {
     unsubscribe();
     ws.emit(TYPE.FS_EVENT, { watch_id: "watch-1", path: "/tmp", event: "changed" });
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  test("malformed FS_EVENT is ignored", () => {
+    const { conn, ws } = openConnection();
+    const handler = vi.fn();
+    conn.onFSEvent(handler);
+
+    ws.emit(TYPE.FS_EVENT, { watch_id: "watch-1", path: "/tmp", event: false });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test("throwing FS_EVENT handler does not prevent later handlers", () => {
+    const { conn, ws } = openConnection();
+    const first = vi.fn(() => {
+      throw new Error("handler failed");
+    });
+    const second = vi.fn();
+    conn.onFSEvent(first);
+    conn.onFSEvent(second);
+
+    expect(() => ws.emit(TYPE.FS_EVENT, { watch_id: "watch-1", path: "/tmp", event: "changed" })).not.toThrow();
+
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   test("sendFSRequest rejects when websocket is not open", async () => {

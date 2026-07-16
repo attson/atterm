@@ -51,6 +51,44 @@ describe("FileExplorer filesystem bridge", () => {
     expect(wrapper.text()).toContain("remote-only.txt");
   });
 
+  it("rebinds a remote bridge when its connection is replaced for the same session", async () => {
+    const sessionID = ref<string | null>("remote-session");
+    const firstUnsubscribe = vi.fn();
+    const first = {
+      sendFSRequest: vi.fn().mockResolvedValue({
+        request_id: "first", ok: true, entries: [{ name: "first.txt", isDir: false }],
+      }),
+      onFSEvent: vi.fn(() => firstUnsubscribe),
+    } as unknown as SessionConnection;
+    const second = {
+      sendFSRequest: vi.fn().mockResolvedValue({
+        request_id: "second", ok: true, entries: [{ name: "second.txt", isDir: false }],
+      }),
+      onFSEvent: vi.fn(() => () => {}),
+    } as unknown as SessionConnection;
+    const activeConnection = shallowRef<SessionConnection | null>(first);
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => sessionID.value),
+      activeIsRemote: computed(() => true),
+      activeSessionConnection: computed(() => activeConnection.value),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/remote/project"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+
+    const wrapper = mount(FileExplorer, { props: { context } });
+    await flushPromises();
+    activeConnection.value = second;
+    await flushPromises();
+
+    expect(second.sendFSRequest).toHaveBeenCalledWith({ op: "list_dir", path: "/remote/project" });
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain("second.txt");
+  });
+
   it("keeps the local bridge and pinned root when switching local sessions", async () => {
     const activeSessionID = ref<string | null>("local-one");
     const activeConnection = shallowRef<SessionConnection | null>({} as SessionConnection);

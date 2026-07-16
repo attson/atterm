@@ -60,4 +60,33 @@ describe("FileTree", () => {
     await node.trigger("dblclick");
     expect(w.emitted("file-double-clicked")).toBeTruthy();
   });
+
+  it("unwatches a directory when an in-flight watch resolves after unmount", async () => {
+    let resolveWatch!: (id: number) => void;
+    (platform.pluginHost!.fs.watchDir as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<number>((resolve) => { resolveWatch = resolve; }),
+    );
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+
+    void w.find('.node[data-type="dir"]').trigger("click");
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(1));
+    w.unmount();
+    resolveWatch(42);
+    await flushPromises();
+
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(42);
+  });
+
+  it("unwinds directory watches when the root changes", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    void w.find('.node[data-type="dir"]').trigger("click");
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(1));
+
+    await w.setProps({ root: "/other" });
+    await flushPromises();
+
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(1);
+  });
 });

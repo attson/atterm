@@ -35,6 +35,7 @@ describe("MediaPreview", () => {
 
   it("falls back to BinaryBanner on media error", async () => {
     const w = mount(MediaPreview, { props: { fs, path: "/x/c.mp4", kind: "video" } });
+    await flushPromises();
     await w.find("video").trigger("error");
     expect(w.text()).toContain("Inline preview unavailable");
   });

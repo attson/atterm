@@ -161,4 +161,35 @@ describe("FileEditor (dispatcher)", () => {
     expect(w.text()).toContain("fs broken");
     expect(w.find('[data-test="kind-code"]').exists()).toBe(false);
   });
+
+  it("does not let a stale fileMeta response replace the newer file kind", async () => {
+    let resolveFirst!: (value: { path: string; size: number; modTime: number; isBinary: boolean }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/x/first.bin") {
+        return new Promise((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve({ path, size: 10, modTime: 2, isBinary: false });
+    });
+    const w = mount(FileEditor, {
+      props: { fs, path: "/x/first.bin", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+      global: {
+        stubs: {
+          CodeViewer: { template: '<div data-test="kind-code" />' },
+          ImagePreview: { template: '<div data-test="kind-image" />' },
+          MediaPreview: { template: '<div data-test="kind-media" />' },
+          PdfPreview: { template: '<div data-test="kind-pdf" />' },
+          MarkdownPreview: { template: '<div data-test="kind-markdown" />' },
+          BinaryBanner: { template: '<div data-test="kind-banner" />' },
+        },
+      },
+    });
+    await flushPromises();
+    await w.setProps({ path: "/x/second.txt" });
+    await flushPromises();
+    resolveFirst({ path: "/x/first.bin", size: 10, modTime: 1, isBinary: true });
+    await flushPromises();
+
+    expect(w.find('[data-test="kind-code"]').exists()).toBe(true);
+    expect(w.find('[data-test="kind-banner"]').exists()).toBe(false);
+  });
 });

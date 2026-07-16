@@ -34,7 +34,24 @@ describe("ImagePreview", () => {
 
   it("falls back to BinaryBanner on <img> error", async () => {
     const w = mount(ImagePreview, { props: { fs, path: "/x/broken.png", theme: "dimmed" } });
+    await flushPromises();
     await w.find("img").trigger("error");
     expect(w.text()).toContain("Inline preview unavailable");
+  });
+
+  it("ignores an error from a stale image URL", async () => {
+    (platform.pluginHost!.fs.assetUrlFor as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce("blob:old")
+      .mockReturnValueOnce("blob:new");
+    const w = mount(ImagePreview, { props: { fs, path: "/x/old.png", theme: "dimmed" } });
+    await flushPromises();
+    await w.setProps({ path: "/x/new.png" });
+    await flushPromises();
+
+    const image = w.find("img");
+    image.element.setAttribute("src", "blob:old");
+    await image.trigger("error");
+
+    expect(w.text()).not.toContain("Inline preview unavailable");
   });
 });

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch } from "vue";
+import { onBeforeUnmount, ref, watch } from "vue";
 import { previewKind, type PreviewKind } from "./previewKind";
 import CodeViewer from "./CodeViewer.vue";
 import ImagePreview from "./ImagePreview.vue";
@@ -25,19 +25,34 @@ const { t } = useI18n();
 
 const kind = ref<PreviewKind | null>(null);
 const error = ref<string>("");
+let disposed = false;
+let generation = 0;
+
+function isCurrent(fs: FileSystemBridge, path: string, request: number): boolean {
+  return !disposed && generation === request && props.fs === fs && props.path === path;
+}
 
 async function resolveKind() {
+  const fs = props.fs;
+  const path = props.path;
+  const request = ++generation;
   kind.value = null;
   error.value = "";
   try {
-    const meta = (await props.fs.fileMeta(props.path)) as { isBinary: boolean };
-    kind.value = previewKind(props.path, meta.isBinary);
+    const meta = (await fs.fileMeta(path)) as { isBinary: boolean };
+    if (!isCurrent(fs, path, request)) return;
+    kind.value = previewKind(path, meta.isBinary);
   } catch (e) {
+    if (!isCurrent(fs, path, request)) return;
     error.value = (e as Error).message;
   }
 }
 
-watch(() => [props.path, props.fs.identity], () => { void resolveKind(); }, { immediate: true });
+watch(() => [props.path, props.fs], () => { void resolveKind(); }, { immediate: true });
+onBeforeUnmount(() => {
+  disposed = true;
+  generation++;
+});
 </script>
 
 <template>

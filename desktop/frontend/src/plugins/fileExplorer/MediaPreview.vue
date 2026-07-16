@@ -44,7 +44,11 @@ onBeforeUnmount(() => {
   releaseAsset();
 });
 
-function onError() { failed.value = true; }
+function onError(event: Event) {
+  const target = event.currentTarget as HTMLMediaElement | null;
+  if (!target || !src.value || target.getAttribute("src") !== src.value) return;
+  failed.value = true;
+}
 </script>
 
 <template>

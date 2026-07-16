@@ -46,7 +46,11 @@ onBeforeUnmount(() => {
 });
 
 function toggle() { mode.value = mode.value === "fit" ? "native" : "fit"; }
-function onError() { failed.value = true; }
+function onError(event: Event) {
+  const target = event.currentTarget as HTMLImageElement | null;
+  if (!target || !src.value || target.getAttribute("src") !== src.value) return;
+  failed.value = true;
+}
 </script>
 
 <template>

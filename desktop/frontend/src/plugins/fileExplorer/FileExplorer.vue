@@ -75,20 +75,22 @@ const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
 const fs = shallowRef<FileSystemBridge | null>(null);
 const fsGeneration = ref(0);
 
+const bridgeIdentity = computed<string | null>(() => {
+  if (!props.context.activeIsRemote.value) return platform.pluginHost ? "local" : null;
+  const sessionID = props.context.activeSessionId.value;
+  return sessionID && props.context.activeSessionConnection.value ? `remote:${sessionID}` : null;
+});
+
 watch(
-  () => [
-    props.context.activeIsRemote.value,
-    props.context.activeSessionId.value,
-    props.context.activeSessionConnection.value,
-    platform.pluginHost,
-  ] as const,
-  async ([remote, sessionID, connection, pluginHost]) => {
-    const next = remote
-      ? connection && sessionID
-        ? createRemoteSessionFS(connection, `remote:${sessionID}`)
+  bridgeIdentity,
+  async (identity) => {
+    const connection = props.context.activeSessionConnection.value;
+    const next = identity === "local"
+      ? platform.pluginHost
+        ? createLocalFSBridge(platform.pluginHost, platform.events)
         : null
-      : pluginHost
-        ? createLocalFSBridge(pluginHost, platform.events)
+      : identity && connection
+        ? createRemoteSessionFS(connection, identity)
         : null;
     const previous = fs.value;
 

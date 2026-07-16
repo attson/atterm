@@ -706,9 +706,11 @@ function onTemplateHotkey(e: KeyboardEvent) {
 }
 
 let templatesOff: (() => void) | null = null;
+let isAlive = true;
 
 onMounted(async () => {
   await ensureTerm();
+  if (!isAlive) return;
   // Resolve the local hostname before opening the WS so the very first ATTACH
   // carries the correct client_name. Failure (e.g. Wails not ready in tests
   // or a future browser-only build) falls back to the default in connection.ts.
@@ -718,6 +720,7 @@ onMounted(async () => {
   } catch {
     /* fall back to default */
   }
+  if (!isAlive) return;
   startConnection();
   reloadTemplates();
   templatesOff = platform.events.on("quickTemplates:changed", reloadTemplates);
@@ -732,12 +735,16 @@ onMounted(async () => {
   // mount, which makes FitAddon return NaN and bail. By the time we get a
   // second rAF the layout has definitely settled.
   requestAnimationFrame(() => {
+    if (!isAlive) return;
     safeFit();
-    requestAnimationFrame(() => safeFit());
+    requestAnimationFrame(() => {
+      if (isAlive) safeFit();
+    });
   });
 });
 
 onBeforeUnmount(() => {
+  isAlive = false;
   // Drop every external callback that could re-enter the term BEFORE we
   // touch conn / term. A queued ResizeObserver entry or a stray document
   // listener firing in the same tick used to call safeFit() → fit.fit() on

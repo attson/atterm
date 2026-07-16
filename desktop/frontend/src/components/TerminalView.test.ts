@@ -26,6 +26,15 @@ describe("TerminalView plugin connection registry", () => {
   });
 });
 
+describe("TerminalView async mount lifecycle", () => {
+  test("does not attach after an async mount resumes on an unmounted view", () => {
+    expect(source).toContain("let isAlive = true;");
+    expect(source).toMatch(/await ensureTerm\(\);\s*if \(!isAlive\) return;/);
+    expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;\s*startConnection\(\)/);
+    expect(source).toMatch(/onBeforeUnmount\(\(\) => \{\s*isAlive = false;/);
+  });
+});
+
 describe("TerminalView overlay placement", () => {
   test("remote panes move attach progress below the remote badge", () => {
     expect(source).toContain("avoidTopRightBadge?: boolean");

@@ -132,6 +132,34 @@ describe("useTerminalLinkProvider", () => {
     expect(openURL).toHaveBeenCalledWith("https://x.test");
   });
 
+  it("activate with Mod consumes the click so the WebView does not navigate", async () => {
+    const f = makeFakeTerm("https://x.test");
+    const openURL = vi.fn().mockResolvedValue(undefined);
+    useTerminalLinkProvider({
+      term: f.term,
+      isMac: true,
+      getHomeDir: () => "",
+      openURL,
+      onError: vi.fn(),
+    });
+    let links: any[] | undefined;
+    f.getProvider().provideLinks(1, (l) => (links = l as any[]));
+    const event = new MouseEvent("click", {
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const stopPropagation = vi.spyOn(event, "stopPropagation");
+    const stopImmediatePropagation = vi.spyOn(event, "stopImmediatePropagation");
+
+    await links![0].activate(event, "https://x.test");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(stopImmediatePropagation).toHaveBeenCalledOnce();
+    expect(openURL).toHaveBeenCalledWith("https://x.test");
+  });
+
   it("activate for ~/ without homeDir calls onError, not openURL", async () => {
     const f = makeFakeTerm("cd ~/Projects/foo");
     const openURL = vi.fn().mockResolvedValue(undefined);

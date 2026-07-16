@@ -33,6 +33,12 @@ describe("TerminalView async mount lifecycle", () => {
     expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;\s*startConnection\(\)/);
     expect(source).toMatch(/onBeforeUnmount\(\(\) => \{\s*isAlive = false;/);
   });
+
+  test("checks liveness inside ensureTerm after each async dependency", () => {
+    expect(source).toMatch(/function isLiveTerminal\(\): boolean/);
+    expect(source).toMatch(/await getWebglRendererEnabled\(\);[\s\S]*?if \(!isLiveTerminal\(\)\) return;[\s\S]*?keyTarget\.addEventListener/);
+    expect(source).toMatch(/await getUserHomeDir\(\);[\s\S]*?if \(!isLiveTerminal\(\)\) return;[\s\S]*?useTerminalLinkProvider[\s\S]*?resizeObserver\.observe/);
+  });
 });
 
 describe("TerminalView overlay placement", () => {

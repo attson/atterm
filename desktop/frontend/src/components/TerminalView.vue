@@ -112,6 +112,7 @@ let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
 let pluginInputSender: ((text: string) => void) | null = null;
+let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
@@ -141,6 +142,10 @@ let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
 let copyKeyTarget: HTMLDivElement | null = null;
+
+function isLiveTerminal(): boolean {
+  return isAlive && term !== null && termContainer.value !== null;
+}
 
 const MENU_WIDTH = 150;
 const MENU_HEIGHT = 150;
@@ -479,6 +484,7 @@ async function ensureTerm() {
     // opt back in from Settings once the binding is reachable.
     webglEnabled = false;
   }
+  if (!isLiveTerminal()) return;
   if (webglEnabled) {
     try {
       const webgl = new WebglAddon();
@@ -558,6 +564,7 @@ async function ensureTerm() {
   } catch {
     cachedHomeDir = "";
   }
+  if (!isLiveTerminal()) return;
   linkProviderDisposer = useTerminalLinkProvider({
     term,
     isMac,
@@ -706,7 +713,6 @@ function onTemplateHotkey(e: KeyboardEvent) {
 }
 
 let templatesOff: (() => void) | null = null;
-let isAlive = true;
 
 onMounted(async () => {
   await ensureTerm();

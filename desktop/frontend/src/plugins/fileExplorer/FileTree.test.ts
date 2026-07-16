@@ -200,4 +200,43 @@ describe("FileTree", () => {
     expect(w.text()).toContain("new.txt");
     expect(w.text()).not.toContain("old.txt");
   });
+
+  it("does not let a removed node's pending watch replace a recreated node's live watch", async () => {
+    const emitDirChanged = installDirChangeEmitter();
+    let parentReads = 0;
+    const childWatchResolvers: Array<(id: number) => void> = [];
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/proj") return Promise.resolve([{ name: "parent", isDir: true }]);
+      if (path === "/proj/parent") {
+        parentReads++;
+        return Promise.resolve([{ name: "child", isDir: true }]);
+      }
+      return Promise.resolve([]);
+    });
+    (platform.pluginHost!.fs.watchDir as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/proj/parent") return Promise.resolve(10);
+      return new Promise<number>((resolve) => { childWatchResolvers.push(resolve); });
+    });
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/parent"]').trigger("click");
+    await flushPromises();
+    void w.find('.node[title="/proj/parent/child"]').trigger("click");
+    await vi.waitFor(() => expect(childWatchResolvers).toHaveLength(1));
+
+    emitDirChanged("/proj/parent");
+    await flushPromises();
+    void w.find('.node[title="/proj/parent/child"]').trigger("click");
+    await vi.waitFor(() => expect(childWatchResolvers).toHaveLength(2));
+    childWatchResolvers[1](22);
+    await flushPromises();
+    childWatchResolvers[0](11);
+    await flushPromises();
+
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(11);
+    expect(platform.pluginHost!.fs.unwatchDir).not.toHaveBeenCalledWith(22);
+    w.unmount();
+    await flushPromises();
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(22);
+  });
 });

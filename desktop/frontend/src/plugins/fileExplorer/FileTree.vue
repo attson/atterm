@@ -90,10 +90,10 @@ function releaseDescendantState(parent: string) {
     if (isDescendant(path, parent)) pendingExpands.delete(path);
   }
   for (const path of Array.from(watchGenerations.keys())) {
-    if (isDescendant(path, parent)) watchGenerations.delete(path);
+    if (isDescendant(path, parent)) advanceWatchGeneration(path);
   }
   for (const path of Array.from(refreshGenerations.keys())) {
-    if (isDescendant(path, parent)) refreshGenerations.delete(path);
+    if (isDescendant(path, parent)) advanceRefreshGeneration(path);
   }
 }
 
@@ -114,8 +114,6 @@ function stopCurrentGeneration() {
   offDirChanged();
   offDirChanged = () => {};
   pendingExpands.clear();
-  watchGenerations.clear();
-  refreshGenerations.clear();
   releaseWatches();
 }
 
@@ -178,7 +176,7 @@ async function toggle(n: TreeNode) {
   const root = props.root;
   const showHidden = props.showHidden;
   const request = generation;
-  if (!isCurrent(fs, root, showHidden, request)) return;
+  if (!isCurrentNode(fs, root, showHidden, request, n)) return;
   selectedPath.value = n.path;
   if (!n.expanded) {
     if (pendingExpands.has(n.path)) return;
@@ -189,17 +187,17 @@ async function toggle(n: TreeNode) {
         const refreshRequest = advanceRefreshGeneration(n.path);
         const children = await loadDir(fs, n.path, showHidden);
         if (
-          !isCurrent(fs, root, showHidden, request)
+          !isCurrentNode(fs, root, showHidden, request, n)
           || watchGenerations.get(n.path) !== watchRequest
           || refreshGenerations.get(n.path) !== refreshRequest
         ) return;
         n.children = children;
       }
-      if (!isCurrent(fs, root, showHidden, request) || watchGenerations.get(n.path) !== watchRequest) return;
+      if (!isCurrentNode(fs, root, showHidden, request, n) || watchGenerations.get(n.path) !== watchRequest) return;
       n.expanded = true;
       const id = await fs.watchDir(n.path);
       if (
-        !isCurrent(fs, root, showHidden, request)
+        !isCurrentNode(fs, root, showHidden, request, n)
         || !n.expanded
         || watchGenerations.get(n.path) !== watchRequest
       ) {
@@ -210,14 +208,14 @@ async function toggle(n: TreeNode) {
       if (previous) {
         watchHandles.delete(n.path);
         await unwatch(previous.fs, previous.id);
-        if (!isCurrent(fs, root, showHidden, request) || watchGenerations.get(n.path) !== watchRequest) {
+        if (!isCurrentNode(fs, root, showHidden, request, n) || watchGenerations.get(n.path) !== watchRequest) {
           await unwatch(fs, id);
           return;
         }
       }
       watchHandles.set(n.path, { fs, id });
     } catch (err) {
-      if (isCurrent(fs, root, showHidden, request)) {
+      if (isCurrentNode(fs, root, showHidden, request, n)) {
         console.warn("plugin-fs: watcher unavailable or cap reached for", n.path, err);
       }
     } finally {
@@ -231,10 +229,10 @@ async function toggle(n: TreeNode) {
     if (handle) {
       watchHandles.delete(n.path);
       await unwatch(handle.fs, handle.id);
-      if (!isCurrent(fs, root, showHidden, request)) return;
+      if (!isCurrentNode(fs, root, showHidden, request, n)) return;
     }
   }
-  if (isCurrent(fs, root, showHidden, request)) emit("dir-toggled", n.path, n.expanded);
+  if (isCurrentNode(fs, root, showHidden, request, n)) emit("dir-toggled", n.path, n.expanded);
 }
 
 function findNode(nodes: TreeNode[], path: string): TreeNode | null {
@@ -246,6 +244,16 @@ function findNode(nodes: TreeNode[], path: string): TreeNode | null {
     }
   }
   return null;
+}
+
+function isCurrentNode(
+  fs: FileSystemBridge,
+  root: string,
+  showHidden: boolean,
+  request: number,
+  node: TreeNode,
+): boolean {
+  return isCurrent(fs, root, showHidden, request) && findNode(rootNodes.value, node.path) === node;
 }
 
 onBeforeUnmount(() => {

@@ -123,6 +123,11 @@ const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
   null,
 );
 
+const pluginSessionConnections = inject<Map<string, SessionConnection> | null>(
+  "atterm:pluginSessionConnections",
+  null,
+);
+
 // pluginContext is provided by App.vue (Task 14). Null when TerminalView is
 // rendered outside the plugin-aware App (e.g. tests, standalone embedding).
 const pluginContext = inject<PluginContext>("atterm:pluginContext", null as unknown as PluginContext);
@@ -602,6 +607,7 @@ function startConnection() {
     { clientName: localHostname.value, remote: !props.isLocalSession }
   );
   conn.attach();
+  pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins
   // (Quick Input) can pipe text through this same driver connection.
   // A fresh SessionConnection would attach as a viewer and have its
@@ -748,6 +754,9 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
   pluginInputSenders?.delete(props.sessionId);
+  if (pluginSessionConnections?.get(props.sessionId) === conn) {
+    pluginSessionConnections?.delete(props.sessionId);
+  }
   focusCoalescer?.dispose();
   focusCoalescer = null;
   linkProviderDisposer?.dispose();

@@ -10,6 +10,15 @@ function styleBlockFor(selector: string): string {
   return match?.[1] ?? "";
 }
 
+describe("TerminalView plugin connection registry", () => {
+  test("registers its live SessionConnection and only removes its own entry", () => {
+    expect(source).toContain('"atterm:pluginSessionConnections"');
+    expect(source).toMatch(/pluginSessionConnections\?\.set\(props\.sessionId, conn\)/);
+    expect(source).toMatch(/pluginSessionConnections\?\.get\(props\.sessionId\) === conn/);
+    expect(source).toMatch(/pluginSessionConnections\?\.delete\(props\.sessionId\)/);
+  });
+});
+
 describe("TerminalView overlay placement", () => {
   test("remote panes move attach progress below the remote badge", () => {
     expect(source).toContain("avoidTopRightBadge?: boolean");

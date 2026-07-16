@@ -52,7 +52,7 @@ import {
 } from "./lib/api";
 import type { Endpoint, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
-import { SessionListConnection, type SessionInfo } from "./lib/connection";
+import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
 import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
@@ -367,10 +367,17 @@ const currentTitleForBar = computed<string>(() => {
 const pluginInputSenders = new Map<string, (text: string) => void>();
 provide("atterm:pluginInputSenders", pluginInputSenders);
 
+// TerminalView owns these connections. Plugins must reuse an entry instead of
+// opening another /client attachment for the active session.
+const pluginSessionConnections = new Map<string, SessionConnection>();
+provide("atterm:pluginSessionConnections", pluginSessionConnections);
+
 const pluginContext = createPluginContext({
   activePane: activePaneRef,
   endpointForPane: endpointFor,
   sessionInfoForPane: paneSessionInfo,
+  sessionConnectionForPane: (pane) =>
+    pane.sessionId ? pluginSessionConnections.get(pane.sessionId) ?? null : null,
   sendToSession: (sessionId, endpoint, text) => {
     const sender = pluginInputSenders.get(sessionId);
     if (sender) {

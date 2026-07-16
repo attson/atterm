@@ -33,6 +33,8 @@ const emit = defineEmits<{
 const rootNodes = ref<TreeNode[]>([]);
 const selectedPath = ref<string>("");
 const watchHandles = new Map<string, { fs: FileSystemBridge; id: number | string }>();
+const pendingExpands = new Map<string, number>();
+const watchGenerations = new Map<string, number>();
 let disposed = false;
 let generation = 0;
 let offDirChanged: () => void = () => {};
@@ -73,10 +75,18 @@ function releaseWatches() {
   for (const { fs, id } of handles) void unwatch(fs, id);
 }
 
+function advanceWatchGeneration(path: string): number {
+  const next = (watchGenerations.get(path) ?? 0) + 1;
+  watchGenerations.set(path, next);
+  return next;
+}
+
 function stopCurrentGeneration() {
   generation++;
   offDirChanged();
   offDirChanged = () => {};
+  pendingExpands.clear();
+  watchGenerations.clear();
   releaseWatches();
 }
 
@@ -131,33 +141,53 @@ async function toggle(n: TreeNode) {
   if (!isCurrent(fs, root, showHidden, request)) return;
   selectedPath.value = n.path;
   if (!n.expanded) {
-    if (n.children === null) {
-      const children = await loadDir(fs, n.path, showHidden);
-      if (!isCurrent(fs, root, showHidden, request)) return;
-      n.children = children;
-    }
-    if (!isCurrent(fs, root, showHidden, request)) return;
-    n.expanded = true;
+    if (pendingExpands.has(n.path)) return;
+    const watchRequest = advanceWatchGeneration(n.path);
+    pendingExpands.set(n.path, watchRequest);
     try {
+      if (n.children === null) {
+        const children = await loadDir(fs, n.path, showHidden);
+        if (!isCurrent(fs, root, showHidden, request) || watchGenerations.get(n.path) !== watchRequest) return;
+        n.children = children;
+      }
+      if (!isCurrent(fs, root, showHidden, request) || watchGenerations.get(n.path) !== watchRequest) return;
+      n.expanded = true;
       const id = await fs.watchDir(n.path);
-      if (!isCurrent(fs, root, showHidden, request) || !n.expanded) {
+      if (
+        !isCurrent(fs, root, showHidden, request)
+        || !n.expanded
+        || watchGenerations.get(n.path) !== watchRequest
+      ) {
         await unwatch(fs, id);
         return;
+      }
+      const previous = watchHandles.get(n.path);
+      if (previous) {
+        watchHandles.delete(n.path);
+        await unwatch(previous.fs, previous.id);
+        if (!isCurrent(fs, root, showHidden, request) || watchGenerations.get(n.path) !== watchRequest) {
+          await unwatch(fs, id);
+          return;
+        }
       }
       watchHandles.set(n.path, { fs, id });
     } catch (err) {
       if (isCurrent(fs, root, showHidden, request)) {
         console.warn("plugin-fs: watcher unavailable or cap reached for", n.path, err);
       }
+    } finally {
+      if (pendingExpands.get(n.path) === watchRequest) pendingExpands.delete(n.path);
     }
   } else {
+    advanceWatchGeneration(n.path);
+    pendingExpands.delete(n.path);
+    n.expanded = false;
     const handle = watchHandles.get(n.path);
     if (handle) {
       watchHandles.delete(n.path);
       await unwatch(handle.fs, handle.id);
       if (!isCurrent(fs, root, showHidden, request)) return;
     }
-    n.expanded = false;
   }
   if (isCurrent(fs, root, showHidden, request)) emit("dir-toggled", n.path, n.expanded);
 }

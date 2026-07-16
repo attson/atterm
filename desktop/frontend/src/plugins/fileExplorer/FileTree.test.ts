@@ -89,4 +89,45 @@ describe("FileTree", () => {
 
     expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(1);
   });
+
+  it("starts only one watch for concurrent expands of the same directory", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const dir = w.find('.node[data-type="dir"]');
+
+    void dir.trigger("click");
+    void dir.trigger("click");
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalled());
+
+    expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(1);
+    w.unmount();
+    await flushPromises();
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(1);
+  });
+
+  it("unwatches an older pending watch after the directory is collapsed and re-expanded", async () => {
+    const resolvers: Array<(id: number) => void> = [];
+    (platform.pluginHost!.fs.watchDir as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<number>((resolve) => { resolvers.push(resolve); }),
+    );
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const dir = w.find('.node[data-type="dir"]');
+
+    void dir.trigger("click");
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(1));
+    await dir.trigger("click");
+    void dir.trigger("click");
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.watchDir).toHaveBeenCalledTimes(2));
+
+    resolvers[0](11);
+    await flushPromises();
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(11);
+
+    resolvers[1](12);
+    await flushPromises();
+    w.unmount();
+    await flushPromises();
+    expect(platform.pluginHost!.fs.unwatchDir).toHaveBeenCalledWith(12);
+  });
 });

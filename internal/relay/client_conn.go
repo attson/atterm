@@ -44,6 +44,11 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 	// Outgoing pump (started after ATTACH).
 	writerCtx, cancelWriter := context.WithCancel(ctx)
 	defer cancelWriter()
+	targetedOverflow := func() {
+		s.debugf("client targeted_fs_overflow")
+		cancelWriter()
+		_ = c.CloseNow()
+	}
 
 	startWriter := func() {
 		go func() {
@@ -238,41 +243,51 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 			var request proto.FSRequestPayload
 			if err := json.Unmarshal(f.Payload, &request); err != nil || request.RequestID == "" || request.Op == "" || f.SessionID != sess.ID {
-				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "invalid_request")
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
 				continue
 			}
 			if request.Op != "open_external" && !isReadOnlyFSOperation(request.Op) {
-				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "invalid_request")
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
 				continue
 			}
 			if sess.Info().RemotePermission != proto.RemotePermissionFull {
-				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "permission_denied")
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "permission_denied")
 				continue
 			}
 			if !sess.DriverFromUpstream() {
-				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "upstream_unavailable")
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "upstream_unavailable")
 				continue
 			}
 			if request.Op == "open_external" {
 				if scope != authWrite {
-					s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "permission_denied")
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "permission_denied")
 					continue
 				}
 				if !sess.IsDriver(sub) {
-					s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "driver_required")
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "driver_required")
 					continue
 				}
 			}
 
 			routes := s.fsRoutes()
-			if !routes.registerRequest(sess.ID, request.RequestID, targetedOut) {
-				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "duplicate_request_id")
+			if request.Op == "unwatch_dir" {
+				if request.WatchID == "" {
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
+					continue
+				}
+				if !routes.clientOwnsWatch(sess.ID, request.WatchID, targetedOut) {
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "permission_denied")
+					continue
+				}
+			}
+			if !routes.registerRequestRoute(sess.ID, request, targetedOut, targetedOverflow) {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "duplicate_request_id")
 				continue
 			}
 			if !sess.SendInbound(f) {
 				routes.unregisterRequest(sess.ID, request.RequestID, targetedOut)
 				s.debugf("client fs_request_drop reason=inbound_full session=%s request_id=%s", sess.ID, request.RequestID)
-				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "upstream_unavailable")
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "upstream_unavailable")
 			}
 
 		case proto.TypePing:
@@ -307,7 +322,7 @@ func isReadOnlyFSOperation(op string) bool {
 	}
 }
 
-func (s *Server) sendFSClientError(out chan<- proto.Frame, sessionID uuid.UUID, requestID, message string) {
+func (s *Server) sendFSClientError(out chan<- proto.Frame, onOverflow func(), sessionID uuid.UUID, requestID, message string) {
 	payload, err := json.Marshal(proto.FSResponsePayload{
 		RequestID: requestID,
 		Error:     message,
@@ -315,7 +330,7 @@ func (s *Server) sendFSClientError(out chan<- proto.Frame, sessionID uuid.UUID, 
 	if err != nil {
 		return
 	}
-	if !sendFSFrame(out, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
+	if !sendFSFrameToRoute(fsClientRoute{out: out, onOverflow: onOverflow}, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
 		s.debugf("client fs_error_drop session=%s request_id=%s", sessionID, requestID)
 	}
 }

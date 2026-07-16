@@ -139,7 +139,7 @@ func TestFSRouterRegistersWatchAfterSuccessfulResponse(t *testing.T) {
 	r := newFSRouter()
 	sessionID := uuid.New()
 	out := make(chan proto.Frame, 2)
-	r.registerRequest(sessionID, "watch-request", out)
+	r.registerRequestRoute(sessionID, proto.FSRequestPayload{RequestID: "watch-request", Op: "watch_dir"}, out, nil)
 
 	r.routeResponse(proto.Frame{
 		Type:      proto.TypeFSResponse,
@@ -160,6 +160,59 @@ func TestFSRouterRegistersWatchAfterSuccessfulResponse(t *testing.T) {
 		}
 	default:
 		t.Fatal("watch owner did not receive event")
+	}
+}
+
+func TestFSRouterDuplicateWatchIDDoesNotStealEvents(t *testing.T) {
+	r := newFSRouter()
+	sessionID := uuid.New()
+	first := make(chan proto.Frame, 2)
+	second := make(chan proto.Frame, 2)
+	r.registerWatch(sessionID, "watch-1", first)
+	if !r.registerRequestRoute(sessionID, proto.FSRequestPayload{RequestID: "second-watch-request", Op: "watch_dir"}, second, nil) {
+		t.Fatal("second watch request route was not registered")
+	}
+
+	if !r.routeResponse(proto.Frame{
+		Type:      proto.TypeFSResponse,
+		SessionID: sessionID,
+		Payload:   []byte(`{"request_id":"second-watch-request","ok":true,"watch_id":"watch-1"}`),
+	}) {
+		t.Fatal("duplicate watch response was not delivered to requester")
+	}
+
+	select {
+	case got := <-second:
+		var response proto.FSResponsePayload
+		if err := json.Unmarshal(got.Payload, &response); err != nil {
+			t.Fatalf("decode duplicate watch response: %v", err)
+		}
+		if response.OK || response.Error != "duplicate_watch_id" {
+			t.Fatalf("duplicate watch response = %+v, want duplicate_watch_id error", response)
+		}
+	default:
+		t.Fatal("duplicate watch requester did not receive an error")
+	}
+
+	if !r.routeEvent(proto.Frame{
+		Type:      proto.TypeFSEvent,
+		SessionID: sessionID,
+		Payload:   []byte(`{"watch_id":"watch-1","path":"/tmp","event":"dir_changed"}`),
+	}) {
+		t.Fatal("watch event was not routed to original owner")
+	}
+	select {
+	case got := <-first:
+		if got.Type != proto.TypeFSEvent {
+			t.Fatalf("original owner frame type = %v, want FS_EVENT", got.Type)
+		}
+	default:
+		t.Fatal("original watch owner did not receive event")
+	}
+	select {
+	case got := <-second:
+		t.Fatalf("duplicate watch requester received event: %+v", got)
+	default:
 	}
 }
 
@@ -211,6 +264,28 @@ func TestFSRouterDropsWhenClientChannelIsFull(t *testing.T) {
 
 	if r.routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: []byte(`{"request_id":"request","ok":true}`)}) {
 		t.Fatal("response was reported delivered to full channel")
+	}
+}
+
+func TestFSRouterResponseOverflowInvokesCallback(t *testing.T) {
+	r := newFSRouter()
+	sessionID := uuid.New()
+	out := make(chan proto.Frame, 1)
+	out <- proto.Frame{Type: proto.TypeMeta}
+	overflow := make(chan struct{}, 1)
+	if !r.registerRequestRoute(sessionID, proto.FSRequestPayload{RequestID: "request", Op: "list_dir"}, out, func() {
+		overflow <- struct{}{}
+	}) {
+		t.Fatal("request route was not registered")
+	}
+
+	if r.routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: []byte(`{"request_id":"request","ok":true}`)}) {
+		t.Fatal("response was reported delivered to full channel")
+	}
+	select {
+	case <-overflow:
+	default:
+		t.Fatal("overflow callback was not invoked")
 	}
 }
 
@@ -391,6 +466,105 @@ func TestClientFSDuplicateRequestRejectsLaterRequester(t *testing.T) {
 	}
 	if frame.Type != proto.TypeFSResponse {
 		t.Fatalf("original requester frame type = %v, want FS_RESPONSE", frame.Type)
+	}
+}
+
+func TestClientFSUnwatchRejectsNonOwner(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	owner := dialClientAttach(t, ctx, httpSrv, token, sessionID, "owner")
+	defer owner.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, owner)
+	other := dialClientAttach(t, ctx, httpSrv, token, sessionID, "other")
+	defer other.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, other)
+
+	watchPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "watch-request", Op: "watch_dir", Path: "/tmp"})
+	writeClientFrame(t, ctx, owner, proto.TypeFSRequest, sessionID, watchPayload)
+	select {
+	case got := <-sess.Inbound():
+		if got.Type != proto.TypeFSRequest {
+			t.Fatalf("watch inbound type = %v, want FS_REQUEST", got.Type)
+		}
+	case <-ctx.Done():
+		t.Fatal("owner watch request was not forwarded")
+	}
+	watchResponse, _ := json.Marshal(proto.FSResponsePayload{RequestID: "watch-request", OK: true, WatchID: "watch-1"})
+	if !srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: watchResponse}) {
+		t.Fatal("watch response was not routed")
+	}
+	_, data, err := owner.Read(ctx)
+	if err != nil {
+		t.Fatalf("read owner watch response: %v", err)
+	}
+	if _, err := proto.Unmarshal(data); err != nil {
+		t.Fatalf("unmarshal owner watch response: %v", err)
+	}
+
+	unwatchPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "unwatch-other", Op: "unwatch_dir", WatchID: "watch-1"})
+	writeClientFrame(t, ctx, other, proto.TypeFSRequest, sessionID, unwatchPayload)
+	assertNoFSInbound(t, sess)
+	assertFSClientError(t, ctx, other, "unwatch-other", "permission_denied")
+}
+
+func TestClientFSOwnerUnwatchSuccessRemovesWatchRoute(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newRelayHTTPServer(t, srv)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "owner")
+	defer client.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, client)
+
+	watchPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "watch-request", Op: "watch_dir", Path: "/tmp"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, watchPayload)
+	select {
+	case <-sess.Inbound():
+	case <-ctx.Done():
+		t.Fatal("watch request was not forwarded")
+	}
+	watchResponse, _ := json.Marshal(proto.FSResponsePayload{RequestID: "watch-request", OK: true, WatchID: "watch-1"})
+	if !srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: watchResponse}) {
+		t.Fatal("watch response was not routed")
+	}
+	if _, _, err := client.Read(ctx); err != nil {
+		t.Fatalf("read watch response: %v", err)
+	}
+
+	unwatchPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "unwatch-owner", Op: "unwatch_dir", WatchID: "watch-1"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, unwatchPayload)
+	select {
+	case got := <-sess.Inbound():
+		if got.Type != proto.TypeFSRequest {
+			t.Fatalf("unwatch inbound type = %v, want FS_REQUEST", got.Type)
+		}
+	case <-ctx.Done():
+		t.Fatal("owner unwatch request was not forwarded")
+	}
+	unwatchResponse, _ := json.Marshal(proto.FSResponsePayload{RequestID: "unwatch-owner", OK: true})
+	if !srv.fsRoutes().routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: unwatchResponse}) {
+		t.Fatal("unwatch response was not routed")
+	}
+	if _, _, err := client.Read(ctx); err != nil {
+		t.Fatalf("read unwatch response: %v", err)
+	}
+
+	if srv.fsRoutes().routeEvent(proto.Frame{
+		Type:      proto.TypeFSEvent,
+		SessionID: sessionID,
+		Payload:   []byte(`{"watch_id":"watch-1","path":"/tmp","event":"dir_changed"}`),
+	}) {
+		t.Fatal("watch event routed after owner unwatch succeeded")
 	}
 }
 

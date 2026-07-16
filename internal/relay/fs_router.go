@@ -13,13 +13,20 @@ type fsRouteKey struct {
 	id        string
 }
 
+type fsClientRoute struct {
+	out        chan<- proto.Frame
+	op         string
+	watchID    string
+	onOverflow func()
+}
+
 // fsRouter keeps the per-client routes needed by remote filesystem RPC. FS
 // frames cannot use Session.Broadcast because every response and watch event
 // belongs to its original requesting client only.
 type fsRouter struct {
 	mu       sync.Mutex
-	requests map[fsRouteKey]chan<- proto.Frame
-	watches  map[fsRouteKey]chan<- proto.Frame
+	requests map[fsRouteKey]fsClientRoute
+	watches  map[fsRouteKey]fsClientRoute
 }
 
 // Keep router allocation lazy so every Server, including direct test-only
@@ -37,29 +44,38 @@ func (s *Server) fsRoutes() *fsRouter {
 
 func newFSRouter() *fsRouter {
 	return &fsRouter{
-		requests: make(map[fsRouteKey]chan<- proto.Frame),
-		watches:  make(map[fsRouteKey]chan<- proto.Frame),
+		requests: make(map[fsRouteKey]fsClientRoute),
+		watches:  make(map[fsRouteKey]fsClientRoute),
 	}
 }
 
 func (r *fsRouter) registerRequest(sessionID uuid.UUID, requestID string, out chan<- proto.Frame) bool {
-	if requestID == "" || out == nil {
+	return r.registerRequestRoute(sessionID, proto.FSRequestPayload{RequestID: requestID}, out, nil)
+}
+
+func (r *fsRouter) registerRequestRoute(sessionID uuid.UUID, request proto.FSRequestPayload, out chan<- proto.Frame, onOverflow func()) bool {
+	if request.RequestID == "" || out == nil {
 		return false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := fsRouteKey{sessionID: sessionID, id: requestID}
+	key := fsRouteKey{sessionID: sessionID, id: request.RequestID}
 	if _, exists := r.requests[key]; exists {
 		return false
 	}
-	r.requests[key] = out
+	r.requests[key] = fsClientRoute{
+		out:        out,
+		op:         request.Op,
+		watchID:    request.WatchID,
+		onOverflow: onOverflow,
+	}
 	return true
 }
 
 func (r *fsRouter) unregisterRequest(sessionID uuid.UUID, requestID string, out chan<- proto.Frame) {
 	key := fsRouteKey{sessionID: sessionID, id: requestID}
 	r.mu.Lock()
-	if r.requests[key] == out {
+	if route, ok := r.requests[key]; ok && route.out == out {
 		delete(r.requests, key)
 	}
 	r.mu.Unlock()
@@ -70,8 +86,18 @@ func (r *fsRouter) registerWatch(sessionID uuid.UUID, watchID string, out chan<-
 		return
 	}
 	r.mu.Lock()
-	r.watches[fsRouteKey{sessionID: sessionID, id: watchID}] = out
+	r.watches[fsRouteKey{sessionID: sessionID, id: watchID}] = fsClientRoute{out: out}
 	r.mu.Unlock()
+}
+
+func (r *fsRouter) clientOwnsWatch(sessionID uuid.UUID, watchID string, out chan<- proto.Frame) bool {
+	if watchID == "" || out == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	route, ok := r.watches[fsRouteKey{sessionID: sessionID, id: watchID}]
+	return ok && route.out == out
 }
 
 func (r *fsRouter) unregisterClient(out chan<- proto.Frame) {
@@ -81,12 +107,12 @@ func (r *fsRouter) unregisterClient(out chan<- proto.Frame) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for key, route := range r.requests {
-		if route == out {
+		if route.out == out {
 			delete(r.requests, key)
 		}
 	}
 	for key, route := range r.watches {
-		if route == out {
+		if route.out == out {
 			delete(r.watches, key)
 		}
 	}
@@ -115,14 +141,39 @@ func (r *fsRouter) routeResponse(f proto.Frame) bool {
 
 	key := fsRouteKey{sessionID: f.SessionID, id: payload.RequestID}
 	r.mu.Lock()
-	out := r.requests[key]
+	route, ok := r.requests[key]
+	if !ok {
+		r.mu.Unlock()
+		return false
+	}
 	delete(r.requests, key)
-	if out != nil && payload.OK && payload.WatchID != "" {
-		r.watches[fsRouteKey{sessionID: f.SessionID, id: payload.WatchID}] = out
+	if payload.OK {
+		switch route.op {
+		case "watch_dir":
+			if payload.WatchID != "" {
+				watchKey := fsRouteKey{sessionID: f.SessionID, id: payload.WatchID}
+				if existing, exists := r.watches[watchKey]; exists && existing.out != route.out {
+					payload.OK = false
+					payload.Error = "duplicate_watch_id"
+					payload.WatchID = ""
+					f.Payload, _ = json.Marshal(payload)
+				} else {
+					route.watchID = payload.WatchID
+					r.watches[watchKey] = route
+				}
+			}
+		case "unwatch_dir":
+			if route.watchID != "" {
+				watchKey := fsRouteKey{sessionID: f.SessionID, id: route.watchID}
+				if watchRoute, exists := r.watches[watchKey]; exists && watchRoute.out == route.out {
+					delete(r.watches, watchKey)
+				}
+			}
+		}
 	}
 	r.mu.Unlock()
 
-	return sendFSFrame(out, f)
+	return sendFSFrameToRoute(route, f)
 }
 
 func (r *fsRouter) routeEvent(f proto.Frame) bool {
@@ -132,10 +183,20 @@ func (r *fsRouter) routeEvent(f proto.Frame) bool {
 	}
 
 	r.mu.Lock()
-	out := r.watches[fsRouteKey{sessionID: f.SessionID, id: payload.WatchID}]
+	route := r.watches[fsRouteKey{sessionID: f.SessionID, id: payload.WatchID}]
 	r.mu.Unlock()
 
-	return sendFSFrame(out, f)
+	return sendFSFrameToRoute(route, f)
+}
+
+func sendFSFrameToRoute(route fsClientRoute, f proto.Frame) bool {
+	if sendFSFrame(route.out, f) {
+		return true
+	}
+	if route.out != nil && route.onOverflow != nil {
+		route.onOverflow()
+	}
+	return false
 }
 
 func sendFSFrame(out chan<- proto.Frame, f proto.Frame) bool {

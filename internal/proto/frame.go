@@ -51,6 +51,9 @@ const (
 	TypeCommandEvent  Type = 0x35 // uplink -> relay (Web Push trigger)
 	TypeViewers       Type = 0x36 // relay -> uplink; mirror's remote subscriber count
 	TypePasteFile     Type = 0x37 // client -> relay -> desktop PTY host (generic file attachment)
+	TypeFSRequest     Type = 0x38 // client -> relay -> desktop uplink (remote file explorer)
+	TypeFSResponse    Type = 0x39 // desktop uplink -> relay -> requester client
+	TypeFSEvent       Type = 0x3a // desktop uplink -> relay -> requester client
 
 	// Auth frames (server → client).
 	TypeAuthInfo Type = 0x40 // relay -> uplink; UTF-8 JSON {user_id}
@@ -219,6 +222,70 @@ type PasteFilePayload struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
 	Data        []byte `json:"data"`
+}
+
+// DirEntry is a protocol-level directory listing item.
+type DirEntry struct {
+	Name    string `json:"name"`
+	IsDir   bool   `json:"isDir"`
+	Size    int64  `json:"size,omitempty"`
+	ModTime int64  `json:"modTime,omitempty"`
+}
+
+// FileContent carries a bounded file preview body.
+type FileContent struct {
+	Path        string `json:"path"`
+	Data        []byte `json:"data"`
+	IsBinary    bool   `json:"isBinary"`
+	TruncatedAt int64  `json:"truncatedAt,omitempty"`
+}
+
+// FileMetaInfo carries file metadata used before reading content.
+type FileMetaInfo struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	ModTime  int64  `json:"modTime"`
+	IsBinary bool   `json:"isBinary"`
+}
+
+// FSRequestPayload is the JSON body of TypeFSRequest.
+type FSRequestPayload struct {
+	RequestID string `json:"request_id"`
+	Op        string `json:"op"`
+	Path      string `json:"path,omitempty"`
+	MaxBytes  int64  `json:"max_bytes,omitempty"`
+	Offset    int64  `json:"offset,omitempty"`
+	Length    int64  `json:"length,omitempty"`
+	WatchID   string `json:"watch_id,omitempty"`
+}
+
+// FSChunkPayload carries a chunk of file data for remote previews/assets.
+type FSChunkPayload struct {
+	Path        string `json:"path"`
+	Data        []byte `json:"data"`
+	Offset      int64  `json:"offset"`
+	Length      int64  `json:"length"`
+	EOF         bool   `json:"eof"`
+	ContentType string `json:"contentType,omitempty"`
+}
+
+// FSResponsePayload is the JSON body of TypeFSResponse.
+type FSResponsePayload struct {
+	RequestID string          `json:"request_id"`
+	OK        bool            `json:"ok"`
+	Error     string          `json:"error,omitempty"`
+	Entries   []DirEntry      `json:"entries,omitempty"`
+	Meta      *FileMetaInfo   `json:"meta,omitempty"`
+	Content   *FileContent    `json:"content,omitempty"`
+	Chunk     *FSChunkPayload `json:"chunk,omitempty"`
+	WatchID   string          `json:"watch_id,omitempty"`
+}
+
+// FSEventPayload is the JSON body of TypeFSEvent.
+type FSEventPayload struct {
+	WatchID string `json:"watch_id"`
+	Path    string `json:"path"`
+	Event   string `json:"event"`
 }
 
 // SessionInfo is one entry of TypeListResp.

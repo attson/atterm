@@ -87,3 +87,15 @@ func TestPasteFileFrameCodec(t *testing.T) {
 		t.Fatalf("frame roundtrip mismatch: got %+v want type=%v sid=%v", got, TypePasteFile, sid)
 	}
 }
+
+func TestFSFrameTypeValues(t *testing.T) {
+	if TypeFSRequest != 0x38 {
+		t.Fatalf("TypeFSRequest = 0x%02x, want 0x38", TypeFSRequest)
+	}
+	if TypeFSResponse != 0x39 {
+		t.Fatalf("TypeFSResponse = 0x%02x, want 0x39", TypeFSResponse)
+	}
+	if TypeFSEvent != 0x3a {
+		t.Fatalf("TypeFSEvent = 0x%02x, want 0x3a", TypeFSEvent)
+	}
+}

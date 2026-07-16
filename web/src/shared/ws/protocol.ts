@@ -31,6 +31,9 @@ export const TYPE = {
   CLAIM_DRIVER:     0x34,
   COMMAND_EVENT:    0x35,
   PASTE_FILE:       0x37,
+  FS_REQUEST:       0x38,
+  FS_RESPONSE:      0x39,
+  FS_EVENT:         0x3a,
 } as const
 
 export type FrameType = (typeof TYPE)[keyof typeof TYPE]

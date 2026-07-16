@@ -77,9 +77,12 @@ export function createRemoteSessionFS(conn: SessionConnection, identity = "remot
       if (chunk.path !== path || chunk.offset !== offset) {
         throw new Error("remote filesystem response returned an unexpected chunk");
       }
-      const bytes = decodeChunk(chunk);
       const declaredEnd = chunk.offset + chunk.length;
-      if (offset + bytes.byteLength > MAX_ASSET_BYTES || declaredEnd > MAX_ASSET_BYTES) {
+      if (declaredEnd > MAX_ASSET_BYTES) {
+        throw new Error("remote asset exceeds the 50 MiB size limit");
+      }
+      const bytes = decodeChunk(chunk);
+      if (offset + bytes.byteLength > MAX_ASSET_BYTES) {
         throw new Error("remote asset exceeds the 50 MiB size limit");
       }
       if (chunk.contentType) contentType = chunk.contentType;
@@ -119,7 +122,11 @@ function decodeChunk(chunk: FSChunkPayload): Uint8Array {
   if (!Number.isSafeInteger(chunk.length) || chunk.length < 0) {
     throw new Error("remote filesystem response chunk has invalid length");
   }
-  return base64ToBytes(chunk.data);
+  const bytes = base64ToBytes(chunk.data);
+  if (chunk.length !== bytes.byteLength) {
+    throw new Error("remote filesystem response chunk length does not match data");
+  }
+  return bytes;
 }
 
 function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {

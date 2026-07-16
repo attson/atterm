@@ -78,4 +78,12 @@ describe("RemoteFileSystemBridge", () => {
 
     await expect(createRemoteSessionFS(conn).assetUrlFor("/large.bin")).rejects.toThrow(/50 MiB/);
   });
+
+  it("rejects a chunk whose declared length differs from its decoded bytes", async () => {
+    const conn = connection([
+      response({ chunk: { path: "/bad.bin", data: "aGk=", offset: 0, length: 3, eof: true } }),
+    ]);
+
+    await expect(createRemoteSessionFS(conn).assetUrlFor("/bad.bin")).rejects.toThrow(/length/i);
+  });
 });

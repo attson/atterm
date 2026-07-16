@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRemoteSessionFS } from "./remoteSessionFS";
-import type { FSRequest, FSResponse, SessionConnection } from "../../lib/connection";
+import type { FSEvent, FSRequest, FSResponse, SessionConnection } from "../../lib/connection";
 
 function response(overrides: Partial<FSResponse> = {}): FSResponse {
   return { request_id: "request", ok: true, ...overrides };
@@ -9,7 +9,20 @@ function response(overrides: Partial<FSResponse> = {}): FSResponse {
 function connection(responses: FSResponse[]) {
   const sendFSRequest = vi.fn<[FSRequest, number?], Promise<FSResponse>>();
   for (const item of responses) sendFSRequest.mockResolvedValueOnce(item);
-  return { sendFSRequest } as unknown as SessionConnection;
+  const fsEventHandlers = new Set<(event: FSEvent) => void>();
+  const fsEventUnsubscribes: Array<() => void> = [];
+  const onFSEvent = vi.fn((handler: (event: FSEvent) => void) => {
+    fsEventHandlers.add(handler);
+    const unsubscribe = vi.fn(() => fsEventHandlers.delete(handler));
+    fsEventUnsubscribes.push(unsubscribe);
+    return unsubscribe;
+  });
+  return {
+    sendFSRequest,
+    onFSEvent,
+    fsEventUnsubscribes,
+    emitFSEvent: (event: FSEvent) => fsEventHandlers.forEach((handler) => handler(event)),
+  };
 }
 
 describe("RemoteFileSystemBridge", () => {
@@ -20,7 +33,7 @@ describe("RemoteFileSystemBridge", () => {
   it("maps listDir to list_dir and returns entries", async () => {
     const conn = connection([response({ entries: [{ name: "src", isDir: true }] })]);
 
-    await expect(createRemoteSessionFS(conn).listDir("/project")).resolves.toEqual([
+    await expect(createRemoteSessionFS(conn as unknown as SessionConnection).listDir("/project")).resolves.toEqual([
       { name: "src", isDir: true },
     ]);
     expect(conn.sendFSRequest).toHaveBeenCalledWith({ op: "list_dir", path: "/project" });
@@ -35,7 +48,7 @@ describe("RemoteFileSystemBridge", () => {
       response(),
       response({ ok: false, error: "denied" }),
     ]);
-    const fs = createRemoteSessionFS(conn);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
 
     await expect(fs.fileMeta("/a")).resolves.toMatchObject({ size: 4 });
     await expect(fs.readFile("/a")).resolves.toMatchObject({ data: [104, 101, 108, 108, 111] });
@@ -56,9 +69,9 @@ describe("RemoteFileSystemBridge", () => {
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     const conn = connection([
       response({ chunk: { path: "/image.png", data: "aGk=", offset: 0, length: 2, eof: false, contentType: "image/png" } }),
-      response({ chunk: { path: "/image.png", data: "IQ==", offset: 2, length: 1, eof: true } }),
+      response({ chunk: { path: "/image.png", data: "IQ==", offset: 2, length: 1, eof: true, contentType: "application/octet-stream" } }),
     ]);
-    const fs = createRemoteSessionFS(conn);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
 
     await expect(fs.assetUrlFor("/image.png")).resolves.toBe("blob:asset");
     await expect(fs.assetUrlFor("/image.png")).resolves.toBe("blob:asset");
@@ -76,7 +89,7 @@ describe("RemoteFileSystemBridge", () => {
       response({ chunk: { path: "/large.bin", data: "", offset: 0, length: 50 * 1024 * 1024 + 1, eof: true } }),
     ]);
 
-    await expect(createRemoteSessionFS(conn).assetUrlFor("/large.bin")).rejects.toThrow(/50 MiB/);
+    await expect(createRemoteSessionFS(conn as unknown as SessionConnection).assetUrlFor("/large.bin")).rejects.toThrow(/50 MiB/);
   });
 
   it("rejects a chunk whose declared length differs from its decoded bytes", async () => {
@@ -84,6 +97,43 @@ describe("RemoteFileSystemBridge", () => {
       response({ chunk: { path: "/bad.bin", data: "aGk=", offset: 0, length: 3, eof: true } }),
     ]);
 
-    await expect(createRemoteSessionFS(conn).assetUrlFor("/bad.bin")).rejects.toThrow(/length/i);
+    await expect(createRemoteSessionFS(conn as unknown as SessionConnection).assetUrlFor("/bad.bin")).rejects.toThrow(/length/i);
+  });
+
+  it("revokes an asset URL that completes after it was invalidated", async () => {
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:slow");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const conn = connection([]);
+    let resolveRequest!: (value: FSResponse) => void;
+    conn.sendFSRequest.mockImplementationOnce(
+      () => new Promise<FSResponse>((resolve) => { resolveRequest = resolve; }),
+    );
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+
+    const pending = fs.assetUrlFor("/slow.png");
+    fs.revokeAssetUrl("/slow.png");
+    resolveRequest(response({ chunk: { path: "/slow.png", data: "aGk=", offset: 0, length: 2, eof: true } }));
+
+    await expect(pending).resolves.toBe("blob:slow");
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:slow");
+  });
+
+  it("forwards changed filesystem events and unsubscribes when unused", () => {
+    const conn = connection([]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    const changed = vi.fn();
+
+    const unsubscribe = fs.onDirChanged(changed);
+    conn.emitFSEvent({ watch_id: "watch-1", path: "/project", event: "changed" });
+    conn.emitFSEvent({ watch_id: "watch-1", path: "/project", event: "other" });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledWith("/project");
+
+    unsubscribe();
+    expect(conn.onFSEvent).toHaveBeenCalledTimes(1);
+    expect(conn.fsEventUnsubscribes[0]).toHaveBeenCalledTimes(1);
+    conn.emitFSEvent({ watch_id: "watch-1", path: "/project", event: "changed" });
+    expect(changed).toHaveBeenCalledTimes(1);
   });
 });

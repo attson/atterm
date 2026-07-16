@@ -34,7 +34,10 @@ function requireField<T>(value: T | undefined, field: string): T {
 
 export function createRemoteSessionFS(conn: SessionConnection, identity = "remote"): RemoteFileSystemBridge {
   const assetURLs = new Map<string, string>();
-  const pendingAssetURLs = new Map<string, Promise<string>>();
+  const pendingAssetURLs = new Map<string, { generation: number; promise: Promise<string> }>();
+  const assetGenerations = new Map<string, number>();
+  const dirChangedHandlers = new Set<(path: string) => void>();
+  let stopFSEvents: (() => void) | null = null;
 
   async function listDir(path: string): Promise<DirEntry[]> {
     return requireField(ensureOK(await conn.sendFSRequest({ op: "list_dir", path })).entries, "entries");
@@ -66,7 +69,7 @@ export function createRemoteSessionFS(conn: SessionConnection, identity = "remot
 
   async function fetchAssetURL(path: string): Promise<string> {
     const chunks: ArrayBuffer[] = [];
-    let contentType = "application/octet-stream";
+    let contentType: string | undefined;
     let offset = 0;
 
     for (;;) {
@@ -85,36 +88,66 @@ export function createRemoteSessionFS(conn: SessionConnection, identity = "remot
       if (offset + bytes.byteLength > MAX_ASSET_BYTES) {
         throw new Error("remote asset exceeds the 50 MiB size limit");
       }
-      if (chunk.contentType) contentType = chunk.contentType;
+      if (!contentType && chunk.contentType) contentType = chunk.contentType;
       chunks.push(copyToArrayBuffer(bytes));
       offset += bytes.byteLength;
       if (chunk.eof) break;
       if (bytes.byteLength === 0) throw new Error("remote filesystem response returned an empty non-final chunk");
     }
 
-    const url = URL.createObjectURL(new Blob(chunks, { type: contentType }));
-    assetURLs.set(path, url);
+    const url = URL.createObjectURL(new Blob(chunks, { type: contentType || "application/octet-stream" }));
     return url;
   }
 
   function assetUrlFor(path: string): Promise<string> {
     const cached = assetURLs.get(path);
     if (cached) return Promise.resolve(cached);
+    const generation = assetGenerations.get(path) ?? 0;
     const pending = pendingAssetURLs.get(path);
-    if (pending) return pending;
-    const request = fetchAssetURL(path).finally(() => pendingAssetURLs.delete(path));
-    pendingAssetURLs.set(path, request);
+    if (pending?.generation === generation) return pending.promise;
+    const request = fetchAssetURL(path).then((url) => {
+      if ((assetGenerations.get(path) ?? 0) !== generation) {
+        URL.revokeObjectURL(url);
+      } else {
+        assetURLs.set(path, url);
+      }
+      return url;
+    });
+    pendingAssetURLs.set(path, { generation, promise: request });
+    const clearPending = () => {
+      if (pendingAssetURLs.get(path)?.promise === request) pendingAssetURLs.delete(path);
+    };
+    request.then(clearPending, clearPending);
     return request;
   }
 
   function revokeAssetUrl(path: string): void {
+    assetGenerations.set(path, (assetGenerations.get(path) ?? 0) + 1);
     const url = assetURLs.get(path);
-    if (!url) return;
-    URL.revokeObjectURL(url);
-    assetURLs.delete(path);
+    if (url) {
+      URL.revokeObjectURL(url);
+      assetURLs.delete(path);
+    }
   }
 
-  return { identity, listDir, watchDir, unwatchDir, readFile, fileMeta, openExternal, assetUrlFor, revokeAssetUrl };
+  function onDirChanged(handler: (path: string) => void): () => void {
+    dirChangedHandlers.add(handler);
+    if (!stopFSEvents) {
+      stopFSEvents = conn.onFSEvent((event) => {
+        if (event.event !== "changed" || !event.path) return;
+        dirChangedHandlers.forEach((nextHandler) => nextHandler(event.path));
+      });
+    }
+    return () => {
+      dirChangedHandlers.delete(handler);
+      if (dirChangedHandlers.size === 0 && stopFSEvents) {
+        stopFSEvents();
+        stopFSEvents = null;
+      }
+    };
+  }
+
+  return { identity, listDir, watchDir, unwatchDir, readFile, fileMeta, openExternal, assetUrlFor, onDirChanged, revokeAssetUrl };
 }
 
 function decodeChunk(chunk: FSChunkPayload): Uint8Array {

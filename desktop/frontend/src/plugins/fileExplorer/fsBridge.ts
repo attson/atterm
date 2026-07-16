@@ -1,4 +1,4 @@
-import type { PluginHostBridge, DirEntry, FileContent, FileMetaInfo } from "../../platform/types";
+import type { EventBus, PluginHostBridge, DirEntry, FileContent, FileMetaInfo } from "../../platform/types";
 
 export interface FileSystemBridge {
   readonly identity: string;
@@ -9,18 +9,25 @@ export interface FileSystemBridge {
   fileMeta(path: string): Promise<FileMetaInfo>;
   openExternal(path: string): Promise<void>;
   assetUrlFor(path: string): string | Promise<string>;
+  onDirChanged(handler: (path: string) => void): () => void;
   revokeAssetUrl?(path: string): void;
 }
 
-export function createLocalFSBridge(pluginHost: PluginHostBridge): FileSystemBridge {
+export function createLocalFSBridge(pluginHost: PluginHostBridge, events?: EventBus): FileSystemBridge {
   return {
     identity: "local",
     listDir: (path) => pluginHost.fs.listDir(path),
     watchDir: (path) => pluginHost.fs.watchDir(path),
-    unwatchDir: (id) => pluginHost.fs.unwatchDir(id as number),
+    unwatchDir: async (id) => {
+      if (typeof id !== "number") throw new Error("local filesystem watch ID must be a number");
+      await pluginHost.fs.unwatchDir(id);
+    },
     readFile: (path, maxBytes) => pluginHost.fs.readFile(path, maxBytes),
     fileMeta: (path) => pluginHost.fs.fileMeta(path),
     openExternal: (path) => pluginHost.fs.openExternal(path),
     assetUrlFor: (path) => pluginHost.fs.assetUrlFor(path),
+    onDirChanged: (handler) => events?.on("plugin-fs:dir-changed", (data) => {
+      if (typeof data === "string") handler(data);
+    }) ?? (() => {}),
   };
 }

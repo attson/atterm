@@ -405,6 +405,7 @@ export class SessionConnection {
       timer: number;
     }
   >();
+  private retiredFSRequestIDs = new Set<string>();
   private fsEventHandlers = new Set<(event: FSEvent) => void>();
 
   constructor(
@@ -441,6 +442,7 @@ export class SessionConnection {
   detach(): void {
     this.detached = true;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
+    this.retiredFSRequestIDs.clear();
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -464,12 +466,16 @@ export class SessionConnection {
     if (this.pendingFSRequests.has(requestID)) {
       return Promise.reject(new Error(`duplicate filesystem request_id: ${requestID}`));
     }
+    if (this.retiredFSRequestIDs.has(requestID)) {
+      return Promise.reject(new Error(`retired filesystem request_id after timeout: ${requestID}`));
+    }
     const payload: FSRequest = { ...req, request_id: requestID };
     const encoded = encodeText(JSON.stringify(payload));
 
     return new Promise<FSResponse>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pendingFSRequests.delete(requestID);
+        this.retiredFSRequestIDs.add(requestID);
         reject(new Error(`filesystem request timed out: ${requestID}`));
       }, timeoutMs);
       this.pendingFSRequests.set(requestID, { resolve, reject, timer });
@@ -585,6 +591,7 @@ export class SessionConnection {
 
     ws.onopen = () => {
       this.reconnectAttempts = 0;
+      this.retiredFSRequestIDs.clear();
       this.handlers.onStatus?.("attached");
       const attachPayload = encodeText(
         JSON.stringify({
@@ -680,6 +687,7 @@ export class SessionConnection {
     ws.onclose = () => {
       this.ws = null;
       this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
+      this.retiredFSRequestIDs.clear();
       if (this.detached) return;
       this.handlers.onStatus?.("reconnecting");
       const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));

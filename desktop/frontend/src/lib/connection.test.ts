@@ -240,7 +240,7 @@ describe("SessionConnection FS RPC", () => {
     await expect(firstPromise).resolves.toEqual({ request_id: "fs-duplicate", ok: true, entries: [] });
   });
 
-  test("timed out FS request is cleaned up and a late response is ignored", async () => {
+  test("timed out explicit request_id is retired so late responses cannot resolve a later request", async () => {
     vi.useFakeTimers();
     const { conn, ws } = openConnection();
     const firstPromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-timeout" }, 10);
@@ -249,10 +249,11 @@ describe("SessionConnection FS RPC", () => {
     await vi.advanceTimersByTimeAsync(10);
     await firstRejection;
 
-    ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-timeout", ok: true, entries: [] });
     const secondPromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-timeout" }, 10);
+    const secondRejection = expect(secondPromise).rejects.toThrow(/retired|timed out/i);
     ws.emit(TYPE.FS_RESPONSE, { request_id: "fs-timeout", ok: true, entries: [] });
-    await expect(secondPromise).resolves.toEqual({ request_id: "fs-timeout", ok: true, entries: [] });
+    await secondRejection;
+    expect(ws.sent).toHaveLength(2);
   });
 
   test("ws.send exception rejects and clears the pending FS request", async () => {

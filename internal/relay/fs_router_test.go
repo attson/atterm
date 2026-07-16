@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -69,6 +70,37 @@ func TestFSRouterDuplicateRequestPreservesOriginalRequester(t *testing.T) {
 	case got := <-second:
 		t.Fatalf("duplicate requester received response: %+v", got)
 	default:
+	}
+}
+
+func TestFSRouterUnregisterSessionRemovesOnlyItsRoutes(t *testing.T) {
+	r := newFSRouter()
+	removedSessionID := uuid.New()
+	keptSessionID := uuid.New()
+	removed := make(chan proto.Frame, 2)
+	kept := make(chan proto.Frame, 2)
+	if !r.registerRequest(removedSessionID, "request", removed) {
+		t.Fatal("removed-session request route was not registered")
+	}
+	r.registerWatch(removedSessionID, "watch", removed)
+	if !r.registerRequest(keptSessionID, "request", kept) {
+		t.Fatal("kept-session request route was not registered")
+	}
+	r.registerWatch(keptSessionID, "watch", kept)
+
+	r.unregisterSession(removedSessionID)
+
+	if r.routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: removedSessionID, Payload: []byte(`{"request_id":"request","ok":true}`)}) {
+		t.Fatal("removed-session response was routed")
+	}
+	if r.routeEvent(proto.Frame{Type: proto.TypeFSEvent, SessionID: removedSessionID, Payload: []byte(`{"watch_id":"watch"}`)}) {
+		t.Fatal("removed-session event was routed")
+	}
+	if !r.routeResponse(proto.Frame{Type: proto.TypeFSResponse, SessionID: keptSessionID, Payload: []byte(`{"request_id":"request","ok":true}`)}) {
+		t.Fatal("kept-session response was not routed")
+	}
+	if !r.routeEvent(proto.Frame{Type: proto.TypeFSEvent, SessionID: keptSessionID, Payload: []byte(`{"watch_id":"watch"}`)}) {
+		t.Fatal("kept-session event was not routed")
 	}
 }
 
@@ -193,6 +225,49 @@ func TestClientFSRequestForwardsReadOnlyFullPermission(t *testing.T) {
 	if got.Type != proto.TypeFSResponse {
 		t.Fatalf("requester frame type = %v, want FS_RESPONSE", got.Type)
 	}
+}
+
+func TestClientFSReadScopeForwardsReadOnlyFullPermission(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newReadScopeClientHTTPServer(t, srv, userID)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "read-client")
+	defer client.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, client)
+	requestPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "read-scope", Op: "list_dir", Path: "/tmp"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, requestPayload)
+
+	select {
+	case got := <-sess.Inbound():
+		if got.Type != proto.TypeFSRequest {
+			t.Fatalf("inbound type = %v, want FS_REQUEST", got.Type)
+		}
+	case <-ctx.Done():
+		t.Fatal("read-scope read-only FS request was not forwarded")
+	}
+}
+
+func TestClientFSReadScopeRejectsOpenExternal(t *testing.T) {
+	srv, token, userID := serverWithSessionAndUser(t)
+	httpSrv := newReadScopeClientHTTPServer(t, srv, userID)
+
+	sessionID := uuid.New()
+	sess := newClientSession(t, srv, sessionID, userID, proto.RemotePermissionFull)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client := dialClientAttach(t, ctx, httpSrv, token, sessionID, "read-client")
+	defer client.Close(websocket.StatusNormalClosure, "")
+	drainAttachIntro(t, ctx, client)
+	requestPayload, _ := json.Marshal(proto.FSRequestPayload{RequestID: "open-read", Op: "open_external", Path: "/tmp/a"})
+	writeClientFrame(t, ctx, client, proto.TypeFSRequest, sessionID, requestPayload)
+	assertFSClientError(t, ctx, client, "open-read", "permission_denied")
+	assertNoFSInbound(t, sess)
 }
 
 func TestClientFSDuplicateRequestRejectsLaterRequester(t *testing.T) {
@@ -350,6 +425,20 @@ func TestUplinkFSResponseRoutesToRequestingClient(t *testing.T) {
 func newRelayHTTPServer(t *testing.T, srv *Server) *httptest.Server {
 	t.Helper()
 	httpSrv := httptest.NewServer(srv)
+	t.Cleanup(httpSrv.Close)
+	return httpSrv
+}
+
+func newReadScopeClientHTTPServer(t *testing.T, srv *Server, ownerUserID string) *httptest.Server {
+	t.Helper()
+	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close(websocket.StatusInternalError, "")
+		srv.handleClient(r.Context(), c, authRead, ownerUserID)
+	}))
 	t.Cleanup(httpSrv.Close)
 	return httpSrv
 }

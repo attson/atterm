@@ -92,6 +92,21 @@ func (r *fsRouter) unregisterClient(out chan<- proto.Frame) {
 	}
 }
 
+func (r *fsRouter) unregisterSession(sessionID uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key := range r.requests {
+		if key.sessionID == sessionID {
+			delete(r.requests, key)
+		}
+	}
+	for key := range r.watches {
+		if key.sessionID == sessionID {
+			delete(r.watches, key)
+		}
+	}
+}
+
 func (r *fsRouter) routeResponse(f proto.Frame) bool {
 	var payload proto.FSResponsePayload
 	if err := json.Unmarshal(f.Payload, &payload); err != nil || payload.RequestID == "" {

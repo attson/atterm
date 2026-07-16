@@ -241,13 +241,19 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "invalid_request")
 				continue
 			}
-			if scope != authWrite || sessionRemotePermission(sess) != permFull {
+			if sessionRemotePermission(sess) != permFull {
 				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "permission_denied")
 				continue
 			}
-			if request.Op == "open_external" && !sess.IsDriver(sub) {
-				s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "driver_required")
-				continue
+			if request.Op == "open_external" {
+				if scope != authWrite {
+					s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "permission_denied")
+					continue
+				}
+				if !sess.IsDriver(sub) {
+					s.sendFSClientError(targetedOut, sess.ID, request.RequestID, "driver_required")
+					continue
+				}
 			}
 
 			routes := s.fsRoutes()

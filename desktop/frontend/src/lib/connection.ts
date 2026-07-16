@@ -48,14 +48,46 @@ export interface FSRequest {
   watch_id?: string;
 }
 
+export interface FSDirEntry {
+  name: string;
+  isDir: boolean;
+  size?: number;
+  modTime?: number;
+}
+
+export interface FSFileContent {
+  path: string;
+  // Go JSON encodes []byte fields as standard base64 strings.
+  data: string;
+  isBinary: boolean;
+  truncatedAt?: number;
+}
+
+export interface FSFileMetaInfo {
+  path: string;
+  size: number;
+  modTime: number;
+  isBinary: boolean;
+}
+
+export interface FSChunkPayload {
+  path: string;
+  // Go JSON encodes []byte fields as standard base64 strings.
+  data: string;
+  offset: number;
+  length: number;
+  eof: boolean;
+  contentType?: string;
+}
+
 export interface FSResponse {
   request_id: string;
   ok: boolean;
   error?: string;
-  entries?: unknown;
-  meta?: unknown;
-  content?: string;
-  chunk?: string;
+  entries?: FSDirEntry[];
+  meta?: FSFileMetaInfo;
+  content?: FSFileContent;
+  chunk?: FSChunkPayload;
   watch_id?: string;
 }
 

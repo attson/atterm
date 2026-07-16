@@ -4,7 +4,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { utf8ToBytes, randomBytes } from "@noble/hashes/utils.js";
 import source from "./connection.ts?raw";
-import { decryptSessionFields, SessionConnection, type SessionInfo } from "./connection";
+import { decryptSessionFields, SessionConnection, type FSResponse, type SessionInfo } from "./connection";
 import { setAccountKeyProvider } from "./account-key";
 import type { SealedSessionFields } from "./opaque";
 import { TYPE, decodeFrame, decodeText, encodeFrame, encodeText, uuidParse } from "./proto";
@@ -127,6 +127,34 @@ describe("SessionConnection FS RPC", () => {
       ok: true,
       entries: [{ name: "a.txt" }],
     });
+  });
+
+  test("exports structured FS_RESPONSE result types matching the wire schema", () => {
+    expect(source).toMatch(/export interface FSDirEntry/);
+    expect(source).toMatch(/entries\?: FSDirEntry\[\]/);
+    expect(source).toMatch(/meta\?: FSFileMetaInfo/);
+    expect(source).toMatch(/content\?: FSFileContent/);
+    expect(source).toMatch(/chunk\?: FSChunkPayload/);
+
+    const response: FSResponse = {
+      request_id: "fs-typed",
+      ok: true,
+      entries: [{ name: "src", isDir: true, size: 0, modTime: 1760000000000 }],
+      meta: { path: "/tmp/a.txt", size: 12, modTime: 1760000000001, isBinary: false },
+      content: { path: "/tmp/a.txt", data: "aGVsbG8=", isBinary: false, truncatedAt: 0 },
+      chunk: {
+        path: "/tmp/a.txt",
+        data: "aGVs",
+        offset: 0,
+        length: 3,
+        eof: false,
+        contentType: "text/plain",
+      },
+      watch_id: "watch-1",
+    };
+
+    expect(response.content?.data).toBe("aGVsbG8=");
+    expect(response.chunk?.offset).toBe(0);
   });
 
   test("unknown FS_RESPONSE does not resolve another pending request", async () => {

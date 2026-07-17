@@ -168,6 +168,14 @@ export interface PluginHostBridge {
      *  AssetServer.Handler at /pluginfs/<base64.URLEncoding(path)>. The URL
      *  is stable for the lifetime of the file path; no expiry. */
     assetUrlFor(path: string): string
+    /** Atomic write via tmp+rename. expectedModTime=0 disables CAS;
+     *  createIfMissing=true allows creating a non-existent target. */
+    writeFile(path: string, data: number[] | Uint8Array, expectedModTime: number, createIfMissing: boolean): Promise<FileMetaInfo>
+    createFile(path: string): Promise<FileMetaInfo>
+    rename(from: string, to: string): Promise<FileMetaInfo>
+    remove(path: string, recursive: boolean): Promise<void>
+    mkdir(path: string): Promise<FileMetaInfo>
+    trash(path: string): Promise<void>
   }
 }
 

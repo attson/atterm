@@ -34,6 +34,12 @@ function requireField<T>(value: T | undefined, field: string): T {
   return value;
 }
 
+function bytesToBase64(data: Uint8Array): string {
+  let binary = "";
+  for (const b of data) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
 export function createRemoteSessionFS(conn: SessionConnection, identity = "remote"): RemoteFileSystemBridge {
   const assetURLs = new Map<string, string>();
   const pendingAssetURLs = new Map<string, { generation: number; promise: Promise<string> }>();
@@ -68,6 +74,52 @@ export function createRemoteSessionFS(conn: SessionConnection, identity = "remot
 
   async function openExternal(path: string): Promise<void> {
     await ensureOK(await conn.sendFSRequest({ op: "open_external", path }));
+  }
+
+  async function writeFile(
+    path: string,
+    data: Uint8Array,
+    expectedModTime: number | null,
+  ): Promise<FileMetaInfo> {
+    return requireField(
+      ensureOK(await conn.sendFSRequest({
+        op: "write_file",
+        path,
+        data: bytesToBase64(data),
+        expected_modtime: expectedModTime ?? 0,
+        create_if_missing: expectedModTime === null,
+      })).meta,
+      "meta",
+    );
+  }
+
+  async function createFile(path: string): Promise<FileMetaInfo> {
+    return requireField(
+      ensureOK(await conn.sendFSRequest({ op: "create_file", path })).meta,
+      "meta",
+    );
+  }
+
+  async function rename(from: string, to: string): Promise<FileMetaInfo> {
+    return requireField(
+      ensureOK(await conn.sendFSRequest({ op: "rename", path: from, new_path: to })).meta,
+      "meta",
+    );
+  }
+
+  async function remove(path: string, recursive: boolean): Promise<void> {
+    await ensureOK(await conn.sendFSRequest({ op: "remove", path, recursive }));
+  }
+
+  async function mkdir(path: string): Promise<FileMetaInfo> {
+    return requireField(
+      ensureOK(await conn.sendFSRequest({ op: "mkdir", path })).meta,
+      "meta",
+    );
+  }
+
+  async function trash(path: string): Promise<void> {
+    await ensureOK(await conn.sendFSRequest({ op: "trash", path }));
   }
 
   async function fetchAssetURL(path: string): Promise<string> {
@@ -181,7 +233,25 @@ export function createRemoteSessionFS(conn: SessionConnection, identity = "remot
     }
   }
 
-  return { identity, listDir, watchDir, unwatchDir, readFile, fileMeta, openExternal, assetUrlFor, onDirChanged, revokeAssetUrl, dispose };
+  return {
+    identity,
+    listDir,
+    watchDir,
+    unwatchDir,
+    readFile,
+    fileMeta,
+    openExternal,
+    assetUrlFor,
+    onDirChanged,
+    revokeAssetUrl,
+    dispose,
+    writeFile,
+    createFile,
+    rename,
+    remove,
+    mkdir,
+    trash,
+  };
 }
 
 function decodeChunk(chunk: FSChunkPayload): Uint8Array {

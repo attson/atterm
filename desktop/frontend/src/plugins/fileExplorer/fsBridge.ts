@@ -12,6 +12,15 @@ export interface FileSystemBridge {
   onDirChanged(handler: (path: string) => void): () => void;
   revokeAssetUrl?(path: string): void;
   dispose?(): void;
+  /** Writes data to path. When expectedModTime is a number, the server compares it
+   *  to the on-disk modTime and rejects with a stale_modtime error on mismatch.
+   *  When expectedModTime is null, the file is created if it doesn't exist. */
+  writeFile(path: string, data: Uint8Array, expectedModTime: number | null): Promise<FileMetaInfo>;
+  createFile(path: string): Promise<FileMetaInfo>;
+  rename(from: string, to: string): Promise<FileMetaInfo>;
+  remove(path: string, recursive: boolean): Promise<void>;
+  mkdir(path: string): Promise<FileMetaInfo>;
+  trash(path: string): Promise<void>;
 }
 
 export function createLocalFSBridge(pluginHost: PluginHostBridge, events?: EventBus): FileSystemBridge {
@@ -31,5 +40,12 @@ export function createLocalFSBridge(pluginHost: PluginHostBridge, events?: Event
       if (typeof data === "string") handler(data);
     }) ?? (() => {}),
     dispose: () => {},
+    writeFile: (path, data, expectedModTime) =>
+      pluginHost.fs.writeFile(path, Array.from(data), expectedModTime ?? 0, expectedModTime === null),
+    createFile: (path) => pluginHost.fs.createFile(path),
+    rename: (from, to) => pluginHost.fs.rename(from, to),
+    remove: (path, recursive) => pluginHost.fs.remove(path, recursive),
+    mkdir: (path) => pluginHost.fs.mkdir(path),
+    trash: (path) => pluginHost.fs.trash(path),
   };
 }

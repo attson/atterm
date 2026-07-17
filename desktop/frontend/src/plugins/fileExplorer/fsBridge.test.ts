@@ -12,6 +12,12 @@ function pluginHost(): PluginHostBridge {
       fileMeta: vi.fn(),
       openExternal: vi.fn(),
       assetUrlFor: vi.fn(),
+      writeFile: vi.fn().mockResolvedValue({ path: "/x", size: 0, modTime: 0, isBinary: false }),
+      createFile: vi.fn().mockResolvedValue({ path: "/x", size: 0, modTime: 0, isBinary: false }),
+      rename: vi.fn().mockResolvedValue({ path: "/x", size: 0, modTime: 0, isBinary: false }),
+      remove: vi.fn().mockResolvedValue(undefined),
+      mkdir: vi.fn().mockResolvedValue({ path: "/x", size: 0, modTime: 0, isBinary: false }),
+      trash: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as PluginHostBridge;
 }
@@ -22,6 +28,27 @@ describe("createLocalFSBridge", () => {
 
     await expect(createLocalFSBridge(host).unwatchDir("remote-watch")).rejects.toThrow(/must be a number/);
     expect(host.fs.unwatchDir).not.toHaveBeenCalled();
+  });
+
+  it("writeFile forwards data + expectedModTime + createIfMissing=false", async () => {
+    const host = pluginHost();
+    const bridge = createLocalFSBridge(host);
+    await bridge.writeFile("/x", new Uint8Array([1, 2, 3]), 42);
+    expect(host.fs.writeFile).toHaveBeenCalledWith("/x", [1, 2, 3], 42, false);
+  });
+
+  it("writeFile with null expectedModTime sends createIfMissing=true and expected_modtime=0", async () => {
+    const host = pluginHost();
+    const bridge = createLocalFSBridge(host);
+    await bridge.writeFile("/x", new Uint8Array(), null);
+    expect(host.fs.writeFile).toHaveBeenCalledWith("/x", [], 0, true);
+  });
+
+  it("remove forwards recursive flag", async () => {
+    const host = pluginHost();
+    const bridge = createLocalFSBridge(host);
+    await bridge.remove("/x", true);
+    expect(host.fs.remove).toHaveBeenCalledWith("/x", true);
   });
 
   it("forwards plugin filesystem directory-change events", () => {

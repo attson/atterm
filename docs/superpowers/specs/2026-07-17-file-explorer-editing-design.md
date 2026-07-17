@@ -226,7 +226,7 @@ export interface FileSystemBridge {
 
 **i18n**
 
-新增 key（`en.json` + `zh.json`）：
+新增 key（`desktop/frontend/src/i18n/messages/en.ts` + `zh-CN.ts`）：
 
 ```
 plugins.fileExplorer.save            "Save" / "保存"
@@ -288,7 +288,7 @@ plugins.fileExplorer.saveFailed      "Save failed: {message}" / "保存失败：
 - `desktop/frontend/src/plugins/fileExplorer/fsBridge.ts`（接口扩展）
 - `desktop/frontend/src/plugins/fileExplorer/remoteSessionFS.ts`（write 侧编码）
 - `desktop/frontend/src/plugins/fileExplorer/tabsModel.ts`（`dirty` 字段 + `setDirty`）
-- `desktop/frontend/src/i18n/locales/en.json` + `zh.json`
+- `desktop/frontend/src/i18n/messages/en.ts` + `zh-CN.ts`
 
 **删除**
 - `desktop/frontend/src/plugins/fileExplorer/CodeViewer.vue`（改名成 CodeEditor）

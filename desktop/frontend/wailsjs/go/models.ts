@@ -713,6 +713,90 @@ export namespace main {
 	        this.hotkey = source["hotkey"];
 	    }
 	}
+	export class ReceivedFileEntry {
+	    name: string;
+	    bytes: number;
+	    received_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReceivedFileEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.bytes = source["bytes"];
+	        this.received_at = source["received_at"];
+	    }
+	}
+	export class ReceivedFilesSessionEntry {
+	    session_id: string;
+	    session_name: string;
+	    bytes: number;
+	    files: ReceivedFileEntry[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReceivedFilesSessionEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.session_id = source["session_id"];
+	        this.session_name = source["session_name"];
+	        this.bytes = source["bytes"];
+	        this.files = this.convertValues(source["files"], ReceivedFileEntry);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ReceivedFilesSummary {
+	    total_bytes: number;
+	    sessions: ReceivedFilesSessionEntry[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReceivedFilesSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total_bytes = source["total_bytes"];
+	        this.sessions = this.convertValues(source["sessions"], ReceivedFilesSessionEntry);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class TabSnapshot {
 	    id: string;
 	    layout: string;
@@ -827,18 +911,17 @@ export namespace main {
 	export class RelayMe {
 	    user_id: string;
 	    email: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RelayMe(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.user_id = source["user_id"];
 	        this.email = source["email"];
 	    }
 	}
-
 	export class RelaySessionRow {
 	    id_hash: string;
 	    user_agent: string;
@@ -846,11 +929,11 @@ export namespace main {
 	    created_at: number;
 	    expires_at: number;
 	    is_current: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RelaySessionRow(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id_hash = source["id_hash"];
@@ -861,22 +944,21 @@ export namespace main {
 	        this.is_current = source["is_current"];
 	    }
 	}
-
+	
 	export class SignOutOthersResult {
 	    deleted: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SignOutOthersResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.deleted = source["deleted"];
 	    }
 	}
-
-
-
+	
+	
 	export class VersionLine {
 	    minor: string;
 	    latest: string;
@@ -905,6 +987,7 @@ export namespace main {
 	    downloading: boolean;
 	    download_pct: number;
 	    ready: boolean;
+	    downloaded_exists: boolean;
 	    error: string;
 	    asset_url: string;
 	    asset_size: number;
@@ -927,6 +1010,7 @@ export namespace main {
 	        this.downloading = source["downloading"];
 	        this.download_pct = source["download_pct"];
 	        this.ready = source["ready"];
+	        this.downloaded_exists = source["downloaded_exists"];
 	        this.error = source["error"];
 	        this.asset_url = source["asset_url"];
 	        this.asset_size = source["asset_size"];
@@ -934,7 +1018,7 @@ export namespace main {
 	        this.download_path = source["download_path"];
 	        this.lines = this.convertValues(source["lines"], VersionLine);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -952,54 +1036,6 @@ export namespace main {
 		    }
 		    return a;
 		}
-	}
-	export class ReceivedFileEntry {
-	    name: string;
-	    bytes: number;
-	    received_at: number;
-
-	    static createFrom(source: any = {}) {
-	        return new ReceivedFileEntry(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.bytes = source["bytes"];
-	        this.received_at = source["received_at"];
-	    }
-	}
-	export class ReceivedFilesSessionEntry {
-	    session_id: string;
-	    session_name: string;
-	    bytes: number;
-	    files: ReceivedFileEntry[];
-
-	    static createFrom(source: any = {}) {
-	        return new ReceivedFilesSessionEntry(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.session_id = source["session_id"];
-	        this.session_name = source["session_name"];
-	        this.bytes = source["bytes"];
-	        this.files = (source["files"] || []).map((f: any) => new ReceivedFileEntry(f));
-	    }
-	}
-	export class ReceivedFilesSummary {
-	    total_bytes: number;
-	    sessions: ReceivedFilesSessionEntry[];
-
-	    static createFrom(source: any = {}) {
-	        return new ReceivedFilesSummary(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.total_bytes = source["total_bytes"];
-	        this.sessions = (source["sessions"] || []).map((s: any) => new ReceivedFilesSessionEntry(s));
-	    }
 	}
 
 }

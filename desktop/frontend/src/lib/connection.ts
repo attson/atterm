@@ -36,7 +36,13 @@ export type FSRequestOp =
   | "read_chunk"
   | "watch_dir"
   | "unwatch_dir"
-  | "open_external";
+  | "open_external"
+  | "write_file"
+  | "create_file"
+  | "rename"
+  | "remove"
+  | "mkdir"
+  | "trash";
 
 export interface FSRequest {
   op: FSRequestOp;
@@ -46,6 +52,16 @@ export interface FSRequest {
   offset?: number;
   length?: number;
   watch_id?: string;
+  /** Base64-encoded file body — matches Go's []byte JSON encoding. */
+  data?: string;
+  /** Client's last-known modTime (ms). 0 disables the CAS check. */
+  expected_modtime?: number;
+  /** Target path for rename. */
+  new_path?: string;
+  /** remove: recursive delete. */
+  recursive?: boolean;
+  /** write_file: allow creation when the target doesn't exist. */
+  create_if_missing?: boolean;
 }
 
 export interface FSDirEntry {

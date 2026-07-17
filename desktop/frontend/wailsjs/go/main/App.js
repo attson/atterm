@@ -10,8 +10,16 @@ export function BroadcastCommandFinished(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['BroadcastCommandFinished'](arg1, arg2, arg3, arg4);
 }
 
+export function CancelDownload() {
+  return window['go']['main']['App']['CancelDownload']();
+}
+
 export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
+}
+
+export function ClearRelayConfig() {
+  return window['go']['main']['App']['ClearRelayConfig']();
 }
 
 export function CloseSession(arg1) {
@@ -46,20 +54,12 @@ export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
 }
 
+export function ForceRedownload(arg1) {
+  return window['go']['main']['App']['ForceRedownload'](arg1);
+}
+
 export function GetAINotificationsOnly() {
   return window['go']['main']['App']['GetAINotificationsOnly']();
-}
-
-export function ListRelaySessions() {
-  return window['go']['main']['App']['ListRelaySessions']();
-}
-
-export function RevokeRelaySession(arg1) {
-  return window['go']['main']['App']['RevokeRelaySession'](arg1);
-}
-
-export function SignOutOtherRelaySessions() {
-  return window['go']['main']['App']['SignOutOtherRelaySessions']();
 }
 
 export function GetAccountKey() {
@@ -202,6 +202,10 @@ export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
 
+export function ListRelaySessions() {
+  return window['go']['main']['App']['ListRelaySessions']();
+}
+
 export function ListRemoteSessions() {
   return window['go']['main']['App']['ListRemoteSessions']();
 }
@@ -242,12 +246,36 @@ export function ProbeRelayVersion(arg1, arg2) {
   return window['go']['main']['App']['ProbeRelayVersion'](arg1, arg2);
 }
 
+export function ReceivedFilesClearAll() {
+  return window['go']['main']['App']['ReceivedFilesClearAll']();
+}
+
+export function ReceivedFilesClearSession(arg1) {
+  return window['go']['main']['App']['ReceivedFilesClearSession'](arg1);
+}
+
+export function ReceivedFilesDelete(arg1, arg2) {
+  return window['go']['main']['App']['ReceivedFilesDelete'](arg1, arg2);
+}
+
+export function ReceivedFilesList() {
+  return window['go']['main']['App']['ReceivedFilesList']();
+}
+
+export function ReceivedFilesOpenDir() {
+  return window['go']['main']['App']['ReceivedFilesOpenDir']();
+}
+
 export function RegisterRemoteRelay(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['RegisterRemoteRelay'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function RememberRelayPassword(arg1) {
   return window['go']['main']['App']['RememberRelayPassword'](arg1);
+}
+
+export function RevokeRelaySession(arg1) {
+  return window['go']['main']['App']['RevokeRelaySession'](arg1);
 }
 
 export function SaveRecoverySnapshot(arg1) {
@@ -322,10 +350,6 @@ export function SetRelayConfig(arg1) {
   return window['go']['main']['App']['SetRelayConfig'](arg1);
 }
 
-export function ClearRelayConfig() {
-  return window['go']['main']['App']['ClearRelayConfig']();
-}
-
 export function SetRelayDisableE2EE(arg1) {
   return window['go']['main']['App']['SetRelayDisableE2EE'](arg1);
 }
@@ -370,34 +394,10 @@ export function ShowNotification(arg1, arg2) {
   return window['go']['main']['App']['ShowNotification'](arg1, arg2);
 }
 
-export function CancelDownload() {
-  return window['go']['main']['App']['CancelDownload']();
-}
-
-export function ForceRedownload(arg1) {
-  return window['go']['main']['App']['ForceRedownload'](arg1);
+export function SignOutOtherRelaySessions() {
+  return window['go']['main']['App']['SignOutOtherRelaySessions']();
 }
 
 export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
-}
-
-export function ReceivedFilesList() {
-  return window['go']['main']['App']['ReceivedFilesList']();
-}
-
-export function ReceivedFilesClearAll() {
-  return window['go']['main']['App']['ReceivedFilesClearAll']();
-}
-
-export function ReceivedFilesClearSession(arg1) {
-  return window['go']['main']['App']['ReceivedFilesClearSession'](arg1);
-}
-
-export function ReceivedFilesDelete(arg1, arg2) {
-  return window['go']['main']['App']['ReceivedFilesDelete'](arg1, arg2);
-}
-
-export function ReceivedFilesOpenDir() {
-  return window['go']['main']['App']['ReceivedFilesOpenDir']();
 }

@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers } from "@codemirror/view";
+import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { languageForPath } from "./languageMap";
 import { highlightExtensionFor } from "./highlight";
 import { useI18n } from "../../i18n/useI18n";
@@ -18,16 +19,24 @@ const props = defineProps<{
   theme: "dimmed" | "light";
 }>();
 
+const emit = defineEmits<{
+  (e: "dirty-change", dirty: boolean): void;
+}>();
+
 const host = ref<HTMLDivElement | null>(null);
 const state = ref<"loading" | "tooLarge" | "binary" | "ok" | "error">("loading");
 const errorMsg = ref<string>("");
 const reloadPending = ref(false);
 const loadedAt = ref<number | null>(null);
+const dirty = ref(false);
+const conflict = ref<{ currentModTime: number } | null>(null);
+const saveError = ref<string>("");
 
 let view: EditorView | null = null;
 let off: (() => void) | null = null;
 let disposed = false;
 let loadGeneration = 0;
+let originalText = "";
 
 function isCurrent(
   fs: FileSystemBridge,
@@ -49,8 +58,6 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(host.value).getPropertyValue(name).trim() || fallback;
 }
 
-// Wails serializes Go []byte as a base64 string over JSON. Older runtimes
-// may also pass through a Uint8Array or number[]. Decode all three to text.
 function decodeFileBytes(data: unknown): string {
   let bytes: Uint8Array;
   if (typeof data === "string") {
@@ -93,6 +100,12 @@ function makeThemeExt(theme: "dimmed" | "light"): Extension {
   );
 }
 
+function setDirty(next: boolean) {
+  if (dirty.value === next) return;
+  dirty.value = next;
+  emit("dirty-change", next);
+}
+
 async function load() {
   const fs = props.fs;
   const path = props.path;
@@ -104,21 +117,44 @@ async function load() {
   view?.destroy();
   view = null;
   try {
-    const meta = (await fs.fileMeta(path)) as any;
+    const meta = (await fs.fileMeta(path)) as { size: number; modTime: number; isBinary: boolean };
     if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
     loadedAt.value = meta.modTime;
     reloadPending.value = false;
-    if (meta.isBinary) { state.value = "binary"; return; }
-    if (meta.size > MAX_BYTES_FRONTEND) { state.value = "tooLarge"; return; }
-    const result = (await fs.readFile(path, MAX_BYTES_FRONTEND)) as any;
+    if (meta.isBinary) { state.value = "binary"; setDirty(false); return; }
+    if (meta.size > MAX_BYTES_FRONTEND) { state.value = "tooLarge"; setDirty(false); return; }
+    const result = (await fs.readFile(path, MAX_BYTES_FRONTEND)) as { data: unknown };
     if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
     const text = decodeFileBytes(result.data);
 
+    originalText = text;
+    setDirty(false);
+    conflict.value = null;
+    saveError.value = "";
+
+    const dirtyListener = EditorView.updateListener.of((v) => {
+      if (!v.docChanged) return;
+      setDirty(v.state.doc.toString() !== originalText);
+    });
+
+    const saveKey = keymap.of([
+      {
+        key: "Mod-s",
+        preventDefault: true,
+        run: () => {
+          void save();
+          return true;
+        },
+      },
+    ]);
+
     const exts: Extension[] = [
-      EditorView.editable.of(false),
-      EditorState.readOnly.of(true),
       makeThemeExt(theme),
       highlightExtensionFor(theme),
+      history(),
+      keymap.of([...defaultKeymap, ...historyKeymap]),
+      saveKey,
+      dirtyListener,
     ];
     if (showLineNumbers) exts.push(lineNumbers());
     const langExt = await languageForPath(path);
@@ -142,12 +178,49 @@ async function load() {
   }
 }
 
+async function save(): Promise<boolean> {
+  if (!view || state.value !== "ok") return false;
+  const text = view.state.doc.toString();
+  const bytes = new TextEncoder().encode(text);
+  saveError.value = "";
+  try {
+    const meta = await props.fs.writeFile(props.path, bytes, loadedAt.value);
+    originalText = text;
+    loadedAt.value = meta.modTime;
+    reloadPending.value = false;
+    conflict.value = null;
+    setDirty(false);
+    return true;
+  } catch (err) {
+    const msg = (err as Error).message ?? "";
+    const m = /stale_modtime: current=(\d+)/.exec(msg);
+    if (m) {
+      conflict.value = { currentModTime: Number(m[1]) };
+    } else {
+      saveError.value = msg;
+    }
+    return false;
+  }
+}
+
+async function overwriteWithServerModTime() {
+  if (!conflict.value) return;
+  loadedAt.value = conflict.value.currentModTime;
+  conflict.value = null;
+  await save();
+}
+
+function reloadDiscardChanges() {
+  conflict.value = null;
+  void load();
+}
+
 async function checkDirChanged(fs: FileSystemBridge, dir: string) {
   const path = props.path;
   const request = loadGeneration;
   if (!path.startsWith(dir + "/") && path !== dir) return;
   try {
-    const meta = (await fs.fileMeta(path)) as any;
+    const meta = (await fs.fileMeta(path)) as { modTime: number };
     if (disposed || props.fs !== fs || props.path !== path || loadGeneration !== request) return;
     if (loadedAt.value && meta.modTime > loadedAt.value) reloadPending.value = true;
   } catch { /* ignore */ }
@@ -180,13 +253,40 @@ onBeforeUnmount(() => {
   view = null;
   if (off) off();
 });
+
+// testAppend is used by unit tests to simulate a doc edit without a live
+// DOM keyboard event. It's a thin no-op wrapper in production.
+defineExpose({
+  save,
+  testAppend: (text: string) => {
+    if (!view) return;
+    view.dispatch({ changes: { from: view.state.doc.length, insert: text } });
+  },
+});
 </script>
 
 <template>
   <div class="file-editor">
+    <div v-if="conflict" class="banner err conflict" data-test="conflict-banner">
+      <span class="msg">{{ t("plugins.fileExplorer.staleModTime") }}</span>
+      <button data-test="conflict-overwrite" @click="overwriteWithServerModTime">
+        {{ t("plugins.fileExplorer.overwrite") }}
+      </button>
+      <button data-test="conflict-reload" @click="reloadDiscardChanges">
+        {{ t("plugins.fileExplorer.reloadDiscard") }}
+      </button>
+      <button data-test="conflict-cancel" @click="conflict = null">
+        {{ t("plugins.fileExplorer.cancel") }}
+      </button>
+    </div>
+    <div v-if="saveError" class="banner err" data-test="save-error">
+      {{ t("plugins.fileExplorer.saveFailed", { message: saveError }) }}
+    </div>
     <div v-if="reloadPending" class="reload-badge">
       {{ t("plugins.fileExplorer.fileChanged") }}
-      <button @click="load">{{ t("plugins.fileExplorer.reload") }}</button>
+      <button @click="load">
+        {{ dirty ? t("plugins.fileExplorer.reloadDiscard") : t("plugins.fileExplorer.reload") }}
+      </button>
     </div>
     <div v-if="state === 'tooLarge'" class="banner muted">{{ t("plugins.fileExplorer.tooLarge") }}</div>
     <div v-else-if="state === 'binary'" class="banner muted">{{ t("plugins.fileExplorer.binary") }}</div>
@@ -204,9 +304,6 @@ onBeforeUnmount(() => {
   background: var(--ed-editor-bg, #22272e);
 }
 .cm-host { flex: 1 1 auto; overflow: auto; }
-/* CodeMirror's internal scrollable element (.cm-scroller) and the host's own
-   scrollbar both need to track the theme — otherwise macOS paints a default
-   light bar on the dark editor (and vice versa). */
 .cm-host::-webkit-scrollbar,
 .cm-host :deep(.cm-scroller)::-webkit-scrollbar {
   width: 12px;
@@ -230,9 +327,25 @@ onBeforeUnmount(() => {
 .cm-host :deep(.cm-scroller)::-webkit-scrollbar-corner {
   background: var(--ed-editor-bg, #22272e);
 }
-.banner { padding: 18px 20px; font-size: 13px; }
+.banner { padding: 8px 12px; font-size: 13px; }
 .muted { color: var(--ed-muted, rgba(173, 186, 199, 0.5)); }
 .err { color: var(--ed-error, #f47067); }
+.conflict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--ed-border, #444c56);
+}
+.conflict .msg { flex: 1 1 auto; }
+.conflict button {
+  background: var(--ed-shell-bg, #22272e);
+  border: 1px solid var(--ed-border, #444c56);
+  color: var(--ed-row-fg, #adbac7);
+  padding: 1px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.conflict button:hover { background: var(--ed-row-hover, rgba(173, 186, 199, 0.1)); }
 .reload-badge {
   display: flex;
   align-items: center;

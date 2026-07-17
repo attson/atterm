@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import { onBeforeUnmount, ref, watch } from "vue";
+import { onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { previewKind, type PreviewKind } from "./previewKind";
-import CodeViewer from "./CodeViewer.vue";
+import CodeEditor from "./CodeEditor.vue";
 import ImagePreview from "./ImagePreview.vue";
 import MediaPreview from "./MediaPreview.vue";
 import PdfPreview from "./PdfPreview.vue";
@@ -20,6 +20,18 @@ const props = defineProps<{
    *  single-view kinds. */
   viewMode: "code" | "render";
 }>();
+
+const emit = defineEmits<{
+  (e: "dirty-change", dirty: boolean): void;
+}>();
+
+const codeEditorRef = ref<{ save: () => Promise<boolean> } | null>(null) as Ref<{ save: () => Promise<boolean> } | null>;
+
+async function save(): Promise<boolean> {
+  return codeEditorRef.value?.save?.() ?? Promise.resolve(false);
+}
+
+defineExpose({ save });
 
 const { t } = useI18n();
 
@@ -61,11 +73,13 @@ onBeforeUnmount(() => {
       {{ t("plugins.fileExplorer.errorPrefix", { message: error }) }}
     </div>
     <template v-else-if="kind === 'code' || ((kind === 'svg' || kind === 'markdown') && viewMode === 'code')">
-      <CodeViewer
+      <CodeEditor
+        ref="codeEditorRef"
         :fs="fs"
         :path="path"
         :show-line-numbers="showLineNumbers"
         :theme="theme"
+        @dirty-change="(v: boolean) => emit('dirty-change', v)"
       />
     </template>
     <template v-else-if="kind === 'image' || (kind === 'svg' && viewMode === 'render')">

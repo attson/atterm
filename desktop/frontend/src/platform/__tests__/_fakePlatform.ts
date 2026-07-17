@@ -119,6 +119,12 @@ export function createFakePlatform(): Platform {
         fileMeta: vi.fn().mockResolvedValue({ path: '/x', size: 0, modTime: 0, isDir: false, exists: true }),
         openExternal: vi.fn().mockResolvedValue(undefined),
         assetUrlFor: vi.fn((p: string) => "/pluginfs/" + btoa(p)),
+        writeFile: vi.fn().mockResolvedValue({ path: '/x', size: 0, modTime: 0, isBinary: false }),
+        createFile: vi.fn().mockResolvedValue({ path: '/x', size: 0, modTime: 0, isBinary: false }),
+        rename: vi.fn().mockResolvedValue({ path: '/x', size: 0, modTime: 0, isBinary: false }),
+        remove: vi.fn().mockResolvedValue(undefined),
+        mkdir: vi.fn().mockResolvedValue({ path: '/x', size: 0, modTime: 0, isBinary: false }),
+        trash: vi.fn().mockResolvedValue(undefined),
       },
     },
   }

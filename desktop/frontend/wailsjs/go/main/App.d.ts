@@ -9,7 +9,11 @@ export function BeginFeishuPair():Promise<string>;
 
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;
 
+export function CancelDownload():Promise<void>;
+
 export function CheckUpdate():Promise<void>;
+
+export function ClearRelayConfig():Promise<void>;
 
 export function CloseSession(arg1:string):Promise<void>;
 
@@ -27,13 +31,9 @@ export function ExportDiagnostics(arg1:string):Promise<string>;
 
 export function FetchRelayMe():Promise<main.RelayMe>;
 
+export function ForceRedownload(arg1:string):Promise<void>;
+
 export function GetAINotificationsOnly():Promise<boolean>;
-
-export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
-
-export function RevokeRelaySession(arg1:string):Promise<void>;
-
-export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function GetAccountKey():Promise<string>;
 
@@ -105,6 +105,8 @@ export function HasAccountKey():Promise<boolean>;
 
 export function InstallUpdate():Promise<void>;
 
+export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
+
 export function ListRemoteSessions():Promise<string>;
 
 export function ListShells():Promise<Array<string>>;
@@ -125,9 +127,21 @@ export function PickLogFilePath():Promise<string>;
 
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
+export function ReceivedFilesClearAll():Promise<void>;
+
+export function ReceivedFilesClearSession(arg1:string):Promise<void>;
+
+export function ReceivedFilesDelete(arg1:string,arg2:string):Promise<void>;
+
+export function ReceivedFilesList():Promise<main.ReceivedFilesSummary>;
+
+export function ReceivedFilesOpenDir():Promise<void>;
+
 export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function RememberRelayPassword(arg1:string):Promise<void>;
+
+export function RevokeRelaySession(arg1:string):Promise<void>;
 
 export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
@@ -165,8 +179,6 @@ export function SetRecoveryDialogEnabled(arg1:boolean):Promise<void>;
 
 export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 
-export function ClearRelayConfig():Promise<void>;
-
 export function SetRelayDisableE2EE(arg1:boolean):Promise<void>;
 
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
@@ -189,18 +201,6 @@ export function SetWebglRendererEnabled(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 
-export function CancelDownload():Promise<void>;
-
-export function ForceRedownload(arg1:string):Promise<void>;
+export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;
-
-export function ReceivedFilesList():Promise<main.ReceivedFilesSummary>;
-
-export function ReceivedFilesClearAll():Promise<void>;
-
-export function ReceivedFilesClearSession(arg1:string):Promise<void>;
-
-export function ReceivedFilesDelete(arg1:string,arg2:string):Promise<void>;
-
-export function ReceivedFilesOpenDir():Promise<void>;

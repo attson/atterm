@@ -209,4 +209,55 @@ describe("RemoteFileSystemBridge", () => {
     expect(changed).not.toHaveBeenCalled();
     expect(createObjectURL).toHaveBeenCalledTimes(2);
   });
+
+  it("writeFile serializes data as base64 and forwards expected_modtime", async () => {
+    const conn = connection([response({ meta: { path: "/a", size: 2, modTime: 42, isBinary: false } })]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    await fs.writeFile("/a", new Uint8Array([104, 105]), 41);
+    expect(conn.sendFSRequest).toHaveBeenCalledWith({
+      op: "write_file",
+      path: "/a",
+      data: "aGk=",
+      expected_modtime: 41,
+      create_if_missing: false,
+    });
+  });
+
+  it("writeFile with null expected_modtime maps to create_if_missing=true", async () => {
+    const conn = connection([response({ meta: { path: "/a", size: 0, modTime: 1, isBinary: false } })]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    await fs.writeFile("/a", new Uint8Array(), null);
+    expect(conn.sendFSRequest).toHaveBeenCalledWith(expect.objectContaining({
+      op: "write_file",
+      create_if_missing: true,
+      expected_modtime: 0,
+    }));
+  });
+
+  it("propagates stale_modtime error from writeFile", async () => {
+    const conn = connection([response({ ok: false, error: "stale_modtime: current=99" })]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    await expect(fs.writeFile("/a", new Uint8Array(), 1)).rejects.toThrow(/stale_modtime/);
+  });
+
+  it("createFile / rename / remove / mkdir / trash map to their ops", async () => {
+    const conn = connection([
+      response({ meta: { path: "/a", size: 0, modTime: 1, isBinary: false } }),
+      response({ meta: { path: "/b", size: 1, modTime: 2, isBinary: false } }),
+      response(),
+      response({ meta: { path: "/sub", size: 0, modTime: 3, isBinary: false } }),
+      response(),
+    ]);
+    const fs = createRemoteSessionFS(conn as unknown as SessionConnection);
+    await fs.createFile("/a");
+    await fs.rename("/a", "/b");
+    await fs.remove("/b", true);
+    await fs.mkdir("/sub");
+    await fs.trash("/x");
+    expect(conn.sendFSRequest).toHaveBeenNthCalledWith(1, { op: "create_file", path: "/a" });
+    expect(conn.sendFSRequest).toHaveBeenNthCalledWith(2, { op: "rename", path: "/a", new_path: "/b" });
+    expect(conn.sendFSRequest).toHaveBeenNthCalledWith(3, { op: "remove", path: "/b", recursive: true });
+    expect(conn.sendFSRequest).toHaveBeenNthCalledWith(4, { op: "mkdir", path: "/sub" });
+    expect(conn.sendFSRequest).toHaveBeenNthCalledWith(5, { op: "trash", path: "/x" });
+  });
 });

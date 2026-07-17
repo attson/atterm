@@ -15,7 +15,10 @@ import (
 
 func makeRemoteFS(t *testing.T) (*remoteFS, *fsAccess, string) {
 	t.Helper()
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("evalsymlinks tempdir: %v", err)
+	}
 	access := newFSAccess([]string{root})
 	fs := newRemoteFS(access)
 	t.Cleanup(fs.close)
@@ -304,5 +307,139 @@ func TestRemoteFSPermissionGateRejectsEmptyAndUnknownPermissionBeforeFSWork(t *t
 				t.Fatalf("permission %q reached fs availability check: %+v", remotePermission, resp)
 			}
 		})
+	}
+}
+
+func TestRemoteFSWriteFileSuccess(t *testing.T) {
+	fs, _, root := makeRemoteFS(t)
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := fs.handle(uuid.New(), proto.FSRequestPayload{
+		RequestID:       "r",
+		Op:              "write_file",
+		Path:            target,
+		Data:            []byte("new"),
+		ExpectedModTime: info.ModTime().UnixMilli(),
+	})
+	resp := decodeFSResponse(t, frame)
+	if !resp.OK {
+		t.Fatalf("expected ok, got %q", resp.Error)
+	}
+	if resp.Meta == nil || resp.Meta.Size != 3 {
+		t.Fatalf("unexpected meta: %+v", resp.Meta)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != "new" {
+		t.Fatalf("body = %q, want %q", got, "new")
+	}
+}
+
+func TestRemoteFSWriteFileStaleModTime(t *testing.T) {
+	fs, _, root := makeRemoteFS(t)
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := fs.handle(uuid.New(), proto.FSRequestPayload{
+		RequestID:       "r",
+		Op:              "write_file",
+		Path:            target,
+		Data:            []byte("nope"),
+		ExpectedModTime: 1,
+	})
+	resp := decodeFSResponse(t, frame)
+	if resp.OK {
+		t.Fatal("expected stale_modtime failure")
+	}
+	if !strings.Contains(resp.Error, "stale_modtime") {
+		t.Fatalf("expected stale_modtime error, got %q", resp.Error)
+	}
+}
+
+func TestRemoteFSCreateRenameRemoveMkdir(t *testing.T) {
+	fs, _, root := makeRemoteFS(t)
+	sid := uuid.New()
+
+	respFor := func(payload proto.FSRequestPayload) proto.FSResponsePayload {
+		return decodeFSResponse(t, fs.handle(sid, payload))
+	}
+
+	created := respFor(proto.FSRequestPayload{RequestID: "1", Op: "create_file", Path: filepath.Join(root, "a")})
+	if !created.OK {
+		t.Fatalf("create_file: %s", created.Error)
+	}
+	if created.Meta == nil {
+		t.Fatal("create_file meta missing")
+	}
+
+	renamed := respFor(proto.FSRequestPayload{
+		RequestID: "2", Op: "rename",
+		Path:    filepath.Join(root, "a"),
+		NewPath: filepath.Join(root, "b"),
+	})
+	if !renamed.OK {
+		t.Fatalf("rename: %s", renamed.Error)
+	}
+
+	mk := respFor(proto.FSRequestPayload{RequestID: "3", Op: "mkdir", Path: filepath.Join(root, "sub")})
+	if !mk.OK {
+		t.Fatalf("mkdir: %s", mk.Error)
+	}
+
+	rm := respFor(proto.FSRequestPayload{RequestID: "4", Op: "remove", Path: filepath.Join(root, "b")})
+	if !rm.OK {
+		t.Fatalf("remove: %s", rm.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, "b")); err == nil {
+		t.Fatal("remove left file behind")
+	}
+}
+
+func TestRemoteFSUnsupportedOpStillReports(t *testing.T) {
+	fs, _, _ := makeRemoteFS(t)
+	frame := fs.handle(uuid.New(), proto.FSRequestPayload{
+		RequestID: "u", Op: "not_a_real_op",
+	})
+	resp := decodeFSResponse(t, frame)
+	if resp.OK {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(resp.Error, "unsupported op") {
+		t.Fatalf("expected unsupported op error, got %q", resp.Error)
+	}
+}
+
+func TestRemoteFSPermissionGateBlocksWrite(t *testing.T) {
+	fs, _, root := makeRemoteFS(t)
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := make(chan proto.Frame, 1)
+	ok := handleRemoteFSRequest(context.Background(), out, uuid.New(), proto.RemotePermissionControl, fs, proto.FSRequestPayload{
+		RequestID: "p",
+		Op:        "write_file",
+		Path:      target,
+		Data:      []byte("y"),
+	})
+	if !ok {
+		t.Fatal("expected response queued")
+	}
+	resp := decodeFSResponse(t, <-out)
+	if resp.OK {
+		t.Fatal("expected permission-denied")
+	}
+	if !strings.Contains(resp.Error, "full") {
+		t.Fatalf("expected full-permission error, got %q", resp.Error)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != "x" {
+		t.Fatalf("file mutated despite gate: %q", got)
 	}
 }

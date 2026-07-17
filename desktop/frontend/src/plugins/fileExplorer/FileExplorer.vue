@@ -8,7 +8,8 @@ import { isLightTerminalTheme } from "../../lib/terminalThemes";
 import FileTree from "./FileTree.vue";
 import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
-import { openPath, closeTab, setViewMode, type TabsState } from "./tabsModel";
+import ConfirmDialog from "./ConfirmDialog.vue";
+import { openPath, closeTab, setViewMode, setDirty, type TabsState } from "./tabsModel";
 import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
 import { createRemoteSessionFS } from "./remoteSessionFS";
 import type { PluginContext } from "../types";
@@ -131,6 +132,48 @@ function closeTabAt(idx: number) {
   tabsState.value = closeTab(tabsState.value, idx);
 }
 
+interface CloseConfirmSpec {
+  idx: number;
+  name: string;
+  buttons: Array<{ id: string; label: string; kind?: "primary" | "danger" | "secondary" }>;
+}
+const confirmClose = ref<CloseConfirmSpec | null>(null);
+const codeEditorRef = ref<{ save: () => Promise<boolean> } | null>(null);
+
+function onDirtyChange(v: boolean) {
+  const active = activePath.value;
+  if (!active) return;
+  tabsState.value = setDirty(tabsState.value, active, v);
+}
+
+async function onCloseRequest(idx: number) {
+  const tab = tabsState.value.tabs[idx];
+  if (!tab?.dirty) {
+    closeTabAt(idx);
+    return;
+  }
+  confirmClose.value = {
+    idx,
+    name: tab.path.split("/").pop() ?? tab.path,
+    buttons: [
+      { id: "save", label: t("plugins.fileExplorer.save"), kind: "primary" },
+      { id: "dontSave", label: t("plugins.fileExplorer.dontSave"), kind: "danger" },
+      { id: "cancel", label: t("plugins.fileExplorer.cancel"), kind: "secondary" },
+    ],
+  };
+}
+
+async function resolveConfirmClose(id: string) {
+  const spec = confirmClose.value;
+  confirmClose.value = null;
+  if (!spec) return;
+  if (id === "cancel") return;
+  if (id === "dontSave") { closeTabAt(spec.idx); return; }
+  // save
+  const ok = (await codeEditorRef.value?.save?.()) ?? false;
+  if (ok) closeTabAt(spec.idx);
+}
+
 function togglePin() {
   pinned.value = pinned.value === null ? props.context.activeCwd.value : null;
 }
@@ -192,23 +235,31 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
           :active-idx="tabsState.activeIdx"
           :view-mode="activeViewMode"
           @select="selectTab"
-          @close="closeTabAt"
+          @close-request="onCloseRequest"
           @toggle-view-mode="onToggleViewMode"
         />
         <div class="editor-area">
           <FileEditor
             v-if="activePath && fs"
+            ref="codeEditorRef"
             :key="fsGeneration"
             :fs="fs"
             :path="activePath"
             :show-line-numbers="showLineNumbers"
             :theme="explorerTheme"
             :view-mode="activeViewMode"
+            @dirty-change="onDirtyChange"
           />
           <div v-else class="placeholder">{{ t("plugins.fileExplorer.selectFile") }}</div>
         </div>
       </div>
     </div>
+    <ConfirmDialog
+      v-if="confirmClose"
+      :title="t('plugins.fileExplorer.confirmCloseTitle', { name: confirmClose.name })"
+      :buttons="confirmClose.buttons"
+      @resolve="resolveConfirmClose"
+    />
   </div>
 </template>
 

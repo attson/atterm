@@ -24,7 +24,7 @@ function mountFE(path: string, meta: { size: number; isBinary: boolean }) {
     props: { fs, path, showLineNumbers: false, theme: "dimmed", viewMode: "code" },
     global: {
       stubs: {
-        CodeViewer: { template: '<div data-test="kind-code" />' },
+        CodeEditor: { template: '<div data-test="kind-code" />' },
         ImagePreview: { template: '<div data-test="kind-image" />' },
         MediaPreview: { template: '<div data-test="kind-media" />' },
         PdfPreview: { template: '<div data-test="kind-pdf" />' },
@@ -60,7 +60,7 @@ describe("FileEditor (dispatcher)", () => {
     expect(w.find('[data-test="kind-pdf"]').exists()).toBe(true);
   });
 
-  it("routes .go to CodeViewer", async () => {
+  it("routes .go to CodeEditor", async () => {
     const w = mountFE("/x/main.go", { size: 500, isBinary: false });
     await flushPromises();
     expect(w.find('[data-test="kind-code"]').exists()).toBe(true);
@@ -72,7 +72,7 @@ describe("FileEditor (dispatcher)", () => {
     expect(w.find('[data-test="kind-banner"]').exists()).toBe(true);
   });
 
-  it("routes svg to CodeViewer when viewMode=code", async () => {
+  it("routes svg to CodeEditor when viewMode=code", async () => {
     const w = mountFE("/x/logo.svg", { size: 200, isBinary: false });
     await flushPromises();
     expect(w.find('[data-test="kind-code"]').exists()).toBe(true);
@@ -86,7 +86,7 @@ describe("FileEditor (dispatcher)", () => {
       props: { fs, path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
       global: {
         stubs: {
-          CodeViewer: { template: '<div data-test="kind-code" />' },
+          CodeEditor: { template: '<div data-test="kind-code" />' },
           ImagePreview: { template: '<div data-test="kind-image" />' },
           MediaPreview: { template: '<div data-test="kind-media" />' },
           PdfPreview: { template: '<div data-test="kind-pdf" />' },
@@ -99,7 +99,7 @@ describe("FileEditor (dispatcher)", () => {
     expect(w.find('[data-test="kind-markdown"]').exists()).toBe(true);
   });
 
-  it("routes .md to CodeViewer when viewMode=code", async () => {
+  it("routes .md to CodeEditor when viewMode=code", async () => {
     (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       path: "/x/README.md", size: 500, modTime: 1, isBinary: false,
     });
@@ -107,7 +107,7 @@ describe("FileEditor (dispatcher)", () => {
       props: { fs, path: "/x/README.md", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
       global: {
         stubs: {
-          CodeViewer: { template: '<div data-test="kind-code" />' },
+          CodeEditor: { template: '<div data-test="kind-code" />' },
           ImagePreview: { template: '<div data-test="kind-image" />' },
           MediaPreview: { template: '<div data-test="kind-media" />' },
           PdfPreview: { template: '<div data-test="kind-pdf" />' },
@@ -128,7 +128,7 @@ describe("FileEditor (dispatcher)", () => {
       props: { fs, path: "/x/logo.svg", showLineNumbers: false, theme: "dimmed", viewMode: "render" },
       global: {
         stubs: {
-          CodeViewer: { template: '<div data-test="kind-code" />' },
+          CodeEditor: { template: '<div data-test="kind-code" />' },
           ImagePreview: { template: '<div data-test="kind-image" />' },
           MediaPreview: { template: '<div data-test="kind-media" />' },
           PdfPreview: { template: '<div data-test="kind-pdf" />' },
@@ -148,7 +148,7 @@ describe("FileEditor (dispatcher)", () => {
       props: { fs, path: "/x/main.go", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
       global: {
         stubs: {
-          CodeViewer: { template: '<div data-test="kind-code" />' },
+          CodeEditor: { template: '<div data-test="kind-code" />' },
           ImagePreview: { template: '<div data-test="kind-image" />' },
           MediaPreview: { template: '<div data-test="kind-media" />' },
           PdfPreview: { template: '<div data-test="kind-pdf" />' },
@@ -174,7 +174,7 @@ describe("FileEditor (dispatcher)", () => {
       props: { fs, path: "/x/first.bin", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
       global: {
         stubs: {
-          CodeViewer: { template: '<div data-test="kind-code" />' },
+          CodeEditor: { template: '<div data-test="kind-code" />' },
           ImagePreview: { template: '<div data-test="kind-image" />' },
           MediaPreview: { template: '<div data-test="kind-media" />' },
           PdfPreview: { template: '<div data-test="kind-pdf" />' },

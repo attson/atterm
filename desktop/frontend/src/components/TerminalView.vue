@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
@@ -111,6 +111,8 @@ const platform = usePlatform();
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
+let pluginInputSender: ((text: string) => void) | null = null;
+let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
@@ -120,6 +122,11 @@ let focusCoalescer: FocusReportCoalescer | null = null;
 // when this TerminalView is rendered outside the plugin-aware App.
 const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
   "atterm:pluginInputSenders",
+  null,
+);
+
+const pluginSessionConnections = inject<Map<string, SessionConnection> | null>(
+  "atterm:pluginSessionConnections",
   null,
 );
 
@@ -135,6 +142,10 @@ let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
 let copyKeyTarget: HTMLDivElement | null = null;
+
+function isLiveTerminal(): boolean {
+  return isAlive && term !== null && termContainer.value !== null;
+}
 
 const MENU_WIDTH = 150;
 const MENU_HEIGHT = 150;
@@ -473,6 +484,7 @@ async function ensureTerm() {
     // opt back in from Settings once the binding is reachable.
     webglEnabled = false;
   }
+  if (!isLiveTerminal()) return;
   if (webglEnabled) {
     try {
       const webgl = new WebglAddon();
@@ -552,6 +564,7 @@ async function ensureTerm() {
   } catch {
     cachedHomeDir = "";
   }
+  if (!isLiveTerminal()) return;
   linkProviderDisposer = useTerminalLinkProvider({
     term,
     isMac,
@@ -566,7 +579,7 @@ async function ensureTerm() {
 
 function startConnection() {
   if (!term) return;
-  conn = new SessionConnection(
+  conn = markRaw(new SessionConnection(
     props.endpoint,
     props.sessionId,
     {
@@ -600,13 +613,15 @@ function startConnection() {
       },
     },
     { clientName: localHostname.value, remote: !props.isLocalSession }
-  );
+  ));
   conn.attach();
+  pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins
   // (Quick Input) can pipe text through this same driver connection.
   // A fresh SessionConnection would attach as a viewer and have its
   // IN frames dropped by the relay.
-  pluginInputSenders?.set(props.sessionId, (text: string) => conn?.sendInput(text));
+  pluginInputSender = (text: string) => conn?.sendInput(text);
+  pluginInputSenders?.set(props.sessionId, pluginInputSender);
   // Skip the no-op RESIZE if our fit landed on the same size the relay
   // already knows about. Net effect: locally-spawned shells (PTY born at
   // predicted dims) and cross-attached shells whose owner happens to be
@@ -701,6 +716,7 @@ let templatesOff: (() => void) | null = null;
 
 onMounted(async () => {
   await ensureTerm();
+  if (!isAlive) return;
   // Resolve the local hostname before opening the WS so the very first ATTACH
   // carries the correct client_name. Failure (e.g. Wails not ready in tests
   // or a future browser-only build) falls back to the default in connection.ts.
@@ -710,6 +726,7 @@ onMounted(async () => {
   } catch {
     /* fall back to default */
   }
+  if (!isAlive) return;
   startConnection();
   reloadTemplates();
   templatesOff = platform.events.on("quickTemplates:changed", reloadTemplates);
@@ -724,12 +741,16 @@ onMounted(async () => {
   // mount, which makes FitAddon return NaN and bail. By the time we get a
   // second rAF the layout has definitely settled.
   requestAnimationFrame(() => {
+    if (!isAlive) return;
     safeFit();
-    requestAnimationFrame(() => safeFit());
+    requestAnimationFrame(() => {
+      if (isAlive) safeFit();
+    });
   });
 });
 
 onBeforeUnmount(() => {
+  isAlive = false;
   // Drop every external callback that could re-enter the term BEFORE we
   // touch conn / term. A queued ResizeObserver entry or a stray document
   // listener firing in the same tick used to call safeFit() → fit.fit() on
@@ -747,7 +768,13 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
-  pluginInputSenders?.delete(props.sessionId);
+  if (pluginInputSenders?.get(props.sessionId) === pluginInputSender) {
+    pluginInputSenders?.delete(props.sessionId);
+  }
+  pluginInputSender = null;
+  if (pluginSessionConnections?.get(props.sessionId) === conn) {
+    pluginSessionConnections?.delete(props.sessionId);
+  }
   focusCoalescer?.dispose();
   focusCoalescer = null;
   linkProviderDisposer?.dispose();

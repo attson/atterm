@@ -1,16 +1,22 @@
 <script lang="ts" setup>
-import { onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { usePlatform } from "../../platform";
 import BinaryBanner from "./BinaryBanner.vue";
+import type { FileSystemBridge } from "./fsBridge";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
-const props = defineProps<{ path: string; theme: "dimmed" | "light" }>();
+const props = defineProps<{ fs: FileSystemBridge; path: string; theme: "dimmed" | "light" }>();
 const platform = usePlatform();
-const fs = platform.pluginHost!.fs;
 
 const html = ref<string>("");
 const state = ref<"loading" | "ok" | "error">("loading");
+let disposed = false;
+let generation = 0;
+
+function isCurrent(fs: FileSystemBridge, path: string, request: number): boolean {
+  return !disposed && generation === request && props.fs === fs && props.path === path;
+}
 
 function decodeFileBytes(data: unknown): string {
   let bytes: Uint8Array;
@@ -32,11 +38,17 @@ function decodeFileBytes(data: unknown): string {
 }
 
 async function load() {
+  const fs = props.fs;
+  const path = props.path;
+  const request = ++generation;
+  if (disposed) return;
   state.value = "loading";
   try {
-    const meta = (await fs.fileMeta(props.path)) as { size: number; isBinary: boolean };
+    const meta = (await fs.fileMeta(path)) as { size: number; isBinary: boolean };
+    if (!isCurrent(fs, path, request)) return;
     if (meta.size > MAX_BYTES) { state.value = "error"; return; }
-    const result = (await fs.readFile(props.path, MAX_BYTES)) as { data: unknown };
+    const result = (await fs.readFile(path, MAX_BYTES)) as { data: unknown };
+    if (!isCurrent(fs, path, request)) return;
     const text = decodeFileBytes(result.data);
     // Lazy-load the parser so it joins this component's own chunk only when
     // the user actually opens a markdown file.
@@ -44,9 +56,12 @@ async function load() {
     // html: false disables raw HTML in the source. linkify: true turns bare
     // URLs into <a> tags. typographer: false keeps quotes and dashes literal.
     const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
-    html.value = md.render(text);
+    const rendered = md.render(text);
+    if (!isCurrent(fs, path, request)) return;
+    html.value = rendered;
     state.value = "ok";
   } catch {
+    if (!isCurrent(fs, path, request)) return;
     state.value = "error";
   }
 }
@@ -64,12 +79,19 @@ function onContainerClick(ev: MouseEvent) {
   // Otherwise (relative links, fragments, javascript:) — no-op.
 }
 
-onMounted(() => { void load(); });
-watch(() => props.path, () => { void load(); });
+onMounted(() => {
+  disposed = false;
+  void load();
+});
+watch(() => [props.path, props.fs], () => { void load(); });
+onBeforeUnmount(() => {
+  disposed = true;
+  generation++;
+});
 </script>
 
 <template>
-  <BinaryBanner v-if="state === 'error'" :path="path" />
+  <BinaryBanner v-if="state === 'error'" :fs="fs" :path="path" />
   <div
     v-else-if="state === 'ok'"
     class="md-host"

@@ -11,6 +11,15 @@ vi.mock("./TerminalView.vue", () => ({
   },
 }));
 
+describe("PaneGrid terminal identity", () => {
+  test("keys each pane by session identity with an empty-cell fallback", () => {
+    expect(source).toMatch(/function paneKey\(pane: Pane, idx: number\): string/);
+    expect(source).toMatch(/return pane\.sessionId \?\? `empty-\$\{idx\}`/);
+    expect(source).toContain(':key="paneKey(pane, idx)"');
+    expect(source).not.toContain(':key="idx"');
+  });
+});
+
 describe("PaneGrid viewers badge", () => {
   test("accepts a viewerCountFor prop", () => {
     expect(source).toMatch(/viewerCountFor\?: \(sessionId: string\) => number/);

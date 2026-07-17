@@ -440,21 +440,21 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		}
 	}()
 	return &relayHost{
-		addr:         ln.Addr().String(),
-		sessionToken: tok,
-		adminUserID:  adminUser.ID,
-		server:       srv,
-		httpSrv:      httpSrv,
-		store:        store,
-		sqliteStore:  store,
-		hostID:       hostid.Get(),
-		host:         hostnameOrUnknown(),
-		user:         usernameOrUid(),
-		cfg:          cfgStore,
-		sessions:     make(map[uuid.UUID]*activeSession),
-		changes:      make(chan struct{}, 1),
-		uplinkSubs:   make(map[uuid.UUID]*session.Subscriber),
-		startSniffFn: startAIResolve,
+		addr:                 ln.Addr().String(),
+		sessionToken:         tok,
+		adminUserID:          adminUser.ID,
+		server:               srv,
+		httpSrv:              httpSrv,
+		store:                store,
+		sqliteStore:          store,
+		hostID:               hostid.Get(),
+		host:                 hostnameOrUnknown(),
+		user:                 usernameOrUid(),
+		cfg:                  cfgStore,
+		sessions:             make(map[uuid.UUID]*activeSession),
+		changes:              make(chan struct{}, 1),
+		uplinkSubs:           make(map[uuid.UUID]*session.Subscriber),
+		startSniffFn:         startAIResolve,
 		feishuCards:          internalfeishu.NewCardIndex(),
 		feishuSubs:           make(map[string]*internalfeishu.FeishuSubscriber),
 		feishuAnchorRuntimes: make(map[string]*anchorRuntime),
@@ -575,6 +575,14 @@ func (h *relayHost) ClaimLocalDriver(id uuid.UUID, clientID, clientName string) 
 	}
 	sess.ClaimDriver(uplinkSub, clientID, clientName)
 	return nil
+}
+
+func (h *relayHost) DriverClientID(id uuid.UUID) (string, bool) {
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		return "", false
+	}
+	return sess.DriverClientID(), true
 }
 
 // SendLocalInbound forwards an IN/RESIZE frame from a remote attacher into the

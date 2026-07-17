@@ -1,5 +1,6 @@
 import type { Component, ComputedRef, Ref } from "vue";
 import type { Endpoint } from "../lib/api";
+import type { SessionConnection } from "../lib/connection";
 import type { Pane } from "../lib/types";
 import type { MessageKey } from "../i18n";
 
@@ -21,6 +22,8 @@ export interface ContextMenuPlugin {
 export interface PluginContext {
   activePane: Ref<Pane | null>;
   activeSessionId: ComputedRef<string | null>;
+  activeIsRemote: ComputedRef<boolean>;
+  activeSessionConnection: ComputedRef<SessionConnection | null>;
   activeEndpoint: ComputedRef<Endpoint | null>;
   activeCwd: ComputedRef<string | null>;
   // Current terminal theme id (e.g. "classic" / "daylight"). Plugins use it

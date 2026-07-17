@@ -15,7 +15,7 @@ func makeFS(t *testing.T) (*PluginFS, string) {
 	t.Helper()
 	home := t.TempDir()
 	fs := &PluginFS{
-		allowRoots: []string{home},
+		access: newFSAccess([]string{home}),
 	}
 	return fs, home
 }

@@ -28,20 +28,50 @@ var (
 // ownerUserID, when non-empty, restricts ATTACH to sessions owned by that user.
 func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string) {
 	c.SetReadLimit(clientReadLimit)
+	targetedOut := make(chan proto.Frame, 16)
 
 	var (
-		sess *session.Session
-		sub  *session.Subscriber
+		sess     *session.Session
+		sub      *session.Subscriber
+		clientID string
 	)
 	defer func() {
 		if sess != nil && sub != nil {
 			sess.Unsubscribe(sub)
 		}
 	}()
+	defer func() {
+		routes := s.fsRoutes()
+		if sess != nil && sess.DriverFromUpstream() {
+			for _, watch := range routes.clientWatches(targetedOut) {
+				if watch.sessionID != sess.ID {
+					continue
+				}
+				request := proto.FSRequestPayload{
+					RequestID: "cleanup-unwatch-" + uuid.NewString(),
+					Op:        "unwatch_dir",
+					WatchID:   watch.watchID,
+				}
+				payload, err := json.Marshal(request)
+				if err != nil {
+					continue
+				}
+				if !sess.SendInbound(proto.Frame{Type: proto.TypeFSRequest, SessionID: sess.ID, Payload: payload}) {
+					s.debugf("client fs_cleanup_drop reason=inbound_full session=%s watch_id=%s", sess.ID, watch.watchID)
+				}
+			}
+		}
+		routes.unregisterClient(targetedOut)
+	}()
 
 	// Outgoing pump (started after ATTACH).
 	writerCtx, cancelWriter := context.WithCancel(ctx)
 	defer cancelWriter()
+	targetedOverflow := func() {
+		s.debugf("client targeted_fs_overflow")
+		cancelWriter()
+		_ = c.CloseNow()
+	}
 
 	startWriter := func() {
 		go func() {
@@ -55,6 +85,16 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				case <-sub.Done():
 					_ = c.Close(websocket.StatusGoingAway, "session ended")
 					return
+				case f := <-targetedOut:
+					s.debugFrame("client", "send", f)
+					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
+					cancel()
+					if err != nil {
+						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
+						_ = c.CloseNow()
+						return
+					}
 				case <-ticker.C:
 					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
 					err := c.Ping(ctx)
@@ -154,6 +194,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				return
 			}
 			sess = target
+			clientID = ap.ClientID
 			sub, _ = sess.Subscribe(ap.SinceSeq, ap.ClientID, ap.ClientName)
 			s.debugf("client attached session=%s since_seq=%d client_id=%q client_name=%q", id, ap.SinceSeq, ap.ClientID, ap.ClientName)
 			if ownerUserID != "" && s.cfg.Store != nil {
@@ -219,6 +260,67 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			}
 			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
 
+		case proto.TypeFSRequest:
+			if sess == nil {
+				s.debugf("client drop frame=FS_REQUEST reason=not_attached")
+				continue
+			}
+			var request proto.FSRequestPayload
+			if err := json.Unmarshal(f.Payload, &request); err != nil || request.RequestID == "" || request.Op == "" || f.SessionID != sess.ID {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
+				continue
+			}
+			if request.Op != "open_external" && !isReadOnlyFSOperation(request.Op) {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
+				continue
+			}
+			if sess.Info().RemotePermission != proto.RemotePermissionFull {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "permission_denied")
+				continue
+			}
+			if !sess.DriverFromUpstream() {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "upstream_unavailable")
+				continue
+			}
+			if request.Op == "open_external" {
+				if scope != authWrite {
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "permission_denied")
+					continue
+				}
+				if !sess.IsDriver(sub) {
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "driver_required")
+					continue
+				}
+			}
+
+			routes := s.fsRoutes()
+			if request.Op == "unwatch_dir" {
+				if request.WatchID == "" {
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
+					continue
+				}
+				if !routes.clientOwnsWatch(sess.ID, request.WatchID, targetedOut) {
+					s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "permission_denied")
+					continue
+				}
+			}
+			request.ClientID = clientID
+			payload, err := json.Marshal(request)
+			if err != nil {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
+				continue
+			}
+			f.Payload = payload
+			if !routes.registerRequestRoute(sess.ID, request, targetedOut, targetedOverflow) {
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "duplicate_request_id")
+				continue
+			}
+			if !sess.SendInbound(f) {
+				routes.unregisterRequest(sess.ID, request.RequestID, targetedOut)
+				s.debugf("client fs_request_drop reason=inbound_full session=%s request_id=%s", sess.ID, request.RequestID)
+				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "upstream_unavailable")
+			}
+
 		case proto.TypePing:
 			// Echo PING payload as PONG so the client can compute RTT
 			// without trusting the server clock. nhooyr Conn.Write is
@@ -239,5 +341,27 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		default:
 			log.Printf("client: unexpected frame type 0x%02x", f.Type)
 		}
+	}
+}
+
+func isReadOnlyFSOperation(op string) bool {
+	switch op {
+	case "list_dir", "file_meta", "read_file", "read_chunk", "watch_dir", "unwatch_dir":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) sendFSClientError(out chan<- proto.Frame, onOverflow func(), sessionID uuid.UUID, requestID, message string) {
+	payload, err := json.Marshal(proto.FSResponsePayload{
+		RequestID: requestID,
+		Error:     message,
+	})
+	if err != nil {
+		return
+	}
+	if !sendFSFrameToRoute(fsClientRoute{out: out, onOverflow: onOverflow}, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
+		s.debugf("client fs_error_drop session=%s request_id=%s", sessionID, requestID)
 	}
 }

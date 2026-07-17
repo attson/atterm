@@ -3,6 +3,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import MarkdownPreview from "./MarkdownPreview.vue";
 import { __setPlatformForTests } from "../../platform";
 import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
+import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
 
 // Warm the markdown-it dynamic-import cache so flushPromises() inside each
 // test sees the parser load synchronously. Without this the very first test's
@@ -11,10 +12,12 @@ import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
 beforeAll(async () => { await import("markdown-it"); });
 
 let platform: ReturnType<typeof createFakePlatform>;
+let fs: FileSystemBridge;
 beforeEach(() => {
   vi.clearAllMocks();
   platform = createFakePlatform();
   __setPlatformForTests(platform);
+  fs = createLocalFSBridge(platform.pluginHost!, platform.events);
 });
 afterEach(() => __setPlatformForTests(null));
 
@@ -30,7 +33,7 @@ function mockRead(path: string, source: string, size?: number) {
 describe("MarkdownPreview", () => {
   it("renders headings as <h1> tags", async () => {
     mockRead("/x/a.md", "# Hello world\n\nbody text");
-    const w = mount(MarkdownPreview, { props: { path: "/x/a.md", theme: "dimmed" } });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/a.md", theme: "dimmed" } });
     await flushPromises();
     expect(w.find(".md-host").exists()).toBe(true);
     expect(w.html()).toContain("<h1>Hello world</h1>");
@@ -38,7 +41,7 @@ describe("MarkdownPreview", () => {
 
   it("renders fenced code blocks as <pre><code>", async () => {
     mockRead("/x/a.md", "```\nconst x = 1;\n```");
-    const w = mount(MarkdownPreview, { props: { path: "/x/a.md", theme: "dimmed" } });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/a.md", theme: "dimmed" } });
     await flushPromises();
     expect(w.html()).toContain("<pre>");
     expect(w.html()).toContain("const x = 1;");
@@ -46,7 +49,7 @@ describe("MarkdownPreview", () => {
 
   it("escapes raw HTML in the source (html: false)", async () => {
     mockRead("/x/a.md", "before <script>alert(1)</script> after");
-    const w = mount(MarkdownPreview, { props: { path: "/x/a.md", theme: "dimmed" } });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/a.md", theme: "dimmed" } });
     await flushPromises();
     // The literal "<script>" must NOT survive into the rendered DOM.
     expect(w.find("script").exists()).toBe(false);
@@ -59,7 +62,7 @@ describe("MarkdownPreview", () => {
     (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       path: "/x/big.md", size: 3 * 1024 * 1024, modTime: 1, isBinary: false,
     });
-    const w = mount(MarkdownPreview, { props: { path: "/x/big.md", theme: "dimmed" } });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/big.md", theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("Inline preview unavailable");
   });
@@ -68,14 +71,14 @@ describe("MarkdownPreview", () => {
     (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("boom"),
     );
-    const w = mount(MarkdownPreview, { props: { path: "/x/a.md", theme: "dimmed" } });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/a.md", theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("Inline preview unavailable");
   });
 
   it("opens http(s) links via system.openExternalURL on click", async () => {
     mockRead("/x/a.md", "[example](https://example.com)");
-    const w = mount(MarkdownPreview, { props: { path: "/x/a.md", theme: "dimmed" } });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/a.md", theme: "dimmed" } });
     await flushPromises();
     const a = w.find("a");
     expect(a.exists()).toBe(true);
@@ -85,9 +88,49 @@ describe("MarkdownPreview", () => {
 
   it("does not call openExternalURL for relative links", async () => {
     mockRead("/x/a.md", "[local](./foo.md)");
-    const w = mount(MarkdownPreview, { props: { path: "/x/a.md", theme: "dimmed" } });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/a.md", theme: "dimmed" } });
     await flushPromises();
     await w.find("a").trigger("click");
     expect(platform.system.openExternalURL).not.toHaveBeenCalled();
+  });
+
+  it("ignores a delayed fileMeta result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; size: number; modTime: number; isBinary: boolean }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/x/old.md") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, size: 9, modTime: 2, isBinary: false });
+    });
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: "/x/new.md", data: new TextEncoder().encode("# New file"), isBinary: false, truncatedAt: 0,
+    });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/old.md", theme: "dimmed" } });
+    await flushPromises();
+    await w.setProps({ path: "/x/new.md" });
+    await flushPromises();
+    resolveOld({ path: "/x/old.md", size: 3 * 1024 * 1024, modTime: 1, isBinary: false });
+    await flushPromises();
+
+    expect(w.html()).toContain("<h1>New file</h1>");
+    expect(w.text()).not.toContain("Inline preview unavailable");
+  });
+
+  it("ignores a delayed readFile result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; data: string; isBinary: boolean; truncatedAt: number }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) =>
+      Promise.resolve({ path, size: 10, modTime: 1, isBinary: false }),
+    );
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/x/old.md") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, data: "IyBOZXcgZmlsZQ==", isBinary: false, truncatedAt: 0 });
+    });
+    const w = mount(MarkdownPreview, { props: { fs, path: "/x/old.md", theme: "dimmed" } });
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.readFile).toHaveBeenCalledWith("/x/old.md", 2 * 1024 * 1024));
+    await w.setProps({ path: "/x/new.md" });
+    await flushPromises();
+    resolveOld({ path: "/x/old.md", data: "IyBPbGQgZmlsZQ==", isBinary: false, truncatedAt: 0 });
+    await flushPromises();
+
+    expect(w.html()).toContain("<h1>New file</h1>");
+    expect(w.html()).not.toContain("<h1>Old file</h1>");
   });
 });

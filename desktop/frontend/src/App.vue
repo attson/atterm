@@ -52,7 +52,7 @@ import {
 } from "./lib/api";
 import type { Endpoint, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
-import { SessionListConnection, type SessionInfo } from "./lib/connection";
+import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
 import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
@@ -303,14 +303,13 @@ const currentTab = computed<Tab | null>(
 
 // Keep a Ref (not ComputedRef) so it satisfies PluginContextInputs.activePane.
 const activePaneRef = ref<Pane | null>(null);
-watch(
-  [() => currentTab.value, () => currentTab.value?.activePaneIdx],
-  () => {
-    const t = currentTab.value;
-    activePaneRef.value = t ? t.panes[t.activePaneIdx] ?? null : null;
-  },
-  { immediate: true, deep: false },
-);
+const selectedPane = computed<Pane | null>(() => {
+  const tab = currentTab.value;
+  return tab?.panes[tab.activePaneIdx] ?? null;
+});
+watch(selectedPane, (pane) => {
+  activePaneRef.value = pane;
+}, { immediate: true });
 
 // Drive the OS window title from the active tab's AI session OSC title.
 // claude / codex prefix their OSC title with status glyphs (● / ✻) already,
@@ -367,10 +366,17 @@ const currentTitleForBar = computed<string>(() => {
 const pluginInputSenders = new Map<string, (text: string) => void>();
 provide("atterm:pluginInputSenders", pluginInputSenders);
 
+// TerminalView owns these connections. Plugins must reuse an entry instead of
+// opening another /client attachment for the active session.
+const pluginSessionConnections = reactive(new Map<string, SessionConnection>()) as Map<string, SessionConnection>;
+provide("atterm:pluginSessionConnections", pluginSessionConnections);
+
 const pluginContext = createPluginContext({
   activePane: activePaneRef,
   endpointForPane: endpointFor,
   sessionInfoForPane: paneSessionInfo,
+  sessionConnectionForPane: (pane) =>
+    pane.sessionId ? pluginSessionConnections.get(pane.sessionId) ?? null : null,
   sendToSession: (sessionId, endpoint, text) => {
     const sender = pluginInputSenders.get(sessionId);
     if (sender) {

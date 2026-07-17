@@ -3,13 +3,16 @@ import { mount, flushPromises } from "@vue/test-utils";
 import CodeViewer from "./CodeViewer.vue";
 import { __setPlatformForTests } from "../../platform";
 import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
+import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
 
 let platform: ReturnType<typeof createFakePlatform>;
+let fs: FileSystemBridge;
 
 beforeEach(() => {
   vi.clearAllMocks();
   platform = createFakePlatform();
   __setPlatformForTests(platform);
+  fs = createLocalFSBridge(platform.pluginHost!, platform.events);
 });
 
 afterEach(() => {
@@ -21,7 +24,7 @@ describe("CodeViewer", () => {
     (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       path: "/a.txt", size: 3_000_000, modTime: 1, isBinary: false,
     });
-    const w = mount(CodeViewer, { props: { path: "/a.txt", showLineNumbers: false, theme: "dimmed" } });
+    const w = mount(CodeViewer, { props: { fs, path: "/a.txt", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("File too large");
     expect(platform.pluginHost!.fs.readFile).not.toHaveBeenCalled();
@@ -31,7 +34,7 @@ describe("CodeViewer", () => {
     (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       path: "/b.bin", size: 100, modTime: 1, isBinary: true,
     });
-    const w = mount(CodeViewer, { props: { path: "/b.bin", showLineNumbers: false, theme: "dimmed" } });
+    const w = mount(CodeViewer, { props: { fs, path: "/b.bin", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(w.text()).toContain("Binary file");
     expect(platform.pluginHost!.fs.readFile).not.toHaveBeenCalled();
@@ -44,10 +47,50 @@ describe("CodeViewer", () => {
     (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       path: "/c.txt", data: new TextEncoder().encode("hello"), isBinary: false, truncatedAt: 0,
     });
-    const w = mount(CodeViewer, { props: { path: "/c.txt", showLineNumbers: false, theme: "dimmed" } });
+    const w = mount(CodeViewer, { props: { fs, path: "/c.txt", showLineNumbers: false, theme: "dimmed" } });
     await flushPromises();
     expect(platform.pluginHost!.fs.readFile).toHaveBeenCalled();
     expect(w.text()).not.toContain("File too large");
     expect(w.text()).not.toContain("Binary file");
+  });
+
+  it("ignores a delayed fileMeta result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; size: number; modTime: number; isBinary: boolean }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/old.bin") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, size: 3, modTime: 2, isBinary: false });
+    });
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+      path: "/new.txt", data: "bmV3IGNvbnRlbnQ=", isBinary: false, truncatedAt: 0,
+    });
+    const w = mount(CodeViewer, { props: { fs, path: "/old.bin", showLineNumbers: false, theme: "dimmed" } });
+    await flushPromises();
+    await w.setProps({ path: "/new.txt" });
+    await flushPromises();
+    resolveOld({ path: "/old.bin", size: 3, modTime: 1, isBinary: true });
+    await flushPromises();
+
+    expect(w.text()).toContain("new content");
+    expect(w.text()).not.toContain("Binary file");
+  });
+
+  it("ignores a delayed readFile result for the previous path", async () => {
+    let resolveOld!: (value: { path: string; data: string; isBinary: boolean; truncatedAt: number }) => void;
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) =>
+      Promise.resolve({ path, size: 10, modTime: 1, isBinary: false }),
+    );
+    (platform.pluginHost!.fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/old.txt") return new Promise((resolve) => { resolveOld = resolve; });
+      return Promise.resolve({ path, data: "bmV3IGNvbnRlbnQ=", isBinary: false, truncatedAt: 0 });
+    });
+    const w = mount(CodeViewer, { props: { fs, path: "/old.txt", showLineNumbers: false, theme: "dimmed" } });
+    await vi.waitFor(() => expect(platform.pluginHost!.fs.readFile).toHaveBeenCalledWith("/old.txt", 2 * 1024 * 1024));
+    await w.setProps({ path: "/new.txt" });
+    await flushPromises();
+    resolveOld({ path: "/old.txt", data: "b2xkIGNvbnRlbnQ=", isBinary: false, truncatedAt: 0 });
+    await flushPromises();
+
+    expect(w.text()).toContain("new content");
+    expect(w.text()).not.toContain("old content");
   });
 });

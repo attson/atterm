@@ -29,6 +29,74 @@ export interface Endpoint {
   session_token: string;
 }
 
+export type FSRequestOp =
+  | "list_dir"
+  | "file_meta"
+  | "read_file"
+  | "read_chunk"
+  | "watch_dir"
+  | "unwatch_dir"
+  | "open_external";
+
+export interface FSRequest {
+  op: FSRequestOp;
+  request_id?: string;
+  path?: string;
+  max_bytes?: number;
+  offset?: number;
+  length?: number;
+  watch_id?: string;
+}
+
+export interface FSDirEntry {
+  name: string;
+  isDir: boolean;
+  size?: number;
+  modTime?: number;
+}
+
+export interface FSFileContent {
+  path: string;
+  // Go JSON encodes []byte fields as standard base64 strings.
+  data: string;
+  isBinary: boolean;
+  truncatedAt?: number;
+}
+
+export interface FSFileMetaInfo {
+  path: string;
+  size: number;
+  modTime: number;
+  isBinary: boolean;
+}
+
+export interface FSChunkPayload {
+  path: string;
+  // Go JSON encodes []byte fields as standard base64 strings.
+  data: string;
+  offset: number;
+  length: number;
+  eof: boolean;
+  contentType?: string;
+}
+
+export interface FSResponse {
+  request_id: string;
+  ok: boolean;
+  error?: string;
+  entries?: FSDirEntry[];
+  meta?: FSFileMetaInfo;
+  content?: FSFileContent;
+  chunk?: FSChunkPayload;
+  watch_id?: string;
+}
+
+export interface FSEvent {
+  watch_id: string;
+  path: string;
+  event: "changed" | string;
+}
+
 export interface ConnectionHandlers {
   onOutput?: (data: Uint8Array) => void;
   onClose?: (info: ClosePayload) => void;
@@ -77,6 +145,7 @@ export interface SessionListHandlers {
 
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SUBPROTOCOL_SAFE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const DEFAULT_FS_REQUEST_TIMEOUT_MS = 30_000;
 
 export function pasteImageBlockReason(wsReadyState: number | undefined, blobSize: number): string | null {
   if (wsReadyState !== WebSocket.OPEN) return t("terminal.websocketNotOpen");
@@ -118,6 +187,77 @@ function tokenSubprotocol(token: string): string | undefined {
   if (!token) return undefined;
   if (SUBPROTOCOL_SAFE.test(token)) return `atterm-token.${token}`;
   return `atterm-token-b64.${stringToBase64URL(token)}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isFSDirEntry(value: unknown): value is FSDirEntry {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.name === "string" &&
+    typeof value.isDir === "boolean" &&
+    isOptionalNumber(value.size) &&
+    isOptionalNumber(value.modTime)
+  );
+}
+
+function isFSFileMetaInfo(value: unknown): value is FSFileMetaInfo {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.path === "string" &&
+    typeof value.size === "number" &&
+    Number.isFinite(value.size) &&
+    typeof value.modTime === "number" &&
+    Number.isFinite(value.modTime) &&
+    typeof value.isBinary === "boolean"
+  );
+}
+
+function isFSFileContent(value: unknown): value is FSFileContent {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.path === "string" &&
+    typeof value.data === "string" &&
+    typeof value.isBinary === "boolean" &&
+    isOptionalNumber(value.truncatedAt)
+  );
+}
+
+function isFSChunkPayload(value: unknown): value is FSChunkPayload {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.path === "string" &&
+    typeof value.data === "string" &&
+    typeof value.offset === "number" &&
+    Number.isFinite(value.offset) &&
+    typeof value.length === "number" &&
+    Number.isFinite(value.length) &&
+    typeof value.eof === "boolean" &&
+    isOptionalString(value.contentType)
+  );
+}
+
+function isFSResponse(value: unknown): value is FSResponse {
+  if (!isRecord(value)) return false;
+  if (typeof value.request_id !== "string" || typeof value.ok !== "boolean") return false;
+  if (!isOptionalString(value.error) || !isOptionalString(value.watch_id)) return false;
+  if (value.entries !== undefined && (!Array.isArray(value.entries) || !value.entries.every(isFSDirEntry))) {
+    return false;
+  }
+  if (value.meta !== undefined && !isFSFileMetaInfo(value.meta)) return false;
+  if (value.content !== undefined && !isFSFileContent(value.content)) return false;
+  if (value.chunk !== undefined && !isFSChunkPayload(value.chunk)) return false;
+  return true;
 }
 
 export function webSocketAuth(endpoint: Endpoint, path: string): { url: string; protocols?: string[] } {
@@ -257,6 +397,16 @@ export class SessionConnection {
   // after an idle reconnect the host recreates its uplink proxy subscriber with
   // auto-promote suppressed, so the session has no driver until we re-claim.
   private isDriverRole = false;
+  private pendingFSRequests = new Map<
+    string,
+    {
+      resolve: (response: FSResponse) => void;
+      reject: (err: Error) => void;
+      timer: number;
+    }
+  >();
+  private retiredFSRequestIDs = new Set<string>();
+  private fsEventHandlers = new Set<(event: FSEvent) => void>();
 
   constructor(
     private endpoint: Endpoint,
@@ -291,6 +441,8 @@ export class SessionConnection {
 
   detach(): void {
     this.detached = true;
+    this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
+    this.retiredFSRequestIDs.clear();
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -303,6 +455,45 @@ export class SessionConnection {
       }
       this.ws = null;
     }
+  }
+
+  sendFSRequest(req: FSRequest, timeoutMs = DEFAULT_FS_REQUEST_TIMEOUT_MS): Promise<FSResponse> {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("filesystem request failed: websocket is not open"));
+    }
+    const requestID = req.request_id || this.newUniqueFSRequestID();
+    if (this.pendingFSRequests.has(requestID)) {
+      return Promise.reject(new Error(`duplicate filesystem request_id: ${requestID}`));
+    }
+    if (this.retiredFSRequestIDs.has(requestID)) {
+      return Promise.reject(new Error(`retired filesystem request_id after timeout: ${requestID}`));
+    }
+    const payload: FSRequest = { ...req, request_id: requestID };
+    const encoded = encodeText(JSON.stringify(payload));
+
+    return new Promise<FSResponse>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.pendingFSRequests.delete(requestID);
+        this.retiredFSRequestIDs.add(requestID);
+        reject(new Error(`filesystem request timed out: ${requestID}`));
+      }, timeoutMs);
+      this.pendingFSRequests.set(requestID, { resolve, reject, timer });
+      try {
+        ws.send(encodeFrame(TYPE.FS_REQUEST, this.sidBytes, encoded));
+      } catch (e) {
+        window.clearTimeout(timer);
+        this.pendingFSRequests.delete(requestID);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  }
+
+  onFSEvent(handler: (event: FSEvent) => void): () => void {
+    this.fsEventHandlers.add(handler);
+    return () => {
+      this.fsEventHandlers.delete(handler);
+    };
   }
 
   sendInput(s: string): void {
@@ -400,6 +591,7 @@ export class SessionConnection {
 
     ws.onopen = () => {
       this.reconnectAttempts = 0;
+      this.retiredFSRequestIDs.clear();
       this.handlers.onStatus?.("attached");
       const attachPayload = encodeText(
         JSON.stringify({
@@ -485,11 +677,17 @@ export class SessionConnection {
         } catch {
           /* ignore */
         }
+      } else if (f.type === TYPE.FS_RESPONSE) {
+        this.handleFSResponse(f.payload);
+      } else if (f.type === TYPE.FS_EVENT) {
+        this.handleFSEvent(f.payload);
       }
     };
 
     ws.onclose = () => {
       this.ws = null;
+      this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
+      this.retiredFSRequestIDs.clear();
       if (this.detached) return;
       this.handlers.onStatus?.("reconnecting");
       const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
@@ -515,6 +713,72 @@ export class SessionConnection {
     if (this.detached) return;
     const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
     this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);
+  }
+
+  private newFSRequestID(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `fs-${crypto.randomUUID()}`;
+    }
+    return `fs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  private newUniqueFSRequestID(): string {
+    for (let i = 0; i < 5; i++) {
+      const requestID = this.newFSRequestID();
+      if (!this.pendingFSRequests.has(requestID)) return requestID;
+    }
+    return `fs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  private handleFSResponse(payload: Uint8Array): void {
+    let response: FSResponse;
+    try {
+      const parsed = JSON.parse(decodeText(payload));
+      if (!isFSResponse(parsed)) return;
+      response = parsed;
+    } catch {
+      return;
+    }
+    const pending = this.pendingFSRequests.get(response.request_id);
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    this.pendingFSRequests.delete(response.request_id);
+    pending.resolve(response);
+  }
+
+  private handleFSEvent(payload: Uint8Array): void {
+    let event: FSEvent;
+    try {
+      const parsed = JSON.parse(decodeText(payload)) as Partial<FSEvent>;
+      if (
+        !parsed ||
+        typeof parsed.watch_id !== "string" ||
+        typeof parsed.path !== "string" ||
+        typeof parsed.event !== "string"
+      ) {
+        return;
+      }
+      event = parsed as FSEvent;
+    } catch {
+      return;
+    }
+    for (const handler of this.fsEventHandlers) {
+      try {
+        handler(event);
+      } catch {
+        /* keep later handlers isolated */
+      }
+    }
+  }
+
+  private rejectPendingFSRequests(err: Error): void {
+    if (this.pendingFSRequests.size === 0) return;
+    const pending = Array.from(this.pendingFSRequests.values());
+    this.pendingFSRequests.clear();
+    for (const item of pending) {
+      window.clearTimeout(item.timer);
+      item.reject(err);
+    }
   }
 }
 

@@ -2,18 +2,17 @@
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { usePlatform } from "../../platform";
 import { languageForPath } from "./languageMap";
 import { highlightExtensionFor } from "./highlight";
 import { useI18n } from "../../i18n/useI18n";
+import type { FileSystemBridge } from "./fsBridge";
 
-const platform = usePlatform();
-const fs = platform.pluginHost!.fs;
 const { t } = useI18n();
 
 const MAX_BYTES_FRONTEND = 2 * 1024 * 1024;
 
 const props = defineProps<{
+  fs: FileSystemBridge;
   path: string;
   showLineNumbers: boolean;
   theme: "dimmed" | "light";
@@ -27,6 +26,23 @@ const loadedAt = ref<number | null>(null);
 
 let view: EditorView | null = null;
 let off: (() => void) | null = null;
+let disposed = false;
+let loadGeneration = 0;
+
+function isCurrent(
+  fs: FileSystemBridge,
+  path: string,
+  showLineNumbers: boolean,
+  theme: "dimmed" | "light",
+  request: number,
+): boolean {
+  return !disposed
+    && loadGeneration === request
+    && props.fs === fs
+    && props.path === path
+    && props.showLineNumbers === showLineNumbers
+    && props.theme === theme;
+}
 
 function cssVar(name: string, fallback: string): string {
   if (typeof window === "undefined" || !host.value) return fallback;
@@ -51,7 +67,7 @@ function decodeFileBytes(data: unknown): string {
   return new TextDecoder().decode(bytes);
 }
 
-function makeThemeExt(): Extension {
+function makeThemeExt(theme: "dimmed" | "light"): Extension {
   return EditorView.theme(
     {
       "&": {
@@ -73,65 +89,93 @@ function makeThemeExt(): Extension {
       },
       ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px 0 14px" },
     },
-    { dark: props.theme !== "light" },
+    { dark: theme !== "light" },
   );
 }
 
 async function load() {
+  const fs = props.fs;
+  const path = props.path;
+  const showLineNumbers = props.showLineNumbers;
+  const theme = props.theme;
+  const request = ++loadGeneration;
+  if (disposed) return;
   state.value = "loading";
   view?.destroy();
   view = null;
   try {
-    const meta = (await fs.fileMeta(props.path)) as any;
+    const meta = (await fs.fileMeta(path)) as any;
+    if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
     loadedAt.value = meta.modTime;
     reloadPending.value = false;
     if (meta.isBinary) { state.value = "binary"; return; }
     if (meta.size > MAX_BYTES_FRONTEND) { state.value = "tooLarge"; return; }
-    const result = (await fs.readFile(props.path, MAX_BYTES_FRONTEND)) as any;
+    const result = (await fs.readFile(path, MAX_BYTES_FRONTEND)) as any;
+    if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
     const text = decodeFileBytes(result.data);
-    state.value = "ok";
 
     const exts: Extension[] = [
       EditorView.editable.of(false),
       EditorState.readOnly.of(true),
-      makeThemeExt(),
-      highlightExtensionFor(props.theme),
+      makeThemeExt(theme),
+      highlightExtensionFor(theme),
     ];
-    if (props.showLineNumbers) exts.push(lineNumbers());
-    const langExt = await languageForPath(props.path);
+    if (showLineNumbers) exts.push(lineNumbers());
+    const langExt = await languageForPath(path);
     if (langExt) exts.push(langExt);
 
-    if (!host.value) return;
-    view = new EditorView({
+    if (!isCurrent(fs, path, showLineNumbers, theme, request) || !host.value) return;
+    const nextView = new EditorView({
       state: EditorState.create({ doc: text, extensions: exts }),
       parent: host.value,
     });
+    if (!isCurrent(fs, path, showLineNumbers, theme, request)) {
+      nextView.destroy();
+      return;
+    }
+    view = nextView;
+    state.value = "ok";
   } catch (err) {
+    if (!isCurrent(fs, path, showLineNumbers, theme, request)) return;
     state.value = "error";
     errorMsg.value = (err as Error).message;
   }
 }
 
-onMounted(() => {
-  void load();
-  off = platform.events.on("plugin-fs:dir-changed", async (data: unknown) => {
-    const dir = data as string;
-    if (!props.path.startsWith(dir + "/") && props.path !== dir) return;
-    try {
-      const meta = (await fs.fileMeta(props.path)) as any;
-      if (loadedAt.value && meta.modTime > loadedAt.value) {
-        reloadPending.value = true;
-      }
-    } catch { /* ignore */ }
+async function checkDirChanged(fs: FileSystemBridge, dir: string) {
+  const path = props.path;
+  const request = loadGeneration;
+  if (!path.startsWith(dir + "/") && path !== dir) return;
+  try {
+    const meta = (await fs.fileMeta(path)) as any;
+    if (disposed || props.fs !== fs || props.path !== path || loadGeneration !== request) return;
+    if (loadedAt.value && meta.modTime > loadedAt.value) reloadPending.value = true;
+  } catch { /* ignore */ }
+}
+
+function subscribeToDirChanges(fs: FileSystemBridge) {
+  off?.();
+  off = fs.onDirChanged((dir) => {
+    void checkDirChanged(fs, dir);
   });
+}
+
+onMounted(() => {
+  disposed = false;
+  void load();
+  subscribeToDirChanges(props.fs);
 });
 
 watch(
-  () => [props.path, props.showLineNumbers, props.theme],
+  () => [props.path, props.fs, props.showLineNumbers, props.theme],
   () => { void load(); },
 );
 
+watch(() => props.fs, (fs) => subscribeToDirChanges(fs));
+
 onBeforeUnmount(() => {
+  disposed = true;
+  loadGeneration++;
   view?.destroy();
   view = null;
   if (off) off();

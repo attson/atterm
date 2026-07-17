@@ -1,23 +1,65 @@
 <script lang="ts" setup>
-import { ref, computed } from "vue";
-import { usePlatform } from "../../platform";
+import { onBeforeUnmount, ref, watch } from "vue";
 import BinaryBanner from "./BinaryBanner.vue";
+import type { FileSystemBridge } from "./fsBridge";
 
-const props = defineProps<{ path: string; theme: "dimmed" | "light" }>();
-const platform = usePlatform();
-const src = computed(() => platform.pluginHost!.fs.assetUrlFor(props.path));
+const props = defineProps<{ fs: FileSystemBridge; path: string; theme: "dimmed" | "light" }>();
+const src = ref("");
+const assetKey = ref(0);
 
 const mode = ref<"fit" | "native">("fit");
 const failed = ref(false);
+let active = true;
+let request = 0;
+let requested: { fs: FileSystemBridge; path: string } | null = null;
+
+function releaseAsset() {
+  if (!requested) return;
+  requested.fs.revokeAssetUrl?.(requested.path);
+  requested = null;
+}
+
+async function loadAsset() {
+  const fs = props.fs;
+  const path = props.path;
+  const currentRequest = ++request;
+  assetKey.value = currentRequest;
+  releaseAsset();
+  requested = { fs, path };
+  src.value = "";
+  failed.value = false;
+  try {
+    const url = await fs.assetUrlFor(path);
+    if (!active || currentRequest !== request || props.fs !== fs || props.path !== path) {
+      fs.revokeAssetUrl?.(path);
+      return;
+    }
+    src.value = url;
+  } catch {
+    if (active && currentRequest === request && props.fs === fs && props.path === path) failed.value = true;
+  }
+}
+
+watch(() => [props.path, props.fs.identity], () => { void loadAsset(); }, { immediate: true });
+onBeforeUnmount(() => {
+  active = false;
+  request++;
+  releaseAsset();
+});
 
 function toggle() { mode.value = mode.value === "fit" ? "native" : "fit"; }
-function onError() { failed.value = true; }
+function onError(event: Event) {
+  const target = event.currentTarget as HTMLElement | null;
+  if (!src.value || !target || target.dataset.assetRequest !== String(assetKey.value)) return;
+  releaseAsset();
+  failed.value = true;
+}
 </script>
 
 <template>
-  <BinaryBanner v-if="failed" :path="path" />
+  <BinaryBanner v-if="failed" :fs="fs" :path="path" />
   <div v-else class="img-host" :class="mode">
-    <img :src="src" alt="" @click="toggle" @error="onError" />
+    <img :key="assetKey" :data-asset-request="assetKey" :src="src" alt="" @click="toggle" @error="onError" />
   </div>
 </template>
 

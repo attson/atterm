@@ -1,6 +1,7 @@
 <script lang="ts" setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { Pin, PinOff } from "lucide-vue-next";
+import { usePlatform } from "../../platform";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
 import { isLightTerminalTheme } from "../../lib/terminalThemes";
@@ -8,12 +9,15 @@ import FileTree from "./FileTree.vue";
 import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
 import { openPath, closeTab, setViewMode, type TabsState } from "./tabsModel";
+import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
+import { createRemoteSessionFS } from "./remoteSessionFS";
 import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 // theme.css is loaded once from App.vue so its --ed-* vars are available
 // even before this lazy chunk is fetched.
 
 const props = defineProps<{ context: PluginContext }>();
+const platform = usePlatform();
 const store = usePluginConfigStore();
 const { t } = useI18n();
 
@@ -47,15 +51,24 @@ const { onMouseDown: onDividerDown } = useResizer({
   },
 });
 
-// lastCwd retains the last non-empty cwd we've seen so the panel keeps a
-// stable root during the brief window when a freshly-spawned session's
-// optimistic SessionInfo entry has been overwritten by a stale server
-// listing push, or when the active pane is empty (pre-fill split).
-const lastCwd = ref<string>("");
+const bridgeOwner = computed(() => {
+  if (!props.context.activeIsRemote.value) {
+    return { identity: platform.pluginHost ? "local" : null, connection: null };
+  }
+  const sessionID = props.context.activeSessionId.value;
+  const connection = props.context.activeSessionConnection.value;
+  return { identity: sessionID && connection ? `remote:${sessionID}` : null, connection };
+});
+
+// Preserve an optimistic cwd only for the filesystem that reported it. A
+// stale/null update from one bridge must never become another bridge's root.
+const lastCwds = ref<Record<string, string>>({});
 watch(
-  () => props.context.activeCwd.value,
-  (val) => {
-    if (val) lastCwd.value = val;
+  () => [props.context.activeCwd.value, bridgeOwner.value.identity] as const,
+  ([cwd, identity]) => {
+    if (cwd && identity) {
+      lastCwds.value = { ...lastCwds.value, [identity]: cwd };
+    }
   },
   { immediate: true },
 );
@@ -64,10 +77,43 @@ const root = computed<string | null>(() => {
   if (pinned.value) return pinned.value;
   const cur = props.context.activeCwd.value;
   if (cur) return cur;
-  return lastCwd.value || null;
+  const identity = bridgeOwner.value.identity;
+  return identity ? lastCwds.value[identity] ?? null : null;
 });
 
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
+const fs = shallowRef<FileSystemBridge | null>(null);
+const fsGeneration = ref(0);
+
+watch(
+  () => [bridgeOwner.value.identity, bridgeOwner.value.connection] as const,
+  async ([identity, connection]) => {
+    const next = identity === "local"
+      ? platform.pluginHost
+        ? createLocalFSBridge(platform.pluginHost, platform.events)
+        : null
+      : identity && connection
+        ? createRemoteSessionFS(connection, identity)
+        : null;
+    const previous = fs.value;
+    const identityChanged = previous?.identity !== next?.identity;
+
+    fs.value = next;
+    fsGeneration.value++;
+    if (identityChanged) {
+      pinned.value = null;
+      tabsState.value = { tabs: [], activeIdx: -1 };
+    }
+    await nextTick();
+    previous?.dispose?.();
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  fs.value?.dispose?.();
+  fs.value = null;
+});
 
 function onFileClick(path: string) {
   tabsState.value = openPath(tabsState.value, path, "preview");
@@ -128,7 +174,9 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         </header>
         <div class="tree-scroll">
           <FileTree
-            v-if="root"
+            v-if="root && fs"
+            :key="fsGeneration"
+            :fs="fs"
             :root="root"
             :show-hidden="showHidden"
             @file-clicked="onFileClick"
@@ -149,7 +197,9 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         />
         <div class="editor-area">
           <FileEditor
-            v-if="activePath"
+            v-if="activePath && fs"
+            :key="fsGeneration"
+            :fs="fs"
             :path="activePath"
             :show-line-numbers="showLineNumbers"
             :theme="explorerTheme"

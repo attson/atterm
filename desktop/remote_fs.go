@@ -121,6 +121,51 @@ func (fs *remoteFS) handle(sessionID uuid.UUID, req proto.FSRequestPayload) prot
 		if err = fs.requireOpenExternalDriver(sessionID, req.ClientID); err == nil {
 			err = fs.openExternal(req.Path)
 		}
+	case "write_file":
+		var meta FileMetaInfo
+		meta, err = fs.access.writeFile(req.Path, req.Data, req.ExpectedModTime, req.CreateIfMissing)
+		if err == nil {
+			response.Meta = &proto.FileMetaInfo{
+				Path:     meta.Path,
+				Size:     meta.Size,
+				ModTime:  meta.ModTime,
+				IsBinary: meta.IsBinary,
+			}
+		}
+	case "create_file":
+		var meta FileMetaInfo
+		meta, err = fs.access.createFile(req.Path)
+		if err == nil {
+			response.Meta = &proto.FileMetaInfo{
+				Path:    meta.Path,
+				Size:    meta.Size,
+				ModTime: meta.ModTime,
+			}
+		}
+	case "rename":
+		var meta FileMetaInfo
+		meta, err = fs.access.renamePath(req.Path, req.NewPath)
+		if err == nil {
+			response.Meta = &proto.FileMetaInfo{
+				Path:    meta.Path,
+				Size:    meta.Size,
+				ModTime: meta.ModTime,
+			}
+		}
+	case "remove":
+		err = fs.access.removePath(req.Path, req.Recursive)
+	case "mkdir":
+		var meta FileMetaInfo
+		meta, err = fs.access.mkdir(req.Path)
+		if err == nil {
+			response.Meta = &proto.FileMetaInfo{
+				Path:    meta.Path,
+				Size:    meta.Size,
+				ModTime: meta.ModTime,
+			}
+		}
+	case "trash":
+		err = fs.access.trashPath(req.Path)
 	default:
 		err = fmt.Errorf("remote_fs: unsupported op %q", req.Op)
 	}

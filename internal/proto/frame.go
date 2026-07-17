@@ -250,14 +250,19 @@ type FileMetaInfo struct {
 
 // FSRequestPayload is the JSON body of TypeFSRequest.
 type FSRequestPayload struct {
-	RequestID string `json:"request_id"`
-	ClientID  string `json:"client_id,omitempty"`
-	Op        string `json:"op"`
-	Path      string `json:"path,omitempty"`
-	MaxBytes  int64  `json:"max_bytes,omitempty"`
-	Offset    int64  `json:"offset,omitempty"`
-	Length    int64  `json:"length,omitempty"`
-	WatchID   string `json:"watch_id,omitempty"`
+	RequestID       string `json:"request_id"`
+	ClientID        string `json:"client_id,omitempty"`
+	Op              string `json:"op"`
+	Path            string `json:"path,omitempty"`
+	MaxBytes        int64  `json:"max_bytes,omitempty"`
+	Offset          int64  `json:"offset,omitempty"`
+	Length          int64  `json:"length,omitempty"`
+	WatchID         string `json:"watch_id,omitempty"`
+	Data            []byte `json:"data,omitempty"`
+	ExpectedModTime int64  `json:"expected_modtime,omitempty"`
+	NewPath         string `json:"new_path,omitempty"`
+	Recursive       bool   `json:"recursive,omitempty"`
+	CreateIfMissing bool   `json:"create_if_missing,omitempty"`
 }
 
 // FSChunkPayload carries a chunk of file data for remote previews/assets.

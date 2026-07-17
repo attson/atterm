@@ -12,7 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "select", idx: number): void;
-  (e: "close", idx: number): void;
+  (e: "close-request", idx: number): void;
   (e: "toggle-view-mode"): void;
 }>();
 
@@ -40,8 +40,10 @@ const activeHasDualMode = computed(() => {
       :title="t.path"
       @click="emit('select', i)"
     >
-      <span class="name">{{ basename(t.path) }}</span>
-      <span class="close" @click.stop="emit('close', i)">
+      <span class="name">
+        {{ basename(t.path) }}<span v-if="t.dirty" class="dot" data-test="dirty-dot">•</span>
+      </span>
+      <span class="close" @click.stop="emit('close-request', i)">
         <X :size="12" :stroke-width="2" />
       </span>
     </div>
@@ -97,6 +99,7 @@ const activeHasDualMode = computed(() => {
   background: var(--ed-tab-active-bar, #539bf5);
 }
 .tab.preview .name { font-style: italic; }
+.dot { margin-left: 3px; color: var(--ed-tab-active-bar, #539bf5); font-weight: bold; }
 .close {
   display: inline-flex;
   align-items: center;

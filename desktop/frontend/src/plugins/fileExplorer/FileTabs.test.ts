@@ -20,10 +20,18 @@ describe("FileTabs", () => {
     expect(w.emitted("select")?.[0]).toEqual([1]);
   });
 
-  it("clicking close emits close with idx", async () => {
+  it("clicking close emits close-request with idx", async () => {
     const w = mount(FileTabs, { props: { tabs, activeIdx: 0, viewMode: "code" } });
     await w.findAll(".tab .close")[1].trigger("click");
-    expect(w.emitted("close")?.[0]).toEqual([1]);
+    expect(w.emitted("close-request")?.[0]).toEqual([1]);
+  });
+
+  it("shows the dirty dot when tab.dirty=true", () => {
+    const dirtyTabs = [
+      { path: "/a.txt", persistent: true, lastActiveAt: 1, viewMode: "code" as const, dirty: true },
+    ];
+    const w = mount(FileTabs, { props: { tabs: dirtyTabs, activeIdx: 0, viewMode: "code" } });
+    expect(w.find('[data-test="dirty-dot"]').exists()).toBe(true);
   });
 
   it("shows the SVG view toggle when the active tab is an .svg", () => {

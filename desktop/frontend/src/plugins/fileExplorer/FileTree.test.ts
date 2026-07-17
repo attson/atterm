@@ -277,3 +277,93 @@ describe("FileTree", () => {
     expect(listDir.mock.calls.filter(([path]) => path === "/proj/parent/child")).toHaveLength(childReadsBeforeCollapse);
   });
 });
+
+describe("FileTree context menu + CRUD", () => {
+  it("right-click on a file opens the context menu with four items", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await flushPromises();
+    expect(w.find('[data-test="file-tree-menu"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-new-file"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-new-folder"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-rename"]').exists()).toBe(true);
+    expect(w.find('[data-test="menu-delete"]').exists()).toBe(true);
+  });
+
+  it("clicking Delete without Shift dispatches fs.trash", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-delete"]').trigger("click");
+    await flushPromises();
+    await w.find('[data-test="btn-trash"]').trigger("click");
+    await flushPromises();
+    expect(platform.pluginHost!.fs.trash).toHaveBeenCalledWith("/proj/README.md");
+    expect(platform.pluginHost!.fs.remove).not.toHaveBeenCalled();
+  });
+
+  it("shift-right-click delete dispatches fs.remove", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu", { shiftKey: true });
+    await flushPromises();
+    await w.find('[data-test="menu-delete"]').trigger("click");
+    await flushPromises();
+    await w.find('[data-test="btn-hard"]').trigger("click");
+    await flushPromises();
+    expect(platform.pluginHost!.fs.remove).toHaveBeenCalledWith("/proj/README.md", false);
+    expect(platform.pluginHost!.fs.trash).not.toHaveBeenCalled();
+  });
+
+  it("New File on a directory node inserts an inline row and creates on submit", async () => {
+    (platform.pluginHost!.fs.watchDir as ReturnType<typeof vi.fn>).mockResolvedValueOnce(10);
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    // expand /proj/src
+    await w.find('.node[title="/proj/src"]').trigger("click");
+    await flushPromises();
+    await w.find('.node[title="/proj/src"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-new-file"]').trigger("click");
+    await flushPromises();
+    const inputs = w.findAll('[data-test="inline-edit-input"]');
+    expect(inputs.length).toBeGreaterThan(0);
+    const input = inputs[inputs.length - 1];
+    await input.setValue("new.txt");
+    await input.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(platform.pluginHost!.fs.createFile).toHaveBeenCalledWith("/proj/src/new.txt");
+  });
+
+  it("Rename replaces the row with an inline editor and calls rename", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-rename"]').trigger("click");
+    await flushPromises();
+    const input = w.find('[data-test="inline-edit-input"]');
+    await input.setValue("READ.md");
+    await input.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(platform.pluginHost!.fs.rename).toHaveBeenCalledWith("/proj/README.md", "/proj/READ.md");
+  });
+
+  it("trash unavailable → re-prompts with hard-delete confirmation", async () => {
+    (platform.pluginHost!.fs.trash as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("trash: no platform trash command available"),
+    );
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-delete"]').trigger("click");
+    await flushPromises();
+    await w.find('[data-test="btn-trash"]').trigger("click");
+    await flushPromises();
+    // hard-delete confirmation now open
+    expect(w.find('[data-test="btn-hard"]').exists()).toBe(true);
+  });
+});

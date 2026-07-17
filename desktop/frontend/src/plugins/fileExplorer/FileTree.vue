@@ -1,7 +1,11 @@
 <script lang="ts" setup>
 import { ref, watch, onMounted, onBeforeUnmount } from "vue";
 import FileTreeNode from "./FileTreeNode.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 import type { FileSystemBridge } from "./fsBridge";
+import { useI18n } from "../../i18n/useI18n";
+
+const { t } = useI18n();
 
 interface DirEntry {
   name: string;
@@ -29,6 +33,105 @@ const emit = defineEmits<{
   (e: "file-double-clicked", path: string): void;
   (e: "dir-toggled", path: string, expanded: boolean): void;
 }>();
+
+type ContextMenuAnchor = { x: number; y: number; node: TreeNode; level: number; shift: boolean };
+const menu = ref<ContextMenuAnchor | null>(null);
+
+type InlineIntent =
+  | { kind: "newFile"; parentPath: string; parentLevel: number }
+  | { kind: "newFolder"; parentPath: string; parentLevel: number }
+  | { kind: "rename"; node: TreeNode; level: number };
+const inlineIntent = ref<InlineIntent | null>(null);
+
+type DeleteConfirmSpec = { node: TreeNode; mode: "trash" | "hard" };
+const deleteConfirm = ref<DeleteConfirmSpec | null>(null);
+
+function parentDir(p: string): string {
+  const i = p.lastIndexOf("/");
+  return i <= 0 ? "/" : p.slice(0, i);
+}
+
+function baseName(p: string): string {
+  const i = p.lastIndexOf("/");
+  return i === -1 ? p : p.slice(i + 1);
+}
+
+function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
+  ev.preventDefault();
+  menu.value = { x: ev.clientX, y: ev.clientY, node, level, shift: ev.shiftKey };
+}
+
+function closeMenu() { menu.value = null; }
+
+async function onMenuAction(action: "newFile" | "newFolder" | "rename" | "delete") {
+  const anchor = menu.value;
+  menu.value = null;
+  if (!anchor) return;
+  const node = anchor.node;
+  if (action === "newFile" || action === "newFolder") {
+    const parentPath = node.isDir ? node.path : parentDir(node.path);
+    const parentLevel = node.isDir ? anchor.level + 1 : anchor.level;
+    inlineIntent.value = { kind: action, parentPath, parentLevel };
+    return;
+  }
+  if (action === "rename") {
+    inlineIntent.value = { kind: "rename", node, level: anchor.level };
+    return;
+  }
+  if (action === "delete") {
+    deleteConfirm.value = { node, mode: anchor.shift ? "hard" : "trash" };
+  }
+}
+
+async function submitInline(name: string) {
+  const intent = inlineIntent.value;
+  inlineIntent.value = null;
+  if (!intent) return;
+  try {
+    if (intent.kind === "newFile") await props.fs.createFile(joinPath(intent.parentPath, name));
+    else if (intent.kind === "newFolder") await props.fs.mkdir(joinPath(intent.parentPath, name));
+    else if (intent.kind === "rename") await props.fs.rename(intent.node.path, joinPath(parentDir(intent.node.path), name));
+  } catch (err) {
+    console.warn("file-explorer: inline action failed", err);
+  }
+}
+
+function cancelInline() { inlineIntent.value = null; }
+
+async function resolveDeleteConfirm(id: string) {
+  const conf = deleteConfirm.value;
+  deleteConfirm.value = null;
+  if (!conf || id === "cancel") return;
+  try {
+    if (id === "hard") {
+      await props.fs.remove(conf.node.path, conf.node.isDir);
+    } else {
+      try {
+        await props.fs.trash(conf.node.path);
+      } catch (err) {
+        const msg = (err as Error).message ?? "";
+        if (msg.includes("no platform trash command available")) {
+          // Re-prompt with the hard-delete confirmation.
+          deleteConfirm.value = { node: conf.node, mode: "hard" };
+        } else {
+          throw err;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("file-explorer: delete failed", err);
+  }
+}
+
+function deleteButtons(mode: "trash" | "hard") {
+  const primary = mode === "hard"
+    ? { id: "hard", label: t("plugins.fileExplorer.delete"), kind: "danger" as const }
+    : { id: "trash", label: t("plugins.fileExplorer.moveToTrash"), kind: "primary" as const };
+  return [
+    primary,
+    { id: "cancel", label: t("plugins.fileExplorer.cancel"), kind: "secondary" as const },
+  ];
+}
 
 const rootNodes = ref<TreeNode[]>([]);
 const selectedPath = ref<string>("");
@@ -293,25 +396,75 @@ defineExpose({ refresh: startGeneration });
 </script>
 
 <template>
-  <ul class="tree-root">
-    <li v-for="n in rootNodes" :key="n.path">
-      <FileTreeNode
-        :node="n"
-        :level="0"
-        :selected-path="selectedPath"
-        @toggle="toggle"
-        @click-file="clickFile"
-        @dblclick-file="dblClickFile"
-      />
-    </li>
-  </ul>
+  <div class="tree-wrap" @click="closeMenu">
+    <ul class="tree-root">
+      <li v-for="n in rootNodes" :key="n.path">
+        <FileTreeNode
+          :node="n"
+          :level="0"
+          :selected-path="selectedPath"
+          :inline-intent="inlineIntent"
+          @toggle="toggle"
+          @click-file="clickFile"
+          @dblclick-file="dblClickFile"
+          @context="openMenuFromNode"
+          @inline-submit="submitInline"
+          @inline-cancel="cancelInline"
+        />
+      </li>
+    </ul>
+    <div
+      v-if="menu"
+      class="ctx-menu"
+      data-test="file-tree-menu"
+      :style="{ top: menu.y + 'px', left: menu.x + 'px' }"
+      @click.stop
+    >
+      <button data-test="menu-new-file" @click="onMenuAction('newFile')">{{ t("plugins.fileExplorer.newFile") }}</button>
+      <button data-test="menu-new-folder" @click="onMenuAction('newFolder')">{{ t("plugins.fileExplorer.newFolder") }}</button>
+      <button data-test="menu-rename" @click="onMenuAction('rename')">{{ t("plugins.fileExplorer.rename") }}</button>
+      <button data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
+    </div>
+    <ConfirmDialog
+      v-if="deleteConfirm"
+      :title="deleteConfirm.mode === 'hard'
+        ? t('plugins.fileExplorer.confirmHardDelete', { name: baseName(deleteConfirm.node.path) })
+        : t('plugins.fileExplorer.confirmTrash', { name: baseName(deleteConfirm.node.path) })"
+      :buttons="deleteButtons(deleteConfirm.mode)"
+      @resolve="resolveDeleteConfirm"
+    />
+  </div>
 </template>
 
 <style scoped>
+.tree-wrap { position: relative; height: 100%; }
 .tree-root {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 .tree-root > li { display: block; }
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  background: var(--ed-shell-bg, #22272e);
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  display: flex;
+  flex-direction: column;
+}
+.ctx-menu button {
+  background: none;
+  border: none;
+  color: var(--ed-row-fg, #adbac7);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.ctx-menu button:hover { background: var(--ed-row-hover, rgba(255,255,255,0.06)); }
 </style>

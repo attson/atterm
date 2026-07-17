@@ -44,7 +44,7 @@ describe("previewKind", () => {
     expect(previewKind("/p/foo.png", true)).toBe("image");
   });
 
-  it("text + unknown ext defaults to code (let CodeViewer show its binary banner)", () => {
+  it("text + unknown ext defaults to code (let CodeEditor show its binary banner)", () => {
     expect(previewKind("/p/blob.dat", false)).toBe("code");
   });
 });

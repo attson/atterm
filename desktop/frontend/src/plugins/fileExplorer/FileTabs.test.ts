@@ -4,8 +4,8 @@ import FileTabs from "./FileTabs.vue";
 
 describe("FileTabs", () => {
   const tabs = [
-    { path: "/a.txt", persistent: true, lastActiveAt: 1, viewMode: "code" as const },
-    { path: "/b.txt", persistent: false, lastActiveAt: 2, viewMode: "code" as const },
+    { path: "/a.txt", persistent: true, lastActiveAt: 1, viewMode: "code" as const, dirty: false },
+    { path: "/b.txt", persistent: false, lastActiveAt: 2, viewMode: "code" as const, dirty: false },
   ];
 
   it("renders one tab per entry, styled by persistent flag", () => {
@@ -27,13 +27,13 @@ describe("FileTabs", () => {
   });
 
   it("shows the SVG view toggle when the active tab is an .svg", () => {
-    const svgTabs = [{ path: "/x/logo.svg", persistent: true, lastActiveAt: 1, viewMode: "code" as const }];
+    const svgTabs = [{ path: "/x/logo.svg", persistent: true, lastActiveAt: 1, viewMode: "code" as const, dirty: false }];
     const w = mount(FileTabs, { props: { tabs: svgTabs, activeIdx: 0, viewMode: "code" } });
     expect(w.find(".view-toggle").exists()).toBe(true);
   });
 
   it("emits toggle-view-mode on click", async () => {
-    const svgTabs = [{ path: "/x/logo.svg", persistent: true, lastActiveAt: 1, viewMode: "code" as const }];
+    const svgTabs = [{ path: "/x/logo.svg", persistent: true, lastActiveAt: 1, viewMode: "code" as const, dirty: false }];
     const w = mount(FileTabs, { props: { tabs: svgTabs, activeIdx: 0, viewMode: "code" } });
     await w.find(".view-toggle").trigger("click");
     expect(w.emitted("toggle-view-mode")?.length).toBe(1);
@@ -45,13 +45,13 @@ describe("FileTabs", () => {
   });
 
   it("shows the view toggle when the active tab is a .md", () => {
-    const mdTabs = [{ path: "/x/README.md", persistent: true, lastActiveAt: 1, viewMode: "render" as const }];
+    const mdTabs = [{ path: "/x/README.md", persistent: true, lastActiveAt: 1, viewMode: "render" as const, dirty: false }];
     const w = mount(FileTabs, { props: { tabs: mdTabs, activeIdx: 0, viewMode: "render" } });
     expect(w.find(".view-toggle").exists()).toBe(true);
   });
 
   it("shows the view toggle when the active tab is a .markdown", () => {
-    const mdTabs = [{ path: "/x/notes.markdown", persistent: true, lastActiveAt: 1, viewMode: "render" as const }];
+    const mdTabs = [{ path: "/x/notes.markdown", persistent: true, lastActiveAt: 1, viewMode: "render" as const, dirty: false }];
     const w = mount(FileTabs, { props: { tabs: mdTabs, activeIdx: 0, viewMode: "render" } });
     expect(w.find(".view-toggle").exists()).toBe(true);
   });

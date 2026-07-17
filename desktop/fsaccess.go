@@ -105,9 +105,10 @@ func (a *fsAccess) resolve(path string) (string, error) {
 }
 
 const (
-	maxReadBytesHard = 5 * 1024 * 1024 // server-side hard cap (5 MB)
-	binaryProbeBytes = 4096            // bytes inspected for NUL -> binary
-	readChunkMax     = 256 * 1024
+	maxReadBytesHard  = 5 * 1024 * 1024 // server-side hard cap (5 MB)
+	maxWriteBytesHard = 5 * 1024 * 1024 // symmetric write cap
+	binaryProbeBytes  = 4096            // bytes inspected for NUL -> binary
+	readChunkMax      = 256 * 1024
 )
 
 type FileContent struct {
@@ -147,6 +148,17 @@ type fsReadFile interface {
 var osOpenFile = func(name string) (fsReadFile, error) {
 	return os.Open(name)
 }
+
+// Write-side mock hooks. Tests replace these to fault-inject failures without
+// touching the real filesystem.
+var (
+	osCreateTemp = os.CreateTemp
+	osRename     = os.Rename
+	osRemove     = os.Remove
+	osRemoveAll  = os.RemoveAll
+	osMkdir      = os.Mkdir
+	osWriteFile  = os.WriteFile
+)
 
 // DirEntry is a serialized representation of one directory entry.
 type DirEntry struct {

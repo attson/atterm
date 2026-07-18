@@ -89,7 +89,7 @@ describe("dispatchPastedFile", () => {
 
     expect(result).toBe("image-sent");
     expect(sendPasteImage).toHaveBeenCalledTimes(1);
-    expect(sendPasteImage.mock.calls[0][1]).toBe("clip.png");
+    expect(sendPasteImage).toHaveBeenCalledWith(expect.any(Blob), "clip.png");
     expect(sendPasteFile).not.toHaveBeenCalled();
     expect(paste).not.toHaveBeenCalled();
   });
@@ -111,7 +111,7 @@ describe("dispatchPastedFile", () => {
 
     expect(result).toBe("file-sent");
     expect(sendPasteFile).toHaveBeenCalledTimes(1);
-    expect(sendPasteFile.mock.calls[0][1]).toBe("notes.pdf");
+    expect(sendPasteFile).toHaveBeenCalledWith(expect.any(Blob), "notes.pdf");
     expect(sendPasteImage).not.toHaveBeenCalled();
     expect(onFileToast).toHaveBeenCalledWith("notes.pdf", 32);
     expect(paste).not.toHaveBeenCalled();

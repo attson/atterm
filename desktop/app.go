@@ -1139,6 +1139,15 @@ func (a *App) GetClipboardPastePayload() (ClipboardPastePayload, error) {
 	return readClipboardPastePayloadFromRuntime(a.ctx), nil
 }
 
+// GetPasteboardFileURLs returns the absolute file system paths of any file
+// URL items currently on the system pasteboard (e.g. Cmd+C in Finder).
+// Empty when the pasteboard carries no file URLs, or on non-darwin builds
+// where no NSPasteboard-equivalent bridge is wired up yet. The frontend
+// treats an empty slice as "no source path — fall back to PASTE_FILE upload".
+func (a *App) GetPasteboardFileURLs() []string {
+	return readPasteboardFileURLs()
+}
+
 // GetTerminalTheme returns the user's global terminal theme preference.
 func (a *App) GetTerminalTheme() string {
 	if a.cfgStore == nil {

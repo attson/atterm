@@ -140,6 +140,81 @@ describe("useRecoverySnapshot", () => {
     scope.stop();
   });
 
+  it("does not trigger an immediate (500ms) save when only current_command changes", async () => {
+    // Regression: current_command is the live OSC 133 command line, which an AI
+    // session (Claude Code spinner/status) rewrites every second. Routing it
+    // through the 500ms structural debounce made recovery fsync the snapshot to
+    // disk once a second. It must instead ride the 5s heartbeat.
+    const info = ref<any>({
+      id: "s1", command: "claude", cwd: "/x", title: "t", type: "ai",
+      current_command: "claude --foo", cols: 80, rows: 24, started_at: 0, host_id: "h",
+    });
+    const tabs = ref<Tab[]>([
+      {
+        id: "t1", layout: "single",
+        panes: [{ sessionId: "s1", remote: false }],
+        activePaneIdx: 0, colRatio: 0.5, rowRatio: 0.5,
+      },
+    ]);
+    const currentTabId = ref<string | null>("t1");
+    const sessionInfoFor = (sid: string) => (sid === "s1" ? info.value : undefined);
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {} });
+    });
+
+    // Flush the initial setup save.
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    const before = (api.saveRecoverySnapshot as any).mock.calls.length;
+
+    // Only current_command changes (a spinner tick).
+    info.value = { ...info.value, current_command: "claude --bar" };
+    await nextTick();
+    // Within the structural window: must NOT have saved yet.
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    expect((api.saveRecoverySnapshot as any).mock.calls.length).toBe(before);
+
+    // It still rides the 5s heartbeat eventually.
+    vi.advanceTimersByTime(5000);
+    await Promise.resolve();
+    expect((api.saveRecoverySnapshot as any).mock.calls.length).toBeGreaterThan(before);
+    scope.stop();
+  });
+
+  it("still triggers an immediate (500ms) save when title changes", async () => {
+    const info = ref<any>({
+      id: "s1", command: "claude", cwd: "/x", title: "old", type: "ai",
+      current_command: "claude", cols: 80, rows: 24, started_at: 0, host_id: "h",
+    });
+    const tabs = ref<Tab[]>([
+      {
+        id: "t1", layout: "single",
+        panes: [{ sessionId: "s1", remote: false }],
+        activePaneIdx: 0, colRatio: 0.5, rowRatio: 0.5,
+      },
+    ]);
+    const currentTabId = ref<string | null>("t1");
+    const sessionInfoFor = (sid: string) => (sid === "s1" ? info.value : undefined);
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {} });
+    });
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    const before = (api.saveRecoverySnapshot as any).mock.calls.length;
+
+    info.value = { ...info.value, title: "new" };
+    await nextTick();
+    vi.advanceTimersByTime(510);
+    await Promise.resolve();
+    expect((api.saveRecoverySnapshot as any).mock.calls.length).toBeGreaterThan(before);
+    scope.stop();
+  });
+
   it("periodic safety timer does not write when idle (clean)", async () => {
     const tabs = ref<Tab[]>([]);
     const currentTabId = ref<string | null>(null);

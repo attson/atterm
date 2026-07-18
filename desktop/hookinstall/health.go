@@ -104,22 +104,32 @@ func checkSettings(home string, wantCommand string) (ok bool, errStr string) {
 	if err != nil {
 		return false, fmt.Sprintf("Claude settings.json invalid JSON: %v", err)
 	}
+	for _, s := range ownedSlots {
+		entries := *s.field(&cfg.Hooks)
+		if ok, msg := checkHookKind(s.name, entries, wantCommand); !ok {
+			return false, msg
+		}
+	}
+	return true, ""
+}
+
+func checkHookKind(kind string, entries []HookEntry, wantCommand string) (ok bool, msg string) {
 	var attermEntries []HookEntry
-	for _, e := range cfg.Hooks.Notification {
+	for _, e := range entries {
 		if isAttermHookCommand(e) {
 			attermEntries = append(attermEntries, e)
 		}
 	}
 	if len(attermEntries) == 0 {
-		return false, "Notification hook entry missing"
+		return false, kind + " hook entry missing"
 	}
 	for _, e := range attermEntries {
 		for _, h := range e.Hooks {
 			if h.Command != wantCommand {
-				return false, "Notification entry points at stale binary path"
+				return false, kind + " entry points at stale binary path"
 			}
 			if _, err := os.Stat(h.Command); err != nil {
-				return false, "Notification command path missing on disk"
+				return false, kind + " command path missing on disk"
 			}
 		}
 	}

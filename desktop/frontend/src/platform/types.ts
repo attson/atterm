@@ -85,6 +85,10 @@ export interface RemoteSession {
   cwd?: string
   cols: number
   rows: number
+  /** Unix seconds when the session was first opened (PTY fork time).
+   *  Stable for the lifetime of the session. Used as the primary sort key
+   *  in the host group list so rows don't reshuffle as activity changes. */
+  started_at?: number
   remote_permission?: string
   task_state?: 'idle' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'disconnected' | 'closed'
   current_command?: string
@@ -164,6 +168,14 @@ export interface PluginHostBridge {
      *  AssetServer.Handler at /pluginfs/<base64.URLEncoding(path)>. The URL
      *  is stable for the lifetime of the file path; no expiry. */
     assetUrlFor(path: string): string
+    /** Atomic write via tmp+rename. expectedModTime=0 disables CAS;
+     *  createIfMissing=true allows creating a non-existent target. */
+    writeFile(path: string, data: number[] | Uint8Array, expectedModTime: number, createIfMissing: boolean): Promise<FileMetaInfo>
+    createFile(path: string): Promise<FileMetaInfo>
+    rename(from: string, to: string): Promise<FileMetaInfo>
+    remove(path: string, recursive: boolean): Promise<void>
+    mkdir(path: string): Promise<FileMetaInfo>
+    trash(path: string): Promise<void>
   }
 }
 

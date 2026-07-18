@@ -18,6 +18,12 @@ import {
   ReadFile,
   FileMeta,
   OpenExternal,
+  WriteFile,
+  CreateFile,
+  Rename,
+  Remove,
+  Mkdir,
+  Trash,
 } from '../../wailsjs/go/main/PluginFS'
 import type { Platform, EnvironmentInfo, RemoteSession } from './types'
 import { setAccountKeyProvider } from '../lib/account-key'
@@ -78,15 +84,7 @@ export function createWailsPlatform(): Platform {
           remote_permission: cfg.remote_permission,
         })
       },
-      clear: async () => {
-        await api.setRelayConfig({
-          url: '',
-          token: '',
-          allow_insecure_relay: false,
-          disable_e2ee: false,
-          remote_permission: 'full',
-        })
-      },
+      clear: () => api.clearRelayConfig(),
       fetchMe: () => api.fetchRelayMe(),
       setUplinkPaused: (paused: boolean) => api.setUplinkPaused(paused),
     },
@@ -183,6 +181,13 @@ export function createWailsPlatform(): Platform {
           const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_");
           return "/pluginfs/" + b64;
         },
+        writeFile: (path: string, data: number[] | Uint8Array, expectedModTime: number, createIfMissing: boolean) =>
+          WriteFile(path, Array.from(data), expectedModTime, createIfMissing) as Promise<import('./types').FileMetaInfo>,
+        createFile: (path: string) => CreateFile(path) as Promise<import('./types').FileMetaInfo>,
+        rename: (from: string, to: string) => Rename(from, to) as Promise<import('./types').FileMetaInfo>,
+        remove: (path: string, recursive: boolean) => Remove(path, recursive),
+        mkdir: (path: string) => Mkdir(path) as Promise<import('./types').FileMetaInfo>,
+        trash: (path: string) => Trash(path),
       },
     },
   }

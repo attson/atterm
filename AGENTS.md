@@ -1,9 +1,9 @@
 # AGENTS.md
 
 > **Audience**: 在 atterm 仓库里工作的 AI 编码 agent
-> **Last updated**: 2026-06-19
+> **Last updated**: 2026-07-10
 > **Status**: stable
-> **See also**: [README.md](./README.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md)
+> **See also**: [README.md](./README.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md) · [docs/spec/feishu.md](./docs/spec/feishu.md)
 
 atterm = 跨平台终端模拟器 + 内建会话云同步。所有从桌面 app 启动的会话默认可被任意设备的 web/桌面客户端 attach、查看历史、继续输入。核心场景：本机跑 codex/claude 的长 AI 任务，离开工位后用手机/另一台机器接管。
 
@@ -74,6 +74,23 @@ atterm/
 27. **OPAQUE 需要「安全上下文」，所以浏览器必须经 HTTPS 访问 relay**：浏览器只在 HTTPS 或 `localhost` 暴露 `crypto.subtle`（`@cloudflare/opaque-ts` 用它做哈希/HMAC），明文 HTTP 公网 IP 上 `crypto.subtle===undefined`，注册/登录在浏览器本地直接抛错、**连请求都发不出**（Network 为空）。`cmd/atterm-relay` 起两个监听：HTTP（`--addr :8080`，给反代后端 / loopback 开发）和 HTTPS（`--https-addr`，浏览器直连）。**没有自签回退**：开了 `--https-addr` 就必须提供真证书 `ATTERM_TLS_CERT`/`ATTERM_TLS_KEY`（缺失即 fatal，逻辑在 `buildTLSConfig`）；否则用 HTTP 端口在前面挂 TLS 终止反代（Cloudflare/Caddy/nginx/Tailscale）。生产单端口即 `--addr "" --https-addr :443` + 真证书。**不要**为了「能在明文 HTTP 跑」去掉 WebCrypto/换纯 JS OPAQUE 库——既改动 E2EE 核心（红线 #20 两端套件写死），又因 token/wrap 明文过网而并不安全。**也不要**重新引入自签证书：WebView 的 WebSocket 无法在代码层信任自签名证书（WKWebView 无 app 级钩子）。
 
 28. **AI 会话恢复 "never resume the wrong conversation"**：`desktop/recovery_store.go` + `recovery_types.go` 的 `RecoverySnapshot` 记每个 pane 的 `ai.{kind,session_id,captured_at_unix}` / `last_command_line` / `last_cwd` / `title`；只有 `ai.session_id` 是真凭据，`aider` 无 sid 时改重放整条 `last_command_line`。sid 来自 `desktop/ai_sid_sniff.go`（session 首次 spawn 后由 OSC 133 D 触发分类 + 对应 jsonl 文件 mtime 监听）+ `desktop/ai_sid_resolve.go`（cwd 切换后按新 cwd 重试）；claude 走 `~/.claude/projects/<sanitized-cwd>/<sid>.jsonl`，codex 走 `~/.codex/sessions/YYYY/MM/DD/rollout-*-<sid>.jsonl`。**抓不到优于抓错**：抓不到就让 ai badge 留空、恢复时不注入 resume、用户得到普通 shell；抓错会把另一个对话的历史 leak 进恢复后的 agent。恢复时 resume 注入由 Go 侧 `desktop/relay_host.go::SetOnFirstPrompt` 直接写 PTY，保留原启动命令的 flag（`--permission-mode` 等），**不要**移回前端用 `sendInput` 一次发完整 `"<cmd>\r"` —— Codex 会把 CR 当 paste 解（同类教训 PR #63 → #110 → #129 来回三次）。前端 `useRecoverySnapshot` 写盘 + `App.vue::pendingLocalIds` + `lib/localListMerge.ts` 三件套保护刚 seed 的 sid 不被 stale `LIST_RESP` 推翻（PR #240）；恢复 attach 给远端 pane 默认 `isDriver = props.isLocalSession ?? true` —— 本机本地 driver，远端 viewer，避免乐观默认 driver 但 relay drop IN 帧的「看着能输入但不通」。
+
+29. **发布分支与 tag 路线分线管理**：仓库当前并行两条发布线 —— `main` 是 **v0.2.x**，`v0.3-dev` 是 **v0.3.x**，每条线的 patch 版本独立递增。**算下一个 tag 必须按"reachable from 当前分支"过滤**：
+
+    ```bash
+    # main → next v0.2.(Z+1)
+    git tag --list 'v0.2.*' --merged main     --sort=-v:refname | head -1
+    # v0.3-dev → next v0.3.(Z+1)
+    git tag --list 'v0.3.*' --merged v0.3-dev --sort=-v:refname | head -1
+    ```
+
+    **不要**用全局 `git tag --sort=-v:refname | head -1` —— 它会把另一条线的 tag 排进来，在 main 上误推 v0.3.x 当场触发 release CI、要 cancel + `git push --delete origin <tag>` + 重打的事故（v0.3.2 误推教训）。`ship-release` skill 默认是单条主线假设，在这个仓库里**必须**手动校正：发布前先 `git rev-parse --abbrev-ref HEAD` 确认当前分支属于哪条线，再按该线过滤算 next。release CI（`.github/workflows/build.yml` 的 release job）在 `v*` tag push 时触发，不区分版本线，所以 tag 错就立刻有 artifact 错。删 tag 是 destructive 操作，未经用户确认不得执行。
+
+30. **飞书 anchor card 生命周期三件独立**：一张 anchor card 上有 `anchor_body_md` / `anchor_input` / `anchor_buttons` / `anchor_askform` 四个子元素，其中 input / buttons / form 三者的 **DELETE 与 CREATE 各自幂等**、各自由自己的 mounted 标记（`CardAnchor.CurrentInputID != ""` / `ButtonsMounted` / `FormMounted`）门控。挂 AskUserQuestion form 时会先 DELETE input 和 buttons（form 独占交互面）、拆 form 时按状态**独立**重建 input 和 buttons —— **不要**把三件事合并成"要么全挂要么全拆"，否则任一 CREATE 失败会短路后续 restore；也**不要**在 `swapAnchorButtons` 里对已删的 `anchor_buttons` 做 PATCH（会拿到飞书 `code=300313 not find elementID`），必须先看 `anchor.ButtonsMounted` 短路（见 `desktop/relay_host.go::swapAnchorButtons` + `updateAnchorAskForm` + `deleteAnchorForm`）。序列号所有 CREATE / DELETE / PATCH 都要在 `anchor.SendMu` 内分配，防止飞书 monotonic sequence 交叉（`code=300317`）。
+
+31. **AskUserQuestion form 按键模型是反向工程的，改前必读 memory**：`desktop/feishu/service.go::buildQuestionStrokes` 里 stroke plan 每题分 4 分支（单选 / 多选 / 单选+custom / 多选+custom），每种发的按键序列不一样（数字键单键 / 数字键 + Tab / 数字键 + Enter / 数字键 + ↓ 走位 + Enter / 数字键 + ↓ + Enter on Submit button）—— 这套模型来自反编译 claude-code 2.1.168 二进制找到的 `if (X && Y) { Y(D); return; }` 分支 + 用户手动实测。**改动这个函数前**必须先读 `~/.claude/projects/-Users-attson-code-github-com-attson-atterm/memory/feedback_askform_key_model.md`（血泪史 + 拒绝方案清单）和 `feedback_askform_permission_grant.md`（本机 claude 需先"Yes, and don't ask again" 授权 AskUserQuestion 才能远程回答，否则第一对 `1\r` 被 permission dialog 吃掉，最后一题空 → tool wedges）。**不要**再花时间试 delay tuning / Right-arrow pump / Ctrl+Return via LF —— 都测过不通。这两条见 memory index。
+
+32. **飞书 form widget 状态按 element_id 缓存**：飞书 CardKit v2 客户端把 `select_static` / `input` 的用户选择、输入值按 `element_id` 缓存 —— DELETE + CREATE 用同一个 element_id **不清缓存**，第 2 次挂 form 会加载上次 submission 的下拉和 txt。修法在 `internal/feishu/anchor_card.go::RenderAskQuestionForm` 里给每个 widget 的 element_id 加 mount seq 后缀（`askform_q0_sel_<seq>` / `askform_q0_txt_<seq>`），`seq` 来自 `anchor.PatchSeq` 分配（`relay_host.updateAnchorAskForm` 已经在做）。改这块儿时**不要**把 seq 后缀去掉，也**不要**只旋转部分 widget id —— 部分同名部分不同名会让 form 上一半空一半有历史值。同理 claude AskUserQuestion Type-something 的 TUI 层稳定丢最后一个字符（用户手动键盘也丢，不是 stroke 问题）—— workaround 是给 `sl.txt` 末尾补一个空格作牺牲字符（`buildQuestionStrokes` 已做）。这是 upstream 的锅，不要拆掉 workaround。
 
 ## 开发命令
 
@@ -175,6 +192,10 @@ gh run list --repo attson/atterm --limit 10
 | 改 account_key 持久化 / 解锁路径 | 桌面：`zalando/go-keyring` via `desktop/account_key.go` + Wails 绑定 `GetAccountKey` / `setAccountKey` + `EventsEmit("account-key-changed")`。Web：`web/src/shared/api/account-key.ts`（sessionStorage）。iOS：`mobile/ios/.../AttermSecureStorage.swift` + `desktop/frontend/src/platform/capacitor.ts` + `desktop/frontend/src/lib/account-key.ts`（cache 注册表）。改写入/读取路径时**不要**加 IndexedDB / localStorage（红线 #21）|
 | 改 sealed 字段 / E2EE 信封 | agent: `desktop/uplink.go::SendCommandEvent` / `desktop/uplink_seal_fields.go` / `desktop/uplink_seal_push.go`（seal + plaintext strip,红线 #23）。relay: `internal/relay/uplink_conn.go::handleUplinkCommandEvent`（透传 SealedBody）+ `internal/webpush/dispatch.go`（sealed 分支）+ `internal/webhook/render.go`（sealed 分支）。client 解密：`web/src/shared/lib/opaque.ts::openSessionFields/openMetaFields/openPushBodyFields` + `web/src/shared/sw-bridge.ts`（SW 解密桥）。`proto.CommandEventPayload.SealedBody` / `SessionInfo.Sealed` / `MetaPayload.Sealed` 已在 `internal/proto/frame.go` 落地；加新 sealed 帧请同时 bump [docs/spec/protocol.md](./docs/spec/protocol.md) §E2EE 信封 的 AAD 表（红线 #22）|
 | 改 AI 会话恢复 / sid sniff / resume 注入 | `desktop/recovery_store.go`（snapshot schema + atomic write）+ `desktop/recovery_types.go`（`RecoverySnapshot` / `TabSnapshot` / `PaneSnapshot` / `AIInfo`）+ `desktop/ai_sid_sniff.go`（OSC 133 D 触发 + jsonl mtime 监听 + `aiSniffers` 注册表）+ `desktop/ai_sid_resolve.go`（cwd 切换重试）+ `desktop/relay_host.go`（`SetOnAIClassified`、`SetOnFirstPrompt` 注入 resume 命令、`computeResumeArgs`）+ `desktop/frontend/src/composables/useRecoverySnapshot.ts`（debounce 500ms / 5s 写盘）+ `desktop/frontend/src/lib/localListMerge.ts`（`pendingLocalIds` 保护刚 seed 的 sid）+ `desktop/frontend/src/components/RecoveryDialog.vue` + `App.vue::executeRestore`（Case A new spawn / Case B remote rebind）。新增 ai_kind 时：Go 加 `aiSniffSpec`（命令 token + jsonl glob）+ `computeResumeArgs` 分支；前端 `lib/aiKind.ts::classifyAIKind` 加 token；`buildRestoreSessionReq` 透传 `ai_kind` + `initial_ai_session_id`。改红线 #28 |
+| 改飞书 anchor card 生命周期 / body streaming / archive | `desktop/relay_host.go`（`updateAnchorAskForm` 挂拆 form + 独立 restore input/buttons、`swapAnchorButtons` 门控 `ButtonsMounted`、`deleteAnchorForm` 独立幂等）+ `desktop/feishu/dispatcher.go`（`InsertAnchorFormWithSeq` / `DeleteAnchorFormWithSeq` / `CreateAnchorInputWithSeq` / `CreateAnchorButtonsWithSeq` typed helpers）+ `desktop/feishu/service.go`（`deleteAnchorForm` 也清 `PendingForm`、`clearAnchorInput` 旋转 element_id）+ `internal/feishu/cardindex.go`（`CardAnchor` 状态标记 `CurrentInputID` / `ButtonsMounted` / `FormMounted` / `PendingForm`）。红线 #30 |
+| 改 AskUserQuestion form 按键 stroke plan | `desktop/feishu/service.go::buildQuestionStrokes`（4 分支：单选 / 多选 / 单选+custom / 多选+custom；trailing space 是牺牲字符不要去）+ `desktop/feishu/service.go::handleAskFormSubmit`（parse formValue → slots → 拼 stroke → `Router.InjectKeystrokesBySession`，350ms 间距是硬要求）+ `internal/feishu/router.go::InjectKeystrokesBySession`（每键独立 SendInput，首键 inline 后余键 goroutine）。**改前必读**：`memory/feedback_askform_key_model.md` + `feedback_askform_permission_grant.md`（红线 #31）|
+| 改飞书 form 渲染 / widget 结构 | `internal/feishu/anchor_card.go::RenderAskQuestionForm`（signature 含 `mountSeq int64`；每题一行 column_set：select_static 或 multi_select_static + input；widget element_id 必须带 `_<mountSeq>` 后缀）+ `internal/feishu/anchor_card.go::AskFormQuestion`（`MultiSelect bool` + `Options []AskFormOpt`）+ `desktop/feishu/hook_adapter.go::extractAllAskUserQuestions`（`multiSelect` flag 传下去）+ `desktop/feishu/service.go::parseAskFormSlots`（`sel` 单选 string / `selMulti` 多选 []string / `txt` 都 populate）。红线 #32 |
+| 改飞书本地模式 vs relay 模式配置分流 | `desktop/app.go`（模式路由 + `SetFeishuBinding` / `GetFeishuStatus` 分流）+ `desktop/feishu_local_settings.go`（local 存钥匙串）+ `internal/relay/admin_http.go::/admin/api/feishu`（relay 存 sqlite `users.db` + `AdminConfig.Feishu`）+ `desktop/frontend/src/components/SettingsFeishu.vue`（模式选择 + `SelectDropdown` 深色 UI）+ i18n。红线 #29 系列 |
 
 ## 风格摘要
 
@@ -220,10 +241,17 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 给 E2EE 加"密码找回 / 备用问题 / 邮件链接"分支；这会让 relay 重新拿到 `account_key`，整套 E2EE 模型降级（红线 #24）。step-up 只是给 hard-delete 这种特权操作加一道再确认
 - ❌ 在 AI sid 抓不准时硬猜一个塞进 `recovery.json`（红线 #28）；宁可让 ai 字段留空、恢复后是普通 shell 让用户自己重启 agent，也别把另一个对话的历史 leak 进恢复后的 session
 - ❌ 把恢复 attach 的远端 pane 默认成 `isDriver: true`（红线 #28 / PR #240）；relay 那边可能 driverless 或别人是 driver，乐观默认 + META 不到 = UI 显 driver 但 IN 帧被丢，bug 极隐蔽
+- ❌ 把 anchor card 的 input / buttons / form 合并成一次 DELETE + CREATE（红线 #30）；三件独立，各自 gate 在自己的 mounted 标记，否则任何一个 CREATE 失败会让 restore 短路
+- ❌ 在 `swapAnchorButtons` 里 PATCH `anchor_buttons` 前不看 `anchor.ButtonsMounted`（红线 #30）；对已删元素 PATCH 会拿 `code=300313 not find elementID`
+- ❌ 试图用 delay tuning / Right-arrow pump / Ctrl+Return via LF (0x0a) 修 AskUserQuestion 丢字（红线 #31）；都测过不通，问题在 claude TUI 里，workaround 已经是 trailing space（红线 #32）
+- ❌ 给 `RenderAskQuestionForm` 里 widget element_id 去掉 `_<mountSeq>` 后缀（红线 #32）；同一 anchor 第 2 次挂 form 会加载上次答案，用户 confused
+- ❌ 没有先本地"Yes, and don't ask again"授权 AskUserQuestion 就调 stroke（`feedback_askform_permission_grant.md`）；permission dialog 会吃掉序列头两个 stroke，form 走位全乱
+- ❌ 手动删掉 `sl.txt + " "` 尾部空格 workaround（红线 #32）；claude TUI 稳定丢最后一字符，空格是被牺牲的那个
 
 ## 文档导引
 
 - `docs/spec/architecture.md` — 整体架构、组件职责、数据流、phase 路线
 - `docs/spec/protocol.md` — wire 协议完整规范（所有帧类型、重连续传语义）
+- `docs/spec/feishu.md` — 飞书子系统正式 spec（模式、anchor card 生命周期、AskUserQuestion form flow、已知限制）
 - `docs/spec/conventions.md` — Go/TS 代码约定、commit 风格、测试组织
 - `docs/spec/component-style.md` — 前端组件视觉、控件复用、Settings / dialog / pane 样式规范

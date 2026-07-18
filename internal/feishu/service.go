@@ -62,9 +62,10 @@ type TokenSource interface {
 
 // ServiceConfig groups the moving parts.
 type ServiceConfig struct {
-	Store BindingStore
-	IM    IMClient
-	Token TokenSource
+	Store  BindingStore
+	IM     IMClient
+	Token  TokenSource
+	Router *Router // optional; nil → anchor card actions fall through to "ignored"
 }
 
 // Service is the aggregate layer. Methods are safe for concurrent use.
@@ -164,6 +165,12 @@ func (s *Service) HandleEvent(ctx context.Context, appIDHash string, body []byte
 		if env.Message == nil {
 			return &HandleResult{Reason: "no_message"}, nil
 		}
+		// Reply-target path: a text reply quoting an anchor card → route through
+		// the inbound router instead of treating as a /bind command.
+		if s.cfg.Router != nil && env.Message.ReplyToMsgID != "" {
+			d := s.cfg.Router.RouteReply(env.Message.ReplyToMsgID, env.Message.SenderOpenID, env.Message.Text)
+			return s.handleRouterDecision(ctx, b, d, env.Message.SenderOpenID), nil
+		}
 		go s.handleBindMessage(context.WithoutCancel(ctx), b, env.Message)
 		return &HandleResult{Reason: "im_message_dispatched"}, nil
 	case "card.action.trigger":
@@ -181,12 +188,68 @@ func (s *Service) HandleEvent(ctx context.Context, appIDHash string, body []byte
 				Inject:     &Injection{SessionID: env.CardAction.SessionID, Text: env.CardAction.Text, OwnerUserID: b.UserID},
 				Reason:     "card_inject",
 			}, nil
+		case "input", "key", "end":
+			if s.cfg.Router == nil {
+				return &HandleResult{Reason: "ignored_card_action_no_router"}, nil
+			}
+			d := s.routeAnchorCardAction(env.CardAction)
+			return decisionToCardResult(d), nil
 		default:
 			return &HandleResult{Reason: "ignored_card_action"}, nil
 		}
 	default:
 		return &HandleResult{Reason: "ignored_event_type"}, nil
 	}
+}
+
+// routeAnchorCardAction resolves the anchor for an input/key/end card action
+// and dispatches through the router. It tries CardToken first (when set), then
+// falls back to SessionID so old-style cards (whose CardToken may differ) still
+// resolve.
+func (s *Service) routeAnchorCardAction(action *CardActionTrigger) Decision {
+	// Prefer CardToken-based lookup (fast path for CardKit cards).
+	if action.CardToken != "" {
+		anchor := s.cfg.Router.idx.ByCardToken(action.CardToken)
+		if anchor != nil {
+			return s.cfg.Router.routeCardActionWith(anchor, action.OperatorOpenID, action.Kind, action.Event, action.Text)
+		}
+	}
+	// Fall back to SessionID-based lookup (covers legacy cards or missing token).
+	return s.cfg.Router.RouteCardActionBySession(action.SessionID, action.OperatorOpenID, action.Kind, action.Event, action.Text)
+}
+
+// decisionToCardResult converts a router Decision into a HandleResult suitable
+// for the HTTP callback layer. ActionInject gets a bare 200; ActionReject gets a
+// toast-only card update so Feishu can surface the message to the user.
+func decisionToCardResult(d Decision) *HandleResult {
+	switch d.Action {
+	case ActionInject:
+		return &HandleResult{Reason: "anchor_inject_ok"}
+	case ActionReject:
+		if d.Toast != "" {
+			ack := RenderToastUpdate(d.Toast)
+			return &HandleResult{Reason: "anchor_inject_rejected", CardUpdate: &ack}
+		}
+		return &HandleResult{Reason: "anchor_inject_rejected"}
+	case ActionPreempt:
+		// Phase 2 (Task 16) — treat as rejected for now.
+		return &HandleResult{Reason: "anchor_preempt"}
+	}
+	return &HandleResult{Reason: "anchor_unknown_action"}
+}
+
+// handleRouterDecision converts a router Decision for a reply message into a
+// HandleResult. On reject, it sends a DM back to the sender via IM.
+func (s *Service) handleRouterDecision(ctx context.Context, b *Binding, d Decision, senderOpenID string) *HandleResult {
+	if d.Action == ActionReject && d.Toast != "" {
+		tok, err := s.cfg.Token.Get(ctx, b.AppID, b.AppSecret)
+		if err == nil {
+			if err := s.cfg.IM.SendTextToOpenID(ctx, tok, senderOpenID, d.Toast); err != nil {
+				log.Printf("feishu: router reject reply: %v", err)
+			}
+		}
+	}
+	return &HandleResult{Reason: "anchor_reply_handled"}
 }
 
 // handleBindMessage processes "/bind <CODE>" text messages. Async-safe;

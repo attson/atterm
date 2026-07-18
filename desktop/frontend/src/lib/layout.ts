@@ -252,6 +252,24 @@ export function focusNeighbor(
   return typeof next === "number" ? next : null;
 }
 
+// findPaneLocation locates the tab + pane index that holds the given session
+// id. Returns null when no tab matches. Used by App.vue's openRemoteAsTab so
+// a sidebar click on a session in a multi-pane tab switches both to the right
+// tab AND to the right pane — without the paneIdx, gotoTab() lands on the
+// previously-active pane in that tab and leaves focus on the wrong pty.
+export function findPaneLocation<
+  T extends { id: string; panes: { sessionId: string | null }[] },
+>(
+  tabs: readonly T[],
+  sessionId: string,
+): { tabId: string; paneIdx: number } | null {
+  for (const t of tabs) {
+    const idx = t.panes.findIndex((p) => p.sessionId === sessionId);
+    if (idx >= 0) return { tabId: t.id, paneIdx: idx };
+  }
+  return null;
+}
+
 // Re-export so consumers only import from layout.ts.
 export type { Pane, Tab, LayoutKind, SplitDir, FocusDir };
 export { PANE_COUNT, EMPTY_PANE };

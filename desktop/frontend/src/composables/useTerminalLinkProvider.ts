@@ -75,6 +75,9 @@ function toILink(
     decorations: { underline: true, pointerCursor: true },
     activate: async (event: MouseEvent) => {
       if (!isModClickEvent(event, isMac)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       const url = normalizeForOpen(m, getHomeDir());
       if (!url) {
         onError("terminal.link.openFailedNoHome");

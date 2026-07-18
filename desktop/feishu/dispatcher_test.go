@@ -10,7 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/google/uuid"
 )
 
@@ -55,6 +57,7 @@ func TestCardMsgMap_RememberLookupRoundTrip(t *testing.T) {
 type capturingIM struct {
 	mu       sync.Mutex
 	bodies   []string
+	texts    []string
 	openIDs  []string
 	tokens   []string
 	err      error
@@ -76,6 +79,14 @@ func (c *capturingIM) SendInteractiveToOpenID(ctx context.Context, token, openID
 	return "om_test", nil
 }
 func (c *capturingIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	c.tokens = append(c.tokens, token)
+	c.openIDs = append(c.openIDs, openID)
+	c.texts = append(c.texts, text)
 	return nil
 }
 
@@ -153,6 +164,53 @@ func TestDispatcher_DedupWindowSuppressesSecondWaiting(t *testing.T) {
 	})
 	if len(im.bodies) != 1 {
 		t.Fatalf("expected 1 send, got %d", len(im.bodies))
+	}
+}
+
+// When an anchor is live for the session (AIChunker attached), the standalone
+// WaitingInput card is redundant — the anchor already surfaces the "waiting"
+// state via its status preamble and is fully interactive. Suppress it so the
+// DM doesn't get two cards for the same event.
+func TestDispatcher_WaitingInputSuppressedWhenChunkerAttached(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    im,
+	})
+	sid := uuid.New()
+	// Attach a chunker to simulate a live anchor for this session.
+	d.AttachAIChunker(sid.String(), internalfeishu.NewAIChunker(func(string) {}))
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q1", DedupKey: "k1",
+	})
+	if len(im.bodies) != 0 {
+		t.Errorf("expected 0 sends when anchor is live; got %d", len(im.bodies))
+	}
+}
+
+// Sanity check: when no chunker is attached (shell session, or AI anchor
+// already archived), WaitingInput still fires — it's the notification
+// fallback that doesn't have another surface.
+func TestDispatcher_WaitingInputStillFiresWithoutChunker(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := &capturingIM{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    im,
+	})
+	sid := uuid.New()
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q1", DedupKey: "k1",
+	})
+	if len(im.bodies) != 1 {
+		t.Errorf("expected 1 send when no anchor; got %d", len(im.bodies))
 	}
 }
 
@@ -388,6 +446,111 @@ func TestDispatch_CommandFailureCount(t *testing.T) {
 	}
 }
 
+// blockingIM lets a test gate when SendInteractiveToOpenID returns, so
+// concurrent dispatch attempts can be observed in flight at the same time.
+type blockingIM struct {
+	mu      sync.Mutex
+	bodies  []string
+	release chan struct{}
+	entered chan struct{} // closed when the FIRST send call enters
+	once    sync.Once
+}
+
+func newBlockingIM() *blockingIM {
+	return &blockingIM{
+		release: make(chan struct{}),
+		entered: make(chan struct{}),
+	}
+}
+
+func (b *blockingIM) SendInteractiveToOpenID(ctx context.Context, token, openID string, body []byte) (string, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.release
+	b.mu.Lock()
+	b.bodies = append(b.bodies, string(body))
+	b.mu.Unlock()
+	return "om_blocking", nil
+}
+
+func (b *blockingIM) SendTextToOpenID(ctx context.Context, token, openID, text string) error {
+	return nil
+}
+
+// TestDispatcher_ConcurrentWaitingInputOnlyOneSend covers the dedup race
+// between the hook path and the heuristic path firing for the same
+// session within the dedup window. Before the eager-stamp fix, both
+// goroutines could pass the check-then-IO interval and double-send.
+func TestDispatcher_ConcurrentWaitingInputOnlyOneSend(t *testing.T) {
+	store := &inMemBindingStore{}
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	im := newBlockingIM()
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    im,
+	})
+
+	sid := uuid.New()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+				SessionID:    sid,
+				Source:       WaitingSourceHeuristic,
+				QuestionText: "Q",
+			})
+		}()
+	}
+
+	// Wait until the (single) in-flight send has started before releasing.
+	<-im.entered
+	close(im.release)
+	wg.Wait()
+
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	if len(im.bodies) != 1 {
+		t.Fatalf("expected 1 send across 8 concurrent dispatches; got %d", len(im.bodies))
+	}
+}
+
+// TestDispatcher_RollsBackStampOnTokenUnavailable verifies that when a
+// dispatch bails because no token is configured, the eager stamp is
+// withdrawn so a subsequent dispatch (after a token becomes available)
+// is not gated by a leftover stamp from the failed attempt.
+func TestDispatcher_RollsBackStampOnTokenUnavailable(t *testing.T) {
+	store := &inMemBindingStore{}
+	im := &capturingIM{}
+	ts := &stubTokenSource{err: ErrTokenNotConfigured}
+	d := NewDispatcher(DispatcherConfig{Store: store, Token: ts, IM: im})
+
+	sid := uuid.New()
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q",
+	})
+	if len(im.bodies) != 0 {
+		t.Fatalf("expected 0 sends with no token; got %d", len(im.bodies))
+	}
+
+	// Token becomes available. The next event in the same dedup window
+	// must NOT be gated by the previous (rolled-back) stamp.
+	_ = store.SetCredentials(context.Background(), Credentials{AppID: "a", AppSecret: "s", EncryptKey: "k", VerifyToken: "v"})
+	_ = store.SetBound(context.Background(), "ou_x")
+	ts.err = nil
+	ts.tok = "tt"
+	ts.openID = "ou_x"
+
+	d.DispatchWaitingInput(context.Background(), WaitingInputDispatchEvent{
+		SessionID: sid, Source: WaitingSourceHook, QuestionText: "Q2",
+	})
+	if len(im.bodies) != 1 {
+		t.Fatalf("expected 1 send after token recovered; got %d", len(im.bodies))
+	}
+}
+
 // atomicTime is a tiny test clock used by the dedup window test.
 type atomicTime struct {
 	v atomic.Int64
@@ -399,3 +562,93 @@ func (a *atomicTime) advance(s int64)         { a.v.Add(s) }
 
 // Force errors import; required by the auth-error helper.
 var _ = errors.New
+
+func TestDispatcher_DispatchTurnRoutesToChunker(t *testing.T) {
+	var got string
+	aiChunker := internalfeishu.NewAIChunker(func(body string) { got = body })
+
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	d.AttachAIChunker("sess1", aiChunker)
+	d.DispatchTurn("sess1", TurnEvent{Kind: TurnUserPrompt, Text: "hello"})
+
+	// The chunker uses a 100ms throttle window; sleep past it then Tick.
+	time.Sleep(150 * time.Millisecond)
+	aiChunker.Tick()
+
+	if !strings.Contains(got, "hello") {
+		t.Errorf("got = %q, want it to contain 'hello'", got)
+	}
+}
+
+func TestDispatcher_DispatchTurnNoChunker(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	// No AttachAIChunker call — should not panic or error.
+	d.DispatchTurn("missing", TurnEvent{Kind: TurnUserPrompt, Text: "x"})
+}
+
+// Lazy-attach hook: when DispatchTurn arrives for a session with no
+// AIChunker, fire the SetOnTurnMissingChunker callback with that session
+// id so the host can backfill an anchor (used when remote-terminal is
+// toggled on mid-session).
+func TestDispatcher_DispatchTurn_NoChunker_FiresMissingCallback(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	var got []string
+	var mu sync.Mutex
+	d.SetOnTurnMissingChunker(func(sid string) {
+		mu.Lock()
+		got = append(got, sid)
+		mu.Unlock()
+	})
+	d.DispatchTurn("sess-lazy", TurnEvent{Kind: TurnUserPrompt, Text: "hello"})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "sess-lazy" {
+		t.Fatalf("expected callback with 'sess-lazy'; got %v", got)
+	}
+}
+
+// When an AIChunker is already attached, DispatchTurn must NOT fire the
+// missing-chunker callback (it exists only for the lazy backfill path).
+func TestDispatcher_DispatchTurn_WithChunker_SkipsMissingCallback(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	d.AttachAIChunker("sess-live", internalfeishu.NewAIChunker(func(string) {}))
+	var fired atomic.Bool
+	d.SetOnTurnMissingChunker(func(string) { fired.Store(true) })
+	d.DispatchTurn("sess-live", TurnEvent{Kind: TurnUserPrompt, Text: "hi"})
+	if fired.Load() {
+		t.Fatalf("callback fired despite chunker being attached")
+	}
+}
+
+// Nil callback (setter never called) must not panic when a turn arrives
+// with no chunker attached.
+func TestDispatcher_DispatchTurn_NoChunker_NilCallbackSafe(t *testing.T) {
+	store := &inMemBindingStore{}
+	d := NewDispatcher(DispatcherConfig{
+		Store: store,
+		Token: &stubTokenSource{tok: "tt", openID: "ou_x", hash: "h"},
+		IM:    &capturingIM{},
+	})
+	// No SetOnTurnMissingChunker call; must not panic.
+	d.DispatchTurn("nobody", TurnEvent{Kind: TurnUserPrompt, Text: "x"})
+}

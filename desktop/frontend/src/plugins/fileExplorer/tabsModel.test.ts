@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openPath, closeTab, setViewMode, defaultViewMode, type TabsState } from "./tabsModel";
+import { openPath, closeTab, setViewMode, setDirty, defaultViewMode, type TabsState } from "./tabsModel";
 
 function empty(): TabsState {
   return { tabs: [], activeIdx: -1 };
@@ -100,5 +100,33 @@ describe("tabsModel.openPath × defaultViewMode", () => {
   it("a new svg tab opens in code mode", () => {
     const s = openPath({ tabs: [], activeIdx: -1 }, "/x/logo.svg", "persistent");
     expect(s.tabs[0].viewMode).toBe("code");
+  });
+});
+
+describe("tabsModel.setDirty", () => {
+  it("marks the matching tab dirty by path", () => {
+    let s: TabsState = { tabs: [], activeIdx: -1 };
+    s = openPath(s, "/a", "persistent");
+    s = openPath(s, "/b", "persistent");
+    const next = setDirty(s, "/a", true);
+    expect(next.tabs.find((t) => t.path === "/a")?.dirty).toBe(true);
+    expect(next.tabs.find((t) => t.path === "/b")?.dirty).toBe(false);
+  });
+
+  it("no-ops when path is not open", () => {
+    const s = openPath({ tabs: [], activeIdx: -1 }, "/a", "persistent");
+    const next = setDirty(s, "/missing", true);
+    expect(next).toBe(s);
+  });
+
+  it("no-ops when dirty already at target value", () => {
+    const s = openPath({ tabs: [], activeIdx: -1 }, "/a", "persistent");
+    const next = setDirty(s, "/a", false);
+    expect(next).toBe(s);
+  });
+
+  it("openPath creates tabs with dirty=false", () => {
+    const s = openPath({ tabs: [], activeIdx: -1 }, "/a", "persistent");
+    expect(s.tabs[0].dirty).toBe(false);
   });
 });

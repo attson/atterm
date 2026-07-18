@@ -19,4 +19,43 @@ describe("SettingsFeishu", () => {
     expect(source).toContain(":checked=\"aiOnlyNotifications\"");
     expect(source).toContain("onToggleAIOnly");
   });
+
+  test("imports the remote terminal bindings from the api layer", () => {
+    expect(source).toContain("getFeishuRemoteTerminalSettings");
+    expect(source).toContain("setFeishuRemoteTerminalSettings");
+  });
+
+  test("tracks remote terminal state with refs and reads them on mount", () => {
+    expect(source).toContain("remoteTerminalEnabled");
+    expect(source).toMatch(/remoteTerminalEnabled\s*=\s*ref\(false\)/);
+    expect(source).toContain("sessionAutoAttach");
+    expect(source).toMatch(/sessionAutoAttach\s*=\s*ref\('ai'\)/);
+    expect(source).toContain("getFeishuRemoteTerminalSettings()");
+  });
+
+  test("renders the remote terminal checkbox toggle and autoAttach select", () => {
+    expect(source).toContain("settings.feishu.remoteTerminal.enable");
+    expect(source).toContain(":checked=\"remoteTerminalEnabled\"");
+    expect(source).toContain("onRemoteTerminalToggleChange");
+    expect(source).toContain("settings.feishu.remoteTerminal.autoAttach.ai");
+    expect(source).toContain("settings.feishu.remoteTerminal.autoAttach.all");
+    expect(source).toContain("settings.feishu.remoteTerminal.autoAttach.none");
+    expect(source).toContain("onAutoAttachChange");
+  });
+
+  test("renders Feishu mode dropdown with all three options", () => {
+    expect(source).toContain("settings.feishu.mode.options.auto");
+    expect(source).toContain("settings.feishu.mode.options.local");
+    expect(source).toContain("settings.feishu.mode.options.relay");
+  });
+
+  test("binds Feishu mode dropdown to setFeishuModePref via a change handler", () => {
+    expect(source).toContain("onFeishuModeChange");
+    expect(source).toContain("setFeishuModePref");
+  });
+
+  test("renders effective-mode line and a fallback warning", () => {
+    expect(source).toContain("settings.feishu.mode.effective.label");
+    expect(source).toContain("settings.feishu.mode.effective.fallbackWarn");
+  });
 });

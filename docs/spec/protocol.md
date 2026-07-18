@@ -61,6 +61,10 @@ const (
     TypeClaimDriver     Type = 0x34  // client → relay (viewer claims driver role)
     TypeCommandEvent    Type = 0x35  // uplink → relay (Web Push notification trigger)
     TypeViewers         Type = 0x36  // relay → uplink (mirror remote subscriber count)
+    TypePasteFile       Type = 0x37  // client → relay → desktop PTY host (generic file attachment)
+    TypeFSRequest       Type = 0x38  // client → relay → desktop uplink (remote file explorer)
+    TypeFSResponse      Type = 0x39  // desktop uplink → relay → requester client
+    TypeFSEvent         Type = 0x3a  // desktop uplink → relay → requester client
 
     // Auth frames (server → client).
     TypeAuthInfo        Type = 0x40  // relay → uplink; UTF-8 JSON {user_id}
@@ -211,9 +215,9 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
 
 | 值 | 远程允许 | relay/host 拦截 |
 |----|----------|-----------------|
-| `view` | list / attach / 接收输出与历史 | `IN` / `RESIZE` / `PASTE_IMAGE` |
-| `control` | `view` + `IN` + `RESIZE` | `PASTE_IMAGE` |
-| `full` 或空 | `control` + `PASTE_IMAGE` | 无 |
+| `view` | list / attach / 接收输出与历史 | `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` |
+| `control` | `view` + `IN` + `RESIZE` | `PASTE_IMAGE` / `PASTE_FILE` |
+| `full` 或空 | `control` + `PASTE_IMAGE` + `PASTE_FILE` | 无 |
 
 实践中很少用（前端走 REST `/api/sessions` 更直接）。
 
@@ -319,6 +323,112 @@ payload = JSON：
 
 `data` 解码后最大 10 MiB（JSON/base64 后仍需低于协议 16 MiB payload 上限）。`content_type` 必须是 `image/*`。
 
+### `PASTE_FILE` (0x37) — client → relay → desktop PTY host
+
+远程 client 显式选择/拖入的通用文件（PDF / log / diff / 任意二进制），路由与 `PASTE_IMAGE` 同构：driver + `full` 权限方可发送，非 driver 或不足权限静默 drop（日志 `not_driver` / `permission_denied`）。desktop 收到后 sanitize filename（strip 目录部分/控制字符、NFC normalize、≤128 字符、Windows 保留名前缀 `_`），落盘到 `<cache-root>/paste-files/<sid>/<safe-name>`（冲名追加 ` (N)`，`O_EXCL` 原子创建），然后把结果**绝对路径**直接 `Write` 进 PTY 主端（**无 CR，无引号**）。
+
+payload = JSON：
+
+```json
+{
+  "filename": "notes.pdf",
+  "content_type": "application/pdf",
+  "data": "<base64 file bytes>"
+}
+```
+
+- `filename`：用户可见文件名（不含目录）。wire 值可以脏，desktop 强制 sanitize + dedup 才落盘。
+- `content_type`：客户端 best-effort，服务器不校验、不据此路由。允许任意 mime（含 `application/octet-stream`）。
+- `data`：原始字节。解码后 `≤ 10 MiB`（`maxPasteFileBytes`）；desktop 侧 backstop 与前端预检同数值。协议层仍受 payload 16 MiB 上限约束。
+- **E2EE**：当持有 `account_key` 时，整个 `PasteFilePayload` JSON 走 [§E2EE 信封](#e2ee-信封) 加密，AAD 鉴别字节 = `0x37`。**当前 Go 侧 attach 客户端已支持**（另一台 atterm desktop attach 时）；`web` / `Capacitor` 前端与 PASTE_IMAGE 同 posture 尚未 seal（独立 spec）。
+- **权限**：`remote_permission = "full"` 才允许；`view` / `control` 被 relay 拒绝，同 PASTE_IMAGE。
+- **driver-only**：非当前 driver subscriber 的 PASTE_FILE 被 relay 静默 drop。
+
+区别于 PASTE_IMAGE：不塞 native clipboard、不发 `Ctrl-V`；文件名对 AI/shell 可见（保留 sanitized 原名，方便后续读取时通过 mime 或后缀推断类型）。
+
+### Remote File Explorer (`FS_REQUEST` 0x38 / `FS_RESPONSE` 0x39 / `FS_EVENT` 0x3a)
+
+远程文件浏览器使用三个 additive JSON 帧，均复用帧 header 里的 `session_id` 作为目标会话。它只定义协议载荷；relay/client/uplink 的具体处理在后续实现中接入。
+
+#### Flow
+
+1. 已 attach 的 client 为一次文件操作生成 `request_id`，发送 `FS_REQUEST` 到 relay。
+2. relay 按 session 的 uplink 路由把请求转发到拥有本地 PTY/文件系统的 desktop uplink。
+3. desktop uplink 调用本机受限文件访问层，返回同 `request_id` 的 `FS_RESPONSE`。
+4. 对目录 watch，desktop uplink 后续用 `FS_EVENT` 向 requester client 推送变更；client 收到后重新发 `list_dir` / `file_meta` 等请求刷新。
+
+#### Permissions
+
+文件浏览会读取 owner 机器上的路径，权限必须是 owner 显式发布的 `remote_permission = "full"`。relay 和 desktop host 都必须按当前 session 的 `remote_permission` 拦截：
+
+- `view` / `control`：不允许浏览或读取远程文件，所有 `FS_REQUEST` 都必须拒绝。
+- `full`：允许只读浏览、预览、分块读取、目录 watch。
+
+只读操作不要求当前 driver 状态：`list_dir` / `file_meta` / `read_file` / `read_chunk` / `watch_dir` / `unwatch_dir` 在 `remote_permission = "full"` 下可由已授权 client 发起。`open_external` 会在 owner 机器触发 OS 打开动作，因此额外要求发送方是当前 driver；relay 侧需按 session driver 状态拒绝，desktop uplink 执行前再拦一次，保持与 `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` 的本机动作防线一致。
+
+#### `FS_REQUEST` payload
+
+```json
+{
+  "request_id": "uuid-or-random-string",
+  "client_id": "relay-injected-attacher-client-id",
+  "op": "list_dir",
+  "path": "/Users/alice/project",
+  "max_bytes": 2097152,
+  "offset": 0,
+  "length": 262144,
+  "watch_id": "server-watch-id"
+}
+```
+
+- `request_id`：client 生成的关联 ID；desktop 原样带回。
+- `client_id`：relay 转发前按已 attach subscriber 的身份注入/覆盖；浏览器传入的值不可信且会被忽略。desktop host 只用它对 `open_external` 做当前 driver 二次校验，普通浏览器 client 不需要也不应该自行设置。
+- `op`：`list_dir` / `file_meta` / `read_file` / `read_chunk` / `watch_dir` / `unwatch_dir` / `open_external`。
+- `path`：owner 机器上的路径；desktop 必须走本地 allow-root/path-clean 校验。
+- `max_bytes`：`read_file` 的最大返回字节数，host 仍有 hard cap。
+- `offset` / `length`：`read_chunk` 的分块范围。
+- `watch_id`：`unwatch_dir` 使用 desktop 之前返回的 watch id。
+
+#### `FS_RESPONSE` payload
+
+```json
+{
+  "request_id": "same-as-request",
+  "ok": true,
+  "error": "",
+  "entries": [
+    { "name": "src", "isDir": true, "size": 0, "modTime": 1760000000000 }
+  ],
+  "meta": { "path": "/Users/alice/project/README.md", "size": 1234, "modTime": 1760000000000, "isBinary": false },
+  "content": { "path": "/Users/alice/project/README.md", "data": "base64", "isBinary": false, "truncatedAt": 0 },
+  "chunk": { "path": "/Users/alice/project/logo.png", "data": "base64", "offset": 0, "length": 262144, "eof": false, "contentType": "image/png" },
+  "watch_id": "server-watch-id"
+}
+```
+
+- `ok=false` 时 `error` 是 user-visible-ish 的简短错误字符串；其它 result 字段可省略。
+- `entries` 用于 `list_dir`，元素 schema 为 `DirEntry { name, isDir, size, modTime }`。
+- `meta` 用于 `file_meta`，schema 为 `FileMetaInfo { path, size, modTime, isBinary }`。
+- `content` 用于 `read_file`，schema 为 `FileContent { path, data, isBinary, truncatedAt }`。
+- `chunk` 用于 `read_chunk`，schema 为 `FSChunkPayload { path, data, offset, length, eof, contentType }`。
+- Go JSON 的 `[]byte` 字段按标准 base64 字符串编码。
+
+#### `FS_EVENT` payload
+
+```json
+{
+  "watch_id": "server-watch-id",
+  "path": "/Users/alice/project",
+  "event": "changed"
+}
+```
+
+`event` 当前只要求支持 `changed`。watch 是 requester-scoped：relay 不应把一个 client 的 watch event 广播给其它 client。
+
+#### Plaintext / E2EE posture
+
+当前 `FS_REQUEST` / `FS_RESPONSE` / `FS_EVENT` payload 是 relay 可见的 JSON 明文，包含路径、文件名、metadata 和文件内容字节。它们不在现有 [§E2EE 信封](#e2ee-信封) 鉴别表内，也没有 sealed 字段；relay 因此可以做路由、权限、payload 大小限制和审计，但也能读到文件浏览内容。后续如给文件浏览加 sealed payload，必须分配唯一 AAD `frame_type` 字节（`0x38` / `0x39` / `0x3a` 中对应所在帧）并更新 §E2EE 信封表。
+
 ### `CLAIM_DRIVER` (0x34) — client → relay
 
 viewer 想接管成为 driver 时发。payload = JSON：
@@ -399,7 +509,7 @@ Payload (UTF-8 JSON):
 
 ## Driver / Viewer 模型
 
-每个 session 在任意时刻最多有一个 driver subscriber。driver 是唯一允许把 `IN` / `RESIZE` / `PASTE_IMAGE` 转发到 PTY 的连接；其它都是 viewer（只收 `OUT` / `META` / `CLOSE` / `REPLAY_PROGRESS`）。
+每个 session 在任意时刻最多有一个 driver subscriber。driver 是唯一允许把 `IN` / `RESIZE` / `PASTE_IMAGE` / `PASTE_FILE` 转发到 PTY 的连接；其它都是 viewer（只收 `OUT` / `META` / `CLOSE` / `REPLAY_PROGRESS`）。
 
 - **自动晋升**：第一个 `Subscribe` 上来的 subscriber（不论 loopback 还是 uplink）自动 driver。
 - **接管**：viewer 端按空格 → `CLAIM_DRIVER` → relay 切 driver → META 广播。

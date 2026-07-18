@@ -18,11 +18,25 @@ type ClaudeSettings struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ClaudeHooks is the "hooks" object. We only own the Notification slot.
-// Other hook lists (e.g. PreToolUse) are passed through unmodified.
+// ClaudeHooks is the "hooks" object. atterm owns five slots, all pointing
+// at the same atterm-hook binary; the dispatcher discriminates by
+// hook_event_name + tool_name on receipt:
+//
+//	Notification     — waiting-input prompts (permission/idle)
+//	PreToolUse       — empty matcher: covers AskUserQuestion (waiting-input
+//	                   card) AND non-AskUserQuestion tools (streaming 🛠 calls)
+//	UserPromptSubmit — streaming 👤 user message
+//	Stop             — streaming 🤖 assistant final
+//	PostToolUse      — streaming 🛠 tool result
+//
+// Other hook lists are passed through unmodified.
 type ClaudeHooks struct {
-	Notification []HookEntry                `json:"Notification,omitempty"`
-	Extra        map[string]json.RawMessage `json:"-"`
+	Notification     []HookEntry                `json:"Notification,omitempty"`
+	PreToolUse       []HookEntry                `json:"PreToolUse,omitempty"`
+	UserPromptSubmit []HookEntry                `json:"UserPromptSubmit,omitempty"`
+	Stop             []HookEntry                `json:"Stop,omitempty"`
+	PostToolUse      []HookEntry                `json:"PostToolUse,omitempty"`
+	Extra            map[string]json.RawMessage `json:"-"`
 }
 
 // UnmarshalJSON splits the known field from the unknown rest so we can
@@ -56,11 +70,22 @@ func (h *ClaudeHooks) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if n, ok := raw["Notification"]; ok {
-		if err := json.Unmarshal(n, &h.Notification); err != nil {
-			return err
+	for _, b := range []struct {
+		key  string
+		dest *[]HookEntry
+	}{
+		{"Notification", &h.Notification},
+		{"PreToolUse", &h.PreToolUse},
+		{"UserPromptSubmit", &h.UserPromptSubmit},
+		{"Stop", &h.Stop},
+		{"PostToolUse", &h.PostToolUse},
+	} {
+		if v, ok := raw[b.key]; ok {
+			if err := json.Unmarshal(v, b.dest); err != nil {
+				return err
+			}
+			delete(raw, b.key)
 		}
-		delete(raw, "Notification")
 	}
 	h.Extra = raw
 	return nil
@@ -73,6 +98,18 @@ func (h ClaudeHooks) MarshalJSON() ([]byte, error) {
 	}
 	if h.Notification != nil {
 		out["Notification"] = h.Notification
+	}
+	if h.PreToolUse != nil {
+		out["PreToolUse"] = h.PreToolUse
+	}
+	if h.UserPromptSubmit != nil {
+		out["UserPromptSubmit"] = h.UserPromptSubmit
+	}
+	if h.Stop != nil {
+		out["Stop"] = h.Stop
+	}
+	if h.PostToolUse != nil {
+		out["PostToolUse"] = h.PostToolUse
 	}
 	return json.Marshal(out)
 }

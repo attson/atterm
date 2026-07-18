@@ -19,7 +19,7 @@ function extOf(name: string): string | null {
  *
  *  `isBinary` is the backend `fileMeta.isBinary` flag (NUL byte in first 4 KB).
  *  - Known media extensions win regardless of `isBinary`.
- *  - For an unknown extension, fall back to `code` so CodeViewer can show its
+ *  - For an unknown extension, fall back to `code` so CodeEditor can show its
  *    existing too-large / binary banners. The `binary-unknown` kind is only
  *    returned for unknown-ext AND isBinary, where neither preview applies.
  */

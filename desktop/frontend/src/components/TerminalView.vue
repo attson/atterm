@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
@@ -21,7 +21,9 @@ import {
   isPasteAllowed,
   prepareSendPayload,
 } from "../lib/terminalContextMenu";
-import { pasteFromClipboard } from "../lib/terminalPaste";
+import { isCtrlVKeydownPaste, pasteFromClipboard } from "../lib/terminalPaste";
+import { pasteImageBus } from "../lib/pasteImageBus";
+import { pasteFileBus } from "../lib/pasteFileBus";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
@@ -109,6 +111,8 @@ const platform = usePlatform();
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let conn: SessionConnection | null = null;
+let pluginInputSender: ((text: string) => void) | null = null;
+let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
@@ -118,6 +122,11 @@ let focusCoalescer: FocusReportCoalescer | null = null;
 // when this TerminalView is rendered outside the plugin-aware App.
 const pluginInputSenders = inject<Map<string, (text: string) => void> | null>(
   "atterm:pluginInputSenders",
+  null,
+);
+
+const pluginSessionConnections = inject<Map<string, SessionConnection> | null>(
+  "atterm:pluginSessionConnections",
   null,
 );
 
@@ -133,6 +142,10 @@ let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
 let copyKeyTarget: HTMLDivElement | null = null;
+
+function isLiveTerminal(): boolean {
+  return isAlive && term !== null && termContainer.value !== null;
+}
 
 const MENU_WIDTH = 150;
 const MENU_HEIGHT = 150;
@@ -174,17 +187,61 @@ async function handleCopyShortcut(e: KeyboardEvent) {
   }
 }
 
-async function handleImagePaste(e: ClipboardEvent) {
-  const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
-  if (!item) return;
-  const file = item.getAsFile();
-  if (!file) return;
+async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
+  if (!term || !conn || !isCtrlVKeydownPaste(e)) return;
+  // Stop xterm from also forwarding `\x16` to the PTY (the TUI would
+  // otherwise also read the clipboard and we'd double-paste).
   e.preventDefault();
   e.stopPropagation();
+  if (pasteBusy.value) return;
+  pasteBusy.value = true;
   try {
-    await conn?.sendPasteImage(file, file.name || "clipboard-image");
+    const result = await pasteFromClipboard({
+      term,
+      conn,
+      status: status.value,
+      remotePermission: props.remotePermission,
+    });
+    if (!result.ok && (result.reasonKey || result.reason)) {
+      emit("toast", result.reasonKey ? t(result.reasonKey) : result.reason!);
+    }
   } catch (err) {
-    console.warn("[AT Term] failed to paste terminal image", err);
+    console.warn("[AT Term] failed to paste on Ctrl+V", err);
+  } finally {
+    pasteBusy.value = false;
+  }
+}
+
+async function handleImagePaste(e: ClipboardEvent) {
+  const items = Array.from(e.clipboardData?.items || []);
+  // Prefer an image item if present (aligns with legacy Cmd+V paste-image
+  // path). Otherwise pick the first non-string file item to send as a
+  // generic PASTE_FILE.
+  const imageItem = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
+  const anyFileItem = imageItem ?? items.find((i) => i.kind === "file");
+  if (!anyFileItem) return;
+  const file = anyFileItem.getAsFile();
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    console.warn("[AT Term] pasted file too large", file.name, file.size);
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  if (imageItem && anyFileItem === imageItem) {
+    pasteImageBus.emit(file, file.name || "clipboard-image");
+    try {
+      await conn?.sendPasteImage(file, file.name || "clipboard-image");
+    } catch (err) {
+      console.warn("[AT Term] failed to paste terminal image", err);
+    }
+  } else {
+    pasteFileBus.emit(file.name || "file", file.size);
+    try {
+      await conn?.sendPasteFile(file, file.name || "file");
+    } catch (err) {
+      console.warn("[AT Term] failed to paste terminal file", err);
+    }
   }
 }
 
@@ -427,6 +484,7 @@ async function ensureTerm() {
     // opt back in from Settings once the binding is reachable.
     webglEnabled = false;
   }
+  if (!isLiveTerminal()) return;
   if (webglEnabled) {
     try {
       const webgl = new WebglAddon();
@@ -439,6 +497,7 @@ async function ensureTerm() {
   const keyTarget = termContainer.value!;
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
+  keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
   keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   safeFit();
@@ -505,6 +564,7 @@ async function ensureTerm() {
   } catch {
     cachedHomeDir = "";
   }
+  if (!isLiveTerminal()) return;
   linkProviderDisposer = useTerminalLinkProvider({
     term,
     isMac,
@@ -519,7 +579,7 @@ async function ensureTerm() {
 
 function startConnection() {
   if (!term) return;
-  conn = new SessionConnection(
+  conn = markRaw(new SessionConnection(
     props.endpoint,
     props.sessionId,
     {
@@ -553,13 +613,15 @@ function startConnection() {
       },
     },
     { clientName: localHostname.value, remote: !props.isLocalSession }
-  );
+  ));
   conn.attach();
+  pluginSessionConnections?.set(props.sessionId, conn);
   // Register a driver-side input sender for this session so plugins
   // (Quick Input) can pipe text through this same driver connection.
   // A fresh SessionConnection would attach as a viewer and have its
   // IN frames dropped by the relay.
-  pluginInputSenders?.set(props.sessionId, (text: string) => conn?.sendInput(text));
+  pluginInputSender = (text: string) => conn?.sendInput(text);
+  pluginInputSenders?.set(props.sessionId, pluginInputSender);
   // Skip the no-op RESIZE if our fit landed on the same size the relay
   // already knows about. Net effect: locally-spawned shells (PTY born at
   // predicted dims) and cross-attached shells whose owner happens to be
@@ -654,6 +716,7 @@ let templatesOff: (() => void) | null = null;
 
 onMounted(async () => {
   await ensureTerm();
+  if (!isAlive) return;
   // Resolve the local hostname before opening the WS so the very first ATTACH
   // carries the correct client_name. Failure (e.g. Wails not ready in tests
   // or a future browser-only build) falls back to the default in connection.ts.
@@ -663,6 +726,7 @@ onMounted(async () => {
   } catch {
     /* fall back to default */
   }
+  if (!isAlive) return;
   startConnection();
   reloadTemplates();
   templatesOff = platform.events.on("quickTemplates:changed", reloadTemplates);
@@ -677,12 +741,16 @@ onMounted(async () => {
   // mount, which makes FitAddon return NaN and bail. By the time we get a
   // second rAF the layout has definitely settled.
   requestAnimationFrame(() => {
+    if (!isAlive) return;
     safeFit();
-    requestAnimationFrame(() => safeFit());
+    requestAnimationFrame(() => {
+      if (isAlive) safeFit();
+    });
   });
 });
 
 onBeforeUnmount(() => {
+  isAlive = false;
   // Drop every external callback that could re-enter the term BEFORE we
   // touch conn / term. A queued ResizeObserver entry or a stray document
   // listener firing in the same tick used to call safeFit() → fit.fit() on
@@ -696,10 +764,17 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
-  pluginInputSenders?.delete(props.sessionId);
+  if (pluginInputSenders?.get(props.sessionId) === pluginInputSender) {
+    pluginInputSenders?.delete(props.sessionId);
+  }
+  pluginInputSender = null;
+  if (pluginSessionConnections?.get(props.sessionId) === conn) {
+    pluginSessionConnections?.delete(props.sessionId);
+  }
   focusCoalescer?.dispose();
   focusCoalescer = null;
   linkProviderDisposer?.dispose();
@@ -733,6 +808,23 @@ watch(
       });
     } else {
       closeContextMenu();
+    }
+  }
+);
+
+// Pane swap inside an already-active tab: the active-watch above doesn't fire
+// (props.active stayed true), so xterm never learns the focus moved. A manual
+// mousedown on the pane goes via the DOM and lands focus on xterm's textarea
+// naturally; a programmatic set-active-pane (e.g. sidebar click on a session
+// living in a multi-pane tab) doesn't. Watch `focused` independently so the
+// new active pane's xterm always gets keystrokes.
+watch(
+  () => props.focused,
+  (isFocused) => {
+    if (isFocused) {
+      nextTick(() => {
+        term?.focus();
+      });
     }
   }
 );

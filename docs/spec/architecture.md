@@ -1,9 +1,9 @@
 # 架构规范
 
 > **Audience**: 理解 atterm 系统整体结构的工程师
-> **Last updated**: 2026-06-10
+> **Last updated**: 2026-07-10
 > **Status**: stable
-> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md)
+> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md)
 
 ## 一句话总览
 
@@ -78,6 +78,10 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update / Pairing / Diagnostics / QuickTemplates) | 不实现协议 |
 | `web/` | web | Vue 3 + TypeScript + Naive UI 多页浏览器/PWA client（login/signup/main/settings/admin/setup），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token` |
+| `internal/feishu` | internal | 飞书 client SDK：Cardkit v2 anchor card 渲染 + IM 消息 API + Router.InjectKeystrokesBySession（stroke dispatch 到本地 pty） | 不知道 hook payload 结构（那是 `desktop/feishu` 层）|
+| `desktop/feishu` | desktop | hook payload 解析、AskUserQuestion form 挂拆 lifecycle、stroke plan 构造、local 模式 LongConn subscriber | 不直接持有 pty；stroke 通过 `Router.InjectKeystrokesBySession` 送 |
+
+飞书子系统的模式分流（local vs relay）、anchor card 生命周期、AskUserQuestion 表单式远程回答的完整规范见 [feishu.md](./feishu.md)。
 
 ## User accounts and identity
 

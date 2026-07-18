@@ -179,6 +179,9 @@ defineExpose({
   sendPasteImage(blob: Blob, filename?: string) {
     return conn?.sendPasteImage(blob, filename)
   },
+  sendPasteFile(blob: Blob, filename: string) {
+    return conn?.sendPasteFile(blob, filename)
+  },
   copySelection() {
     if (!term) return
     const sel = term.getSelection()

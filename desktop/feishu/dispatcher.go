@@ -21,6 +21,18 @@ type IMClient interface {
 	SendTextToOpenID(ctx context.Context, token, openID, text string) error
 }
 
+// CardKitClient is the subset of internal/feishu.Client used for anchor card
+// operations (send + streaming PATCH). Stored separately in DispatcherConfig
+// so tests can stub it without affecting the IM send path.
+type CardKitClient interface {
+	SendAnchorCard(ctx context.Context, tenantToken, openID string, cardBody []byte) (msgID, cardToken string, err error)
+	PatchCard(ctx context.Context, tenantToken, cardToken, elementID, bodyMarkdown string, sequence int64) error
+	PatchCardElement(ctx context.Context, tenantToken, cardToken, elementID string, partial map[string]any, sequence int64) error
+	UpdateCardElement(ctx context.Context, tenantToken, cardToken, elementID string, element map[string]any, sequence int64) error
+	DeleteCardElement(ctx context.Context, tenantToken, cardToken, elementID string, sequence int64) error
+	CreateCardElement(ctx context.Context, tenantToken, cardToken, targetElementID, insertType string, elements []map[string]any, sequence int64) error
+}
+
 // CommandFinishedEvent feeds the dispatcher from the heuristic OSC 133 D path.
 type CommandFinishedEvent struct {
 	SessionID  uuid.UUID
@@ -72,9 +84,10 @@ const (
 
 // DispatcherConfig holds the wired-in dependencies.
 type DispatcherConfig struct {
-	Store BindingStore
-	Token TokenSource
-	IM    IMClient
+	Store   BindingStore
+	Token   TokenSource
+	IM      IMClient
+	CardKit CardKitClient // optional; nil disables anchor card send/patch
 	// Now returns Unix seconds. Default = time.Now().Unix.
 	Now func() int64
 }
@@ -124,6 +137,18 @@ type Dispatcher struct {
 	authFailures int            // global auth-class failure count
 
 	cardMsgs cardMsgMap
+
+	aiMu            sync.Mutex
+	aiChunkers      map[string]*internalfeishu.AIChunker
+	onAnchorButtons func(sessionID string, options []string) // nil opts → restore defaults
+	// onAskForm fires when claude's AskUserQuestion payload should surface
+	// as an interactive form container on the anchor. Non-empty questions
+	// → insert form; nil questions → remove form (claude moved on).
+	onAskForm func(sessionID string, questions []AskUserQuestionEntry)
+	// onTurnMissingChunker fires when a TurnEvent arrives for a session
+	// with no AIChunker attached. The host uses it to lazily backfill an
+	// anchor when remote-terminal was toggled on after the session started.
+	onTurnMissingChunker func(sessionID string)
 }
 
 // LookupCardSession returns the session id a previously sent card's message_id
@@ -179,6 +204,19 @@ func (d *Dispatcher) DispatchCommandFinished(ctx context.Context, ev CommandFini
 }
 
 func (d *Dispatcher) DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent) {
+	// Anchor supersedes standalone WaitingInput: when a live AIChunker is
+	// attached for this session, the anchor card's status preamble
+	// (⏸ 等待输入 · 已 Nm) + fully interactive body already carries the
+	// signal. A second card would duplicate the notification in the same DM.
+	// Non-AI sessions and detached-anchor cases still fall through — the
+	// WaitingInput card is the fallback notification surface for those.
+	d.aiMu.Lock()
+	hasAnchor := d.aiChunkers[ev.SessionID.String()] != nil
+	d.aiMu.Unlock()
+	if hasAnchor {
+		return
+	}
+
 	// The session-level key gates all waiting-input sends for this session,
 	// regardless of whether the trigger came from the hook or heuristic path.
 	sessionKey := "waiting:" + ev.SessionID.String()
@@ -237,25 +275,46 @@ func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKe
 			return
 		}
 	}
+	// Stamp eagerly — under the same lock as the check — so a concurrent
+	// caller (e.g. hook + heuristic racing for the same WaitingInput
+	// event) sees us as in-flight and bails. We may roll back below if
+	// the send turns out to be impossible (no token).
+	d.lastDispatch[dedupKey] = now
+	if sessionKey != dedupKey {
+		d.lastDispatch[sessionKey] = now
+	}
 	d.muD.Unlock()
+
+	rollback := func() {
+		d.muD.Lock()
+		defer d.muD.Unlock()
+		// Only roll back our own stamp — a newer dispatch may have replaced it.
+		if d.lastDispatch[dedupKey] == now {
+			delete(d.lastDispatch, dedupKey)
+		}
+		if sessionKey != dedupKey && d.lastDispatch[sessionKey] == now {
+			delete(d.lastDispatch, sessionKey)
+		}
+	}
 
 	tok, openID, _, err := d.cfg.Token.Get(ctx)
 	if err != nil {
-		if errors.Is(err, ErrTokenNotConfigured) {
-			return
-		}
-		if errors.Is(err, ErrTokenDisabled) {
+		rollback()
+		if errors.Is(err, ErrTokenNotConfigured) || errors.Is(err, ErrTokenDisabled) {
 			return
 		}
 		log.Printf("feishu: dispatch token: %v", err)
 		return
 	}
 	if openID == "" {
+		rollback()
 		return
 	}
 
 	body, err := render()
 	if err != nil {
+		// Render errors are programming bugs, not transient — keep the
+		// stamp so we don't retry-storm on the same broken event.
 		log.Printf("feishu: render card: %v", err)
 		return
 	}
@@ -263,15 +322,10 @@ func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKe
 	mid, err := d.cfg.IM.SendInteractiveToOpenID(ctx, tok, openID, body)
 	if err != nil {
 		d.recordSendError(ctx, sid, err)
+		// Keep the stamp — gate retries to the dedup window.
 		return
 	}
 	d.cardMsgs.remember(mid, sid)
-
-	d.muD.Lock()
-	d.lastDispatch[dedupKey] = now
-	// Always stamp the session-level key too so heuristic fallbacks are gated.
-	d.lastDispatch[sessionKey] = now
-	d.muD.Unlock()
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey string, render func() ([]byte, error)) {
@@ -282,20 +336,28 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 		d.muD.Unlock()
 		return
 	}
+	d.lastDispatch[dedupKey] = now
 	d.muD.Unlock()
+
+	rollback := func() {
+		d.muD.Lock()
+		defer d.muD.Unlock()
+		if d.lastDispatch[dedupKey] == now {
+			delete(d.lastDispatch, dedupKey)
+		}
+	}
 
 	tok, openID, _, err := d.cfg.Token.Get(ctx)
 	if err != nil {
-		if errors.Is(err, ErrTokenNotConfigured) {
-			return
-		}
-		if errors.Is(err, ErrTokenDisabled) {
+		rollback()
+		if errors.Is(err, ErrTokenNotConfigured) || errors.Is(err, ErrTokenDisabled) {
 			return
 		}
 		log.Printf("feishu: dispatch token: %v", err)
 		return
 	}
 	if openID == "" {
+		rollback()
 		return
 	}
 
@@ -311,10 +373,255 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 		return
 	}
 	d.cardMsgs.remember(mid, sid)
+}
 
-	d.muD.Lock()
-	d.lastDispatch[dedupKey] = now
-	d.muD.Unlock()
+// SendAnchorCard POSTs the given card body to the configured open_id and
+// returns (msgID, cardToken, openID, error). It resolves the tenant token via
+// the configured TokenSource so callers do not need to manage credentials.
+// Returns ErrTokenNotConfigured / ErrTokenDisabled transparently.
+func (d *Dispatcher) SendAnchorCard(ctx context.Context, cardBody []byte) (msgID, cardToken, openID string, err error) {
+	if d.cfg.CardKit == nil {
+		return "", "", "", fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	tok, oid, _, err := d.cfg.Token.Get(ctx)
+	if err != nil {
+		return "", "", "", err
+	}
+	if oid == "" {
+		return "", "", "", fmt.Errorf("feishu dispatcher: open_id empty (not bound)")
+	}
+	mid, tok2, err := d.cfg.CardKit.SendAnchorCard(ctx, tok, oid, cardBody)
+	if err != nil {
+		return "", "", "", err
+	}
+	return mid, tok2, oid, nil
+}
+
+// PatchAnchor patches the live body markdown of an anchor card. tenantToken
+// must be a valid tenant_access_token; callers should obtain it via
+// SendAnchorCard's returned triple or refresh via the TokenSource. sequence
+// is strictly increasing per card (use CardAnchor.PatchSeq). Always targets
+// the body markdown element identified by internalfeishu.AnchorBodyElementID.
+func (d *Dispatcher) PatchAnchor(ctx context.Context, tenantToken, cardToken, bodyMarkdown string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.PatchCard(ctx, tenantToken, cardToken, internalfeishu.AnchorBodyElementID, bodyMarkdown, sequence)
+}
+
+// ClearAnchorInputWithSeqs removes the input element with the given
+// oldElementID then inserts a fresh one after the body markdown with the
+// given newElementID. Caller owns two consecutive seq slots (seqDel <
+// seqCre) and holds the per-anchor SendMu across the call so no other send
+// can slip a higher-seq op between the two — Feishu enforces strict
+// monotonicity and rejects out-of-order arrivals with code=300317.
+//
+// The element_id MUST change on every cycle: Feishu's client caches the
+// user-typed value keyed by element_id, and reusing the same id would leak
+// the last value straight through the DELETE + POST. Caller is responsible
+// for tracking the current id (e.g. on the anchor) and generating a new one.
+func (d *Dispatcher) ClearAnchorInputWithSeqs(ctx context.Context, tenantToken, cardToken, sessionID, oldElementID, newElementID string, seqDel, seqCre int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	if err := d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
+		oldElementID, seqDel); err != nil {
+		return err
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{internalfeishu.NewInputElement(sessionID, newElementID)},
+		seqCre)
+}
+
+// PatchAnchorElement is the generic element-PATCH passthrough — used by the
+// anchor button-row swap (AskUserQuestion options ↔ default keystrokes).
+// Other call sites should prefer the typed helpers (PatchAnchor /
+// ClearAnchorInput) when one fits.
+func (d *Dispatcher) PatchAnchorElement(ctx context.Context, tenantToken, cardToken, elementID string, partial map[string]any, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.PatchCardElement(ctx, tenantToken, cardToken, elementID, partial, sequence)
+}
+
+// InsertAnchorFormWithSeq inserts the AskUserQuestion form container after
+// the body markdown. Caller allocates sequence under the anchor's SendMu.
+func (d *Dispatcher) InsertAnchorFormWithSeq(ctx context.Context, tenantToken, cardToken string, form map[string]any, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{form}, sequence)
+}
+
+// DeleteAnchorFormWithSeq removes the AskUserQuestion form container.
+// Caller allocates sequence under the anchor's SendMu.
+func (d *Dispatcher) DeleteAnchorFormWithSeq(ctx context.Context, tenantToken, cardToken string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorAskFormElementID, sequence)
+}
+
+// DeleteAnchorInputWithSeq removes the anchor's Type-here input element.
+// Used when an AskUserQuestion form goes up: the per-question inputs make
+// the standalone input redundant and visually noisy. Caller allocates
+// sequence under the anchor's SendMu.
+func (d *Dispatcher) DeleteAnchorInputWithSeq(ctx context.Context, tenantToken, cardToken, elementID string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken, elementID, sequence)
+}
+
+// CreateAnchorInputWithSeq re-inserts the anchor input element after the body
+// markdown. Used to restore the input when the AskUserQuestion form is torn
+// down. Caller allocates sequence under the anchor's SendMu.
+func (d *Dispatcher) CreateAnchorInputWithSeq(ctx context.Context, tenantToken, cardToken, sessionID, elementID string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorBodyElementID, "insert_after",
+		[]map[string]any{internalfeishu.NewInputElement(sessionID, elementID)},
+		sequence)
+}
+
+// DeleteAnchorButtonsWithSeq removes the anchor buttons row. Used when an
+// AskUserQuestion form goes up: the form has its own submit/reset buttons,
+// the default keystroke row would just clutter the space below.
+func (d *Dispatcher) DeleteAnchorButtonsWithSeq(ctx context.Context, tenantToken, cardToken string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.DeleteCardElement(ctx, tenantToken, cardToken,
+		internalfeishu.AnchorButtonsElementID, sequence)
+}
+
+// CreateAnchorButtonsWithSeq re-inserts the default keystroke buttons row
+// (^C/^D/Esc/Enter/结束) after the input element. Used to restore the row
+// when an AskUserQuestion form is torn down.
+func (d *Dispatcher) CreateAnchorButtonsWithSeq(ctx context.Context, tenantToken, cardToken, sessionID, targetElementID string, sequence int64) error {
+	if d.cfg.CardKit == nil {
+		return fmt.Errorf("feishu dispatcher: no CardKitClient configured")
+	}
+	return d.cfg.CardKit.CreateCardElement(ctx, tenantToken, cardToken,
+		targetElementID, "insert_after",
+		[]map[string]any{internalfeishu.NewDefaultButtonsElement(sessionID)},
+		sequence)
+}
+
+// GetToken returns a fresh (tenantToken, openID) pair via the configured
+// TokenSource. Used by relay_host when it needs to PATCH an anchor card
+// and must refresh the token independently of a SendAnchorCard call.
+func (d *Dispatcher) GetToken(ctx context.Context) (tenantToken, openID string, err error) {
+	tok, oid, _, e := d.cfg.Token.Get(ctx)
+	return tok, oid, e
+}
+
+// AttachAIChunker registers a chunker for streaming AI turn events for the
+// given session. Called by relay_host when a FeishuSubscriber attaches to
+// an AI session. Replaces any existing chunker for the session.
+func (d *Dispatcher) AttachAIChunker(sessionID string, ch *internalfeishu.AIChunker) {
+	d.aiMu.Lock()
+	defer d.aiMu.Unlock()
+	if d.aiChunkers == nil {
+		d.aiChunkers = map[string]*internalfeishu.AIChunker{}
+	}
+	d.aiChunkers[sessionID] = ch
+}
+
+// DetachAIChunker removes the chunker for the session. Safe when none exists.
+func (d *Dispatcher) DetachAIChunker(sessionID string) {
+	d.aiMu.Lock()
+	defer d.aiMu.Unlock()
+	delete(d.aiChunkers, sessionID)
+}
+
+// DispatchTurn forwards a parsed TurnEvent into the per-session AIChunker.
+// Silently no-ops when no chunker is attached (the session may be shell-only,
+// or remote-terminal may be disabled). Translates TurnKind into the
+// internalfeishu.Turn*Event types AIChunker.PushTurn expects.
+func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
+	d.aiMu.Lock()
+	chunker := d.aiChunkers[sessionID]
+	known := len(d.aiChunkers)
+	onButtons := d.onAnchorButtons
+	onMissing := d.onTurnMissingChunker
+	d.aiMu.Unlock()
+	if chunker == nil {
+		log.Printf("feishu-turn: no chunker sid=%s kind=%v known_chunkers=%d", sessionID, ev.Kind, known)
+		if onMissing != nil {
+			// Fire-and-forget: the host performs a network round-trip to
+			// SendAnchorCard, which we must not block the hook HTTP handler
+			// on. This turn's body is lost — the anchor is in place for the
+			// next turn ("lazy backfill on next event" semantics).
+			onMissing(sessionID)
+		}
+		return
+	}
+	log.Printf("feishu-turn: route sid=%s kind=%v text_len=%d opts=%d", sessionID, ev.Kind, len(ev.Text), len(ev.Options))
+	switch ev.Kind {
+	case TurnUserPrompt:
+		chunker.PushTurn(internalfeishu.TurnUserPromptEvent{Text: ev.Text, TranscriptPath: ev.TranscriptPath})
+	case TurnAssistantFinal:
+		chunker.PushTurn(internalfeishu.TurnAssistantFinalEvent{Text: ev.Text})
+	case TurnToolStart:
+		chunker.PushTurn(internalfeishu.TurnToolStartEvent{ToolName: ev.ToolName})
+	case TurnToolEnd:
+		chunker.PushTurn(internalfeishu.TurnToolEndEvent{ToolName: ev.ToolName, ToolBody: ev.ToolBody})
+	}
+	// Anchor button-row swap: AskUserQuestion (TurnAssistantFinal with
+	// Options) replaces the default keystroke buttons with clickable option
+	// buttons. Any other AssistantFinal — i.e. a regular Stop — restores the
+	// default buttons (no-op when already default; cost is one PATCH per
+	// turn end, acceptable).
+	if onButtons != nil && ev.Kind == TurnAssistantFinal {
+		onButtons(sessionID, ev.Options)
+	}
+	// AskUserQuestion form: FormQuestions non-empty on TurnAssistantFinal
+	// → insert form container; Stop with no questions → remove any
+	// mounted form (claude moved on).
+	if ev.Kind == TurnAssistantFinal {
+		d.aiMu.Lock()
+		onForm := d.onAskForm
+		d.aiMu.Unlock()
+		if onForm != nil {
+			onForm(sessionID, ev.FormQuestions)
+		}
+	}
+}
+
+// SetOnAnchorButtons registers the per-session button-swap callback.
+// relay_host wires this to its PATCH path: non-nil options → option buttons;
+// nil options → restore default keystroke row.
+func (d *Dispatcher) SetOnAnchorButtons(fn func(sessionID string, options []string)) {
+	d.aiMu.Lock()
+	d.onAnchorButtons = fn
+	d.aiMu.Unlock()
+}
+
+// SetOnAskForm registers the AskUserQuestion form callback. relay_host
+// wires this to its CreateCardElement / DeleteCardElement path so a form
+// container gets inserted (non-nil questions) or removed (nil questions)
+// as claude cycles through AskUserQuestion turns.
+func (d *Dispatcher) SetOnAskForm(fn func(sessionID string, questions []AskUserQuestionEntry)) {
+	d.aiMu.Lock()
+	d.onAskForm = fn
+	d.aiMu.Unlock()
+}
+
+// SetOnTurnMissingChunker registers a callback that fires when DispatchTurn
+// arrives for a session with no AIChunker attached. relay_host uses this to
+// lazily backfill an anchor card when the user toggled remote-terminal on
+// after the session was created.
+func (d *Dispatcher) SetOnTurnMissingChunker(fn func(sessionID string)) {
+	d.aiMu.Lock()
+	d.onTurnMissingChunker = fn
+	d.aiMu.Unlock()
 }
 
 type feishuAuthClass interface {

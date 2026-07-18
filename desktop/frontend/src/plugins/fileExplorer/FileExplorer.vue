@@ -1,19 +1,24 @@
 <script lang="ts" setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { Pin, PinOff } from "lucide-vue-next";
+import { usePlatform } from "../../platform";
 import { usePluginConfigStore } from "../configStore";
 import { useResizer } from "../useResizer";
 import { isLightTerminalTheme } from "../../lib/terminalThemes";
 import FileTree from "./FileTree.vue";
 import FileTabs from "./FileTabs.vue";
 import FileEditor from "./FileEditor.vue";
-import { openPath, closeTab, setViewMode, type TabsState } from "./tabsModel";
+import ConfirmDialog from "./ConfirmDialog.vue";
+import { openPath, closeTab, setViewMode, setDirty, type TabsState } from "./tabsModel";
+import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
+import { createRemoteSessionFS } from "./remoteSessionFS";
 import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 // theme.css is loaded once from App.vue so its --ed-* vars are available
 // even before this lazy chunk is fetched.
 
 const props = defineProps<{ context: PluginContext }>();
+const platform = usePlatform();
 const store = usePluginConfigStore();
 const { t } = useI18n();
 
@@ -47,15 +52,24 @@ const { onMouseDown: onDividerDown } = useResizer({
   },
 });
 
-// lastCwd retains the last non-empty cwd we've seen so the panel keeps a
-// stable root during the brief window when a freshly-spawned session's
-// optimistic SessionInfo entry has been overwritten by a stale server
-// listing push, or when the active pane is empty (pre-fill split).
-const lastCwd = ref<string>("");
+const bridgeOwner = computed(() => {
+  if (!props.context.activeIsRemote.value) {
+    return { identity: platform.pluginHost ? "local" : null, connection: null };
+  }
+  const sessionID = props.context.activeSessionId.value;
+  const connection = props.context.activeSessionConnection.value;
+  return { identity: sessionID && connection ? `remote:${sessionID}` : null, connection };
+});
+
+// Preserve an optimistic cwd only for the filesystem that reported it. A
+// stale/null update from one bridge must never become another bridge's root.
+const lastCwds = ref<Record<string, string>>({});
 watch(
-  () => props.context.activeCwd.value,
-  (val) => {
-    if (val) lastCwd.value = val;
+  () => [props.context.activeCwd.value, bridgeOwner.value.identity] as const,
+  ([cwd, identity]) => {
+    if (cwd && identity) {
+      lastCwds.value = { ...lastCwds.value, [identity]: cwd };
+    }
   },
   { immediate: true },
 );
@@ -64,10 +78,43 @@ const root = computed<string | null>(() => {
   if (pinned.value) return pinned.value;
   const cur = props.context.activeCwd.value;
   if (cur) return cur;
-  return lastCwd.value || null;
+  const identity = bridgeOwner.value.identity;
+  return identity ? lastCwds.value[identity] ?? null : null;
 });
 
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
+const fs = shallowRef<FileSystemBridge | null>(null);
+const fsGeneration = ref(0);
+
+watch(
+  () => [bridgeOwner.value.identity, bridgeOwner.value.connection] as const,
+  async ([identity, connection]) => {
+    const next = identity === "local"
+      ? platform.pluginHost
+        ? createLocalFSBridge(platform.pluginHost, platform.events)
+        : null
+      : identity && connection
+        ? createRemoteSessionFS(connection, identity)
+        : null;
+    const previous = fs.value;
+    const identityChanged = previous?.identity !== next?.identity;
+
+    fs.value = next;
+    fsGeneration.value++;
+    if (identityChanged) {
+      pinned.value = null;
+      tabsState.value = { tabs: [], activeIdx: -1 };
+    }
+    await nextTick();
+    previous?.dispose?.();
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  fs.value?.dispose?.();
+  fs.value = null;
+});
 
 function onFileClick(path: string) {
   tabsState.value = openPath(tabsState.value, path, "preview");
@@ -83,6 +130,48 @@ function selectTab(idx: number) {
 
 function closeTabAt(idx: number) {
   tabsState.value = closeTab(tabsState.value, idx);
+}
+
+interface CloseConfirmSpec {
+  idx: number;
+  name: string;
+  buttons: Array<{ id: string; label: string; kind?: "primary" | "danger" | "secondary" }>;
+}
+const confirmClose = ref<CloseConfirmSpec | null>(null);
+const codeEditorRef = ref<{ save: () => Promise<boolean> } | null>(null);
+
+function onDirtyChange(v: boolean) {
+  const active = activePath.value;
+  if (!active) return;
+  tabsState.value = setDirty(tabsState.value, active, v);
+}
+
+async function onCloseRequest(idx: number) {
+  const tab = tabsState.value.tabs[idx];
+  if (!tab?.dirty) {
+    closeTabAt(idx);
+    return;
+  }
+  confirmClose.value = {
+    idx,
+    name: tab.path.split("/").pop() ?? tab.path,
+    buttons: [
+      { id: "save", label: t("plugins.fileExplorer.save"), kind: "primary" },
+      { id: "dontSave", label: t("plugins.fileExplorer.dontSave"), kind: "danger" },
+      { id: "cancel", label: t("plugins.fileExplorer.cancel"), kind: "secondary" },
+    ],
+  };
+}
+
+async function resolveConfirmClose(id: string) {
+  const spec = confirmClose.value;
+  confirmClose.value = null;
+  if (!spec) return;
+  if (id === "cancel") return;
+  if (id === "dontSave") { closeTabAt(spec.idx); return; }
+  // save
+  const ok = (await codeEditorRef.value?.save?.()) ?? false;
+  if (ok) closeTabAt(spec.idx);
 }
 
 function togglePin() {
@@ -128,7 +217,9 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         </header>
         <div class="tree-scroll">
           <FileTree
-            v-if="root"
+            v-if="root && fs"
+            :key="fsGeneration"
+            :fs="fs"
             :root="root"
             :show-hidden="showHidden"
             @file-clicked="onFileClick"
@@ -144,21 +235,31 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
           :active-idx="tabsState.activeIdx"
           :view-mode="activeViewMode"
           @select="selectTab"
-          @close="closeTabAt"
+          @close-request="onCloseRequest"
           @toggle-view-mode="onToggleViewMode"
         />
         <div class="editor-area">
           <FileEditor
-            v-if="activePath"
+            v-if="activePath && fs"
+            ref="codeEditorRef"
+            :key="fsGeneration"
+            :fs="fs"
             :path="activePath"
             :show-line-numbers="showLineNumbers"
             :theme="explorerTheme"
             :view-mode="activeViewMode"
+            @dirty-change="onDirtyChange"
           />
           <div v-else class="placeholder">{{ t("plugins.fileExplorer.selectFile") }}</div>
         </div>
       </div>
     </div>
+    <ConfirmDialog
+      v-if="confirmClose"
+      :title="t('plugins.fileExplorer.confirmCloseTitle', { name: confirmClose.name })"
+      :buttons="confirmClose.buttons"
+      @resolve="resolveConfirmClose"
+    />
   </div>
 </template>
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, test, vi } from "vitest";
 import source from "./TerminalView.vue?raw";
 import paneSource from "./PaneGrid.vue?raw";
+import appSource from "../App.vue?raw";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import type { ContextMenuPlugin } from "../plugins/types";
 
@@ -9,6 +10,36 @@ function styleBlockFor(selector: string): string {
   const match = source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
   return match?.[1] ?? "";
 }
+
+describe("TerminalView plugin connection registry", () => {
+  test("registers its live SessionConnection and only removes its own entry", () => {
+    expect(appSource).toMatch(/reactive\(new Map<string, SessionConnection>\(\)\)/);
+    expect(appSource).toMatch(/const selectedPane = computed<Pane \| null>/);
+    expect(appSource).toMatch(/watch\(selectedPane,/);
+    expect(source).toContain('"atterm:pluginSessionConnections"');
+    expect(source).toMatch(/pluginSessionConnections\?\.set\(props\.sessionId, conn\)/);
+    expect(source).toMatch(/pluginSessionConnections\?\.get\(props\.sessionId\) === conn/);
+    expect(source).toMatch(/pluginSessionConnections\?\.delete\(props\.sessionId\)/);
+    expect(source).toMatch(/pluginInputSenders\?\.set\(props\.sessionId, pluginInputSender\)/);
+    expect(source).toMatch(/pluginInputSenders\?\.get\(props\.sessionId\) === pluginInputSender/);
+    expect(source).toMatch(/pluginInputSenders\?\.delete\(props\.sessionId\)/);
+  });
+});
+
+describe("TerminalView async mount lifecycle", () => {
+  test("does not attach after an async mount resumes on an unmounted view", () => {
+    expect(source).toContain("let isAlive = true;");
+    expect(source).toMatch(/await ensureTerm\(\);\s*if \(!isAlive\) return;/);
+    expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;\s*startConnection\(\)/);
+    expect(source).toMatch(/onBeforeUnmount\(\(\) => \{\s*isAlive = false;/);
+  });
+
+  test("checks liveness inside ensureTerm after each async dependency", () => {
+    expect(source).toMatch(/function isLiveTerminal\(\): boolean/);
+    expect(source).toMatch(/await getWebglRendererEnabled\(\);[\s\S]*?if \(!isLiveTerminal\(\)\) return;[\s\S]*?keyTarget\.addEventListener/);
+    expect(source).toMatch(/await getUserHomeDir\(\);[\s\S]*?if \(!isLiveTerminal\(\)\) return;[\s\S]*?useTerminalLinkProvider[\s\S]*?resizeObserver\.observe/);
+  });
+});
 
 describe("TerminalView overlay placement", () => {
   test("remote panes move attach progress below the remote badge", () => {
@@ -381,5 +412,19 @@ describe("TerminalView resize-suspended", () => {
 
   test("watches resize-suspended falling edge to emit final sendResize", () => {
     expect(source).toMatch(/watch\(\s*\(\)\s*=>\s*props\.resizeSuspended,[\s\S]*?prev\s*&&\s*!next[\s\S]*?conn\.sendResize\(term\.cols,\s*term\.rows\)/);
+  });
+});
+
+describe("TerminalView programmatic focus", () => {
+  test("watches props.focused so pane-swap inside an active tab refocuses xterm", () => {
+    // Without this watch, programmatic set-active-pane (e.g. sidebar click on
+    // a session that lives in a multi-pane tab) only updates activePaneIdx —
+    // there's no DOM mousedown to land natural focus on xterm's textarea, so
+    // the user has to click the pane manually to type. The watch must call
+    // term?.focus() inside a nextTick so it runs after Vue rerenders the
+    // newly-focused pane.
+    expect(source).toMatch(
+      /watch\(\s*\(\)\s*=>\s*props\.focused,[\s\S]*?if\s*\(\s*isFocused\s*\)[\s\S]*?nextTick\([\s\S]*?term\?\.focus\(\)/,
+    );
   });
 });

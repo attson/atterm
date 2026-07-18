@@ -28,6 +28,23 @@
         <span>{{ t('settings.feishu.aiOnlyNotifications') }}</span>
       </label>
     </section>
+    <section class="remote-terminal" data-test="feishu-remote-terminal">
+      <label class="remote-terminal__toggle">
+        <input type="checkbox" :checked="remoteTerminalEnabled" @change="onRemoteTerminalToggleChange" />
+        <span>{{ t('settings.feishu.remoteTerminal.enable') }}</span>
+      </label>
+      <div v-if="remoteTerminalEnabled" class="remote-terminal__attach-label">
+        <span>{{ t('settings.feishu.remoteTerminal.autoAttachLabel') }}</span>
+        <SelectDropdown
+          class="remote-terminal__attach-select"
+          :model-value="sessionAutoAttach"
+          :options="autoAttachOptions"
+          :aria-label="t('settings.feishu.remoteTerminal.autoAttachLabel')"
+          data-test="feishu-auto-attach"
+          @update:model-value="onAutoAttachChange"
+        />
+      </div>
+    </section>
     <div v-if="status.error" class="hint feishu-status-error" data-test="feishu-load-error">
       <span>{{ t('settings.feishu.load_error', { error: status.error }) }}</span>
       <button type="button" class="hook-install__retry" @click="refresh" data-test="feishu-status-retry">
@@ -39,7 +56,28 @@
     </p>
     <p v-else-if="!status.enabled" class="hint">{{ t('settings.feishu.disabled') }}</p>
     <template v-else>
-      <p class="hint">{{ t('settings.feishu.mode') }}: {{ status.mode }}</p>
+      <div class="feishu-mode">
+        <div class="feishu-mode__label">
+          <span class="feishu-mode__label-text">{{ t('settings.feishu.mode.label') }}</span>
+          <SelectDropdown
+            class="feishu-mode__select"
+            :model-value="feishuModePref"
+            :options="feishuModeOptions"
+            :aria-label="t('settings.feishu.mode.label')"
+            @update:model-value="onFeishuModeChange"
+          />
+        </div>
+        <p class="feishu-mode__effective">
+          <span>{{ t('settings.feishu.mode.effective.label') }}:</span>
+          <strong>{{ feishuEffectiveMode || '—' }}</strong>
+          <span
+            v-if="feishuModePref === 'relay' && feishuEffectiveMode === 'local'"
+            class="feishu-mode__warn"
+          >
+            ⚠ {{ t('settings.feishu.mode.effective.fallbackWarn') }}
+          </span>
+        </p>
+      </div>
       <template v-if="status.bound">
         <p>{{ t('settings.feishu.bound', { open_id: status.open_id }) }}</p>
         <section class="test-send" data-test="feishu-test-send">
@@ -118,6 +156,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from '../i18n/useI18n'
+import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
 import {
   getFeishuStatus,
   setFeishuCredentials,
@@ -128,6 +167,11 @@ import {
   setHookInstallEnabled,
   getAINotificationsOnly,
   setAINotificationsOnly,
+  getFeishuRemoteTerminalSettings,
+  setFeishuRemoteTerminalSettings,
+  getFeishuModePref,
+  setFeishuModePref,
+  getFeishuEffectiveMode,
   type FeishuStatusResp,
   type FeishuCredentials,
   type HookInstallState,
@@ -154,6 +198,16 @@ const saveError = ref('')
 // the backend default before onMounted reads the persisted value.
 const aiOnlyNotifications = ref(true)
 
+// Feishu mode preference + effective mode display.
+const feishuModePref = ref<'auto' | 'local' | 'relay'>('auto')
+const feishuEffectiveMode = ref('')
+
+const feishuModeOptions = computed<SelectOption[]>(() => [
+  { value: 'auto', label: t('settings.feishu.mode.options.auto') },
+  { value: 'local', label: t('settings.feishu.mode.options.local') },
+  { value: 'relay', label: t('settings.feishu.mode.options.relay') },
+])
+
 async function onToggleAIOnly(e: Event) {
   const on = (e.target as HTMLInputElement).checked
   try {
@@ -163,6 +217,62 @@ async function onToggleAIOnly(e: Event) {
     // Persist failed: re-read so the checkbox reflects the actual backend state.
     try {
       aiOnlyNotifications.value = await getAINotificationsOnly()
+    } catch {
+      /* leave the optimistic value */
+    }
+  }
+}
+
+async function onFeishuModeChange(next: string) {
+  try {
+    await setFeishuModePref(next)
+    feishuModePref.value = next as 'auto' | 'local' | 'relay'
+    // Reconcile may have swapped the running mode synchronously; refresh.
+    feishuEffectiveMode.value = await getFeishuEffectiveMode()
+  } catch (err) {
+    // Rollback the dropdown to the persisted value on failure.
+    feishuModePref.value = (await getFeishuModePref()) as 'auto' | 'local' | 'relay'
+    console.error('SetFeishuModePref failed', err)
+  }
+}
+
+// Remote terminal toggle + autoAttach dropdown. Default to off/"ai" so the UI
+// matches the backend default before onMounted reads the persisted value.
+const remoteTerminalEnabled = ref(false)
+const sessionAutoAttach = ref('ai')
+
+const autoAttachOptions = computed<SelectOption[]>(() => [
+  { value: 'ai', label: t('settings.feishu.remoteTerminal.autoAttach.ai') },
+  { value: 'all', label: t('settings.feishu.remoteTerminal.autoAttach.all') },
+  { value: 'none', label: t('settings.feishu.remoteTerminal.autoAttach.none') },
+])
+
+async function onRemoteTerminalToggleChange(e: Event) {
+  const on = (e.target as HTMLInputElement).checked
+  try {
+    await setFeishuRemoteTerminalSettings(on, sessionAutoAttach.value)
+    remoteTerminalEnabled.value = on
+  } catch {
+    // Persist failed: re-read so the checkbox reflects the actual backend state.
+    try {
+      const s = await getFeishuRemoteTerminalSettings()
+      remoteTerminalEnabled.value = s.enabled
+      sessionAutoAttach.value = s.auto_attach
+    } catch {
+      /* leave the optimistic value */
+    }
+  }
+}
+
+async function onAutoAttachChange(mode: string) {
+  try {
+    await setFeishuRemoteTerminalSettings(remoteTerminalEnabled.value, mode)
+    sessionAutoAttach.value = mode
+  } catch {
+    try {
+      const s = await getFeishuRemoteTerminalSettings()
+      remoteTerminalEnabled.value = s.enabled
+      sessionAutoAttach.value = s.auto_attach
     } catch {
       /* leave the optimistic value */
     }
@@ -267,6 +377,19 @@ onMounted(async () => {
     aiOnlyNotifications.value = await getAINotificationsOnly()
   } catch {
     // non-fatal; keep the default-on value.
+  }
+  try {
+    const rts = await getFeishuRemoteTerminalSettings()
+    remoteTerminalEnabled.value = rts.enabled
+    sessionAutoAttach.value = rts.auto_attach
+  } catch {
+    // non-fatal; keep the defaults (false / "ai").
+  }
+  try {
+    feishuModePref.value = (await getFeishuModePref()) as 'auto' | 'local' | 'relay'
+    feishuEffectiveMode.value = await getFeishuEffectiveMode()
+  } catch {
+    // non-fatal; keep the defaults ('auto' / '').
   }
 })
 
@@ -508,4 +631,32 @@ async function onDelete() {
   margin-bottom: 12px;
 }
 .ai-only__toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.remote-terminal {
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.remote-terminal__toggle { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.remote-terminal__attach-label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--fg-dim);
+  padding-left: 22px;
+}
+.remote-terminal__attach-select {
+  width: 220px;
+}
+.feishu-mode { margin: 8px 0; }
+.feishu-mode__label { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--fg-dim); }
+.feishu-mode__label-text { flex-shrink: 0; }
+.feishu-mode__select {
+  width: 240px;
+}
+.feishu-mode__effective { margin: 4px 0 0; font-size: 12px; color: var(--fg-dim, #999); }
+.feishu-mode__warn { color: var(--warn, #d89614); margin-left: 8px; }
 </style>

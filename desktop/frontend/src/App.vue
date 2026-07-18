@@ -12,6 +12,8 @@ import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import RecoveryDialog from "./components/RecoveryDialog.vue";
 import ShortcutHints from "./components/ShortcutHints.vue";
+import PasteImagePreviewHost from "./components/PasteImagePreviewHost.vue";
+import PasteFilePreviewHost from "./components/PasteFilePreviewHost.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
@@ -50,10 +52,10 @@ import {
 } from "./lib/api";
 import type { Endpoint, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
-import { SessionListConnection, type SessionInfo } from "./lib/connection";
+import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
-import { RATIO_DEFAULT, closePane, focusNeighbor, transitionLayout } from "./lib/layout";
+import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
@@ -100,6 +102,7 @@ const settingsInitialTab = ref<"general" | "relay" | "logging" | "updates" | und
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
 const localHostID = ref<string>("");
+const localHost = ref<string>("");
 
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
@@ -300,14 +303,13 @@ const currentTab = computed<Tab | null>(
 
 // Keep a Ref (not ComputedRef) so it satisfies PluginContextInputs.activePane.
 const activePaneRef = ref<Pane | null>(null);
-watch(
-  [() => currentTab.value, () => currentTab.value?.activePaneIdx],
-  () => {
-    const t = currentTab.value;
-    activePaneRef.value = t ? t.panes[t.activePaneIdx] ?? null : null;
-  },
-  { immediate: true, deep: false },
-);
+const selectedPane = computed<Pane | null>(() => {
+  const tab = currentTab.value;
+  return tab?.panes[tab.activePaneIdx] ?? null;
+});
+watch(selectedPane, (pane) => {
+  activePaneRef.value = pane;
+}, { immediate: true });
 
 // Drive the OS window title from the active tab's AI session OSC title.
 // claude / codex prefix their OSC title with status glyphs (● / ✻) already,
@@ -364,10 +366,17 @@ const currentTitleForBar = computed<string>(() => {
 const pluginInputSenders = new Map<string, (text: string) => void>();
 provide("atterm:pluginInputSenders", pluginInputSenders);
 
+// TerminalView owns these connections. Plugins must reuse an entry instead of
+// opening another /client attachment for the active session.
+const pluginSessionConnections = reactive(new Map<string, SessionConnection>()) as Map<string, SessionConnection>;
+provide("atterm:pluginSessionConnections", pluginSessionConnections);
+
 const pluginContext = createPluginContext({
   activePane: activePaneRef,
   endpointForPane: endpointFor,
   sessionInfoForPane: paneSessionInfo,
+  sessionConnectionForPane: (pane) =>
+    pane.sessionId ? pluginSessionConnections.get(pane.sessionId) ?? null : null,
   sendToSession: (sessionId, endpoint, text) => {
     const sender = pluginInputSenders.get(sessionId);
     if (sender) {
@@ -914,14 +923,17 @@ function onSwitchTab(delta: number) {
 }
 
 function openRemoteAsTab(sessionId: string) {
-  // If any tab already holds a pane for this session, just switch to it.
-  // Keep one tab per session so the clicked sidebar row maps to a single
-  // terminal tab instead of duplicating the same remote session.
-  const existing = tabs.value.find((t) =>
-    t.panes.some((p) => p.sessionId === sessionId),
-  );
-  if (existing) {
-    gotoTab(existing.id);
+  // If any tab already holds a pane for this session, switch to it and
+  // focus the EXACT pane — sidebar clicks on a session in a multi-pane
+  // tab should land focus on that pane, not on whichever pane was active
+  // in the tab before.
+  const loc = findPaneLocation(tabs.value, sessionId);
+  if (loc) {
+    const t = tabs.value.find((tab) => tab.id === loc.tabId);
+    if (t && t.activePaneIdx !== loc.paneIdx) {
+      t.activePaneIdx = loc.paneIdx;
+    }
+    gotoTab(loc.tabId);
     return;
   }
   const id = newId();
@@ -1068,6 +1080,7 @@ onMounted(async () => {
     bootStage = "getHostInfo";
     const info = await getHostInfo();
     localHostID.value = info.host_id;
+    localHost.value = info.host;
     bootStage = "loadRecoverySnapshot";
     recoverySnap = await loadRecoverySnapshot();
     recoveryEnabled = await getRecoveryDialogEnabled();
@@ -1154,6 +1167,8 @@ onUnmounted(() => {
       @open-remote="openRemoteFromTitleBar"
       @open-settings="showSettings = true"
     />
+    <PasteImagePreviewHost />
+    <PasteFilePreviewHost />
 
     <div v-if="authError" class="auth-error-banner" role="alert">
       <span class="auth-error-msg">{{ authErrorMessage }}</span>
@@ -1182,6 +1197,7 @@ onUnmounted(() => {
         :unread-by-state-groups="sessions.unreadByState.value"
         :active-session-id="activePaneRef?.sessionId ?? null"
         :local-host-id="localHostID"
+        :local-host="localHost"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @markSeen="onMarkSeen"

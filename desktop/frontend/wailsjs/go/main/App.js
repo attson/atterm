@@ -10,8 +10,16 @@ export function BroadcastCommandFinished(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['BroadcastCommandFinished'](arg1, arg2, arg3, arg4);
 }
 
+export function CancelDownload() {
+  return window['go']['main']['App']['CancelDownload']();
+}
+
 export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
+}
+
+export function ClearRelayConfig() {
+  return window['go']['main']['App']['ClearRelayConfig']();
 }
 
 export function CloseSession(arg1) {
@@ -34,12 +42,24 @@ export function DiscardRecoverySnapshot() {
   return window['go']['main']['App']['DiscardRecoverySnapshot']();
 }
 
+export function DownloadVersion(arg1) {
+  return window['go']['main']['App']['DownloadVersion'](arg1);
+}
+
 export function ExportDiagnostics(arg1) {
   return window['go']['main']['App']['ExportDiagnostics'](arg1);
 }
 
 export function FetchRelayMe() {
   return window['go']['main']['App']['FetchRelayMe']();
+}
+
+export function ForceRedownload(arg1) {
+  return window['go']['main']['App']['ForceRedownload'](arg1);
+}
+
+export function GetAINotificationsOnly() {
+  return window['go']['main']['App']['GetAINotificationsOnly']();
 }
 
 export function GetAccountKey() {
@@ -70,6 +90,18 @@ export function GetEndpoint() {
   return window['go']['main']['App']['GetEndpoint']();
 }
 
+export function GetFeishuEffectiveMode() {
+  return window['go']['main']['App']['GetFeishuEffectiveMode']();
+}
+
+export function GetFeishuModePref() {
+  return window['go']['main']['App']['GetFeishuModePref']();
+}
+
+export function GetFeishuRemoteTerminalSettings() {
+  return window['go']['main']['App']['GetFeishuRemoteTerminalSettings']();
+}
+
 export function GetFeishuStatus() {
   return window['go']['main']['App']['GetFeishuStatus']();
 }
@@ -92,10 +124,6 @@ export function GetLogPreview() {
 
 export function GetLoggingConfig() {
   return window['go']['main']['App']['GetLoggingConfig']();
-}
-
-export function GetAINotificationsOnly() {
-  return window['go']['main']['App']['GetAINotificationsOnly']();
 }
 
 export function GetNotificationsEnabled() {
@@ -174,6 +202,10 @@ export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
 
+export function ListRelaySessions() {
+  return window['go']['main']['App']['ListRelaySessions']();
+}
+
 export function ListRemoteSessions() {
   return window['go']['main']['App']['ListRemoteSessions']();
 }
@@ -214,6 +246,26 @@ export function ProbeRelayVersion(arg1, arg2) {
   return window['go']['main']['App']['ProbeRelayVersion'](arg1, arg2);
 }
 
+export function ReceivedFilesClearAll() {
+  return window['go']['main']['App']['ReceivedFilesClearAll']();
+}
+
+export function ReceivedFilesClearSession(arg1) {
+  return window['go']['main']['App']['ReceivedFilesClearSession'](arg1);
+}
+
+export function ReceivedFilesDelete(arg1, arg2) {
+  return window['go']['main']['App']['ReceivedFilesDelete'](arg1, arg2);
+}
+
+export function ReceivedFilesList() {
+  return window['go']['main']['App']['ReceivedFilesList']();
+}
+
+export function ReceivedFilesOpenDir() {
+  return window['go']['main']['App']['ReceivedFilesOpenDir']();
+}
+
 export function RegisterRemoteRelay(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['RegisterRemoteRelay'](arg1, arg2, arg3, arg4, arg5);
 }
@@ -222,12 +274,20 @@ export function RememberRelayPassword(arg1) {
   return window['go']['main']['App']['RememberRelayPassword'](arg1);
 }
 
+export function RevokeRelaySession(arg1) {
+  return window['go']['main']['App']['RevokeRelaySession'](arg1);
+}
+
 export function SaveRecoverySnapshot(arg1) {
   return window['go']['main']['App']['SaveRecoverySnapshot'](arg1);
 }
 
 export function SendFeishuTestCard(arg1) {
   return window['go']['main']['App']['SendFeishuTestCard'](arg1);
+}
+
+export function SetAINotificationsOnly(arg1) {
+  return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
 }
 
 export function SetAutoCheckUpdates(arg1) {
@@ -246,6 +306,14 @@ export function SetFeishuCredentials(arg1) {
   return window['go']['main']['App']['SetFeishuCredentials'](arg1);
 }
 
+export function SetFeishuModePref(arg1) {
+  return window['go']['main']['App']['SetFeishuModePref'](arg1);
+}
+
+export function SetFeishuRemoteTerminalSettings(arg1, arg2) {
+  return window['go']['main']['App']['SetFeishuRemoteTerminalSettings'](arg1, arg2);
+}
+
 export function SetHookInstallEnabled(arg1) {
   return window['go']['main']['App']['SetHookInstallEnabled'](arg1);
 }
@@ -256,10 +324,6 @@ export function SetLocalePreference(arg1) {
 
 export function SetLoggingConfig(arg1) {
   return window['go']['main']['App']['SetLoggingConfig'](arg1);
-}
-
-export function SetAINotificationsOnly(arg1) {
-  return window['go']['main']['App']['SetAINotificationsOnly'](arg1);
 }
 
 export function SetNotificationsEnabled(arg1) {
@@ -330,8 +394,8 @@ export function ShowNotification(arg1, arg2) {
   return window['go']['main']['App']['ShowNotification'](arg1, arg2);
 }
 
-export function DownloadVersion(arg1) {
-  return window['go']['main']['App']['DownloadVersion'](arg1);
+export function SignOutOtherRelaySessions() {
+  return window['go']['main']['App']['SignOutOtherRelaySessions']();
 }
 
 export function StartDownload() {

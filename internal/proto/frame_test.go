@@ -1,9 +1,12 @@
 package proto
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestSessionInfoAttentionJSON(t *testing.T) {
@@ -41,5 +44,58 @@ func TestViewersPayloadRoundTrip(t *testing.T) {
 	}
 	if out != in {
 		t.Fatalf("round-trip = %+v; want %+v", out, in)
+	}
+}
+
+func TestPasteFilePayloadRoundtrip(t *testing.T) {
+	if TypePasteFile != 0x37 {
+		t.Fatalf("TypePasteFile = 0x%02x; want 0x37", TypePasteFile)
+	}
+	p := PasteFilePayload{
+		Filename:    "notes.pdf",
+		ContentType: "application/pdf",
+		Data:        []byte("hello world"),
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got PasteFilePayload
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Filename != p.Filename || got.ContentType != p.ContentType || !bytes.Equal(got.Data, p.Data) {
+		t.Fatalf("roundtrip mismatch: got %+v want %+v", got, p)
+	}
+}
+
+func TestPasteFileFrameCodec(t *testing.T) {
+	sid := uuid.New()
+	body, err := json.Marshal(PasteFilePayload{
+		Filename: "foo.log", ContentType: "text/plain", Data: []byte{0x01, 0x02, 0x03},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := Frame{Type: TypePasteFile, SessionID: sid, Payload: body}
+	buf := Marshal(f)
+	got, err := Unmarshal(buf)
+	if err != nil {
+		t.Fatalf("unmarshal frame: %v", err)
+	}
+	if got.Type != TypePasteFile || got.SessionID != sid || !bytes.Equal(got.Payload, body) {
+		t.Fatalf("frame roundtrip mismatch: got %+v want type=%v sid=%v", got, TypePasteFile, sid)
+	}
+}
+
+func TestFSFrameTypeValues(t *testing.T) {
+	if TypeFSRequest != 0x38 {
+		t.Fatalf("TypeFSRequest = 0x%02x, want 0x38", TypeFSRequest)
+	}
+	if TypeFSResponse != 0x39 {
+		t.Fatalf("TypeFSResponse = 0x%02x, want 0x39", TypeFSResponse)
+	}
+	if TypeFSEvent != 0x3a {
+		t.Fatalf("TypeFSEvent = 0x%02x, want 0x3a", TypeFSEvent)
 	}
 }

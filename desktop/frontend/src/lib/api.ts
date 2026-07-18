@@ -134,6 +134,18 @@ export interface RelayMe {
   email: string;
 }
 
+export interface RelaySessionRow {
+  id_hash: string;
+  user_agent: string;
+  ip_prefix: string;
+  created_at: number;   // unix ms
+  expires_at: number;   // unix ms
+  is_current: boolean;
+}
+
+export interface SignOutOthersResult {
+  deleted: number;
+}
 
 export interface DiagnosticsPayload {
   generated_at: string;
@@ -270,6 +282,11 @@ export interface UpdateState {
   download_dir: string;
   download_path: string;
   lines: VersionLine[];
+  // downloaded_exists is true when the most recent DownloadVersion /
+  // StartDownload call short-circuited to Ready because the archive was
+  // already on disk. The frontend watches false→true to prompt the user
+  // whether to redownload.
+  downloaded_exists: boolean;
 }
 
 interface AppBindings {
@@ -281,6 +298,7 @@ interface AppBindings {
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
   SetRelayConfig(cfg: RelayConfig): Promise<void>;
+  ClearRelayConfig(): Promise<void>;
   SetRelayDisableE2EE(disabled: boolean): Promise<void>;
   SetUplinkPaused(paused: boolean): Promise<void>;
   GetUplinkHealth(): Promise<ConnHealthSnapshot>;
@@ -292,6 +310,9 @@ interface AppBindings {
   RememberRelayPassword(password: string): Promise<void>;
   ProbeRelayVersion(arg1: string, arg2: boolean): Promise<void>;
   FetchRelayMe(): Promise<RelayMe>;
+  ListRelaySessions(): Promise<RelaySessionRow[]>;
+  RevokeRelaySession(idHash: string): Promise<void>;
+  SignOutOtherRelaySessions(): Promise<SignOutOthersResult>;
   CreatePairingToken(): Promise<PairingToken>;
   GetLoggingConfig(): Promise<LoggingConfig>;
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
@@ -307,6 +328,8 @@ interface AppBindings {
   CheckUpdate(): Promise<void>;
   StartDownload(): Promise<void>;
   DownloadVersion(tag: string): Promise<void>;
+  CancelDownload(): Promise<void>;
+  ForceRedownload(tag: string): Promise<void>;
   InstallUpdate(): Promise<void>;
   GetAutoCheckUpdates(): Promise<boolean>;
   SetAutoCheckUpdates(enabled: boolean): Promise<void>;
@@ -317,6 +340,11 @@ interface AppBindings {
   SetNotificationsEnabled(enabled: boolean): Promise<void>;
   GetAINotificationsOnly(): Promise<boolean>;
   SetAINotificationsOnly(enabled: boolean): Promise<void>;
+  GetFeishuModePref(): Promise<string>;
+  SetFeishuModePref(pref: string): Promise<void>;
+  GetFeishuEffectiveMode(): Promise<string>;
+  GetFeishuRemoteTerminalSettings(): Promise<FeishuRemoteTerminalSettings>;
+  SetFeishuRemoteTerminalSettings(enabled: boolean, autoAttach: string): Promise<void>;
   GetPtyInputDebugEnabled(): Promise<boolean>;
   SetPtyInputDebugEnabled(enabled: boolean): Promise<void>;
   ShowNotification(title: string, body: string): Promise<void>;
@@ -470,6 +498,10 @@ export function setRelayConfig(cfg: {
     last_email: cfg.last_email ?? "",
     connected: false,
   });
+}
+
+export function clearRelayConfig(): Promise<void> {
+  return bindings().ClearRelayConfig();
 }
 
 // setRelayDisableE2EE flips the agent-side seal toggle directly without
@@ -635,6 +667,13 @@ export function downloadVersion(tag: string): Promise<void> {
   return bindings().DownloadVersion(tag);
 }
 
+export function cancelDownload(): Promise<void> {
+  return bindings().CancelDownload();
+}
+export function forceRedownload(tag: string): Promise<void> {
+  return bindings().ForceRedownload(tag);
+}
+
 export function installUpdate(): Promise<void> {
   return bindings().InstallUpdate();
 }
@@ -673,6 +712,31 @@ export function getAINotificationsOnly(): Promise<boolean> {
 
 export function setAINotificationsOnly(enabled: boolean): Promise<void> {
   return bindings().SetAINotificationsOnly(enabled);
+}
+
+export function getFeishuModePref(): Promise<string> {
+  return bindings().GetFeishuModePref();
+}
+
+export function setFeishuModePref(pref: string): Promise<void> {
+  return bindings().SetFeishuModePref(pref);
+}
+
+export function getFeishuEffectiveMode(): Promise<string> {
+  return bindings().GetFeishuEffectiveMode();
+}
+
+export interface FeishuRemoteTerminalSettings {
+  enabled: boolean;
+  auto_attach: string;
+}
+
+export function getFeishuRemoteTerminalSettings(): Promise<FeishuRemoteTerminalSettings> {
+  return bindings().GetFeishuRemoteTerminalSettings();
+}
+
+export function setFeishuRemoteTerminalSettings(enabled: boolean, autoAttach: string): Promise<void> {
+  return bindings().SetFeishuRemoteTerminalSettings(enabled, autoAttach);
 }
 
 export function getPtyInputDebugEnabled(): Promise<boolean> {
@@ -769,6 +833,18 @@ export function broadcastCommandFinished(
 // token. The returned email is held in memory only (SEC-1 — not persisted).
 export function fetchRelayMe(): Promise<RelayMe> {
   return bindings().FetchRelayMe();
+}
+
+export function listRelaySessions(): Promise<RelaySessionRow[]> {
+  return bindings().ListRelaySessions();
+}
+
+export function revokeRelaySession(idHash: string): Promise<void> {
+  return bindings().RevokeRelaySession(idHash);
+}
+
+export function signOutOtherRelaySessions(): Promise<SignOutOthersResult> {
+  return bindings().SignOutOtherRelaySessions();
 }
 
 // createPairingToken asks the relay to mint a 5-minute single-use pairing

@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { pasteFromClipboard } from "./terminalPaste";
+import { isCtrlVKeydownPaste, pasteFromClipboard } from "./terminalPaste";
+
+function ev(parts: Partial<Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">>) {
+  return {
+    altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+    code: "KeyV", key: "v",
+    ...parts,
+  };
+}
 
 describe("pasteFromClipboard", () => {
   it("routes text payloads through term.paste", async () => {
@@ -136,4 +144,92 @@ describe("pasteFromClipboard", () => {
     expect(conn.sendPasteImage).toHaveBeenCalledTimes(1);
     expect(term.paste).not.toHaveBeenCalled();
   });
+
+  it("emits pasteImageBus before sending the image", async () => {
+    const { pasteImageBus } = await import("./pasteImageBus");
+    const emitSpy = vi.spyOn(pasteImageBus, "emit");
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({
+        kind: "image",
+        filename: "clipboard-image.png",
+        content_type: "image/png",
+        data_base64: "iVBORw0K",
+      }),
+    });
+
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+    const [blob, name] = emitSpy.mock.calls[0];
+    expect(blob).toBeInstanceOf(Blob);
+    expect((blob as Blob).type).toBe("image/png");
+    expect(name).toBe("clipboard-image.png");
+    expect(conn.sendPasteImage).toHaveBeenCalledTimes(1);
+    emitSpy.mockRestore();
+  });
+
+  it("does not emit pasteImageBus on text paste", async () => {
+    const { pasteImageBus } = await import("./pasteImageBus");
+    const emitSpy = vi.spyOn(pasteImageBus, "emit");
+    const term = { paste: vi.fn() };
+    const conn = { sendPasteImage: vi.fn(async () => true) };
+
+    await pasteFromClipboard({
+      term,
+      conn,
+      status: "attached",
+      remotePermission: "full",
+      getPayload: async () => ({ kind: "text", text: "hello" }),
+    });
+
+    expect(emitSpy).not.toHaveBeenCalled();
+    emitSpy.mockRestore();
+  });
 });
+
+describe("isCtrlVKeydownPaste", () => {
+  it("matches Ctrl+V on mac (closes the gap where browser paste event does not fire)", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true }), "mac")).toBe(true);
+  });
+
+  it("matches Ctrl+V on linux (WebKit2GTK does not reliably fire the paste event)", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true }), "linux")).toBe(true);
+  });
+
+  it("does not match Cmd+V on mac (browser already fires paste event)", () => {
+    expect(isCtrlVKeydownPaste(ev({ metaKey: true }), "mac")).toBe(false);
+  });
+
+  it("does not match Ctrl+Shift+V (different shortcut, often a side-paste)", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, shiftKey: true }), "mac")).toBe(false);
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, shiftKey: true }), "linux")).toBe(false);
+  });
+
+  it("does not match Ctrl+Alt+V", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, altKey: true }), "mac")).toBe(false);
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, altKey: true }), "linux")).toBe(false);
+  });
+
+  it("does not match Ctrl+Cmd+V on mac", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, metaKey: true }), "mac")).toBe(false);
+  });
+
+  it("does not match Ctrl+V on Windows/other (their native paste event works)", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true }), "other")).toBe(false);
+  });
+
+  it("does not match other keys with Ctrl", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, code: "KeyC", key: "c" }), "mac")).toBe(false);
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, code: "KeyC", key: "c" }), "linux")).toBe(false);
+  });
+
+  it("recognizes the v key regardless of letter case", () => {
+    expect(isCtrlVKeydownPaste(ev({ ctrlKey: true, key: "V" }), "linux")).toBe(true);
+  });
+});
+

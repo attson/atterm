@@ -127,6 +127,7 @@ export const en = {
     loadingHistory: 'loading history... {percent}%',
     paste: 'Paste',
     pickImage: 'pick image',
+    pickFile: 'pick file',
     remoteControl: 'remote has taken control',
     statuses: {
       attached: 'attached',

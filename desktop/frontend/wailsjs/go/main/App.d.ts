@@ -9,7 +9,11 @@ export function BeginFeishuPair():Promise<string>;
 
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;
 
+export function CancelDownload():Promise<void>;
+
 export function CheckUpdate():Promise<void>;
+
+export function ClearRelayConfig():Promise<void>;
 
 export function CloseSession(arg1:string):Promise<void>;
 
@@ -21,9 +25,15 @@ export function DeleteFeishuBinding():Promise<void>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
 
+export function DownloadVersion(arg1:string):Promise<void>;
+
 export function ExportDiagnostics(arg1:string):Promise<string>;
 
 export function FetchRelayMe():Promise<main.RelayMe>;
+
+export function ForceRedownload(arg1:string):Promise<void>;
+
+export function GetAINotificationsOnly():Promise<boolean>;
 
 export function GetAccountKey():Promise<string>;
 
@@ -39,6 +49,12 @@ export function GetDiagnostics(arg1:string):Promise<main.DiagnosticsPayload>;
 
 export function GetEndpoint():Promise<main.Endpoint>;
 
+export function GetFeishuEffectiveMode():Promise<string>;
+
+export function GetFeishuModePref():Promise<string>;
+
+export function GetFeishuRemoteTerminalSettings():Promise<main.FeishuRemoteTerminalSettings>;
+
 export function GetFeishuStatus():Promise<main.FeishuStatusResp>;
 
 export function GetHookInstallState():Promise<hookinstall.State>;
@@ -50,8 +66,6 @@ export function GetLocalePreference():Promise<string>;
 export function GetLogPreview():Promise<main.LogPreview>;
 
 export function GetLoggingConfig():Promise<main.LoggingConfig>;
-
-export function GetAINotificationsOnly():Promise<boolean>;
 
 export function GetNotificationsEnabled():Promise<boolean>;
 
@@ -91,6 +105,8 @@ export function HasAccountKey():Promise<boolean>;
 
 export function InstallUpdate():Promise<void>;
 
+export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
+
 export function ListRemoteSessions():Promise<string>;
 
 export function ListShells():Promise<Array<string>>;
@@ -111,13 +127,27 @@ export function PickLogFilePath():Promise<string>;
 
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
+export function ReceivedFilesClearAll():Promise<void>;
+
+export function ReceivedFilesClearSession(arg1:string):Promise<void>;
+
+export function ReceivedFilesDelete(arg1:string,arg2:string):Promise<void>;
+
+export function ReceivedFilesList():Promise<main.ReceivedFilesSummary>;
+
+export function ReceivedFilesOpenDir():Promise<void>;
+
 export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function RememberRelayPassword(arg1:string):Promise<void>;
 
+export function RevokeRelaySession(arg1:string):Promise<void>;
+
 export function SaveRecoverySnapshot(arg1:string):Promise<void>;
 
 export function SendFeishuTestCard(arg1:string):Promise<void>;
+
+export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetAutoCheckUpdates(arg1:boolean):Promise<void>;
 
@@ -127,13 +157,15 @@ export function SetDefaultShell(arg1:string):Promise<void>;
 
 export function SetFeishuCredentials(arg1:feishu.Credentials):Promise<void>;
 
+export function SetFeishuModePref(arg1:string):Promise<void>;
+
+export function SetFeishuRemoteTerminalSettings(arg1:boolean,arg2:string):Promise<void>;
+
 export function SetHookInstallEnabled(arg1:boolean):Promise<void>;
 
 export function SetLocalePreference(arg1:string):Promise<void>;
 
 export function SetLoggingConfig(arg1:main.LoggingConfig):Promise<void>;
-
-export function SetAINotificationsOnly(arg1:boolean):Promise<void>;
 
 export function SetNotificationsEnabled(arg1:boolean):Promise<void>;
 
@@ -169,6 +201,6 @@ export function SetWebglRendererEnabled(arg1:boolean):Promise<void>;
 
 export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 
-export function DownloadVersion(arg1:string):Promise<void>;
+export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;

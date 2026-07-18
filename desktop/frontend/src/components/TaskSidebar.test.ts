@@ -192,3 +192,28 @@ test("list viewport keeps vertical scrolling without horizontal scrollbar overla
 
   expect(source).toMatch(/\.list-wrap\s*\{[^}]*overflow-y:\s*auto;[^}]*overflow-x:\s*hidden;/s);
 });
+
+describe("TaskSidebar localHost passthrough", () => {
+  test("renders #N suffix on co-resident headers when localHost set", () => {
+    vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {
+          "h-a": [mk({ session_id: "s1", host_id: "h-a", host: "mac" })],
+          "h-b": [mk({ session_id: "s2", host_id: "h-b", host: "mac" })],
+        },
+        unreadByHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        totalUnread: 0,
+        localHostId: "h-a",
+        localHost: "mac",
+      },
+    });
+    const headers = w.findAll('[data-test="host-header"]');
+    const texts = headers.map((h) => h.text());
+    expect(texts.some((t) => t.includes("mac #1"))).toBe(true);
+    expect(texts.some((t) => t.includes("mac #2"))).toBe(true);
+  });
+});

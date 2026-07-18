@@ -24,11 +24,15 @@ const props = withDefaults(defineProps<{
   // Pinned to the top of the host group list and tagged with a "本机"
   // chip in the header. Forwarded as-is to TaskGroupedList.
   localHostId?: string;
+  // Local OS hostname; forwarded so TaskGroupedList can render "#N"
+  // suffixes when multiple atterm instances on this machine share it.
+  localHost?: string;
 }>(), {
   byStateGroups: () => ({}),
   unreadByStateGroups: () => ({}),
   activeSessionId: null,
   localHostId: "",
+  localHost: "",
 });
 
 const emit = defineEmits<{
@@ -194,6 +198,7 @@ const railIcons = computed(() => {
           :unread-by-state="unreadByStateGroups"
           :active-session-id="activeSessionId"
           :local-host-id="localHostId"
+          :local-host="localHost"
           @open="(s) => emit('open', s)"
           @markSeen="(p) => emit('markSeen', p)"
         />

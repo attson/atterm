@@ -85,14 +85,17 @@ describe("useSessions", () => {
     expect(completedSeen.value.map((s) => s.session_id).sort()).toEqual(["a", "b"]);
   });
 
-  test("rows within a host sorted: unread-first then urgency then last_output_at desc", () => {
+  test("rows within a host sorted by started_at ascending (stable, ignores task_state and last_output_at)", () => {
     const local = ref<RemoteSession[]>([]);
     const remote = ref<RemoteSession[]>([
+      // Intentionally arranged so the OLD sort (urgency + last_output_at)
+      // would put 'c' first — under the new stable sort, started_at wins.
       mk({
         session_id: "a",
         host_id: "h",
         task_state: "running",
-        last_output_at: 100,
+        last_output_at: 999,  // most-recent activity should NOT pull this row up
+        started_at: 100,      // earliest started → first row
       }),
       mk({
         session_id: "b",
@@ -100,15 +103,40 @@ describe("useSessions", () => {
         task_state: "completed",
         unread: true,
         attention_at: 1,
+        started_at: 200,
       }),
       mk({
         session_id: "c",
         host_id: "h",
         task_state: "waiting_input",
         attention_at: 1,
+        started_at: 300,      // latest started → last row, even though waiting_input
       }),
     ]);
     const { byHost } = useSessions(local, remote);
-    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["c", "b", "a"]);
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["a", "b", "c"]);
+  });
+
+  test("rows with identical started_at fall back to session_id for deterministic order", () => {
+    const local = ref<RemoteSession[]>([]);
+    const remote = ref<RemoteSession[]>([
+      mk({ session_id: "z", host_id: "h", started_at: 100 }),
+      mk({ session_id: "a", host_id: "h", started_at: 100 }),
+      mk({ session_id: "m", host_id: "h", started_at: 100 }),
+    ]);
+    const { byHost } = useSessions(local, remote);
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["a", "m", "z"]);
+  });
+
+  test("rows without started_at sort first (treated as 0) but stay deterministic via session_id", () => {
+    const local = ref<RemoteSession[]>([]);
+    const remote = ref<RemoteSession[]>([
+      mk({ session_id: "withTime", host_id: "h", started_at: 500 }),
+      mk({ session_id: "noTimeB", host_id: "h" }),
+      mk({ session_id: "noTimeA", host_id: "h" }),
+    ]);
+    const { byHost } = useSessions(local, remote);
+    expect(byHost.value["h"].map((s) => s.session_id))
+      .toEqual(["noTimeA", "noTimeB", "withTime"]);
   });
 });

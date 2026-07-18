@@ -96,6 +96,10 @@ function onPaneClick(idx: number) {
   if (idx !== props.tab.activePaneIdx) emit("set-active-pane", idx);
 }
 
+function paneKey(pane: Pane, idx: number): string {
+  return pane.sessionId ?? `empty-${idx}`;
+}
+
 function formatWho(info: SessionInfo | null): string {
   if (!info) return "";
   const u = info.user || "";
@@ -114,7 +118,7 @@ function formatWho(info: SessionInfo | null): string {
   >
     <div
       v-for="(pane, idx) in tab.panes"
-      :key="idx"
+      :key="paneKey(pane, idx)"
       class="cell"
       :style="{ gridArea: areaFor[idx] }"
       @mousedown="onPaneClick(idx)"

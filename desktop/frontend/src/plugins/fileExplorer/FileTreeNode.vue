@@ -17,6 +17,7 @@ import {
   Braces,
   Image,
 } from "lucide-vue-next";
+import InlineEditRow from "./InlineEditRow.vue";
 
 interface TreeNode {
   path: string;
@@ -26,17 +27,37 @@ interface TreeNode {
   children: TreeNode[] | null;
 }
 
+type InlineIntent =
+  | { kind: "newFile"; parentPath: string; parentLevel: number }
+  | { kind: "newFolder"; parentPath: string; parentLevel: number }
+  | { kind: "rename"; node: TreeNode; level: number };
+
 const props = defineProps<{
   node: TreeNode;
   level: number;
   selectedPath: string;
+  inlineIntent?: InlineIntent | null;
 }>();
 
 const emit = defineEmits<{
   (e: "toggle", n: TreeNode): void;
   (e: "click-file", n: TreeNode): void;
   (e: "dblclick-file", n: TreeNode): void;
+  (e: "context", ev: MouseEvent, n: TreeNode, level: number): void;
+  (e: "inline-submit", value: string): void;
+  (e: "inline-cancel"): void;
 }>();
+
+const renamingHere = computed(() =>
+  props.inlineIntent?.kind === "rename" && props.inlineIntent.node.path === props.node.path,
+);
+
+const insertNewHere = computed(() => {
+  const intent = props.inlineIntent;
+  if (!intent) return null;
+  if (intent.kind !== "newFile" && intent.kind !== "newFolder") return null;
+  return intent.parentPath === props.node.path ? intent : null;
+});
 
 const INDENT_PX = 8;
 const ROW_HEIGHT = 22;
@@ -101,11 +122,24 @@ function onClick() {
 function onDblClick() {
   if (!props.node.isDir) emit("dblclick-file", props.node);
 }
+
+function onContext(ev: MouseEvent) {
+  emit("context", ev, props.node, props.level);
+}
 </script>
 
 <template>
   <div class="node-wrap">
+    <InlineEditRow
+      v-if="renamingHere"
+      :level="level"
+      :icon="node.isDir ? 'folder' : 'file'"
+      :initial-value="node.name"
+      @submit="(v) => emit('inline-submit', v)"
+      @cancel="emit('inline-cancel')"
+    />
     <div
+      v-else
       class="node"
       :class="{ selected: isSelected, 'is-dir': node.isDir, 'is-file': !node.isDir }"
       :data-type="node.isDir ? 'dir' : 'file'"
@@ -117,6 +151,7 @@ function onDblClick() {
       :title="node.path"
       @click="onClick"
       @dblclick="onDblClick"
+      @contextmenu="onContext"
     >
       <span class="twisty">
         <component
@@ -150,14 +185,26 @@ function onDblClick() {
       class="tree-list"
       :style="{ '--indent-base': `${level * INDENT_PX + 12}px` }"
     >
+      <li v-if="insertNewHere">
+        <InlineEditRow
+          :level="level + 1"
+          :icon="insertNewHere.kind === 'newFolder' ? 'folder' : 'file'"
+          @submit="(v) => emit('inline-submit', v)"
+          @cancel="emit('inline-cancel')"
+        />
+      </li>
       <li v-for="c in node.children" :key="c.path">
         <FileTreeNode
           :node="c"
           :level="level + 1"
           :selected-path="selectedPath"
+          :inline-intent="inlineIntent"
           @toggle="(n: TreeNode) => emit('toggle', n)"
           @click-file="(n: TreeNode) => emit('click-file', n)"
           @dblclick-file="(n: TreeNode) => emit('dblclick-file', n)"
+          @context="(ev: MouseEvent, n: TreeNode, l: number) => emit('context', ev, n, l)"
+          @inline-submit="(v: string) => emit('inline-submit', v)"
+          @inline-cancel="() => emit('inline-cancel')"
         />
       </li>
     </ul>

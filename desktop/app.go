@@ -26,6 +26,7 @@ import (
 	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/connhealth"
 	"github.com/attson/atterm/internal/e2eeclient"
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
@@ -523,6 +524,65 @@ func (a *App) SetRelayConfig(req RelayConfig) error {
 	a.applyRelayConfig(cfg)
 	if priorDisableE2EE != cfg.DisableE2EE {
 		a.emitE2EEModeChanged(cfg.DisableE2EE)
+	}
+	return nil
+}
+
+// ClearRelayConfig removes every persisted relay identifier from this
+// desktop: the 9 Relay* fields on appConfig, the OS-keychain password slot
+// (origin+email), and the OS-keychain account_key slot (origin+userID).
+// The in-memory account_key is zeroed too, so this desktop stops sealing /
+// decrypting frames for the just-forgotten identity. The uplink is stopped
+// as part of applyRelayConfig (empty URL takes the "no uplink" branch).
+//
+// Local terminal sessions, pairing peer records, and every non-relay
+// setting are left untouched.
+func (a *App) ClearRelayConfig() error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	oldURL := cfg.RelayURL
+	oldEmail := cfg.RelayLastEmail
+
+	// Clear the E2EE account_key BEFORE zeroing cfg. setAccountKey(nil)
+	// routes through persistAccountKey which reads cfg.RelayURL /
+	// cfg.RelaySessionUserID; if we cleared cfg first, persistAccountKey
+	// early-returns on the empty URL and the keychain slot is orphaned.
+	a.setAccountKey(nil)
+
+	cfg.RelayURL = ""
+	cfg.RelaySessionToken = ""
+	cfg.RelaySessionExpiresAt = 0
+	cfg.RelayLastEmail = ""
+	cfg.RelaySessionUserID = ""
+	cfg.AllowInsecureRelay = false
+	cfg.DisableE2EE = false
+	cfg.RemotePermission = ""
+	cfg.RelayPaused = false
+
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+
+	// Best-effort keychain delete for the password slot. clearRelayPasswordFor
+	// swallows ErrNotFound; other errors are logged and swallowed because the
+	// persisted config is already gone — "cleared with a stray keychain
+	// entry" is strictly better than "aborted midway".
+	if err := clearRelayPasswordFor(oldURL, oldEmail); err != nil {
+		log.Printf("desktop: clear relay password keychain slot: %v", err)
+	}
+
+	a.applyRelayConfig(cfg)
+
+	// emitE2EEModeChanged pushes e2ee-mode-changed unconditionally; the
+	// existing helper does not skip when the value is already false, which
+	// is what we want after a clear (the Settings checkbox needs the sync).
+	a.emitE2EEModeChanged(false)
+
+	if a.ctx != nil && a.eventsEmitter != nil {
+		a.eventsEmitter(a.ctx, "relay:auth-info", map[string]any{"user_id": ""})
+		a.eventsEmitter(a.ctx, "relay-config-changed")
 	}
 	return nil
 }
@@ -1442,6 +1502,26 @@ func (a *App) DownloadVersion(tag string) error {
 	return a.updater.DownloadVersion(a.ctx, tag)
 }
 
+// CancelDownload interrupts an in-flight update download (if any) and
+// clears the download state so the UI reverts to the pre-download
+// primary button. Bound to Settings → Updates "Cancel (N%)" button.
+func (a *App) CancelDownload() {
+	if a.updater == nil {
+		return
+	}
+	a.updater.Cancel()
+}
+
+// ForceRedownload deletes any existing archive for tag and downloads
+// fresh. Bound to Settings → Updates "Redownload" button and the
+// "redownload?" confirm prompt.
+func (a *App) ForceRedownload(tag string) error {
+	if a.updater == nil {
+		return nil
+	}
+	return a.updater.ForceRedownload(a.ctx, tag)
+}
+
 // InstallUpdate spawns the install helper detached and quits the app.
 // The helper waits for our PID to exit then replaces the install and
 // relaunches.
@@ -1635,6 +1715,135 @@ func (a *App) SetAINotificationsOnly(enabled bool) error {
 	return nil
 }
 
+// GetFeishuModePref returns the persisted Feishu mode preference
+// ("auto" | "local" | "relay"). Empty / unknown values resolve to "auto".
+func (a *App) GetFeishuModePref() string {
+	if a.cfgStore == nil {
+		return "auto"
+	}
+	return a.cfgStore.Get().FeishuModePrefOrDefault()
+}
+
+// SetFeishuModePref persists the new preference and triggers a hot
+// reconcile of the running Feishu service. Validates against the three
+// known values; rejects anything else without mutating state.
+func (a *App) SetFeishuModePref(pref string) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	switch pref {
+	case "auto", "local", "relay":
+	default:
+		return fmt.Errorf("invalid feishu mode preference %q (want auto|local|relay)", pref)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.FeishuModePref = pref
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("feishu_mode_pref")
+	a.reconcileFeishuMode(a.ctx, cfg)
+	return nil
+}
+
+// GetFeishuEffectiveMode returns the currently-running Feishu mode
+// ("local" | "relay"), or "" before startFeishu has run. Independent
+// of the persisted preference — reflects the actual swapped state.
+func (a *App) GetFeishuEffectiveMode() string {
+	a.feishuMu.RLock()
+	defer a.feishuMu.RUnlock()
+	return a.feishuMode
+}
+
+// FeishuRemoteTerminalSettings is returned by GetFeishuRemoteTerminalSettings.
+type FeishuRemoteTerminalSettings struct {
+	Enabled    bool   `json:"enabled"`
+	AutoAttach string `json:"auto_attach"`
+}
+
+// GetFeishuRemoteTerminalSettings returns the current binding's remote
+// terminal settings. Returns defaults (false, "ai") when the relay host is
+// unavailable or no binding exists.
+//
+// Wails-bound methods must not declare context.Context in their signature.
+func (a *App) GetFeishuRemoteTerminalSettings() (FeishuRemoteTerminalSettings, error) {
+	defaults := FeishuRemoteTerminalSettings{Enabled: false, AutoAttach: "ai"}
+	if a.ctx == nil {
+		return defaults, nil
+	}
+	// Local mode: read the keychain blob.
+	if ls := a.localBindingStore(); ls != nil {
+		v, err := ls.Get(a.ctx)
+		if err != nil {
+			return defaults, nil // no blob yet → defaults
+		}
+		autoAttach := v.SessionAutoAttach
+		if autoAttach == "" {
+			autoAttach = "ai"
+		}
+		return FeishuRemoteTerminalSettings{
+			Enabled:    v.RemoteTerminalEnabled,
+			AutoAttach: autoAttach,
+		}, nil
+	}
+	// Relay mode: read the embedded sqlite binding (unchanged).
+	if a.host == nil || a.host.sqliteStore == nil {
+		return defaults, nil
+	}
+	b, err := a.host.sqliteStore.GetFeishuBinding(a.ctx, a.host.adminUserID)
+	if err != nil {
+		// Binding not yet created → return defaults, not an error.
+		return defaults, nil
+	}
+	autoAttach := b.SessionAutoAttach
+	if autoAttach == "" {
+		autoAttach = "ai"
+	}
+	return FeishuRemoteTerminalSettings{
+		Enabled:    b.RemoteTerminalEnabled,
+		AutoAttach: autoAttach,
+	}, nil
+}
+
+// SetFeishuRemoteTerminalSettings updates the remote terminal toggle and
+// autoAttach mode for the current user's Feishu binding. If the enabled flag
+// flipped, OnRemoteTerminalToggle is called to tear down (or arm) active
+// subscribers.
+//
+// Wails-bound methods must not declare context.Context in their signature.
+func (a *App) SetFeishuRemoteTerminalSettings(enabled bool, autoAttach string) error {
+	if a.ctx == nil {
+		return fmt.Errorf("app not ready")
+	}
+	// Local mode: write the keychain blob; the toggle side effect still runs
+	// against the in-memory subscriber map below.
+	if ls := a.localBindingStore(); ls != nil {
+		prevEnabled := false
+		if v, err := ls.Get(a.ctx); err == nil {
+			prevEnabled = v.RemoteTerminalEnabled
+		}
+		if err := ls.SetRemoteTerminalSettings(a.ctx, enabled, autoAttach); err != nil {
+			return err
+		}
+		if a.host != nil && prevEnabled != enabled {
+			a.host.OnRemoteTerminalToggle(enabled)
+		}
+		return nil
+	}
+	// Relay mode: write the embedded sqlite binding (unchanged).
+	if a.host == nil || a.host.sqliteStore == nil {
+		return fmt.Errorf("relay host unavailable")
+	}
+	prev, _ := a.host.sqliteStore.GetFeishuBinding(a.ctx, a.host.adminUserID)
+	if err := a.host.sqliteStore.SetRemoteTerminalSettings(a.ctx, a.host.adminUserID, enabled, autoAttach); err != nil {
+		return err
+	}
+	if prev != nil && prev.RemoteTerminalEnabled != enabled {
+		a.host.OnRemoteTerminalToggle(enabled)
+	}
+	return nil
+}
+
 // GetPtyInputDebugEnabled reports whether PTY input debug logging is on.
 func (a *App) GetPtyInputDebugEnabled() bool {
 	if a.cfgStore == nil {
@@ -1787,6 +1996,51 @@ func (a *App) FetchRelayMe() (RelayMe, error) {
 		return RelayMe{}, err
 	}
 	return out, nil
+}
+
+// ListRelaySessions returns every active session for the currently
+// logged-in relay account. Bound to Settings → Signed-in Devices tab.
+func (a *App) ListRelaySessions() ([]RelaySessionRow, error) {
+	if a.cfgStore == nil {
+		return nil, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return nil, fmt.Errorf("not authenticated")
+	}
+	return a.meSessionsGET(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
+}
+
+// RevokeRelaySession revokes one session by id_hash. The current
+// session cannot be revoked through this method (the relay endpoint
+// itself refuses to revoke the caller's own session, so no extra
+// guard is needed here).
+func (a *App) RevokeRelaySession(idHash string) error {
+	idHash = strings.TrimSpace(idHash)
+	if idHash == "" {
+		return fmt.Errorf("id_hash is empty")
+	}
+	if a.cfgStore == nil {
+		return fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return fmt.Errorf("not authenticated")
+	}
+	return a.meSessionDELETE(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, idHash, cfg.AllowInsecureRelay)
+}
+
+// SignOutOtherRelaySessions revokes every session except the current
+// one. Returns the number of sessions revoked.
+func (a *App) SignOutOtherRelaySessions() (SignOutOthersResult, error) {
+	if a.cfgStore == nil {
+		return SignOutOthersResult{}, fmt.Errorf("config store not ready")
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
+		return SignOutOthersResult{}, fmt.Errorf("not authenticated")
+	}
+	return a.meSessionsSignOutOthers(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
 }
 
 // PairingTokenResponse is what the renderer receives when generating a QR code.
@@ -2057,7 +2311,28 @@ func relayHTTPBase(relayURL string) string {
 // state and returns it alongside the resolved mode ("relay" / "local"). Shared
 // by startFeishu (first init) and reconcileFeishuMode (runtime switch).
 func (a *App) feishuServiceConfig(cfg appConfig) (feishu.ServiceConfig, string) {
-	if cfg.RelayURL != "" && cfg.RelaySessionToken != "" {
+	loggedIn := cfg.RelayURL != "" && cfg.RelaySessionToken != "" && !cfg.RelayPaused
+
+	effective := "local"
+	switch cfg.FeishuModePrefOrDefault() {
+	case "local":
+		effective = "local"
+	case "relay":
+		if loggedIn {
+			effective = "relay"
+		} else {
+			effective = "local"
+			log.Printf("desktop: feishu mode=relay requested but not effectively logged in (RelayPaused=%v); falling back to local", cfg.RelayPaused)
+		}
+	default: // "auto"
+		if loggedIn {
+			effective = "relay"
+		} else {
+			effective = "local"
+		}
+	}
+
+	if effective == "relay" {
 		// The stored relay URL is a WebSocket URL (wss://). The Feishu relay
 		// store/token source make plain HTTP REST calls, and http.Client rejects
 		// "wss"/"ws" ("unsupported protocol scheme"), so rewrite the scheme.
@@ -2115,6 +2390,19 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	if a.host != nil {
 		a.host.FeishuHookEndpoint = hookEndpoint
 		a.host.SetFeishuDispatcher(svc.Dispatcher())
+		a.host.SetFeishuRemoteTermState(a.feishuRemoteTermState)
+		// Wire the inbound router so LongConn card actions and reply messages
+		// are routed through the CardIndex + FeishuSubscriber registry.
+		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
+			a.host.feishuSubsMu.Lock()
+			defer a.host.feishuSubsMu.Unlock()
+			fs, ok := a.host.feishuSubs[sessionID]
+			if !ok || fs == nil {
+				return nil
+			}
+			return fs
+		})
+		svc.SetRouter(router)
 	}
 
 	if mode == "local" {
@@ -2162,6 +2450,19 @@ func (a *App) reconcileFeishuMode(ctx context.Context, cfg appConfig) {
 	a.feishuHookSrv.SetDispatcher(newSvc.Dispatcher())
 	if a.host != nil {
 		a.host.SetFeishuDispatcher(newSvc.Dispatcher())
+		a.host.SetFeishuRemoteTermState(a.feishuRemoteTermState)
+		// Rebuild the inbound router for the new service so LongConn events
+		// are routed through the same CardIndex + FeishuSubscriber registry.
+		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
+			a.host.feishuSubsMu.Lock()
+			defer a.host.feishuSubsMu.Unlock()
+			fs, ok := a.host.feishuSubs[sessionID]
+			if !ok || fs == nil {
+				return nil
+			}
+			return fs
+		})
+		newSvc.SetRouter(router)
 	}
 	a.feishuService = newSvc
 	a.feishuMode = desired
@@ -2240,6 +2541,19 @@ func (a *App) GetFeishuStatus() (FeishuStatusResp, error) {
 		// is exactly what made a transient failure look like "not enabled".
 		return FeishuStatusResp{Mode: mode, Error: err.Error()}, nil
 	}
+	// Local mode keeps full credentials in the keychain; a blob with an OpenID
+	// but no AppSecret (e.g. a stale bind left over after switching modes) is
+	// effectively unconfigured — the long-conn and token mint both need the
+	// secret. Treat it as "not configured" so the UI shows the credentials
+	// form instead of a misleading "bound" view that can't actually send.
+	// Relay mode never echoes the secret back, so this check is local-only.
+	if mode == "local" && v.AppSecret == "" {
+		return FeishuStatusResp{
+			Enabled: true,
+			Mode:    mode,
+			Bound:   false,
+		}, nil
+	}
 	return FeishuStatusResp{
 		Enabled:     true,
 		Mode:        mode,
@@ -2259,6 +2573,47 @@ func (a *App) currentFeishu() (*feishu.Service, string) {
 	a.feishuMu.RLock()
 	defer a.feishuMu.RUnlock()
 	return a.feishuService, a.feishuMode
+}
+
+// localBindingStore returns the keychain-backed store when Feishu is running in
+// local mode, or nil otherwise. Used to route remote-terminal settings to the
+// keychain (relay mode keeps them in the embedded sqlite store).
+func (a *App) localBindingStore() *feishu.LocalKeychainBindingStore {
+	svc, mode := a.currentFeishu()
+	if svc == nil || mode != "local" {
+		return nil
+	}
+	ls, _ := svc.Store().(*feishu.LocalKeychainBindingStore)
+	return ls
+}
+
+// feishuRemoteTermState reads the remote-terminal gate state for the live mode:
+// the keychain blob in local mode, the embedded sqlite binding in relay mode.
+// Returns ok=false when no binding exists yet or the store is unavailable.
+func (a *App) feishuRemoteTermState(ctx context.Context) (enabled bool, openID, autoAttach string, ok bool) {
+	if ls := a.localBindingStore(); ls != nil {
+		v, err := ls.Get(ctx)
+		if err != nil {
+			return false, "", "", false
+		}
+		aa := v.SessionAutoAttach
+		if aa == "" {
+			aa = "ai"
+		}
+		return v.RemoteTerminalEnabled, v.OpenID, aa, true
+	}
+	if a.host == nil || a.host.sqliteStore == nil {
+		return false, "", "", false
+	}
+	b, err := a.host.sqliteStore.GetFeishuBinding(ctx, a.host.adminUserID)
+	if err != nil {
+		return false, "", "", false
+	}
+	aa := b.SessionAutoAttach
+	if aa == "" {
+		aa = "ai"
+	}
+	return b.RemoteTerminalEnabled, b.OpenID, aa, true
 }
 
 // SetFeishuCredentials saves app credentials and (re)starts the long-conn.

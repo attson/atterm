@@ -15,6 +15,20 @@ func TestStripANSI(t *testing.T) {
 		{"truncated csi at eof", "abc\x1b[3", "abc"},
 		{"truncated osc at eof", "abc\x1b]title", "abc"},
 		{"empty", "", ""},
+
+		// Leading orphan CSI tail — tail buffer cut mid-sequence. Without
+		// the stripLeadingCSITail guard, these would emit garbage like
+		// "153;153;153m..." in Feishu cards.
+		{"orphan SGR truecolor at start", "153;153;153mEnter to select", "Enter to select"},
+		{"orphan SGR basic at start", "31mred text", "red text"},
+		{"orphan CSI cursor at start", "2Jcleared", "cleared"},
+		{"orphan multi-param at start", "1;5;7mfancy", "fancy"},
+
+		// Non-orphan inputs that LOOK orphan-ish must be preserved.
+		{"leading digits then text — not orphan", "123 results found", "123 results found"},
+		{"leading digit;digit;text — not orphan (no final byte)", "12;34 columns", "12;34 columns"},
+		{"semicolon-only — no run, not orphan", ";abc", ";abc"},
+		{"single digit then space — not CSI", "1 thing", "1 thing"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

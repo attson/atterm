@@ -323,6 +323,7 @@ func (s *Server) Store() *userstore.SQLiteStore {
 // seen rows for it. All session teardown paths funnel through here so the
 // session_seen table does not accumulate rows for dead sessions.
 func (s *Server) removeSession(id uuid.UUID) {
+	s.fsRoutes().unregisterSession(id)
 	s.registry.Remove(id)
 	if s.cfg.Store != nil {
 		_ = s.cfg.Store.PruneSeenSession(context.Background(), id.String())

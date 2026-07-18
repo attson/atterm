@@ -8,6 +8,8 @@ export interface Tab {
   /** Code-vs-render toggle. Meaningful for dual-mode kinds (SVG, markdown);
    *  harmless on others. */
   viewMode: ViewMode;
+  /** True when the editor holds unsaved changes for this file. */
+  dirty: boolean;
 }
 
 /** Initial viewMode for a new tab. Markdown opens rendered by default
@@ -41,7 +43,7 @@ export function openPath(state: TabsState, path: string, kind: OpenKind): TabsSt
     const previewIdx = state.tabs.findIndex((t) => !t.persistent);
     if (previewIdx >= 0) {
       const next = clone(state);
-      next.tabs[previewIdx] = { path, persistent: false, lastActiveAt: now, viewMode: defaultViewMode(path) };
+      next.tabs[previewIdx] = { path, persistent: false, lastActiveAt: now, viewMode: defaultViewMode(path), dirty: false };
       next.activeIdx = previewIdx;
       return next;
     }
@@ -49,7 +51,7 @@ export function openPath(state: TabsState, path: string, kind: OpenKind): TabsSt
 
   // Append; may need eviction.
   let next = clone(state);
-  next.tabs.push({ path, persistent: kind === "persistent", lastActiveAt: now, viewMode: defaultViewMode(path) });
+  next.tabs.push({ path, persistent: kind === "persistent", lastActiveAt: now, viewMode: defaultViewMode(path), dirty: false });
   next.activeIdx = next.tabs.length - 1;
   if (next.tabs.length > MAX_TABS) {
     next = evictOldest(next);
@@ -108,6 +110,15 @@ export function setViewMode(state: TabsState, mode: ViewMode): TabsState {
   if (state.activeIdx < 0) return state;
   const next = clone(state);
   next.tabs[state.activeIdx].viewMode = mode;
+  return next;
+}
+
+export function setDirty(state: TabsState, path: string, dirty: boolean): TabsState {
+  const idx = state.tabs.findIndex((t) => t.path === path);
+  if (idx < 0) return state;
+  if (state.tabs[idx].dirty === dirty) return state;
+  const next = clone(state);
+  next.tabs[idx].dirty = dirty;
   return next;
 }
 

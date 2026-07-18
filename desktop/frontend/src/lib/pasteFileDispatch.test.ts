@@ -52,7 +52,7 @@ describe("dispatchPastedFile", () => {
 
     expect(result).toBe("path-injected");
     expect(paste).toHaveBeenCalledTimes(1);
-    expect(paste).toHaveBeenCalledWith("'/Users/a/docker-compose.yml'");
+    expect(paste).toHaveBeenCalledWith("/Users/a/docker-compose.yml");
     expect(sendPasteImage).not.toHaveBeenCalled();
     expect(sendPasteFile).not.toHaveBeenCalled();
     expect(onFileToast).not.toHaveBeenCalled();

@@ -415,6 +415,19 @@ describe("TerminalView resize-suspended", () => {
   });
 });
 
+describe("TerminalView paste-file dispatch", () => {
+  test("delegates paste to dispatchPastedFile with a Wails-backed local-path hook", () => {
+    // handleImagePaste must route through dispatchPastedFile so the local
+    // NSPasteboard file-URL bypass (source path injection) can take over
+    // instead of always uploading via PASTE_FILE — that upload path lands
+    // in paste-files/<sid>/, which the "received files" inbox treats as
+    // remote-delivered. See docs/spec/protocol.md and paste_file.go.
+    expect(source).toContain("dispatchPastedFile");
+    expect(source).toContain("GetPasteboardFileURLs");
+    expect(source).toMatch(/isLocalSession:\s*props\.isLocalSession/);
+  });
+});
+
 describe("TerminalView programmatic focus", () => {
   test("watches props.focused so pane-swap inside an active tab refocuses xterm", () => {
     // Without this watch, programmatic set-active-pane (e.g. sidebar click on

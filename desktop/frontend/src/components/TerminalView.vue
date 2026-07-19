@@ -24,6 +24,8 @@ import {
 import { isCtrlVKeydownPaste, pasteFromClipboard } from "../lib/terminalPaste";
 import { pasteImageBus } from "../lib/pasteImageBus";
 import { pasteFileBus } from "../lib/pasteFileBus";
+import { dispatchPastedFile } from "../lib/pasteFileDispatch";
+import { GetPasteboardFileURLs } from "../../wailsjs/go/main/App";
 import { stripC1Controls } from "../lib/stripC1Controls";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
@@ -214,34 +216,43 @@ async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
 
 async function handleImagePaste(e: ClipboardEvent) {
   const items = Array.from(e.clipboardData?.items || []);
-  // Prefer an image item if present (aligns with legacy Cmd+V paste-image
-  // path). Otherwise pick the first non-string file item to send as a
-  // generic PASTE_FILE.
-  const imageItem = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
-  const anyFileItem = imageItem ?? items.find((i) => i.kind === "file");
-  if (!anyFileItem) return;
-  const file = anyFileItem.getAsFile();
-  if (!file) return;
-  if (file.size > 10 * 1024 * 1024) {
-    console.warn("[AT Term] pasted file too large", file.name, file.size);
-    return;
-  }
+  const anyFile = items.find((i) => i.kind === "file");
+  if (!anyFile) return;
   e.preventDefault();
   e.stopPropagation();
-  if (imageItem && anyFileItem === imageItem) {
-    pasteImageBus.emit(file, file.name || "clipboard-image");
-    try {
-      await conn?.sendPasteImage(file, file.name || "clipboard-image");
-    } catch (err) {
-      console.warn("[AT Term] failed to paste terminal image", err);
-    }
-  } else {
-    pasteFileBus.emit(file.name || "file", file.size);
-    try {
-      await conn?.sendPasteFile(file, file.name || "file");
-    } catch (err) {
-      console.warn("[AT Term] failed to paste terminal file", err);
-    }
+  const activeTerm = term;
+  const activeConn = conn;
+  if (!activeTerm || !activeConn) return;
+  try {
+    // In a local session, the NSPasteboard often carries the original file
+    // URL (Finder Copy). dispatchPastedFile probes for those paths via the
+    // Wails bridge and injects them straight into xterm, skipping the
+    // PASTE_FILE upload so the shell sees the source path — not the
+    // paste-files/<sid>/ inbox that the "remote clients" inbox semantics
+    // still label as remote-received.
+    await dispatchPastedFile({
+      items,
+      isLocalSession: props.isLocalSession ?? true,
+      conn: {
+        sendPasteImage: (blob, filename) => {
+          pasteImageBus.emit(blob, filename);
+          return activeConn.sendPasteImage(blob, filename);
+        },
+        sendPasteFile: (blob, filename) => activeConn.sendPasteFile(blob, filename),
+      },
+      paste: (s) => activeTerm.paste(s),
+      getLocalPaths: async () => {
+        try {
+          return (await GetPasteboardFileURLs()) ?? [];
+        } catch (err) {
+          console.warn("[AT Term] GetPasteboardFileURLs failed", err);
+          return [];
+        }
+      },
+      onFileToast: (name, size) => pasteFileBus.emit(name, size),
+    });
+  } catch (err) {
+    console.warn("[AT Term] paste dispatch failed", err);
   }
 }
 

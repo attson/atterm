@@ -69,6 +69,8 @@ export function GetLoggingConfig():Promise<main.LoggingConfig>;
 
 export function GetNotificationsEnabled():Promise<boolean>;
 
+export function GetPasteboardFileURLs():Promise<Array<string>>;
+
 export function GetPluginConfig():Promise<main.PluginConfig>;
 
 export function GetPtyInputDebugEnabled():Promise<boolean>;

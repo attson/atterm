@@ -130,6 +130,10 @@ export function GetNotificationsEnabled() {
   return window['go']['main']['App']['GetNotificationsEnabled']();
 }
 
+export function GetPasteboardFileURLs() {
+  return window['go']['main']['App']['GetPasteboardFileURLs']();
+}
+
 export function GetPluginConfig() {
   return window['go']['main']['App']['GetPluginConfig']();
 }

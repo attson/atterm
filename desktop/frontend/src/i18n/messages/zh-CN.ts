@@ -547,6 +547,11 @@ export const zhCN = {
         description: "图标旁加一段「运行中 / 等待输入 / 已完成」文字。更直观。",
       },
     },
+    pinned: {
+      title: "置顶",
+      menuPin: "置顶",
+      menuUnpin: "取消置顶",
+    },
     markAllRead: "全部标已读",
     markRead: "标已读",
     completedFold: "已完成",

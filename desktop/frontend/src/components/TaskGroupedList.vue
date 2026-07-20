@@ -3,10 +3,13 @@ import { computed, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
+import TaskRowInner from "./TaskRowInner.vue";
+import SessionRowMenu from "./SessionRowMenu.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
 import { useTaskPreset } from "../composables/useTaskPreset";
+import { useSessionPins } from "../composables/useSessionPins";
 import {
   aiTitleOrCommand,
   rowTitle,
@@ -64,12 +67,26 @@ const STATE_ORDER: TaskState[] = [
   "closed",
 ];
 
+const pins = useSessionPins();
+
 const groups = computed<Record<string, RemoteSession[]>>(() =>
   props.groupBy === "state" ? props.byState : props.byHost,
 );
 const unreadByGroup = computed<Record<string, number>>(() =>
   props.groupBy === "state" ? props.unreadByState : props.unreadByHost,
 );
+// Same source as `groups`, minus any session currently pinned — pinned
+// sessions are pulled out of their host/state group entirely and surface
+// only in the virtual pinned group above (see `pinnedSessions` below).
+const filteredGroups = computed<Record<string, RemoteSession[]>>(() => {
+  const out: Record<string, RemoteSession[]> = {};
+  for (const [k, list] of Object.entries(groups.value)) {
+    out[k] = list.filter((s) => !pins.isPinned(s.session_id));
+  }
+  return out;
+});
+// Urgency order for sorting the pinned group — mirrors STATE_ORDER minus
+// "closed" (pinned+closed sessions still sort last via the fallback index).
 const groupKeys = computed<string[]>(() => {
   if (props.groupBy === "state") {
     return STATE_ORDER.filter((s) => (groups.value[s] ?? []).length > 0);
@@ -107,6 +124,56 @@ onMounted(async () => {
     home.value = await getUserHomeDir();
   } catch { /* leave empty — helper still truncates */ }
 });
+
+// Sentinel collapse key for the virtual pinned group — safe against
+// collisions since host_ids are UUIDs and states are the fixed enum above.
+const PINNED_KEY = "__pinned__";
+
+function urgencyIndex(state?: TaskState | string): number {
+  if (!state) return STATE_ORDER.length;
+  const i = STATE_ORDER.indexOf(state as TaskState);
+  return i === -1 ? STATE_ORDER.length : i;
+}
+
+// Flattens byHost/byState (whichever is active) and keeps only pinned
+// sessions, sorted by task_state urgency like every other group.
+const pinnedSessions = computed<RemoteSession[]>(() => {
+  const out: RemoteSession[] = [];
+  const seen = new Set<string>();
+  const source = props.groupBy === "state" ? props.byState ?? {} : props.byHost ?? {};
+  for (const list of Object.values(source)) {
+    for (const s of list) {
+      if (seen.has(s.session_id)) continue;
+      if (pins.isPinned(s.session_id)) {
+        seen.add(s.session_id);
+        out.push(s);
+      }
+    }
+  }
+  out.sort((a, b) => urgencyIndex(a.task_state) - urgencyIndex(b.task_state));
+  return out;
+});
+
+const menuState = ref<{
+  open: boolean;
+  x: number;
+  y: number;
+  session: RemoteSession | null;
+}>({ open: false, x: 0, y: 0, session: null });
+
+function onRowMenu(e: MouseEvent, s: RemoteSession) {
+  e.preventDefault();
+  menuState.value = { open: true, x: e.clientX, y: e.clientY, session: s };
+}
+
+function closeMenu() {
+  menuState.value = { ...menuState.value, open: false, session: null };
+}
+
+function onToggleFromMenu() {
+  const s = menuState.value.session;
+  if (s) pins.toggle(s.session_id);
+}
 
 const coResidentMap = computed<Map<string, number>>(() =>
   coResidentIndex(props.byHost, props.localHost ?? ""),
@@ -154,9 +221,46 @@ function stateLabel(state: string | undefined): string {
 
 <template>
   <div class="task-grouped-list">
+    <template v-if="pinnedSessions.length > 0">
+      <div
+        class="group-header pinned-group"
+        data-test="pinned-group-header"
+        role="button"
+        tabindex="0"
+        :aria-expanded="!isGroupCollapsed(PINNED_KEY)"
+        @click="toggleGroupCollapsed(PINNED_KEY)"
+        @keydown.enter.prevent="toggleGroupCollapsed(PINNED_KEY)"
+        @keydown.space.prevent="toggleGroupCollapsed(PINNED_KEY)"
+      >
+        <span class="caret">{{ isGroupCollapsed(PINNED_KEY) ? '▶' : '▼' }}</span>
+        <span class="pin-icon" aria-hidden="true">📌</span>
+        <span class="group-title">{{ t("tasks.pinned.title") }}</span>
+        <span class="group-count">{{ pinnedSessions.length }}</span>
+      </div>
+      <template v-if="!isGroupCollapsed(PINNED_KEY)">
+        <button
+          v-for="s in pinnedSessions"
+          :key="s.session_id"
+          class="task-row"
+          :class="{ active: s.session_id === activeSessionId }"
+          data-test="task-row"
+          :data-session-id="s.session_id"
+          :data-active="s.session_id === activeSessionId ? 'true' : undefined"
+          @click="emit('open', s)"
+          @contextmenu="onRowMenu($event, s)"
+        >
+          <TaskRowInner
+            :session="s"
+            :show-state-label="showStateLabel"
+            :home="home"
+            @mark-read="onMarkRead(s)"
+          />
+        </button>
+      </template>
+    </template>
+    <template v-for="key in groupKeys" :key="key">
     <section
-      v-for="key in groupKeys"
-      :key="key"
+      v-if="(filteredGroups[key] ?? []).length > 0"
       class="host-group"
       :data-test="`host-group-${key}`"
     >
@@ -197,45 +301,25 @@ function stateLabel(state: string | undefined): string {
         </button>
       </header>
       <button
-        v-for="s in (isGroupCollapsed(key) ? [] : groups[key])"
+        v-for="s in (isGroupCollapsed(key) ? [] : filteredGroups[key])"
         :key="s.session_id"
         class="task-row"
         :class="{ active: s.session_id === activeSessionId }"
         data-test="task-row"
+        :data-session-id="s.session_id"
         :data-active="s.session_id === activeSessionId ? 'true' : undefined"
         @click="emit('open', s)"
+        @contextmenu="onRowMenu($event, s)"
       >
-        <span class="row-top">
-          <TaskStateIcon
-            :state="(s.task_state as TaskState | undefined) ?? 'idle'"
-          />
-          <span
-            v-if="showStateLabel"
-            class="state-label"
-            data-test="state-label"
-          >{{ stateLabel(s.task_state) }}</span>
-          <span class="cmd-and-cwd" :title="rowTitle(s)">
-            <span class="cmd">{{ aiTitleOrCommand(s) }}</span>
-          </span>
-          <span v-if="s.unread" class="unread-dot" data-test="unread-dot">●</span>
-          <span
-            v-if="s.unread"
-            class="row-mark-read"
-            data-test="row-mark-read"
-            role="button"
-            tabindex="0"
-            :title="t('tasks.markRead')"
-            :aria-label="t('tasks.markRead')"
-            @click.stop="onMarkRead(s)"
-            @keydown.enter.stop.prevent="onMarkRead(s)"
-            @keydown.space.stop.prevent="onMarkRead(s)"
-          >
-            ✓
-          </span>
-        </span>
-        <span v-if="shortenCwd(s.cwd, home)" class="cwd" data-test="row-cwd">{{ shortenCwd(s.cwd, home) }}</span>
+        <TaskRowInner
+          :session="s"
+          :show-state-label="showStateLabel"
+          :home="home"
+          @mark-read="onMarkRead(s)"
+        />
       </button>
     </section>
+    </template>
     <section v-if="completedSeen.length > 0" class="completed-fold">
       <button
         class="fold-toggle"
@@ -273,6 +357,16 @@ function stateLabel(state: string | undefined): string {
         </button>
       </template>
     </section>
+    <SessionRowMenu
+      :open="menuState.open"
+      :x="menuState.x"
+      :y="menuState.y"
+      :pinned="menuState.session ? pins.isPinned(menuState.session.session_id) : false"
+      :label-pin="t('tasks.pinned.menuPin')"
+      :label-unpin="t('tasks.pinned.menuUnpin')"
+      @close="closeMenu"
+      @toggle-pin="onToggleFromMenu"
+    />
   </div>
 </template>
 
@@ -287,6 +381,12 @@ function stateLabel(state: string | undefined): string {
 .local-chip { font-size: 10px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 3px; padding: 0 4px; line-height: 1.3; white-space: nowrap; flex-shrink: 0; }
 .mark-all { background: none; border: none; cursor: pointer; padding: 0 4px; color: inherit; }
 .host-group { display: flex; flex-direction: column; gap: 4px; }
+.group-header { display: flex; align-items: center; gap: 6px; font-weight: 500; padding: 4px 6px; cursor: pointer; user-select: none; }
+.group-header:hover { background: rgba(255, 255, 255, 0.04); border-radius: 4px; }
+.group-header .caret { font-size: 9px; opacity: 0.7; width: 9px; display: inline-block; }
+.pinned-group .pin-icon { font-size: 11px; }
+.group-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-count { margin-left: auto; font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; }
 .task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; }
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
 .task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }

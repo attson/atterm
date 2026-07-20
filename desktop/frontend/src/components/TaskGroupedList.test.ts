@@ -1,11 +1,17 @@
-import { describe, expect, test, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, expect, test, vi, beforeEach } from "vitest";
+import { mount, flushPromises } from "@vue/test-utils";
+import { nextTick } from "vue";
 import TaskGroupedList from "./TaskGroupedList.vue";
 import type { RemoteSession } from "../platform/types";
+import { __resetForTests as resetPins } from "../composables/useSessionPins";
 
 vi.mock("../lib/api", () => ({
   getUserHomeDir: vi.fn().mockResolvedValue("/Users/attson"),
+  getPinnedSessionIds: vi.fn().mockResolvedValue([]),
+  setPinnedSessionIds: vi.fn().mockResolvedValue(undefined),
 }));
+
+import * as api from "../lib/api";
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -414,5 +420,68 @@ describe("TaskGroupedList co-resident numbering", () => {
     for (const h of headers) {
       expect(h.text()).not.toContain("#");
     }
+  });
+});
+
+describe("TaskGroupedList pinned group", () => {
+  function seededProps(pinnedIds: string[] = []) {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(pinnedIds);
+    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    return {
+      byHost: {
+        h1: [
+          mk({ session_id: "a", host_id: "h1", host: "h1", task_state: "running" }),
+          mk({ session_id: "b", host_id: "h1", host: "h1", task_state: "running" }),
+        ],
+        h2: [
+          mk({ session_id: "c", host_id: "h2", host: "h2", task_state: "running" }),
+          mk({ session_id: "d", host_id: "h2", host: "h2", task_state: "running" }),
+        ],
+      },
+      unreadByHost: { h1: 0, h2: 0 },
+      primaryStateForHost: () => "running" as const,
+      completedSeen: [],
+      groupBy: "host" as const,
+    };
+  }
+
+  beforeEach(() => {
+    resetPins();
+    vi.restoreAllMocks();
+  });
+
+  test("renders pinned group at the top when at least one pinned session exists", async () => {
+    const w = mount(TaskGroupedList, { props: seededProps(["b"]) });
+    await flushPromises();
+    await nextTick();
+    const header = w.find("[data-test=pinned-group-header]");
+    expect(header.exists()).toBe(true);
+  });
+
+  test("pinned session does not appear in its original host group", async () => {
+    const w = mount(TaskGroupedList, { props: seededProps(["b"]) });
+    await flushPromises();
+    await nextTick();
+    const rows = w.findAll("[data-test=task-row]");
+    const ids = rows.map((r) => r.attributes("data-session-id"));
+    // "b" should appear exactly once (in pinned group), not twice.
+    const count = ids.filter((id) => id === "b").length;
+    expect(count).toBe(1);
+  });
+
+  test("pinned group is absent when no session is pinned", async () => {
+    const w = mount(TaskGroupedList, { props: seededProps([]) });
+    await flushPromises();
+    await nextTick();
+    expect(w.find("[data-test=pinned-group-header]").exists()).toBe(false);
+  });
+
+  test("@contextmenu on a task row opens the SessionRowMenu", async () => {
+    const w = mount(TaskGroupedList, { props: seededProps([]) });
+    await flushPromises();
+    await nextTick();
+    const firstRow = w.find("[data-test=task-row]");
+    await firstRow.trigger("contextmenu");
+    expect(w.find("[data-test=session-row-menu]").exists()).toBe(true);
   });
 });

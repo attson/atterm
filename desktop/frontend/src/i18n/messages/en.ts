@@ -545,6 +545,11 @@ export const en = {
         description: "Adds a short status label (Running / Waiting / Done) next to the icon. More explicit.",
       },
     },
+    pinned: {
+      title: "Pinned",
+      menuPin: "Pin to top",
+      menuUnpin: "Unpin",
+    },
     markAllRead: "Mark all read",
     markRead: "Mark read",
     completedFold: "Completed",

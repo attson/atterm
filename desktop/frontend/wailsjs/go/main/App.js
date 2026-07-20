@@ -134,6 +134,10 @@ export function GetPasteboardFileURLs() {
   return window['go']['main']['App']['GetPasteboardFileURLs']();
 }
 
+export function GetPinnedSessionIds() {
+  return window['go']['main']['App']['GetPinnedSessionIds']();
+}
+
 export function GetPluginConfig() {
   return window['go']['main']['App']['GetPluginConfig']();
 }
@@ -332,6 +336,10 @@ export function SetLoggingConfig(arg1) {
 
 export function SetNotificationsEnabled(arg1) {
   return window['go']['main']['App']['SetNotificationsEnabled'](arg1);
+}
+
+export function SetPinnedSessionIds(arg1) {
+  return window['go']['main']['App']['SetPinnedSessionIds'](arg1);
 }
 
 export function SetPluginConfig(arg1) {

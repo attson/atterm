@@ -379,6 +379,8 @@ interface AppBindings {
   SetTaskSidebarCollapsed(collapsed: boolean): Promise<void>;
   GetTaskSidebarWidth(): Promise<number>;
   SetTaskSidebarWidth(px: number): Promise<void>;
+  GetPinnedSessionIds(): Promise<string[]>;
+  SetPinnedSessionIds(ids: string[]): Promise<void>;
   GetUserHomeDir(): Promise<string>;
   MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
   ListRemoteSessions(): Promise<string>;
@@ -899,6 +901,13 @@ export function getTaskSidebarWidth(): Promise<number> {
 }
 export function setTaskSidebarWidth(px: number): Promise<void> {
   return bindings().SetTaskSidebarWidth(px);
+}
+
+export function getPinnedSessionIds(): Promise<string[]> {
+  return bindings().GetPinnedSessionIds();
+}
+export function setPinnedSessionIds(ids: string[]): Promise<void> {
+  return bindings().SetPinnedSessionIds(ids);
 }
 
 export function getUserHomeDir(): Promise<string> {

@@ -144,3 +144,53 @@ func TestBeforeCloseAllowsQuitWhenApproved(t *testing.T) {
 		t.Fatalf("emitted = %d; want 0 (no event should fire when approved)", emitted)
 	}
 }
+
+func TestPinnedSessionIds_EmptyDefault(t *testing.T) {
+	a := newRelayTestApp(t)
+	got := a.GetPinnedSessionIds()
+	if got == nil {
+		t.Fatal("GetPinnedSessionIds() = nil; want empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("GetPinnedSessionIds() = %v; want []", got)
+	}
+}
+
+func TestPinnedSessionIds_RoundTrip(t *testing.T) {
+	a := newRelayTestApp(t)
+	ids := []string{"aaa", "bbb", "ccc"}
+	if err := a.SetPinnedSessionIds(ids); err != nil {
+		t.Fatalf("SetPinnedSessionIds: %v", err)
+	}
+	got := a.GetPinnedSessionIds()
+	if !reflect.DeepEqual(got, ids) {
+		t.Fatalf("GetPinnedSessionIds() = %v; want %v", got, ids)
+	}
+}
+
+func TestPinnedSessionIds_DedupeDropsEmpty(t *testing.T) {
+	a := newRelayTestApp(t)
+	input := []string{"aaa", "", "bbb", "aaa", "ccc", ""}
+	if err := a.SetPinnedSessionIds(input); err != nil {
+		t.Fatalf("SetPinnedSessionIds: %v", err)
+	}
+	got := a.GetPinnedSessionIds()
+	want := []string{"aaa", "bbb", "ccc"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("GetPinnedSessionIds() = %v; want %v", got, want)
+	}
+}
+
+func TestPinnedSessionIds_NilClears(t *testing.T) {
+	a := newRelayTestApp(t)
+	if err := a.SetPinnedSessionIds([]string{"aaa"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := a.SetPinnedSessionIds(nil); err != nil {
+		t.Fatalf("SetPinnedSessionIds(nil): %v", err)
+	}
+	got := a.GetPinnedSessionIds()
+	if len(got) != 0 {
+		t.Fatalf("after clear: got %v; want []", got)
+	}
+}

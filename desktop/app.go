@@ -1319,6 +1319,43 @@ func (a *App) SetTaskSidebarWidth(px int) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetPinnedSessionIds returns the persisted list of session_ids the user
+// has pinned to the top of the session bar. Always returns a non-nil
+// slice so the frontend can rely on Array semantics.
+func (a *App) GetPinnedSessionIds() []string {
+	if a.cfgStore == nil {
+		return []string{}
+	}
+	ids := a.cfgStore.Get().PinnedSessionIDs
+	if ids == nil {
+		return []string{}
+	}
+	return ids
+}
+
+// SetPinnedSessionIds persists the list, deduping and dropping empty
+// entries while preserving first-occurrence order.
+func (a *App) SetPinnedSessionIds(ids []string) error {
+	if a.cfgStore == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.PinnedSessionIDs = out
+	return a.cfgStore.Set(cfg)
+}
+
 // MarkSessionsSeen marks sessions as seen on the relay. If all is true, all
 // sessions are marked seen regardless of the ids slice.
 func (a *App) MarkSessionsSeen(ids []string, all bool) error {

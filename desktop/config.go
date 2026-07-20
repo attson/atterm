@@ -187,6 +187,14 @@ type appConfig struct {
 	// on Set in app.go.
 	TaskSidebarWidth int `json:"task_sidebar_width,omitempty"`
 
+	// PinnedSessionIDs holds session_ids the user has pinned to the top of
+	// the session bar. Order in the slice is not meaningful — the frontend
+	// sorts pinned rows by task_state urgency, same as other groups. Stale
+	// ids (session gone) are kept in place: they render as nothing while
+	// absent and reappear if the session returns; the frontend never
+	// deletes ids the user did not explicitly unpin.
+	PinnedSessionIDs []string `json:"pinned_session_ids,omitempty"`
+
 	// PrefsMeta records per-key sync state (last local update timestamp and
 	// dirty flag) for the synced preferences. Never sent to the relay.
 	PrefsMeta map[string]prefsMetaEntry `json:"prefs_meta,omitempty"`

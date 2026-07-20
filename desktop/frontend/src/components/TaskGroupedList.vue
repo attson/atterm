@@ -23,12 +23,10 @@ const showStateLabel = computed(() => preset.active.value.showLabel);
 
 const props = withDefaults(defineProps<{
   byHost: Record<string, RemoteSession[]>;
-  unreadByHost: Record<string, number>;
   primaryStateForHost: (hostId: string) => TaskState;
   completedSeen: RemoteSession[];
   groupBy?: "host" | "state";
   byState?: Record<string, RemoteSession[]>;
-  unreadByState?: Record<string, number>;
   activeSessionId?: string | null;
   // Local host_id (from GetHostInfo). When set and groupBy=host, the local
   // group is pinned to the top of the list and tagged with a "本机" chip so
@@ -43,7 +41,6 @@ const props = withDefaults(defineProps<{
 }>(), {
   groupBy: "host",
   byState: () => ({}),
-  unreadByState: () => ({}),
   activeSessionId: null,
   localHostId: "",
   localHost: "",
@@ -193,11 +190,10 @@ function groupHeader(key: string): string {
 function groupPrimaryState(key: string): TaskState {
   if (props.groupBy === "state") return (key as TaskState);
   // Derive from the filtered (post-pin) list so the header icon matches
-  // what's actually rendered underneath — falls back to the parent's
-  // unfiltered computation only when every session in the group is pinned
-  // away, matching the pre-existing behavior for that edge case.
+  // what's actually rendered underneath. The caller only invokes this for
+  // groups whose filtered list is non-empty (see the `v-if` guarding the
+  // `<section>` below), so `list` is always non-empty here.
   const list = filteredGroups.value[key] ?? [];
-  if (list.length === 0) return props.primaryStateForHost(key);
   let best = list[0];
   for (const s of list) {
     if (urgencyIndex(s.task_state) < urgencyIndex(best.task_state)) best = s;

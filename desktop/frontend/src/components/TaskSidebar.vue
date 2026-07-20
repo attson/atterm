@@ -14,12 +14,10 @@ const groupByState = useTaskGroupBy();
 const props = withDefaults(defineProps<{
   collapsed: boolean;
   byHost: Record<string, RemoteSession[]>;
-  unreadByHost: Record<string, number>;
   primaryStateForHost: (hostId: string) => TaskState;
   completedSeen: RemoteSession[];
   totalUnread: number;
   byStateGroups?: Record<string, RemoteSession[]>;
-  unreadByStateGroups?: Record<string, number>;
   activeSessionId?: string | null;
   // Pinned to the top of the host group list and tagged with a "本机"
   // chip in the header. Forwarded as-is to TaskGroupedList.
@@ -29,7 +27,6 @@ const props = withDefaults(defineProps<{
   localHost?: string;
 }>(), {
   byStateGroups: () => ({}),
-  unreadByStateGroups: () => ({}),
   activeSessionId: null,
   localHostId: "",
   localHost: "",
@@ -190,12 +187,10 @@ const railIcons = computed(() => {
       <div class="list-wrap" data-test="task-grouped-list">
         <TaskGroupedList
           :by-host="byHost"
-          :unread-by-host="unreadByHost"
           :primary-state-for-host="primaryStateForHost"
           :completed-seen="completedSeen"
           :group-by="groupByState.activeId.value"
           :by-state="byStateGroups"
-          :unread-by-state="unreadByStateGroups"
           :active-session-id="activeSessionId"
           :local-host-id="localHostId"
           :local-host="localHost"

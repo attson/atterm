@@ -1189,12 +1189,10 @@ onUnmounted(() => {
       <TaskSidebar
         :collapsed="sidebarCollapsed"
         :by-host="sessions.byHost.value"
-        :unread-by-host="sessions.unreadByHost.value"
         :primary-state-for-host="sessions.primaryStateForHost"
         :completed-seen="sessions.completedSeen.value"
         :total-unread="sessions.totalUnread.value"
         :by-state-groups="sessions.byState.value"
-        :unread-by-state-groups="sessions.unreadByState.value"
         :active-session-id="activePaneRef?.sessionId ?? null"
         :local-host-id="localHostID"
         :local-host="localHost"

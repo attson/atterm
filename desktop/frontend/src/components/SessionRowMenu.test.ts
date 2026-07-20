@@ -56,6 +56,27 @@ describe("SessionRowMenu", () => {
     w.unmount();
   });
 
+  test("focusout to a target outside the menu emits close; inside does not", async () => {
+    const w = factory();
+    const menu = w.find("[data-test=session-row-menu]").element as HTMLElement;
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+
+    menu.dispatchEvent(
+      new FocusEvent("focusout", { bubbles: true, relatedTarget: outside }),
+    );
+    expect(w.emitted("close")).toHaveLength(1);
+
+    const insideItem = w.find("[data-test=session-row-menu-item]").element;
+    menu.dispatchEvent(
+      new FocusEvent("focusout", { bubbles: true, relatedTarget: insideItem }),
+    );
+    expect(w.emitted("close")).toHaveLength(1);
+
+    outside.remove();
+    w.unmount();
+  });
+
   test("positions to (x, y) via inline style", () => {
     const w = factory({ x: 200, y: 300 });
     const root = w.find("[data-test=session-row-menu]");

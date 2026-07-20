@@ -58,6 +58,17 @@ function onOutside(e: MouseEvent) {
   }
 }
 
+// Spec §4.5: focus leaving the menu subtree (e.g. Tab out, or focus jumping
+// to <body> when the previously-focused element is removed) also dismisses
+// the menu, alongside Esc and outside-mousedown.
+function onFocusOut(e: FocusEvent) {
+  if (!menuRef.value) return;
+  const related = e.relatedTarget as Node | null;
+  if (!related || !menuRef.value.contains(related)) {
+    emit("close");
+  }
+}
+
 watch(
   () => props.open,
   (v) => {
@@ -94,6 +105,8 @@ onBeforeUnmount(() => {
     data-test="session-row-menu"
     role="menu"
     :style="style"
+    @focusout.capture="onFocusOut"
+    @contextmenu.prevent
   >
     <button
       class="menu-item"

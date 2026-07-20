@@ -54,7 +54,12 @@ function unpinFn(id: string): void {
 }
 
 export interface UseSessionPins {
-  pinnedIds: Ref<Set<string>>;
+  // Read-only from the outside — the only safe mutation entry points are
+  // pin/unpin/toggle, which always create a fresh Set so Vue's reactivity
+  // picks up the change. Exposing a mutable Set/Ref would let a consumer
+  // call .add()/.delete() directly, which is a same-instance mutation that
+  // Vue's shallow-ref change detection silently misses.
+  pinnedIds: Readonly<Ref<ReadonlySet<string>>>;
   isPinned: (id: string) => boolean;
   pin: (id: string) => void;
   unpin: (id: string) => void;

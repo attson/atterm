@@ -2,6 +2,7 @@ import { describe, expect, test, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import TaskGroupedList from "./TaskGroupedList.vue";
+import TaskStateIcon from "./TaskStateIcon.vue";
 import type { RemoteSession } from "../platform/types";
 import { __resetForTests as resetPins } from "../composables/useSessionPins";
 
@@ -483,5 +484,40 @@ describe("TaskGroupedList pinned group", () => {
     const firstRow = w.find("[data-test=task-row]");
     await firstRow.trigger("contextmenu");
     expect(w.find("[data-test=session-row-menu]").exists()).toBe(true);
+  });
+
+  test("host header count/unread/state reflect filtered rows after pinning", async () => {
+    // h1 has 'a' (idle, read) and 'b' (failed, unread). Pin 'b' — it moves
+    // into the virtual pinned group and should no longer influence h1's
+    // header count, unread badge/mark-all button, or state icon.
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["b"]);
+    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    const a = mk({ session_id: "a", host_id: "h1", host: "h1", task_state: "idle", unread: false });
+    const b = mk({ session_id: "b", host_id: "h1", host: "h1", task_state: "failed", unread: true, attention_at: 1 });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h1: [a, b] },
+        unreadByHost: { h1: 1 },
+        primaryStateForHost: () => "failed" as const,
+        completedSeen: [],
+        groupBy: "host" as const,
+      },
+    });
+    await flushPromises();
+    await nextTick();
+
+    const header = w.find('[data-test="host-group-h1"] [data-test="host-header"]');
+    expect(header.exists()).toBe(true);
+
+    // Count badge reflects only the visible (non-pinned) row.
+    expect(header.find(".count").text()).toBe("1");
+
+    // No unread badge/mark-all button — the only visible row ('a') is read.
+    expect(header.find(".unread-badge").exists()).toBe(false);
+    expect(header.find('[data-test="host-mark-all"]').exists()).toBe(false);
+
+    // State icon reflects 'a' (idle), not the pinned-away 'b' (failed).
+    const icon = header.findComponent(TaskStateIcon);
+    expect(icon.props("state")).toBe("idle");
   });
 });

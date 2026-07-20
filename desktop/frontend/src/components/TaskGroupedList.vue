@@ -72,9 +72,6 @@ const pins = useSessionPins();
 const groups = computed<Record<string, RemoteSession[]>>(() =>
   props.groupBy === "state" ? props.byState : props.byHost,
 );
-const unreadByGroup = computed<Record<string, number>>(() =>
-  props.groupBy === "state" ? props.unreadByState : props.unreadByHost,
-);
 // Same source as `groups`, minus any session currently pinned — pinned
 // sessions are pulled out of their host/state group entirely and surface
 // only in the virtual pinned group above (see `pinnedSessions` below).
@@ -195,11 +192,21 @@ function groupHeader(key: string): string {
 
 function groupPrimaryState(key: string): TaskState {
   if (props.groupBy === "state") return (key as TaskState);
-  return props.primaryStateForHost(key);
+  // Derive from the filtered (post-pin) list so the header icon matches
+  // what's actually rendered underneath — falls back to the parent's
+  // unfiltered computation only when every session in the group is pinned
+  // away, matching the pre-existing behavior for that edge case.
+  const list = filteredGroups.value[key] ?? [];
+  if (list.length === 0) return props.primaryStateForHost(key);
+  let best = list[0];
+  for (const s of list) {
+    if (urgencyIndex(s.task_state) < urgencyIndex(best.task_state)) best = s;
+  }
+  return (best.task_state as TaskState | undefined) ?? "idle";
 }
 
 function unreadIdsForGroup(key: string): string[] {
-  return (groups.value[key] ?? []).filter((s) => s.unread).map((s) => s.session_id);
+  return (filteredGroups.value[key] ?? []).filter((s) => s.unread).map((s) => s.session_id);
 }
 
 function onMarkRead(s: RemoteSession) {
@@ -285,13 +292,13 @@ function stateLabel(state: string | undefined): string {
         </span>
         <span class="counts">
           <TaskStateIcon :state="groupPrimaryState(key)" :size="10" />
-          <span class="count">{{ (groups[key] ?? []).length }}</span>
+          <span class="count">{{ (filteredGroups[key] ?? []).length }}</span>
         </span>
-        <span v-if="unreadByGroup[key] > 0" class="unread-badge">
-          {{ t("tasks.unreadBadge", { count: unreadByGroup[key] }) }}
+        <span v-if="unreadIdsForGroup(key).length > 0" class="unread-badge">
+          {{ t("tasks.unreadBadge", { count: unreadIdsForGroup(key).length }) }}
         </span>
         <button
-          v-if="unreadByGroup[key] > 0"
+          v-if="unreadIdsForGroup(key).length > 0"
           class="mark-all"
           data-test="host-mark-all"
           :title="t('tasks.markAllRead')"

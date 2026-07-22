@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -90,5 +92,33 @@ func TestCodexWatchDir(t *testing.T) {
 	want := "/HOME/.codex/sessions/2026/06/13"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestCodexRolloutSidsSkipsSubagentSessions(t *testing.T) {
+	dir := t.TempDir()
+	userSid := "019f8a8c-dfb3-7891-bca6-88f1f482d2d1"
+	subagentSid := "019f8aed-8f6a-7fe0-96ed-0a4bd18f3bfe"
+	write := func(name, line string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(line+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(
+		"rollout-2026-07-22T23-58-35-"+userSid+".jsonl",
+		`{"type":"session_meta","payload":{"id":"`+userSid+`","thread_source":"user","originator":"codex-tui"}}`,
+	)
+	write(
+		"rollout-2026-07-23T01-44-12-"+subagentSid+".jsonl",
+		`{"type":"session_meta","payload":{"id":"`+subagentSid+`","thread_source":"subagent","originator":"codex-tui","source":{"subagent":{"thread_spawn":{"parent_thread_id":"`+userSid+`"}}}}}`,
+	)
+
+	got := codexRolloutSids(dir)
+	if _, ok := got[userSid]; !ok {
+		t.Fatalf("missing user sid %s in %v", userSid, got)
+	}
+	if _, ok := got[subagentSid]; ok {
+		t.Fatalf("subagent sid %s must not be resumable: %v", subagentSid, got)
 	}
 }

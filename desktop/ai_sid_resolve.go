@@ -455,7 +455,9 @@ func startCodexFileResolve(ctx context.Context, cwd string, onCapture func(sid s
 }
 
 // codexRolloutSids returns the set of session ids parsed from rollout-*.jsonl
-// filenames in dir.
+// filenames in dir. Subagent rollouts are intentionally ignored: Codex writes
+// them under the same directory shape, but `codex resume <agent-id>` is not the
+// user-facing conversation recovery path.
 func codexRolloutSids(dir string) map[string]struct{} {
 	out := map[string]struct{}{}
 	ents, err := os.ReadDir(dir)
@@ -467,10 +469,39 @@ func codexRolloutSids(dir string) map[string]struct{} {
 			continue
 		}
 		if sid, ok := codexParseSid(e.Name()); ok {
-			out[sid] = struct{}{}
+			if codexRolloutIsResumable(filepath.Join(dir, e.Name()), sid) {
+				out[sid] = struct{}{}
+			}
 		}
 	}
 	return out
+}
+
+func codexRolloutIsResumable(path, sid string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		return false
+	}
+	var first struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID           string `json:"id"`
+			ThreadSource string `json:"thread_source"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &first); err != nil {
+		return false
+	}
+	if first.Type != "session_meta" || first.Payload.ID != sid {
+		return false
+	}
+	return first.Payload.ThreadSource == "" || first.Payload.ThreadSource == "user"
 }
 
 // startAIResolve dispatches AI session-id resolution by CLI kind. claude uses

@@ -18,11 +18,14 @@
 
 set -e
 
+if [ -z "${ATTERM_RELAY_CONFIG_DIR:-}" ]; then
+    export ATTERM_RELAY_CONFIG_DIR="/etc/atterm"
+fi
+
 if [ "$(id -u)" = "0" ]; then
-    dir="${ATTERM_RELAY_CONFIG_DIR:-/etc/atterm}"
-    if [ -d "$dir" ]; then
-        chown -R atterm:atterm "$dir"
-    fi
+    dir="$ATTERM_RELAY_CONFIG_DIR"
+    mkdir -p "$dir"
+    chown -R atterm:atterm "$dir"
     exec su-exec atterm:atterm /usr/local/bin/atterm-relay "$@"
 fi
 

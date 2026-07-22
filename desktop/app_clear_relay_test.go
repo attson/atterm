@@ -23,6 +23,7 @@ func seededRelayApp(t *testing.T) *App {
 		RelaySessionExpiresAt: 1_700_000_000,
 		RelayLastEmail:        "u@example.com",
 		RelaySessionUserID:    "user-abc",
+		RelayRealmID:          "realm-test",
 		AllowInsecureRelay:    true,
 		DisableE2EE:           true,
 		RemotePermission:      "full",
@@ -74,13 +75,13 @@ func TestClearRelayConfig_DeletesAccountKeyKeychainSlot(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i + 1)
 	}
-	if err := saveAccountKey("wss://r.example.com", "user-abc", key); err != nil {
+	if err := saveAccountKey("realm-test", "user-abc", key); err != nil {
 		t.Fatalf("saveAccountKey: %v", err)
 	}
 	if err := a.ClearRelayConfig(); err != nil {
 		t.Fatalf("ClearRelayConfig: %v", err)
 	}
-	got, err := loadAccountKey("wss://r.example.com", "user-abc")
+	got, err := loadAccountKey("realm-test", "user-abc")
 	if err != nil {
 		t.Fatalf("loadAccountKey: %v", err)
 	}

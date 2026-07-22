@@ -749,7 +749,12 @@ export function setPtyInputDebugEnabled(enabled: boolean): Promise<void> {
   return bindings().SetPtyInputDebugEnabled(enabled);
 }
 
-export async function showNotification(title: string, body: string): Promise<void> {
+export interface NotificationRouteData {
+  session_id?: string;
+  kind?: string;
+}
+
+export async function showNotification(title: string, body: string, data?: NotificationRouteData): Promise<void> {
   // Honor the user's "Show system notifications" toggle BEFORE we touch any
   // notification backend. The Wails runtime's SendNotification (preferred
   // path below) talks to macOS UserNotifications directly and would
@@ -768,6 +773,7 @@ export async function showNotification(title: string, body: string): Promise<voi
         id: `atterm-${Date.now()}-${notificationID}`,
         title,
         body,
+        ...(data ? { data } : {}),
       });
       return;
     } catch {

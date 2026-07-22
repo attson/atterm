@@ -135,9 +135,27 @@ describe("TerminalView right-click menu", () => {
     // computeLinkHit reuses the same detectLinks used by the hover provider,
     // hit-testing by cell column (cellInLink) so wide glyphs don't skew it.
     expect(source).toMatch(/detectLinks\(text\)\.find/);
+    // Mouse coordinates are viewport-relative; xterm buffer lines are absolute
+    // within scrollback, so clicks must be offset by viewportY.
+    expect(source).toContain("const bufferRow = term.buffer.active.viewportY + hit.row");
+    expect(source).toContain("term.buffer.active.getLine(bufferRow)");
+    // Coordinates should be relative to xterm's rendered grid, not the outer
+    // host that also contains padding/overlays.
+    expect(source).toContain("function getTerminalGridElement()");
+    expect(source).toContain('.querySelector<HTMLElement>(".xterm-rows")');
+    expect(source).toContain('.querySelector<HTMLElement>(".xterm-screen")');
     expect(source).toContain("cellInLink(hit.col");
     expect(source).toContain("mapBufferLineCells(line, term.cols)");
     expect(source).toContain("cellCoordsAt(");
+  });
+
+  test("opens terminal links from a capture-phase modifier mouseup fallback", () => {
+    expect(source).toContain('@mouseup.capture="onTerminalMouseUp"');
+    expect(source).toMatch(/function\s+onTerminalMouseUp\s*\(\s*e:\s*MouseEvent\s*\)/);
+    expect(source).toContain("isModClickEvent(e, isMac)");
+    expect(source).toMatch(/const\s+hit\s*=\s*computeLinkHit\(e\)/);
+    expect(source).toContain("openLinkMatch(hit)");
+    expect(source).toContain("e.stopImmediatePropagation()");
   });
 });
 

@@ -31,7 +31,7 @@ import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/fo
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
-import { cellInLink, detectLinks, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
+import { cellInLink, detectLinks, isModClickEvent, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
 import { cellCoordsAt } from "../lib/terminalCellCoords";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import { descriptorsForSlot } from "../plugins/registry";
@@ -308,16 +308,26 @@ function onDocumentKeyDown(e: KeyboardEvent) {
   if (e.key === "Escape") closeContextMenu();
 }
 
+function getTerminalGridElement(): HTMLElement | null {
+  const root = term?.element;
+  return (
+    root?.querySelector<HTMLElement>(".xterm-rows") ??
+    root?.querySelector<HTMLElement>(".xterm-screen") ??
+    termContainer.value
+  );
+}
+
 // computeLinkHit converts a right-click MouseEvent into the LinkMatch that
 // covers the clicked cell, or null when the click isn't on any detected link.
 // Reuses detectLinks so the menu agrees with what the hover provider drew.
 function computeLinkHit(e: MouseEvent): LinkMatch | null {
   if (!term) return null;
-  const viewport = termContainer.value;
+  const viewport = getTerminalGridElement();
   if (!viewport) return null;
   const hit = cellCoordsAt(e.clientX, e.clientY, term, viewport);
   if (!hit) return null;
-  const line = term.buffer.active.getLine(hit.row);
+  const bufferRow = term.buffer.active.viewportY + hit.row;
+  const line = term.buffer.active.getLine(bufferRow);
   if (!line) return null;
   // hit.col is a cell column; map detected string-index spans to cell columns
   // so wide glyphs (CJK, emoji) before the link don't throw off hit-testing.
@@ -329,6 +339,10 @@ async function onMenuOpenLink() {
   const hit = menuLinkHit.value;
   closeContextMenu();
   if (!hit) return;
+  await openLinkMatch(hit);
+}
+
+async function openLinkMatch(hit: LinkMatch) {
   const url = normalizeForOpen(hit, cachedHomeDir);
   if (!url) {
     emit("toast", t("terminal.link.openFailedNoHome"));
@@ -340,6 +354,17 @@ async function onMenuOpenLink() {
     console.warn("[AT Term] open link failed", err);
     emit("toast", t("terminal.link.openFailed"));
   }
+}
+
+function onTerminalMouseUp(e: MouseEvent) {
+  if (e.button !== 0) return;
+  if (!isModClickEvent(e, isMac)) return;
+  const hit = computeLinkHit(e);
+  if (!hit) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  void openLinkMatch(hit);
 }
 
 async function onMenuCopyLink() {
@@ -535,7 +560,10 @@ async function ensureTerm() {
     const focused = typeof document !== "undefined" && document.hasFocus();
     if (!shouldNotify(Date.now(), lastBellAt, focused)) return;
     lastBellAt = Date.now();
-    void showNotification("AT Term", t("terminal.bellNotification", { session: props.sessionLabel || "session" }));
+    void showNotification("AT Term", t("terminal.bellNotification", { session: props.sessionLabel || "session" }), {
+      session_id: props.sessionId,
+      kind: "bell",
+    });
   });
 
   const cmdTracker = new CommandTracker();
@@ -557,6 +585,7 @@ async function ensureTerm() {
           elapsed: formatElapsed(ev.elapsedMs),
           session: props.sessionLabel || "session",
         }),
+        { session_id: props.sessionId, kind: "command_finished" },
       );
       void broadcastCommandFinished(
         props.sessionId,
@@ -869,7 +898,12 @@ watch(
 
 <template>
   <div class="term-view" :class="{ focused }">
-    <div ref="termContainer" class="term" @contextmenu.prevent="openContextMenu"></div>
+    <div
+      ref="termContainer"
+      class="term"
+      @contextmenu.prevent="openContextMenu"
+      @mouseup.capture="onTerminalMouseUp"
+    ></div>
     <div
       v-if="active && (status !== 'attached' || replayProgress)"
       class="overlay"

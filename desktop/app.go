@@ -231,6 +231,7 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 // exists yet — they seed the first run.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	wailsruntime.OnNotificationResponse(ctx, a.handleNotificationResponse)
 	a.pluginFS.setupWatcher(ctx)
 	// cfgStore must be ready before startRelayHost — the relay host's
 	// bootstrap admin password lives in appConfig, so it has to be loaded

@@ -161,6 +161,7 @@ const toast = ref<string>("");
 
 const quitDialogOpen = ref(false);
 let quitListenerOff: (() => void) | null = null;
+let notificationClickListenerOff: (() => void) | null = null;
 
 function handleBeforeClose() {
   // Best-effort final persist so a clean quit always lands the latest state.
@@ -948,6 +949,25 @@ function openRemoteAsTab(sessionId: string) {
   gotoTab(id);
 }
 
+function focusSessionFromNotification(data: unknown) {
+  const payload = data as { session_id?: unknown; sessionId?: unknown } | null;
+  const sessionId =
+    typeof payload?.session_id === "string"
+      ? payload.session_id
+      : typeof payload?.sessionId === "string"
+        ? payload.sessionId
+        : "";
+  if (!sessionId) return;
+  const loc = findPaneLocation(tabs.value, sessionId);
+  if (!loc) return;
+  const t = tabs.value.find((tab) => tab.id === loc.tabId);
+  if (!t) return;
+  t.activePaneIdx = loc.paneIdx;
+  gotoTab(loc.tabId);
+  void $platform.system.windowUnminimize?.();
+  void $platform.system.windowShow?.();
+}
+
 const tabSummaries = computed(() =>
   tabs.value.map((t) => {
     const active = t.panes[t.activePaneIdx];
@@ -1031,6 +1051,7 @@ onMounted(async () => {
     /* default = expanded (false) */
   }
   quitListenerOff = $platform.events.on('before-close', handleBeforeClose);
+  notificationClickListenerOff = $platform.events.on('notification:click', focusSessionFromNotification);
   try {
     const info = await $platform.system.getEnvironment();
     if (info !== null) {
@@ -1143,6 +1164,8 @@ onMounted(async () => {
 onUnmounted(() => {
   quitListenerOff?.();
   quitListenerOff = null;
+  notificationClickListenerOff?.();
+  notificationClickListenerOff = null;
   window.removeEventListener("hashchange", syncRoute);
   localSessionListConn?.detach();
   stopRemotePoll();

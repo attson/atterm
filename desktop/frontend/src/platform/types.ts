@@ -12,6 +12,7 @@ export type {
   ClipboardPastePayload,
   UpdateState,
   MarkSessionsSeenOpts,
+  NotificationRouteData,
 } from '../lib/api'
 
 // PluginConfig + sub-types live in wailsjs/go/models, re-export here.
@@ -44,7 +45,7 @@ export interface Capabilities {
 }
 
 // ----- Bridges -----
-import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState, MarkSessionsSeenOpts as _MarkSessionsSeenOpts } from '../lib/api'
+import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState, MarkSessionsSeenOpts as _MarkSessionsSeenOpts, NotificationRouteData as _NotificationRouteData } from '../lib/api'
 
 export interface PairingConsumeResult {
   relay_url: string
@@ -126,13 +127,15 @@ export interface SessionBridge {
 }
 
 export interface SystemBridge {
-  showNotification(title: string, body: string): Promise<void>
+  showNotification(title: string, body: string, data?: _NotificationRouteData): Promise<void>
   getClipboardPaste(): Promise<_Clip>
   pickLogFilePath?(): Promise<string>
   openExternalURL(url: string): Promise<void>
   getEnvironment(): Promise<EnvironmentInfo | null>
   // Window control surface — optional, gated by caps.windowControls.
   windowMinimize?(): Promise<void>
+  windowShow?(): Promise<void>
+  windowUnminimize?(): Promise<void>
   windowToggleMaximize?(): Promise<void>
   windowIsMaximized?(): Promise<boolean>
   // windowSetTitle updates the OS window title (macOS title bar etc).

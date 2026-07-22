@@ -3,6 +3,8 @@ import {
   EventsOn,
   EventsEmit,
   WindowMinimise,
+  WindowShow,
+  WindowUnminimise,
   WindowToggleMaximise,
   WindowIsMaximised,
   WindowSetTitle,
@@ -117,6 +119,8 @@ export function createWailsPlatform(): Platform {
         }
       },
       windowMinimize: async () => WindowMinimise(),
+      windowShow: async () => WindowShow(),
+      windowUnminimize: async () => WindowUnminimise(),
       windowToggleMaximize: async () => WindowToggleMaximise(),
       windowIsMaximized: () => WindowIsMaximised(),
       windowSetTitle: async (title: string) => WindowSetTitle(title),

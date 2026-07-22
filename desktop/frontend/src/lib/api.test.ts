@@ -148,6 +148,26 @@ describe("notification api wrapper", () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
+  test("passes route data through to Wails native notifications", async () => {
+    const fallback = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({ ShowNotification: fallback } as any);
+
+    await showNotification("AT Term", "Command finished", {
+      session_id: "sid-1",
+      kind: "command_finished",
+    });
+
+    expect(SendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          session_id: "sid-1",
+          kind: "command_finished",
+        },
+      }),
+    );
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
   test("falls back to the Go binding when Wails native notifications are unavailable", async () => {
     const fallback = vi.fn().mockResolvedValue(undefined);
     __setBindingsForTest({ ShowNotification: fallback } as any);

@@ -57,6 +57,18 @@ describe("terminal toasts", () => {
   });
 });
 
+describe("notification click routing", () => {
+  test("subscribes to notification:click and focuses the matching pane", () => {
+    expect(source).toContain("platform.events.on('notification:click'");
+    expect(source).toContain("function focusSessionFromNotification");
+    expect(source).toContain("findPaneLocation(tabs.value, sessionId)");
+    expect(source).toContain("t.activePaneIdx = loc.paneIdx");
+    expect(source).toContain("gotoTab(loc.tabId)");
+    expect(source).toContain("windowUnminimize?.()");
+    expect(source).toContain("windowShow?.()");
+  });
+});
+
 describe("remote session discovery", () => {
   test("remote list snapshots do not clear already-open panes", () => {
     const body = source.match(/function\s+applyRemoteSessions\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";

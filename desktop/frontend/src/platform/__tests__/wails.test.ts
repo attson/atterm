@@ -24,6 +24,8 @@ vi.mock('../../../wailsjs/runtime/runtime', () => ({
   EventsOn: vi.fn(() => () => {}),
   EventsEmit: vi.fn(),
   WindowMinimise: vi.fn(),
+  WindowShow: vi.fn(),
+  WindowUnminimise: vi.fn(),
   WindowToggleMaximise: vi.fn(),
   WindowIsMaximised: vi.fn().mockResolvedValue(true),
   Quit: vi.fn(),
@@ -45,7 +47,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 }))
 
 import { createWailsPlatform } from '../wails'
-import { WindowMinimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
+import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
 import { GetPluginConfig, SetPluginConfig } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import { fetchRelayMe, showNotification, setUplinkPaused, markSessionsSeen } from '../../lib/api'
@@ -90,6 +92,18 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.system.windowMinimize!()
     expect(WindowMinimise).toHaveBeenCalledOnce()
+  })
+
+  it('system.windowShow delegates to runtime WindowShow', async () => {
+    const p = createWailsPlatform()
+    await p.system.windowShow!()
+    expect(WindowShow).toHaveBeenCalledOnce()
+  })
+
+  it('system.windowUnminimize delegates to runtime WindowUnminimise', async () => {
+    const p = createWailsPlatform()
+    await p.system.windowUnminimize!()
+    expect(WindowUnminimise).toHaveBeenCalledOnce()
   })
 
   it('system.getEnvironment returns the EnvironmentInfo from runtime', async () => {

@@ -62,6 +62,8 @@ export function createFakePlatform(): Platform {
       openExternalURL: vi.fn().mockResolvedValue(undefined),
       getEnvironment: vi.fn().mockResolvedValue({ platform: 'darwin', arch: 'arm64', buildType: 'production' }),
       windowMinimize: vi.fn().mockResolvedValue(undefined),
+      windowShow: vi.fn().mockResolvedValue(undefined),
+      windowUnminimize: vi.fn().mockResolvedValue(undefined),
       windowToggleMaximize: vi.fn().mockResolvedValue(undefined),
       windowIsMaximized: vi.fn().mockResolvedValue(false),
       windowSetTitle: vi.fn().mockResolvedValue(undefined),

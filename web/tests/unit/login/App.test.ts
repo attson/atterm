@@ -19,8 +19,10 @@ installI18nTestHooks()
 describe('Login App.vue', () => {
   it('overrides Chrome autofill background on login inputs', () => {
     expect(AppSource).toContain(':-webkit-autofill')
+    expect(AppSource).toContain(':has(input:-webkit-autofill)')
     expect(AppSource).toContain('-webkit-text-fill-color')
     expect(AppSource).toContain('-webkit-box-shadow')
+    expect(AppSource).toContain('-webkit-background-clip')
   })
 
   let originalLocation: Location

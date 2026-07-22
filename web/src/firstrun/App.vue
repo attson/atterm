@@ -219,14 +219,21 @@ const overrides = getNaiveOverrides()
 
 <style>
 /* Autofill background override — unscoped (see web/src/login/App.vue). */
+.auth-page .n-input:has(input:-webkit-autofill) {
+  --n-color: var(--panel-2) !important;
+  --n-color-focus: var(--panel-2) !important;
+  --n-color-hover: var(--panel-2) !important;
+}
 .auth-page input:-webkit-autofill,
 .auth-page input:-webkit-autofill:hover,
 .auth-page input:-webkit-autofill:focus,
 .auth-page input:-webkit-autofill:active {
   -webkit-text-fill-color: var(--fg) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
   caret-color: var(--fg);
-  -webkit-box-shadow: 0 0 0 1000px var(--panel) inset !important;
-  box-shadow: 0 0 0 1000px var(--panel) inset !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset !important;
+  box-shadow: 0 0 0 1000px var(--panel-2) inset !important;
   transition: background-color 9999s ease-out;
 }
 </style>

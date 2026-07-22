@@ -11,12 +11,12 @@ import (
 func (s *SQLiteStore) AdminExists(ctx context.Context) (bool, error) {
 	var exists int
 	err := s.db.QueryRowContext(ctx,
-		s.dia.Rebind(`SELECT EXISTS(SELECT 1 FROM users WHERE is_admin = 1 AND disabled_at IS NULL)`),
+		s.dia.Rebind(`SELECT COUNT(*) FROM users WHERE is_admin = 1 AND disabled_at IS NULL`),
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("admin exists: %w", err)
 	}
-	return exists == 1, nil
+	return exists > 0, nil
 }
 
 // SetUserAdmin flips users.is_admin for the given userID. Idempotent;

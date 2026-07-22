@@ -2,6 +2,8 @@ package userstore
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -32,6 +34,23 @@ func TestAdminExists(t *testing.T) {
 	}
 	if ok, _ := s.AdminExists(ctx); ok {
 		t.Fatal("disabled admin must not count")
+	}
+}
+
+func TestAdminExistsQueryUsesNumericCount(t *testing.T) {
+	// Postgres returns a native bool for SELECT EXISTS(...). AdminExists scans
+	// into an int, so that shape fails with:
+	// converting driver.Value type bool ("false") to a int.
+	src, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	if strings.Contains(body, "SELECT EXISTS(") {
+		t.Fatal("AdminExists must use a numeric COUNT query, not SELECT EXISTS")
+	}
+	if !strings.Contains(body, "COUNT(*)") && !strings.Contains(body, "COUNT(1)") {
+		t.Fatal("AdminExists should use COUNT(*)/COUNT(1) so SQLite and Postgres scan as an integer")
 	}
 }
 

@@ -3,6 +3,8 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { NButton, NTag } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { listSessions } from '@shared/api/sessions'
+import { hasAccountKey } from '@shared/api/account-key'
+import { loadRelayConfig } from '@shared/api/relay-config'
 import type { SessionInfo } from '@shared/api/types'
 import { useI18n } from '@shared/i18n/useI18n'
 import { displayForType } from '@shared/sessionType'
@@ -16,10 +18,29 @@ const emit = defineEmits<{
 const rows = ref<SessionInfo[]>([])
 const loading = ref(true)
 const errorMsg = ref('')
+const needsAccountUnlock = ref(false)
 const { t } = useI18n()
 let pollHandle: ReturnType<typeof setInterval> | null = null
 
+function hasSessionWithoutAccountKey(): boolean {
+  const cfg = loadRelayConfig()
+  return Boolean(cfg?.sessionToken) && !hasAccountKey()
+}
+
+const unlockHref = computed(() => {
+  const next = `${location.pathname || '/'}${location.search || ''}${location.hash || ''}`
+  return `/login.html?next=${encodeURIComponent(next || '/')}`
+})
+
 async function reload() {
+  if (hasSessionWithoutAccountKey()) {
+    needsAccountUnlock.value = true
+    rows.value = []
+    errorMsg.value = ''
+    loading.value = false
+    return
+  }
+  needsAccountUnlock.value = false
   try {
     rows.value = await listSessions()
     errorMsg.value = ''
@@ -84,46 +105,58 @@ onUnmounted(() => {
       <n-button size="small" tertiary @click="reload">{{ t('main.refresh') }}</n-button>
     </div>
 
-    <p v-if="!loading && rows.length === 0" class="empty">
+    <p v-if="!loading && !needsAccountUnlock && rows.length === 0" class="empty">
       {{ t('main.empty') }} <code>atterm-agent</code>.
     </p>
 
-    <div v-for="g in groups" :key="g.hostId || g.hostname" class="host-group">
-      <header>
-        <span class="hostname">{{ g.hostname }}</span>
-        <n-tag v-if="g.hostId" size="small" type="default">
-          <code>{{ shortID(g.hostId) }}</code>
-        </n-tag>
-        <span class="count">{{ sessionCount(g.sessions.length) }}</span>
-      </header>
-      <div class="grid">
-        <button
-          v-for="s in g.sessions"
-          :key="s.id"
-          type="button"
-          class="card"
-          :data-testid="`session-card-${s.id}`"
-          @click="onCardClick(s.id)"
-        >
-          <div class="cmd">
-            <span v-if="typeForSession(s)" class="type-chip" :style="{ '--chip': typeForSession(s)!.color }">
-              {{ t(`main.taskTypes.${typeForSession(s)!.key}`) }}
-            </span>
-            {{ (s.type === 'ai' && s.title) ? s.title : (s.command || t('main.unknownCommand')) }}
-          </div>
-          <div class="meta">
-            <span class="id"><code>{{ shortID(s.id) }}</code></span>
-            <span class="size">{{ s.cols }}×{{ s.rows }}</span>
-            <span class="cwd">{{ s.cwd }}</span>
-          </div>
-          <span
-            v-if="s.task_state === 'failed' && s.summary?.error_lines?.length"
-            class="err-line"
-            :data-testid="`task-err-${s.id}`"
-          >{{ s.summary.error_lines[0] }}</span>
-        </button>
-      </div>
+    <div v-if="!loading && needsAccountUnlock" class="unlock-panel" role="status">
+      <h2>{{ t('main.unlock.title') }}</h2>
+      <p>{{ t('main.unlock.text') }}</p>
+      <a
+        class="unlock-link"
+        data-testid="unlock-account-key"
+        :href="unlockHref"
+      >{{ t('main.unlock.action') }}</a>
     </div>
+
+    <template v-if="!needsAccountUnlock">
+      <div v-for="g in groups" :key="g.hostId || g.hostname" class="host-group">
+        <header>
+          <span class="hostname">{{ g.hostname }}</span>
+          <n-tag v-if="g.hostId" size="small" type="default">
+            <code>{{ shortID(g.hostId) }}</code>
+          </n-tag>
+          <span class="count">{{ sessionCount(g.sessions.length) }}</span>
+        </header>
+        <div class="grid">
+          <button
+            v-for="s in g.sessions"
+            :key="s.id"
+            type="button"
+            class="card"
+            :data-testid="`session-card-${s.id}`"
+            @click="onCardClick(s.id)"
+          >
+            <div class="cmd">
+              <span v-if="typeForSession(s)" class="type-chip" :style="{ '--chip': typeForSession(s)!.color }">
+                {{ t(`main.taskTypes.${typeForSession(s)!.key}`) }}
+              </span>
+              {{ (s.type === 'ai' && s.title) ? s.title : (s.command || t('main.unknownCommand')) }}
+            </div>
+            <div class="meta">
+              <span class="id"><code>{{ shortID(s.id) }}</code></span>
+              <span class="size">{{ s.cols }}×{{ s.rows }}</span>
+              <span class="cwd">{{ s.cwd }}</span>
+            </div>
+            <span
+              v-if="s.task_state === 'failed' && s.summary?.error_lines?.length"
+              class="err-line"
+              :data-testid="`task-err-${s.id}`"
+            >{{ s.summary.error_lines[0] }}</span>
+          </button>
+        </div>
+      </div>
+    </template>
     <p v-if="errorMsg" class="form-error" role="alert">{{ errorMsg }}</p>
   </section>
 </template>
@@ -184,5 +217,32 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .empty { color: var(--fg-dim); font-size: 0.875rem; }
+.unlock-panel {
+  max-width: 520px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 1rem;
+}
+.unlock-panel h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+.unlock-panel p {
+  margin: 0 0 0.875rem;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+.unlock-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 0.875rem;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #06101f;
+  font-weight: 700;
+  text-decoration: none;
+}
 .form-error { color: var(--bad); font-size: 0.875rem; margin: 0.5rem 0 0; }
 </style>

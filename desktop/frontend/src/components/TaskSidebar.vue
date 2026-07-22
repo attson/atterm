@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   totalUnread: number;
   byStateGroups?: Record<string, RemoteSession[]>;
   activeSessionId?: string | null;
+  openSessionIds?: string[];
   // Pinned to the top of the host group list and tagged with a "本机"
   // chip in the header. Forwarded as-is to TaskGroupedList.
   localHostId?: string;
@@ -28,6 +29,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   byStateGroups: () => ({}),
   activeSessionId: null,
+  openSessionIds: () => [],
   localHostId: "",
   localHost: "",
 });
@@ -35,6 +37,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: "update:collapsed", v: boolean): void;
   (e: "open", session: RemoteSession): void;
+  (e: "close", session: RemoteSession): void;
   (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
 }>();
 
@@ -192,9 +195,11 @@ const railIcons = computed(() => {
           :group-by="groupByState.activeId.value"
           :by-state="byStateGroups"
           :active-session-id="activeSessionId"
+          :open-session-ids="openSessionIds"
           :local-host-id="localHostId"
           :local-host="localHost"
           @open="(s) => emit('open', s)"
+          @close="(s) => emit('close', s)"
           @markSeen="(p) => emit('markSeen', p)"
         />
       </div>

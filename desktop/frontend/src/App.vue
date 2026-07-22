@@ -54,6 +54,7 @@ import type { Endpoint, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
+import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
 import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
@@ -107,6 +108,8 @@ const localHost = ref<string>("");
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
 const remoteRawList = ref<SessionInfo[]>([]);
+const REMOTE_STALE_TAB_GRACE_MS = 60_000;
+const remoteMissingSince = new Map<string, number>();
 // IDs of local sessions we just spawned (spawnLocalShell / executeRestore) but
 // whose presence Go has not yet echoed back in a LIST_RESP. While here, the
 // session is exempt from applyLocalSessions' overwrite and from sweep — see
@@ -136,6 +139,14 @@ async function setSidebarCollapsedAndPersist(v: boolean) {
 
 function onSidebarOpen(s: RemoteSession) {
   openRemoteAsTab(s.session_id);
+}
+
+function onSidebarClose(s: RemoteSession) {
+  const loc = findPaneLocation(tabs.value, s.session_id);
+  if (!loc) return;
+  const t = tabs.value.find((tab) => tab.id === loc.tabId);
+  if (!t) return;
+  void closePaneAt(t, loc.paneIdx);
 }
 
 function openRemoteFromTitleBar() {
@@ -450,6 +461,7 @@ const allUsedSessionIds = computed(() => {
   for (const t of tabs.value) for (const p of t.panes) if (p.sessionId) s.add(p.sessionId);
   return s;
 });
+const openSessionIds = computed(() => Array.from(allUsedSessionIds.value));
 
 const availableRemote = computed<SessionInfo[]>(() =>
   remoteList.value.filter((r) => !allUsedSessionIds.value.has(r.id)),
@@ -528,6 +540,20 @@ function applyLocalSessions(sessions: SessionInfo[]) {
 function applyRemoteSessions(sessions: SessionInfo[]) {
   remoteRawList.value = sessions;
   refreshVisibleRemoteSessions();
+  const pruned = pruneStaleRemoteTabs({
+    tabs: tabs.value,
+    remoteSessions: remoteList.value,
+    missingSince: remoteMissingSince,
+    nowMs: Date.now(),
+    graceMs: REMOTE_STALE_TAB_GRACE_MS,
+  });
+  if (pruned.removedTabIds.length > 0) {
+    tabs.value = pruned.tabs;
+    if (currentTabId.value && pruned.removedTabIds.includes(currentTabId.value)) {
+      if (tabs.value.length > 0) gotoTab(tabs.value[0].id);
+      else location.hash = "";
+    }
+  }
 }
 
 function connectLocalSessionList(endpoint: Endpoint) {
@@ -568,6 +594,7 @@ function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpo
   stopRemotePoll();
   remoteRawList.value = [];
   remoteList.value = [];
+  remoteMissingSince.clear();
   remoteEndpoint.value = attachEndpoint;
   if (!relayConnected) return;
   void pollRemoteSessions();
@@ -1217,10 +1244,12 @@ onUnmounted(() => {
         :total-unread="sessions.totalUnread.value"
         :by-state-groups="sessions.byState.value"
         :active-session-id="activePaneRef?.sessionId ?? null"
+        :open-session-ids="openSessionIds"
         :local-host-id="localHostID"
         :local-host="localHost"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
+        @close="onSidebarClose"
         @markSeen="onMarkSeen"
       />
       <main class="main">

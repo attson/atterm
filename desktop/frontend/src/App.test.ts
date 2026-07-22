@@ -74,6 +74,14 @@ describe("remote session discovery", () => {
     const body = source.match(/function\s+applyRemoteSessions\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
     expect(body).not.toContain("sweepMissingSessions");
   });
+
+  test("TaskSidebar close closes the pane holding that session", () => {
+    expect(source).toContain("function onSidebarClose");
+    expect(source).toContain("findPaneLocation(tabs.value, s.session_id)");
+    expect(source).toContain("closePaneAt(t, loc.paneIdx)");
+    expect(source).toContain(':open-session-ids="openSessionIds"');
+    expect(source).toContain('@close="onSidebarClose"');
+  });
 });
 
 describe("auth-error banner", () => {
@@ -336,6 +344,16 @@ describe("remote tab session retention", () => {
     expect(visiblePaneSessionId()).toBe("remote-1");
     expect(wrapper.find('[data-testid="pane-empty"]').exists()).toBe(false);
   }, 10000);
+
+  test("successful remote polls prune stale single-pane remote tabs after a grace window", () => {
+    expect(source).toContain("REMOTE_STALE_TAB_GRACE_MS = 60_000");
+    expect(source).toContain("remoteMissingSince");
+    expect(source).toContain("pruneStaleRemoteTabs({");
+    expect(source).toContain("remoteSessions: remoteList.value");
+    expect(source).toContain("tabs.value = pruned.tabs");
+    expect(source).toContain("pruned.removedTabIds.includes(currentTabId.value)");
+    expect(source).toContain('location.hash = ""');
+  });
 });
 
 describe("App window title follows active AI session", () => {

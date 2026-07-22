@@ -13,6 +13,8 @@ installI18nTestHooks()
 describe('SessionList.vue', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    localStorage.clear()
+    sessionStorage.clear()
     vi.clearAllMocks()
     vi.useFakeTimers()
   })
@@ -27,6 +29,25 @@ describe('SessionList.vue', () => {
     await flushPromises()
 
     expect(wrapper.text()).toMatch(/no live sessions/i)
+  })
+
+  it('asks the user to sign in again when a session token exists without an account key', async () => {
+    localStorage.setItem('atterm.relay', JSON.stringify({
+      baseURL: '',
+      sessionToken: 'sess_token',
+      expiresAt: null,
+      allowInsecure: false,
+    }))
+    ;(listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: '11111111-2222-3333-4444-555555555555', command: '', cwd: '', title: '', cols: 80, rows: 24, started_at: 0, host_id: 'h1', host: 'laptop', user: 'me', sealed: 'abc' },
+    ])
+
+    const wrapper = mount(SessionList, { attachTo: document.body })
+    await flushPromises()
+
+    expect(listSessions).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Sign in again')
+    expect(wrapper.find('[data-testid="unlock-account-key"]').attributes('href')).toContain('/login.html?next=')
   })
 
   it('groups sessions by host and renders cards', async () => {

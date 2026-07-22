@@ -18,13 +18,16 @@ const props = withDefaults(defineProps<{
   session: RemoteSession;
   showStateLabel?: boolean;
   home?: string;
+  showClose?: boolean;
 }>(), {
   showStateLabel: false,
   home: "",
+  showClose: false,
 });
 
 const emit = defineEmits<{
   (e: "markRead"): void;
+  (e: "close"): void;
 }>();
 
 const { t } = useI18n();
@@ -62,6 +65,20 @@ function stateLabel(state: string | undefined): string {
     >
       ✓
     </span>
+    <span
+      v-if="props.showClose"
+      class="row-close"
+      data-test="row-close"
+      role="button"
+      tabindex="0"
+      :title="t('common.close')"
+      :aria-label="t('common.close')"
+      @click.stop="emit('close')"
+      @keydown.enter.stop.prevent="emit('close')"
+      @keydown.space.stop.prevent="emit('close')"
+    >
+      ×
+    </span>
   </span>
   <span
     v-if="shortenCwd(props.session.cwd, home)"
@@ -78,4 +95,16 @@ function stateLabel(state: string | undefined): string {
 .cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; padding-left: 18px; }
 .unread-dot { font-size: 9px; color: currentColor; }
 .row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
+.row-close {
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  color: var(--fg-dim);
+  border-radius: 4px;
+}
+.row-close:hover {
+  background: rgba(248, 81, 73, 0.18);
+  color: var(--bad);
+}
 </style>

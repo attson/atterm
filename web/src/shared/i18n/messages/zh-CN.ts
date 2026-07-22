@@ -113,6 +113,11 @@ export const zhCN = {
     title: '远程会话',
     unknownCommand: '（未知）',
     unknownHost: '未知主机',
+    unlock: {
+      action: '重新登录',
+      text: '此浏览器仍处于登录状态，但内存中的加密密钥已锁定。重新登录后才能解密会话名称、命令和路径。',
+      title: '解锁加密会话信息',
+    },
     viewOnlyNotice: '此设备只能查看该会话。你可以查看输出，但不能输入。',
     taskTypes: {
       ai: 'AI',

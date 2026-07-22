@@ -181,6 +181,47 @@ func TestSilence_TimerReschedulesWhenOutputTooRecent(t *testing.T) {
 	}
 }
 
+func TestSilence_TinyRunningRedrawDoesNotPostponeWaiting(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.meta.Type = SessionTypeAI
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.mu.Unlock()
+
+	// Codex/Claude idle TUIs can emit tiny cursor/status redraw chunks while
+	// the prompt is already waiting. Those bytes should update LastOutputAt,
+	// but must not reset the silence clock that decides running -> waiting.
+	s.updateTerminalState([]byte("\x1b[?25l"))
+	s.onSilenceFired()
+
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("tiny redraw while running should not postpone silence flip; got %q", s.Info().TaskState)
+	}
+}
+
+func TestSilence_BurstSmallOutputPostponesWaiting(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "8")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.meta.Type = SessionTypeAI
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.mu.Unlock()
+
+	s.updateTerminalState([]byte("abcd"))
+	s.updateTerminalState([]byte("efgh"))
+	s.onSilenceFired()
+
+	if s.Info().TaskState != proto.TaskStateRunning {
+		t.Fatalf("burst small output should postpone silence flip; got %q", s.Info().TaskState)
+	}
+}
+
 func TestSilence_OutputRestoresRunningFromSilenceWaiting(t *testing.T) {
 	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "50")
 	// Use a small restore threshold so we can exercise it with a short buffer

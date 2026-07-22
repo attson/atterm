@@ -111,6 +111,11 @@ export const en = {
     title: 'Remote sessions',
     unknownCommand: '(unknown)',
     unknownHost: 'unknown host',
+    unlock: {
+      action: 'Sign in again',
+      text: 'This browser is signed in, but the in-memory encryption key is locked. Sign in again to decrypt session names, commands, and paths.',
+      title: 'Unlock encrypted session details',
+    },
     viewOnlyNotice: 'This session is view-only from this device. You can inspect output, but input is disabled.',
     taskTypes: {
       ai: 'AI',

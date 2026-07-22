@@ -114,6 +114,25 @@ describe("TaskSidebar", () => {
     await w.find('[data-test="sidebar-mark-all"]').trigger("click");
     expect(w.emitted("markSeen")?.[0]?.[0]).toEqual({ all: true });
   });
+
+  test("forwards close from an open session row", async () => {
+    const sess = mk({ session_id: "s1", host: "mac", title: "claude" });
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: { h: [sess] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+        totalUnread: 0,
+        openSessionIds: ["s1"],
+      },
+    });
+
+    await w.find('[data-test="row-close"]').trigger("click");
+
+    expect(w.emitted("close")?.[0]).toEqual([sess]);
+  });
 });
 
 test("drag handle emits pointerdown→move→up and persists width", async () => {

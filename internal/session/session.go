@@ -83,6 +83,8 @@ type Session struct {
 	// transition (Close, OSC 133, external UpdateMeta).
 	silenceRestoreBytes         int64
 	silenceRestoreByteThreshold int64
+	silenceActivityBytes        int64
+	silenceActivityStartedMono  time.Time
 
 	// lastResizeMono stamps the monotonic time of the last UpdateSize call
 	// that actually changed cols/rows. PTY resize → SIGWINCH → TUIs
@@ -96,11 +98,13 @@ type Session struct {
 	lastResizeMono       time.Time
 	silenceResizeGraceMS int64
 
-	// lastOutputMono is a monotonic wall-clock stamp of the last byte we
-	// processed in updateTerminalState. Used by the silence heuristic
-	// because LastOutputAt is unix-seconds, which silently rounds
-	// sub-second silenceThresholdMS values up to the next integer-second
-	// boundary.
+	// lastOutputMono is a monotonic wall-clock stamp of the last meaningful
+	// output for silence detection. LastOutputAt still records every OUT
+	// chunk for display; this field deliberately ignores isolated tiny TUI
+	// redraws so idle Codex/Claude prompts can settle to waiting_input.
+	// It uses monotonic time because LastOutputAt is unix-seconds, which
+	// silently rounds sub-second silenceThresholdMS values up to the next
+	// integer-second boundary.
 	lastOutputMono time.Time
 
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
@@ -210,6 +214,7 @@ func (s *Subscriber) close() {
 const defaultSilenceThresholdMS int64 = 5000
 const defaultSilenceRestoreByteThreshold int64 = 256
 const defaultSilenceResizeGraceMS int64 = 1500
+const silenceActivityBurstWindow = time.Second
 
 func envSilenceDetectEnabled() bool {
 	v := os.Getenv("ATTERM_TASK_SILENCE_DETECT")
@@ -383,6 +388,7 @@ func (s *Session) SubscriberCount() int {
 func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	s.mu.Lock()
 	changed := false
+	prevTaskState := s.meta.TaskState
 	if m.Cwd != "" && s.meta.Cwd != m.Cwd {
 		s.meta.Cwd = m.Cwd
 		changed = true
@@ -394,9 +400,13 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	if mergeTaskMeta(&s.meta, m) {
 		changed = true
 	}
+	if prevTaskState != proto.TaskStateRunning && s.meta.TaskState == proto.TaskStateRunning {
+		s.markSilenceActivityLocked(time.Now())
+	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
 		s.silenceRestoreBytes = 0
+		s.resetSilenceActivityBurstLocked()
 	}
 	s.rescheduleSilenceTimerLocked()
 	// Mirror sessions adopt the upstream's authoritative driver. Local
@@ -450,6 +460,7 @@ func (s *Session) UpdateCwdTitle(cwd, title string) {
 func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	s.mu.Lock()
 	changed := false
+	prevTaskState := s.meta.TaskState
 	if info.Cwd != "" && s.meta.Cwd != info.Cwd {
 		s.meta.Cwd = info.Cwd
 		changed = true
@@ -465,9 +476,13 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	if mergeTaskInfo(&s.meta, info) {
 		changed = true
 	}
+	if prevTaskState != proto.TaskStateRunning && s.meta.TaskState == proto.TaskStateRunning {
+		s.markSilenceActivityLocked(time.Now())
+	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
 		s.silenceRestoreBytes = 0
+		s.resetSilenceActivityBurstLocked()
 	}
 	s.rescheduleSilenceTimerLocked()
 	metaCopy := s.meta
@@ -844,7 +859,6 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		changed = true
 	}
 	s.meta.LastOutputAt = now.Unix()
-	s.lastOutputMono = now
 	if s.applyOSC133Locked(data, now) {
 		changed = true
 	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
@@ -899,6 +913,7 @@ func (s *Session) updateTerminalState(data []byte) bool {
 				s.meta.TaskState = proto.TaskStateRunning
 				s.waitingFromSilence = false
 				s.silenceRestoreBytes = 0
+				s.markSilenceActivityLocked(now)
 				changed = true
 				restoredFromSilence = true
 			} else {
@@ -906,6 +921,9 @@ func (s *Session) updateTerminalState(data []byte) bool {
 					s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
 			}
 		}
+	}
+	if !restoredFromSilence {
+		s.noteRunningSilenceActivityLocked(data, now)
 	}
 	// Always reschedule at the tail. The helper itself decides whether to
 	// arm based on the post-update state + altScreen + detect-enabled flag.
@@ -973,6 +991,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			started := now.Unix()
 			s.cmdStarted = now
+			s.markSilenceActivityLocked(now)
 			if s.meta.CommandStartedAt != started {
 				s.meta.CommandStartedAt = started
 				changed = true
@@ -1037,6 +1056,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
 				s.silenceRestoreBytes = 0
+				s.resetSilenceActivityBurstLocked()
 			}
 			if s.silenceTimer != nil {
 				s.silenceTimer.Stop()
@@ -1180,6 +1200,42 @@ func (s *Session) silenceAppliesToLocked() bool {
 	return s.altScreen || s.meta.Type == SessionTypeAI
 }
 
+func (s *Session) markSilenceActivityLocked(now time.Time) {
+	s.lastOutputMono = now
+	s.silenceActivityBytes = 0
+	s.silenceActivityStartedMono = time.Time{}
+}
+
+func (s *Session) resetSilenceActivityBurstLocked() {
+	s.silenceActivityBytes = 0
+	s.silenceActivityStartedMono = time.Time{}
+}
+
+func (s *Session) noteRunningSilenceActivityLocked(data []byte, now time.Time) {
+	if s.meta.TaskState != proto.TaskStateRunning {
+		return
+	}
+	if !s.silenceAppliesToLocked() {
+		s.markSilenceActivityLocked(now)
+		return
+	}
+	chunkBytes := int64(len(data))
+	if chunkBytes >= s.silenceRestoreByteThreshold {
+		s.markSilenceActivityLocked(now)
+		return
+	}
+	if s.silenceActivityStartedMono.IsZero() ||
+		now.Sub(s.silenceActivityStartedMono) > silenceActivityBurstWindow {
+		s.silenceActivityStartedMono = now
+		s.silenceActivityBytes = chunkBytes
+	} else {
+		s.silenceActivityBytes += chunkBytes
+	}
+	if s.silenceActivityBytes >= s.silenceRestoreByteThreshold {
+		s.markSilenceActivityLocked(now)
+	}
+}
+
 // rescheduleSilenceTimerLocked arms (or re-arms) the per-session silence
 // timer. Caller must hold s.mu.Lock(). Stops any existing timer first; only
 // arms a new one when detection is enabled, the session is running and not
@@ -1208,6 +1264,14 @@ func (s *Session) rescheduleSilenceTimerLocked() {
 	d := time.Duration(s.silenceThresholdMS) * time.Millisecond
 	if d <= 0 {
 		return
+	}
+	if !s.lastOutputMono.IsZero() {
+		elapsed := time.Since(s.lastOutputMono)
+		if elapsed >= d {
+			d = time.Millisecond
+		} else {
+			d -= elapsed
+		}
 	}
 	silenceDebugLocked(s, fmt.Sprintf("arm: in %v (type=%q alt=%v)", d, s.meta.Type, s.altScreen))
 	s.silenceTimer = time.AfterFunc(d, s.onSilenceFired)
@@ -1261,6 +1325,7 @@ func (s *Session) onSilenceFired() {
 	s.meta.AttentionAt = now.Unix()
 	s.waitingFromSilence = true
 	s.silenceRestoreBytes = 0
+	s.resetSilenceActivityBurstLocked()
 	s.fireTaskStateLocked(proto.TaskStateRunning, proto.TaskStateWaitingInput, TaskMeta{})
 	metaHook := s.onMetaChanged
 	s.mu.Unlock()

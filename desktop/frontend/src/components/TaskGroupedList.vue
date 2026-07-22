@@ -38,16 +38,21 @@ const props = withDefaults(defineProps<{
   // dev + prod (or future profiles) on the same machine become distinguishable.
   // Empty string disables the suffix entirely.
   localHost?: string;
+  // Session ids currently opened as panes in this desktop window. Only
+  // these rows show the close affordance.
+  openSessionIds?: string[];
 }>(), {
   groupBy: "host",
   byState: () => ({}),
   activeSessionId: null,
   localHostId: "",
   localHost: "",
+  openSessionIds: () => [],
 });
 
 const emit = defineEmits<{
   (e: "open", session: RemoteSession): void;
+  (e: "close", session: RemoteSession): void;
   (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
 }>();
 
@@ -65,6 +70,7 @@ const STATE_ORDER: TaskState[] = [
 ];
 
 const pins = useSessionPins();
+const openSessionIdSet = computed(() => new Set(props.openSessionIds));
 
 const groups = computed<Record<string, RemoteSession[]>>(() =>
   props.groupBy === "state" ? props.byState : props.byHost,
@@ -256,7 +262,9 @@ function stateLabel(state: string | undefined): string {
             :session="s"
             :show-state-label="showStateLabel"
             :home="home"
+            :show-close="openSessionIdSet.has(s.session_id)"
             @mark-read="onMarkRead(s)"
+            @close="emit('close', s)"
           />
         </button>
       </template>
@@ -318,7 +326,9 @@ function stateLabel(state: string | undefined): string {
           :session="s"
           :show-state-label="showStateLabel"
           :home="home"
+          :show-close="openSessionIdSet.has(s.session_id)"
           @mark-read="onMarkRead(s)"
+          @close="emit('close', s)"
         />
       </button>
     </section>
@@ -354,6 +364,16 @@ function stateLabel(state: string | undefined): string {
             </span>
           </span>
           <span v-if="shortenCwd(s.cwd, home)" class="cwd">{{ shortenCwd(s.cwd, home) }}</span>
+          <button
+            v-if="openSessionIdSet.has(s.session_id)"
+            class="row-close completed-row-close"
+            data-test="row-close"
+            :title="t('common.close')"
+            :aria-label="t('common.close')"
+            @click.stop="emit('close', s)"
+          >
+            ×
+          </button>
         </div>
         <button class="fold-mark-all" data-test="fold-mark-all" @click="onMarkFold">
           {{ t("tasks.markAllRead") }}
@@ -403,6 +423,18 @@ function stateLabel(state: string | undefined): string {
 .cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; padding-left: 18px; }
 .unread-dot { font-size: 9px; color: currentColor; }
 .row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
+.completed-row-close {
+  align-self: flex-end;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 1px 4px;
+}
+.completed-row-close:hover { background: rgba(248, 81, 73, 0.18); color: var(--bad); }
 .completed-fold { border-top: 1px solid rgba(255, 255, 255, 0.06); margin-top: 6px; padding-top: 4px; display: flex; flex-direction: column; gap: 4px; }
 .fold-toggle { background: none; border: none; cursor: pointer; padding: 4px 6px; width: 100%; text-align: left; color: inherit; opacity: 0.7; }
 .fold-mark-all { background: none; border: 1px solid rgba(255, 255, 255, 0.12); cursor: pointer; padding: 4px 8px; margin: 4px 6px; color: inherit; border-radius: 3px; }

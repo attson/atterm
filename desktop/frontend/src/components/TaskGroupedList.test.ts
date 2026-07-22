@@ -75,6 +75,24 @@ describe("TaskGroupedList", () => {
     expect(w.emitted("markSeen")?.[0]?.[0]).toEqual({ ids: ["s1"] });
   });
 
+  test("clicking row close emits close without opening the session", async () => {
+    const sess = mk({ session_id: "s1", host: "mac", title: "claude" });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [sess] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+        openSessionIds: ["s1"],
+      },
+    });
+
+    await w.find('[data-test="row-close"]').trigger("click");
+
+    expect(w.emitted("close")?.[0]?.[0]).toEqual(sess);
+    expect(w.emitted("open")).toBeUndefined();
+  });
+
   test("host header mark-all emits markSeen ids for that host's unread", async () => {
     const a = mk({ session_id: "a", host: "mac", unread: true, attention_at: 1 });
     const b = mk({ session_id: "b", host: "mac", unread: true, attention_at: 1 });

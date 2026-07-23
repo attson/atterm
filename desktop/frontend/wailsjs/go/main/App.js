@@ -162,6 +162,10 @@ export function GetShellIntegrationEnabled() {
   return window['go']['main']['App']['GetShellIntegrationEnabled']();
 }
 
+export function GetStartupError() {
+  return window['go']['main']['App']['GetStartupError']();
+}
+
 export function GetTaskGroupBy() {
   return window['go']['main']['App']['GetTaskGroupBy']();
 }

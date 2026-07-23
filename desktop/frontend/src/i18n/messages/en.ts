@@ -48,6 +48,11 @@ export const en = {
     noActiveSession: "No active session",
     noEndpoint: "No endpoint",
     pluginFailedToLoad: "Plugin \"{title}\" failed to load",
+    startupFailureTitle: "AT Term could not start",
+    startupFailureIntro: "The desktop backend hit a fatal startup error. Your terminal sessions were not started.",
+    startupFailureLogPath: "Log file",
+    startupFailureCopy: "Copy diagnostics",
+    startupFailureCopied: "Startup diagnostics copied",
   },
   titlebar: {
     e2eeOffChip: "Plaintext",

@@ -523,6 +523,22 @@ export namespace main {
 	        this.dev_dual_output = source["dev_dual_output"];
 	    }
 	}
+	export class StartupError {
+	    fatal: boolean;
+	    message: string;
+	    log_path: string;
+
+	    static createFrom(source: any = {}) {
+	        return new StartupError(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fatal = source["fatal"];
+	        this.message = source["message"];
+	        this.log_path = source["log_path"];
+	    }
+	}
 	export class NewSessionReq {
 	    command: string;
 	    args?: string[];
@@ -1039,4 +1055,3 @@ export namespace main {
 	}
 
 }
-

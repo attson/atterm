@@ -117,6 +117,51 @@ describe("auth-error banner", () => {
   });
 });
 
+describe("startup fatal error", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    __setPlatformForTests(createFakePlatform());
+  });
+
+  afterEach(() => {
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+  });
+
+  it("renders a startup failure panel and stops before opening the local endpoint", async () => {
+    const getEndpoint = vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" });
+    __setBindingsForTest({
+      GetStartupError: vi.fn().mockResolvedValue({
+        fatal: true,
+        message: "start relay host: open userstore",
+        log_path: "/tmp/atterm/desktop.log",
+      }),
+      GetEndpoint: getEndpoint,
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(10),
+      ConfirmQuit: vi.fn().mockResolvedValue(undefined),
+    } as any);
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TabBar: true,
+          TaskSidebar: true,
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="startup-fatal"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("start relay host: open userstore");
+    expect(wrapper.text()).toContain("/tmp/atterm/desktop.log");
+    expect(getEndpoint).not.toHaveBeenCalled();
+  });
+});
+
 describe("quit confirmation", () => {
   test("registers the before-close listener and imports confirmQuit", () => {
     expect(source).toContain("platform.events.on('before-close'");

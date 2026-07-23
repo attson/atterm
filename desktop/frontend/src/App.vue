@@ -32,6 +32,7 @@ import {
   closeSession,
   confirmQuit,
   getEndpoint,
+  getStartupError,
   getHostInfo,
   getRelayConfig,
   getCommandNotifyThresholdSeconds,
@@ -50,7 +51,7 @@ import {
   type RecoverySnapshot,
   type RecoveryTabSnapshot,
 } from "./lib/api";
-import type { Endpoint, UpdateState } from "./lib/api";
+import type { Endpoint, StartupError, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
@@ -166,6 +167,8 @@ const currentTabId = ref<string | null>(null);
 
 const status = ref<"loading" | "ready" | "error">("loading");
 const errorMsg = ref<string>("");
+const startupFatal = ref<StartupError | null>(null);
+const startupFatalCopyStatus = ref<string>("");
 const starting = ref(false);
 const showSettings = ref(false);
 const toast = ref<string>("");
@@ -192,6 +195,23 @@ function onConfirmQuit() {
 
 function onCancelQuit() {
   quitDialogOpen.value = false;
+}
+
+async function copyStartupFailure() {
+  const fatal = startupFatal.value;
+  if (!fatal) return;
+  const text = [
+    "AT Term startup failed",
+    fatal.message,
+    fatal.log_path ? `log: ${fatal.log_path}` : "",
+  ].filter(Boolean).join("\n");
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+    await navigator.clipboard.writeText(text);
+    startupFatalCopyStatus.value = i18nT("app.startupFailureCopied");
+  } catch {
+    startupFatalCopyStatus.value = i18nT("terminal.copyFailed");
+  }
 }
 
 const updateBadge = ref(false);
@@ -1099,6 +1119,17 @@ onMounted(async () => {
   });
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
+  try {
+    const fatal = await getStartupError();
+    if (fatal?.fatal) {
+      startupFatal.value = fatal;
+      status.value = "error";
+      errorMsg.value = fatal.message;
+      return;
+    }
+  } catch (e) {
+    console.warn("[AT Term] failed to load startup fatal state", e);
+  }
   // Set up the size-prediction probe before anything spawns a PTY — the
   // probe must be ready by the time auto-startNewTab fires.
   await setupMeasureProbe();
@@ -1227,6 +1258,7 @@ onUnmounted(() => {
     </div>
 
     <TabBar
+      v-if="!startupFatal"
       :tabs="tabSummaries"
       :current-id="currentTabId"
       :starting="starting"
@@ -1235,7 +1267,24 @@ onUnmounted(() => {
       @new="startNewTab"
     />
 
-    <div class="main-row">
+    <div v-if="startupFatal" class="startup-fatal" data-testid="startup-fatal" role="alert">
+      <section class="startup-fatal-panel">
+        <h1>{{ i18nT("app.startupFailureTitle") }}</h1>
+        <p>{{ i18nT("app.startupFailureIntro") }}</p>
+        <pre>{{ startupFatal.message }}</pre>
+        <div v-if="startupFatal.log_path" class="startup-fatal-log">
+          <span>{{ i18nT("app.startupFailureLogPath") }}</span>
+          <code>{{ startupFatal.log_path }}</code>
+        </div>
+        <div class="startup-fatal-actions">
+          <button @click="copyStartupFailure">{{ i18nT("app.startupFailureCopy") }}</button>
+          <button class="danger" @click="onConfirmQuit">{{ i18nT("sessions.quit") }}</button>
+        </div>
+        <p v-if="startupFatalCopyStatus" class="startup-fatal-copy-status">{{ startupFatalCopyStatus }}</p>
+      </section>
+    </div>
+
+    <div v-else class="main-row">
       <TaskSidebar
         :collapsed="sidebarCollapsed"
         :by-host="sessions.byHost.value"
@@ -1355,6 +1404,82 @@ onUnmounted(() => {
   color: #ffb3b3; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px;
 }
 .auth-error-dismiss:hover { color: #fff; }
+
+.startup-fatal {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #0d1117;
+}
+.startup-fatal-panel {
+  width: min(680px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--fg);
+}
+.startup-fatal-panel h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+}
+.startup-fatal-panel p {
+  margin: 0;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+.startup-fatal-panel pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #161b22;
+  color: #ffb3b3;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.startup-fatal-log {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.startup-fatal-log code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg);
+}
+.startup-fatal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.startup-fatal-actions button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #21262d;
+  color: var(--fg);
+  cursor: pointer;
+}
+.startup-fatal-actions button:hover { background: #30363d; }
+.startup-fatal-actions button.danger {
+  border-color: #8b2e2e;
+  color: #ffb3b3;
+}
+.startup-fatal-copy-status {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
 
 .main-row {
   display: flex;

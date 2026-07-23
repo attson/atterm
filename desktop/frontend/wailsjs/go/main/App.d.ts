@@ -85,6 +85,8 @@ export function GetRelayConfig():Promise<main.RelayConfig>;
 
 export function GetShellIntegrationEnabled():Promise<boolean>;
 
+export function GetStartupError():Promise<main.StartupError>;
+
 export function GetTaskGroupBy():Promise<string>;
 
 export function GetTaskPreset():Promise<string>;

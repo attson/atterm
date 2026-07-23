@@ -136,6 +136,12 @@ type LogPreview struct {
 	Content   string `json:"content"`
 }
 
+type StartupError struct {
+	Fatal   bool   `json:"fatal"`
+	Message string `json:"message"`
+	LogPath string `json:"log_path"`
+}
+
 // App is the Wails-bound application surface.
 type App struct {
 	ctx         context.Context
@@ -174,6 +180,9 @@ type App struct {
 	// thread might rewrap during password change.
 	accountKeyMu sync.Mutex
 	accountKey   []byte
+
+	startupFatalMu sync.RWMutex
+	startupFatal   StartupError
 
 	// eventsEmitter is the Wails EventsEmit function used to push events
 	// to the frontend. Defaults to wailsruntime.EventsEmit in NewApp;
@@ -241,7 +250,8 @@ func (a *App) startup(ctx context.Context) {
 	}
 	h, err := startRelayHost(a.cfgStore)
 	if err != nil {
-		log.Fatalf("desktop: start relay host: %v", err)
+		a.setStartupFatalError("start relay host", err)
+		return
 	}
 	a.host = h
 
@@ -278,7 +288,8 @@ func (a *App) startup(ctx context.Context) {
 	if a.logger == nil {
 		a.logger, err = newDesktopLoggingManager(cfg, Version)
 		if err != nil {
-			log.Fatalf("desktop: init logging: %v", err)
+			a.setStartupFatalError("init logging", err)
+			return
 		}
 	}
 	// Restore the E2EE account_key from the OS keychain if a previous
@@ -424,6 +435,47 @@ func (a *App) GetEndpoint() Endpoint {
 		return Endpoint{}
 	}
 	return Endpoint{URL: "ws://" + a.host.addr, SessionToken: a.host.sessionToken}
+}
+
+func (a *App) setStartupFatalError(stage string, err error) {
+	if err == nil {
+		return
+	}
+	msg := strings.TrimSpace(stage)
+	if msg != "" {
+		msg += ": "
+	}
+	msg += err.Error()
+	payload := StartupError{
+		Fatal:   true,
+		Message: msg,
+		LogPath: a.startupLogPath(),
+	}
+	a.startupFatalMu.Lock()
+	a.startupFatal = payload
+	a.startupFatalMu.Unlock()
+	log.Printf("desktop: startup fatal: %s", msg)
+}
+
+func (a *App) startupLogPath() string {
+	cfg := appConfig{}
+	if a.cfgStore != nil {
+		cfg = a.cfgStore.Get()
+	}
+	if a.logger != nil {
+		return a.logger.EffectivePath(cfg.LogFilePath)
+	}
+	return cfg.LogFilePathOrDefault()
+}
+
+func (a *App) GetStartupError() StartupError {
+	a.startupFatalMu.RLock()
+	payload := a.startupFatal
+	a.startupFatalMu.RUnlock()
+	if payload.Fatal && payload.LogPath == "" {
+		payload.LogPath = a.startupLogPath()
+	}
+	return payload
 }
 
 // GetRelayConfig returns the currently-persisted relay URL/token plus whether

@@ -50,6 +50,11 @@ export const zhCN = {
     noActiveSession: "没有活动会话",
     noEndpoint: "没有 endpoint",
     pluginFailedToLoad: "插件“{title}”加载失败",
+    startupFailureTitle: "AT Term 启动失败",
+    startupFailureIntro: "桌面后端遇到了致命启动错误。终端会话尚未启动。",
+    startupFailureLogPath: "日志文件",
+    startupFailureCopy: "复制诊断信息",
+    startupFailureCopied: "启动诊断信息已复制",
   },
   titlebar: {
     e2eeOffChip: "明文",

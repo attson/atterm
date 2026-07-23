@@ -2,6 +2,8 @@ package userstore
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 )
 
@@ -45,5 +47,49 @@ func TestOpenInMemory_MigrationIdempotent(t *testing.T) {
 	}
 	if nBefore != nAfter {
 		t.Fatalf("expected same migration row count after re-run: before=%d, after=%d", nBefore, nAfter)
+	}
+}
+
+func TestOpenSkipsRenamedFeishuRemoteTerminalMigration(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "users.db")
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("initial Open: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close initial store: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(on)")
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		DELETE FROM schema_migrations WHERE name = '0010_feishu_remote_terminal.sql';
+		INSERT INTO schema_migrations(name, applied_at) VALUES('0007_feishu_remote_terminal.sql', strftime('%s','now'));
+	`); err != nil {
+		db.Close()
+		t.Fatalf("prepare renamed migration state: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	s, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open with renamed feishu remote terminal migration: %v", err)
+	}
+	defer s.Close()
+
+	var seen int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM schema_migrations WHERE name = '0010_feishu_remote_terminal.sql'`,
+	).Scan(&seen); err != nil {
+		t.Fatalf("check backfilled migration record: %v", err)
+	}
+	if seen != 1 {
+		t.Fatalf("expected current migration name to be backfilled, got %d rows", seen)
 	}
 }

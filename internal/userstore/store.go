@@ -256,13 +256,14 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		var seen int
-		if err := s.db.QueryRowContext(ctx,
-			s.dia.Rebind(`SELECT count(*) FROM schema_migrations WHERE name=?`), name,
-		).Scan(&seen); err != nil {
+		seen, err := s.migrationSeen(ctx, name)
+		if err != nil {
 			return fmt.Errorf("check migration %s: %w", name, err)
 		}
-		if seen > 0 {
+		if seen {
+			if err := s.recordMigration(ctx, name); err != nil {
+				return fmt.Errorf("record renamed migration %s: %w", name, err)
+			}
 			continue
 		}
 		body, err := migrationsFS.ReadFile(dir + "/" + name)
@@ -288,4 +289,41 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *SQLiteStore) migrationSeen(ctx context.Context, name string) (bool, error) {
+	names := equivalentMigrationNames(name)
+	placeholders := make([]string, len(names))
+	args := make([]any, len(names))
+	for i, n := range names {
+		placeholders[i] = "?"
+		args[i] = n
+	}
+	var seen int
+	err := s.db.QueryRowContext(ctx,
+		s.dia.Rebind(`SELECT count(*) FROM schema_migrations WHERE name IN (`+strings.Join(placeholders, ",")+`)`),
+		args...,
+	).Scan(&seen)
+	return seen > 0, err
+}
+
+func (s *SQLiteStore) recordMigration(ctx context.Context, name string) error {
+	_, err := s.db.ExecContext(ctx,
+		s.dia.Rebind(`INSERT INTO schema_migrations(name, applied_at) VALUES(?, ?) ON CONFLICT(name) DO NOTHING`),
+		name, time.Now().Unix())
+	return err
+}
+
+func equivalentMigrationNames(name string) []string {
+	switch name {
+	case "0007_feishu_remote_terminal.sql":
+		return []string{name, "0010_feishu_remote_terminal.sql"}
+	case "0010_feishu_remote_terminal.sql":
+		// v0.3 moved this migration after DB-backed relay config migrations.
+		// Some desktop SQLite stores already recorded the earlier name while
+		// carrying the same columns, so the later name must not rerun ALTER.
+		return []string{name, "0007_feishu_remote_terminal.sql"}
+	default:
+		return []string{name}
+	}
 }

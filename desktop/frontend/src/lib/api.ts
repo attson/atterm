@@ -21,6 +21,12 @@ export interface Endpoint {
   session_token: string;
 }
 
+export interface StartupError {
+  fatal: boolean;
+  message: string;
+  log_path: string;
+}
+
 export type LocalePreference = "system" | "en" | "zh-CN";
 
 export interface NewSessionReq {
@@ -291,6 +297,7 @@ export interface UpdateState {
 
 interface AppBindings {
   GetClipboardPastePayload(): Promise<ClipboardPastePayload>;
+  GetStartupError?(): Promise<StartupError>;
   GetEndpoint(): Promise<Endpoint>;
   GetHostInfo(): Promise<HostInfo>;
   NewSession(req: NewSessionReq): Promise<NewSessionResp>;
@@ -438,6 +445,14 @@ async function ensureNotificationRuntimeReady(): Promise<boolean> {
 
 export function getClipboardPastePayload(): Promise<ClipboardPastePayload> {
   return bindings().GetClipboardPastePayload();
+}
+
+export function getStartupError(): Promise<StartupError> {
+  const b = bindings();
+  if (!b.GetStartupError) {
+    return Promise.resolve({ fatal: false, message: "", log_path: "" });
+  }
+  return b.GetStartupError();
 }
 
 export function getEndpoint(): Promise<Endpoint> {

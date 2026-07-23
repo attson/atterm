@@ -212,4 +212,44 @@ describe("useSessionPins", () => {
     await flushPromises();
     expect(setSpy).toHaveBeenCalledTimes(1);
   });
+
+  test("ready() resolves once the initial load settles, unblocking isPinned", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    // No flushPromises before ready() — this is the race fix #1 closes:
+    // isPinned would see the empty default here without awaiting ready().
+    await pins.ready();
+    expect(pins.isPinned("a")).toBe(true);
+  });
+
+  test("ready() still resolves (to the empty default) when the load rejects", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockRejectedValue(new Error("boom"));
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await pins.ready();
+    expect(pins.isPinned("a")).toBe(false);
+  });
+
+  test("flushNow warns (but still resolves) when the persist call rejects", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue([]);
+    vi.spyOn(api, "setPinnedSessionIds").mockRejectedValue(new Error("disk full"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await flushPromises();
+
+    pins.pin("a");
+    await expect(pins.flushNow()).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[pins] flushNow persist failed",
+      expect.any(Error),
+    );
+  });
 });

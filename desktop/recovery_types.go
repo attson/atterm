@@ -40,6 +40,13 @@ type TabSnapshot struct {
 // against Shell/LastCwd (which would land in a directory that doesn't even
 // exist on the local machine). HostID is informational so the recovery
 // dialog can group restored panes by their origin host.
+//
+// For local panes (Remote=false), SessionID instead carries the *previous
+// generation's* session id — the local pane always gets a fresh id on
+// respawn, so this field has no meaning to Go itself. It exists purely so
+// the frontend can migrate pinned-session ids across the respawn (rename
+// old id -> new id in useSessionPins) — see
+// 2026-07-23-pinned-session-recovery-design.md §4.3.
 type PaneSnapshot struct {
 	Slot            int      `json:"slot"`
 	Remote          bool     `json:"remote,omitempty"`

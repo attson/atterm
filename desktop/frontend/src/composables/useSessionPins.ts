@@ -31,8 +31,9 @@ function schedulePersist(): void {
   if (flushHandle) clearTimeout(flushHandle);
   flushHandle = setTimeout(() => {
     flushHandle = null;
-    void setPinnedSessionIds(Array.from(pinnedIds.value)).catch(() => {
+    void setPinnedSessionIds(Array.from(pinnedIds.value)).catch((e) => {
       /* best-effort */
+      console.warn("[pins] schedulePersist failed", e);
     });
   }, PERSIST_DEBOUNCE_MS);
 }
@@ -70,8 +71,11 @@ async function flushNowFn(): Promise<void> {
   }
   try {
     await setPinnedSessionIds(Array.from(pinnedIds.value));
-  } catch {
-    /* best-effort — same policy as schedulePersist */
+  } catch (e) {
+    // Still best-effort (same policy as schedulePersist), but recovery is
+    // the one synchronous window where a silent failure would be costly —
+    // log it so the caller has a signal even though flushNow keeps resolving.
+    console.warn("[pins] flushNow persist failed", e);
   }
 }
 
@@ -88,6 +92,12 @@ export interface UseSessionPins {
   toggle: (id: string) => void;
   rename: (oldId: string, newId: string) => void;
   flushNow: () => Promise<void>;
+  // Resolves once the initial getPinnedSessionIds() load has settled (loaded
+  // or failed-to-empty — see loadOnce). Callers that need pinnedIds to be
+  // authoritative before reading it synchronously (e.g. recovery's pin
+  // migration) should `await` this first instead of racing the fire-and-
+  // forget load that useSessionPins() kicks off on every call.
+  ready: () => Promise<void>;
 }
 
 export function useSessionPins(): UseSessionPins {
@@ -100,6 +110,7 @@ export function useSessionPins(): UseSessionPins {
     toggle: (id) => (pinnedIds.value.has(id) ? unpinFn(id) : pinFn(id)),
     rename: renameFn,
     flushNow: flushNowFn,
+    ready: () => loadOnce(),
   };
 }
 

@@ -128,6 +128,13 @@ const remoteListAdapted = computed<RemoteSession[]>(() => remoteList.value.map(a
 
 const sessions = useSessions(localListAdapted, remoteListAdapted);
 
+// Used by executeRestore for pin migration (rename oldSid -> new session_id
+// on respawn) and by the sidebar pin toggle. Hoisted to setup scope like the
+// other composables here — pinnedIds is module-scoped internally, so calling
+// useSessionPins() from inside executeRestore would have been functionally
+// equivalent, but this matches the rest of the file's style.
+const pins = useSessionPins();
+
 const sidebarCollapsed = ref(false);
 
 async function setSidebarCollapsedAndPersist(v: boolean) {
@@ -840,7 +847,10 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
   // Remote panes keep their sid across restarts, so remote entries in the
   // pin set are already correct — no rename needed on that branch.
   // See 2026-07-23-pinned-session-recovery-design.md §4.3.
-  const pins = useSessionPins();
+  // pins itself is the setup-scope instance (see top of <script setup>); wait
+  // for its initial load here so isPinned(oldSid) below can't race the
+  // fire-and-forget getPinnedSessionIds() kicked off elsewhere.
+  await pins.ready();
   let savedActiveIdx = -1;
   // Resolve the user's real default shell once. Panes whose snapshot has an
   // empty shell restore against this instead of /bin/sh — see

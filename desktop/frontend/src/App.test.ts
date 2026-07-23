@@ -6,6 +6,7 @@ import { createFakePlatform } from "./platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "./lib/api";
 import { TYPE, NIL_SID, encodeFrame, encodeText } from "./lib/proto";
 import type { SessionInfo } from "./lib/connection";
+import { __resetForTests as __resetPinsForTests } from "./composables/useSessionPins";
 import App from "./App.vue";
 
 // jsdom does not implement matchMedia; stub it so xterm's ScreenDprMonitor
@@ -437,5 +438,116 @@ describe("App window title follows active AI session", () => {
     } finally {
       __setPlatformForTests(null);
     }
+  });
+});
+
+describe("recovery pin migration integration", () => {
+  // Integration coverage for executeRestore's pin-migration slice: drives the
+  // real useSessionPins module (not mocked) through a real recovery restore,
+  // unlike useSessionPins.test.ts (which exercises rename/flushNow directly
+  // with synthetic ids) or recoveryRestore.test.ts (which never touches
+  // pins). This is the one path that proves the two wire together correctly.
+  class NoopWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = NoopWebSocket.CONNECTING;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(_url: string) {}
+    send() {}
+    close() {}
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    __setPlatformForTests(createFakePlatform());
+    __resetPinsForTests();
+    vi.stubGlobal("WebSocket", NoopWebSocket);
+  });
+
+  afterEach(() => {
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+    __resetPinsForTests();
+    vi.unstubAllGlobals();
+  });
+
+  it("renames a pinned local session's id across executeRestore's respawn", async () => {
+    const setPinned = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({
+      GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
+      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
+      GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
+      GetRelayConfig: vi.fn().mockResolvedValue({
+        url: "ws://remote", token: "", session_expires_at: 0,
+        allow_insecure_relay: false, remote_permission: "full", connected: false,
+      }),
+      ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
+      GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(0),
+      ListShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
+      NewSession: vi.fn().mockResolvedValue({ session_id: "new-sid" }),
+      CloseSession: vi.fn().mockResolvedValue(undefined),
+      GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      ConfirmQuit: vi.fn().mockResolvedValue(undefined),
+      MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
+      LoadRecoverySnapshot: vi.fn().mockResolvedValue({
+        version: 1,
+        host_id: "",
+        clean_shutdown: false,
+        saved_at_unix: 0,
+        active_tab_id: "t1",
+        tabs: [
+          {
+            id: "t1",
+            layout: "single",
+            active_pane_idx: 0,
+            col_ratio: 0.5,
+            row_ratio: 0.5,
+            panes: [{ slot: 0, remote: false, session_id: "old-sid", shell: "/bin/zsh", last_cwd: "/tmp" }],
+          },
+        ],
+      }),
+      SaveRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      DiscardRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
+      GetPinnedSessionIds: vi.fn().mockResolvedValue(["old-sid"]),
+      SetPinnedSessionIds: setPinned,
+    } as any);
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TabBar: true,
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          TaskSidebar: true,
+          PaneGrid: true,
+          RecoveryDialog: {
+            props: ["snapshot"],
+            template: `<button data-testid="btn-restore-all" @click="$emit('restore', snapshot.tabs)">restore</button>`,
+          },
+        },
+      },
+    });
+    // setupMeasureProbe() (called from boot()) resolves off a real
+    // requestAnimationFrame — a bare flushPromises() only drains microtasks,
+    // so without this the RecoveryDialog stub never appears in time. Matches
+    // the "remote tab session retention" describe block above.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await flushPromises();
+
+    await wrapper.get('[data-testid="btn-restore-all"]').trigger("click");
+    await flushPromises();
+
+    expect(setPinned).toHaveBeenCalled();
+    const persisted = setPinned.mock.calls[setPinned.mock.calls.length - 1][0];
+    expect(persisted).toContain("new-sid");
+    expect(persisted).not.toContain("old-sid");
   });
 });

@@ -341,7 +341,11 @@ describe("useRecoverySnapshot", () => {
     scope.stop();
   });
 
-  it("omits remote/host_id/session_id for local panes (keeps snapshot lean)", async () => {
+  it("writes session_id for local panes (needed for pin migration) but keeps remote/host_id undefined", async () => {
+    // Regression: pin state is keyed by session_id. On restart the local pane
+    // gets a fresh sid from newSession(); executeRestore needs the previous
+    // generation's sid to remap the pin set. See
+    // docs/superpowers/specs/2026-07-23-pinned-session-recovery-design.md §4.1.
     const tabs = ref<Tab[]>([]);
     const currentTabId = ref<string | null>(null);
     const sessionInfoFor = (sid: string) =>
@@ -379,8 +383,8 @@ describe("useRecoverySnapshot", () => {
     expect(calls.length).toBeGreaterThan(0);
     const last = calls[calls.length - 1][0];
     const pane = last.tabs[0].panes[0];
+    expect(pane.session_id).toBe("local-sid");
     expect(pane.remote).toBeUndefined();
-    expect(pane.session_id).toBeUndefined();
     expect(pane.host_id).toBeUndefined();
     scope.stop();
   });

@@ -70,7 +70,14 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
             slot: idx,
             remote: persistAsRemote || undefined,
             host_id: persistAsRemote ? info?.host_id ?? "" : undefined,
-            session_id: persistAsRemote && p.sessionId ? p.sessionId : undefined,
+            // Written for both remote (authoritative id used to rebind by
+            // executeRestore) and local (previous-generation id, used only by
+            // executeRestore's pin migration to keep pinned sessions pinned
+            // after respawn). See §4.1 of
+            // 2026-07-23-pinned-session-recovery-design.md.
+            // Sidebar viewers (remote=true on local host) are treated as
+            // plain-local, so session_id is omitted.
+            session_id: (!p.remote || persistAsRemote) && p.sessionId ? p.sessionId : undefined,
             shell: info?.command?.split(" ")[0] ?? "",
             shell_args: [],
             last_cwd: info?.cwd ?? "",

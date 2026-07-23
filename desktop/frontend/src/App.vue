@@ -61,6 +61,7 @@ import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLa
 import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
+import { useSessionPins } from "./composables/useSessionPins";
 import {
   buildRestoreSessionReq,
   synthSessionInfoFromSnapshot,
@@ -833,6 +834,13 @@ async function onRecoveryDiscard() {
 // race against snapshot mutation and complicate error placement.
 async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: string) {
   const newIds: string[] = [];
+  // Pin migration: local panes get a fresh session_id on respawn, which
+  // would strand the previous generation's pin ids in config. Capture the
+  // old sid from the snapshot and hand it to pins.rename after each spawn.
+  // Remote panes keep their sid across restarts, so remote entries in the
+  // pin set are already correct — no rename needed on that branch.
+  // See 2026-07-23-pinned-session-recovery-design.md §4.3.
+  const pins = useSessionPins();
   let savedActiveIdx = -1;
   // Resolve the user's real default shell once. Panes whose snapshot has an
   // empty shell restore against this instead of /bin/sh — see
@@ -871,6 +879,10 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
         continue;
       }
       try {
+        // oldSid: previous generation's session_id, saved by useRecoverySnapshot
+        // for local panes (Task 2). Empty when the snapshot pre-dates that
+        // change — skip pin migration in that case, matches old behavior.
+        const oldSid = snap.session_id || "";
         const dims = predictCellDims(tab.layout);
         const req = buildRestoreSessionReq(snap, dims.cols, dims.rows, defaultShell);
         const resp = await newSession(req);
@@ -899,6 +911,9 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
         ];
         // Resume injection is handled Go-side on the shell's first prompt
         // (see relay_host SetOnFirstPrompt) — reliable, no task-state poll.
+        if (oldSid && pins.isPinned(oldSid)) {
+          pins.rename(oldSid, resp.session_id);
+        }
       } catch (e) {
         console.warn("[recovery] pane spawn failed", e);
         t.panes[i] = { sessionId: null, remote: false };
@@ -912,6 +927,12 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
   } else if (newIds.length > 0) {
     gotoTab(newIds[0]);
   }
+  // Persist the migrated pin set now (rather than waiting for the 300ms
+  // debounce). The sidebar's first repaint after recovery reads pinnedIds
+  // from the reactive Set (already up to date), but a fast-follow force
+  // quit before the debounce fires would strand the new sids out of
+  // config. Idempotent no-op when no rename happened.
+  await pins.flushNow();
 }
 
 async function onClosePane() {

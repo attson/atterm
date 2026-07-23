@@ -53,6 +53,28 @@ function unpinFn(id: string): void {
   schedulePersist();
 }
 
+function renameFn(oldId: string, newId: string): void {
+  if (!oldId || !newId || oldId === newId) return;
+  if (!pinnedIds.value.has(oldId)) return;
+  const next = new Set(pinnedIds.value);
+  next.delete(oldId);
+  next.add(newId);
+  pinnedIds.value = next;
+  schedulePersist();
+}
+
+async function flushNowFn(): Promise<void> {
+  if (flushHandle) {
+    clearTimeout(flushHandle);
+    flushHandle = null;
+  }
+  try {
+    await setPinnedSessionIds(Array.from(pinnedIds.value));
+  } catch {
+    /* best-effort — same policy as schedulePersist */
+  }
+}
+
 export interface UseSessionPins {
   // Read-only from the outside — the only safe mutation entry points are
   // pin/unpin/toggle, which always create a fresh Set so Vue's reactivity
@@ -64,6 +86,8 @@ export interface UseSessionPins {
   pin: (id: string) => void;
   unpin: (id: string) => void;
   toggle: (id: string) => void;
+  rename: (oldId: string, newId: string) => void;
+  flushNow: () => Promise<void>;
 }
 
 export function useSessionPins(): UseSessionPins {
@@ -74,6 +98,8 @@ export function useSessionPins(): UseSessionPins {
     pin: pinFn,
     unpin: unpinFn,
     toggle: (id) => (pinnedIds.value.has(id) ? unpinFn(id) : pinFn(id)),
+    rename: renameFn,
+    flushNow: flushNowFn,
   };
 }
 

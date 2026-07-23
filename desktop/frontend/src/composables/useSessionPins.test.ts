@@ -89,4 +89,127 @@ describe("useSessionPins", () => {
     await flushPromises();
     expect(pins.isPinned("a")).toBe(false);
   });
+
+  test("rename replaces old id with new id and schedules one persist", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a", "b"]);
+    const setSpy = vi
+      .spyOn(api, "setPinnedSessionIds")
+      .mockResolvedValue(undefined);
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await flushPromises();
+
+    pins.rename("a", "a2");
+    expect(pins.isPinned("a")).toBe(false);
+    expect(pins.isPinned("a2")).toBe(true);
+    expect(pins.isPinned("b")).toBe(true);
+    expect(setSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(new Set(setSpy.mock.calls[0][0])).toEqual(new Set(["a2", "b"]));
+  });
+
+  test("rename is a no-op when old id is not pinned", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
+    const setSpy = vi
+      .spyOn(api, "setPinnedSessionIds")
+      .mockResolvedValue(undefined);
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await flushPromises();
+
+    pins.rename("x", "y");
+    expect(pins.isPinned("a")).toBe(true);
+    expect(pins.isPinned("y")).toBe(false);
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  test("rename(x, x) is a no-op", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
+    const setSpy = vi
+      .spyOn(api, "setPinnedSessionIds")
+      .mockResolvedValue(undefined);
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await flushPromises();
+
+    pins.rename("a", "a");
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(pins.isPinned("a")).toBe(true);
+  });
+
+  test("rename with empty ids is a no-op", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
+    const setSpy = vi
+      .spyOn(api, "setPinnedSessionIds")
+      .mockResolvedValue(undefined);
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await flushPromises();
+
+    pins.rename("", "b");
+    pins.rename("a", "");
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(pins.isPinned("a")).toBe(true);
+  });
+
+  test("rename onto an already-pinned id is idempotent (Set dedup)", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a", "b"]);
+    const setSpy = vi
+      .spyOn(api, "setPinnedSessionIds")
+      .mockResolvedValue(undefined);
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await flushPromises();
+
+    pins.rename("a", "b");
+    expect(pins.isPinned("a")).toBe(false);
+    expect(pins.isPinned("b")).toBe(true);
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setSpy.mock.calls[0][0]).toEqual(["b"]);
+  });
+
+  test("flushNow cancels the debounce and persists immediately", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue([]);
+    const setSpy = vi
+      .spyOn(api, "setPinnedSessionIds")
+      .mockResolvedValue(undefined);
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await flushPromises();
+
+    pins.pin("a");
+    pins.rename("a", "b");
+    expect(setSpy).not.toHaveBeenCalled();
+    await pins.flushNow();
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setSpy.mock.calls[0][0]).toEqual(["b"]);
+
+    // No stale timer fires after flushNow (would double-persist).
+    vi.advanceTimersByTime(300);
+    await flushPromises();
+    expect(setSpy).toHaveBeenCalledTimes(1);
+  });
 });

@@ -81,7 +81,7 @@ close,重启桌面客户端后仍能拿到同一 sid 并 rebind → 该情形下
 session_id: persistAsRemote && p.sessionId ? p.sessionId : undefined,
 
 // after
-session_id: p.sessionId || undefined,
+session_id: (!p.remote || persistAsRemote) && p.sessionId ? p.sessionId : undefined,
 ```
 
 `remote` / `host_id` 的写入规则不变(仍受 `persistAsRemote` 门控)。
@@ -89,11 +89,21 @@ session_id: p.sessionId || undefined,
 判定 remote-rebind,不受影响——多写的 local sid 不会误触发 rebind
 分支,因为 `remote` 是 false。
 
-字段语义变化(需在 spec 注释里落):
+字段语义(三种 pane):
 
-- `remote: true` 的 pane,`session_id` = 用于 rebind 的权威 id。
-- `remote: false` 的 pane,`session_id` = **上世代** local sid,仅用于
-  pin 迁移;不做任何其它用途(尤其不要拿去 rebind——那 sid 已死)。
+- **真正的 remote pane**(`p.remote === true` 且 `info.host_id !==
+  localHostID` → `persistAsRemote === true`):`session_id` = 用于
+  rebind 的权威 id;`remote: true` + `host_id` 也一并写。
+- **纯 local pane**(`p.remote === false`):`session_id` = **上世代**
+  local sid,仅用于 pin 迁移;`remote` / `host_id` 不写。
+- **Sidebar-viewer on local host**(`p.remote === true` 但
+  `info.host_id === localHostID` → `persistAsRemote === false`):
+  `remote` / `host_id` / `session_id` 全部 **不写**——原来的
+  session_id 属于另一实例的 relay,恢复时 pane 会 spawn 出全新本机
+  shell,把 pin 从远端 sid 迁到新本机 sid 会造成跨实例 pin 语义漂移。
+  这类 pin 的连续性由 relay 侧 session id 保活提供(sidebar 里那个
+  session 若还活着,就会以同一 sid 出现在 list 里,pin 自动生效);
+  spawn 分支的 pin 迁移**故意**不覆盖这个 case。
 
 `recovery.json` 体积影响:每个 local pane 多 ~50 字节(UUID 字符串 +
 JSON 引号 + 键名),量级可忽略。
@@ -196,6 +206,7 @@ remote 分支不需要 flush(sid 未变、pin 集本来就没被动过)。
 | Local pane 恢复,`snap.session_id ∈ pin` | rename → 新 sid pinned |
 | Local pane 恢复,`snap.session_id ∉ pin` | 不映射,新 sid 未 pin |
 | Remote pane 恢复(sid 不变) | remote 分支在 rename 之前 `continue`;不调用 rename,pin 集不变(sid 未变、天然仍在) |
+| Sidebar viewer on local host 恢复 | snapshot 里 `session_id` 未写(§4.1);`oldSid = ""` → 跳过 rename。老 pin id 如果对应的原始 session 仍活,relay 的 list 会以同一 sid 推回来,pin 自动生效;若不活,则孤儿 |
 | `snap.session_id` 缺失(旧 recovery.json / 异常快照) | 跳过映射,新 sid 未 pin;不崩 |
 | 用户 discard 掉某 tab | 该 tab 的 pane 未 spawn,老 pin id 成孤儿(保留,兼容 pin-design §4.7 "不清理脏 id") |
 | Spawn 失败(catch 分支) | `t.panes[i] = { sessionId: null }`,不做 rename;老 pin id 成孤儿 |

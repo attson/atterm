@@ -1,9 +1,11 @@
 # Auth — Atterm Session Token + OPAQUE + E2EE 钥匙环
 
 > **Audience**: 实现或审计 atterm 鉴权层与端到端加密的工程师
-> **Last updated**: 2026-06-16
+> **Last updated**: 2026-07-24
 > **Status**: stable
 > **See also**: [protocol.md](./protocol.md) · [architecture.md](./architecture.md) · [../superpowers/specs/2026-06-15-relay-e2ee-design.md](../superpowers/specs/2026-06-15-relay-e2ee-design.md)
+
+v0.3.x：登录响应新增 `realm_id` + `home_instance_url`（多实例路由，见 §4.3）；`remote_permission=full` 现在也门控远程文件浏览器的 `FS_REQUEST`（见 §2、§10）。详见 [architecture.md](./architecture.md) §Relay 多实例架构。
 
 ## 目录
 
@@ -61,6 +63,8 @@ flowchart LR
 | `session_token` | 30 天 TTL（无滑动续期） | `sessions` 表（DB 存 sha256，明文仅响应一次） | 客户端日常凭据 |
 | `pairing_token` | 5 分钟，一次性消费 | `pairing_tokens` 表 | QR 配对、跨设备引导 |
 | `invitation_code` | 7 天 TTL，一次性消费 | `invitations` 表 | 邀请新用户注册 |
+
+`remote_permission`（`view` / `control` / `full`，session owner 在 `SessionInfo` 里发布，见 [protocol.md](./protocol.md) §权限矩阵）不是账号鉴权的一部分，但门控同一 session 内的能力上限：`full` 是唯一允许发起远程文件浏览器 `FS_REQUEST`（浏览/编辑/CRUD/回收站）的等级，`internal/relay/client_conn.go` 在校验完 session token 之后再按此字段拒绝或放行（`permission_denied`，见 §10）。
 
 ## 3. 数据模型
 
@@ -169,11 +173,20 @@ sequenceDiagram
 要点：
 
 1. `POST /api/auth/login/init` → `POST /api/auth/login/finalize`；本地用密码跑 OPAQUE，relay 全程接触不到密码或口令哈希。
-2. finalize 返回 `session_token` + `account_key_wrap`（客户端本地解开拿回 32B `account_key`）+ user 摘要。
+2. finalize 返回 `session_token` + `account_key_wrap`（客户端本地解开拿回 32B `account_key`）+ user 摘要 + `realm_id` + `home_instance_url`（v0.3.x 多实例栈新增，见下）。
 3. 后续请求带 `Authorization: Bearer <session_token>`；WS 升级带 `Sec-WebSocket-Protocol: atterm-token.<session_token>`。
 4. 特权操作（`DELETE /api/me` 等）需 step-up：再走一次 `/api/auth/stepup/{init,finalize}` 换 60s 单次有效的 `step_up_token`（`internal/relay/opaque_stepup.go`）。
 
 完整 OPAQUE 套件、endpoint、数据模型与时序见 §12。`GET /api/me`（Bearer）→ `LookupSession(sha256(token))` → user 摘要，这部分与认证方式无关。
+
+**登录响应新增字段（v0.3.x，多实例路由）**：`internal/relay/opaque_auth.go::loginFinalizeResponse` 在 `session_token` / `account_key_wrap` / `user` 之外，携带：
+
+| 字段 | 来源 | 客户端行为 |
+|------|------|------------|
+| `realm_id` | `internal/userstore/realm.go` 的 `relay_realm_state`（集群共享、永不变） | 只读；用于校验自己连的是同一 realm（跨实例 E2EE `account_key` 派生一致性）。客户端**不应**接受来自不同 `realm_id` 的 `account_key_wrap` 混用 |
+| `home_instance_url` | `internal/relay/node_home.go::resolveHomeInstanceURL`，按用户偏好或任选一个活跃实例 | 客户端登录后若当前连接的 relay ≠ `home_instance_url`，自行发起 reconnect 到该实例；`PUT /api/me/home` 可改用户偏好 |
+
+`register/finalize` 响应（`registerFinalizeResponse`）目前只带 `realm_id`（无 `home_instance_url`——新用户尚无偏好，首次登录才落地）。多实例部署细节（`relay_instances` 心跳、`GET /api/nodes`）见 [architecture.md](./architecture.md) §Relay 多实例架构。
 
 ### 4.4 配对（QR + 一次性 pairing token）
 
@@ -425,6 +438,17 @@ Web 浏览器没有等价存储——只能用 localStorage。XSS 风险：单�
 | `500` | 任何 endpoint | DB 故障等 | 重试或提示后端故障 |
 
 WS 升级失败统一表现为 HTTP 状态码（在 upgrade 之前），客户端在 `onerror` 中读取 status code。
+
+**`FS_REQUEST`（帧协议层，非 HTTP 状态码）**：鉴权通过、session 已 attach 后，`internal/relay/client_conn.go` 还会按 `remote_permission` 拒绝，回一个 `FS_RESPONSE{error}` 帧而非断连：
+
+| `error` 值 | 触发条件 | 客户端建议 |
+|---|---|---|
+| `invalid_request` | payload 解析失败 / `request_id`、`op` 缺失 / `session_id` 不匹配 | 视为客户端 bug，不重试 |
+| `permission_denied` | `remote_permission != full`；或 `open_external` 且 scope 非 write | 隐藏/禁用远程文件浏览器入口 |
+| `upstream_unavailable` | 对应桌面 host 未连接 mirror（`DriverFromUpstream()` 为假） | 提示"owner 设备离线"，可重试 |
+| `driver_required` | `open_external` 但当前客户端不是 driver | 提示"需先取得 driver" |
+
+完整 `FS_REQUEST`/`FS_RESPONSE`/`FS_EVENT` 帧 schema 与权限矩阵见 [protocol.md](./protocol.md)。
 
 ## 11. 客户端实现要点
 

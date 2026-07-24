@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
@@ -24,7 +25,150 @@ const emit = defineEmits<{
   (e: "activate", id: string): void;
   (e: "close", id: string): void;
   (e: "new"): void;
+  (e: "reorder", fromId: string, targetId: string, position: "before" | "after"): void;
 }>();
+
+const DRAG_THRESHOLD = 4;
+const EDGE_SCROLL_ZONE = 40;
+const EDGE_SCROLL_SPEED = 8;
+
+const drag = ref<null | {
+  fromId: string;
+  startX: number;
+  active: boolean;
+  pointerId: number;
+  overId: string | null;
+  position: "before" | "after" | null;
+  hadDrag: boolean;
+}>(null);
+const tabsEl = ref<HTMLElement | null>(null);
+let lastClientX = 0;
+let rafId: number | null = null;
+
+function isCloseTarget(e: PointerEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  return !!t && !!t.closest?.(".close");
+}
+
+function onTabPointerDown(id: string, e: PointerEvent) {
+  if (e.button !== 0) return;
+  if (isCloseTarget(e)) return;
+  drag.value = {
+    fromId: id,
+    startX: e.clientX,
+    active: false,
+    pointerId: e.pointerId,
+    overId: null,
+    position: null,
+    hadDrag: false,
+  };
+}
+
+function hitTest(clientX: number): { id: string; position: "before" | "after" } | null {
+  if (!tabsEl.value) return null;
+  const nodes = Array.from(tabsEl.value.querySelectorAll<HTMLElement>(".tab"));
+  if (nodes.length === 0) return null;
+  for (const el of nodes) {
+    const r = el.getBoundingClientRect();
+    if (clientX >= r.left && clientX <= r.right) {
+      const mid = (r.left + r.right) / 2;
+      return { id: el.dataset.tabId!, position: clientX < mid ? "before" : "after" };
+    }
+  }
+  const firstR = nodes[0].getBoundingClientRect();
+  if (clientX < firstR.left) return { id: nodes[0].dataset.tabId!, position: "before" };
+  const lastR = nodes[nodes.length - 1].getBoundingClientRect();
+  return { id: nodes[nodes.length - 1].dataset.tabId!, position: "after" };
+}
+
+function tickEdgeScroll() {
+  const d = drag.value;
+  const el = tabsEl.value;
+  if (!d || !d.active || !el) { rafId = null; return; }
+  const rect = el.getBoundingClientRect();
+  if (lastClientX - rect.left < EDGE_SCROLL_ZONE) {
+    el.scrollLeft = Math.max(0, el.scrollLeft - EDGE_SCROLL_SPEED);
+  } else if (rect.right - lastClientX < EDGE_SCROLL_ZONE) {
+    el.scrollLeft = el.scrollLeft + EDGE_SCROLL_SPEED;
+  } else {
+    rafId = null;
+    return;
+  }
+  rafId = requestAnimationFrame(tickEdgeScroll);
+}
+
+function onWindowPointerMove(e: PointerEvent) {
+  const d = drag.value;
+  if (!d || e.pointerId !== d.pointerId) return;
+  lastClientX = e.clientX;
+  if (!d.active) {
+    if (Math.abs(e.clientX - d.startX) < DRAG_THRESHOLD) return;
+    d.active = true;
+    d.hadDrag = true;
+  }
+  if (tabsEl.value) {
+    const rect = tabsEl.value.getBoundingClientRect();
+    const inLeft = e.clientX - rect.left < EDGE_SCROLL_ZONE;
+    const inRight = rect.right - e.clientX < EDGE_SCROLL_ZONE;
+    if ((inLeft || inRight) && rafId === null) {
+      rafId = requestAnimationFrame(tickEdgeScroll);
+    }
+  }
+  const hit = hitTest(e.clientX);
+  if (!hit) return;
+  if (hit.id === d.fromId) return;
+  if (hit.id === d.overId && hit.position === d.position) return;
+  d.overId = hit.id;
+  d.position = hit.position;
+  emit("reorder", d.fromId, hit.id, hit.position);
+}
+
+function suppressNextClick() {
+  const el = tabsEl.value;
+  if (!el) return;
+  const stop = (ev: MouseEvent) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    el.removeEventListener("click", stop, true);
+  };
+  el.addEventListener("click", stop, true);
+  // If the trailing click never arrives (drag ended off-tab), clean up on
+  // the next macrotask so a later, unrelated click on the tabbar still fires.
+  setTimeout(() => el.removeEventListener("click", stop, true), 0);
+}
+
+function endDrag(cancelled: boolean) {
+  const d = drag.value;
+  if (!d) return;
+  if (d.hadDrag && !cancelled) suppressNextClick();
+  drag.value = null;
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+}
+
+function onWindowPointerUp(e: PointerEvent) {
+  if (!drag.value || e.pointerId !== drag.value.pointerId) return;
+  endDrag(false);
+}
+
+function onWindowPointerCancel(e: PointerEvent) {
+  if (!drag.value || e.pointerId !== drag.value.pointerId) return;
+  endDrag(true);
+}
+
+onMounted(() => {
+  window.addEventListener("pointermove", onWindowPointerMove);
+  window.addEventListener("pointerup", onWindowPointerUp);
+  window.addEventListener("pointercancel", onWindowPointerCancel);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("pointermove", onWindowPointerMove);
+  window.removeEventListener("pointerup", onWindowPointerUp);
+  window.removeEventListener("pointercancel", onWindowPointerCancel);
+  if (rafId !== null) cancelAnimationFrame(rafId);
+});
 
 const { t: i18nT } = useI18n();
 
@@ -74,15 +218,21 @@ function onClose(e: MouseEvent, id: string) {
 
 <template>
   <div class="tabbar">
-    <div class="tabs">
+    <div class="tabs" ref="tabsEl">
       <div
         v-for="(t, idx) in tabs"
         :key="t.id"
         :data-tab-id="t.id"
         class="tab"
-        :class="{ active: t.id === currentId, remote: t.activeRemote, disconnected: t.disconnected }"
+        :class="{
+          active: t.id === currentId,
+          remote: t.activeRemote,
+          disconnected: t.disconnected,
+          dragging: drag?.active && drag?.fromId === t.id,
+        }"
         :title="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.disconnected ? i18nT('terminal.tabDisconnectedSuffix') + ' ' : '') + (t.activeSession?.command ?? '')"
         @click="emit('activate', t.id)"
+        @pointerdown="onTabPointerDown(t.id, $event)"
       >
         <span class="num">{{ idx + 1 }}:</span>
         <span v-if="t.layout !== 'single'" class="layout-icon" :title="layoutTitle(t)">{{ layoutLabel(t) }}</span>
@@ -107,7 +257,7 @@ function onClose(e: MouseEvent, id: string) {
           class="tab-unread-dot"
           data-test="tab-unread-dot"
         >●</span>
-        <button class="close" @click="onClose($event, t.id)">×</button>
+        <button class="close" @pointerdown.stop @click="onClose($event, t.id)">×</button>
       </div>
     </div>
     <button
@@ -138,7 +288,9 @@ function onClose(e: MouseEvent, id: string) {
   color: var(--fg-dim); cursor: pointer; user-select: none;
   white-space: nowrap; min-width: 110px; max-width: 220px;
   transition: background 120ms;
+  touch-action: pan-y;
 }
+.tab.dragging { opacity: 0.5; }
 .tab:hover { background: rgba(255, 255, 255, 0.04); }
 .tab.active {
   background: var(--bg); color: var(--fg);

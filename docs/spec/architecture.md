@@ -1,9 +1,11 @@
 # 架构规范
 
 > **Audience**: 理解 atterm 系统整体结构的工程师
-> **Last updated**: 2026-07-10
+> **Last updated**: 2026-07-24
 > **Status**: stable
-> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md)
+> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md) · [conventions.md](./conventions.md) · [component-style.md](./component-style.md)
+
+v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identity + `relay_instances` 心跳 + `home_instance_url` 路由）+ DB-backed 运行时配置（`relay_config` 表，SQLite / Postgres 双后端，取代原 `relay.json`）、远程文件浏览器（`FS_REQUEST/RESPONSE/EVENT` + `PASTE_FILE`）、会话侧栏置顶 + 搜索（`useSessionPins` / `sessionMatch.ts`）及其恢复期 pin 迁移、桌面启动致命错误非崩溃化（`StartupError`）。相关设计 doc：[session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [pinned-session-recovery-design](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)。
 
 ## 一句话总览
 
@@ -68,11 +70,13 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子 | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
-| `userstore` | `internal/userstore/` | SQLite 持久化：users / invitations / sessions / pairing_tokens / webhooks | 不知道 HTTP / 不依赖 relay |
+| `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webhooks / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）| 不知道 HTTP / 不依赖 relay |
+| `internal/relay/instance_registry.go` + `node_home.go` + `config_refresh.go` | internal | 多实例心跳缓存、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
 | `desktop/relay_host.go` | desktop | 启 mini relay，spawn PTY，AdoptSession | 不连远程 |
 | `desktop/uplink.go` | desktop | 远程 relay 客户端（lazy 协议） | 不直接拥有 PTY |
+| `desktop/remote_fs.go` | desktop | 远程文件浏览器桥接：本机文件系统 CRUD + 回收站 + watch，响应 `FS_REQUEST`/发 `FS_EVENT`，受 `remote_permission=full` 门控（配合 `internal/relay/fs_router.go` 按 host 路由） | 不做前端 UI、不越权访问未授权 session 的 host |
 | `desktop/updater.go` | desktop | GitHub Releases 自动更新 state machine（check / download / 调用 platform install helper） | 不动 PTY、不动 relay |
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
@@ -199,6 +203,8 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 - 多实例同机：`host_id` 相同，`session_id` 独立 → 去重必须按 `session_id`
 - session 在迁移/重启间不持久（PTY 退出即销毁）
 
+**会话置顶跨重启迁移**：本机 pane 重启后 recovery 会拿到新 `session_id`；`desktop/frontend/src/composables/useRecoverySnapshot.ts::buildSnapshot` 现在对纯 local pane 也写 `session_id`（仅供 pin 迁移读，不触发 remote-rebind 分支），`App.vue::executeRestore` spawn 新 sid 后调 `useSessionPins.rename(oldSid, newSid)` 承接置顶状态。**sidebar-viewer on local host**（`p.remote===true` 但 `info.host_id===本机`）是第三种 pane 状态，其 `session_id` 属于另一实例的 relay，故意不参与该迁移——完整三态判定表见 [pinned-session-recovery-design.md](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) §4.1。
+
 ## phase 完成度（截至当前）
 
 - ✅ Phase 0：协议骨架，命令行 wrapper + relay + 浏览器 attach
@@ -222,7 +228,7 @@ desktop/main.go            创建 *App，wails.Run；OnStartup→app.startup，O
                            var Version / UpdateVerifyPublicKey (ldflags 注入)
 desktop/app.go             A 持有 *relayHost、*uplink、*configStore、*Updater
                            暴露 ~48 个 binding，按用途分组：session/relay/update/
-                           pairing/diagnostics/quicktemplates/plugin-fs；
+                           pairing/diagnostics/quicktemplates/plugin-fs/pin；
                            CloseSession sync 注销（cleanup() 同步调，notifyChange 立即
                            推 ANNOUNCE，不等 pty.Wait）；
                            CreatePairingToken 用当前 RelayURL + session token 调
@@ -230,7 +236,13 @@ desktop/app.go             A 持有 *relayHost、*uplink、*configStore、*Updat
                            GetQuickTemplates / SetQuickTemplates 读写
                            appConfig.QuickTemplates；
                            GetDiagnostics / ExportDiagnostics 走 desktop/diagnostics.go
-                           组装脱敏 payload + 平台 save dialog
+                           组装脱敏 payload + 平台 save dialog；
+                           Get/SetPinnedSessionIds 读写 config.go::PinnedSessionIDs；
+                           setStartupFatalError(msg, logPath) / GetStartupError() —
+                           relay host 启动或日志初始化失败时不再 log.Fatalf 崩进程，
+                           改记 startupFatal *StartupError{Fatal,Message,LogPath}
+                           字段，webview 照常起来，前端 boot 末尾拉取展示可复制的
+                           失败信息（红线 #19 + #35）
 desktop/relay_host.go      启动 relay.NewServer + net.Listen("tcp","127.0.0.1:0")
                            NewSession 起 ptyhost、AdoptSession 到本地 server
                            watchCwd goroutine 每秒 readlink /proc/<pid>/cwd
@@ -272,31 +284,55 @@ desktop/config.go          ~/.config/atterm/config.json 持久化，atomic write
 
 `cmd/atterm-relay` 是生产入口，默认 fail-closed：
 
-- 用户账号和身份信息存储在 SQLite（`users.db`，路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；密码走 OPAQUE，relay 永不接收明文密码（见 auth.md §12）；
+- 用户账号和身份信息存储在 `internal/userstore`（SQLite 或 Postgres 双后端，由 `ATTERM_RELAY_DB_DRIVER=sqlite|postgres` 选择，DSN 走 `ATTERM_RELAY_DB_DSN`；SQLite 默认路径由 `--config-dir` 或 `ATTERM_RELAY_CONFIG_DIR` 指定）；密码走 OPAQUE，relay 永不接收明文密码（见 auth.md §12）；
 - 监听 HTTP（`--addr :8080`，给反代后端 / loopback 开发）与 HTTPS（`--https-addr`，浏览器直连）。OPAQUE 用浏览器 WebCrypto，只在安全上下文（HTTPS/localhost）可用，故浏览器必须经 HTTPS 访问。**无自签回退**：开 `--https-addr` 必须提供真证书 `ATTERM_TLS_CERT/KEY`（缺失即 fatal，见 `buildTLSConfig`），否则在 `:8080` 前面挂 TLS 终止反代（Cloudflare/Caddy/nginx）（红线 #27）；
 - 公网监听时必须设置 `ATTERM_BOOTSTRAP_ADMIN_EMAIL`（relay 启动打印一次性 claim token，操作员用它完成 OPAQUE 注册即获得 admin；**无 `ATTERM_BOOTSTRAP_ADMIN_PASSWORD`**），除非显式 `--dev-insecure`；
 - 公网监听未设置 `--origins` / `ATTERM_ORIGINS` 时拒绝启动，除非显式 `--dev-insecure`；
 - 默认返回 CSP/security headers，`web/` 项目代码只允许同源 script 和同源 stylesheet；CSP 额外允许 inline style 供 xterm.js 运行时布局样式，并预留 Cloudflare Web Analytics beacon 源（不允许应用代码引入 CDN 依赖）；Vue/xterm/Naive UI 等依赖由 Vite 打包为同源 assets，并由 PWA service worker 预缓存；
 - 对 HTTP 请求和 WS upgrade 先按远端 IP 限流，鉴权成功后再按远端 IP + token hash 限流，并限制同一 key 的活跃 WS 连接数；
 - 支持 owner 发布的 `remote_permission`（view/control/full），relay 和 desktop uplink 双重强制执行；
-- runtime 配置持久化在 `<config-dir>/relay.json`（`--config` / `ATTERM_RELAY_CONFIG` 覆盖路径），`/admin/api/*` 可运行时读写并热生效，无需重启（见下「运行时配置」）；`/admin/` API 需 admin 用户；
+- runtime 配置持久化在 DB `relay_config` 表（`internal/userstore/relay_config.go`，singleton row），`/admin/api/*` 可运行时读写并热生效，无需重启（见下「运行时配置」）；`/admin/` API 需 admin 用户；
 - `--dev-insecure` 只用于开发/可信内网，会打印明文传输/弱鉴权警告。
 
-### 运行时配置（`relay.json` + 管理后台）
+### 运行时配置（DB `relay_config` + 管理后台）
 
-启动所需 env 已收窄到「核心」（bootstrap email、origins、持久化目录）；飞书、限流、Origin 白名单、VAPID subject、详细日志等都下沉到 `internal/relay/admin_config.go` 的 `AdminConfig`，由 `/admin/api/config` 与 `/admin/api/feishu` 读写并热应用：
+`relay.json` 已完全下线：`docker-compose.yml` 明确注释「no longer written or read」，仓库内 `internal/`、`cmd/` 下已无非测试引用。启动所需 env 已收窄到「核心」（bootstrap email、origins、DB 后端选择）；飞书、限流、Origin 白名单、VAPID subject、详细日志等都下沉到 `internal/relay/admin_config.go` 的 `AdminConfig`，由 `/admin/api/config` 与 `/admin/api/feishu` 读写并热应用：
 
-- **热生效（不重启）**：origins / debug 走 `Server` 上的 `atomic.Pointer` / `atomic.Bool`；限流走 `applyRuntimeLimits`；飞书走 `Server.ApplyFeishuConfig`（运行时建/拆 secret cipher + handler，路由常注册后按原子 handler 门控，因为 `http.ServeMux` 不支持注销路由）。
-- **唯一需重启**：VAPID subject（`webpush.Open` 启动时一次性消费）。
+- **热生效（不重启）**：origins / debug 走 `Server` 上的 `atomic.Pointer` / `atomic.Bool`；限流走 `applyRuntimeLimits`（`ATTERM_RATE_LIMIT_PER_MINUTE` / `ATTERM_MAX_CONNECTIONS_PER_KEY` 例外，仍是 per-instance 进程内 map，改后需重启该实例）；飞书走 `Server.ApplyFeishuConfig`（运行时建/拆 secret cipher + handler，路由常注册后按原子 handler 门控，因为 `http.ServeMux` 不支持注销路由）。
+- **唯一因架构限制需重启**：VAPID subject（`webpush.Open` 启动时一次性消费）。
 - **DB 在无 secret cipher 下也能打开**：字段加密 cipher 只在启用飞书时挂载（`userstore.SetSecretCipher`），所以 `ATTERM_FEISHU_ENCRYPT_KEY` 不再是启动必填——没配飞书的 relay 不会因缺密钥崩溃。
-- **env→config 播种**：上述每个 env 在首次启动时若 `relay.json` 对应项为空则写入一次（config 优先），之后管理后台是唯一可信源。
-- 飞书主加密密钥有意持久化在 `relay.json`（0600）以保护 `users.db` 里的飞书凭据；admin GET 只回显末 4 位、绝不返回明文。详见 AGENTS.md 红线 #26。
+- **env→config 播种**：上述每个 env 在首次启动时若 `relay_config` 对应字段为空则写入一次（DB 值优先），之后管理后台是唯一可信源。
+- 飞书主加密密钥有意持久化在 DB `relay_config.feishu_secret_key` 以保护 `users.db` 里的飞书凭据；admin GET 只回显末 4 位、绝不返回明文、绝不写日志；换 key 会让旧飞书绑定无法解密，故 PUT 默认拒绝轮换、需 `force:true`。详见 AGENTS.md 红线 #26。
+- **多实例传播**：`internal/relay/config_refresh.go` 轮询 `relay_config.version`（默认 ~10s TTL），任一实例的 admin 改动会在这个窗口内同步到所有实例。
 
 鉴权详情见协议规范 §鉴权（统一为 Bearer session token，admin 由 `users.is_admin` 决定）。
 
 `internal/relay.NewServer(relay.Config{})` 作为库仍保留”不鉴权”语义（当 Resolver 和
 Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等同于 `cmd/atterm-relay`
 的生产默认行为。
+
+## Relay 多实例架构
+
+跨机 HA / 就近节点路由通过 realm identity + instance registry 实现（v0.3.x，全部合入
+`v0.3-dev`）：
+
+- **realm identity**：`internal/userstore/realm.go` 的 `relay_realm_state`（singleton
+  row）持有整个集群共享的 `realm_id`，首次启动生成、永不变，直接影响 E2EE
+  `account_key` 派生——同一物理集群的所有实例必须共享同一 realm，`realm_id` 只从 DB
+  读、不接受 env 覆盖。
+- **instance heartbeat**：每个实例通过 `ATTERM_RELAY_INSTANCE_PUBLIC_URL` 声明自己的
+  外部可达 URL，定期心跳写入 `internal/userstore/relay_instances.go` 的
+  `relay_instances` 表；`internal/relay/instance_registry.go` 维护活跃实例的内存缓存。
+- **home_instance 路由**：`internal/relay/node_home.go::resolveHomeInstanceURL` 按用户
+  的 `home_instance_url` 偏好字段返回登录后应连的实例（未设置则任选一个活跃实例）。
+  登录响应（`internal/relay/opaque_auth.go`）在 `AUTH_INFO` 之外额外下发 `realm_id` +
+  `home_instance_url` 两个字段（走 HTTP 登录响应而非帧协议，详见 auth.md §登录）；
+  客户端拿到 `home_instance_url` 后自行发起 reconnect。`PUT /api/me/home` 可改用户偏好，
+  `GET /api/nodes` 返回活跃实例列表供节点切换 UI 使用。
+- **配置传播**：多实例场景下所有实例指向同一外部 Postgres，`relay_config` 变更靠上文
+  §运行时配置 的版本轮询扩散；除 realm/config 外没有实例间直连或 gossip。
+
+改这部分代码时请同步更新本节与 AGENTS.md 红线 #33、auth.md §登录响应字段。
 
 ## 远程权限与 admin 配置
 
@@ -305,7 +341,7 @@ Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等
 里发布 `remote_permission`。远端 relay 计算 principal scope 与 owner 权限的交集：
 session token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
 
-relay admin 配置（`AdminConfig` / `relay.json`）覆盖运维场景：rate limit、连接数、Origin 白名单、详细日志开关，以及飞书集成（开关 + 加密密钥 + base URL）。改动经 `/admin/api/config` 与 `/admin/api/feishu` 热生效（见上「运行时配置」）。用户账号管理（邀请、用户列表、提权）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。前端对应 `web/src/admin/tabs/{Config,FeishuConfig,Users,Invitations}.vue`。
+relay admin 配置（`AdminConfig` / DB `relay_config`）覆盖运维场景：rate limit、连接数、Origin 白名单、详细日志开关，以及飞书集成（开关 + 加密密钥 + base URL）。改动经 `/admin/api/config` 与 `/admin/api/feishu` 热生效（见上「运行时配置」）。用户账号管理（邀请、用户列表、提权）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。前端对应 `web/src/admin/tabs/{Config,FeishuConfig,Users,Invitations}.vue`。
 
 ## 前端架构细节
 
@@ -331,11 +367,27 @@ desktop/frontend/src/
 │                          autocheck toggle / release notes / 三个按钮）
 │   ├── ConfirmInstallDialog.vue force install & restart 确认弹窗，列出会被
 │                                 终止的本地 session 数 + 远端 detach 数
-│   └── RemoteSessionsDialog.vue cast 面板：以 tab 形式打开远端 session
+│   ├── RemoteSessionsDialog.vue cast 面板：以 tab 形式打开远端 session
+│   ├── TaskSidebar.vue    会话侧栏容器：header 内联 `<input type="search">`
+│                          （`Cmd/Ctrl+F` focus，`Esc` 清空）+ `defineExpose({
+│                          focusSearch })`；`.title` ellipsis 应对窄侧栏
+│   ├── TaskGroupedList.vue 虚拟 📌 pinned 分组渲染 + 折叠组（既有
+│                          `useCollapsedGroups` 模式）+ `matchesSession`
+│                          搜索过滤（含完成折叠一并过滤）+ 空态提示
+│                          `[data-test="search-empty"]`
+│   └── SessionRowMenu.vue 右键会话行菜单：fixed-positioned popover，
+│                          Esc/focusout/空白点自关，viewport 溢出翻转
 ├── composables/
-│   └── useTerminalShortcuts.ts document 级 capture-phase keydown router
-│                                匹配 e.code（KeyN/KeyW/KeyT/Bracket{Left,Right}）
-│                                避开 macOS Option-letter dead key 的 e.key 陷阱
+│   ├── useTerminalShortcuts.ts document 级 capture-phase keydown router
+│   │                          匹配 e.code（KeyN/KeyW/KeyT/Bracket{Left,Right}）
+│   │                          避开 macOS Option-letter dead key 的 e.key 陷阱
+│   ├── useSessionPins.ts  module-level `pinnedIds: Ref<Set<string>>` 共享状态
+│   │                      + `pin/unpin/toggle/rename/flushNow`（300ms debounce
+│   │                      持久化到 `desktop/config.go::PinnedSessionIDs`）
+│   ├── useCollapsedGroups.ts 侧栏分组折叠状态（`useSessionPins` 沿用同一
+│   │                          module-level ref 共享模式）
+│   └── useRecoverySnapshot.ts snapshot 写盘 + `buildSnapshot` 携带
+│                              pin 迁移用的 `session_id`（见「会话标识」节）
 ├── lib/
 │   ├── types.ts           LayoutKind/Pane/Tab/SplitDir/FocusDir
 │   ├── layout.ts          transitionLayout / closePane / focusNeighbor 纯函数
@@ -344,11 +396,19 @@ desktop/frontend/src/
 │   ├── connection.ts      SessionConnection：WS attach + 重连 + 续传 +
 │                          sendResize 队列（WS 还在 CONNECTING 时缓存，ws.onopen
 │                          跟在 ATTACH 帧后 flush）
+│   ├── sessionMatch.ts    `matchesSession(session, q)` 纯函数：title/cwd/
+│                          current_command case-insensitive substring；`q`
+│                          由调用方预先 trim + lowercase
+│   ├── shortcutBindings.ts `sidebar.focus-search`（默认 `Mod+KeyF`）等
+│                           快捷键 action 绑定表
 │   └── api.ts             Wails bindings 包装（不依赖 generated 文件，走
 │                          window.go.main.App.*；含 UpdateState 镜像）
 ├── platform/              Wails / Capacitor / browser adapter；App 只依赖
 │                          `usePlatform()`，不要在其它目录直接 import wailsjs
-├── plugins/               右侧插件槽：file explorer / translate（legacy quickInput 已删，由 QuickTemplate 取代）
+├── plugins/               右侧插件槽：fileExplorer（本地/远程双源切换 +
+│                          编辑 + CRUD + 回收站，受 `remote_permission=full`
+│                          门控远程侧）/ translate（legacy quickInput 已删，
+│                          由 QuickTemplate 取代）
 └── i18n/                  desktop 前端中英 messages + useI18n()
 ```
 

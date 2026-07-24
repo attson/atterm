@@ -21,6 +21,7 @@ import { useResizer } from "./plugins/useResizer";
 import { usePluginConfigStore } from "./plugins/configStore";
 import { sendInputToSession } from "./lib/sendInput";
 import { applyTabReorder } from "./lib/tabReorder";
+import { computeCloseTabState } from "./lib/closeTabOptimistic";
 // Plugin theme palettes (CSS vars). Loaded in main bundle so the panel
 // toggle and Quick Input toolbar can read --ed-* vars even when the
 // file-explorer chunk is not yet loaded.
@@ -962,11 +963,14 @@ async function onClosePane() {
   closePaneAt(t, t.activePaneIdx);
 }
 
-async function closePaneAt(t: Tab, idx: number, opts?: { detachOnly?: boolean }) {
+function closePaneAt(t: Tab, idx: number, opts?: { detachOnly?: boolean }) {
   const target = t.panes[idx];
-  if (target?.sessionId && !target.remote && !opts?.detachOnly) {
-    pendingLocalIds.delete(target.sessionId);
-    try { await closeSession(target.sessionId); } catch { /* sweep cleans up */ }
+  // In single layout closePane() keeps the pane's sessionId and returns
+  // closeTab:true; let closeTab() below handle the local kill so we don't
+  // duplicate the RPC or the optimistic localList drop.
+  const cascadeToCloseTab = t.layout === "single";
+  if (!cascadeToCloseTab && target?.sessionId && !target.remote && !opts?.detachOnly) {
+    optimisticallyDropLocalSession(target.sessionId);
   }
   const r = closePane(t.layout, t.panes, idx, t.colRatio, t.rowRatio);
   t.layout = r.layout;
@@ -979,27 +983,39 @@ async function closePaneAt(t: Tab, idx: number, opts?: { detachOnly?: boolean })
   }
 }
 
-async function closeTab(id: string, opts?: { detachOnly?: boolean }) {
-  const t = tabs.value.find((tt) => tt.id === id);
-  if (!t) return;
-  const closures: Promise<void>[] = [];
-  for (const p of t.panes) {
-    if (p.sessionId && !p.remote) {
-      pendingLocalIds.delete(p.sessionId);
-      // closePane's "single" layout branch returns panes unchanged (still
-      // holding the sessionId) alongside closeTab:true — detachOnly callers
-      // (mergeSelectedIntoTab) rely on this guard so the cascade here
-      // doesn't kill a shell that's only moving to another tab.
-      if (!opts?.detachOnly) {
-        closures.push(closeSession(p.sessionId).catch(() => undefined));
-      }
-    }
+// Optimistic close for a single local session: drop from pending + localList
+// right away, then fire the Go CloseSession RPC in the background. The next
+// LIST_RESP will reconcile if anything survived on the Go side.
+function optimisticallyDropLocalSession(sid: string) {
+  pendingLocalIds.delete(sid);
+  const filtered = localList.value.filter((s) => s.id !== sid);
+  if (filtered.length !== localList.value.length) {
+    localList.value = filtered;
+    refreshVisibleRemoteSessions();
   }
-  await Promise.all(closures);
-  tabs.value = tabs.value.filter((tt) => tt.id !== id);
-  if (currentTabId.value === id) {
+  closeSession(sid).catch(() => undefined);
+}
+
+function closeTab(id: string, opts?: { detachOnly?: boolean }) {
+  const plan = computeCloseTabState(tabs.value, localList.value, currentTabId.value, id, opts);
+  if (!plan) return;
+  for (const sid of plan.localIdsToClose) pendingLocalIds.delete(sid);
+  // Optimistic UI: drop the tab and its local sessions from the visible state
+  // right away so the sidebar and tabbar reflect the intent before the Go
+  // CloseSession RPCs (and the follow-up LIST_RESP) round-trip. If a close
+  // somehow fails on the Go side, the next LIST_RESP will resurface it —
+  // better than sitting on a blocked await for hundreds of ms.
+  tabs.value = plan.nextTabs;
+  if (plan.nextLocalList !== localList.value) {
+    localList.value = plan.nextLocalList;
+    refreshVisibleRemoteSessions();
+  }
+  if (plan.wasCurrent) {
     if (tabs.value.length > 0) gotoTab(tabs.value[0].id);
     else location.hash = "";
+  }
+  for (const sid of plan.localIdsToClose) {
+    closeSession(sid).catch(() => undefined);
   }
 }
 

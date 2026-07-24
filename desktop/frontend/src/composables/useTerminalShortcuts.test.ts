@@ -18,6 +18,7 @@ describe("useTerminalShortcuts (default bindings)", () => {
     onFocusPane: vi.fn(),
     onNewTab: vi.fn(),
     onSwitchTab: vi.fn(),
+    onFocusSidebarSearch: vi.fn(),
   };
 
   beforeEach(() => {
@@ -84,6 +85,12 @@ describe("useTerminalShortcuts (default bindings)", () => {
   it("Ctrl+Shift+[ (key='{') -> onSwitchTab(-1)", () => {
     fireKey({ key: "{", code: "BracketLeft", ctrlKey: true, shiftKey: true });
     expect(handlers.onSwitchTab).toHaveBeenCalledWith(-1);
+  });
+
+  it("Ctrl+F -> onFocusSidebarSearch, preventDefault", () => {
+    const ev = fireKey({ key: "f", code: "KeyF", ctrlKey: true });
+    expect(handlers.onFocusSidebarSearch).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
   });
 
   it("plain N (no modifier) is ignored", () => {

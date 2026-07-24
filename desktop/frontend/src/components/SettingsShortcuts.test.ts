@@ -33,12 +33,12 @@ async function setupStore(initial: Record<string, string>) {
 }
 
 describe("SettingsShortcuts", () => {
-  it("renders 13 rows grouped under 'pane', 'tab', and 'sidebar'", async () => {
+  it("renders 14 rows grouped under 'pane', 'tab', and 'sidebar'", async () => {
     await setupStore({});
     const wrapper = mount(SettingsShortcuts, { props: { mod: "Control" } });
     await flushPromises();
     const rows = wrapper.findAll(".shortcut-row");
-    expect(rows).toHaveLength(13);
+    expect(rows).toHaveLength(14);
     expect(wrapper.text()).toContain("Pane");
     expect(wrapper.text()).toContain("Tab");
     expect(wrapper.text()).toContain("Sidebar");

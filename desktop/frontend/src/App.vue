@@ -343,6 +343,7 @@ const currentTab = computed<Tab | null>(
 
 // Keep a Ref (not ComputedRef) so it satisfies PluginContextInputs.activePane.
 const activePaneRef = ref<Pane | null>(null);
+const taskSidebarRef = ref<InstanceType<typeof TaskSidebar> | null>(null);
 const selectedPane = computed<Pane | null>(() => {
   const tab = currentTab.value;
   return tab?.panes[tab.activePaneIdx] ?? null;
@@ -1098,6 +1099,9 @@ useTerminalShortcuts(
     onNewTab: startNewTab,
     onSwitchTab,
     onToggleTaskSidebar: () => setSidebarCollapsedAndPersist(!sidebarCollapsed.value),
+    onFocusSidebarSearch: () => {
+      void taskSidebarRef.value?.focusSearch();
+    },
   },
   { bindings: shortcutBindings },
 );
@@ -1317,6 +1321,7 @@ onUnmounted(() => {
 
     <div v-else class="main-row">
       <TaskSidebar
+        ref="taskSidebarRef"
         :collapsed="sidebarCollapsed"
         :by-host="sessions.byHost.value"
         :primary-state-for-host="sessions.primaryStateForHost"

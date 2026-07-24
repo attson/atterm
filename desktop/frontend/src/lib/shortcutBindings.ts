@@ -32,6 +32,7 @@ export const ACTIONS: readonly ShortcutAction[] = [
   { id: "tab.prev",                   group: "tab",  labelKey: "settings.shortcuts.previousTab",                          defaultBinding: "Mod+Shift+BracketLeft" },
   { id: "tab.next",                   group: "tab",  labelKey: "settings.shortcuts.nextTab",                              defaultBinding: "Mod+Shift+BracketRight" },
   { id: "toggleTaskSidebar",          group: "sidebar", labelKey: "tasks.sidebar.collapse",                               defaultBinding: "Mod+KeyB" },
+  { id: "sidebar.focus-search",       group: "sidebar", labelKey: "settings.shortcuts.focusSidebarSearch",                defaultBinding: "Mod+KeyF" },
 ] as const;
 
 export const ACTION_BY_ID: Record<string, ShortcutAction | undefined> = Object.fromEntries(

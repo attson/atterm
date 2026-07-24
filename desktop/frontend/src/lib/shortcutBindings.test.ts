@@ -3,8 +3,8 @@ import { ACTIONS, ACTION_BY_ID, DEFAULT_BINDINGS } from "./shortcutBindings";
 import { serialize, parse, type Mod } from "./shortcutBindings";
 
 describe("shortcutBindings registry", () => {
-  it("declares 13 actions", () => {
-    expect(ACTIONS).toHaveLength(13);
+  it("declares 14 actions", () => {
+    expect(ACTIONS).toHaveLength(14);
   });
 
   it("has unique action IDs", () => {
@@ -27,7 +27,7 @@ describe("shortcutBindings registry", () => {
     for (const a of ACTIONS) {
       expect(DEFAULT_BINDINGS[a.defaultBinding]).toBe(a.id);
     }
-    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(13);
+    expect(Object.keys(DEFAULT_BINDINGS)).toHaveLength(14);
   });
 });
 
@@ -170,12 +170,12 @@ import { buildRoutingTable } from "./shortcutBindings";
 import { formatChord } from "./shortcutBindings";
 
 describe("buildRoutingTable", () => {
-  it("with empty overrides returns the default 13-entry table", () => {
+  it("with empty overrides returns the default 14-entry table", () => {
     const t = buildRoutingTable({});
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
     expect(t["Mod+Alt+KeyN"]).toBe("pane.split-vertical-pick");
     expect(t["Mod+KeyT"]).toBe("tab.new");
-    expect(Object.keys(t)).toHaveLength(13);
+    expect(Object.keys(t)).toHaveLength(14);
   });
 
   it("override removes the action's previous binding entry from the table", () => {
@@ -187,7 +187,7 @@ describe("buildRoutingTable", () => {
   it("empty override removes the action from the table entirely", () => {
     const t = buildRoutingTable({ "pane.close": "" });
     expect(t["Mod+KeyW"]).toBeUndefined();
-    expect(Object.keys(t)).toHaveLength(12);
+    expect(Object.keys(t)).toHaveLength(13);
   });
 
   it("two actions colliding on the same binding: last one written wins", () => {
@@ -206,7 +206,7 @@ describe("buildRoutingTable", () => {
     const t = buildRoutingTable({ "ghost.action": "Mod+KeyN" });
     // Defaults intact, override ignored
     expect(t["Mod+KeyN"]).toBe("pane.split-vertical-new");
-    expect(Object.keys(t)).toHaveLength(13);
+    expect(Object.keys(t)).toHaveLength(14);
   });
 });
 

@@ -311,6 +311,7 @@ export const en = {
       newTab: "New tab",
       previousTab: "Previous tab",
       nextTab: "Next tab",
+      focusSidebarSearch: "Focus sidebar search",
     },
     diagnostics: {
       tab: "Diagnostics",

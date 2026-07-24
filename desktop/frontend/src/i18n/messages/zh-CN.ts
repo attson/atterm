@@ -313,6 +313,7 @@ export const zhCN = {
       newTab: "新建标签页",
       previousTab: "上一个标签页",
       nextTab: "下一个标签页",
+      focusSidebarSearch: "聚焦侧栏搜索",
     },
     diagnostics: {
       tab: "诊断",

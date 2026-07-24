@@ -5,11 +5,13 @@ import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import TaskRowInner from "./TaskRowInner.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
+import SessionDetailsPopover from "./SessionDetailsPopover.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
 import { useTaskPreset } from "../composables/useTaskPreset";
 import { useSessionPins } from "../composables/useSessionPins";
+import { useSessionSelection } from "../composables/useSessionSelection";
 import { matchesSession } from "../lib/sessionMatch";
 import {
   aiTitleOrCommand,
@@ -46,6 +48,13 @@ const props = withDefaults(defineProps<{
   // Matched against title / cwd / current_command (case-insensitive
   // substring). See docs/superpowers/specs/2026-07-24-sidebar-search-design.md.
   searchQuery?: string;
+  // Resolves a session id to its current pane location (tab + pane index),
+  // if it is open as a pane in this window. Supplied by the parent so this
+  // component stays free of App-scope tab/pane state; used only to render
+  // the "pane location" row in SessionDetailsPopover.
+  paneLocationFor?: (id: string) => { tabId: string; paneIdx: number } | null;
+  // Resolves a tabId to its 0-based display index, for the same popover row.
+  tabIndexById?: (tabId: string) => number;
 }>(), {
   groupBy: "host",
   byState: () => ({}),
@@ -54,15 +63,20 @@ const props = withDefaults(defineProps<{
   localHost: "",
   openSessionIds: () => [],
   searchQuery: "",
+  paneLocationFor: () => null,
+  tabIndexById: () => 0,
 });
 
 const emit = defineEmits<{
   (e: "open", session: RemoteSession): void;
   (e: "close", session: RemoteSession): void;
   (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
+  (e: "merge-selected"): void;
+  (e: "close-selected"): void;
 }>();
 
 const { t } = useI18n();
+const sel = useSessionSelection();
 
 // STATE_ORDER controls the visual order of state groups: most-urgent first.
 const STATE_ORDER: TaskState[] = [
@@ -184,6 +198,35 @@ const hasAnyMatch = computed(
     || completedFiltered.value.length > 0,
 );
 
+// Flat id list in the exact visual order rows render (excluding group
+// headers, empty-hint, fold-toggle). Used as the axis for Shift+click
+// range selection. Rebuild on any change to pinned/filtered/completed.
+const orderedVisibleIds = computed<string[]>(() => {
+  const out: string[] = [];
+  for (const s of pinnedSessions.value) out.push(s.session_id);
+  for (const key of groupKeys.value) {
+    if (isGroupCollapsed(key)) continue;
+    for (const s of filteredGroups.value[key] ?? []) out.push(s.session_id);
+  }
+  if (foldOpen.value) {
+    for (const s of completedFiltered.value) out.push(s.session_id);
+  }
+  return out;
+});
+
+function onRowClick(e: MouseEvent, s: RemoteSession) {
+  if (e.shiftKey) {
+    sel.selectRange(s.session_id, orderedVisibleIds.value);
+    return;
+  }
+  if (e.metaKey || e.ctrlKey) {
+    sel.toggle(s.session_id);
+    return;
+  }
+  sel.clear();
+  emit("open", s);
+}
+
 const menuState = ref<{
   open: boolean;
   x: number;
@@ -193,6 +236,11 @@ const menuState = ref<{
 
 function onRowMenu(e: MouseEvent, s: RemoteSession) {
   e.preventDefault();
+  // If right-click lands on a row that isn't part of the current
+  // selection, reset the selection to just that row — same behavior as
+  // macOS Finder / VSCode explorer. This keeps the menu's action target
+  // unambiguous.
+  if (!sel.isSelected(s.session_id)) sel.selectOnly(s.session_id);
   menuState.value = { open: true, x: e.clientX, y: e.clientY, session: s };
 }
 
@@ -203,7 +251,38 @@ function closeMenu() {
 const menuItems = computed<MenuItem[]>(() => {
   const s = menuState.value.session;
   if (!s) return [];
+  const n = sel.size.value;
+  const multi = n >= 2 && sel.isSelected(s.session_id);
+  if (multi) {
+    const openCount = Array.from(sel.selectedIds.value).filter((id) =>
+      openSessionIdSet.value.has(id),
+    ).length;
+    return [
+      {
+        key: "merge",
+        label: t("tasks.rowMenu.merge", { n }),
+        disabled: n > 4,
+      },
+      {
+        key: "close",
+        label: t("tasks.rowMenu.closeSelected", { n: openCount }),
+        disabled: openCount === 0,
+      },
+      {
+        key: "details",
+        label: t("tasks.rowMenu.details"),
+        disabled: true,
+      },
+      {
+        key: pins.isPinned(s.session_id) ? "unpin" : "pin",
+        label: pins.isPinned(s.session_id)
+          ? t("tasks.pinned.menuUnpin")
+          : t("tasks.pinned.menuPin"),
+      },
+    ];
+  }
   return [
+    { key: "details", label: t("tasks.rowMenu.details") },
     {
       key: pins.isPinned(s.session_id) ? "unpin" : "pin",
       label: pins.isPinned(s.session_id)
@@ -213,12 +292,34 @@ const menuItems = computed<MenuItem[]>(() => {
   ];
 });
 
+const detailsState = ref<{
+  open: boolean;
+  x: number;
+  y: number;
+  session: RemoteSession | null;
+}>({ open: false, x: 0, y: 0, session: null });
+
 function onMenuSelect(key: string) {
   const s = menuState.value.session;
   if (!s) return;
   if (key === "pin" || key === "unpin") {
     pins.toggle(s.session_id);
+  } else if (key === "details") {
+    detailsState.value = {
+      open: true,
+      x: menuState.value.x,
+      y: menuState.value.y,
+      session: s,
+    };
+  } else if (key === "merge") {
+    emit("merge-selected");
+  } else if (key === "close") {
+    emit("close-selected");
   }
+}
+
+function closeDetails() {
+  detailsState.value = { ...detailsState.value, open: false, session: null };
 }
 
 const coResidentMap = computed<Map<string, number>>(() =>
@@ -297,11 +398,12 @@ function stateLabel(state: string | undefined): string {
           v-for="s in pinnedSessions"
           :key="s.session_id"
           class="task-row"
-          :class="{ active: s.session_id === activeSessionId }"
+          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
           data-test="task-row"
           :data-session-id="s.session_id"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
-          @click="emit('open', s)"
+          :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
+          @click="(e) => onRowClick(e, s)"
           @contextmenu="onRowMenu($event, s)"
         >
           <TaskRowInner
@@ -361,11 +463,12 @@ function stateLabel(state: string | undefined): string {
         v-for="s in (isGroupCollapsed(key) ? [] : filteredGroups[key])"
         :key="s.session_id"
         class="task-row"
-        :class="{ active: s.session_id === activeSessionId }"
+        :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
         data-test="task-row"
         :data-session-id="s.session_id"
         :data-active="s.session_id === activeSessionId ? 'true' : undefined"
-        @click="emit('open', s)"
+        :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
+        @click="(e) => onRowClick(e, s)"
         @contextmenu="onRowMenu($event, s)"
       >
         <TaskRowInner
@@ -400,10 +503,11 @@ function stateLabel(state: string | undefined): string {
           v-for="s in completedFiltered"
           :key="s.session_id"
           class="task-row dim"
-          :class="{ active: s.session_id === activeSessionId }"
+          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
           data-test="completed-fold-row"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
-          @click="emit('open', s)"
+          :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
+          @click="(e) => onRowClick(e, s)"
         >
           <span class="row-top">
             <TaskStateIcon :state="(s.task_state as TaskState | undefined) ?? 'idle'" />
@@ -441,6 +545,15 @@ function stateLabel(state: string | undefined): string {
       @close="closeMenu"
       @select="onMenuSelect"
     />
+    <SessionDetailsPopover
+      :open="detailsState.open"
+      :x="detailsState.x"
+      :y="detailsState.y"
+      :session="detailsState.session"
+      :pane-location="detailsState.session ? paneLocationFor(detailsState.session.session_id) : null"
+      :tab-index-by-id="tabIndexById"
+      @close="closeDetails"
+    />
   </div>
 </template>
 
@@ -465,6 +578,10 @@ function stateLabel(state: string | undefined): string {
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
 .task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }
 .task-row.active:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.task-row.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .task-row.dim { opacity: 0.6; }
 .task-row.dim.active { opacity: 0.9; }
 .row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }

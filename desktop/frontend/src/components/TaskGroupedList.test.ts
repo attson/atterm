@@ -5,6 +5,7 @@ import TaskGroupedList from "./TaskGroupedList.vue";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import type { RemoteSession } from "../platform/types";
 import { __resetForTests as resetPins } from "../composables/useSessionPins";
+import { __resetForTests as resetSel, useSessionSelection } from "../composables/useSessionSelection";
 
 vi.mock("../lib/api", () => ({
   getUserHomeDir: vi.fn().mockResolvedValue("/Users/attson"),
@@ -25,6 +26,13 @@ function mk(over: Partial<RemoteSession>): RemoteSession {
     rows: 24,
     ...over,
   };
+}
+
+// Small factory so multi-select tests (and any future ones) don't repeat
+// `mount(TaskGroupedList, { props: ... })` boilerplate. Existing describe
+// blocks above mount inline and are left as-is.
+function mountList(props: Record<string, unknown>) {
+  return mount(TaskGroupedList, { props: props as any });
 }
 
 describe("TaskGroupedList", () => {
@@ -672,5 +680,130 @@ describe("TaskGroupedList search filter", () => {
     const rows = w.findAll('[data-test="completed-fold-row"]');
     expect(rows).toHaveLength(1);
     expect(rows[0].text()).toContain("Feishu");
+  });
+});
+
+describe("TaskGroupedList — multi-select", () => {
+  beforeEach(() => resetSel());
+
+  function mkSessions(): RemoteSession[] {
+    // Use whatever your existing helpers produce; if none, inline:
+    return [
+      { session_id: "s1", host_id: "h1", host: "h1", user: "u", title: "one", cols: 80, rows: 24, cwd: "/a" },
+      { session_id: "s2", host_id: "h1", host: "h1", user: "u", title: "two", cols: 80, rows: 24, cwd: "/b" },
+      { session_id: "s3", host_id: "h1", host: "h1", user: "u", title: "three", cols: 80, rows: 24, cwd: "/c" },
+    ] as RemoteSession[];
+  }
+
+  function mount3() {
+    return mountList({
+      byHost: { h1: mkSessions() },
+      primaryStateForHost: () => "idle",
+      completedSeen: [],
+      openSessionIds: ["s1"],
+    });
+  }
+
+  test("Cmd+click on a row toggles selection, does not emit open", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[1].trigger("click", { metaKey: true });
+    expect(w.emitted("open")).toBeUndefined();
+    expect(rows[1].attributes("data-selected")).toBe("true");
+    // Toggle off
+    await rows[1].trigger("click", { metaKey: true });
+    expect(w.findAll("[data-test=task-row][data-selected=true]").length).toBe(0);
+  });
+
+  test("Ctrl+click on a row toggles selection (Windows/Linux)", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[2].trigger("click", { ctrlKey: true });
+    expect(rows[2].attributes("data-selected")).toBe("true");
+  });
+
+  test("plain click clears selection and emits open", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[0].trigger("click", { metaKey: true });
+    await rows[1].trigger("click", { metaKey: true });
+    await rows[2].trigger("click"); // plain click
+    expect(w.emitted("open")).toHaveLength(1);
+    expect(w.findAll("[data-test=task-row][data-selected=true]").length).toBe(0);
+  });
+
+  test("Shift+click extends selection from anchor to target in visible order", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[0].trigger("click", { metaKey: true }); // anchor s1
+    await rows[2].trigger("click", { shiftKey: true }); // range s1..s3
+    expect(rows[0].attributes("data-selected")).toBe("true");
+    expect(rows[1].attributes("data-selected")).toBe("true");
+    expect(rows[2].attributes("data-selected")).toBe("true");
+  });
+
+  test("contextmenu with sel.size>=2 shows merge/close/details items", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[0].trigger("click", { metaKey: true });
+    await rows[1].trigger("click", { metaKey: true });
+    await rows[0].trigger("contextmenu");
+    expect(w.find("[data-test=session-row-menu-item-merge]").exists()).toBe(true);
+    expect(w.find("[data-test=session-row-menu-item-close]").exists()).toBe(true);
+    expect(
+      (w.find("[data-test=session-row-menu-item-details]").element as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  test("contextmenu with sel.size<=1 shows details/pin items only", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[0].trigger("contextmenu");
+    expect(w.find("[data-test=session-row-menu-item-details]").exists()).toBe(true);
+    expect(w.find("[data-test=session-row-menu-item-pin]").exists()).toBe(true);
+    expect(w.find("[data-test=session-row-menu-item-merge]").exists()).toBe(false);
+  });
+
+  test("contextmenu on unselected row when sel.size>=1 replaces selection", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[0].trigger("click", { metaKey: true }); // select s1
+    await rows[2].trigger("contextmenu"); // right-click s3 (not selected)
+    // Menu should be the single-select variant (s3 alone)
+    expect(w.find("[data-test=session-row-menu-item-details]").exists()).toBe(true);
+    expect(w.find("[data-test=session-row-menu-item-merge]").exists()).toBe(false);
+    // s3 is now the only selected row
+    expect(w.findAll("[data-test=task-row][data-selected=true]").length).toBe(1);
+    expect(rows[2].attributes("data-selected")).toBe("true");
+  });
+
+  test("selecting merge from menu emits merge-selected", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[0].trigger("click", { metaKey: true });
+    await rows[1].trigger("click", { metaKey: true });
+    await rows[0].trigger("contextmenu");
+    await w.find("[data-test=session-row-menu-item-merge]").trigger("click");
+    expect(w.emitted("merge-selected")).toHaveLength(1);
+  });
+
+  test("selecting close-selected from menu emits close-selected", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[0].trigger("click", { metaKey: true }); // s1 is open
+    await rows[1].trigger("click", { metaKey: true }); // s2 not open
+    await rows[0].trigger("contextmenu");
+    await w.find("[data-test=session-row-menu-item-close]").trigger("click");
+    expect(w.emitted("close-selected")).toHaveLength(1);
+  });
+
+  test("selecting details from menu opens SessionDetailsPopover with the right-clicked session", async () => {
+    const w = mount3();
+    const rows = w.findAll("[data-test=task-row]");
+    await rows[1].trigger("contextmenu");
+    await w.find("[data-test=session-row-menu-item-details]").trigger("click");
+    const popover = w.find("[data-test=session-details-popover]");
+    expect(popover.exists()).toBe(true);
+    expect(popover.find("[data-test=details-field-sessionId] .value").text()).toBe("s2");
   });
 });

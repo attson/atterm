@@ -74,10 +74,7 @@ describe("SessionDetailsPopover", () => {
     });
     const row = w.find("[data-test=details-field-paneLocation]");
     expect(row.exists()).toBe(true);
-    // Content will be the interpolated t() output; once i18n keys land in
-    // Task 8 this will render "Tab 1 · Pane 3". For now just confirm the
-    // "not open" branch didn't fire.
-    expect(row.find(".value").text()).not.toBe("");
+    expect(row.find(".value").text()).toBe("Tab 1 · Pane 3");
   });
 
   test("renders 'not open' when paneLocation is null", () => {

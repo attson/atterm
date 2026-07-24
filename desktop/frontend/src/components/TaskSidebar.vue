@@ -73,7 +73,7 @@ function onSidebarBlankClick(e: MouseEvent) {
   // bulk bar itself (those handle their own selection semantics).
   if (
     el.closest(
-      ".task-row, .host-header, .group-header, .bulk-bar, .session-row-menu, .session-details-popover",
+      ".task-row, .host-header, .group-header, .bulk-bar, .session-row-menu, .session-details-popover, .resize-handle",
     )
   ) {
     return;

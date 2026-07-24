@@ -203,7 +203,9 @@ const hasAnyMatch = computed(
 // range selection. Rebuild on any change to pinned/filtered/completed.
 const orderedVisibleIds = computed<string[]>(() => {
   const out: string[] = [];
-  for (const s of pinnedSessions.value) out.push(s.session_id);
+  if (!isGroupCollapsed(PINNED_KEY)) {
+    for (const s of pinnedSessions.value) out.push(s.session_id);
+  }
   for (const key of groupKeys.value) {
     if (isGroupCollapsed(key)) continue;
     for (const s of filteredGroups.value[key] ?? []) out.push(s.session_id);

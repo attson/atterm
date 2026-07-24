@@ -684,7 +684,11 @@ describe("TaskGroupedList search filter", () => {
 });
 
 describe("TaskGroupedList — multi-select", () => {
-  beforeEach(() => resetSel());
+  beforeEach(() => {
+    resetSel();
+    resetPins();
+    vi.restoreAllMocks();
+  });
 
   function mkSessions(): RemoteSession[] {
     // Use whatever your existing helpers produce; if none, inline:
@@ -740,6 +744,32 @@ describe("TaskGroupedList — multi-select", () => {
     expect(rows[0].attributes("data-selected")).toBe("true");
     expect(rows[1].attributes("data-selected")).toBe("true");
     expect(rows[2].attributes("data-selected")).toBe("true");
+  });
+
+  test("Shift+range skips hidden pinned rows when the pinned group is collapsed", async () => {
+    // s1 is pinned; collapse the pinned group so it's hidden; then anchor
+    // on a visible row and Shift+click another — s1 must NOT be swept in.
+    resetPins();
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["s1"]);
+    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+
+    const w = mount3();
+    await flushPromises();
+    await nextTick();
+
+    // Collapse the pinned group header. Its header has data-test="pinned-group-header".
+    await w.find("[data-test=pinned-group-header]").trigger("click");
+
+    const rows = w.findAll("[data-test=task-row]");
+    // With pinned collapsed, only s2 & s3 should render as rows.
+    expect(rows.length).toBe(2);
+    await rows[0].trigger("click", { metaKey: true }); // anchor s2
+    await rows[1].trigger("click", { shiftKey: true }); // range s2..s3
+    expect(rows[0].attributes("data-selected")).toBe("true");
+    expect(rows[1].attributes("data-selected")).toBe("true");
+    // s1 is pinned+collapsed → not rendered, not in orderedVisibleIds, not selected
+    const sel = useSessionSelection();
+    expect(sel.isSelected("s1")).toBe(false);
   });
 
   test("contextmenu with sel.size>=2 shows merge/close/details items", async () => {

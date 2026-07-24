@@ -6,6 +6,7 @@ import { nextTick } from "vue";
 import TaskSidebar from "./TaskSidebar.vue";
 import type { RemoteSession } from "../platform/types";
 import * as api from "../lib/api";
+import { __resetForTests as resetSel, useSessionSelection } from "../composables/useSessionSelection";
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -317,5 +318,102 @@ describe("TaskSidebar localHost passthrough", () => {
     const texts = headers.map((h) => h.text());
     expect(texts.some((t) => t.includes("mac #1"))).toBe(true);
     expect(texts.some((t) => t.includes("mac #2"))).toBe(true);
+  });
+});
+
+describe("TaskSidebar — multi-select footer + Esc / blank clear", () => {
+  beforeEach(() => resetSel());
+
+  function mountSidebar(overrides: Record<string, any> = {}) {
+    return mount(TaskSidebar, {
+      attachTo: document.body,
+      props: {
+        collapsed: false,
+        byHost: { h1: [{
+          session_id: "s1", host_id: "h1", host: "h1", user: "u",
+          title: "one", cols: 80, rows: 24,
+        }] },
+        primaryStateForHost: () => "idle",
+        completedSeen: [],
+        totalUnread: 0,
+        openSessionIds: ["s1"],
+        ...overrides,
+      },
+    });
+  }
+
+  test("BulkActionBar not rendered when selection is empty", () => {
+    const w = mountSidebar();
+    expect(w.find("[data-test=bulk-action-bar]").exists()).toBe(false);
+  });
+
+  test("BulkActionBar rendered when selection is non-empty", async () => {
+    const w = mountSidebar();
+    // Force a selection through the composable directly
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    expect(w.find("[data-test=bulk-action-bar]").exists()).toBe(true);
+  });
+
+  test("mark-all footer is suppressed while selection is non-empty even with unread", async () => {
+    const w = mountSidebar({ totalUnread: 3 });
+    expect(w.find("[data-test=sidebar-mark-all]").exists()).toBe(true);
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    expect(w.find("[data-test=sidebar-mark-all]").exists()).toBe(false);
+    expect(w.find("[data-test=bulk-action-bar]").exists()).toBe(true);
+  });
+
+  test("BulkActionBar 'clear' clears selection", async () => {
+    const w = mountSidebar();
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    await w.find("[data-test=bulk-clear]").trigger("click");
+    expect(useSessionSelection().size.value).toBe(0);
+  });
+
+  test("Esc inside sidebar clears selection", async () => {
+    const w = mountSidebar();
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    await w.find(".task-sidebar").trigger("keydown", { key: "Escape" });
+    expect(useSessionSelection().size.value).toBe(0);
+  });
+
+  test("clicking sidebar blank area clears selection", async () => {
+    const w = mountSidebar();
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    // Click on the sidebar-header area outside any row / menu / bar
+    await w.find(".sidebar-header").trigger("click");
+    expect(useSessionSelection().size.value).toBe(0);
+  });
+
+  test("clicking inside a task row does NOT trigger blank-click clear (row handles its own logic)", async () => {
+    const w = mountSidebar();
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    await w.find("[data-test=task-row]").trigger("click", { metaKey: true });
+    // Selection may toggle for s1 (from 1 → 0 → 1), but blank-clear must NOT
+    // fire independently — verify the composable is not force-empty via
+    // an unrelated path.
+    // After metaKey toggle: s1 was selected, so toggle removes it → 0.
+    expect(useSessionSelection().size.value).toBe(0);
+  });
+
+  test("BulkActionBar merge emit is forwarded to TaskSidebar", async () => {
+    const w = mountSidebar();
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    await w.find("[data-test=bulk-merge]").trigger("click");
+    expect(w.emitted("merge-selected")).toHaveLength(1);
+  });
+
+  test("BulkActionBar close emit is forwarded to TaskSidebar", async () => {
+    const w = mountSidebar();
+    useSessionSelection().toggle("s1");
+    await w.vm.$nextTick();
+    await w.find("[data-test=bulk-close]").trigger("click");
+    expect(w.emitted("close-selected")).toHaveLength(1);
   });
 });

@@ -4,9 +4,11 @@ import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskGroupedList from "./TaskGroupedList.vue";
 import TaskStateIcon from "./TaskStateIcon.vue";
+import BulkActionBar from "./BulkActionBar.vue";
 import { useI18n } from "../i18n/useI18n";
 import { getTaskSidebarWidth, setTaskSidebarWidth } from "../lib/api";
 import { useTaskGroupBy } from "../composables/useTaskGroupBy";
+import { useSessionSelection } from "../composables/useSessionSelection";
 
 const { t } = useI18n();
 const groupByState = useTaskGroupBy();
@@ -26,12 +28,16 @@ const props = withDefaults(defineProps<{
   // Local OS hostname; forwarded so TaskGroupedList can render "#N"
   // suffixes when multiple atterm instances on this machine share it.
   localHost?: string;
+  paneLocationFor?: (id: string) => { tabId: string; paneIdx: number } | null;
+  tabIndexById?: (tabId: string) => number;
 }>(), {
   byStateGroups: () => ({}),
   activeSessionId: null,
   openSessionIds: () => [],
   localHostId: "",
   localHost: "",
+  paneLocationFor: () => null,
+  tabIndexById: () => 0,
 });
 
 const emit = defineEmits<{
@@ -39,7 +45,41 @@ const emit = defineEmits<{
   (e: "open", session: RemoteSession): void;
   (e: "close", session: RemoteSession): void;
   (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
+  (e: "merge-selected"): void;
+  (e: "close-selected"): void;
 }>();
+
+const sel = useSessionSelection();
+const openCount = computed(() => {
+  const opens = new Set(props.openSessionIds ?? []);
+  let n = 0;
+  for (const id of sel.selectedIds.value) if (opens.has(id)) n++;
+  return n;
+});
+const canMerge = computed(() => sel.size.value >= 1 && sel.size.value <= 4);
+
+function onSidebarKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape" && sel.size.value > 0) {
+    e.preventDefault();
+    sel.clear();
+  }
+}
+
+function onSidebarBlankClick(e: MouseEvent) {
+  if (sel.size.value === 0) return;
+  const el = e.target as HTMLElement | null;
+  if (!el) return;
+  // Don't clear if the click landed inside a row, menu, popover, or the
+  // bulk bar itself (those handle their own selection semantics).
+  if (
+    el.closest(
+      ".task-row, .host-header, .group-header, .bulk-bar, .session-row-menu, .session-details-popover",
+    )
+  ) {
+    return;
+  }
+  sel.clear();
+}
 
 const widthPx = ref(240);
 const minWidth = 180;
@@ -144,6 +184,9 @@ const railIcons = computed(() => {
     class="task-sidebar"
     :class="{ collapsed }"
     :style="!collapsed ? { width: widthPx + 'px' } : undefined"
+    tabindex="-1"
+    @keydown="onSidebarKeydown"
+    @click.capture="onSidebarBlankClick"
   >
     <div
       v-if="!collapsed"
@@ -227,12 +270,26 @@ const railIcons = computed(() => {
           :local-host-id="localHostId"
           :local-host="localHost"
           :search-query="query"
+          :pane-location-for="paneLocationFor"
+          :tab-index-by-id="tabIndexById"
           @open="(s) => emit('open', s)"
           @close="(s) => emit('close', s)"
           @markSeen="(p) => emit('markSeen', p)"
+          @merge-selected="emit('merge-selected')"
+          @close-selected="emit('close-selected')"
         />
       </div>
-      <footer v-if="totalUnread > 0">
+      <footer v-if="sel.size.value >= 1">
+        <BulkActionBar
+          :count="sel.size.value"
+          :open-count="openCount"
+          :can-merge="canMerge"
+          @merge="emit('merge-selected')"
+          @close-selected="emit('close-selected')"
+          @clear="sel.clear()"
+        />
+      </footer>
+      <footer v-else-if="totalUnread > 0">
         <button
           class="mark-all"
           data-test="sidebar-mark-all"

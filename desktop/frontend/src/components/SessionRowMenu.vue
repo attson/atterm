@@ -1,24 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+export type MenuItem = { key: string; label: string; disabled?: boolean };
+
 const props = withDefaults(defineProps<{
   open: boolean;
   x: number;
   y: number;
-  pinned: boolean;
-  labelPin: string;
-  labelUnpin: string;
-}>(), { open: false, pinned: false });
+  items: MenuItem[];
+}>(), { open: false });
 
 const emit = defineEmits<{
   (e: "close"): void;
-  (e: "togglePin"): void;
+  (e: "select", key: string): void;
 }>();
 
 const menuRef = ref<HTMLElement | null>(null);
-
-// Viewport-edge flipping: when the menu would overflow the right/bottom edge,
-// anchor it above/left of (x, y) instead. Recomputed each time it opens.
 const positionedX = ref(0);
 const positionedY = ref(0);
 
@@ -40,33 +37,25 @@ const style = computed(() => ({
   top: positionedY.value + "px",
 }));
 
-function onItemClick() {
-  emit("togglePin");
+function onItemClick(item: MenuItem) {
+  if (item.disabled) return;
+  emit("select", item.key);
   emit("close");
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") {
-    emit("close");
-  }
+  if (e.key === "Escape") emit("close");
 }
 
 function onOutside(e: MouseEvent) {
   if (!menuRef.value) return;
-  if (!menuRef.value.contains(e.target as Node)) {
-    emit("close");
-  }
+  if (!menuRef.value.contains(e.target as Node)) emit("close");
 }
 
-// Spec §4.5: focus leaving the menu subtree (e.g. Tab out, or focus jumping
-// to <body> when the previously-focused element is removed) also dismisses
-// the menu, alongside Esc and outside-mousedown.
 function onFocusOut(e: FocusEvent) {
   if (!menuRef.value) return;
   const related = e.relatedTarget as Node | null;
-  if (!related || !menuRef.value.contains(related)) {
-    emit("close");
-  }
+  if (!related || !menuRef.value.contains(related)) emit("close");
 }
 
 watch(
@@ -75,7 +64,6 @@ watch(
     if (v) {
       positionedX.value = props.x;
       positionedY.value = props.y;
-      // Wait a tick so the element is mounted with intrinsic size, then flip.
       requestAnimationFrame(updatePosition);
       window.addEventListener("keydown", onKeydown);
       window.addEventListener("mousedown", onOutside);
@@ -109,13 +97,17 @@ onBeforeUnmount(() => {
     @contextmenu.prevent
   >
     <button
+      v-for="item in items"
+      :key="item.key"
       class="menu-item"
-      data-test="session-row-menu-item"
+      :class="{ disabled: item.disabled }"
+      :data-test="`session-row-menu-item-${item.key}`"
       role="menuitem"
       type="button"
-      @click.stop="onItemClick"
+      :disabled="item.disabled"
+      @click.stop="onItemClick(item)"
     >
-      {{ pinned ? labelUnpin : labelPin }}
+      {{ item.label }}
     </button>
   </div>
 </template>
@@ -143,9 +135,13 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   font-size: 13px;
 }
-.menu-item:hover,
-.menu-item:focus {
+.menu-item:hover:not(.disabled),
+.menu-item:focus:not(.disabled) {
   background: rgba(255, 255, 255, 0.08);
   outline: none;
+}
+.menu-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 </style>

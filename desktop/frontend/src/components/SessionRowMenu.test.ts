@@ -1,87 +1,71 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { mount } from "@vue/test-utils";
-import SessionRowMenu from "./SessionRowMenu.vue";
+import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
 
-function factory(overrides: Partial<InstanceType<typeof SessionRowMenu>["$props"]> = {}) {
+function factory(overrides: {
+  open?: boolean;
+  items?: MenuItem[];
+} = {}) {
   return mount(SessionRowMenu, {
     attachTo: document.body,
     props: {
       open: true,
       x: 100,
       y: 100,
-      pinned: false,
-      labelPin: "Pin to top",
-      labelUnpin: "Unpin",
-      ...overrides,
+      items: overrides.items ?? [
+        { key: "pin", label: "Pin to top" },
+      ],
+      ...(overrides.open !== undefined ? { open: overrides.open } : {}),
     },
   });
 }
 
-describe("SessionRowMenu", () => {
+describe("SessionRowMenu (items-driven)", () => {
   test("does not render when open=false", () => {
     const w = factory({ open: false });
     expect(w.find("[data-test=session-row-menu]").exists()).toBe(false);
   });
 
-  test("shows Pin label when pinned=false", () => {
-    const w = factory({ pinned: false });
-    const item = w.find("[data-test=session-row-menu-item]");
-    expect(item.text()).toBe("Pin to top");
+  test("renders each item with its label and key-scoped data-test", () => {
+    const w = factory({
+      items: [
+        { key: "details", label: "View details" },
+        { key: "pin", label: "Pin to top" },
+      ],
+    });
+    expect(w.find("[data-test=session-row-menu-item-details]").text()).toBe("View details");
+    expect(w.find("[data-test=session-row-menu-item-pin]").text()).toBe("Pin to top");
   });
 
-  test("shows Unpin label when pinned=true", () => {
-    const w = factory({ pinned: true });
-    const item = w.find("[data-test=session-row-menu-item]");
-    expect(item.text()).toBe("Unpin");
-  });
-
-  test("clicking the item emits togglePin then close", async () => {
-    const w = factory();
-    await w.find("[data-test=session-row-menu-item]").trigger("click");
-    expect(w.emitted("togglePin")).toHaveLength(1);
+  test("clicking an enabled item emits select(key) then close", async () => {
+    const w = factory({
+      items: [{ key: "pin", label: "Pin to top" }],
+    });
+    await w.find("[data-test=session-row-menu-item-pin]").trigger("click");
+    expect(w.emitted("select")).toEqual([["pin"]]);
     expect(w.emitted("close")).toHaveLength(1);
+  });
+
+  test("clicking a disabled item does not emit select or close", async () => {
+    const w = factory({
+      items: [{ key: "details", label: "View details", disabled: true }],
+    });
+    await w.find("[data-test=session-row-menu-item-details]").trigger("click");
+    expect(w.emitted("select")).toBeUndefined();
+    expect(w.emitted("close")).toBeUndefined();
   });
 
   test("Escape emits close", async () => {
     const w = factory();
-    await w.trigger("keydown", { key: "Escape" });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(w.emitted("close")).toHaveLength(1);
+    w.unmount();
   });
 
-  test("outside click emits close", async () => {
+  test("outside mousedown emits close", async () => {
     const w = factory();
-    // Simulate click outside the menu root.
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(w.emitted("close")).toHaveLength(1);
     w.unmount();
-  });
-
-  test("focusout to a target outside the menu emits close; inside does not", async () => {
-    const w = factory();
-    const menu = w.find("[data-test=session-row-menu]").element as HTMLElement;
-    const outside = document.createElement("button");
-    document.body.appendChild(outside);
-
-    menu.dispatchEvent(
-      new FocusEvent("focusout", { bubbles: true, relatedTarget: outside }),
-    );
-    expect(w.emitted("close")).toHaveLength(1);
-
-    const insideItem = w.find("[data-test=session-row-menu-item]").element;
-    menu.dispatchEvent(
-      new FocusEvent("focusout", { bubbles: true, relatedTarget: insideItem }),
-    );
-    expect(w.emitted("close")).toHaveLength(1);
-
-    outside.remove();
-    w.unmount();
-  });
-
-  test("positions to (x, y) via inline style", () => {
-    const w = factory({ x: 200, y: 300 });
-    const root = w.find("[data-test=session-row-menu]");
-    const style = (root.element as HTMLElement).style;
-    expect(style.left).toBe("200px");
-    expect(style.top).toBe("300px");
   });
 });

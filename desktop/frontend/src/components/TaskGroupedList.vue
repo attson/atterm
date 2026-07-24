@@ -4,7 +4,7 @@ import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import TaskRowInner from "./TaskRowInner.vue";
-import SessionRowMenu from "./SessionRowMenu.vue";
+import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
@@ -200,9 +200,25 @@ function closeMenu() {
   menuState.value = { ...menuState.value, open: false, session: null };
 }
 
-function onToggleFromMenu() {
+const menuItems = computed<MenuItem[]>(() => {
   const s = menuState.value.session;
-  if (s) pins.toggle(s.session_id);
+  if (!s) return [];
+  return [
+    {
+      key: pins.isPinned(s.session_id) ? "unpin" : "pin",
+      label: pins.isPinned(s.session_id)
+        ? t("tasks.pinned.menuUnpin")
+        : t("tasks.pinned.menuPin"),
+    },
+  ];
+});
+
+function onMenuSelect(key: string) {
+  const s = menuState.value.session;
+  if (!s) return;
+  if (key === "pin" || key === "unpin") {
+    pins.toggle(s.session_id);
+  }
 }
 
 const coResidentMap = computed<Map<string, number>>(() =>
@@ -421,11 +437,9 @@ function stateLabel(state: string | undefined): string {
       :open="menuState.open"
       :x="menuState.x"
       :y="menuState.y"
-      :pinned="menuState.session ? pins.isPinned(menuState.session.session_id) : false"
-      :label-pin="t('tasks.pinned.menuPin')"
-      :label-unpin="t('tasks.pinned.menuUnpin')"
+      :items="menuItems"
       @close="closeMenu"
-      @toggle-pin="onToggleFromMenu"
+      @select="onMenuSelect"
     />
   </div>
 </template>

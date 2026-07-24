@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskGroupedList from "./TaskGroupedList.vue";
@@ -47,6 +47,24 @@ const maxWidth = 480;
 let dragOriginX = 0;
 let dragOriginWidth = 0;
 let dragging = false;
+
+const query = ref("");
+const searchEl = ref<HTMLInputElement | null>(null);
+
+function onSearchEsc() {
+  query.value = "";
+}
+
+async function focusSearch(): Promise<void> {
+  if (props.collapsed) {
+    emit("update:collapsed", false);
+    await nextTick();
+  }
+  searchEl.value?.focus();
+  searchEl.value?.select();
+}
+
+defineExpose({ focusSearch });
 
 onMounted(async () => {
   try {
@@ -168,6 +186,16 @@ const railIcons = computed(() => {
     <div v-else class="expanded">
       <header class="sidebar-header">
         <span class="title">{{ t("tasks.sidebar.title") }}</span>
+        <input
+          ref="searchEl"
+          v-model="query"
+          type="search"
+          class="sidebar-search"
+          data-test="sidebar-search"
+          :placeholder="t('tasks.sidebar.searchPlaceholder')"
+          :aria-label="t('tasks.sidebar.searchPlaceholder')"
+          @keydown.esc.prevent="onSearchEsc"
+        />
         <button
           class="group-toggle"
           data-test="group-toggle"
@@ -198,6 +226,7 @@ const railIcons = computed(() => {
           :open-session-ids="openSessionIds"
           :local-host-id="localHostId"
           :local-host="localHost"
+          :search-query="query"
           @open="(s) => emit('open', s)"
           @close="(s) => emit('close', s)"
           @markSeen="(p) => emit('markSeen', p)"
@@ -255,7 +284,7 @@ const railIcons = computed(() => {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
-.title { flex: 1; font-weight: 500; }
+.title { flex: 0 0 auto; font-weight: 500; margin-right: 6px; }
 .collapse-button,
 .expand-button {
   background: none;
@@ -276,6 +305,24 @@ const railIcons = computed(() => {
   opacity: 0.8;
 }
 .group-toggle:hover { opacity: 1; background: rgba(255, 255, 255, 0.05); }
+.sidebar-search {
+  flex: 1 1 auto;
+  min-width: 60px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  color: inherit;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 20px;
+  margin-right: 6px;
+  outline: none;
+}
+.sidebar-search:focus { border-color: var(--border); background: rgba(255, 255, 255, 0.05); }
+.sidebar-search::placeholder { opacity: 0.5; }
+/* Chromium/WebKit render a native × clear button for type="search"; leave it
+   alone (colors match via `color: inherit`). */
 .list-wrap {
   flex: 1 1 auto;
   overflow-y: auto;

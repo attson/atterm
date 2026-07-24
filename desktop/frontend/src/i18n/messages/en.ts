@@ -539,6 +539,7 @@ export const en = {
       title: "Sessions",
       collapse: "Collapse sidebar (Cmd/Ctrl+B)",
       expand: "Expand sidebar (Cmd/Ctrl+B)",
+      searchPlaceholder: "Search",
     },
     preset: {
       iconOnly: {
@@ -554,6 +555,9 @@ export const en = {
       title: "Pinned",
       menuPin: "Pin to top",
       menuUnpin: "Unpin",
+    },
+    search: {
+      empty: 'No sessions match "{q}"',
     },
     markAllRead: "Mark all read",
     markRead: "Mark read",

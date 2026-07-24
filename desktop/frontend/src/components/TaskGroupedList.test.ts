@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { describe, expect, it, test, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import TaskGroupedList from "./TaskGroupedList.vue";
@@ -537,5 +537,103 @@ describe("TaskGroupedList pinned group", () => {
     // State icon reflects 'a' (idle), not the pinned-away 'b' (failed).
     const icon = header.findComponent(TaskStateIcon);
     expect(icon.props("state")).toBe("idle");
+  });
+});
+
+describe("TaskGroupedList search filter", () => {
+  it("filters rows by searchQuery across title/cwd/current_command", async () => {
+    const s1 = { session_id: "a", host_id: "h", title: "Feishu Gateway", cwd: "/proj/api", cols: 80, rows: 24, started_at: 0 } as any;
+    const s2 = { session_id: "b", host_id: "h", title: "Web app", cwd: "/proj/web", cols: 80, rows: 24, started_at: 0 } as any;
+    const s3 = { session_id: "c", host_id: "h", title: "Runner", cwd: "/tmp", current_command: "npm run build", cols: 80, rows: 24, started_at: 0 } as any;
+    const wrapper = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [s1, s2, s3] },
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        groupBy: "host",
+        byState: {},
+        searchQuery: "feishu",
+      },
+    });
+    await nextTick();
+    const rows = wrapper.findAll('[data-test="task-row"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].attributes("data-session-id")).toBe("a");
+  });
+
+  it("auto-expands a collapsed group when a match lives inside it", async () => {
+    const s1 = { session_id: "a", host_id: "h", title: "Feishu Gateway", cwd: "", cols: 80, rows: 24, started_at: 0 } as any;
+    const wrapper = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [s1] },
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        groupBy: "host",
+        byState: {},
+        searchQuery: "",
+      },
+    });
+    await nextTick();
+    // Collapse the group first.
+    await wrapper.find('[data-test="host-header"]').trigger("click");
+    await nextTick();
+    expect(wrapper.findAll('[data-test="task-row"]')).toHaveLength(0);
+    // Now type a matching query — the collapse should short-circuit and the
+    // row should reappear without us having to click to expand.
+    await wrapper.setProps({ searchQuery: "feishu" });
+    await nextTick();
+    expect(wrapper.findAll('[data-test="task-row"]')).toHaveLength(1);
+    // Clearing the query restores the original (still-collapsed) state.
+    await wrapper.setProps({ searchQuery: "" });
+    await nextTick();
+    expect(wrapper.findAll('[data-test="task-row"]')).toHaveLength(0);
+  });
+
+  it("hides groups whose filtered list is empty and shows an empty-state hint when nothing matches", async () => {
+    const s1 = { session_id: "a", host_id: "h", title: "Feishu Gateway", cwd: "", cols: 80, rows: 24, started_at: 0 } as any;
+    const wrapper = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [s1] },
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        groupBy: "host",
+        byState: {},
+        searchQuery: "no-such-thing",
+      },
+    });
+    await nextTick();
+    expect(wrapper.findAll('[data-test="task-row"]')).toHaveLength(0);
+    expect(wrapper.findAll('[data-test="host-header"]')).toHaveLength(0);
+    const empty = wrapper.find('[data-test="search-empty"]');
+    expect(empty.exists()).toBe(true);
+    expect(empty.text()).toContain("no-such-thing");
+  });
+
+  test("pinned session disappears from the pinned group when the query doesn't match it", async () => {
+    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["b"]);
+    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    const a = mk({ session_id: "a", host_id: "h1", host: "h1", task_state: "running", title: "Feishu Gateway" });
+    const b = mk({ session_id: "b", host_id: "h1", host: "h1", task_state: "running", title: "Web app" });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h1: [a, b] },
+        unreadByHost: { h1: 0 },
+        primaryStateForHost: () => "running" as const,
+        completedSeen: [],
+        groupBy: "host" as const,
+        searchQuery: "",
+      },
+    });
+    await flushPromises();
+    await nextTick();
+    expect(w.find("[data-test=pinned-group-header]").exists()).toBe(true);
+
+    await w.setProps({ searchQuery: "feishu" });
+    await nextTick();
+    // The pinned group vanishes entirely — its only member ("b") doesn't
+    // match the query, even though "a" (unpinned) does.
+    expect(w.find("[data-test=pinned-group-header]").exists()).toBe(false);
+    const rows = w.findAll("[data-test=task-row]");
+    expect(rows.map((r) => r.attributes("data-session-id"))).toEqual(["a"]);
   });
 });

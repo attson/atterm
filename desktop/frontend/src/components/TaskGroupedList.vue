@@ -10,6 +10,7 @@ import { shortenCwd } from "../lib/shortenCwd";
 import { getUserHomeDir } from "../lib/api";
 import { useTaskPreset } from "../composables/useTaskPreset";
 import { useSessionPins } from "../composables/useSessionPins";
+import { matchesSession } from "../lib/sessionMatch";
 import {
   aiTitleOrCommand,
   rowTitle,
@@ -41,6 +42,10 @@ const props = withDefaults(defineProps<{
   // Session ids currently opened as panes in this desktop window. Only
   // these rows show the close affordance.
   openSessionIds?: string[];
+  // Live search query from the sidebar header. Empty string = no filter.
+  // Matched against title / cwd / current_command (case-insensitive
+  // substring). See docs/superpowers/specs/2026-07-24-sidebar-search-design.md.
+  searchQuery?: string;
 }>(), {
   groupBy: "host",
   byState: () => ({}),
@@ -48,6 +53,7 @@ const props = withDefaults(defineProps<{
   localHostId: "",
   localHost: "",
   openSessionIds: () => [],
+  searchQuery: "",
 });
 
 const emit = defineEmits<{
@@ -70,6 +76,10 @@ const STATE_ORDER: TaskState[] = [
 ];
 
 const pins = useSessionPins();
+// Normalized query — trimmed + lowercased once per input change, then handed
+// verbatim to matchesSession (which does not re-lowercase). Empty string
+// short-circuits the filter (matchesSession returns true unconditionally).
+const q = computed(() => props.searchQuery.trim().toLocaleLowerCase());
 const openSessionIdSet = computed(() => new Set(props.openSessionIds));
 
 const groups = computed<Record<string, RemoteSession[]>>(() =>
@@ -81,7 +91,9 @@ const groups = computed<Record<string, RemoteSession[]>>(() =>
 const filteredGroups = computed<Record<string, RemoteSession[]>>(() => {
   const out: Record<string, RemoteSession[]> = {};
   for (const [k, list] of Object.entries(groups.value)) {
-    out[k] = list.filter((s) => !pins.isPinned(s.session_id));
+    out[k] = list.filter(
+      (s) => !pins.isPinned(s.session_id) && matchesSession(s, q.value),
+    );
   }
   return out;
 });
@@ -89,12 +101,13 @@ const filteredGroups = computed<Record<string, RemoteSession[]>>(() => {
 // "closed" (pinned+closed sessions still sort last via the fallback index).
 const groupKeys = computed<string[]>(() => {
   if (props.groupBy === "state") {
-    return STATE_ORDER.filter((s) => (groups.value[s] ?? []).length > 0);
+    return STATE_ORDER.filter((s) => (filteredGroups.value[s] ?? []).length > 0);
   }
   // Pin the local host to the top so the user's own machine is the first
   // thing visible — the rest stays alphabetical for stability across
   // relay churn (a remote dropping in/out shouldn't reshuffle the list).
-  const keys = Object.keys(groups.value).sort();
+  const keys = Object.keys(groups.value).sort()
+    .filter((k) => (filteredGroups.value[k] ?? []).length > 0);
   if (!props.localHostId) return keys;
   const i = keys.indexOf(props.localHostId);
   if (i <= 0) return keys;
@@ -106,6 +119,10 @@ const foldOpen = ref(false);
 // absence means expanded. Works for both groupBy="host" and groupBy="state".
 const collapsedGroups = ref<Set<string>>(new Set());
 function isGroupCollapsed(key: string): boolean {
+  // Active query overrides folded state: every group appears expanded so
+  // matches inside are visible. The underlying set is not mutated — clearing
+  // the query restores the user's real collapse state.
+  if (q.value) return false;
   return collapsedGroups.value.has(key);
 }
 function toggleGroupCollapsed(key: string) {
@@ -144,7 +161,7 @@ const pinnedSessions = computed<RemoteSession[]>(() => {
   for (const list of Object.values(source)) {
     for (const s of list) {
       if (seen.has(s.session_id)) continue;
-      if (pins.isPinned(s.session_id)) {
+      if (pins.isPinned(s.session_id) && matchesSession(s, q.value)) {
         seen.add(s.session_id);
         out.push(s);
       }
@@ -153,6 +170,10 @@ const pinnedSessions = computed<RemoteSession[]>(() => {
   out.sort((a, b) => urgencyIndex(a.task_state) - urgencyIndex(b.task_state));
   return out;
 });
+
+const hasAnyMatch = computed(
+  () => pinnedSessions.value.length > 0 || groupKeys.value.length > 0,
+);
 
 const menuState = ref<{
   open: boolean;
@@ -333,6 +354,13 @@ function stateLabel(state: string | undefined): string {
       </button>
     </section>
     </template>
+    <div
+      v-if="q && !hasAnyMatch"
+      class="empty-hint"
+      data-test="search-empty"
+    >
+      {{ t('tasks.search.empty', { q: props.searchQuery }) }}
+    </div>
     <section v-if="completedSeen.length > 0" class="completed-fold">
       <button
         class="fold-toggle"
@@ -438,4 +466,11 @@ function stateLabel(state: string | undefined): string {
 .completed-fold { border-top: 1px solid rgba(255, 255, 255, 0.06); margin-top: 6px; padding-top: 4px; display: flex; flex-direction: column; gap: 4px; }
 .fold-toggle { background: none; border: none; cursor: pointer; padding: 4px 6px; width: 100%; text-align: left; color: inherit; opacity: 0.7; }
 .fold-mark-all { background: none; border: 1px solid rgba(255, 255, 255, 0.12); cursor: pointer; padding: 4px 8px; margin: 4px 6px; color: inherit; border-radius: 3px; }
+.empty-hint {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--fg);
+  opacity: 0.55;
+  font-size: 12px;
+}
 </style>

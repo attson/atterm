@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
+import { nextTick } from "vue";
 import TaskSidebar from "./TaskSidebar.vue";
 import type { RemoteSession } from "../platform/types";
 import * as api from "../lib/api";
@@ -132,6 +133,88 @@ describe("TaskSidebar", () => {
     await w.find('[data-test="row-close"]').trigger("click");
 
     expect(w.emitted("close")?.[0]).toEqual([sess]);
+  });
+
+  test("renders a search input in the expanded header and hides it when collapsed", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+    });
+    await flushPromises();
+    expect(w.find('[data-test="sidebar-search"]').exists()).toBe(true);
+
+    await w.setProps({ collapsed: true });
+    await nextTick();
+    expect(w.find('[data-test="sidebar-search"]').exists()).toBe(false);
+  });
+
+  test("passes the typed query down to TaskGroupedList", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+    });
+    await flushPromises();
+    const input = w.find('[data-test="sidebar-search"]');
+    await input.setValue("feishu");
+    await nextTick();
+    const list = w.findComponent({ name: "TaskGroupedList" });
+    expect(list.props("searchQuery")).toBe("feishu");
+  });
+
+  test("Esc inside the search input clears the query", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+    });
+    await flushPromises();
+    const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    await input.setValue("proj");
+    expect(input.element.value).toBe("proj");
+    await input.trigger("keydown", { key: "Escape" });
+    await nextTick();
+    expect(input.element.value).toBe("");
+  });
+
+  test("focusSearch() expose focuses the input (and expands the sidebar if collapsed)", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: true,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    // Call the exposed method — should emit collapse:false then focus.
+    await (w.vm as any).focusSearch();
+    await nextTick();
+    expect(w.emitted("update:collapsed")?.[0]).toEqual([false]);
+
+    // Simulate the parent responding to update:collapsed by setting the prop.
+    await w.setProps({ collapsed: false });
+    await nextTick();
+    await (w.vm as any).focusSearch();
+    await nextTick();
+    const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    expect(document.activeElement).toBe(input.element);
+    w.unmount();
   });
 });
 

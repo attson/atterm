@@ -541,6 +541,7 @@ export const zhCN = {
       title: "会话",
       collapse: "折叠侧栏 (Cmd/Ctrl+B)",
       expand: "展开侧栏 (Cmd/Ctrl+B)",
+      searchPlaceholder: "搜索",
     },
     preset: {
       iconOnly: {
@@ -556,6 +557,9 @@ export const zhCN = {
       title: "置顶",
       menuPin: "置顶",
       menuUnpin: "取消置顶",
+    },
+    search: {
+      empty: '搜索 "{q}" 无匹配会话',
     },
     markAllRead: "全部标已读",
     markRead: "标已读",

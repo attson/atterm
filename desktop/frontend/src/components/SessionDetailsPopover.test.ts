@@ -25,14 +25,16 @@ function factory(over: {
   session?: RemoteSession | null;
   paneLocation?: { tabId: string; paneIdx: number } | null;
 } = {}) {
+  const session = over.session === undefined ? mkSession() : over.session;
+  const paneLocation = over.paneLocation === undefined ? null : over.paneLocation;
   return mount(SessionDetailsPopover, {
     attachTo: document.body,
     props: {
       open: true,
       x: 200,
       y: 200,
-      session: "session" in over ? over.session : mkSession(),
-      paneLocation: "paneLocation" in over ? over.paneLocation : null,
+      session,
+      paneLocation,
       tabIndexById: (id: string) => (id === "t1" ? 1 : 0),
     },
   });

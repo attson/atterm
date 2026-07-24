@@ -25,6 +25,7 @@ function makeFakeTerm(lineText: string) {
     provideLinks: (y: number, cb: (links: unknown[] | undefined) => void) => void;
   } | null = null;
   const dispose = vi.fn();
+  const clearSelection = vi.fn();
   const cells = cellsFromString(lineText);
   return {
     term: {
@@ -33,6 +34,7 @@ function makeFakeTerm(lineText: string) {
         provider = p;
         return { dispose };
       },
+      clearSelection,
       buffer: {
         active: {
           getLine(_y: number) {
@@ -50,6 +52,7 @@ function makeFakeTerm(lineText: string) {
     } as unknown as import("xterm").Terminal,
     getProvider: () => provider!,
     dispose,
+    clearSelection,
   };
 }
 
@@ -111,6 +114,50 @@ describe("useTerminalLinkProvider", () => {
     f.getProvider().provideLinks(1, (l) => (links = l as any[]));
     await links![0].activate(new MouseEvent("click", {}), "https://x.test");
     expect(openURL).not.toHaveBeenCalled();
+    // Plain click must not touch selection — user may have deliberately
+    // dragged a selection that ended over the link.
+    expect(f.clearSelection).not.toHaveBeenCalled();
+  });
+
+  it("activate with Mod clears the terminal selection", async () => {
+    // xterm.js starts a selection on the mousedown that leads into the
+    // click; the linkProvider's activate() must clear it after opening the
+    // URL so the user isn't left staring at a blue highlight.
+    const f = makeFakeTerm("https://x.test");
+    const openURL = vi.fn().mockResolvedValue(undefined);
+    useTerminalLinkProvider({
+      term: f.term,
+      isMac: true,
+      getHomeDir: () => "",
+      openURL,
+      onError: vi.fn(),
+    });
+    let links: any[] | undefined;
+    f.getProvider().provideLinks(1, (l) => (links = l as any[]));
+    await links![0].activate(
+      new MouseEvent("click", { metaKey: true }),
+      "https://x.test",
+    );
+    expect(f.clearSelection).toHaveBeenCalledOnce();
+  });
+
+  it("activate clears selection even when openURL rejects", async () => {
+    const f = makeFakeTerm("https://x.test");
+    const openURL = vi.fn().mockRejectedValue(new Error("boom"));
+    useTerminalLinkProvider({
+      term: f.term,
+      isMac: true,
+      getHomeDir: () => "",
+      openURL,
+      onError: vi.fn(),
+    });
+    let links: any[] | undefined;
+    f.getProvider().provideLinks(1, (l) => (links = l as any[]));
+    await links![0].activate(
+      new MouseEvent("click", { metaKey: true }),
+      "https://x.test",
+    );
+    expect(f.clearSelection).toHaveBeenCalledOnce();
   });
 
   it("activate with Mod opens URL", async () => {

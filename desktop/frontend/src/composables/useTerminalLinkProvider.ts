@@ -42,7 +42,7 @@ export function useTerminalLinkProvider(
       }
       callback(
         matches.map((m) =>
-          toILink(m, y, cellStart, isMac, getHomeDir, openURL, onError),
+          toILink(m, y, cellStart, term, isMac, getHomeDir, openURL, onError),
         ),
       );
     },
@@ -60,6 +60,7 @@ function toILink(
   m: LinkMatch,
   y: number,
   cellStart: number[],
+  term: Terminal,
   isMac: boolean,
   getHomeDir: () => string,
   openURL: (url: string) => Promise<void>,
@@ -78,6 +79,12 @@ function toILink(
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
+      // xterm's selection is set on the mousedown that precedes this
+      // click; preventDefault on the click can't undo that. Clear it up
+      // front so both the success and error paths leave the user with a
+      // clean terminal — Mod-click on a link means "open it", never
+      // "select it".
+      term.clearSelection();
       const url = normalizeForOpen(m, getHomeDir());
       if (!url) {
         onError("terminal.link.openFailedNoHome");

@@ -1,9 +1,9 @@
 # 组件样式规范
 
 > **Audience**: 改 atterm 前端 UI 的工程师
-> **Last updated**: 2026-06-13
+> **Last updated**: 2026-07-24
 > **Status**: stable
-> **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md)
+> **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md) · [session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)
 
 本文定义 atterm 桌面端与 Web/PWA 前端的组件视觉规则。目标是让后续迭代保持“终端工具 + 低干扰控制台”的一致质感，避免局部组件退回浏览器或系统默认控件。
 
@@ -242,8 +242,8 @@ detail 视图。
 
 ## 会话侧栏：内部滚动 + 分组折叠
 
-`desktop/frontend/src/components/TaskSidebar.vue` + `TaskGroupedList.vue`
-负责左侧任务面板。两条结构性约束**不能弱化**：
+`desktop/frontend/src/components/TaskSidebar.vue` + `TaskGroupedList.vue` +
+`SessionRowMenu.vue` 负责左侧任务面板。两条结构性约束**不能弱化**：
 
 ### 内部滚动，不撑窗口
 
@@ -314,6 +314,103 @@ header 必须可键盘操作：
   set；切换分组维度不需要保留折叠状态。
 - 不要给 group 顶部加滑动展开/收起的高度动画——session 列表数量变化时高度
   动画会和 flex column 的 layout 抢主线程，引起明显抖动。直接 `v-if` 切换即可。
+
+### 📌 置顶虚拟组（pinned virtual group）
+
+`TaskGroupedList` 在 host/state 分组之上叠加一个**虚拟组**：被 `useSessionPins`
+标记为置顶的会话会从原本的 host/state 分组里摘出来，统一渲染在列表最前面，
+与 host/state 分组共用同一套折叠语义（`collapsedGroups`，sentinel key
+`PINNED_KEY = "__pinned__"`）。视觉上与普通 `.group-header` 保持同族但要能一眼
+区分：
+
+```css
+.pinned-group .pin-icon { font-size: 11px; }
+```
+
+结构规则：
+
+- header 结构与 host/state 分组一致（`role="button" tabindex="0"` + caret +
+  `.group-title` + `.group-count`），只是在 caret 和标题之间插入一个
+  `<span class="pin-icon" aria-hidden="true">📌</span>`。不要另起一套 header
+  样式，靠 emoji + `data-test="pinned-group-header"` 区分即可。
+- 置顶组是"摘出"而非"复制"——同一 session 只会出现在置顶组或原分组之一，
+  不会同时出现两处；`filteredGroups` 过滤时排除已置顶的 session
+  （`!pins.isPinned(s.session_id)`）。
+- 置顶组为空（无置顶会话）时整段 `<template v-if="pinnedSessions.length > 0">`
+  不渲染，不留空 header。
+- 置顶/取消置顶的入口是 `SessionRowMenu`（见下）以及行内右键菜单；不提供拖拽
+  排序，`pinnedSessions` 内部排序沿用 `STATE_ORDER`（不含 `closed`，closed+
+  pinned 会话靠 fallback index 排到最后）。
+
+### 侧栏内联搜索框
+
+`TaskSidebar.vue` header 里用原生 `<input type="search">` 承担会话过滤，不是
+另起自定义 combobox：
+
+```css
+.sidebar-search {
+  flex: 1 1 auto;
+  min-width: 60px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  color: inherit;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 20px;
+  margin-right: 6px;
+  outline: none;
+}
+.sidebar-search:focus { border-color: var(--border); background: rgba(255, 255, 255, 0.05); }
+.sidebar-search::placeholder { opacity: 0.5; }
+```
+
+要点：
+
+- 常态透明边框（`border: 1px solid transparent`），只在 `:focus` 时描边，避免
+  header 里一排常驻的输入框边框噪音。
+- Chromium/WebKit 会给 `type="search"` 渲染原生 × 清除按钮；**不要**用
+  `appearance: none` 关掉它——颜色靠 `color: inherit` 跟随主题即可，关掉清除
+  按钮反而要重新实现清空逻辑。
+- 组件通过 `defineExpose({ focusSearch })` 暴露聚焦方法（选中已有文本），供
+  快捷键从别处跳转聚焦搜索框；新增聚焦入口复用这个方法，不要在别处重复
+  `querySelector` 找输入框。
+- 过滤逻辑（`sessionMatch.ts`）作用于命令、cwd、标题、host 名等字段，大小写
+  不敏感；置顶组和普通分组各自独立过滤（见上一节），搜索词变化不影响
+  折叠状态。
+
+### 会话行右键菜单：视口翻转 popover（SessionRowMenu）
+
+`SessionRowMenu.vue` 是右键菜单（目前只有一个"置顶/取消置顶"菜单项），走
+`position: fixed` + 视口边缘翻转，不是简单地贴在鼠标坐标：
+
+```css
+.session-row-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--menu-bg, #1f1f22);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+```
+
+行为规则：
+
+- 打开时先按鼠标坐标 `(x, y)` 定位，`requestAnimationFrame` 后用真实
+  `getBoundingClientRect()` 尺寸判断是否超出右/下边界，超出则翻转锚定到
+  `(x - width, y)` / `(x, y - height)`。翻转判定必须等元素挂载出尺寸后再算，
+  不能用估算宽高，否则窄侧栏靠右的行右键会把菜单顶到屏幕外。
+- 关闭触发点有三处，缺一不可：`Escape` 键、菜单外 `mousedown`、菜单子树
+  `focusout`（相关目标不在菜单内时）。后者是为了 Tab 移出菜单或菜单项被移除
+  导致 focus 跳到 `<body>` 时也能收起，不依赖鼠标事件。
+- 菜单项按钮 `@click.stop`，避免冒泡到外层触发 `mousedown` 关闭逻辑先于
+  `click` 触发，导致点击穿透。
+- 复用 Dialog / overlay 一节的阴影语言（深阴影 + 6px radius），但不需要
+  backdrop——popover 级别的浮层不挡住其余 UI。
 
 ## 快捷模板：bar + hotkey + 隐藏开关
 

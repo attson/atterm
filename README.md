@@ -6,9 +6,9 @@
 [![Go](https://img.shields.io/badge/go-1.23-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 
 > **Audience**: 第一次见到 atterm 的人 / 想跑起来或部署的开发者
-> **Last updated**: 2026-07-10
+> **Last updated**: 2026-07-24
 > **Status**: stable
-> **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md) · [docs/spec/feishu.md](./docs/spec/feishu.md) · [docs/roadmap.md](./docs/roadmap.md)
+> **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md) · [docs/spec/feishu.md](./docs/spec/feishu.md) · [docs/roadmap.md](./docs/roadmap.md)
 
 AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动的 shell、Codex、Claude 等长任务，可以在离开电脑后从手机、浏览器或另一台电脑继续查看和输入。Relay 端启用 E2EE 后，命令输出 / 标题 / cwd / 任务摘要在传输和持久化路径上都对 relay 不可读，只在拥有 `account_key` 的客户端解开。
 
@@ -36,7 +36,14 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 
 - 桌面端 macOS / Linux / Windows 三平台，多 tab、本地 PTY、cwd 跟踪。
 - 每 tab 1 / 2 / 4 pane 分屏，分割线可拖拽缩放；macOS `⌘N` / `⌘⇧N`，其他平台 `Ctrl`。
-- 主题 / 快捷键设置、右侧插件面板、Quick Input、文件浏览器、翻译插件。
+- 主题 / 快捷键设置、右侧插件面板、Quick Input、翻译插件。
+- 远程文件浏览器 + 编辑 + 全套 CRUD + 回收站（v0.3.x）：可浏览 owner 机器文件系统（受 `remote_permission=full` 限制），双源切换本地/远程；`PASTE_FILE 0x37` 帧承载文件传输。
+
+**会话侧栏（v0.3.x）**
+
+- 右键会话行 → 「置顶」把重要会话抽到顶部虚拟 📌 组；集合按 `session_id` 存桌面本地 config，跨重启保留。
+- Header 内联搜索框（`Cmd/Ctrl+F` 聚焦，`Esc` 清空）按 title / cwd / current_command 即时过滤；折叠组命中时自动展开，完成折叠也一并过滤，全无匹配时显示空态提示。
+- 置顶跨重启迁移：本机会话重启后被 recovery 重新 spawn 拿新 sid 时，pin 自动从旧 sid 迁到新 sid，不再漂成孤儿。
 
 **远程接管（lazy 同步）**
 
@@ -80,7 +87,9 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 
 - Settings → Diagnostics 一键导出脱敏的 app / OS / WebView / uplink / 配置摘要，方便贴 issue。
 - Settings → Logging 配 log level + 文件路径，内置 viewer + 3s 实时尾部预览，不用切到 Finder 找日志文件。
-- 启动链按 `bootStage` 分阶段，失败时 titlebar 直接显示 `connectLocalSessionList: SyntaxError: …`；`new WebSocket()` 同步异常被隔离重连，不会击穿 boot await chain。
+- 启动链按 `bootStage` 分阶段（`refreshTerminalTheme` / `getEndpoint` / `getHostInfo` / `loadRecoverySnapshot` / `connectLocalSessionList` / `refreshRelayConfig`），失败时 titlebar 直接显示 `connectLocalSessionList: SyntaxError: …`；`new WebSocket()` 同步异常被隔离重连，不会击穿 boot await chain。
+- Relay host / 日志系统等 fatal 不再直接崩进程：走 `setStartupFatalError`，webview 起来展示可复制的失败信息 + 日志路径，方便贴 issue。
+- 通知点击直接路由到对应 session：命令完成 / AskUserQuestion 通知带上 `session_id` payload，用户点通知自动打开或聚焦到那个 tab。
 
 路线图未完成：桌面安装包 codesign / notarization（P1.8）、单 session 分享 + presence + 审计日志（P3）、可选持久化历史 + 命令级回放（P4）、E2EE 外部加密评审（M7-audit）。详见 [`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/spec/architecture.md`](docs/spec/architecture.md) §phase 完成度。
 
@@ -106,7 +115,9 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 - **远端 pane** — 用旧 `session_id` 直接 rebind 到 relay；relay 上 session 还活就接回去，挂了就显示 `disconnected` 占位、保留标题。
 - **AI 会话** — Go 端在恢复 shell 第一次 prompt 时直接写 `claude --resume <sid>` / `codex resume <sid>`，不用你手敲；保留原启动命令的 flag（`--permission-mode` 等）。`aider` 无稳定 sid，改重放上次的整条 last command line。
 
-AI sid 抓取在 session 启动时自动进行（OSC 133 D 事件触发分类 + claude/codex 的 session jsonl 文件 mtime 跟踪），抓不到就退化为普通 shell 恢复、不注入 resume —— "抓不到" 优于 "抓错的对话"。
+AI sid 抓取在 session 启动时自动进行（OSC 133 D 事件触发分类 + claude/codex 的 session jsonl 文件 mtime 跟踪），抓不到就退化为普通 shell 恢复、不注入 resume —— "抓不到" 优于 "抓错的对话"。**Codex subagent restore session** 会被显式跳过，避免把子代理会话误判成主会话的 resume 目标。
+
+**置顶跨重启（v0.3.x）**：本机 pane 恢复时会拿新 `session_id`，`useSessionPins.rename(oldSid, newSid)` 自动把 pin 从旧 sid 迁到新 sid；remote pane 因为 sid 由 relay 保活、天然不需要迁移。sidebar-viewer on local host（`p.remote===true` 但 `host_id===本机`）是第三态，其 sid 属于另一实例的 relay，故意不参与 pin 迁移。
 
 对话框可在 Settings → General 关闭，关掉后下次启动直接走 startNewTab。
 
@@ -285,7 +296,9 @@ compose 默认只起明文 HTTP `:8080`，**前面要挂一个 TLS 终止反代*
 > - **`:8080` 是明文 HTTP 端口**：仅供反代后端或内网用，浏览器直连它登录不了。
 > - 仅本机临时用：`ssh -L 8080:127.0.0.1:8080 <host>` 后开 `http://localhost:8080`（loopback 是安全上下文）。
 
-大多数配置已下沉到管理后台（Admin → Config / Feishu），持久化在 `<config-dir>/relay.json`，运行时即可修改、无需重启（VAPID subject 除外）。**启动只需要核心 env**；其余 env 仍被支持，会在首次启动时一次性「播种」进 `relay.json`。
+大多数配置已下沉到管理后台（Admin → Config / Feishu），持久化在 DB 表 `relay_config`（SQLite 或 Postgres，取决于 `ATTERM_RELAY_DB_DRIVER`），运行时即可修改、无需重启（VAPID subject 除外）。**启动只需要核心 env**；其余 env 仍被支持，会在首次启动时一次性「播种」进 `relay_config`。
+
+> **存储后端**：`docker-compose.yml` 默认起一个 bundled Postgres 与 relay 一起跑（`ATTERM_RELAY_DB_DRIVER=postgres`）。多实例部署把 `ATTERM_RELAY_DB_DRIVER=postgres` + `ATTERM_RELAY_DB_DSN` 指向同一个**外部** Postgres 即可——admin config 变更通过 `internal/relay/config_refresh.go` 的版本轮询在 ~10s 内传播到其它实例（rate_limit / max_connections 仍是 per-instance）。若要单实例 SQLite，设 `ATTERM_RELAY_DB_DRIVER=sqlite` + `ATTERM_RELAY_DB_DSN=<config-dir>/users.db`。
 
 核心环境变量：
 
@@ -294,17 +307,20 @@ compose 默认只起明文 HTTP `:8080`，**前面要挂一个 TLS 终止反代*
 | `ATTERM_BOOTSTRAP_ADMIN_EMAIL` | 启动时为该邮箱打印一次性 claim token（见下「Bootstrap admin」）；用它注册一个**新**账号即获得 admin。公网监听必须设置（除非 `--dev-insecure`） |
 | `ATTERM_ORIGINS` | 浏览器 Origin 白名单；公网部署必须设成真实域名（也可后台 Admin → Config 修改） |
 | `ATTERM_RELAY_PORT` | 宿主机端口，默认 `8080` |
-| `ATTERM_RELAY_CONFIG_DIR` | relay 持久化配置目录（含 `users.db`、`relay.json`），默认 `./data/atterm-relay` |
+| `ATTERM_RELAY_DB_DRIVER` | `sqlite`（默认）或 `postgres`。多实例部署必须 `postgres` |
+| `ATTERM_RELAY_DB_DSN` | SQLite 下是文件路径（默认 `<config-dir>/users.db`），Postgres 下是 `postgres://user:pw@host:port/db?sslmode=...` DSN |
+| `ATTERM_RELAY_CONFIG_DIR` | SQLite 模式下的持久化目录（`users.db` 落这里，也是运行时临时文件根目录），默认 `./data/atterm-relay`。Postgres 模式下**不承担 DB 存储**，仍是临时文件根目录 |
+| `ATTERM_RELAY_INSTANCE_PUBLIC_URL` | 本实例外部可达 URL（例：`https://relay-a.example.com`）；多实例部署必填——每个实例声明自己的 URL，写入 `relay_instances` 心跳表并作为 `home_instance_url` 派发候选。单实例可省 |
 
 可选环境变量（不设也能启动；现在更推荐在管理后台配置）：
 
 | 变量 | 用途 |
 |------|------|
-| `ATTERM_FEISHU_ENCRYPT_KEY` | 飞书应用凭据 AEAD 静态加密密钥（32 字节 base64）。**不再必填**——在 Admin → Feishu 里可一键「生成」并保存。仅当你想用 env 预置时设置（`openssl rand -base64 32`），首次启动会播种进 `relay.json` 并自动启用飞书 |
+| `ATTERM_FEISHU_ENCRYPT_KEY` | 飞书应用凭据 AEAD 静态加密密钥（32 字节 base64）。**不再必填**——在 Admin → Feishu 里可一键「生成」并保存。仅当你想用 env 预置时设置（`openssl rand -base64 32`），首次启动会播种进 DB `relay_config.feishu_secret_key` 并自动启用飞书 |
 | `ATTERM_FEISHU_BASE_URL` | 飞书 Open Platform 基础 URL，默认 `https://open.feishu.cn`；私有化部署时覆盖（也可后台配置） |
 | `ATTERM_VAPID_SUBJECT` | Web Push VAPID subject，默认 `mailto:noreply@atterm.local`（改动需重启 relay） |
-| `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP 的请求与 WS upgrade 分钟限额（也可后台 Admin → Config 修改） |
-| `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP 的活跃 WebSocket 连接上限（同上） |
+| `ATTERM_RATE_LIMIT_PER_MINUTE` | 每个 IP 的请求与 WS upgrade 分钟限额（**per-instance**，改后需重启该实例；也可后台 Admin → Config 修改） |
+| `ATTERM_MAX_CONNECTIONS_PER_KEY` | 每个 IP 的活跃 WebSocket 连接上限（同上，**per-instance**） |
 
 公网示例：
 
@@ -353,13 +369,25 @@ claim token 是 OPAQUE 注册的「会合凭据」：`register/finalize` 校验 
 
 ### 管理后台（Admin）
 
-以 admin 账号登录后，顶部导航出现 **Admin**，大部分运行时配置都在这里改、保存即生效、无需重启（持久化到 `<config-dir>/relay.json`，权限 0600）：
+以 admin 账号登录后，顶部导航出现 **Admin**，大部分运行时配置都在这里改、保存即生效、无需重启（持久化到 DB 表 `relay_config`，SQLite 或 Postgres 后端由 `ATTERM_RELAY_DB_DRIVER` 决定；多实例部署下 config 版本轮询在 ~10s 内传播到其它实例）：
 
 - **Config**：速率限制、每 key 连接上限、Origin 白名单、详细日志开关（`debug` / `debug_payload`，后者会记录终端输入输出，属敏感信息，仅排查时临时开）。
-- **Feishu**：飞书集成开关 + 加密密钥（可一键「生成」32 字节安全码）+ Open Platform base URL。保存后 relay 即可热接入飞书，无需重启；关闭即拆除。该密钥用于加密 `users.db` 里的飞书凭据，存在 `relay.json`（GET 接口只回显末 4 位、绝不返回明文）。
+- **Feishu**：飞书集成开关 + 加密密钥（可一键「生成」32 字节安全码）+ Open Platform base URL。保存后 relay 即可热接入飞书，无需重启；关闭即拆除。该密钥用于加密 `users.db` 里的飞书凭据，持久化在 DB `relay_config.feishu_secret_key`（GET 接口只回显末 4 位、绝不返回明文、绝不写日志；换 key 会让旧飞书绑定无法解密，故 PUT 默认拒绝轮换、需 `force:true`）。
 - **Invitations / Users**：邀请记录与用户/角色管理。
 
-> 唯一需要重启才生效的是 VAPID subject（Web Push 启动时一次性消费）。
+> 需重启才生效的：VAPID subject（Web Push 启动时一次性消费）、per-instance 的 `ATTERM_RATE_LIMIT_PER_MINUTE` / `ATTERM_MAX_CONNECTIONS_PER_KEY`（当前仍是进程内 map）。
+
+### 多实例部署
+
+需要跨机 HA / 就近节点路由时：
+
+1. 起 N 个 relay 实例，全部指同一外部 Postgres（`ATTERM_RELAY_DB_DRIVER=postgres` + `ATTERM_RELAY_DB_DSN`）。
+2. 每个实例设自己独有的 `ATTERM_RELAY_INSTANCE_PUBLIC_URL`（例：`https://relay-us.example.com`、`https://relay-eu.example.com`）。
+3. Relay 首次启动写入 `relay_realm_state`（`realm_id` 全集群共享，永不变，直接影响 E2EE `account_key` 派生），并把自己心跳到 `relay_instances` 表（`internal/userstore/relay_instances.go`）。
+4. 用户登录任意实例，响应携带 `realm_id` + `home_instance_url`；客户端拿到 `home_instance_url` 后自行 reconnect 到该实例。用户可在 `PUT /api/me/home` 更改自己偏好的 home instance（`internal/relay/node_home.go`）。
+5. `GET /api/nodes` 返回活跃实例列表，供 web / 桌面客户端做节点切换 UI。
+
+**红线**：`realm_id` 只从 DB 读、不从 env 覆盖——同一物理集群必须共享同一 realm，否则 E2EE 会跨实例失效；实例之间也不要拉 gossip / 直连，所有共享状态走 DB。
 
 ## 安全模型
 

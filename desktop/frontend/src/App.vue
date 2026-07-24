@@ -20,6 +20,7 @@ import { createPluginContext } from "./plugins/usePluginContext";
 import { useResizer } from "./plugins/useResizer";
 import { usePluginConfigStore } from "./plugins/configStore";
 import { sendInputToSession } from "./lib/sendInput";
+import { applyTabReorder } from "./lib/tabReorder";
 // Plugin theme palettes (CSS vars). Loaded in main bundle so the panel
 // toggle and Quick Input toolbar can read --ed-* vars even when the
 // file-explorer chunk is not yet loaded.
@@ -688,6 +689,10 @@ function gotoTab(id: string) {
   if (location.hash !== "#/t/" + id) {
     location.hash = "#/t/" + id;
   }
+}
+
+function onTabReorder(fromId: string, targetId: string, position: "before" | "after") {
+  tabs.value = applyTabReorder(tabs.value, fromId, targetId, position);
 }
 
 function findSessionInfo(sid: string, remote: boolean): SessionInfo | undefined {
@@ -1373,6 +1378,7 @@ onUnmounted(() => {
       @activate="gotoTab"
       @close="closeTab"
       @new="startNewTab"
+      @reorder="onTabReorder"
     />
 
     <div v-if="startupFatal" class="startup-fatal" data-testid="startup-fatal" role="alert">

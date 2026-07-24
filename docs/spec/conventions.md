@@ -1,7 +1,7 @@
 # 代码约定
 
 > **Audience**: 改 Go / 前端代码的工程师
-> **Last updated**: 2026-06-13
+> **Last updated**: 2026-07-24
 > **Status**: stable
 > **See also**: [component-style.md](./component-style.md) · [architecture.md](./architecture.md)
 
@@ -33,7 +33,9 @@ desktop/frontend/src/
 ├── main.ts             Vue 入口
 ├── App.vue             根组件
 ├── components/         全部 *.vue，每个组件单文件
-├── composables/        Vue 3 setup helpers (e.g. useTerminalShortcuts.ts)
+├── composables/        Vue 3 setup helpers (e.g. useTerminalShortcuts.ts,
+│                       useSessionPins.ts, useCollapsedGroups.ts — 后两者是
+│                       module-level ref 共享状态模式，见下「跨组件共享状态」)
 ├── i18n/               desktop 前端中英 messages + useI18n()
 ├── lib/                pure TS 模块（无 Vue 依赖）
 │   ├── proto.ts        协议层
@@ -42,7 +44,9 @@ desktop/frontend/src/
 │   ├── layout.ts       纯函数（pane 布局 transition / close / focus 导航）
 │   └── api.ts          Wails bindings 包装
 ├── platform/           Wails / Capacitor / browser 适配层
-└── plugins/            右侧插件槽与内置插件（file explorer / quick input / translate）
+└── plugins/            右侧插件槽与内置插件（fileExplorer：本地/远程双源切换 +
+                        编辑 + CRUD + 回收站 / translate；legacy quick input
+                        已删，由 QuickTemplate 取代）
 ```
 
 `lib/` 不依赖 Vue（便于单元测试、未来共享给 web/）。组件不直接 fetch / WebSocket，全走 `lib/`。`lib/layout.ts` 这种纯函数模块用 vitest 跑单测，TDD 增量覆盖。
@@ -187,6 +191,44 @@ if err != nil {
 - 类型在 `interface` 写公共 schema；`type` 用于 union / 别名
 - 模板里数据结构的对齐：`<TerminalView :endpoint="…" :session-id="…" :active="…" />` kebab-case，`<script>` 用 camelCase
 - 不在组件内做副作用（fetch/WS）跨 mount 边界；`onMounted/onUnmounted` 配对清理
+
+#### 跨组件共享状态：module-level ref composable
+
+多个不相关组件需要读写同一份状态（例：会话置顶集合要同时给 `TaskSidebar`、
+`TaskGroupedList`、`SessionRowMenu` 用；分组折叠状态要给 header 和列表项用）时，
+**不要** provide/inject 或把状态提到共同祖先再逐层传 props/emit。约定写法是
+在 composable 文件的 module 顶层声明一个 `ref`，`export` 出的函数闭包引用它：
+
+```ts
+// useSessionPins.ts
+const pinnedIds: Ref<Set<string>> = ref(new Set());   // module-level，全应用单例
+
+export function useSessionPins() {
+  function pin(sid: string) {
+    pinnedIds.value = new Set(pinnedIds.value).add(sid);  // 见下「铁规」
+    schedulePersist();
+  }
+  return { pinnedIds, pin, unpin, toggle, rename, flushNow };
+}
+```
+
+任意组件调用 `useSessionPins()` 拿到的都是**同一个** `pinnedIds` ref——这是
+"module-level singleton"而非 Vue 的依赖注入机制，`useCollapsedGroups.ts` 用
+的是同一模式，`useSessionPins.ts` 是照抄它落地的（`session-bar-pin-design.md`
+明确写"沿用 `useCollapsedGroups` 模式"）。
+
+**铁规**：
+
+- **不要**直接 `pinnedIds.value.add(...)` / `.delete(...)` 做同一 `Set` 实例的
+  原地 mutation——Vue 的响应式对 `ref<Set>` 走引用相等判定，同实例 mutation
+  不会触发依赖更新。必须 `pinnedIds.value = new Set(pinnedIds.value)` 先 clone
+  出新实例再增删，赋值本身触发响应式。
+- 需要跨重启持久化的字段（如 `PinnedSessionIDs`），写操作要 debounce
+  （`useSessionPins.ts` 用 300ms）+ 提供 `flushNow()` 给调用方在关键时刻
+  （如 recovery `executeRestore` 收尾）强制落盘，不要只依赖 debounce 定时器。
+- 什么时候才用这个模式：**只**当状态是"整个前端进程内唯一一份、多个非父子
+  组件都要读写"时才用；单一组件内部状态还是用 `ref` + props/emit，不要为了
+  "统一写法"到处开 module-level singleton。
 
 ### CSS
 
@@ -375,6 +417,10 @@ loading 状态，整个 app 看着像挂了。
 赋值；catch 时把 `${bootStage}: ${e.name}: ${e.message}` 写进
 `errorMsg.value` + `console.error('[boot] step "${bootStage}" failed', { … })`。
 
+**六步顺序固定**（v0.3.x 新增第 4 步 `loadRecoverySnapshot`，在 `getHostInfo`
+与 `connectLocalSessionList` 之间；插错顺序会让 recovery 快照在会话列表建立前
+还没就绪，pin 迁移拿不到旧 sid）：
+
 ```ts
 let bootStage = "";
 try {
@@ -385,6 +431,8 @@ try {
   bootStage = "getHostInfo";
   const info = await getHostInfo();
   localHostID.value = info.host_id;
+  bootStage = "loadRecoverySnapshot";
+  await loadRecoverySnapshot();
   bootStage = "connectLocalSessionList";
   connectLocalSessionList(localEndpoint.value);
   bootStage = "refreshRelayConfig";
@@ -399,6 +447,9 @@ try {
   errorMsg.value = `${bootStage}: ${name}: ${msg}` || i18nT("app.wailsBindingsUnavailable");
   return;
 }
+// boot 末尾（无论上面是否抛出）再拉一次 Go 侧致命错误，见下「Go 侧 StartupError」
+const startupErr = await GetStartupError();
+if (startupErr?.fatal) showStartupFailure(startupErr);
 ```
 
 效果：
@@ -421,6 +472,25 @@ try {
   这种分散 catch——5 个调用就 5 段相同的错误处理，写错一个就回归。
 - 把 `bootStage` 局部化到 try 内（`let bootStage = ""` 放 try 里）——
   catch 拿不到。
+
+### Go 侧 StartupError（前端 bootStage 的配套半边）
+
+前端 `bootStage` 只能捕获**前端**抛出的异常。Go 侧的致命初始化失败（relay
+host 起不来、日志系统初始化失败）历史上是 `log.Fatalf`——整个进程崩溃退出，
+webview 来不及展示任何 UI，用户只看到 app 消失。v0.3.x 把这类路径统一改成
+非崩溃：
+
+- `desktop/app.go::setStartupFatalError(msg, logPath)` 把失败记进
+  `startupFatal *StartupError{Fatal, Message, LogPath}` 字段，函数
+  **return** 而不是 `log.Fatalf`，Wails 主循环继续跑，webview 正常起来。
+- 前端在 boot 链末尾（无论上面 `bootStage` try/catch 是否已经失败）调用
+  `GetStartupError()`，非空且 `Fatal` 为真时展示可复制的失败信息
+  + 日志路径（`app.startupFailureCopy` i18n key）。
+- **不要**再在 `desktop/` 初始化路径里加裸 `log.Fatalf`；任何"没这个就跑不动"
+  的失败都要走 `setStartupFatalError` + `return`（AGENTS.md 红线 #19 / #35）。
+
+这两端（`bootStage` + `StartupError`）合起来才是完整的启动失败可观测设计——
+只读一半会漏掉另一半覆盖的失败场景。
 
 ### Sticky non-shell session type
 

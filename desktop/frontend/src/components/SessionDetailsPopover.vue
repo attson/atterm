@@ -90,7 +90,7 @@ const rows = computed(() => {
   if (s.cwd) list.push({ key: "cwd", label: t("tasks.details.cwd"), value: s.cwd, copy: true });
   const cmd = s.current_command || s.title;
   if (cmd) list.push({ key: "command", label: t("tasks.details.command"), value: cmd, copy: true });
-  if (s.task_state) list.push({ key: "state", label: t("tasks.details.state"), value: taskStateLabel(s.task_state, t as any) });
+  if (s.task_state) list.push({ key: "state", label: t("tasks.details.state"), value: taskStateLabel(s.task_state, t) });
   if (s.started_at) list.push({ key: "startedAt", label: t("tasks.details.startedAt"), value: fmtTs(s.started_at) });
   if (s.command_started_at) list.push({ key: "commandStartedAt", label: t("tasks.details.commandStartedAt"), value: fmtTs(s.command_started_at) });
   if (s.command_ended_at) list.push({ key: "commandEndedAt", label: t("tasks.details.commandEndedAt"), value: fmtTs(s.command_ended_at) });
@@ -101,7 +101,10 @@ const rows = computed(() => {
   list.push({ key: "pinned", label: t("tasks.details.pinned"), value: pins.isPinned(s.session_id) ? t("common.yes") : t("common.no") });
   const loc = props.paneLocation;
   const paneLabel = loc
-    ? `Tab ${props.tabIndexById(loc.tabId)} · Pane ${loc.paneIdx + 1}`
+    ? t("tasks.details.paneAt", {
+        tab: props.tabIndexById(loc.tabId),
+        pane: loc.paneIdx + 1,
+      })
     : t("tasks.details.paneNone");
   list.push({ key: "paneLocation", label: t("tasks.details.paneLocation"), value: paneLabel });
   return list;
@@ -129,11 +132,11 @@ watch(
       positionedX.value = props.x;
       positionedY.value = props.y;
       requestAnimationFrame(updatePosition);
-      document.addEventListener("keydown", onKeydown);
-      document.addEventListener("mousedown", onOutside);
+      window.addEventListener("keydown", onKeydown);
+      window.addEventListener("mousedown", onOutside);
     } else {
-      document.removeEventListener("keydown", onKeydown);
-      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKeydown);
+      window.removeEventListener("mousedown", onOutside);
     }
   },
   { immediate: true },
@@ -144,8 +147,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener("keydown", onKeydown);
-  document.removeEventListener("mousedown", onOutside);
+  window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("mousedown", onOutside);
 });
 </script>
 

@@ -284,7 +284,15 @@ const railIcons = computed(() => {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
-.title { flex: 0 0 auto; font-weight: 500; margin-right: 6px; }
+.title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 500;
+  margin-right: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .collapse-button,
 .expand-button {
   background: none;

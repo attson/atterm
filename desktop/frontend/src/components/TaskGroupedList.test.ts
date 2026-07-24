@@ -541,6 +541,11 @@ describe("TaskGroupedList pinned group", () => {
 });
 
 describe("TaskGroupedList search filter", () => {
+  beforeEach(() => {
+    resetPins();
+    vi.restoreAllMocks();
+  });
+
   it("filters rows by searchQuery across title/cwd/current_command", async () => {
     const s1 = { session_id: "a", host_id: "h", title: "Feishu Gateway", cwd: "/proj/api", cols: 80, rows: 24, started_at: 0 } as any;
     const s2 = { session_id: "b", host_id: "h", title: "Web app", cwd: "/proj/web", cols: 80, rows: 24, started_at: 0 } as any;
@@ -635,5 +640,37 @@ describe("TaskGroupedList search filter", () => {
     expect(w.find("[data-test=pinned-group-header]").exists()).toBe(false);
     const rows = w.findAll("[data-test=task-row]");
     expect(rows.map((r) => r.attributes("data-session-id"))).toEqual(["a"]);
+  });
+
+  test("completed fold is filtered by search query", async () => {
+    const done1 = mk({ session_id: "d1", host_id: "h", host: "h", title: "Feishu Gateway" });
+    const done2 = mk({ session_id: "d2", host_id: "h", host: "h", title: "Web app" });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [done1, done2],
+        groupBy: "host" as const,
+        searchQuery: "feishu",
+      },
+    });
+    await flushPromises();
+    await nextTick();
+
+    // Fold header count reflects only the matching completed row.
+    const toggle = w.find('[data-test="completed-fold-toggle"]');
+    expect(toggle.exists()).toBe(true);
+    expect(toggle.text()).toContain("1");
+
+    // No groups/pinned matches, but the completed fold has one — the
+    // empty-state hint must not appear.
+    expect(w.find('[data-test="search-empty"]').exists()).toBe(false);
+
+    // Expanding the fold renders only the matching row.
+    await toggle.trigger("click");
+    await nextTick();
+    const rows = w.findAll('[data-test="completed-fold-row"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].text()).toContain("Feishu");
   });
 });

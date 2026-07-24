@@ -171,8 +171,17 @@ const pinnedSessions = computed<RemoteSession[]>(() => {
   return out;
 });
 
+// Completed-fold rows, filtered by the same query as every other group —
+// keeps the fold's count/header/rows consistent with what the empty-state
+// hint is judging "any match" against.
+const completedFiltered = computed<RemoteSession[]>(() =>
+  props.completedSeen.filter((s) => matchesSession(s, q.value)),
+);
+
 const hasAnyMatch = computed(
-  () => pinnedSessions.value.length > 0 || groupKeys.value.length > 0,
+  () => pinnedSessions.value.length > 0
+    || groupKeys.value.length > 0
+    || completedFiltered.value.length > 0,
 );
 
 const menuState = ref<{
@@ -361,18 +370,18 @@ function stateLabel(state: string | undefined): string {
     >
       {{ t('tasks.search.empty', { q: props.searchQuery }) }}
     </div>
-    <section v-if="completedSeen.length > 0" class="completed-fold">
+    <section v-if="completedFiltered.length > 0" class="completed-fold">
       <button
         class="fold-toggle"
         data-test="completed-fold-toggle"
         @click="foldOpen = !foldOpen"
       >
         {{ foldOpen ? "▼" : "▶" }} {{ t("tasks.completedFold") }} ·
-        {{ completedSeen.length }}
+        {{ completedFiltered.length }}
       </button>
       <template v-if="foldOpen">
         <div
-          v-for="s in completedSeen"
+          v-for="s in completedFiltered"
           :key="s.session_id"
           class="task-row dim"
           :class="{ active: s.session_id === activeSessionId }"

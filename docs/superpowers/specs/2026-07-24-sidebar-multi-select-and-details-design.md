@@ -322,8 +322,12 @@ async function closeSelectedOpen() {
   const openSet = openSessionIdSet.value;
   const ids = Array.from(sel.selectedIds.value).filter((id) => openSet.has(id));
   for (const id of ids) {
-    const s = allKnownSessions.value.find((x) => x.session_id === id);
-    if (s) onSidebarClose(s);
+    // 与 onSidebarClose 走同一路径：id → pane 位置 → closePaneAt
+    const loc = findPaneLocation(tabs.value, id);
+    if (!loc) continue; // 边界：期间被别的动作 detach 了
+    const t = tabs.value.find((tt) => tt.id === loc.tabId);
+    if (!t) continue;
+    await closePaneAt(t, loc.paneIdx);
   }
   sel.clear();
 }
@@ -332,8 +336,11 @@ async function closeSelectedOpen() {
 `buildPanes(layout, ids)`：按 layout 生成 pane 数组，`ids.length <
 capacity(layout)` 时补 empty pane `{sessionId: null}`。
 
-`detachPaneAt` 若与现有 `closePaneAt` 逻辑重合大部分（只是不 kill
-session），则复用后者，透传一个 `skipKill=true`；plan 阶段拆细。
+`detachPaneAt(tab, paneIdx)` 与 `closePaneAt` 差别只在"不 kill 会话"。
+plan 阶段的选项：给 `closePaneAt` 加 `opts.detachOnly?: boolean`
+参数（默认 false = 现行 kill 行为），`detachPaneAt` 是 `closePaneAt(..., {detachOnly: true})`
+的薄包装。合并流程走 detach-only，批量关闭走默认 kill，仍与
+`onSidebarClose` 单条路径等价。
 
 ### 4.7 键盘 & 空白点击
 

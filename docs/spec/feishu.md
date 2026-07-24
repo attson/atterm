@@ -1,7 +1,7 @@
 # Feishu — 远程终端与 AskUserQuestion form 子系统
 
 > **Audience**: 实现或审计 atterm 飞书集成路径的工程师(anchor card 生命周期 / AskUserQuestion 表单式远程回答 / local vs relay 模式分流)
-> **Last updated**: 2026-07-10
+> **Last updated**: 2026-07-24
 > **Status**: shipped through v0.2.171
 > **See also**: [architecture.md](./architecture.md) · [protocol.md](./protocol.md) · [auth.md](./auth.md) · [../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md](../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md)
 
@@ -33,7 +33,7 @@
 | 维度 | local 模式 | relay 模式 |
 |---|---|---|
 | 网络路径 | 桌面 app 直连飞书 Open Platform(LongConn) | 桌面 app → 中央 relay(`cmd/atterm-relay`)→ 飞书 |
-| 应用凭据存储 | 本机钥匙串(macOS Keychain / Linux Secret Service / Windows Credential Manager) | Relay `users.db` 里的字段级加密 + `relay.json` 的 `AdminConfig.Feishu` |
+| 应用凭据存储 | 本机钥匙串(macOS Keychain / Linux Secret Service / Windows Credential Manager) | Relay `users.db` 里的字段级加密 + DB `relay_config` 表的 `AdminConfig.Feishu`(`internal/userstore/relay_config.go`;SQLite/Postgres 双后端) |
 | 事件订阅 | 桌面 app 直接跑 `feishu-sdk-go` LongConn subscriber | Relay 跑 subscriber,通过 `/uplink` 转发到桌面 |
 | 适用场景 | 单人自用 / 内网 / 无公网 relay 时 | 多设备访问 / 团队共享 relay / 桌面不常在线 |
 | 配置入口 | 桌面 Settings → Feishu → Local | 桌面 Settings → Feishu → Relay(实际写 `/admin/api/feishu`) |
@@ -42,7 +42,7 @@
 
 **红线**:
 - Local 模式的钥匙串存储在 `desktop/feishu_local_settings.go`,不要走 sqlite。
-- Relay 模式的字段加密走 `internal/relay/admin_config.go::AdminConfig.Feishu.EncryptKey`(base64 32B),持久化在 `relay.json`(权限 0600),GET 只回显末 4 位。见 [AGENTS.md 红线 #26](../../AGENTS.md#关键设计原则红线)。
+- Relay 模式的字段加密走 `internal/relay/admin_config.go::AdminConfig.Feishu.EncryptKey`(base64 32B),持久化在 DB `relay_config` 表(SQLite/Postgres,由 `ATTERM_RELAY_DB_DRIVER`/`ATTERM_RELAY_DB_DSN` 选后端;`relay.json` 已完全退役,不再读写),GET 只回显末 4 位。见 [AGENTS.md 红线 #26](../../AGENTS.md#关键设计原则红线)。
 - `userstore.Open` 允许 secret cipher 为 nil(即使 relay 没启用飞书也能启动),仅飞书 CRUD 在 cipher nil 时报错;不要把 `ATTERM_FEISHU_ENCRYPT_KEY` 重设为启动必填。
 
 ## 3. Anchor card 生命周期
@@ -77,6 +77,17 @@ stateDiagram-v2
 `CardAnchor.SendMu` 是同一 anchor 的 send 序列化锁。**每一个** CREATE / DELETE / PATCH / UpdateCardElement 都在 SendMu 内分配 `PatchSeq` 并发出 —— 飞书对同一 card 的 op 用 monotonic sequence 强校验(`code=300317 sequence compare failed`),SendMu 保证同一 anchor 下不会有 seq 交叉。
 
 流式 body PATCH 频率高(默认 30s 心跳 + 事件驱动),要确保它和 form / input / buttons 的 op 都排队走 SendMu。
+
+### 3.4 Takeover 中途开启的懒回填(lazy backfill)
+
+`OnRemoteTerminalToggle(true)` 本身**仍然是 no-op** —— binding 的 `RemoteTerminalEnabled` 打开时不会批量给所有已在跑的 AI 会话补 anchor card(`desktop/relay_host.go::OnRemoteTerminalToggle`)。真正的补卡入口在别处,懒触发而非跟随开关事件:
+
+- `sess.SetOnTaskStateChange` 回调里,每次任务态转换都先调 `h.lazyAttachIfMissing(ctx, sess, sid)`。
+- `Dispatcher.SetOnTurnMissingChunker` 注册 `h.onTurnMissingChunker` —— 一个 `TurnEvent` 到达但该 session 还没有 `AIChunker` 时(即中途开启 takeover、`NewSession` 时没注册 subscriber 的会话)触发同一条懒回填路径。
+
+两个入口都收敛到 `lazyAttachIfMissing → attachFeishuSubscriberForAutoAttach(ctx, sess, sid, "ai")`,并用 `tryStartLazyAttach` / `clearLazyAttachInFlight` 做 per-session in-flight 门控,防止任务态转换和 TurnEvent 并发触发时重复 attach。
+
+**行为**:用户在会话跑起来之后才打开 remote-terminal takeover,不需要重启会话或手动 `/attach`,anchor card 会在下一次任务态变化或下一个 turn 事件时自动补上 —— 触发那一刻的 turn body 会丢(attach 是异步的,补上的是"下一条"起的流式输出),但从下一个 turn 开始 anchor card 就跟得上。
 
 ## 4. AskUserQuestion form flow
 
@@ -276,6 +287,7 @@ memory `feedback_askform_permission_grant.md` 有详细指引。
 | 场景 | 入口 |
 |---|---|
 | Anchor card 生命周期 | `desktop/relay_host.go` — `updateAnchorAskForm` / `deleteAnchorForm` / `swapAnchorButtons` |
+| Takeover 中途开启懒回填(§3.4) | `desktop/relay_host.go` — `lazyAttachIfMissing` / `onTurnMissingChunker` / `OnRemoteTerminalToggle` |
 | Stroke plan 逻辑 | `desktop/feishu/service.go` — `buildQuestionStrokes` / `handleAskFormSubmit` / `parseAskFormSlots` |
 | Form 渲染 | `internal/feishu/anchor_card.go` — `RenderAskQuestionForm` / `NewInputElement` / `NewDefaultButtonsElement` |
 | Card index 状态 | `internal/feishu/cardindex.go` — `CardAnchor` 结构 + `SendMu` / `PatchSeq` / mounted 标记 |

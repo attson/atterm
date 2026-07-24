@@ -62,6 +62,7 @@ import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalS
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
 import { useSessionPins } from "./composables/useSessionPins";
+import { useSessionSelection } from "./composables/useSessionSelection";
 import {
   buildRestoreSessionReq,
   synthSessionInfoFromSnapshot,
@@ -134,6 +135,10 @@ const sessions = useSessions(localListAdapted, remoteListAdapted);
 // useSessionPins() from inside executeRestore would have been functionally
 // equivalent, but this matches the rest of the file's style.
 const pins = useSessionPins();
+
+// Multi-select state for the sidebar's merge / batch-close actions
+// (module-scoped internally, same pattern as useSessionPins above).
+const sel = useSessionSelection();
 
 const sidebarCollapsed = ref(false);
 
@@ -952,9 +957,9 @@ async function onClosePane() {
   closePaneAt(t, t.activePaneIdx);
 }
 
-async function closePaneAt(t: Tab, idx: number) {
+async function closePaneAt(t: Tab, idx: number, opts?: { detachOnly?: boolean }) {
   const target = t.panes[idx];
-  if (target?.sessionId && !target.remote) {
+  if (target?.sessionId && !target.remote && !opts?.detachOnly) {
     pendingLocalIds.delete(target.sessionId);
     try { await closeSession(target.sessionId); } catch { /* sweep cleans up */ }
   }
@@ -965,18 +970,24 @@ async function closePaneAt(t: Tab, idx: number) {
   t.colRatio = r.colRatio;
   t.rowRatio = r.rowRatio;
   if (r.closeTab) {
-    closeTab(t.id);
+    closeTab(t.id, opts);
   }
 }
 
-async function closeTab(id: string) {
+async function closeTab(id: string, opts?: { detachOnly?: boolean }) {
   const t = tabs.value.find((tt) => tt.id === id);
   if (!t) return;
   const closures: Promise<void>[] = [];
   for (const p of t.panes) {
     if (p.sessionId && !p.remote) {
       pendingLocalIds.delete(p.sessionId);
-      closures.push(closeSession(p.sessionId).catch(() => undefined));
+      // closePane's "single" layout branch returns panes unchanged (still
+      // holding the sessionId) alongside closeTab:true — detachOnly callers
+      // (mergeSelectedIntoTab) rely on this guard so the cascade here
+      // doesn't kill a shell that's only moving to another tab.
+      if (!opts?.detachOnly) {
+        closures.push(closeSession(p.sessionId).catch(() => undefined));
+      }
     }
   }
   await Promise.all(closures);
@@ -1026,6 +1037,68 @@ function openRemoteAsTab(sessionId: string) {
     rowRatio: RATIO_DEFAULT,
   });
   gotoTab(id);
+}
+
+function layoutForCount(n: number): LayoutKind | null {
+  if (n === 1) return "single";
+  if (n === 2) return "vertical";
+  if (n === 3 || n === 4) return "grid2x2";
+  return null;
+}
+
+function paneLocationForSession(id: string): { tabId: string; paneIdx: number } | null {
+  return findPaneLocation(tabs.value, id);
+}
+
+function tabIndexById(tabId: string): number {
+  const i = tabs.value.findIndex((t) => t.id === tabId);
+  return i < 0 ? 0 : i + 1; // 1-based for display
+}
+
+async function mergeSelectedIntoTab(): Promise<void> {
+  const ids = Array.from(sel.selectedIds.value);
+  const layout = layoutForCount(ids.length);
+  if (!layout) return; // UI already disables merge above 4 selections; belt-and-braces guard.
+  // Detach any panes currently holding these ids WITHOUT killing local
+  // shells — the sessions are moving into the merged tab, not closing.
+  // closePaneAt cascades closeTab() when the last pane leaves a tab.
+  for (const id of ids) {
+    const loc = findPaneLocation(tabs.value, id);
+    if (!loc) continue;
+    const t = tabs.value.find((tt) => tt.id === loc.tabId);
+    if (!t) continue;
+    await closePaneAt(t, loc.paneIdx, { detachOnly: true });
+  }
+  const capacity = PANE_COUNT[layout];
+  const panes: Pane[] = new Array(capacity).fill(null).map((_, i) => (
+    i < ids.length
+      ? { sessionId: ids[i], remote: true }
+      : { sessionId: null, remote: false }
+  ));
+  const newTab: Tab = {
+    id: newId(),
+    layout,
+    panes,
+    activePaneIdx: 0,
+    colRatio: RATIO_DEFAULT,
+    rowRatio: RATIO_DEFAULT,
+  };
+  tabs.value.push(newTab);
+  gotoTab(newTab.id);
+  sel.clear();
+}
+
+async function closeSelectedOpen(): Promise<void> {
+  const opens = allUsedSessionIds.value;
+  const ids = Array.from(sel.selectedIds.value).filter((id) => opens.has(id));
+  for (const id of ids) {
+    const loc = findPaneLocation(tabs.value, id);
+    if (!loc) continue;
+    const t = tabs.value.find((tt) => tt.id === loc.tabId);
+    if (!t) continue;
+    await closePaneAt(t, loc.paneIdx);
+  }
+  sel.clear();
 }
 
 function focusSessionFromNotification(data: unknown) {
@@ -1332,9 +1405,13 @@ onUnmounted(() => {
         :open-session-ids="openSessionIds"
         :local-host-id="localHostID"
         :local-host="localHost"
+        :pane-location-for="paneLocationForSession"
+        :tab-index-by-id="tabIndexById"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @close="onSidebarClose"
+        @merge-selected="mergeSelectedIntoTab"
+        @close-selected="closeSelectedOpen"
         @markSeen="onMarkSeen"
       />
       <main class="main">

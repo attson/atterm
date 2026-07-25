@@ -235,6 +235,8 @@ export const zhCN = {
         regenerate: "重新生成",
         expiresIn: "剩余",
         expired: "已过期 - 请重新生成",
+        wrappedBadge: "含 E2EE 密钥",
+        unwrappedWarning: "当前 E2EE 密钥未解锁 — 手机端扫码后将看不到会话详情。请先在上方 Relay 设置里用邮箱/密码登录以解锁。",
       },
     },
     logging: {

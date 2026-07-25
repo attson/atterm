@@ -58,6 +58,12 @@ onBeforeUnmount(() => { if (tick) clearInterval(tick) })
 
     <div v-else class="qr-wrap">
       <img :src="qrDataUrl" alt="" class="qr" :class="{ dimmed: expired }" data-testid="pair-qr" />
+      <div v-if="current.wrapped" class="wrap-badge" data-testid="pair-wrap-badge">
+        {{ t('settings.relay.pairing.wrappedBadge') }}
+      </div>
+      <p v-else class="wrap-warning" data-testid="pair-wrap-warning">
+        {{ t('settings.relay.pairing.unwrappedWarning') }}
+      </p>
       <div v-if="!expired" class="countdown">
         <span>{{ t('settings.relay.pairing.expiresIn') }}</span>
         <span class="time">{{ countdownText }}</span>
@@ -84,6 +90,8 @@ onBeforeUnmount(() => { if (tick) clearInterval(tick) })
 .qr.dimmed { opacity: 0.35; }
 .countdown { font-size: 12px; color: var(--fg-dim); }
 .countdown.expired { color: var(--bad); }
+.wrap-badge { font-size: 11px; color: var(--fg-dim); padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; }
+.wrap-warning { font-size: 11px; color: var(--warn); background: rgba(255, 200, 0, 0.06); border-left: 2px solid var(--warn); padding: 6px 10px; margin: 0; line-height: 1.4; text-align: left; max-width: 240px; }
 .prefix { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--fg-dim); }
 .error { color: var(--bad); font-size: 12px; margin: 0; }
 button { height: 30px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent); color: var(--bg); padding: 0 12px; font-size: 12px; font-weight: 700; cursor: pointer; }

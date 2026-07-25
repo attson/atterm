@@ -233,6 +233,8 @@ export const en = {
         regenerate: "Regenerate",
         expiresIn: "expires in",
         expired: "expired - generate a new code",
+        wrappedBadge: "includes E2EE key",
+        unwrappedWarning: "E2EE key is locked — mobile will connect but sealed session details won't decrypt. Log in with email + password in the Relay settings above to unlock.",
       },
     },
     logging: {

@@ -49,4 +49,32 @@ describe('PairingPanel', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="pair-expired"]').exists()).toBe(true)
   })
+
+  it('shows wrapped badge when tok.wrapped is true', async () => {
+    vi.spyOn(api, 'createPairingToken').mockResolvedValue({
+      token: 'pair_x',
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+      qr_url: 'https://r.example/pair?t=x&k=y',
+      wrapped: true,
+    })
+    const wrapper = mount(PairingPanel)
+    await wrapper.find('[data-testid="pair-generate"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="pair-wrap-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="pair-wrap-warning"]').exists()).toBe(false)
+  })
+
+  it('shows unwrapped warning when tok.wrapped is false', async () => {
+    vi.spyOn(api, 'createPairingToken').mockResolvedValue({
+      token: 'pair_x',
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+      qr_url: 'https://r.example/pair?t=x',
+      wrapped: false,
+    })
+    const wrapper = mount(PairingPanel)
+    await wrapper.find('[data-testid="pair-generate"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="pair-wrap-warning"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="pair-wrap-badge"]').exists()).toBe(false)
+  })
 })

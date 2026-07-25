@@ -48,3 +48,16 @@ func TestWrapAccountKey_FreshWKPerCall(t *testing.T) {
 		t.Fatal("wrap_key reused across calls")
 	}
 }
+
+// TestWrapAccountKey_GoldenForTS is a throw-away vector generator: seals a
+// KNOWN ak with a KNOWN wk and nonce and logs the result so it can be pasted
+// into desktop/frontend/src/lib/opaque.test.ts. Not a regression test.
+func TestWrapAccountKey_GoldenForTS(t *testing.T) {
+	ak := bytes.Repeat([]byte{0x42}, 32)
+	wk := bytes.Repeat([]byte{0x99}, 32)
+	nonce := bytes.Repeat([]byte{0x77}, 24)
+	aead, _ := chacha20poly1305.NewX(wk)
+	env := append([]byte{0x01}, nonce...)
+	env = aead.Seal(env, nonce, ak, pairWrapAAD)
+	t.Logf("GOLDEN ak=%x wk=%x env=%x", ak, wk, env)
+}

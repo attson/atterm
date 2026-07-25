@@ -4,6 +4,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { utf8ToBytes, randomBytes } from '@noble/hashes/utils.js'
 import {
+  openAccountKeyWrap,
   openMetaFields,
   openOutFrame,
   openSessionFields,
@@ -171,5 +172,47 @@ describe('openOutFrame (remote TypeOut stream decrypt)', () => {
     expect(openOutFrame(env, new Uint8Array(32), uuid, 7)).toBeNull()
     expect(openOutFrame(new Uint8Array(40), accountKey, uuid, 7)).toBeNull() // too short
     expect(openOutFrame(null, accountKey, uuid, 7)).toBeNull()
+  })
+})
+
+function hexToBytes(h: string): Uint8Array {
+  const out = new Uint8Array(h.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substring(i * 2, i * 2 + 2), 16)
+  return out
+}
+
+describe('openAccountKeyWrap', () => {
+  // Values captured from desktop/wrap_account_key_test.go
+  // TestWrapAccountKey_GoldenForTS — see that test's t.Logf output.
+  const AK = new Uint8Array(32).fill(0x42)
+  const WK = new Uint8Array(32).fill(0x99)
+  const ENV = hexToBytes(
+    '0177777777777777777777777777777777777777777777777749f5e18042a088e014b6e94085cec3f0423cde0e15ba982caca14bef556aa6fd8f2e225a7ecb16e6f9e12754da515726',
+  )
+
+  it('opens a Go-sealed envelope', () => {
+    const got = openAccountKeyWrap(ENV, WK)
+    expect(got).not.toBeNull()
+    expect(Array.from(got!)).toEqual(Array.from(AK))
+  })
+
+  it('returns null on wrong wrap key', () => {
+    const bad = new Uint8Array(32).fill(0xaa)
+    expect(openAccountKeyWrap(ENV, bad)).toBeNull()
+  })
+
+  it('returns null on wrong cipher_id', () => {
+    const tampered = new Uint8Array(ENV)
+    tampered[0] = 0x02
+    expect(openAccountKeyWrap(tampered, WK)).toBeNull()
+  })
+
+  it('returns null on truncated envelope', () => {
+    expect(openAccountKeyWrap(ENV.subarray(0, 20), WK)).toBeNull()
+  })
+
+  it('returns null on missing envelope', () => {
+    expect(openAccountKeyWrap(null, WK)).toBeNull()
+    expect(openAccountKeyWrap(undefined, WK)).toBeNull()
   })
 })

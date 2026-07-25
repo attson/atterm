@@ -217,6 +217,37 @@ export function openMetaFields(
   return openSealedFields<SealedMetaFields>(sealed, accountKey, sessionUUID, META_AAD_FRAME_TYPE)
 }
 
+/** Constant AAD bytes bound to the AEAD envelope carrying a QR-transferred
+ *  account_key. Must match Go's pairWrapAAD in desktop/wrap_account_key.go.
+ *  Changing this string is a wire break — bump the version suffix and
+ *  update both sides together. */
+const PAIR_WRAP_AAD = utf8ToBytes('atterm-pair-wrap-v1')
+
+/** openAccountKeyWrap AEAD-opens the 73-byte envelope produced by the
+ *  desktop's wrapAccountKey. Returns the raw 32-byte account_key, or null
+ *  on any structural / cipher error. Callers MUST treat null as
+ *  "no key transferred" and fall back to today's behaviour rather than
+ *  raising — a broken wrap should not prevent the pair from completing. */
+export function openAccountKeyWrap(
+  envelope: Uint8Array | number[] | null | undefined,
+  wrapKey: Uint8Array,
+): Uint8Array | null {
+  if (!envelope) return null
+  const env = envelope instanceof Uint8Array ? envelope : new Uint8Array(envelope)
+  const minLen = 1 + 24 + 16 // cipher_id + nonce + Poly1305 tag
+  if (env.length < minLen) return null
+  if (env[0] !== CIPHER_ID_XCHACHA20_POLY1305) return null
+  if (wrapKey.length !== 32) return null
+
+  const nonce = env.subarray(1, 1 + 24)
+  const ciphertext = env.subarray(1 + 24)
+  try {
+    return xchacha20poly1305(wrapKey, nonce, PAIR_WRAP_AAD).decrypt(ciphertext)
+  } catch {
+    return null
+  }
+}
+
 /** Shared low-level inverse of the agent's AEAD seal. The frameType
  * byte goes into the AAD; SessionInfo (0x12) and META (0x05) live on
  * the same wire codec but with distinct discriminators so an envelope

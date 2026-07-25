@@ -42,6 +42,10 @@ wasm_exec_src="$(go env GOROOT)/misc/wasm/wasm_exec.js"
 
 GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false -ldflags="-s -w" \
   -o "$out_dir/opaque.wasm" ./cmd/opaque-wasm
+# rm -f first: an existing wasm_exec.js may lack the owner write bit
+# (older Go SDKs shipped it read-only, and plain `cp` inherits that on
+# first copy), which would make subsequent `cp` fail with EACCES.
+rm -f "$out_dir/wasm_exec.js"
 cp "$wasm_exec_src" "$out_dir/wasm_exec.js"
 
 echo "built opaque.wasm + wasm_exec.js -> $out_dir"

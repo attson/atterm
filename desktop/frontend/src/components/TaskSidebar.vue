@@ -270,6 +270,7 @@ const railIcons = computed(() => {
           @blur="onSearchBlur"
         />
         <button
+          v-if="!(searchOpen || query)"
           class="group-toggle"
           data-test="group-toggle"
           :title="t('tasks.settings.groupBy')"

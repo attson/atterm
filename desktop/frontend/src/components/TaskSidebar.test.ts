@@ -305,6 +305,32 @@ describe("TaskSidebar", () => {
     w.unmount();
   });
 
+  test("group-toggle button is hidden while search is open, shown when collapsed back", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    expect(w.find('[data-test="group-toggle"]').exists()).toBe(true);
+
+    await w.find('[data-test="sidebar-search-toggle"]').trigger("click");
+    await nextTick();
+    expect(w.find('[data-test="group-toggle"]').exists()).toBe(false);
+
+    // Close search via blur on empty → group-toggle comes back.
+    const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    await input.trigger("blur");
+    await nextTick();
+    expect(w.find('[data-test="group-toggle"]').exists()).toBe(true);
+    w.unmount();
+  });
+
   test("blur with non-empty query keeps input visible", async () => {
     const w = mount(TaskSidebar, {
       props: {

@@ -90,9 +90,25 @@ let dragging = false;
 
 const query = ref("");
 const searchEl = ref<HTMLInputElement | null>(null);
+const searchOpen = ref(false);
+
+async function openSearch(): Promise<void> {
+  searchOpen.value = true;
+  await nextTick();
+  searchEl.value?.focus();
+  searchEl.value?.select();
+}
+
+function onSearchBlur() {
+  if (query.value === "") searchOpen.value = false;
+}
 
 function onSearchEsc() {
-  query.value = "";
+  if (query.value !== "") {
+    query.value = "";
+    return;
+  }
+  searchOpen.value = false;
 }
 
 async function focusSearch(): Promise<void> {
@@ -100,8 +116,7 @@ async function focusSearch(): Promise<void> {
     emit("update:collapsed", false);
     await nextTick();
   }
-  searchEl.value?.focus();
-  searchEl.value?.select();
+  await openSearch();
 }
 
 defineExpose({ focusSearch });
@@ -228,8 +243,22 @@ const railIcons = computed(() => {
     </div>
     <div v-else class="expanded">
       <header class="sidebar-header">
-        <span class="title">{{ t("tasks.sidebar.title") }}</span>
+        <span v-if="!(searchOpen || query)" class="title">{{ t("tasks.sidebar.title") }}</span>
+        <button
+          v-if="!(searchOpen || query)"
+          class="search-icon-btn"
+          data-test="sidebar-search-toggle"
+          :title="t('tasks.sidebar.searchPlaceholder')"
+          :aria-label="t('tasks.sidebar.searchPlaceholder')"
+          @click="openSearch"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5" />
+            <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </button>
         <input
+          v-else
           ref="searchEl"
           v-model="query"
           type="search"
@@ -238,6 +267,7 @@ const railIcons = computed(() => {
           :placeholder="t('tasks.sidebar.searchPlaceholder')"
           :aria-label="t('tasks.sidebar.searchPlaceholder')"
           @keydown.esc.prevent="onSearchEsc"
+          @blur="onSearchBlur"
         />
         <button
           class="group-toggle"
@@ -342,7 +372,7 @@ const railIcons = computed(() => {
   border-bottom: 1px solid var(--border);
 }
 .title {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   font-weight: 500;
   margin-right: 6px;
@@ -350,6 +380,20 @@ const railIcons = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.search-icon-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin-right: 6px;
+  opacity: 0.7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+}
+.search-icon-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.05); }
 .collapse-button,
 .expand-button {
   background: none;

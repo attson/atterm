@@ -136,7 +136,7 @@ describe("TaskSidebar", () => {
     expect(w.emitted("close")?.[0]).toEqual([sess]);
   });
 
-  test("renders a search input in the expanded header and hides it when collapsed", async () => {
+  test("expanded header defaults to search icon, not input; collapsed shows neither", async () => {
     const w = mount(TaskSidebar, {
       props: {
         collapsed: false,
@@ -147,10 +147,12 @@ describe("TaskSidebar", () => {
       },
     });
     await flushPromises();
-    expect(w.find('[data-test="sidebar-search"]').exists()).toBe(true);
+    expect(w.find('[data-test="sidebar-search-toggle"]').exists()).toBe(true);
+    expect(w.find('[data-test="sidebar-search"]').exists()).toBe(false);
 
     await w.setProps({ collapsed: true });
     await nextTick();
+    expect(w.find('[data-test="sidebar-search-toggle"]').exists()).toBe(false);
     expect(w.find('[data-test="sidebar-search"]').exists()).toBe(false);
   });
 
@@ -165,6 +167,8 @@ describe("TaskSidebar", () => {
       },
     });
     await flushPromises();
+    await w.find('[data-test="sidebar-search-toggle"]').trigger("click");
+    await nextTick();
     const input = w.find('[data-test="sidebar-search"]');
     await input.setValue("feishu");
     await nextTick();
@@ -172,7 +176,7 @@ describe("TaskSidebar", () => {
     expect(list.props("searchQuery")).toBe("feishu");
   });
 
-  test("Esc inside the search input clears the query", async () => {
+  test("Esc inside the search input clears the query first, then collapses on empty", async () => {
     const w = mount(TaskSidebar, {
       props: {
         collapsed: false,
@@ -183,15 +187,27 @@ describe("TaskSidebar", () => {
       },
     });
     await flushPromises();
+    await w.find('[data-test="sidebar-search-toggle"]').trigger("click");
+    await nextTick();
     const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
     await input.setValue("proj");
     expect(input.element.value).toBe("proj");
+
+    // First Esc: non-empty → clears, stays open.
     await input.trigger("keydown", { key: "Escape" });
     await nextTick();
-    expect(input.element.value).toBe("");
+    const inputAfterFirstEsc = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    expect(inputAfterFirstEsc.exists()).toBe(true);
+    expect(inputAfterFirstEsc.element.value).toBe("");
+
+    // Second Esc: empty → collapses back to icon.
+    await inputAfterFirstEsc.trigger("keydown", { key: "Escape" });
+    await nextTick();
+    expect(w.find('[data-test="sidebar-search"]').exists()).toBe(false);
+    expect(w.find('[data-test="sidebar-search-toggle"]').exists()).toBe(true);
   });
 
-  test("focusSearch() expose focuses the input (and expands the sidebar if collapsed)", async () => {
+  test("focusSearch() expands sidebar if collapsed and opens the search input", async () => {
     const w = mount(TaskSidebar, {
       props: {
         collapsed: true,
@@ -203,18 +219,113 @@ describe("TaskSidebar", () => {
       attachTo: document.body,
     });
     await flushPromises();
-    // Call the exposed method — should emit collapse:false then focus.
+    // From collapsed: emits update:collapsed=false (parent expands the sidebar);
+    // internally focusSearch also flips searchOpen=true so once the parent
+    // applies the prop, the input (not the icon) is what shows up.
     await (w.vm as any).focusSearch();
     await nextTick();
     expect(w.emitted("update:collapsed")?.[0]).toEqual([false]);
 
-    // Simulate the parent responding to update:collapsed by setting the prop.
+    // Parent responds by setting collapsed=false — expanded branch renders
+    // with searchOpen already true, so the input is visible (no toggle).
     await w.setProps({ collapsed: false });
     await nextTick();
+    const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    expect(input.exists()).toBe(true);
+    expect(w.find('[data-test="sidebar-search-toggle"]').exists()).toBe(false);
+
+    // Second focusSearch (after parent applied prop) focuses the input.
+    await (w.vm as any).focusSearch();
+    await nextTick();
+    expect(document.activeElement).toBe(input.element);
+    w.unmount();
+  });
+
+  test("focusSearch() from expanded + icon state opens the input and focuses", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    expect(w.find('[data-test="sidebar-search-toggle"]').exists()).toBe(true);
     await (w.vm as any).focusSearch();
     await nextTick();
     const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    expect(input.exists()).toBe(true);
     expect(document.activeElement).toBe(input.element);
+    w.unmount();
+  });
+
+  test("clicking the search-toggle opens the input and focuses it", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    await w.find('[data-test="sidebar-search-toggle"]').trigger("click");
+    await nextTick();
+    const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    expect(input.exists()).toBe(true);
+    expect(document.activeElement).toBe(input.element);
+    w.unmount();
+  });
+
+  test("blur with empty query collapses back to icon", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    await w.find('[data-test="sidebar-search-toggle"]').trigger("click");
+    await nextTick();
+    const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    expect(input.exists()).toBe(true);
+    await input.trigger("blur");
+    await nextTick();
+    expect(w.find('[data-test="sidebar-search"]').exists()).toBe(false);
+    expect(w.find('[data-test="sidebar-search-toggle"]').exists()).toBe(true);
+    w.unmount();
+  });
+
+  test("blur with non-empty query keeps input visible", async () => {
+    const w = mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    await w.find('[data-test="sidebar-search-toggle"]').trigger("click");
+    await nextTick();
+    const input = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    await input.setValue("keep");
+    await input.trigger("blur");
+    await nextTick();
+    const stillInput = w.find<HTMLInputElement>('[data-test="sidebar-search"]');
+    expect(stillInput.exists()).toBe(true);
+    expect(stillInput.element.value).toBe("keep");
     w.unmount();
   });
 });

@@ -135,3 +135,15 @@ func TestConsumePairingToken_ConcurrentExactlyOneWinner(t *testing.T) {
 		t.Fatalf("wins=%d losses=%d, want 1 / %d", wins, losses, n-1)
 	}
 }
+
+func TestPairingWrap_ColumnExists(t *testing.T) {
+	s := newTestStore(t)
+	var name string
+	err := s.db.QueryRow("SELECT name FROM pragma_table_info('pairing_tokens') WHERE name = 'wrapped_account_key'").Scan(&name)
+	if err != nil {
+		t.Fatalf("column not present: %v", err)
+	}
+	if name != "wrapped_account_key" {
+		t.Fatalf("got %q, want wrapped_account_key", name)
+	}
+}

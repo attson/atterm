@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,47 @@ import (
 
 	"github.com/attson/atterm/internal/userstore"
 )
+
+// pairTestUser bundles the seeded user's ID with a fresh session token, so
+// pair tests can both authenticate as the user and assert on ownership.
+type pairTestUser struct {
+	ID           string
+	SessionToken string
+}
+
+// newPairTestServer builds a Server with RealmID and InstancePublicURL set
+// (so /api/pair/consume can echo them) and seeds one OPAQUE user with a
+// valid session token. Model: helpers_test.go's serverWithSessionAndUser.
+func newPairTestServer(t *testing.T) (*Server, *userstore.SQLiteStore, pairTestUser) {
+	t.Helper()
+	store := userstore.NewInMemory(t)
+	ctx := context.Background()
+	u, err := store.CreateOpaqueUser(ctx, "pair-test@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	tok, _, err := store.CreateSession(ctx, u.ID, "go-test", "127.0.0.1", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	srv := NewServer(Config{
+		Store:             store,
+		Resolver:          NewIdentityResolver(store),
+		RealmID:           "test-realm",
+		InstancePublicURL: "https://node.example",
+	})
+	return srv, store, pairTestUser{ID: u.ID, SessionToken: tok}
+}
+
+// mustJSON marshals v to a []byte, failing the test on error.
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	return b
+}
 
 func TestPairConsume_ReturnsSessionToken(t *testing.T) {
 	// Create a server with an authenticated user.
@@ -150,5 +192,89 @@ func TestPairConsume_ConsumedTwice_Conflict(t *testing.T) {
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("second consume: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPairCreate_AcceptsWrap(t *testing.T) {
+	srv, store, u := newPairTestServer(t)
+	wrap := bytes.Repeat([]byte{0xAB}, 73)
+
+	body := bytes.NewReader(mustJSON(t, map[string]string{"wrap": base64.StdEncoding.EncodeToString(wrap)}))
+	req := httptest.NewRequest("POST", "/api/pair/create", body)
+	req.Header.Set("Authorization", "Bearer "+u.SessionToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d, body: %s", w.Code, w.Body)
+	}
+	var create struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &create); err != nil {
+		t.Fatalf("unmarshal create: %v", err)
+	}
+
+	// Verify the wrap made it into the DB via ConsumePairingToken.
+	_, gotWrap, err := store.ConsumePairingToken(context.Background(), create.Token)
+	if err != nil {
+		t.Fatalf("ConsumePairingToken: %v", err)
+	}
+	if !bytes.Equal(gotWrap, wrap) {
+		t.Fatalf("wrap mismatch: got %x want %x", gotWrap, wrap)
+	}
+}
+
+func TestPairConsume_ReturnsRealmHomeWrap(t *testing.T) {
+	srv, store, u := newPairTestServer(t)
+	// Seed a pair token with a known wrap. The server was constructed with
+	// RealmID=test-realm, InstancePublicURL="https://node.example".
+	sec, _, err := store.CreatePairingToken(context.Background(), u.ID, 5*time.Minute, []byte("WRAPBYTES"))
+	if err != nil {
+		t.Fatalf("CreatePairingToken: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/pair/consume", bytes.NewReader(mustJSON(t, map[string]string{"token": sec.Expose()})))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d, body: %s", w.Code, w.Body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal consume: %v", err)
+	}
+	if got["realm_id"] != "test-realm" {
+		t.Fatalf("realm_id = %v", got["realm_id"])
+	}
+	if got["home_instance_url"] == nil {
+		t.Fatalf("home_instance_url missing")
+	}
+	if got["wrap"] != base64.StdEncoding.EncodeToString([]byte("WRAPBYTES")) {
+		t.Fatalf("wrap = %v", got["wrap"])
+	}
+}
+
+func TestPairConsume_NoWrap_OmitsWrapField(t *testing.T) {
+	srv, store, u := newPairTestServer(t)
+	sec, _, err := store.CreatePairingToken(context.Background(), u.ID, 5*time.Minute, nil)
+	if err != nil {
+		t.Fatalf("CreatePairingToken: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/pair/consume", bytes.NewReader(mustJSON(t, map[string]string{"token": sec.Expose()})))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d, body: %s", w.Code, w.Body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal consume: %v", err)
+	}
+	if _, exists := got["wrap"]; exists {
+		t.Fatalf("wrap key should be omitted")
 	}
 }

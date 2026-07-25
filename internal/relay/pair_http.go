@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -29,7 +30,23 @@ func (a *AuthServer) handlePairCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
-	secret, row, err := a.Store.CreatePairingToken(r.Context(), p.UserID, pairingTTL, nil)
+	var body struct {
+		Wrap string `json:"wrap,omitempty"`
+	}
+	// Decode is best-effort — an empty/missing body is allowed for
+	// backward compatibility with the old create endpoint.
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	var wrap []byte
+	if body.Wrap != "" {
+		var err error
+		wrap, err = base64.StdEncoding.DecodeString(body.Wrap)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "wrap_invalid")
+			return
+		}
+	}
+
+	secret, row, err := a.Store.CreatePairingToken(r.Context(), p.UserID, pairingTTL, wrap)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -59,8 +76,9 @@ func (a *AuthServer) handlePairConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Consume the pairing token to retrieve the user.
-	user, _, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
+	// Consume the pairing token to retrieve the user + any wrapped
+	// account key bundled with it (E2EE pairing, Task 2).
+	user, wrap, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
 	if err != nil {
 		status := http.StatusNotFound
 		if errors.Is(err, userstore.ErrPairingConsumed) {
@@ -79,12 +97,24 @@ func (a *AuthServer) handlePairConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSONStatus(w, http.StatusOK, map[string]any{
+	homeURL, err := resolveHomeInstanceURL(r.Context(), a.Store, user.ID, a.InstancePublicURL)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]any{
 		"session_token": tok,
 		"expires_at":    sess.ExpiresAt.Unix(),
 		"user": map[string]any{
 			"id":    user.ID,
 			"email": user.Email,
 		},
-	})
+		"realm_id":          a.RealmID,
+		"home_instance_url": homeURL,
+	}
+	if len(wrap) > 0 {
+		resp["wrap"] = base64.StdEncoding.EncodeToString(wrap)
+	}
+	writeJSONStatus(w, http.StatusOK, resp)
 }

@@ -1,6 +1,6 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import PairingConsume from '../PairingConsume.vue'
+import PairingConsume, { parseScanned } from '../PairingConsume.vue'
 
 const consumePairing = vi.fn()
 const save = vi.fn()
@@ -48,7 +48,7 @@ describe('PairingConsume', () => {
       props: { scannedUrl: 'https://relay.example.com/pair?t=pair_VALID' },
     })
     await flushPromises()
-    expect(consumePairing).toHaveBeenCalledWith('https://relay.example.com', 'pair_VALID')
+    expect(consumePairing).toHaveBeenCalledWith('https://relay.example.com', 'pair_VALID', undefined)
     expect(save).toHaveBeenCalledWith(expect.objectContaining({
       url: 'https://relay.example.com',
       token: 'sess_NEW',
@@ -65,5 +65,28 @@ describe('PairingConsume', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="pair-error"]').exists()).toBe(true)
     expect(save).not.toHaveBeenCalled()
+  })
+})
+
+describe('parseScanned', () => {
+  it('parses URL with t= and k= into wrapKey Uint8Array(32)', () => {
+    const wk = new Uint8Array(32).fill(0x55)
+    const kB64Url = btoa(String.fromCharCode(...wk))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    const url = `https://relay.example/pair?t=pair_abc&k=${kB64Url}`
+    const got = parseScanned(url, false)
+    expect(typeof got).toBe('object')
+    expect((got as any).token).toBe('pair_abc')
+    expect((got as any).wrapKey).toBeInstanceOf(Uint8Array)
+    expect((got as any).wrapKey.length).toBe(32)
+  })
+
+  it('accepts URL without k= (no wrapKey)', () => {
+    const got = parseScanned('https://relay.example/pair?t=pair_abc', false)
+    expect((got as any).wrapKey).toBeUndefined()
+  })
+
+  it('rejects k= that is not 32 bytes', () => {
+    expect(parseScanned('https://relay.example/pair?t=x&k=YQ', false)).toBe('pair_invalid_url')
   })
 })

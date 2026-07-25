@@ -60,7 +60,7 @@ export interface RelayBridge {
   clear(): Promise<void>
   fetchMe(): Promise<_RelayMe>
   setUplinkPaused?(paused: boolean): Promise<void>
-  consumePairing?(relayBase: string, token: string): Promise<PairingConsumeResult>
+  consumePairing?(relayBase: string, token: string, wrapKey?: Uint8Array): Promise<PairingConsumeResult>
   /** Mobile-only. POST {url}/api/auth/login with {email, password}; on success
    *  writes the returned session token + email into the persisted RelayConfig
    *  and stores the password under a separate Keychain key for one-tap

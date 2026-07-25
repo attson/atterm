@@ -1,3 +1,43 @@
+<script lang="ts">
+function b64UrlNoPadToBytes(s: string): Uint8Array {
+  const norm = s.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = norm.length % 4 === 0 ? '' : '='.repeat(4 - (norm.length % 4))
+  const bin = atob(norm + pad)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+// Exported at module scope (not inside <script setup>, which cannot carry
+// ES module exports) so tests can exercise the pure parsing logic directly.
+export function parseScanned(raw: string, allowInsecure: boolean): { origin: string; token: string; wrapKey?: Uint8Array } | string {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return 'pair_invalid_url'
+  }
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && allowInsecure)) {
+    return 'pair_invalid_scheme'
+  }
+  const token = u.searchParams.get('t')
+  if (!token || !u.host) return 'pair_invalid_url'
+  const k = u.searchParams.get('k')
+  let wrapKey: Uint8Array | undefined
+  if (k) {
+    let bytes: Uint8Array
+    try {
+      bytes = b64UrlNoPadToBytes(k)
+    } catch {
+      return 'pair_invalid_url'
+    }
+    if (bytes.length !== 32) return 'pair_invalid_url'
+    wrapKey = bytes
+  }
+  return { origin: u.origin, token, wrapKey }
+}
+</script>
+
 <script lang="ts" setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { usePlatform } from '../platform'
@@ -44,21 +84,6 @@ const stepLabel = computed(() => {
   }
 })
 
-function parseScanned(raw: string, allowInsecure: boolean): { origin: string; token: string } | string {
-  let u: URL
-  try {
-    u = new URL(raw)
-  } catch {
-    return 'pair_invalid_url'
-  }
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && allowInsecure)) {
-    return 'pair_invalid_scheme'
-  }
-  const token = u.searchParams.get('t')
-  if (!token || !u.host) return 'pair_invalid_url'
-  return { origin: u.origin, token }
-}
-
 // RAF-driven elapsed counter. requestAnimationFrame is tied to the
 // display refresh signal and survives the throttling that drops
 // setInterval to ~0 Hz when WKWebView is mid-fetch on iOS.
@@ -91,7 +116,7 @@ async function run() {
     if (!platform.relay.consumePairing) throw new Error('platform_unsupported')
     step.value = 'requesting'
     const result = await Promise.race([
-      platform.relay.consumePairing(parsed.origin, parsed.token),
+      platform.relay.consumePairing(parsed.origin, parsed.token, parsed.wrapKey),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('pair_timeout')), 16_000),
       ),

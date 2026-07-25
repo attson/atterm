@@ -1,7 +1,9 @@
 package userstore
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -18,7 +20,7 @@ func TestCreatePairingToken_ReturnsPlaintextOnceAndStoresHash(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	secret, row, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute)
+	secret, row, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, nil)
 	if err != nil {
 		t.Fatalf("CreatePairingToken: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestConsumePairingToken_HappyPath_ReturnsUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	pairSecret, _, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute)
+	pairSecret, _, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, nil)
 	if err != nil {
 		t.Fatalf("CreatePairingToken: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestConsumePairingToken_SecondCallFails(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
-	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute)
+	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, nil)
 
 	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != nil {
 		t.Fatalf("first consume: %v", err)
@@ -86,7 +88,7 @@ func TestConsumePairingToken_Expired(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
-	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, -1*time.Second)
+	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, -1*time.Second, nil)
 
 	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingExpired) {
 		t.Fatalf("expired consume: got %v want ErrPairingExpired", err)
@@ -105,7 +107,7 @@ func TestConsumePairingToken_ConcurrentExactlyOneWinner(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
-	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute)
+	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, nil)
 	code := pairSecret.Expose()
 
 	const n = 50
@@ -145,5 +147,46 @@ func TestPairingWrap_ColumnExists(t *testing.T) {
 	}
 	if name != "wrapped_account_key" {
 		t.Fatalf("got %q, want wrapped_account_key", name)
+	}
+}
+
+func TestCreatePairingToken_StoresWrap(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, err := s.CreateOpaqueUser(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	wrap := []byte{0x01, 0x02, 0x03, 0x04}
+	_, row, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, wrap)
+	if err != nil {
+		t.Fatalf("CreatePairingToken: %v", err)
+	}
+	var got []byte
+	if err := s.db.QueryRow("SELECT wrapped_account_key FROM pairing_tokens WHERE token_hash = ?", row.Hash).Scan(&got); err != nil {
+		t.Fatalf("read wrap: %v", err)
+	}
+	if !bytes.Equal(got, wrap) {
+		t.Fatalf("wrap: got %x, want %x", got, wrap)
+	}
+}
+
+func TestCreatePairingToken_NilWrap(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, err := s.CreateOpaqueUser(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	_, row, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, nil)
+	if err != nil {
+		t.Fatalf("CreatePairingToken: %v", err)
+	}
+	var got sql.NullString
+	if err := s.db.QueryRow("SELECT wrapped_account_key FROM pairing_tokens WHERE token_hash = ?", row.Hash).Scan(&got); err != nil {
+		t.Fatalf("read wrap: %v", err)
+	}
+	if got.Valid {
+		t.Fatalf("expected NULL wrap, got %q", got.String)
 	}
 }

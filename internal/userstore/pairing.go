@@ -49,7 +49,8 @@ func pairingHash(plaintext string) string {
 // and is never persisted server-side.
 //
 // Plaintext format: "pair_" + base64url-no-padding(32 random bytes) ≈ 47 chars.
-func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl time.Duration) (Secret, *PairingToken, error) {
+// wrap may be nil; when non-nil, stored verbatim in wrapped_account_key.
+func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl time.Duration, wrap []byte) (Secret, *PairingToken, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return Secret{}, nil, fmt.Errorf("rand: %w", err)
@@ -64,9 +65,9 @@ func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl
 	expires := now.Add(ttl)
 
 	res, err := s.db.ExecContext(ctx,
-		s.dia.Rebind(`INSERT INTO pairing_tokens(token_hash, prefix, user_id, created_at, expires_at, consumed_at)
-		 VALUES(?, ?, ?, ?, ?, NULL)`),
-		hash, prefix, userID, now.Unix(), expires.Unix(),
+		s.dia.Rebind(`INSERT INTO pairing_tokens(token_hash, prefix, user_id, created_at, expires_at, consumed_at, wrapped_account_key)
+		 VALUES(?, ?, ?, ?, ?, NULL, ?)`),
+		hash, prefix, userID, now.Unix(), expires.Unix(), wrap,
 	)
 	if err != nil {
 		return Secret{}, nil, fmt.Errorf("insert pairing_token: %w", err)

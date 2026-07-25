@@ -168,7 +168,8 @@ type Store interface {
 
 	// Pairing tokens (mobile QR code). Consuming a code returns the owning
 	// user; the caller is responsible for minting a session token.
-	CreatePairingToken(ctx context.Context, userID string, ttl time.Duration) (Secret, *PairingToken, error)
+	// wrap may be nil; when non-nil, stored verbatim in wrapped_account_key.
+	CreatePairingToken(ctx context.Context, userID string, ttl time.Duration, wrap []byte) (Secret, *PairingToken, error)
 	ConsumePairingToken(ctx context.Context, plaintext string) (*User, error)
 
 	// Sessions (single bearer token; cookie OR Authorization header).

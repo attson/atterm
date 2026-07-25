@@ -29,7 +29,7 @@ func (a *AuthServer) handlePairCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
-	secret, row, err := a.Store.CreatePairingToken(r.Context(), p.UserID, pairingTTL)
+	secret, row, err := a.Store.CreatePairingToken(r.Context(), p.UserID, pairingTTL, nil)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

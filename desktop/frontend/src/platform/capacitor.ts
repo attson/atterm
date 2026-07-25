@@ -7,6 +7,7 @@ import { notifyLocalChange } from '../lib/prefsSync.capacitor'
 import {
   SERVER_IDENTITY,
   defaultKDFParams,
+  openAccountKeyWrap,
   openSessionFields,
   unwrapWithPassword,
   wrapAccountKey,
@@ -333,7 +334,7 @@ export function createCapacitorPlatform(): Platform {
         if (!res.ok) throw new Error(`relay fetchMe failed: HTTP ${res.status}`)
         return (await res.json()) as RelayMe
       },
-      consumePairing: async (relayBase, token) => {
+      consumePairing: async (relayBase, token, wrapKey?: Uint8Array) => {
         const base = relayBase.replace(/\/$/, '')
         // Use CapacitorHttp explicitly instead of fetch. fetch() on iOS goes
         // through WKWebView; when a TLS handshake hangs there, the entire JS
@@ -366,8 +367,44 @@ export function createCapacitorPlatform(): Platform {
         // from when /api/pair/consume was going to redirect pairing to a
         // different host). Use the base we just called as the relay URL —
         // it is by definition the relay we want to talk to.
-        const body = resp.data as { session_token: string; expires_at: number; user: { id: string; email: string } }
-        return { relay_url: base, ...body }
+        const body = resp.data as {
+          session_token: string
+          expires_at: number
+          user: { id: string; email: string }
+          realm_id?: string
+          home_instance_url?: string
+          wrap?: string
+        }
+
+        // wrap (present when the pairing desktop had an unlocked account_key
+        // and the QR carried a &k= wrap key) lets the mobile app decrypt
+        // session details (cwd/title/command, live META) without ever
+        // running the OPAQUE password flow. A missing wrapKey, missing
+        // wrap, or a decrypt failure must never fail the pair — it just
+        // means session details stay sealed until the user logs in with
+        // their password instead.
+        if (body.wrap && wrapKey) {
+          try {
+            const ak = openAccountKeyWrap(b64StdToBytes(body.wrap), wrapKey)
+            if (ak) {
+              await secureStorage.set(ACCOUNT_KEY_KEY, bytesToB64Std(ak))
+              setCachedAccountKey(ak)
+            } else {
+              console.warn('pair: wrap decrypt failed; session details will not decrypt')
+            }
+          } catch (e) {
+            console.warn('pair: wrap open threw', e)
+          }
+        }
+
+        return {
+          relay_url: base,
+          session_token: body.session_token,
+          expires_at: body.expires_at,
+          user: body.user,
+          realm_id: body.realm_id ?? '',
+          home_instance_url: body.home_instance_url ?? '',
+        }
       },
       login: async (url, email, password, allowInsecure) => {
         const base = url.replace(/\/$/, '')

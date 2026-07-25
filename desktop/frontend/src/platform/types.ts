@@ -52,6 +52,12 @@ export interface PairingConsumeResult {
   session_token: string
   expires_at: number
   user: { id: string; email: string }
+  // realm_id / home_instance_url mirror the fields the OPAQUE login finalize
+  // step already returns (see opaqueLogin in capacitor.ts) so pairing and
+  // password login populate RelayConfig identically. '' when the relay
+  // omitted them (older relay versions).
+  realm_id: string
+  home_instance_url: string
 }
 
 export interface RelayBridge {

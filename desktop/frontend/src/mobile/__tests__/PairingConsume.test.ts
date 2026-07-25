@@ -43,6 +43,8 @@ describe('PairingConsume', () => {
       session_token: 'sess_NEW',
       expires_at: 1735689600,
       user: { id: 'u1', email: 'alice@example.com' },
+      realm_id: 'realm-1',
+      home_instance_url: 'https://home.example.com',
     })
     const wrapper = mount(PairingConsume, {
       props: { scannedUrl: 'https://relay.example.com/pair?t=pair_VALID' },
@@ -53,6 +55,8 @@ describe('PairingConsume', () => {
       url: 'https://relay.example.com',
       token: 'sess_NEW',
       session_expires_at: 1735689600,
+      realmId: 'realm-1',
+      homeInstanceURL: 'https://home.example.com',
     }))
     expect(wrapper.emitted('connected')).toBeTruthy()
   })

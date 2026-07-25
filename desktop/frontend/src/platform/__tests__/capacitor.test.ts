@@ -11,6 +11,19 @@ vi.mock('../../lib/opaqueWasm', () => ({
   opaqueRegisterFinish: vi.fn(async () => ({ record: 'cmVj', exportKey: '' })),
 }))
 
+// @capacitor/core's CapacitorHttp is a registerPlugin() Proxy: every property
+// read (even after a plain `CapacitorHttp.post = fn` assignment) goes through
+// a `get` trap that ignores the underlying target and dynamically resolves
+// the web plugin implementation instead — so it cannot be stubbed by mutating
+// the export. Replace just CapacitorHttp with a plain mock object; keep every
+// other export (registerPlugin, Capacitor, …) real since secureStorage.ts's
+// Keychain plugin registration depends on them.
+vi.mock('@capacitor/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@capacitor/core')>()
+  return { ...actual, CapacitorHttp: { post: vi.fn() } }
+})
+
+import { CapacitorHttp } from '@capacitor/core'
 import { createCapacitorPlatform } from '../capacitor'
 import { secureStorage } from '../secureStorage'
 
@@ -575,5 +588,97 @@ describe('capacitor.markSessionsSeen', () => {
 
     const p = createCapacitorPlatform()
     await expect(p.sessions.markSessionsSeen!({ all: true })).rejects.toThrow('relay_unauthorized')
+  })
+})
+
+describe('createCapacitorPlatform — relay.consumePairing', () => {
+  // Same golden vector as desktop/frontend/src/lib/opaque.test.ts
+  // (captured from desktop/wrap_account_key_test.go
+  // TestWrapAccountKey_GoldenForTS) so this exercises a real Go-sealed
+  // envelope, not just a TS round-trip.
+  const AK = new Uint8Array(32).fill(0x42)
+  const WK = new Uint8Array(32).fill(0x99)
+  const WRAP_B64 =
+    'AXd3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d0n14YBCoIjgFLbpQIXOw/BCPN4OFbqYLKyhS+9Vaqb9jy4iWn7LFub54SdU2lFXJg=='
+
+  beforeEach(async () => {
+    localStorage.clear()
+    await secureStorage.remove('atterm.relay.session')
+    await secureStorage.remove('atterm.relay.account-key')
+    vi.mocked(CapacitorHttp.post).mockReset()
+  })
+
+  it('unwraps wrap and stores account_key in Keychain', async () => {
+    vi.mocked(CapacitorHttp.post).mockResolvedValue({
+      status: 200,
+      data: {
+        session_token: 'sess_pair',
+        expires_at: 1735689600,
+        user: { id: 'u1', email: 'alice@example.com' },
+        realm_id: 'realm-1',
+        home_instance_url: 'https://home.example.com',
+        wrap: WRAP_B64,
+      },
+    } as unknown as Awaited<ReturnType<typeof CapacitorHttp.post>>)
+
+    const p = createCapacitorPlatform()
+    const result = await p.relay.consumePairing!('https://relay.example.com', 'pair_tok', WK)
+
+    expect(result).toEqual({
+      relay_url: 'https://relay.example.com',
+      session_token: 'sess_pair',
+      expires_at: 1735689600,
+      user: { id: 'u1', email: 'alice@example.com' },
+      realm_id: 'realm-1',
+      home_instance_url: 'https://home.example.com',
+    })
+    const stored = await secureStorage.get('atterm.relay.account-key')
+    expect(stored).not.toBeNull()
+    const storedBytes = Uint8Array.from(atob(stored!), (c) => c.charCodeAt(0))
+    expect(Array.from(storedBytes)).toEqual(Array.from(AK))
+  })
+
+  it('does not touch Keychain when wrap is absent', async () => {
+    vi.mocked(CapacitorHttp.post).mockResolvedValue({
+      status: 200,
+      data: {
+        session_token: 'sess_nowrap',
+        expires_at: 0,
+        user: { id: 'u1', email: 'alice@example.com' },
+        realm_id: '',
+        home_instance_url: '',
+      },
+    } as unknown as Awaited<ReturnType<typeof CapacitorHttp.post>>)
+
+    const p = createCapacitorPlatform()
+    const result = await p.relay.consumePairing!('https://relay.example.com', 'pair_tok', WK)
+
+    expect(result.realm_id).toBe('')
+    expect(result.home_instance_url).toBe('')
+    expect(await secureStorage.get('atterm.relay.account-key')).toBeNull()
+  })
+
+  it('does not touch Keychain when wrap decrypt fails (wrong wrapKey)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(CapacitorHttp.post).mockResolvedValue({
+      status: 200,
+      data: {
+        session_token: 'sess_badwrap',
+        expires_at: 0,
+        user: { id: 'u1', email: 'alice@example.com' },
+        realm_id: 'realm-1',
+        home_instance_url: 'https://home.example.com',
+        wrap: WRAP_B64,
+      },
+    } as unknown as Awaited<ReturnType<typeof CapacitorHttp.post>>)
+
+    const wrongKey = new Uint8Array(32).fill(0xaa)
+    const p = createCapacitorPlatform()
+    const result = await p.relay.consumePairing!('https://relay.example.com', 'pair_tok', wrongKey)
+
+    // Pair still succeeds; only the wrap-driven key install is skipped.
+    expect(result.session_token).toBe('sess_badwrap')
+    expect(await secureStorage.get('atterm.relay.account-key')).toBeNull()
+    expect(warn).toHaveBeenCalled()
   })
 })

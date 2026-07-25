@@ -131,6 +131,8 @@ async function run() {
       remote_permission: 'full',
       last_email: '',
       connected: false,
+      realmId: result.realm_id,
+      homeInstanceURL: result.home_instance_url,
     })
     if (cancelled) return
     emit('connected')

@@ -2148,11 +2148,24 @@ type PairingTokenResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`
 	QRURL     string `json:"qr_url"`
+	// Wrapped is true iff the QR URL carries an AEAD-sealed account_key
+	// (?&k=<wk>). false when the desktop's account_key was locked at
+	// generation time or wrapping failed; the mobile can still consume the
+	// pair to obtain a session token but sealed session fields will not
+	// decrypt.
+	Wrapped bool `json:"wrapped"`
 }
 
 // CreatePairingToken asks the configured relay to mint a 5-minute single-use
 // pairing token for the desktop's current user and returns the response,
 // including the qr_url to encode into a QR code.
+//
+// If the desktop's account_key is currently unlocked, it is sealed into an
+// AEAD envelope and shipped to the relay as part of the create request; the
+// fresh wrap key is then appended to the QR URL as &k=<wk> so the mobile can
+// recover the account_key without it ever touching the relay in the clear.
+// Wrap failures are logged and swallowed — pairing still proceeds without
+// the account_key, matching Wrapped=false.
 func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	if a.cfgStore == nil {
 		return PairingTokenResponse{}, fmt.Errorf("config store not ready")
@@ -2161,8 +2174,32 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return PairingTokenResponse{}, fmt.Errorf("no relay configured")
 	}
+
+	// Snapshot account_key. If unlocked and wrap succeeds, ship the
+	// ciphertext up and remember the wrap key for the QR URL suffix.
+	var wrapB64 string
+	var wk []byte
+	if ak := a.accountKeySnapshot(); len(ak) > 0 {
+		env, key, err := wrapAccountKey(ak)
+		if err != nil {
+			log.Printf("desktop: wrap account_key for pair: %v (falling back to no-wrap QR)", err)
+		} else {
+			wrapB64 = base64.StdEncoding.EncodeToString(env)
+			wk = key
+		}
+	}
+
+	body := map[string]string{}
+	if wrapB64 != "" {
+		body["wrap"] = wrapB64
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return PairingTokenResponse{}, err
+	}
+
 	baseHTTP := relayHTTPBase(cfg.RelayURL)
-	req, err := http.NewRequest("POST", baseHTTP+"/api/pair/create", strings.NewReader("{}"))
+	req, err := http.NewRequest("POST", baseHTTP+"/api/pair/create", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return PairingTokenResponse{}, err
 	}
@@ -2179,6 +2216,15 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	var out PairingTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return PairingTokenResponse{}, err
+	}
+
+	if len(wk) > 0 {
+		sep := "&"
+		if !strings.Contains(out.QRURL, "?") {
+			sep = "?"
+		}
+		out.QRURL = out.QRURL + sep + "k=" + base64.RawURLEncoding.EncodeToString(wk)
+		out.Wrapped = true
 	}
 	return out, nil
 }

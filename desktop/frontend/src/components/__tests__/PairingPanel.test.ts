@@ -21,6 +21,7 @@ describe('PairingPanel', () => {
       token: 'pair_TESTVAL',
       expires_at: Math.floor(Date.now() / 1000) + 300,
       qr_url: 'https://relay.test/pair?t=pair_TESTVAL',
+      wrapped: false,
     })
   })
 

@@ -186,6 +186,7 @@ export interface PairingToken {
   token: string;
   expires_at: number;
   qr_url: string;
+  wrapped: boolean;
 }
 
 export interface FeishuCredentials {

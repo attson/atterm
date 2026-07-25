@@ -85,34 +85,36 @@ func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl
 }
 
 // ConsumePairingToken validates a pair code, marks it consumed, and returns
-// the owning user. The caller is responsible for minting a session token.
+// the owning user and any wrapped account key. The caller is responsible for
+// minting a session token.
 //
 // Concurrency: the atomic UPDATE with the consumed_at IS NULL guard makes
 // "exactly one consumer wins"; the rest get ErrPairingConsumed even if they
 // pass the validity check on the read row.
-func (s *SQLiteStore) ConsumePairingToken(ctx context.Context, plaintext string) (*User, error) {
+func (s *SQLiteStore) ConsumePairingToken(ctx context.Context, plaintext string) (*User, []byte, error) {
 	hash := pairingHash(plaintext)
 
 	var (
 		userID     string
 		expiresAt  int64
 		consumedAt sql.NullInt64
+		wrap       []byte
 	)
 	err := s.db.QueryRowContext(ctx,
-		s.dia.Rebind(`SELECT user_id, expires_at, consumed_at
+		s.dia.Rebind(`SELECT user_id, expires_at, consumed_at, wrapped_account_key
 		 FROM pairing_tokens WHERE token_hash = ?`), hash,
-	).Scan(&userID, &expiresAt, &consumedAt)
+	).Scan(&userID, &expiresAt, &consumedAt, &wrap)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrPairingNotFound
+		return nil, nil, ErrPairingNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lookup pairing_token: %w", err)
+		return nil, nil, fmt.Errorf("lookup pairing_token: %w", err)
 	}
 	if consumedAt.Valid {
-		return nil, ErrPairingConsumed
+		return nil, nil, ErrPairingConsumed
 	}
 	if time.Now().Unix() > expiresAt {
-		return nil, ErrPairingExpired
+		return nil, nil, ErrPairingExpired
 	}
 
 	res, err := s.db.ExecContext(ctx,
@@ -121,16 +123,20 @@ func (s *SQLiteStore) ConsumePairingToken(ctx context.Context, plaintext string)
 		time.Now().Unix(), hash,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("consume pairing_token: %w", err)
+		return nil, nil, fmt.Errorf("consume pairing_token: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return nil, fmt.Errorf("rows affected: %w", err)
+		return nil, nil, fmt.Errorf("rows affected: %w", err)
 	}
 	if n == 0 {
 		// Lost the race to another consumer.
-		return nil, ErrPairingConsumed
+		return nil, nil, ErrPairingConsumed
 	}
 
-	return s.GetUser(ctx, userID)
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return u, wrap, nil
 }

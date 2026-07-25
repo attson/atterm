@@ -60,7 +60,7 @@ func (a *AuthServer) handlePairConsume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Consume the pairing token to retrieve the user.
-	user, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
+	user, _, err := a.Store.ConsumePairingToken(r.Context(), body.Token)
 	if err != nil {
 		status := http.StatusNotFound
 		if errors.Is(err, userstore.ErrPairingConsumed) {

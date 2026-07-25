@@ -55,7 +55,7 @@ func TestConsumePairingToken_HappyPath_ReturnsUser(t *testing.T) {
 		t.Fatalf("CreatePairingToken: %v", err)
 	}
 
-	got, err := s.ConsumePairingToken(ctx, pairSecret.Expose())
+	got, _, err := s.ConsumePairingToken(ctx, pairSecret.Expose())
 	if err != nil {
 		t.Fatalf("ConsumePairingToken: %v", err)
 	}
@@ -76,10 +76,10 @@ func TestConsumePairingToken_SecondCallFails(t *testing.T) {
 	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
 	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, nil)
 
-	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != nil {
+	if _, _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); err != nil {
 		t.Fatalf("first consume: %v", err)
 	}
-	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingConsumed) {
+	if _, _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingConsumed) {
 		t.Fatalf("second consume: got %v want ErrPairingConsumed", err)
 	}
 }
@@ -90,7 +90,7 @@ func TestConsumePairingToken_Expired(t *testing.T) {
 	u, _ := s.CreateOpaqueUser(ctx, "alice@example.com")
 	pairSecret, _, _ := s.CreatePairingToken(ctx, u.ID, -1*time.Second, nil)
 
-	if _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingExpired) {
+	if _, _, err := s.ConsumePairingToken(ctx, pairSecret.Expose()); !errors.Is(err, ErrPairingExpired) {
 		t.Fatalf("expired consume: got %v want ErrPairingExpired", err)
 	}
 }
@@ -98,7 +98,7 @@ func TestConsumePairingToken_Expired(t *testing.T) {
 func TestConsumePairingToken_UnknownTokenString(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	if _, err := s.ConsumePairingToken(ctx, "pair_NOTAREALTOKENVALUE"); !errors.Is(err, ErrPairingNotFound) {
+	if _, _, err := s.ConsumePairingToken(ctx, "pair_NOTAREALTOKENVALUE"); !errors.Is(err, ErrPairingNotFound) {
 		t.Fatalf("garbage consume: got %v want ErrPairingNotFound", err)
 	}
 }
@@ -117,7 +117,7 @@ func TestConsumePairingToken_ConcurrentExactlyOneWinner(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.ConsumePairingToken(ctx, code)
+			_, _, err := s.ConsumePairingToken(ctx, code)
 			results <- err
 		}()
 	}
@@ -188,5 +188,46 @@ func TestCreatePairingToken_NilWrap(t *testing.T) {
 	}
 	if got.Valid {
 		t.Fatalf("expected NULL wrap, got %q", got.String)
+	}
+}
+
+func TestConsumePairingToken_ReturnsWrap(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, err := s.CreateOpaqueUser(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	wrap := []byte("wrap-bytes")
+	sec, _, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, wrap)
+	if err != nil {
+		t.Fatalf("CreatePairingToken: %v", err)
+	}
+	_, got, err := s.ConsumePairingToken(ctx, sec.Expose())
+	if err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if !bytes.Equal(got, wrap) {
+		t.Fatalf("wrap: got %x, want %x", got, wrap)
+	}
+}
+
+func TestConsumePairingToken_NoWrapReturnsNil(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	u, err := s.CreateOpaqueUser(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("CreateOpaqueUser: %v", err)
+	}
+	sec, _, err := s.CreatePairingToken(ctx, u.ID, 5*time.Minute, nil)
+	if err != nil {
+		t.Fatalf("CreatePairingToken: %v", err)
+	}
+	_, got, err := s.ConsumePairingToken(ctx, sec.Expose())
+	if err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("wrap: expected nil, got %x", got)
 	}
 }

@@ -170,7 +170,7 @@ type Store interface {
 	// user; the caller is responsible for minting a session token.
 	// wrap may be nil; when non-nil, stored verbatim in wrapped_account_key.
 	CreatePairingToken(ctx context.Context, userID string, ttl time.Duration, wrap []byte) (Secret, *PairingToken, error)
-	ConsumePairingToken(ctx context.Context, plaintext string) (*User, error)
+	ConsumePairingToken(ctx context.Context, plaintext string) (*User, []byte, error)
 
 	// Sessions (single bearer token; cookie OR Authorization header).
 	CreateSession(ctx context.Context, userID, userAgent, ipPrefix string, ttl time.Duration) (plaintext string, sess *Session, err error)

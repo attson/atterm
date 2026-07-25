@@ -46,6 +46,12 @@ type AuthServer struct {
 	// etc.) sleeps until at least this duration has elapsed.
 	// Default 200ms; ±50ms random jitter is added.
 	FailureFloor time.Duration
+	// RealmID is echoed in /api/pair/consume so mobiles anchor their local
+	// state to the same realm the desktop uses. Mirrors OpaqueAuthHandler.realmID.
+	RealmID string
+	// InstancePublicURL is this relay node's public URL, threaded through
+	// to resolveHomeInstanceURL(). Empty in single-instance / dev.
+	InstancePublicURL string
 }
 
 // Routes returns an http.Handler with all auth + me endpoints mounted. The

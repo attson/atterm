@@ -224,9 +224,11 @@ func NewServer(cfg Config) *Server {
 	if cfg.Resolver != nil && cfg.Store != nil {
 		limits := NewLimitRegistry()
 		authSrv := &AuthServer{
-			Store:        cfg.Store,
-			Limits:       limits,
-			FailureFloor: 200 * time.Millisecond,
+			Store:            cfg.Store,
+			Limits:           limits,
+			FailureFloor:     200 * time.Millisecond,
+			RealmID:          cfg.RealmID,
+			InstancePublicURL: cfg.InstancePublicURL,
 		}
 		adminSrv := &AdminServer{Store: cfg.Store}
 		authSrv.RegisterInto(s.mux, s.requireSession)

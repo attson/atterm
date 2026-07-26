@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { NCard, NForm, NFormItem, NInputNumber, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInputNumber, NInput, NButton, NSpace, NSwitch, useMessage } from 'naive-ui'
 import { ApiError } from '@shared/api/client'
 import { getAdminConfig, setAdminConfig } from '@shared/api/admin'
 import type { AdminConfig } from '@shared/api/types'
@@ -11,11 +11,18 @@ const rateInput = ref<number>(0)
 const connInput = ref<number>(0)
 const debugInput = ref(false)
 const debugPayloadInput = ref(false)
+const originsInput = ref<string>('')
 const loading = ref(true)
 const saving = ref(false)
 const errorMsg = ref('')
 const message = useMessage()
 const { t } = useI18n()
+
+// Newline-separated list ⇄ string[]; blank lines are dropped so save doesn't
+// send stray "" patterns (which nhooyr's filepath.Match would treat as literal).
+function parseOrigins(raw: string): string[] {
+  return raw.split('\n').map((s) => s.trim()).filter(Boolean)
+}
 
 function effectiveLabel(stored: number, fallback: number): string {
   if (stored < 0) return t('admin.config.effectiveDisabled')
@@ -40,6 +47,7 @@ async function load() {
     connInput.value = c.max_connections_per_key
     debugInput.value = c.debug
     debugPayloadInput.value = c.debug_payload
+    originsInput.value = (c.allowed_origins ?? []).join('\n')
   } catch (e) {
     if (e instanceof ApiError) errorMsg.value = t('admin.config.loadFailed')
   } finally {
@@ -57,12 +65,14 @@ async function onSave() {
       max_connections_per_key: Math.round(connInput.value),
       debug: debugInput.value,
       debug_payload: debugPayloadInput.value,
+      allowed_origins: parseOrigins(originsInput.value),
     })
     cfg.value = updated
     rateInput.value = updated.rate_limit_per_minute
     connInput.value = updated.max_connections_per_key
     debugInput.value = updated.debug
     debugPayloadInput.value = updated.debug_payload
+    originsInput.value = (updated.allowed_origins ?? []).join('\n')
     message.success(t('setup.saved'))
   } catch (e) {
     if (e instanceof ApiError) errorMsg.value = t('admin.config.saveFailed')
@@ -113,6 +123,18 @@ onMounted(load)
         <n-space align="center" :size="8">
           <n-switch v-model:value="debugPayloadInput" data-testid="cfg-debug-payload" />
           <span class="warn">{{ t('admin.config.debugPayloadWarn') }}</span>
+        </n-space>
+      </n-form-item>
+      <n-form-item :label="t('admin.config.allowedOrigins')" :show-feedback="false">
+        <n-space vertical :size="4" style="width: 100%">
+          <n-input
+            v-model:value="originsInput"
+            type="textarea"
+            :placeholder="t('admin.config.allowedOriginsPlaceholder')"
+            :autosize="{ minRows: 3, maxRows: 10 }"
+            :input-props="{ 'data-testid': 'cfg-origins' } as unknown as Record<string, unknown>"
+          />
+          <span class="muted">{{ t('admin.config.allowedOriginsHint') }}</span>
         </n-space>
       </n-form-item>
       <n-space class="actions" align="center">

@@ -79,6 +79,7 @@ export interface AdminConfig {
   default_max_connections_per_key: number
   debug: boolean
   debug_payload: boolean
+  allowed_origins: string[]
   version: string
 }
 
@@ -87,6 +88,7 @@ export interface AdminConfigUpdate {
   max_connections_per_key: number
   debug?: boolean
   debug_payload?: boolean
+  allowed_origins?: string[]
 }
 
 // FeishuAdminConfig is the masked Feishu integration view (GET /admin/api/feishu).

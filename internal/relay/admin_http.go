@@ -341,6 +341,11 @@ type adminConfigResponse struct {
 	Debug        bool `json:"debug"`
 	DebugPayload bool `json:"debug_payload"`
 
+	// AllowedOrigins is the current HTTP/WS Origin allow-list. Editable via
+	// PUT with allowed_origins in the body. An empty list means "any origin"
+	// (dev mode). Mobile Capacitor clients need "capacitor://localhost" here.
+	AllowedOrigins []string `json:"allowed_origins"`
+
 	Version string `json:"version"`
 }
 
@@ -422,6 +427,7 @@ func (s *Server) adminConfigResponse() adminConfigResponse {
 		DefaultMaxConnectionsPerKey: defaultMaxConnections,
 		Debug:                       s.debugOn(),
 		DebugPayload:                s.debugPayloadOn(),
+		AllowedOrigins:              append([]string(nil), cfg.AllowedOrigins...),
 		Version:                     s.cfg.Version,
 	}
 }

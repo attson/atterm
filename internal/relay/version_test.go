@@ -195,6 +195,96 @@ func TestAdminConfigPersistsRuntimeLimits(t *testing.T) {
 	}
 }
 
+// TestAdminConfigRoundtripsAllowedOrigins verifies the admin UI can read the
+// current allow-list and PUT a new one. The hot-apply path (SetAllowedOrigins
+// + OriginPatterns) is exercised implicitly: after the PUT, the server's
+// accept options carry the normalized patterns (host-only) so that a mobile
+// WS from Origin capacitor://localhost survives nhooyr's origin check.
+func TestAdminConfigRoundtripsAllowedOrigins(t *testing.T) {
+	ctx := context.Background()
+	store, err := userstore.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	u, err := store.CreateOpaqueUser(ctx, "admin@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetUserAdmin(ctx, u.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	tok, _, err := store.CreateSession(ctx, u.ID, "ua", "1.2.3.0/24", 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfgStore := NewAdminConfigStore(store, AdminConfig{
+		AllowedOrigins: []string{"https://relay.example.com"},
+	})
+	resolver := NewIdentityResolver(store)
+	srv := NewServer(Config{
+		Resolver:         resolver,
+		Store:            store,
+		AdminConfigStore: cfgStore,
+		AllowedOrigins:   []string{"relay.example.com"},
+	})
+
+	// GET returns the stored list verbatim (not the normalized host patterns).
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+	getReq.Header.Set("Authorization", "Bearer "+tok)
+	getRec := httptest.NewRecorder()
+	srv.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status=%d body=%s; want 200", getRec.Code, getRec.Body.String())
+	}
+	var got struct {
+		AllowedOrigins []string `json:"allowed_origins"`
+	}
+	if err := json.NewDecoder(getRec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode GET: %v", err)
+	}
+	if len(got.AllowedOrigins) != 1 || got.AllowedOrigins[0] != "https://relay.example.com" {
+		t.Fatalf("GET allowed_origins=%#v; want [https://relay.example.com]", got.AllowedOrigins)
+	}
+
+	// PUT with a mobile-inclusive list must persist AND hot-apply so that
+	// WS from capacitor://localhost (host=localhost) survives the origin check.
+	putBody := strings.NewReader(`{
+		"rate_limit_per_minute": 0,
+		"max_connections_per_key": 0,
+		"allowed_origins": ["https://relay.example.com", "capacitor://localhost"]
+	}`)
+	putReq := httptest.NewRequest(http.MethodPut, "/admin/api/config", putBody)
+	putReq.Header.Set("Authorization", "Bearer "+tok)
+	putReq.Header.Set("Content-Type", "application/json")
+	putRec := httptest.NewRecorder()
+	srv.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status=%d body=%s; want 200", putRec.Code, putRec.Body.String())
+	}
+
+	snap := cfgStore.Snapshot()
+	if len(snap.AllowedOrigins) != 2 || snap.AllowedOrigins[1] != "capacitor://localhost" {
+		t.Fatalf("persisted allowed_origins=%#v; want [https://relay.example.com capacitor://localhost]", snap.AllowedOrigins)
+	}
+
+	// Hot-apply: acceptOptions must now use host-only patterns so nhooyr's
+	// authenticateOrigin can match Origin capacitor://localhost (host=localhost).
+	patterns := srv.currentAllowedOrigins()
+	sawLocalhost := false
+	for _, p := range patterns {
+		if p == "localhost" {
+			sawLocalhost = true
+			break
+		}
+	}
+	if !sawLocalhost {
+		t.Fatalf("after PUT, allowedOrigins patterns=%#v; want to include host-only 'localhost'", patterns)
+	}
+}
+
 func TestRateLimitRejectsExcessRequests(t *testing.T) {
 	srv := NewServer(Config{Version: "v1.2.3", RateLimitPerMinute: 1})
 

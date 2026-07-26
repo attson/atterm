@@ -561,7 +561,7 @@ onMounted(() => {
         if (term.cols > 0 && term.rows > 0) conn?.sendResize(term.cols, term.rows)
       }
     },
-  })
+  }, { remote: true })
   conn.attach()
   refreshInputMode()
   reloadBars()

@@ -900,6 +900,13 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
         };
         continue;
       }
+      // Platforms without a local PTY (e.g. the web build) can't fork a
+      // local shell at all — leave the pane empty instead of calling
+      // newSession, matching how a snapshot-less boot renders there.
+      if (!caps.localPty) {
+        t.panes[i] = { sessionId: null, remote: false };
+        continue;
+      }
       try {
         // oldSid: previous generation's session_id, saved by useRecoverySnapshot
         // for local panes (Task 2). Empty when the snapshot pre-dates that
@@ -1335,9 +1342,12 @@ onMounted(async () => {
         // whether to spawn restored panes or fall back to startNewTab — so
         // we deliberately do NOT call startNewTab() here.
         recoveryDialogState.value = { open: true, snapshot: recoverySnap };
-      } else {
+      } else if (caps.localPty) {
         startNewTab();
       }
+      // else: no recovery snapshot and no local PTY (web build) — render
+      // the empty state (sidebar only, no tab) instead of crashing on a
+      // startNewTab() that has nothing to spawn.
     }
   } catch (e: any) {
     const name = e?.name ?? "Error";

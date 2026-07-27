@@ -25,25 +25,6 @@ func newRelayTestApp(t *testing.T) *App {
 	return a
 }
 
-// newTestApp creates a minimal App with prefsSync initialized for
-// preference sync tests.
-func newTestApp(t *testing.T) *App {
-	t.Helper()
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	t.Setenv("LocalAppData", filepath.Join(root, "local"))
-	a := &App{
-		cfgStore: &configStore{},
-		ctx:      context.Background(),
-	}
-	adapter := newAppConfigAdapter(a.cfgStore)
-	relayClient := newHTTPRelayClient(a.cfgStore)
-	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
-	return a
-}
-
 // TestSetUplinkPaused_TogglesWithoutWipingConfig verifies the
 // "disconnect erases config" fix: pausing/unpausing via SetUplinkPaused
 // must not touch the persisted URL/token, only the pause flag.
@@ -217,7 +198,20 @@ func TestPinnedSessionIds_NilClears(t *testing.T) {
 }
 
 func TestPinnedSessionIds_MarksPrefDirty(t *testing.T) {
-	a := newTestApp(t)
+	// Inline setup: temp dirs + App with prefsSync initialized.
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("LocalAppData", filepath.Join(root, "local"))
+	a := &App{
+		cfgStore: &configStore{},
+		ctx:      context.Background(),
+	}
+	adapter := newAppConfigAdapter(a.cfgStore)
+	relayClient := newHTTPRelayClient(a.cfgStore)
+	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
+
 	// After Set, prefsMeta[pinned_session_ids].Dirty must be true.
 	if err := a.SetPinnedSessionIds([]string{"sid-x"}); err != nil {
 		t.Fatalf("SetPinnedSessionIds: %v", err)

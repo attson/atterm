@@ -11,6 +11,7 @@ export const SYNCED_KEYS = [
   'notifications_enabled',
   'command_notify_threshold_seconds',
   'shell_integration_enabled',
+  'pinned_session_ids',
 ] as const
 
 export type SyncedKey = (typeof SYNCED_KEYS)[number]

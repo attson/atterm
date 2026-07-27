@@ -12,14 +12,19 @@ class FakeAdapter implements Adapter {
 }
 
 describe('PrefsSyncEngine', () => {
-  it('SYNCED_KEYS lists exactly the five fields', () => {
+  it('SYNCED_KEYS lists exactly the six fields', () => {
     expect(SYNCED_KEYS.slice().sort()).toEqual([
       'command_notify_threshold_seconds',
       'locale_preference',
       'notifications_enabled',
+      'pinned_session_ids',
       'quick_templates',
       'shell_integration_enabled',
     ])
+  })
+
+  it('SYNCED_KEYS includes pinned_session_ids', () => {
+    expect(SYNCED_KEYS).toContain('pinned_session_ids' as any)
   })
 
   it('pull adopts server value when newer and not dirty', async () => {

@@ -17,6 +17,19 @@ import { enableAutoUnmount } from "@vue/test-utils";
 // after each test closes those listeners down deterministically.
 enableAutoUnmount(afterEach);
 
+// App.vue's web-only tabs snapshot (lib/webTabsSnapshot) reads/writes real
+// jsdom localStorage/sessionStorage keyed by a per-session window id. Since
+// every test file shares one jsdom global, a mounted App instance whose
+// tabs change can debounce-save a snapshot (300ms real setTimeout) that
+// outlives the test and leaks into a later mount's loadSnapshot() call —
+// same class of cross-test bleed as the listener leak above, just via
+// Storage instead of `document`. Clear both after every test so no test's
+// window id / snapshot survives into the next.
+afterEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+});
+
 if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, "crypto", {
     value: webcrypto,

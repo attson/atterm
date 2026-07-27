@@ -44,6 +44,7 @@ describe('createCapacitorPlatform', () => {
       systemClipboard: true,
       notifications: true,
       fileDialog: false,
+      wailsBindings: false,
     })
   })
 

@@ -620,6 +620,26 @@ async function pollRemoteSessions() {
   }
 }
 
+// Web-only session poll. Skips the Wails-specific listRemoteSessions()
+// (which goes through Go's remoteProxy — none of that exists on web) and
+// hits the platform bridge's HTTP `/api/sessions` directly. The web
+// platform returns RemoteSession[] with `session_id` alias, but the raw
+// SessionInfo `id` field is preserved from /api/sessions — remap it so
+// applyRemoteSessions (which reads `.id`) sees a consistent shape.
+async function pollRemoteSessionsViaPlatform() {
+  const rs = await $platform.sessions.listRemoteSessions();
+  // The web platform bridge (desktop/frontend/src/platform/web.ts) preserves
+  // the original `id` field from /api/sessions and adds a `session_id`
+  // alias for the RemoteSession shape. Recover the SessionInfo view by
+  // aliasing session_id back to id (harmless when both are already
+  // present).
+  const asSessionInfo: SessionInfo[] = rs.map((s) => {
+    const raw = s as unknown as SessionInfo & { session_id?: string };
+    return { ...raw, id: raw.id ?? raw.session_id ?? "" };
+  });
+  applyRemoteSessions(asSessionInfo);
+}
+
 // connectRemoteSessionList (re)starts the remote-session list poll and sets the
 // attach endpoint. Two independent concerns:
 //   - The LIST is read through the Go backend (App.ListRemoteSessions), polled
@@ -1232,26 +1252,28 @@ watch([tabs, currentTabId], () => {
 // `#/session/<sid>` (lib/webTabsSnapshot's formatHash) so the address bar is
 // bookmarkable/shareable on a real web deployment. Uses history.replaceState
 // (never `location.hash =`) so it never adds a history entry and never fires
-// a `hashchange` event back at onHashChange below. Desktop/capacitor already
-// own a separate `#/t/<tabId>` hash via gotoTab()/syncRoute() — this watcher
-// runs there too (no is-web gate), but nothing reads the hash back except
-// syncRoute (mount + a real hashchange event, neither of which replaceState
-// triggers), so it's harmless there.
-watch(currentTab, (t) => {
-  const activePane = t?.panes[t.activePaneIdx];
-  const sid = activePane?.sessionId ?? "";
-  const target = sid ? formatHash(sid) : "#/";
-  if (location.hash !== target) history.replaceState({}, "", target);
-});
+// a `hashchange` event back at onHashChange below. Gated on
+// `!caps.wailsBindings` — desktop owns its own `#/t/<tabId>` hash via
+// gotoTab()/syncRoute() and this watcher would clobber it on every pane
+// change (leaving the tab hash out of sync with the visible tab).
+if (!caps.wailsBindings) {
+  watch(currentTab, (t) => {
+    const activePane = t?.panes[t.activePaneIdx];
+    const sid = activePane?.sessionId ?? "";
+    const target = sid ? formatHash(sid) : "#/";
+    if (location.hash !== target) history.replaceState({}, "", target);
+  });
+}
 
 // Web-only per-window tabs snapshot (lib/webTabsSnapshot). loadSnapshot()/
-// saveSnapshot() key off a sessionStorage-scoped window id that only ever
-// has a matching localStorage entry on the web build (main.web.ts writes it
-// here on every tabs change) — a fresh Wails/Capacitor launch always mints a
-// fresh window id (sessionStorage resets on relaunch), so loadSnapshot()
-// stays null there and this whole feature is a no-op off-web.
+// saveSnapshot() key off a sessionStorage-scoped window id and are gated on
+// `!caps.wailsBindings` so a Wails/Capacitor build never touches the
+// browser-only localStorage entry (used to be a no-op relying on
+// sessionStorage minting a fresh id per launch — the wailsBindings gate
+// makes the platform check explicit).
 let snapshotSaveHandle: ReturnType<typeof setTimeout> | null = null;
 function scheduleSnapshotSave() {
+  if (caps.wailsBindings) return;
   if (snapshotSaveHandle) clearTimeout(snapshotSaveHandle);
   snapshotSaveHandle = setTimeout(() => {
     snapshotSaveHandle = null;
@@ -1275,7 +1297,9 @@ function scheduleSnapshotSave() {
     });
   }, 300);
 }
-watch(tabs, () => { scheduleSnapshotSave(); }, { deep: true });
+if (!caps.wailsBindings) {
+  watch(tabs, () => { scheduleSnapshotSave(); }, { deep: true });
+}
 
 // restoreFromWebSnapshot rebuilds tabs from the web-only localStorage
 // snapshot at boot. Every pane restores as remote (the web build has no
@@ -1398,33 +1422,66 @@ onMounted(async () => {
     tabs: [],
   };
   let recoveryEnabled = true;
-  try {
-    bootStage = "refreshTerminalTheme";
-    await refreshTerminalTheme();
-    bootStage = "getEndpoint";
-    localEndpoint.value = await getEndpoint();
-    bootStage = "getHostInfo";
-    const info = await getHostInfo();
-    localHostID.value = info.host_id;
-    localHost.value = info.host;
-    bootStage = "loadRecoverySnapshot";
-    recoverySnap = await loadRecoverySnapshot();
-    recoveryEnabled = await getRecoveryDialogEnabled();
-    bootStage = "connectLocalSessionList";
-    connectLocalSessionList(localEndpoint.value);
-    bootStage = "refreshRelayConfig";
-    await refreshRelayConfig();
-  } catch (e: any) {
-    const name = e?.name ?? "Error";
-    const msg = e?.message ?? String(e);
-    console.error(`[boot] step "${bootStage}" failed`, {
-      name,
-      message: msg,
-      stack: e?.stack,
-    });
-    status.value = "error";
-    errorMsg.value = `${bootStage}: ${name}: ${msg}` || i18nT("app.wailsBindingsUnavailable");
-    return;
+  // The Wails-only boot chain: every call below reaches into window.go.main.App
+  // via lib/api's `bindings()`, which throws "Wails bindings not ready" on the
+  // web build. Gate the whole block on `caps.wailsBindings`; the web branch
+  // below runs an equivalent bootstrap via the platform bridge.
+  if (caps.wailsBindings) {
+    try {
+      bootStage = "refreshTerminalTheme";
+      await refreshTerminalTheme();
+      bootStage = "getEndpoint";
+      localEndpoint.value = await getEndpoint();
+      bootStage = "getHostInfo";
+      const info = await getHostInfo();
+      localHostID.value = info.host_id;
+      localHost.value = info.host;
+      bootStage = "loadRecoverySnapshot";
+      recoverySnap = await loadRecoverySnapshot();
+      recoveryEnabled = await getRecoveryDialogEnabled();
+      bootStage = "connectLocalSessionList";
+      connectLocalSessionList(localEndpoint.value);
+      bootStage = "refreshRelayConfig";
+      await refreshRelayConfig();
+    } catch (e: any) {
+      const name = e?.name ?? "Error";
+      const msg = e?.message ?? String(e);
+      console.error(`[boot] step "${bootStage}" failed`, {
+        name,
+        message: msg,
+        stack: e?.stack,
+      });
+      status.value = "error";
+      errorMsg.value = `${bootStage}: ${name}: ${msg}` || i18nT("app.wailsBindingsUnavailable");
+      return;
+    }
+  } else {
+    // Web boot: no local PTY, no Wails uplink. The session list is served
+    // by the relay's HTTP API (via platform.sessions.listRemoteSessions),
+    // polled every 3s (rarer than desktop's 2s WS-backed poll — no
+    // subscribe channel here, so lower is wasted bandwidth). Marks status
+    // ready as soon as the first poll returns so the UI leaves the
+    // "loading" splash even when the list is empty.
+    try {
+      bootStage = "listRemoteSessions";
+      await pollRemoteSessionsViaPlatform();
+      status.value = "ready";
+      remotePollHandle = window.setInterval(() => {
+        void pollRemoteSessionsViaPlatform();
+      }, 3000);
+    } catch (e: any) {
+      const name = e?.name ?? "Error";
+      const msg = e?.message ?? String(e);
+      console.error(`[boot-web] step "${bootStage}" failed`, {
+        name, message: msg, stack: e?.stack,
+      });
+      // Non-fatal: leave status=loading but log; user can retry via reload.
+      // The session-list refresh interval is still installed below so a
+      // transient error clears itself.
+      remotePollHandle = window.setInterval(() => {
+        void pollRemoteSessionsViaPlatform();
+      }, 3000);
+    }
   }
 
   // Auto-update poll: every 5s pull state.available || ready and toggle the

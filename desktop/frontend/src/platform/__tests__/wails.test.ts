@@ -62,6 +62,7 @@ describe('createWailsPlatform', () => {
     expect(p.caps).toEqual({
       localPty: true, autoUpdate: true, pluginHost: true, windowControls: true,
       systemClipboard: true, notifications: true, fileDialog: true,
+      wailsBindings: true,
     })
   })
 

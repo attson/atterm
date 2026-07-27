@@ -269,6 +269,7 @@ export function createCapacitorPlatform(): Platform {
       systemClipboard: true,
       notifications: true,
       fileDialog: false,
+      wailsBindings: false,
     },
     relay: {
       // load: prefer localStorage (synchronous, never hangs). Keychain is a

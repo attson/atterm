@@ -7,6 +7,7 @@ function fakePlatform(): Platform {
     caps: {
       localPty: true, autoUpdate: true, pluginHost: true, windowControls: true,
       systemClipboard: true, notifications: true, fileDialog: true,
+      wailsBindings: true,
     },
     relay: {
       load: async () => null,

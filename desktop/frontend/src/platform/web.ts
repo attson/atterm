@@ -16,6 +16,7 @@ const CAPS: Capabilities = {
   systemClipboard: true,
   notifications: typeof Notification !== 'undefined',
   fileDialog: true,
+  wailsBindings: false,
 }
 
 const relay: RelayBridge = {

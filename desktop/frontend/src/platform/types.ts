@@ -42,6 +42,13 @@ export interface Capabilities {
   systemClipboard: boolean
   notifications: boolean
   fileDialog: boolean
+  // True on Wails (where window.go.main.App is populated), false on Web
+  // and Capacitor. Distinct from `localPty`: Capacitor also has
+  // localPty=false but runs in a different shell (MobileApp.vue) with its
+  // own session-list bridge. App.vue uses `wailsBindings` to gate the
+  // desktop-only boot chain (getEndpoint/getHostInfo/loadRecoverySnapshot
+  // …) whose lib/api calls throw when the Wails runtime isn't there.
+  wailsBindings: boolean
 }
 
 // ----- Bridges -----

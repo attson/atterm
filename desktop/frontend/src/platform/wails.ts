@@ -73,6 +73,7 @@ export function createWailsPlatform(): Platform {
       systemClipboard: true,
       notifications: true,
       fileDialog: true,
+      wailsBindings: true,
     },
     relay: {
       load: () => api.getRelayConfig().then((c) => c ?? null),

@@ -46,13 +46,23 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
-      '@':       fileURLToPath(new URL('./src',        import.meta.url)),
+      '@shared':    fileURLToPath(new URL('./src/shared', import.meta.url)),
+      '@webshared': fileURLToPath(new URL('./src/shared', import.meta.url)),
+      '@':          fileURLToPath(new URL('../desktop/frontend/src', import.meta.url)),
     },
   },
   server: {
     port: 5173,
     strictPort: true,
+    // The `main` entry (index.html) mounts desktop/frontend/src/main.web.ts,
+    // which lives outside this project's root — allow vite's dev server to
+    // serve files from there.
+    fs: {
+      allow: [
+        fileURLToPath(new URL('.', import.meta.url)),
+        fileURLToPath(new URL('../desktop/frontend/src', import.meta.url)),
+      ],
+    },
     proxy: {
       '/api':       { target: RELAY_HTTP, changeOrigin: false },
       '/sub':       { target: RELAY_HTTP, changeOrigin: false },

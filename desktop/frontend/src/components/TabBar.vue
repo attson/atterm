@@ -15,11 +15,15 @@ interface TabSummary {
   disconnected?: boolean;
 }
 
-defineProps<{
-  tabs: TabSummary[];
-  currentId: string | null;
-  starting: boolean;
-}>();
+withDefaults(
+  defineProps<{
+    tabs: TabSummary[];
+    currentId: string | null;
+    starting: boolean;
+    canNewLocal?: boolean;
+  }>(),
+  { canNewLocal: true },
+);
 
 const emit = defineEmits<{
   (e: "activate", id: string): void;
@@ -261,7 +265,9 @@ function onClose(e: MouseEvent, id: string) {
       </div>
     </div>
     <button
+      v-if="canNewLocal"
       class="plus"
+      data-test="new-local-shell"
       :disabled="starting"
       :title="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
       @click="emit('new')"

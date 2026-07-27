@@ -239,6 +239,32 @@ describe("TitleBar caps gate", () => {
   })
 })
 
+describe("local shell entrypoint caps gate", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    __setPlatformForTests(createFakePlatform())
+  })
+
+  afterEach(() => {
+    __setPlatformForTests(null)
+  })
+
+  it('shows the new-local-shell button by default (caps.localPty=true)', async () => {
+    const w = mount(App)
+    await flushPromises()
+    expect(w.find('[data-test="new-local-shell"]').exists()).toBe(true)
+  })
+
+  it('hides the new-local-shell button when caps.localPty is false', async () => {
+    const platform = createFakePlatform()
+    platform.caps = { ...platform.caps, localPty: false }
+    __setPlatformForTests(platform)
+    const w = mount(App)
+    await flushPromises()
+    expect(w.find('[data-test="new-local-shell"]').exists()).toBe(false)
+  })
+})
+
 describe("remote tab session retention", () => {
   class FakeWebSocket {
     static instances: FakeWebSocket[] = [];

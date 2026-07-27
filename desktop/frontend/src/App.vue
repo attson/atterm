@@ -1391,6 +1391,7 @@ onUnmounted(() => {
       :tabs="tabSummaries"
       :current-id="currentTabId"
       :starting="starting"
+      :can-new-local="caps.localPty"
       @activate="gotoTab"
       @close="closeTab"
       @new="startNewTab"

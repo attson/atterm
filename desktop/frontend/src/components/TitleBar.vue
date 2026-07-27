@@ -45,7 +45,6 @@ const props = defineProps<{
   sessionCount: number;
   remoteEndpoint: Endpoint | null;
   availableRemoteCount: number;
-  updateBadge: boolean;
   currentTitle?: string;
   currentTaskState?: TaskState | null;
 }>();
@@ -79,7 +78,6 @@ platform.events.on("e2ee-mode-changed", (data) => {
 
 defineEmits<{
   (e: "open-remote"): void;
-  (e: "open-settings"): void;
 }>();
 
 // Default to linux if Environment() fails — gives users window controls
@@ -203,26 +201,6 @@ function onTitleDblClick() {
       </svg>
       <span v-if="availableRemoteCount > 0" class="badge">{{ availableRemoteCount }}</span>
     </button>
-    <button
-      class="icon-btn"
-      type="button"
-      data-testid="titlebar-settings"
-      :title="t('terminal.relaySettings')"
-      @click="$emit('open-settings')"
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="16" height="16"
-        viewBox="0 0 24 24"
-        fill="none" stroke="currentColor"
-        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
-      <span v-if="updateBadge" class="dot"></span>
-    </button>
     <WindowControls v-if="showWindowControls" />
   </header>
 </template>
@@ -322,12 +300,6 @@ function onTitleDblClick() {
   background: #d29922; color: #0d1117; font-size: 9px; font-weight: 700;
   border-radius: 10px; padding: 1px 5px; line-height: 1.3;
   min-width: 16px; text-align: center;
-}
-.icon-btn .dot {
-  position: absolute; top: 2px; right: 2px;
-  width: 6px; height: 6px;
-  background: #d29922;
-  border-radius: 50%;
 }
 /* Running indicator at the titlebar bottom: a transparent-base track with a
    long green wave (720px wide) traveling L→R; one wave is always either

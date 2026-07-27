@@ -1511,11 +1511,9 @@ onUnmounted(() => {
       :session-count="sessionCount"
       :remote-endpoint="remoteEndpoint"
       :available-remote-count="availableRemote.length"
-      :update-badge="updateBadge"
       :current-title="currentTitleForBar"
       :current-task-state="currentTaskStateForBar"
       @open-remote="openRemoteFromTitleBar"
-      @open-settings="showSettings = true"
     />
     <PasteImagePreviewHost />
     <PasteFilePreviewHost />
@@ -1532,10 +1530,12 @@ onUnmounted(() => {
       :current-id="currentTabId"
       :starting="starting"
       :can-new-local="caps.localPty"
+      :update-badge="updateBadge"
       @activate="gotoTab"
       @close="closeTab"
       @new="startNewTab"
       @reorder="onTabReorder"
+      @open-settings="showSettings = true"
     />
 
     <div v-if="startupFatal" class="startup-fatal" data-testid="startup-fatal" role="alert">

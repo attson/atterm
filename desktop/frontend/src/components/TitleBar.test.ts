@@ -15,7 +15,6 @@ const baseProps = {
   sessionCount: 0,
   remoteEndpoint: null,
   availableRemoteCount: 0,
-  updateBadge: false,
 };
 
 beforeEach(() => {
@@ -133,12 +132,6 @@ describe("TitleBar buttons", () => {
     expect(w.emitted("open-remote")).toBeTruthy();
   });
 
-  it("settings button emits open-settings when clicked", async () => {
-    const w = await mountForPlatform("darwin");
-    await w.get('[data-testid="titlebar-settings"]').trigger("click");
-    expect(w.emitted("open-settings")).toBeTruthy();
-  });
-
   it("renders availableRemoteCount badge when > 0", async () => {
     const w = await mountForPlatform("darwin", {
       remoteEndpoint: { url: "wss://x", token: "t" },
@@ -147,9 +140,9 @@ describe("TitleBar buttons", () => {
     expect(w.find(".badge").text()).toBe("4");
   });
 
-  it("renders update dot when updateBadge=true", async () => {
-    const w = await mountForPlatform("darwin", { updateBadge: true });
-    expect(w.find(".dot").exists()).toBe(true);
+  it("no longer renders a settings button (moved to TabBar so it's reachable regardless of caps.windowControls)", async () => {
+    const w = await mountForPlatform("darwin");
+    expect(w.find('[data-testid="titlebar-settings"]').exists()).toBe(false);
   });
 });
 

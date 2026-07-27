@@ -239,6 +239,34 @@ describe("TitleBar caps gate", () => {
   })
 })
 
+describe("settings button stays reachable when caps.windowControls is false (web/mobile)", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    __setPlatformForTests(null)
+  })
+
+  it('opens SettingsDialog via the TabBar settings button even with no TitleBar', async () => {
+    const platform = createFakePlatform()
+    platform.caps = { ...platform.caps, windowControls: false }
+    __setPlatformForTests(platform)
+    const w = mount(App)
+    await flushPromises()
+
+    // TitleBar (and its old settings button) is gone under this cap set.
+    expect(w.find('[data-testid="titlebar-root"]').exists()).toBe(false)
+    expect(w.find('.settings-dialog').exists()).toBe(false)
+
+    const settingsBtn = w.get('[data-test="tabbar-settings"]')
+    await settingsBtn.trigger("click")
+    await flushPromises()
+
+    expect(w.find('.settings-dialog').exists()).toBe(true)
+  })
+})
+
 describe("local shell entrypoint caps gate", () => {
   beforeEach(() => {
     setActivePinia(createPinia())

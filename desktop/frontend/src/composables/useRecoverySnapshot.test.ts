@@ -60,7 +60,7 @@ describe("useRecoverySnapshot", () => {
     vi.advanceTimersByTime(600);
     await Promise.resolve();
 
-    const calls = (api.saveRecoverySnapshot as any).mock.calls;
+    const calls = vi.mocked(api.saveRecoverySnapshot).mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     const last = calls[calls.length - 1][0];
     expect(last.tabs[0].panes[0].ai?.session_id).toBe("abc-uuid-xyz");

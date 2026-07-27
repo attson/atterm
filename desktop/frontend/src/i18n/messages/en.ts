@@ -578,6 +578,8 @@ export const en = {
       collapse: "Collapse sidebar (Cmd/Ctrl+B)",
       expand: "Expand sidebar (Cmd/Ctrl+B)",
       searchPlaceholder: "Search",
+      openDrawer: "Open sidebar",
+      closeDrawer: "Close sidebar",
     },
     preset: {
       iconOnly: {

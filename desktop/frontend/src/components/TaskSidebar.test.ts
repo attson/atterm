@@ -563,3 +563,72 @@ describe("TaskSidebar — multi-select footer + Esc / blank clear", () => {
     expect(w.emitted("close-selected")).toHaveLength(1);
   });
 });
+
+describe("TaskSidebar — narrow-screen drawer mode", () => {
+  const originalInnerWidth = window.innerWidth;
+
+  beforeEach(() => {
+    vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+    __setPlatformForTests(createFakePlatform());
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", {
+      value: originalInnerWidth,
+      writable: true,
+      configurable: true,
+    });
+    __setPlatformForTests(null);
+  });
+
+  function mountNarrow(width: number) {
+    Object.defineProperty(window, "innerWidth", { value: width, writable: true, configurable: true });
+    return mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+    });
+  }
+
+  test("renders drawer + hamburger when viewport < 768px", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    expect(w.find('[data-test="sidebar-hamburger"]').exists()).toBe(true);
+    expect(w.find(".task-sidebar.drawer").exists()).toBe(true);
+  });
+
+  test("normal layout when viewport >= 768px", async () => {
+    const w = mountNarrow(1400);
+    await nextTick();
+    expect(w.find('[data-test="sidebar-hamburger"]').exists()).toBe(false);
+    expect(w.find(".task-sidebar.drawer").exists()).toBe(false);
+  });
+
+  test("hamburger click toggles drawer open state", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    const ham = w.find('[data-test="sidebar-hamburger"]');
+    await ham.trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(true);
+    await ham.trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(false);
+  });
+
+  test("resizing back to wide resets drawer to closed and hides hamburger", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    await w.find('[data-test="sidebar-hamburger"]').trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(true);
+
+    Object.defineProperty(window, "innerWidth", { value: 1400, writable: true, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+    await nextTick();
+
+    expect(w.find('[data-test="sidebar-hamburger"]').exists()).toBe(false);
+    expect(w.find(".task-sidebar.drawer").exists()).toBe(false);
+  });
+});

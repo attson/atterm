@@ -81,7 +81,6 @@ export default defineConfig({
         index:    fileURLToPath(new URL('./index.html',           import.meta.url)),
         login:    fileURLToPath(new URL('./login.html',           import.meta.url)),
         signup:   fileURLToPath(new URL('./signup.html',          import.meta.url)),
-        settings: fileURLToPath(new URL('./settings.html',        import.meta.url)),
         admin:    fileURLToPath(new URL('./admin/index.html',     import.meta.url)),
         setup:    fileURLToPath(new URL('./setup.html',           import.meta.url)),
         firstrun: fileURLToPath(new URL('./firstrun.html',        import.meta.url)),

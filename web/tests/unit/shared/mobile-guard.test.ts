@@ -21,13 +21,11 @@ const CASES: Case[] = [
   { name: 'mobile no config + home → setup',   mobile: true,  hasConfig: false, page: 'home',     expectRedirect: '/setup.html',  expectReturn: true  },
   { name: 'mobile no config + login → setup',  mobile: true,  hasConfig: false, page: 'login',    expectRedirect: '/setup.html',  expectReturn: true  },
   { name: 'mobile no config + admin → setup',  mobile: true,  hasConfig: false, page: 'admin',    expectRedirect: '/setup.html',  expectReturn: true  },
-  { name: 'mobile no config + settings → setup', mobile: true,  hasConfig: false, page: 'settings', expectRedirect: '/setup.html',  expectReturn: true  },
   { name: 'mobile no config + signup → setup',   mobile: true,  hasConfig: false, page: 'signup',   expectRedirect: '/setup.html',  expectReturn: true  },
   { name: 'mobile + config + setup → home',    mobile: true,  hasConfig: true,  page: 'setup',    expectRedirect: '/',            expectReturn: true  },
   { name: 'mobile + config + login → home',    mobile: true,  hasConfig: true,  page: 'login',    expectRedirect: '/',            expectReturn: true  },
   { name: 'mobile + config + signup → home',   mobile: true,  hasConfig: true,  page: 'signup',   expectRedirect: '/',            expectReturn: true  },
   { name: 'mobile + config + home → render',   mobile: true,  hasConfig: true,  page: 'home',     expectRedirect: null,           expectReturn: false },
-  { name: 'mobile + config + settings → render', mobile: true, hasConfig: true, page: 'settings', expectRedirect: null,           expectReturn: false },
   { name: 'mobile + config + admin → render',  mobile: true,  hasConfig: true,  page: 'admin',    expectRedirect: null,           expectReturn: false },
 ]
 

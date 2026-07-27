@@ -54,6 +54,8 @@ export function createFakePlatform(): Platform {
       listShells: vi.fn().mockResolvedValue([]),
       listRemoteSessions: vi.fn().mockResolvedValue([]),
       markSessionsSeen: vi.fn().mockResolvedValue(undefined),
+      getPins: vi.fn().mockResolvedValue([]),
+      setPins: vi.fn().mockResolvedValue(undefined),
     },
     system: {
       showNotification: vi.fn().mockResolvedValue(undefined),

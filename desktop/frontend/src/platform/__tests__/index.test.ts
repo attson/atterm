@@ -18,6 +18,8 @@ function fakePlatform(): Platform {
       closeSession: async () => {},
       listShells: async () => [],
       listRemoteSessions: async () => [],
+      getPins: async () => [],
+      setPins: async () => {},
     },
     system: {
       showNotification: async () => {},

@@ -130,6 +130,13 @@ export interface SessionBridge {
    *  status on failure). Capacitor posts directly to /api/sessions/seen
    *  with Bearer auth and throws `'relay_unauthorized'` on HTTP 401. */
   markSessionsSeen?(opts: _MarkSessionsSeenOpts): Promise<void>
+  /** Read the persisted pin list. Wails reads from appConfig; Capacitor/
+   *  Web from localStorage. */
+  getPins(): Promise<string[]>
+  /** Persist the pin list. Wails writes to appConfig (which triggers a
+   *  prefs push server-side); Capacitor/Web write to localStorage and
+   *  notify the prefsSync engine locally. */
+  setPins(ids: string[]): Promise<void>
 }
 
 export interface SystemBridge {

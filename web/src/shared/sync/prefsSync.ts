@@ -5,10 +5,18 @@
 
 import { apiFetch } from '@shared/api/client'
 
+// Kept in lockstep with `syncedKeys` in internal/prefssync/sync.go —
+// the drift-check test in web/tests/unit/shared/prefsSync.test.ts asserts
+// both lists match. When adding/removing a key you MUST update ALL of:
+//   1. internal/prefssync/sync.go::syncedKeys (Go source of truth)
+//   2. desktop/frontend/src/lib/prefsSync.ts::SYNCED_KEYS
+//   3. this file's SYNCED_KEYS
+//   4. EXPECTED_SYNCED_KEYS in web/tests/unit/shared/prefsSync.test.ts
 export const SYNCED_KEYS = [
   'locale_preference',
   'quick_templates',
   'notifications_enabled',
+  'ai_notifications_only',
   'command_notify_threshold_seconds',
   'shell_integration_enabled',
   'pinned_session_ids',

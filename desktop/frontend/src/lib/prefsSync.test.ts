@@ -11,20 +11,33 @@ class FakeAdapter implements Adapter {
   keys() { return SYNCED_KEYS.slice() }
 }
 
+// Mirrors internal/prefssync/sync.go::syncedKeys. If Go grows a new key
+// (or drops one), update BOTH this literal AND the SYNCED_KEYS list in
+// desktop/frontend/src/lib/prefsSync.ts + web/src/shared/sync/prefsSync.ts.
+// The drift-check test below cross-checks TS against this expectation —
+// a hardcoded literal is intentional (importing Go at test time is
+// impractical) and reviewed together with the Go change.
+const EXPECTED_SYNCED_KEYS = [
+  'ai_notifications_only',
+  'command_notify_threshold_seconds',
+  'locale_preference',
+  'notifications_enabled',
+  'pinned_session_ids',
+  'quick_templates',
+  'shell_integration_enabled',
+] as const
+
 describe('PrefsSyncEngine', () => {
-  it('SYNCED_KEYS lists exactly the six fields', () => {
-    expect(SYNCED_KEYS.slice().sort()).toEqual([
-      'command_notify_threshold_seconds',
-      'locale_preference',
-      'notifications_enabled',
-      'pinned_session_ids',
-      'quick_templates',
-      'shell_integration_enabled',
-    ])
+  it('SYNCED_KEYS matches the Go source of truth (internal/prefssync/sync.go)', () => {
+    expect(SYNCED_KEYS.slice().sort()).toEqual([...EXPECTED_SYNCED_KEYS])
   })
 
   it('SYNCED_KEYS includes pinned_session_ids', () => {
     expect(SYNCED_KEYS).toContain('pinned_session_ids' as any)
+  })
+
+  it('SYNCED_KEYS includes ai_notifications_only', () => {
+    expect(SYNCED_KEYS).toContain('ai_notifications_only' as any)
   })
 
   it('pull adopts server value when newer and not dirty', async () => {

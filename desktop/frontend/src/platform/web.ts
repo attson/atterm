@@ -2,6 +2,11 @@ import type { Platform, Capabilities, RelayBridge, SessionBridge, RemoteSession 
 import { apiFetch } from '@webshared/api/client'
 // ^ resolved via the '@webshared' vite alias to web/src/shared/api/client
 // (desktop/frontend/vite.config.ts).
+import { loadRelayConfig, saveRelayConfig, clearRelayConfig } from '@webshared/api/relay-config'
+// ^ single source of truth for web's relay storage key ('atterm.relay') and
+// shape ({ baseURL, sessionToken, expiresAt, allowInsecure, ... }) — apiFetch
+// itself reads auth through loadRelayConfig, so the bridge below must adapt
+// to/from exactly this shape or requests silently stop carrying a token.
 
 const CAPS: Capabilities = {
   localPty: false,
@@ -13,34 +18,39 @@ const CAPS: Capabilities = {
   fileDialog: true,
 }
 
-// helper for relay config storage — mirrors web's current key
-const RELAY_KEY = 'atterm.relay.session'
-
 const relay: RelayBridge = {
   async load() {
-    try {
-      const raw = localStorage.getItem(RELAY_KEY)
-      if (!raw) return null
-      const j = JSON.parse(raw)
-      // Adapt web's stored shape to the internal RelayConfig shape.
-      return {
-        base_url: j.baseURL ?? '',
-        session_token: j.sessionToken ?? '',
-        expires_at: j.expiresAt ?? 0,
-        allow_insecure_relay: !!j.allowInsecure,
-      } as any
-    } catch { return null }
+    const cfg = loadRelayConfig()
+    if (!cfg) return null
+    // Adapt web's { baseURL, sessionToken, expiresAt, allowInsecure } shape
+    // to the internal RelayConfig shape ({ url, token, session_expires_at,
+    // allow_insecure_relay, ... }). remote_permission/last_email/connected
+    // have no web-side equivalent (they're Wails/Go uplink concepts) so they
+    // get the same defaults setRelayConfig() uses in lib/api.ts.
+    return {
+      url: cfg.baseURL,
+      token: cfg.sessionToken ?? '',
+      session_expires_at: cfg.expiresAt ?? 0,
+      allow_insecure_relay: cfg.allowInsecure,
+      remote_permission: 'full',
+      last_email: '',
+      connected: false,
+      ...(cfg.realmId !== undefined ? { realmId: cfg.realmId } : {}),
+      ...(cfg.homeInstanceURL !== undefined ? { homeInstanceURL: cfg.homeInstanceURL } : {}),
+    }
   },
   async save(cfg) {
-    localStorage.setItem(RELAY_KEY, JSON.stringify({
-      baseURL: (cfg as any).base_url,
-      sessionToken: (cfg as any).session_token,
-      expiresAt: (cfg as any).expires_at,
-      allowInsecure: (cfg as any).allow_insecure_relay,
-    }))
+    saveRelayConfig({
+      baseURL: cfg.url,
+      sessionToken: cfg.token || null,
+      expiresAt: cfg.session_expires_at || null,
+      allowInsecure: cfg.allow_insecure_relay,
+      ...(cfg.realmId !== undefined ? { realmId: cfg.realmId } : {}),
+      ...(cfg.homeInstanceURL !== undefined ? { homeInstanceURL: cfg.homeInstanceURL } : {}),
+    })
   },
   async clear() {
-    localStorage.removeItem(RELAY_KEY)
+    clearRelayConfig()
   },
   async fetchMe() {
     const { data } = await apiFetch<any>('/api/me')

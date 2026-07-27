@@ -11,7 +11,7 @@ const CAPS: Capabilities = {
   pluginHost: false,
   windowControls: false,
   systemClipboard: true,
-  notifications: true,
+  notifications: typeof Notification !== 'undefined',
   fileDialog: true,
 }
 

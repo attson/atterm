@@ -1,4 +1,4 @@
-import type { Platform, Capabilities, RelayBridge, SessionBridge, RemoteSession } from './types'
+import type { Platform, Capabilities, RelayBridge, SessionBridge, RemoteSession, SystemBridge, EventBus, TemplateBridge, AuxKeyBridge } from './types'
 import { apiFetch } from '@webshared/api/client'
 // ^ resolved via the '@webshared' vite alias to web/src/shared/api/client
 // (desktop/frontend/vite.config.ts).
@@ -86,15 +86,95 @@ const sessions: SessionBridge = {
   },
 }
 
-export function createWebPlatform(): Platform {
-  // Populated in subsequent tasks.
+const events: EventBus = (() => {
+  const map = new Map<string, Set<(data: unknown) => void>>()
   return {
-    caps: CAPS,
-    relay,
-    sessions,
-    system: {} as any,
-    events: {} as any,
-    templates: {} as any,
-    auxKeys: {} as any,
+    on(name, handler) {
+      let set = map.get(name)
+      if (!set) { set = new Set(); map.set(name, set) }
+      set.add(handler)
+      return () => { set!.delete(handler) }
+    },
+    emit(name, data) {
+      const set = map.get(name)
+      if (!set) return
+      for (const fn of Array.from(set)) { try { fn(data) } catch { /* listener errors don't break emit */ } }
+    },
   }
+})()
+
+const system: SystemBridge = {
+  async showNotification(title, body, data) {
+    if (typeof Notification === 'undefined') return
+    try {
+      const n = new Notification(title, { body })
+      if (data) n.onclick = () => events.emit('notification:click', data)
+    } catch { /* permission denied or unsupported — silent, matches capacitor stub */ }
+  },
+  async getClipboardPaste() {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) return { kind: 'none' }
+    try {
+      const text = await navigator.clipboard.readText()
+      return text ? { kind: 'text', text } : { kind: 'none' }
+    } catch {
+      return { kind: 'none' }
+    }
+  },
+  async openExternalURL(url) {
+    window.open(url, '_blank', 'noopener')
+  },
+  async getEnvironment() {
+    return { buildType: 'web', platform: navigator.userAgent, arch: '' }
+  },
+}
+
+const TEMPLATES_KEY = 'atterm.quick_templates.value'
+const TEMPLATES_HIDDEN_KEY = 'atterm.templates_hidden.value'
+const AUXKEYS_KEY = 'atterm.aux_keys.value'
+
+const templates: TemplateBridge = {
+  async load() {
+    try {
+      const raw = localStorage.getItem(TEMPLATES_KEY)
+      if (!raw) return []
+      const v = JSON.parse(raw)
+      return Array.isArray(v) ? v : []
+    } catch { return [] }
+  },
+  async save(list) {
+    localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list))
+    const { notifyLocalChange } = await import('@webshared/sync/prefsSync')
+    notifyLocalChange('quick_templates')
+  },
+  async clear() {
+    localStorage.removeItem(TEMPLATES_KEY)
+  },
+  async loadHidden() {
+    try { return JSON.parse(localStorage.getItem(TEMPLATES_HIDDEN_KEY) ?? 'false') }
+    catch { return false }
+  },
+  async saveHidden(hidden) {
+    localStorage.setItem(TEMPLATES_HIDDEN_KEY, JSON.stringify(hidden))
+  },
+}
+
+const auxKeys: AuxKeyBridge = {
+  async load() {
+    try {
+      const raw = localStorage.getItem(AUXKEYS_KEY)
+      if (!raw) return []
+      const v = JSON.parse(raw)
+      return Array.isArray(v) ? v : []
+    } catch { return [] }
+  },
+  async save(list) {
+    localStorage.setItem(AUXKEYS_KEY, JSON.stringify(list))
+  },
+  async clear() {
+    localStorage.removeItem(AUXKEYS_KEY)
+  },
+}
+
+export function createWebPlatform(): Platform {
+  return { caps: CAPS, relay, sessions, system, events, templates, auxKeys }
 }

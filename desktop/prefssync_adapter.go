@@ -52,6 +52,9 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 		}
 		b, _ := json.Marshal(*c.ShellIntegrationEnabled)
 		return b, true
+	case "pinned_session_ids":
+		b, _ := json.Marshal(c.PinnedSessionIDs)
+		return b, true
 	}
 	return nil, false
 }
@@ -95,6 +98,12 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 			return err
 		}
 		c.ShellIntegrationEnabled = &b
+	case "pinned_session_ids":
+		var ids []string
+		if err := json.Unmarshal(value, &ids); err != nil {
+			return err
+		}
+		c.PinnedSessionIDs = ids
 	default:
 		return fmt.Errorf("unknown key %s", key)
 	}

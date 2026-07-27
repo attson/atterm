@@ -3,6 +3,8 @@ import { ref, nextTick, effectScope } from "vue";
 import { useRecoverySnapshot } from "./useRecoverySnapshot";
 import * as api from "../lib/api";
 import type { Tab } from "../lib/types";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 
 describe("useRecoverySnapshot", () => {
   beforeEach(() => {
@@ -12,6 +14,57 @@ describe("useRecoverySnapshot", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    __setPlatformForTests(null);
+  });
+
+  it("mounts via platform.events.on with no onEvent override and no Wails runtime stub", async () => {
+    // Regression: the composable used to default onEvent to a raw Wails
+    // EventsOn call, which crashes on the web target because
+    // window.runtime doesn't exist there. Omitting onEvent here (as App.vue
+    // does in production) and never touching window.runtime proves the
+    // default path now goes through platform.events.on instead, which has a
+    // real implementation on every platform including web.
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...createFakePlatform(), events });
+
+    const tabs = ref<Tab[]>([
+      {
+        id: "t1",
+        layout: "single",
+        panes: [{ sessionId: "s1", remote: false }],
+        activePaneIdx: 0,
+        colRatio: 0.5,
+        rowRatio: 0.5,
+      },
+    ]);
+    const currentTabId = ref<string | null>("t1");
+    const sessionInfoFor = vi.fn().mockImplementation((sid: string) => ({
+      id: sid,
+      command: "claude",
+      cwd: "/x",
+      title: "t",
+      cols: 80,
+      rows: 24,
+      started_at: 0,
+      host_id: "h",
+    }));
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref("") });
+    });
+
+    // The subscription must have gone through the fake platform's event bus.
+    events.emit("recovery:ai-sid", { session_id: "s1", kind: "claude", ai_session_id: "abc-uuid-xyz" });
+
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+
+    const calls = (api.saveRecoverySnapshot as any).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const last = calls[calls.length - 1][0];
+    expect(last.tabs[0].panes[0].ai?.session_id).toBe("abc-uuid-xyz");
+    scope.stop();
   });
 
   it("debounces structural changes around 500ms", async () => {

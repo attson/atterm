@@ -9,7 +9,7 @@ import {
   type RecoveryPaneSnapshot,
   type RecoveryAIInfo,
 } from "../lib/api";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { usePlatform } from "../platform";
 
 // AI session id captures keyed by atterm session id. Lives outside the
 // reactive store so non-structural changes don't trigger watcher re-runs.
@@ -38,8 +38,10 @@ export interface UseRecoverySnapshotArgs {
   // When info.host_id matches, the pane is saved as plain-local so restore
   // re-spawns a fresh shell at last_cwd.
   localHostID: Ref<string>;
-  // Test seam — production code calls Wails EventsOn. Returns an off()
-  // function the composable calls on scope dispose.
+  // Test seam — production code goes through platform.events.on (backed by
+  // Wails EventsOn / the Capacitor bridge / the web BroadcastChannel bus
+  // depending on platform). Returns an off() function the composable calls
+  // on scope dispose.
   onEvent?: (name: string, cb: (payload: any) => void) => () => void;
 }
 
@@ -203,7 +205,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
   );
 
   // AI sid capture event subscription.
-  const evtOn = args.onEvent ?? ((name, cb) => EventsOn(name, cb));
+  const evtOn = args.onEvent ?? ((name, cb) => usePlatform().events.on(name, cb));
   const off = evtOn("recovery:ai-sid", (payload: any) => {
     const sid: string = payload?.session_id ?? "";
     const kind = (payload?.kind ?? "") as "claude" | "codex" | "aider" | "";

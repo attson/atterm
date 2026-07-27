@@ -147,12 +147,26 @@ function updateIsNarrow() {
   if (wasNarrow && !isNarrow.value) drawerOpen.value = false;
 }
 
+// ESC-to-close: when the drawer is open, pressing Escape anywhere in the
+// window collapses it back to hidden. Keeps the drawer feeling modal-like
+// without a full backdrop overlay. Gated on drawerOpen so it doesn't
+// intercept ESC on the desktop layout (where the sidebar is always
+// inline).
+function onWindowKeydown(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  if (!drawerOpen.value) return;
+  drawerOpen.value = false;
+  e.preventDefault();
+}
+
 onMounted(() => {
   updateIsNarrow();
   window.addEventListener("resize", updateIsNarrow);
+  window.addEventListener("keydown", onWindowKeydown);
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateIsNarrow);
+  window.removeEventListener("keydown", onWindowKeydown);
 });
 
 function onDragStart(e: PointerEvent) {
@@ -386,16 +400,21 @@ const railIcons = computed(() => {
 }
 .task-sidebar.collapsed { width: 32px; }
 .sidebar-hamburger {
+  /* Position below TabBar (height 28px in components/TabBar.vue) so the
+     first tab's label stays clickable at narrow widths. Was `top: 12px`,
+     which overlapped the leftmost tab and hid its content. */
   position: fixed;
-  top: 12px;
-  left: 12px;
+  top: 34px;
+  left: 8px;
   z-index: 20;
-  padding: 6px 10px;
+  padding: 4px 8px;
   background: var(--panel);
   border: 1px solid var(--border);
   color: inherit;
   border-radius: 4px;
   cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
 }
 .task-sidebar.drawer {
   position: fixed;

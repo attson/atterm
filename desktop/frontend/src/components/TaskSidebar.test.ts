@@ -631,4 +631,28 @@ describe("TaskSidebar — narrow-screen drawer mode", () => {
     expect(w.find('[data-test="sidebar-hamburger"]').exists()).toBe(false);
     expect(w.find(".task-sidebar.drawer").exists()).toBe(false);
   });
+
+  test("ESC key closes an open drawer", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    await w.find('[data-test="sidebar-hamburger"]').trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(true);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await nextTick();
+
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(false);
+  });
+
+  test("ESC key is a no-op when drawer is already closed (does not swallow ESC for other listeners)", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    // drawer starts closed
+    const ev = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    window.dispatchEvent(ev);
+    await nextTick();
+    // still closed and event NOT defaulted (so other handlers can act)
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(false);
+    expect(ev.defaultPrevented).toBe(false);
+  });
 });

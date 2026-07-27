@@ -1406,7 +1406,11 @@ func (a *App) SetPinnedSessionIds(ids []string) error {
 	}
 	cfg := a.cfgStore.Get()
 	cfg.PinnedSessionIDs = out
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markPrefDirtyAndPush("pinned_session_ids")
+	return nil
 }
 
 // MarkSessionsSeen marks sessions as seen on the relay. If all is true, all
@@ -2329,6 +2333,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.CommandNotifyThresholdSeconds != nil
 		case "shell_integration_enabled":
 			return c.ShellIntegrationEnabled != nil
+		case "pinned_session_ids":
+			return len(c.PinnedSessionIDs) > 0
 		}
 		return false
 	}

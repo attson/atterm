@@ -750,4 +750,153 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
     expect(newSessionMock).not.toHaveBeenCalled();
     expect(wrapper.find('[data-testid="tabbar-stub"]').attributes("data-tab-count")).toBe("0");
   });
+
+  it("recovery discard does not spawn a local shell when caps.localPty=false", async () => {
+    platform.caps = { ...platform.caps, localPty: false };
+    const newSessionMock = vi.fn().mockResolvedValue({ session_id: "new-sid" });
+    const discardMock = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({
+      GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
+      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
+      GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
+      GetRelayConfig: vi.fn().mockResolvedValue({
+        url: "ws://remote", token: "", session_expires_at: 0,
+        allow_insecure_relay: false, remote_permission: "full", connected: false,
+      }),
+      ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
+      GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(0),
+      ListShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
+      NewSession: newSessionMock,
+      CloseSession: vi.fn().mockResolvedValue(undefined),
+      GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      ConfirmQuit: vi.fn().mockResolvedValue(undefined),
+      MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
+      LoadRecoverySnapshot: vi.fn().mockResolvedValue({
+        version: 1,
+        host_id: "",
+        clean_shutdown: false,
+        saved_at_unix: 0,
+        active_tab_id: "t1",
+        tabs: [
+          {
+            id: "t1",
+            layout: "single",
+            active_pane_idx: 0,
+            col_ratio: 0.5,
+            row_ratio: 0.5,
+            panes: [{ slot: 0, remote: false, session_id: "old-sid", shell: "/bin/zsh", last_cwd: "/tmp" }],
+          },
+        ],
+      }),
+      SaveRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      DiscardRecoverySnapshot: discardMock,
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
+    } as any);
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TabBar: {
+            props: ["tabs"],
+            template: `<div data-testid="tabbar-stub" :data-tab-count="tabs.length"></div>`,
+          },
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          TaskSidebar: true,
+          RecoveryDialog: {
+            props: ["snapshot"],
+            template: `<button data-testid="btn-discard" @click="$emit('discard')">discard</button>`,
+          },
+          PaneGrid: true,
+        },
+      },
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await flushPromises();
+
+    await wrapper.get('[data-testid="btn-discard"]').trigger("click");
+    await flushPromises();
+
+    expect(discardMock).toHaveBeenCalled();
+    expect(newSessionMock).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="tabbar-stub"]').attributes("data-tab-count")).toBe("0");
+  });
+
+  it("keyboard onNewTab shortcut is a no-op when caps.localPty=false", async () => {
+    platform.caps = { ...platform.caps, localPty: false };
+    const newSessionMock = vi.fn().mockResolvedValue({ session_id: "new-sid" });
+    __setBindingsForTest({
+      GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
+      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
+      GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
+      GetRelayConfig: vi.fn().mockResolvedValue({
+        url: "ws://remote", token: "", session_expires_at: 0,
+        allow_insecure_relay: false, remote_permission: "full", connected: false,
+      }),
+      ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
+      GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(0),
+      ListShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
+      NewSession: newSessionMock,
+      CloseSession: vi.fn().mockResolvedValue(undefined),
+      GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      ConfirmQuit: vi.fn().mockResolvedValue(undefined),
+      MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
+      LoadRecoverySnapshot: vi.fn().mockResolvedValue({
+        version: 1,
+        host_id: "",
+        clean_shutdown: true,
+        saved_at_unix: 0,
+        tabs: [],
+      }),
+      SaveRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      DiscardRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
+    } as any);
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TabBar: {
+            props: ["tabs"],
+            template: `<div data-testid="tabbar-stub" :data-tab-count="tabs.length"></div>`,
+          },
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          TaskSidebar: true,
+          PaneGrid: true,
+        },
+      },
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await flushPromises();
+    // Boot auto-start already skipped (Task 3.2); reset the mock so this
+    // test only observes the keyboard shortcut's own behavior.
+    newSessionMock.mockClear();
+
+    // Mirror useTerminalShortcuts' own platform detection (Meta on mac,
+    // Control elsewhere) so the synthetic event matches whichever modifier
+    // this test run resolves to — setting both would trip its
+    // wrong-modifier rejection.
+    const isMac = navigator.platform?.toLowerCase().includes("mac") ?? false;
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "t",
+        code: "KeyT",
+        metaKey: isMac,
+        ctrlKey: !isMac,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await flushPromises();
+
+    expect(newSessionMock).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="tabbar-stub"]').attributes("data-tab-count")).toBe("0");
+  });
 });

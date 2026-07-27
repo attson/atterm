@@ -5,6 +5,17 @@
 // network call. Real runtimes (browser, Capacitor WebView, Node) all ship
 // full WebCrypto — this just brings the test env in line with them.
 import { webcrypto } from "node:crypto";
+import { afterEach } from "vitest";
+import { enableAutoUnmount } from "@vue/test-utils";
+
+// Component tests across the suite mount App (and other components) without
+// always unmounting afterward. Vue-level effects usually don't leak across
+// tests, but document-level listeners registered via composables (e.g.
+// useTerminalShortcuts' capture-phase keydown handler) survive an un-unmounted
+// component for the rest of the file, so a later test's synthetic keydown can
+// be picked up by every earlier still-mounted App instance too. Auto-unmount
+// after each test closes those listeners down deterministically.
+enableAutoUnmount(afterEach);
 
 if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, "crypto", {

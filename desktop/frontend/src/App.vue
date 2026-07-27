@@ -831,7 +831,7 @@ async function onRecoveryRestore(picks: RecoveryTabSnapshot[]) {
   const savedActive = recoveryDialogState.value.snapshot?.active_tab_id ?? "";
   recoveryDialogState.value = { open: false, snapshot: null };
   if (picks.length === 0) {
-    await startNewTab();
+    if (caps.localPty) await startNewTab();
     return;
   }
   await executeRestore(picks, savedActive);
@@ -844,7 +844,7 @@ async function onRecoveryDiscard() {
   } catch (e) {
     console.warn("[recovery] discard failed", e);
   }
-  await startNewTab();
+  if (caps.localPty) await startNewTab();
 }
 
 // executeRestore rebuilds tabs/panes from a snapshot. Serial per tab (and
@@ -1197,7 +1197,7 @@ useTerminalShortcuts(
     onSplitHorizontal: (mode) => onSplit("horizontal", mode),
     onClosePane,
     onFocusPane,
-    onNewTab: startNewTab,
+    onNewTab: () => { if (caps.localPty) startNewTab(); },
     onSwitchTab,
     onToggleTaskSidebar: () => setSidebarCollapsedAndPersist(!sidebarCollapsed.value),
     onFocusSidebarSearch: () => {

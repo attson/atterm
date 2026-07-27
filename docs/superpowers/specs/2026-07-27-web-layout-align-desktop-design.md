@@ -458,6 +458,13 @@ Pin 同步链路本身在 PR 1-3 上线后即工作（desktop/mobile 之间）�
 ### 6.3 破坏性变更（用户可感知）
 
 - **`settings.html` 直连 URL 失效**：改在主界面 ⚙ 里打开 SettingsDialog
+- **修改密码 / 注销账号 / push 通知管理 UI 一并下线**：`web/settings.html`
+  是这几项功能唯一的入口，desktop 的 SettingsDialog 本身不包含它们，因此随
+  `web/src/settings/*` 删除一并失去（对应 API 封装
+  `web/src/shared/api/me.ts::changePassword/deleteMe`、
+  `web/src/shared/api/push-flow.ts`、`push.ts::testPush` 也已删除，不再有
+  调用方）。需要这些功能的用户可直接调用 `/api/me/{password,delete}` 及
+  push 相关端点；如需 UI，后续可在 SettingsDialog 里补回
 - **`#/session/<sid>` 直链继续有效**（§4.3.3 保证）
 - **localStorage 键新增**：`atterm.web.tabs.v1.<windowId>` +
   `atterm.pinned_session_ids.{value,meta}`（不破坏旧键）

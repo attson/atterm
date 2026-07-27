@@ -1,5 +1,4 @@
 import { apiFetch } from './client'
-import { requestStepUpToken } from './stepup'
 import type {
   MeResponse,
   SessionRow,
@@ -30,28 +29,4 @@ export async function signOutOthers(): Promise<SignOutOthersResponse> {
     { method: 'POST' },
   )
   return data
-}
-
-// Password (settings → Change Password tab).
-export async function changePassword(
-  current_password: string,
-  new_password: string,
-): Promise<void> {
-  await apiFetch('/api/me/password', {
-    method: 'POST',
-    body: JSON.stringify({ current_password, new_password }),
-  })
-}
-
-// Account deletion (settings → Danger zone tab). The relay's
-// /api/me handler requires an X-Step-Up-Token issued by a fresh
-// OPAQUE step-up handshake (M1i-enforce); we drive it here so the
-// caller only needs to supply email + password.
-export async function deleteMe(email: string, password: string): Promise<void> {
-  const stepUpToken = await requestStepUpToken(email, password)
-  await apiFetch('/api/me', {
-    method: 'DELETE',
-    headers: { 'X-Step-Up-Token': stepUpToken },
-    body: JSON.stringify({ email }),
-  })
 }

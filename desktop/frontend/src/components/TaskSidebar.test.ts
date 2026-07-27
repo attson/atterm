@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import TaskSidebar from "./TaskSidebar.vue";
 import type { RemoteSession } from "../platform/types";
 import * as api from "../lib/api";
 import { __resetForTests as resetSel, useSessionSelection } from "../composables/useSessionSelection";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -24,6 +26,13 @@ function mk(over: Partial<RemoteSession>): RemoteSession {
 describe("TaskSidebar", () => {
   beforeEach(() => {
     vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+    // TaskSidebar renders TaskGroupedList, which mounts useSessionPins() —
+    // pins now go through platform.sessions.getPins/setPins.
+    __setPlatformForTests(createFakePlatform());
+  });
+
+  afterEach(() => {
+    __setPlatformForTests(null);
   });
 
   test("expanded shows TaskGroupedList and Mark-all-read button when unread > 0", () => {

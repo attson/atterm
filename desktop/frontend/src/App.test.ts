@@ -461,9 +461,11 @@ describe("recovery pin migration integration", () => {
     close() {}
   }
 
+  let platform: ReturnType<typeof createFakePlatform>;
   beforeEach(() => {
     setActivePinia(createPinia());
-    __setPlatformForTests(createFakePlatform());
+    platform = createFakePlatform();
+    __setPlatformForTests(platform);
     __resetPinsForTests();
     vi.stubGlobal("WebSocket", NoopWebSocket);
   });
@@ -477,6 +479,8 @@ describe("recovery pin migration integration", () => {
 
   it("renames a pinned local session's id across executeRestore's respawn", async () => {
     const setPinned = vi.fn().mockResolvedValue(undefined);
+    platform.sessions.getPins = vi.fn().mockResolvedValue(["old-sid"]);
+    platform.sessions.setPins = setPinned;
     __setBindingsForTest({
       GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
       GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
@@ -514,8 +518,6 @@ describe("recovery pin migration integration", () => {
       SaveRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
       DiscardRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
       GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
-      GetPinnedSessionIds: vi.fn().mockResolvedValue(["old-sid"]),
-      SetPinnedSessionIds: setPinned,
     } as any);
 
     const wrapper = mount(App, {

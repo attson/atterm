@@ -1,4 +1,4 @@
-import { describe, expect, it, test, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, test, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import TaskGroupedList from "./TaskGroupedList.vue";
@@ -6,14 +6,25 @@ import TaskStateIcon from "./TaskStateIcon.vue";
 import type { RemoteSession } from "../platform/types";
 import { __resetForTests as resetPins } from "../composables/useSessionPins";
 import { __resetForTests as resetSel, useSessionSelection } from "../composables/useSessionSelection";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 
 vi.mock("../lib/api", () => ({
   getUserHomeDir: vi.fn().mockResolvedValue("/Users/attson"),
-  getPinnedSessionIds: vi.fn().mockResolvedValue([]),
-  setPinnedSessionIds: vi.fn().mockResolvedValue(undefined),
 }));
 
-import * as api from "../lib/api";
+// TaskGroupedList mounts useSessionPins() (via SessionDetailsPopover /
+// SessionRowMenu) unconditionally on setup, so every test needs a platform —
+// pins now flow through platform.sessions.getPins/setPins instead of the old
+// lib/api mock.
+let platform: ReturnType<typeof createFakePlatform>;
+beforeEach(() => {
+  platform = createFakePlatform();
+  __setPlatformForTests(platform);
+});
+afterEach(() => {
+  __setPlatformForTests(null);
+});
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -452,8 +463,8 @@ describe("TaskGroupedList co-resident numbering", () => {
 
 describe("TaskGroupedList pinned group", () => {
   function seededProps(pinnedIds: string[] = []) {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(pinnedIds);
-    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    platform.sessions.getPins = vi.fn().mockResolvedValue(pinnedIds);
+    platform.sessions.setPins = vi.fn().mockResolvedValue(undefined);
     return {
       byHost: {
         h1: [
@@ -516,8 +527,8 @@ describe("TaskGroupedList pinned group", () => {
     // h1 has 'a' (idle, read) and 'b' (failed, unread). Pin 'b' — it moves
     // into the virtual pinned group and should no longer influence h1's
     // header count, unread badge/mark-all button, or state icon.
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["b"]);
-    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    platform.sessions.getPins = vi.fn().mockResolvedValue(["b"]);
+    platform.sessions.setPins = vi.fn().mockResolvedValue(undefined);
     const a = mk({ session_id: "a", host_id: "h1", host: "h1", task_state: "idle", unread: false });
     const b = mk({ session_id: "b", host_id: "h1", host: "h1", task_state: "failed", unread: true, attention_at: 1 });
     const w = mount(TaskGroupedList, {
@@ -623,8 +634,8 @@ describe("TaskGroupedList search filter", () => {
   });
 
   test("pinned session disappears from the pinned group when the query doesn't match it", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["b"]);
-    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    platform.sessions.getPins = vi.fn().mockResolvedValue(["b"]);
+    platform.sessions.setPins = vi.fn().mockResolvedValue(undefined);
     const a = mk({ session_id: "a", host_id: "h1", host: "h1", task_state: "running", title: "Feishu Gateway" });
     const b = mk({ session_id: "b", host_id: "h1", host: "h1", task_state: "running", title: "Web app" });
     const w = mount(TaskGroupedList, {
@@ -750,8 +761,8 @@ describe("TaskGroupedList — multi-select", () => {
     // s1 is pinned; collapse the pinned group so it's hidden; then anchor
     // on a visible row and Shift+click another — s1 must NOT be swept in.
     resetPins();
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["s1"]);
-    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    platform.sessions.getPins = vi.fn().mockResolvedValue(["s1"]);
+    platform.sessions.setPins = vi.fn().mockResolvedValue(undefined);
 
     const w = mount3();
     await flushPromises();

@@ -1,6 +1,27 @@
 import { vi } from 'vitest'
-import type { Platform, UpdateState } from '../types'
+import type { EventBus, Platform, UpdateState } from '../types'
 import type { main as Models } from '../../../wailsjs/go/models'
+
+// A minimal real EventEmitter matching the EventBus interface, for tests that
+// need on()/emit() to actually fire handlers (createFakePlatform().events is
+// just vi.fn() stubs that don't wire on() through to emit()).
+export function fakeEventBus(): EventBus {
+  const handlers = new Map<string, Set<(data: unknown) => void>>()
+  return {
+    on(event, handler) {
+      let set = handlers.get(event)
+      if (!set) {
+        set = new Set()
+        handlers.set(event, set)
+      }
+      set.add(handler)
+      return () => set!.delete(handler)
+    },
+    emit(event, data) {
+      handlers.get(event)?.forEach((h) => h(data))
+    },
+  }
+}
 
 // Returns a fresh fake Platform with all bridges present and every method
 // wired to vi.fn() returning a sensible default. Tests should override the

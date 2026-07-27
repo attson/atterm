@@ -1,11 +1,11 @@
 # 架构规范
 
 > **Audience**: 理解 atterm 系统整体结构的工程师
-> **Last updated**: 2026-07-24
+> **Last updated**: 2026-07-28
 > **Status**: stable
 > **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md) · [conventions.md](./conventions.md) · [component-style.md](./component-style.md)
 
-v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identity + `relay_instances` 心跳 + `home_instance_url` 路由）+ DB-backed 运行时配置（`relay_config` 表，SQLite / Postgres 双后端，取代原 `relay.json`）、远程文件浏览器（`FS_REQUEST/RESPONSE/EVENT` + `PASTE_FILE`）、会话侧栏置顶 + 搜索（`useSessionPins` / `sessionMatch.ts`）及其恢复期 pin 迁移、桌面启动致命错误非崩溃化（`StartupError`）。相关设计 doc：[session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [pinned-session-recovery-design](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)。
+v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identity + `relay_instances` 心跳 + `home_instance_url` 路由）+ DB-backed 运行时配置（`relay_config` 表，SQLite / Postgres 双后端，取代原 `relay.json`）、远程文件浏览器（`FS_REQUEST/RESPONSE/EVENT` + `PASTE_FILE`）、会话侧栏置顶 + 搜索（`useSessionPins` / `sessionMatch.ts`）及其恢复期 pin 迁移、桌面启动致命错误非崩溃化（`StartupError`）、**web 主入口改挂桌面 `App.vue`**（`platform/web.ts` 桥接，删除独立的 `web/src/main/` 会话列表页与 `settings.html`）。相关设计 doc：[session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [pinned-session-recovery-design](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md) · [web-layout-align-desktop-design](../superpowers/specs/2026-07-27-web-layout-align-desktop-design.md)。
 
 ## 一句话总览
 
@@ -81,7 +81,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update / Pairing / Diagnostics / QuickTemplates) | 不实现协议 |
-| `web/` | web | Vue 3 + TypeScript + Naive UI 多页浏览器/PWA client（login/signup/main/settings/admin/setup），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token` |
+| `web/` | web | Vue 3 + TypeScript + Naive UI 浏览器/PWA client；除 login/signup/setup/firstrun/admin 几个独立小页面外，主入口 `index.html` 现在通过 `main-web.ts` → `desktop/frontend/src/main.web.ts` 挂载**桌面同一份** `App.vue`（见「前端架构细节」节），不再是独立的 `web/src/main/` 会话列表页；`settings.html` 已删除（设置并入 `App.vue` 的 `SettingsDialog.vue`），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token`（以及 web 专属的 pin/模板/aux-key 等 `platform/web.ts` 桥接的本地偏好） |
 | `internal/feishu` | internal | 飞书 client SDK：Cardkit v2 anchor card 渲染 + IM 消息 API + Router.InjectKeystrokesBySession（stroke dispatch 到本地 pty） | 不知道 hook payload 结构（那是 `desktop/feishu` 层）|
 | `desktop/feishu` | desktop | hook payload 解析、AskUserQuestion form 挂拆 lifecycle、stroke plan 构造、local 模式 LongConn subscriber | 不直接持有 pty；stroke 通过 `Router.InjectKeystrokesBySession` 送 |
 
@@ -172,7 +172,7 @@ ATTACH(sid, client_id)  ───►
 - **远端 pane 默认 viewer**：`TerminalView.isDriver = ref(props.isLocalSession ?? true)` —— 本机永远 driver，远端起始 viewer，等第一帧 META 校正。乐观默认 driver 会让 "看着能输入但 relay 在丢 IN 帧" 的状态难发现（PR #240）。
 - **恢复 attach 不复用旧 client_id**：每次 SessionConnection 都用新 `crypto.randomUUID()`，relay 视为新加入的 viewer。前任 driver 若已断开，session 进入 driverless 状态，任一端 `CLAIM_DRIVER` 都能拿到。但 **uplink-proxy sub 不会自动 promote 自身**（见 `internal/relay/uplink_conn.go` 注释 + `desktop/frontend/src/lib/connection.ts::openWS` "Re-assert the driver claim if we held it before this (re)connect"），避免桌面 mirror sub 误抢真用户的 driver。
 
-帧格式与字节级语义见 [protocol.md](./protocol.md) §Driver / Viewer 模型。前端实现在 `desktop/frontend/src/components/TerminalView.vue`（`isDriver` ref + `onDriverChange` handler + Space 拦截调 `claimDriver()`）和 `web/src/main/`（同语义，组件分布不同）。
+帧格式与字节级语义见 [protocol.md](./protocol.md) §Driver / Viewer 模型。前端实现在 `desktop/frontend/src/components/TerminalView.vue`（`isDriver` ref + `onDriverChange` handler + Space 拦截调 `claimDriver()`）——web 现在挂载的就是这同一个组件（见「前端架构细节」节），不再有独立的 `web/src/main/` 实现。
 
 ## 会话生命周期
 
@@ -412,16 +412,42 @@ desktop/frontend/src/
 └── i18n/                  desktop 前端中英 messages + useI18n()
 ```
 
-`web/` 前端同样是 Vue 3 + TypeScript，但按浏览器页面拆成 MPA：
+`web/` 前端同样是 Vue 3 + TypeScript，Vite 多入口构建，但**主页面不再是独立实现**：`index.html`
+挂载的是桌面同一份 `App.vue`（tabs/panes/侧栏/设置全部复用，见上一节），只有登录前后的少数独立
+小页面还是各自的 MPA entry：
 
 ```
 web/src/
-├── main/                  session list + xterm attach + PWA install hint
-├── login/ signup/ setup/  auth 与移动 relay bootstrap
-├── settings/              tokens / sessions / push / webhooks / relay config
+├── main-web.ts            index.html 入口：仅 `import
+│                          '../../desktop/frontend/src/main.web.ts'`
+│                          （相对路径 import 而非 <script src>，因为 Vite/浏览器
+│                          都会把 index.html script 标签的 "../.." 路径钳制在
+│                          server root；同源模块 import 则会被 Vite 解析走
+│                          `/@fs/` 机制，见 main-web.ts 顶部注释）
+├── login/ signup/ setup/  auth 与移动 relay bootstrap（独立小页面，非 App.vue）
+├── firstrun/              首次运行引导页
 ├── admin/                 users / invitations / config（限流·origins·debug）/ feishu（开关·密钥·base url）
-└── shared/                api clients、ws protocol、i18n、Naive theme、Topbar
+└── shared/                api clients、ws protocol、i18n、Naive theme、Topbar、
+                           `sync/prefsSync.ts`（web 侧 `PrefsSyncEngine`，见下）
 ```
+
+`desktop/frontend/src/main.web.ts` + `desktop/frontend/src/platform/web.ts` 是桥接层：
+`platform/web.ts` 用 `localStorage` + 同源 `apiFetch` 实现 `Platform` 接口（`getPins`/
+`setPins` 等），让同一份 `App.vue` 在 web 下无需 Wails 绑定即可跑（Capacitor 走的是独立的
+`main.capacitor.ts` + `mobile/MobileApp.vue`，不受影响）。已知 platform-capability gap（非本计划
+引入、任务 6.1 已记录为预期行为，未修）：`App.vue` 里少数几处（`refreshTerminalTheme` 等 boot
+step、`getStartupError`、`getCommandNotifyThresholdSeconds`）直接调 `lib/api.ts` 的 Wails-only
+`bindings()` 而不是走 `platform` 抽象，在 web 下会各打一条**非致命** console error/warning
+（`Wails 绑定尚未就绪`），不影响页面渲染或功能。
+
+**pin 跨端同步**：`useSessionPins` 的 pin 变更（web 侧存 `localStorage`
+key `atterm.pinned_session_ids.value`）触发 `platform/web.ts::sessions.setPins` →
+`@webshared/sync/prefsSync.ts::notifyLocalChange('pinned_session_ids')` 标记该 key
+dirty；`PrefsSyncEngine`（`web/src/shared/sync/prefsSync.ts`，逻辑镜像
+`desktop/frontend/src/lib/prefsSync.ts`）按 per-key `updated_at` 做 LWW pull/push，
+经 `PUT/GET /api/me/preferences` 与 relay 上的 `internal/prefssync` 交换；其它客户端
+（桌面 `desktop/prefssync_adapter.go`、移动端）下一次 pull tick 拿到新值后触发
+`prefs:changed` 事件，侧栏据此重新分组。
 
 ## 移动端架构（Capacitor）
 

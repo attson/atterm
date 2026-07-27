@@ -289,11 +289,25 @@ localStorage：`atterm.templates.value` / `atterm.aux_keys.value`
 
 ### 4.4 移动端 (Capacitor) 影响
 
-- 与 web 共用 `App.vue`；`Capabilities.localPty` 显式化对 Capacitor 是
-  no-op（原本就没有 `newSession`）
-- 窄屏 drawer 化直接惠及 mobile viewport
-- `useSessionPins` platform 化后，Capacitor 的 pin 也走 prefsSync 而不是
-  当前的 Wails-only shim（当前 mobile 上 pin 是不通的，本 spec 顺带修复）
+**澄清**：Capacitor 挂载的是 `desktop/frontend/src/mobile/MobileApp.vue`
+（153 行独立 mobile shell + `Mobile*` 组件系列），**不是** desktop 的
+`App.vue`。这是 mobile iOS app 的刻意选择（terminal UX 与 desktop 差异
+大）。所以本 spec 的 "web 布局对齐 desktop" 影响面：
+
+- **Web**：挂 `App.vue`（desktop shell）
+- **Desktop**：继续挂 `App.vue`（不变）
+- **Mobile Capacitor**：继续挂 `MobileApp.vue`（不变）
+- 窄屏 drawer 化（§4.3.8）是 `App.vue::TaskSidebar` 的责任；受益的是
+  **web 在窄浏览器视口**（含手机浏览器访问 web 页面）+ desktop 拖窄窗口，
+  **不影响** Capacitor mobile app（那有独立 mobile UI）
+- `useSessionPins` platform 化后：
+  - Wails: 走 `bindings().Get/SetPinnedSessionIds`（不变）
+  - Web: 走 localStorage + prefsSync
+  - Capacitor: 若 `MobileApp` 需要展示 pin 组，同样接入（但 `MobileSessionList`
+    目前不使用 pin，需要单独设计入口；本 spec 不覆盖 mobile pin UI，
+    仅保证 Capacitor 上 pin 的**存储/同步链路**可工作，pin 管理在 desktop 或
+    web 上操作后同步到 mobile 是 no-op（mobile 端不渲染 pin 组）——除非有独立
+    需求扩展 MobileSessionList）
 
 ### 4.5 Pin 全端同步
 

@@ -45,6 +45,7 @@ func TestSyncedKeys_MatchesWhitelist(t *testing.T) {
 		"ai_notifications_only",
 		"command_notify_threshold_seconds",
 		"shell_integration_enabled",
+		"pinned_session_ids",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d keys, want %d: %v", len(got), len(want), got)
@@ -248,5 +249,19 @@ func TestSeedFromLocal_MarksMissingNonDefaultDirty(t *testing.T) {
 	mn := a.ReadMeta("notifications_enabled")
 	if mn.Dirty {
 		t.Fatalf("non-customized key should not be dirty")
+	}
+}
+
+func TestSyncedKeys_IncludesPinnedSessionIds(t *testing.T) {
+	keys := SyncedKeys()
+	found := false
+	for _, k := range keys {
+		if k == "pinned_session_ids" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("SyncedKeys() = %v; want pinned_session_ids", keys)
 	}
 }

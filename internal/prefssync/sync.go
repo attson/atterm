@@ -55,6 +55,7 @@ var syncedKeys = []string{
 	"ai_notifications_only",
 	"command_notify_threshold_seconds",
 	"shell_integration_enabled",
+	"pinned_session_ids",
 }
 
 // SyncedKeys returns the canonical list of keys this engine syncs.

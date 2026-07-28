@@ -4,6 +4,8 @@ import { apiFetch } from '@webshared/api/client'
 // (desktop/frontend/vite.config.ts).
 import { loadRelayConfig, saveRelayConfig, clearRelayConfig } from '@webshared/api/relay-config'
 import { logout as webLogout } from '@webshared/api/auth'
+import { loadAccountKey } from '@webshared/api/account-key'
+import { setAccountKeyProvider } from '../lib/account-key'
 // ^ single source of truth for web's relay storage key ('atterm.relay') and
 // shape ({ baseURL, sessionToken, expiresAt, allowInsecure, ... }) — apiFetch
 // itself reads auth through loadRelayConfig, so the bridge below must adapt
@@ -94,6 +96,20 @@ const sessions: SessionBridge = {
     localStorage.setItem('atterm.pinned_session_ids.value', JSON.stringify(ids))
     const { notifyLocalChange } = await import('@webshared/sync/prefsSync')
     notifyLocalChange('pinned_session_ids')
+  },
+  async listRelaySessions() {
+    const { data } = await apiFetch<import('../lib/api').RelaySessionRow[]>('/api/me/sessions')
+    return data
+  },
+  async revokeRelaySession(idHash) {
+    await apiFetch(`/api/me/sessions/${encodeURIComponent(idHash)}`, { method: 'DELETE' })
+  },
+  async signOutOtherRelaySessions() {
+    const { data } = await apiFetch<import('../lib/api').SignOutOthersResult>(
+      '/api/me/sessions/sign-out-others',
+      { method: 'POST' },
+    )
+    return data
   },
 }
 
@@ -191,5 +207,6 @@ const auxKeys: AuxKeyBridge = {
 }
 
 export function createWebPlatform(): Platform {
+  setAccountKeyProvider(() => loadAccountKey())
   return { caps: CAPS, relay, sessions, system, events, templates, auxKeys }
 }

@@ -52,7 +52,7 @@ export interface Capabilities {
 }
 
 // ----- Bridges -----
-import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState, MarkSessionsSeenOpts as _MarkSessionsSeenOpts, NotificationRouteData as _NotificationRouteData } from '../lib/api'
+import type { RelayConfig as _RelayConfig, RelayMe as _RelayMe, NewSessionReq as _Req, NewSessionResp as _Resp, ClipboardPastePayload as _Clip, UpdateState as _UpdateState, MarkSessionsSeenOpts as _MarkSessionsSeenOpts, NotificationRouteData as _NotificationRouteData, RelaySessionRow as _RelaySessionRow, SignOutOthersResult as _SignOutOthersResult } from '../lib/api'
 
 export interface PairingConsumeResult {
   relay_url: string
@@ -144,6 +144,10 @@ export interface SessionBridge {
    *  prefs push server-side); Capacitor/Web write to localStorage and
    *  notify the prefsSync engine locally. */
   setPins(ids: string[]): Promise<void>
+  /** Relay account sessions for Settings -> Signed-in devices. */
+  listRelaySessions?(): Promise<_RelaySessionRow[]>
+  revokeRelaySession?(idHash: string): Promise<void>
+  signOutOtherRelaySessions?(): Promise<_SignOutOthersResult>
 }
 
 export interface SystemBridge {

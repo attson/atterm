@@ -20,6 +20,9 @@ vi.mock('../../lib/api', () => ({
   markSessionsSeen: vi.fn().mockResolvedValue(undefined),
   getPinnedSessionIds: vi.fn().mockResolvedValue(['s1', 's2']),
   setPinnedSessionIds: vi.fn().mockResolvedValue(undefined),
+  listRelaySessions: vi.fn().mockResolvedValue([{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, is_current: true }]),
+  revokeRelaySession: vi.fn().mockResolvedValue(undefined),
+  signOutOtherRelaySessions: vi.fn().mockResolvedValue({ deleted: 1 }),
 }))
 
 vi.mock('../../../wailsjs/runtime/runtime', () => ({
@@ -53,7 +56,17 @@ import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
 import { GetPluginConfig, SetPluginConfig, GetAppVersion } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
-import { fetchRelayMe, showNotification, setUplinkPaused, markSessionsSeen, getPinnedSessionIds, setPinnedSessionIds } from '../../lib/api'
+import {
+  fetchRelayMe,
+  showNotification,
+  setUplinkPaused,
+  markSessionsSeen,
+  getPinnedSessionIds,
+  setPinnedSessionIds,
+  listRelaySessions,
+  revokeRelaySession,
+  signOutOtherRelaySessions,
+} from '../../lib/api'
 
 describe('createWailsPlatform', () => {
   beforeEach(() => { vi.clearAllMocks() })
@@ -97,6 +110,26 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.sessions.setPins(['s3'])
     expect(setPinnedSessionIds).toHaveBeenCalledWith(['s3'])
+  })
+
+  it('sessions.listRelaySessions delegates to api.listRelaySessions', async () => {
+    const p = createWailsPlatform()
+    const rows = await p.sessions.listRelaySessions!()
+    expect(listRelaySessions).toHaveBeenCalledOnce()
+    expect(rows).toEqual([{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, is_current: true }])
+  })
+
+  it('sessions.revokeRelaySession delegates to api.revokeRelaySession', async () => {
+    const p = createWailsPlatform()
+    await p.sessions.revokeRelaySession!('h1')
+    expect(revokeRelaySession).toHaveBeenCalledWith('h1')
+  })
+
+  it('sessions.signOutOtherRelaySessions delegates to api.signOutOtherRelaySessions', async () => {
+    const p = createWailsPlatform()
+    const result = await p.sessions.signOutOtherRelaySessions!()
+    expect(signOutOtherRelaySessions).toHaveBeenCalledOnce()
+    expect(result).toEqual({ deleted: 1 })
   })
 
   it('system.showNotification delegates', async () => {

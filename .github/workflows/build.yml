@@ -116,6 +116,14 @@ jobs:
         working-directory: desktop/frontend
         run: npm ci
 
+      # desktop/frontend/tsconfig.json's `paths` alias `@webshared/*` resolves
+      # into web/src/shared/*, so vue-tsc transitively typechecks web/src/shared
+      # files (main.web.ts + platform/web.ts pull the chain in). Those files
+      # transitively import Vue, so `vue` must be resolvable at typecheck time.
+      - name: install web deps (for @webshared typecheck)
+        working-directory: web
+        run: npm ci --ignore-scripts
+
       # desktop/main.go has //go:embed all:frontend/dist — Go demands the
       # directory exists at compile time even for `vet`. Build the frontend
       # before any Go tooling touches the desktop package.
@@ -217,6 +225,14 @@ jobs:
         working-directory: desktop/frontend
         run: npm ci
 
+      # desktop/frontend/tsconfig.json's `paths` alias `@webshared/*` resolves
+      # into web/src/shared/*, so vue-tsc transitively typechecks web/src/shared
+      # files (main.web.ts + platform/web.ts pull the chain in). Those files
+      # transitively import Vue, so `vue` must be resolvable at typecheck time.
+      - name: install web deps (for @webshared typecheck)
+        working-directory: web
+        run: npm ci --ignore-scripts
+
       - name: build frontend
         working-directory: desktop/frontend
         run: npm run build
@@ -309,6 +325,14 @@ jobs:
       - name: install frontend deps
         working-directory: desktop/frontend
         run: npm ci
+
+      # desktop/frontend/tsconfig.json's `paths` alias `@webshared/*` resolves
+      # into web/src/shared/*, so vue-tsc transitively typechecks web/src/shared
+      # files (main.web.ts + platform/web.ts pull the chain in). Those files
+      # transitively import Vue, so `vue` must be resolvable at typecheck time.
+      - name: install web deps (for @webshared typecheck)
+        working-directory: web
+        run: npm ci --ignore-scripts
 
       - name: build frontend
         working-directory: desktop/frontend

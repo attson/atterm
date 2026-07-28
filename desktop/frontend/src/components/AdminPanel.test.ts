@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { mount } from "@vue/test-utils";
+import { describe, expect, test, vi } from "vitest";
+import { mount, flushPromises } from "@vue/test-utils";
 import AdminPanel from "./AdminPanel.vue";
 import Invitations from "./admin/Invitations.vue";
 import Users from "./admin/Users.vue";
@@ -63,5 +63,44 @@ describe("AdminPanel", () => {
     expect(w.find('[data-test="admin-tab-users"]').exists()).toBe(true);
     expect(w.find('[data-test="admin-tab-config"]').exists()).toBe(true);
     expect(w.find('[data-test="admin-tab-feishu"]').exists()).toBe(true);
+  });
+
+  // Regression: every admin child calls `useMessage()` from naive-ui, which
+  // throws unconditionally when it can't find an <n-message-provider> above.
+  // Before we wrapped AdminPanel's body in <n-config-provider> +
+  // <n-message-provider>, first-clicking the TabBar admin button crashed the
+  // whole panel. Stub only the network layer (apiFetch), then mount a real
+  // Invitations child so the provider wiring is exercised end-to-end.
+  test("mounts real Invitations child without throwing (provider wiring)", async () => {
+    vi.resetModules();
+    vi.doMock("@shared/api/client", async () => {
+      const actual = await vi.importActual<typeof import("@shared/api/client")>(
+        "@shared/api/client",
+      );
+      return {
+        ...actual,
+        apiFetch: vi.fn(async () => ({ data: [], status: 200, headers: new Headers() })),
+      };
+    });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { default: FreshAdminPanel } = await import("./AdminPanel.vue");
+      const w = mount(FreshAdminPanel, {
+        global: {
+          // Keep the other three tabs stubbed — we only need one real child
+          // to prove <n-message-provider> resolves for `useMessage()`.
+          stubs: { Users: true, Config: true, FeishuConfig: true },
+        },
+      });
+      await flushPromises();
+      expect(w.find('[data-test="admin-tab-invitations"]').exists()).toBe(true);
+      // Any `useMessage()` failure surfaces as an unhandled console error from
+      // Vue's error handler. Assert the console stayed clean.
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      vi.doUnmock("@shared/api/client");
+      vi.resetModules();
+    }
   });
 });

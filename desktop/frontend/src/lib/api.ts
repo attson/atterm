@@ -937,10 +937,6 @@ export function getUserHomeDir(): Promise<string> {
   return bindings().GetUserHomeDir();
 }
 
-export function getAppVersion(): Promise<string> {
-  return bindings().GetAppVersion();
-}
-
 export type MarkSessionsSeenOpts = { ids: string[] } | { all: true };
 
 export function markSessionsSeen(opts: MarkSessionsSeenOpts): Promise<void> {

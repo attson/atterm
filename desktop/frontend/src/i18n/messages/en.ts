@@ -433,6 +433,7 @@ export const en = {
       notAuthenticated: 'Log in to your relay account first (Settings → Relay).',
     },
     account: {
+      title: 'Account',
       email: 'Email',
       changePassword: {
         title: 'Change password',

@@ -27,7 +27,7 @@ describe("SettingsDialog shell", () => {
   });
 
   test("tracks the active tab and switches via sidebar clicks", () => {
-    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']\s*\|\s*["']shortcuts["']/);
+    expect(source).toMatch(/activeTab\s*=\s*ref<["']general["']\s*\|\s*["']account["']\s*\|\s*["']relay["']\s*\|\s*["']logging["']\s*\|\s*["']updates["']\s*\|\s*["']plugins["']\s*\|\s*["']shortcuts["']/);
     expect(source).toContain('@click="switchTab(\'general\')"');
     expect(source).toContain('@click="switchTab(\'relay\')"');
     expect(source).toContain('@click="switchTab(\'updates\')"');
@@ -216,6 +216,53 @@ describe("SettingsDialog caps gating", () => {
     __setPlatformForTests(platform);
     const w = mountDialog({ ...baseProps, initialTab: "updates" });
     expect(w.find(".settings-nav-item.active").text()).toBe(en.settings.tabs.general);
+  });
+
+  it("shows the Account tab on non-wails platforms (web/capacitor)", () => {
+    platform.caps = { ...platform.caps, wailsBindings: false };
+    __setPlatformForTests(platform);
+    expect(navLabels(mountDialog())).toContain(en.settings.account.title);
+  });
+
+  it("hides the Account tab on Wails (apiFetch would 401 against the desktop session)", () => {
+    platform.caps = { ...platform.caps, wailsBindings: true };
+    __setPlatformForTests(platform);
+    expect(navLabels(mountDialog())).not.toContain(en.settings.account.title);
+  });
+
+  it("hides Relay / Diagnostics / Received files / Feishu on non-wails platforms", () => {
+    platform.caps = { ...platform.caps, wailsBindings: false };
+    __setPlatformForTests(platform);
+    const labels = navLabels(mountDialog());
+    expect(labels).not.toContain(en.settings.tabs.relay);
+    expect(labels).not.toContain(en.settings.diagnostics.tab);
+    expect(labels).not.toContain(en.settings.tabs.receivedFiles);
+    expect(labels).not.toContain(en.settings.feishu.title);
+  });
+
+  it("falls back to general when initialTab is 'relay' but wailsBindings=false", () => {
+    platform.caps = { ...platform.caps, wailsBindings: false };
+    __setPlatformForTests(platform);
+    const w = mountDialog({ ...baseProps, initialTab: "relay" });
+    expect(w.find(".settings-nav-item.active").text()).toBe(en.settings.tabs.general);
+  });
+});
+
+describe("SettingsDialog version footer", () => {
+  it("renders 'AT Term v<version>' once getAppVersion resolves", async () => {
+    platform.system.getAppVersion = vi.fn().mockResolvedValue("0.3.20");
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    await flushPromises();
+    expect(w.find('[data-testid="settings-version-footer"]').text()).toBe("AT Term v0.3.20");
+  });
+
+  it("renders 'AT Term (dev)' when getAppVersion resolves empty/dev", async () => {
+    platform.system.getAppVersion = vi.fn().mockResolvedValue("dev");
+    __setPlatformForTests(platform);
+    const w = mountDialog();
+    await flushPromises();
+    expect(w.find('[data-testid="settings-version-footer"]').text()).toBe("AT Term (dev)");
   });
 });
 

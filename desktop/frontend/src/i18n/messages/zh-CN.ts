@@ -435,6 +435,7 @@ export const zhCN = {
       notAuthenticated: '请先在 "Relay" 页登录 relay 账号。',
     },
     account: {
+      title: '账号',
       email: '邮箱',
       changePassword: {
         title: '修改密码',

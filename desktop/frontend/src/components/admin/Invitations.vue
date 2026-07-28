@@ -29,11 +29,11 @@ const newSecrets = ref<InvitationCreated[]>([])
 const message = useMessage()
 const { t } = useI18n()
 
-// data-testid is not in Vue's stock InputHTMLAttributes, so cast through any
+// data-testid is not in Vue's stock InputHTMLAttributes, so cast through Record<string, unknown>
 // for the test-only hooks. Keeps the markup identical at runtime.
-const noteInputProps = { 'data-testid': 'invite-note', autocomplete: 'off' } as any
-const countInputProps = { 'data-testid': 'invite-count' } as any
-const expiresPickerProps = { 'data-testid': 'invite-expires' } as any
+const noteInputProps = { 'data-testid': 'invite-note', autocomplete: 'off' } as Record<string, unknown>
+const countInputProps = { 'data-testid': 'invite-count' } as Record<string, unknown>
+const expiresPickerProps = { 'data-testid': 'invite-expires' } as Record<string, unknown>
 
 function fmt(iso: string | undefined): string {
   return formatDateTime(iso)

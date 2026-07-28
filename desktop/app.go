@@ -1317,6 +1317,12 @@ func (a *App) GetUserHomeDir() string {
 	return h
 }
 
+// GetAppVersion returns the app version injected at build time via
+// -ldflags -X main.Version=<tag>. Empty / "dev" for unbuilt dev runs.
+func (a *App) GetAppVersion() string {
+	return Version
+}
+
 // GetTaskSidebarCollapsed returns whether the task sidebar panel is collapsed.
 func (a *App) GetTaskSidebarCollapsed() bool {
 	if a.cfgStore == nil {

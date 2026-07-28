@@ -37,6 +37,8 @@ export function GetAINotificationsOnly():Promise<boolean>;
 
 export function GetAccountKey():Promise<string>;
 
+export function GetAppVersion():Promise<string>;
+
 export function GetAutoCheckUpdates():Promise<boolean>;
 
 export function GetClipboardPastePayload():Promise<main.ClipboardPastePayload>;

@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createWebPlatform } from '../web'
 
+vi.mock('@webshared/api/version', () => ({
+  fetchVersion: vi.fn().mockResolvedValue('v0.3.19'),
+}))
+
 describe('web platform', () => {
   it('caps: localPty=false autoUpdate=false pluginHost=false windowControls=false', () => {
     const p = createWebPlatform()
@@ -130,6 +134,13 @@ describe('web platform', () => {
       const info = await createWebPlatform().system.getClipboardPaste()
       expect(info).toEqual({ kind: 'text', text: 'pasted' })
       Object.defineProperty(navigator, 'clipboard', { value: original, configurable: true })
+    })
+
+    it('system.getAppVersion delegates to @webshared/api/version fetchVersion', async () => {
+      const { fetchVersion } = await import('@webshared/api/version')
+      const version = await createWebPlatform().system.getAppVersion()
+      expect(fetchVersion).toHaveBeenCalledOnce()
+      expect(version).toBe('v0.3.19')
     })
   })
 })

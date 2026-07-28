@@ -133,6 +133,10 @@ const system: SystemBridge = {
   async getEnvironment() {
     return { buildType: 'web', platform: navigator.userAgent, arch: '' }
   },
+  async getAppVersion() {
+    const { fetchVersion } = await import('@webshared/api/version')
+    return fetchVersion()
+  },
 }
 
 const TEMPLATES_KEY = 'atterm.quick_templates.value'

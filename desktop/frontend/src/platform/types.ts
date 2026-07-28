@@ -152,6 +152,8 @@ export interface SystemBridge {
   pickLogFilePath?(): Promise<string>
   openExternalURL(url: string): Promise<void>
   getEnvironment(): Promise<EnvironmentInfo | null>
+  // Version string like "v0.3.19", or "dev" for unbuilt / non-desktop runs.
+  getAppVersion(): Promise<string>
   // Window control surface — optional, gated by caps.windowControls.
   windowMinimize?(): Promise<void>
   windowShow?(): Promise<void>

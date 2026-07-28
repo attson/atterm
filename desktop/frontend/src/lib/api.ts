@@ -390,6 +390,7 @@ interface AppBindings {
   GetPinnedSessionIds(): Promise<string[]>;
   SetPinnedSessionIds(ids: string[]): Promise<void>;
   GetUserHomeDir(): Promise<string>;
+  GetAppVersion(): Promise<string>;
   MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
   ListRemoteSessions(): Promise<string>;
 }
@@ -934,6 +935,10 @@ export function setPinnedSessionIds(ids: string[]): Promise<void> {
 
 export function getUserHomeDir(): Promise<string> {
   return bindings().GetUserHomeDir();
+}
+
+export function getAppVersion(): Promise<string> {
+  return bindings().GetAppVersion();
 }
 
 export type MarkSessionsSeenOpts = { ids: string[] } | { all: true };

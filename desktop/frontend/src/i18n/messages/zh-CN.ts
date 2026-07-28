@@ -438,6 +438,10 @@ export const zhCN = {
     account: {
       title: '账号',
       email: '邮箱',
+      logout: {
+        button: '退出登录',
+        submitting: '退出中...',
+      },
       changePassword: {
         title: '修改密码',
         oldPassword: '当前密码',

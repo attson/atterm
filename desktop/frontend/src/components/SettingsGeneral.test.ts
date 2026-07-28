@@ -78,6 +78,16 @@ describe("SettingsGeneral", () => {
 });
 
 describe("SettingsGeneral notification toggle", () => {
+  test("desktop-only settings are hidden behind caps.wailsBindings on web", () => {
+    expect(source).toContain("if (caps.wailsBindings)");
+    expect(source).toContain('v-if="caps.wailsBindings && !notificationsLoading"');
+    expect(source).toContain('v-if="caps.wailsBindings && !shellIntegrationLoading"');
+    expect(source).toContain('v-if="caps.wailsBindings && !recoveryEnabledLoading"');
+    expect(source).toContain('v-if="caps.wailsBindings && !defaultShellLoading"');
+    expect(source).toContain('v-if="caps.wailsBindings && !webglRendererLoading"');
+    expect(source).toContain('v-if="caps.wailsBindings && !commandNotifyThresholdLoading"');
+  });
+
   test("imports notification getter and setter", () => {
     expect(source).toContain("getNotificationsEnabled");
     expect(source).toContain("setNotificationsEnabled");

@@ -42,6 +42,11 @@ describe("SettingsDialog shell", () => {
     expect(source).toContain("relayRef?.saveLabel");
   });
 
+  test("only reads the Wails terminal theme preference when Wails bindings exist", () => {
+    expect(source).toContain("if (!caps.wailsBindings) return;");
+    expect(source).toMatch(/if\s*\(!caps\.wailsBindings\)\s*return;[\s\S]*?getTerminalThemePreference\(\)/);
+  });
+
   test("hosts sub-dialogs and listens for tab events", () => {
     expect(source).toContain('@open-log-viewer="openLogViewer"');
     expect(source).toContain('@request-install="onForceInstallClick"');
@@ -265,4 +270,3 @@ describe("SettingsDialog version footer", () => {
     expect(w.find('[data-testid="settings-version-footer"]').text()).toBe("AT Term (dev)");
   });
 });
-

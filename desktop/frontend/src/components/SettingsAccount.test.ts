@@ -15,6 +15,7 @@ const { fakePlatform } = vi.hoisted(() => ({
   fakePlatform: {
     relay: {
       fetchMe: vi.fn(),
+      logout: vi.fn(),
     },
   },
 }))
@@ -39,6 +40,7 @@ beforeEach(() => {
   changePasswordMock.mockReset()
   deleteMeMock.mockReset()
   fakePlatform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: 'u1', email: 'me@example.com' })
+  fakePlatform.relay.logout = vi.fn().mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -62,6 +64,24 @@ describe('SettingsAccount', () => {
     const w = await mountReady()
     expect(fakePlatform.relay.fetchMe).toHaveBeenCalledTimes(1)
     expect(w.get('[data-testid="account-email"]').text()).toBe('me@example.com')
+  })
+
+  it('offers logout, clears the relay session, and redirects to login', async () => {
+    const assign = vi.fn()
+    const originalLocation = window.location
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, assign },
+      writable: true,
+    })
+
+    const w = await mountReady()
+    await w.get('[data-testid="account-logout-button"]').trigger('click')
+    await flushPromises()
+
+    expect(fakePlatform.relay.logout).toHaveBeenCalledTimes(1)
+    expect(assign).toHaveBeenCalledWith('/login.html')
+
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true })
   })
 
   describe('change password', () => {

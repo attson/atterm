@@ -7,6 +7,8 @@ import { __setBindingsForTest } from "./lib/api";
 import { TYPE, NIL_SID, encodeFrame, encodeText } from "./lib/proto";
 import type { SessionInfo } from "./lib/connection";
 import { __resetForTests as __resetPinsForTests } from "./composables/useSessionPins";
+import * as api from "./lib/api";
+import { saveSnapshot } from "./lib/webTabsSnapshot";
 import App from "./App.vue";
 
 // jsdom does not implement matchMedia; stub it so xterm's ScreenDprMonitor
@@ -1026,5 +1028,75 @@ describe("admin view (main-area swap)", () => {
     await flushPromises();
 
     expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
+  });
+});
+
+describe("recovery snapshot gated on caps.wailsBindings (web)", () => {
+  // Regression for the "Wails 绑定尚未就绪" uncaught error on web: App.vue used
+  // to construct useRecoverySnapshot unconditionally, whose structural watcher
+  // called saveRecoverySnapshot() -> lib/api's bindings() -> throws
+  // synchronously because the web build has no window.go. The throw happened
+  // 500ms later inside a setTimeout callback, so it escaped as uncaught.
+  //
+  // This test deliberately leaves bindings unstubbed (no __setBindingsForTest
+  // call) so window.go stays absent, exactly reproducing the web environment.
+  // It restores a web tabs snapshot (lib/webTabsSnapshot) at boot — the same
+  // kind of post-mount tabs mutation that used to trigger the composable's
+  // deep watcher — and asserts saveRecoverySnapshot is never invoked and
+  // nothing throws once the 500ms structural debounce window has passed.
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorage.clear();
+    sessionStorage.clear();
+    saveSnapshot({
+      tabs: [
+        {
+          id: "web-t1",
+          layout: "single",
+          active_pane_idx: 0,
+          panes: [{ slot: 0, session_id: "remote-1", host_id: "host-remote" }],
+        },
+      ],
+      active_tab_id: "web-t1",
+    });
+  });
+
+  afterEach(() => {
+    __setPlatformForTests(null);
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it("never calls saveRecoverySnapshot and does not throw when restoring a web tabs snapshot", async () => {
+    const saveSpy = vi.spyOn(api, "saveRecoverySnapshot");
+
+    const platform = createFakePlatform();
+    platform.caps = { ...platform.caps, wailsBindings: false, localPty: false, windowControls: false };
+    platform.sessions.listRemoteSessions = vi.fn().mockResolvedValue([]);
+    __setPlatformForTests(platform);
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TabBar: true,
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          TaskSidebar: true,
+          PaneGrid: true,
+        },
+      },
+    });
+    await flushPromises();
+
+    // The web snapshot restore above pushes a tab post-mount — exactly the
+    // kind of structural tabs mutation that used to schedule a 500ms flush
+    // through the (unconditionally-constructed) recovery composable.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await flushPromises();
+
+    expect(saveSpy).not.toHaveBeenCalled();
+    wrapper.unmount();
   });
 });

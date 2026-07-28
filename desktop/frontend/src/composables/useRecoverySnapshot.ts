@@ -106,7 +106,18 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     if (structuralTimer) { clearTimeout(structuralTimer); structuralTimer = null; }
     if (heartbeatTimer)  { clearTimeout(heartbeatTimer);  heartbeatTimer = null; }
     dirty = false;
-    void saveRecoverySnapshot(buildSnapshot());
+    // Defense-in-depth: App.vue only constructs this composable when
+    // caps.wailsBindings is true, but saveRecoverySnapshot() can still throw
+    // synchronously (bindings() throws when window.go isn't ready yet) or
+    // reject asynchronously. Never let either escape as an uncaught error —
+    // recovery is best-effort persistence, not a user-visible operation.
+    try {
+      void saveRecoverySnapshot(buildSnapshot()).catch((e) => {
+        console.warn("[recovery] saveRecoverySnapshot failed", e);
+      });
+    } catch (e) {
+      console.warn("[recovery] saveRecoverySnapshot failed", e);
+    }
   }
 
   function scheduleStructural() {

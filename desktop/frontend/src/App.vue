@@ -211,7 +211,7 @@ let notificationClickListenerOff: (() => void) | null = null;
 function handleBeforeClose() {
   // Best-effort final persist so a clean quit always lands the latest state.
   // (Sleep / force-quit are covered by the composable's periodic safety flush.)
-  recovery.flushNow();
+  recovery?.flushNow();
   if (localSessionCount.value === 0 && remoteSessionCount.value === 0) {
     void confirmQuit();
     return;
@@ -1249,16 +1249,22 @@ useTerminalShortcuts(
 // Persists tab/pane structure (+ AI sid captures) so a crash or unclean exit
 // can rebuild the workspace on next launch. cwd/title heartbeat is a
 // follow-up; the structural watch covers the v1 use case.
-const recovery = useRecoverySnapshot({
-  tabs,
-  currentTabId,
-  localHostID,
-  // Look up both lists — restricting to local would null out the host_id
-  // / title / cwd we need to persist for remote panes (so the next launch
-  // can re-bind them instead of forking a fresh local shell).
-  sessionInfoFor: (sid: string) =>
-    findSessionInfo(sid, false) ?? findSessionInfo(sid, true),
-});
+// recovery.json is a Wails/desktop-only concept — the web build already
+// persists its workspace via webTabsSnapshot, and has no Go-side bindings for
+// SaveRecoverySnapshot to call. Gate construction on caps.wailsBindings so the
+// composable's watchers/timers never fire (and never throw) on web.
+const recovery = caps.wailsBindings
+  ? useRecoverySnapshot({
+      tabs,
+      currentTabId,
+      localHostID,
+      // Look up both lists — restricting to local would null out the host_id
+      // / title / cwd we need to persist for remote panes (so the next launch
+      // can re-bind them instead of forking a fresh local shell).
+      sessionInfoFor: (sid: string) =>
+        findSessionInfo(sid, false) ?? findSessionInfo(sid, true),
+    })
+  : null;
 
 watch([tabs, currentTabId], () => {
   if (tabs.value.length === 0) return;

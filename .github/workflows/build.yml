@@ -47,6 +47,14 @@ jobs:
       - name: install web deps
         working-directory: web
         run: npm ci --ignore-scripts
+      # web/main.html mounts desktop/frontend/src/main.web.ts, whose transitive
+      # imports (App.vue + all shared components) reach ~30 packages that live
+      # only in desktop/frontend/package.json. Rollup resolves those relative
+      # to the importer file's directory, so it needs desktop/frontend/node_modules
+      # populated even though the build cwd is web/.
+      - name: install desktop/frontend deps (transitive for main.web.ts chain)
+        working-directory: desktop/frontend
+        run: npm ci --ignore-scripts
       # The web OPAQUE client is github.com/bytemare/opaque compiled to WASM; it
       # must exist before vite build (imported via ?url). build-web.sh also
       # builds it; this earlier copy is for the "type check + build" step.

@@ -11,6 +11,17 @@ export async function getMe(): Promise<MeResponse> {
 }
 
 // Password (settings → Change Password tab).
+//
+// This intentionally restores the pre-stepup shape: POST /api/me/password
+// with { current_password, new_password }, no X-Step-Up-Token. Spec §4.4
+// documents an OPAQUE step-up flow (see deleteMe below for the pattern), but
+// the restored client uses the historic single-request form because that's
+// what the desktop UI shipped before the admin/settings rewrite. The relay
+// endpoint currently returns 410 on live, so this call fails end-to-end
+// today — tracked as a follow-up to reintroduce the step-up handshake on
+// both sides. describeAccountError in SettingsAccount.vue still has
+// step_up_required / step_up_invalid branches so re-adding the token here
+// won't need any UI churn.
 export async function changePassword(
   current_password: string,
   new_password: string,

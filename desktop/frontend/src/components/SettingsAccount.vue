@@ -36,6 +36,13 @@ onMounted(async () => {
 //   the "session expired" case, distinct from a wrong password.
 // - Any other 401 (stepup init/finalize server-side reject, or the
 //   password-change endpoint) reads as "wrong current password".
+//
+// Note: the step_up_required / step_up_invalid branches below are unreachable
+// today for the change-password path — the restored `changePassword`
+// (web/src/shared/api/me.ts) sends the historic pre-stepup shape and never
+// attaches a step-up token, so the relay can't respond with those codes for
+// that endpoint. They stay wired for `deleteMe` (which does drive step-up)
+// and for the follow-up that reintroduces step-up on change-password.
 function describeAccountError(e: unknown): string {
   if (e instanceof Error && e.message === "invalid credentials") {
     return t("settings.account.errors.wrongPassword");
@@ -78,6 +85,9 @@ async function onChangePasswordSubmit() {
   changePasswordSuccess.value = "";
   changePasswordSubmitting.value = true;
   try {
+    // Restored pre-stepup shape (see comment on `changePassword` in
+    // web/src/shared/api/me.ts). Endpoint currently returns 410 on the live
+    // relay; tracked as follow-up to re-introduce OPAQUE step-up here.
     await changePassword(oldPassword.value, newPassword.value);
     changePasswordSuccess.value = t("settings.account.changePassword.successToast");
     oldPassword.value = "";
@@ -121,6 +131,13 @@ async function onDeleteClick() {
   deleteSubmitting.value = true;
   try {
     await deleteMe(email.value, dangerPassword.value);
+    // Hard-navigate to the login page. /login.html only exists in the web
+    // bundle (Wails doesn't serve it), but this tab is gated on
+    // !caps.wailsBindings in SettingsDialog.vue — so the surrounding
+    // SettingsDialog can only render this button in the browser build,
+    // where the URL resolves. Full-page navigation is the intended reset:
+    // it clears every in-memory ref + closes any WS to the (now-deleted)
+    // account.
     location.assign("/login.html");
   } catch (e) {
     deleteError.value = describeAccountError(e);

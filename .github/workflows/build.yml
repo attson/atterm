@@ -132,6 +132,18 @@ jobs:
         working-directory: web
         run: npm ci --ignore-scripts
 
+      # web/src/shared/lib/opaqueWasm.ts imports wasm_exec.js and opaque.wasm
+      # via ?url — these are ephemeral build outputs. Desktop bundles admin
+      # components (via App.vue), which reach through @shared/api into
+      # @shared/lib/opaque → opaqueWasm.ts, so those files must exist before
+      # `vite build` runs.
+      - name: build opaque wasm (for admin/E2EE chain)
+        run: |
+          wasm_exec="$(go env GOROOT)/misc/wasm/wasm_exec.js"
+          [ -f "$wasm_exec" ] || wasm_exec="$(go env GOROOT)/lib/wasm/wasm_exec.js"
+          GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false -ldflags="-s -w" -o web/src/shared/lib/opaque.wasm ./cmd/opaque-wasm
+          cp "$wasm_exec" web/src/shared/lib/wasm_exec.js
+
       # desktop/main.go has //go:embed all:frontend/dist — Go demands the
       # directory exists at compile time even for `vet`. Build the frontend
       # before any Go tooling touches the desktop package.
@@ -241,6 +253,18 @@ jobs:
         working-directory: web
         run: npm ci --ignore-scripts
 
+      # web/src/shared/lib/opaqueWasm.ts imports wasm_exec.js and opaque.wasm
+      # via ?url — these are ephemeral build outputs. Desktop bundles admin
+      # components (via App.vue), which reach through @shared/api into
+      # @shared/lib/opaque → opaqueWasm.ts, so those files must exist before
+      # `vite build` runs.
+      - name: build opaque wasm (for admin/E2EE chain)
+        run: |
+          wasm_exec="$(go env GOROOT)/misc/wasm/wasm_exec.js"
+          [ -f "$wasm_exec" ] || wasm_exec="$(go env GOROOT)/lib/wasm/wasm_exec.js"
+          GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false -ldflags="-s -w" -o web/src/shared/lib/opaque.wasm ./cmd/opaque-wasm
+          cp "$wasm_exec" web/src/shared/lib/wasm_exec.js
+
       - name: build frontend
         working-directory: desktop/frontend
         run: npm run build
@@ -341,6 +365,18 @@ jobs:
       - name: install web deps (for @webshared typecheck)
         working-directory: web
         run: npm ci --ignore-scripts
+
+      # web/src/shared/lib/opaqueWasm.ts imports wasm_exec.js and opaque.wasm
+      # via ?url — these are ephemeral build outputs. Desktop bundles admin
+      # components (via App.vue), which reach through @shared/api into
+      # @shared/lib/opaque → opaqueWasm.ts, so those files must exist before
+      # `vite build` runs.
+      - name: build opaque wasm (for admin/E2EE chain)
+        run: |
+          wasm_exec="$(go env GOROOT)/misc/wasm/wasm_exec.js"
+          [ -f "$wasm_exec" ] || wasm_exec="$(go env GOROOT)/lib/wasm/wasm_exec.js"
+          GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false -ldflags="-s -w" -o web/src/shared/lib/opaque.wasm ./cmd/opaque-wasm
+          cp "$wasm_exec" web/src/shared/lib/wasm_exec.js
 
       - name: build frontend
         working-directory: desktop/frontend

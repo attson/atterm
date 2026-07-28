@@ -54,7 +54,7 @@ import {
   type RecoverySnapshot,
   type RecoveryTabSnapshot,
 } from "./lib/api";
-import type { Endpoint, RelayMe, StartupError, UpdateState } from "./lib/api";
+import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
@@ -698,6 +698,34 @@ async function refreshRelayConfig() {
   if (key === lastRemoteKey) return;
   lastRemoteKey = key;
   connectRemoteSessionList(relayConnected, attachEndpoint);
+}
+
+// buildWebRemoteEndpoint adapts the RelayConfig the web platform bridge
+// returns (platform/web.ts relay.load) into the ws(s) Endpoint that
+// SessionConnection dials directly. Unlike desktop's connectRemoteSessionList,
+// there is no Go loopback proxy on web — the browser attaches straight to
+// the relay. `cfg.url` (RelayConfig.baseURL) is normally empty for the common
+// case of the web app being served by the relay itself (same-origin login):
+// apiFetch treats an empty baseURL as "relative to location.origin" (see
+// web/src/shared/api/client.ts), so mirror that here by falling back to the
+// current page's origin with http(s) mapped to ws(s). A non-empty cfg.url
+// (cross-origin pairing case) is converted the same way. homeInstanceURL
+// takes priority when set (multi-instance realm routing), matching
+// web/src/shared/ws/client-conn.ts's wsUrl() precedence.
+function buildWebRemoteEndpoint(cfg: RelayConfig): Endpoint | null {
+  if (!cfg.token) return null;
+  const httpBase = cfg.homeInstanceURL || cfg.url;
+  if (!httpBase) {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    return { url: `${proto}//${location.host}`, session_token: cfg.token };
+  }
+  try {
+    const u = new URL(httpBase);
+    const proto = u.protocol === "https:" ? "wss:" : "ws:";
+    return { url: `${proto}//${u.host}`, session_token: cfg.token };
+  } catch {
+    return null;
+  }
 }
 
 async function refreshTerminalTheme() {
@@ -1503,6 +1531,9 @@ onMounted(async () => {
     // ready as soon as the first poll returns so the UI leaves the
     // "loading" splash even when the list is empty.
     try {
+      bootStage = "loadRelayConfig";
+      const relayCfg = await $platform.relay.load();
+      remoteEndpoint.value = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null;
       bootStage = "listRemoteSessions";
       await pollRemoteSessionsViaPlatform();
       status.value = "ready";
@@ -1688,7 +1719,7 @@ defineExpose({ me });
       />
       <main class="main">
         <AdminPanel v-if="adminViewOpen" />
-        <template v-else-if="localEndpoint">
+        <template v-else-if="localEndpoint || remoteEndpoint">
           <div v-if="tabs.length === 0" class="empty">
             {{ i18nT("app.startingFirstSession") }}
           </div>

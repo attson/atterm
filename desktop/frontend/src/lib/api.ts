@@ -138,6 +138,9 @@ export interface RelayConfig {
 export interface RelayMe {
   user_id: string;
   email: string;
+  // Optional: older relays / cached objects may omit it. App.vue's isAdmin
+  // computed treats a missing field as non-admin (`=== true` check).
+  is_admin?: boolean;
 }
 
 export interface RelaySessionRow {

@@ -927,6 +927,7 @@ export namespace main {
 	export class RelayMe {
 	    user_id: string;
 	    email: string;
+	    is_admin: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RelayMe(source);
@@ -936,6 +937,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.user_id = source["user_id"];
 	        this.email = source["email"];
+	        this.is_admin = source["is_admin"];
 	    }
 	}
 	export class RelaySessionRow {

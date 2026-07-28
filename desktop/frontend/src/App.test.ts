@@ -928,3 +928,103 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
     expect(wrapper.find('[data-testid="tabbar-stub"]').attributes("data-tab-count")).toBe("0");
   });
 });
+
+describe("admin view (main-area swap)", () => {
+  // Minimal TabBar stub: reflects isAdmin/adminOpen props back onto a
+  // data-test button (so a test can assert App wired them through) and
+  // exposes two triggers — toggle-admin (mirrors the real admin button) and
+  // activate (mirrors clicking a session tab, i.e. gotoTab).
+  const tabBarStub = {
+    props: ["isAdmin", "adminOpen"],
+    template: `
+      <div>
+        <button v-if="isAdmin" data-testid="toggle-admin" :class="{ active: adminOpen }" @click="$emit('toggle-admin')">admin</button>
+        <button data-testid="activate-session-tab" @click="$emit('activate', 'tab-1')">tab</button>
+      </div>
+    `,
+  };
+
+  function mountAdminApp() {
+    return mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TaskSidebar: true,
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          PaneGrid: { template: `<div data-testid="pane-grid-stub" />` },
+          AdminPanel: { template: `<div data-testid="admin-panel-stub" />` },
+          TabBar: tabBarStub,
+        },
+      },
+    });
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+  });
+
+  it("isAdmin=true + adminViewOpen=true renders AdminPanel and hides PaneGrid", async () => {
+    const platform = createFakePlatform();
+    platform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: "u1", email: "a@b.com", is_admin: true });
+    __setPlatformForTests(platform);
+
+    const wrapper = mountAdminApp();
+    await flushPromises();
+
+    // Closed by default — PaneGrid's absence here is coincidental (no
+    // localEndpoint in this test), the real assertion is AdminPanel's gate.
+    expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
+
+    await wrapper.get('[data-testid="toggle-admin"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="pane-grid-stub"]').exists()).toBe(false);
+  });
+
+  it("clicking a session tab (gotoTab) closes the admin view", async () => {
+    const platform = createFakePlatform();
+    platform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: "u1", email: "a@b.com", is_admin: true });
+    __setPlatformForTests(platform);
+
+    const wrapper = mountAdminApp();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="toggle-admin"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(true);
+
+    await wrapper.get('[data-testid="activate-session-tab"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
+  });
+
+  it("isAdmin transitioning true -> false auto-resets adminViewOpen", async () => {
+    const platform = createFakePlatform();
+    platform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: "u1", email: "a@b.com", is_admin: true });
+    __setPlatformForTests(platform);
+
+    const wrapper = mountAdminApp();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="toggle-admin"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(true);
+
+    // Simulate admin rights being revoked mid-session: App.vue exposes `me`
+    // (see defineExpose at the bottom of App.vue) purely so this transition
+    // is testable without a second live fetchMe() round-trip.
+    (wrapper.vm as any).me = { user_id: "u1", email: "a@b.com", is_admin: false };
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="admin-panel-stub"]').exists()).toBe(false);
+  });
+});

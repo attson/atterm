@@ -7,6 +7,7 @@ import TitleBar from "./components/TitleBar.vue";
 import TaskSidebar from "./components/TaskSidebar.vue";
 import { useWindowMaximized } from "./composables/useWindowMaximized";
 import PaneGrid from "./components/PaneGrid.vue";
+import AdminPanel from "./components/AdminPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
@@ -53,7 +54,7 @@ import {
   type RecoverySnapshot,
   type RecoveryTabSnapshot,
 } from "./lib/api";
-import type { Endpoint, StartupError, UpdateState } from "./lib/api";
+import type { Endpoint, RelayMe, StartupError, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
@@ -188,6 +189,20 @@ const startupFatalCopyStatus = ref<string>("");
 const starting = ref(false);
 const showSettings = ref(false);
 const toast = ref<string>("");
+
+// Current relay identity, fetched once at boot (see onMounted). Exposed via
+// defineExpose so tests can drive the isAdmin-transition watcher below
+// without a second live fetchMe() call.
+const me = ref<RelayMe | null>(null);
+const isAdmin = computed(() => me.value?.is_admin === true);
+// Whether the main area shows AdminPanel instead of the pane-grid tabs.
+// Not persisted (see spec §4.10) — always starts closed.
+const adminViewOpen = ref(false);
+// If admin rights are revoked mid-session, drop out of the admin view
+// automatically rather than leaving a non-admin staring at a stale panel.
+watch(isAdmin, (v) => {
+  if (!v) adminViewOpen.value = false;
+});
 
 const quitDialogOpen = ref(false);
 let quitListenerOff: (() => void) | null = null;
@@ -711,6 +726,9 @@ function gotoTab(id: string) {
   if (location.hash !== "#/t/" + id) {
     location.hash = "#/t/" + id;
   }
+  // Clicking a session tab always means "I want my terminal back" — close
+  // the admin view without touching tabs/currentTabId/hash otherwise.
+  adminViewOpen.value = false;
 }
 
 function onTabReorder(fromId: string, targetId: string, position: "before" | "after") {
@@ -1389,6 +1407,16 @@ onMounted(async () => {
       viewerCounts[d.session_id] = d.count ?? 0;
     }
   });
+  // Fire-and-forget: drives TabBar's admin button + AdminPanel gating only.
+  // Not on the critical boot path — an unconfigured/unauthenticated relay
+  // rejects immediately and just leaves isAdmin false.
+  void (async () => {
+    try {
+      me.value = await $platform.relay.fetchMe();
+    } catch {
+      me.value = null;
+    }
+  })();
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
   window.addEventListener("hashchange", onHashChange);
@@ -1567,6 +1595,11 @@ onUnmounted(() => {
   if (snapshotSaveHandle !== null) window.clearTimeout(snapshotSaveHandle);
   teardownMeasureProbe();
 });
+
+// Test-only surface: lets App.test.ts drive the isAdmin-transition watcher
+// (me.value changes → isAdmin recomputes → adminViewOpen auto-resets) without
+// standing up a second live fetchMe() round-trip mid-test.
+defineExpose({ me });
 </script>
 
 <template>
@@ -1598,11 +1631,14 @@ onUnmounted(() => {
       :starting="starting"
       :can-new-local="caps.localPty"
       :update-badge="updateBadge"
+      :is-admin="isAdmin"
+      :admin-open="adminViewOpen"
       @activate="gotoTab"
       @close="closeTab"
       @new="startNewTab"
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
+      @toggle-admin="adminViewOpen = !adminViewOpen"
     />
 
     <div v-if="startupFatal" class="startup-fatal" data-testid="startup-fatal" role="alert">
@@ -1645,7 +1681,8 @@ onUnmounted(() => {
         @markSeen="onMarkSeen"
       />
       <main class="main">
-        <template v-if="localEndpoint">
+        <AdminPanel v-if="adminViewOpen" />
+        <template v-else-if="localEndpoint">
           <div v-if="tabs.length === 0" class="empty">
             {{ i18nT("app.startingFirstSession") }}
           </div>

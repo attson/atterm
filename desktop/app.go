@@ -2069,8 +2069,9 @@ func (a *App) BroadcastCommandFinished(sessionID string, exitCode, elapsedMS int
 // RelayMe is the response body from the relay's /api/me endpoint.
 // Email is never logged or persisted (SEC-1).
 type RelayMe struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
+	UserID  string `json:"user_id"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"is_admin"`
 }
 
 // FetchRelayMe queries the configured relay's /api/me endpoint using the

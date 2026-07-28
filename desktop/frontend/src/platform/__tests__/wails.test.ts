@@ -18,6 +18,8 @@ vi.mock('../../lib/api', () => ({
   downloadVersion: vi.fn().mockResolvedValue(undefined),
   installUpdate: vi.fn().mockResolvedValue(undefined),
   markSessionsSeen: vi.fn().mockResolvedValue(undefined),
+  getPinnedSessionIds: vi.fn().mockResolvedValue(['s1', 's2']),
+  setPinnedSessionIds: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../../../wailsjs/runtime/runtime', () => ({
@@ -50,7 +52,7 @@ import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
 import { GetPluginConfig, SetPluginConfig } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
-import { fetchRelayMe, showNotification, setUplinkPaused, markSessionsSeen } from '../../lib/api'
+import { fetchRelayMe, showNotification, setUplinkPaused, markSessionsSeen, getPinnedSessionIds, setPinnedSessionIds } from '../../lib/api'
 
 describe('createWailsPlatform', () => {
   beforeEach(() => { vi.clearAllMocks() })
@@ -60,6 +62,7 @@ describe('createWailsPlatform', () => {
     expect(p.caps).toEqual({
       localPty: true, autoUpdate: true, pluginHost: true, windowControls: true,
       systemClipboard: true, notifications: true, fileDialog: true,
+      wailsBindings: true,
     })
   })
 
@@ -80,6 +83,19 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.sessions.markSessionsSeen!({ ids: ['s1'] })
     expect(markSessionsSeen).toHaveBeenCalledWith({ ids: ['s1'] })
+  })
+
+  it('sessions.getPins delegates to api.getPinnedSessionIds', async () => {
+    const p = createWailsPlatform()
+    const pins = await p.sessions.getPins()
+    expect(getPinnedSessionIds).toHaveBeenCalledOnce()
+    expect(pins).toEqual(['s1', 's2'])
+  })
+
+  it('sessions.setPins delegates to api.setPinnedSessionIds', async () => {
+    const p = createWailsPlatform()
+    await p.sessions.setPins(['s3'])
+    expect(setPinnedSessionIds).toHaveBeenCalledWith(['s3'])
   })
 
   it('system.showNotification delegates', async () => {

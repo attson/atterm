@@ -42,6 +42,13 @@ export interface Capabilities {
   systemClipboard: boolean
   notifications: boolean
   fileDialog: boolean
+  // True on Wails (where window.go.main.App is populated), false on Web
+  // and Capacitor. Distinct from `localPty`: Capacitor also has
+  // localPty=false but runs in a different shell (MobileApp.vue) with its
+  // own session-list bridge. App.vue uses `wailsBindings` to gate the
+  // desktop-only boot chain (getEndpoint/getHostInfo/loadRecoverySnapshot
+  // …) whose lib/api calls throw when the Wails runtime isn't there.
+  wailsBindings: boolean
 }
 
 // ----- Bridges -----
@@ -130,6 +137,13 @@ export interface SessionBridge {
    *  status on failure). Capacitor posts directly to /api/sessions/seen
    *  with Bearer auth and throws `'relay_unauthorized'` on HTTP 401. */
   markSessionsSeen?(opts: _MarkSessionsSeenOpts): Promise<void>
+  /** Read the persisted pin list. Wails reads from appConfig; Capacitor/
+   *  Web from localStorage. */
+  getPins(): Promise<string[]>
+  /** Persist the pin list. Wails writes to appConfig (which triggers a
+   *  prefs push server-side); Capacitor/Web write to localStorage and
+   *  notify the prefsSync engine locally. */
+  setPins(ids: string[]): Promise<void>
 }
 
 export interface SystemBridge {

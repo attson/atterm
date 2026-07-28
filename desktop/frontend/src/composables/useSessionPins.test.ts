@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { effectScope, nextTick } from "vue";
 import { flushPromises } from "@vue/test-utils";
 import { useSessionPins, __resetForTests } from "./useSessionPins";
-import * as api from "../lib/api";
+import { __setPlatformForTests } from "../platform";
+import {
+  createFakePlatform as fakePlatform,
+  fakeEventBus,
+} from "../platform/__tests__/_fakePlatform";
 
 describe("useSessionPins", () => {
   let scope: ReturnType<typeof effectScope>;
@@ -15,10 +19,15 @@ describe("useSessionPins", () => {
   afterEach(() => {
     vi.useRealTimers();
     scope.stop();
+    __setPlatformForTests(null);
   });
 
-  test("loads pinned ids from Wails on first use", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a", "b"]);
+  test("loads pinned ids from platform on first use", async () => {
+    const getPins = vi.fn().mockResolvedValue(["a", "b"]);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -31,19 +40,22 @@ describe("useSessionPins", () => {
   });
 
   test("only fetches once across multiple useSessionPins() calls", async () => {
-    const spy = vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue([]);
+    const getPins = vi.fn().mockResolvedValue([]);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins },
+    } as any);
     scope.run(() => {
       useSessionPins();
       useSessionPins();
       useSessionPins();
     });
     await flushPromises();
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(getPins).toHaveBeenCalledTimes(1);
   });
 
   test("pin/unpin/toggle mutate pinnedIds", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue([]);
-    vi.spyOn(api, "setPinnedSessionIds").mockResolvedValue(undefined);
+    __setPlatformForTests(fakePlatform());
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -59,11 +71,12 @@ describe("useSessionPins", () => {
     expect(pins.isPinned("b")).toBe(false);
   });
 
-  test("rapid toggles debounce into a single setPinnedSessionIds call", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue([]);
-    const setSpy = vi
-      .spyOn(api, "setPinnedSessionIds")
-      .mockResolvedValue(undefined);
+  test("rapid toggles debounce into a single setPins call", async () => {
+    const setPins = vi.fn().mockResolvedValue(undefined);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, setPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -73,15 +86,19 @@ describe("useSessionPins", () => {
     pins.pin("b");
     pins.pin("c");
     pins.unpin("b");
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(setPins).not.toHaveBeenCalled();
     vi.advanceTimersByTime(300);
     await flushPromises();
-    expect(setSpy).toHaveBeenCalledTimes(1);
-    expect(setSpy).toHaveBeenCalledWith(["a", "c"]);
+    expect(setPins).toHaveBeenCalledTimes(1);
+    expect(setPins).toHaveBeenCalledWith(["a", "c"]);
   });
 
-  test("survives getPinnedSessionIds rejection", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockRejectedValue(new Error("boom"));
+  test("survives getPins rejection", async () => {
+    const getPins = vi.fn().mockRejectedValue(new Error("boom"));
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -91,10 +108,12 @@ describe("useSessionPins", () => {
   });
 
   test("rename replaces old id with new id and schedules one persist", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a", "b"]);
-    const setSpy = vi
-      .spyOn(api, "setPinnedSessionIds")
-      .mockResolvedValue(undefined);
+    const getPins = vi.fn().mockResolvedValue(["a", "b"]);
+    const setPins = vi.fn().mockResolvedValue(undefined);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins, setPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -105,19 +124,21 @@ describe("useSessionPins", () => {
     expect(pins.isPinned("a")).toBe(false);
     expect(pins.isPinned("a2")).toBe(true);
     expect(pins.isPinned("b")).toBe(true);
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(setPins).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(300);
     await flushPromises();
-    expect(setSpy).toHaveBeenCalledTimes(1);
-    expect(new Set(setSpy.mock.calls[0][0])).toEqual(new Set(["a2", "b"]));
+    expect(setPins).toHaveBeenCalledTimes(1);
+    expect(new Set(setPins.mock.calls[0][0])).toEqual(new Set(["a2", "b"]));
   });
 
   test("rename is a no-op when old id is not pinned", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
-    const setSpy = vi
-      .spyOn(api, "setPinnedSessionIds")
-      .mockResolvedValue(undefined);
+    const getPins = vi.fn().mockResolvedValue(["a"]);
+    const setPins = vi.fn().mockResolvedValue(undefined);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins, setPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -129,14 +150,16 @@ describe("useSessionPins", () => {
     expect(pins.isPinned("y")).toBe(false);
     vi.advanceTimersByTime(300);
     await flushPromises();
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(setPins).not.toHaveBeenCalled();
   });
 
   test("rename(x, x) is a no-op", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
-    const setSpy = vi
-      .spyOn(api, "setPinnedSessionIds")
-      .mockResolvedValue(undefined);
+    const getPins = vi.fn().mockResolvedValue(["a"]);
+    const setPins = vi.fn().mockResolvedValue(undefined);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins, setPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -146,15 +169,17 @@ describe("useSessionPins", () => {
     pins.rename("a", "a");
     vi.advanceTimersByTime(300);
     await flushPromises();
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(setPins).not.toHaveBeenCalled();
     expect(pins.isPinned("a")).toBe(true);
   });
 
   test("rename with empty ids is a no-op", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
-    const setSpy = vi
-      .spyOn(api, "setPinnedSessionIds")
-      .mockResolvedValue(undefined);
+    const getPins = vi.fn().mockResolvedValue(["a"]);
+    const setPins = vi.fn().mockResolvedValue(undefined);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins, setPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -165,15 +190,17 @@ describe("useSessionPins", () => {
     pins.rename("a", "");
     vi.advanceTimersByTime(300);
     await flushPromises();
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(setPins).not.toHaveBeenCalled();
     expect(pins.isPinned("a")).toBe(true);
   });
 
   test("rename onto an already-pinned id is idempotent (Set dedup)", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a", "b"]);
-    const setSpy = vi
-      .spyOn(api, "setPinnedSessionIds")
-      .mockResolvedValue(undefined);
+    const getPins = vi.fn().mockResolvedValue(["a", "b"]);
+    const setPins = vi.fn().mockResolvedValue(undefined);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins, setPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -185,15 +212,16 @@ describe("useSessionPins", () => {
     expect(pins.isPinned("b")).toBe(true);
     vi.advanceTimersByTime(300);
     await flushPromises();
-    expect(setSpy).toHaveBeenCalledTimes(1);
-    expect(setSpy.mock.calls[0][0]).toEqual(["b"]);
+    expect(setPins).toHaveBeenCalledTimes(1);
+    expect(setPins.mock.calls[0][0]).toEqual(["b"]);
   });
 
   test("flushNow cancels the debounce and persists immediately", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue([]);
-    const setSpy = vi
-      .spyOn(api, "setPinnedSessionIds")
-      .mockResolvedValue(undefined);
+    const setPins = vi.fn().mockResolvedValue(undefined);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, setPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -202,19 +230,23 @@ describe("useSessionPins", () => {
 
     pins.pin("a");
     pins.rename("a", "b");
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(setPins).not.toHaveBeenCalled();
     await pins.flushNow();
-    expect(setSpy).toHaveBeenCalledTimes(1);
-    expect(setSpy.mock.calls[0][0]).toEqual(["b"]);
+    expect(setPins).toHaveBeenCalledTimes(1);
+    expect(setPins.mock.calls[0][0]).toEqual(["b"]);
 
     // No stale timer fires after flushNow (would double-persist).
     vi.advanceTimersByTime(300);
     await flushPromises();
-    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(setPins).toHaveBeenCalledTimes(1);
   });
 
   test("ready() resolves once the initial load settles, unblocking isPinned", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue(["a"]);
+    const getPins = vi.fn().mockResolvedValue(["a"]);
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -226,7 +258,11 @@ describe("useSessionPins", () => {
   });
 
   test("ready() still resolves (to the empty default) when the load rejects", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockRejectedValue(new Error("boom"));
+    const getPins = vi.fn().mockRejectedValue(new Error("boom"));
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins },
+    } as any);
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
       pins = useSessionPins();
@@ -236,8 +272,11 @@ describe("useSessionPins", () => {
   });
 
   test("flushNow warns (but still resolves) when the persist call rejects", async () => {
-    vi.spyOn(api, "getPinnedSessionIds").mockResolvedValue([]);
-    vi.spyOn(api, "setPinnedSessionIds").mockRejectedValue(new Error("disk full"));
+    const setPins = vi.fn().mockRejectedValue(new Error("disk full"));
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, setPins },
+    } as any);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     let pins!: ReturnType<typeof useSessionPins>;
     scope.run(() => {
@@ -251,5 +290,48 @@ describe("useSessionPins", () => {
       "[pins] flushNow persist failed",
       expect.any(Error),
     );
+  });
+
+  test("reload re-reads from platform on demand", async () => {
+    const getPins = vi.fn()
+      .mockResolvedValueOnce(['a'])
+      .mockResolvedValueOnce(['a', 'b'])
+    __setPlatformForTests({
+      ...fakePlatform(),
+      sessions: { ...fakePlatform().sessions, getPins, setPins: vi.fn().mockResolvedValue(undefined) },
+    } as any)
+
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await pins.ready()
+    expect(Array.from(pins.pinnedIds.value)).toEqual(['a'])
+
+    await pins.reload()
+    expect(Array.from(pins.pinnedIds.value)).toEqual(['a', 'b'])
+    expect(getPins).toHaveBeenCalledTimes(2)
+  });
+
+  test("prefs:changed event triggers reload", async () => {
+    const getPins = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(['new'])
+    const events = fakeEventBus()
+    __setPlatformForTests({
+      ...fakePlatform(),
+      events,
+      sessions: { ...fakePlatform().sessions, getPins, setPins: vi.fn().mockResolvedValue(undefined) },
+    } as any)
+
+    let pins!: ReturnType<typeof useSessionPins>;
+    scope.run(() => {
+      pins = useSessionPins();
+    });
+    await pins.ready()
+    expect(pins.pinnedIds.value.size).toBe(0)
+
+    events.emit('prefs:changed', undefined)
+    await vi.waitFor(() => expect(pins.pinnedIds.value.has('new')).toBe(true))
   });
 });

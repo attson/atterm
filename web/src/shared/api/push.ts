@@ -26,8 +26,3 @@ export async function unsubscribePush(endpoint: string): Promise<void> {
     body: JSON.stringify({ endpoint }),
   })
 }
-
-export async function testPush(): Promise<number> {
-  const { data } = await apiFetch<{ sent: number }>('/api/push/test', { method: 'POST' })
-  return data.sent
-}

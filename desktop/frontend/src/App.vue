@@ -76,6 +76,7 @@ import {
 } from "./lib/terminalThemes";
 import { useI18n } from "./i18n/useI18n";
 import type { MessageKey } from "./i18n";
+import { loadSnapshot, saveSnapshot, parseHashSid, formatHash, type WebTabsSnapshot } from "./lib/webTabsSnapshot";
 
 const { t: i18nT } = useI18n();
 
@@ -619,6 +620,26 @@ async function pollRemoteSessions() {
   }
 }
 
+// Web-only session poll. Skips the Wails-specific listRemoteSessions()
+// (which goes through Go's remoteProxy — none of that exists on web) and
+// hits the platform bridge's HTTP `/api/sessions` directly. The web
+// platform returns RemoteSession[] with `session_id` alias, but the raw
+// SessionInfo `id` field is preserved from /api/sessions — remap it so
+// applyRemoteSessions (which reads `.id`) sees a consistent shape.
+async function pollRemoteSessionsViaPlatform() {
+  const rs = await $platform.sessions.listRemoteSessions();
+  // The web platform bridge (desktop/frontend/src/platform/web.ts) preserves
+  // the original `id` field from /api/sessions and adds a `session_id`
+  // alias for the RemoteSession shape. Recover the SessionInfo view by
+  // aliasing session_id back to id (harmless when both are already
+  // present).
+  const asSessionInfo: SessionInfo[] = rs.map((s) => {
+    const raw = s as unknown as SessionInfo & { session_id?: string };
+    return { ...raw, id: raw.id ?? raw.session_id ?? "" };
+  });
+  applyRemoteSessions(asSessionInfo);
+}
+
 // connectRemoteSessionList (re)starts the remote-session list poll and sets the
 // attach endpoint. Two independent concerns:
 //   - The LIST is read through the Go backend (App.ListRemoteSessions), polled
@@ -831,7 +852,7 @@ async function onRecoveryRestore(picks: RecoveryTabSnapshot[]) {
   const savedActive = recoveryDialogState.value.snapshot?.active_tab_id ?? "";
   recoveryDialogState.value = { open: false, snapshot: null };
   if (picks.length === 0) {
-    await startNewTab();
+    if (caps.localPty) await startNewTab();
     return;
   }
   await executeRestore(picks, savedActive);
@@ -844,7 +865,7 @@ async function onRecoveryDiscard() {
   } catch (e) {
     console.warn("[recovery] discard failed", e);
   }
-  await startNewTab();
+  if (caps.localPty) await startNewTab();
 }
 
 // executeRestore rebuilds tabs/panes from a snapshot. Serial per tab (and
@@ -898,6 +919,13 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
           remote: true,
           lastSeenInfo: synthSessionInfoFromSnapshot(snap),
         };
+        continue;
+      }
+      // Platforms without a local PTY (e.g. the web build) can't fork a
+      // local shell at all — leave the pane empty instead of calling
+      // newSession, matching how a snapshot-less boot renders there.
+      if (!caps.localPty) {
+        t.panes[i] = { sessionId: null, remote: false };
         continue;
       }
       try {
@@ -1190,7 +1218,7 @@ useTerminalShortcuts(
     onSplitHorizontal: (mode) => onSplit("horizontal", mode),
     onClosePane,
     onFocusPane,
-    onNewTab: startNewTab,
+    onNewTab: () => { if (caps.localPty) startNewTab(); },
     onSwitchTab,
     onToggleTaskSidebar: () => setSidebarCollapsedAndPersist(!sidebarCollapsed.value),
     onFocusSidebarSearch: () => {
@@ -1220,6 +1248,119 @@ watch([tabs, currentTabId], () => {
   gotoTab(tabs.value[0].id);
 });
 
+// Web-only URL hash sync: reflects the active pane's session id as
+// `#/session/<sid>` (lib/webTabsSnapshot's formatHash) so the address bar is
+// bookmarkable/shareable on a real web deployment. Uses history.replaceState
+// (never `location.hash =`) so it never adds a history entry and never fires
+// a `hashchange` event back at onHashChange below. Gated on
+// `!caps.wailsBindings` — desktop owns its own `#/t/<tabId>` hash via
+// gotoTab()/syncRoute() and this watcher would clobber it on every pane
+// change (leaving the tab hash out of sync with the visible tab).
+if (!caps.wailsBindings) {
+  watch(currentTab, (t) => {
+    const activePane = t?.panes[t.activePaneIdx];
+    const sid = activePane?.sessionId ?? "";
+    const target = sid ? formatHash(sid) : "#/";
+    if (location.hash !== target) history.replaceState({}, "", target);
+  });
+}
+
+// Web-only per-window tabs snapshot (lib/webTabsSnapshot). loadSnapshot()/
+// saveSnapshot() key off a sessionStorage-scoped window id and are gated on
+// `!caps.wailsBindings` so a Wails/Capacitor build never touches the
+// browser-only localStorage entry (used to be a no-op relying on
+// sessionStorage minting a fresh id per launch — the wailsBindings gate
+// makes the platform check explicit).
+let snapshotSaveHandle: ReturnType<typeof setTimeout> | null = null;
+function scheduleSnapshotSave() {
+  if (caps.wailsBindings) return;
+  if (snapshotSaveHandle) clearTimeout(snapshotSaveHandle);
+  snapshotSaveHandle = setTimeout(() => {
+    snapshotSaveHandle = null;
+    saveSnapshot({
+      tabs: tabs.value.map((t) => ({
+        id: t.id,
+        layout: t.layout,
+        active_pane_idx: t.activePaneIdx,
+        col_ratio: t.colRatio,
+        row_ratio: t.rowRatio,
+        panes: t.panes
+          .map((p, slot) => ({
+            slot,
+            session_id: p.sessionId ?? "",
+            host_id: p.lastSeenInfo?.host_id,
+            sealed: p.lastSeenInfo?.sealed,
+          }))
+          .filter((p) => p.session_id),
+      })),
+      active_tab_id: currentTabId.value ?? "",
+    });
+  }, 300);
+}
+if (!caps.wailsBindings) {
+  watch(tabs, () => { scheduleSnapshotSave(); }, { deep: true });
+}
+
+// restoreFromWebSnapshot rebuilds tabs from the web-only localStorage
+// snapshot at boot. Every pane restores as remote (the web build has no
+// local PTY — see caps.localPty gating throughout this file), mirroring
+// executeRestore's remote-pane branch: re-bind sessionId + synth
+// lastSeenInfo, no spawn.
+function restoreFromWebSnapshot(snap: WebTabsSnapshot) {
+  const validLayouts: LayoutKind[] = ["single", "vertical", "horizontal", "grid2x2"];
+  const newIds: string[] = [];
+  let activeIdx = -1;
+  for (const snapTab of snap.tabs) {
+    const layout: LayoutKind = validLayouts.includes(snapTab.layout as LayoutKind)
+      ? (snapTab.layout as LayoutKind)
+      : "single";
+    const t: Tab = {
+      id: newId(),
+      layout,
+      activePaneIdx: snapTab.active_pane_idx,
+      colRatio: snapTab.col_ratio ?? RATIO_DEFAULT,
+      rowRatio: snapTab.row_ratio ?? RATIO_DEFAULT,
+      panes: [],
+    };
+    const want = PANE_COUNT[layout];
+    for (let i = 0; i < want; i++) {
+      const p = snapTab.panes.find((pp) => pp.slot === i);
+      if (!p || !p.session_id) {
+        t.panes[i] = { sessionId: null, remote: false };
+        continue;
+      }
+      t.panes[i] = {
+        sessionId: p.session_id,
+        remote: true,
+        lastSeenInfo: synthSessionInfoFromSnapshot({
+          slot: p.slot,
+          remote: true,
+          host_id: p.host_id,
+          session_id: p.session_id,
+          shell: "",
+        }),
+      };
+    }
+    if (snapTab.id === snap.active_tab_id) activeIdx = newIds.length;
+    tabs.value.push(t);
+    newIds.push(t.id);
+  }
+  if (activeIdx >= 0 && newIds[activeIdx]) gotoTab(newIds[activeIdx]);
+  else if (newIds.length > 0) gotoTab(newIds[0]);
+}
+
+// onHashChange handles `#/session/<sid>` deep links after mount (e.g. a
+// share link pasted into an already-open tab, or a hand-edited hash).
+// `focus`/`permission` are parsed by parseHashSid but not yet enforced
+// anywhere in the pane/session model — reserved for a follow-up once
+// view-only / auto-focus semantics land; openRemoteAsTab's own
+// findPaneLocation dedup already covers "already open → activate that pane".
+function onHashChange() {
+  const { sid } = parseHashSid(location.hash);
+  if (!sid) return;
+  openRemoteAsTab(sid);
+}
+
 onMounted(async () => {
   try {
     sidebarCollapsed.value = await getTaskSidebarCollapsed();
@@ -1248,6 +1389,7 @@ onMounted(async () => {
   });
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
+  window.addEventListener("hashchange", onHashChange);
   try {
     const fatal = await getStartupError();
     if (fatal?.fatal) {
@@ -1280,33 +1422,66 @@ onMounted(async () => {
     tabs: [],
   };
   let recoveryEnabled = true;
-  try {
-    bootStage = "refreshTerminalTheme";
-    await refreshTerminalTheme();
-    bootStage = "getEndpoint";
-    localEndpoint.value = await getEndpoint();
-    bootStage = "getHostInfo";
-    const info = await getHostInfo();
-    localHostID.value = info.host_id;
-    localHost.value = info.host;
-    bootStage = "loadRecoverySnapshot";
-    recoverySnap = await loadRecoverySnapshot();
-    recoveryEnabled = await getRecoveryDialogEnabled();
-    bootStage = "connectLocalSessionList";
-    connectLocalSessionList(localEndpoint.value);
-    bootStage = "refreshRelayConfig";
-    await refreshRelayConfig();
-  } catch (e: any) {
-    const name = e?.name ?? "Error";
-    const msg = e?.message ?? String(e);
-    console.error(`[boot] step "${bootStage}" failed`, {
-      name,
-      message: msg,
-      stack: e?.stack,
-    });
-    status.value = "error";
-    errorMsg.value = `${bootStage}: ${name}: ${msg}` || i18nT("app.wailsBindingsUnavailable");
-    return;
+  // The Wails-only boot chain: every call below reaches into window.go.main.App
+  // via lib/api's `bindings()`, which throws "Wails bindings not ready" on the
+  // web build. Gate the whole block on `caps.wailsBindings`; the web branch
+  // below runs an equivalent bootstrap via the platform bridge.
+  if (caps.wailsBindings) {
+    try {
+      bootStage = "refreshTerminalTheme";
+      await refreshTerminalTheme();
+      bootStage = "getEndpoint";
+      localEndpoint.value = await getEndpoint();
+      bootStage = "getHostInfo";
+      const info = await getHostInfo();
+      localHostID.value = info.host_id;
+      localHost.value = info.host;
+      bootStage = "loadRecoverySnapshot";
+      recoverySnap = await loadRecoverySnapshot();
+      recoveryEnabled = await getRecoveryDialogEnabled();
+      bootStage = "connectLocalSessionList";
+      connectLocalSessionList(localEndpoint.value);
+      bootStage = "refreshRelayConfig";
+      await refreshRelayConfig();
+    } catch (e: any) {
+      const name = e?.name ?? "Error";
+      const msg = e?.message ?? String(e);
+      console.error(`[boot] step "${bootStage}" failed`, {
+        name,
+        message: msg,
+        stack: e?.stack,
+      });
+      status.value = "error";
+      errorMsg.value = `${bootStage}: ${name}: ${msg}` || i18nT("app.wailsBindingsUnavailable");
+      return;
+    }
+  } else {
+    // Web boot: no local PTY, no Wails uplink. The session list is served
+    // by the relay's HTTP API (via platform.sessions.listRemoteSessions),
+    // polled every 3s (rarer than desktop's 2s WS-backed poll — no
+    // subscribe channel here, so lower is wasted bandwidth). Marks status
+    // ready as soon as the first poll returns so the UI leaves the
+    // "loading" splash even when the list is empty.
+    try {
+      bootStage = "listRemoteSessions";
+      await pollRemoteSessionsViaPlatform();
+      status.value = "ready";
+      remotePollHandle = window.setInterval(() => {
+        void pollRemoteSessionsViaPlatform();
+      }, 3000);
+    } catch (e: any) {
+      const name = e?.name ?? "Error";
+      const msg = e?.message ?? String(e);
+      console.error(`[boot-web] step "${bootStage}" failed`, {
+        name, message: msg, stack: e?.stack,
+      });
+      // Non-fatal: leave status=loading but log; user can retry via reload.
+      // The session-list refresh interval is still installed below so a
+      // transient error clears itself.
+      remotePollHandle = window.setInterval(() => {
+        void pollRemoteSessionsViaPlatform();
+      }, 3000);
+    }
   }
 
   // Auto-update poll: every 5s pull state.available || ready and toggle the
@@ -1329,14 +1504,34 @@ onMounted(async () => {
   try {
     if (!autoStarted && tabs.value.length === 0) {
       autoStarted = true;
-      const hasRecovery = recoveryEnabled && (recoverySnap?.tabs?.length ?? 0) > 0;
-      if (hasRecovery) {
-        // Dialog handlers (onRecoveryRestore / onRecoveryDiscard) decide
-        // whether to spawn restored panes or fall back to startNewTab — so
-        // we deliberately do NOT call startNewTab() here.
-        recoveryDialogState.value = { open: true, snapshot: recoverySnap };
+      // Web-only: a per-window tabs snapshot in localStorage takes priority
+      // over the server-side recovery snapshot below — it reflects exactly
+      // what this browser tab/window had open (see restoreFromWebSnapshot).
+      // loadSnapshot() is always null on desktop/capacitor, so this branch
+      // is a no-op there and falls straight through to the existing logic.
+      const webSnap = loadSnapshot();
+      if (webSnap && webSnap.tabs.length > 0) {
+        restoreFromWebSnapshot(webSnap);
       } else {
-        startNewTab();
+        // Deep link: `#/session/<sid>` opens that one remote session as a
+        // new tab instead of falling through to recovery/auto-start.
+        const { sid: hashSid } = parseHashSid(location.hash);
+        if (hashSid) {
+          openRemoteAsTab(hashSid);
+        } else {
+          const hasRecovery = recoveryEnabled && (recoverySnap?.tabs?.length ?? 0) > 0;
+          if (hasRecovery) {
+            // Dialog handlers (onRecoveryRestore / onRecoveryDiscard) decide
+            // whether to spawn restored panes or fall back to startNewTab — so
+            // we deliberately do NOT call startNewTab() here.
+            recoveryDialogState.value = { open: true, snapshot: recoverySnap };
+          } else if (caps.localPty) {
+            startNewTab();
+          }
+          // else: no recovery snapshot and no local PTY (web build) — render
+          // the empty state (sidebar only, no tab) instead of crashing on a
+          // startNewTab() that has nothing to spawn.
+        }
       }
     }
   } catch (e: any) {
@@ -1354,10 +1549,12 @@ onUnmounted(() => {
   notificationClickListenerOff?.();
   notificationClickListenerOff = null;
   window.removeEventListener("hashchange", syncRoute);
+  window.removeEventListener("hashchange", onHashChange);
   localSessionListConn?.detach();
   stopRemotePoll();
   if (toastHandle !== null) window.clearTimeout(toastHandle);
   if (updatePollHandle !== null) window.clearInterval(updatePollHandle);
+  if (snapshotSaveHandle !== null) window.clearTimeout(snapshotSaveHandle);
   teardownMeasureProbe();
 });
 </script>
@@ -1371,11 +1568,9 @@ onUnmounted(() => {
       :session-count="sessionCount"
       :remote-endpoint="remoteEndpoint"
       :available-remote-count="availableRemote.length"
-      :update-badge="updateBadge"
       :current-title="currentTitleForBar"
       :current-task-state="currentTaskStateForBar"
       @open-remote="openRemoteFromTitleBar"
-      @open-settings="showSettings = true"
     />
     <PasteImagePreviewHost />
     <PasteFilePreviewHost />
@@ -1391,10 +1586,13 @@ onUnmounted(() => {
       :tabs="tabSummaries"
       :current-id="currentTabId"
       :starting="starting"
+      :can-new-local="caps.localPty"
+      :update-badge="updateBadge"
       @activate="gotoTab"
       @close="closeTab"
       @new="startNewTab"
       @reorder="onTabReorder"
+      @open-settings="showSettings = true"
     />
 
     <div v-if="startupFatal" class="startup-fatal" data-testid="startup-fatal" role="alert">

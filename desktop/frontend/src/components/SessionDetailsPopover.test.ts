@@ -1,7 +1,18 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import SessionDetailsPopover from "./SessionDetailsPopover.vue";
 import type { RemoteSession } from "../platform/types";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
+
+// SessionDetailsPopover mounts useSessionPins() unconditionally on setup —
+// pins now go through platform.sessions.getPins/setPins.
+beforeEach(() => {
+  __setPlatformForTests(createFakePlatform());
+});
+afterEach(() => {
+  __setPlatformForTests(null);
+});
 
 function mkSession(over: Partial<RemoteSession> = {}): RemoteSession {
   return {

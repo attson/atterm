@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskGroupedList from "./TaskGroupedList.vue";
@@ -134,6 +134,41 @@ function clampWidth(px: number): number {
   return Math.max(minWidth, Math.min(maxWidth, px));
 }
 
+// Below 768px the sidebar becomes an overlay drawer (position:fixed,
+// slid off-screen until toggled via the hamburger button) rather than
+// an inline column. Resizing back to wide always resets the drawer to
+// closed so it doesn't linger open once it's no longer an overlay.
+const isNarrow = ref(false);
+const drawerOpen = ref(false);
+
+function updateIsNarrow() {
+  const wasNarrow = isNarrow.value;
+  isNarrow.value = window.innerWidth < 768;
+  if (wasNarrow && !isNarrow.value) drawerOpen.value = false;
+}
+
+// ESC-to-close: when the drawer is open, pressing Escape anywhere in the
+// window collapses it back to hidden. Keeps the drawer feeling modal-like
+// without a full backdrop overlay. Gated on drawerOpen so it doesn't
+// intercept ESC on the desktop layout (where the sidebar is always
+// inline).
+function onWindowKeydown(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  if (!drawerOpen.value) return;
+  drawerOpen.value = false;
+  e.preventDefault();
+}
+
+onMounted(() => {
+  updateIsNarrow();
+  window.addEventListener("resize", updateIsNarrow);
+  window.addEventListener("keydown", onWindowKeydown);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", updateIsNarrow);
+  window.removeEventListener("keydown", onWindowKeydown);
+});
+
 function onDragStart(e: PointerEvent) {
   if (props.collapsed) return;
   dragging = true;
@@ -195,145 +230,165 @@ const railIcons = computed(() => {
 </script>
 
 <template>
-  <aside
-    class="task-sidebar"
-    :class="{ collapsed }"
-    :style="!collapsed ? { width: widthPx + 'px' } : undefined"
-    tabindex="-1"
-    @keydown="onSidebarKeydown"
-    @click.capture="onSidebarBlankClick"
-  >
-    <div
-      v-if="!collapsed"
-      class="resize-handle"
-      data-test="sidebar-resize-handle"
-      @pointerdown="onDragStart"
-      @pointermove="onDragMove"
-      @pointerup="onDragEnd"
-      @pointercancel="onDragEnd"
-    />
-    <div v-if="collapsed" class="rail" data-test="sidebar-rail">
-      <button
-        class="expand-button"
-        :title="t('tasks.sidebar.expand')"
-        @click="emit('update:collapsed', false)"
-      >
-        »
-      </button>
-      <span v-if="totalUnread > 0" class="rail-badge" data-test="sidebar-rail-badge">
-        {{ totalUnread }}
-      </span>
-      <span
-        v-for="s in railIcons"
-        :key="s.session_id"
-        class="rail-icon"
-        data-test="sidebar-rail-icon"
-        role="button"
-        tabindex="0"
-        :aria-label="s.current_command || s.title || s.session_id.slice(0, 8)"
-        @click="emit('open', s)"
-        @keydown.enter.prevent="emit('open', s)"
-        @keydown.space.prevent="emit('open', s)"
-      >
-        <TaskStateIcon
-          :state="(s.task_state as TaskState | undefined) ?? 'idle'"
-          :size="14"
-        />
-      </span>
-    </div>
-    <div v-else class="expanded">
-      <header class="sidebar-header">
-        <span v-if="!(searchOpen || query)" class="title">{{ t("tasks.sidebar.title") }}</span>
+  <!-- `display: contents` keeps this a single Vue template root (so
+       non-declared attrs from the parent still fall through onto the
+       `<aside>` without a "renders fragment root nodes" warning) while
+       the hamburger stays a *sibling* of `.task-sidebar`, not a
+       descendant — it must not inherit the drawer's translateX, or it
+       would slide off-screen along with the closed drawer. -->
+  <div class="task-sidebar-shell">
+    <button
+      v-if="isNarrow"
+      data-test="sidebar-hamburger"
+      class="sidebar-hamburger"
+      :aria-label="drawerOpen ? t('tasks.sidebar.closeDrawer') : t('tasks.sidebar.openDrawer')"
+      @click="drawerOpen = !drawerOpen"
+    >☰</button>
+    <aside
+      class="task-sidebar"
+      :class="{ collapsed, drawer: isNarrow, open: isNarrow && drawerOpen }"
+      :style="!collapsed ? { width: widthPx + 'px' } : undefined"
+      tabindex="-1"
+      @keydown="onSidebarKeydown"
+      @click.capture="onSidebarBlankClick"
+    >
+      <div
+        v-if="!collapsed"
+        class="resize-handle"
+        data-test="sidebar-resize-handle"
+        @pointerdown="onDragStart"
+        @pointermove="onDragMove"
+        @pointerup="onDragEnd"
+        @pointercancel="onDragEnd"
+      />
+      <div v-if="collapsed" class="rail" data-test="sidebar-rail">
         <button
-          v-if="!(searchOpen || query)"
-          class="search-icon-btn"
-          data-test="sidebar-search-toggle"
-          :title="t('tasks.sidebar.searchPlaceholder')"
-          :aria-label="t('tasks.sidebar.searchPlaceholder')"
-          @click="openSearch"
+          class="expand-button"
+          :title="t('tasks.sidebar.expand')"
+          @click="emit('update:collapsed', false)"
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5" />
-            <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-          </svg>
+          »
         </button>
-        <input
-          v-else
-          ref="searchEl"
-          v-model="query"
-          type="search"
-          class="sidebar-search"
-          data-test="sidebar-search"
-          :placeholder="t('tasks.sidebar.searchPlaceholder')"
-          :aria-label="t('tasks.sidebar.searchPlaceholder')"
-          @keydown.esc.prevent="onSearchEsc"
-          @blur="onSearchBlur"
-        />
-        <button
-          v-if="!(searchOpen || query)"
-          class="group-toggle"
-          data-test="group-toggle"
-          :title="t('tasks.settings.groupBy')"
-          @click="onToggleGroupBy"
+        <span v-if="totalUnread > 0" class="rail-badge" data-test="sidebar-rail-badge">
+          {{ totalUnread }}
+        </span>
+        <span
+          v-for="s in railIcons"
+          :key="s.session_id"
+          class="rail-icon"
+          data-test="sidebar-rail-icon"
+          role="button"
+          tabindex="0"
+          :aria-label="s.current_command || s.title || s.session_id.slice(0, 8)"
+          @click="emit('open', s)"
+          @keydown.enter.prevent="emit('open', s)"
+          @keydown.space.prevent="emit('open', s)"
         >
-          {{ groupByState.activeId.value === 'state'
-            ? t('tasks.settings.groupByState')
-            : t('tasks.settings.groupByHost') }}
-        </button>
-        <button
-          class="collapse-button"
-          data-test="collapse-button"
-          :title="t('tasks.sidebar.collapse')"
-          @click="emit('update:collapsed', true)"
-        >
-          «
-        </button>
-      </header>
-      <div class="list-wrap" data-test="task-grouped-list">
-        <TaskGroupedList
-          :by-host="byHost"
-          :primary-state-for-host="primaryStateForHost"
-          :completed-seen="completedSeen"
-          :group-by="groupByState.activeId.value"
-          :by-state="byStateGroups"
-          :active-session-id="activeSessionId"
-          :open-session-ids="openSessionIds"
-          :local-host-id="localHostId"
-          :local-host="localHost"
-          :search-query="query"
-          :pane-location-for="paneLocationFor"
-          :tab-index-by-id="tabIndexById"
-          @open="(s) => emit('open', s)"
-          @close="(s) => emit('close', s)"
-          @markSeen="(p) => emit('markSeen', p)"
-          @merge-selected="emit('merge-selected')"
-          @close-selected="emit('close-selected')"
-        />
+          <TaskStateIcon
+            :state="(s.task_state as TaskState | undefined) ?? 'idle'"
+            :size="14"
+          />
+        </span>
       </div>
-      <footer v-if="sel.size.value >= 1">
-        <BulkActionBar
-          :count="sel.size.value"
-          :open-count="openCount"
-          :can-merge="canMerge"
-          @merge="emit('merge-selected')"
-          @close-selected="emit('close-selected')"
-          @clear="sel.clear()"
-        />
-      </footer>
-      <footer v-else-if="totalUnread > 0">
-        <button
-          class="mark-all"
-          data-test="sidebar-mark-all"
-          @click="emit('markSeen', { all: true })"
-        >
-          {{ t("tasks.markAllRead") }}
-        </button>
-      </footer>
-    </div>
-  </aside>
+      <div v-else class="expanded">
+        <header class="sidebar-header">
+          <span v-if="!(searchOpen || query)" class="title">{{ t("tasks.sidebar.title") }}</span>
+          <button
+            v-if="!(searchOpen || query)"
+            class="search-icon-btn"
+            data-test="sidebar-search-toggle"
+            :title="t('tasks.sidebar.searchPlaceholder')"
+            :aria-label="t('tasks.sidebar.searchPlaceholder')"
+            @click="openSearch"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5" />
+              <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+          </button>
+          <input
+            v-else
+            ref="searchEl"
+            v-model="query"
+            type="search"
+            class="sidebar-search"
+            data-test="sidebar-search"
+            :placeholder="t('tasks.sidebar.searchPlaceholder')"
+            :aria-label="t('tasks.sidebar.searchPlaceholder')"
+            @keydown.esc.prevent="onSearchEsc"
+            @blur="onSearchBlur"
+          />
+          <button
+            v-if="!(searchOpen || query)"
+            class="group-toggle"
+            data-test="group-toggle"
+            :title="t('tasks.settings.groupBy')"
+            @click="onToggleGroupBy"
+          >
+            {{ groupByState.activeId.value === 'state'
+              ? t('tasks.settings.groupByState')
+              : t('tasks.settings.groupByHost') }}
+          </button>
+          <button
+            class="collapse-button"
+            data-test="collapse-button"
+            :title="t('tasks.sidebar.collapse')"
+            @click="emit('update:collapsed', true)"
+          >
+            «
+          </button>
+        </header>
+        <div class="list-wrap" data-test="task-grouped-list">
+          <TaskGroupedList
+            :by-host="byHost"
+            :primary-state-for-host="primaryStateForHost"
+            :completed-seen="completedSeen"
+            :group-by="groupByState.activeId.value"
+            :by-state="byStateGroups"
+            :active-session-id="activeSessionId"
+            :open-session-ids="openSessionIds"
+            :local-host-id="localHostId"
+            :local-host="localHost"
+            :search-query="query"
+            :pane-location-for="paneLocationFor"
+            :tab-index-by-id="tabIndexById"
+            @open="(s) => emit('open', s)"
+            @close="(s) => emit('close', s)"
+            @markSeen="(p) => emit('markSeen', p)"
+            @merge-selected="emit('merge-selected')"
+            @close-selected="emit('close-selected')"
+          />
+        </div>
+        <footer v-if="sel.size.value >= 1">
+          <BulkActionBar
+            :count="sel.size.value"
+            :open-count="openCount"
+            :can-merge="canMerge"
+            @merge="emit('merge-selected')"
+            @close-selected="emit('close-selected')"
+            @clear="sel.clear()"
+          />
+        </footer>
+        <footer v-else-if="totalUnread > 0">
+          <button
+            class="mark-all"
+            data-test="sidebar-mark-all"
+            @click="emit('markSeen', { all: true })"
+          >
+            {{ t("tasks.markAllRead") }}
+          </button>
+        </footer>
+      </div>
+    </aside>
+  </div>
 </template>
 
 <style scoped>
+.task-sidebar-shell {
+  /* Not itself a layout box — its children (hamburger + aside) participate
+     directly in the parent's flex/grid as if this wrapper weren't there. */
+  display: contents;
+}
 .task-sidebar {
   position: relative;
   background: var(--panel);
@@ -344,6 +399,34 @@ const railIcons = computed(() => {
   height: 100%;
 }
 .task-sidebar.collapsed { width: 32px; }
+.sidebar-hamburger {
+  /* Position below TabBar (height 28px in components/TabBar.vue) so the
+     first tab's label stays clickable at narrow widths. Was `top: 12px`,
+     which overlapped the leftmost tab and hid its content. */
+  position: fixed;
+  top: 34px;
+  left: 8px;
+  z-index: 20;
+  padding: 4px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.task-sidebar.drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 15;
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+}
+.task-sidebar.drawer.open { transform: translateX(0); }
 /* expanded width comes from inline :style="{ width: widthPx + 'px' }" */
 /* .expanded must itself be a flex column so .list-wrap's `flex: 1 1 auto;
    overflow-y: auto` actually engages. Without this, .list-wrap's flex props

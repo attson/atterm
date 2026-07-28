@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import TaskSidebar from "./TaskSidebar.vue";
 import type { RemoteSession } from "../platform/types";
 import * as api from "../lib/api";
 import { __resetForTests as resetSel, useSessionSelection } from "../composables/useSessionSelection";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
@@ -24,6 +26,13 @@ function mk(over: Partial<RemoteSession>): RemoteSession {
 describe("TaskSidebar", () => {
   beforeEach(() => {
     vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+    // TaskSidebar renders TaskGroupedList, which mounts useSessionPins() —
+    // pins now go through platform.sessions.getPins/setPins.
+    __setPlatformForTests(createFakePlatform());
+  });
+
+  afterEach(() => {
+    __setPlatformForTests(null);
   });
 
   test("expanded shows TaskGroupedList and Mark-all-read button when unread > 0", () => {
@@ -552,5 +561,98 @@ describe("TaskSidebar — multi-select footer + Esc / blank clear", () => {
     await w.vm.$nextTick();
     await w.find("[data-test=bulk-close]").trigger("click");
     expect(w.emitted("close-selected")).toHaveLength(1);
+  });
+});
+
+describe("TaskSidebar — narrow-screen drawer mode", () => {
+  const originalInnerWidth = window.innerWidth;
+
+  beforeEach(() => {
+    vi.spyOn(api, "getTaskSidebarWidth").mockResolvedValue(240);
+    __setPlatformForTests(createFakePlatform());
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", {
+      value: originalInnerWidth,
+      writable: true,
+      configurable: true,
+    });
+    __setPlatformForTests(null);
+  });
+
+  function mountNarrow(width: number) {
+    Object.defineProperty(window, "innerWidth", { value: width, writable: true, configurable: true });
+    return mount(TaskSidebar, {
+      props: {
+        collapsed: false,
+        byHost: {},
+        primaryStateForHost: () => "idle" as const,
+        completedSeen: [],
+        totalUnread: 0,
+      },
+    });
+  }
+
+  test("renders drawer + hamburger when viewport < 768px", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    expect(w.find('[data-test="sidebar-hamburger"]').exists()).toBe(true);
+    expect(w.find(".task-sidebar.drawer").exists()).toBe(true);
+  });
+
+  test("normal layout when viewport >= 768px", async () => {
+    const w = mountNarrow(1400);
+    await nextTick();
+    expect(w.find('[data-test="sidebar-hamburger"]').exists()).toBe(false);
+    expect(w.find(".task-sidebar.drawer").exists()).toBe(false);
+  });
+
+  test("hamburger click toggles drawer open state", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    const ham = w.find('[data-test="sidebar-hamburger"]');
+    await ham.trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(true);
+    await ham.trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(false);
+  });
+
+  test("resizing back to wide resets drawer to closed and hides hamburger", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    await w.find('[data-test="sidebar-hamburger"]').trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(true);
+
+    Object.defineProperty(window, "innerWidth", { value: 1400, writable: true, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+    await nextTick();
+
+    expect(w.find('[data-test="sidebar-hamburger"]').exists()).toBe(false);
+    expect(w.find(".task-sidebar.drawer").exists()).toBe(false);
+  });
+
+  test("ESC key closes an open drawer", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    await w.find('[data-test="sidebar-hamburger"]').trigger("click");
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(true);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await nextTick();
+
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(false);
+  });
+
+  test("ESC key is a no-op when drawer is already closed (does not swallow ESC for other listeners)", async () => {
+    const w = mountNarrow(500);
+    await nextTick();
+    // drawer starts closed
+    const ev = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    window.dispatchEvent(ev);
+    await nextTick();
+    // still closed and event NOT defaulted (so other handlers can act)
+    expect(w.find(".task-sidebar.drawer.open").exists()).toBe(false);
+    expect(ev.defaultPrevented).toBe(false);
   });
 });

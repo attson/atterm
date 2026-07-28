@@ -580,6 +580,8 @@ export const zhCN = {
       collapse: "折叠侧栏 (Cmd/Ctrl+B)",
       expand: "展开侧栏 (Cmd/Ctrl+B)",
       searchPlaceholder: "搜索",
+      openDrawer: "打开侧栏",
+      closeDrawer: "关闭侧栏",
     },
     preset: {
       iconOnly: {

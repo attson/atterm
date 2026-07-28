@@ -46,13 +46,29 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
-      '@':       fileURLToPath(new URL('./src',        import.meta.url)),
+      '@shared':    fileURLToPath(new URL('./src/shared', import.meta.url)),
+      '@webshared': fileURLToPath(new URL('./src/shared', import.meta.url)),
+      '@':          fileURLToPath(new URL('../desktop/frontend/src', import.meta.url)),
     },
+    // main.web.ts lives under ../desktop/frontend/src/, so Rollup's default
+    // resolution walks up from that path and never reaches web/node_modules
+    // where pinia/vue/xterm/naive-ui/etc. are installed. `dedupe` forces
+    // these packages to resolve from web/ project root regardless of the
+    // importer's file location.
+    dedupe: ['vue', 'pinia', 'naive-ui', 'xterm', 'xterm-addon-fit', 'vfonts'],
   },
   server: {
     port: 5173,
     strictPort: true,
+    // The `main` entry (index.html) mounts desktop/frontend/src/main.web.ts,
+    // which lives outside this project's root — allow vite's dev server to
+    // serve files from there.
+    fs: {
+      allow: [
+        fileURLToPath(new URL('.', import.meta.url)),
+        fileURLToPath(new URL('../desktop/frontend/src', import.meta.url)),
+      ],
+    },
     proxy: {
       '/api':       { target: RELAY_HTTP, changeOrigin: false },
       '/sub':       { target: RELAY_HTTP, changeOrigin: false },
@@ -71,7 +87,6 @@ export default defineConfig({
         index:    fileURLToPath(new URL('./index.html',           import.meta.url)),
         login:    fileURLToPath(new URL('./login.html',           import.meta.url)),
         signup:   fileURLToPath(new URL('./signup.html',          import.meta.url)),
-        settings: fileURLToPath(new URL('./settings.html',        import.meta.url)),
         admin:    fileURLToPath(new URL('./admin/index.html',     import.meta.url)),
         setup:    fileURLToPath(new URL('./setup.html',           import.meta.url)),
         firstrun: fileURLToPath(new URL('./firstrun.html',        import.meta.url)),

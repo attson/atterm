@@ -73,6 +73,7 @@ export function createWailsPlatform(): Platform {
       systemClipboard: true,
       notifications: true,
       fileDialog: true,
+      wailsBindings: true,
     },
     relay: {
       load: () => api.getRelayConfig().then((c) => c ?? null),
@@ -98,6 +99,8 @@ export function createWailsPlatform(): Platform {
       // in App.vue. Keep this empty until the platform bridge is unified.
       listRemoteSessions: async (): Promise<RemoteSession[]> => [],
       markSessionsSeen: api.markSessionsSeen,
+      getPins: () => api.getPinnedSessionIds(),
+      setPins: (ids) => api.setPinnedSessionIds(ids),
     },
     system: {
       showNotification: api.showNotification,

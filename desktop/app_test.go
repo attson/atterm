@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/attson/atterm/internal/prefssync"
 )
 
 // newRelayTestApp creates a minimal App wired for relay/uplink tests.
@@ -192,5 +194,44 @@ func TestPinnedSessionIds_NilClears(t *testing.T) {
 	got := a.GetPinnedSessionIds()
 	if len(got) != 0 {
 		t.Fatalf("after clear: got %v; want []", got)
+	}
+}
+
+func TestPinnedSessionIds_MarksPrefDirty(t *testing.T) {
+	// Inline setup: temp dirs + App with prefsSync initialized.
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("LocalAppData", filepath.Join(root, "local"))
+	a := &App{
+		cfgStore: &configStore{},
+		ctx:      context.Background(),
+	}
+	adapter := newAppConfigAdapter(a.cfgStore)
+	relayClient := newHTTPRelayClient(a.cfgStore)
+	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
+
+	// After Set, prefsMeta[pinned_session_ids].Dirty must be true.
+	if err := a.SetPinnedSessionIds([]string{"sid-x"}); err != nil {
+		t.Fatalf("SetPinnedSessionIds: %v", err)
+	}
+	m := a.cfgStore.Get().PrefsMeta["pinned_session_ids"]
+	if !m.Dirty {
+		t.Fatalf("prefs_meta.pinned_session_ids.dirty = false; want true")
+	}
+	if m.UpdatedAtLocal <= 0 {
+		t.Fatalf("UpdatedAtLocal = %d; want > 0", m.UpdatedAtLocal)
+	}
+}
+
+func TestIsPrefCustomized_PinnedSessionIds(t *testing.T) {
+	fn := isPrefCustomized(appConfig{PinnedSessionIDs: []string{"sid"}})
+	if !fn("pinned_session_ids") {
+		t.Fatal("expected true when list has entries")
+	}
+	empty := isPrefCustomized(appConfig{})
+	if empty("pinned_session_ids") {
+		t.Fatal("expected false when list empty")
 	}
 }

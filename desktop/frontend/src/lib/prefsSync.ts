@@ -3,12 +3,21 @@
 // Wails desktop entry and the Capacitor mobile entry; the adapter is the
 // per-platform persistence layer (Wails RPC vs Capacitor localStorage).
 
+// Kept in lockstep with `syncedKeys` in internal/prefssync/sync.go —
+// the drift-check test at the bottom of prefsSync.test.ts asserts both
+// lists match. When adding/removing a key you MUST update ALL of:
+//   1. internal/prefssync/sync.go::syncedKeys (Go source of truth)
+//   2. this file's SYNCED_KEYS
+//   3. web/src/shared/sync/prefsSync.ts::SYNCED_KEYS
+//   4. EXPECTED_SYNCED_KEYS in prefsSync.test.ts (the drift-check literal)
 export const SYNCED_KEYS = [
   'locale_preference',
   'quick_templates',
   'notifications_enabled',
+  'ai_notifications_only',
   'command_notify_threshold_seconds',
   'shell_integration_enabled',
+  'pinned_session_ids',
 ] as const
 
 export type SyncedKey = (typeof SYNCED_KEYS)[number]

@@ -1,0 +1,135 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { createWebPlatform } from '../web'
+
+describe('web platform', () => {
+  it('caps: localPty=false autoUpdate=false pluginHost=false windowControls=false', () => {
+    const p = createWebPlatform()
+    expect(p.caps.localPty).toBe(false)
+    expect(p.caps.autoUpdate).toBe(false)
+    expect(p.caps.pluginHost).toBe(false)
+    expect(p.caps.windowControls).toBe(false)
+    expect(p.caps.systemClipboard).toBe(true)
+    expect(p.caps.fileDialog).toBe(true)
+  })
+
+  describe('relay + sessions bridges', () => {
+    beforeEach(() => {
+      localStorage.clear()
+    })
+
+    it('relay.load reads atterm.relay', () => {
+      localStorage.setItem('atterm.relay', JSON.stringify({ baseURL: 'http://x', sessionToken: 't' }))
+      const p = createWebPlatform()
+      return expect(p.relay.load()).resolves.toMatchObject({ url: 'http://x', token: 't' })
+    })
+
+    it('relay.save writes atterm.relay with web shape', async () => {
+      await createWebPlatform().relay.save({
+        url: 'http://y',
+        token: 'tok2',
+        session_expires_at: 123,
+        allow_insecure_relay: true,
+        remote_permission: 'full',
+        last_email: '',
+        connected: false,
+      })
+      const raw = localStorage.getItem('atterm.relay')
+      expect(raw).not.toBeNull()
+      expect(JSON.parse(raw as string)).toMatchObject({
+        baseURL: 'http://y',
+        sessionToken: 'tok2',
+        expiresAt: 123,
+        allowInsecure: true,
+      })
+      // must NOT write to the mobile/Capacitor key
+      expect(localStorage.getItem('atterm.relay.session')).toBeNull()
+    })
+
+    it('sessions.getPins reads pinned_session_ids from localStorage', () => {
+      localStorage.setItem('atterm.pinned_session_ids.value', JSON.stringify(['a', 'b']))
+      return expect(createWebPlatform().sessions.getPins()).resolves.toEqual(['a', 'b'])
+    })
+
+    it('sessions.setPins writes localStorage', async () => {
+      await createWebPlatform().sessions.setPins(['x'])
+      expect(localStorage.getItem('atterm.pinned_session_ids.value')).toBe('["x"]')
+    })
+
+    it('sessions.listShells returns empty', () => {
+      return expect(createWebPlatform().sessions.listShells()).resolves.toEqual([])
+    })
+  })
+
+  describe('events + templates + system bridges', () => {
+    beforeEach(() => {
+      localStorage.clear()
+    })
+
+    it('events on/emit/off roundtrip', () => {
+      const p = createWebPlatform()
+      const fn = vi.fn()
+      const off = p.events.on('x', fn)
+      p.events.emit('x', 'v')
+      expect(fn).toHaveBeenCalledWith('v')
+      off()
+      p.events.emit('x', 'v2')
+      expect(fn).toHaveBeenCalledTimes(1)
+    })
+
+    it('templates load/save/clear via localStorage', async () => {
+      const p = createWebPlatform()
+      await p.templates.save([{ id: '1', label: 'l1', text: 't1' }])
+      const list = await p.templates.load()
+      expect(list.length).toBe(1)
+      expect(localStorage.getItem('atterm.quick_templates.value')).not.toBeNull()
+      await p.templates.clear()
+      expect(await p.templates.load()).toEqual([])
+    })
+
+    it('templates loadHidden/saveHidden via localStorage', async () => {
+      const p = createWebPlatform()
+      expect(await p.templates.loadHidden()).toBe(false)
+      await p.templates.saveHidden(true)
+      expect(await p.templates.loadHidden()).toBe(true)
+      expect(localStorage.getItem('atterm.templates_hidden.value')).not.toBeNull()
+    })
+
+    it('auxKeys load/save/clear via localStorage', async () => {
+      const p = createWebPlatform()
+      await p.auxKeys.save([{ id: 'a1', label: 'esc', seq: '\x1b' }])
+      const list = await p.auxKeys.load()
+      expect(list).toEqual([{ id: 'a1', label: 'esc', seq: '\x1b' }])
+      expect(localStorage.getItem('atterm.aux_keys.value')).not.toBeNull()
+      await p.auxKeys.clear()
+      expect(await p.auxKeys.load()).toEqual([])
+    })
+
+    it('system.getEnvironment returns buildType=web', async () => {
+      const info = await createWebPlatform().system.getEnvironment()
+      expect(info?.buildType).toBe('web')
+    })
+
+    it('system.openExternalURL calls window.open', async () => {
+      const spy = vi.spyOn(window, 'open').mockImplementation(() => null)
+      await createWebPlatform().system.openExternalURL('https://example.com')
+      expect(spy).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener')
+      spy.mockRestore()
+    })
+
+    it('system.getClipboardPaste returns kind=none when navigator.clipboard is missing', async () => {
+      const info = await createWebPlatform().system.getClipboardPaste()
+      expect(info.kind).toBe('none')
+    })
+
+    it('system.getClipboardPaste reads text via navigator.clipboard.readText', async () => {
+      const original = (navigator as any).clipboard
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { readText: vi.fn().mockResolvedValue('pasted') },
+        configurable: true,
+      })
+      const info = await createWebPlatform().system.getClipboardPaste()
+      expect(info).toEqual({ kind: 'text', text: 'pasted' })
+      Object.defineProperty(navigator, 'clipboard', { value: original, configurable: true })
+    })
+  })
+})

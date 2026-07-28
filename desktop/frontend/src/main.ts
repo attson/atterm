@@ -23,6 +23,7 @@ async function bootstrap() {
   // reconciles synced fields, so the Vue components can re-read them.
   EventsOn('prefs:changed', () => {
     window.dispatchEvent(new CustomEvent('atterm:prefs-changed'))
+    platform.events.emit('prefs:changed', undefined)
   })
 }
 

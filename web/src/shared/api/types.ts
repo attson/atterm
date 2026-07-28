@@ -27,19 +27,6 @@ export interface VersionResponse {
   version: string
 }
 
-export interface SessionRow {
-  id_hash: string
-  user_agent: string
-  ip_prefix: string
-  created_at: number  // unix ms
-  expires_at: number  // unix ms
-  is_current: boolean
-}
-
-export interface SignOutOthersResponse {
-  deleted: number
-}
-
 export interface AdminUserRow {
   id: string
   email: string

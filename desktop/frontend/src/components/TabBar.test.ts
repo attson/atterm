@@ -128,6 +128,31 @@ const baseTab = {
   disconnected: false,
 };
 
+describe("TabBar settings button", () => {
+  // Settings lives on TabBar (not TitleBar) specifically so it stays
+  // reachable when caps.windowControls=false hides TitleBar entirely
+  // (web/mobile). TabBar itself is only gated on `!startupFatal` in
+  // App.vue, so it's always present alongside a mounted app.
+  it("renders a settings button and emits open-settings when clicked", async () => {
+    const w = mount(TabBar, { props: { tabs: [], currentId: null, starting: false } });
+    const btn = w.get('[data-test="tabbar-settings"]');
+    await btn.trigger("click");
+    expect(w.emitted("open-settings")).toBeTruthy();
+  });
+
+  it("renders no update dot by default", () => {
+    const w = mount(TabBar, { props: { tabs: [], currentId: null, starting: false } });
+    expect(w.find('[data-test="tabbar-settings"] .dot').exists()).toBe(false);
+  });
+
+  it("renders an update dot on the settings button when updateBadge=true", () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, updateBadge: true },
+    });
+    expect(w.find('[data-test="tabbar-settings"] .dot').exists()).toBe(true);
+  });
+});
+
 describe("TabBar state icon + unread", () => {
   test("uses TaskStateIcon for the active session's task_state", () => {
     const tab = {

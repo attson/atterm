@@ -48,10 +48,10 @@ async function bootstrap() {
   const prefsSync = createCapacitorPrefsSync()
   setSharedPrefsSync(prefsSync)
   // Initial PULL (fire-and-forget; mobile may not be logged in yet)
-  void prefsSync.pull().catch(() => {})
+  void prefsSync.pull().then(() => platform.events.emit('prefs:changed', undefined)).catch(() => {})
   // Foreground PULL
   CapacitorApp.addListener('appStateChange', (state) => {
-    if (state.isActive) void prefsSync.pull().catch(() => {})
+    if (state.isActive) void prefsSync.pull().then(() => platform.events.emit('prefs:changed', undefined)).catch(() => {})
   })
 
   const app = createApp(MobileApp)

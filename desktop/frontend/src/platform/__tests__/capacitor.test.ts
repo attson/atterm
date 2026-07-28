@@ -44,6 +44,7 @@ describe('createCapacitorPlatform', () => {
       systemClipboard: true,
       notifications: true,
       fileDialog: false,
+      wailsBindings: false,
     })
   })
 
@@ -126,6 +127,20 @@ describe('createCapacitorPlatform', () => {
   it('sessions.closeSession is a no-op placeholder', async () => {
     const p = createCapacitorPlatform()
     await expect(p.sessions.closeSession('s1')).resolves.toBeUndefined()
+  })
+
+  it('getPins reads pinned_session_ids from localStorage', async () => {
+    localStorage.setItem('atterm.pinned_session_ids.value', JSON.stringify(['a', 'b']))
+    const p = createCapacitorPlatform()
+    await expect(p.sessions.getPins()).resolves.toEqual(['a', 'b'])
+  })
+
+  it('setPins writes localStorage + calls notifyLocalChange', async () => {
+    const notify = vi.spyOn(await import('../../lib/prefsSync.capacitor'), 'notifyLocalChange')
+    const p = createCapacitorPlatform()
+    await p.sessions.setPins(['x'])
+    expect(localStorage.getItem('atterm.pinned_session_ids.value')).toBe('["x"]')
+    expect(notify).toHaveBeenCalledWith('pinned_session_ids')
   })
 
   it('system.openExternalURL calls window.open in a new tab', async () => {

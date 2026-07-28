@@ -1,5 +1,5 @@
 import { ref, type Ref } from "vue";
-import { getPinnedSessionIds, setPinnedSessionIds } from "../lib/api";
+import { usePlatform } from "../platform";
 
 // Module-scoped so state is shared across all consumers within the app
 // lifetime (matches useCollapsedGroups / useTaskGroupBy pattern).
@@ -7,18 +7,25 @@ const pinnedIds = ref<Set<string>>(new Set());
 let loaded = false;
 let loadPromise: Promise<void> | null = null;
 let flushHandle: ReturnType<typeof setTimeout> | null = null;
+let eventsBound = false;
 
 const PERSIST_DEBOUNCE_MS = 300;
+
+async function readFromPlatform(): Promise<void> {
+  try {
+    const list = await usePlatform().sessions.getPins();
+    pinnedIds.value = new Set(list);
+  } catch {
+    /* best-effort — leave whatever value we had */
+  }
+}
 
 async function loadOnce(): Promise<void> {
   if (loaded) return;
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
     try {
-      const list = await getPinnedSessionIds();
-      pinnedIds.value = new Set(list);
-    } catch {
-      /* best-effort — leave the empty default in place */
+      await readFromPlatform();
     } finally {
       loaded = true;
       loadPromise = null;
@@ -31,11 +38,22 @@ function schedulePersist(): void {
   if (flushHandle) clearTimeout(flushHandle);
   flushHandle = setTimeout(() => {
     flushHandle = null;
-    void setPinnedSessionIds(Array.from(pinnedIds.value)).catch((e) => {
+    void usePlatform().sessions.setPins(Array.from(pinnedIds.value)).catch((e) => {
       /* best-effort */
       console.warn("[pins] schedulePersist failed", e);
     });
   }, PERSIST_DEBOUNCE_MS);
+}
+
+// Re-reads from the store whenever the Go side (or another device via
+// prefsSync) reconciles the pin list, so open windows/tabs stay in sync
+// without requiring a manual reload() call.
+function bindEventsOnce(): void {
+  if (eventsBound) return;
+  eventsBound = true;
+  usePlatform().events.on("prefs:changed", () => {
+    void readFromPlatform();
+  });
 }
 
 function pinFn(id: string): void {
@@ -70,7 +88,7 @@ async function flushNowFn(): Promise<void> {
     flushHandle = null;
   }
   try {
-    await setPinnedSessionIds(Array.from(pinnedIds.value));
+    await usePlatform().sessions.setPins(Array.from(pinnedIds.value));
   } catch (e) {
     // Still best-effort (same policy as schedulePersist), but recovery is
     // the one synchronous window where a silent failure would be costly —
@@ -92,16 +110,20 @@ export interface UseSessionPins {
   toggle: (id: string) => void;
   rename: (oldId: string, newId: string) => void;
   flushNow: () => Promise<void>;
-  // Resolves once the initial getPinnedSessionIds() load has settled (loaded
-  // or failed-to-empty — see loadOnce). Callers that need pinnedIds to be
-  // authoritative before reading it synchronously (e.g. recovery's pin
+  // Resolves once the initial platform.sessions.getPins() load has settled
+  // (loaded or failed-to-empty — see loadOnce). Callers that need pinnedIds
+  // to be authoritative before reading it synchronously (e.g. recovery's pin
   // migration) should `await` this first instead of racing the fire-and-
   // forget load that useSessionPins() kicks off on every call.
   ready: () => Promise<void>;
+  /** Force a re-read from the store, ignoring the internal loaded guard.
+   *  Bound to prefs:changed event; also callable directly. */
+  reload: () => Promise<void>;
 }
 
 export function useSessionPins(): UseSessionPins {
   void loadOnce();
+  bindEventsOnce();
   return {
     pinnedIds,
     isPinned: (id) => pinnedIds.value.has(id),
@@ -111,6 +133,7 @@ export function useSessionPins(): UseSessionPins {
     rename: renameFn,
     flushNow: flushNowFn,
     ready: () => loadOnce(),
+    reload: () => readFromPlatform(),
   };
 }
 
@@ -118,6 +141,7 @@ export function __resetForTests(): void {
   pinnedIds.value = new Set();
   loaded = false;
   loadPromise = null;
+  eventsBound = false;
   if (flushHandle) {
     clearTimeout(flushHandle);
     flushHandle = null;

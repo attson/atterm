@@ -269,6 +269,7 @@ export function createCapacitorPlatform(): Platform {
       systemClipboard: true,
       notifications: true,
       fileDialog: false,
+      wailsBindings: false,
     },
     relay: {
       // load: prefer localStorage (synchronous, never hangs). Keychain is a
@@ -564,6 +565,20 @@ export function createCapacitorPlatform(): Platform {
         })
         if (res.status === 401) throw new Error('relay_unauthorized')
         if (!res.ok) throw new Error(`mark-seen: HTTP ${res.status}`)
+      },
+      getPins: async () => {
+        try {
+          const raw = localStorage.getItem('atterm.pinned_session_ids.value')
+          if (raw === null) return []
+          const v = JSON.parse(raw)
+          return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+        } catch {
+          return []
+        }
+      },
+      setPins: async (ids) => {
+        localStorage.setItem('atterm.pinned_session_ids.value', JSON.stringify(ids))
+        notifyLocalChange('pinned_session_ids')
       },
     },
     system: {

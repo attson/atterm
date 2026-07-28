@@ -15,17 +15,29 @@ interface TabSummary {
   disconnected?: boolean;
 }
 
-defineProps<{
-  tabs: TabSummary[];
-  currentId: string | null;
-  starting: boolean;
-}>();
+withDefaults(
+  defineProps<{
+    tabs: TabSummary[];
+    currentId: string | null;
+    starting: boolean;
+    canNewLocal?: boolean;
+    // Mirrors the desktop-update indicator that used to live on TitleBar's
+    // settings button. Kept optional/default-false so web/mobile callers
+    // that never surface an update state don't need to pass it.
+    updateBadge?: boolean;
+  }>(),
+  { canNewLocal: true, updateBadge: false },
+);
 
 const emit = defineEmits<{
   (e: "activate", id: string): void;
   (e: "close", id: string): void;
   (e: "new"): void;
   (e: "reorder", fromId: string, targetId: string, position: "before" | "after"): void;
+  // Settings lives here (not TitleBar) so it's reachable regardless of
+  // caps.windowControls — TitleBar (and its old settings button) is hidden
+  // entirely on web/mobile, but TabBar always renders alongside App.vue.
+  (e: "open-settings"): void;
 }>();
 
 const DRAG_THRESHOLD = 4;
@@ -261,11 +273,33 @@ function onClose(e: MouseEvent, id: string) {
       </div>
     </div>
     <button
+      v-if="canNewLocal"
       class="plus"
+      data-test="new-local-shell"
       :disabled="starting"
       :title="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
       @click="emit('new')"
     >+</button>
+    <button
+      class="settings-btn"
+      type="button"
+      data-test="tabbar-settings"
+      :title="i18nT('terminal.relaySettings')"
+      @click="emit('open-settings')"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="14" height="14"
+        viewBox="0 0 24 24"
+        fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+      <span v-if="updateBadge" class="dot"></span>
+    </button>
   </div>
 </template>
 
@@ -328,6 +362,22 @@ function onClose(e: MouseEvent, id: string) {
 }
 .plus:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 .plus:disabled { opacity: 0.4; cursor: not-allowed; }
+.settings-btn {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--fg-dim);
+  padding: 0 10px; cursor: pointer;
+  border-left: 1px solid var(--border);
+  transition: color 120ms, background 120ms;
+}
+.settings-btn:hover { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
+.settings-btn svg { display: block; }
+.settings-btn .dot {
+  position: absolute; top: 4px; right: 4px;
+  width: 6px; height: 6px;
+  background: #d29922;
+  border-radius: 50%;
+}
 .tab .tab-unread-dot {
   font-size: 8px;
   margin-left: 4px;

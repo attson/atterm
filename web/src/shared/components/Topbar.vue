@@ -6,7 +6,7 @@ import { logout } from '@shared/api/auth'
 import { fetchVersion, formatVersionLabel } from '@shared/api/version'
 import { useI18n } from '@shared/i18n/useI18n'
 
-defineProps<{ active: 'home' | 'settings' | 'admin' }>()
+defineProps<{ active: 'home' | 'admin' }>()
 
 const me = ref<MeResponse | null>(null)
 const version = ref('dev')
@@ -49,11 +49,6 @@ async function onLogout() {
         :class="{ active: active === 'home' }"
         :aria-current="active === 'home' ? 'page' : false"
       >{{ t('topbar.home') }}</a>
-      <a
-        href="/settings.html"
-        :class="{ active: active === 'settings' }"
-        :aria-current="active === 'settings' ? 'page' : false"
-      >{{ t('topbar.settings') }}</a>
       <a
         v-if="me?.is_admin"
         href="/admin/"

@@ -1,4 +1,12 @@
 <script setup lang="ts">
+// Pin storage + prefsSync intentionally not surfaced in this shell.
+// The pinned_session_ids preference is pushed/pulled cross-device via
+// prefsSync (see web/src/shared/sync/prefsSync.ts + platform.sessions.
+// getPins/setPins), but this mobile session list does NOT render a
+// pin UI or re-order pinned entries — users pin/unpin from the desktop
+// or web shells (see spec §4.4 for the deferred-mobile-UI decision).
+// Fetching the pin list here would only cost a localStorage read that
+// nothing consumes.
 import { computed, ref, onMounted } from 'vue'
 import { usePlatform } from '../platform'
 import type { RemoteSession } from '../platform/types'

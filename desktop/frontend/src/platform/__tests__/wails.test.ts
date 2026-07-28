@@ -38,6 +38,7 @@ vi.mock('../../../wailsjs/runtime/runtime', () => ({
 vi.mock('../../../wailsjs/go/main/App', () => ({
   GetPluginConfig: vi.fn().mockResolvedValue({ enabled_plugins: [] }),
   SetPluginConfig: vi.fn().mockResolvedValue(undefined),
+  GetAppVersion: vi.fn().mockResolvedValue('v0.3.19'),
 }))
 
 vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
@@ -50,7 +51,7 @@ vi.mock('../../../wailsjs/go/main/PluginFS', () => ({
 
 import { createWailsPlatform } from '../wails'
 import { WindowMinimise, WindowShow, WindowUnminimise, Environment, BrowserOpenURL, EventsOn, EventsEmit } from '../../../wailsjs/runtime/runtime'
-import { GetPluginConfig, SetPluginConfig } from '../../../wailsjs/go/main/App'
+import { GetPluginConfig, SetPluginConfig, GetAppVersion } from '../../../wailsjs/go/main/App'
 import { ListDir, ReadFile } from '../../../wailsjs/go/main/PluginFS'
 import { fetchRelayMe, showNotification, setUplinkPaused, markSessionsSeen, getPinnedSessionIds, setPinnedSessionIds } from '../../lib/api'
 
@@ -133,6 +134,13 @@ describe('createWailsPlatform', () => {
     const p = createWailsPlatform()
     await p.system.openExternalURL('https://example.com')
     expect(BrowserOpenURL).toHaveBeenCalledWith('https://example.com')
+  })
+
+  it('system.getAppVersion delegates to wailsjs GetAppVersion', async () => {
+    const p = createWailsPlatform()
+    const version = await p.system.getAppVersion()
+    expect(GetAppVersion).toHaveBeenCalledOnce()
+    expect(version).toBe('v0.3.19')
   })
 
   it('events.on subscribes via EventsOn and returns the unsubscribe', () => {

@@ -27,6 +27,7 @@ function fakePlatform(): Platform {
       getClipboardPaste: async () => ({ kind: 'none' }),
       openExternalURL: async () => {},
       getEnvironment: async () => null,
+      getAppVersion: async () => 'dev',
     },
     events: {
       on: () => () => {},

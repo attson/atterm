@@ -42,7 +42,7 @@ describe('setup/App.vue', () => {
   })
 
   it('passes resolved Naive UI locale props from every web entrypoint', () => {
-    for (const entrypoint of ['admin', 'setup', 'login', 'signup']) {
+    for (const entrypoint of ['setup', 'login', 'signup']) {
       const source = readFileSync(
         join(process.cwd(), 'src', entrypoint, 'App.vue'),
         'utf8',

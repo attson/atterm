@@ -66,6 +66,10 @@ export function GetAccountKey() {
   return window['go']['main']['App']['GetAccountKey']();
 }
 
+export function GetAppVersion() {
+  return window['go']['main']['App']['GetAppVersion']();
+}
+
 export function GetAutoCheckUpdates() {
   return window['go']['main']['App']['GetAutoCheckUpdates']();
 }

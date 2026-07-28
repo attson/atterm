@@ -138,6 +138,9 @@ export interface RelayConfig {
 export interface RelayMe {
   user_id: string;
   email: string;
+  // Optional: older relays / cached objects may omit it. App.vue's isAdmin
+  // computed treats a missing field as non-admin (`=== true` check).
+  is_admin?: boolean;
 }
 
 export interface RelaySessionRow {
@@ -390,6 +393,7 @@ interface AppBindings {
   GetPinnedSessionIds(): Promise<string[]>;
   SetPinnedSessionIds(ids: string[]): Promise<void>;
   GetUserHomeDir(): Promise<string>;
+  GetAppVersion(): Promise<string>;
   MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
   ListRemoteSessions(): Promise<string>;
 }

@@ -224,10 +224,10 @@ func NewServer(cfg Config) *Server {
 	if cfg.Resolver != nil && cfg.Store != nil {
 		limits := NewLimitRegistry()
 		authSrv := &AuthServer{
-			Store:            cfg.Store,
-			Limits:           limits,
-			FailureFloor:     200 * time.Millisecond,
-			RealmID:          cfg.RealmID,
+			Store:             cfg.Store,
+			Limits:            limits,
+			FailureFloor:      200 * time.Millisecond,
+			RealmID:           cfg.RealmID,
 			InstancePublicURL: cfg.InstancePublicURL,
 		}
 		adminSrv := &AdminServer{Store: cfg.Store}
@@ -677,7 +677,6 @@ func allowedStaticPath(p string) bool {
 	switch p {
 	case "/", "/index.html",
 		"/login.html", "/signup.html", "/settings.html", "/firstrun.html",
-		"/admin/", "/admin/index.html",
 		"/sw.js", "/manifest.webmanifest",
 		"/icon.svg", "/icon.png":
 		return true
@@ -706,8 +705,9 @@ func allowedStaticPath(p string) bool {
 // Authorization is now a purely client-side concern: every page boots its
 // SPA, which reads the session token from localStorage. If the token is
 // missing or rejected, apiFetch's 401 interceptor sends the user to
-// /login.html. Admin gating works the same way — the admin SPA queries
-// /api/me, checks is_admin, and redirects clients without privileges.
+// /login.html. Admin gating works the same way — the admin panel (inline in
+// the main App.vue, not a standalone page) queries /api/me, checks is_admin,
+// and hides the admin entry point for clients without privileges.
 //
 // resolver is retained as a parameter for compatibility but is unused; the
 // resolver argument may be nil and is ignored at runtime.

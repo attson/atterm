@@ -121,6 +121,10 @@ export function createWailsPlatform(): Platform {
           return null
         }
       },
+      getAppVersion: async () => {
+        const { GetAppVersion } = await import('../../wailsjs/go/main/App')
+        return GetAppVersion()
+      },
       windowMinimize: async () => WindowMinimise(),
       windowShow: async () => WindowShow(),
       windowUnminimize: async () => WindowUnminimise(),

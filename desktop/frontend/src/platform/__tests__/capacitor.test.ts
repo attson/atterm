@@ -166,6 +166,11 @@ describe('createCapacitorPlatform', () => {
     await expect(p.system.showNotification('t', 'b')).resolves.toBeUndefined()
   })
 
+  it("system.getAppVersion always resolves 'dev' (no Wails binding to ask)", async () => {
+    const p = createCapacitorPlatform()
+    await expect(p.system.getAppVersion()).resolves.toBe('dev')
+  })
+
   it('events.on/emit invoke handlers in order; off unsubscribes', () => {
     const p = createCapacitorPlatform()
     const calls: unknown[] = []

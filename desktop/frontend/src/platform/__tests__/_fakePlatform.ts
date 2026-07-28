@@ -85,6 +85,7 @@ export function createFakePlatform(): Platform {
       pickLogFilePath: vi.fn().mockResolvedValue('/tmp/log'),
       openExternalURL: vi.fn().mockResolvedValue(undefined),
       getEnvironment: vi.fn().mockResolvedValue({ platform: 'darwin', arch: 'arm64', buildType: 'production' }),
+      getAppVersion: vi.fn().mockResolvedValue('dev'),
       windowMinimize: vi.fn().mockResolvedValue(undefined),
       windowShow: vi.fn().mockResolvedValue(undefined),
       windowUnminimize: vi.fn().mockResolvedValue(undefined),

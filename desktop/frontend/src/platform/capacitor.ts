@@ -592,6 +592,9 @@ export function createCapacitorPlatform(): Platform {
         }
       },
       getEnvironment: async () => ({ buildType: 'capacitor', platform: 'ios', arch: 'arm64' }),
+      // No Wails binding to ask on mobile; the app version is only shown
+      // for desktop builds today.
+      getAppVersion: async () => 'dev',
       // window* + pickLogFilePath omitted — desktop-only
     },
     events: createEventBus(),

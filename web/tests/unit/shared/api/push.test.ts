@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const fetchMock = vi.fn()
 ;(globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch
 
-import { getPushKey, subscribePush, unsubscribePush } from '@shared/api/push'
+import { getPushKey, subscribePush, unsubscribePush, testPush } from '@shared/api/push'
 
 function jsonOk(body: unknown) {
   return Promise.resolve(
@@ -46,6 +46,11 @@ describe('push api', () => {
     await unsubscribePush('https://example/abc')
     const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)
     expect(body).toEqual({ endpoint: 'https://example/abc' })
+  })
+
+  it('testPush returns the sent count', async () => {
+    fetchMock.mockReturnValueOnce(jsonOk({ sent: 3 }))
+    expect(await testPush()).toBe(3)
   })
 
   it('getPushKey throws ApiError on 503 (push disabled)', async () => {

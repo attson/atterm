@@ -9,6 +9,7 @@ import {
 import { getTerminalTheme } from "../lib/terminalThemes";
 import { usePlatform } from "../platform";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsAccount from "./SettingsAccount.vue";
 import SettingsRelay from "./SettingsRelay.vue";
 import SettingsLogging from "./SettingsLogging.vue";
 import SettingsUpdates from "./SettingsUpdates.vue";
@@ -32,11 +33,12 @@ const { t, resolvedLocale } = useI18n();
 // Tab heading metadata: i18n key + English subtitle shown under H2 when the
 // UI is in Chinese (CodeIsland-style "通用 General preferences" anchor).
 // English locale skips the subtitle to avoid duplicate text.
-type SettingsTabId = "general" | "tasks" | "relay" | "plugins"
+type SettingsTabId = "general" | "account" | "tasks" | "relay" | "plugins"
   | "shortcuts" | "templates" | "logging" | "updates" | "diagnostics" | "feishu" | "devices" | "received-files";
 
 const tabMeta: Record<SettingsTabId, { labelKey: MessageKey; english: string }> = {
   general:     { labelKey: "settings.tabs.general",        english: "General preferences" },
+  account:     { labelKey: "settings.account.title",       english: "Account" },
   tasks:       { labelKey: "tasks.settings.section",       english: "Tasks display" },
   relay:       { labelKey: "settings.tabs.relay",          english: "Relay" },
   plugins:     { labelKey: "settings.tabs.plugins",        english: "Plugins" },
@@ -61,6 +63,7 @@ const activeTabEnglish = computed(() =>
 const icoBase = 'viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
 const tabIcons: Record<SettingsTabId, string> = {
   general:     `<svg ${icoBase}><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v2M8 12.4v2M14.4 8h-2M3.6 8h-2M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4M12.5 12.5l-1.4-1.4M4.9 4.9 3.5 3.5"/></svg>`,
+  account:     `<svg ${icoBase}><circle cx="8" cy="5.6" r="2.6"/><path d="M3 14c0-2.8 2.2-4.6 5-4.6s5 1.8 5 4.6"/></svg>`,
   tasks:       `<svg ${icoBase}><path d="M3 4h10M3 8h10M3 12h6"/></svg>`,
   relay:       `<svg ${icoBase}><circle cx="8" cy="8" r="1.4"/><path d="M4.4 4.4a5 5 0 0 0 0 7.2M11.6 11.6a5 5 0 0 0 0-7.2M2.4 2.4a8 8 0 0 0 0 11.2M13.6 13.6a8 8 0 0 0 0-11.2"/></svg>`,
   plugins:     `<svg ${icoBase}><path d="M5 2v2.5H2.5V8H5v3.5h3.5V14H12V11.5h2V8h-2.5V4.5H8.5V2z"/></svg>`,
@@ -78,7 +81,7 @@ const props = defineProps<{
   localSessionCount: number;
   remoteSessionCount: number;
   terminalThemeId: string;
-  initialTab?: "general" | "relay" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices";
+  initialTab?: "general" | "account" | "relay" | "logging" | "updates" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices";
 }>();
 
 const emit = defineEmits<{
@@ -92,18 +95,32 @@ const emit = defineEmits<{
 // pane. Map any legacy `initialTab: 'logging'` onto diagnostics so deep links
 // keep working.
 const initialTab = props.initialTab === "logging" ? "diagnostics" : (props.initialTab ?? "general");
-const activeTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files">(initialTab);
+const activeTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files">(initialTab);
 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
 if (!caps.pluginHost) { hiddenTabs.add('plugins'); hiddenTabs.add('shortcuts') }
+// SettingsAccount calls apiFetch, which reads a web-only localStorage
+// session token — on Wails this would 401. Mobile Capacitor has its own
+// MobileApp.vue shell (doesn't use SettingsDialog at all), so gating on
+// caps.wailsBindings is effectively "web-only" for this tab.
+if (caps.wailsBindings) hiddenTabs.add('account')
+// Relay / Diagnostics / Received files / Feishu are desktop-only concerns
+// (local relay config, Wails-side log/env dumps, local filesystem drops,
+// desktop uplink) that don't apply once the client is a browser tab.
+if (!caps.wailsBindings) {
+  hiddenTabs.add('relay')
+  hiddenTabs.add('diagnostics')
+  hiddenTabs.add('received-files')
+  hiddenTabs.add('feishu')
+}
 if (hiddenTabs.has(activeTab.value)) activeTab.value = 'general'
 
 const persistedTheme = ref(getTerminalTheme(props.terminalThemeId).id);
 
 const relayRef = ref<InstanceType<typeof SettingsRelay> | null>(null);
 const relayDirty = ref(false);
-const pendingTab = ref<"general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files" | null>(null);
+const pendingTab = ref<"general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files" | null>(null);
 const showDiscardConfirm = ref(false);
 
 const logPreview = ref<LogPreview | null>(null);
@@ -114,6 +131,13 @@ const showLogViewer = ref(false);
 const showConfirm = ref(false);
 const updateVersionForConfirm = ref("");
 
+const appVersion = ref("");
+const versionLabel = computed(() => {
+  const v = appVersion.value.trim();
+  if (!v || v === "dev") return "AT Term (dev)";
+  return `AT Term ${v.startsWith("v") ? v : `v${v}`}`;
+});
+
 onMounted(async () => {
   try {
     const themeID = await getTerminalThemePreference();
@@ -123,7 +147,15 @@ onMounted(async () => {
   }
 });
 
-function switchTab(next: "general" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files") {
+onMounted(async () => {
+  try {
+    appVersion.value = await platform.system.getAppVersion();
+  } catch {
+    /* versionLabel falls back to the dev-build label */
+  }
+});
+
+function switchTab(next: "general" | "account" | "relay" | "logging" | "updates" | "plugins" | "shortcuts" | "diagnostics" | "templates" | "tasks" | "feishu" | "devices" | "received-files") {
   if (activeTab.value === next) return;
   if (activeTab.value === "relay" && relayDirty.value) {
     pendingTab.value = next;
@@ -225,6 +257,15 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.tabs.general") }}</span>
           </button>
           <button
+            v-if="!caps.wailsBindings"
+            class="settings-nav-item"
+            :class="{ active: activeTab === 'account' }"
+            @click="switchTab('account')"
+          >
+            <span class="nav-icon" v-html="tabIcons.account"></span>
+            <span class="nav-label">{{ t("settings.account.title") }}</span>
+          </button>
+          <button
             class="settings-nav-item"
             :class="{ active: activeTab === 'tasks' }"
             @click="switchTab('tasks')"
@@ -233,6 +274,7 @@ function onSaveClick() {
             <span class="nav-label">{{ t("tasks.settings.section") }}</span>
           </button>
           <button
+            v-if="caps.wailsBindings"
             class="settings-nav-item"
             :class="{ active: activeTab === 'relay' }"
             @click="switchTab('relay')"
@@ -284,6 +326,7 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.tabs.updates") }}</span>
           </button>
           <button
+            v-if="caps.wailsBindings"
             class="settings-nav-item"
             :class="{ active: activeTab === 'diagnostics' }"
             @click="switchTab('diagnostics')"
@@ -292,6 +335,7 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.diagnostics.tab") }}</span>
           </button>
           <button
+            v-if="caps.wailsBindings"
             class="settings-nav-item"
             :class="{ active: activeTab === 'feishu' }"
             @click="switchTab('feishu')"
@@ -300,6 +344,7 @@ function onSaveClick() {
             <span class="nav-label">{{ t("settings.feishu.title") }}</span>
           </button>
           <button
+            v-if="caps.wailsBindings"
             class="settings-nav-item"
             :class="{ active: activeTab === 'received-files' }"
             @click="switchTab('received-files')"
@@ -320,8 +365,10 @@ function onSaveClick() {
             @terminal-theme-changed="onTerminalThemeChanged"
             @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
           />
+          <SettingsAccount v-if="!caps.wailsBindings && activeTab === 'account'" />
           <SettingsTasks v-show="activeTab === 'tasks'" />
           <SettingsRelay
+            v-if="caps.wailsBindings"
             v-show="activeTab === 'relay'"
             ref="relayRef"
             @dirty="onRelayDirty"
@@ -335,7 +382,7 @@ function onSaveClick() {
           <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
-          <div v-if="activeTab === 'diagnostics'" class="diag-merged">
+          <div v-if="activeTab === 'diagnostics' && caps.wailsBindings" class="diag-merged">
             <section v-if="caps.fileDialog" class="merged-section">
               <h4 class="merged-section-title">{{ t("settings.tabs.logging") }}</h4>
               <SettingsLogging @open-log-viewer="openLogViewer" />
@@ -345,9 +392,9 @@ function onSaveClick() {
               <SettingsDiagnostics />
             </section>
           </div>
-          <SettingsFeishu v-if="activeTab === 'feishu'" />
+          <SettingsFeishu v-if="activeTab === 'feishu' && caps.wailsBindings" />
           <SettingsDevices v-if="activeTab === 'devices'" />
-          <SettingsReceivedFiles v-if="activeTab === 'received-files'" />
+          <SettingsReceivedFiles v-if="activeTab === 'received-files' && caps.wailsBindings" />
         </section>
       </div>
 
@@ -358,6 +405,10 @@ function onSaveClick() {
           :disabled="!relayRef?.canSave"
           @click="onSaveClick"
         >{{ relayRef?.saveLabel ?? t("settings.relay.saveConnect") }}</button>
+      </footer>
+
+      <footer class="version-footer" data-testid="settings-version-footer">
+        {{ versionLabel }}
       </footer>
     </div>
 
@@ -552,6 +603,13 @@ function onSaveClick() {
 }
 .settings-footer .danger:hover:not(:disabled) {
   background: rgba(248, 81, 73, 0.1);
+}
+.version-footer {
+  flex: 0 0 auto;
+  padding: 4px 16px 8px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-align: right;
 }
 
 /* Diagnostics pane hosts two stacked sections: Logging (top) + Diagnostics

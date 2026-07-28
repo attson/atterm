@@ -81,7 +81,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update / Pairing / Diagnostics / QuickTemplates) | 不实现协议 |
-| `web/` | web | Vue 3 + TypeScript + Naive UI 浏览器/PWA client；除 login/signup/setup/firstrun/admin 几个独立小页面外，主入口 `index.html` 现在通过 `main-web.ts` → `desktop/frontend/src/main.web.ts` 挂载**桌面同一份** `App.vue`（见「前端架构细节」节），不再是独立的 `web/src/main/` 会话列表页；`settings.html` 已删除（设置并入 `App.vue` 的 `SettingsDialog.vue`），通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token`（以及 web 专属的 pin/模板/aux-key 等 `platform/web.ts` 桥接的本地偏好） |
+| `web/` | web | Vue 3 + TypeScript + Naive UI 浏览器/PWA client；除 login/signup/setup/firstrun 几个独立小页面外，主入口 `index.html` 现在通过 `main-web.ts` → `desktop/frontend/src/main.web.ts` 挂载**桌面同一份** `App.vue`（见「前端架构细节」节），不再是独立的 `web/src/main/` 会话列表页；`settings.html` 已删除（设置并入 `App.vue` 的 `SettingsDialog.vue`），admin 面板由主 App.vue 内嵌为 AdminPanel 视图（TabBar 按钮切换），不再是独立的 `admin.html` MPA entry；通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token`（以及 web 专属的 pin/模板/aux-key 等 `platform/web.ts` 桥接的本地偏好） |
 | `internal/feishu` | internal | 飞书 client SDK：Cardkit v2 anchor card 渲染 + IM 消息 API + Router.InjectKeystrokesBySession（stroke dispatch 到本地 pty） | 不知道 hook payload 结构（那是 `desktop/feishu` 层）|
 | `desktop/feishu` | desktop | hook payload 解析、AskUserQuestion form 挂拆 lifecycle、stroke plan 构造、local 模式 LongConn subscriber | 不直接持有 pty；stroke 通过 `Router.InjectKeystrokesBySession` 送 |
 
@@ -341,7 +341,7 @@ Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等
 里发布 `remote_permission`。远端 relay 计算 principal scope 与 owner 权限的交集：
 session token 始终是 write scope；但不能超过 owner 发布的 view/control/full。
 
-relay admin 配置（`AdminConfig` / DB `relay_config`）覆盖运维场景：rate limit、连接数、Origin 白名单、详细日志开关，以及飞书集成（开关 + 加密密钥 + base URL）。改动经 `/admin/api/config` 与 `/admin/api/feishu` 热生效（见上「运行时配置」）。用户账号管理（邀请、用户列表、提权）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。前端对应 `web/src/admin/tabs/{Config,FeishuConfig,Users,Invitations}.vue`。
+relay admin 配置（`AdminConfig` / DB `relay_config`）覆盖运维场景：rate limit、连接数、Origin 白名单、详细日志开关，以及飞书集成（开关 + 加密密钥 + base URL）。改动经 `/admin/api/config` 与 `/admin/api/feishu` 热生效（见上「运行时配置」）。用户账号管理（邀请、用户列表、提权）通过 `/admin/api/*` 端点操作，凭证为 admin user 的 session token（`user.is_admin=true`）。前端对应 `desktop/frontend/src/components/admin/{Config,FeishuConfig,Users,Invitations}.vue`：admin 面板由主 `App.vue` 内嵌为 `AdminPanel.vue` 主区域视图，经 TabBar admin 按钮切换渲染，不再是独立的 `web/src/admin/` MPA entry / `admin.html`。
 
 ## 前端架构细节
 
@@ -426,8 +426,7 @@ web/src/
 │                          `/@fs/` 机制，见 main-web.ts 顶部注释）
 ├── login/ signup/ setup/  auth 与移动 relay bootstrap（独立小页面，非 App.vue）
 ├── firstrun/              首次运行引导页
-├── admin/                 users / invitations / config（限流·origins·debug）/ feishu（开关·密钥·base url）
-└── shared/                api clients、ws protocol、i18n、Naive theme、Topbar、
+└── shared/                api clients、ws protocol、i18n、Naive theme、
                            `sync/prefsSync.ts`（web 侧 `PrefsSyncEngine`，见下）
 ```
 

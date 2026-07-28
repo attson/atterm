@@ -17,10 +17,13 @@ import {
   setWebglRendererEnabled,
   setTerminalThemePreference,
 } from "../lib/api";
-import { type LocalePreference } from "../i18n";
+import { type LocalePreference, type MessageKey } from "../i18n";
 import { useI18n } from "../i18n/useI18n";
 import { TERMINAL_THEMES, getTerminalTheme } from "../lib/terminalThemes";
 import SelectDropdown from "./SelectDropdown.vue";
+import { usePlatform } from "../platform";
+import { enablePushFlow, disablePushFlow, type EnableReason } from "@shared/api/push-flow";
+import { testPush } from "@shared/api/push";
 
 const props = defineProps<{
   terminalThemeId: string;
@@ -36,6 +39,8 @@ const persisted = ref(selected.value);
 const saving = ref(false);
 const error = ref("");
 const { t, languageOptions, localePreference, setLocalePreference: setRuntimeLocalePreference } = useI18n();
+const platform = usePlatform();
+const caps = platform.caps;
 
 const selectedLocale = ref<LocalePreference>(localePreference.value);
 const persistedLocale = ref<LocalePreference>(localePreference.value);
@@ -72,6 +77,29 @@ const webglRendererEnabled = ref(true);
 const webglRendererLoading = ref(true);
 const commandNotifyThresholdSec = ref(10);
 const commandNotifyThresholdLoading = ref(true);
+
+// Wails also sets caps.notifications=true (system notifications), but has
+// no Service Worker at all, so browser Push only ever makes sense when
+// both the platform capability AND a real navigator.serviceWorker are
+// present. Capacitor has its own native push channel and doesn't run a
+// Service Worker either, so this gate excludes it too without needing a
+// dedicated cap.
+const pushSupported = computed(
+  () => caps.notifications && typeof navigator !== "undefined" && "serviceWorker" in navigator,
+);
+const pushEnabled = ref(false);
+const pushLoading = ref(true);
+const pushBusy = ref(false);
+const pushTestBusy = ref(false);
+const pushError = ref("");
+
+const PUSH_ERROR_KEY: Record<EnableReason, MessageKey> = {
+  denied: "settings.general.pushNotifications.errors.denied",
+  disabled: "settings.general.pushNotifications.errors.disabled",
+  "key-failed": "settings.general.pushNotifications.errors.keyFailed",
+  "subscribe-failed": "settings.general.pushNotifications.errors.subscribeFailed",
+  "subscribe-rejected": "settings.general.pushNotifications.errors.subscribeRejected",
+};
 
 const defaultShellOptions = computed(() => [
   { value: "auto", label: t("settings.general.auto") },
@@ -140,7 +168,74 @@ onMounted(async () => {
   } finally {
     commandNotifyThresholdLoading.value = false;
   }
+  await refreshPushState();
 });
+
+async function refreshPushState() {
+  if (!pushSupported.value) {
+    pushLoading.value = false;
+    return;
+  }
+  try {
+    if (!navigator.serviceWorker.controller) {
+      pushEnabled.value = false;
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    pushEnabled.value = subscription !== null;
+  } catch {
+    pushEnabled.value = false;
+  } finally {
+    pushLoading.value = false;
+  }
+}
+
+async function onPushToggle(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const checked = target.checked;
+  pushError.value = "";
+  pushBusy.value = true;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    if (checked) {
+      const result = await enablePushFlow({
+        notification: {
+          permission: Notification.permission,
+          requestPermission: () => Notification.requestPermission(),
+        },
+        registration,
+      });
+      if (!result.ok) {
+        target.checked = false;
+        pushEnabled.value = false;
+        pushError.value = t(PUSH_ERROR_KEY[result.reason] ?? "settings.general.pushNotifications.errors.generic");
+        return;
+      }
+      pushEnabled.value = true;
+    } else {
+      await disablePushFlow({ registration });
+      pushEnabled.value = false;
+    }
+  } catch (e: any) {
+    target.checked = pushEnabled.value;
+    pushError.value = e?.message ?? String(e);
+  } finally {
+    pushBusy.value = false;
+  }
+}
+
+async function onTestPush() {
+  pushError.value = "";
+  pushTestBusy.value = true;
+  try {
+    await testPush();
+  } catch (e: any) {
+    pushError.value = e?.message ?? String(e);
+  } finally {
+    pushTestBusy.value = false;
+  }
+}
 
 async function onNotificationsToggle(e: Event) {
   const target = e.target as HTMLInputElement;
@@ -405,6 +500,31 @@ async function onChange() {
     </p>
 
     <p v-if="error" class="error">{{ error }}</p>
+
+    <section v-if="pushSupported" class="push-section" data-testid="push-section">
+      <h3 class="section-title">{{ t("settings.general.pushNotifications.title") }}</h3>
+      <label class="checkbox" v-if="!pushLoading">
+        <input
+          type="checkbox"
+          data-testid="push-toggle"
+          :checked="pushEnabled"
+          :disabled="pushBusy"
+          @change="onPushToggle"
+        />
+        {{ t("settings.general.pushNotifications.enable") }}
+      </label>
+      <button
+        v-if="pushEnabled"
+        type="button"
+        class="push-test-button"
+        data-testid="push-test"
+        :disabled="pushTestBusy"
+        @click="onTestPush"
+      >
+        {{ t("settings.general.pushNotifications.test") }}
+      </button>
+      <p v-if="pushError" class="error" data-testid="push-error">{{ pushError }}</p>
+    </section>
   </div>
 </template>
 
@@ -469,5 +589,33 @@ async function onChange() {
   border-radius: 4px;
   color: var(--fg);
   font: inherit;
+}
+.push-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.section-title {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.push-test-button {
+  align-self: flex-start;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.push-test-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

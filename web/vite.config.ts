@@ -6,7 +6,7 @@ import { fileURLToPath, URL } from 'node:url'
 const RELAY_HTTP = 'http://127.0.0.1:8080'
 const RELAY_WS = 'ws://127.0.0.1:8080'
 
-// All five MPA entries are Vue 3 + Naive UI. vite-plugin-pwa generates
+// All four MPA entries are Vue 3 + Naive UI. vite-plugin-pwa generates
 // the service worker and manifest; runtime caching is disabled per Sec-5
 // (static-only precache) and navigateFallback is null because this is an
 // MPA, not an SPA.
@@ -87,7 +87,6 @@ export default defineConfig({
         index:    fileURLToPath(new URL('./index.html',           import.meta.url)),
         login:    fileURLToPath(new URL('./login.html',           import.meta.url)),
         signup:   fileURLToPath(new URL('./signup.html',          import.meta.url)),
-        admin:    fileURLToPath(new URL('./admin/index.html',     import.meta.url)),
         setup:    fileURLToPath(new URL('./setup.html',           import.meta.url)),
         firstrun: fileURLToPath(new URL('./firstrun.html',        import.meta.url)),
       },

@@ -153,6 +153,37 @@ describe("TabBar settings button", () => {
   });
 });
 
+describe("TabBar admin button", () => {
+  it("renders the admin button when isAdmin=true", () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, isAdmin: true, adminOpen: false },
+    });
+    expect(w.find('[data-test="admin-button"]').exists()).toBe(true);
+  });
+
+  it("does not render the admin button when isAdmin=false", () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, isAdmin: false, adminOpen: false },
+    });
+    expect(w.find('[data-test="admin-button"]').exists()).toBe(false);
+  });
+
+  it("adds the active class when adminOpen=true", () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, isAdmin: true, adminOpen: true },
+    });
+    expect(w.get('[data-test="admin-button"]').classes()).toContain("active");
+  });
+
+  it("emits toggle-admin when clicked", async () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, isAdmin: true, adminOpen: false },
+    });
+    await w.get('[data-test="admin-button"]').trigger("click");
+    expect(w.emitted("toggle-admin")).toBeTruthy();
+  });
+});
+
 describe("TabBar state icon + unread", () => {
   test("uses TaskStateIcon for the active session's task_state", () => {
     const tab = {

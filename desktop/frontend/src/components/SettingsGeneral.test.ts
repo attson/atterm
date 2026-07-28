@@ -1,5 +1,53 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, it, vi, beforeEach, afterEach } from "vitest";
+import { mount, flushPromises } from "@vue/test-utils";
 import source from "./SettingsGeneral.vue?raw";
+import SettingsGeneral from "./SettingsGeneral.vue";
+import { __setPlatformForTests } from "../platform";
+import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
+
+vi.mock("@shared/api/push-flow", () => ({
+  enablePushFlow: vi.fn(),
+  disablePushFlow: vi.fn(),
+}));
+vi.mock("@shared/api/push", () => ({
+  testPush: vi.fn(),
+}));
+
+import { enablePushFlow, disablePushFlow } from "@shared/api/push-flow";
+import { testPush } from "@shared/api/push";
+
+const enablePushFlowMock = enablePushFlow as unknown as ReturnType<typeof vi.fn>;
+const disablePushFlowMock = disablePushFlow as unknown as ReturnType<typeof vi.fn>;
+const testPushMock = testPush as unknown as ReturnType<typeof vi.fn>;
+
+function stubServiceWorker(opts: { controller?: object | null; subscription?: object | null } = {}) {
+  const controller = opts.controller === undefined ? {} : opts.controller;
+  const subscription = opts.subscription === undefined ? null : opts.subscription;
+  const registration = {
+    pushManager: {
+      getSubscription: vi.fn().mockResolvedValue(subscription),
+    },
+  };
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: {
+      controller,
+      ready: Promise.resolve(registration),
+    },
+  });
+  // Real browsers that expose navigator.serviceWorker also expose the
+  // Notification API; jsdom has neither, so stub both together.
+  Object.defineProperty(globalThis, "Notification", {
+    configurable: true,
+    value: { permission: "granted", requestPermission: vi.fn().mockResolvedValue("granted") },
+  });
+  return registration;
+}
+
+function removeServiceWorker() {
+  delete (navigator as { serviceWorker?: unknown }).serviceWorker;
+  delete (globalThis as { Notification?: unknown }).Notification;
+}
 
 describe("SettingsGeneral", () => {
   test("declares terminalThemeId prop and terminal-theme-changed emit", () => {
@@ -118,5 +166,119 @@ describe("SettingsGeneral language preference", () => {
     expect(source).toContain("settings.general.languageLabel");
     expect(source).toContain("settings.general.languageHint");
     expect(source).toContain("languageOptions");
+  });
+});
+
+describe("SettingsGeneral push notification section", () => {
+  let platform: ReturnType<typeof createFakePlatform>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    platform = createFakePlatform();
+    __setPlatformForTests(platform);
+  });
+
+  afterEach(() => {
+    __setPlatformForTests(null);
+    removeServiceWorker();
+  });
+
+  it("does not render when caps.notifications is false", async () => {
+    platform.caps.notifications = false;
+    stubServiceWorker();
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    expect(w.find('[data-testid="push-section"]').exists()).toBe(false);
+  });
+
+  it("does not render when caps.notifications is true but there is no navigator.serviceWorker (e.g. Wails)", async () => {
+    platform.caps.notifications = true;
+    removeServiceWorker();
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    expect(w.find('[data-testid="push-section"]').exists()).toBe(false);
+  });
+
+  it("renders when caps.notifications is true and navigator.serviceWorker is present", async () => {
+    platform.caps.notifications = true;
+    stubServiceWorker();
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    expect(w.find('[data-testid="push-section"]').exists()).toBe(true);
+  });
+
+  it("checkbox starts unchecked and the test button is hidden when there is no existing subscription", async () => {
+    platform.caps.notifications = true;
+    stubServiceWorker({ subscription: null });
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    expect(w.get<HTMLInputElement>('[data-testid="push-toggle"]').element.checked).toBe(false);
+    expect(w.find('[data-testid="push-test"]').exists()).toBe(false);
+  });
+
+  it("checkbox starts checked and the test button is shown when a subscription already exists", async () => {
+    platform.caps.notifications = true;
+    stubServiceWorker({ subscription: { endpoint: "https://example/1" } });
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    expect(w.get<HTMLInputElement>('[data-testid="push-toggle"]').element.checked).toBe(true);
+    expect(w.find('[data-testid="push-test"]').exists()).toBe(true);
+  });
+
+  it("toggling the checkbox on calls enablePushFlow and reflects success", async () => {
+    platform.caps.notifications = true;
+    stubServiceWorker({ subscription: null });
+    enablePushFlowMock.mockResolvedValue({ ok: true });
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    await w.get('[data-testid="push-toggle"]').setValue(true);
+    await flushPromises();
+
+    expect(enablePushFlowMock).toHaveBeenCalledTimes(1);
+    expect(w.find('[data-testid="push-test"]').exists()).toBe(true);
+  });
+
+  it("toggling the checkbox on surfaces the mapped error and reverts the checkbox when enablePushFlow fails", async () => {
+    platform.caps.notifications = true;
+    stubServiceWorker({ subscription: null });
+    enablePushFlowMock.mockResolvedValue({ ok: false, reason: "denied" });
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    await w.get('[data-testid="push-toggle"]').setValue(true);
+    await flushPromises();
+
+    expect(w.get<HTMLInputElement>('[data-testid="push-toggle"]').element.checked).toBe(false);
+    expect(w.get('[data-testid="push-error"]').text()).toContain(
+      "Browser denied the notification permission.",
+    );
+  });
+
+  it("toggling the checkbox off calls disablePushFlow and hides the test button", async () => {
+    platform.caps.notifications = true;
+    stubServiceWorker({ subscription: { endpoint: "https://example/1" } });
+    disablePushFlowMock.mockResolvedValue({ ok: true });
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    await w.get('[data-testid="push-toggle"]').setValue(false);
+    await flushPromises();
+
+    expect(disablePushFlowMock).toHaveBeenCalledTimes(1);
+    expect(w.find('[data-testid="push-test"]').exists()).toBe(false);
+  });
+
+  it("clicking the test button calls testPush", async () => {
+    platform.caps.notifications = true;
+    stubServiceWorker({ subscription: { endpoint: "https://example/1" } });
+    testPushMock.mockResolvedValue(1);
+    const w = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    await w.get('[data-testid="push-test"]').trigger("click");
+    await flushPromises();
+
+    expect(testPushMock).toHaveBeenCalledTimes(1);
   });
 });

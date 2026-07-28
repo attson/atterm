@@ -50,7 +50,12 @@ export async function enablePushFlow(deps: EnableDeps): Promise<EnableResult> {
   try {
     sub = await deps.registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: base64UrlToUint8Array(key),
+      // TS 5.7+ made Uint8Array generic over its backing buffer, which no
+      // longer structurally matches BufferSource's ArrayBuffer-only view
+      // under desktop/frontend's newer TypeScript (this file type-checks
+      // clean on web's older compiler without the cast). PushManager
+      // accepts any BufferSource at runtime; only the type needs narrowing.
+      applicationServerKey: base64UrlToUint8Array(key) as BufferSource,
     })
   } catch {
     return { ok: false, reason: 'subscribe-failed' }

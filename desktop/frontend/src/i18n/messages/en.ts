@@ -176,6 +176,19 @@ export const en = {
       webglHint: "GPU-rasterized rendering keeps light themes free of cell ghosting on dense TUI output. Off by default on Linux because NVIDIA proprietary + X11 + WebKitGTK paint the cursor / last cell a frame late, which surfaces as visible typing lag. Affects new terminal sessions only.",
       commandNotifyThreshold: "Command-finished notification threshold (seconds)",
       commandNotifyHint: "Commands shorter than this duration do not produce a notification. Requires shell integration to be enabled.",
+      pushNotifications: {
+        title: "Push notifications",
+        enable: "Enable push notifications",
+        test: "Send test notification",
+        errors: {
+          denied: "Browser denied the notification permission.",
+          disabled: "Push notifications are disabled on the server.",
+          keyFailed: "Could not fetch the push key from the relay.",
+          subscribeFailed: "Browser subscription failed.",
+          subscribeRejected: "The relay rejected the subscription.",
+          generic: "Push notification request failed.",
+        },
+      },
       themes: {
         classicLabel: "AT Term Classic",
         classicDescription: "Current black terminal look.",

@@ -178,6 +178,19 @@ export const zhCN = {
       webglHint: "GPU 光栅化渲染可避免浅色主题在密集 TUI 输出中出现单元格残影。Linux 默认关闭，因为 NVIDIA 专有驱动 + X11 + WebKitGTK 会让光标/最后一个单元格晚一帧绘制，表现为可见输入延迟。仅影响新终端会话。",
       commandNotifyThreshold: "命令完成通知阈值（秒）",
       commandNotifyHint: "短于此时长的命令不会产生通知。需要启用 shell 集成。",
+      pushNotifications: {
+        title: "推送通知",
+        enable: "启用推送通知",
+        test: "发送测试通知",
+        errors: {
+          denied: "浏览器拒绝了通知权限。",
+          disabled: "服务器已禁用推送通知。",
+          keyFailed: "无法从 relay 获取推送密钥。",
+          subscribeFailed: "浏览器订阅失败。",
+          subscribeRejected: "relay 拒绝了此订阅。",
+          generic: "推送通知请求失败。",
+        },
+      },
       themes: {
         classicLabel: "AT Term 经典",
         classicDescription: "当前的黑色终端外观。",

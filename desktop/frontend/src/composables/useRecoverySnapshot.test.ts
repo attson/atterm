@@ -480,4 +480,57 @@ describe("useRecoverySnapshot", () => {
     expect((api.saveRecoverySnapshot as any).mock.calls.length).toBe(before);
     scope.stop();
   });
+
+  it("flushNow swallows a synchronous throw from saveRecoverySnapshot (bindings not ready)", async () => {
+    // Regression: lib/api's saveRecoverySnapshot calls bindings() internally,
+    // which THROWS synchronously (not a rejected promise) when window.go is
+    // absent (the web build). App.vue now gates construction of this
+    // composable on caps.wailsBindings, but flushNow must also defend itself
+    // in depth — a synchronous throw here used to escape uncaught out of the
+    // setTimeout callback that calls flushNow.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(api.saveRecoverySnapshot).mockImplementation(() => {
+      throw new Error("Wails 绑定尚未就绪");
+    });
+
+    const tabs = ref<Tab[]>([]);
+    const currentTabId = ref<string | null>(null);
+    const sessionInfoFor = vi.fn().mockReturnValue(undefined);
+
+    const scope = effectScope();
+    let composable!: ReturnType<typeof useRecoverySnapshot>;
+    scope.run(() => {
+      composable = useRecoverySnapshot({
+        tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {},
+      });
+    });
+
+    expect(() => composable.flushNow()).not.toThrow();
+    expect(warnSpy).toHaveBeenCalled();
+    scope.stop();
+  });
+
+  it("flushNow swallows an async rejection from saveRecoverySnapshot", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(api.saveRecoverySnapshot).mockRejectedValue(new Error("disk full"));
+
+    const tabs = ref<Tab[]>([]);
+    const currentTabId = ref<string | null>(null);
+    const sessionInfoFor = vi.fn().mockReturnValue(undefined);
+
+    const scope = effectScope();
+    let composable!: ReturnType<typeof useRecoverySnapshot>;
+    scope.run(() => {
+      composable = useRecoverySnapshot({
+        tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent: () => () => {},
+      });
+    });
+
+    expect(() => composable.flushNow()).not.toThrow();
+    for (let i = 0; i < 10 && warnSpy.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(warnSpy).toHaveBeenCalled();
+    scope.stop();
+  });
 });

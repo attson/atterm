@@ -14,32 +14,31 @@ func staticHandlerFS(t *testing.T) http.Handler {
 	t.Helper()
 	files := fstest.MapFS{
 		// Allowed production assets.
-		"index.html":                          {Data: []byte("<root>")},
-		"login.html":                          {Data: []byte("<login>")},
-		"signup.html":                         {Data: []byte("<signup>")},
-		"settings.html":                       {Data: []byte("<settings>")},
-		"admin/index.html":                    {Data: []byte("<admin>")},
-		"sw.js":                               {Data: []byte("// sw")},
-		"workbox-0bb07689.js":                 {Data: []byte("// workbox")},
-		"manifest.webmanifest":                {Data: []byte("{}")},
-		"icon.svg":                            {Data: []byte("<svg/>")},
-		"icon.png":                            {Data: []byte("\x89PNG")},
-		"assets/login-Drb6zxei.js":            {Data: []byte("// login bundle")},
-		"assets/Topbar-WYJzjxIi.css":          {Data: []byte("/* topbar */")},
+		"index.html":                {Data: []byte("<root>")},
+		"login.html":                {Data: []byte("<login>")},
+		"signup.html":               {Data: []byte("<signup>")},
+		"settings.html":             {Data: []byte("<settings>")},
+		"sw.js":                     {Data: []byte("// sw")},
+		"workbox-0bb07689.js":       {Data: []byte("// workbox")},
+		"manifest.webmanifest":      {Data: []byte("{}")},
+		"icon.svg":                  {Data: []byte("<svg/>")},
+		"icon.png":                  {Data: []byte("\x89PNG")},
+		"assets/login-Drb6zxei.js":  {Data: []byte("// login bundle")},
+		"assets/shell-WYJzjxIi.css": {Data: []byte("/* shell */")},
 
 		// Not allowed — these would be exposed if --web pointed at the
 		// source tree without the whitelist.
-		"package.json":                        {Data: []byte("{}")},
-		"tsconfig.json":                       {Data: []byte("{}")},
-		".npmrc":                              {Data: []byte("// secrets")},
-		"vite.config.ts":                      {Data: []byte("// config")},
-		"src/main/App.vue":                    {Data: []byte("<template/>")},
-		"tests/contract/auth-pages.test.mjs":  {Data: []byte("// test")},
-		"legacy/manifest.webmanifest":         {Data: []byte("{}")},
-		"assets/sub/dir/nested.js":            {Data: []byte("// nested")},
+		"package.json":                       {Data: []byte("{}")},
+		"tsconfig.json":                      {Data: []byte("{}")},
+		".npmrc":                             {Data: []byte("// secrets")},
+		"vite.config.ts":                     {Data: []byte("// config")},
+		"src/main/App.vue":                   {Data: []byte("<template/>")},
+		"tests/contract/auth-pages.test.mjs": {Data: []byte("// test")},
+		"legacy/manifest.webmanifest":        {Data: []byte("{}")},
+		"assets/sub/dir/nested.js":           {Data: []byte("// nested")},
 
 		// .gitkeep is in the embed root but is not a real asset.
-		".gitkeep":                            {Data: []byte("")},
+		".gitkeep": {Data: []byte("")},
 	}
 	return newStaticHandler(nil, files)
 }
@@ -48,11 +47,10 @@ func TestStaticHandler_AllowsProductionAssets(t *testing.T) {
 	h := staticHandlerFS(t)
 	allowed := []string{
 		"/", "/index.html", "/login.html", "/signup.html", "/settings.html",
-		"/admin/", "/admin/index.html",
 		"/sw.js", "/workbox-0bb07689.js",
 		"/manifest.webmanifest",
 		"/icon.svg", "/icon.png",
-		"/assets/login-Drb6zxei.js", "/assets/Topbar-WYJzjxIi.css",
+		"/assets/login-Drb6zxei.js", "/assets/shell-WYJzjxIi.css",
 	}
 	for _, p := range allowed {
 		t.Run("GET "+p, func(t *testing.T) {
@@ -84,6 +82,11 @@ func TestStaticHandler_BlocksSourceFiles(t *testing.T) {
 		"/legacy/",
 		"/legacy/manifest.webmanifest",
 		"/.gitkeep",
+		// admin.html was dropped from the build (admin is now an inline
+		// AdminPanel view in the main App.vue bundle) — the standalone
+		// /admin/ path must no longer be whitelisted.
+		"/admin/",
+		"/admin/index.html",
 	}
 	for _, p := range blocked {
 		t.Run("GET "+p, func(t *testing.T) {
@@ -109,9 +112,8 @@ func TestStaticHandler_BlocksNestedAssets(t *testing.T) {
 
 func TestStaticHandler_NoDirectoryListing(t *testing.T) {
 	h := staticHandlerFS(t)
-	// /admin/ is allowed but FileServer would emit a listing if no admin/
-	// directory index existed. With admin/index.html present, FileServer
-	// serves the file. We just verify no parent-of-tree listing is leaked.
+	// None of these directories are on the whitelist, so the handler must
+	// 404 them outright rather than let FileServer emit a directory listing.
 	for _, p := range []string{"/src/", "/tests/", "/legacy/", "/assets/"} {
 		t.Run("GET "+p, func(t *testing.T) {
 			rr := httptest.NewRecorder()

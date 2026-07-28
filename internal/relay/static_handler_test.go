@@ -9,13 +9,12 @@ import (
 )
 
 // fakeWebFS returns an in-memory fs.FS that mimics what web-dist/
-// holds: an index.html, a login.html, an admin/index.html, plus one
-// /assets/ bundle so the "ungated bundle" test has a target.
+// holds: an index.html, a login.html, plus one /assets/ bundle so the
+// "ungated bundle" test has a target.
 func fakeWebFS(t *testing.T) fs.FS {
 	t.Helper()
 	return fstest.MapFS{
 		"index.html":           {Data: []byte("<html>home</html>")},
-		"admin/index.html":     {Data: []byte("<html>admin</html>")},
 		"assets/admin-fake.js": {Data: []byte("/* admin */")},
 		"login.html":           {Data: []byte("<html>login</html>")},
 	}
@@ -43,18 +42,20 @@ func TestStaticHandler_RootServesUnconditionally(t *testing.T) {
 	}
 }
 
-func TestStaticHandler_AdminPageServesUnconditionally(t *testing.T) {
+// TestStaticHandler_AdminPathNotWhitelisted guards against re-adding
+// /admin/ to the static whitelist. The standalone admin.html MPA entry was
+// dropped — admin is now an inline AdminPanel view served as part of the
+// main index.html bundle, gated client-side on /api/me.is_admin — so the
+// bare /admin/ path must 404 rather than serve a (nonexistent) shell.
+func TestStaticHandler_AdminPathNotWhitelisted(t *testing.T) {
 	fsys := fakeWebFS(t)
 	handler := newStaticHandler(nil, fsys)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d; want 200 (admin shell loads then redirects client-side based on /api/me.is_admin)", rec.Code)
-	}
-	if !contains(rec.Body.String(), "admin") {
-		t.Errorf("body did not contain admin shell HTML; got %q", rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d; want 404 (admin.html was dropped; admin is inline in the main App.vue bundle now)", rec.Code)
 	}
 }
 

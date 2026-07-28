@@ -1,6 +1,6 @@
 import { isMobileApp, loadRelayConfig } from './api/relay-config'
 
-export type EntryPage = 'home' | 'login' | 'signup' | 'admin' | 'setup' | 'firstrun'
+export type EntryPage = 'home' | 'login' | 'signup' | 'setup' | 'firstrun'
 
 // applyMobileEntryGuard inspects the Capacitor environment and stored
 // relay config, then issues a redirect when the current page would be

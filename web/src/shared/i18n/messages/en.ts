@@ -22,13 +22,6 @@ export const en = {
     versionLabel: 'version {version}',
     yes: 'yes',
   },
-  topbar: {
-    admin: 'Admin',
-    home: 'Home',
-    main: 'Sessions',
-    primaryNav: 'Primary',
-    signOut: 'Sign out',
-  },
   auth: {
     alreadyHaveAccount: 'Already have an account?',
     createAccount: 'Create account',

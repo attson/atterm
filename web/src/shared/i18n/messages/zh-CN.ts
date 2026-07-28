@@ -24,13 +24,6 @@ export const zhCN = {
     versionLabel: '版本 {version}',
     yes: '是',
   },
-  topbar: {
-    admin: '管理',
-    home: '首页',
-    main: '会话',
-    primaryNav: '主导航',
-    signOut: '退出登录',
-  },
   auth: {
     alreadyHaveAccount: '已有账号？',
     createAccount: '创建账号',

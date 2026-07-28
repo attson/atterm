@@ -50,6 +50,12 @@ export default defineConfig({
       '@webshared': fileURLToPath(new URL('./src/shared', import.meta.url)),
       '@':          fileURLToPath(new URL('../desktop/frontend/src', import.meta.url)),
     },
+    // main.web.ts lives under ../desktop/frontend/src/, so Rollup's default
+    // resolution walks up from that path and never reaches web/node_modules
+    // where pinia/vue/xterm/naive-ui/etc. are installed. `dedupe` forces
+    // these packages to resolve from web/ project root regardless of the
+    // importer's file location.
+    dedupe: ['vue', 'pinia', 'naive-ui', 'xterm', 'xterm-addon-fit', 'vfonts'],
   },
   server: {
     port: 5173,

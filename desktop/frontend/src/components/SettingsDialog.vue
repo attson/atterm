@@ -139,6 +139,7 @@ const versionLabel = computed(() => {
 });
 
 onMounted(async () => {
+  if (!caps.wailsBindings) return;
   try {
     const themeID = await getTerminalThemePreference();
     persistedTheme.value = getTerminalTheme(themeID).id;

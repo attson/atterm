@@ -700,6 +700,18 @@ async function refreshRelayConfig() {
   connectRemoteSessionList(relayConnected, attachEndpoint);
 }
 
+function refreshDesktopRelayConfig() {
+  if (caps.wailsBindings) {
+    void refreshRelayConfig();
+  }
+}
+
+function onSettingsClose() {
+  showSettings.value = false;
+  settingsInitialTab.value = undefined;
+  refreshDesktopRelayConfig();
+}
+
 // buildWebRemoteEndpoint adapts the RelayConfig the web platform bridge
 // returns (platform/web.ts relay.load) into the ws(s) Endpoint that
 // SessionConnection dials directly. Unlike desktop's connectRemoteSessionList,
@@ -1743,7 +1755,7 @@ defineExpose({ me });
         </template>
         <div v-if="toast" class="toast">{{ toast }}</div>
       </main>
-      <template v-if="rightPanelHasPlugin">
+      <template v-if="caps.pluginHost && rightPanelHasPlugin">
         <button class="panel-toggle" @click="togglePanel" :title="panelCollapsed ? i18nT('app.showPanel') : i18nT('app.hidePanel')">
           {{ panelCollapsed ? '‹' : '›' }}
         </button>
@@ -1758,11 +1770,12 @@ defineExpose({ me });
          instance persists across tab/pane switches. They target the active
          pane via pluginContext.activePane (a reactive ref). -->
     <PluginHost
+      v-if="caps.pluginHost"
       slot-id="bottom-toolbar"
       :context="pluginContext"
       class="bottom-toolbar"
     />
-    <TranslatePanelHost />
+    <TranslatePanelHost v-if="caps.pluginHost" />
 
     <SettingsDialog
       v-if="showSettings"
@@ -1772,8 +1785,8 @@ defineExpose({ me });
       :initial-tab="settingsInitialTab"
       @terminal-theme-changed="onTerminalThemeChanged"
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
-      @relay-config-changed="refreshRelayConfig"
-      @close="showSettings = false; settingsInitialTab = undefined; refreshRelayConfig()"
+      @relay-config-changed="refreshDesktopRelayConfig"
+      @close="onSettingsClose"
     />
     <SessionPickerDialog
       v-if="pickerCtx"

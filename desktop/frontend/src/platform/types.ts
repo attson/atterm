@@ -81,9 +81,9 @@ export interface RelayBridge {
    *    'invalid_credentials' | 'rate_limited' | 'cannot_reach_relay' |
    *    'http_<status>'. */
   login?(url: string, email: string, password: string, allowInsecure: boolean): Promise<void>
-  /** Mobile-only. POST /api/auth/logout (best-effort, network errors ignored)
-   *  and clear the local session token. Preserves url + last_email + the
-   *  saved password so the next login is one tap. */
+  /** Web/Capacitor. POST /api/auth/logout best-effort and clear the local
+   *  session token + unlocked account key. Capacitor preserves url +
+   *  last_email + saved password so the next login is one tap. */
   logout?(): Promise<void>
   /** Mobile-only. Reads the saved password from Keychain. Returns '' when
    *  nothing is stored. */

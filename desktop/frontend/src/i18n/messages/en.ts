@@ -436,6 +436,10 @@ export const en = {
     account: {
       title: 'Account',
       email: 'Email',
+      logout: {
+        button: 'Log out',
+        submitting: 'Logging out...',
+      },
       changePassword: {
         title: 'Change password',
         oldPassword: 'Current password',

@@ -60,6 +60,22 @@ describe("terminal toasts", () => {
   });
 });
 
+describe("web capability gates", () => {
+  test("does not mount plugin hosts when caps.pluginHost=false", () => {
+    expect(source).toContain('<template v-if="caps.pluginHost && rightPanelHasPlugin">');
+    expect(source).toContain('<PluginHost\n      v-if="caps.pluginHost"');
+    expect(source).toContain('<TranslatePanelHost v-if="caps.pluginHost"');
+  });
+
+  test("settings close only refreshes desktop relay config when Wails bindings exist", () => {
+    expect(source).toContain("function refreshDesktopRelayConfig()");
+    expect(source).toContain("if (caps.wailsBindings)");
+    expect(source).toContain('@relay-config-changed="refreshDesktopRelayConfig"');
+    expect(source).toContain('@close="onSettingsClose"');
+    expect(source).not.toContain('@close="showSettings = false; settingsInitialTab = undefined; refreshRelayConfig()"');
+  });
+});
+
 describe("notification click routing", () => {
   test("subscribes to notification:click and focuses the matching pane", () => {
     expect(source).toContain("platform.events.on('notification:click'");

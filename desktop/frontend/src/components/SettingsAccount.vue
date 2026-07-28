@@ -11,6 +11,7 @@ const platform = usePlatform();
 // ----- Email (read-only) -----
 const email = ref("");
 const emailLoading = ref(true);
+const logoutSubmitting = ref(false);
 
 onMounted(async () => {
   try {
@@ -25,6 +26,19 @@ onMounted(async () => {
     emailLoading.value = false;
   }
 });
+
+async function onLogoutClick() {
+  if (logoutSubmitting.value) return;
+  logoutSubmitting.value = true;
+  try {
+    await platform.relay.logout?.();
+  } catch {
+    // The shared web logout helper clears local state in finally. Do not keep
+    // the user on an authenticated surface just because server revoke failed.
+  } finally {
+    location.assign("/login.html");
+  }
+}
 
 // describeAccountError maps the errors the OPAQUE step-up + password/delete
 // endpoints can throw onto the toast copy from spec §4.4's error table.
@@ -154,6 +168,19 @@ async function onDeleteClick() {
       <p class="email-value" data-testid="account-email">
         {{ emailLoading ? t("common.loading") : email }}
       </p>
+      <button
+        type="button"
+        class="secondary"
+        data-testid="account-logout-button"
+        :disabled="logoutSubmitting"
+        @click="onLogoutClick"
+      >
+        {{
+          logoutSubmitting
+            ? t("settings.account.logout.submitting")
+            : t("settings.account.logout.button")
+        }}
+      </button>
     </section>
 
     <section class="account-section">

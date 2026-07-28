@@ -5,6 +5,10 @@ vi.mock('@webshared/api/version', () => ({
   fetchVersion: vi.fn().mockResolvedValue('v0.3.19'),
 }))
 
+vi.mock('@webshared/api/auth', () => ({
+  logout: vi.fn().mockResolvedValue(undefined),
+}))
+
 describe('web platform', () => {
   it('caps: localPty=false autoUpdate=false pluginHost=false windowControls=false', () => {
     const p = createWebPlatform()
@@ -47,6 +51,12 @@ describe('web platform', () => {
       })
       // must NOT write to the mobile/Capacitor key
       expect(localStorage.getItem('atterm.relay.session')).toBeNull()
+    })
+
+    it('relay.logout delegates to the shared web auth logout helper', async () => {
+      const { logout } = await import('@webshared/api/auth')
+      await createWebPlatform().relay.logout?.()
+      expect(logout).toHaveBeenCalledOnce()
     })
 
     it('sessions.getPins reads pinned_session_ids from localStorage', () => {

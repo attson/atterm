@@ -108,65 +108,69 @@ const defaultShellOptions = computed(() => [
 ]);
 
 onMounted(async () => {
-  try {
-    const preference = await getLocalePreference();
-    selectedLocale.value = preference;
-    persistedLocale.value = preference;
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  }
-  try {
-    notificationsEnabled.value = await getNotificationsEnabled();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    notificationsLoading.value = false;
-  }
-  try {
-    shellIntegrationEnabled.value = await getShellIntegrationEnabled();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    shellIntegrationLoading.value = false;
-  }
-  try {
-    recoveryEnabled.value = await getRecoveryDialogEnabled();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    recoveryEnabledLoading.value = false;
-  }
-  try {
-    const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
-    availableShells.value = shells;
-    if (configured === "auto") {
-      selectedDefaultShell.value = "auto";
-    } else if (shells.includes(configured)) {
-      selectedDefaultShell.value = configured;
-      customShellPath.value = configured;
-    } else {
-      selectedDefaultShell.value = "__custom__";
-      customShellPath.value = configured;
+  if (caps.wailsBindings) {
+    try {
+      const preference = await getLocalePreference();
+      selectedLocale.value = preference;
+      persistedLocale.value = preference;
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
     }
-    persistedDefaultShell.value = selectedDefaultShell.value;
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    defaultShellLoading.value = false;
   }
-  try {
-    webglRendererEnabled.value = await getWebglRendererEnabled();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    webglRendererLoading.value = false;
-  }
-  try {
-    commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
-  } finally {
-    commandNotifyThresholdLoading.value = false;
+  if (caps.wailsBindings) {
+    try {
+      notificationsEnabled.value = await getNotificationsEnabled();
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
+    } finally {
+      notificationsLoading.value = false;
+    }
+    try {
+      shellIntegrationEnabled.value = await getShellIntegrationEnabled();
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
+    } finally {
+      shellIntegrationLoading.value = false;
+    }
+    try {
+      recoveryEnabled.value = await getRecoveryDialogEnabled();
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
+    } finally {
+      recoveryEnabledLoading.value = false;
+    }
+    try {
+      const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
+      availableShells.value = shells;
+      if (configured === "auto") {
+        selectedDefaultShell.value = "auto";
+      } else if (shells.includes(configured)) {
+        selectedDefaultShell.value = configured;
+        customShellPath.value = configured;
+      } else {
+        selectedDefaultShell.value = "__custom__";
+        customShellPath.value = configured;
+      }
+      persistedDefaultShell.value = selectedDefaultShell.value;
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
+    } finally {
+      defaultShellLoading.value = false;
+    }
+    try {
+      webglRendererEnabled.value = await getWebglRendererEnabled();
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
+    } finally {
+      webglRendererLoading.value = false;
+    }
+    try {
+      commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
+    } catch (e: any) {
+      error.value = e?.message ?? String(e);
+    } finally {
+      commandNotifyThresholdLoading.value = false;
+    }
   }
   await refreshPushState();
 });
@@ -375,7 +379,9 @@ async function onChange() {
   saving.value = true;
   error.value = "";
   try {
-    await setTerminalThemePreference(nextTheme);
+    if (caps.wailsBindings) {
+      await setTerminalThemePreference(nextTheme);
+    }
     persisted.value = nextTheme;
     emit("terminal-theme-changed", nextTheme);
   } catch (e: any) {
@@ -412,7 +418,7 @@ async function onChange() {
       {{ t("settings.general.terminalThemeHint") }}
     </p>
 
-    <label class="checkbox" v-if="!notificationsLoading">
+    <label class="checkbox" v-if="caps.wailsBindings && !notificationsLoading">
       <input
         type="checkbox"
         :checked="notificationsEnabled"
@@ -420,11 +426,11 @@ async function onChange() {
       />
       {{ t("settings.general.notificationsBell") }}
     </label>
-    <p class="hint" v-if="!notificationsLoading">
+    <p class="hint" v-if="caps.wailsBindings && !notificationsLoading">
       {{ t("settings.general.notificationsHint") }}
     </p>
 
-    <label class="checkbox" v-if="!shellIntegrationLoading">
+    <label class="checkbox" v-if="caps.wailsBindings && !shellIntegrationLoading">
       <input
         type="checkbox"
         :checked="shellIntegrationEnabled"
@@ -432,11 +438,11 @@ async function onChange() {
       />
       {{ t("settings.general.shellIntegration") }}
     </label>
-    <p class="hint" v-if="!shellIntegrationLoading">
+    <p class="hint" v-if="caps.wailsBindings && !shellIntegrationLoading">
       {{ t("settings.general.shellIntegrationHint") }}
     </p>
 
-    <label class="checkbox" v-if="!recoveryEnabledLoading">
+    <label class="checkbox" v-if="caps.wailsBindings && !recoveryEnabledLoading">
       <input
         type="checkbox"
         :checked="recoveryEnabled"
@@ -444,23 +450,23 @@ async function onChange() {
       />
       {{ t("settings.general.recoveryEnabled") }}
     </label>
-    <p class="hint" v-if="!recoveryEnabledLoading">
+    <p class="hint" v-if="caps.wailsBindings && !recoveryEnabledLoading">
       {{ t("settings.general.recoveryEnabledHint") }}
     </p>
 
-    <label class="field-label" v-if="!defaultShellLoading">{{ t("settings.general.defaultShell") }}</label>
+    <label class="field-label" v-if="caps.wailsBindings && !defaultShellLoading">{{ t("settings.general.defaultShell") }}</label>
     <SelectDropdown
-      v-if="!defaultShellLoading"
+      v-if="caps.wailsBindings && !defaultShellLoading"
       v-model="selectedDefaultShell"
       :options="defaultShellOptions"
       :aria-label="t('settings.general.defaultShell')"
       :disabled="defaultShellSaving"
       @update:modelValue="onDefaultShellChange"
     />
-    <p class="hint" v-if="!defaultShellLoading">
+    <p class="hint" v-if="caps.wailsBindings && !defaultShellLoading">
       {{ t("settings.general.defaultShellHint") }}
     </p>
-    <div v-if="!defaultShellLoading && selectedDefaultShell === '__custom__'" class="custom-shell-row">
+    <div v-if="caps.wailsBindings && !defaultShellLoading && selectedDefaultShell === '__custom__'" class="custom-shell-row">
       <input
         class="text-input"
         v-model="customShellPath"
@@ -471,7 +477,7 @@ async function onChange() {
       <button :disabled="defaultShellSaving" @click="onCustomShellSave">{{ t("settings.general.saveCustom") }}</button>
     </div>
 
-    <label class="checkbox" v-if="!webglRendererLoading">
+    <label class="checkbox" v-if="caps.wailsBindings && !webglRendererLoading">
       <input
         type="checkbox"
         :checked="webglRendererEnabled"
@@ -479,15 +485,15 @@ async function onChange() {
       />
       {{ t("settings.general.webglRenderer") }}
     </label>
-    <p class="hint" v-if="!webglRendererLoading">
+    <p class="hint" v-if="caps.wailsBindings && !webglRendererLoading">
       {{ t("settings.general.webglHint") }}
     </p>
 
-    <label class="field-label" v-if="!commandNotifyThresholdLoading">
+    <label class="field-label" v-if="caps.wailsBindings && !commandNotifyThresholdLoading">
       {{ t("settings.general.commandNotifyThreshold") }}
     </label>
     <input
-      v-if="!commandNotifyThresholdLoading"
+      v-if="caps.wailsBindings && !commandNotifyThresholdLoading"
       class="number-input"
       type="number"
       min="1"
@@ -495,7 +501,7 @@ async function onChange() {
       :value="commandNotifyThresholdSec"
       @change="onCommandNotifyThresholdChange"
     />
-    <p class="hint" v-if="!commandNotifyThresholdLoading">
+    <p class="hint" v-if="caps.wailsBindings && !commandNotifyThresholdLoading">
       {{ t("settings.general.commandNotifyHint") }}
     </p>
 

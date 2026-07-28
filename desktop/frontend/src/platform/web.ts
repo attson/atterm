@@ -3,6 +3,7 @@ import { apiFetch } from '@webshared/api/client'
 // ^ resolved via the '@webshared' vite alias to web/src/shared/api/client
 // (desktop/frontend/vite.config.ts).
 import { loadRelayConfig, saveRelayConfig, clearRelayConfig } from '@webshared/api/relay-config'
+import { logout as webLogout } from '@webshared/api/auth'
 // ^ single source of truth for web's relay storage key ('atterm.relay') and
 // shape ({ baseURL, sessionToken, expiresAt, allowInsecure, ... }) — apiFetch
 // itself reads auth through loadRelayConfig, so the bridge below must adapt
@@ -56,6 +57,9 @@ const relay: RelayBridge = {
   async fetchMe() {
     const { data } = await apiFetch<any>('/api/me')
     return data
+  },
+  async logout() {
+    await webLogout()
   },
 }
 

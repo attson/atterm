@@ -75,6 +75,8 @@ export const zhCN = {
     takeControl: "接管控制",
     clearBuffer: "清空缓冲区",
     sendSelection: "发送",
+    pickImage: "图片",
+    pickFile: "文件",
     emptyPaneHint: "[空面板 - 按 Cmd+N / Ctrl+N 填充]",
     remote: "远端",
     remotePrefix: "[远端] ",

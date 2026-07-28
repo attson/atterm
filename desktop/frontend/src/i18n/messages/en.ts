@@ -73,6 +73,8 @@ export const en = {
     takeControl: "Take control",
     clearBuffer: "clear buffer",
     sendSelection: "send",
+    pickImage: "image",
+    pickFile: "file",
     emptyPaneHint: "[empty pane - press Cmd+N / Ctrl+N to fill]",
     remote: "remote",
     remotePrefix: "[remote] ",

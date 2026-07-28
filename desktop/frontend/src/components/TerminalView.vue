@@ -18,6 +18,7 @@ import {
 import {
   canSendSelection,
   clampContextMenuPosition,
+  effectiveRemotePermission,
   isPasteAllowed,
   prepareSendPayload,
 } from "../lib/terminalContextMenu";
@@ -39,6 +40,7 @@ import { usePluginConfigStore } from "../plugins/configStore";
 import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/types";
 import { useI18n } from "../i18n/useI18n";
 import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
+import { effectiveAuxKeys, type AuxKey } from "../lib/auxKeys";
 import { usePlatform } from "../platform";
 
 const props = withDefaults(
@@ -84,6 +86,8 @@ const menuY = ref(0);
 const menuHasSelection = ref(false);
 const pasteBusy = ref(false);
 const menuRef = ref<HTMLDivElement | null>(null);
+const filePicker = ref<HTMLInputElement | null>(null);
+const imagePicker = ref<HTMLInputElement | null>(null);
 // Driver state: true = our IN/RESIZE go through, FitAddon sizes xterm to the
 // container. false = viewer: xterm.cols/rows locked to PTY's reported dims
 // from META. Local panes are always the driver. Remote panes start as viewer
@@ -108,6 +112,7 @@ const localHostname = ref("");
 // is empty so the bar is never empty on a fresh install.
 const templates = ref<readonly QuickTemplate[]>([]);
 const templatesHidden = ref(false);
+const auxKeys = ref<readonly AuxKey[]>([]);
 const platform = usePlatform();
 
 let term: Terminal | null = null;
@@ -161,6 +166,20 @@ const menuCanSend = computed(() =>
     isDriver: isDriver.value,
   }),
 );
+const showAuxKeyBar = computed(() =>
+  !platform.caps.wailsBindings && !platform.caps.localPty && auxKeys.value.length > 0
+);
+const auxKeysCanSend = computed(() =>
+  isDriver.value && isPasteAllowed(status.value, props.remotePermission)
+);
+const pasteBlobCanSend = computed(() =>
+  auxKeysCanSend.value && effectiveRemotePermission(props.remotePermission) === "full"
+);
+const bottomBarCount = computed(() =>
+  (templatesHidden.value ? 0 : 1) + (showAuxKeyBar.value ? 1 : 0)
+);
+const terminalBottom = computed(() => `${bottomBarCount.value * 30}px`);
+const templateBarBottom = computed(() => showAuxKeyBar.value ? "30px" : "0");
 
 function handleViewerKeydown(event: KeyboardEvent) {
   if (isDriver.value) return; // driver mode passes through
@@ -687,6 +706,57 @@ function sendTemplate(tpl: QuickTemplate) {
   window.setTimeout(() => c?.sendInput("\r"), 16);
 }
 
+function sendAux(seq: string) {
+  if (!auxKeysCanSend.value) return;
+  conn?.sendInput(seq);
+}
+
+function openFilePicker() {
+  if (!pasteBlobCanSend.value) return;
+  if (filePicker.value) filePicker.value.value = "";
+  filePicker.value?.click();
+}
+
+async function onFilePicked(event: Event) {
+  if (!pasteBlobCanSend.value) return;
+  const input = event.currentTarget as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file) return;
+  const name = file.name || "file";
+  try {
+    await conn?.sendPasteFile(file, name);
+    pasteFileBus.emit(name, file.size);
+  } catch (err: any) {
+    console.warn("[AT Term] failed to send picked file", err);
+    emit("toast", err?.message ?? t("terminal.pasteFailed"));
+  } finally {
+    if (input) input.value = "";
+  }
+}
+
+function openImagePicker() {
+  if (!pasteBlobCanSend.value) return;
+  if (imagePicker.value) imagePicker.value.value = "";
+  imagePicker.value?.click();
+}
+
+async function onImagePicked(event: Event) {
+  if (!pasteBlobCanSend.value) return;
+  const input = event.currentTarget as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file) return;
+  const name = file.name || "picked-image";
+  try {
+    pasteImageBus.emit(file, name);
+    await conn?.sendPasteImage(file, name);
+  } catch (err: any) {
+    console.warn("[AT Term] failed to send picked image", err);
+    emit("toast", err?.message ?? t("terminal.pasteFailed"));
+  } finally {
+    if (input) input.value = "";
+  }
+}
+
 // Wheel-to-horizontal-scroll for the template bar. Trackpads emit deltaX
 // natively when scrolled sideways, but a vertical mouse wheel — the common
 // case when the cursor is hovering over a one-row strip — only emits deltaY.
@@ -703,10 +773,17 @@ function onTemplateBarWheel(e: WheelEvent) {
 
 // Re-read the persisted template list + hidden flag. Wired to the
 // 'quickTemplates:changed' event the Settings page emits so an open
-// terminal updates immediately, without a remount.
-async function reloadTemplates() {
-  templates.value = await effectiveTemplates(platform.templates);
-  templatesHidden.value = await platform.templates.loadHidden();
+// terminal updates immediately, without a remount. It also loads aux keys so
+// browser terminals get the same raw control-key row as the mobile shell.
+async function reloadShortcutBars() {
+  const [nextTemplates, nextAuxKeys, nextHidden] = await Promise.all([
+    effectiveTemplates(platform.templates),
+    effectiveAuxKeys(platform.auxKeys),
+    platform.templates.loadHidden(),
+  ]);
+  templates.value = nextTemplates;
+  auxKeys.value = nextAuxKeys;
+  templatesHidden.value = nextHidden;
 }
 
 // parseHotkey turns a user-typed string like "Mod+1", "Alt+Shift+P", "Mod+/"
@@ -753,6 +830,7 @@ function onTemplateHotkey(e: KeyboardEvent) {
 }
 
 let templatesOff: (() => void) | null = null;
+let shortcutsOff: (() => void) | null = null;
 
 onMounted(async () => {
   await ensureTerm();
@@ -768,8 +846,9 @@ onMounted(async () => {
   }
   if (!isAlive) return;
   startConnection();
-  reloadTemplates();
-  templatesOff = platform.events.on("quickTemplates:changed", reloadTemplates);
+  reloadShortcutBars();
+  templatesOff = platform.events.on("quickTemplates:changed", reloadShortcutBars);
+  shortcutsOff = platform.events.on("mobile:shortcutsChanged", reloadShortcutBars);
   document.addEventListener("mousedown", onDocumentMouseDown);
   document.addEventListener("keydown", onDocumentKeyDown);
   // Hotkey handler is a capture-phase listener so it preempts xterm's own
@@ -800,6 +879,8 @@ onBeforeUnmount(() => {
   resizeObserver = null;
   templatesOff?.();
   templatesOff = null;
+  shortcutsOff?.();
+  shortcutsOff = null;
   document.removeEventListener("mousedown", onDocumentMouseDown);
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
@@ -901,6 +982,7 @@ watch(
     <div
       ref="termContainer"
       class="term"
+      :style="{ bottom: terminalBottom }"
       @contextmenu.prevent="openContextMenu"
       @mouseup.capture="onTerminalMouseUp"
     ></div>
@@ -956,6 +1038,7 @@ watch(
       v-if="!templatesHidden"
       class="template-bar"
       data-testid="template-bar"
+      :style="{ bottom: templateBarBottom }"
       @wheel.passive="onTemplateBarWheel"
     >
       <button
@@ -966,6 +1049,48 @@ watch(
         :title="tpl.hotkey || ''"
         @click="sendTemplate(tpl)"
       >{{ tpl.label }}</button>
+    </div>
+    <div
+      v-if="showAuxKeyBar"
+      class="aux-key-bar"
+      data-testid="terminal-aux-key-bar"
+      @wheel.passive="onTemplateBarWheel"
+    >
+      <input
+        ref="filePicker"
+        class="file-picker-input"
+        data-testid="terminal-file-input"
+        type="file"
+        @change="onFilePicked"
+      />
+      <input
+        ref="imagePicker"
+        class="file-picker-input"
+        data-testid="terminal-image-input"
+        type="file"
+        accept="image/*"
+        @change="onImagePicked"
+      />
+      <button
+        class="aux-key-btn"
+        data-testid="terminal-pick-image"
+        :disabled="!pasteBlobCanSend"
+        @click="openImagePicker"
+      >{{ t("terminal.pickImage") }}</button>
+      <button
+        class="aux-key-btn"
+        data-testid="terminal-pick-file"
+        :disabled="!pasteBlobCanSend"
+        @click="openFilePicker"
+      >{{ t("terminal.pickFile") }}</button>
+      <button
+        v-for="key in auxKeys"
+        :key="key.id"
+        class="aux-key-btn"
+        :data-testid="`terminal-aux-key-${key.id}`"
+        :disabled="!auxKeysCanSend"
+        @click="sendAux(key.seq)"
+      >{{ key.label }}</button>
     </div>
   </div>
 </template>
@@ -1004,6 +1129,26 @@ watch(
   scrollbar-width: none;
 }
 .template-bar::-webkit-scrollbar { display: none; }
+.aux-key-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  z-index: 4;
+  scrollbar-width: none;
+}
+.aux-key-bar::-webkit-scrollbar { display: none; }
+.file-picker-input {
+  display: none;
+}
 .template-btn {
   flex: 0 0 auto;
   height: 22px;
@@ -1019,6 +1164,28 @@ watch(
 .template-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.aux-key-btn {
+  flex: 0 0 auto;
+  min-width: 34px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 0.76rem;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.aux-key-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.aux-key-btn:disabled {
+  color: var(--fg-dim);
+  cursor: default;
+  opacity: 0.55;
 }
 .term :deep(.xterm) {
   /* FitAddon subtracts padding from the xterm element, not this host. */

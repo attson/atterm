@@ -67,6 +67,57 @@ describe("TerminalView fit geometry", () => {
   });
 });
 
+describe("TerminalView web auxiliary keys", () => {
+  test("loads the mobile aux-key defaults for browser terminals only", () => {
+    expect(source).toContain('effectiveAuxKeys, type AuxKey');
+    expect(source).toMatch(/const\s+auxKeys\s*=\s*ref<readonly AuxKey\[\]>\(\[\]\)/);
+    expect(source).toMatch(/effectiveAuxKeys\(platform\.auxKeys\)/);
+    expect(source).toMatch(/const\s+showAuxKeyBar\s*=\s*computed\(\s*\(\)\s*=>\s*![^)]*platform\.caps\.wailsBindings[\s\S]*?![^)]*platform\.caps\.localPty/);
+  });
+
+  test("renders an aux-key row and sends raw sequences through the active connection", () => {
+    expect(source).toContain('data-testid="terminal-aux-key-bar"');
+    expect(source).toContain(':data-testid="`terminal-aux-key-${key.id}`"');
+    expect(source).toContain('@click="sendAux(key.seq)"');
+    expect(source).toMatch(/function\s+sendAux\s*\(\s*seq:\s*string\s*\)/);
+    expect(source).toMatch(/conn\?\.sendInput\(seq\)/);
+    expect(source).toMatch(/const\s+auxKeysCanSend\s*=\s*computed/);
+    expect(source).toContain(':disabled="!auxKeysCanSend"');
+  });
+
+  test("lets browser terminals pick a file and send it over PASTE_FILE", () => {
+    expect(source).toMatch(/const\s+filePicker\s*=\s*ref<HTMLInputElement \| null>\(null\)/);
+    expect(source).toContain('data-testid="terminal-pick-file"');
+    expect(source).toContain('data-testid="terminal-file-input"');
+    expect(source).toContain('@click="openFilePicker"');
+    expect(source).toContain('@change="onFilePicked"');
+    expect(source).toMatch(/function\s+openFilePicker\s*\(\s*\)/);
+    expect(source).toMatch(/async function\s+onFilePicked\s*\(/);
+    expect(source).toMatch(/conn\?\.sendPasteFile\(file,\s*name\)/);
+    expect(source).toMatch(/pasteFileBus\.emit\(name,\s*file\.size\)/);
+  });
+
+  test("lets browser terminals pick an image and send it over PASTE_IMAGE", () => {
+    expect(source).toMatch(/const\s+imagePicker\s*=\s*ref<HTMLInputElement \| null>\(null\)/);
+    expect(source).toContain('data-testid="terminal-pick-image"');
+    expect(source).toContain('data-testid="terminal-image-input"');
+    expect(source).toContain('accept="image/*"');
+    expect(source).toContain('@click="openImagePicker"');
+    expect(source).toContain('@change="onImagePicked"');
+    expect(source).toMatch(/function\s+openImagePicker\s*\(\s*\)/);
+    expect(source).toMatch(/async function\s+onImagePicked\s*\(/);
+    expect(source).toMatch(/conn\?\.sendPasteImage\(file,\s*name\)/);
+    expect(source).toMatch(/pasteImageBus\.emit\(file,\s*name\)/);
+  });
+
+  test("keeps the terminal viewport above both bottom shortcut bars", () => {
+    expect(source).toContain(':style="{ bottom: terminalBottom }"');
+    expect(source).toMatch(/const\s+bottomBarCount\s*=\s*computed/);
+    expect(source).toMatch(/showAuxKeyBar\.value\s*\?\s*1\s*:\s*0/);
+    expect(source).toContain(':style="{ bottom: templateBarBottom }"');
+  });
+});
+
 describe("TerminalView themes", () => {
   test("accepts a theme prop and uses it when creating xterm", () => {
     expect(source).toContain("theme: ITheme");

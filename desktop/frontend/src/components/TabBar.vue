@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
+import { ShieldUser } from "lucide-vue-next";
 import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
@@ -25,8 +26,13 @@ withDefaults(
     // settings button. Kept optional/default-false so web/mobile callers
     // that never surface an update state don't need to pass it.
     updateBadge?: boolean;
+    // Whether the current user is an admin. Gates the admin button entirely
+    // — non-admins never see it, regardless of adminOpen.
+    isAdmin?: boolean;
+    // Whether the admin panel is the currently active main-area view.
+    adminOpen?: boolean;
   }>(),
-  { canNewLocal: true, updateBadge: false },
+  { canNewLocal: true, updateBadge: false, isAdmin: false, adminOpen: false },
 );
 
 const emit = defineEmits<{
@@ -38,6 +44,7 @@ const emit = defineEmits<{
   // caps.windowControls — TitleBar (and its old settings button) is hidden
   // entirely on web/mobile, but TabBar always renders alongside App.vue.
   (e: "open-settings"): void;
+  (e: "toggle-admin"): void;
 }>();
 
 const DRAG_THRESHOLD = 4;
@@ -281,6 +288,17 @@ function onClose(e: MouseEvent, id: string) {
       @click="emit('new')"
     >+</button>
     <button
+      v-if="isAdmin"
+      class="admin-btn"
+      type="button"
+      data-test="admin-button"
+      :class="{ active: adminOpen }"
+      :title="i18nT('terminal.adminPanel')"
+      @click="emit('toggle-admin')"
+    >
+      <ShieldUser :size="14" />
+    </button>
+    <button
       class="settings-btn"
       type="button"
       data-test="tabbar-settings"
@@ -378,6 +396,16 @@ function onClose(e: MouseEvent, id: string) {
   background: #d29922;
   border-radius: 50%;
 }
+.admin-btn {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--fg-dim);
+  padding: 0 10px; cursor: pointer;
+  border-left: 1px solid var(--border);
+  transition: color 120ms, background 120ms;
+}
+.admin-btn:hover { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
+.admin-btn.active { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 .tab .tab-unread-dot {
   font-size: 8px;
   margin-left: 4px;

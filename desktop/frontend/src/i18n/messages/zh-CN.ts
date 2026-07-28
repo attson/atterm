@@ -86,6 +86,7 @@ export const zhCN = {
     remoteSessionsAvailable: "{count} 个远端会话可用",
     connectRelayForRemote: "连接 relay 后可查看远端会话",
     relaySettings: "relay 设置",
+    adminPanel: "管理面板",
     newTab: "新建标签页",
     starting: "启动中...",
     layoutVertical: "左右分屏",

@@ -803,19 +803,24 @@ describe("TaskGroupedList — multi-select", () => {
     expect(w.find("[data-test=session-row-menu-item-details]").exists()).toBe(true);
     expect(w.find("[data-test=session-row-menu-item-pin]").exists()).toBe(true);
     expect(w.find("[data-test=session-row-menu-item-merge]").exists()).toBe(false);
+    expect(w.findAll("[data-test=session-row-menu] .menu-item").map((b) => b.attributes("data-test"))).toEqual([
+      "session-row-menu-item-pin",
+      "session-row-menu-item-details",
+    ]);
   });
 
-  test("contextmenu on unselected row when sel.size>=1 replaces selection", async () => {
+  test("contextmenu on unselected row preserves the current selection", async () => {
     const w = mount3();
     const rows = w.findAll("[data-test=task-row]");
     await rows[0].trigger("click", { metaKey: true }); // select s1
     await rows[2].trigger("contextmenu"); // right-click s3 (not selected)
-    // Menu should be the single-select variant (s3 alone)
+    // Menu should target s3 without changing the existing selected set.
     expect(w.find("[data-test=session-row-menu-item-details]").exists()).toBe(true);
     expect(w.find("[data-test=session-row-menu-item-merge]").exists()).toBe(false);
-    // s3 is now the only selected row
+    // s1 remains selected; s3 is only the menu target, not newly selected.
     expect(w.findAll("[data-test=task-row][data-selected=true]").length).toBe(1);
-    expect(rows[2].attributes("data-selected")).toBe("true");
+    expect(rows[0].attributes("data-selected")).toBe("true");
+    expect(rows[2].attributes("data-selected")).toBeUndefined();
   });
 
   test("selecting merge from menu emits merge-selected", async () => {

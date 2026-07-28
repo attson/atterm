@@ -18,9 +18,11 @@ func newRelayTestApp(t *testing.T) *App {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	t.Setenv("LocalAppData", filepath.Join(root, "local"))
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	a := &App{
 		cfgStore: &configStore{},
-		ctx:      context.Background(),
+		ctx:      ctx,
 	}
 	return a
 }

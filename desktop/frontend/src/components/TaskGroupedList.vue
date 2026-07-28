@@ -238,11 +238,6 @@ const menuState = ref<{
 
 function onRowMenu(e: MouseEvent, s: RemoteSession) {
   e.preventDefault();
-  // If right-click lands on a row that isn't part of the current
-  // selection, reset the selection to just that row — same behavior as
-  // macOS Finder / VSCode explorer. This keeps the menu's action target
-  // unambiguous.
-  if (!sel.isSelected(s.session_id)) sel.selectOnly(s.session_id);
   menuState.value = { open: true, x: e.clientX, y: e.clientY, session: s };
 }
 
@@ -271,26 +266,26 @@ const menuItems = computed<MenuItem[]>(() => {
         disabled: openCount === 0,
       },
       {
-        key: "details",
-        label: t("tasks.rowMenu.details"),
-        disabled: true,
-      },
-      {
         key: pins.isPinned(s.session_id) ? "unpin" : "pin",
         label: pins.isPinned(s.session_id)
           ? t("tasks.pinned.menuUnpin")
           : t("tasks.pinned.menuPin"),
       },
+      {
+        key: "details",
+        label: t("tasks.rowMenu.details"),
+        disabled: true,
+      },
     ];
   }
   return [
-    { key: "details", label: t("tasks.rowMenu.details") },
     {
       key: pins.isPinned(s.session_id) ? "unpin" : "pin",
       label: pins.isPinned(s.session_id)
         ? t("tasks.pinned.menuUnpin")
         : t("tasks.pinned.menuPin"),
     },
+    { key: "details", label: t("tasks.rowMenu.details") },
   ];
 });
 

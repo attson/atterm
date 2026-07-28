@@ -1362,10 +1362,12 @@ function onHashChange() {
 }
 
 onMounted(async () => {
-  try {
-    sidebarCollapsed.value = await getTaskSidebarCollapsed();
-  } catch {
-    /* default = expanded (false) */
+  if (caps.wailsBindings) {
+    try {
+      sidebarCollapsed.value = await getTaskSidebarCollapsed();
+    } catch {
+      /* default = expanded (false) */
+    }
   }
   quitListenerOff = $platform.events.on('before-close', handleBeforeClose);
   notificationClickListenerOff = $platform.events.on('notification:click', focusSessionFromNotification);
@@ -1390,24 +1392,28 @@ onMounted(async () => {
   syncRoute();
   window.addEventListener("hashchange", syncRoute);
   window.addEventListener("hashchange", onHashChange);
-  try {
-    const fatal = await getStartupError();
-    if (fatal?.fatal) {
-      startupFatal.value = fatal;
-      status.value = "error";
-      errorMsg.value = fatal.message;
-      return;
+  if (caps.wailsBindings) {
+    try {
+      const fatal = await getStartupError();
+      if (fatal?.fatal) {
+        startupFatal.value = fatal;
+        status.value = "error";
+        errorMsg.value = fatal.message;
+        return;
+      }
+    } catch (e) {
+      console.warn("[AT Term] failed to load startup fatal state", e);
     }
-  } catch (e) {
-    console.warn("[AT Term] failed to load startup fatal state", e);
   }
   // Set up the size-prediction probe before anything spawns a PTY — the
   // probe must be ready by the time auto-startNewTab fires.
   await setupMeasureProbe();
-  try {
-    commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
-  } catch (e) {
-    console.warn("[AT Term] failed to load command-notify threshold", e);
+  if (caps.wailsBindings) {
+    try {
+      commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
+    } catch (e) {
+      console.warn("[AT Term] failed to load command-notify threshold", e);
+    }
   }
   // Track which boot step is running so a thrown error pins down the call
   // site for the user (and the logs) — without this, the catch below collapses
@@ -1486,15 +1492,19 @@ onMounted(async () => {
 
   // Auto-update poll: every 5s pull state.available || ready and toggle the
   // ⚙ badge dot. Lower frequency than session poll because update state
-  // changes are rare (boot check + 24h ticker).
-  updatePollHandle = window.setInterval(async () => {
-    try {
-      const st: UpdateState = await getUpdateState();
-      updateBadge.value = !!(st.available || st.ready);
-    } catch {
-      /* ignore — never block UI on updater failures */
-    }
-  }, 5000);
+  // changes are rare (boot check + 24h ticker). Wails-only — on web/capacitor
+  // there is no bundled auto-updater, and calling this every 5s only pollutes
+  // the console with rejected promises.
+  if (caps.wailsBindings) {
+    updatePollHandle = window.setInterval(async () => {
+      try {
+        const st: UpdateState = await getUpdateState();
+        updateBadge.value = !!(st.available || st.ready);
+      } catch {
+        /* ignore — never block UI on updater failures */
+      }
+    }, 5000);
+  }
 
   // Auto-start guarded by try/catch: a stray throw here (e.g. a Wails-side
   // shape regression making `recoverySnap.tabs` null) used to escape onMounted

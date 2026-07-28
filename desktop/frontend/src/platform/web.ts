@@ -65,9 +65,15 @@ const sessions: SessionBridge = {
   },
   async listShells() { return [] },
   async listRemoteSessions(): Promise<RemoteSession[]> {
-    const { data } = await apiFetch<{ items?: any[] }>('/api/sessions')
-    // Map SessionInfo → RemoteSession same way App.vue's adaptSession does.
-    return (data.items ?? []).map((s: any) => ({ ...s, session_id: s.id })) as RemoteSession[]
+    // /api/sessions returns SessionInfo[] directly, not {items:[...]}.
+    // Reuse web's listSessions helper for E2EE-sealed field decryption
+    // (title / cwd / command / current_command); otherwise those fields
+    // stay blank on the sidebar.
+    const { listSessions } = await import('@webshared/api/sessions')
+    const items = await listSessions()
+    // Map SessionInfo (id) → RemoteSession (session_id) same way
+    // App.vue's adaptSession does.
+    return items.map((s) => ({ ...s, session_id: s.id })) as unknown as RemoteSession[]
   },
   async markSessionsSeen(opts) {
     await apiFetch('/api/sessions/seen', { method: 'POST', body: JSON.stringify(opts) })

@@ -101,6 +101,9 @@ export function createWailsPlatform(): Platform {
       markSessionsSeen: api.markSessionsSeen,
       getPins: () => api.getPinnedSessionIds(),
       setPins: (ids) => api.setPinnedSessionIds(ids),
+      listRelaySessions: api.listRelaySessions,
+      revokeRelaySession: api.revokeRelaySession,
+      signOutOtherRelaySessions: api.signOutOtherRelaySessions,
     },
     system: {
       showNotification: api.showNotification,

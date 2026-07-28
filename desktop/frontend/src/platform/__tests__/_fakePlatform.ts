@@ -78,6 +78,9 @@ export function createFakePlatform(): Platform {
       markSessionsSeen: vi.fn().mockResolvedValue(undefined),
       getPins: vi.fn().mockResolvedValue([]),
       setPins: vi.fn().mockResolvedValue(undefined),
+      listRelaySessions: vi.fn().mockResolvedValue([]),
+      revokeRelaySession: vi.fn().mockResolvedValue(undefined),
+      signOutOtherRelaySessions: vi.fn().mockResolvedValue({ deleted: 0 }),
     },
     system: {
       showNotification: vi.fn().mockResolvedValue(undefined),

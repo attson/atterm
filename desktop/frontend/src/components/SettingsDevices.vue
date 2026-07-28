@@ -1,14 +1,11 @@
 <script lang="ts" setup>
 import { onMounted, ref } from "vue";
-import {
-  listRelaySessions,
-  revokeRelaySession,
-  signOutOtherRelaySessions,
-  type RelaySessionRow,
-} from "../lib/api";
+import type { RelaySessionRow } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
+import { usePlatform } from "../platform";
 
 const { t } = useI18n();
+const platform = usePlatform();
 
 const rows = ref<RelaySessionRow[]>([]);
 const loading = ref(true);
@@ -24,7 +21,12 @@ async function reload(silent = false) {
   error.value = "";
   notAuthed.value = false;
   try {
-    rows.value = await listRelaySessions();
+    if (!platform.sessions.listRelaySessions) {
+      notAuthed.value = true;
+      rows.value = [];
+      return;
+    }
+    rows.value = await platform.sessions.listRelaySessions();
   } catch (e: any) {
     const msg = e?.message ?? String(e);
     if (msg.includes("not authenticated")) {
@@ -51,7 +53,7 @@ async function onRevoke(row: RelaySessionRow) {
   if (!window.confirm(t("settings.devices.revokeConfirm", { ua }))) return;
   revoking.value = { ...revoking.value, [row.id_hash]: true };
   try {
-    await revokeRelaySession(row.id_hash);
+    await platform.sessions.revokeRelaySession?.(row.id_hash);
     await reload(true);
   } catch (e: any) {
     error.value = e?.message ?? String(e);
@@ -66,7 +68,7 @@ async function onSignOutOthers() {
   if (!window.confirm(t("settings.devices.signOutOthersConfirm"))) return;
   signingOutOthers.value = true;
   try {
-    await signOutOtherRelaySessions();
+    await platform.sessions.signOutOtherRelaySessions?.();
     await reload(true);
   } catch (e: any) {
     error.value = e?.message ?? String(e);

@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createWebPlatform } from '../web'
+import { getCurrentAccountKey, setAccountKeyProvider } from '../../lib/account-key'
+import { saveAccountKey } from '@webshared/api/account-key'
 
 vi.mock('@webshared/api/version', () => ({
   fetchVersion: vi.fn().mockResolvedValue('v0.3.19'),
@@ -10,6 +12,11 @@ vi.mock('@webshared/api/auth', () => ({
 }))
 
 describe('web platform', () => {
+  afterEach(() => {
+    setAccountKeyProvider(null)
+    vi.restoreAllMocks()
+  })
+
   it('caps: localPty=false autoUpdate=false pluginHost=false windowControls=false', () => {
     const p = createWebPlatform()
     expect(p.caps.localPty).toBe(false)
@@ -23,6 +30,8 @@ describe('web platform', () => {
   describe('relay + sessions bridges', () => {
     beforeEach(() => {
       localStorage.clear()
+      sessionStorage.clear()
+      setAccountKeyProvider(null)
     })
 
     it('relay.load reads atterm.relay', () => {
@@ -71,6 +80,51 @@ describe('web platform', () => {
 
     it('sessions.listShells returns empty', () => {
       return expect(createWebPlatform().sessions.listShells()).resolves.toEqual([])
+    })
+
+    it('sessions.listRelaySessions fetches /api/me/sessions with bearer auth', async () => {
+      localStorage.setItem('atterm.relay', JSON.stringify({ baseURL: 'https://relay.example', sessionToken: 'tok' }))
+      const rows = [{ id_hash: 'h1', user_agent: 'UA', ip_prefix: '1.2.3', created_at: 1, expires_at: 2, is_current: true }]
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      )
+      await expect(createWebPlatform().sessions.listRelaySessions?.()).resolves.toEqual(rows)
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://relay.example/api/me/sessions',
+        expect.objectContaining({
+          credentials: 'omit',
+          headers: expect.any(Headers),
+        }),
+      )
+      const headers = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Headers
+      expect(headers.get('Authorization')).toBe('Bearer tok')
+    })
+
+    it('sessions.revokeRelaySession DELETEs the encoded session hash', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
+      await createWebPlatform().sessions.revokeRelaySession?.('h/1')
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/me/sessions/h%2F1',
+        expect.objectContaining({ method: 'DELETE', credentials: 'omit' }),
+      )
+    })
+
+    it('sessions.signOutOtherRelaySessions POSTs and returns the deleted count', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ deleted: 3 }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      )
+      await expect(createWebPlatform().sessions.signOutOtherRelaySessions?.()).resolves.toEqual({ deleted: 3 })
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/me/sessions/sign-out-others',
+        expect.objectContaining({ method: 'POST', credentials: 'omit' }),
+      )
+    })
+
+    it('registers the web account_key provider for shared terminal connections', () => {
+      const key = new Uint8Array(32).map((_, i) => i)
+      saveAccountKey(key)
+      createWebPlatform()
+      expect(getCurrentAccountKey()).toEqual(key)
     })
   })
 

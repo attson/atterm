@@ -6,6 +6,7 @@ import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import type { TaskState } from "../lib/taskState";
+import { usableAITitle } from "../lib/sessionLabel";
 
 interface TabSummary {
   id: string;
@@ -207,7 +208,15 @@ function shortTitle(s: SessionInfo | null): string {
 // when one is available; everything else falls back to shortTitle so shell
 // tabs keep their cwd-basename display.
 function tabTitle(s: SessionInfo | null): string {
-  if (s?.type === 'ai' && s.title) return s.title;
+  if (s) {
+    const title = usableAITitle({
+      type: s.type,
+      title: s.title,
+      current_command: s.current_command,
+      cwd: s.cwd,
+    });
+    if (title) return title;
+  }
   return shortTitle(s);
 }
 

@@ -412,12 +412,16 @@ func startClaudeTitleResolve(ctx context.Context, sess *session.Session, home st
 const (
 	codexResolveInterval = 200 * time.Millisecond
 	codexResolveBudget   = 30 * time.Second
+	codexTitleInterval   = 1 * time.Second
+	codexTitleMaxRunes   = 80
 )
 
 // startCodexFileResolve keeps the filename heuristic for codex (its jsonl has
 // no ai-title record). It baselines the day-dir's rollout ids, then waits for a
-// single new one to appear. Ambiguous (≥2 new) aborts.
-func startCodexFileResolve(ctx context.Context, cwd string, onCapture func(sid string)) {
+// single new one to appear. Ambiguous (≥2 new) aborts. Once captured, it keeps
+// polling the rollout for the latest user_message and mirrors that into the
+// session title; Codex's OSC title is only spinner + cwd basename.
+func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd string, onCapture func(sid string)) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("recovery: no home for codex resolve: %v", err)
@@ -437,14 +441,17 @@ func startCodexFileResolve(ctx context.Context, cwd string, onCapture func(sid s
 		case <-time.After(codexResolveInterval):
 		}
 		var fresh []string
-		for sid := range codexRolloutSids(dir) {
+		files := codexRolloutFiles(dir)
+		for sid := range files {
 			if _, seen := before[sid]; !seen {
 				fresh = append(fresh, sid)
 			}
 		}
 		switch {
 		case len(fresh) == 1:
-			onCapture(fresh[0])
+			sid := fresh[0]
+			onCapture(sid)
+			trackCodexUserTitle(ctx, sess, files[sid])
 			return
 		case len(fresh) >= 2:
 			log.Printf("recovery: codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
@@ -454,12 +461,83 @@ func startCodexFileResolve(ctx context.Context, cwd string, onCapture func(sid s
 	log.Printf("recovery: codex resolve timeout in %s", dir)
 }
 
+func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string) {
+	last := ""
+	for {
+		if title, ok := scanCodexJsonlForUserTitle(path); ok && title != last {
+			last = title
+			sess.UpdateCwdTitle("", title)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(codexTitleInterval):
+		}
+	}
+}
+
+func scanCodexJsonlForUserTitle(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	needle := []byte(`"user_message"`)
+	title := ""
+	for sc.Scan() {
+		line := sc.Bytes()
+		if !bytes.Contains(line, needle) {
+			continue
+		}
+		var rec struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue
+		}
+		if rec.Type != "event_msg" || rec.Payload.Type != "user_message" {
+			continue
+		}
+		if t := normalizeCodexUserTitle(rec.Payload.Message); t != "" {
+			title = t
+		}
+	}
+	return title, title != ""
+}
+
+func normalizeCodexUserTitle(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if s == "" {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= codexTitleMaxRunes {
+		return s
+	}
+	return string(r[:codexTitleMaxRunes]) + "..."
+}
+
 // codexRolloutSids returns the set of session ids parsed from rollout-*.jsonl
 // filenames in dir. Subagent rollouts are intentionally ignored: Codex writes
 // them under the same directory shape, but `codex resume <agent-id>` is not the
 // user-facing conversation recovery path.
 func codexRolloutSids(dir string) map[string]struct{} {
 	out := map[string]struct{}{}
+	for sid := range codexRolloutFiles(dir) {
+		out[sid] = struct{}{}
+	}
+	return out
+}
+
+func codexRolloutFiles(dir string) map[string]string {
+	out := map[string]string{}
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return out
@@ -470,7 +548,7 @@ func codexRolloutSids(dir string) map[string]struct{} {
 		}
 		if sid, ok := codexParseSid(e.Name()); ok {
 			if codexRolloutIsResumable(filepath.Join(dir, e.Name()), sid) {
-				out[sid] = struct{}{}
+				out[sid] = filepath.Join(dir, e.Name())
 			}
 		}
 	}
@@ -519,7 +597,7 @@ func startAIResolve(ctx context.Context, sess *session.Session, cwd, kind string
 		startClaudeTitleResolve(ctx, sess, home, onCapture)
 	case "codex":
 		log.Printf("recovery: ai resolve start kind=codex cwd=%s", cwd)
-		startCodexFileResolve(ctx, cwd, onCapture)
+		startCodexFileResolve(ctx, sess, cwd, onCapture)
 	default:
 		// aider and unknown kinds: nothing to resolve.
 	}

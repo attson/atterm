@@ -81,6 +81,16 @@ describe('sessionLabel.aiTitleOrCommand', () => {
     })).toBe('Remove token auth from relay login')
   })
 
+  it('falls back to commandLabel for codex animated cwd titles', () => {
+    expect(aiTitleOrCommand({
+      session_id: 'x',
+      current_command: 'codex',
+      cwd: '/Users/attson/code/github.com.attson/worktrees/material-tag-front',
+      title: '∷ material-tag-front',
+      type: 'ai',
+    })).toBe('codex')
+  })
+
   it('falls back to commandLabel when AI session has empty title', () => {
     expect(aiTitleOrCommand({
       session_id: 'x',

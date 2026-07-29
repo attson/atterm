@@ -52,12 +52,39 @@ export function rowTitle(s: SessionLike): string {
   return s.cwd ? `${cmd}\n${s.cwd}` : cmd
 }
 
+function basenameFromCwd(cwd: string | undefined): string {
+  const stripped = (cwd ?? '').replace(/\/+$/, '')
+  if (!stripped) return ''
+  return stripped.split('/').pop() ?? ''
+}
+
+function isCodexAnimatedCwdTitle(
+  title: string,
+  currentCommand: string | undefined,
+  cwd: string | undefined,
+): boolean {
+  if (!currentCommand) return false
+  const base = basenameFromCwd(cwd)
+  if (!base) return false
+  return commandLabel({ current_command: currentCommand, title: '', session_id: '' }) === 'codex'
+    && title.replace(/^[\s:：;·•∙.∷⋮⋯\u2800-\u28ff]+/u, '').trim() === base
+}
+
+export function usableAITitle(s: Pick<SessionLike, 'current_command' | 'title' | 'type' | 'cwd'>): string {
+  if (s.type !== 'ai') return ''
+  const title = (s.title ?? '').trim()
+  if (!title) return ''
+  if (isCodexAnimatedCwdTitle(title, s.current_command, s.cwd)) return ''
+  return title
+}
+
 // aiTitleOrCommand returns the AI-set window title (from OSC 0/1/2, surfaced
 // via SessionInfo.Title) when the session is classified as an AI workload
 // and a title is available. Otherwise returns the existing short command
 // label so shell sessions keep their current display.
 export function aiTitleOrCommand(s: SessionLike): string {
-  if (s.type === 'ai' && s.title) return s.title
+  const title = usableAITitle(s)
+  if (title) return title
   return commandLabel(s)
 }
 

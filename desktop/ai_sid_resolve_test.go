@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/session"
+	"github.com/google/uuid"
 )
 
 func TestNormalizeAITitle(t *testing.T) {
@@ -124,6 +129,82 @@ func TestResolveFreshClaudeSessionID(t *testing.T) {
 	if _, ok := resolveFreshClaudeSessionID(dir, since); ok {
 		t.Fatal("no active file must yield no result")
 	}
+}
+
+func TestScanCodexJsonlForUserTitle(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollout-2026-07-29T13-18-54-019fac4f-bd07-7630-8ea5-30ed7515a488.jsonl")
+	writeJsonl(t, p,
+		`{"type":"session_meta","payload":{"id":"019fac4f-bd07-7630-8ea5-30ed7515a488"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"修改site展示页面，同步最新内容"}}`,
+		`{"type":"event_msg","payload":{"type":"agent_message","message":"noise"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"  更新截图资源\n\n"}}`,
+	)
+
+	title, ok := scanCodexJsonlForUserTitle(p)
+	if !ok || title != "更新截图资源" {
+		t.Fatalf("got (%q,%v), want latest user message", title, ok)
+	}
+}
+
+func TestScanCodexJsonlForUserTitle_IgnoresEmptyAndLargeLines(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollout-2026-07-29T13-18-54-019fac4f-bd07-7630-8ea5-30ed7515a488.jsonl")
+	huge := `{"type":"response_item","payload":{"type":"function_call_output","output":"` + strings.Repeat("x", 2<<20) + `"}}`
+	writeJsonl(t, p,
+		huge,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"first"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"   "}}`,
+	)
+
+	title, ok := scanCodexJsonlForUserTitle(p)
+	if !ok || title != "first" {
+		t.Fatalf("got (%q,%v), want first non-empty user message", title, ok)
+	}
+}
+
+func TestStartCodexFileResolve_CapturesSidAndMirrorsUserTitle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gotSid := make(chan string, 1)
+	go startCodexFileResolve(ctx, sess, cwd, func(sid string) {
+		gotSid <- sid
+	})
+
+	time.Sleep(codexResolveInterval * 2)
+	sid := "019fac4f-bd07-7630-8ea5-30ed7515a488"
+	writeJsonl(t, filepath.Join(dir, "rollout-2026-07-29T13-18-54-"+sid+".jsonl"),
+		`{"type":"session_meta","payload":{"id":"`+sid+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"修改site展示页面，同步最新内容"}}`,
+	)
+
+	select {
+	case got := <-gotSid:
+		if got != sid {
+			t.Fatalf("captured sid = %q, want %q", got, sid)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for codex sid capture")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := sess.Info().Title; got == "修改site展示页面，同步最新内容" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("session title = %q, want codex user message", sess.Info().Title)
 }
 
 func TestAdvancedSids(t *testing.T) {

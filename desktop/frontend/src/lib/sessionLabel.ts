@@ -58,23 +58,29 @@ function basenameFromCwd(cwd: string | undefined): string {
   return stripped.split('/').pop() ?? ''
 }
 
-function isCodexAnimatedCwdTitle(
+function stripCodexAnimatedTitlePrefix(title: string): string {
+  return title.replace(/^[\s:：;·•∙.∷⋮⋯\u2800-\u28ff]+/u, '').trim()
+}
+
+function codexAnimatedCwdTitle(
   title: string,
   currentCommand: string | undefined,
   cwd: string | undefined,
-): boolean {
-  if (!currentCommand) return false
+): string {
+  if (!currentCommand) return ''
   const base = basenameFromCwd(cwd)
-  if (!base) return false
-  return commandLabel({ current_command: currentCommand, title: '', session_id: '' }) === 'codex'
-    && title.replace(/^[\s:：;·•∙.∷⋮⋯\u2800-\u28ff]+/u, '').trim() === base
+  if (!base) return ''
+  const strippedTitle = stripCodexAnimatedTitlePrefix(title)
+  if (commandLabel({ current_command: currentCommand, title: '', session_id: '' }) !== 'codex') return ''
+  return strippedTitle === base ? strippedTitle : ''
 }
 
 export function usableAITitle(s: Pick<SessionLike, 'current_command' | 'title' | 'type' | 'cwd'>): string {
   if (s.type !== 'ai') return ''
   const title = (s.title ?? '').trim()
   if (!title) return ''
-  if (isCodexAnimatedCwdTitle(title, s.current_command, s.cwd)) return ''
+  const codexCwdTitle = codexAnimatedCwdTitle(title, s.current_command, s.cwd)
+  if (codexCwdTitle) return codexCwdTitle
   return title
 }
 

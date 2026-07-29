@@ -1,12 +1,12 @@
 # AT Term
 
 [![Release](https://img.shields.io/github/v/release/attson/atterm?style=flat-square)](https://github.com/attson/atterm/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](./LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](#)
 [![Go](https://img.shields.io/badge/go-1.23-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 
 > **Audience**: 第一次见到 atterm 的人 / 想跑起来或部署的开发者
-> **Last updated**: 2026-07-24
+> **Last updated**: 2026-07-29
 > **Status**: stable
 > **See also**: [AGENTS.md](./AGENTS.md) · [docs/spec/architecture.md](./docs/spec/architecture.md) · [docs/spec/auth.md](./docs/spec/auth.md) · [docs/spec/protocol.md](./docs/spec/protocol.md) · [docs/spec/feishu.md](./docs/spec/feishu.md) · [docs/roadmap.md](./docs/roadmap.md)
 
@@ -66,7 +66,8 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 
 **移动端 / Web / PWA**
 
-- Web 端 Vue 3 + TS + Naive UI 多页应用（login / signup / main / settings / admin / setup），中英双语。
+- Web 端 Vue 3 + TS + Naive UI；登录 / 注册 / setup 保持独立小页面，主入口复用桌面 `App.vue`（tabs / panes / 侧栏 / Settings / Admin 内嵌），中英双语。
+- Web 终端支持浏览器端辅助键条（Enter / Esc / Tab / `Ctrl-C` / `Ctrl-D` / 方向键）以及显式选择图片 / 文件粘贴进远端 PTY；图片和文件操作需要当前连接是 driver 且 session `remote_permission=full`。
 - iOS Capacitor 壳：QR 扫码配对（5min 一次性 token）/ 手动登录 / Keychain 凭据持久化 / 防误触模式 / 中文输入法补获 / `@capacitor/camera` 图片菜单 / 隐藏键盘辅助条 / viewer 锁 PTY 尺寸。
 - 移动任务首页按状态分组（需关注 / 运行中 / 完成 / 失败 / 断连）、列表分组可折叠。
 
@@ -271,9 +272,9 @@ go run ./cmd/atterm-relay --addr :8080
 |------|--------------------|
 | `view` | 只能查看输出和历史 |
 | `control` | 可以输入和 resize |
-| `full` | 保留完整远程控制能力 |
+| `full` | `control` + 粘贴图片 / 选择文件 / 远程文件浏览器 |
 
-权限由桌面端 `remote_permission` 设置决定；relay 和 desktop host 都强制执行。`view` 用户即使有完整账号，也只能查看输出，不能输入 / resize / 粘贴图片。
+权限由桌面端 `remote_permission` 设置决定；relay 和 desktop host 都强制执行。`view` 用户即使有完整账号，也只能查看输出，不能输入 / resize / 粘贴图片或文件；`control` 可以输入但仍不能触发文件类动作。
 
 ## 部署 relay
 

@@ -1,7 +1,7 @@
 # 组件样式规范
 
 > **Audience**: 改 atterm 前端 UI 的工程师
-> **Last updated**: 2026-07-24
+> **Last updated**: 2026-07-29
 > **Status**: stable
 > **See also**: [conventions.md](./conventions.md) · [protocol.md](./protocol.md) · [session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md)
 
@@ -474,8 +474,30 @@ testid 契约（**不要**改，自动测试依赖）：
 - `template-add` / `template-reset` / `template-reset-confirm`
 
 mobile 设置页有独立的模板编辑器（见下方 §移动端设置页），逻辑相同，但
-样式适配触屏（行高更高、按钮更大）。web 没有编辑器，只渲染 bar，
-读 localStorage `atterm.templates.hidden` 决定是否显示。
+样式适配触屏（行高更高、按钮更大）。web 主 App 复用桌面 Settings 的
+Templates tab，读写 `platform.templates`（当前 web bridge 落到 localStorage +
+prefs sync）；不要在 `web/src/` 另起第二套模板编辑 UI。
+
+## Web 终端辅助键与文件选择
+
+浏览器端没有桌面原生菜单和移动端系统键盘辅助条，因此 `TerminalView.vue` 在
+browser/web capability 下渲染一条紧凑的 terminal aux row。它和 template bar
+同属终端工具面，不是 Settings 表单控件：
+
+- 只在 `!platform.caps.wailsBindings && !platform.caps.localPty` 时显示；桌面 Wails
+  和 Capacitor 移动端不显示这条 browser-only row。
+- 按钮顺序固定为文件类动作在前（图片、文件），后接 `effectiveAuxKeys`（Enter /
+  Esc / Tab / `Ctrl-C` / `Ctrl-D` / 方向键等）。文件类动作使用 hidden
+  `<input type="file">`，可见按钮只负责触发 picker。
+- row 高 30px，按钮高 22px、最小宽度 34px、padding `0 9px`、6px radius、
+  12px mono；不要做大块卡片或第二层 toolbar。
+- 普通 aux key 的可用条件是 attached + driver + 非 view-only；图片/文件按钮还必须
+  `remote_permission === "full"`。UI disabled 只是提示，relay/desktop host 仍必须做
+  同样拦截。
+- 文案来自 desktop i18n（`terminal.pickImage` / `terminal.pickFile`），中英文同步；
+  不在模板里硬编码 "image/file"。
+- 文件 picker 不接受目录；图片 picker `accept="image/*"`。选择后 input value 要清空，
+  这样同一文件可连续选择两次触发 change。
 
 ## 移动端设置页
 

@@ -1,7 +1,7 @@
 # 代码约定
 
 > **Audience**: 改 Go / 前端代码的工程师
-> **Last updated**: 2026-07-24
+> **Last updated**: 2026-07-29
 > **Status**: stable
 > **See also**: [component-style.md](./component-style.md) · [architecture.md](./architecture.md)
 
@@ -51,15 +51,16 @@ desktop/frontend/src/
 
 `lib/` 不依赖 Vue（便于单元测试、未来共享给 web/）。组件不直接 fetch / WebSocket，全走 `lib/`。`lib/layout.ts` 这种纯函数模块用 vitest 跑单测，TDD 增量覆盖。
 
-`web/src/` 是独立的 Vue 3 + TypeScript + Naive UI MPA：
+`web/src/` 是 Vue 3 + TypeScript + Naive UI。登录、注册、setup、firstrun 仍是独立 MPA 小页面；主体验 `index.html` 不再维护第二套 UI，而是通过 `main-web.ts` 挂载桌面同一份 `App.vue`：
 
 ```text
 web/src/
-├── main/ login/ signup/ setup/ settings/ admin/
-└── shared/              api、ws、i18n、theme、Topbar、mobile guard
+├── main-web.ts          index.html 入口，import desktop/frontend/src/main.web.ts
+├── login/ signup/ setup/ firstrun/
+└── shared/              api、ws、i18n、theme、Topbar、mobile guard、prefs sync
 ```
 
-Web 客户端协议层在 `web/src/shared/ws/`，不要再新增 legacy `web/app.js` 路径。
+Web 客户端协议层在 `web/src/shared/ws/`，不要再新增 legacy `web/app.js` 路径。改主界面的会话列表、侧栏、右键菜单、终端、Settings 或 Admin 时，优先改 `desktop/frontend/src/App.vue` / `components/**` / `platform/web.ts`；不要复活 `web/src/main/`、`web/src/settings/`、`web/src/admin/` 的第二套主界面。
 
 ## 命名
 
@@ -170,6 +171,10 @@ if err != nil {
   `insertText && !isComposing` 触发 `sendInput`，`insertCompositionText` 不被劫持
 - 移动端 fit / viewer 锁尺寸测试：mock `ResizeObserver` + xterm `resize` 验证
   viewer 收到 `meta.cols/rows` 时 `term.resize(cols, rows)`、driver 不锁
+- Web 终端辅助键 / 文件选择测试：`desktop/frontend/src/components/TerminalView.test.ts`
+  覆盖 browser/web 下 aux key row 渲染、`Ctrl-C` 等按钮直接 `sendInput`、
+  图片按钮触发 `sendPasteImage`、文件按钮触发 `sendPasteFile`，以及 view/control
+  权限和 viewer 状态下按钮被 gate。桌面/Wails 路径不应显示 browser-only aux row。
 - Pairing UI 测试：`desktop/frontend/src/components/__tests__/PairingPanel.test.ts`
   覆盖生成 / 二维码渲染 / 过期倒计时；`mobile` 端 setup 流程的扫码 → consume
   → 写入 secure storage 的 happy path 覆盖在 `web/tests/unit/setup-pair-*.ts`

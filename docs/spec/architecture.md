@@ -1,11 +1,11 @@
 # 架构规范
 
 > **Audience**: 理解 atterm 系统整体结构的工程师
-> **Last updated**: 2026-07-28
+> **Last updated**: 2026-07-29
 > **Status**: stable
 > **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md) · [conventions.md](./conventions.md) · [component-style.md](./component-style.md)
 
-v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identity + `relay_instances` 心跳 + `home_instance_url` 路由）+ DB-backed 运行时配置（`relay_config` 表，SQLite / Postgres 双后端，取代原 `relay.json`）、远程文件浏览器（`FS_REQUEST/RESPONSE/EVENT` + `PASTE_FILE`）、会话侧栏置顶 + 搜索（`useSessionPins` / `sessionMatch.ts`）及其恢复期 pin 迁移、桌面启动致命错误非崩溃化（`StartupError`）、**web 主入口改挂桌面 `App.vue`**（`platform/web.ts` 桥接，删除独立的 `web/src/main/` 会话列表页与 `settings.html`）。相关设计 doc：[session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [pinned-session-recovery-design](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md) · [web-layout-align-desktop-design](../superpowers/specs/2026-07-27-web-layout-align-desktop-design.md)。
+v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identity + `relay_instances` 心跳 + `home_instance_url` 路由）+ DB-backed 运行时配置（`relay_config` 表，SQLite / Postgres 双后端，取代原 `relay.json`）、远程文件浏览器（`FS_REQUEST/RESPONSE/EVENT` + `PASTE_FILE`）、会话侧栏置顶 + 搜索（`useSessionPins` / `sessionMatch.ts`）及其恢复期 pin 迁移、桌面启动致命错误非崩溃化（`StartupError`）、**web 主入口改挂桌面 `App.vue`**（`platform/web.ts` 桥接，删除独立的 `web/src/main/` 会话列表页与 `settings.html` / `admin.html` 主界面）、web 终端辅助键 + 显式选择图片/文件粘贴（复用 `TerminalView.vue`，走 `PASTE_IMAGE` / `PASTE_FILE`，受 driver + `remote_permission=full` 门控）。相关设计 doc：[session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [pinned-session-recovery-design](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md) · [web-layout-align-desktop-design](../superpowers/specs/2026-07-27-web-layout-align-desktop-design.md)。
 
 ## 一句话总览
 
@@ -70,7 +70,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子 | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
-| `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webhooks / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）| 不知道 HTTP / 不依赖 relay |
+| `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webpush subscriptions / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）；历史 `webhooks` 表已由 migration 删除 | 不知道 HTTP / 不依赖 relay |
 | `internal/relay/instance_registry.go` + `node_home.go` + `config_refresh.go` | internal | 多实例心跳缓存、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
@@ -81,7 +81,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `desktop/scripts/install-{darwin,linux,windows}` | desktop | 平台 install helper，等父 PID 退出后替换 binary 并重启 | 不发网络请求 |
 | `desktop/diagnostics.go` | desktop | 收集 app/OS/relay 状态摘要 + 脱敏，写到用户选择的文件 | 不读 PTY 字节、不导出 token 明文 |
 | `desktop/app.go` | desktop | Wails bindings (Session / Relay / Update / Pairing / Diagnostics / QuickTemplates) | 不实现协议 |
-| `web/` | web | Vue 3 + TypeScript + Naive UI 浏览器/PWA client；除 login/signup/setup/firstrun 几个独立小页面外，主入口 `index.html` 现在通过 `main-web.ts` → `desktop/frontend/src/main.web.ts` 挂载**桌面同一份** `App.vue`（见「前端架构细节」节），不再是独立的 `web/src/main/` 会话列表页；`settings.html` 已删除（设置并入 `App.vue` 的 `SettingsDialog.vue`），admin 面板由主 App.vue 内嵌为 AdminPanel 视图（TabBar 按钮切换），不再是独立的 `admin.html` MPA entry；通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token`（以及 web 专属的 pin/模板/aux-key 等 `platform/web.ts` 桥接的本地偏好） |
+| `web/` | web | Vue 3 + TypeScript + Naive UI 浏览器/PWA client；除 login/signup/setup/firstrun 几个独立小页面外，主入口 `index.html` 现在通过 `main-web.ts` → `desktop/frontend/src/main.web.ts` 挂载**桌面同一份** `App.vue`（见「前端架构细节」节），不再是独立的 `web/src/main/` 会话列表页；`settings.html` 已删除（设置并入 `App.vue` 的 `SettingsDialog.vue`），admin 面板由主 App.vue 内嵌为 AdminPanel 视图（TabBar 按钮切换），不再是独立的 `admin.html` MPA entry；终端辅助键、右键菜单、置顶/多选、选择图片/文件粘贴都复用桌面组件，通过同源 API/WS 直连 relay | 不从 CDN 加载 script/style；localStorage 只保存 `session_token`（以及 web 专属的 pin/模板/aux-key 等 `platform/web.ts` 桥接的本地偏好） |
 | `internal/feishu` | internal | 飞书 client SDK：Cardkit v2 anchor card 渲染 + IM 消息 API + Router.InjectKeystrokesBySession（stroke dispatch 到本地 pty） | 不知道 hook payload 结构（那是 `desktop/feishu` 层）|
 | `desktop/feishu` | desktop | hook payload 解析、AskUserQuestion form 挂拆 lifecycle、stroke plan 构造、local 模式 LongConn subscriber | 不直接持有 pty；stroke 通过 `Router.InjectKeystrokesBySession` 送 |
 
@@ -358,7 +358,10 @@ desktop/frontend/src/
 │   ├── TerminalView.vue   xterm.js + FitAddon；多实例 v-show 切换；
 │                          rAF 兜底 fit 处理 layout 时序竞态；focused prop 描边；
 │                          expectedCols/Rows = SessionInfo.cols/rows，相同时跳过
-│                          初始 RESIZE（远端 attach 不打扰）
+│                          初始 RESIZE（远端 attach 不打扰）；browser/web 下额外
+│                          渲染 aux key row（Enter/Esc/Tab/Ctrl-C/Ctrl-D/方向键）
+│                          与图片/文件 hidden input，发送 PASTE_IMAGE/PASTE_FILE
+│                          时要求 attached + driver + remote_permission=full
 │   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge
 │                          + close-pane × 同行 flex 布局；close 按钮 mousedown
 │                          不冒泡，避免先激活其它 pane 再关错目标
@@ -429,6 +432,8 @@ web/src/
 └── shared/                api clients、ws protocol、i18n、Naive theme、
                            `sync/prefsSync.ts`（web 侧 `PrefsSyncEngine`，见下）
 ```
+
+`web/src/main/`、`web/src/settings/`、`web/src/admin/` 不再承载主体验；不要在这些路径复活第二套会话列表、设置页或管理后台。需要补 web-only 行为时，优先在 `desktop/frontend/src/platform/web.ts` 实现 `Platform` bridge，或在桌面组件里用 `platform.caps` 做能力分支。
 
 `desktop/frontend/src/main.web.ts` + `desktop/frontend/src/platform/web.ts` 是桥接层：
 `platform/web.ts` 用 `localStorage` + 同源 `apiFetch` 实现 `Platform` 接口（`getPins`/

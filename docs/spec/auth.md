@@ -1,7 +1,7 @@
 # Auth — Atterm Session Token + OPAQUE + E2EE 钥匙环
 
 > **Audience**: 实现或审计 atterm 鉴权层与端到端加密的工程师
-> **Last updated**: 2026-07-24
+> **Last updated**: 2026-07-29
 > **Status**: stable
 > **See also**: [protocol.md](./protocol.md) · [architecture.md](./architecture.md) · [../superpowers/specs/2026-06-15-relay-e2ee-design.md](../superpowers/specs/2026-06-15-relay-e2ee-design.md)
 
@@ -329,7 +329,7 @@ unauthorized
 | `GET` | `/version` | 客户端版本协商 |
 | `GET` | `/`, `/login.html`, `/signup.html`, 等静态资源 | 静态 SPA bootstrap |
 
-所有其他 endpoint（含 `/api/me/*`, `/api/pair/create`, `/api/auth/logout`, `/api/push/*`, `/api/webhooks/*`, `/api/admin/*`, `/api/sessions`, `/api/sessions/seen`, WS `/agent`, `/uplink`, `/client`, `/client-sessions`）都通过 `requireSession`。
+所有其他 endpoint（含 `/api/me/*`, `/api/pair/create`, `/api/auth/logout`, `/api/push/*`, `/api/admin/*`, `/api/sessions`, `/api/sessions/seen`, WS `/agent`, `/uplink`, `/client`, `/client-sessions`）都通过 `requireSession`。历史 `/api/me/webhooks` / `/api/webhooks/*` 已随通用 outbound webhook 下线，不再注册。
 
 部分 endpoint 在 `requireSession` 之外还套一层 `requireAdmin`（`internal/relay/admin_http.go`），要求 `user.IsAdmin == true`。
 
@@ -516,7 +516,7 @@ WS 升级失败统一表现为 HTTP 状态码（在 upgrade 之前），客户�
 
 ### 12.3 数据模型（OPAQUE / E2EE 扩展）
 
-§3 已经列了 `users` / `websessions` / `pairing_tokens` / 邀请码 / webhooks 几张表。OPAQUE + E2EE 由 `migrations/0003_opaque_auth.sql` 引入：
+§3 已经列了 `users` / `websessions` / `pairing_tokens` / 邀请码 / webpush 订阅等表。OPAQUE + E2EE 由 `migrations/0003_opaque_auth.sql` 引入：
 
 | 表 / 字段 | 类型 | 来源 | 备注 |
 |------|------|------|------|

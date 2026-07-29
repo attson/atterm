@@ -1,7 +1,7 @@
 # Wire 协议规范 (v1)
 
 > **Audience**: 实现 WS 帧或 HTTP API 客户端的工程师
-> **Last updated**: 2026-06-10
+> **Last updated**: 2026-07-29
 > **Status**: stable
 > **See also**: [auth.md](./auth.md) · [architecture.md](./architecture.md)
 
@@ -305,7 +305,7 @@ relay 端 mirror session 最后一个 subscriber 离开时发，请求桌面 app
 
 ### `PASTE_IMAGE` (0x33) — client → relay → desktop PTY host
 
-远程 web/mobile client 粘贴图片时发送。relay 将其按 session inbound 路径转发给拥有该 PTY 的 desktop host；desktop host 保存图片并尽量模拟本机图片粘贴（设置宿主机系统剪贴板图片后向 PTY 发送 `Ctrl-V`），不支持原生图片剪贴板的平台回退为向 PTY 粘贴临时文件路径。当前原生剪贴板路径：
+远程 web/mobile client 粘贴或显式选择图片时发送。relay 将其按 session inbound 路径转发给拥有该 PTY 的 desktop host；desktop host 保存图片并尽量模拟本机图片粘贴（设置宿主机系统剪贴板图片后向 PTY 发送 `Ctrl-V`），不支持原生图片剪贴板的平台回退为向 PTY 粘贴临时文件路径。当前原生剪贴板路径：
 
 - macOS: `osascript`
 - Linux: 优先 `wl-copy`，再尝试 `xclip` / `xsel`
@@ -322,6 +322,8 @@ payload = JSON：
 ```
 
 `data` 解码后最大 10 MiB（JSON/base64 后仍需低于协议 16 MiB payload 上限）。`content_type` 必须是 `image/*`。
+
+权限与角色：只有当前 driver 且 `remote_permission = "full"` 的 subscriber 可以发送；`view` / `control` 或 viewer 状态必须被 relay 拦截，desktop host 执行前也要二次校验。
 
 ### `PASTE_FILE` (0x37) — client → relay → desktop PTY host
 
@@ -340,7 +342,7 @@ payload = JSON：
 - `filename`：用户可见文件名（不含目录）。wire 值可以脏，desktop 强制 sanitize + dedup 才落盘。
 - `content_type`：客户端 best-effort，服务器不校验、不据此路由。允许任意 mime（含 `application/octet-stream`）。
 - `data`：原始字节。解码后 `≤ 10 MiB`（`maxPasteFileBytes`）；desktop 侧 backstop 与前端预检同数值。协议层仍受 payload 16 MiB 上限约束。
-- **E2EE**：当持有 `account_key` 时，整个 `PasteFilePayload` JSON 走 [§E2EE 信封](#e2ee-信封) 加密，AAD 鉴别字节 = `0x37`。**当前 Go 侧 attach 客户端已支持**（另一台 atterm desktop attach 时）；`web` / `Capacitor` 前端与 PASTE_IMAGE 同 posture 尚未 seal（独立 spec）。
+- **E2EE**：当持有 `account_key` 时，整个 `PasteFilePayload` JSON 可以走 [§E2EE 信封](#e2ee-信封) 加密，AAD 鉴别字节 = `0x37`。**当前 Go 侧 attach 客户端已支持**（另一台 atterm desktop attach 时）；`web` / `Capacitor` 前端当前与 PASTE_IMAGE 同 posture，发送明文 JSON（独立 spec 再做 browser sealed paste）。
 - **权限**：`remote_permission = "full"` 才允许；`view` / `control` 被 relay 拒绝，同 PASTE_IMAGE。
 - **driver-only**：非当前 driver subscriber 的 PASTE_FILE 被 relay 静默 drop。
 
@@ -535,7 +537,8 @@ Payload (UTF-8 JSON):
 | `/healthz` | GET | 公开 liveness 探测；返回 `{ok, version}`，无鉴权 |
 | `/admin/health` | GET | admin-only 运维健康检查页（HTML） |
 | `/admin/api/health` | GET | admin-only HealthPayload JSON（详见 §health endpoint） |
-| `/`, `/login.html`, `/signup.html`, `/settings.html`, `/setup.html`, `/admin/`, `/pair` | GET | 静态 Vue MPA web/PWA 客户端（默认使用 embedded `internal/relay/web-dist/`；开发可用 `--web web/dist`） |
+| `/` | GET | Web/PWA 主入口；加载 `web/src/main-web.ts`，复用桌面 `App.vue`（Settings / Admin 内嵌主界面） |
+| `/login.html`, `/signup.html`, `/setup.html`, `/firstrun.html`, `/pair` | GET | 静态 Vue MPA 辅助页面（默认使用 embedded `internal/relay/web-dist/`；开发可用 `--web web/dist`） |
 
 CORS：所有路径自动响应 `Access-Control-Allow-Origin: *`，`OPTIONS` 直接 204。非 `OPTIONS`
 请求进入 mux 前会经过按远端 IP/token 计算的固定窗口 rate limit；WebSocket upgrade

@@ -1,7 +1,7 @@
 # Feishu — 远程终端与 AskUserQuestion form 子系统
 
 > **Audience**: 实现或审计 atterm 飞书集成路径的工程师(anchor card 生命周期 / AskUserQuestion 表单式远程回答 / local vs relay 模式分流)
-> **Last updated**: 2026-07-24
+> **Last updated**: 2026-07-29
 > **Status**: shipped through v0.2.171
 > **See also**: [architecture.md](./architecture.md) · [protocol.md](./protocol.md) · [auth.md](./auth.md) · [../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md](../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md)
 
@@ -22,7 +22,7 @@
 
 飞书集成经历了三个阶段:
 
-1. **命令完成通知**(早期,通用 webhook 路径):任务完成时 relay 通过 `internal/webhook` 向飞书 open API 推 IM 消息卡片。payload = session id + summary,不带原始输出。
+1. **命令完成通知**(早期,通用 webhook 路径,已下线):任务完成时 relay 曾通过 `internal/webhook` 向飞书 open API 推 IM 消息卡片。该通用 outbound webhook 已由 migration 删除,当前通知路径收敛到 Web Push 与下述飞书 anchor card 模式。
 2. **anchor card 作为远程终端**(v0.2.15x+,PR 系列 `feishu-as-terminal`):把 IM 卡片升级成**持续更新的锚点卡** —— body 流式承载 assistant 输出、卡片自带输入框 + `^C/^D/Esc/Enter/结束` 按钮直接把用户操作送回本地 pty。用户不用打开桌面就能远程回复正在等待的 AI 会话。
 3. **AskUserQuestion 表单式回答**(v0.2.171,PR #261):claude-code 触发 AskUserQuestion tool 时,锚点卡片挂载一份 form container —— 每题一行下拉 + 自定义输入框,提交后系统按反向工程的按键模型自动送 stroke 到本地 claude TUI。
 

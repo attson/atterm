@@ -51,6 +51,39 @@ describe("FileExplorer filesystem bridge", () => {
     expect(wrapper.text()).toContain("remote-only.txt");
   });
 
+  it("renders a filename search box that drives recursive tree search", async () => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/local") {
+        return [
+          { name: "src", isDir: true },
+          { name: "README.md", isDir: false },
+        ];
+      }
+      if (path === "/local/src") {
+        return [{ name: "nested-search.ts", isDir: false }];
+      }
+      return [];
+    });
+    const context: PluginContext = {
+      activePane: ref(null),
+      activeSessionId: computed(() => "local-session"),
+      activeIsRemote: computed(() => false),
+      activeSessionConnection: computed(() => null),
+      activeEndpoint: computed(() => null),
+      activeCwd: computed(() => "/local"),
+      terminalThemeId: computed(() => "classic"),
+      send: vi.fn(),
+      showToast: vi.fn(),
+    };
+
+    const wrapper = mount(FileExplorer, { props: { context } });
+    await flushPromises();
+    await wrapper.find('[data-test="file-name-search"]').setValue("search");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("nested-search.ts");
+  });
+
   it("rebinds a remote bridge when its connection is replaced for the same session", async () => {
     const sessionID = ref<string | null>("remote-session");
     const firstUnsubscribe = vi.fn();

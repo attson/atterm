@@ -1,8 +1,9 @@
 <script lang="ts" setup>
-import { ref, watch, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
 import FileTreeNode from "./FileTreeNode.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import type { FileSystemBridge } from "./fsBridge";
+import { searchFileNames, type FileNameSearchResult } from "./fileNameSearch";
 import { useI18n } from "../../i18n/useI18n";
 
 const { t } = useI18n();
@@ -26,6 +27,7 @@ const props = defineProps<{
   fs: FileSystemBridge;
   root: string;
   showHidden: boolean;
+  searchQuery?: string;
 }>();
 
 const emit = defineEmits<{
@@ -135,13 +137,19 @@ function deleteButtons(mode: "trash" | "hard") {
 
 const rootNodes = ref<TreeNode[]>([]);
 const selectedPath = ref<string>("");
+const searchResults = ref<FileNameSearchResult[]>([]);
+const searchLoading = ref(false);
+const searchTruncated = ref(false);
 const watchHandles = new Map<string, { fs: FileSystemBridge; id: number | string }>();
 const pendingExpands = new Map<string, number>();
 const watchGenerations = new Map<string, number>();
 const refreshGenerations = new Map<string, number>();
 let disposed = false;
 let generation = 0;
+let searchGeneration = 0;
 let offDirChanged: () => void = () => {};
+
+const normalizedSearchQuery = computed(() => (props.searchQuery ?? "").trim());
 
 function isCurrent(fs: FileSystemBridge, root: string, showHidden: boolean, request: number): boolean {
   return !disposed
@@ -278,6 +286,34 @@ function startGeneration() {
 
 watch(() => [props.root, props.fs, props.showHidden], startGeneration);
 
+watch(
+  () => [props.root, props.fs, props.showHidden, normalizedSearchQuery.value] as const,
+  async ([root, fs, showHidden, query]) => {
+    const request = ++searchGeneration;
+    searchResults.value = [];
+    searchTruncated.value = false;
+    if (!query) {
+      searchLoading.value = false;
+      return;
+    }
+    searchLoading.value = true;
+    try {
+      const result = await searchFileNames(fs, root, query, { showHidden });
+      if (disposed || searchGeneration !== request) return;
+      searchResults.value = result.results;
+      searchTruncated.value = result.truncated;
+    } catch (err) {
+      if (disposed || searchGeneration !== request) return;
+      console.warn("file-explorer: filename search failed", err);
+      searchResults.value = [];
+      searchTruncated.value = false;
+    } finally {
+      if (!disposed && searchGeneration === request) searchLoading.value = false;
+    }
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   startGeneration();
 });
@@ -377,6 +413,7 @@ function isCurrentNode(
 
 onBeforeUnmount(() => {
   disposed = true;
+  searchGeneration++;
   stopCurrentGeneration();
 });
 
@@ -392,12 +429,43 @@ function dblClickFile(n: TreeNode) {
   emit("file-double-clicked", n.path);
 }
 
+function clickSearchResult(result: FileNameSearchResult) {
+  selectedPath.value = result.path;
+  emit("file-clicked", result.path);
+}
+
+function dblClickSearchResult(result: FileNameSearchResult) {
+  selectedPath.value = result.path;
+  emit("file-double-clicked", result.path);
+}
+
 defineExpose({ refresh: startGeneration });
 </script>
 
 <template>
   <div class="tree-wrap" @click="closeMenu">
-    <ul class="tree-root">
+    <div v-if="normalizedSearchQuery" class="search-results" data-test="file-search-results">
+      <div v-if="searchLoading" class="search-status">{{ t("common.loading") }}</div>
+      <div v-else-if="searchResults.length === 0" class="search-status">
+        {{ t("plugins.fileExplorer.noSearchResults") }}
+      </div>
+      <button
+        v-for="result in searchResults"
+        :key="result.path"
+        class="search-result"
+        data-test="file-search-result"
+        :title="result.path"
+        @click.stop="clickSearchResult(result)"
+        @dblclick.stop="dblClickSearchResult(result)"
+      >
+        <span class="search-name">{{ result.name }}</span>
+        <span class="search-path">{{ result.path }}</span>
+      </button>
+      <div v-if="searchTruncated" class="search-status">
+        {{ t("plugins.fileExplorer.searchTruncated") }}
+      </div>
+    </div>
+    <ul v-else class="tree-root">
       <li v-for="n in rootNodes" :key="n.path">
         <FileTreeNode
           :node="n"
@@ -438,6 +506,44 @@ defineExpose({ refresh: startGeneration });
 
 <style scoped>
 .tree-wrap { position: relative; height: 100%; }
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0;
+}
+.search-result {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ed-row-fg, #cccccc);
+  text-align: left;
+  cursor: pointer;
+}
+.search-result:hover { background: var(--ed-row-hover, rgba(255, 255, 255, 0.05)); }
+.search-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.search-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ed-muted, rgba(173, 186, 199, 0.55));
+  font-size: 11px;
+}
+.search-status {
+  padding: 8px 10px;
+  color: var(--ed-muted, rgba(173, 186, 199, 0.55));
+  font-size: 12px;
+}
 .tree-root {
   list-style: none;
   margin: 0;

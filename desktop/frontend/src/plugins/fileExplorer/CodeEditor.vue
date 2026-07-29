@@ -3,6 +3,7 @@ import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
+import { search, searchKeymap } from "@codemirror/search";
 import { languageForPath } from "./languageMap";
 import { highlightExtensionFor } from "./highlight";
 import { useI18n } from "../../i18n/useI18n";
@@ -152,7 +153,8 @@ async function load() {
       makeThemeExt(theme),
       highlightExtensionFor(theme),
       history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      search({ top: true }),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       saveKey,
       dirtyListener,
     ];

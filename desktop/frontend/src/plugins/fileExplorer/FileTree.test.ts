@@ -56,6 +56,39 @@ describe("FileTree", () => {
     expect(items).toContain(".git");
   });
 
+  it("recursively searches file names under the root and opens a result", async () => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/proj") {
+        return [
+          { name: "src", isDir: true },
+          { name: "node_modules", isDir: true },
+          { name: "README.md", isDir: false },
+        ];
+      }
+      if (path === "/proj/src") {
+        return [
+          { name: "SearchPanel.vue", isDir: false },
+          { name: "unrelated.ts", isDir: false },
+        ];
+      }
+      if (path === "/proj/node_modules") {
+        return [{ name: "search-package.js", isDir: false }];
+      }
+      return [];
+    });
+    const w = mount(FileTree, {
+      props: { fs, root: "/proj", showHidden: false, searchQuery: "search" } as any,
+    });
+    await flushPromises();
+
+    expect(w.find('[data-test="file-search-results"]').exists()).toBe(true);
+    expect(w.text()).toContain("SearchPanel.vue");
+    expect(w.text()).not.toContain("search-package.js");
+
+    await w.find('[data-test="file-search-result"]').trigger("click");
+    expect(w.emitted("file-clicked")?.[0]?.[0]).toBe("/proj/src/SearchPanel.vue");
+  });
+
   it("clicking a file emits file-clicked", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();

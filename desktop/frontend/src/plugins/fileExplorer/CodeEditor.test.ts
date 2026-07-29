@@ -4,6 +4,7 @@ import CodeEditor from "./CodeEditor.vue";
 import { __setPlatformForTests } from "../../platform";
 import { createFakePlatform } from "../../platform/__tests__/_fakePlatform";
 import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
+import codeEditorSource from "./CodeEditor.vue?raw";
 
 let platform: ReturnType<typeof createFakePlatform>;
 let fs: FileSystemBridge;
@@ -31,6 +32,12 @@ function stubCM() {
 }
 
 describe("CodeEditor", () => {
+  it("wires CodeMirror search so Mod-F opens editor-local search", () => {
+    expect(codeEditorSource).toContain("@codemirror/search");
+    expect(codeEditorSource).toContain("search(");
+    expect(codeEditorSource).toContain("searchKeymap");
+  });
+
   it("shows placeholder for too-large file (size > 2 MB)", async () => {
     (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       path: "/a.txt", size: 3_000_000, modTime: 1, isBinary: false,

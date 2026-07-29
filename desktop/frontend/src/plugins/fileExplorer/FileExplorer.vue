@@ -85,6 +85,7 @@ const root = computed<string | null>(() => {
 const tabsState = ref<TabsState>({ tabs: [], activeIdx: -1 });
 const fs = shallowRef<FileSystemBridge | null>(null);
 const fsGeneration = ref(0);
+const fileNameSearch = ref("");
 
 watch(
   () => [bridgeOwner.value.identity, bridgeOwner.value.connection] as const,
@@ -104,6 +105,7 @@ watch(
     if (identityChanged) {
       pinned.value = null;
       tabsState.value = { tabs: [], activeIdx: -1 };
+      fileNameSearch.value = "";
     }
     await nextTick();
     previous?.dispose?.();
@@ -215,6 +217,15 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             <component :is="pinned !== null ? Pin : PinOff" :size="14" :stroke-width="1.5" />
           </button>
         </header>
+        <div class="tree-search">
+          <input
+            v-model="fileNameSearch"
+            data-test="file-name-search"
+            type="search"
+            :placeholder="t('plugins.fileExplorer.searchFiles')"
+            :aria-label="t('plugins.fileExplorer.searchFiles')"
+          />
+        </div>
         <div class="tree-scroll">
           <FileTree
             v-if="root && fs"
@@ -222,6 +233,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :fs="fs"
             :root="root"
             :show-hidden="showHidden"
+            :search-query="fileNameSearch"
             @file-clicked="onFileClick"
             @file-double-clicked="onFileDoubleClick"
           />
@@ -296,6 +308,29 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
 }
 .pin:hover { opacity: 1; }
 .pin.pinned { opacity: 1; color: var(--ed-tab-active-bar, #539bf5); }
+
+.tree-search {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--ed-border, #444c56);
+  background: var(--ed-tree-bg, #2d333b);
+}
+.tree-search input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  box-sizing: border-box;
+  border: 1px solid var(--ed-border, #444c56);
+  border-radius: 4px;
+  background: var(--ed-editor-bg, #22272e);
+  color: var(--ed-row-fg, #adbac7);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.tree-search input:focus {
+  border-color: var(--ed-tab-active-bar, #539bf5);
+}
 
 .fe-body { flex: 1 1 auto; display: flex; min-height: 0; }
 .tree-pane {

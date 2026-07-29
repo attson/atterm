@@ -1,4 +1,4 @@
-// AuxKey is one button in the mobile terminal's control-key bar. Unlike a
+// AuxKey is one button in the browser/Capacitor terminal's control-key bar. Unlike a
 // QuickTemplate (label + text + trailing CR + preview dialog), an aux key
 // sends its raw `seq` bytes verbatim on tap — it models a control keypress
 // (esc, ctrl-c, arrows), not a line of input.
@@ -8,7 +8,7 @@ export interface AuxKey {
   seq: string
 }
 
-// DEFAULT_AUX_KEYS mirrors the keys MobileTerminal historically hardcoded.
+// DEFAULT_AUX_KEYS mirrors the keys the old mobile terminal hardcoded.
 // Stable string ids (not UUIDs) so re-seeding after a reset is churn-free.
 export const DEFAULT_AUX_KEYS: AuxKey[] = [
   { id: 'aux-enter', label: 'enter', seq: '\r' },

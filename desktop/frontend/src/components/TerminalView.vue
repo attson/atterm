@@ -149,6 +149,7 @@ let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
 let copyKeyTarget: HTMLDivElement | null = null;
+let imeInputTarget: HTMLTextAreaElement | null = null;
 
 function isLiveTerminal(): boolean {
   return isAlive && term !== null && termContainer.value !== null;
@@ -273,6 +274,22 @@ async function handleImagePaste(e: ClipboardEvent) {
   } catch (err) {
     console.warn("[AT Term] paste dispatch failed", err);
   }
+}
+
+// iOS on-screen keyboards send some direct text (notably Chinese 9-key
+// punctuation, numbers, and space) through the textarea `input` event without
+// xterm forwarding it. Take over only the non-composition insertText case so
+// pinyin -> Hanzi composition remains xterm-owned.
+function onImeInput(event: InputEvent) {
+  if (event.inputType !== "insertText") return;
+  if (event.isComposing) return;
+  const data = event.data;
+  if (!data) return;
+  if (!auxKeysCanSend.value) return;
+  event.stopImmediatePropagation();
+  conn?.sendInput(data);
+  const target = event.target as HTMLTextAreaElement | null;
+  if (target && "value" in target) target.value = "";
 }
 
 function closeContextMenu() {
@@ -555,6 +572,8 @@ async function ensureTerm() {
   keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
   keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
+  imeInputTarget = term.element?.querySelector<HTMLTextAreaElement>("textarea") ?? null;
+  imeInputTarget?.addEventListener("input", onImeInput as EventListener, { capture: true });
   safeFit();
   focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
   term.onData((data) => {
@@ -889,6 +908,8 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget = null;
+  imeInputTarget?.removeEventListener("input", onImeInput as EventListener, { capture: true } as EventListenerOptions);
+  imeInputTarget = null;
   if (pluginInputSenders?.get(props.sessionId) === pluginInputSender) {
     pluginInputSenders?.delete(props.sessionId);
   }

@@ -551,4 +551,17 @@ footer { padding: 8px; border-top: 1px solid var(--border); }
   padding: 1px 5px;
 }
 .rail-icon { cursor: pointer; padding: 2px; }
+
+@media (max-width: 767px) {
+  .sidebar-hamburger {
+    top: calc(env(safe-area-inset-top) + 42px);
+    left: calc(env(safe-area-inset-left) + 8px);
+    min-height: 32px;
+  }
+  .task-sidebar.drawer {
+    top: env(safe-area-inset-top);
+    bottom: env(safe-area-inset-bottom);
+    max-width: min(86vw, 360px);
+  }
+}
 </style>

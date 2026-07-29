@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { initI18n, resetI18nForTest } from "../i18n";
 import TabBar from "./TabBar.vue";
+import tabBarSource from "./TabBar.vue?raw";
 
 if (typeof (globalThis as any).PointerEvent === "undefined") {
   class PointerEventShim extends MouseEvent {
@@ -46,6 +47,13 @@ afterEach(() => {
 });
 
 describe("TabBar", () => {
+  test("sticks to the top while terminal content scrolls", () => {
+    const tabbarStyle = tabBarSource.match(/\.tabbar\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(tabbarStyle).toContain("position: sticky");
+    expect(tabbarStyle).toContain("top: 0");
+    expect(tabbarStyle).toContain("z-index:");
+  });
+
   it("renders the lastSeenInfo title with a disconnected style after a remote drop", async () => {
     await initI18n({
       loadPreference: async () => "zh-CN",

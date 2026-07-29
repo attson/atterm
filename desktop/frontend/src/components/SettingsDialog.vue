@@ -100,10 +100,8 @@ const activeTab = ref<"general" | "account" | "relay" | "logging" | "updates" | 
 const hiddenTabs = new Set<string>()
 if (!caps.autoUpdate) hiddenTabs.add('updates')
 if (!caps.pluginHost) { hiddenTabs.add('plugins'); hiddenTabs.add('shortcuts') }
-// SettingsAccount calls apiFetch, which reads a web-only localStorage
-// session token — on Wails this would 401. Mobile Capacitor has its own
-// MobileApp.vue shell (doesn't use SettingsDialog at all), so gating on
-// caps.wailsBindings is effectively "web-only" for this tab.
+// SettingsAccount is for browser/Capacitor account state. On Wails the
+// desktop relay config owns auth, so this tab is hidden.
 if (caps.wailsBindings) hiddenTabs.add('account')
 // Relay / Diagnostics / Received files / Feishu are desktop-only concerns
 // (local relay config, Wails-side log/env dumps, local filesystem drops,
@@ -696,5 +694,63 @@ function onSaveClick() {
 }
 .discard-row .danger:hover {
   background: rgba(248, 81, 73, 0.1);
+}
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    justify-content: stretch;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+  .settings-dialog {
+    width: 100vw;
+    height: auto;
+    max-width: 100vw;
+    max-height: 100dvh;
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+  }
+  .settings-header {
+    padding: 10px 12px;
+  }
+  .settings-body {
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: 100%;
+    flex: 0 0 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+    scrollbar-width: none;
+  }
+  .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-nav-item {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 34px;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+  .settings-pane {
+    min-height: 0;
+    padding: 14px 16px 18px;
+  }
+  .settings-pane-header {
+    margin-bottom: 12px;
+  }
+  .settings-pane-title {
+    font-size: 18px;
+  }
+  .settings-footer {
+    padding: 10px 12px;
+  }
+  .version-footer {
+    padding: 4px 12px 8px;
+  }
 }
 </style>

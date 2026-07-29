@@ -1,5 +1,5 @@
-// Font stack for the xterm terminal canvas. Single source of truth for both
-// the desktop TerminalView and mobile MobileTerminal.
+// Font stack for the xterm terminal canvas. Single source of truth for
+// TerminalView across desktop, web, and Capacitor.
 //
 // The chain is ASCII-mono families FIRST (Menlo / Consolas / Liberation Mono /
 // DejaVu Sans Mono) so plain code/text keeps its true monospace appearance,

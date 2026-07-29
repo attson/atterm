@@ -50,7 +50,7 @@ function b64StdToBytes(s: string): Uint8Array {
 //
 // Errors are mapped to the historical strings the UI already handles
 // (invalid_credentials, cannot_reach_relay, http_*) so the
-// mobile/MobileSetup.vue + login flow does not need to change.
+// SettingsAccount.vue + the Capacitor login flow do not need to change.
 async function opaqueLogin(
   base: string,
   email: string,
@@ -426,6 +426,9 @@ export function createCapacitorPlatform(): Platform {
           homeInstanceURL: result.home_instance_url,
         }
         await secureStorage.set(STORAGE_KEY, JSON.stringify(cfg))
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
+        }
         await secureStorage.set(PASSWORD_KEY, password)
         // Persist the unlocked account_key to the same secure-storage
         // backend the session token uses. AttermSecureStorage stores
@@ -456,6 +459,9 @@ export function createCapacitorPlatform(): Platform {
           session_expires_at: 0,
         }
         await secureStorage.set(STORAGE_KEY, JSON.stringify(cleared))
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(cleared))
+        }
         // Wipe the unlocked account_key alongside the session token.
         // Leaving it persisted after an explicit logout would let any
         // other process holding the Keychain item recover the user's
@@ -472,9 +478,8 @@ export function createCapacitorPlatform(): Platform {
     sessions: {
       // newSession omitted — capacitor cannot fork local PTYs
       closeSession: async () => {
-        // Attach-only client: closing a tab detaches the local WS (handled in
-        // MobileApp by dropping it from the keepalive registry). It does NOT
-        // kill the remote PTY — that stays owned by the host that started it.
+        // Attach-only client: closing a tab detaches the local WS. It does
+        // NOT kill the remote PTY — that stays owned by the host that started it.
       },
       listShells: async () => [],
       listRemoteSessions: async (): Promise<RemoteSession[]> => {

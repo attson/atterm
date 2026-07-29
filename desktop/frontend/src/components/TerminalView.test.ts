@@ -116,6 +116,16 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toMatch(/showAuxKeyBar\.value\s*\?\s*1\s*:\s*0/);
     expect(source).toContain(':style="{ bottom: templateBarBottom }"');
   });
+
+  test("capture-handles mobile IME insertText without touching composition events", () => {
+    expect(source).toMatch(/function\s+onImeInput\s*\(\s*event:\s*InputEvent\s*\)/);
+    expect(source).toContain('event.inputType !== "insertText"');
+    expect(source).toContain("event.isComposing");
+    expect(source).toMatch(/conn\?\.sendInput\(data\)/);
+    expect(source).toContain("stopImmediatePropagation()");
+    expect(source).toContain('addEventListener("input", onImeInput');
+    expect(source).toContain('removeEventListener("input", onImeInput');
+  });
 });
 
 describe("TerminalView themes", () => {

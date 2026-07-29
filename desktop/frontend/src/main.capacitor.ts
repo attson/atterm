@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { initI18n, type LocalePreference } from './i18n'
 import { bridgeSharedI18n } from './i18n/shared-bridge'
-import MobileApp from './mobile/MobileApp.vue'
+import App from './App.vue'
 import { initPlatform } from './platform'
 import { createCapacitorPlatform } from './platform/capacitor'
 import { Capacitor } from '@capacitor/core'
@@ -37,9 +37,8 @@ async function saveLocalePreference(preference: LocalePreference): Promise<void>
 async function bootstrap() {
   await initI18n({ loadPreference: loadLocalePreference, savePreference: saveLocalePreference })
   // @shared/i18n powers components under `@shared/*` (admin panel, shared
-  // Topbar). MobileApp doesn't render the admin panel today, but keep the
-  // three entries consistent so a future shared component picks up the
-  // user's locale automatically instead of silently rendering in English.
+  // Topbar). Keep the three entries consistent so shared components pick up
+  // the user's locale automatically instead of silently rendering in English.
   bridgeSharedI18n()
 
   // iOS only: hide WKWebView's input accessory bar (the floating ✓ ↑ ↓ strip
@@ -60,7 +59,7 @@ async function bootstrap() {
     if (state.isActive) void prefsSync.pull().then(() => platform.events.emit('prefs:changed', undefined)).catch(() => {})
   })
 
-  const app = createApp(MobileApp)
+  const app = createApp(App)
   app.use(createPinia())
   app.provide('platform', platform)
   app.config.globalProperties.$platform = platform

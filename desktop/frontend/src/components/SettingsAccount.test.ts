@@ -14,14 +14,33 @@ vi.mock('../i18n/useI18n', () => ({
 const { fakePlatform } = vi.hoisted(() => ({
   fakePlatform: {
     relay: {
+      load: vi.fn(),
       fetchMe: vi.fn(),
       logout: vi.fn(),
+      loadSavedPassword: vi.fn(),
+      login: undefined as undefined | ReturnType<typeof vi.fn>,
+      consumePairing: undefined as undefined | ReturnType<typeof vi.fn>,
+      save: vi.fn(),
     },
+    events: {
+      emit: vi.fn(),
+    },
+  },
+}))
+
+const { qrScanner } = vi.hoisted(() => ({
+  qrScanner: {
+    requestPermissions: vi.fn(),
+    scan: vi.fn(),
   },
 }))
 
 vi.mock('../platform', () => ({
   usePlatform: () => fakePlatform,
+}))
+
+vi.mock('../platform/qrScanner', () => ({
+  QRScanner: qrScanner,
 }))
 
 vi.mock('@shared/api/me', () => ({
@@ -39,8 +58,16 @@ const deleteMeMock = deleteMe as unknown as ReturnType<typeof vi.fn>
 beforeEach(() => {
   changePasswordMock.mockReset()
   deleteMeMock.mockReset()
+  fakePlatform.relay.load = vi.fn().mockResolvedValue(null)
   fakePlatform.relay.fetchMe = vi.fn().mockResolvedValue({ user_id: 'u1', email: 'me@example.com' })
   fakePlatform.relay.logout = vi.fn().mockResolvedValue(undefined)
+  fakePlatform.relay.loadSavedPassword = vi.fn().mockResolvedValue('')
+  fakePlatform.relay.login = undefined
+  fakePlatform.relay.consumePairing = undefined
+  fakePlatform.relay.save = vi.fn().mockResolvedValue(undefined)
+  fakePlatform.events.emit = vi.fn()
+  qrScanner.requestPermissions = vi.fn().mockResolvedValue({ camera: 'granted' })
+  qrScanner.scan = vi.fn().mockResolvedValue({ cancelled: false, rawValue: 'https://relay.example.com/pair?t=pair_OK' })
 })
 
 afterEach(() => {
@@ -64,6 +91,38 @@ describe('SettingsAccount', () => {
     const w = await mountReady()
     expect(fakePlatform.relay.fetchMe).toHaveBeenCalledTimes(1)
     expect(w.get('[data-testid="account-email"]').text()).toBe('me@example.com')
+  })
+
+  it('shows QR pairing for inline-login platforms and refreshes account state after pairing', async () => {
+    fakePlatform.relay.fetchMe = vi.fn()
+      .mockRejectedValueOnce(new Error('unauthorized'))
+      .mockResolvedValue({ user_id: 'u1', email: 'paired@example.com' })
+    fakePlatform.relay.login = vi.fn().mockResolvedValue(undefined)
+    fakePlatform.relay.consumePairing = vi.fn().mockResolvedValue({
+      relay_url: 'https://relay.example.com',
+      session_token: 'sess_PAIR',
+      expires_at: 1735689600,
+      user: { id: 'u1', email: 'paired@example.com' },
+      realm_id: 'realm-1',
+      home_instance_url: 'https://home.example.com',
+    })
+
+    const w = await mountReady()
+    expect(w.find('[data-testid="account-inline-login"]').exists()).toBe(true)
+
+    await w.get('[data-testid="account-scan-qr"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(qrScanner.requestPermissions).toHaveBeenCalledTimes(1)
+    expect(qrScanner.scan).toHaveBeenCalledTimes(1)
+    expect(fakePlatform.relay.consumePairing).toHaveBeenCalledWith('https://relay.example.com', 'pair_OK', undefined)
+    expect(fakePlatform.relay.save).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://relay.example.com',
+      token: 'sess_PAIR',
+    }))
+    expect(fakePlatform.events.emit).toHaveBeenCalledWith('relay:auth-restored', undefined)
+    expect(w.get('[data-testid="account-email"]').text()).toBe('paired@example.com')
   })
 
   it('offers logout, clears the relay session, and redirects to login', async () => {

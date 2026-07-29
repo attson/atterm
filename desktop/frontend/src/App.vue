@@ -104,8 +104,13 @@ function openSettingsRelay() {
   showSettings.value = true;
 }
 
+function openSettingsAccount() {
+  settingsInitialTab.value = "account";
+  showSettings.value = true;
+}
+
 // Track which tab to open when Settings is opened programmatically.
-const settingsInitialTab = ref<"general" | "relay" | "logging" | "updates" | undefined>(undefined);
+const settingsInitialTab = ref<"general" | "account" | "relay" | "logging" | "updates" | undefined>(undefined);
 
 const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
@@ -653,6 +658,26 @@ async function pollRemoteSessionsViaPlatform() {
     return { ...raw, id: raw.id ?? raw.session_id ?? "" };
   });
   applyRemoteSessions(asSessionInfo);
+}
+
+async function refreshPlatformRelayState(): Promise<boolean> {
+  const relayCfg = await $platform.relay.load();
+  const endpoint = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null;
+  remoteEndpoint.value = endpoint;
+  if (!endpoint) {
+    remoteRawList.value = [];
+    remoteList.value = [];
+    return false;
+  }
+  await pollRemoteSessionsViaPlatform();
+  return true;
+}
+
+function startPlatformRemotePoll(): void {
+  stopRemotePoll();
+  remotePollHandle = window.setInterval(() => {
+    void pollRemoteSessionsViaPlatform();
+  }, 3000);
 }
 
 // connectRemoteSessionList (re)starts the remote-session list poll and sets the
@@ -1453,6 +1478,20 @@ onMounted(async () => {
       viewerCounts[d.session_id] = d.count ?? 0;
     }
   });
+  $platform.events.on('relay:auth-restored', () => {
+    if (caps.wailsBindings) return;
+    void (async () => {
+      try {
+        const ok = await refreshPlatformRelayState();
+        if (ok) {
+          status.value = "ready";
+          startPlatformRemotePoll();
+        }
+      } catch (e) {
+        console.warn("[AT Term] failed to refresh relay state after login", e);
+      }
+    })();
+  });
   // Fire-and-forget: drives TabBar's admin button + AdminPanel gating only.
   // Not on the critical boot path — an unconfigured/unauthenticated relay
   // rejects immediately and just leaves isAdmin false.
@@ -1544,14 +1583,12 @@ onMounted(async () => {
     // "loading" splash even when the list is empty.
     try {
       bootStage = "loadRelayConfig";
-      const relayCfg = await $platform.relay.load();
-      remoteEndpoint.value = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null;
-      bootStage = "listRemoteSessions";
-      await pollRemoteSessionsViaPlatform();
+      const hasRelayConfig = await refreshPlatformRelayState();
+      if (!hasRelayConfig && !caps.localPty) {
+        openSettingsAccount();
+      }
       status.value = "ready";
-      remotePollHandle = window.setInterval(() => {
-        void pollRemoteSessionsViaPlatform();
-      }, 3000);
+      if (hasRelayConfig) startPlatformRemotePoll();
     } catch (e: any) {
       const name = e?.name ?? "Error";
       const msg = e?.message ?? String(e);
@@ -1958,5 +1995,33 @@ defineExpose({ me });
   background: rgba(13, 17, 23, 0.92); border: 1px solid var(--border);
   color: var(--fg); padding: 6px 12px; border-radius: 6px; font-size: 12px;
   pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .app {
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .main-row {
+    min-width: 0;
+  }
+  .main {
+    min-width: 0;
+  }
+  .auth-error-banner {
+    padding: 7px 10px;
+    gap: 6px;
+  }
+  .auth-error-action {
+    padding: 2px 6px;
+  }
+  .toast {
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 24px);
+    text-align: center;
+  }
 }
 </style>

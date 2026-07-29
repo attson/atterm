@@ -434,8 +434,8 @@ header 必须可键盘操作：
 
 ### Template bar
 
-横向滚动按钮条，渲染在 desktop TerminalView / web TerminalView 的 status
-bar 上方，以及 mobile MobileTerminal 替换原 `quickbar`。
+横向滚动按钮条，渲染在共享 `TerminalView.vue` 的 status bar 上方；desktop /
+web / Capacitor 都走同一个组件。
 
 - 高度 28px、最小宽度 34px、padding `0 9px`、圆角 7px、字体 `var(--font-mono)`
   12px。
@@ -480,12 +480,12 @@ prefs sync）；不要在 `web/src/` 另起第二套模板编辑 UI。
 
 ## Web 终端辅助键与文件选择
 
-浏览器端没有桌面原生菜单和移动端系统键盘辅助条，因此 `TerminalView.vue` 在
-browser/web capability 下渲染一条紧凑的 terminal aux row。它和 template bar
-同属终端工具面，不是 Settings 表单控件：
+浏览器和 Capacitor 没有桌面原生菜单，因此 `TerminalView.vue` 在
+non-Wails / non-local-PTY capability 下渲染一条紧凑的 terminal aux row。它和
+template bar 同属终端工具面，不是 Settings 表单控件：
 
 - 只在 `!platform.caps.wailsBindings && !platform.caps.localPty` 时显示；桌面 Wails
-  和 Capacitor 移动端不显示这条 browser-only row。
+  不显示，web 和 Capacitor 显示。
 - 按钮顺序固定为文件类动作在前（图片、文件），后接 `effectiveAuxKeys`（Enter /
   Esc / Tab / `Ctrl-C` / `Ctrl-D` / 方向键等）。文件类动作使用 hidden
   `<input type="file">`，可见按钮只负责触发 picker。
@@ -501,63 +501,33 @@ browser/web capability 下渲染一条紧凑的 terminal aux row。它和 templa
 
 ## 移动端设置页
 
-`MobileSettings.vue` 是从 `MobileSessionList` 的 ⚙ 按钮进入的独立 view。
-**不再退回连接页**（旧版 gear 直接进 setup 是 regression）。结构：
-
-```text
-┌─ ← 返回      设置                              ─┐
-│                                                  │
-│  语言          [ 跟随系统 ▾ ]                    │
-│                                                  │
-│  快捷模板                                        │
-│   ☑ 在终端上方显示快捷模板栏                     │
-│   ┌─────────────────────────────────────────┐   │
-│   │ yes   │ yes        │ ↑ ↓ 编辑 删除 │   │     │
-│   │ ok    │ ok         │ ↑ ↓ 编辑 删除 │   │     │
-│   │ ...                                     │   │
-│   └─────────────────────────────────────────┘   │
-│   [ + 新增 ]            [ 恢复默认 ]             │
-│                                                  │
-│  快捷按键（控制键）                              │
-│   ┌─────────────────────────────────────────┐   │
-│   │ esc   │ \e         │ ↑ ↓ 编辑 删除 │   │     │
-│   │ ⌃C    │ \x03       │ ↑ ↓ 编辑 删除 │   │     │
-│   │ ...                                     │   │
-│   └─────────────────────────────────────────┘   │
-│   [ + 新增 ]            [ 恢复默认 ]             │
-│                                                  │
-│  [ 退出登录 ]                                    │
-└──────────────────────────────────────────────────┘
-```
+Capacitor 不再维护 `src/mobile/MobileSettings.vue` / `MobileSetup.vue` 第二套 UI。
+移动端设置复用共享 `SettingsDialog.vue`，窄屏时 dialog 全屏，左侧 nav 变成横向
+tab，并保留 safe-area padding。
 
 约束：
 
-- 两个编辑器（模板 / aux 键）共用 `MobileListEditor.vue`，通过
-  `displayValue` / `parseValue` 钩子让 aux 编辑器把 `\xNN` 等转义字符
-  显示 + 解码成原始字节。
-- 「退出登录」按钮**只**回到连接页（`view = 'setup'`），**不调**
-  `platform.relay.clear()`，配置保留预填。如果要真清，是另一个动作。
-- 任何模板 / aux 键改动后 emit `mobile:shortcutsChanged`，已开的
-  `MobileTerminal` 订阅事件 reload 两个 bar + 隐藏开关。
-- show-bar checkbox 用 `:checked="!hidden"`（label 是"显示"），
-  saveHidden 取反传 `!show`，避免双否定的 UX 困惑。
+- 登录、退出、扫码配对在 `SettingsAccount.vue`。扫码按钮调用
+  `platform/qrScanner.ts` 的 app-local `AttermQRScanner` plugin，消费流程在
+  `SettingsPairingConsume.vue`，成功后 emit `relay:auth-restored` 让 `App.vue`
+  重新加载 endpoint / session list。
+- 模板和 aux 键仍走 `SettingsTemplates.vue` / `platform.templates` /
+  `platform.auxKeys`。改动后 emit `quickTemplates:changed`；Capacitor 也保留
+  `mobile:shortcutsChanged` 订阅以兼容旧事件名。
+- 退出登录走 `platform.relay.logout()`；Capacitor 实现会清 token 和 account key，
+  但保留 url / last_email / saved password 供下一次登录预填。
 
-## 移动端防误触模式 banner
+## 移动端终端输入
 
-`MobileTerminal` 在控制模式关闭时显示一条黄色横幅
-（`.protect-banner` 在 control-panel 顶部）：
+移动端终端现在复用共享 `TerminalView.vue`，不再有独立 `MobileTerminal.vue`。
 
-- `v-if="canControl && isDriver && !controlMode"` —— 只在
-  "本可输入但用户没开控制模式" 时显示，view-only / viewer
-  自己有别的覆盖层。
-- `<div :key="protectBump" :class="{ shaking: protectBump > 0 }">`：
-  每次用户点击 inert 按钮 / 触摸终端区，`nudgeProtect()` 递增
-  `protectBump`，banner 用它做 `:key` 触发 0.4s shake 动画 + 高亮。
-- 文案：`"防误触模式 · 打开下方控制模式可输入"`（zh）/
-  `"Tap-protect mode · enable Control mode below to type"`（en）。
-- AUX 键 / 模板按钮 / paste / image 全部用 `:class="{ inert: !canSend }"`
-  **而不是** `:disabled`，iOS 上 disabled button 不触发任何 pointer 事件，
-  banner 抖动捕获不到。
+- IME 兼容层只在 xterm textarea 的 capture-phase `input` 上处理
+  `inputType === "insertText" && !isComposing && data`，并在 driver + 非 view-only
+  时 `sendInput(data)`。composition 路径一律交给 xterm。
+- fit 仍由 `ResizeObserver` 驱动；driver 才跑 `safeFit()`，viewer 从 META 的
+  `cols/rows` 锁定 `term.resize(cols, rows)`。
+- viewer / view-only 继续依赖共享 viewer overlay 和权限 gate；已删除旧移动端
+  tap-protect banner，不要重新引入第二套控制模式。
 
 ## 移动端键盘可见
 

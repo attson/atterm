@@ -42,6 +42,7 @@ if (typeof window !== "undefined" && !(window as any).runtime) {
 }
 import source from "./App.vue?raw";
 import settingsSource from "./components/SettingsDialog.vue?raw";
+import capacitorMainSource from "./main.capacitor.ts?raw";
 
 describe("tab activation", () => {
   test("gotoTab sets currentTabId before mutating the hash", () => {
@@ -73,6 +74,24 @@ describe("web capability gates", () => {
     expect(source).toContain('@relay-config-changed="refreshDesktopRelayConfig"');
     expect(source).toContain('@close="onSettingsClose"');
     expect(source).not.toContain('@close="showSettings = false; settingsInitialTab = undefined; refreshRelayConfig()"');
+  });
+});
+
+describe("capacitor uses the shared web shell", () => {
+  test("Capacitor boots the shared App.vue entry instead of the legacy mobile shell", () => {
+    expect(capacitorMainSource).toContain("import App from './App.vue'");
+    expect(capacitorMainSource).toContain("const app = createApp(App)");
+    expect(capacitorMainSource).not.toContain("import MobileApp");
+    expect(capacitorMainSource).not.toContain("createApp(MobileApp)");
+  });
+
+  test("non-Wails app can open Settings directly to the Account tab when no attach endpoint exists", () => {
+    expect(source).toContain("function openSettingsAccount()");
+    expect(source).toContain('settingsInitialTab.value = "account"');
+    expect(source).toContain("if (!hasRelayConfig && !caps.localPty)");
+    expect(source).toContain("openSettingsAccount()");
+    expect(source).toContain("const endpoint = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null");
+    expect(source).toContain("if (!endpoint)");
   });
 });
 

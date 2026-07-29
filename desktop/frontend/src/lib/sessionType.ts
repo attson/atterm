@@ -1,6 +1,5 @@
 // Shared display metadata for session.type ("shell" | "ai" | "test" | "build"
-// | "deploy"). Renderers (desktop TabBar, mobile MobileSessionList, web
-// SessionList) all call displayForType() and decide their own layout.
+// | "deploy"). Renderers call displayForType() and decide their own layout.
 //
 // SVG path strings are 16×16 viewBox, single-path, stroke="currentColor"
 // stroke-width="1.6" linecap="round" linejoin="round" — match the lucide

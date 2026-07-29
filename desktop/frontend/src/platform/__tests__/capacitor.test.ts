@@ -26,6 +26,7 @@ vi.mock('@capacitor/core', async (importOriginal) => {
 import { CapacitorHttp } from '@capacitor/core'
 import { createCapacitorPlatform } from '../capacitor'
 import { secureStorage } from '../secureStorage'
+import { wrapAccountKey } from '../../lib/opaque'
 
 describe('createCapacitorPlatform', () => {
   beforeEach(async () => {
@@ -220,6 +221,7 @@ describe('createCapacitorPlatform — relay.login', () => {
     localStorage.clear()
     await secureStorage.remove('atterm.relay.session')
     await secureStorage.remove('atterm.relay.password')
+    await secureStorage.remove('atterm.relay.account-key')
     vi.restoreAllMocks()
   })
 
@@ -256,6 +258,34 @@ describe('createCapacitorPlatform — relay.login', () => {
     expect(body.login_ke.length).toBeGreaterThan(0)
   })
 
+  it('successful login mirrors relay config into localStorage for the fast load path', async () => {
+    const accountKey = new Uint8Array(32)
+    accountKey[0] = 7
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        login_response: 'AAAA',
+        session_id: 'sid-xyz',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        user_id: 'user-1',
+        session_token: 'sess_new',
+        account_key_wrap: wrapAccountKey('pw', accountKey, { alg: 'argon2id', m: 32, t: 1, p: 1 }),
+        realm_id: 'realm-1',
+        home_instance_url: 'https://home.example.com',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const p = createCapacitorPlatform()
+    await p.relay.login!('https://r.example.com', 'me@example.com', 'pw', false)
+
+    const fromSecure = JSON.parse((await secureStorage.get('atterm.relay.session'))!)
+    const fromLocal = JSON.parse(localStorage.getItem('atterm.relay.session')!)
+    expect(fromSecure.token).toBe('sess_new')
+    expect(fromLocal).toEqual(fromSecure)
+    expect(fromLocal.realmId).toBe('realm-1')
+    expect(fromLocal.homeInstanceURL).toBe('https://home.example.com')
+  })
+
   it('maps 401 on /init to invalid_credentials and leaves storage untouched', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
     const p = createCapacitorPlatform()
@@ -289,6 +319,7 @@ describe('createCapacitorPlatform — relay.logout', () => {
     localStorage.clear()
     await secureStorage.remove('atterm.relay.session')
     await secureStorage.remove('atterm.relay.password')
+    await secureStorage.remove('atterm.relay.account-key')
     vi.restoreAllMocks()
   })
 
@@ -316,12 +347,14 @@ describe('createCapacitorPlatform — relay.logout', () => {
     expect((init as RequestInit).credentials).toBe('omit')
 
     const saved = JSON.parse((await secureStorage.get('atterm.relay.session'))!)
+    const savedLocal = JSON.parse(localStorage.getItem('atterm.relay.session')!)
     expect(saved.token).toBe('')
     expect(saved.session_expires_at).toBe(0)
     expect(saved.url).toBe('https://r.example.com')
     expect(saved.last_email).toBe('me@example.com')
     expect(saved.allow_insecure_relay).toBe(false)
     expect(saved.remote_permission).toBe('full')
+    expect(savedLocal).toEqual(saved)
     expect(await secureStorage.get('atterm.relay.password')).toBe('hunter2hunter2')
   })
 

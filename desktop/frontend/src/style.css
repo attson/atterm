@@ -59,6 +59,12 @@ html, body {
 
 #app { height: 100%; }
 
+@supports (height: 100dvh) {
+  html, body, #app {
+    height: 100dvh;
+  }
+}
+
 /* xterm.js viewport scrollbar — iTerm-style overlay look.
  *
  * macOS WKWebView with "Show scroll bars: Always" otherwise paints a

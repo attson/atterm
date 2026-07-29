@@ -323,6 +323,9 @@ function onClose(e: MouseEvent, id: string) {
 
 <style scoped>
 .tabbar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
   display: flex; align-items: stretch; background: var(--panel);
   border-bottom: 1px solid var(--border); flex: 0 0 auto; height: 28px;
   overflow: hidden;
@@ -410,5 +413,29 @@ function onClose(e: MouseEvent, id: string) {
   font-size: 8px;
   margin-left: 4px;
   color: currentColor;
+}
+
+@media (max-width: 767px) {
+  .tabbar {
+    height: 36px;
+  }
+  .tab {
+    min-width: 86px;
+    max-width: 150px;
+    padding: 0 6px 0 10px;
+    gap: 4px;
+  }
+  .tab .num {
+    display: none;
+  }
+  .tab .close {
+    opacity: 1;
+    padding: 0 2px;
+  }
+  .settings-btn,
+  .admin-btn {
+    min-width: 40px;
+    padding: 0 12px;
+  }
 }
 </style>

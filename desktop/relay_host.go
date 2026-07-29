@@ -896,6 +896,12 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	if req.AIKind != "" {
 		if sess, ok := h.server.Registry().Get(id); ok {
 			sidCopy := id
+			if req.InitialAISessionID != "" {
+				h.onAISidCaptured(sidCopy, req.AIKind, req.InitialAISessionID)
+				if req.AIKind == "codex" {
+					go startCodexKnownTitleResolve(resolveCtx, sess, cwd, req.InitialAISessionID)
+				}
+			}
 			if argv := computeResumeArgs(req.AIKind, req.InitialAISessionID, req.InitialAICommandLine); argv != nil {
 				line := strings.Join(argv, " ") + "\n"
 				ptyCopy := pty

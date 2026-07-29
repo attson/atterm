@@ -98,6 +98,9 @@ const authErrorBanners: Record<string, MessageKey> = {
 const authErrorMessage = computed(() =>
   authError.value ? (authErrorBanners[authError.value] ? i18nT(authErrorBanners[authError.value]) : authError.value) : "",
 );
+const emptyMainMessage = computed(() =>
+  caps.localPty ? i18nT("app.startingFirstSession") : i18nT("app.waitingForSessionSelection"),
+);
 
 function openSettingsRelay() {
   settingsInitialTab.value = "relay";
@@ -1770,7 +1773,7 @@ defineExpose({ me });
         <AdminPanel v-if="adminViewOpen" />
         <template v-else-if="localEndpoint || remoteEndpoint">
           <div v-if="tabs.length === 0" class="empty">
-            {{ i18nT("app.startingFirstSession") }}
+            {{ emptyMainMessage }}
           </div>
           <PaneGrid
             v-for="t in tabs"

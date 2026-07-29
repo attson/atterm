@@ -39,6 +39,7 @@ export const en = {
     showPanel: "Show panel",
     hidePanel: "Hide panel",
     startingFirstSession: "starting first session...",
+    waitingForSessionSelection: "waiting for session selection...",
     noShellsFound: "no shells found on this machine",
     wailsBindingsUnavailable: "Wails bindings unavailable",
     wailsBindingsNotReady: "Wails bindings not ready",

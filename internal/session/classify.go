@@ -32,27 +32,9 @@ var wrapperCommands = map[string]struct{}{
 // ClassifyCommand returns one of the SessionType* constants for cmd.
 // Pure / total / O(len(cmd)).
 func ClassifyCommand(cmd string) string {
-	tokens := strings.Fields(cmd)
-	// Strip wrappers and POSIX env-var prefixes from the front.
-	for len(tokens) > 0 {
-		t := tokens[0]
-		if _, ok := wrapperCommands[t]; ok {
-			tokens = tokens[1:]
-			continue
-		}
-		if envAssignRE.MatchString(t) {
-			tokens = tokens[1:]
-			continue
-		}
-		break
-	}
-	if len(tokens) == 0 {
+	first, second := commandExecutableTokens(cmd)
+	if first == "" {
 		return SessionTypeShell
-	}
-	first := filepath.Base(tokens[0])
-	second := ""
-	if len(tokens) > 1 {
-		second = tokens[1]
 	}
 
 	switch first {
@@ -72,4 +54,29 @@ func ClassifyCommand(cmd string) string {
 		}
 	}
 	return SessionTypeShell
+}
+
+func commandExecutableTokens(cmd string) (first, second string) {
+	tokens := strings.Fields(cmd)
+	// Strip wrappers and POSIX env-var prefixes from the front.
+	for len(tokens) > 0 {
+		t := tokens[0]
+		if _, ok := wrapperCommands[t]; ok {
+			tokens = tokens[1:]
+			continue
+		}
+		if envAssignRE.MatchString(t) {
+			tokens = tokens[1:]
+			continue
+		}
+		break
+	}
+	if len(tokens) == 0 {
+		return "", ""
+	}
+	first = filepath.Base(tokens[0])
+	if len(tokens) > 1 {
+		second = tokens[1]
+	}
+	return first, second
 }

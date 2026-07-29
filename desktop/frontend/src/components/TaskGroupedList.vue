@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
@@ -217,6 +217,11 @@ const orderedVisibleIds = computed<string[]>(() => {
 });
 
 function onRowClick(e: MouseEvent, s: RemoteSession) {
+  if (suppressClickSessionId === s.session_id) {
+    suppressClickSessionId = "";
+    e.preventDefault();
+    return;
+  }
   if (e.shiftKey) {
     sel.selectRange(s.session_id, orderedVisibleIds.value);
     return;
@@ -236,10 +241,54 @@ const menuState = ref<{
   session: RemoteSession | null;
 }>({ open: false, x: 0, y: 0, session: null });
 
+function openRowMenuAt(x: number, y: number, s: RemoteSession) {
+  menuState.value = { open: true, x, y, session: s };
+}
+
 function onRowMenu(e: MouseEvent, s: RemoteSession) {
   e.preventDefault();
-  menuState.value = { open: true, x: e.clientX, y: e.clientY, session: s };
+  openRowMenuAt(e.clientX, e.clientY, s);
 }
+
+const LONG_PRESS_MS = 1000;
+const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+let longPressStart: { x: number; y: number; sessionId: string } | null = null;
+let suppressClickSessionId = "";
+
+function clearLongPressTimer() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  longPressStart = null;
+}
+
+function onRowPointerDown(e: PointerEvent, s: RemoteSession) {
+  if (e.pointerType === "mouse" || e.button !== 0) return;
+  clearLongPressTimer();
+  longPressStart = { x: e.clientX, y: e.clientY, sessionId: s.session_id };
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    suppressClickSessionId = s.session_id;
+    openRowMenuAt(e.clientX, e.clientY, s);
+  }, LONG_PRESS_MS);
+}
+
+function onRowPointerMove(e: PointerEvent) {
+  if (!longPressStart) return;
+  const dx = Math.abs(e.clientX - longPressStart.x);
+  const dy = Math.abs(e.clientY - longPressStart.y);
+  if (dx > LONG_PRESS_MOVE_TOLERANCE_PX || dy > LONG_PRESS_MOVE_TOLERANCE_PX) {
+    clearLongPressTimer();
+  }
+}
+
+function onRowPointerEnd() {
+  clearLongPressTimer();
+}
+
+onBeforeUnmount(clearLongPressTimer);
 
 function closeMenu() {
   menuState.value = { ...menuState.value, open: false, session: null };
@@ -402,6 +451,11 @@ function stateLabel(state: string | undefined): string {
           :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
           @click="(e) => onRowClick(e, s)"
           @contextmenu="onRowMenu($event, s)"
+          @pointerdown="onRowPointerDown($event, s)"
+          @pointermove="onRowPointerMove($event)"
+          @pointerup="onRowPointerEnd"
+          @pointercancel="onRowPointerEnd"
+          @pointerleave="onRowPointerEnd"
         >
           <TaskRowInner
             :session="s"
@@ -467,6 +521,11 @@ function stateLabel(state: string | undefined): string {
         :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
         @click="(e) => onRowClick(e, s)"
         @contextmenu="onRowMenu($event, s)"
+        @pointerdown="onRowPointerDown($event, s)"
+        @pointermove="onRowPointerMove($event)"
+        @pointerup="onRowPointerEnd"
+        @pointercancel="onRowPointerEnd"
+        @pointerleave="onRowPointerEnd"
       >
         <TaskRowInner
           :session="s"
@@ -505,6 +564,12 @@ function stateLabel(state: string | undefined): string {
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
           :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
           @click="(e) => onRowClick(e, s)"
+          @contextmenu="onRowMenu($event, s)"
+          @pointerdown="onRowPointerDown($event, s)"
+          @pointermove="onRowPointerMove($event)"
+          @pointerup="onRowPointerEnd"
+          @pointercancel="onRowPointerEnd"
+          @pointerleave="onRowPointerEnd"
         >
           <span class="row-top">
             <TaskStateIcon :state="(s.task_state as TaskState | undefined) ?? 'idle'" />
@@ -571,7 +636,7 @@ function stateLabel(state: string | undefined): string {
 .pinned-group .pin-icon { font-size: 11px; }
 .group-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-count { margin-left: auto; font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; }
-.task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; }
+.task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; }
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
 .task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }
 .task-row.active:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }

@@ -418,9 +418,11 @@ const (
 
 // startCodexFileResolve keeps the filename heuristic for codex (its jsonl has
 // no ai-title record). It baselines the day-dir's rollout ids, then waits for a
-// single new one to appear. Ambiguous (≥2 new) aborts. Once captured, it keeps
-// polling the rollout for the latest user_message and mirrors that into the
-// session title; Codex's OSC title is only spinner + cwd basename.
+// single new one to appear, or a single existing same-cwd rollout to advance
+// after the user selects it from Codex's resume picker. Ambiguous (≥2) aborts.
+// Once captured, it keeps polling the rollout for the first user_message and
+// mirrors that into the session title; Codex's OSC title is only spinner + cwd
+// basename.
 func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd string, onCapture func(sid string)) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -432,7 +434,7 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		log.Printf("recovery: mkdir %s: %v — skip codex resolve", dir, err)
 		return
 	}
-	before := codexRolloutSids(dir)
+	before := codexRolloutFileInfos(dir, cwd)
 	deadline := time.Now().Add(codexResolveBudget)
 	for time.Now().Before(deadline) {
 		select {
@@ -441,22 +443,37 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 		case <-time.After(codexResolveInterval):
 		}
 		var fresh []string
-		files := codexRolloutFiles(dir)
-		for sid := range files {
-			if _, seen := before[sid]; !seen {
+		var advanced []string
+		files := codexRolloutFileInfos(dir, cwd)
+		for sid, file := range files {
+			prev, seen := before[sid]
+			if !seen {
 				fresh = append(fresh, sid)
+				continue
+			}
+			if file.ModTime.After(prev.ModTime) {
+				advanced = append(advanced, sid)
 			}
 		}
 		switch {
 		case len(fresh) == 1:
 			sid := fresh[0]
 			onCapture(sid)
-			trackCodexUserTitle(ctx, sess, files[sid])
+			trackCodexUserTitle(ctx, sess, files[sid].Path)
 			return
 		case len(fresh) >= 2:
 			log.Printf("recovery: codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
 			return
+		case len(advanced) == 1:
+			sid := advanced[0]
+			onCapture(sid)
+			trackCodexUserTitle(ctx, sess, files[sid].Path)
+			return
+		case len(advanced) >= 2:
+			log.Printf("recovery: codex resolve ambiguous (%d advanced in %s) — abort", len(advanced), dir)
+			return
 		}
+		before = files
 	}
 	log.Printf("recovery: codex resolve timeout in %s", dir)
 }
@@ -464,9 +481,11 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string) {
 	last := ""
 	for {
-		if title, ok := scanCodexJsonlForUserTitle(path); ok && title != last {
-			last = title
-			sess.UpdateCwdTitle("", title)
+		if title, ok := scanCodexJsonlForUserTitle(path); ok {
+			if title != last || sess.Info().Title != title {
+				last = title
+				sess.UpdateCwdTitle("", title)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -474,6 +493,23 @@ func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string
 		case <-time.After(codexTitleInterval):
 		}
 	}
+}
+
+func startCodexKnownTitleResolve(ctx context.Context, sess *session.Session, cwd, sid string) {
+	if sid == "" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("recovery: no home for known codex title resolve: %v", err)
+		return
+	}
+	path, ok := codexRolloutPathBySid(home, cwd, sid)
+	if !ok {
+		log.Printf("recovery: known codex sid %s not found under %s", sid, filepath.Join(home, ".codex", "sessions"))
+		return
+	}
+	trackCodexUserTitle(ctx, sess, path)
 }
 
 func scanCodexJsonlForUserTitle(path string) (string, bool) {
@@ -505,8 +541,8 @@ func scanCodexJsonlForUserTitle(path string) (string, bool) {
 		if rec.Type != "event_msg" || rec.Payload.Type != "user_message" {
 			continue
 		}
-		if t := normalizeCodexUserTitle(rec.Payload.Message); t != "" {
-			title = t
+		if title = normalizeCodexUserTitle(rec.Payload.Message); title != "" {
+			return title, true
 		}
 	}
 	return title, title != ""
@@ -538,6 +574,44 @@ func codexRolloutSids(dir string) map[string]struct{} {
 
 func codexRolloutFiles(dir string) map[string]string {
 	out := map[string]string{}
+	for sid, info := range codexRolloutFileInfos(dir, "") {
+		out[sid] = info.Path
+	}
+	return out
+}
+
+func codexRolloutPathBySid(home, cwd, sid string) (string, bool) {
+	root := filepath.Join(home, ".codex", "sessions")
+	var matches []string
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		got, ok := codexParseSid(d.Name())
+		if !ok || got != sid {
+			return nil
+		}
+		if codexRolloutIsResumableForCwd(path, sid, cwd) {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	if len(matches) != 1 {
+		if len(matches) > 1 {
+			log.Printf("recovery: known codex sid %s ambiguous (%d rollout files)", sid, len(matches))
+		}
+		return "", false
+	}
+	return matches[0], true
+}
+
+type codexRolloutFileInfo struct {
+	Path    string
+	ModTime time.Time
+}
+
+func codexRolloutFileInfos(dir, cwd string) map[string]codexRolloutFileInfo {
+	out := map[string]codexRolloutFileInfo{}
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return out
@@ -547,8 +621,13 @@ func codexRolloutFiles(dir string) map[string]string {
 			continue
 		}
 		if sid, ok := codexParseSid(e.Name()); ok {
-			if codexRolloutIsResumable(filepath.Join(dir, e.Name()), sid) {
-				out[sid] = filepath.Join(dir, e.Name())
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			if codexRolloutIsResumableForCwd(path, sid, cwd) {
+				out[sid] = codexRolloutFileInfo{Path: path, ModTime: info.ModTime()}
 			}
 		}
 	}
@@ -556,6 +635,10 @@ func codexRolloutFiles(dir string) map[string]string {
 }
 
 func codexRolloutIsResumable(path, sid string) bool {
+	return codexRolloutIsResumableForCwd(path, sid, "")
+}
+
+func codexRolloutIsResumableForCwd(path, sid, cwd string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -571,6 +654,7 @@ func codexRolloutIsResumable(path, sid string) bool {
 		Payload struct {
 			ID           string `json:"id"`
 			ThreadSource string `json:"thread_source"`
+			Cwd          string `json:"cwd"`
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(sc.Bytes(), &first); err != nil {
@@ -579,7 +663,13 @@ func codexRolloutIsResumable(path, sid string) bool {
 	if first.Type != "session_meta" || first.Payload.ID != sid {
 		return false
 	}
-	return first.Payload.ThreadSource == "" || first.Payload.ThreadSource == "user"
+	if first.Payload.ThreadSource != "" && first.Payload.ThreadSource != "user" {
+		return false
+	}
+	if cwd != "" && first.Payload.Cwd != "" && filepath.Clean(first.Payload.Cwd) != filepath.Clean(cwd) {
+		return false
+	}
+	return true
 }
 
 // startAIResolve dispatches AI session-id resolution by CLI kind. claude uses

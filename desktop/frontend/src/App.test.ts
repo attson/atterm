@@ -43,6 +43,7 @@ if (typeof window !== "undefined" && !(window as any).runtime) {
 import source from "./App.vue?raw";
 import settingsSource from "./components/SettingsDialog.vue?raw";
 import capacitorMainSource from "./main.capacitor.ts?raw";
+import zhCNSource from "./i18n/messages/zh-CN.ts?raw";
 
 describe("tab activation", () => {
   test("gotoTab sets currentTabId before mutating the hash", () => {
@@ -814,6 +815,9 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
 
     expect(newSessionMock).not.toHaveBeenCalled();
     expect(wrapper.find('[data-testid="tabbar-stub"]').attributes("data-tab-count")).toBe("0");
+    expect(wrapper.text()).toContain("waiting for session selection...");
+    expect(wrapper.text()).not.toContain("starting first session...");
+    expect(zhCNSource).toContain('waitingForSessionSelection: "等待会话选择..."');
   });
 
   it("recovery discard does not spawn a local shell when caps.localPty=false", async () => {

@@ -43,6 +43,7 @@ describe("useRecoverySnapshot", () => {
       command: "claude",
       cwd: "/x",
       title: "t",
+      type: "ai",
       cols: 80,
       rows: 24,
       started_at: 0,
@@ -64,6 +65,58 @@ describe("useRecoverySnapshot", () => {
     expect(calls.length).toBeGreaterThan(0);
     const last = calls[calls.length - 1][0];
     expect(last.tabs[0].panes[0].ai?.session_id).toBe("abc-uuid-xyz");
+    scope.stop();
+  });
+
+  it("does not persist stale AI metadata after the session type downgrades to shell", async () => {
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...createFakePlatform(), events });
+
+    const info = ref<any>({
+      id: "s1",
+      command: "zsh",
+      cwd: "/x",
+      title: "百度是什么",
+      type: "ai",
+      current_command: "codex",
+      cols: 80,
+      rows: 24,
+      started_at: 0,
+      host_id: "h",
+    });
+    const tabs = ref<Tab[]>([
+      {
+        id: "t1",
+        layout: "single",
+        panes: [{ sessionId: "s1", remote: false }],
+        activePaneIdx: 0,
+        colRatio: 0.5,
+        rowRatio: 0.5,
+      },
+    ]);
+    const currentTabId = ref<string | null>("t1");
+    const sessionInfoFor = (sid: string) => (sid === "s1" ? info.value : undefined);
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref("") });
+    });
+
+    events.emit("recovery:ai-sid", { session_id: "s1", kind: "codex", ai_session_id: "019faea7-292e-7ad3-a408-4faf2bb8a848" });
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    let calls = vi.mocked(api.saveRecoverySnapshot).mock.calls;
+    expect(calls[calls.length - 1][0].tabs[0].panes[0].ai?.session_id).toBe("019faea7-292e-7ad3-a408-4faf2bb8a848");
+
+    info.value = { ...info.value, type: "shell", current_command: "ls -G" };
+    await nextTick();
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+
+    calls = vi.mocked(api.saveRecoverySnapshot).mock.calls;
+    const pane = calls[calls.length - 1][0].tabs[0].panes[0];
+    expect(pane.session_type).toBe("shell");
+    expect(pane.ai).toBeUndefined();
     scope.stop();
   });
 
@@ -117,6 +170,7 @@ describe("useRecoverySnapshot", () => {
       command: "claude",
       cwd: "/x",
       title: "t",
+      type: "ai",
       cols: 80,
       rows: 24,
       started_at: 0,

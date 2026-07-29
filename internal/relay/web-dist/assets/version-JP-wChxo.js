@@ -1,1 +1,0 @@
-import{a as t,A as e}from"./client-3rGnOobG.js";import{bZ as n}from"./relay-config-qEn7j3a8.js";function s(r,o=n){return o("common.versionLabel",{version:r||"dev"})}async function c(){try{const{data:r}=await t("/api/version");return r.version}catch(r){if(!(r instanceof e))throw r;return"dev"}}export{c as fetchVersion,s as formatVersionLabel};

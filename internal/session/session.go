@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ringbuf"
@@ -147,6 +148,12 @@ type Session struct {
 	// sid sniffer for fresh sessions (restored sessions get sniff via
 	// NewSession's req.AIKind path).
 	onAIClassified func(commandLine, cwd string)
+
+	// aiCommandFinished records the exact boundary where an AI CLI command has
+	// emitted OSC 133;D. If the next OSC 133;C is a plain shell command, the
+	// session can safely leave the sticky ai type without treating AI-internal
+	// input as a shell command.
+	aiCommandFinished bool
 
 	// onFirstPrompt fires once on the first OSC 133;A/B prompt marker — i.e.
 	// the shell has drawn its first prompt and is ready to accept input.
@@ -975,11 +982,14 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.meta.CurrentCommand = command
 				changed = true
 			}
-			// Sticky non-shell classification: shell never overwrites an
-			// already-set non-shell tag (so opening `claude`, exiting back
-			// to the shell prompt, and running `ls` keeps the session
-			// flagged as ai). See spec §4.
-			if newType := ClassifyCommand(command); newType != SessionTypeShell && s.meta.Type != newType {
+			newType := ClassifyCommand(command)
+			// Sticky non-shell classification: shell does not overwrite
+			// test/build/deploy tags. AI is the exception once its command has
+			// explicitly ended and the shell starts a new ordinary command.
+			if s.meta.Type == SessionTypeAI && newType == SessionTypeShell && s.aiCommandFinished {
+				s.meta.Type = SessionTypeShell
+				changed = true
+			} else if newType != SessionTypeShell && s.meta.Type != newType {
 				wasNonAI := s.meta.Type != SessionTypeAI
 				s.meta.Type = newType
 				changed = true
@@ -989,6 +999,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 					s.onAIClassified(command, s.meta.Cwd)
 				}
 			}
+			s.aiCommandFinished = false
 			started := now.Unix()
 			s.cmdStarted = now
 			s.markSilenceActivityLocked(now)
@@ -1045,6 +1056,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.meta.CommandExitCode = &v
 				changed = true
 			}
+			s.aiCommandFinished = ClassifyCommand(s.meta.CurrentCommand) == SessionTypeAI
 			// Capture a structured summary of this command's tail output.
 			// Always populate Summary on D so clients can show the most
 			// recent context; ErrorLines is filled only when the command
@@ -1100,8 +1112,45 @@ func (s *Session) applyOSCTitleLocked(data []byte) bool {
 	if newTitle == s.meta.Title {
 		return false
 	}
+	if s.shouldIgnoreCodexFallbackTitleLocked(newTitle) {
+		return false
+	}
 	s.meta.Title = newTitle
 	return true
+}
+
+func (s *Session) shouldIgnoreCodexFallbackTitleLocked(newTitle string) bool {
+	if s.meta.Title == "" {
+		return false
+	}
+	first, _ := commandExecutableTokens(s.meta.CurrentCommand)
+	if first != "codex" {
+		return false
+	}
+	newStripped := stripCodexAnimatedTitlePrefix(newTitle)
+	currentStripped := stripCodexAnimatedTitlePrefix(s.meta.Title)
+	if newStripped == "codex" {
+		return currentStripped != "codex"
+	}
+	cwdBase := basenameFromCwd(s.meta.Cwd)
+	return cwdBase != "" && newStripped == cwdBase && currentStripped != cwdBase
+}
+
+func basenameFromCwd(cwd string) string {
+	stripped := strings.TrimRight(cwd, "/")
+	if stripped == "" {
+		return ""
+	}
+	parts := strings.Split(stripped, "/")
+	return parts[len(parts)-1]
+}
+
+func stripCodexAnimatedTitlePrefix(title string) string {
+	return strings.TrimSpace(strings.TrimLeftFunc(title, func(r rune) bool {
+		return unicode.IsSpace(r) ||
+			strings.ContainsRune(":：;·•∙.∷⋮⋯", r) ||
+			(r >= '\u2800' && r <= '\u28ff')
+	}))
 }
 
 func (s *Session) consumeOSC133Locked(data []byte) []string {

@@ -689,17 +689,46 @@ func TestPushOut_AssignsTypeOnNonShellCommand(t *testing.T) {
 	}
 }
 
-func TestPushOut_TypeStickyAfterShellCommand(t *testing.T) {
+func TestPushOut_NonAITypeStickyAfterShellCommand(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{})
-	s.PushOut(1, []byte("\x1b]133;C;claude\x07"))
-	if got := s.Info().Type; got != SessionTypeAI {
-		t.Fatalf("post-claude: %q", got)
+	s.PushOut(1, []byte("\x1b]133;C;npm test\x07"))
+	if got := s.Info().Type; got != SessionTypeTest {
+		t.Fatalf("post-test: %q", got)
 	}
 	// "D;0" closes the running command, then a new C runs "ls".
 	s.PushOut(2, []byte("\x1b]133;D;0\x07"))
 	s.PushOut(3, []byte("\x1b]133;C;ls -la\x07"))
+	if got := s.Info().Type; got != SessionTypeTest {
+		t.Fatalf("after ls: Type got %q want %q (sticky non-shell)", got, SessionTypeTest)
+	}
+}
+
+func TestPushOut_AIDowngradesToShellAfterFinishedThenShellCommand(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	s.PushOut(1, []byte("\x1b]133;C;codex resume 019faea7-292e-7ad3-a408-4faf2bb8a848\x07"))
 	if got := s.Info().Type; got != SessionTypeAI {
-		t.Fatalf("after ls: Type got %q want %q (sticky non-shell)", got, SessionTypeAI)
+		t.Fatalf("post-codex: %q", got)
+	}
+	s.PushOut(2, []byte("\x1b]133;D;0\x07"))
+	s.PushOut(3, []byte("\x1b]133;C;ls -G\x07"))
+	info := s.Info()
+	if info.Type != SessionTypeShell {
+		t.Fatalf("after ls: Type got %q want %q", info.Type, SessionTypeShell)
+	}
+	if info.CurrentCommand != "ls -G" {
+		t.Fatalf("CurrentCommand got %q want ls -G", info.CurrentCommand)
+	}
+}
+
+func TestPushOut_AIRemainsStickyUntilAICommandFinishes(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{})
+	s.PushOut(1, []byte("\x1b]133;C;codex\x07"))
+	if got := s.Info().Type; got != SessionTypeAI {
+		t.Fatalf("post-codex: %q", got)
+	}
+	s.PushOut(2, []byte("\x1b]133;C;ls -G\x07"))
+	if got := s.Info().Type; got != SessionTypeAI {
+		t.Fatalf("after ls without D: Type got %q want %q", got, SessionTypeAI)
 	}
 }
 
@@ -826,6 +855,48 @@ func TestPushOut_OSC2_AlongsideOSC133(t *testing.T) {
 	}
 	if info.CurrentCommand != "npm test" {
 		t.Fatalf("CurrentCommand = %q, want %q", info.CurrentCommand, "npm test")
+	}
+}
+
+func TestPushOut_OSC2_CodexCwdTitleDoesNotOverwriteResolvedUserTitle(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cwd: "/Users/attson/code"})
+	_ = s.PushOut(1, []byte("\x1b]133;C;codex\x07"))
+	s.UpdateCwdTitle("", "你在做什么呢")
+
+	changed := s.PushOut(2, []byte("\x1b]2;code\x07"))
+	if changed {
+		t.Fatalf("codex cwd OSC title should not report a title change")
+	}
+	if got := s.Info().Title; got != "你在做什么呢" {
+		t.Fatalf("Title = %q, want resolved codex user title", got)
+	}
+}
+
+func TestPushOut_OSC2_CodexExecutableTitleDoesNotOverwriteResolvedUserTitle(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cwd: "/Users/attson/code"})
+	_ = s.PushOut(1, []byte("\x1b]133;C;codex resume 019faea7-292e-7ad3-a408-4faf2bb8a848\x07"))
+	s.UpdateCwdTitle("", "当前会话id是多少")
+
+	changed := s.PushOut(2, []byte("\x1b]2;codex\x07"))
+	if changed {
+		t.Fatalf("codex executable OSC title should not report a title change")
+	}
+	if got := s.Info().Title; got != "当前会话id是多少" {
+		t.Fatalf("Title = %q, want resolved codex user title", got)
+	}
+}
+
+func TestPushOut_OSC2_ClaudeTitleStillUpdatesAfterExistingTitle(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{Cwd: "/Users/attson/code"})
+	_ = s.PushOut(1, []byte("\x1b]133;C;claude\x07"))
+	s.UpdateCwdTitle("", "Old Claude Title")
+
+	changed := s.PushOut(2, []byte("\x1b]2;New Claude Title\x07"))
+	if !changed {
+		t.Fatalf("claude OSC title change should still report changed=true")
+	}
+	if got := s.Info().Title; got != "New Claude Title" {
+		t.Fatalf("Title = %q, want new claude OSC title", got)
 	}
 }
 

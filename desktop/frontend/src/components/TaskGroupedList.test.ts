@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, test, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { nextTick } from "vue";
 import TaskGroupedList from "./TaskGroupedList.vue";
+import source from "./TaskGroupedList.vue?raw";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import type { RemoteSession } from "../platform/types";
 import { __resetForTests as resetPins } from "../composables/useSessionPins";
@@ -23,6 +24,7 @@ beforeEach(() => {
   __setPlatformForTests(platform);
 });
 afterEach(() => {
+  vi.useRealTimers();
   __setPlatformForTests(null);
 });
 
@@ -521,6 +523,87 @@ describe("TaskGroupedList pinned group", () => {
     const firstRow = w.find("[data-test=task-row]");
     await firstRow.trigger("contextmenu");
     expect(w.find("[data-test=session-row-menu]").exists()).toBe(true);
+  });
+
+  test("task rows disable native text selection and iOS touch callout", () => {
+    const taskRowRule = source.match(/\.task-row\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(taskRowRule).toContain("user-select: none");
+    expect(taskRowRule).toContain("-webkit-user-select: none");
+    expect(taskRowRule).toContain("-webkit-touch-callout: none");
+  });
+
+  test("touch long-press for 1s opens the SessionRowMenu without opening the row", async () => {
+    vi.useFakeTimers();
+    const w = mount(TaskGroupedList, { props: seededProps([]) });
+    await flushPromises();
+    await nextTick();
+    const firstRow = w.find("[data-test=task-row]");
+
+    await firstRow.trigger("pointerdown", {
+      pointerType: "touch",
+      button: 0,
+      clientX: 42,
+      clientY: 64,
+    });
+    vi.advanceTimersByTime(999);
+    await nextTick();
+    expect(w.find("[data-test=session-row-menu]").exists()).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    await nextTick();
+    expect(w.find("[data-test=session-row-menu]").exists()).toBe(true);
+
+    await firstRow.trigger("pointerup", { pointerType: "touch" });
+    await firstRow.trigger("click");
+    expect(w.emitted("open")).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  test("touch long-press cancels when released before 1s", async () => {
+    vi.useFakeTimers();
+    const w = mount(TaskGroupedList, { props: seededProps([]) });
+    await flushPromises();
+    await nextTick();
+    const firstRow = w.find("[data-test=task-row]");
+
+    await firstRow.trigger("pointerdown", {
+      pointerType: "touch",
+      button: 0,
+      clientX: 42,
+      clientY: 64,
+    });
+    vi.advanceTimersByTime(999);
+    await firstRow.trigger("pointerup", { pointerType: "touch" });
+    vi.advanceTimersByTime(1);
+    await nextTick();
+
+    expect(w.find("[data-test=session-row-menu]").exists()).toBe(false);
+    vi.useRealTimers();
+  });
+
+  test("touch long-press cancels when the finger moves like a scroll gesture", async () => {
+    vi.useFakeTimers();
+    const w = mount(TaskGroupedList, { props: seededProps([]) });
+    await flushPromises();
+    await nextTick();
+    const firstRow = w.find("[data-test=task-row]");
+
+    await firstRow.trigger("pointerdown", {
+      pointerType: "touch",
+      button: 0,
+      clientX: 42,
+      clientY: 64,
+    });
+    await firstRow.trigger("pointermove", {
+      pointerType: "touch",
+      clientX: 42,
+      clientY: 80,
+    });
+    vi.advanceTimersByTime(1000);
+    await nextTick();
+
+    expect(w.find("[data-test=session-row-menu]").exists()).toBe(false);
+    vi.useRealTimers();
   });
 
   test("host header count/unread/state reflect filtered rows after pinning", async () => {

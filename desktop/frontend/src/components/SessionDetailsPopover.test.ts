@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import SessionDetailsPopover from "./SessionDetailsPopover.vue";
+import source from "./SessionDetailsPopover.vue?raw";
 import type { RemoteSession } from "../platform/types";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
@@ -99,6 +100,17 @@ describe("SessionDetailsPopover", () => {
     const w = factory();
     await w.find("[data-test=details-field-sessionId] .copy").trigger("click");
     expect(writeText).toHaveBeenCalledWith("sess-abc");
+  });
+
+  test("details rows allow horizontal scrolling for long values on narrow screens", () => {
+    const rowsRule = source.match(/\.rows\s*\{[^}]*\}/)?.[0] ?? "";
+    const rowRule = source.match(/\.row\s*\{[^}]*\}/)?.[0] ?? "";
+    const valueRule = source.match(/\.value\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(rowsRule).toContain("overflow-x: auto");
+    expect(rowsRule).toContain("-webkit-overflow-scrolling: touch");
+    expect(rowRule).toContain("min-width: max-content");
+    expect(valueRule).toContain("overflow: visible");
+    expect(valueRule).toContain("text-overflow: clip");
   });
 
   test("Escape emits close", async () => {

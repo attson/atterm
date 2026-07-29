@@ -62,6 +62,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
         panes: t.panes.map((p, idx): RecoveryPaneSnapshot => {
           const info = p.sessionId ? args.sessionInfoFor(p.sessionId) : undefined;
           const ai = p.sessionId ? aiBySid.get(p.sessionId) : undefined;
+          const persistAI = info?.type === "ai";
           // A sidebar-opened local session has pane.remote=true but lives on
           // this host; persist it as plain-local so restore re-spawns at the
           // saved cwd. Genuinely remote panes still save session_id+host_id so
@@ -86,7 +87,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
             session_type: info?.type ?? "",
             last_command_line: info?.current_command ?? "",
             title: info?.title ?? "",
-            ai: ai ? ({ ...ai } as RecoveryAIInfo) : undefined,
+            ai: persistAI && ai ? ({ ...ai } as RecoveryAIInfo) : undefined,
           };
         }),
       }))

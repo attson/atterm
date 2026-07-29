@@ -194,6 +194,8 @@ onBeforeUnmount(() => {
   z-index: 1000;
   min-width: 260px;
   max-width: 420px;
+  width: min(420px, calc(100vw - 16px));
+  box-sizing: border-box;
   padding: 8px 10px 10px;
   background: var(--menu-bg, #1f1f22);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -212,21 +214,24 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 3px;
   max-height: 380px;
+  overflow-x: auto;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .row {
   display: grid;
   grid-template-columns: 96px 1fr auto;
   gap: 8px;
   align-items: baseline;
+  min-width: max-content;
 }
 .label {
   color: var(--fg-dim);
   white-space: nowrap;
 }
 .value {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
   font-family: var(--font-mono);
   min-width: 0;

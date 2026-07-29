@@ -41,6 +41,7 @@ export const zhCN = {
     showPanel: "显示面板",
     hidePanel: "隐藏面板",
     startingFirstSession: "正在启动第一个会话...",
+    waitingForSessionSelection: "等待会话选择...",
     noShellsFound: "此机器上找不到 shell",
     wailsBindingsUnavailable: "Wails 绑定不可用",
     wailsBindingsNotReady: "Wails 绑定尚未就绪",

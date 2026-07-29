@@ -39,6 +39,18 @@ func writeJsonl(t *testing.T, path string, lines ...string) {
 	}
 }
 
+func appendJsonl(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScanJsonlForAITitle(t *testing.T) {
 	dir := t.TempDir()
 
@@ -142,8 +154,8 @@ func TestScanCodexJsonlForUserTitle(t *testing.T) {
 	)
 
 	title, ok := scanCodexJsonlForUserTitle(p)
-	if !ok || title != "更新截图资源" {
-		t.Fatalf("got (%q,%v), want latest user message", title, ok)
+	if !ok || title != "修改site展示页面，同步最新内容" {
+		t.Fatalf("got (%q,%v), want first user message", title, ok)
 	}
 }
 
@@ -205,6 +217,129 @@ func TestStartCodexFileResolve_CapturesSidAndMirrorsUserTitle(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("session title = %q, want codex user message", sess.Info().Title)
+}
+
+func TestStartCodexFileResolve_CapturesResumedExistingRollout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := codexWatchDir(cwd, time.Now(), home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sid := "019fae77-52c1-7201-bbdc-078634559f19"
+	path := filepath.Join(dir, "rollout-2026-07-29T23-21-23-"+sid+".jsonl")
+	writeJsonl(t, path,
+		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"web 端这里是不是应该换一种提示"}}`,
+	)
+	old := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gotSid := make(chan string, 1)
+	go startCodexFileResolve(ctx, sess, cwd, func(captured string) {
+		gotSid <- captured
+	})
+
+	time.Sleep(codexResolveInterval * 2)
+	appendJsonl(t, path, `{"type":"event_msg","payload":{"type":"agent_message","message":"resume selected"}}`)
+
+	select {
+	case got := <-gotSid:
+		if got != sid {
+			t.Fatalf("captured sid = %q, want %q", got, sid)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for resumed codex sid capture")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := sess.Info().Title; got == "web 端这里是不是应该换一种提示" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("session title = %q, want first codex user message", sess.Info().Title)
+}
+
+func TestStartCodexKnownTitleResolve_FindsPreviousDaySidAndMirrorsUserTitle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work", "repo")
+	dir := filepath.Join(home, ".codex", "sessions", "2026", "07", "29")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sid := "019fae95-43eb-7491-9341-05c156228664"
+	path := filepath.Join(dir, "rollout-2026-07-29T23-54-05-"+sid+".jsonl")
+	writeJsonl(t, path,
+		`{"type":"session_meta","payload":{"id":"`+sid+`","cwd":"`+cwd+`","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"你在做什么呢"}}`,
+	)
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: cwd})
+	defer sess.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go startCodexKnownTitleResolve(ctx, sess, cwd, sid)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := sess.Info().Title; got == "你在做什么呢" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("session title = %q, want previous-day codex user message", sess.Info().Title)
+}
+
+func TestTrackCodexUserTitle_ReappliesAfterExternalTitleOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout-2026-07-30T00-13-54-019faea7-292e-7ad3-a408-4faf2bb8a848.jsonl")
+	writeJsonl(t, path,
+		`{"type":"session_meta","payload":{"id":"019faea7-292e-7ad3-a408-4faf2bb8a848","cwd":"/Users/attson/code","thread_source":"user"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"web 端这里是不是应该换一种提示"}}`,
+	)
+
+	sess := session.New(uuid.New(), proto.SessionInfo{Cwd: "/Users/attson/code"})
+	defer sess.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go trackCodexUserTitle(ctx, sess, path)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := sess.Info().Title; got == "web 端这里是不是应该换一种提示" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := sess.Info().Title; got != "web 端这里是不是应该换一种提示" {
+		t.Fatalf("initial session title = %q, want codex user message", got)
+	}
+
+	sess.UpdateCwdTitle("", "codex")
+	if got := sess.Info().Title; got != "codex" {
+		t.Fatalf("test setup failed: title after overwrite = %q, want codex", got)
+	}
+
+	deadline = time.Now().Add(2 * codexTitleInterval)
+	for time.Now().Before(deadline) {
+		if got := sess.Info().Title; got == "web 端这里是不是应该换一种提示" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("session title after overwrite = %q, want codex user message reapplied", sess.Info().Title)
 }
 
 func TestAdvancedSids(t *testing.T) {

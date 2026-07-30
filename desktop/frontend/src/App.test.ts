@@ -243,6 +243,11 @@ describe("sidebar close confirmation", () => {
     expect(source).toMatch(/onSidebarClose\(s\)/);
   });
 
+  test("does not confirm remote session closes", () => {
+    expect(source).toMatch(/shouldConfirmCloseSession[\s\S]*?!isOpenRemoteSession\(s\.session_id\)[\s\S]*?isCloseRiskySession\(s\)/);
+    expect(source).toMatch(/riskyCloseCandidatesForPanes[\s\S]*?filter[\s\S]*?!pane\.remote/);
+  });
+
   test("tab and pane close UI also route through close confirmation", () => {
     expect(source).toMatch(/function\s+requestCloseTab\s*\(/);
     expect(source).toMatch(/function\s+requestClosePane\s*\(/);

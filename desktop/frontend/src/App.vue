@@ -253,7 +253,7 @@ function isCloseRiskySession(s: RemoteSession): boolean {
 }
 
 function shouldConfirmCloseSession(s: RemoteSession): boolean {
-  return isCloseRiskySession(s);
+  return !isOpenRemoteSession(s.session_id) && isCloseRiskySession(s);
 }
 
 function sessionCloseTitle(s: RemoteSession): string {
@@ -314,6 +314,7 @@ function closeCandidateForPane(pane: Pane): RemoteSession | null {
 
 function riskyCloseCandidatesForPanes(panes: Pane[]): RemoteSession[] {
   return panes
+    .filter((pane) => !pane.remote)
     .map(closeCandidateForPane)
     .filter((s): s is RemoteSession => !!s && isCloseRiskySession(s));
 }

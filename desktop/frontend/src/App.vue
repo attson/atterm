@@ -807,6 +807,12 @@ function findSessionInfo(sid: string, remote: boolean): SessionInfo | undefined 
   return (remote ? remoteList.value : localList.value).find((s) => s.id === sid);
 }
 
+function activeLocalPaneCwd(tab: Tab): string {
+  const pane = tab.panes[tab.activePaneIdx];
+  if (!pane?.sessionId || pane.remote) return "";
+  return findSessionInfo(pane.sessionId, false)?.cwd ?? "";
+}
+
 async function spawnLocalShell(
   cwd: string,
   dims: { cols: number; rows: number },
@@ -844,7 +850,8 @@ async function startNewTab() {
   starting.value = true;
   errorMsg.value = "";
   try {
-    const sid = await spawnLocalShell("", predictCellDims("single"));
+    const spawnCwd = currentTab.value ? activeLocalPaneCwd(currentTab.value) : "";
+    const sid = await spawnLocalShell(spawnCwd, predictCellDims("single"));
     const id = newId();
     tabs.value.push({
       id,
@@ -866,6 +873,7 @@ async function startNewTab() {
 async function onSplit(dir: SplitDir, mode: SplitMode) {
   const t = currentTab.value;
   if (!t) return;
+  const spawnCwd = mode === "new" ? activeLocalPaneCwd(t) : "";
 
   // Pick mode: bail before mutating layout if there's nothing the picker
   // could populate. Otherwise the user gets a permanently empty quadrant
@@ -904,13 +912,14 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
     return;
   }
 
-  // New shell starts in HOME (cwd="") — matches iTerm's default behavior.
+  // New shell inherits the active local pane's cwd when known; empty cwd
+  // still lets the Go side fall back to HOME for remote/empty/unknown panes.
   // Cols/rows are predicted via the FitAddon probe so the PTY is born at
   // the same dimensions xterm.js will land on after fit(); without this
   // there's a SIGWINCH between fork and first prompt that some zsh themes
   // turn into a stray PROMPT_EOL_MARK ('%').
   try {
-    const sid = await spawnLocalShell("", predictCellDims(result.layout));
+    const sid = await spawnLocalShell(spawnCwd, predictCellDims(result.layout));
     t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
   } catch (e: any) {
     showToast(i18nT("app.splitFailed", { message: e?.message ?? String(e) }));

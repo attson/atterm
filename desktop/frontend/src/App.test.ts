@@ -970,6 +970,179 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
   });
 });
 
+describe("split new pane cwd inheritance", () => {
+  class FakeLocalListWebSocket {
+    static instances: FakeLocalListWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeLocalListWebSocket.CONNECTING;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public url: string) {
+      FakeLocalListWebSocket.instances.push(this);
+    }
+
+    send() {}
+    close() {
+      this.readyState = FakeLocalListWebSocket.CONNECTING;
+      this.onclose?.();
+    }
+
+    emitSessions(sessions: SessionInfo[]) {
+      const bytes = encodeFrame(TYPE.LIST_RESP, NIL_SID, encodeText(JSON.stringify(sessions)));
+      this.onmessage?.({ data: bytes.buffer } as MessageEvent);
+    }
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    __setPlatformForTests(createFakePlatform());
+    FakeLocalListWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeLocalListWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+  });
+
+  async function mountAppWithActiveLocalCwd(
+    newSessionMock = vi.fn()
+      .mockResolvedValueOnce({ session_id: "local-1" })
+      .mockResolvedValueOnce({ session_id: "local-2" }),
+    tabBarStub: any = true,
+  ) {
+    __setBindingsForTest({
+      GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
+      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
+      GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
+      GetRelayConfig: vi.fn().mockResolvedValue({
+        url: "", token: "", session_expires_at: 0,
+        allow_insecure_relay: false, remote_permission: "full", connected: false,
+      }),
+      ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
+      GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(0),
+      ListShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
+      NewSession: newSessionMock,
+      CloseSession: vi.fn().mockResolvedValue(undefined),
+      GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      ConfirmQuit: vi.fn().mockResolvedValue(undefined),
+      MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
+      LoadRecoverySnapshot: vi.fn().mockResolvedValue({
+        version: 1,
+        host_id: "",
+        clean_shutdown: true,
+        saved_at_unix: 0,
+        tabs: [],
+      }),
+      SaveRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      DiscardRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
+    } as any);
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          TabBar: tabBarStub,
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          TaskSidebar: true,
+          PaneGrid: true,
+        },
+      },
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await flushPromises();
+
+    FakeLocalListWebSocket.instances[0].emitSessions([{
+      id: "local-1",
+      command: "/bin/zsh",
+      cwd: "/work/repo",
+      title: "repo",
+      cols: 80,
+      rows: 24,
+      started_at: 1,
+      host_id: "local-host",
+      host: "local",
+      user: "attson",
+    }]);
+    await flushPromises();
+    newSessionMock.mockClear();
+    return { newSessionMock, wrapper };
+  }
+
+  function dispatchModKey(key: string, code: string, extra: KeyboardEventInit = {}) {
+    const isMac = navigator.platform?.toLowerCase().includes("mac") ?? false;
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key,
+        code,
+        metaKey: isMac,
+        ctrlKey: !isMac,
+        bubbles: true,
+        cancelable: true,
+        ...extra,
+      }),
+    );
+  }
+
+  it("Ctrl+N starts the new local pane in the active local pane cwd", async () => {
+    const { newSessionMock } = await mountAppWithActiveLocalCwd();
+
+    dispatchModKey("n", "KeyN");
+    await flushPromises();
+
+    expect(newSessionMock).toHaveBeenCalledTimes(1);
+    expect(newSessionMock).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/work/repo" }));
+  });
+
+  it("Ctrl+Shift+N starts the new horizontal local pane in the active local pane cwd", async () => {
+    const { newSessionMock } = await mountAppWithActiveLocalCwd();
+
+    dispatchModKey("N", "KeyN", { shiftKey: true });
+    await flushPromises();
+
+    expect(newSessionMock).toHaveBeenCalledTimes(1);
+    expect(newSessionMock).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/work/repo" }));
+  });
+
+  it("Ctrl+T starts the new tab in the active local pane cwd", async () => {
+    const newSessionMock = vi.fn()
+      .mockResolvedValueOnce({ session_id: "local-1" })
+      .mockResolvedValueOnce({ session_id: "local-2" });
+    await mountAppWithActiveLocalCwd(newSessionMock);
+
+    dispatchModKey("t", "KeyT");
+    await flushPromises();
+
+    expect(newSessionMock).toHaveBeenCalledTimes(1);
+    expect(newSessionMock).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/work/repo" }));
+  });
+
+  it("manual new-tab action starts the new tab in the active local pane cwd", async () => {
+    const newSessionMock = vi.fn()
+      .mockResolvedValueOnce({ session_id: "local-1" })
+      .mockResolvedValueOnce({ session_id: "local-2" });
+    const { wrapper } = await mountAppWithActiveLocalCwd(newSessionMock, {
+      template: `<button data-testid="new-tab" @click="$emit('new')">new</button>`,
+    });
+
+    await wrapper.get('[data-testid="new-tab"]').trigger("click");
+    await flushPromises();
+
+    expect(newSessionMock).toHaveBeenCalledTimes(1);
+    expect(newSessionMock).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/work/repo" }));
+  });
+});
+
 describe("admin view (main-area swap)", () => {
   // Minimal TabBar stub: reflects isAdmin/adminOpen props back onto a
   // data-test button (so a test can assert App wired them through) and

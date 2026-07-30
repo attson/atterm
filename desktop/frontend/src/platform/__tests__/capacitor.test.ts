@@ -515,11 +515,19 @@ describe('createCapacitorPlatform — templates', () => {
     expect(await p.templates.load()).toEqual(list)
   })
 
-  it('templates.clear removes the key', async () => {
+  it('templates.load prefers the synced quick_templates value over the legacy local key', async () => {
+    localStorage.setItem('atterm.templates', JSON.stringify([{ id: 'old', label: 'old', text: 'old' }]))
+    localStorage.setItem('atterm.quick_templates.value', JSON.stringify([{ id: 'new', label: 'new', text: 'new' }]))
+    const p = createCapacitorPlatform()
+    expect(await p.templates.load()).toEqual([{ id: 'new', label: 'new', text: 'new' }])
+  })
+
+  it('templates.clear resets the synced value so reset propagates cross-device', async () => {
     const p = createCapacitorPlatform()
     await p.templates.save([{ id: 'x', label: 'x', text: 'x' }])
     await p.templates.clear()
     expect(localStorage.getItem('atterm.templates')).toBeNull()
+    expect(localStorage.getItem('atterm.quick_templates.value')).toBe('[]')
     expect(await p.templates.load()).toEqual([])
   })
 

@@ -179,7 +179,9 @@ const templates: TemplateBridge = {
     notifyLocalChange('quick_templates')
   },
   async clear() {
-    localStorage.removeItem(TEMPLATES_KEY)
+    localStorage.setItem(TEMPLATES_KEY, JSON.stringify([]))
+    const { notifyLocalChange } = await import('@webshared/sync/prefsSync')
+    notifyLocalChange('quick_templates')
   },
   async loadHidden() {
     try { return JSON.parse(localStorage.getItem(TEMPLATES_HIDDEN_KEY) ?? 'false') }

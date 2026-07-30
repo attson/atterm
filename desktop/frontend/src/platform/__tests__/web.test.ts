@@ -152,6 +152,7 @@ describe('web platform', () => {
       expect(list.length).toBe(1)
       expect(localStorage.getItem('atterm.quick_templates.value')).not.toBeNull()
       await p.templates.clear()
+      expect(localStorage.getItem('atterm.quick_templates.value')).toBe('[]')
       expect(await p.templates.load()).toEqual([])
     })
 

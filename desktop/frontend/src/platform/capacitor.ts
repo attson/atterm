@@ -26,6 +26,7 @@ const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
 const ACCOUNT_KEY_KEY = 'atterm.relay.account-key'
 const TEMPLATES_KEY = 'atterm.templates'
+const SYNCED_TEMPLATES_KEY = 'atterm.quick_templates.value'
 const AUXKEYS_KEY = 'atterm.auxkeys'
 
 // Shared base64 helpers for the OPAQUE / wrap envelope bytes. Same
@@ -34,6 +35,16 @@ const AUXKEYS_KEY = 'atterm.auxkeys'
 // across both clients).
 function bytesToB64Std(b: Uint8Array): string {
   return btoa(String.fromCharCode(...b))
+}
+
+function parseQuickTemplateList(raw: string | null): QuickTemplate[] | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as QuickTemplate[]) : null
+  } catch {
+    return null
+  }
 }
 
 function b64StdToBytes(s: string): Uint8Array {
@@ -615,26 +626,21 @@ export function createCapacitorPlatform(): Platform {
     templates: {
       load: async () => {
         if (typeof localStorage === 'undefined') return []
-        const raw = localStorage.getItem(TEMPLATES_KEY)
-        if (!raw) return []
-        try {
-          const parsed = JSON.parse(raw)
-          return Array.isArray(parsed) ? (parsed as QuickTemplate[]) : []
-        } catch {
-          return []
-        }
+        return parseQuickTemplateList(localStorage.getItem(SYNCED_TEMPLATES_KEY))
+          ?? parseQuickTemplateList(localStorage.getItem(TEMPLATES_KEY))
+          ?? []
       },
       save: async (list) => {
         if (typeof localStorage === 'undefined') return
         localStorage.setItem(TEMPLATES_KEY, JSON.stringify(list))
-        try {
-          localStorage.setItem('atterm.quick_templates.value', JSON.stringify(list))
-        } catch { /* ignore */ }
+        localStorage.setItem(SYNCED_TEMPLATES_KEY, JSON.stringify(list))
         notifyLocalChange('quick_templates')
       },
       clear: async () => {
         if (typeof localStorage === 'undefined') return
         localStorage.removeItem(TEMPLATES_KEY)
+        localStorage.setItem(SYNCED_TEMPLATES_KEY, JSON.stringify([]))
+        notifyLocalChange('quick_templates')
       },
       loadHidden: async () => {
         if (typeof localStorage === 'undefined') return false

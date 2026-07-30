@@ -37,16 +37,29 @@ export function localStorageAdapter(): Adapter {
 }
 
 interface StoredRelayConfig {
-  baseURL: string
-  sessionToken: string
+  baseURL?: string
+  sessionToken?: string
+  url?: string
+  token?: string
   expiresAt?: number
   allowInsecure?: boolean
 }
 
-function loadRelay(): StoredRelayConfig | null {
+interface NormalizedRelayConfig {
+  baseURL: string
+  sessionToken: string
+}
+
+function loadRelay(): NormalizedRelayConfig | null {
   const raw = localStorage.getItem('atterm.relay.session')
   if (!raw) return null
-  try { return JSON.parse(raw) as StoredRelayConfig } catch { return null }
+  try {
+    const cfg = JSON.parse(raw) as StoredRelayConfig
+    const baseURL = cfg.baseURL ?? cfg.url ?? ''
+    const sessionToken = cfg.sessionToken ?? cfg.token ?? ''
+    if (!baseURL || !sessionToken) return null
+    return { baseURL, sessionToken }
+  } catch { return null }
 }
 
 export function capacitorRelayClient(): RelayClient {

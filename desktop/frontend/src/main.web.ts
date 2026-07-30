@@ -24,9 +24,13 @@ async function bootstrap() {
 
   const prefsSync = new PrefsSyncEngine(localStorageAdapter(), apiRelayClient())
   setSharedPrefsSync(prefsSync)
-  void prefsSync.pull()
-    .then(() => platform.events.emit('prefs:changed', undefined))
-    .catch(() => {})
+  const pullPrefsAndNotify = () => {
+    void prefsSync.pull()
+      .then(() => platform.events.emit('prefs:changed', undefined))
+      .catch(() => {})
+  }
+  pullPrefsAndNotify()
+  platform.events.on('prefs:remote-changed', pullPrefsAndNotify)
 
   const app = createApp(App)
   app.use(createPinia())

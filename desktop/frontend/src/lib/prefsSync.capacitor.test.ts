@@ -52,4 +52,26 @@ describe('capacitorRelayClient', () => {
     expect(call[0]).toBe('https://r.example.com/api/me/preferences')
     expect((call[1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer tok-xyz' })
   })
+
+  it('reads the current Capacitor relay config shape', async () => {
+    localStorage.setItem('atterm.relay.session', JSON.stringify({
+      url: 'https://r.example.com',
+      token: 'tok-current',
+      session_expires_at: 0,
+      allow_insecure_relay: false,
+      remote_permission: 'full',
+      last_email: '',
+      connected: false,
+    }))
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [{ key: 'pinned_session_ids', value: ['sid-web'], updated_at: 10 }] }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const client = capacitorRelayClient()
+    const out = await client.get()
+    expect(out).toEqual([{ key: 'pinned_session_ids', value: ['sid-web'], updated_at: 10 }])
+    const call = fetchMock.mock.calls[0]
+    expect(call[0]).toBe('https://r.example.com/api/me/preferences')
+    expect((call[1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer tok-current' })
+  })
 })

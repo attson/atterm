@@ -99,3 +99,9 @@ func TestFSFrameTypeValues(t *testing.T) {
 		t.Fatalf("TypeFSEvent = 0x%02x, want 0x3a", TypeFSEvent)
 	}
 }
+
+func TestPrefsChangedFrameTypeValue(t *testing.T) {
+	if TypePrefsChanged != 0x14 {
+		t.Fatalf("TypePrefsChanged = 0x%02x; want 0x14", TypePrefsChanged)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -50,6 +51,51 @@ func TestClientSessionsStreamsInitialAndChangedSnapshots(t *testing.T) {
 	}
 	if changed[0].ID != id.String() || changed[0].Cwd != "/tmp" {
 		t.Fatalf("changed session = %+v; want id %s cwd /tmp", changed[0], id)
+	}
+}
+
+func TestClientSessionsStreamsPrefsChangedAfterPreferencePut(t *testing.T) {
+	srv, tok, _ := serverWithSessionAndUser(t)
+	httpSrv := httptest.NewServer(srv)
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(httpSrv.URL, "http") + "/client-sessions"
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: map[string][]string{"Authorization": {"Bearer " + tok}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	_ = readListResp(t, ctx, conn)
+
+	body := `{"items":[{"key":"pinned_session_ids","value":["sid-web"],"client_updated_at":1700000000000}]}`
+	req, err := http.NewRequestWithContext(ctx, "PUT", httpSrv.URL+"/api/me/preferences", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /api/me/preferences status = %d", resp.StatusCode)
+	}
+
+	f, err := readFrame(ctx, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Type != proto.TypePrefsChanged {
+		t.Fatalf("frame type = 0x%02x; want PREFS_CHANGED", f.Type)
+	}
+	if len(f.Payload) != 0 {
+		t.Fatalf("PREFS_CHANGED payload len = %d; want 0", len(f.Payload))
 	}
 }
 

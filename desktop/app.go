@@ -150,9 +150,10 @@ type App struct {
 	cfgStore    *configStore
 	logger      *loggingManager
 
-	mu           sync.Mutex
-	uplink       *uplink
-	uplinkCancel context.CancelFunc
+	mu               sync.Mutex
+	uplink           *uplink
+	uplinkCancel     context.CancelFunc
+	prefsWatchCancel context.CancelFunc
 
 	updater *Updater
 
@@ -351,6 +352,10 @@ func (a *App) shutdown(ctx context.Context) {
 		a.uplinkCancel()
 		a.uplinkCancel = nil
 	}
+	if a.prefsWatchCancel != nil {
+		a.prefsWatchCancel()
+		a.prefsWatchCancel = nil
+	}
 	a.mu.Unlock()
 	if a.updater != nil {
 		a.updater.Stop()
@@ -376,6 +381,7 @@ func (a *App) shutdown(ctx context.Context) {
 // the uplink and the Feishu integration mode. Caller need not hold a.mu.
 func (a *App) applyRelayConfig(cfg appConfig) {
 	a.applyRelayUplink(cfg)
+	a.applyRelayPrefsWatch(cfg)
 	// Feishu mode follows the relay login state: relay when logged in, local
 	// otherwise. Done outside a.mu (reconcile uses its own lock and may touch
 	// the long-conn). No-op until startFeishu has run.
@@ -391,6 +397,10 @@ func (a *App) applyRelayUplink(cfg appConfig) {
 		a.uplinkCancel()
 		a.uplinkCancel = nil
 		a.uplink = nil
+	}
+	if a.prefsWatchCancel != nil {
+		a.prefsWatchCancel()
+		a.prefsWatchCancel = nil
 	}
 	if cfg.RelayURL == "" || cfg.RelayPaused || cfg.RelaySessionToken == "" {
 		reason := "no URL"

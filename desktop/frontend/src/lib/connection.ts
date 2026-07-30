@@ -157,6 +157,7 @@ export interface SessionConnectionOptions {
 export interface SessionListHandlers {
   onSessions: (sessions: SessionInfo[]) => void;
   onStatus?: (s: Status) => void;
+  onPrefsChanged?: () => void;
 }
 
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -346,6 +347,10 @@ export class SessionListConnection {
       try {
         f = decodeFrame(new Uint8Array(ev.data as ArrayBuffer));
       } catch {
+        return;
+      }
+      if (f.type === TYPE.PREFS_CHANGED) {
+        this.handlers.onPrefsChanged?.();
         return;
       }
       if (f.type !== TYPE.LIST_RESP) return;

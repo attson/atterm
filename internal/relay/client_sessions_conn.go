@@ -23,6 +23,8 @@ const (
 func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ownerUserID string) {
 	sub := s.registry.SubscribeChanges()
 	defer sub.Close()
+	prefsSub := s.prefsNotify.Subscribe(ownerUserID)
+	defer prefsSub.Close()
 
 	if !s.writeSessionList(ctx, c, ownerUserID) {
 		return
@@ -46,8 +48,32 @@ func (s *Server) handleClientSessions(ctx context.Context, c *websocket.Conn, ow
 			if !s.writeSessionList(ctx, c, ownerUserID) {
 				return
 			}
+		case <-prefsSub.C():
+			if !s.writePrefsChanged(ctx, c) {
+				return
+			}
 		}
 	}
+}
+
+func (s *Server) notifyPreferencesChanged(userID string) {
+	if s.prefsNotify == nil {
+		return
+	}
+	s.prefsNotify.Notify(userID)
+}
+
+func (s *Server) writePrefsChanged(ctx context.Context, c *websocket.Conn) bool {
+	frame := proto.Frame{Type: proto.TypePrefsChanged}
+	s.debugFrame("client-sessions", "send", frame)
+	wctx, cancel := context.WithTimeout(ctx, clientSessionsWriteWait)
+	err := c.Write(wctx, websocket.MessageBinary, proto.Marshal(frame))
+	cancel()
+	if err != nil {
+		s.debugf("client-sessions prefs_changed_write_failed error=%q", err)
+		return false
+	}
+	return true
 }
 
 func (s *Server) writeSessionList(ctx context.Context, c *websocket.Conn, ownerUserID string) bool {

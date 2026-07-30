@@ -22,7 +22,9 @@ func (a *AuthServer) handleGetPreferences(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	if items == nil { items = []userstore.PreferenceItem{} }
+	if items == nil {
+		items = []userstore.PreferenceItem{}
+	}
 	writeJSONStatus(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -73,6 +75,9 @@ func (a *AuthServer) handlePutPreferences(w http.ResponseWriter, r *http.Request
 	}
 	if result == nil {
 		result = []userstore.PreferenceItem{}
+	}
+	if len(body.Items) > 0 && a.OnPreferencesChanged != nil {
+		a.OnPreferencesChanged(user.ID)
 	}
 	writeJSONStatus(w, http.StatusOK, map[string]any{"items": result})
 }

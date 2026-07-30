@@ -37,6 +37,7 @@ const (
 	// TypeReplayProgress brackets the initial ATTACH scrollback replay so
 	// clients can show history-loading progress before the session is live.
 	TypeReplayProgress Type = 0x13 // relay -> client
+	TypePrefsChanged   Type = 0x14 // relay -> client-sessions; preferences changed for this user
 	TypePing           Type = 0x20
 	TypePong           Type = 0x21
 

@@ -97,6 +97,7 @@ type Config struct {
 type Server struct {
 	cfg         Config
 	registry    *session.Registry
+	prefsNotify *prefsNotifier
 	mux         *http.ServeMux
 	rate        *fixedWindowLimiter
 	conns       *connectionLimiter
@@ -165,12 +166,13 @@ func NewServer(cfg Config) *Server {
 		connLimit = defaultMaxConnections
 	}
 	s := &Server{
-		cfg:       cfg,
-		registry:  session.NewRegistry(),
-		mux:       http.NewServeMux(),
-		rate:      newFixedWindowLimiter(rateLimit, time.Minute),
-		conns:     newConnectionLimiter(connLimit),
-		startTime: time.Now(),
+		cfg:         cfg,
+		registry:    session.NewRegistry(),
+		prefsNotify: newPrefsNotifier(),
+		mux:         http.NewServeMux(),
+		rate:        newFixedWindowLimiter(rateLimit, time.Minute),
+		conns:       newConnectionLimiter(connLimit),
+		startTime:   time.Now(),
 	}
 	originsInit := append([]string(nil), cfg.AllowedOrigins...)
 	s.allowedOrigins.Store(&originsInit)
@@ -224,11 +226,12 @@ func NewServer(cfg Config) *Server {
 	if cfg.Resolver != nil && cfg.Store != nil {
 		limits := NewLimitRegistry()
 		authSrv := &AuthServer{
-			Store:             cfg.Store,
-			Limits:            limits,
-			FailureFloor:      200 * time.Millisecond,
-			RealmID:           cfg.RealmID,
-			InstancePublicURL: cfg.InstancePublicURL,
+			Store:                cfg.Store,
+			Limits:               limits,
+			FailureFloor:         200 * time.Millisecond,
+			RealmID:              cfg.RealmID,
+			InstancePublicURL:    cfg.InstancePublicURL,
+			OnPreferencesChanged: s.notifyPreferencesChanged,
 		}
 		adminSrv := &AdminServer{Store: cfg.Store}
 		authSrv.RegisterInto(s.mux, s.requireSession)

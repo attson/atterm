@@ -52,6 +52,7 @@ const (
     TypeList          Type = 0x11  // client → relay
     TypeListResp      Type = 0x12  // relay → client
     TypeReplayProgress Type = 0x13 // relay → client
+    TypePrefsChanged  Type = 0x14  // relay → client-sessions
     TypePing          Type = 0x20
     TypePong          Type = 0x21
     TypeAnnounce      Type = 0x30  // uplink → relay  (Phase 1.5)
@@ -220,6 +221,10 @@ LIST 空 payload。LIST_RESP payload = `[]SessionInfo` JSON 数组：
 | `full` 或空 | `control` + `PASTE_IMAGE` + `PASTE_FILE` | 无 |
 
 实践中很少用（前端走 REST `/api/sessions` 更直接）。
+
+### `PREFS_CHANGED` (0x14) — relay → client-sessions
+
+`/client-sessions` 连接上的轻量通知帧，payload 为空。任一客户端成功 `PUT /api/me/preferences` 后，relay 向同一 `user_id` 的 `/client-sessions` 订阅者发送该帧；客户端收到后复用现有 prefs sync `GET /api/me/preferences` / pull 流程，再在本地触发 `prefs:changed` 让 UI 重读。该帧不携带偏好内容，避免在 WS 上复制 LWW/校验逻辑；老客户端按未知 frame 忽略即可。
 
 ### `REPLAY_PROGRESS` (0x13) — attach 历史回放进度
 

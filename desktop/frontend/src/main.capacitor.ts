@@ -9,6 +9,7 @@ import { Capacitor } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Keyboard } from '@capacitor/keyboard'
 import { createCapacitorPrefsSync, setSharedPrefsSync, notifyLocalChange } from './lib/prefsSync.capacitor'
+import { bindCapacitorPrefsSync } from './lib/capacitorPrefsSyncBinder'
 import './style.css'
 
 const LOCALE_STORAGE_KEY = 'atterm.locale'
@@ -52,12 +53,7 @@ async function bootstrap() {
 
   const prefsSync = createCapacitorPrefsSync()
   setSharedPrefsSync(prefsSync)
-  // Initial PULL (fire-and-forget; mobile may not be logged in yet)
-  void prefsSync.pull().then(() => platform.events.emit('prefs:changed', undefined)).catch(() => {})
-  // Foreground PULL
-  CapacitorApp.addListener('appStateChange', (state) => {
-    if (state.isActive) void prefsSync.pull().then(() => platform.events.emit('prefs:changed', undefined)).catch(() => {})
-  })
+  bindCapacitorPrefsSync(platform, prefsSync, CapacitorApp)
 
   const app = createApp(App)
   app.use(createPinia())

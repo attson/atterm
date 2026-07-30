@@ -281,6 +281,7 @@ const recoveryDialogState = ref<{ open: boolean; snapshot: RecoverySnapshot | nu
 let autoStarted = false;
 let toastHandle: number | null = null;
 let localSessionListConn: SessionListConnection | null = null;
+let remoteSessionListConn: SessionListConnection | null = null;
 let remotePollHandle: number | null = null;
 // Dedup key for refreshRelayConfig: "connected|attachUrl|token". Avoids
 // restarting the remote poll / re-setting the endpoint when nothing changed.
@@ -628,10 +629,28 @@ function connectLocalSessionList(endpoint: Endpoint) {
 }
 
 function stopRemotePoll() {
+  remoteSessionListConn?.detach();
+  remoteSessionListConn = null;
   if (remotePollHandle !== null) {
     window.clearInterval(remotePollHandle);
     remotePollHandle = null;
   }
+}
+
+function onRemotePrefsChanged() {
+  $platform.events.emit("prefs:remote-changed", undefined);
+}
+
+function connectRemoteSessionListWS(endpoint: Endpoint) {
+  stopRemotePoll();
+  remoteSessionListConn = new SessionListConnection(endpoint, {
+    onSessions: applyRemoteSessions,
+    onPrefsChanged: onRemotePrefsChanged,
+    onStatus: (s) => {
+      if (s === "error") status.value = "error";
+    },
+  });
+  remoteSessionListConn.attach();
 }
 
 async function pollRemoteSessions() {
@@ -643,9 +662,9 @@ async function pollRemoteSessions() {
   }
 }
 
-// Web-only session poll. Skips the Wails-specific listRemoteSessions()
-// (which goes through Go's remoteProxy — none of that exists on web) and
-// hits the platform bridge's HTTP `/api/sessions` directly. The web
+// HTTP fallback for non-Wails clients when the `/client-sessions` WS cannot
+// be established. Skips the Wails-specific listRemoteSessions() and hits the
+// platform bridge's HTTP `/api/sessions` directly. The web
 // platform returns RemoteSession[] with `session_id` alias, but the raw
 // SessionInfo `id` field is preserved from /api/sessions — remap it so
 // applyRemoteSessions (which reads `.id`) sees a consistent shape.
@@ -668,26 +687,27 @@ async function refreshPlatformRelayState(): Promise<boolean> {
   const endpoint = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null;
   remoteEndpoint.value = endpoint;
   if (!endpoint) {
+    stopRemotePoll();
     remoteRawList.value = [];
     remoteList.value = [];
     return false;
   }
-  await pollRemoteSessionsViaPlatform();
+  connectRemoteSessionListWS(endpoint);
   return true;
 }
 
 function startPlatformRemotePoll(): void {
+  if (remoteSessionListConn) return;
   stopRemotePoll();
   remotePollHandle = window.setInterval(() => {
     void pollRemoteSessionsViaPlatform();
   }, 3000);
 }
 
-// connectRemoteSessionList (re)starts the remote-session list poll and sets the
+// connectRemoteSessionList (re)starts the remote-session list stream and sets the
 // attach endpoint. Two independent concerns:
-//   - The LIST is read through the Go backend (App.ListRemoteSessions), polled
-//     whenever the relay is connected — some networks fingerprint-RST the
-//     WKWebView TLS handshake to the relay while Go's TLS passes.
+//   - The LIST is read through /client-sessions via the Go loopback proxy when
+//     available, with App.ListRemoteSessions polling as fallback.
 //   - The ATTACH endpoint is the Go loopback proxy (remoteProxy). When it's
 //     unavailable the list still shows; you just can't open a remote pane.
 function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpoint | null) {
@@ -697,6 +717,10 @@ function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpo
   remoteMissingSince.clear();
   remoteEndpoint.value = attachEndpoint;
   if (!relayConnected) return;
+  if (attachEndpoint) {
+    connectRemoteSessionListWS(attachEndpoint);
+    return;
+  }
   void pollRemoteSessions();
   remotePollHandle = window.setInterval(pollRemoteSessions, 2000);
 }

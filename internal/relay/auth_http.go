@@ -52,6 +52,10 @@ type AuthServer struct {
 	// InstancePublicURL is this relay node's public URL, threaded through
 	// to resolveHomeInstanceURL(). Empty in single-instance / dev.
 	InstancePublicURL string
+	// OnPreferencesChanged, when non-nil, is called after a successful
+	// preferences PUT so long-lived client-sessions streams can trigger a
+	// fresh pull on other clients.
+	OnPreferencesChanged func(userID string)
 }
 
 // Routes returns an http.Handler with all auth + me endpoints mounted. The

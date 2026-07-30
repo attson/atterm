@@ -17,6 +17,7 @@ export const TYPE = {
   LIST: 0x11,
   LIST_RESP: 0x12,
   REPLAY_PROGRESS: 0x13,
+  PREFS_CHANGED: 0x14,
   PING: 0x20,
   PONG: 0x21,
   PASTE_IMAGE: 0x33,

@@ -20,8 +20,10 @@ var allowedPreferenceKeys = map[string]preferenceKind{
 	"locale_preference":                preferenceKindString,
 	"quick_templates":                  preferenceKindArray,
 	"notifications_enabled":            preferenceKindBool,
+	"ai_notifications_only":            preferenceKindBool,
 	"command_notify_threshold_seconds": preferenceKindInt,
 	"shell_integration_enabled":        preferenceKindBool,
+	"pinned_session_ids":               preferenceKindArray,
 }
 
 type preferenceKind int
@@ -48,7 +50,9 @@ func (s *SQLiteStore) GetUserPreferences(ctx context.Context, userID string) ([]
 		s.dia.Rebind(`SELECT key, value_json, updated_at FROM user_preferences WHERE user_id = ?`),
 		userID,
 	)
-	if err != nil { return nil, fmt.Errorf("query: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
 	defer rows.Close()
 
 	var out []PreferenceItem
@@ -61,7 +65,9 @@ func (s *SQLiteStore) GetUserPreferences(ctx context.Context, userID string) ([]
 		it.ValueJSON = json.RawMessage(raw)
 		out = append(out, it)
 	}
-	if err := rows.Err(); err != nil { return nil, fmt.Errorf("rows: %w", err) }
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
 	return out, nil
 }
 
@@ -72,6 +78,7 @@ func (s *SQLiteStore) GetUserPreferences(ctx context.Context, userID string) ([]
 //   - if item.UpdatedAt > existing.updated_at, writes with
 //     updated_at = max(item.UpdatedAt, serverNowMs)
 //   - otherwise leaves existing untouched
+//
 // Returns the full current state for every key the user has after the
 // operation (including keys not in the input).
 func (s *SQLiteStore) SetUserPreferences(
@@ -82,14 +89,18 @@ func (s *SQLiteStore) SetUserPreferences(
 ) ([]PreferenceItem, error) {
 	for _, it := range items {
 		kind, ok := allowedPreferenceKeys[it.Key]
-		if !ok { return nil, fmt.Errorf("%w: %s", ErrUnknownPreferenceKey, it.Key) }
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrUnknownPreferenceKey, it.Key)
+		}
 		if err := validatePreferenceValue(kind, it.ValueJSON); err != nil {
 			return nil, fmt.Errorf("%w: %s: %s", ErrInvalidPreferenceValue, it.Key, err)
 		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil { return nil, fmt.Errorf("begin: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
 	defer tx.Rollback()
 
 	for _, it := range items {
@@ -110,7 +121,9 @@ func (s *SQLiteStore) SetUserPreferences(
 		}
 	}
 
-	if err := tx.Commit(); err != nil { return nil, fmt.Errorf("commit: %w", err) }
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
 
 	return s.GetUserPreferences(ctx, userID)
 }

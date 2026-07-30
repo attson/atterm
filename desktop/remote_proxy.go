@@ -12,7 +12,7 @@ import (
 )
 
 // remoteProxy is a loopback WebSocket reverse proxy to the configured relay's
-// /client endpoint.
+// /client and /client-sessions endpoints.
 //
 // Why it exists: on some networks the desktop WebView cannot open a TLS
 // WebSocket directly to the relay — the WKWebView handshake is fingerprint-RST
@@ -48,6 +48,7 @@ func startRemoteProxy(cfgStore *configStore) (*remoteProxy, error) {
 	p := &remoteProxy{cfgStore: cfgStore, addr: ln.Addr().String()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/client", p.handleClient)
+	mux.HandleFunc("/client-sessions", p.handleClientSessions)
 	p.httpSrv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := p.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -76,6 +77,14 @@ func (p *remoteProxy) Stop() {
 }
 
 func (p *remoteProxy) handleClient(w http.ResponseWriter, r *http.Request) {
+	p.handleWSProxy(w, r, "/client")
+}
+
+func (p *remoteProxy) handleClientSessions(w http.ResponseWriter, r *http.Request) {
+	p.handleWSProxy(w, r, "/client-sessions")
+}
+
+func (p *remoteProxy) handleWSProxy(w http.ResponseWriter, r *http.Request, relayPath string) {
 	cfg := p.cfgStore.Get()
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		http.Error(w, "no relay configured", http.StatusServiceUnavailable)
@@ -110,10 +119,10 @@ func (p *remoteProxy) handleClient(w http.ResponseWriter, r *http.Request) {
 		dialOpts.HTTPClient = relayHTTPClient(true, 0)
 	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, 10*time.Second)
-	remote, _, err := websocket.Dial(dialCtx, strings.TrimRight(cfg.RelayURL, "/")+"/client", dialOpts)
+	remote, _, err := websocket.Dial(dialCtx, strings.TrimRight(cfg.RelayURL, "/")+relayPath, dialOpts)
 	cancelDial()
 	if err != nil {
-		log.Printf("desktop remote-proxy: dial relay /client: %v", err)
+		log.Printf("desktop remote-proxy: dial relay %s: %v", relayPath, err)
 		local.Close(websocket.StatusTryAgainLater, "relay dial failed")
 		return
 	}

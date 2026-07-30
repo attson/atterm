@@ -4,10 +4,10 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { utf8ToBytes, randomBytes } from "@noble/hashes/utils.js";
 import source from "./connection.ts?raw";
-import { decryptSessionFields, SessionConnection, type FSResponse, type SessionInfo } from "./connection";
+import { decryptSessionFields, SessionConnection, SessionListConnection, type FSResponse, type SessionInfo } from "./connection";
 import { setAccountKeyProvider } from "./account-key";
 import type { SealedSessionFields } from "./opaque";
-import { TYPE, decodeFrame, decodeText, encodeFrame, encodeText, uuidParse } from "./proto";
+import { TYPE, NIL_SID, decodeFrame, decodeText, encodeFrame, encodeText, uuidParse } from "./proto";
 
 // --- Sealing helper (mirrors opaque.test.ts sealFields) ---------------------
 const SESSION_INFO_AAD_FRAME_TYPE = 0x12;
@@ -326,6 +326,69 @@ describe("SessionConnection FS RPC", () => {
     const closePromise = second.conn.sendFSRequest({ op: "list_dir", path: "/tmp", request_id: "fs-close" });
     second.ws.close();
     await expect(closePromise).rejects.toThrow(/closed/i);
+  });
+});
+
+describe("SessionListConnection prefs events", () => {
+  const endpoint = { url: "ws://127.0.0.1:1234", session_token: "token" };
+
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 3;
+
+    readyState = FakeWebSocket.CONNECTING;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public url: string, public protocols?: string[]) {
+      FakeWebSocket.instances.push(this);
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.();
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+
+    emit(type: number, payload?: Uint8Array) {
+      const bytes = encodeFrame(type as any, NIL_SID, payload ?? new Uint8Array(0));
+      this.onmessage?.({ data: bytes.buffer } as MessageEvent);
+    }
+  }
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("PREFS_CHANGED invokes onPrefsChanged without disturbing session list handling", () => {
+    const onSessions = vi.fn();
+    const onPrefsChanged = vi.fn();
+    const conn = new SessionListConnection(endpoint, { onSessions, onPrefsChanged });
+    conn.attach();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+
+    ws.emit(TYPE.PREFS_CHANGED);
+    expect(onPrefsChanged).toHaveBeenCalledTimes(1);
+    expect(onSessions).not.toHaveBeenCalled();
+
+    ws.emit(TYPE.LIST_RESP, encodeText(JSON.stringify([baseSession("sid-1")])));
+    expect(onSessions).toHaveBeenCalledTimes(1);
+    expect(onSessions.mock.calls[0][0][0].id).toBe("sid-1");
   });
 });
 

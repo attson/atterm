@@ -53,6 +53,12 @@ if [ -f web/package.json ] && [ -d web/node_modules ]; then
   (cd web && npm run build)
   if [ -d web/dist ] && [ -n "$(ls -A web/dist 2>/dev/null)" ]; then
     rsync -a web/dist/ "$dist/"
+    find "$dist" -type f \( \
+      -name '*.html' -o \
+      -name '*.js' -o \
+      -name '*.css' -o \
+      -name '*.webmanifest' \
+    \) -exec perl -pi -e 's/[ \t]+$//' {} +
   fi
 fi
 

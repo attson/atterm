@@ -11,6 +11,7 @@ import AdminPanel from "./components/AdminPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
+import ConfirmCloseSessionDialog from "./components/ConfirmCloseSessionDialog.vue";
 import RecoveryDialog from "./components/RecoveryDialog.vue";
 import ShortcutHints from "./components/ShortcutHints.vue";
 import PasteImagePreviewHost from "./components/PasteImagePreviewHost.vue";
@@ -175,6 +176,14 @@ function onSidebarClose(s: RemoteSession) {
   void closePaneAt(t, loc.paneIdx);
 }
 
+function requestCloseSession(s: RemoteSession) {
+  if (!shouldConfirmCloseSession(s)) {
+    onSidebarClose(s);
+    return;
+  }
+  openCloseSessionConfirm([s], () => onSidebarClose(s));
+}
+
 function openRemoteFromTitleBar() {
   void setSidebarCollapsedAndPersist(false);
 }
@@ -213,6 +222,9 @@ watch(isAdmin, (v) => {
 });
 
 const quitDialogOpen = ref(false);
+const pendingCloseSession = ref<RemoteSession | null>(null);
+const pendingCloseSessions = ref<RemoteSession[]>([]);
+let pendingCloseAction: (() => void | Promise<void>) | null = null;
 let quitListenerOff: (() => void) | null = null;
 let notificationClickListenerOff: (() => void) | null = null;
 
@@ -234,6 +246,76 @@ function onConfirmQuit() {
 
 function onCancelQuit() {
   quitDialogOpen.value = false;
+}
+
+function isCloseRiskySession(s: RemoteSession): boolean {
+  return s.type === "ai" || s.task_state === "running";
+}
+
+function shouldConfirmCloseSession(s: RemoteSession): boolean {
+  return isCloseRiskySession(s);
+}
+
+function sessionCloseTitle(s: RemoteSession): string {
+  return s.current_command || s.title || s.session_id.slice(0, 8);
+}
+
+const pendingCloseTitle = computed(() => {
+  if (pendingCloseSessions.value.length > 1) return "";
+  const s = pendingCloseSession.value;
+  return s ? sessionCloseTitle(s) : "";
+});
+
+const pendingCloseIsAi = computed(() =>
+  pendingCloseSessions.value.some((s) => s.type === "ai"),
+);
+const pendingCloseIsRunning = computed(() =>
+  pendingCloseSessions.value.some((s) => s.task_state === "running"),
+);
+const pendingCloseIsRemote = computed(() =>
+  pendingCloseSessions.value.length > 0 && pendingCloseSessions.value.every((s) => isOpenRemoteSession(s.session_id)),
+);
+
+function clearPendingCloseSession() {
+  pendingCloseSession.value = null;
+  pendingCloseSessions.value = [];
+  pendingCloseAction = null;
+}
+
+function openCloseSessionConfirm(sessionsToClose: RemoteSession[], action: () => void | Promise<void>) {
+  pendingCloseSessions.value = sessionsToClose;
+  pendingCloseSession.value = sessionsToClose[0] ?? null;
+  pendingCloseAction = action;
+}
+
+function confirmCloseSession() {
+  const action = pendingCloseAction;
+  clearPendingCloseSession();
+  void action?.();
+}
+
+function cancelCloseSession() {
+  clearPendingCloseSession();
+}
+
+function isOpenRemoteSession(sessionId: string): boolean {
+  const loc = findPaneLocation(tabs.value, sessionId);
+  if (!loc) return false;
+  const t = tabs.value.find((tab) => tab.id === loc.tabId);
+  return t?.panes[loc.paneIdx]?.remote === true;
+}
+
+function closeCandidateForPane(pane: Pane): RemoteSession | null {
+  const id = pane.sessionId;
+  if (!id) return pane.lastSeenInfo ? adaptSession(pane.lastSeenInfo) : null;
+  const info = findSessionInfo(id, pane.remote) ?? findSessionInfo(id, !pane.remote) ?? pane.lastSeenInfo;
+  return info ? adaptSession(info) : null;
+}
+
+function riskyCloseCandidatesForPanes(panes: Pane[]): RemoteSession[] {
+  return panes
+    .map(closeCandidateForPane)
+    .filter((s): s is RemoteSession => !!s && isCloseRiskySession(s));
 }
 
 async function copyStartupFailure() {
@@ -1107,7 +1189,17 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
 async function onClosePane() {
   const t = currentTab.value;
   if (!t) return;
-  closePaneAt(t, t.activePaneIdx);
+  requestClosePane(t, t.activePaneIdx);
+}
+
+function requestClosePane(t: Tab, idx: number) {
+  const target = t.panes[idx];
+  const risky = target ? riskyCloseCandidatesForPanes([target]) : [];
+  if (risky.length > 0) {
+    openCloseSessionConfirm(risky, () => closePaneAt(t, idx));
+    return;
+  }
+  closePaneAt(t, idx);
 }
 
 function closePaneAt(t: Tab, idx: number, opts?: { detachOnly?: boolean }) {
@@ -1164,6 +1256,16 @@ function closeTab(id: string, opts?: { detachOnly?: boolean }) {
   for (const sid of plan.localIdsToClose) {
     closeSession(sid).catch(() => undefined);
   }
+}
+
+function requestCloseTab(id: string) {
+  const t = tabs.value.find((tab) => tab.id === id);
+  const risky = t ? riskyCloseCandidatesForPanes(t.panes) : [];
+  if (risky.length > 0) {
+    openCloseSessionConfirm(risky, () => closeTab(id));
+    return;
+  }
+  closeTab(id);
 }
 
 function onFocusPane(dir: "left" | "right" | "up" | "down") {
@@ -1256,9 +1358,26 @@ async function mergeSelectedIntoTab(): Promise<void> {
   sel.clear();
 }
 
-async function closeSelectedOpen(): Promise<void> {
+function sessionInfoForOpenId(id: string): RemoteSession | null {
+  const remote = isOpenRemoteSession(id);
+  const info = findSessionInfo(id, remote) ?? findSessionInfo(id, !remote);
+  return info ? adaptSession(info) : null;
+}
+
+function closeSelectedOpen(): void {
   const opens = allUsedSessionIds.value;
   const ids = Array.from(sel.selectedIds.value).filter((id) => opens.has(id));
+  const risky = ids
+    .map(sessionInfoForOpenId)
+    .filter((s): s is RemoteSession => !!s && isCloseRiskySession(s));
+  if (risky.length > 0) {
+    openCloseSessionConfirm(risky, () => performCloseSelectedOpen(ids));
+    return;
+  }
+  void performCloseSelectedOpen(ids);
+}
+
+async function performCloseSelectedOpen(ids: string[]): Promise<void> {
   for (const id of ids) {
     const loc = findPaneLocation(tabs.value, id);
     if (!loc) continue;
@@ -1756,7 +1875,7 @@ defineExpose({ me });
       :is-admin="isAdmin"
       :admin-open="adminViewOpen"
       @activate="gotoTab"
-      @close="closeTab"
+      @close="requestCloseTab"
       @new="startNewTab"
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
@@ -1797,7 +1916,7 @@ defineExpose({ me });
         :tab-index-by-id="tabIndexById"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
-        @close="onSidebarClose"
+        @close="requestCloseSession"
         @merge-selected="mergeSelectedIntoTab"
         @close-selected="closeSelectedOpen"
         @markSeen="onMarkSeen"
@@ -1820,7 +1939,7 @@ defineExpose({ me });
             :terminal-theme="currentTerminalTheme.xtermTheme"
             :command-notify-threshold-sec="commandNotifyThresholdSec"
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
-            @close-pane="(idx) => closePaneAt(t, idx)"
+            @close-pane="(idx) => requestClosePane(t, idx)"
             @toast="showToast"
             @update:col-ratio="(r) => { t.colRatio = r; }"
             @update:row-ratio="(r) => { t.rowRatio = r; }"
@@ -1875,6 +1994,16 @@ defineExpose({ me });
       :remote-count="remoteSessionCount"
       @confirm="onConfirmQuit"
       @cancel="onCancelQuit"
+    />
+    <ConfirmCloseSessionDialog
+      v-if="pendingCloseSessions.length > 0"
+      :title="pendingCloseTitle"
+      :count="pendingCloseSessions.length"
+      :is-ai="pendingCloseIsAi"
+      :is-running="pendingCloseIsRunning"
+      :is-remote="pendingCloseIsRemote"
+      @confirm="confirmCloseSession"
+      @cancel="cancelCloseSession"
     />
     <RecoveryDialog
       v-if="recoveryDialogState.snapshot"

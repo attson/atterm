@@ -11,15 +11,15 @@ export interface AuxKey {
 // DEFAULT_AUX_KEYS mirrors the keys the old mobile terminal hardcoded.
 // Stable string ids (not UUIDs) so re-seeding after a reset is churn-free.
 export const DEFAULT_AUX_KEYS: AuxKey[] = [
+  { id: 'aux-up', label: '↑', seq: '\x1b[A' },
+  { id: 'aux-down', label: '↓', seq: '\x1b[B' },
+  { id: 'aux-left', label: '←', seq: '\x1b[D' },
+  { id: 'aux-right', label: '→', seq: '\x1b[C' },
   { id: 'aux-enter', label: 'enter', seq: '\r' },
   { id: 'aux-esc', label: 'esc', seq: '\x1b' },
   { id: 'aux-tab', label: 'tab', seq: '\t' },
   { id: 'aux-ctrl-c', label: '⌃C', seq: '\x03' },
   { id: 'aux-ctrl-d', label: '⌃D', seq: '\x04' },
-  { id: 'aux-up', label: '↑', seq: '\x1b[A' },
-  { id: 'aux-down', label: '↓', seq: '\x1b[B' },
-  { id: 'aux-left', label: '←', seq: '\x1b[D' },
-  { id: 'aux-right', label: '→', seq: '\x1b[C' },
 ]
 
 // effectiveAuxKeys returns the persisted list if non-empty, else the

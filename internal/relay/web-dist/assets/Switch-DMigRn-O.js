@@ -122,7 +122,7 @@ import{ai as me,F as Ce,a as ae,ar as le,a3 as ye,a6 as F,R as I,H as E,K as n,L
  align-items: center;
  line-height: 1;
  `,[ne()]),n("button",`
- align-items: center; 
+ align-items: center;
  top: var(--n-offset);
  left: var(--n-offset);
  height: var(--n-button-height);

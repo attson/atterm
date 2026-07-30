@@ -178,15 +178,15 @@ ${t}
  border-radius: var(--n-scrollbar-border-radius);
  right: 0;
  `)])]),re("horizontal--top",`
- top: var(--n-scrollbar-rail-top-horizontal-top); 
- right: var(--n-scrollbar-rail-right-horizontal-top); 
- bottom: var(--n-scrollbar-rail-bottom-horizontal-top); 
- left: var(--n-scrollbar-rail-left-horizontal-top); 
+ top: var(--n-scrollbar-rail-top-horizontal-top);
+ right: var(--n-scrollbar-rail-right-horizontal-top);
+ bottom: var(--n-scrollbar-rail-bottom-horizontal-top);
+ left: var(--n-scrollbar-rail-left-horizontal-top);
  `),re("horizontal--bottom",`
- top: var(--n-scrollbar-rail-top-horizontal-bottom); 
- right: var(--n-scrollbar-rail-right-horizontal-bottom); 
- bottom: var(--n-scrollbar-rail-bottom-horizontal-bottom); 
- left: var(--n-scrollbar-rail-left-horizontal-bottom); 
+ top: var(--n-scrollbar-rail-top-horizontal-bottom);
+ right: var(--n-scrollbar-rail-right-horizontal-bottom);
+ bottom: var(--n-scrollbar-rail-bottom-horizontal-bottom);
+ left: var(--n-scrollbar-rail-left-horizontal-bottom);
  `),re("vertical",`
  width: var(--n-scrollbar-width);
  `,[L(">",[V("scrollbar",`
@@ -194,15 +194,15 @@ ${t}
  border-radius: var(--n-scrollbar-border-radius);
  bottom: 0;
  `)])]),re("vertical--left",`
- top: var(--n-scrollbar-rail-top-vertical-left); 
- right: var(--n-scrollbar-rail-right-vertical-left); 
- bottom: var(--n-scrollbar-rail-bottom-vertical-left); 
- left: var(--n-scrollbar-rail-left-vertical-left); 
+ top: var(--n-scrollbar-rail-top-vertical-left);
+ right: var(--n-scrollbar-rail-right-vertical-left);
+ bottom: var(--n-scrollbar-rail-bottom-vertical-left);
+ left: var(--n-scrollbar-rail-left-vertical-left);
  `),re("vertical--right",`
- top: var(--n-scrollbar-rail-top-vertical-right); 
- right: var(--n-scrollbar-rail-right-vertical-right); 
- bottom: var(--n-scrollbar-rail-bottom-vertical-right); 
- left: var(--n-scrollbar-rail-left-vertical-right); 
+ top: var(--n-scrollbar-rail-top-vertical-right);
+ right: var(--n-scrollbar-rail-right-vertical-right);
+ bottom: var(--n-scrollbar-rail-bottom-vertical-right);
+ left: var(--n-scrollbar-rail-left-vertical-right);
  `),re("disabled",[L(">",[V("scrollbar","pointer-events: none;")])]),L(">",[V("scrollbar",`
  z-index: 1;
  position: absolute;
@@ -345,7 +345,7 @@ ${t}
  line-height: var(--n-height);
  `,[L("&[type=password]::-ms-reveal","display: none;"),L("+",[V("placeholder",`
  display: flex;
- align-items: center; 
+ align-items: center;
  `)])]),Po("textarea",[V("placeholder","white-space: nowrap;")]),V("eye",`
  display: flex;
  align-items: center;
@@ -580,7 +580,7 @@ ${t}
  background-color: var(--n-color);
  color: var(--n-text-color);
  word-break: break-word;
- transition: 
+ transition:
  color .3s var(--n-bezier),
  background-color .3s var(--n-bezier),
  box-shadow .3s var(--n-bezier),
@@ -788,7 +788,7 @@ ${t}
  grid-area: mark;
  user-select: none;
  -webkit-user-select: none;
- visibility: hidden; 
+ visibility: hidden;
  `)]),pe("form-item-blank",`
  grid-area: blank;
  min-height: var(--n-blank-height);
@@ -814,17 +814,17 @@ ${t}
  "mark text"
  ". text";
  `),re("right-mark",`
- grid-template-areas: 
+ grid-template-areas:
  "text mark"
  "text .";
  `),re("right-hanging-mark",`
- grid-template-areas: 
+ grid-template-areas:
  "text mark"
  "text .";
  `),V("text",`
- grid-area: text; 
+ grid-area: text;
  `),V("asterisk",`
- grid-area: mark; 
+ grid-area: mark;
  align-self: end;
  `)])]),re("top-labelled",`
  grid-template-areas:

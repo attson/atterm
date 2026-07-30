@@ -115,11 +115,12 @@ describe("remote session discovery", () => {
   });
 
   test("TaskSidebar close closes the pane holding that session", () => {
+    expect(source).toContain("function requestCloseSession");
     expect(source).toContain("function onSidebarClose");
     expect(source).toContain("findPaneLocation(tabs.value, s.session_id)");
     expect(source).toContain("closePaneAt(t, loc.paneIdx)");
     expect(source).toContain(':open-session-ids="openSessionIds"');
-    expect(source).toContain('@close="onSidebarClose"');
+    expect(source).toContain('@close="requestCloseSession"');
   });
 });
 
@@ -219,6 +220,35 @@ describe("quit confirmation", () => {
   test("gates the dialog: zero counts call confirmQuit, otherwise open dialog", () => {
     expect(source).toMatch(/localSessionCount\.value\s*===\s*0[^\n]*remoteSessionCount\.value\s*===\s*0/);
     expect(source).toContain("quitDialogOpen.value = true");
+  });
+});
+
+describe("sidebar close confirmation", () => {
+  test("routes sidebar closes through a confirmation request", () => {
+    expect(source).toContain("ConfirmCloseSessionDialog");
+    expect(source).toContain("pendingCloseSession");
+    expect(source).toMatch(/function\s+shouldConfirmCloseSession\s*\(/);
+    expect(source).toMatch(/function\s+requestCloseSession\s*\(/);
+    expect(source).toMatch(/function\s+confirmCloseSession\s*\(/);
+    expect(source).toContain('@close="requestCloseSession"');
+    expect(source).toContain("<ConfirmCloseSessionDialog");
+    expect(source).toContain(':is-ai="pendingCloseIsAi"');
+    expect(source).toContain(':is-running="pendingCloseIsRunning"');
+  });
+
+  test("confirms AI sessions and running sessions before closing", () => {
+    expect(source).toMatch(/s\.type\s*===\s*["']ai["']/);
+    expect(source).toMatch(/s\.task_state\s*===\s*["']running["']/);
+    expect(source).toMatch(/pendingCloseSession\.value\s*=\s*s/);
+    expect(source).toMatch(/onSidebarClose\(s\)/);
+  });
+
+  test("tab and pane close UI also route through close confirmation", () => {
+    expect(source).toMatch(/function\s+requestCloseTab\s*\(/);
+    expect(source).toMatch(/function\s+requestClosePane\s*\(/);
+    expect(source).toContain('@close="requestCloseTab"');
+    expect(source).toContain('@close-pane="(idx) => requestClosePane(t, idx)"');
+    expect(source).toContain("requestClosePane(t, t.activePaneIdx)");
   });
 });
 

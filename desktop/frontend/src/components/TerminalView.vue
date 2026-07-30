@@ -4,6 +4,7 @@ import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "xterm-addon-webgl";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
@@ -33,7 +34,8 @@ import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
 import { cellInLink, detectLinks, isModClickEvent, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
-import { cellCoordsAt } from "../lib/terminalCellCoords";
+import { cellCoordsAt, readXtermCellSize } from "../lib/terminalCellCoords";
+import { wordBoundaryAt } from "../lib/wordBoundary";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import { descriptorsForSlot } from "../plugins/registry";
 import { usePluginConfigStore } from "../plugins/configStore";
@@ -42,6 +44,7 @@ import { useI18n } from "../i18n/useI18n";
 import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
 import { effectiveAuxKeys, type AuxKey } from "../lib/auxKeys";
 import { usePlatform } from "../platform";
+import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -88,6 +91,8 @@ const pasteBusy = ref(false);
 const menuRef = ref<HTMLDivElement | null>(null);
 const filePicker = ref<HTMLInputElement | null>(null);
 const imagePicker = ref<HTMLInputElement | null>(null);
+const pasteConfirmOpen = ref(false);
+const pasteConfirmText = ref("");
 // Driver state: true = our IN/RESIZE go through, FitAddon sizes xterm to the
 // container. false = viewer: xterm.cols/rows locked to PTY's reported dims
 // from META. Local panes are always the driver. Remote panes start as viewer
@@ -112,7 +117,23 @@ const localHostname = ref("");
 // is empty so the bar is never empty on a fresh install.
 const templates = ref<readonly QuickTemplate[]>([]);
 const templatesHidden = ref(false);
+const pendingTemplateConfirm = ref<QuickTemplate | null>(null);
 const auxKeys = ref<readonly AuxKey[]>([]);
+const keyboardWanted = ref(false);
+const imeFocused = ref(false);
+const softKeyboardOpening = ref(false);
+const softKeyboardOpen = computed(() => imeFocused.value || softKeyboardOpening.value);
+const softKeyboardCollapsed = computed(() => !softKeyboardOpen.value);
+type SelectionMode = "idle" | "pressing" | "selecting" | "dragging";
+const selectionMode = ref<SelectionMode>("idle");
+const selectionPopover = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  arrowDir: "down" as "down" | "up",
+  copying: false,
+  sending: false,
+});
 const platform = usePlatform();
 
 let term: Terminal | null = null;
@@ -150,6 +171,57 @@ let linkProviderDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
 let copyKeyTarget: HTMLDivElement | null = null;
 let imeInputTarget: HTMLTextAreaElement | null = null;
+let terminalTouchViewport: HTMLElement | null = null;
+let selectionPressTimer: ReturnType<typeof setTimeout> | null = null;
+let selectionPressAnchor: { x: number; y: number } | null = null;
+let selectionDragAnchor: { start: number; end: number; row: number } | null = null;
+let selectionEdgeScrollTimer: ReturnType<typeof setInterval> | null = null;
+let selectionEdgeScrollDir: -1 | 1 | 0 = 0;
+let lastBlockedTerminalTouchAt = 0;
+let lastKeyboardControlPointerAt = 0;
+let lastSoftKeyboardToggleAt = -Infinity;
+let keyboardControlClickSuppressedUntil = 0;
+let lastShortcutTouchActionAt = 0;
+let softKeyboardOpenFocusTimers: number[] = [];
+let keyboardScrollRestoreTimers: number[] = [];
+let pendingKeyboardScrollPosition: ScrollPosition | null = null;
+
+const LONG_PRESS_MS = 500;
+const PRESS_JITTER_PX = 8;
+const POST_PRESS_DRAG_PX = 4;
+const EDGE_PX = 24;
+const EDGE_SCROLL_LINES = 3;
+const EDGE_SCROLL_INTERVAL_MS = 60;
+const TOUCH_COMPAT_MOUSE_BLOCK_MS = 800;
+const KEYBOARD_CONTROL_BLUR_GRACE_MS = 500;
+const KEYBOARD_CONTROL_CLICK_SUPPRESS_MS = 800;
+const KEYBOARD_SCROLL_RESTORE_DELAYS_MS = [80, 180, 360, 700];
+const SOFT_KEYBOARD_TOGGLE_DEDUP_MS = 350;
+const SOFT_KEYBOARD_OPEN_RETRY_DELAYS_MS = [60, 180, 360];
+const SOFT_KEYBOARD_OPEN_GRACE_MS = 900;
+const SHORTCUT_TAP_MOVE_PX = 10;
+
+type ShortcutPointerState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  cancelled: boolean;
+};
+let shortcutPointerState: ShortcutPointerState | null = null;
+
+type KeyboardControlTouchState = {
+  startX: number;
+  startY: number;
+  cancelled: boolean;
+  scrollTarget: HTMLElement | null;
+  startScrollLeft: number;
+};
+let keyboardControlTouchState: KeyboardControlTouchState | null = null;
+
+type ScrollPosition = {
+  viewportY: number;
+  atBottom: boolean;
+};
 
 function isLiveTerminal(): boolean {
   return isAlive && term !== null && termContainer.value !== null;
@@ -181,6 +253,277 @@ const bottomBarCount = computed(() =>
 );
 const terminalBottom = computed(() => `${bottomBarCount.value * 30}px`);
 const templateBarBottom = computed(() => showAuxKeyBar.value ? "30px" : "0");
+const templateConfirmOpen = computed(() => pendingTemplateConfirm.value !== null);
+const templateConfirmRequired = computed(() =>
+  !(platform.caps.wailsBindings || platform.caps.localPty)
+);
+
+function focusTerminalIfDriver() {
+  if (!isDriver.value) return;
+  term?.focus();
+}
+
+function focusTerminalForPaneActivation() {
+  if (platform.caps.wailsBindings || platform.caps.localPty || keyboardWanted.value) {
+    focusTerminalIfDriver();
+  }
+}
+
+function syncTerminalInputMode() {
+  if (term) term.options.disableStdin = !isDriver.value;
+  if (!imeInputTarget) return;
+  imeInputTarget.readOnly = !isDriver.value;
+  imeInputTarget.tabIndex = isDriver.value ? 0 : -1;
+  if (!isDriver.value) {
+    clearSoftKeyboardOpenFocusTimers();
+    softKeyboardOpening.value = false;
+    keyboardWanted.value = false;
+    if (document.activeElement === imeInputTarget) {
+      imeInputTarget.blur();
+      term?.blur();
+    }
+  }
+}
+
+function captureScrollPosition(): ScrollPosition | null {
+  const buffer = term?.buffer.active;
+  if (!buffer) return null;
+  return {
+    viewportY: buffer.viewportY,
+    atBottom: buffer.viewportY >= buffer.baseY,
+  };
+}
+
+function applyScrollPosition(scrollPosition: ScrollPosition | null) {
+  if (!scrollPosition) return;
+  if (!term || !isAlive) return;
+  if (scrollPosition.atBottom) {
+    term.scrollToBottom();
+  } else {
+    term.scrollToLine(scrollPosition.viewportY);
+  }
+}
+
+function clearKeyboardScrollRestoreTimers() {
+  for (const timer of keyboardScrollRestoreTimers) window.clearTimeout(timer);
+  keyboardScrollRestoreTimers = [];
+}
+
+function clearSoftKeyboardOpenFocusTimers() {
+  for (const timer of softKeyboardOpenFocusTimers) window.clearTimeout(timer);
+  softKeyboardOpenFocusTimers = [];
+}
+
+function restorePendingKeyboardScrollPosition() {
+  applyScrollPosition(pendingKeyboardScrollPosition);
+}
+
+function restoreScrollPositionAfterKeyboardToggle(scrollPosition: ScrollPosition | null) {
+  if (!scrollPosition) return;
+  clearKeyboardScrollRestoreTimers();
+  pendingKeyboardScrollPosition = scrollPosition;
+  const lastDelay = KEYBOARD_SCROLL_RESTORE_DELAYS_MS[KEYBOARD_SCROLL_RESTORE_DELAYS_MS.length - 1];
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      restorePendingKeyboardScrollPosition();
+    });
+  });
+  for (const delay of KEYBOARD_SCROLL_RESTORE_DELAYS_MS) {
+    keyboardScrollRestoreTimers.push(window.setTimeout(() => {
+      restorePendingKeyboardScrollPosition();
+      if (delay === lastDelay) {
+        pendingKeyboardScrollPosition = null;
+        keyboardScrollRestoreTimers = [];
+      }
+    }, delay));
+  }
+}
+
+function hideSoftKeyboard() {
+  const scrollPosition = captureScrollPosition();
+  clearSoftKeyboardOpenFocusTimers();
+  softKeyboardOpening.value = false;
+  keyboardWanted.value = false;
+  imeInputTarget?.blur();
+  term?.blur();
+  void platform.system.hideSoftKeyboard?.();
+  restoreScrollPositionAfterKeyboardToggle(scrollPosition);
+}
+
+function scrollToBottomForKeyboardOpen() {
+  if (!term) return;
+  term.scrollToBottom();
+  restoreScrollPositionAfterKeyboardToggle({
+    viewportY: term.buffer.active.baseY,
+    atBottom: true,
+  });
+}
+
+function showSoftKeyboard() {
+  if (!isDriver.value) return;
+  keyboardWanted.value = true;
+  scheduleSoftKeyboardOpenFocusRetries();
+  scrollToBottomForKeyboardOpen();
+  focusTerminalIfDriver();
+}
+
+function scheduleSoftKeyboardOpenFocusRetries() {
+  clearSoftKeyboardOpenFocusTimers();
+  softKeyboardOpening.value = true;
+  for (const delay of SOFT_KEYBOARD_OPEN_RETRY_DELAYS_MS) {
+    softKeyboardOpenFocusTimers.push(window.setTimeout(() => {
+      if (!keyboardWanted.value) return;
+      if (!imeFocused.value) focusTerminalIfDriver();
+      scrollToBottomForKeyboardOpen();
+    }, delay));
+  }
+  softKeyboardOpenFocusTimers.push(window.setTimeout(() => {
+    softKeyboardOpening.value = false;
+    if (!imeFocused.value) keyboardWanted.value = false;
+    softKeyboardOpenFocusTimers = [];
+  }, SOFT_KEYBOARD_OPEN_GRACE_MS));
+}
+
+function onKeyboardControlPointerDown() {
+  lastKeyboardControlPointerAt = Date.now();
+}
+
+function keyboardControlTouchDistanceSquared(touch: Touch) {
+  if (!keyboardControlTouchState) return 0;
+  const dx = touch.clientX - keyboardControlTouchState.startX;
+  const dy = touch.clientY - keyboardControlTouchState.startY;
+  return dx * dx + dy * dy;
+}
+
+function onKeyboardControlTouchStart(event: TouchEvent) {
+  onKeyboardControlPointerDown();
+  const touch = event.touches[0];
+  keyboardControlTouchState = touch
+    ? { startX: touch.clientX, startY: touch.clientY, cancelled: false, scrollTarget: null, startScrollLeft: 0 }
+    : null;
+}
+
+function onAuxKeyboardControlTouchStart(event: TouchEvent) {
+  onKeyboardControlTouchStart(event);
+  if (!keyboardControlTouchState) return;
+  const target = event.currentTarget instanceof Element
+    ? event.currentTarget.closest('.aux-key-scroll')
+    : null;
+  if (!(target instanceof HTMLElement)) return;
+  keyboardControlTouchState.scrollTarget = target;
+  keyboardControlTouchState.startScrollLeft = target.scrollLeft;
+}
+
+function onKeyboardControlTouchMove(event: TouchEvent) {
+  if (!keyboardControlTouchState) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+  const scrollTarget = keyboardControlTouchState.scrollTarget;
+  if (scrollTarget) {
+    scrollTarget.scrollLeft = keyboardControlTouchState.startScrollLeft + keyboardControlTouchState.startX - touch.clientX;
+  }
+  if (keyboardControlTouchDistanceSquared(touch) > SHORTCUT_TAP_MOVE_PX * SHORTCUT_TAP_MOVE_PX) {
+    keyboardControlTouchState.cancelled = true;
+  }
+}
+
+function onKeyboardControlTouchCancel() {
+  keyboardControlTouchState = null;
+}
+
+function shouldRunKeyboardControlTouchAction(event: TouchEvent) {
+  const touch = event.changedTouches[0];
+  const shouldRun =
+    keyboardControlTouchState !== null &&
+    !keyboardControlTouchState.cancelled &&
+    (!touch || keyboardControlTouchDistanceSquared(touch) <= SHORTCUT_TAP_MOVE_PX * SHORTCUT_TAP_MOVE_PX);
+  keyboardControlTouchState = null;
+  return shouldRun;
+}
+
+function onKeyboardControlTouchEnd(event: TouchEvent, action: () => void) {
+  onKeyboardControlPointerDown();
+  if (!shouldRunKeyboardControlTouchAction(event)) return;
+  event.preventDefault();
+  keyboardControlClickSuppressedUntil = Date.now() + KEYBOARD_CONTROL_CLICK_SUPPRESS_MS;
+  action();
+}
+
+function onKeyboardControlClick(action: () => void) {
+  if (Date.now() < keyboardControlClickSuppressedUntil) return;
+  action();
+}
+
+function shouldPreserveSoftKeyboardForControlPointer() {
+  return Date.now() - lastKeyboardControlPointerAt <= KEYBOARD_CONTROL_BLUR_GRACE_MS;
+}
+
+function shouldRunSoftKeyboardToggle() {
+  const now = Date.now();
+  if (now - lastSoftKeyboardToggleAt < SOFT_KEYBOARD_TOGGLE_DEDUP_MS) return false;
+  lastSoftKeyboardToggleAt = now;
+  return true;
+}
+
+function toggleSoftKeyboard() {
+  if (!shouldRunSoftKeyboardToggle()) return;
+  if (softKeyboardCollapsed.value) {
+    showSoftKeyboard();
+  } else {
+    hideSoftKeyboard();
+  }
+}
+
+function shortcutPointerDistanceSquared(event: PointerEvent) {
+  if (!shortcutPointerState) return 0;
+  const dx = event.clientX - shortcutPointerState.startX;
+  const dy = event.clientY - shortcutPointerState.startY;
+  return dx * dx + dy * dy;
+}
+
+function onShortcutPointerDown(event: PointerEvent) {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (event.pointerType === "touch") return;
+  event.stopPropagation();
+  shortcutPointerState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    cancelled: false,
+  };
+}
+
+function onShortcutPointerMove(event: PointerEvent) {
+  if (!shortcutPointerState || shortcutPointerState.pointerId !== event.pointerId) return;
+  if (shortcutPointerDistanceSquared(event) > SHORTCUT_TAP_MOVE_PX * SHORTCUT_TAP_MOVE_PX) {
+    shortcutPointerState.cancelled = true;
+  }
+}
+
+function clearShortcutPointerState(event?: PointerEvent) {
+  if (event) event.stopPropagation();
+  shortcutPointerState = null;
+}
+
+function onShortcutPointerCancel(event: PointerEvent) {
+  if (!shortcutPointerState || shortcutPointerState.pointerId !== event.pointerId) return;
+  clearShortcutPointerState(event);
+}
+
+function shouldSendShortcutPointer(event: PointerEvent) {
+  if (!shortcutPointerState || shortcutPointerState.pointerId !== event.pointerId) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  if (Date.now() - lastShortcutTouchActionAt < KEYBOARD_CONTROL_CLICK_SUPPRESS_MS) {
+    clearShortcutPointerState(event);
+    return false;
+  }
+  const shouldSend =
+    !shortcutPointerState.cancelled &&
+    shortcutPointerDistanceSquared(event) <= SHORTCUT_TAP_MOVE_PX * SHORTCUT_TAP_MOVE_PX;
+  clearShortcutPointerState(event);
+  return shouldSend;
+}
 
 function handleViewerKeydown(event: KeyboardEvent) {
   if (isDriver.value) return; // driver mode passes through
@@ -290,6 +633,352 @@ function onImeInput(event: InputEvent) {
   conn?.sendInput(data);
   const target = event.target as HTMLTextAreaElement | null;
   if (target && "value" in target) target.value = "";
+}
+
+function onImeFocus(event: FocusEvent) {
+  imeFocused.value = true;
+  if (isDriver.value) {
+    if (keyboardWanted.value) scrollToBottomForKeyboardOpen();
+    return;
+  }
+  const target = event.target as HTMLTextAreaElement | null;
+  target?.blur();
+  term?.blur();
+}
+
+function onImeBlur() {
+  imeFocused.value = false;
+  if (keyboardWanted.value && shouldPreserveSoftKeyboardForControlPointer()) {
+    scheduleSoftKeyboardOpenFocusRetries();
+    return;
+  }
+  if (keyboardWanted.value && softKeyboardOpening.value) return;
+  keyboardWanted.value = false;
+}
+
+function shouldBlockTerminalPointerFocus(event: PointerEvent) {
+  if (platform.caps.wailsBindings || platform.caps.localPty) return false;
+  if (event.pointerType === "mouse") return false;
+  return true;
+}
+
+function shouldBlockTerminalTouchFocus(event: TouchEvent) {
+  if (platform.caps.wailsBindings || platform.caps.localPty) return false;
+  return event.touches.length > 0;
+}
+
+function shouldHideSoftKeyboardForTerminalPointer(event: PointerEvent) {
+  if (platform.caps.wailsBindings || platform.caps.localPty) return false;
+  if (!softKeyboardOpen.value) return false;
+  if (event.pointerType === "mouse") return false;
+  return true;
+}
+
+function onTermPointerDown(event: PointerEvent) {
+  const shouldHideKeyboard = shouldHideSoftKeyboardForTerminalPointer(event);
+  const shouldBlockFocus = shouldBlockTerminalPointerFocus(event);
+  if (shouldHideKeyboard || shouldBlockFocus) lastBlockedTerminalTouchAt = Date.now();
+  if (imeFocused.value && imeInputTarget && document.activeElement === imeInputTarget) {
+    if (shouldHideKeyboard) {
+      event.preventDefault();
+      event.stopPropagation();
+      hideSoftKeyboard();
+      onSelectionPointerDown(event);
+    }
+    return;
+  }
+  if (shouldHideKeyboard) {
+    event.preventDefault();
+    event.stopPropagation();
+    hideSoftKeyboard();
+    onSelectionPointerDown(event);
+    return;
+  }
+  if (shouldBlockFocus) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  onSelectionPointerDown(event);
+}
+
+function onTermTouchStart(event: TouchEvent) {
+  if (!shouldBlockTerminalTouchFocus(event)) return;
+  lastBlockedTerminalTouchAt = Date.now();
+  event.stopPropagation();
+  if (!softKeyboardOpen.value) return;
+  event.preventDefault();
+  hideSoftKeyboard();
+}
+
+function onTermMouseDown(event: MouseEvent) {
+  if (platform.caps.wailsBindings || platform.caps.localPty) return;
+  if (Date.now() - lastBlockedTerminalTouchAt > TOUCH_COMPAT_MOUSE_BLOCK_MS) return;
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function stopTerminalTouchMove(event: TouchEvent) {
+  event.stopPropagation();
+}
+
+function clearSelectionPressTimer() {
+  if (!selectionPressTimer) return;
+  clearTimeout(selectionPressTimer);
+  selectionPressTimer = null;
+}
+
+function resolveSelectionViewport(event?: Event): HTMLElement | null {
+  if (terminalTouchViewport && document.contains(terminalTouchViewport)) return terminalTouchViewport;
+  const target = event?.target as HTMLElement | null;
+  const fromTarget = target?.closest?.(".xterm-viewport") as HTMLElement | null;
+  terminalTouchViewport = fromTarget ?? termContainer.value?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+  return terminalTouchViewport;
+}
+
+function exitSelection() {
+  if (term) {
+    try { term.clearSelection(); } catch { /* ignore stale xterm selection */ }
+    syncTerminalInputMode();
+  }
+  if (terminalTouchViewport) terminalTouchViewport.style.touchAction = "pan-y";
+  selectionPopover.value.visible = false;
+  selectionMode.value = "idle";
+  clearSelectionPressTimer();
+  selectionPressAnchor = null;
+  selectionDragAnchor = null;
+  stopSelectionEdgeScroll();
+}
+
+function readSelectionBbox(pos: { start: { x: number; y: number }; end: { x: number; y: number } }) {
+  if (!term || !terminalTouchViewport) return null;
+  const { width: cw, height: ch } = readXtermCellSize(term);
+  if (!cw || !ch) return null;
+  const rect = terminalTouchViewport.getBoundingClientRect();
+  const scrollTop = terminalTouchViewport.scrollTop ?? 0;
+  const left = rect.left + pos.start.x * cw;
+  const top = rect.top + pos.start.y * ch - scrollTop;
+  const width = pos.start.y === pos.end.y ? (pos.end.x - pos.start.x) * cw : rect.width;
+  const height = (pos.end.y - pos.start.y + 1) * ch;
+  return { x: left, y: top, width, height };
+}
+
+function updateSelectionPopoverFromSelection() {
+  if (!term) return;
+  const pos = term.getSelectionPosition?.();
+  if (!pos) {
+    selectionPopover.value.visible = false;
+    return;
+  }
+  const dim = readSelectionBbox(pos);
+  if (!dim) {
+    selectionPopover.value.visible = false;
+    return;
+  }
+  const popoverHeight = 28;
+  const fitsAbove = dim.y - 6 - popoverHeight >= 8;
+  selectionPopover.value.arrowDir = fitsAbove ? "down" : "up";
+  selectionPopover.value.x = dim.x + dim.width / 2;
+  selectionPopover.value.y = fitsAbove
+    ? (window.innerHeight - dim.y + 6)
+    : (dim.y + dim.height + 6);
+  selectionPopover.value.visible = true;
+}
+
+function onSelectionPointerDown(event: PointerEvent) {
+  if (!auxKeysCanSend.value || !term) return;
+  if (selectionMode.value === "selecting" || selectionMode.value === "dragging") {
+    exitSelection();
+  }
+  const viewport = resolveSelectionViewport(event);
+  if (!viewport) return;
+  selectionPressAnchor = { x: event.clientX, y: event.clientY };
+  selectionMode.value = "pressing";
+  clearSelectionPressTimer();
+  selectionPressTimer = setTimeout(() => {
+    selectionPressTimer = null;
+    if (selectionMode.value !== "pressing" || !selectionPressAnchor || !term) return;
+    const hit = cellCoordsAt(selectionPressAnchor.x, selectionPressAnchor.y, term, viewport);
+    if (!hit) {
+      selectionMode.value = "idle";
+      return;
+    }
+    let line = "";
+    try {
+      line = term.buffer.active.getLine(hit.row)?.translateToString(true) ?? "";
+    } catch {
+      line = "";
+    }
+    const boundary = wordBoundaryAt(line, hit.col);
+    if (boundary.len === 0) {
+      selectionMode.value = "idle";
+      return;
+    }
+    try {
+      term.select(boundary.start, hit.row, boundary.len);
+    } catch {
+      selectionMode.value = "idle";
+      return;
+    }
+    term.options.disableStdin = true;
+    viewport.style.touchAction = "none";
+    selectionMode.value = "selecting";
+    selectionDragAnchor = {
+      start: boundary.start,
+      end: boundary.start + boundary.len - 1,
+      row: hit.row,
+    };
+    updateSelectionPopoverFromSelection();
+  }, LONG_PRESS_MS);
+}
+
+function onSelectionPointerMove(event: PointerEvent) {
+  if (selectionMode.value === "pressing" && selectionPressAnchor) {
+    const dx = event.clientX - selectionPressAnchor.x;
+    const dy = event.clientY - selectionPressAnchor.y;
+    if (dx * dx + dy * dy > PRESS_JITTER_PX * PRESS_JITTER_PX) {
+      clearSelectionPressTimer();
+      selectionMode.value = "idle";
+      selectionPressAnchor = null;
+    }
+    return;
+  }
+  if (selectionMode.value !== "selecting" && selectionMode.value !== "dragging") return;
+  if (!term || !terminalTouchViewport || !selectionDragAnchor || !selectionPressAnchor) return;
+  if (selectionMode.value === "selecting") {
+    const dx = event.clientX - selectionPressAnchor.x;
+    const dy = event.clientY - selectionPressAnchor.y;
+    if (dx * dx + dy * dy < POST_PRESS_DRAG_PX * POST_PRESS_DRAG_PX) return;
+    selectionMode.value = "dragging";
+  }
+  const current = cellCoordsAt(event.clientX, event.clientY, term, terminalTouchViewport);
+  if (!current) return;
+  const [rowStart, rowEnd] = selectionDragAnchor.row <= current.row
+    ? [selectionDragAnchor.row, current.row]
+    : [current.row, selectionDragAnchor.row];
+  try {
+    if (rowStart === rowEnd) {
+      const colStart = Math.min(selectionDragAnchor.start, current.col);
+      const colEnd = Math.max(selectionDragAnchor.end, current.col);
+      term.select(colStart, rowStart, colEnd - colStart + 1);
+    } else {
+      term.selectLines(rowStart, rowEnd);
+    }
+  } catch {
+    /* keep previous selection */
+  }
+  const rect = terminalTouchViewport.getBoundingClientRect();
+  let dir: -1 | 1 | 0 = 0;
+  if (event.clientY - rect.top < EDGE_PX) dir = -1;
+  else if (rect.bottom - event.clientY < EDGE_PX) dir = 1;
+  if (dir === 0) stopSelectionEdgeScroll();
+  else ensureSelectionEdgeScroll(dir);
+}
+
+function onSelectionPointerUp() {
+  if (selectionMode.value === "pressing") {
+    clearSelectionPressTimer();
+    selectionMode.value = "idle";
+    selectionPressAnchor = null;
+    return;
+  }
+  if (selectionMode.value === "dragging") {
+    selectionMode.value = "selecting";
+    selectionDragAnchor = null;
+    stopSelectionEdgeScroll();
+    updateSelectionPopoverFromSelection();
+  }
+}
+
+function onSelectionPointerCancel() {
+  stopSelectionEdgeScroll();
+  selectionDragAnchor = null;
+  if (selectionMode.value === "pressing") {
+    clearSelectionPressTimer();
+    selectionMode.value = "idle";
+    selectionPressAnchor = null;
+    return;
+  }
+  if (selectionMode.value === "dragging") selectionMode.value = "selecting";
+}
+
+function onSelectionViewportScroll() {
+  if (selectionMode.value !== "idle") exitSelection();
+}
+
+function ensureSelectionEdgeScroll(dir: -1 | 1) {
+  if (selectionEdgeScrollDir === dir && selectionEdgeScrollTimer) return;
+  stopSelectionEdgeScroll();
+  selectionEdgeScrollDir = dir;
+  selectionEdgeScrollTimer = setInterval(() => {
+    try { term?.scrollLines(dir * EDGE_SCROLL_LINES); } catch { /* ignore */ }
+  }, EDGE_SCROLL_INTERVAL_MS);
+}
+
+function stopSelectionEdgeScroll() {
+  if (selectionEdgeScrollTimer) {
+    clearInterval(selectionEdgeScrollTimer);
+    selectionEdgeScrollTimer = null;
+  }
+  selectionEdgeScrollDir = 0;
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  if (shouldHideSoftKeyboardForDocumentPointer(event)) hideSoftKeyboard();
+  if (templateConfirmOpen.value) {
+    const target = event.target as Element | null;
+    if (!target?.closest?.(".template-confirm-panel, .template-bar")) cancelTemplateSend();
+  }
+  if (selectionMode.value === "idle") return;
+  const target = event.target as Element | null;
+  const viewport = terminalTouchViewport ?? termContainer.value?.querySelector<HTMLElement>(".xterm-viewport");
+  if (target && viewport?.contains(target)) return;
+  if (target && typeof target.closest === "function" && target.closest('[data-testid="selection-popover"]')) return;
+  exitSelection();
+}
+
+function isKeyboardControlSurface(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest('.template-bar, .aux-key-bar, .template-confirm-panel, .paste-confirm-panel'));
+}
+
+function shouldHideSoftKeyboardForDocumentPointer(event: PointerEvent) {
+  if (platform.caps.wailsBindings || platform.caps.localPty) return false;
+  if (!softKeyboardOpen.value) return false;
+  if (event.pointerType === "mouse") return false;
+  return !isKeyboardControlSurface(event.target);
+}
+
+async function onSelectionCopy() {
+  if (!term || selectionPopover.value.copying) {
+    exitSelection();
+    return;
+  }
+  selectionPopover.value.copying = true;
+  let copied = false;
+  try {
+    copied = await copyTerminalSelection(term);
+  } catch (err) {
+    console.warn("[AT Term] selection copy failed", err);
+  } finally {
+    selectionPopover.value.copying = false;
+  }
+  emit("toast", copied ? t("mobile.selection.copied") : t("mobile.selection.copyFailed"));
+  exitSelection();
+}
+
+function onSelectionSend() {
+  if (!term || !conn || selectionPopover.value.sending) {
+    exitSelection();
+    return;
+  }
+  selectionPopover.value.sending = true;
+  try {
+    const payload = prepareSendPayload(term.getSelection());
+    if (payload) conn.sendInput(payload);
+  } finally {
+    selectionPopover.value.sending = false;
+    exitSelection();
+  }
 }
 
 function closeContextMenu() {
@@ -527,6 +1216,7 @@ async function ensureTerm() {
     scrollback: 20000,
     theme: props.theme,
     convertEol: false,
+    disableStdin: !isDriver.value,
     allowProposedApi: true,
   });
   fit = new FitAddon();
@@ -572,8 +1262,17 @@ async function ensureTerm() {
   keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
   keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
+  keyTarget.addEventListener("pointermove", onSelectionPointerMove);
+  keyTarget.addEventListener("pointerup", onSelectionPointerUp);
+  keyTarget.addEventListener("pointercancel", onSelectionPointerCancel);
+  terminalTouchViewport = term.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+  terminalTouchViewport?.addEventListener("touchmove", stopTerminalTouchMove, { passive: true });
+  terminalTouchViewport?.addEventListener("scroll", onSelectionViewportScroll);
   imeInputTarget = term.element?.querySelector<HTMLTextAreaElement>("textarea") ?? null;
+  syncTerminalInputMode();
   imeInputTarget?.addEventListener("input", onImeInput as EventListener, { capture: true });
+  imeInputTarget?.addEventListener("focus", onImeFocus);
+  imeInputTarget?.addEventListener("blur", onImeBlur);
   safeFit();
   focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
   term.onData((data) => {
@@ -651,7 +1350,10 @@ async function ensureTerm() {
     onError: (key) => emit("toast", t(key)),
   });
 
-  resizeObserver = new ResizeObserver(() => safeFit());
+  resizeObserver = new ResizeObserver(() => {
+    safeFit();
+    restorePendingKeyboardScrollPosition();
+  });
   resizeObserver.observe(termContainer.value!);
 }
 
@@ -683,8 +1385,9 @@ function startConnection() {
         const wasDriver = isDriver.value;
         isDriver.value = isMe;
         driverHostname.value = isMe ? "" : driverName;
-        if (term) term.options.disableStdin = !isMe;
+        syncTerminalInputMode();
         applyViewerSize();
+        if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
         if (wasDriver !== isMe) {
           emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
         }
@@ -725,9 +1428,61 @@ function sendTemplate(tpl: QuickTemplate) {
   window.setTimeout(() => c?.sendInput("\r"), 16);
 }
 
-function sendAux(seq: string) {
+function requestTemplateSend(tpl: QuickTemplate) {
+  if (!templateConfirmRequired.value) {
+    sendTemplate(tpl);
+    return;
+  }
+  pendingTemplateConfirm.value = tpl;
+}
+
+function cancelTemplateSend() {
+  pendingTemplateConfirm.value = null;
+}
+
+function confirmTemplateSend() {
+  const tpl = pendingTemplateConfirm.value;
+  pendingTemplateConfirm.value = null;
+  if (!tpl) return;
+  sendTemplate(tpl);
+}
+
+function sendAuxPointer(seq: string, event: PointerEvent) {
+  if (!shouldSendShortcutPointer(event)) return;
   if (!auxKeysCanSend.value) return;
   conn?.sendInput(seq);
+  if (keyboardWanted.value) focusTerminalIfDriver();
+}
+
+function sendAuxTouch(seq: string, event: TouchEvent) {
+  onKeyboardControlTouchEnd(event, () => {
+    if (!auxKeysCanSend.value) return;
+    lastShortcutTouchActionAt = Date.now();
+    conn?.sendInput(seq);
+    if (keyboardWanted.value) focusTerminalIfDriver();
+  });
+}
+
+async function openPasteConfirm() {
+  if (!auxKeysCanSend.value) return;
+  pasteConfirmText.value = "";
+  pasteConfirmOpen.value = true;
+  try {
+    pasteConfirmText.value = await (navigator.clipboard?.readText?.() ?? Promise.resolve(""));
+  } catch {
+    pasteConfirmText.value = "";
+  }
+}
+
+function closePasteConfirm() {
+  pasteConfirmOpen.value = false;
+  pasteConfirmText.value = "";
+}
+
+function confirmMobilePaste() {
+  if (!auxKeysCanSend.value || !pasteConfirmText.value) return;
+  conn?.sendInput(pasteConfirmText.value);
+  closePasteConfirm();
 }
 
 function openFilePicker() {
@@ -755,8 +1510,42 @@ async function onFilePicked(event: Event) {
 
 function openImagePicker() {
   if (!pasteBlobCanSend.value) return;
+  if (platform.caps.capacitor) {
+    void openNativeImagePicker();
+    return;
+  }
   if (imagePicker.value) imagePicker.value.value = "";
   imagePicker.value?.click();
+}
+
+function base64ToFile(base64: string, mime: string, name: string): File {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], name, { type: mime });
+}
+
+async function openNativeImagePicker() {
+  if (!pasteBlobCanSend.value) return;
+  try {
+    const photo = await Camera.getPhoto({
+      source: CameraSource.Prompt,
+      resultType: CameraResultType.Base64,
+      quality: 90,
+      promptLabelHeader: t("mobile.image.prompt"),
+      promptLabelPhoto: t("mobile.image.fromLibrary"),
+      promptLabelPicture: t("mobile.image.takePhoto"),
+      promptLabelCancel: t("common.cancel"),
+    });
+    if (!photo.base64String || !pasteBlobCanSend.value) return;
+    const ext = photo.format || "jpeg";
+    const file = base64ToFile(photo.base64String, `image/${ext}`, `mobile-image.${ext}`);
+    pasteImageBus.emit(file, file.name);
+    await conn?.sendPasteImage(file, file.name);
+  } catch (err) {
+    const message = String((err as { message?: string })?.message ?? err);
+    if (!/cancel/i.test(message)) console.warn("[AT Term] image picker failed:", message);
+  }
 }
 
 async function onImagePicked(event: Event) {
@@ -869,6 +1658,7 @@ onMounted(async () => {
   templatesOff = platform.events.on("quickTemplates:changed", reloadShortcutBars);
   shortcutsOff = platform.events.on("mobile:shortcutsChanged", reloadShortcutBars);
   document.addEventListener("mousedown", onDocumentMouseDown);
+  document.addEventListener("pointerdown", onDocumentPointerDown, { capture: true });
   document.addEventListener("keydown", onDocumentKeyDown);
   // Hotkey handler is a capture-phase listener so it preempts xterm's own
   // keyboard input — the user expects Alt+1 to fire the template, not type "1".
@@ -896,19 +1686,32 @@ onBeforeUnmount(() => {
   // would throw synchronously back into Vue's unmount hook.
   resizeObserver?.disconnect();
   resizeObserver = null;
+  clearSoftKeyboardOpenFocusTimers();
+  softKeyboardOpening.value = false;
+  clearKeyboardScrollRestoreTimers();
+  pendingKeyboardScrollPosition = null;
   templatesOff?.();
   templatesOff = null;
   shortcutsOff?.();
   shortcutsOff = null;
   document.removeEventListener("mousedown", onDocumentMouseDown);
+  document.removeEventListener("pointerdown", onDocumentPointerDown, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", onDocumentKeyDown);
   document.removeEventListener("keydown", onTemplateHotkey, true);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
+  copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);
+  copyKeyTarget?.removeEventListener("pointerup", onSelectionPointerUp);
+  copyKeyTarget?.removeEventListener("pointercancel", onSelectionPointerCancel);
   copyKeyTarget = null;
+  terminalTouchViewport?.removeEventListener("touchmove", stopTerminalTouchMove);
+  terminalTouchViewport?.removeEventListener("scroll", onSelectionViewportScroll);
+  terminalTouchViewport = null;
   imeInputTarget?.removeEventListener("input", onImeInput as EventListener, { capture: true } as EventListenerOptions);
+  imeInputTarget?.removeEventListener("focus", onImeFocus);
+  imeInputTarget?.removeEventListener("blur", onImeBlur);
   imeInputTarget = null;
   if (pluginInputSenders?.get(props.sessionId) === pluginInputSender) {
     pluginInputSenders?.delete(props.sessionId);
@@ -919,6 +1722,7 @@ onBeforeUnmount(() => {
   }
   focusCoalescer?.dispose();
   focusCoalescer = null;
+  exitSelection();
   linkProviderDisposer?.dispose();
   linkProviderDisposer = null;
   conn?.detach();
@@ -946,7 +1750,7 @@ watch(
       // input so keystrokes go to this term instead of the body.
       nextTick(() => {
         safeFit();
-        term?.focus();
+        focusTerminalForPaneActivation();
       });
     } else {
       closeContextMenu();
@@ -965,7 +1769,7 @@ watch(
   (isFocused) => {
     if (isFocused) {
       nextTick(() => {
-        term?.focus();
+        focusTerminalForPaneActivation();
       });
     }
   }
@@ -1006,7 +1810,21 @@ watch(
       :style="{ bottom: terminalBottom }"
       @contextmenu.prevent="openContextMenu"
       @mouseup.capture="onTerminalMouseUp"
+      @touchstart.capture="onTermTouchStart"
+      @pointerdown.capture="onTermPointerDown"
+      @mousedown.capture="onTermMouseDown"
     ></div>
+    <TerminalSelectionPopover
+      :visible="selectionPopover.visible"
+      :x="selectionPopover.x"
+      :y="selectionPopover.y"
+      :arrow-dir="selectionPopover.arrowDir"
+      :copying="selectionPopover.copying"
+      :sending="selectionPopover.sending"
+      @copy="onSelectionCopy"
+      @send="onSelectionSend"
+      @cancel="exitSelection"
+    />
     <div
       v-if="active && (status !== 'attached' || replayProgress)"
       class="overlay"
@@ -1060,6 +1878,7 @@ watch(
       class="template-bar"
       data-testid="template-bar"
       :style="{ bottom: templateBarBottom }"
+      @pointerdown.capture="onKeyboardControlPointerDown"
       @wheel.passive="onTemplateBarWheel"
     >
       <button
@@ -1068,14 +1887,20 @@ watch(
         class="template-btn"
         :data-testid="`template-btn-${tpl.id}`"
         :title="tpl.hotkey || ''"
-        @click="sendTemplate(tpl)"
+        tabindex="-1"
+        @touchstart="onKeyboardControlTouchStart"
+        @touchmove="onKeyboardControlTouchMove"
+        @touchcancel="onKeyboardControlTouchCancel"
+        @touchend="onKeyboardControlTouchEnd($event, () => requestTemplateSend(tpl))"
+        @pointerdown="onKeyboardControlPointerDown"
+        @click="onKeyboardControlClick(() => requestTemplateSend(tpl))"
       >{{ tpl.label }}</button>
     </div>
     <div
       v-if="showAuxKeyBar"
       class="aux-key-bar"
       data-testid="terminal-aux-key-bar"
-      @wheel.passive="onTemplateBarWheel"
+      @pointerdown.capture="onKeyboardControlPointerDown"
     >
       <input
         ref="filePicker"
@@ -1093,25 +1918,152 @@ watch(
         @change="onImagePicked"
       />
       <button
-        class="aux-key-btn"
-        data-testid="terminal-pick-image"
-        :disabled="!pasteBlobCanSend"
-        @click="openImagePicker"
-      >{{ t("terminal.pickImage") }}</button>
+        type="button"
+        class="aux-key-btn keyboard-toggle-btn"
+        data-testid="terminal-hide-keyboard"
+        tabindex="-1"
+        :title="softKeyboardCollapsed ? 'Show keyboard' : 'Hide keyboard'"
+        @touchstart.prevent.stop="onAuxKeyboardControlTouchStart"
+        @touchmove="onKeyboardControlTouchMove"
+        @touchcancel="onKeyboardControlTouchCancel"
+        @touchend.stop="onKeyboardControlTouchEnd($event, toggleSoftKeyboard)"
+        @pointerdown.stop="onKeyboardControlPointerDown"
+        @click.prevent.stop="onKeyboardControlClick(toggleSoftKeyboard)"
+      >{{ softKeyboardCollapsed ? '打开键盘 ⌃' : '折叠键盘 ⌄' }}</button>
+      <div
+        class="aux-key-scroll"
+        data-testid="terminal-aux-key-scroll"
+        @wheel.passive="onTemplateBarWheel"
+      >
+        <button
+          v-for="key in auxKeys"
+          :key="key.id"
+          type="button"
+          class="aux-key-btn"
+          :data-testid="`terminal-aux-key-${key.id}`"
+          :disabled="!auxKeysCanSend"
+          tabindex="-1"
+          @touchstart.prevent="onAuxKeyboardControlTouchStart"
+          @touchmove="onKeyboardControlTouchMove"
+          @touchcancel="onKeyboardControlTouchCancel"
+          @touchend="sendAuxTouch(key.seq, $event)"
+          @pointerdown="onShortcutPointerDown"
+          @pointermove="onShortcutPointerMove"
+          @pointercancel="onShortcutPointerCancel"
+          @pointerup="sendAuxPointer(key.seq, $event)"
+        >{{ key.label }}</button>
+        <button
+          type="button"
+          class="aux-key-btn"
+          data-testid="terminal-pick-image"
+          :disabled="!pasteBlobCanSend"
+          @touchstart.prevent="onAuxKeyboardControlTouchStart"
+          @touchmove="onKeyboardControlTouchMove"
+          @touchcancel="onKeyboardControlTouchCancel"
+          @touchend="onKeyboardControlTouchEnd($event, openImagePicker)"
+          @pointerdown="onKeyboardControlPointerDown"
+          @click="onKeyboardControlClick(openImagePicker)"
+        >{{ t("terminal.pickImage") }}</button>
+        <button
+          type="button"
+          class="aux-key-btn"
+          data-testid="terminal-paste-confirm-open"
+          :disabled="!auxKeysCanSend"
+          @touchstart.prevent="onAuxKeyboardControlTouchStart"
+          @touchmove="onKeyboardControlTouchMove"
+          @touchcancel="onKeyboardControlTouchCancel"
+          @touchend="onKeyboardControlTouchEnd($event, openPasteConfirm)"
+          @pointerdown="onKeyboardControlPointerDown"
+          @click="onKeyboardControlClick(openPasteConfirm)"
+        >{{ t("mobile.pasteClipboard") }}</button>
+        <button
+          type="button"
+          class="aux-key-btn"
+          data-testid="terminal-pick-file"
+          :disabled="!pasteBlobCanSend"
+          @touchstart.prevent="onAuxKeyboardControlTouchStart"
+          @touchmove="onKeyboardControlTouchMove"
+          @touchcancel="onKeyboardControlTouchCancel"
+          @touchend="onKeyboardControlTouchEnd($event, openFilePicker)"
+          @pointerdown="onKeyboardControlPointerDown"
+          @click="onKeyboardControlClick(openFilePicker)"
+        >{{ t("terminal.pickFile") }}</button>
+      </div>
+    </div>
+    <div
+      v-if="templateConfirmOpen"
+      class="template-confirm-panel"
+      data-testid="template-confirm-panel"
+      @pointerdown.capture="onKeyboardControlPointerDown"
+      @click.stop
+    >
+      <div class="template-confirm-copy">
+        <div class="template-confirm-label">{{ pendingTemplateConfirm?.label }}</div>
+        <div class="template-confirm-text">{{ pendingTemplateConfirm?.text }}</div>
+      </div>
       <button
-        class="aux-key-btn"
-        data-testid="terminal-pick-file"
-        :disabled="!pasteBlobCanSend"
-        @click="openFilePicker"
-      >{{ t("terminal.pickFile") }}</button>
+        type="button"
+        class="template-confirm-btn"
+        data-testid="template-confirm-cancel"
+        tabindex="-1"
+        @touchstart="onKeyboardControlTouchStart"
+        @touchmove="onKeyboardControlTouchMove"
+        @touchcancel="onKeyboardControlTouchCancel"
+        @touchend="onKeyboardControlTouchEnd($event, cancelTemplateSend)"
+        @pointerdown="onKeyboardControlPointerDown"
+        @click="onKeyboardControlClick(cancelTemplateSend)"
+      >{{ t("common.cancel") }}</button>
       <button
-        v-for="key in auxKeys"
-        :key="key.id"
-        class="aux-key-btn"
-        :data-testid="`terminal-aux-key-${key.id}`"
-        :disabled="!auxKeysCanSend"
-        @click="sendAux(key.seq)"
-      >{{ key.label }}</button>
+        type="button"
+        class="template-confirm-btn primary"
+        data-testid="template-confirm-send"
+        tabindex="-1"
+        @touchstart="onKeyboardControlTouchStart"
+        @touchmove="onKeyboardControlTouchMove"
+        @touchcancel="onKeyboardControlTouchCancel"
+        @touchend="onKeyboardControlTouchEnd($event, confirmTemplateSend)"
+        @pointerdown="onKeyboardControlPointerDown"
+        @click="onKeyboardControlClick(confirmTemplateSend)"
+      >发送</button>
+    </div>
+    <div
+      v-if="pasteConfirmOpen"
+      class="paste-confirm-panel"
+      data-testid="terminal-paste-confirm-panel"
+      @pointerdown.capture="onKeyboardControlPointerDown"
+      @click.stop
+    >
+      <textarea
+        v-model="pasteConfirmText"
+        class="paste-confirm-input"
+        :placeholder="t('mobile.pastePreview')"
+        rows="2"
+      ></textarea>
+      <button
+        type="button"
+        class="paste-confirm-btn"
+        data-testid="terminal-paste-cancel"
+        tabindex="-1"
+        @touchstart="onKeyboardControlTouchStart"
+        @touchmove="onKeyboardControlTouchMove"
+        @touchcancel="onKeyboardControlTouchCancel"
+        @touchend="onKeyboardControlTouchEnd($event, closePasteConfirm)"
+        @pointerdown="onKeyboardControlPointerDown"
+        @click="onKeyboardControlClick(closePasteConfirm)"
+      >{{ t("common.cancel") }}</button>
+      <button
+        type="button"
+        class="paste-confirm-btn primary"
+        data-testid="terminal-paste-confirm"
+        :disabled="!auxKeysCanSend || !pasteConfirmText"
+        tabindex="-1"
+        @touchstart="onKeyboardControlTouchStart"
+        @touchmove="onKeyboardControlTouchMove"
+        @touchcancel="onKeyboardControlTouchCancel"
+        @touchend="onKeyboardControlTouchEnd($event, confirmMobilePaste)"
+        @pointerdown="onKeyboardControlPointerDown"
+        @click="onKeyboardControlClick(confirmMobilePaste)"
+      >{{ t("mobile.pasteConfirm") }}</button>
     </div>
   </div>
 </template>
@@ -1159,14 +2111,23 @@ watch(
   display: flex;
   align-items: center;
   gap: 6px;
-  overflow-x: auto;
+  overflow: hidden;
   padding: 2px 8px;
   border-top: 1px solid var(--border);
   background: var(--panel);
   z-index: 4;
+}
+.aux-key-scroll {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
   scrollbar-width: none;
 }
-.aux-key-bar::-webkit-scrollbar { display: none; }
+.aux-key-scroll::-webkit-scrollbar { display: none; }
 .file-picker-input {
   display: none;
 }
@@ -1208,9 +2169,120 @@ watch(
   cursor: default;
   opacity: 0.55;
 }
+.keyboard-toggle-btn {
+  min-width: 76px;
+  font-weight: 600;
+}
+.template-confirm-panel {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(60px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  z-index: 6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.template-confirm-copy {
+  min-width: 0;
+}
+.template-confirm-label {
+  color: var(--fg);
+  font: 600 0.78rem var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.template-confirm-text {
+  margin-top: 2px;
+  color: var(--fg-dim);
+  font: 0.72rem var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.template-confirm-btn {
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0 10px;
+  cursor: pointer;
+}
+.template-confirm-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.paste-confirm-panel {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(30px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  z-index: 6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.paste-confirm-input {
+  min-width: 0;
+  resize: vertical;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--terminal-bg);
+  color: var(--fg);
+  padding: 6px 8px;
+  font: 0.78rem var(--font-mono);
+}
+.paste-confirm-btn {
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0 10px;
+  cursor: pointer;
+}
+.paste-confirm-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.paste-confirm-btn:disabled {
+  color: var(--fg-dim);
+  border-color: var(--border);
+  cursor: default;
+  opacity: 0.55;
+}
 .term :deep(.xterm) {
   /* FitAddon subtracts padding from the xterm element, not this host. */
   padding: 6px 8px;
+}
+.term :deep(.xterm-viewport) {
+  top: 6px;
+  right: 8px;
+  bottom: 6px;
+  left: 8px;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.term :deep(.xterm-helper-textarea) {
+  caret-color: transparent;
 }
 .overlay {
   position: absolute;
@@ -1244,6 +2316,7 @@ watch(
   border-radius: 10px;
   padding: 14px 22px;
   text-align: center;
+  pointer-events: auto;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 .viewer-overlay-title {
@@ -1271,6 +2344,7 @@ watch(
   background: #3b82f6;
   color: #fff;
   font-weight: 600;
+  pointer-events: auto;
   cursor: pointer;
 }
 .overlay .warn { color: #d29922; }

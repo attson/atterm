@@ -38,7 +38,7 @@ function stateLabel(state: string | undefined): string {
 </script>
 
 <template>
-  <span class="row-top">
+  <span class="row-top" :class="{ 'has-close': props.showClose }">
     <TaskStateIcon
       :state="(props.session.task_state as TaskState | undefined) ?? 'idle'"
     />
@@ -88,7 +88,8 @@ function stateLabel(state: string | undefined): string {
 </template>
 
 <style scoped>
-.row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.row-top { display: flex; align-items: center; gap: 6px; min-width: 0; position: relative; }
+.row-top.has-close { padding-right: 24px; box-sizing: border-box; }
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
@@ -96,6 +97,9 @@ function stateLabel(state: string | undefined): string {
 .unread-dot { font-size: 9px; color: currentColor; }
 .row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
 .row-close {
+  position: absolute;
+  top: 0;
+  right: 0;
   font-size: 13px;
   line-height: 1;
   padding: 0 4px;

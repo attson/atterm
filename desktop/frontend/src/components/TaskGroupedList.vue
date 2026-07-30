@@ -559,7 +559,7 @@ function stateLabel(state: string | undefined): string {
           v-for="s in completedFiltered"
           :key="s.session_id"
           class="task-row dim"
-          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
+          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), 'has-close': openSessionIdSet.has(s.session_id) }"
           data-test="completed-fold-row"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
           :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
@@ -636,7 +636,8 @@ function stateLabel(state: string | undefined): string {
 .pinned-group .pin-icon { font-size: 11px; }
 .group-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-count { margin-left: auto; font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; }
-.task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; }
+.task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; position: relative; }
+.task-row.has-close { padding-right: 32px; }
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
 .task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }
 .task-row.active:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -654,7 +655,9 @@ function stateLabel(state: string | undefined): string {
 .unread-dot { font-size: 9px; color: currentColor; }
 .row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
 .completed-row-close {
-  align-self: flex-end;
+  position: absolute;
+  top: 5px;
+  right: 8px;
   border: none;
   background: transparent;
   color: var(--fg-dim);

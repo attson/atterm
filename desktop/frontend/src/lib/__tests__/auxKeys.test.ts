@@ -21,6 +21,14 @@ describe('DEFAULT_AUX_KEYS', () => {
     expect(DEFAULT_AUX_KEYS.find((k) => k.id === 'aux-esc')!.seq).toBe('\x1b')
     expect(DEFAULT_AUX_KEYS.find((k) => k.id === 'aux-ctrl-c')!.seq).toBe('\x03')
   })
+  it('puts direction keys first for the narrow mobile shortcut bar', () => {
+    expect(DEFAULT_AUX_KEYS.slice(0, 4).map((k) => k.id)).toEqual([
+      'aux-up',
+      'aux-down',
+      'aux-left',
+      'aux-right',
+    ])
+  })
 })
 
 describe('parseSeq', () => {

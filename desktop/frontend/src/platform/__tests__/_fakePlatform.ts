@@ -59,6 +59,7 @@ export function createFakePlatform(): Platform {
       notifications: true,
       fileDialog: true,
       wailsBindings: true,
+      capacitor: false,
     },
     relay: {
       load: vi.fn().mockResolvedValue(null),

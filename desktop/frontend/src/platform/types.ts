@@ -49,6 +49,10 @@ export interface Capabilities {
   // desktop-only boot chain (getEndpoint/getHostInfo/loadRecoverySnapshot
   // …) whose lib/api calls throw when the Wails runtime isn't there.
   wailsBindings: boolean
+  // True only inside the Capacitor native wrapper. Web has the same
+  // localPty=false/wailsBindings=false shape but lacks native plugins such
+  // as Camera and Keyboard.
+  capacitor: boolean
 }
 
 // ----- Bridges -----
@@ -158,6 +162,10 @@ export interface SystemBridge {
   getEnvironment(): Promise<EnvironmentInfo | null>
   // Version string like "v0.3.19", or "dev" for unbuilt / non-desktop runs.
   getAppVersion(): Promise<string>
+  // Mobile/browser-only helper for dismissing the on-screen keyboard.
+  // TerminalView also blurs xterm locally; this hook lets native shells
+  // such as Capacitor call their keyboard API when available.
+  hideSoftKeyboard?(): Promise<void>
   // Window control surface — optional, gated by caps.windowControls.
   windowMinimize?(): Promise<void>
   windowShow?(): Promise<void>

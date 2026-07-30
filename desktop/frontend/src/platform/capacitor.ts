@@ -2,6 +2,7 @@ import type { Platform, RelayConfig, RelayMe, RemoteSession, SessionSummary } fr
 import type { QuickTemplate } from '../lib/templates'
 import type { AuxKey } from '../lib/auxKeys'
 import { CapacitorHttp } from '@capacitor/core'
+import { Keyboard } from '@capacitor/keyboard'
 import { secureStorage } from './secureStorage'
 import { notifyLocalChange } from '../lib/prefsSync.capacitor'
 import {
@@ -270,6 +271,7 @@ export function createCapacitorPlatform(): Platform {
       notifications: true,
       fileDialog: false,
       wailsBindings: false,
+      capacitor: true,
     },
     relay: {
       // load: prefer localStorage (synchronous, never hangs). Keychain is a
@@ -600,6 +602,13 @@ export function createCapacitorPlatform(): Platform {
       // No Wails binding to ask on mobile; the app version is only shown
       // for desktop builds today.
       getAppVersion: async () => 'dev',
+      hideSoftKeyboard: async () => {
+        try {
+          await Keyboard.hide()
+        } catch {
+          // Some platforms reject when no software keyboard is visible.
+        }
+      },
       // window* + pickLogFilePath omitted — desktop-only
     },
     events: createEventBus(),

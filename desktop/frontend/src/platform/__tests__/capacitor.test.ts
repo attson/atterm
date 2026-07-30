@@ -46,6 +46,7 @@ describe('createCapacitorPlatform', () => {
       notifications: true,
       fileDialog: false,
       wailsBindings: false,
+      capacitor: true,
     })
   })
 

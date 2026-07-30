@@ -25,6 +25,7 @@ describe('web platform', () => {
     expect(p.caps.windowControls).toBe(false)
     expect(p.caps.systemClipboard).toBe(true)
     expect(p.caps.fileDialog).toBe(true)
+    expect(p.caps.capacitor).toBe(false)
   })
 
   describe('relay + sessions bridges', () => {

@@ -20,6 +20,7 @@ const CAPS: Capabilities = {
   notifications: typeof Notification !== 'undefined',
   fileDialog: true,
   wailsBindings: false,
+  capacitor: false,
 }
 
 const relay: RelayBridge = {

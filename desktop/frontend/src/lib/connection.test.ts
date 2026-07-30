@@ -371,6 +371,7 @@ describe("SessionListConnection prefs events", () => {
   });
 
   afterEach(() => {
+    setAccountKeyProvider(null);
     vi.unstubAllGlobals();
   });
 
@@ -389,6 +390,33 @@ describe("SessionListConnection prefs events", () => {
     ws.emit(TYPE.LIST_RESP, encodeText(JSON.stringify([baseSession("sid-1")])));
     expect(onSessions).toHaveBeenCalledTimes(1);
     expect(onSessions.mock.calls[0][0][0].id).toBe("sid-1");
+  });
+
+  test("LIST_RESP overlays sealed session fields before notifying handlers", () => {
+    const uuid = "a1b2c3d4-e5f6-7890-1234-567890abcdef";
+    const accountKey = new Uint8Array(32).map((_, i) => (i * 11) & 0xff);
+    setAccountKeyProvider(() => accountKey);
+    const sealed = sealSessionFields(accountKey, uuid, {
+      title: "codex release",
+      cwd: "/Users/alice/proj",
+      command: "codex",
+      current_command: "gh run list",
+    });
+    const onSessions = vi.fn();
+    const conn = new SessionListConnection(endpoint, { onSessions });
+    conn.attach();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+
+    ws.emit(TYPE.LIST_RESP, encodeText(JSON.stringify([baseSession(uuid, { sealed })])));
+
+    expect(onSessions).toHaveBeenCalledTimes(1);
+    expect(onSessions.mock.calls[0][0][0]).toMatchObject({
+      title: "codex release",
+      cwd: "/Users/alice/proj",
+      command: "codex",
+      current_command: "gh run list",
+    });
   });
 });
 

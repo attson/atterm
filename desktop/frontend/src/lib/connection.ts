@@ -355,7 +355,8 @@ export class SessionListConnection {
       }
       if (f.type !== TYPE.LIST_RESP) return;
       try {
-        this.handlers.onSessions(JSON.parse(decodeText(f.payload)) as SessionInfo[]);
+        const sessions = JSON.parse(decodeText(f.payload)) as SessionInfo[];
+        this.handlers.onSessions(decryptSessionFields(sessions));
       } catch {
         /* ignore malformed snapshots */
       }

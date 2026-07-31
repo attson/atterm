@@ -27,6 +27,12 @@
   }
 }
 
+/* 压缩 hero 与首页内容(demo)之间的空白:VitePress 默认在 hero 下方和内容区
+   上方各留了较大 padding,叠加后 hero 按钮到 demo 之间空太多。 */
+.VPHome .VPHero { padding-bottom: 12px; }
+.VPHome .vp-doc.container { padding-top: 0; }
+.VPHome .tech-home { margin-top: 0; }
+
 .tech-home .badge-strip { display: flex; justify-content: center; margin: 24px 0; }
 .tech-home .badge-wrap { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
 .tech-home .badge {

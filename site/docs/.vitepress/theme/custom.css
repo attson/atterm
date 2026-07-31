@@ -12,6 +12,21 @@
   background-color: var(--vp-c-bg);
 }
 
+/* hero 标题「带远程接管的跨平台终端」默认会换成 3 行。放宽 hero 文本区并让
+   标题在够宽时不换行(窄屏仍允许换行,避免溢出)。 */
+.VPHero .container .main {
+  max-width: none;
+}
+.VPHero .text {
+  max-width: 100%;
+}
+@media (min-width: 960px) {
+  .VPHero .name,
+  .VPHero .text {
+    white-space: nowrap;
+  }
+}
+
 .tech-home .badge-strip { display: flex; justify-content: center; margin: 24px 0; }
 .tech-home .badge-wrap { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
 .tech-home .badge {

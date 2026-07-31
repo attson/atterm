@@ -51,6 +51,9 @@ export default defineConfig({
         // opaqueWasm.ts 会 import gitignore 的 wasm_exec.js(CI 无此文件),而
         // demo 不走 OPAQUE 登录 —— 用桩替换整个模块。必须排在 @shared/@ 之前。
         { find: /^.*lib\/opaqueWasm$/, replacement: R('./theme/components/mock/opaqueWasmStub.ts') },
+        // webTabsSnapshot:让 loadSnapshot 恒 null,从源头关闭 restoreFromWebSnapshot
+        // (它会把残留快照恢复成 remote:true,导致本机会话被误标「远端」+「(空)」)。
+        { find: /^.*lib\/webTabsSnapshot$/, replacement: R('./theme/components/mock/webTabsSnapshotStub.ts') },
         { find: /^@webshared\//, replacement: R('../../../web/src/shared/') },
         { find: /^@shared\//, replacement: R('../../../web/src/shared/') },
         { find: /^@\//, replacement: R('../../../desktop/frontend/src/') },

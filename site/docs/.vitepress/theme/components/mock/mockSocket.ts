@@ -1,8 +1,10 @@
 import { encodeFrame, decodeFrame, decodeText, TYPE, NIL_SID } from '@/lib/proto'
 import { fakeSessions } from './fakeSessions'
-import { replayScripts, PROMPT } from './replayScripts'
+import { replayScripts, PROMPT, IDLE_REPLAY, LOCAL_PROMPT } from './replayScripts'
 import { runFakeCommand } from './fakeCommands'
 import { createMockRemoteFS, type FSRequestLike } from './mockFs'
+import { localSessions, onLocalSessionsChanged } from './localSessions'
+import { LOCAL_ENDPOINT_URL } from './mockGoApp'
 
 // 一个最小 WebSocket 替身:根据 url path 区分「会话列表连接」(/client-sessions)
 // 与「单会话连接」(/client)。不做真实网络,用真实 proto 帧编解码,保证前端
@@ -25,7 +27,7 @@ function encodeOutPayload(seq: number, text: string): Uint8Array {
 
 // LIST_RESP 期望 SessionInfo[](用 id 字段),而 fakeSessions 是 RemoteSession
 // (用 session_id)。映射到 SessionInfo 形状。
-function toSessionInfoJSON(): string {
+function remoteSessionInfoJSON(): string {
   const infos = fakeSessions.map((s) => ({
     id: s.session_id,
     command: s.current_command ?? '',
@@ -51,6 +53,17 @@ function toSessionInfoJSON(): string {
   return JSON.stringify(infos)
 }
 
+// 本机会话列表(localSessions 已是 SessionInfo 形状)。
+function localSessionInfoJSON(): string {
+  return JSON.stringify(localSessions)
+}
+
+// 已知会话 id 集合:凡在 fakeSessions/localSessions 里、或有专属回放脚本的,
+// attach 时走对应脚本;其余(新建的本机会话)走 IDLE_REPLAY。
+function isLocalSid(sid: string): boolean {
+  return localSessions.some((s) => s.id === sid)
+}
+
 type Handler = (ev: any) => void
 
 export class MockSocket {
@@ -67,23 +80,39 @@ export class MockSocket {
 
   private handlers: Record<string, Handler[]> = {}
   private isList: boolean
+  private isLocal: boolean
   private seq = 1
   private idleBuffer = ''
+  private prompt = PROMPT
   private clientID = 'demo-client'
+  private unsubLocal: (() => void) | null = null
   // 单会话连接的文件系统(remote 会话的文件浏览器走 FS_REQUEST 帧)。
   private remoteFS = createMockRemoteFS()
 
   constructor(url: string, _protocols?: string | string[]) {
     this.url = url
     this.isList = url.includes('/client-sessions')
+    // 本机连接 vs 远程连接:GetEndpoint() 返回 LOCAL_ENDPOINT_URL(含 local.demo),
+    // relay 连接用别的 host。本机列表推 localSessions,远程列表推 fakeSessions。
+    this.isLocal = url.includes('local.demo') || url.startsWith(LOCAL_ENDPOINT_URL)
     setTimeout(() => {
       this.readyState = MockSocket.OPEN
       this.fire('open', {})
-      // 会话列表连接:open 后 server 主动推快照(前端不发 LIST 请求)。
       if (this.isList) {
-        this.deliver(encodeFrame(TYPE.LIST_RESP, NIL_SID, enc.encode(toSessionInfoJSON())))
+        this.pushList()
+        // 本机列表:订阅 localSessions 变更(新建/关闭会话)后重推快照。
+        if (this.isLocal) {
+          this.unsubLocal = onLocalSessionsChanged(() => {
+            if (this.readyState === MockSocket.OPEN) this.pushList()
+          })
+        }
       }
     }, 0)
+  }
+
+  private pushList() {
+    const json = this.isLocal ? localSessionInfoJSON() : remoteSessionInfoJSON()
+    this.deliver(encodeFrame(TYPE.LIST_RESP, NIL_SID, enc.encode(json)))
   }
 
   // 兼容属性式(SessionConnection/SessionListConnection 用 ws.onmessage = …)与
@@ -124,7 +153,15 @@ export class MockSocket {
       } catch {
         /* ignore */
       }
-      const script = replayScripts[sidStr] || []
+      // 专属回放脚本(codex/claude/npm/go/预置 idle);本机新建会话无专属脚本,
+      // 走 IDLE_REPLAY 并用本机 prompt,可直接敲命令。
+      let script = replayScripts[sidStr]
+      if (!script) {
+        script = IDLE_REPLAY
+        this.prompt = LOCAL_PROMPT
+      } else if (this.isLocal || isLocalSid(sidStr)) {
+        this.prompt = LOCAL_PROMPT
+      }
       let delay = 60
       for (const chunk of script) {
         const s = frame.sid
@@ -133,7 +170,6 @@ export class MockSocket {
       }
       // 所有会话回放完成后都授予 driver,让访客在任意会话都能敲命令(真实
       // atterm 里 remote 会话默认 viewer 需 take over;demo 为体验起见直接授权)。
-      // 非 idle 会话回放结尾已带 prompt,续敲命令即可。
       setTimeout(() => this.grantDriver(frame.sid), delay + 60)
       return
     }
@@ -187,12 +223,12 @@ export class MockSocket {
             d += 300
           }
           setTimeout(() => {
-            this.out(sid, '\r\n' + PROMPT)
+            this.out(sid, '\r\n' + this.prompt)
             MockSocket.onNotify?.('Task completed', 'codex exec finished (3 files changed)')
           }, d)
         } else {
           if (res.output) this.out(sid, res.output)
-          this.out(sid, PROMPT)
+          this.out(sid, this.prompt)
         }
       } else if (ch === '\x7f' || ch === '\b') {
         if (this.idleBuffer.length) {
@@ -208,6 +244,8 @@ export class MockSocket {
 
   close() {
     this.readyState = MockSocket.CLOSED
+    this.unsubLocal?.()
+    this.unsubLocal = null
     this.fire('close', { code: 1000, wasClean: true })
   }
 }

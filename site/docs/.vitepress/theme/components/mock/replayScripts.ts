@@ -44,3 +44,11 @@ export const replayScripts: Record<string, string[]> = {
 }
 
 export const PROMPT = '\x1b[32myou@dev-server\x1b[0m ~/srv/atterm $ '
+
+// 本机会话(this-mac)的 prompt 与回放:新建的本机会话复用它,可直接敲命令。
+export const LOCAL_PROMPT = '\x1b[32myou@this-mac\x1b[0m ~ $ '
+export const IDLE_REPLAY: string[] = [
+  'Last login: Fri Jul 31 10:00 on ttys000\r\n',
+  'type \x1b[36mhelp\x1b[0m to see demo commands.\r\n',
+  LOCAL_PROMPT,
+]

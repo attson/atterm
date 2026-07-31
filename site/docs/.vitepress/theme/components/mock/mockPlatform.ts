@@ -9,14 +9,17 @@ import { MockSocket } from './mockSocket'
 // 浏览器(pluginHost=true)。
 
 const CAPS: Capabilities = {
-  localPty: false,
+  // localPty + wailsBindings=true 让 App 走桌面 boot 链:显示新建 tab 按钮、
+  // 建立本机会话列表连接、终端连本机 endpoint —— 全部走注入的 window.go
+  // (mockGoApp)与 mockSocket。这样网页也能新建本机会话。
+  localPty: true,
   autoUpdate: false,
-  pluginHost: true, // 打开文件浏览器 + 插件面板;文件面板默认走 local(mock fs)
+  pluginHost: true, // 打开文件浏览器 + 插件面板
   windowControls: false,
   systemClipboard: true,
   notifications: typeof Notification !== 'undefined',
   fileDialog: false,
-  wailsBindings: false,
+  wailsBindings: true,
   capacitor: false,
 }
 

@@ -4,6 +4,7 @@ import { initPlatform } from '@/platform'
 import { initI18n } from '@/i18n'
 import { createMockPlatform } from './mock/mockPlatform'
 import { installMockWebSocket } from './mock/mockSocket'
+import { installMockGoApp } from './mock/mockGoApp'
 
 const FrontendApp = ref(null)
 const ready = ref(false)
@@ -14,6 +15,7 @@ onMounted(async () => {
   // 真实 App.vue 在挂载前依赖:全局 WebSocket 被 mock、platform 已注入、i18n
   // 已初始化(main.web.ts 的 boot 顺序)。这些必须先于组件加载。
   restoreWs = installMockWebSocket()
+  installMockGoApp() // 注入 window.go.main.App,支持桌面 boot + 新建本机会话
   await initI18n({})
   const platform = initPlatform(createMockPlatform)
   platform.events.on('demo:toast', (d) => {

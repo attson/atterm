@@ -15,7 +15,7 @@ const CAPS: Capabilities = {
   localPty: true,
   autoUpdate: false,
   pluginHost: true, // 打开文件浏览器 + 插件面板
-  windowControls: false,
+  windowControls: true, // 显示顶栏 TitleBar(会话标题 / 连接状态 / 窗口控制)
   systemClipboard: true,
   notifications: typeof Notification !== 'undefined',
   fileDialog: false,

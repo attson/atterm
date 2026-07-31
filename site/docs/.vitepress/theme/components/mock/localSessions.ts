@@ -19,23 +19,12 @@ export interface LocalSessionInfo {
   remote_permission?: string
 }
 
-// 预置一个本机会话,让 local host 组默认非空(体现本地+远程双源)。
-export const localSessions: LocalSessionInfo[] = [
-  {
-    id: '66666666-6666-4666-8666-666666666666',
-    command: '/bin/zsh',
-    cwd: '~',
-    title: 'zsh',
-    cols: 100,
-    rows: 30,
-    started_at: 1_753_900_000,
-    host_id: LOCAL_HOST,
-    host: LOCAL_HOST,
-    user: 'you',
-    task_state: 'idle',
-    remote_permission: 'full',
-  },
-]
+// 本机会话表初始为空:demo boot 时 App 的 auto-startNewTab(caps.localPty)会
+// 通过 NewSession 正确创建首个本机会话(pane.remote=false),从而 tab 标题、
+// 文件浏览器、activeSession 都能从 localList 正确解析。若预置一个「未打开」的
+// 本机会话在侧栏,点它会走 openRemoteAsTab(硬编码 remote:true)→ activeSession
+// 在 localList 找不到 →「(空)」+ 标「远端」+ 文件浏览器无活动面板。
+export const localSessions: LocalSessionInfo[] = []
 
 const listeners = new Set<() => void>()
 

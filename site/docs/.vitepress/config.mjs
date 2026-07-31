@@ -45,6 +45,9 @@ export default defineConfig({
         // 解析出的绝对路径不受影响(相对 import 不走 alias),但保险起见先匹配。
         { find: /^.*wailsjs\/go\/main\/App$/, replacement: R('./theme/components/mock/wailsStub.ts') },
         { find: /^.*wailsjs\/runtime\/runtime$/, replacement: R('./theme/components/mock/wailsStub.ts') },
+        // opaqueWasm.ts 会 import gitignore 的 wasm_exec.js(CI 无此文件),而
+        // demo 不走 OPAQUE 登录 —— 用桩替换整个模块。必须排在 @shared/@ 之前。
+        { find: /^.*lib\/opaqueWasm$/, replacement: R('./theme/components/mock/opaqueWasmStub.ts') },
         { find: /^@webshared\//, replacement: R('../../../web/src/shared/') },
         { find: /^@shared\//, replacement: R('../../../web/src/shared/') },
         { find: /^@\//, replacement: R('../../../desktop/frontend/src/') },

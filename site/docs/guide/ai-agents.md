@@ -26,7 +26,3 @@ AI sid 抓取在 session 启动时自动进行(OSC 133 D 事件触发分类 + cl
 - **local vs relay**:`internal/feishu` 支持两种部署 —— local 走本机 LongConn 直连飞书(credentials 存钥匙串),relay 走中央 relay 服务(credentials 存 relay 的 `users.db` + `AdminConfig.Feishu`)。桌面 Settings → Feishu 里可切换。
 
 完整设计与按键模型见项目 [docs/spec/feishu.md](https://github.com/attson/atterm/blob/main/docs/spec/feishu.md)。
-
-## 让同事查看会话
-
-如需让同事 attach 查看,通过 admin 后台为其创建一个账号邀请(`inv_…`),对方注册后即可用自己的账号登录 relay 查看会话。relay 级别的共享只读 token 已在用户账号版本中移除;权限控制现在通过桌面端的 `remote_permission` 字段实现(见 [端到端加密与安全](/guide/e2ee))。

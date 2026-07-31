@@ -1,5 +1,5 @@
 import { encodeFrame, decodeFrame, decodeText, TYPE, NIL_SID } from '@/lib/proto'
-import { fakeSessions, IDLE_SESSION_ID } from './fakeSessions'
+import { fakeSessions } from './fakeSessions'
 import { replayScripts, PROMPT } from './replayScripts'
 import { runFakeCommand } from './fakeCommands'
 import { createMockRemoteFS, type FSRequestLike } from './mockFs'
@@ -131,11 +131,10 @@ export class MockSocket {
         setTimeout(() => this.out(s, chunk), delay)
         delay += 220
       }
-      // idle 会话默认授予 driver,让访客能直接敲命令(真实 atterm 里 remote
-      // 会话默认 viewer,需 take over;demo 为体验起见对 idle 会话直接授权)。
-      if (sidStr === IDLE_SESSION_ID) {
-        setTimeout(() => this.grantDriver(frame.sid), delay + 60)
-      }
+      // 所有会话回放完成后都授予 driver,让访客在任意会话都能敲命令(真实
+      // atterm 里 remote 会话默认 viewer 需 take over;demo 为体验起见直接授权)。
+      // 非 idle 会话回放结尾已带 prompt,续敲命令即可。
+      setTimeout(() => this.grantDriver(frame.sid), delay + 60)
       return
     }
 
@@ -159,8 +158,7 @@ export class MockSocket {
     }
 
     if (frame.type === TYPE.IN) {
-      const sidStr = uuidStringify(frame.sid)
-      if (sidStr !== IDLE_SESSION_ID) return // 只有 idle 会话有假命令响应
+      // 所有会话都接受输入,走同一套假命令响应表。
       this.handleInput(frame.sid, dec.decode(frame.payload))
       return
     }

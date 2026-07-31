@@ -1,4 +1,5 @@
 import type { Platform, Capabilities } from '@/platform/types'
+import { DEFAULT_TEMPLATES } from '@/lib/templates'
 import { fakeSessions } from './fakeSessions'
 import { createMockPluginFs } from './mockFs'
 import { MockSocket } from './mockSocket'
@@ -103,7 +104,8 @@ export function createMockPlatform(): Platform {
     events,
     templates: {
       async load() {
-        return []
+        // 默认快捷模板(yes / ok / continue / commit / push …),让模板条显示出来。
+        return [...DEFAULT_TEMPLATES]
       },
       async save() {},
       async clear() {},
@@ -125,7 +127,7 @@ export function createMockPlatform(): Platform {
           fileExplorer: {
             enabled: true,
             panelWidthPx: 380,
-            panelCollapsed: false,
+            panelCollapsed: true, // 默认折叠,用户点开才浏览文件
             innerTreeRatio: 0.4,
             showHidden: false,
             showLineNumbers: true,

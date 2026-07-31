@@ -13,6 +13,9 @@ export default defineConfig({
   lang: 'zh-CN',
   title: 'AT Term',
   description: '带远程接管能力的跨平台终端(桌面 + 浏览器 + 手机)',
+  head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/atterm/favicon.svg' }],
+  ],
   themeConfig: {
     nav: [
       { text: '首页', link: '/' },

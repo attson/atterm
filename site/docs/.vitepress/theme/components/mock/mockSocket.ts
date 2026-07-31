@@ -2,6 +2,7 @@ import { encodeFrame, decodeFrame, decodeText, TYPE, NIL_SID } from '@/lib/proto
 import { fakeSessions, IDLE_SESSION_ID } from './fakeSessions'
 import { replayScripts, PROMPT } from './replayScripts'
 import { runFakeCommand } from './fakeCommands'
+import { createMockRemoteFS, type FSRequestLike } from './mockFs'
 
 // 一个最小 WebSocket 替身:根据 url path 区分「会话列表连接」(/client-sessions)
 // 与「单会话连接」(/client)。不做真实网络,用真实 proto 帧编解码,保证前端
@@ -68,6 +69,9 @@ export class MockSocket {
   private isList: boolean
   private seq = 1
   private idleBuffer = ''
+  private clientID = 'demo-client'
+  // 单会话连接的文件系统(remote 会话的文件浏览器走 FS_REQUEST 帧)。
+  private remoteFS = createMockRemoteFS()
 
   constructor(url: string, _protocols?: string | string[]) {
     this.url = url
@@ -112,6 +116,14 @@ export class MockSocket {
 
     if (frame.type === TYPE.ATTACH) {
       const sidStr = uuidStringify(frame.sid)
+      // 记录本连接 attach 的 client_id(ATTACH payload 里带),用于后续 META
+      // 授予 driver 角色。
+      try {
+        const p = JSON.parse(dec.decode(frame.payload)) as { client_id?: string }
+        if (p.client_id) this.clientID = p.client_id
+      } catch {
+        /* ignore */
+      }
       const script = replayScripts[sidStr] || []
       let delay = 60
       for (const chunk of script) {
@@ -119,16 +131,48 @@ export class MockSocket {
         setTimeout(() => this.out(s, chunk), delay)
         delay += 220
       }
+      // idle 会话默认授予 driver,让访客能直接敲命令(真实 atterm 里 remote
+      // 会话默认 viewer,需 take over;demo 为体验起见对 idle 会话直接授权)。
+      if (sidStr === IDLE_SESSION_ID) {
+        setTimeout(() => this.grantDriver(frame.sid), delay + 60)
+      }
+      return
+    }
+
+    if (frame.type === TYPE.CLAIM_DRIVER) {
+      // 用户按空格 take over:对任意会话授予 driver。
+      this.grantDriver(frame.sid)
+      return
+    }
+
+    if (frame.type === TYPE.FS_REQUEST) {
+      // remote 会话的文件浏览器:解析请求,用内存树生成响应,回 FS_RESPONSE。
+      let req: FSRequestLike
+      try {
+        req = JSON.parse(dec.decode(frame.payload)) as FSRequestLike
+      } catch {
+        return
+      }
+      const resp = this.remoteFS.handleFSRequest(req)
+      this.deliver(encodeFrame(TYPE.FS_RESPONSE, frame.sid, enc.encode(JSON.stringify(resp))))
       return
     }
 
     if (frame.type === TYPE.IN) {
       const sidStr = uuidStringify(frame.sid)
-      if (sidStr !== IDLE_SESSION_ID) return // 只有 idle 会话接受交互输入
+      if (sidStr !== IDLE_SESSION_ID) return // 只有 idle 会话有假命令响应
       this.handleInput(frame.sid, dec.decode(frame.payload))
       return
     }
-    // RESIZE / CLAIM_DRIVER / PASTE_* 等:mock 忽略
+    // RESIZE / PASTE_* 等:mock 忽略
+  }
+
+  private grantDriver(sid: Uint8Array) {
+    const meta = JSON.stringify({
+      driver_client_id: this.clientID,
+      driver_client_name: 'you',
+    })
+    this.deliver(encodeFrame(TYPE.META, sid, enc.encode(meta)))
   }
 
   private handleInput(sid: Uint8Array, s: string) {

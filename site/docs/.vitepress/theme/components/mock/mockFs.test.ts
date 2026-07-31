@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createMockPluginFs } from './mockFs'
+import { createMockPluginFs, createMockRemoteFS } from './mockFs'
 
 const ROOT = '~/projects/atterm-demo'
 
@@ -55,9 +55,58 @@ describe('createMockPluginFs', () => {
     expect(entries.map((e) => e.name)).not.toContain('package.json')
   })
 
+  it('anchors any session cwd to the demo tree', async () => {
+    const fs = createMockPluginFs()
+    // 会话 cwd 可能是 ~/srv/atterm 等,与 demo 树根不同 — 仍应看到同一棵树
+    const entries = await fs.listDir('~/srv/atterm')
+    expect(entries.map((e) => e.name)).toContain('README.md')
+    const sub = await fs.listDir('~/srv/atterm/src')
+    expect(sub.map((e) => e.name)).toContain('app.ts')
+  })
+
   it('assetUrlFor returns a blob url for binary files', () => {
     const fs = createMockPluginFs()
     const url = fs.assetUrlFor(`${ROOT}/logo.png`)
     expect(url.startsWith('blob:')).toBe(true)
+  })
+})
+
+describe('createMockRemoteFS.handleFSRequest', () => {
+  const call = (op: string, extra: Record<string, unknown> = {}) =>
+    createMockRemoteFS().handleFSRequest({ op, request_id: 'r1', ...extra })
+
+  it('list_dir returns entries anchored to any cwd', () => {
+    const r = createMockRemoteFS().handleFSRequest({ op: 'list_dir', path: '~/projects/atterm', request_id: 'r1' })
+    expect(r.ok).toBe(true)
+    expect(r.entries?.map((e) => e.name)).toContain('main.go')
+    expect(r.request_id).toBe('r1')
+  })
+
+  it('read_file returns base64 data', () => {
+    const r = createMockRemoteFS().handleFSRequest({ op: 'read_file', path: '~/projects/atterm/README.md', request_id: 'r1' })
+    expect(r.ok).toBe(true)
+    const text = atob(r.content!.data)
+    expect(text).toContain('atterm-demo')
+  })
+
+  it('write_file then read_file round-trips', () => {
+    const fs = createMockRemoteFS()
+    const w = fs.handleFSRequest({ op: 'write_file', path: '~/p/README.md', data: btoa('hello'), request_id: 'r1' })
+    expect(w.ok).toBe(true)
+    const r = fs.handleFSRequest({ op: 'read_file', path: '~/p/README.md', request_id: 'r2' })
+    expect(atob(r.content!.data)).toBe('hello')
+  })
+
+  it('read_chunk returns eof for a small file', () => {
+    const r = createMockRemoteFS().handleFSRequest({ op: 'read_chunk', path: '~/projects/atterm/logo.png', offset: 0, length: 262144, request_id: 'r1' })
+    expect(r.ok).toBe(true)
+    expect(r.chunk?.eof).toBe(true)
+    expect(r.chunk?.contentType).toBe('image/png')
+  })
+
+  it('fails cleanly on unsupported op', () => {
+    const r = call('frobnicate')
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('unsupported')
   })
 })

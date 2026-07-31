@@ -57,11 +57,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .home-demo {
-  /* 突破 VitePress 首页内容宽度限制,让 demo 更宽更沉浸 */
-  width: min(1600px, calc(100vw - 32px));
-  margin: 24px calc(50% - min(800px, calc(50vw - 16px))) 0;
-  margin-left: 50%;
-  transform: translateX(-50%);
+  width: min(1248px, calc(100vw - 24px));
+  margin: 24px auto 0;
 }
 .home-demo-frame {
   position: relative;
@@ -74,6 +71,12 @@ onBeforeUnmount(() => {
 }
 .home-demo-frame :deep(*) {
   box-sizing: border-box;
+}
+/* 约束真实 App 根节点填满 demo 框:否则终端 + 模板条的内容高度会超过 680px
+   被 overflow 裁掉,模板条(底部 30px)看不见。 */
+.home-demo-frame :deep(.app) {
+  height: 100%;
+  min-height: 0;
 }
 .home-demo-loading {
   display: flex;

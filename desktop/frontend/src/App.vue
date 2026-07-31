@@ -2157,7 +2157,7 @@ defineExpose({ me });
   justify-content: center; color: var(--fg-dim); font-size: 13px;
 }
 .toast {
-  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: calc(24px + 12px); left: 50%; transform: translateX(-50%);
   background: rgba(13, 17, 23, 0.92); border: 1px solid var(--border);
   color: var(--fg); padding: 6px 12px; border-radius: 6px; font-size: 12px;
   pointer-events: none;

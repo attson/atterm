@@ -617,10 +617,10 @@ describe("TerminalView right-click menu", () => {
     expect(source).toContain("cellCoordsAt(");
   });
 
-  test("opens terminal links from a capture-phase modifier mouseup fallback", () => {
+  test("opens terminal links from a capture-phase mouseup fallback", () => {
     expect(source).toContain('@mouseup.capture="onTerminalMouseUp"');
     expect(source).toMatch(/function\s+onTerminalMouseUp\s*\(\s*e:\s*MouseEvent\s*\)/);
-    expect(source).toContain("isModClickEvent(e, isMac)");
+    expect(source).toContain("shouldActivateLink(e, linkClickDownPos, isMac)");
     expect(source).toMatch(/const\s+hit\s*=\s*computeLinkHit\(e\)/);
     expect(source).toContain("openLinkMatch(hit)");
     expect(source).toContain("e.stopImmediatePropagation()");

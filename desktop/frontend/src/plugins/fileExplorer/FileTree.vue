@@ -4,6 +4,9 @@ import FileTreeNode from "./FileTreeNode.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import type { FileSystemBridge } from "./fsBridge";
 import { searchFileNames, type FileNameSearchResult } from "./fileNameSearch";
+import { fallbackCopyText } from "../../lib/terminalCopy";
+import { quoteForShell } from "./shellQuote";
+import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 
 const { t } = useI18n();
@@ -28,6 +31,7 @@ const props = defineProps<{
   root: string;
   showHidden: boolean;
   searchQuery?: string;
+  context?: PluginContext;
 }>();
 
 const emit = defineEmits<{
@@ -65,11 +69,44 @@ function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
 
 function closeMenu() { menu.value = null; }
 
-async function onMenuAction(action: "newFile" | "newFolder" | "rename" | "delete") {
+async function copyPathToClipboard(path: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(path);
+    } else if (!fallbackCopyText(path)) {
+      return;
+    }
+    props.context?.showToast?.(t("plugins.fileExplorer.pathCopied"));
+  } catch (err) {
+    console.warn("file-explorer: copy path failed", err);
+  }
+}
+
+function onTreeKeydown(e: KeyboardEvent) {
+  const isCopyKey = e.key === "c" || e.key === "C";
+  if (!isCopyKey || e.altKey || e.shiftKey) return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  if (!selectedPath.value) return;
+  e.preventDefault();
+  void copyPathToClipboard(selectedPath.value);
+}
+
+async function onMenuAction(
+  action: "newFile" | "newFolder" | "rename" | "delete" | "copyPath" | "sendToTerminal",
+) {
   const anchor = menu.value;
   menu.value = null;
   if (!anchor) return;
   const node = anchor.node;
+  if (action === "copyPath") {
+    await copyPathToClipboard(node.path);
+    return;
+  }
+  if (action === "sendToTerminal") {
+    props.context?.send?.(quoteForShell(node.path));
+    return;
+  }
   if (action === "newFile" || action === "newFolder") {
     const parentPath = node.isDir ? node.path : parentDir(node.path);
     const parentLevel = node.isDir ? anchor.level + 1 : anchor.level;
@@ -443,7 +480,7 @@ defineExpose({ refresh: startGeneration });
 </script>
 
 <template>
-  <div class="tree-wrap" @click="closeMenu">
+  <div class="tree-wrap" tabindex="0" @click="closeMenu" @keydown="onTreeKeydown">
     <div v-if="normalizedSearchQuery" class="search-results" data-test="file-search-results">
       <div v-if="searchLoading" class="search-status">{{ t("common.loading") }}</div>
       <div v-else-if="searchResults.length === 0" class="search-status">
@@ -491,6 +528,8 @@ defineExpose({ refresh: startGeneration });
       <button data-test="menu-new-file" @click="onMenuAction('newFile')">{{ t("plugins.fileExplorer.newFile") }}</button>
       <button data-test="menu-new-folder" @click="onMenuAction('newFolder')">{{ t("plugins.fileExplorer.newFolder") }}</button>
       <button data-test="menu-rename" @click="onMenuAction('rename')">{{ t("plugins.fileExplorer.rename") }}</button>
+      <button data-test="menu-copy-path" @click="onMenuAction('copyPath')">{{ t("plugins.fileExplorer.copyPath") }}</button>
+      <button data-test="menu-send-to-terminal" @click="onMenuAction('sendToTerminal')">{{ t("plugins.fileExplorer.sendToTerminal") }}</button>
       <button data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
     </div>
     <ConfirmDialog
@@ -506,6 +545,7 @@ defineExpose({ refresh: startGeneration });
 
 <style scoped>
 .tree-wrap { position: relative; height: 100%; }
+.tree-wrap:focus { outline: none; }
 .search-results {
   display: flex;
   flex-direction: column;

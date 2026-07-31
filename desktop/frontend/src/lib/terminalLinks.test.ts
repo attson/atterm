@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   cellInLink,
   detectLinks,
-  isModClickEvent,
+  shouldActivateLink,
   linkCellRange,
   mapBufferLineCells,
+  mapWrappedLogicalLine,
   normalizeForOpen,
   type BufferLineLike,
   type LinkMatch,
@@ -197,33 +198,36 @@ describe("normalizeForOpen", () => {
   });
 });
 
-describe("isModClickEvent", () => {
-  function ev(opts: MouseEventInit): MouseEvent {
-    return new MouseEvent("click", opts);
-  }
+describe("shouldActivateLink", () => {
+  const ev = (o: Partial<MouseEvent>) =>
+    ({ shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, clientX: 0, clientY: 0, ...o }) as MouseEvent;
 
-  it("mac requires metaKey only", () => {
-    expect(isModClickEvent(ev({ metaKey: true }), true)).toBe(true);
-    expect(isModClickEvent(ev({ ctrlKey: true }), true)).toBe(false);
-    expect(isModClickEvent(ev({}), true)).toBe(false);
+  it("opens on a plain click with no drag", () => {
+    expect(shouldActivateLink(ev({ clientX: 10, clientY: 10 }), { x: 10, y: 10 }, false)).toBe(true);
   });
 
-  it("non-mac requires ctrlKey only", () => {
-    expect(isModClickEvent(ev({ ctrlKey: true }), false)).toBe(true);
-    expect(isModClickEvent(ev({ metaKey: true }), false)).toBe(false);
-    expect(isModClickEvent(ev({}), false)).toBe(false);
+  it("opens on a plain click when there is no mousedown record", () => {
+    expect(shouldActivateLink(ev({}), null, false)).toBe(true);
   });
 
-  it("rejects combinations with alt/shift", () => {
-    expect(isModClickEvent(ev({ metaKey: true, shiftKey: true }), true)).toBe(false);
-    expect(isModClickEvent(ev({ metaKey: true, altKey: true }), true)).toBe(false);
-    expect(isModClickEvent(ev({ ctrlKey: true, shiftKey: true }), false)).toBe(false);
-    expect(isModClickEvent(ev({ ctrlKey: true, altKey: true }), false)).toBe(false);
+  it("does not open when the pointer dragged more than the threshold", () => {
+    expect(shouldActivateLink(ev({ clientX: 40, clientY: 10 }), { x: 10, y: 10 }, false)).toBe(false);
   });
 
-  it("rejects when both ctrl and meta are pressed (ambiguous)", () => {
-    expect(isModClickEvent(ev({ metaKey: true, ctrlKey: true }), true)).toBe(false);
-    expect(isModClickEvent(ev({ metaKey: true, ctrlKey: true }), false)).toBe(false);
+  it("opens on a small sub-threshold movement", () => {
+    expect(shouldActivateLink(ev({ clientX: 12, clientY: 11 }), { x: 10, y: 10 }, false)).toBe(true);
+  });
+
+  it("does not open when shift is held", () => {
+    expect(shouldActivateLink(ev({ shiftKey: true }), null, false)).toBe(false);
+  });
+
+  it("does not open when alt is held", () => {
+    expect(shouldActivateLink(ev({ altKey: true }), null, false)).toBe(false);
+  });
+
+  it("opens on ctrl-click (non-mac)", () => {
+    expect(shouldActivateLink(ev({ ctrlKey: true }), null, false)).toBe(true);
   });
 });
 
@@ -274,5 +278,63 @@ describe("linkCellRange / cellInLink past wide glyphs", () => {
     expect(cellInLink(3, m, cellStart)).toBe(true); // first cell of the URL
     expect(cellInLink(16, m, cellStart)).toBe(true); // last cell of the URL
     expect(cellInLink(17, m, cellStart)).toBe(false); // just past the URL
+  });
+});
+
+// Build a fake xterm buffer from an array of {text, wrapped} physical lines.
+function fakeBuffer(rows: Array<{ text: string; wrapped: boolean }>, cols: number) {
+  function lineAt(idx: number) {
+    const row = rows[idx];
+    if (!row) return undefined;
+    const cells: Array<{ chars: string; width: number }> = [];
+    for (const ch of row.text) {
+      const cp = ch.codePointAt(0) ?? 0;
+      const w = cp >= 0x1100 && cp <= 0x9fff ? 2 : 1;
+      cells.push({ chars: ch, width: w });
+      for (let i = 1; i < w; i++) cells.push({ chars: "", width: 0 });
+    }
+    return {
+      isWrapped: row.wrapped,
+      getCell(x: number) {
+        const c = cells[x];
+        if (!c) return undefined;
+        return { getChars: () => c.chars, getWidth: () => c.width };
+      },
+    };
+  }
+  return { getLine: (y: number) => lineAt(y) };
+}
+
+describe("mapWrappedLogicalLine", () => {
+  it("joins a URL split across two soft-wrapped physical lines", () => {
+    const cols = 20;
+    const buf = fakeBuffer(
+      [
+        { text: "http://ex.com/aaaaa", wrapped: false }, // firstY = 0
+        { text: "bbb/ccc", wrapped: true },
+      ],
+      cols,
+    );
+    const { text, cellY } = mapWrappedLogicalLine(buf, 0, cols, 50);
+    expect(text.startsWith("http://ex.com/aaaaa")).toBe(true);
+    expect(text).toContain("bbb/ccc");
+    // the joined text detects as one link
+    expect(detectLinks(text).map((m) => m.text)).toEqual(["http://ex.com/aaaaabbb/ccc"]);
+    // characters from the second physical line report physical row 1
+    const idx = text.indexOf("bbb");
+    expect(cellY[idx]).toBe(1);
+  });
+
+  it("does not join when the next line is a hard newline (isWrapped=false)", () => {
+    const cols = 20;
+    const buf = fakeBuffer(
+      [
+        { text: "http://ex.com/aaaaa", wrapped: false },
+        { text: "bbb/ccc", wrapped: false },
+      ],
+      cols,
+    );
+    const { text } = mapWrappedLogicalLine(buf, 0, cols, 50);
+    expect(text).toBe("http://ex.com/aaaaa");
   });
 });

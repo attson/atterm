@@ -234,6 +234,7 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :root="root"
             :show-hidden="showHidden"
             :search-query="fileNameSearch"
+            :context="context"
             @file-clicked="onFileClick"
             @file-double-clicked="onFileDoubleClick"
           />

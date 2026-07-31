@@ -1,3 +1,17 @@
+/* 统一暗色主题背景:VitePress 默认 nav bar / hero 用 --vp-c-bg-alt(更深),
+   与内容区 --vp-c-bg 在超宽屏右侧留白处形成色差。这里让 nav 背景与页面一致,
+   消除右边缘那条深色带。 */
+.dark {
+  --vp-c-bg: #0b1020;
+  --vp-c-bg-alt: #0b1020;
+  --vp-c-bg-soft: #12172a;
+}
+.dark .VPNavBar,
+.dark .VPNavBar.has-sidebar .content,
+.dark .VPLocalNav {
+  background-color: var(--vp-c-bg);
+}
+
 .tech-home .badge-strip { display: flex; justify-content: center; margin: 24px 0; }
 .tech-home .badge-wrap { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
 .tech-home .badge {

@@ -45,7 +45,3 @@ OPAQUE 登录用浏览器 WebCrypto,只在**安全上下文**(HTTPS 或 `localho
 ## 恢复对话框太烦?
 
 Settings → General 可关闭恢复对话框,关掉后下次启动直接走 startNewTab。
-
-## 首页这个 demo 是真的吗?
-
-首页的交互 demo 嵌入的是 atterm 真实的前端界面,但后端数据(会话、终端输出、文件系统)全部是 mock 的假数据,纯前端运行、无需服务端。想要真实体验请[下载桌面端](https://github.com/attson/atterm/releases/latest)。

@@ -29,7 +29,7 @@ import HomeDemo from './.vitepress/theme/components/HomeDemo.vue'
     <div class="badge"><span class="badge-k">E2EE</span><span class="badge-v">端到端加密</span></div>
     <div class="badge"><span class="badge-k">3 平台</span><span class="badge-v">macOS / Linux / Windows</span></div>
     <div class="badge"><span class="badge-k">OSC 133</span><span class="badge-v">任务状态推导</span></div>
-    <div class="badge"><span class="badge-k">MCP</span><span class="badge-v">AI / CLI 控制</span></div>
+    <div class="badge"><span class="badge-k">AI Agent</span><span class="badge-v">Claude / Codex / Aider</span></div>
     <div class="badge"><span class="badge-k">Web Push</span><span class="badge-v">Feishu / webhook 通知</span></div>
     <div class="badge"><span class="badge-k">Apache-2.0</span><span class="badge-v">开源</span></div>
   </div>

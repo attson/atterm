@@ -1,4 +1,5 @@
 import type { Platform, Capabilities } from '@/platform/types'
+import { DEFAULT_TEMPLATES } from '@/lib/templates'
 import { fakeSessions } from './fakeSessions'
 import { createMockPluginFs } from './mockFs'
 import { MockSocket } from './mockSocket'
@@ -8,14 +9,17 @@ import { MockSocket } from './mockSocket'
 // 浏览器(pluginHost=true)。
 
 const CAPS: Capabilities = {
-  localPty: false,
+  // localPty + wailsBindings=true 让 App 走桌面 boot 链:显示新建 tab 按钮、
+  // 建立本机会话列表连接、终端连本机 endpoint —— 全部走注入的 window.go
+  // (mockGoApp)与 mockSocket。这样网页也能新建本机会话。
+  localPty: true,
   autoUpdate: false,
-  pluginHost: true, // 打开文件浏览器 + 插件面板;文件面板默认走 local(mock fs)
+  pluginHost: true, // 打开文件浏览器 + 插件面板
   windowControls: false,
   systemClipboard: true,
   notifications: typeof Notification !== 'undefined',
   fileDialog: false,
-  wailsBindings: false,
+  wailsBindings: true,
   capacitor: false,
 }
 
@@ -103,7 +107,8 @@ export function createMockPlatform(): Platform {
     events,
     templates: {
       async load() {
-        return []
+        // 默认快捷模板(yes / ok / continue / commit / push …),让模板条显示出来。
+        return [...DEFAULT_TEMPLATES]
       },
       async save() {},
       async clear() {},
@@ -125,7 +130,7 @@ export function createMockPlatform(): Platform {
           fileExplorer: {
             enabled: true,
             panelWidthPx: 380,
-            panelCollapsed: false,
+            panelCollapsed: true, // 默认折叠,用户点开才浏览文件
             innerTreeRatio: 0.4,
             showHidden: false,
             showLineNumbers: true,

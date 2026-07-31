@@ -4,6 +4,7 @@ import { initPlatform } from '@/platform'
 import { initI18n } from '@/i18n'
 import { createMockPlatform } from './mock/mockPlatform'
 import { installMockWebSocket } from './mock/mockSocket'
+import { installMockGoApp } from './mock/mockGoApp'
 
 const FrontendApp = ref(null)
 const ready = ref(false)
@@ -14,6 +15,7 @@ onMounted(async () => {
   // 真实 App.vue 在挂载前依赖:全局 WebSocket 被 mock、platform 已注入、i18n
   // 已初始化(main.web.ts 的 boot 顺序)。这些必须先于组件加载。
   restoreWs = installMockWebSocket()
+  installMockGoApp() // 注入 window.go.main.App,支持桌面 boot + 新建本机会话
   await initI18n({})
   const platform = initPlatform(createMockPlatform)
   platform.events.on('demo:toast', (d) => {
@@ -40,9 +42,6 @@ onBeforeUnmount(() => {
 <template>
   <ClientOnly>
     <section class="home-demo" aria-label="AT Term interactive demo">
-      <p class="home-demo-hint">
-        👇 这是一个纯前端 demo,数据都是假的,随便玩 —— 切换会话、在 idle 的 <code>zsh</code> 里敲 <code>help</code>、打开右侧文件面板。
-      </p>
       <div class="home-demo-frame">
         <component :is="FrontendApp" v-if="ready" />
         <div v-else class="home-demo-loading">正在加载 demo…</div>
@@ -58,17 +57,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .home-demo {
-  width: min(1248px, calc(100vw - 24px));
-  margin: 20px auto 0;
-}
-.home-demo-hint {
-  font-size: 13px;
-  opacity: 0.8;
-  margin: 0 0 8px;
+  /* 突破 VitePress 首页内容宽度限制,让 demo 更宽更沉浸 */
+  width: min(1600px, calc(100vw - 32px));
+  margin: 24px calc(50% - min(800px, calc(50vw - 16px))) 0;
+  margin-left: 50%;
+  transform: translateX(-50%);
 }
 .home-demo-frame {
   position: relative;
-  height: 640px;
+  height: 680px;
   overflow: hidden;
   border: 1px solid var(--vp-c-divider);
   border-radius: 12px;

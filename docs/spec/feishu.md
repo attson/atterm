@@ -1,7 +1,7 @@
 # Feishu — 远程终端与 AskUserQuestion form 子系统
 
 > **Audience**: 实现或审计 atterm 飞书集成路径的工程师(anchor card 生命周期 / AskUserQuestion 表单式远程回答 / local vs relay 模式分流)
-> **Last updated**: 2026-07-29
+> **Last updated**: 2026-07-31
 > **Status**: shipped through v0.2.171
 > **See also**: [architecture.md](./architecture.md) · [protocol.md](./protocol.md) · [auth.md](./auth.md) · [../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md](../superpowers/specs/2026-07-10-askuserquestion-form-flow-spec.md)
 
@@ -33,7 +33,7 @@
 | 维度 | local 模式 | relay 模式 |
 |---|---|---|
 | 网络路径 | 桌面 app 直连飞书 Open Platform(LongConn) | 桌面 app → 中央 relay(`cmd/atterm-relay`)→ 飞书 |
-| 应用凭据存储 | 本机钥匙串(macOS Keychain / Linux Secret Service / Windows Credential Manager) | Relay `users.db` 里的字段级加密 + DB `relay_config` 表的 `AdminConfig.Feishu`(`internal/userstore/relay_config.go`;SQLite/Postgres 双后端) |
+| 应用凭据存储 | 本机钥匙串(macOS Keychain / Linux Secret Service / Windows Credential Manager) | Relay `users.db` 里的字段级加密 + DB `relay_config` 表的 `AdminConfig.Feishu`(结构体定义在 `internal/relay/admin_config.go`;SQL 迁移在 `internal/userstore/migrations/`;SQLite/Postgres 双后端) |
 | 事件订阅 | 桌面 app 直接跑 `feishu-sdk-go` LongConn subscriber | Relay 跑 subscriber,通过 `/uplink` 转发到桌面 |
 | 适用场景 | 单人自用 / 内网 / 无公网 relay 时 | 多设备访问 / 团队共享 relay / 桌面不常在线 |
 | 配置入口 | 桌面 Settings → Feishu → Local | 桌面 Settings → Feishu → Relay(实际写 `/admin/api/feishu`) |
@@ -41,7 +41,7 @@
 **模式切换是显式的**(桌面 Settings 有 mode selector),两种模式的 credential 不共享。切换模式不迁移凭据,需要在新模式下重新绑定飞书应用。
 
 **红线**:
-- Local 模式的钥匙串存储在 `desktop/feishu_local_settings.go`,不要走 sqlite。
+- Local 模式的钥匙串存储在 `desktop/feishu/binding_store_local.go`,不要走 sqlite。
 - Relay 模式的字段加密走 `internal/relay/admin_config.go::AdminConfig.Feishu.EncryptKey`(base64 32B),持久化在 DB `relay_config` 表(SQLite/Postgres,由 `ATTERM_RELAY_DB_DRIVER`/`ATTERM_RELAY_DB_DSN` 选后端;`relay.json` 已完全退役,不再读写),GET 只回显末 4 位。见 [AGENTS.md 红线 #26](../../AGENTS.md#关键设计原则红线)。
 - `userstore.Open` 允许 secret cipher 为 nil(即使 relay 没启用飞书也能启动),仅飞书 CRUD 在 cipher nil 时报错;不要把 `ATTERM_FEISHU_ENCRYPT_KEY` 重设为启动必填。
 
@@ -293,7 +293,7 @@ memory `feedback_askform_permission_grant.md` 有详细指引。
 | Card index 状态 | `internal/feishu/cardindex.go` — `CardAnchor` 结构 + `SendMu` / `PatchSeq` / mounted 标记 |
 | Router / stroke dispatch | `internal/feishu/router.go` — `InjectKeystrokesBySession` |
 | Hook 解析 | `desktop/feishu/hook_adapter.go` — `extractAllAskUserQuestions` / `ParseTurn` |
-| Local / relay 分流 | `desktop/app.go`(mode router)+ `desktop/feishu_local_settings.go`(local)+ `internal/relay/admin_http.go`(relay `/admin/api/feishu`) |
+| Local / relay 分流 | `desktop/app.go`(mode router)+ `desktop/feishu/binding_store_local.go`(local)+ `internal/relay/admin_http.go`(relay `/admin/api/feishu`) |
 | Long-conn subscriber | `desktop/feishu/longconn.go` — `newLarkRuntime` / `extractCardActionFields` |
 
 Manual probe 脚本(需 `-tags manual_probe`,不入 CI):`desktop/feishu/manual_probe_test.go`。用来直接对着开发飞书 app 发真 API,验证 CardKit 组件语法。改 form 渲染 / 组件属性时最快的 sanity check。

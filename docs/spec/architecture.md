@@ -1,9 +1,9 @@
 # 架构规范
 
 > **Audience**: 理解 atterm 系统整体结构的工程师
-> **Last updated**: 2026-07-29
+> **Last updated**: 2026-07-31
 > **Status**: stable
-> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md) · [conventions.md](./conventions.md) · [component-style.md](./component-style.md)
+> **See also**: [auth.md](./auth.md) · [protocol.md](./protocol.md) · [feishu.md](./feishu.md) · [conventions.md](./conventions.md) · [component-style.md](./component-style.md) · [site.md](./site.md)
 
 v0.3.x 主线新增（本文档已并入）：relay 多实例栈（realm identity + `relay_instances` 心跳 + `home_instance_url` 路由）+ DB-backed 运行时配置（`relay_config` 表，SQLite / Postgres 双后端，取代原 `relay.json`）、远程文件浏览器（`FS_REQUEST/RESPONSE/EVENT` + `PASTE_FILE`）、会话侧栏置顶 + 搜索（`useSessionPins` / `sessionMatch.ts`）及其恢复期 pin 迁移、桌面启动致命错误非崩溃化（`StartupError`）、**web 主入口改挂桌面 `App.vue`**（`platform/web.ts` 桥接，删除独立的 `web/src/main/` 会话列表页与 `settings.html` / `admin.html` 主界面）、web 终端辅助键 + 显式选择图片/文件粘贴（复用 `TerminalView.vue`，走 `PASTE_IMAGE` / `PASTE_FILE`，受 driver + `remote_permission=full` 门控）。相关设计 doc：[session-bar-pin-design](../superpowers/specs/2026-07-20-session-bar-pin-design.md) · [pinned-session-recovery-design](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) · [sidebar-search-design](../superpowers/specs/2026-07-24-sidebar-search-design.md) · [web-layout-align-desktop-design](../superpowers/specs/2026-07-27-web-layout-align-desktop-design.md)。
 
@@ -71,7 +71,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 | `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子 | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
 | `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webpush subscriptions / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）；历史 `webhooks` 表已由 migration 删除 | 不知道 HTTP / 不依赖 relay |
-| `internal/relay/instance_registry.go` + `node_home.go` + `config_refresh.go` | internal | 多实例心跳缓存、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
+| 多实例 | `internal/relay/node_home.go` + `config_refresh.go` + `internal/userstore/relay_instances.go` | 多实例心跳缓存（`relay_instances` 表）、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
 | `ptyhost` | `internal/ptyhost/` | 纯 PTY 包装，无本地 TTY 副作用 | 不知道 relay 协议 |
 | `hostid` | `internal/hostid/` | 机器持久 UUID | 不知道 session |
 | `desktop/relay_host.go` | desktop | 启 mini relay，spawn PTY，AdoptSession | 不连远程 |
@@ -322,7 +322,8 @@ Store 均为 nil 时），供本地 mini relay 或测试使用；不要把它等
   读、不接受 env 覆盖。
 - **instance heartbeat**：每个实例通过 `ATTERM_RELAY_INSTANCE_PUBLIC_URL` 声明自己的
   外部可达 URL，定期心跳写入 `internal/userstore/relay_instances.go` 的
-  `relay_instances` 表；`internal/relay/instance_registry.go` 维护活跃实例的内存缓存。
+  `relay_instances` 表；活跃实例列表直接从该表读（`ListActiveInstances`），由
+  `internal/relay/node_home.go` 消费做路由。
 - **home_instance 路由**：`internal/relay/node_home.go::resolveHomeInstanceURL` 按用户
   的 `home_instance_url` 偏好字段返回登录后应连的实例（未设置则任选一个活跃实例）。
   登录响应（`internal/relay/opaque_auth.go`）在 `AUTH_INFO` 之外额外下发 `realm_id` +
@@ -509,6 +510,10 @@ desktop/frontend/src/
   绕过 `active` prop 不变的死角（进设置页时 activeSessionId 不变）。
 - `quickTemplates:changed`（desktop）：SettingsTemplates 改完后 emit，
   desktop TerminalView 订阅重新 reload。
+
+## Demo 站点（site/）
+
+`site/` 是发布到 GitHub Pages（<https://attson.github.io/atterm/>）的 VitePress 站点：既是面向用户的文档站（`docs/guide/*`），也在首页嵌入**真实**的 `desktop/frontend/src/App.vue` 作为交互 demo。demo 复用桌面前端 + `web/src/shared` 源码（Vite alias 接入，**零侵入**），所有后端由 mock 层实现（Platform / WebSocket 帧 / 文件系统三处拦截），访客无需本地 relay 即可体验会话切换、终端回放、交互输入、文件浏览。demo 是生产系统之外的展示层，与 relay/desktop 运行态完全隔离。完整设计见 [site.md](./site.md)。
 
 ## 跨进程时序细节
 

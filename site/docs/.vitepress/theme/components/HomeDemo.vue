@@ -68,7 +68,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .home-demo {
   width: min(1248px, calc(100vw - 24px));
-  margin: 24px auto 0;
+  margin: 8px auto 0;
 }
 .home-demo-frame {
   position: relative;

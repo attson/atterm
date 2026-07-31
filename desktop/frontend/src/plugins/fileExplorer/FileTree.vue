@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import FileTreeNode from "./FileTreeNode.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import type { FileSystemBridge } from "./fsBridge";
@@ -476,7 +476,51 @@ function dblClickSearchResult(result: FileNameSearchResult) {
   emit("file-double-clicked", result.path);
 }
 
-defineExpose({ refresh: startGeneration });
+// Minimal CSS attribute-selector escaper for the title lookup in revealPath.
+function cssEscape(s: string): string {
+  return s.replace(/["\\]/g, "\\$&");
+}
+
+function ancestorChain(root: string, path: string): string[] {
+  // Directory paths from just-below-root down to the parent of `path`, e.g.
+  // root=/proj, path=/proj/a/b/c.ts -> ["/proj/a", "/proj/a/b"].
+  const base = root.endsWith("/") ? root.slice(0, -1) : root;
+  if (path === base || !path.startsWith(base + "/")) return [];
+  const rest = path.slice(base.length + 1);
+  const parts = rest.split("/");
+  const dirs: string[] = [];
+  let cur = base;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = cur + "/" + parts[i];
+    dirs.push(cur);
+  }
+  return dirs;
+}
+
+/**
+ * Expand every ancestor directory of `path` (lazily loading children via
+ * toggle) and select it. Returns true only when `path` is an existing *file*
+ * inside the current root subtree; false for a directory, a missing entry, or
+ * a path outside the root.
+ */
+async function revealPath(path: string): Promise<boolean> {
+  const base = props.root.endsWith("/") ? props.root.slice(0, -1) : props.root;
+  if (path !== base && !path.startsWith(base + "/")) return false;
+  for (const dir of ancestorChain(props.root, path)) {
+    const node = findNode(rootNodes.value, dir);
+    if (!node) return false;
+    if (!node.expanded) await toggle(node);
+  }
+  const target = findNode(rootNodes.value, path);
+  if (!target) return false;
+  selectedPath.value = path;
+  await nextTick();
+  const el = document.querySelector<HTMLElement>(`.node[title="${cssEscape(path)}"]`);
+  el?.scrollIntoView?.({ block: "nearest" });
+  return !target.isDir;
+}
+
+defineExpose({ refresh: startGeneration, revealPath });
 </script>
 
 <template>

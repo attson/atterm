@@ -21,6 +21,7 @@ import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
 import { useResizer } from "./plugins/useResizer";
 import { usePluginConfigStore } from "./plugins/configStore";
+import { useFileRevealStore } from "./plugins/fileExplorer/fileReveal";
 import { sendInputToSession } from "./lib/sendInput";
 import { applyTabReorder } from "./lib/tabReorder";
 import { computeCloseTabState } from "./lib/closeTabOptimistic";
@@ -566,6 +567,20 @@ const panelCollapsed = computed({
 });
 
 function togglePanel() { panelCollapsed.value = !panelCollapsed.value; }
+
+// When the terminal asks to reveal a path, make sure the file explorer is
+// enabled and the panel is open so it can mount and consume the request.
+const fileRevealStore = useFileRevealStore();
+watch(
+  () => fileRevealStore.pending,
+  async (p) => {
+    if (!p) return;
+    if (!pluginStore.isPluginEnabled("file-explorer")) {
+      await pluginStore.setEnabled("file-explorer", true);
+    }
+    if (panelCollapsed.value) panelCollapsed.value = false;
+  },
+);
 
 // True when at least one right-panel plugin is enabled. Suppresses the
 // collapse handle entirely when the slot has nothing to host.

@@ -115,12 +115,12 @@ function makeWrappedTerm(rows: Array<{ text: string; wrapped: boolean }>, cols: 
 describe("useTerminalLinkProvider", () => {
   it("provides one ILink per detectLinks match on the requested line", () => {
     const f = makeFakeTerm("see https://x.test now");
-    const openURL = vi.fn().mockResolvedValue(undefined);
+    const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "/Users/me",
-      openURL,
+      openLink,
       onError: vi.fn(),
     });
 
@@ -144,7 +144,7 @@ describe("useTerminalLinkProvider", () => {
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL: vi.fn(),
+      openLink: vi.fn(),
       onError: vi.fn(),
     });
 
@@ -158,12 +158,12 @@ describe("useTerminalLinkProvider", () => {
 
   it("activate opens on a plain click (no modifier, no drag)", async () => {
     const f = makeFakeTerm("https://x.test");
-    const openURL = vi.fn().mockResolvedValue(undefined);
+    const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError: vi.fn(),
     });
     let links: any[] | undefined;
@@ -173,17 +173,18 @@ describe("useTerminalLinkProvider", () => {
       new MouseEvent("click", { clientX: 5, clientY: 5 }),
       "https://x.test",
     );
-    expect(openURL).toHaveBeenCalledWith("https://x.test");
+    expect(openLink).toHaveBeenCalled();
+    expect(openLink.mock.calls[0][0].text).toBe("https://x.test");
   });
 
   it("activate does not open when the click followed a drag", async () => {
     const f = makeFakeTerm("https://x.test");
-    const openURL = vi.fn().mockResolvedValue(undefined);
+    const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError: vi.fn(),
     });
     let links: any[] | undefined;
@@ -193,7 +194,7 @@ describe("useTerminalLinkProvider", () => {
       new MouseEvent("click", { clientX: 60, clientY: 5 }),
       "https://x.test",
     );
-    expect(openURL).not.toHaveBeenCalled();
+    expect(openLink).not.toHaveBeenCalled();
   });
 
   it("stitches a soft-wrapped URL and returns a segment on each physical row", () => {
@@ -209,7 +210,7 @@ describe("useTerminalLinkProvider", () => {
       term: f.term,
       isMac: false,
       getHomeDir: () => "",
-      openURL: vi.fn(),
+      openLink: vi.fn(),
       onError: vi.fn(),
     });
     let row1: any[] | undefined;
@@ -229,12 +230,12 @@ describe("useTerminalLinkProvider", () => {
     // click; the linkProvider's activate() must clear it after opening the
     // URL so the user isn't left staring at a blue highlight.
     const f = makeFakeTerm("https://x.test");
-    const openURL = vi.fn().mockResolvedValue(undefined);
+    const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError: vi.fn(),
     });
     let links: any[] | undefined;
@@ -246,14 +247,14 @@ describe("useTerminalLinkProvider", () => {
     expect(f.clearSelection).toHaveBeenCalledOnce();
   });
 
-  it("activate clears selection even when openURL rejects", async () => {
+  it("activate clears selection even when openLink rejects", async () => {
     const f = makeFakeTerm("https://x.test");
-    const openURL = vi.fn().mockRejectedValue(new Error("boom"));
+    const openLink = vi.fn().mockRejectedValue(new Error("boom"));
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError: vi.fn(),
     });
     let links: any[] | undefined;
@@ -267,12 +268,12 @@ describe("useTerminalLinkProvider", () => {
 
   it("activate with Mod opens URL", async () => {
     const f = makeFakeTerm("https://x.test");
-    const openURL = vi.fn().mockResolvedValue(undefined);
+    const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError: vi.fn(),
     });
     let links: any[] | undefined;
@@ -281,17 +282,18 @@ describe("useTerminalLinkProvider", () => {
       new MouseEvent("click", { metaKey: true }),
       "https://x.test",
     );
-    expect(openURL).toHaveBeenCalledWith("https://x.test");
+    expect(openLink).toHaveBeenCalled();
+    expect(openLink.mock.calls[0][0].text).toBe("https://x.test");
   });
 
   it("activate with Mod consumes the click so the WebView does not navigate", async () => {
     const f = makeFakeTerm("https://x.test");
-    const openURL = vi.fn().mockResolvedValue(undefined);
+    const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError: vi.fn(),
     });
     let links: any[] | undefined;
@@ -309,18 +311,19 @@ describe("useTerminalLinkProvider", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(stopPropagation).toHaveBeenCalledOnce();
     expect(stopImmediatePropagation).toHaveBeenCalledOnce();
-    expect(openURL).toHaveBeenCalledWith("https://x.test");
+    expect(openLink).toHaveBeenCalled();
+    expect(openLink.mock.calls[0][0].text).toBe("https://x.test");
   });
 
-  it("activate for ~/ without homeDir calls onError, not openURL", async () => {
+  it("activate passes a ~/ match to openLink (home resolution is the callback's job)", async () => {
     const f = makeFakeTerm("cd ~/Projects/foo");
-    const openURL = vi.fn().mockResolvedValue(undefined);
+    const openLink = vi.fn().mockResolvedValue(undefined);
     const onError = vi.fn();
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError,
     });
     let links: any[] | undefined;
@@ -329,19 +332,19 @@ describe("useTerminalLinkProvider", () => {
       new MouseEvent("click", { metaKey: true }),
       "~/Projects/foo",
     );
-    expect(openURL).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledWith("terminal.link.openFailedNoHome");
+    expect(openLink).toHaveBeenCalled();
+    expect(openLink.mock.calls[0][0].text).toBe("~/Projects/foo");
   });
 
-  it("activate surfaces openURL rejection via onError", async () => {
+  it("activate surfaces openLink rejection via onError", async () => {
     const f = makeFakeTerm("https://x.test");
-    const openURL = vi.fn().mockRejectedValue(new Error("boom"));
+    const openLink = vi.fn().mockRejectedValue(new Error("boom"));
     const onError = vi.fn();
     useTerminalLinkProvider({
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL,
+      openLink,
       onError,
     });
     let links: any[] | undefined;
@@ -359,7 +362,7 @@ describe("useTerminalLinkProvider", () => {
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL: vi.fn(),
+      openLink: vi.fn(),
       onError: vi.fn(),
     });
     d.dispose();
@@ -372,7 +375,7 @@ describe("useTerminalLinkProvider", () => {
       term: f.term,
       isMac: true,
       getHomeDir: () => "",
-      openURL: vi.fn(),
+      openLink: vi.fn(),
       onError: vi.fn(),
     });
     const cb = vi.fn();

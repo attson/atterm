@@ -3,7 +3,6 @@ import {
   detectLinks,
   shouldActivateLink,
   mapWrappedLogicalLine,
-  normalizeForOpen,
   type BufferLike,
   type LinkMatch,
   type PointerPos,
@@ -17,7 +16,9 @@ export interface UseTerminalLinkProviderDeps {
   term: Terminal;
   isMac: boolean;
   getHomeDir: () => string;
-  openURL: (url: string) => Promise<void>;
+  // Called when a link is activated; the caller decides how to open the match
+  // (external URL vs. reveal a local path in the file explorer).
+  openLink: (match: LinkMatch) => Promise<void>;
   onError: (key: LinkErrorKey) => void;
 }
 
@@ -29,7 +30,7 @@ const MAX_LOGICAL_ROWS = 50;
 export function useTerminalLinkProvider(
   deps: UseTerminalLinkProviderDeps,
 ): IDisposable {
-  const { term, isMac, getHomeDir, openURL, onError } = deps;
+  const { term, isMac, openLink, onError } = deps;
 
   // Track the most recent mousedown so activate() can tell a plain click from
   // the tail of a drag-select (which must not open the link).
@@ -72,7 +73,7 @@ export function useTerminalLinkProvider(
             const startX = mapped.cellStart[segStart] + 1;
             const endX = mapped.cellStart[segEnd - 1] + 1;
             links.push(
-              makeLink(m, firstIdx + row + 1, startX, endX, term, isMac, () => lastDownPos, getHomeDir, openURL, onError),
+              makeLink(m, firstIdx + row + 1, startX, endX, term, isMac, () => lastDownPos, openLink, onError),
             );
           }
           segStart = segEnd;
@@ -106,8 +107,7 @@ function makeLink(
   term: Terminal,
   isMac: boolean,
   getDownPos: () => PointerPos | null,
-  getHomeDir: () => string,
-  openURL: (url: string) => Promise<void>,
+  openLink: (match: LinkMatch) => Promise<void>,
   onError: (key: LinkErrorKey) => void,
 ) {
   return {
@@ -127,15 +127,12 @@ function makeLink(
       // the success and error paths leave the user with a clean terminal — a
       // click that opens a link means "open it", never "select it".
       term.clearSelection();
-      const url = normalizeForOpen(m, getHomeDir());
-      if (!url) {
-        onError("terminal.link.openFailedNoHome");
-        return;
-      }
+      // The caller decides http (external URL) vs. local path (reveal). Passing
+      // the raw match keeps normalizeForOpen / home-dir resolution on that side.
       try {
-        await openURL(url);
+        await openLink(m);
       } catch (err) {
-        console.warn("[AT Term] openURL failed", err);
+        console.warn("[AT Term] openLink failed", err);
         onError("terminal.link.openFailed");
       }
     },

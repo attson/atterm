@@ -469,3 +469,44 @@ describe("FileTree — path actions", () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 });
+
+describe("FileTree — revealPath", () => {
+  beforeEach(() => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/proj") return [{ name: "src", isDir: true }, { name: "README.md", isDir: false }];
+      if (path === "/proj/src") return [{ name: "app.ts", isDir: false }, { name: "sub", isDir: true }];
+      return [];
+    });
+  });
+
+  it("expands ancestors and selects a nested file, returning true", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/proj/src/app.ts");
+    await flushPromises();
+    expect(isFile).toBe(true);
+    const names = w.findAll(".node-name").map((n) => n.text());
+    expect(names).toContain("app.ts");
+  });
+
+  it("returns false for a directory path", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/proj/src");
+    expect(isFile).toBe(false);
+  });
+
+  it("returns false for a path outside the root subtree", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/other/x.ts");
+    expect(isFile).toBe(false);
+  });
+
+  it("returns false for a non-existent nested path", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/proj/src/missing.ts");
+    expect(isFile).toBe(false);
+  });
+});

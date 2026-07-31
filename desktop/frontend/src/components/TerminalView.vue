@@ -44,6 +44,7 @@ import { useI18n } from "../i18n/useI18n";
 import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
 import { effectiveAuxKeys, type AuxKey } from "../lib/auxKeys";
 import { usePlatform } from "../platform";
+import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 
 const props = withDefaults(
@@ -135,6 +136,7 @@ const selectionPopover = ref({
   sending: false,
 });
 const platform = usePlatform();
+const fileRevealStore = useFileRevealStore();
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -1074,7 +1076,31 @@ async function onMenuOpenLink() {
   await openLinkMatch(hit);
 }
 
+// Resolve a detected path/file match to an absolute local path, or null when a
+// ~/ path can't be resolved (no cached home).
+function localPathFromMatch(hit: LinkMatch): string | null {
+  const raw = hit.text;
+  if (hit.kind === "file") return raw.startsWith("file://") ? raw.slice("file://".length) : raw;
+  if (raw.startsWith("/")) return raw;
+  if (raw.startsWith("~/") || raw === "~/") {
+    if (!cachedHomeDir) return null;
+    const home = cachedHomeDir.replace(/\/+$/, "");
+    return home + raw.slice(1);
+  }
+  return null;
+}
+
 async function openLinkMatch(hit: LinkMatch) {
+  // Local file/path links reveal in the file explorer instead of opening an
+  // external app; http(s) links still go to the browser.
+  if (hit.kind === "path" || hit.kind === "file") {
+    const abs = localPathFromMatch(hit);
+    if (abs) {
+      fileRevealStore.request(abs);
+      return;
+    }
+    // ~/ with no cached home: fall through to the file:// error path below.
+  }
   const url = normalizeForOpen(hit, cachedHomeDir);
   if (!url) {
     emit("toast", t("terminal.link.openFailedNoHome"));
@@ -1356,7 +1382,7 @@ async function ensureTerm() {
     term,
     isMac,
     getHomeDir: () => cachedHomeDir,
-    openURL: (u) => platform.system.openExternalURL(u),
+    openLink: (m) => openLinkMatch(m),
     onError: (key) => emit("toast", t(key)),
   });
 

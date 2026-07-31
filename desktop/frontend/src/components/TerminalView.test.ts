@@ -635,6 +635,16 @@ describe("TerminalView link provider wiring", () => {
     expect(source).toContain('emit("toast", t(key))');
   });
 
+  test("injects openLink into the link provider", () => {
+    expect(source).toContain("openLink: (m) => openLinkMatch(m)");
+  });
+
+  test("routes local file paths to the file reveal store, http to external URL", () => {
+    expect(source).toContain("useFileRevealStore");
+    expect(source).toContain("fileRevealStore.request(abs)");
+    expect(source).toContain("platform.system.openExternalURL(url)");
+  });
+
   test("disposes link provider in onBeforeUnmount", () => {
     expect(source).toMatch(/linkProviderDisposer\?\.dispose\(\)/);
     expect(source).toMatch(/linkProviderDisposer\s*=\s*null/);

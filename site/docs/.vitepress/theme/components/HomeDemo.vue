@@ -14,6 +14,16 @@ let restoreWs = null
 onMounted(async () => {
   // 真实 App.vue 在挂载前依赖:全局 WebSocket 被 mock、platform 已注入、i18n
   // 已初始化(main.web.ts 的 boot 顺序)。这些必须先于组件加载。
+  // 清掉可能残留的 web tabs 快照,保证 demo 每次全新 boot、走 auto-startNewTab
+  // 创建本机会话(否则恢复旧 tab 会跳过 auto-start,本机组消失)。
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i)
+      if (k && (k.startsWith('atterm.web.tabs.') || k === 'atterm.web.window_id')) {
+        localStorage.removeItem(k)
+      }
+    }
+  } catch { /* localStorage 不可用时忽略 */ }
   restoreWs = installMockWebSocket()
   installMockGoApp() // 注入 window.go.main.App,支持桌面 boot + 新建本机会话
   await initI18n({})

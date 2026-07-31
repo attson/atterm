@@ -1,0 +1,28 @@
+.tech-home .badge-strip { display: flex; justify-content: center; margin: 24px 0; }
+.tech-home .badge-wrap { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.tech-home .badge {
+  display: flex; flex-direction: column; align-items: center; padding: 10px 16px;
+  border: 1px solid var(--vp-c-divider); border-radius: 10px; background: var(--vp-c-bg-soft);
+}
+.tech-home .badge-k { font-weight: 700; }
+.tech-home .badge-v { font-size: 12px; opacity: 0.75; }
+.tech-home .feature-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px; margin: 24px 0;
+}
+.tech-home .feature-card {
+  padding: 18px; border: 1px solid var(--vp-c-divider); border-radius: 12px;
+  background: var(--vp-c-bg-soft);
+}
+.tech-home .feature-card h3 { margin: 0 0 8px; }
+.tech-home .downloads {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;
+}
+.tech-home .download-card {
+  display: block; padding: 20px; border: 1px solid var(--vp-c-divider);
+  border-radius: 12px; text-decoration: none; background: var(--vp-c-bg-soft);
+  transition: border-color 0.2s, transform 0.2s;
+}
+.tech-home .download-card:hover { border-color: var(--vp-c-brand-1); transform: translateY(-2px); }
+.tech-home .download-card .os { font-weight: 700; font-size: 18px; }
+.tech-home .download-card .os-sub { font-size: 12px; opacity: 0.7; }

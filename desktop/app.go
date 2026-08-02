@@ -201,6 +201,10 @@ type App struct {
 	// writeFile is os.WriteFile in production; tests substitute a stub.
 	writeFile writeFileFunc
 
+	// sshKnownHostsPath overrides the known_hosts file used by NewSshSession
+	// (tests set a temp path). Empty → ~/.ssh/known_hosts.
+	sshKnownHostsPath string
+
 	prefsSync *prefssync.Engine
 
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by

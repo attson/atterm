@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
@@ -10,6 +12,41 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 )
+
+// NewSshSession opens an SSH remote shell as an adoptable session. On an
+// unknown host key it returns *HostKeyUnknownError with the fingerprint; the
+// frontend shows a TOFU dialog and retries with AcceptHostKey=true. It builds
+// the known_hosts callback (defaulting to ~/.ssh/known_hosts) and delegates
+// the actual dial + adopt to relayHost.OpenSSHSession.
+func (a *App) NewSshSession(req SSHConnectReq) (NewSessionResp, error) {
+	if a.host == nil {
+		return NewSessionResp{}, fmt.Errorf("relay host not ready")
+	}
+	khPath := a.sshKnownHostsPath
+	if khPath == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			khPath = filepath.Join(home, ".ssh", "known_hosts")
+		}
+	}
+
+	var unknown *HostKeyUnknownError
+	cb := sshclient.KnownHostsCallback(khPath, func(host, fp string) bool {
+		if req.AcceptHostKey {
+			return true // user already confirmed in the TOFU dialog
+		}
+		unknown = &HostKeyUnknownError{Fingerprint: fp, Host: host}
+		return false
+	})
+
+	id, err := a.host.OpenSSHSession(a.ctx, req, cb)
+	if err != nil {
+		if unknown != nil {
+			return NewSessionResp{}, unknown // typed → frontend shows fingerprint
+		}
+		return NewSessionResp{}, err
+	}
+	return NewSessionResp{SessionID: id.String()}, nil
+}
 
 // sshPtyHost adapts *sshclient.Session to relay.PtyHost + sessionPTY. The
 // embedded *sshclient.Session already provides Read/Write/Resize/Close.

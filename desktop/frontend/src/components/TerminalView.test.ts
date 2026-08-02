@@ -723,6 +723,21 @@ describe("TerminalView viewer key handling", () => {
     expect(source).toMatch(/claimDriver/);
     expect(source).toMatch(/event\.key\s*===\s*" "/);
   });
+
+  test("handleViewerKeydown is attached at document scope so it fires even when the pane's .term-container has lost focus", () => {
+    // Previously scoped to keyTarget (the .term-container). In viewer mode
+    // the IME textarea is blurred and focus falls to document.body, so a
+    // scoped listener silently died — Space appeared dead until the user
+    // clicked the take-control button. Document scope fixes that; the
+    // handler self-gates on props.active so a background pane in viewer
+    // mode doesn't grab Space meant for the foreground pane / input.
+    expect(source).toContain('document.addEventListener("keydown", handleViewerKeydown');
+    expect(source).toContain('document.removeEventListener("keydown", handleViewerKeydown');
+    expect(source).not.toMatch(/keyTarget\.addEventListener\("keydown",\s*handleViewerKeydown/);
+    expect(source).toMatch(/function\s+handleViewerKeydown[\s\S]*?if\s*\(\s*!props\.active\s*\)\s*return/);
+    expect(source).toMatch(/function\s+handleViewerKeydown[\s\S]*?tagName\s*===\s*"INPUT"/);
+    expect(source).toMatch(/function\s+handleViewerKeydown[\s\S]*?tagName\s*===\s*"TEXTAREA"/);
+  });
 });
 
 describe("TerminalView viewer overlay", () => {

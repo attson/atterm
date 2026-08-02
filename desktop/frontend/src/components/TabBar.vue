@@ -40,6 +40,7 @@ const emit = defineEmits<{
   (e: "activate", id: string): void;
   (e: "close", id: string): void;
   (e: "new"): void;
+  (e: "new-ssh"): void;
   (e: "reorder", fromId: string, targetId: string, position: "before" | "after"): void;
   // Settings lives here (not TitleBar) so it's reachable regardless of
   // caps.windowControls — TitleBar (and its old settings button) is hidden
@@ -296,6 +297,14 @@ function onClose(e: MouseEvent, id: string) {
       :title="starting ? i18nT('terminal.starting') : i18nT('terminal.newTab')"
       @click="emit('new')"
     >+</button>
+    <button
+      v-if="canNewLocal"
+      class="plus ssh"
+      type="button"
+      data-test="new-ssh"
+      title="New SSH Connection"
+      @click="emit('new-ssh')"
+    >SSH</button>
     <button
       v-if="isAdmin"
       class="admin-btn"

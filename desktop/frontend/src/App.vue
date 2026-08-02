@@ -10,6 +10,7 @@ import PaneGrid from "./components/PaneGrid.vue";
 import AdminPanel from "./components/AdminPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
+import NewSshDialog from "./components/NewSshDialog.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import ConfirmCloseSessionDialog from "./components/ConfirmCloseSessionDialog.vue";
 import RecoveryDialog from "./components/RecoveryDialog.vue";
@@ -223,6 +224,7 @@ watch(isAdmin, (v) => {
 });
 
 const quitDialogOpen = ref(false);
+const showSshDialog = ref(false);
 const pendingCloseSession = ref<RemoteSession | null>(null);
 const pendingCloseSessions = ref<RemoteSession[]>([]);
 let pendingCloseAction: (() => void | Promise<void>) | null = null;
@@ -990,6 +992,44 @@ async function startNewTab() {
   } finally {
     starting.value = false;
   }
+}
+
+// openSshTab seeds the freshly-adopted SSH session into localList (it is an
+// AdoptSession-backed session on this host, so it surfaces in the local list)
+// and opens it in a new single-pane tab — mirroring startNewTab's tail.
+function openSshTab(sessionId: string) {
+  pendingLocalIds.add(sessionId);
+  if (!localList.value.some((s) => s.id === sessionId)) {
+    const dims = predictCellDims("single");
+    localList.value = [
+      ...localList.value,
+      {
+        id: sessionId,
+        command: "ssh",
+        cwd: "",
+        title: "ssh",
+        cols: dims.cols,
+        rows: dims.rows,
+        started_at: Math.floor(Date.now() / 1000),
+        host_id: localHostID.value,
+      },
+    ];
+  }
+  const id = newId();
+  tabs.value.push({
+    id,
+    layout: "single",
+    panes: [{ sessionId, remote: false }],
+    activePaneIdx: 0,
+    colRatio: RATIO_DEFAULT,
+    rowRatio: RATIO_DEFAULT,
+  });
+  gotoTab(id);
+}
+
+function onSshConnected(sessionId: string) {
+  showSshDialog.value = false;
+  openSshTab(sessionId);
 }
 
 async function onSplit(dir: SplitDir, mode: SplitMode) {
@@ -1893,6 +1933,7 @@ defineExpose({ me });
       @activate="gotoTab"
       @close="requestCloseTab"
       @new="startNewTab"
+      @new-ssh="showSshDialog = true"
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
       @toggle-admin="adminViewOpen = !adminViewOpen"
@@ -2003,6 +2044,11 @@ defineExpose({ me });
       :remote-sessions="remoteList"
       @pick="onPickerPick"
       @close="onPickerClose"
+    />
+    <NewSshDialog
+      v-if="showSshDialog"
+      @connected="onSshConnected"
+      @cancel="showSshDialog = false"
     />
     <ConfirmQuitDialog
       v-if="quitDialogOpen"

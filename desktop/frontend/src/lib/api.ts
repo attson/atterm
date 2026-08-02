@@ -49,6 +49,22 @@ export interface NewSessionReq {
   initial_ai_command_line?: string;
 }
 
+// SSHConnectReq mirrors desktop/app.go SSHConnectReq. Credentials are used for
+// this connection only and are never persisted (slice 1).
+export interface SSHConnectReq {
+  host: string;
+  port?: string;
+  user: string;
+  auth_kind: "password" | "privateKey";
+  password?: string;
+  private_key?: string;
+  passphrase?: string;
+  cols?: number;
+  rows?: number;
+  // Set on retry after the user confirmed an unknown host fingerprint.
+  accept_host_key?: boolean;
+}
+
 export interface NewSessionResp {
   session_id: string;
 }
@@ -305,6 +321,7 @@ interface AppBindings {
   GetEndpoint(): Promise<Endpoint>;
   GetHostInfo(): Promise<HostInfo>;
   NewSession(req: NewSessionReq): Promise<NewSessionResp>;
+  NewSshSession(req: SSHConnectReq): Promise<NewSessionResp>;
   CloseSession(sessionID: string): Promise<void>;
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
@@ -466,6 +483,10 @@ export function getEndpoint(): Promise<Endpoint> {
 
 export function newSession(req: NewSessionReq): Promise<NewSessionResp> {
   return bindings().NewSession(req);
+}
+
+export function newSshSession(req: SSHConnectReq): Promise<NewSessionResp> {
+  return bindings().NewSshSession(req);
 }
 
 export function closeSession(sessionId: string): Promise<void> {

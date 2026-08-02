@@ -203,14 +203,6 @@ let pendingKeyboardScrollPosition: ScrollPosition | null = null;
 // showSoftKeyboard / hideSoftKeyboard (fresh cycle).
 let userScrolledDuringKeyboardCycle = false;
 
-// Manual touch → scrollTop bridge for xterm's known iOS/mobile bug: xterm
-// puts .xterm-viewport (the actual scrollable element) as a SIBLING of
-// .xterm-screen (the text render layer), and .xterm-screen sits on top. A
-// finger that lands on any rendered text therefore never reaches viewport,
-// so neither `touch-action: pan-y` nor a viewport-scoped touchmove listener
-// ever gets a chance to fire. Manually forwarding touchmove deltas into
-// viewport.scrollTop bypasses the stacking issue. See xterm.js #3613/#5377.
-let touchScrollLastY: number | null = null;
 
 const LONG_PRESS_MS = 500;
 const PRESS_JITTER_PX = 8;
@@ -337,39 +329,16 @@ function onViewportUserScrollIntent() {
   pendingKeyboardScrollPosition = null;
 }
 
-// touchmove is the only touch event guaranteed to reach a bubble-phase
-// listener on the .term wrapper — Vue's `@touchstart.capture="onTermTouchStart"`
-// calls stopPropagation, which prevents touchstart from continuing to
-// target / bubble when the finger lands on a child (.xterm-screen). So we
-// use touchmove's first-fire to initialize the anchor Y, subsequent fires
-// to compute delta, and touchend/touchcancel to clear.
-function onTerminalTouchMoveForScroll(event: TouchEvent) {
-  if (event.touches.length !== 1) {
-    touchScrollLastY = null;
-    return;
-  }
-  // Selection-drag path owns scroll while it's active (edge-scroll timers +
-  // popover placement expect single ownership).
-  if (selectionMode.value === "selecting" || selectionMode.value === "dragging") {
-    touchScrollLastY = null;
-    return;
-  }
-  const y = event.touches[0].clientY;
-  if (touchScrollLastY === null) {
-    touchScrollLastY = y;
-    return;
-  }
-  const viewport = terminalTouchViewport ?? termContainer.value?.querySelector<HTMLElement>(".xterm-viewport");
-  if (!viewport) return;
-  const dy = touchScrollLastY - y;
-  touchScrollLastY = y;
-  if (dy === 0) return;
-  viewport.scrollTop += dy;
+// Xterm 5.3 already handles touch scroll via Viewport.handleTouchStart +
+// handleTouchMove (both registered on the .xterm root). We only need to
+// signal user scroll intent so the soft-keyboard scroll-restore chain
+// (up to ~1.6 s of forced snap-to-bottom) stops fighting the user's swipe.
+// touchmove is the right signal (not touchstart — a plain tap to open the
+// keyboard shouldn't count as "scroll intent"). Selection-drag path is
+// unaffected because it also expresses itself through touchmove and its
+// scroll updates should also short-circuit the restore chain.
+function onTermTouchMoveForRestoreCancel() {
   onViewportUserScrollIntent();
-}
-
-function onTerminalTouchEndForScroll() {
-  touchScrollLastY = null;
 }
 
 function clearKeyboardScrollRestoreTimers() {
@@ -791,9 +760,16 @@ function onTermPointerDown(event: PointerEvent) {
 function onTermTouchStart(event: TouchEvent) {
   if (!shouldBlockTerminalTouchFocus(event)) return;
   lastBlockedTerminalTouchAt = Date.now();
-  event.stopPropagation();
   if (!softKeyboardOpen.value) return;
+  // stopPropagation is scoped to the "hide the on-screen keyboard" branch
+  // ONLY. Blanket stopPropagation here would also block xterm's own
+  // touchstart handler (registered on .xterm root, a descendant of .term),
+  // which is what initializes Viewport._lastTouchY — without it, the first
+  // touchmove computes a huge negative delta against 0 and scroll clamps
+  // to top, and the user sees "swipe does nothing until the second try."
+  // (xterm 5.3 Viewport.handleTouchStart / handleTouchMove.)
   event.preventDefault();
+  event.stopPropagation();
   hideSoftKeyboard();
 }
 
@@ -1397,17 +1373,10 @@ async function ensureTerm() {
   // scroll-restore on wheel too so wheel-scroll during the ~1.6 s window
   // isn't clobbered.
   terminalTouchViewport?.addEventListener("wheel", onViewportUserScrollIntent, { passive: true });
-  // Manual touch → scrollTop bridge lives on the .term wrapper (not on
-  // .xterm-viewport) because xterm's .xterm-screen sibling sits on top of
-  // the viewport in the stacking order, so touches landing on rendered text
-  // never reach the viewport. See touchScrollLastY comment above and
-  // xterm.js #3613. touchstart is skipped on purpose — Vue's
-  // @touchstart.capture on .term calls stopPropagation and would block a
-  // touchstart bubble handler on the same node when finger lands on a
-  // child; touchmove uses its first-fire to seed the anchor Y.
-  keyTarget.addEventListener("touchmove", onTerminalTouchMoveForScroll, { passive: true });
-  keyTarget.addEventListener("touchend", onTerminalTouchEndForScroll, { passive: true });
-  keyTarget.addEventListener("touchcancel", onTerminalTouchEndForScroll, { passive: true });
+  // touchmove on the .term wrapper signals "user is actually scrolling"
+  // (as opposed to tap-to-focus). Cancels the keyboard scroll-restore
+  // chain so it doesn't yank the user back to the bottom mid-swipe.
+  keyTarget.addEventListener("touchmove", onTermTouchMoveForRestoreCancel, { passive: true });
   imeInputTarget = term.element?.querySelector<HTMLTextAreaElement>("textarea") ?? null;
   syncTerminalInputMode();
   imeInputTarget?.addEventListener("input", onImeInput as EventListener, { capture: true });
@@ -1846,9 +1815,7 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);
   copyKeyTarget?.removeEventListener("pointerup", onSelectionPointerUp);
   copyKeyTarget?.removeEventListener("pointercancel", onSelectionPointerCancel);
-  copyKeyTarget?.removeEventListener("touchmove", onTerminalTouchMoveForScroll);
-  copyKeyTarget?.removeEventListener("touchend", onTerminalTouchEndForScroll);
-  copyKeyTarget?.removeEventListener("touchcancel", onTerminalTouchEndForScroll);
+  copyKeyTarget?.removeEventListener("touchmove", onTermTouchMoveForRestoreCancel);
   copyKeyTarget = null;
   terminalTouchViewport?.removeEventListener("touchmove", stopTerminalTouchMove);
   terminalTouchViewport?.removeEventListener("scroll", onSelectionViewportScroll);

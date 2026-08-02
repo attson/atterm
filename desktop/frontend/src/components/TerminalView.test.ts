@@ -276,39 +276,50 @@ describe("TerminalView web auxiliary keys", () => {
     // Fresh state per open/close cycle so a new tap after user scroll re-arms the snap.
     expect(source).toMatch(/function\s+showSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
     expect(source).toMatch(/function\s+hideSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
-    // Wheel on the viewport still cancels the restore (desktop); the touch
-    // path lives on termContainer via onTerminalTouchMoveForScroll, which
-    // also calls onViewportUserScrollIntent so mobile touch scrolls survive.
+    // Wheel on the viewport still cancels the restore (desktop). Mobile
+    // touch signal is now via onTermTouchMoveForRestoreCancel on .term
+    // (xterm owns the actual scroll; we only piggy-back the flag).
     expect(source).toContain('addEventListener("wheel", onViewportUserScrollIntent');
     expect(source).toContain('removeEventListener("wheel", onViewportUserScrollIntent');
-    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?onViewportUserScrollIntent\(\)/);
+    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel[\s\S]*?onViewportUserScrollIntent\(\)/);
   });
 
-  test("manual touch → viewport.scrollTop bridge routes around xterm's iOS stacking bug (#3613)", () => {
-    // xterm 5.x's .xterm-viewport is a SIBLING of .xterm-screen, and
-    // .xterm-screen sits on top in the stacking order — so touches landing
-    // on rendered text never reach the viewport, and neither
-    // `touch-action: pan-y` nor a viewport-scoped touchmove listener ever
-    // gets a chance to fire. We register the touch bridge on termContainer
-    // (which ancestors both) and forward the vertical delta into
-    // viewport.scrollTop ourselves.
-    expect(source).toContain("let touchScrollLastY: number | null = null;");
-    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?viewport\.scrollTop\s*\+=\s*dy/);
-    // Selection drag path owns scroll while it runs — the bridge must bail.
-    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?selectionMode\.value\s*===\s*"selecting"/);
-    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?selectionMode\.value\s*===\s*"dragging"/);
-    // touchmove uses its first fire to seed the anchor Y so we don't need a
-    // touchstart handler (which Vue's `@touchstart.capture` on .term
-    // would block via stopPropagation for touches on child elements).
-    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?if\s*\(\s*touchScrollLastY\s*===\s*null\s*\)\s*\{[\s\S]*?touchScrollLastY\s*=\s*y/);
+  test("onTermTouchStart stopPropagation is scoped to the keyboard-hide branch (so xterm's touchstart can init Viewport._lastTouchY)", () => {
+    // Regression root cause: a blanket stopPropagation on .term's
+    // @touchstart.capture blocks xterm's touchstart handler (registered on
+    // .xterm root, a descendant of .term) which is what initializes
+    // Viewport._lastTouchY. Without that init, xterm's touchmove computes
+    // deltaY against 0, produces a huge negative delta, clamps to scrollTop=0,
+    // and the user sees "swipe does nothing until the second try." The
+    // stopPropagation MUST live only inside the "soft keyboard is open,
+    // hide it" branch — otherwise every mobile swipe is dead until a
+    // second one lands. See xterm 5.3 Viewport.handleTouchStart.
+    const body = source.match(/function\s+onTermTouchStart\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    // Guard first, then keyboard-open check, THEN stopPropagation — flag
+    // the ordering explicitly so a well-meaning refactor can't hoist the
+    // stopPropagation back above the softKeyboardOpen check.
+    expect(body![0]).toMatch(/shouldBlockTerminalTouchFocus[\s\S]*?softKeyboardOpen\.value[\s\S]*?stopPropagation\(\)/);
+    // And there must be exactly one stopPropagation CALL in the body (i.e.,
+    // not an extra one hoisted above the keyboard check). Match `()` to
+    // ignore mentions in comments.
+    const stopCount = (body![0].match(/stopPropagation\(\)/g) || []).length;
+    expect(stopCount).toBe(1);
+  });
+
+  test("touchmove on .term forwards user scroll intent to the keyboard-restore cancel (letting xterm own actual scroll)", () => {
+    // Xterm 5.3 already handles the touchmove-to-scrollTop translation via
+    // Viewport.handleTouchMove on the .xterm root. We only piggy-back to
+    // set the userScrolledDuringKeyboardCycle flag so the ~1.6 s soft-
+    // keyboard restore chain stops fighting the user. No delta math, no
+    // scrollTop mutation here.
+    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel\s*\(\s*\)\s*\{[\s\S]*?onViewportUserScrollIntent\(\)[\s\S]*?\}/);
+    expect(source).toContain('keyTarget.addEventListener("touchmove", onTermTouchMoveForRestoreCancel');
+    expect(source).toContain('copyKeyTarget?.removeEventListener("touchmove", onTermTouchMoveForRestoreCancel');
+    // The earlier misdirected manual bridge is gone (would double-scroll).
+    expect(source).not.toContain("touchScrollLastY");
+    expect(source).not.toContain("onTerminalTouchMoveForScroll");
     expect(source).not.toContain("onTerminalTouchStartForScroll");
-    // Listener wiring on termContainer (keyTarget), with a matching cleanup.
-    expect(source).toContain('keyTarget.addEventListener("touchmove", onTerminalTouchMoveForScroll');
-    expect(source).toContain('keyTarget.addEventListener("touchend", onTerminalTouchEndForScroll');
-    expect(source).toContain('keyTarget.addEventListener("touchcancel", onTerminalTouchEndForScroll');
-    expect(source).toContain('copyKeyTarget?.removeEventListener("touchmove", onTerminalTouchMoveForScroll');
-    expect(source).toContain('copyKeyTarget?.removeEventListener("touchend", onTerminalTouchEndForScroll');
-    expect(source).toContain('copyKeyTarget?.removeEventListener("touchcancel", onTerminalTouchEndForScroll');
   });
 
   test("keeps the keyboard opening state stable across transient mobile blur", () => {

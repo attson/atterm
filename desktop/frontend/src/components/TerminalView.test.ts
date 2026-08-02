@@ -284,27 +284,28 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel[\s\S]*?onViewportUserScrollIntent\(\)/);
   });
 
-  test("onTermTouchStart stopPropagation is scoped to the keyboard-hide branch (so xterm's touchstart can init Viewport._lastTouchY)", () => {
-    // Regression root cause: a blanket stopPropagation on .term's
-    // @touchstart.capture blocks xterm's touchstart handler (registered on
-    // .xterm root, a descendant of .term) which is what initializes
-    // Viewport._lastTouchY. Without that init, xterm's touchmove computes
-    // deltaY against 0, produces a huge negative delta, clamps to scrollTop=0,
-    // and the user sees "swipe does nothing until the second try." The
-    // stopPropagation MUST live only inside the "soft keyboard is open,
-    // hide it" branch — otherwise every mobile swipe is dead until a
-    // second one lands. See xterm 5.3 Viewport.handleTouchStart.
+  test("onTermTouchStart NEVER stopPropagation — xterm's touchstart must always fire to init Viewport._lastTouchY", () => {
+    // Regression root cause: any stopPropagation on .term's
+    // @touchstart.capture blocks xterm's touchstart (registered on .xterm
+    // root, a descendant of .term) from firing on descendants. Xterm's
+    // touchstart is what sets Viewport._lastTouchY = ev.touches[0].pageY;
+    // without that init, the subsequent touchmove computes deltaY against
+    // 0 → huge negative → viewport.scrollTop clamped to 0 → user sees
+    // "first swipe does nothing." Even scoping stopPropagation to
+    // `softKeyboardOpen.value === true` isn't safe, because that computed
+    // includes `imeFocused.value`, which can be stale when iOS drops a
+    // blur event — the swipe silently dies on subsequent touches with no
+    // visible keyboard involvement. preventDefault alone suffices to
+    // stop the browser's default focus-into-IME, and xterm's touchstart
+    // is registered passive so it can't preventDefault anything.
     const body = source.match(/function\s+onTermTouchStart\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
     expect(body).not.toBeNull();
-    // Guard first, then keyboard-open check, THEN stopPropagation — flag
-    // the ordering explicitly so a well-meaning refactor can't hoist the
-    // stopPropagation back above the softKeyboardOpen check.
-    expect(body![0]).toMatch(/shouldBlockTerminalTouchFocus[\s\S]*?softKeyboardOpen\.value[\s\S]*?stopPropagation\(\)/);
-    // And there must be exactly one stopPropagation CALL in the body (i.e.,
-    // not an extra one hoisted above the keyboard check). Match `()` to
-    // ignore mentions in comments.
+    // Guard the hide-keyboard side still preventDefaults and hides.
+    expect(body![0]).toMatch(/preventDefault\(\)/);
+    expect(body![0]).toMatch(/hideSoftKeyboard\(\)/);
+    // NO stopPropagation calls anywhere in this function.
     const stopCount = (body![0].match(/stopPropagation\(\)/g) || []).length;
-    expect(stopCount).toBe(1);
+    expect(stopCount).toBe(0);
   });
 
   test("touchmove on .term forwards user scroll intent to the keyboard-restore cancel (letting xterm own actual scroll)", () => {
@@ -405,7 +406,12 @@ describe("TerminalView web auxiliary keys", () => {
     expect(touchBody![0]).toMatch(/shouldBlockTerminalTouchFocus\(event\)/);
     expect(touchBody![0]).toMatch(/lastBlockedTerminalTouchAt\s*=\s*Date\.now\(\)/);
     expect(touchBody![0]).toMatch(/event\.preventDefault\(\)/);
-    expect(touchBody![0]).toMatch(/event\.stopPropagation\(\)/);
+    // stopPropagation was intentionally removed — it blocked xterm's
+    // touchstart from initializing Viewport._lastTouchY, killing the first
+    // swipe. preventDefault alone stops the refocus, xterm's touchstart is
+    // passive (can't preventDefault) and is safe to let through. See the
+    // dedicated "onTermTouchStart NEVER stopPropagation" test above.
+    expect(touchBody![0]).not.toMatch(/event\.stopPropagation\(\)/);
     expect(touchBody![0]).toMatch(/hideSoftKeyboard\(\)/);
 
     const mouseBody = source.match(/function\s+onTermMouseDown\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);

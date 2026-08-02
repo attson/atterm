@@ -761,15 +761,19 @@ function onTermTouchStart(event: TouchEvent) {
   if (!shouldBlockTerminalTouchFocus(event)) return;
   lastBlockedTerminalTouchAt = Date.now();
   if (!softKeyboardOpen.value) return;
-  // stopPropagation is scoped to the "hide the on-screen keyboard" branch
-  // ONLY. Blanket stopPropagation here would also block xterm's own
-  // touchstart handler (registered on .xterm root, a descendant of .term),
-  // which is what initializes Viewport._lastTouchY — without it, the first
-  // touchmove computes a huge negative delta against 0 and scroll clamps
-  // to top, and the user sees "swipe does nothing until the second try."
-  // (xterm 5.3 Viewport.handleTouchStart / handleTouchMove.)
+  // preventDefault alone stops the default focus that would reopen the
+  // on-screen keyboard; hideSoftKeyboard blurs the IME textarea. We do NOT
+  // stopPropagation — xterm's own touchstart (registered on .xterm root,
+  // a descendant of .term) needs to fire so Viewport._lastTouchY is
+  // initialized against THIS touch's pageY. Without that init, xterm's
+  // subsequent touchmove computes delta against 0 and scroll clamps to
+  // top, and the user sees "first swipe does nothing." This path fires
+  // whenever softKeyboardOpen is true, which includes cases where iOS
+  // dropped a blur event and imeFocused is stale — so blanket
+  // stopPropagation here made those swipes intermittently dead too.
+  // Xterm's touchstart is passive (preventDefault a no-op there) and
+  // does not focus anything, so letting it through is safe.
   event.preventDefault();
-  event.stopPropagation();
   hideSoftKeyboard();
 }
 

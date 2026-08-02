@@ -265,24 +265,31 @@ describe("merged title bar", () => {
     expect(source).not.toContain('class="brand"');
   });
 
-  test("passes status, errorMsg, sessionCount, remoteEndpoint, availableRemoteCount, updateBadge props", () => {
+  test("passes status, errorMsg, sessionCount, remoteEndpoint props to TitleBar and updateBadge to TabBar", () => {
     expect(source).toContain(':status="status"');
     expect(source).toContain(':error-msg="errorMsg"');
     expect(source).toContain(':session-count="sessionCount"');
     expect(source).toContain(':remote-endpoint="remoteEndpoint"');
-    expect(source).toContain(':available-remote-count="availableRemote.length"');
     expect(source).toContain(':update-badge="updateBadge"');
+    // The removed titlebar remote-shortcut and its wiring must NOT reappear.
+    expect(source).not.toContain(':available-remote-count=');
+    expect(source).not.toContain('@open-remote=');
   });
 
-  test("wires open-remote and open-settings events", () => {
-    expect(source).toContain('@open-remote="openRemoteFromTitleBar"');
+  test("wires open-settings event", () => {
     expect(source).toContain('@open-settings="showSettings = true"');
   });
 
-  test("remote titlebar action expands the task sidebar instead of opening a remote dialog", () => {
-    expect(source).toContain("function openRemoteFromTitleBar");
-    expect(source).toContain("setSidebarCollapsedAndPersist(false)");
-    expect(source).not.toContain("showRemote");
+  test("sessionCount reflects the sidebar total, not just tab-attached sessions", () => {
+    // Was: allUsedSessionIds.value.size (tab-attached only, undercount).
+    // Now: sessions.all — matches what the user tallies from the host
+    // group headers in the sidebar.
+    expect(source).toMatch(/const\s+sessionCount\s*=\s*computed\(\(\)\s*=>\s*sessions\.all\.value\.length\)/);
+  });
+
+  test("titlebar remote-shortcut helper is gone (button removed; sidebar host groups are the entry point)", () => {
+    expect(source).not.toContain("function openRemoteFromTitleBar");
+    expect(source).not.toContain("setSidebarCollapsedAndPersist(false)");
   });
 });
 

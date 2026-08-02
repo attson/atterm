@@ -86,8 +86,6 @@ export const zhCN = {
     tabDisconnectedSuffix: "(已断开)",
     closePaneTitle: "关闭面板 (Cmd+W / Ctrl+W)",
     remoteViewerWatching: "{count} 个远端查看者正在观看",
-    remoteSessionsAvailable: "{count} 个远端会话可用",
-    connectRelayForRemote: "连接 relay 后可查看远端会话",
     relaySettings: "relay 设置",
     adminPanel: "管理面板",
     newTab: "新建标签页",

@@ -184,10 +184,6 @@ function requestCloseSession(s: RemoteSession) {
   openCloseSessionConfirm([s], () => onSidebarClose(s));
 }
 
-function openRemoteFromTitleBar() {
-  void setSidebarCollapsedAndPersist(false);
-}
-
 async function onMarkSeen(payload: MarkSessionsSeenOpts) {
   try {
     await markSessionsSeen(payload);
@@ -606,10 +602,6 @@ const allUsedSessionIds = computed(() => {
   return s;
 });
 const openSessionIds = computed(() => Array.from(allUsedSessionIds.value));
-
-const availableRemote = computed<SessionInfo[]>(() =>
-  remoteList.value.filter((r) => !allUsedSessionIds.value.has(r.id)),
-);
 
 function endpointFor(pane: Pane): Endpoint | null {
   return pane.remote ? remoteEndpoint.value : localEndpoint.value;
@@ -1426,7 +1418,12 @@ const tabSummaries = computed(() =>
   }),
 );
 
-const sessionCount = computed(() => allUsedSessionIds.value.size);
+// Total known sessions across every host the sidebar aggregates — local +
+// remote (relay wins on ID collision, so shared sessions aren't
+// double-counted). Matches what the user sees when they scan the host
+// groups in the sidebar; the tab count is a separate concept (see
+// tabs.length) and does not belong here.
+const sessionCount = computed(() => sessions.all.value.length);
 
 const localSessionCount = computed(() => {
   let n = 0;
@@ -1852,10 +1849,8 @@ defineExpose({ me });
       :error-msg="errorMsg"
       :session-count="sessionCount"
       :remote-endpoint="remoteEndpoint"
-      :available-remote-count="availableRemote.length"
       :current-title="currentTitleForBar"
       :current-task-state="currentTaskStateForBar"
-      @open-remote="openRemoteFromTitleBar"
     />
     <PasteImagePreviewHost />
     <PasteFilePreviewHost />

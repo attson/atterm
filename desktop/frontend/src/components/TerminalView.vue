@@ -102,6 +102,12 @@ const pasteConfirmText = ref("");
 // look like driver mode (no overlay) yet have every IN frame dropped by the
 // relay, stranding the user with no way to type and no hint to take control.
 const isDriver = ref(props.isLocalSession ?? true);
+// Ref to the viewer-overlay's "Take control" button. Focused whenever the
+// overlay appears in an active pane so the browser's native Space/Enter →
+// button-click handles takeover. Without this, viewer mode blurs the IME
+// textarea (see syncTerminalInputMode) and focus falls to document.body —
+// the .term-container keydown listener never fires and Space appears dead.
+const takeControlBtnRef = ref<HTMLButtonElement | null>(null);
 const ptyCols = ref<number | null>(null);
 const ptyRows = ref<number | null>(null);
 // driverHostname is the human-readable name of whoever currently holds the
@@ -1388,6 +1394,7 @@ function startConnection() {
         syncTerminalInputMode();
         applyViewerSize();
         if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
+        if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
         if (wasDriver !== isMe) {
           emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
         }
@@ -1846,7 +1853,7 @@ watch(
         <div class="viewer-overlay-title">{{ t("terminal.remoteHasTakenControl") }}</div>
         <div v-if="driverHostname" class="viewer-overlay-host">{{ t("terminal.byHost", { host: driverHostname }) }}</div>
         <div class="viewer-overlay-hint">{{ t("terminal.pressSpaceToTakeBack") }}</div>
-        <button class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">{{ t("terminal.takeControl") }}</button>
+        <button ref="takeControlBtnRef" class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">{{ t("terminal.takeControl") }}</button>
       </div>
     </div>
     <Teleport to="body">

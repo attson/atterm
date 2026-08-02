@@ -11,6 +11,7 @@ import AdminPanel from "./components/AdminPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import NewSshDialog from "./components/NewSshDialog.vue";
+import SshHostsPanel from "./components/SshHostsPanel.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import ConfirmCloseSessionDialog from "./components/ConfirmCloseSessionDialog.vue";
 import RecoveryDialog from "./components/RecoveryDialog.vue";
@@ -225,6 +226,7 @@ watch(isAdmin, (v) => {
 
 const quitDialogOpen = ref(false);
 const showSshDialog = ref(false);
+const showSshHosts = ref(false);
 const pendingCloseSession = ref<RemoteSession | null>(null);
 const pendingCloseSessions = ref<RemoteSession[]>([]);
 let pendingCloseAction: (() => void | Promise<void>) | null = null;
@@ -1029,6 +1031,7 @@ function openSshTab(sessionId: string) {
 
 function onSshConnected(sessionId: string) {
   showSshDialog.value = false;
+  showSshHosts.value = false;
   openSshTab(sessionId);
 }
 
@@ -1933,7 +1936,7 @@ defineExpose({ me });
       @activate="gotoTab"
       @close="requestCloseTab"
       @new="startNewTab"
-      @new-ssh="showSshDialog = true"
+      @new-ssh="showSshHosts = true"
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
       @toggle-admin="adminViewOpen = !adminViewOpen"
@@ -2049,6 +2052,11 @@ defineExpose({ me });
       v-if="showSshDialog"
       @connected="onSshConnected"
       @cancel="showSshDialog = false"
+    />
+    <SshHostsPanel
+      v-if="showSshHosts"
+      @connected="onSshConnected"
+      @close="showSshHosts = false"
     />
     <ConfirmQuitDialog
       v-if="quitDialogOpen"

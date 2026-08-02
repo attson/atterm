@@ -334,8 +334,19 @@ func (h *relayHost) SetFeishuRemoteTermState(fn func(ctx context.Context) (bool,
 	h.feishuRemoteTermState = fn
 }
 
+// sessionPTY is the minimal contract activeSession needs from whatever backs
+// a session — a local PTY (*ptyhost.Host) or an SSH remote shell
+// (*sshclient.Session, via sshPtyHost). Both satisfy it. Resize's signature
+// matches *ptyhost.Host so the local path is unchanged.
+type sessionPTY interface {
+	Read(p []byte) (int, error)
+	Write(p []byte) (int, error)
+	Resize(cols, rows uint16) error
+	Close() error
+}
+
 type activeSession struct {
-	host     *ptyhost.Host
+	host     sessionPTY
 	cleanup  func()
 	restored bool // true when NewSession was invoked with AIKind set (recovery path)
 }

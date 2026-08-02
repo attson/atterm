@@ -17,8 +17,12 @@ func testAccountKey(t *testing.T) []byte {
 
 func TestSealOpenSSHHostsRoundTrip(t *testing.T) {
 	key := testAccountKey(t)
-	hosts := []SSHHost{{ID: "1", Host: "h", User: "u", AuthKind: "password", Alias: "box"}}
-	creds := map[string]sshCredential{"1": {Password: "secret-pw"}}
+	// Long, unmistakable canaries so the leakage assertions can't collide
+	// with random base64 output (a short value like "box" would be flaky).
+	const canaryAlias = "CANARY-alias-do-not-leak-abcdef"
+	const canaryPW = "CANARY-secret-password-do-not-leak-0123456789"
+	hosts := []SSHHost{{ID: "1", Host: "h", User: "u", AuthKind: "password", Alias: canaryAlias}}
+	creds := map[string]sshCredential{"1": {Password: canaryPW}}
 
 	blob, err := sealSSHHosts(key, hosts, creds)
 	if err != nil {
@@ -27,7 +31,7 @@ func TestSealOpenSSHHostsRoundTrip(t *testing.T) {
 	if blob == nil {
 		t.Fatal("expected ciphertext, got nil")
 	}
-	if strings.Contains(string(blob), "secret-pw") || strings.Contains(string(blob), "box") {
+	if strings.Contains(string(blob), canaryPW) || strings.Contains(string(blob), canaryAlias) {
 		t.Fatalf("plaintext leaked into sealed blob: %s", blob)
 	}
 
@@ -35,10 +39,10 @@ func TestSealOpenSSHHostsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openSSHHosts: %v", err)
 	}
-	if len(gotHosts) != 1 || gotHosts[0].ID != "1" || gotHosts[0].Alias != "box" {
+	if len(gotHosts) != 1 || gotHosts[0].ID != "1" || gotHosts[0].Alias != canaryAlias {
 		t.Fatalf("hosts mismatch: %+v", gotHosts)
 	}
-	if gotCreds["1"].Password != "secret-pw" {
+	if gotCreds["1"].Password != canaryPW {
 		t.Fatalf("cred mismatch: %+v", gotCreds)
 	}
 }

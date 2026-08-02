@@ -92,7 +92,10 @@ func TestAdapterSSHHostsEncryptedRoundTrip(t *testing.T) {
 	}
 	a.accountKey = key
 
-	h, err := a.AddSSHHost(SSHHost{Host: "h", User: "u", AuthKind: "password"}, sshCredential{Password: "pw"})
+	// canaryPW is a long, unmistakable secret. A short value like "pw" would
+	// collide with random base64 output, making the leakage assertion flaky.
+	const canaryPW = "CANARY-secret-password-do-not-leak-0123456789"
+	h, err := a.AddSSHHost(SSHHost{Host: "h", User: "u", AuthKind: "password"}, sshCredential{Password: canaryPW})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +106,10 @@ func TestAdapterSSHHostsEncryptedRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ReadValue ok with account key")
 	}
-	if strings.Contains(string(val), "pw") || strings.Contains(string(val), h.ID) {
-		t.Fatalf("plaintext leaked: %s", val)
+	// The sealed value the relay would see must not contain the plaintext
+	// secret — that is the whole point of E2EE sync.
+	if strings.Contains(string(val), canaryPW) {
+		t.Fatalf("plaintext secret leaked into sealed value: %s", val)
 	}
 
 	cfg := cs.Get()
@@ -119,7 +124,7 @@ func TestAdapterSSHHostsEncryptedRoundTrip(t *testing.T) {
 		t.Fatalf("hosts not restored: %+v", got)
 	}
 	raw, err := safekeyring.Get(sshCredentialService(), h.ID)
-	if err != nil || !strings.Contains(raw, "pw") {
+	if err != nil || !strings.Contains(raw, canaryPW) {
 		t.Fatalf("credential not restored: %v %q", err, raw)
 	}
 }

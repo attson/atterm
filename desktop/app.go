@@ -79,6 +79,36 @@ type NewSessionResp struct {
 	SessionID string `json:"session_id"`
 }
 
+// SSHConnectReq describes one SSH connection request from the frontend.
+// Credentials are used for this connection only and never persisted (slice 1).
+type SSHConnectReq struct {
+	Host       string `json:"host"`
+	Port       string `json:"port,omitempty"`
+	User       string `json:"user"`
+	AuthKind   string `json:"auth_kind"` // "password" | "privateKey"
+	Password   string `json:"password,omitempty"`
+	PrivateKey string `json:"private_key,omitempty"` // PEM content (pasted or file-read)
+	Passphrase string `json:"passphrase,omitempty"`
+	Cols       uint16 `json:"cols,omitempty"`
+	Rows       uint16 `json:"rows,omitempty"`
+	// AcceptHostKey is set on a retry after the user confirmed an unknown
+	// host fingerprint in the TOFU dialog.
+	AcceptHostKey bool `json:"accept_host_key,omitempty"`
+}
+
+// errCodeHostKeyUnknown is the error string carried by HostKeyUnknownError so
+// the frontend can recognize the TOFU case and re-issue with AcceptHostKey.
+const errCodeHostKeyUnknown = "ssh_host_key_unknown"
+
+// HostKeyUnknownError carries the fingerprint so the frontend can show the
+// TOFU dialog and retry with AcceptHostKey=true.
+type HostKeyUnknownError struct {
+	Fingerprint string
+	Host        string
+}
+
+func (e *HostKeyUnknownError) Error() string { return errCodeHostKeyUnknown }
+
 // HostInfo describes this machine. The frontend uses HostID to dedupe
 // remote-relay session listings (sessions whose host_id matches us are
 // just mirrors of our own and are reachable through the local mini-relay).

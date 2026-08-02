@@ -11,6 +11,7 @@ import FileEditor from "./FileEditor.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import { openPath, closeTab, setViewMode, setDirty, type TabsState } from "./tabsModel";
 import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
+import { useFileRevealStore } from "./fileReveal";
 import { createRemoteSessionFS } from "./remoteSessionFS";
 import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
@@ -117,6 +118,25 @@ onBeforeUnmount(() => {
   fs.value?.dispose?.();
   fs.value = null;
 });
+
+const fileRevealStore = useFileRevealStore();
+const fileTreeRef = ref<{ revealPath: (p: string) => Promise<boolean> } | null>(null);
+
+// Consume a reveal request from the terminal: expand/select the path in the
+// tree and, when it's a file, open a preview tab.
+watch(
+  () => fileRevealStore.pending,
+  async (p) => {
+    if (!p || !fs.value) return;
+    await nextTick(); // let the tree mount if the panel just opened
+    const isFile = (await fileTreeRef.value?.revealPath(p)) ?? false;
+    if (isFile) {
+      tabsState.value = openPath(tabsState.value, p, "preview");
+    }
+    fileRevealStore.consume();
+  },
+  { immediate: true },
+);
 
 function onFileClick(path: string) {
   tabsState.value = openPath(tabsState.value, path, "preview");
@@ -229,11 +249,13 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
         <div class="tree-scroll">
           <FileTree
             v-if="root && fs"
+            ref="fileTreeRef"
             :key="fsGeneration"
             :fs="fs"
             :root="root"
             :show-hidden="showHidden"
             :search-query="fileNameSearch"
+            :context="context"
             @file-clicked="onFileClick"
             @file-double-clicked="onFileDoubleClick"
           />

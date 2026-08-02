@@ -1,9 +1,26 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
+import { ref, computed } from "vue";
 import FileTree from "./FileTree.vue";
 import { __setPlatformForTests } from '../../platform';
 import { createFakePlatform } from '../../platform/__tests__/_fakePlatform';
 import { createLocalFSBridge, type FileSystemBridge } from "./fsBridge";
+import type { PluginContext } from "../types";
+
+function makeStubContext(overrides: Partial<PluginContext> = {}): PluginContext {
+  return {
+    activePane: ref(null),
+    activeSessionId: computed(() => null),
+    activeIsRemote: computed(() => false),
+    activeSessionConnection: computed(() => null),
+    activeEndpoint: computed(() => null),
+    activeCwd: computed(() => "/proj"),
+    terminalThemeId: computed(() => "classic"),
+    send: vi.fn(),
+    showToast: vi.fn(),
+    ...overrides,
+  };
+}
 
 let platform: ReturnType<typeof createFakePlatform>;
 let fs: FileSystemBridge;
@@ -398,5 +415,98 @@ describe("FileTree context menu + CRUD", () => {
     await flushPromises();
     // hard-delete confirmation now open
     expect(w.find('[data-test="btn-hard"]').exists()).toBe(true);
+  });
+});
+
+describe("FileTree — path actions", () => {
+  it("context menu 'send to terminal' calls context.send with the node path", async () => {
+    const context = makeStubContext();
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false, context } });
+    await flushPromises();
+    const readme = w.findAll(".node").find((n) => n.text().includes("README.md"))!;
+    await readme.trigger("contextmenu");
+    const sendBtn = w.find('[data-test="menu-send-to-terminal"]');
+    expect(sendBtn.exists()).toBe(true);
+    await sendBtn.trigger("click");
+    expect(context.send).toHaveBeenCalledWith("/proj/README.md");
+  });
+
+  it("context menu 'copy path' writes the node path and toasts", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const context = makeStubContext();
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false, context } });
+    await flushPromises();
+    const readme = w.findAll(".node").find((n) => n.text().includes("README.md"))!;
+    await readme.trigger("contextmenu");
+    await w.find('[data-test="menu-copy-path"]').trigger("click");
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith("/proj/README.md");
+    expect(context.showToast).toHaveBeenCalled();
+  });
+
+  it("Ctrl-C copies the selected file path to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const context = makeStubContext();
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false, context } });
+    await flushPromises();
+    const readme = w.findAll(".node").find((n) => n.text().includes("README.md"))!;
+    await readme.trigger("click"); // sets selectedPath
+    await w.find(".tree-wrap").trigger("keydown", { key: "c", ctrlKey: true });
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith("/proj/README.md");
+  });
+
+  it("Ctrl-C does nothing when no file is selected", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const context = makeStubContext();
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false, context } });
+    await flushPromises();
+    await w.find(".tree-wrap").trigger("keydown", { key: "c", ctrlKey: true });
+    await flushPromises();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
+describe("FileTree — revealPath", () => {
+  beforeEach(() => {
+    (platform.pluginHost!.fs.listDir as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+      if (path === "/proj") return [{ name: "src", isDir: true }, { name: "README.md", isDir: false }];
+      if (path === "/proj/src") return [{ name: "app.ts", isDir: false }, { name: "sub", isDir: true }];
+      return [];
+    });
+  });
+
+  it("expands ancestors and selects a nested file, returning true", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/proj/src/app.ts");
+    await flushPromises();
+    expect(isFile).toBe(true);
+    const names = w.findAll(".node-name").map((n) => n.text());
+    expect(names).toContain("app.ts");
+  });
+
+  it("returns false for a directory path", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/proj/src");
+    expect(isFile).toBe(false);
+  });
+
+  it("returns false for a path outside the root subtree", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/other/x.ts");
+    expect(isFile).toBe(false);
+  });
+
+  it("returns false for a non-existent nested path", async () => {
+    const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
+    await flushPromises();
+    const isFile = await (w.vm as any).revealPath("/proj/src/missing.ts");
+    expect(isFile).toBe(false);
   });
 });

@@ -168,9 +168,32 @@ export function cellInLink(
   return col >= cellStart[m.start] && col < cellStart[m.end];
 }
 
-export function isModClickEvent(e: MouseEvent, isMac: boolean): boolean {
+export interface PointerPos {
+  x: number;
+  y: number;
+}
+
+const DRAG_THRESHOLD_PX = 5;
+
+/**
+ * Decide whether a click on a detected link should open it. A plain click opens
+ * the link (single-click to open); shift/alt clicks never open (reserved for
+ * selection); and a click preceded by a mousedown that moved more than
+ * DRAG_THRESHOLD_PX is treated as a text drag-select, not an activation. isMac
+ * is currently unused but kept for signature stability / future per-OS tweaks.
+ */
+export function shouldActivateLink(
+  e: Pick<MouseEvent, "shiftKey" | "altKey" | "clientX" | "clientY">,
+  downPos: PointerPos | null,
+  _isMac: boolean,
+): boolean {
   if (e.shiftKey || e.altKey) return false;
-  return isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  if (downPos) {
+    const dx = e.clientX - downPos.x;
+    const dy = e.clientY - downPos.y;
+    if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) return false;
+  }
+  return true;
 }
 
 export function normalizeForOpen(
@@ -185,4 +208,63 @@ export function normalizeForOpen(
     return `file://${home}${t.slice(1)}`;
   }
   return `file://${t}`;
+}
+
+/** A buffer line that also reports xterm's soft-wrap flag. */
+export interface WrappedLineLike {
+  isWrapped: boolean;
+  getCell(x: number): CellLike | undefined;
+}
+
+/** Minimal slice of xterm's active buffer the logical-line mapper needs. */
+export interface BufferLike {
+  getLine(y: number): WrappedLineLike | undefined;
+}
+
+export interface MappedLogicalLine {
+  /** Joined visible text across all soft-wrapped physical rows. */
+  text: string;
+  /** cellStart[i] = 0-based cell column within its physical row for text[i]. */
+  cellStart: number[];
+  /** cellY[i] = 0-based physical row index (0 = firstY) for text[i]. */
+  cellY: number[];
+  /** Number of physical rows this logical line spans. */
+  rowCount: number;
+}
+
+/**
+ * Walk a soft-wrapped logical line starting at physical row firstY, joining each
+ * continuation row (the row whose isWrapped is true) into one string while
+ * recording, per character, its cell column and which physical row it lands on.
+ * Stops at the first non-wrapped continuation or after maxRows rows.
+ */
+export function mapWrappedLogicalLine(
+  buffer: BufferLike,
+  firstY: number,
+  cols: number,
+  maxRows: number,
+): MappedLogicalLine {
+  let text = "";
+  const cellStart: number[] = [];
+  const cellY: number[] = [];
+  let rowCount = 0;
+  for (let row = 0; row < maxRows; row++) {
+    const line = buffer.getLine(firstY + row);
+    if (!line) break;
+    if (row > 0 && !line.isWrapped) break; // next row is a hard line, stop
+    rowCount = row + 1;
+    for (let x = 0; x < cols; x++) {
+      const cell = line.getCell(x);
+      if (!cell) continue;
+      const width = cell.getWidth();
+      if (width === 0) continue;
+      const chars = cell.getChars() || " ";
+      for (let k = 0; k < chars.length; k++) {
+        cellStart.push(x);
+        cellY.push(row);
+      }
+      text += chars;
+    }
+  }
+  return { text, cellStart, cellY, rowCount };
 }

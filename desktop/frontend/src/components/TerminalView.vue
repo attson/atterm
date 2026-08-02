@@ -33,7 +33,7 @@ import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/fo
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
 import { useTerminalLinkProvider } from "../composables/useTerminalLinkProvider";
-import { cellInLink, detectLinks, isModClickEvent, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
+import { cellInLink, detectLinks, shouldActivateLink, mapBufferLineCells, normalizeForOpen, type LinkMatch } from "../lib/terminalLinks";
 import { cellCoordsAt, readXtermCellSize } from "../lib/terminalCellCoords";
 import { wordBoundaryAt } from "../lib/wordBoundary";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
@@ -44,6 +44,7 @@ import { useI18n } from "../i18n/useI18n";
 import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
 import { effectiveAuxKeys, type AuxKey } from "../lib/auxKeys";
 import { usePlatform } from "../platform";
+import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
 
 const props = withDefaults(
@@ -135,6 +136,7 @@ const selectionPopover = ref({
   sending: false,
 });
 const platform = usePlatform();
+const fileRevealStore = useFileRevealStore();
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -169,6 +171,9 @@ const menuLinkHit = ref<LinkMatch | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let linkProviderDisposer: { dispose(): void } | null = null;
 let cachedHomeDir = "";
+// Press origin of the most recent left mousedown on the terminal grid, used to
+// distinguish a plain link click from the end of a drag-select in mouseup.
+let linkClickDownPos: { x: number; y: number } | null = null;
 let copyKeyTarget: HTMLDivElement | null = null;
 let imeInputTarget: HTMLTextAreaElement | null = null;
 let terminalTouchViewport: HTMLElement | null = null;
@@ -711,6 +716,10 @@ function onTermTouchStart(event: TouchEvent) {
 }
 
 function onTermMouseDown(event: MouseEvent) {
+  // Record the press origin so onTerminalMouseUp can tell a plain click on a
+  // link from the tail of a drag-select. Done before any early return so it
+  // runs on desktop (wails/localPty) too.
+  if (event.button === 0) linkClickDownPos = { x: event.clientX, y: event.clientY };
   if (platform.caps.wailsBindings || platform.caps.localPty) return;
   if (Date.now() - lastBlockedTerminalTouchAt > TOUCH_COMPAT_MOUSE_BLOCK_MS) return;
   event.preventDefault();
@@ -1067,7 +1076,31 @@ async function onMenuOpenLink() {
   await openLinkMatch(hit);
 }
 
+// Resolve a detected path/file match to an absolute local path, or null when a
+// ~/ path can't be resolved (no cached home).
+function localPathFromMatch(hit: LinkMatch): string | null {
+  const raw = hit.text;
+  if (hit.kind === "file") return raw.startsWith("file://") ? raw.slice("file://".length) : raw;
+  if (raw.startsWith("/")) return raw;
+  if (raw.startsWith("~/") || raw === "~/") {
+    if (!cachedHomeDir) return null;
+    const home = cachedHomeDir.replace(/\/+$/, "");
+    return home + raw.slice(1);
+  }
+  return null;
+}
+
 async function openLinkMatch(hit: LinkMatch) {
+  // Local file/path links reveal in the file explorer instead of opening an
+  // external app; http(s) links still go to the browser.
+  if (hit.kind === "path" || hit.kind === "file") {
+    const abs = localPathFromMatch(hit);
+    if (abs) {
+      fileRevealStore.request(abs);
+      return;
+    }
+    // ~/ with no cached home: fall through to the file:// error path below.
+  }
   const url = normalizeForOpen(hit, cachedHomeDir);
   if (!url) {
     emit("toast", t("terminal.link.openFailedNoHome"));
@@ -1083,7 +1116,10 @@ async function openLinkMatch(hit: LinkMatch) {
 
 function onTerminalMouseUp(e: MouseEvent) {
   if (e.button !== 0) return;
-  if (!isModClickEvent(e, isMac)) return;
+  // Plain click opens the link; a click that ended a drag-select (pointer moved
+  // past the threshold) or held shift/alt does not. Mirrors the xterm link
+  // provider's activate() judgment via the shared shouldActivateLink().
+  if (!shouldActivateLink(e, linkClickDownPos, isMac)) return;
   const hit = computeLinkHit(e);
   if (!hit) return;
   e.preventDefault();
@@ -1346,7 +1382,7 @@ async function ensureTerm() {
     term,
     isMac,
     getHomeDir: () => cachedHomeDir,
-    openURL: (u) => platform.system.openExternalURL(u),
+    openLink: (m) => openLinkMatch(m),
     onError: (key) => emit("toast", t(key)),
   });
 

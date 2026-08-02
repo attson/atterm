@@ -15,6 +15,7 @@
 /mobile/ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
 .superpowers/
 .worktrees/
+.workflow-plan/
 
 # Local-only artefacts that should never be committed
 /atterm-relay

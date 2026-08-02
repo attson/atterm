@@ -1,9 +1,12 @@
 <script lang="ts" setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import FileTreeNode from "./FileTreeNode.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import type { FileSystemBridge } from "./fsBridge";
 import { searchFileNames, type FileNameSearchResult } from "./fileNameSearch";
+import { fallbackCopyText } from "../../lib/terminalCopy";
+import { quoteForShell } from "./shellQuote";
+import type { PluginContext } from "../types";
 import { useI18n } from "../../i18n/useI18n";
 
 const { t } = useI18n();
@@ -28,6 +31,7 @@ const props = defineProps<{
   root: string;
   showHidden: boolean;
   searchQuery?: string;
+  context?: PluginContext;
 }>();
 
 const emit = defineEmits<{
@@ -65,11 +69,44 @@ function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
 
 function closeMenu() { menu.value = null; }
 
-async function onMenuAction(action: "newFile" | "newFolder" | "rename" | "delete") {
+async function copyPathToClipboard(path: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(path);
+    } else if (!fallbackCopyText(path)) {
+      return;
+    }
+    props.context?.showToast?.(t("plugins.fileExplorer.pathCopied"));
+  } catch (err) {
+    console.warn("file-explorer: copy path failed", err);
+  }
+}
+
+function onTreeKeydown(e: KeyboardEvent) {
+  const isCopyKey = e.key === "c" || e.key === "C";
+  if (!isCopyKey || e.altKey || e.shiftKey) return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  if (!selectedPath.value) return;
+  e.preventDefault();
+  void copyPathToClipboard(selectedPath.value);
+}
+
+async function onMenuAction(
+  action: "newFile" | "newFolder" | "rename" | "delete" | "copyPath" | "sendToTerminal",
+) {
   const anchor = menu.value;
   menu.value = null;
   if (!anchor) return;
   const node = anchor.node;
+  if (action === "copyPath") {
+    await copyPathToClipboard(node.path);
+    return;
+  }
+  if (action === "sendToTerminal") {
+    props.context?.send?.(quoteForShell(node.path));
+    return;
+  }
   if (action === "newFile" || action === "newFolder") {
     const parentPath = node.isDir ? node.path : parentDir(node.path);
     const parentLevel = node.isDir ? anchor.level + 1 : anchor.level;
@@ -439,11 +476,55 @@ function dblClickSearchResult(result: FileNameSearchResult) {
   emit("file-double-clicked", result.path);
 }
 
-defineExpose({ refresh: startGeneration });
+// Minimal CSS attribute-selector escaper for the title lookup in revealPath.
+function cssEscape(s: string): string {
+  return s.replace(/["\\]/g, "\\$&");
+}
+
+function ancestorChain(root: string, path: string): string[] {
+  // Directory paths from just-below-root down to the parent of `path`, e.g.
+  // root=/proj, path=/proj/a/b/c.ts -> ["/proj/a", "/proj/a/b"].
+  const base = root.endsWith("/") ? root.slice(0, -1) : root;
+  if (path === base || !path.startsWith(base + "/")) return [];
+  const rest = path.slice(base.length + 1);
+  const parts = rest.split("/");
+  const dirs: string[] = [];
+  let cur = base;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = cur + "/" + parts[i];
+    dirs.push(cur);
+  }
+  return dirs;
+}
+
+/**
+ * Expand every ancestor directory of `path` (lazily loading children via
+ * toggle) and select it. Returns true only when `path` is an existing *file*
+ * inside the current root subtree; false for a directory, a missing entry, or
+ * a path outside the root.
+ */
+async function revealPath(path: string): Promise<boolean> {
+  const base = props.root.endsWith("/") ? props.root.slice(0, -1) : props.root;
+  if (path !== base && !path.startsWith(base + "/")) return false;
+  for (const dir of ancestorChain(props.root, path)) {
+    const node = findNode(rootNodes.value, dir);
+    if (!node) return false;
+    if (!node.expanded) await toggle(node);
+  }
+  const target = findNode(rootNodes.value, path);
+  if (!target) return false;
+  selectedPath.value = path;
+  await nextTick();
+  const el = document.querySelector<HTMLElement>(`.node[title="${cssEscape(path)}"]`);
+  el?.scrollIntoView?.({ block: "nearest" });
+  return !target.isDir;
+}
+
+defineExpose({ refresh: startGeneration, revealPath });
 </script>
 
 <template>
-  <div class="tree-wrap" @click="closeMenu">
+  <div class="tree-wrap" tabindex="0" @click="closeMenu" @keydown="onTreeKeydown">
     <div v-if="normalizedSearchQuery" class="search-results" data-test="file-search-results">
       <div v-if="searchLoading" class="search-status">{{ t("common.loading") }}</div>
       <div v-else-if="searchResults.length === 0" class="search-status">
@@ -491,6 +572,8 @@ defineExpose({ refresh: startGeneration });
       <button data-test="menu-new-file" @click="onMenuAction('newFile')">{{ t("plugins.fileExplorer.newFile") }}</button>
       <button data-test="menu-new-folder" @click="onMenuAction('newFolder')">{{ t("plugins.fileExplorer.newFolder") }}</button>
       <button data-test="menu-rename" @click="onMenuAction('rename')">{{ t("plugins.fileExplorer.rename") }}</button>
+      <button data-test="menu-copy-path" @click="onMenuAction('copyPath')">{{ t("plugins.fileExplorer.copyPath") }}</button>
+      <button data-test="menu-send-to-terminal" @click="onMenuAction('sendToTerminal')">{{ t("plugins.fileExplorer.sendToTerminal") }}</button>
       <button data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
     </div>
     <ConfirmDialog
@@ -506,6 +589,7 @@ defineExpose({ refresh: startGeneration });
 
 <style scoped>
 .tree-wrap { position: relative; height: 100%; }
+.tree-wrap:focus { outline: none; }
 .search-results {
   display: flex;
   flex-direction: column;

@@ -17,7 +17,7 @@ function isCopyKey(e: Pick<KeyboardEvent, "code" | "key">): boolean {
   return e.code === "KeyC" || e.key.toLowerCase() === "c";
 }
 
-function fallbackCopyText(text: string): boolean {
+export function fallbackCopyText(text: string): boolean {
   if (typeof document === "undefined") return false;
   const textarea = document.createElement("textarea");
   textarea.value = text;

@@ -56,6 +56,7 @@ var syncedKeys = []string{
 	"command_notify_threshold_seconds",
 	"shell_integration_enabled",
 	"pinned_session_ids",
+	"ssh_hosts_encrypted",
 }
 
 // SyncedKeys returns the canonical list of keys this engine syncs.

@@ -271,8 +271,8 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toContain("let userScrolledDuringKeyboardCycle = false;");
     expect(source).toMatch(/function\s+onViewportUserScrollIntent\s*\([^)]*\)\s*\{[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*true[\s\S]*?clearKeyboardScrollRestoreTimers\(\)[\s\S]*?pendingKeyboardScrollPosition\s*=\s*null[\s\S]*?\}/);
     // Both scroll-forcing paths must bail on the flag.
-    expect(source).toMatch(/function\s+scrollToBottomForKeyboardOpen[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)\s*return/);
-    expect(source).toMatch(/function\s+applyScrollPosition[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)\s*return/);
+    expect(source).toMatch(/function\s+scrollToBottomForKeyboardOpen[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)/);
+    expect(source).toMatch(/function\s+applyScrollPosition[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)/);
     // Fresh state per open/close cycle so a new tap after user scroll re-arms the snap.
     expect(source).toMatch(/function\s+showSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
     expect(source).toMatch(/function\s+hideSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
@@ -281,7 +281,7 @@ describe("TerminalView web auxiliary keys", () => {
     // (xterm owns the actual scroll; we only piggy-back the flag).
     expect(source).toContain('addEventListener("wheel", onViewportUserScrollIntent');
     expect(source).toContain('removeEventListener("wheel", onViewportUserScrollIntent');
-    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel[\s\S]*?onViewportUserScrollIntent\(\)/);
+    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel\s*\([^)]*\)\s*\{[\s\S]*?onViewportUserScrollIntent\(\)/);
   });
 
   test("onTermTouchStart NEVER stopPropagation — xterm's touchstart must always fire to init Viewport._lastTouchY", () => {
@@ -314,7 +314,7 @@ describe("TerminalView web auxiliary keys", () => {
     // set the userScrolledDuringKeyboardCycle flag so the ~1.6 s soft-
     // keyboard restore chain stops fighting the user. No delta math, no
     // scrollTop mutation here.
-    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel\s*\(\s*\)\s*\{[\s\S]*?onViewportUserScrollIntent\(\)[\s\S]*?\}/);
+    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel\s*\([^)]*\)\s*\{[\s\S]*?onViewportUserScrollIntent\(\)[\s\S]*?\}/);
     expect(source).toContain('keyTarget.addEventListener("touchmove", onTermTouchMoveForRestoreCancel');
     expect(source).toContain('copyKeyTarget?.removeEventListener("touchmove", onTermTouchMoveForRestoreCancel');
     // The earlier misdirected manual bridge is gone (would double-scroll).

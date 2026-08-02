@@ -1466,47 +1466,30 @@ async function ensureTerm() {
   keyTarget.addEventListener("pointerup", onSelectionPointerUp);
   keyTarget.addEventListener("pointercancel", onSelectionPointerCancel);
   terminalTouchViewport = term.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
-  // ---- Mobile touch scroll velocity boost ----
+  // ---- Neuter xterm's built-in touch scroll ----
   // xterm 5.3 Viewport.handleTouchMove is a strict 1:1 finger → scrollTop
-  // mapper with no inertia or velocity. On iOS Safari, JS is slow enough
-  // that touch events get coalesced/dropped mid-swipe (the retained events
-  // report old finger positions, not the current one). Combined with 1:1
-  // mapping, a long fast swipe produces only 1-2 events with small deltas,
-  // and the user sees "swipe went far but scroll barely moved." Multiply
-  // xterm's per-event delta by TOUCH_SCROLL_VELOCITY so each retained event
-  // moves more, closing the gap between finger travel and scroll travel.
-  // Only apply on non-desktop runtimes so wheel/native mouse scroll on
-  // Wails / local-PTY is untouched. See xterm.js #5377 (limited mobile
-  // touch support) — this is the least invasive workaround short of
-  // replacing xterm's touch scroll with native iOS scroll (which needs a
-  // .xterm-viewport stacking + xterm listener disable, larger change).
-  if (!(platform.caps.wailsBindings || platform.caps.localPty)) {
-    try {
-      const coreAny = (term as unknown as { _core?: { _viewport?: unknown } })._core;
-      const vp = coreAny?._viewport as {
-        _lastTouchY?: number;
-        _viewportElement?: HTMLElement;
-        handleTouchStart?: (ev: TouchEvent) => void;
-        handleTouchMove?: (ev: TouchEvent) => boolean;
-      } | undefined;
-      if (vp && typeof vp.handleTouchMove === "function") {
-        const TOUCH_SCROLL_VELOCITY = 3;
-        vp.handleTouchStart = function (ev: TouchEvent) {
-          vp._lastTouchY = ev.touches[0]?.pageY ?? 0;
-        };
-        vp.handleTouchMove = function (ev: TouchEvent): boolean {
-          const currentY = ev.touches[0]?.pageY ?? 0;
-          const rawDelta = (vp._lastTouchY ?? currentY) - currentY;
-          vp._lastTouchY = currentY;
-          if (rawDelta === 0) return false;
-          const el = vp._viewportElement;
-          if (el) el.scrollTop += rawDelta * TOUCH_SCROLL_VELOCITY;
-          return false;
-        };
-      }
-    } catch (err) {
-      console.warn("[AT Term] touch velocity boost patch failed", err);
+  // mapper with no inertia; every touchmove synchronously mutates scrollTop
+  // and — since Terminal.ts wraps handleTouchMove with `cancel(ev)` on
+  // `false` return — calls preventDefault on the event. That blocks the
+  // browser's native scroll (with iOS fling / momentum / high-priority
+  // event pipeline) even after the CSS above stacks .xterm-viewport where
+  // touches can reach it. Patch both handlers to no-op and return true so
+  // xterm never calls cancel → no preventDefault → the browser drives the
+  // scroll natively via `touch-action: pan-y` + `-webkit-overflow-scrolling`.
+  // Harmless on desktop (no touch → these handlers never fire anyway); no
+  // gate needed. See xterm.js #5377.
+  try {
+    const coreAny = (term as unknown as { _core?: { _viewport?: unknown } })._core;
+    const vp = coreAny?._viewport as {
+      handleTouchStart?: (ev: TouchEvent) => void;
+      handleTouchMove?: (ev: TouchEvent) => boolean;
+    } | undefined;
+    if (vp) {
+      vp.handleTouchStart = () => {};
+      vp.handleTouchMove = () => true;
     }
+  } catch (err) {
+    console.warn("[AT Term] disable xterm touch scroll failed", err);
   }
   // Bootstrap the debug flag once term is up and install the console dump.
   touchDebugEnabled = readTouchDebugFlag();
@@ -2578,6 +2561,14 @@ watch(
   right: 8px;
   bottom: 6px;
   left: 8px;
+  /* Stack the scrollable viewport ABOVE .xterm-screen (which xterm renders
+     as a sibling immediately after — .xterm-screen wins the default stacking
+     otherwise, so a finger landing on rendered text never reaches viewport
+     and native `touch-action: pan-y` scroll never fires). Transparent bg is
+     required because xterm's default is opaque #000, which would hide the
+     canvas beneath. See xterm.js #3613 / #512 (scrollbar is unclickable). */
+  z-index: 5;
+  background: transparent !important;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;

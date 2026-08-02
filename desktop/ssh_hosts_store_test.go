@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/attson/atterm/internal/safekeyring"
@@ -76,5 +77,62 @@ func TestDeleteSSHHostClearsCredential(t *testing.T) {
 	}
 	if _, err := safekeyring.Get(sshCredentialService(), h.ID); err == nil {
 		t.Fatal("credential should be gone")
+	}
+}
+
+func TestAdapterSSHHostsEncryptedRoundTrip(t *testing.T) {
+	safekeyring.UseFileStore()
+	safekeyring.SetFileDirForTest(t.TempDir())
+	cs := newTestConfigStore(t)
+	a := &App{cfgStore: cs}
+
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	a.accountKey = key
+
+	h, err := a.AddSSHHost(SSHHost{Host: "h", User: "u", AuthKind: "password"}, sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := newAppConfigAdapter(cs, a.accountKeyForSync)
+
+	val, ok := adapter.ReadValue("ssh_hosts_encrypted")
+	if !ok {
+		t.Fatal("expected ReadValue ok with account key")
+	}
+	if strings.Contains(string(val), "pw") || strings.Contains(string(val), h.ID) {
+		t.Fatalf("plaintext leaked: %s", val)
+	}
+
+	cfg := cs.Get()
+	cfg.SSHHosts = nil
+	_ = cs.Set(cfg)
+	_ = safekeyring.Delete(sshCredentialService(), h.ID)
+
+	if err := adapter.WriteValue("ssh_hosts_encrypted", val); err != nil {
+		t.Fatalf("WriteValue: %v", err)
+	}
+	if got := cs.Get().SSHHosts; len(got) != 1 || got[0].ID != h.ID {
+		t.Fatalf("hosts not restored: %+v", got)
+	}
+	raw, err := safekeyring.Get(sshCredentialService(), h.ID)
+	if err != nil || !strings.Contains(raw, "pw") {
+		t.Fatalf("credential not restored: %v %q", err, raw)
+	}
+}
+
+func TestAdapterSSHHostsNoAccountKeySkips(t *testing.T) {
+	cs := newTestConfigStore(t)
+	a := &App{cfgStore: cs} // accountKey nil
+	adapter := newAppConfigAdapter(cs, a.accountKeyForSync)
+
+	if _, ok := adapter.ReadValue("ssh_hosts_encrypted"); ok {
+		t.Fatal("no account key must skip ReadValue (ok=false)")
+	}
+	if err := adapter.WriteValue("ssh_hosts_encrypted", json.RawMessage(`"x"`)); err != nil {
+		t.Fatalf("WriteValue no-op expected, got %v", err)
 	}
 }

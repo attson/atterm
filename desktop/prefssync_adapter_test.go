@@ -15,7 +15,7 @@ func newTestConfigStore(t *testing.T) *configStore {
 
 func TestAdapter_PinnedSessionIds_RoundTrip(t *testing.T) {
 	cs := newTestConfigStore(t)
-	a := newAppConfigAdapter(cs)
+	a := newAppConfigAdapter(cs, func() []byte { return nil })
 
 	want := []string{"sid-a", "sid-b"}
 	raw, _ := json.Marshal(want)

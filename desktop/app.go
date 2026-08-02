@@ -360,7 +360,7 @@ func (a *App) startup(ctx context.Context) {
 		a.updater.SetGHProxyURL(cfg.UpdateGHProxyURL)
 	}
 
-	adapter := newAppConfigAdapter(a.cfgStore)
+	adapter := newAppConfigAdapter(a.cfgStore, a.accountKeyForSync)
 	relayClient := newHTTPRelayClient(a.cfgStore)
 	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
 
@@ -2321,6 +2321,20 @@ func (a *App) markPrefDirtyAndPush(key string) {
 			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
 		}
 	}()
+}
+
+// accountKeyForSync returns a copy of the unlocked E2EE account key, or nil
+// when E2EE is not active. Used by the prefssync adapter to seal/open the SSH
+// host list — nil means "local only, never sync credentials to the relay".
+func (a *App) accountKeyForSync() []byte {
+	a.accountKeyMu.Lock()
+	defer a.accountKeyMu.Unlock()
+	if len(a.accountKey) == 0 {
+		return nil
+	}
+	out := make([]byte, len(a.accountKey))
+	copy(out, a.accountKey)
+	return out
 }
 
 // snapshotRelayErrors returns a copy of the recent-errors ring buffer.

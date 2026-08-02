@@ -258,6 +258,31 @@ describe("TerminalView web auxiliary keys", () => {
     expect(focusBody![0]).toMatch(/scrollToBottomForKeyboardOpen\(\)/);
   });
 
+  test("user scroll during a keyboard-open cycle cancels the snap-to-bottom + restore chain", () => {
+    // Regression: on mobile, tapping to open the keyboard fires
+    // scrollToBottomForKeyboardOpen (which snap-to-bottoms + queues 4
+    // restore timers at 80/180/360/700 ms) and scheduleSoftKeyboardOpenFocusRetries
+    // (which re-fires scrollToBottomForKeyboardOpen at 60/180/360 ms). Any
+    // up-scroll the user made in that window would get yanked back to the
+    // bottom. onViewportUserScrollIntent latches a flag + clears pending
+    // restore timers so the user's intent wins; the snap/apply paths bail
+    // on the flag; showSoftKeyboard/hideSoftKeyboard reset the flag to
+    // start a fresh cycle.
+    expect(source).toContain("let userScrolledDuringKeyboardCycle = false;");
+    expect(source).toMatch(/function\s+onViewportUserScrollIntent\s*\([^)]*\)\s*\{[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*true[\s\S]*?clearKeyboardScrollRestoreTimers\(\)[\s\S]*?pendingKeyboardScrollPosition\s*=\s*null[\s\S]*?\}/);
+    // Both scroll-forcing paths must bail on the flag.
+    expect(source).toMatch(/function\s+scrollToBottomForKeyboardOpen[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)\s*return/);
+    expect(source).toMatch(/function\s+applyScrollPosition[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)\s*return/);
+    // Fresh state per open/close cycle so a new tap after user scroll re-arms the snap.
+    expect(source).toMatch(/function\s+showSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
+    expect(source).toMatch(/function\s+hideSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
+    // Listener wiring on the .xterm-viewport so touch / wheel triggers the cancel.
+    expect(source).toContain('addEventListener("touchstart", onViewportUserScrollIntent');
+    expect(source).toContain('addEventListener("wheel", onViewportUserScrollIntent');
+    expect(source).toContain('removeEventListener("touchstart", onViewportUserScrollIntent');
+    expect(source).toContain('removeEventListener("wheel", onViewportUserScrollIntent');
+  });
+
   test("keeps the keyboard opening state stable across transient mobile blur", () => {
     const toggleBody = source.match(/function\s+toggleSoftKeyboard\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
     expect(toggleBody).not.toBeNull();

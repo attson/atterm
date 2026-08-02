@@ -196,6 +196,12 @@ let lastShortcutTouchActionAt = 0;
 let softKeyboardOpenFocusTimers: number[] = [];
 let keyboardScrollRestoreTimers: number[] = [];
 let pendingKeyboardScrollPosition: ScrollPosition | null = null;
+// Latched true as soon as the user touches / wheels the terminal viewport
+// after a keyboard-open cycle starts. All snap-to-bottom + restore-to-bottom
+// paths bail on this so the user's scroll intent wins over the mobile
+// "keep prompt visible while soft keyboard animates" heuristic. Reset on
+// showSoftKeyboard / hideSoftKeyboard (fresh cycle).
+let userScrolledDuringKeyboardCycle = false;
 
 const LONG_PRESS_MS = 500;
 const PRESS_JITTER_PX = 8;
@@ -308,11 +314,18 @@ function captureScrollPosition(): ScrollPosition | null {
 function applyScrollPosition(scrollPosition: ScrollPosition | null) {
   if (!scrollPosition) return;
   if (!term || !isAlive) return;
+  if (userScrolledDuringKeyboardCycle) return;
   if (scrollPosition.atBottom) {
     term.scrollToBottom();
   } else {
     term.scrollToLine(scrollPosition.viewportY);
   }
+}
+
+function onViewportUserScrollIntent() {
+  userScrolledDuringKeyboardCycle = true;
+  clearKeyboardScrollRestoreTimers();
+  pendingKeyboardScrollPosition = null;
 }
 
 function clearKeyboardScrollRestoreTimers() {
@@ -358,11 +371,13 @@ function hideSoftKeyboard() {
   imeInputTarget?.blur();
   term?.blur();
   void platform.system.hideSoftKeyboard?.();
+  userScrolledDuringKeyboardCycle = false;
   restoreScrollPositionAfterKeyboardToggle(scrollPosition);
 }
 
 function scrollToBottomForKeyboardOpen() {
   if (!term) return;
+  if (userScrolledDuringKeyboardCycle) return;
   term.scrollToBottom();
   restoreScrollPositionAfterKeyboardToggle({
     viewportY: term.buffer.active.baseY,
@@ -372,6 +387,7 @@ function scrollToBottomForKeyboardOpen() {
 
 function showSoftKeyboard() {
   if (!isDriver.value) return;
+  userScrolledDuringKeyboardCycle = false;
   keyboardWanted.value = true;
   scheduleSoftKeyboardOpenFocusRetries();
   scrollToBottomForKeyboardOpen();
@@ -1333,6 +1349,11 @@ async function ensureTerm() {
   terminalTouchViewport = term.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
   terminalTouchViewport?.addEventListener("touchmove", stopTerminalTouchMove, { passive: true });
   terminalTouchViewport?.addEventListener("scroll", onSelectionViewportScroll);
+  // Cancel any pending soft-keyboard scroll-restore chain the moment the user
+  // shows scroll intent — otherwise the 80/180/360/700 ms restore timers +
+  // 60/180/360 ms retry loop would yank their up-scroll back to the bottom.
+  terminalTouchViewport?.addEventListener("touchstart", onViewportUserScrollIntent, { passive: true });
+  terminalTouchViewport?.addEventListener("wheel", onViewportUserScrollIntent, { passive: true });
   imeInputTarget = term.element?.querySelector<HTMLTextAreaElement>("textarea") ?? null;
   syncTerminalInputMode();
   imeInputTarget?.addEventListener("input", onImeInput as EventListener, { capture: true });
@@ -1774,6 +1795,8 @@ onBeforeUnmount(() => {
   copyKeyTarget = null;
   terminalTouchViewport?.removeEventListener("touchmove", stopTerminalTouchMove);
   terminalTouchViewport?.removeEventListener("scroll", onSelectionViewportScroll);
+  terminalTouchViewport?.removeEventListener("touchstart", onViewportUserScrollIntent);
+  terminalTouchViewport?.removeEventListener("wheel", onViewportUserScrollIntent);
   terminalTouchViewport = null;
   imeInputTarget?.removeEventListener("input", onImeInput as EventListener, { capture: true } as EventListenerOptions);
   imeInputTarget?.removeEventListener("focus", onImeFocus);

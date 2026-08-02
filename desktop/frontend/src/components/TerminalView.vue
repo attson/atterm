@@ -203,6 +203,15 @@ let pendingKeyboardScrollPosition: ScrollPosition | null = null;
 // showSoftKeyboard / hideSoftKeyboard (fresh cycle).
 let userScrolledDuringKeyboardCycle = false;
 
+// Manual touch → scrollTop bridge for xterm's known iOS/mobile bug: xterm
+// puts .xterm-viewport (the actual scrollable element) as a SIBLING of
+// .xterm-screen (the text render layer), and .xterm-screen sits on top. A
+// finger that lands on any rendered text therefore never reaches viewport,
+// so neither `touch-action: pan-y` nor a viewport-scoped touchmove listener
+// ever gets a chance to fire. Manually forwarding touchmove deltas into
+// viewport.scrollTop bypasses the stacking issue. See xterm.js #3613/#5377.
+let touchScrollLastY: number | null = null;
+
 const LONG_PRESS_MS = 500;
 const PRESS_JITTER_PX = 8;
 const POST_PRESS_DRAG_PX = 4;
@@ -326,6 +335,34 @@ function onViewportUserScrollIntent() {
   userScrolledDuringKeyboardCycle = true;
   clearKeyboardScrollRestoreTimers();
   pendingKeyboardScrollPosition = null;
+}
+
+function onTerminalTouchStartForScroll(event: TouchEvent) {
+  if (event.touches.length !== 1) {
+    touchScrollLastY = null;
+    return;
+  }
+  touchScrollLastY = event.touches[0].clientY;
+}
+
+function onTerminalTouchMoveForScroll(event: TouchEvent) {
+  if (touchScrollLastY === null || event.touches.length !== 1) return;
+  // Don't fight the selection-drag path: while selecting/dragging a range,
+  // onSelectionPointerMove drives xterm scroll via edge-scroll timers and
+  // the popover positioning; a second scroll source would jitter both.
+  if (selectionMode.value === "selecting" || selectionMode.value === "dragging") return;
+  const viewport = terminalTouchViewport ?? termContainer.value?.querySelector<HTMLElement>(".xterm-viewport");
+  if (!viewport) return;
+  const y = event.touches[0].clientY;
+  const dy = touchScrollLastY - y;
+  if (dy === 0) return;
+  touchScrollLastY = y;
+  viewport.scrollTop += dy;
+  onViewportUserScrollIntent();
+}
+
+function onTerminalTouchEndForScroll() {
+  touchScrollLastY = null;
 }
 
 function clearKeyboardScrollRestoreTimers() {
@@ -1349,11 +1386,19 @@ async function ensureTerm() {
   terminalTouchViewport = term.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
   terminalTouchViewport?.addEventListener("touchmove", stopTerminalTouchMove, { passive: true });
   terminalTouchViewport?.addEventListener("scroll", onSelectionViewportScroll);
-  // Cancel any pending soft-keyboard scroll-restore chain the moment the user
-  // shows scroll intent — otherwise the 80/180/360/700 ms restore timers +
-  // 60/180/360 ms retry loop would yank their up-scroll back to the bottom.
-  terminalTouchViewport?.addEventListener("touchstart", onViewportUserScrollIntent, { passive: true });
+  // Wheel on the viewport still fires natively (desktop) — cancel keyboard
+  // scroll-restore on wheel too so wheel-scroll during the ~1.6 s window
+  // isn't clobbered.
   terminalTouchViewport?.addEventListener("wheel", onViewportUserScrollIntent, { passive: true });
+  // Manual touch → scrollTop bridge lives on the .term wrapper (not on
+  // .xterm-viewport) because xterm's .xterm-screen sibling sits on top of
+  // the viewport in the stacking order, so touches landing on rendered text
+  // never reach the viewport. See touchScrollLastY comment above and
+  // xterm.js #3613. `keyTarget` here is termContainer.value.
+  keyTarget.addEventListener("touchstart", onTerminalTouchStartForScroll, { passive: true });
+  keyTarget.addEventListener("touchmove", onTerminalTouchMoveForScroll, { passive: true });
+  keyTarget.addEventListener("touchend", onTerminalTouchEndForScroll, { passive: true });
+  keyTarget.addEventListener("touchcancel", onTerminalTouchEndForScroll, { passive: true });
   imeInputTarget = term.element?.querySelector<HTMLTextAreaElement>("textarea") ?? null;
   syncTerminalInputMode();
   imeInputTarget?.addEventListener("input", onImeInput as EventListener, { capture: true });
@@ -1792,10 +1837,13 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);
   copyKeyTarget?.removeEventListener("pointerup", onSelectionPointerUp);
   copyKeyTarget?.removeEventListener("pointercancel", onSelectionPointerCancel);
+  copyKeyTarget?.removeEventListener("touchstart", onTerminalTouchStartForScroll);
+  copyKeyTarget?.removeEventListener("touchmove", onTerminalTouchMoveForScroll);
+  copyKeyTarget?.removeEventListener("touchend", onTerminalTouchEndForScroll);
+  copyKeyTarget?.removeEventListener("touchcancel", onTerminalTouchEndForScroll);
   copyKeyTarget = null;
   terminalTouchViewport?.removeEventListener("touchmove", stopTerminalTouchMove);
   terminalTouchViewport?.removeEventListener("scroll", onSelectionViewportScroll);
-  terminalTouchViewport?.removeEventListener("touchstart", onViewportUserScrollIntent);
   terminalTouchViewport?.removeEventListener("wheel", onViewportUserScrollIntent);
   terminalTouchViewport = null;
   imeInputTarget?.removeEventListener("input", onImeInput as EventListener, { capture: true } as EventListenerOptions);

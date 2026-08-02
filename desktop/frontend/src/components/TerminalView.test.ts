@@ -276,11 +276,37 @@ describe("TerminalView web auxiliary keys", () => {
     // Fresh state per open/close cycle so a new tap after user scroll re-arms the snap.
     expect(source).toMatch(/function\s+showSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
     expect(source).toMatch(/function\s+hideSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
-    // Listener wiring on the .xterm-viewport so touch / wheel triggers the cancel.
-    expect(source).toContain('addEventListener("touchstart", onViewportUserScrollIntent');
+    // Wheel on the viewport still cancels the restore (desktop); the touch
+    // path lives on termContainer via onTerminalTouchMoveForScroll, which
+    // also calls onViewportUserScrollIntent so mobile touch scrolls survive.
     expect(source).toContain('addEventListener("wheel", onViewportUserScrollIntent');
-    expect(source).toContain('removeEventListener("touchstart", onViewportUserScrollIntent');
     expect(source).toContain('removeEventListener("wheel", onViewportUserScrollIntent');
+    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?onViewportUserScrollIntent\(\)/);
+  });
+
+  test("manual touch → viewport.scrollTop bridge routes around xterm's iOS stacking bug (#3613)", () => {
+    // xterm 5.x's .xterm-viewport is a SIBLING of .xterm-screen, and
+    // .xterm-screen sits on top in the stacking order — so touches landing
+    // on rendered text never reach the viewport, and neither
+    // `touch-action: pan-y` nor a viewport-scoped touchmove listener ever
+    // gets a chance to fire. We register the touch bridge on termContainer
+    // (which ancestors both) and forward the vertical delta into
+    // viewport.scrollTop ourselves.
+    expect(source).toContain("let touchScrollLastY: number | null = null;");
+    expect(source).toMatch(/function\s+onTerminalTouchStartForScroll[\s\S]*?touchScrollLastY\s*=\s*event\.touches\[0\]\.clientY/);
+    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?viewport\.scrollTop\s*\+=\s*dy/);
+    // Selection drag path owns scroll while it runs — the bridge must bail.
+    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?selectionMode\.value\s*===\s*"selecting"/);
+    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?selectionMode\.value\s*===\s*"dragging"/);
+    // Listener wiring on termContainer (keyTarget), with a matching cleanup.
+    expect(source).toContain('keyTarget.addEventListener("touchstart", onTerminalTouchStartForScroll');
+    expect(source).toContain('keyTarget.addEventListener("touchmove", onTerminalTouchMoveForScroll');
+    expect(source).toContain('keyTarget.addEventListener("touchend", onTerminalTouchEndForScroll');
+    expect(source).toContain('keyTarget.addEventListener("touchcancel", onTerminalTouchEndForScroll');
+    expect(source).toContain('copyKeyTarget?.removeEventListener("touchstart", onTerminalTouchStartForScroll');
+    expect(source).toContain('copyKeyTarget?.removeEventListener("touchmove", onTerminalTouchMoveForScroll');
+    expect(source).toContain('copyKeyTarget?.removeEventListener("touchend", onTerminalTouchEndForScroll');
+    expect(source).toContain('copyKeyTarget?.removeEventListener("touchcancel", onTerminalTouchEndForScroll');
   });
 
   test("keeps the keyboard opening state stable across transient mobile blur", () => {

@@ -3,11 +3,34 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/oklog/ulid/v2"
 )
+
+// markSSHHostsDirty flags the synced host-list value dirty in config (so a
+// later Push uploads it) and, when a sync engine is wired, kicks a push. It
+// writes meta directly so it works even before the engine exists (tests).
+func (a *App) markSSHHostsDirty() {
+	if a.cfgStore == nil {
+		return
+	}
+	cfg := a.cfgStore.Get()
+	if cfg.PrefsMeta == nil {
+		cfg.PrefsMeta = map[string]prefsMetaEntry{}
+	}
+	m := cfg.PrefsMeta["ssh_hosts_encrypted"]
+	m.Dirty = true
+	m.UpdatedAtLocal = time.Now().UnixMilli()
+	cfg.PrefsMeta["ssh_hosts_encrypted"] = m
+	_ = a.cfgStore.Set(cfg)
+
+	if a.prefsSync != nil {
+		a.markPrefDirtyAndPush("ssh_hosts_encrypted")
+	}
+}
 
 // SSHHost is the non-secret part of a saved host, persisted in config.json.
 // Credentials (password / private key / passphrase) live in the keyring keyed
@@ -69,6 +92,7 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 		_ = safekeyring.Delete(sshCredentialService(), h.ID) // roll back
 		return SSHHost{}, err
 	}
+	a.markSSHHostsDirty()
 	return h, nil
 }
 
@@ -95,7 +119,11 @@ func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
 		}
 	}
 	cfg.SSHHosts[idx] = h
-	return a.cfgStore.Set(cfg)
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	a.markSSHHostsDirty()
+	return nil
 }
 
 // DeleteSSHHost removes the host and its credential. A missing credential is
@@ -124,6 +152,7 @@ func (a *App) DeleteSSHHost(id string) error {
 	if err := safekeyring.Delete(sshCredentialService(), id); err != nil && err != safekeyring.ErrNotFound {
 		return fmt.Errorf("delete credential: %w", err)
 	}
+	a.markSSHHostsDirty()
 	return nil
 }
 

@@ -136,3 +136,27 @@ func TestAdapterSSHHostsNoAccountKeySkips(t *testing.T) {
 		t.Fatalf("WriteValue no-op expected, got %v", err)
 	}
 }
+
+func TestCRUDMarksSSHSyncDirty(t *testing.T) {
+	a := newHostsTestApp(t)
+	h, err := a.AddSSHHost(SSHHost{Host: "h", User: "u", AuthKind: "password"}, sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.cfgStore.Get().PrefsMeta["ssh_hosts_encrypted"].Dirty {
+		t.Fatal("Add should mark ssh_hosts_encrypted dirty")
+	}
+
+	cfg := a.cfgStore.Get()
+	m := cfg.PrefsMeta["ssh_hosts_encrypted"]
+	m.Dirty = false
+	cfg.PrefsMeta["ssh_hosts_encrypted"] = m
+	_ = a.cfgStore.Set(cfg)
+
+	if err := a.DeleteSSHHost(h.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !a.cfgStore.Get().PrefsMeta["ssh_hosts_encrypted"].Dirty {
+		t.Fatal("Delete should mark ssh_hosts_encrypted dirty")
+	}
+}

@@ -337,26 +337,33 @@ function onViewportUserScrollIntent() {
   pendingKeyboardScrollPosition = null;
 }
 
-function onTerminalTouchStartForScroll(event: TouchEvent) {
+// touchmove is the only touch event guaranteed to reach a bubble-phase
+// listener on the .term wrapper — Vue's `@touchstart.capture="onTermTouchStart"`
+// calls stopPropagation, which prevents touchstart from continuing to
+// target / bubble when the finger lands on a child (.xterm-screen). So we
+// use touchmove's first-fire to initialize the anchor Y, subsequent fires
+// to compute delta, and touchend/touchcancel to clear.
+function onTerminalTouchMoveForScroll(event: TouchEvent) {
   if (event.touches.length !== 1) {
     touchScrollLastY = null;
     return;
   }
-  touchScrollLastY = event.touches[0].clientY;
-}
-
-function onTerminalTouchMoveForScroll(event: TouchEvent) {
-  if (touchScrollLastY === null || event.touches.length !== 1) return;
-  // Don't fight the selection-drag path: while selecting/dragging a range,
-  // onSelectionPointerMove drives xterm scroll via edge-scroll timers and
-  // the popover positioning; a second scroll source would jitter both.
-  if (selectionMode.value === "selecting" || selectionMode.value === "dragging") return;
+  // Selection-drag path owns scroll while it's active (edge-scroll timers +
+  // popover placement expect single ownership).
+  if (selectionMode.value === "selecting" || selectionMode.value === "dragging") {
+    touchScrollLastY = null;
+    return;
+  }
+  const y = event.touches[0].clientY;
+  if (touchScrollLastY === null) {
+    touchScrollLastY = y;
+    return;
+  }
   const viewport = terminalTouchViewport ?? termContainer.value?.querySelector<HTMLElement>(".xterm-viewport");
   if (!viewport) return;
-  const y = event.touches[0].clientY;
   const dy = touchScrollLastY - y;
-  if (dy === 0) return;
   touchScrollLastY = y;
+  if (dy === 0) return;
   viewport.scrollTop += dy;
   onViewportUserScrollIntent();
 }
@@ -1394,8 +1401,10 @@ async function ensureTerm() {
   // .xterm-viewport) because xterm's .xterm-screen sibling sits on top of
   // the viewport in the stacking order, so touches landing on rendered text
   // never reach the viewport. See touchScrollLastY comment above and
-  // xterm.js #3613. `keyTarget` here is termContainer.value.
-  keyTarget.addEventListener("touchstart", onTerminalTouchStartForScroll, { passive: true });
+  // xterm.js #3613. touchstart is skipped on purpose — Vue's
+  // @touchstart.capture on .term calls stopPropagation and would block a
+  // touchstart bubble handler on the same node when finger lands on a
+  // child; touchmove uses its first-fire to seed the anchor Y.
   keyTarget.addEventListener("touchmove", onTerminalTouchMoveForScroll, { passive: true });
   keyTarget.addEventListener("touchend", onTerminalTouchEndForScroll, { passive: true });
   keyTarget.addEventListener("touchcancel", onTerminalTouchEndForScroll, { passive: true });
@@ -1837,7 +1846,6 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);
   copyKeyTarget?.removeEventListener("pointerup", onSelectionPointerUp);
   copyKeyTarget?.removeEventListener("pointercancel", onSelectionPointerCancel);
-  copyKeyTarget?.removeEventListener("touchstart", onTerminalTouchStartForScroll);
   copyKeyTarget?.removeEventListener("touchmove", onTerminalTouchMoveForScroll);
   copyKeyTarget?.removeEventListener("touchend", onTerminalTouchEndForScroll);
   copyKeyTarget?.removeEventListener("touchcancel", onTerminalTouchEndForScroll);

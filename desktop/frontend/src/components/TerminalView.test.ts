@@ -293,17 +293,19 @@ describe("TerminalView web auxiliary keys", () => {
     // (which ancestors both) and forward the vertical delta into
     // viewport.scrollTop ourselves.
     expect(source).toContain("let touchScrollLastY: number | null = null;");
-    expect(source).toMatch(/function\s+onTerminalTouchStartForScroll[\s\S]*?touchScrollLastY\s*=\s*event\.touches\[0\]\.clientY/);
     expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?viewport\.scrollTop\s*\+=\s*dy/);
     // Selection drag path owns scroll while it runs — the bridge must bail.
     expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?selectionMode\.value\s*===\s*"selecting"/);
     expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?selectionMode\.value\s*===\s*"dragging"/);
+    // touchmove uses its first fire to seed the anchor Y so we don't need a
+    // touchstart handler (which Vue's `@touchstart.capture` on .term
+    // would block via stopPropagation for touches on child elements).
+    expect(source).toMatch(/function\s+onTerminalTouchMoveForScroll[\s\S]*?if\s*\(\s*touchScrollLastY\s*===\s*null\s*\)\s*\{[\s\S]*?touchScrollLastY\s*=\s*y/);
+    expect(source).not.toContain("onTerminalTouchStartForScroll");
     // Listener wiring on termContainer (keyTarget), with a matching cleanup.
-    expect(source).toContain('keyTarget.addEventListener("touchstart", onTerminalTouchStartForScroll');
     expect(source).toContain('keyTarget.addEventListener("touchmove", onTerminalTouchMoveForScroll');
     expect(source).toContain('keyTarget.addEventListener("touchend", onTerminalTouchEndForScroll');
     expect(source).toContain('keyTarget.addEventListener("touchcancel", onTerminalTouchEndForScroll');
-    expect(source).toContain('copyKeyTarget?.removeEventListener("touchstart", onTerminalTouchStartForScroll');
     expect(source).toContain('copyKeyTarget?.removeEventListener("touchmove", onTerminalTouchMoveForScroll');
     expect(source).toContain('copyKeyTarget?.removeEventListener("touchend", onTerminalTouchEndForScroll');
     expect(source).toContain('copyKeyTarget?.removeEventListener("touchcancel", onTerminalTouchEndForScroll');

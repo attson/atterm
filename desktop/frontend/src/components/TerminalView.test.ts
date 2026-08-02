@@ -511,6 +511,19 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toContain('removeEventListener("input", onImeInput');
   });
 
+  test("onImeInput skips desktop runtimes so xterm.onData is not double-fired", () => {
+    // Root cause of the "one space → two spaces" regression: on Wails /
+    // local-PTY the physical keyboard already goes through xterm's keydown →
+    // term.onData(" ") → sendInput(" ") path, but the browser also mirrors
+    // the char into the hidden textarea and fires `input`, which
+    // (pre-gate) ran onImeInput → sendInput(" ") a second time. The gate
+    // MUST run BEFORE the inputType check so no branch in this handler can
+    // fire on desktop.
+    expect(source).toMatch(
+      /function\s+onImeInput[^}]*?if\s*\(\s*platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty\s*\)\s*return/,
+    );
+  });
+
   test("supports mobile long-press selection with copy/send/cancel and scroll/outside exit", () => {
     expect(source).toContain('import TerminalSelectionPopover from "./TerminalSelectionPopover.vue"');
     expect(source).toContain("wordBoundaryAt");

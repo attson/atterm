@@ -634,7 +634,14 @@ async function handleImagePaste(e: ClipboardEvent) {
 // punctuation, numbers, and space) through the textarea `input` event without
 // xterm forwarding it. Take over only the non-composition insertText case so
 // pinyin -> Hanzi composition remains xterm-owned.
+//
+// Desktop (Wails / local-PTY web) MUST skip this path: xterm already handles
+// the physical-keyboard keydown and calls term.onData(" "); the browser then
+// also inserts the char into the hidden textarea and fires `input`, which
+// without this gate would run onImeInput and sendInput a second time —
+// pressing space once produces two spaces, breaking TUI checkbox toggling.
 function onImeInput(event: InputEvent) {
+  if (platform.caps.wailsBindings || platform.caps.localPty) return;
   if (event.inputType !== "insertText") return;
   if (event.isComposing) return;
   const data = event.data;

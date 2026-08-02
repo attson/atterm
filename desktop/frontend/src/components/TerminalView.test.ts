@@ -743,6 +743,17 @@ describe("TerminalView viewer overlay", () => {
     expect(source).toContain('data-testid="take-control"');
     expect(source).toContain('@click="takeControl"');
   });
+
+  test("auto-focuses take-control button on driver→viewer transition in active pane", () => {
+    // Without this, syncTerminalInputMode blurs the IME textarea, focus
+    // falls to document.body, and the .term-container-scoped viewer keydown
+    // listener never fires — Space appears dead until the user clicks the
+    // button first. The ref + programmatic focus restores the native
+    // Space/Enter → button-activation path.
+    expect(source).toContain('ref="takeControlBtnRef"');
+    expect(source).toMatch(/takeControlBtnRef\.value\?\.focus\(\)/);
+    expect(source).toMatch(/!isMe\s*&&\s*\(props\.active\s*\|\|\s*props\.focused\)/);
+  });
 });
 
 describe("TerminalView bell notifications", () => {

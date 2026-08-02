@@ -88,7 +88,7 @@ function stateLabel(state: string | undefined): string {
 </template>
 
 <style scoped>
-.row-top { display: flex; align-items: center; gap: 6px; min-width: 0; position: relative; }
+.row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .row-top.has-close { padding-right: 24px; box-sizing: border-box; }
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }

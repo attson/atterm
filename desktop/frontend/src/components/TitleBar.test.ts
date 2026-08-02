@@ -14,7 +14,6 @@ const baseProps = {
   errorMsg: "",
   sessionCount: 0,
   remoteEndpoint: null,
-  availableRemoteCount: 0,
 };
 
 beforeEach(() => {
@@ -118,26 +117,11 @@ describe("TitleBar status rendering", () => {
 });
 
 describe("TitleBar buttons", () => {
-  it("remote button is disabled when remoteEndpoint is null", async () => {
-    const w = await mountForPlatform("darwin", { remoteEndpoint: null });
-    const btn = w.get('[data-testid="titlebar-remote"]');
-    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("remote button emits open-remote when clicked", async () => {
+  it("no longer renders a remote button (feature removed; sidebar host groups are the entry point)", async () => {
     const w = await mountForPlatform("darwin", {
       remoteEndpoint: { url: "wss://x", token: "t" },
     });
-    await w.get('[data-testid="titlebar-remote"]').trigger("click");
-    expect(w.emitted("open-remote")).toBeTruthy();
-  });
-
-  it("renders availableRemoteCount badge when > 0", async () => {
-    const w = await mountForPlatform("darwin", {
-      remoteEndpoint: { url: "wss://x", token: "t" },
-      availableRemoteCount: 4,
-    });
-    expect(w.find(".badge").text()).toBe("4");
+    expect(w.find('[data-testid="titlebar-remote"]').exists()).toBe(false);
   });
 
   it("no longer renders a settings button (moved to TabBar so it's reachable regardless of caps.windowControls)", async () => {

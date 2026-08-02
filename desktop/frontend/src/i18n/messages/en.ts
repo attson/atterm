@@ -84,8 +84,6 @@ export const en = {
     tabDisconnectedSuffix: "(disconnected)",
     closePaneTitle: "close pane (Cmd+W / Ctrl+W)",
     remoteViewerWatching: "{count} remote viewer(s) watching",
-    remoteSessionsAvailable: "{count} remote session(s) available",
-    connectRelayForRemote: "connect to a relay to see remote sessions",
     relaySettings: "relay settings",
     adminPanel: "admin panel",
     newTab: "new tab",

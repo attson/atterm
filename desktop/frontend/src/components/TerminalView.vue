@@ -218,12 +218,14 @@ let touchDebugEnabled = false;
 function readTouchDebugFlag(): boolean {
   try {
     const raw = window.localStorage.getItem("atterm.debugTouch");
-    if (raw === "0" || raw === "false") return false;
-    if (raw === "1" || raw === "true") return true;
-    // Unset: default ON so users on this branch don't have to enable it.
-    return true;
+    // Explicit opt-in only — the per-touchmove console.log serializations are
+    // expensive enough on iOS Safari (especially with Web Inspector attached)
+    // to noticeably drop touch events, which was masquerading as a "swipe
+    // does nothing" scroll bug. Set atterm.debugTouch=1 to re-enable when
+    // diagnosing.
+    return raw === "1" || raw === "true";
   } catch {
-    return true;
+    return false;
   }
 }
 function touchState() {
@@ -1464,6 +1466,48 @@ async function ensureTerm() {
   keyTarget.addEventListener("pointerup", onSelectionPointerUp);
   keyTarget.addEventListener("pointercancel", onSelectionPointerCancel);
   terminalTouchViewport = term.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+  // ---- Mobile touch scroll velocity boost ----
+  // xterm 5.3 Viewport.handleTouchMove is a strict 1:1 finger → scrollTop
+  // mapper with no inertia or velocity. On iOS Safari, JS is slow enough
+  // that touch events get coalesced/dropped mid-swipe (the retained events
+  // report old finger positions, not the current one). Combined with 1:1
+  // mapping, a long fast swipe produces only 1-2 events with small deltas,
+  // and the user sees "swipe went far but scroll barely moved." Multiply
+  // xterm's per-event delta by TOUCH_SCROLL_VELOCITY so each retained event
+  // moves more, closing the gap between finger travel and scroll travel.
+  // Only apply on non-desktop runtimes so wheel/native mouse scroll on
+  // Wails / local-PTY is untouched. See xterm.js #5377 (limited mobile
+  // touch support) — this is the least invasive workaround short of
+  // replacing xterm's touch scroll with native iOS scroll (which needs a
+  // .xterm-viewport stacking + xterm listener disable, larger change).
+  if (!(platform.caps.wailsBindings || platform.caps.localPty)) {
+    try {
+      const coreAny = (term as unknown as { _core?: { _viewport?: unknown } })._core;
+      const vp = coreAny?._viewport as {
+        _lastTouchY?: number;
+        _viewportElement?: HTMLElement;
+        handleTouchStart?: (ev: TouchEvent) => void;
+        handleTouchMove?: (ev: TouchEvent) => boolean;
+      } | undefined;
+      if (vp && typeof vp.handleTouchMove === "function") {
+        const TOUCH_SCROLL_VELOCITY = 3;
+        vp.handleTouchStart = function (ev: TouchEvent) {
+          vp._lastTouchY = ev.touches[0]?.pageY ?? 0;
+        };
+        vp.handleTouchMove = function (ev: TouchEvent): boolean {
+          const currentY = ev.touches[0]?.pageY ?? 0;
+          const rawDelta = (vp._lastTouchY ?? currentY) - currentY;
+          vp._lastTouchY = currentY;
+          if (rawDelta === 0) return false;
+          const el = vp._viewportElement;
+          if (el) el.scrollTop += rawDelta * TOUCH_SCROLL_VELOCITY;
+          return false;
+        };
+      }
+    } catch (err) {
+      console.warn("[AT Term] touch velocity boost patch failed", err);
+    }
+  }
   // Bootstrap the debug flag once term is up and install the console dump.
   touchDebugEnabled = readTouchDebugFlag();
   installTouchDebugDump();

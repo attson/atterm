@@ -2,16 +2,58 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/attson/atterm/internal/sshclient"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 )
+
+// NewSshSessionByID looks up a saved host + its credential by ID and connects,
+// reusing NewSshSession (which carries the slice-1 known_hosts TOFU flow).
+// Returns errCredentialMissing when no credential is stored so the frontend
+// can prompt the user to supply one.
+func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
+	if a.host == nil {
+		return NewSessionResp{}, fmt.Errorf("relay host not ready")
+	}
+	var found *SSHHost
+	for _, h := range a.ListSSHHosts() {
+		if h.ID == id {
+			hh := h
+			found = &hh
+			break
+		}
+	}
+	if found == nil {
+		return NewSessionResp{}, fmt.Errorf("no such host: %s", id)
+	}
+
+	raw, err := safekeyring.Get(sshCredentialService(), id)
+	if err != nil {
+		return NewSessionResp{}, errors.New(errCredentialMissing)
+	}
+	var cred sshCredential
+	if err := json.Unmarshal([]byte(raw), &cred); err != nil {
+		return NewSessionResp{}, errors.New(errCredentialMissing)
+	}
+
+	return a.NewSshSession(SSHConnectReq{
+		Host: found.Host, Port: found.Port, User: found.User,
+		AuthKind:      found.AuthKind,
+		Password:      cred.Password,
+		PrivateKey:    cred.PrivateKey,
+		Passphrase:    cred.Passphrase,
+		AcceptHostKey: false,
+	})
+}
 
 // NewSshSession opens an SSH remote shell as an adoptable session. On an
 // unknown host key it returns *HostKeyUnknownError with the fingerprint; the

@@ -100,6 +100,10 @@ type SSHConnectReq struct {
 // the frontend can recognize the TOFU case and re-issue with AcceptHostKey.
 const errCodeHostKeyUnknown = "ssh_host_key_unknown"
 
+// errCredentialMissing is returned by NewSshSessionByID when the host has no
+// stored credential; the frontend prompts the user to supply one.
+const errCredentialMissing = "ssh_credential_missing"
+
 // HostKeyUnknownError carries the fingerprint so the frontend can show the
 // TOFU dialog and retry with AcceptHostKey=true.
 type HostKeyUnknownError struct {

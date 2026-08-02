@@ -195,6 +195,10 @@ type appConfig struct {
 	// deletes ids the user did not explicitly unpin.
 	PinnedSessionIDs []string `json:"pinned_session_ids,omitempty"`
 
+	// SSHHosts is the saved SSH host list (non-secret fields only).
+	// Credentials live in the keyring keyed by SSHHost.ID, never here.
+	SSHHosts []SSHHost `json:"ssh_hosts,omitempty"`
+
 	// PrefsMeta records per-key sync state (last local update timestamp and
 	// dirty flag) for the synced preferences. Never sent to the relay.
 	PrefsMeta map[string]prefsMetaEntry `json:"prefs_meta,omitempty"`

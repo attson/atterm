@@ -65,6 +65,31 @@ export interface SSHConnectReq {
   accept_host_key?: boolean;
 }
 
+// SSHHost mirrors desktop SSHHost — the non-secret part of a saved host.
+export interface SSHHost {
+  id: string;
+  alias?: string;
+  host: string;
+  port?: string;
+  user: string;
+  auth_kind: "password" | "privateKey";
+  group?: string;
+  note?: string;
+}
+
+// SSHCredential mirrors desktop sshCredential — the secret part, kept in the
+// keyring on the Go side and only ever sent, never returned.
+export interface SSHCredential {
+  password?: string;
+  private_key?: string;
+  passphrase?: string;
+}
+
+export interface KnownHostEntry {
+  host: string;
+  fingerprint: string;
+}
+
 export interface NewSessionResp {
   session_id: string;
 }
@@ -322,6 +347,13 @@ interface AppBindings {
   GetHostInfo(): Promise<HostInfo>;
   NewSession(req: NewSessionReq): Promise<NewSessionResp>;
   NewSshSession(req: SSHConnectReq): Promise<NewSessionResp>;
+  NewSshSessionByID(id: string): Promise<NewSessionResp>;
+  ListSSHHosts(): Promise<SSHHost[]>;
+  AddSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost>;
+  UpdateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void>;
+  DeleteSSHHost(id: string): Promise<void>;
+  ListKnownHosts(): Promise<KnownHostEntry[]>;
+  RemoveKnownHost(host: string): Promise<void>;
   CloseSession(sessionID: string): Promise<void>;
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
@@ -487,6 +519,34 @@ export function newSession(req: NewSessionReq): Promise<NewSessionResp> {
 
 export function newSshSession(req: SSHConnectReq): Promise<NewSessionResp> {
   return bindings().NewSshSession(req);
+}
+
+export function newSshSessionByID(id: string): Promise<NewSessionResp> {
+  return bindings().NewSshSessionByID(id);
+}
+
+export function listSSHHosts(): Promise<SSHHost[]> {
+  return bindings().ListSSHHosts();
+}
+
+export function addSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost> {
+  return bindings().AddSSHHost(h, cred);
+}
+
+export function updateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void> {
+  return bindings().UpdateSSHHost(h, cred);
+}
+
+export function deleteSSHHost(id: string): Promise<void> {
+  return bindings().DeleteSSHHost(id);
+}
+
+export function listKnownHosts(): Promise<KnownHostEntry[]> {
+  return bindings().ListKnownHosts();
+}
+
+export function removeKnownHost(host: string): Promise<void> {
+  return bindings().RemoveKnownHost(host);
 }
 
 export function closeSession(sessionId: string): Promise<void> {

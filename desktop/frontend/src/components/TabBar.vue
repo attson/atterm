@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { ShieldUser } from "lucide-vue-next";
+import { ShieldUser, Server } from "lucide-vue-next";
 import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
@@ -299,12 +299,14 @@ function onClose(e: MouseEvent, id: string) {
     >+</button>
     <button
       v-if="canNewLocal"
-      class="plus ssh"
+      class="ssh-btn"
       type="button"
       data-test="new-ssh"
-      title="New SSH Connection"
+      title="SSH hosts"
       @click="emit('new-ssh')"
-    >SSH</button>
+    >
+      <Server :size="14" />
+    </button>
     <button
       v-if="isAdmin"
       class="admin-btn"
@@ -401,6 +403,15 @@ function onClose(e: MouseEvent, id: string) {
 }
 .plus:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 .plus:disabled { opacity: 0.4; cursor: not-allowed; }
+.ssh-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--fg-dim);
+  padding: 0 10px; cursor: pointer;
+  border-left: 1px solid var(--border);
+  transition: color 120ms, background 120ms;
+}
+.ssh-btn:hover { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
+.ssh-btn svg { display: block; }
 .settings-btn {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center;

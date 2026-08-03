@@ -4,11 +4,13 @@ import SshHostsPanel from "./SshHostsPanel.vue";
 
 const listSSHHosts = vi.fn();
 const addSSHHost = vi.fn();
+const updateSSHHost = vi.fn();
 const deleteSSHHost = vi.fn();
 const newSshSessionByID = vi.fn();
 vi.mock("../lib/api", () => ({
   listSSHHosts: (...a: unknown[]) => listSSHHosts(...a),
   addSSHHost: (...a: unknown[]) => addSSHHost(...a),
+  updateSSHHost: (...a: unknown[]) => updateSSHHost(...a),
   deleteSSHHost: (...a: unknown[]) => deleteSSHHost(...a),
   newSshSessionByID: (...a: unknown[]) => newSshSessionByID(...a),
 }));
@@ -16,6 +18,7 @@ vi.mock("../lib/api", () => ({
 beforeEach(() => {
   listSSHHosts.mockReset().mockResolvedValue([]);
   addSSHHost.mockReset();
+  updateSSHHost.mockReset();
   deleteSSHHost.mockReset();
   newSshSessionByID.mockReset();
 });
@@ -43,10 +46,13 @@ describe("SshHostsPanel", () => {
     expect(wrapper.emitted("connected")?.[0]).toEqual(["s1"]);
   });
 
-  it("添加主机后调用 addSSHHost 并刷新列表", async () => {
+  it("打开新建抽屉、填表单后调用 addSSHHost 并刷新列表", async () => {
     addSSHHost.mockResolvedValueOnce({ id: "2", host: "h2", user: "u2", auth_kind: "password" });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
+    // The form now lives in a right-side drawer opened via "New Host".
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
     await wrapper.find('[data-test="ssh-add-host"]').setValue("h2");
     await wrapper.find('[data-test="ssh-add-user"]').setValue("u2");
     await wrapper.find('[data-test="ssh-add-password"]').setValue("pw");

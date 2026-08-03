@@ -79,6 +79,48 @@ type NewSessionResp struct {
 	SessionID string `json:"session_id"`
 }
 
+// SSHConnectReq describes one SSH connection request from the frontend.
+// Credentials are used for this connection only and never persisted (slice 1).
+type SSHConnectReq struct {
+	Host       string `json:"host"`
+	Port       string `json:"port,omitempty"`
+	User       string `json:"user"`
+	AuthKind   string `json:"auth_kind"` // "password" | "privateKey"
+	Password   string `json:"password,omitempty"`
+	PrivateKey string `json:"private_key,omitempty"` // PEM content (pasted or file-read)
+	Passphrase string `json:"passphrase,omitempty"`
+	Cols       uint16 `json:"cols,omitempty"`
+	Rows       uint16 `json:"rows,omitempty"`
+	// AcceptHostKey is set on a retry after the user confirmed an unknown
+	// host fingerprint in the TOFU dialog.
+	AcceptHostKey bool `json:"accept_host_key,omitempty"`
+	// SSHHostID is set internally by NewSshSessionByID to the saved SSHHost.ID
+	// so the adopted session carries it (for recovery reconnect). Empty for
+	// ad-hoc connections. Not part of the frontend-facing request shape.
+	SSHHostID string `json:"-"`
+}
+
+// errCodeHostKeyUnknown is the error string carried by HostKeyUnknownError so
+// the frontend can recognize the TOFU case and re-issue with AcceptHostKey.
+const errCodeHostKeyUnknown = "ssh_host_key_unknown"
+
+// errCredentialMissing is returned by NewSshSessionByID when the host has no
+// stored credential; the frontend prompts the user to supply one.
+const errCredentialMissing = "ssh_credential_missing"
+
+// errKeyMissing is returned when a host references a key ID that no longer
+// exists in the vault.
+const errKeyMissing = "ssh_key_missing"
+
+// HostKeyUnknownError carries the fingerprint so the frontend can show the
+// TOFU dialog and retry with AcceptHostKey=true.
+type HostKeyUnknownError struct {
+	Fingerprint string
+	Host        string
+}
+
+func (e *HostKeyUnknownError) Error() string { return errCodeHostKeyUnknown }
+
 // HostInfo describes this machine. The frontend uses HostID to dedupe
 // remote-relay session listings (sessions whose host_id matches us are
 // just mirrors of our own and are reachable through the local mini-relay).
@@ -170,6 +212,10 @@ type App struct {
 
 	// writeFile is os.WriteFile in production; tests substitute a stub.
 	writeFile writeFileFunc
+
+	// sshKnownHostsPath overrides the known_hosts file used by NewSshSession
+	// (tests set a temp path). Empty → ~/.ssh/known_hosts.
+	sshKnownHostsPath string
 
 	prefsSync *prefssync.Engine
 
@@ -322,7 +368,7 @@ func (a *App) startup(ctx context.Context) {
 		a.updater.SetGHProxyURL(cfg.UpdateGHProxyURL)
 	}
 
-	adapter := newAppConfigAdapter(a.cfgStore)
+	adapter := newAppConfigAdapter(a.cfgStore, a.accountKeyForSync)
 	relayClient := newHTTPRelayClient(a.cfgStore)
 	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
 
@@ -2283,6 +2329,20 @@ func (a *App) markPrefDirtyAndPush(key string) {
 			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
 		}
 	}()
+}
+
+// accountKeyForSync returns a copy of the unlocked E2EE account key, or nil
+// when E2EE is not active. Used by the prefssync adapter to seal/open the SSH
+// host list — nil means "local only, never sync credentials to the relay".
+func (a *App) accountKeyForSync() []byte {
+	a.accountKeyMu.Lock()
+	defer a.accountKeyMu.Unlock()
+	if len(a.accountKey) == 0 {
+		return nil
+	}
+	out := make([]byte, len(a.accountKey))
+	copy(out, a.accountKey)
+	return out
 }
 
 // snapshotRelayErrors returns a copy of the recent-errors ring buffer.

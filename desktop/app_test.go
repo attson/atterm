@@ -91,11 +91,11 @@ func TestSetUplinkPaused_TogglesWithoutWipingConfig(t *testing.T) {
 func TestAppLocalePreference(t *testing.T) {
 	a := newRelayTestApp(t)
 	initial := appConfig{
-		RelayURL:         "wss://relay.example",
-		RelaySessionToken:       "atk_locale_test",
-		RemotePermission: "control",
-		RelayPaused:      true,
-		TerminalTheme:    terminalThemeNord,
+		RelayURL:          "wss://relay.example",
+		RelaySessionToken: "atk_locale_test",
+		RemotePermission:  "control",
+		RelayPaused:       true,
+		TerminalTheme:     terminalThemeNord,
 	}
 	if err := a.cfgStore.Set(initial); err != nil {
 		t.Fatalf("seed config: %v", err)
@@ -210,7 +210,7 @@ func TestPinnedSessionIds_MarksPrefDirty(t *testing.T) {
 		cfgStore: &configStore{},
 		ctx:      context.Background(),
 	}
-	adapter := newAppConfigAdapter(a.cfgStore)
+	adapter := newAppConfigAdapter(a.cfgStore, a.accountKeyForSync)
 	relayClient := newHTTPRelayClient(a.cfgStore)
 	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
 

@@ -46,6 +46,7 @@ func TestSyncedKeys_MatchesWhitelist(t *testing.T) {
 		"command_notify_threshold_seconds",
 		"shell_integration_enabled",
 		"pinned_session_ids",
+		"ssh_hosts_encrypted",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d keys, want %d: %v", len(got), len(want), got)

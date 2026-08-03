@@ -10,6 +10,8 @@ import PaneGrid from "./components/PaneGrid.vue";
 import AdminPanel from "./components/AdminPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import SessionPickerDialog from "./components/SessionPickerDialog.vue";
+import NewSshDialog from "./components/NewSshDialog.vue";
+import SshHostsPanel from "./components/SshHostsPanel.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
 import ConfirmCloseSessionDialog from "./components/ConfirmCloseSessionDialog.vue";
 import RecoveryDialog from "./components/RecoveryDialog.vue";
@@ -25,6 +27,8 @@ import { useFileRevealStore } from "./plugins/fileExplorer/fileReveal";
 import { sendInputToSession } from "./lib/sendInput";
 import { applyTabReorder } from "./lib/tabReorder";
 import { computeCloseTabState } from "./lib/closeTabOptimistic";
+import { tabsToAutoCloseOnExit } from "./lib/autoCloseTab";
+import { classifySSHRestore } from "./lib/sshRestore";
 // Plugin theme palettes (CSS vars). Loaded in main bundle so the panel
 // toggle and Quick Input toolbar can read --ed-* vars even when the
 // file-explorer chunk is not yet loaded.
@@ -45,6 +49,7 @@ import {
   getUpdateState,
   listShells,
   newSession,
+  newSshSessionByID,
   markSessionsSeen,
   listRemoteSessions,
   getTaskSidebarCollapsed,
@@ -219,6 +224,8 @@ watch(isAdmin, (v) => {
 });
 
 const quitDialogOpen = ref(false);
+const showSshDialog = ref(false);
+const showSshHosts = ref(false);
 const pendingCloseSession = ref<RemoteSession | null>(null);
 const pendingCloseSessions = ref<RemoteSession[]>([]);
 let pendingCloseAction: (() => void | Promise<void>) | null = null;
@@ -650,7 +657,11 @@ function snapshotKnownSessions(): Map<string, SessionInfo> {
 
 function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
   const localIds = new Set(localList.value.map((s) => s.id));
+  // Tabs where a local session just disappeared this sweep — candidates for
+  // auto-close once we confirm they hold no other live session.
+  const clearedTabIds: string[] = [];
   for (const t of tabs.value) {
+    let clearedHere = false;
     for (let i = 0; i < t.panes.length; i++) {
       const p = t.panes[i];
       if (!p.sessionId) continue;
@@ -662,8 +673,20 @@ function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
         // comes back).
         const lastSeenInfo = snapshot?.get(p.sessionId) ?? p.lastSeenInfo;
         t.panes[i] = { sessionId: null, remote: p.remote, lastSeenInfo };
+        clearedHere = true;
       }
     }
+    if (clearedHere) clearedTabIds.push(t.id);
+  }
+
+  // Auto-close on exit: a terminal (local shell or SSH) that exited leaves its
+  // pane empty above. If that leaves a tab with no live session in ANY pane
+  // (local or remote), close the whole tab instead of stranding an empty
+  // "[empty pane]" placeholder. Only tabs that just lost a session this sweep
+  // are considered, so freshly-opened empty tabs and mid-restore tabs are not
+  // swept away.
+  for (const tabId of tabsToAutoCloseOnExit(tabs.value, localIds, clearedTabIds)) {
+    closeTab(tabId);
   }
 }
 
@@ -984,6 +1007,45 @@ async function startNewTab() {
   }
 }
 
+// openSshTab seeds the freshly-adopted SSH session into localList (it is an
+// AdoptSession-backed session on this host, so it surfaces in the local list)
+// and opens it in a new single-pane tab — mirroring startNewTab's tail.
+function openSshTab(sessionId: string) {
+  pendingLocalIds.add(sessionId);
+  if (!localList.value.some((s) => s.id === sessionId)) {
+    const dims = predictCellDims("single");
+    localList.value = [
+      ...localList.value,
+      {
+        id: sessionId,
+        command: "ssh",
+        cwd: "",
+        title: "ssh",
+        cols: dims.cols,
+        rows: dims.rows,
+        started_at: Math.floor(Date.now() / 1000),
+        host_id: localHostID.value,
+      },
+    ];
+  }
+  const id = newId();
+  tabs.value.push({
+    id,
+    layout: "single",
+    panes: [{ sessionId, remote: false }],
+    activePaneIdx: 0,
+    colRatio: RATIO_DEFAULT,
+    rowRatio: RATIO_DEFAULT,
+  });
+  gotoTab(id);
+}
+
+function onSshConnected(sessionId: string) {
+  showSshDialog.value = false;
+  showSshHosts.value = false;
+  openSshTab(sessionId);
+}
+
 async function onSplit(dir: SplitDir, mode: SplitMode) {
   const t = currentTab.value;
   if (!t) return;
@@ -1135,6 +1197,56 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
       // newSession, matching how a snapshot-less boot renders there.
       if (!caps.localPty) {
         t.panes[i] = { sessionId: null, remote: false };
+        continue;
+      }
+      // SSH sessions must NOT be forked as a local shell (that would spawn a
+      // bogus "ssh" process). Saved-host SSH reconnects by host id; ad-hoc SSH
+      // can't reconnect (used-once creds) so it's left empty with a hint.
+      const sshKind = classifySSHRestore(snap);
+      if (sshKind.kind === "reconnect") {
+        try {
+          const resp = await newSshSessionByID(sshKind.hostId);
+          t.panes[i] = { sessionId: resp.session_id, remote: false };
+          pendingLocalIds.add(resp.session_id);
+          localList.value = [
+            ...localList.value,
+            {
+              id: resp.session_id,
+              command: snap.title || "ssh",
+              cwd: "",
+              title: snap.title || "ssh",
+              type: "shell",
+              cols: predictCellDims(tab.layout).cols,
+              rows: predictCellDims(tab.layout).rows,
+              started_at: Math.floor(Date.now() / 1000),
+              host_id: localHostID.value,
+            },
+          ];
+        } catch (e) {
+          // Host deleted / key missing / TOFU on reconnect → leave empty with a
+          // hint instead of stranding a broken pane.
+          t.panes[i] = {
+            sessionId: null,
+            remote: false,
+            lastSeenInfo: synthSessionInfoFromSnapshot({
+              ...snap,
+              title: (snap.title || "ssh") + " — reconnect failed, open it again",
+            }),
+          };
+          void e;
+        }
+        continue;
+      }
+      if (sshKind.kind === "adhoc") {
+        // Ad-hoc SSH: credentials were used-once; cannot reconnect.
+        t.panes[i] = {
+          sessionId: null,
+          remote: false,
+          lastSeenInfo: synthSessionInfoFromSnapshot({
+            ...snap,
+            title: (snap.title || "ssh") + " — SSH disconnected, reconnect to resume",
+          }),
+        };
         continue;
       }
       try {
@@ -1888,6 +2000,7 @@ defineExpose({ me });
       @activate="gotoTab"
       @close="requestCloseTab"
       @new="startNewTab"
+      @new-ssh="showSshHosts = true"
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
       @toggle-admin="adminViewOpen = !adminViewOpen"
@@ -1998,6 +2111,16 @@ defineExpose({ me });
       :remote-sessions="remoteList"
       @pick="onPickerPick"
       @close="onPickerClose"
+    />
+    <NewSshDialog
+      v-if="showSshDialog"
+      @connected="onSshConnected"
+      @cancel="showSshDialog = false"
+    />
+    <SshHostsPanel
+      v-if="showSshHosts"
+      @connected="onSshConnected"
+      @close="showSshHosts = false"
     />
     <ConfirmQuitDialog
       v-if="quitDialogOpen"

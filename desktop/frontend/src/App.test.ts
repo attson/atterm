@@ -534,6 +534,18 @@ describe("remote tab session retention", () => {
     expect(source).toContain("pruned.removedTabIds.includes(currentTabId.value)");
     expect(source).toContain('location.hash = ""');
   });
+
+  test("sweep auto-closes a tab whose local/SSH session exited, leaving no live session", () => {
+    // A terminal (local shell or adopted SSH session, both remote:false) that
+    // exits gets its pane nulled by sweepMissingSessions. If the tab then holds
+    // no live session in any pane, the whole tab is closed rather than left as
+    // an "[empty pane]" placeholder. Decision logic lives in the pure
+    // tabsToAutoCloseOnExit helper (unit-tested separately).
+    expect(source).toContain("clearedTabIds");
+    expect(source).toContain("if (clearedHere) clearedTabIds.push(t.id)");
+    expect(source).toContain("tabsToAutoCloseOnExit(tabs.value, localIds, clearedTabIds)");
+    expect(source).toContain("closeTab(tabId)");
+  });
 });
 
 describe("App window title follows active AI session", () => {

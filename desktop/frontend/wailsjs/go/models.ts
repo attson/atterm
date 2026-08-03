@@ -487,6 +487,20 @@ export namespace main {
 	        this.user = source["user"];
 	    }
 	}
+	export class KnownHostEntry {
+	    host: string;
+	    fingerprint: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KnownHostEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.fingerprint = source["fingerprint"];
+	    }
+	}
 	export class LogPreview {
 	    path: string;
 	    exists: boolean;
@@ -521,22 +535,6 @@ export namespace main {
 	        this.path = source["path"];
 	        this.effective_path = source["effective_path"];
 	        this.dev_dual_output = source["dev_dual_output"];
-	    }
-	}
-	export class StartupError {
-	    fatal: boolean;
-	    message: string;
-	    log_path: string;
-
-	    static createFrom(source: any = {}) {
-	        return new StartupError(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.fatal = source["fatal"];
-	        this.message = source["message"];
-	        this.log_path = source["log_path"];
 	    }
 	}
 	export class NewSessionReq {
@@ -581,6 +579,7 @@ export namespace main {
 	    token: string;
 	    expires_at: number;
 	    qr_url: string;
+	    wrapped: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PairingTokenResponse(source);
@@ -591,6 +590,7 @@ export namespace main {
 	        this.token = source["token"];
 	        this.expires_at = source["expires_at"];
 	        this.qr_url = source["qr_url"];
+	        this.wrapped = source["wrapped"];
 	    }
 	}
 	export class PaneSnapshot {
@@ -962,6 +962,80 @@ export namespace main {
 	        this.is_current = source["is_current"];
 	    }
 	}
+	export class SSHConnectReq {
+	    host: string;
+	    port?: string;
+	    user: string;
+	    auth_kind: string;
+	    password?: string;
+	    private_key?: string;
+	    passphrase?: string;
+	    cols?: number;
+	    rows?: number;
+	    accept_host_key?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHConnectReq(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.auth_kind = source["auth_kind"];
+	        this.password = source["password"];
+	        this.private_key = source["private_key"];
+	        this.passphrase = source["passphrase"];
+	        this.cols = source["cols"];
+	        this.rows = source["rows"];
+	        this.accept_host_key = source["accept_host_key"];
+	    }
+	}
+	export class SSHHost {
+	    id: string;
+	    alias?: string;
+	    host: string;
+	    port?: string;
+	    user: string;
+	    auth_kind: string;
+	    key_id?: string;
+	    group?: string;
+	    note?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHHost(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.alias = source["alias"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.auth_kind = source["auth_kind"];
+	        this.key_id = source["key_id"];
+	        this.group = source["group"];
+	        this.note = source["note"];
+	    }
+	}
+	export class SSHKey {
+	    id: string;
+	    name: string;
+	    key_type?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSHKey(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.key_type = source["key_type"];
+	    }
+	}
 	
 	export class SignOutOthersResult {
 	    deleted: number;
@@ -973,6 +1047,22 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.deleted = source["deleted"];
+	    }
+	}
+	export class StartupError {
+	    fatal: boolean;
+	    message: string;
+	    log_path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StartupError(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fatal = source["fatal"];
+	        this.message = source["message"];
+	        this.log_path = source["log_path"];
 	    }
 	}
 	
@@ -1055,5 +1145,19 @@ export namespace main {
 		    return a;
 		}
 	}
+	
+	export class sshCredential {
+	    password?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new sshCredential(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.password = source["password"];
+	    }
+	}
 
 }
+

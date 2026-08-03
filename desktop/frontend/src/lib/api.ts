@@ -49,6 +49,57 @@ export interface NewSessionReq {
   initial_ai_command_line?: string;
 }
 
+// SSHConnectReq mirrors desktop/app.go SSHConnectReq. Credentials are used for
+// this connection only and are never persisted (slice 1).
+export interface SSHConnectReq {
+  host: string;
+  port?: string;
+  user: string;
+  // "key" carries a pasted private_key for the ad-hoc dialog; saved hosts use
+  // key_id via NewSshSessionByID instead.
+  auth_kind: "password" | "key";
+  password?: string;
+  private_key?: string;
+  passphrase?: string;
+  cols?: number;
+  rows?: number;
+  // Set on retry after the user confirmed an unknown host fingerprint.
+  accept_host_key?: boolean;
+}
+
+// SSHHost mirrors desktop SSHHost — the non-secret part of a saved host.
+// Key auth references an SSHKey by id rather than inlining a private key.
+export interface SSHHost {
+  id: string;
+  alias?: string;
+  host: string;
+  port?: string;
+  user: string;
+  auth_kind: "password" | "key";
+  key_id?: string;
+  group?: string;
+  note?: string;
+}
+
+// SSHCredential mirrors desktop sshCredential — only a password now; private
+// keys live in the key vault (SSHKey), not on the host.
+export interface SSHCredential {
+  password?: string;
+}
+
+// SSHKey mirrors desktop SSHKey — a vault key's non-secret fields. The private
+// key + passphrase live in the keyring on the Go side.
+export interface SSHKey {
+  id: string;
+  name: string;
+  key_type?: string;
+}
+
+export interface KnownHostEntry {
+  host: string;
+  fingerprint: string;
+}
+
 export interface NewSessionResp {
   session_id: string;
 }
@@ -75,6 +126,11 @@ export interface RecoveryPaneSnapshot {
   last_command_line?: string;
   title?: string;
   ai?: RecoveryAIInfo;
+  // ssh_host_id, when non-empty, marks this pane as an SSH session connected
+  // from a saved host. On restore it is reconnected via NewSshSessionByID
+  // instead of being forked as a local shell. Empty for local shells and
+  // ad-hoc SSH sessions.
+  ssh_host_id?: string;
 }
 
 export interface RecoveryTabSnapshot {
@@ -305,6 +361,18 @@ interface AppBindings {
   GetEndpoint(): Promise<Endpoint>;
   GetHostInfo(): Promise<HostInfo>;
   NewSession(req: NewSessionReq): Promise<NewSessionResp>;
+  NewSshSession(req: SSHConnectReq): Promise<NewSessionResp>;
+  NewSshSessionByID(id: string): Promise<NewSessionResp>;
+  ListSSHHosts(): Promise<SSHHost[]>;
+  AddSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost>;
+  UpdateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void>;
+  DeleteSSHHost(id: string): Promise<void>;
+  ListKnownHosts(): Promise<KnownHostEntry[]>;
+  RemoveKnownHost(host: string): Promise<void>;
+  ListSSHKeys(): Promise<SSHKey[]>;
+  AddSSHKey(name: string, privateKeyPEM: string, passphrase: string): Promise<SSHKey>;
+  UpdateSSHKey(id: string, name: string, privateKeyPEM: string, passphrase: string): Promise<void>;
+  DeleteSSHKey(id: string): Promise<void>;
   CloseSession(sessionID: string): Promise<void>;
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
@@ -466,6 +534,54 @@ export function getEndpoint(): Promise<Endpoint> {
 
 export function newSession(req: NewSessionReq): Promise<NewSessionResp> {
   return bindings().NewSession(req);
+}
+
+export function newSshSession(req: SSHConnectReq): Promise<NewSessionResp> {
+  return bindings().NewSshSession(req);
+}
+
+export function newSshSessionByID(id: string): Promise<NewSessionResp> {
+  return bindings().NewSshSessionByID(id);
+}
+
+export function listSSHHosts(): Promise<SSHHost[]> {
+  return bindings().ListSSHHosts();
+}
+
+export function addSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost> {
+  return bindings().AddSSHHost(h, cred);
+}
+
+export function updateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void> {
+  return bindings().UpdateSSHHost(h, cred);
+}
+
+export function deleteSSHHost(id: string): Promise<void> {
+  return bindings().DeleteSSHHost(id);
+}
+
+export function listKnownHosts(): Promise<KnownHostEntry[]> {
+  return bindings().ListKnownHosts();
+}
+
+export function removeKnownHost(host: string): Promise<void> {
+  return bindings().RemoveKnownHost(host);
+}
+
+export function listSSHKeys(): Promise<SSHKey[]> {
+  return bindings().ListSSHKeys();
+}
+
+export function addSSHKey(name: string, privateKeyPEM: string, passphrase: string): Promise<SSHKey> {
+  return bindings().AddSSHKey(name, privateKeyPEM, passphrase);
+}
+
+export function updateSSHKey(id: string, name: string, privateKeyPEM: string, passphrase: string): Promise<void> {
+  return bindings().UpdateSSHKey(id, name, privateKeyPEM, passphrase);
+}
+
+export function deleteSSHKey(id: string): Promise<void> {
+  return bindings().DeleteSSHKey(id);
 }
 
 export function closeSession(sessionId: string): Promise<void> {

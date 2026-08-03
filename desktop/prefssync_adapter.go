@@ -9,15 +9,21 @@ import (
 	"strings"
 
 	"github.com/attson/atterm/internal/prefssync"
+	"github.com/attson/atterm/internal/safekeyring"
 )
 
 // appConfigAdapter glues prefssync.Adapter to the desktop configStore.
-// Only the 5 synced keys are exposed.
+// Only the whitelisted synced keys are exposed. accountKey supplies the E2EE
+// key for the ssh_hosts_encrypted value (nil when E2EE is inactive → that key
+// stays local-only, never synced).
 type appConfigAdapter struct {
-	store *configStore
+	store      *configStore
+	accountKey func() []byte
 }
 
-func newAppConfigAdapter(s *configStore) *appConfigAdapter { return &appConfigAdapter{store: s} }
+func newAppConfigAdapter(s *configStore, accountKey func() []byte) *appConfigAdapter {
+	return &appConfigAdapter{store: s, accountKey: accountKey}
+}
 
 func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 	c := a.store.Get()
@@ -55,6 +61,34 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 	case "pinned_session_ids":
 		b, _ := json.Marshal(c.PinnedSessionIDs)
 		return b, true
+	case "ssh_hosts_encrypted":
+		key := a.accountKey()
+		if len(key) == 0 {
+			return nil, false // E2EE inactive → local only, never sync
+		}
+		creds := make(map[string]sshCredential, len(c.SSHHosts))
+		for _, h := range c.SSHHosts {
+			if raw, err := safekeyring.Get(sshCredentialService(), h.ID); err == nil {
+				var cr sshCredential
+				if json.Unmarshal([]byte(raw), &cr) == nil {
+					creds[h.ID] = cr
+				}
+			}
+		}
+		keySecrets := make(map[string]sshKeySecret, len(c.SSHKeys))
+		for _, k := range c.SSHKeys {
+			if raw, err := safekeyring.Get(sshKeyService(), k.ID); err == nil {
+				var sec sshKeySecret
+				if json.Unmarshal([]byte(raw), &sec) == nil {
+					keySecrets[k.ID] = sec
+				}
+			}
+		}
+		blob, err := sealSSHHosts(key, c.SSHHosts, creds, c.SSHKeys, keySecrets)
+		if err != nil || blob == nil {
+			return nil, false
+		}
+		return blob, true
 	}
 	return nil, false
 }
@@ -104,6 +138,35 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 			return err
 		}
 		c.PinnedSessionIDs = ids
+	case "ssh_hosts_encrypted":
+		key := a.accountKey()
+		if len(key) == 0 {
+			return nil // no key → ignore inbound sync silently (local only)
+		}
+		hosts, creds, keys, keySecrets, err := openSSHHosts(key, value)
+		if err != nil {
+			return err
+		}
+		for id, cr := range creds {
+			blob, mErr := json.Marshal(cr)
+			if mErr != nil {
+				return mErr
+			}
+			if sErr := safekeyring.Set(sshCredentialService(), id, string(blob)); sErr != nil {
+				return sErr
+			}
+		}
+		for id, sec := range keySecrets {
+			blob, mErr := json.Marshal(sec)
+			if mErr != nil {
+				return mErr
+			}
+			if sErr := safekeyring.Set(sshKeyService(), id, string(blob)); sErr != nil {
+				return sErr
+			}
+		}
+		c.SSHHosts = hosts
+		c.SSHKeys = keys
 	default:
 		return fmt.Errorf("unknown key %s", key)
 	}

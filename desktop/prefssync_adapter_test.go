@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/attson/atterm/internal/prefssync"
@@ -10,12 +11,22 @@ import (
 func newTestConfigStore(t *testing.T) *configStore {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	// os.UserConfigDir consults XDG_CONFIG_HOME on Linux (and other
+	// platform-specific vars) BEFORE falling back to $HOME/.config. CI runners
+	// set XDG_CONFIG_HOME, so without clearing it every test's configStore
+	// would share one config.json and cross-contaminate (host/key rows leaking
+	// between tests). Point every config-dir env at the per-test temp dir so
+	// each configStore is hermetic.
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmp, "cache"))
+	t.Setenv("LocalAppData", filepath.Join(tmp, "local")) // Windows
 	return loadConfig()
 }
 
 func TestAdapter_PinnedSessionIds_RoundTrip(t *testing.T) {
 	cs := newTestConfigStore(t)
-	a := newAppConfigAdapter(cs)
+	a := newAppConfigAdapter(cs, func() []byte { return nil })
 
 	want := []string{"sid-a", "sid-b"}
 	raw, _ := json.Marshal(want)

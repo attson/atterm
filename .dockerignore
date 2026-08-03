@@ -2,10 +2,28 @@
 .idea
 .vscode
 .DS_Store
+.claude
+.superpowers
+.worktrees
+.workflow-plan
+.playwright-mcp
 
-desktop/build/bin
-desktop/frontend/dist
-desktop/frontend/node_modules
+# Frontend, mobile, docs sites — none of this reaches the relay image
+# (Dockerfile.relay copies only go.mod, go.sum, cmd/atterm-relay, internal).
+# Keeping them out of the build context saves ~900 MB per `docker build`.
+desktop/
+mobile/
+web/
+site/
+docs/
 
-**/*.test
-**/*.out
+# Any node_modules dir at any depth
+node_modules/
+**/node_modules/
+
+# Build / test artefacts that occasionally get left in the tree
+*.test
+*.out
+*.exe
+*.png
+atterm-relay

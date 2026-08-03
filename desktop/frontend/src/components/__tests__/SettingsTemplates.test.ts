@@ -110,4 +110,34 @@ describe('SettingsTemplates', () => {
 
     expect(clear).toHaveBeenCalled()
   })
+
+  it('reloads when the platform fires prefs:changed (relay pull landed while pane is open)', async () => {
+    const { __fake } = await import('../../platform') as any
+    let handler: (() => void) | null = null
+    const off = vi.fn()
+    __fake.events.on = vi.fn((event: string, h: () => void) => {
+      if (event === 'prefs:changed') handler = h
+      return off
+    })
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'old', label: 'old', text: 'old-text' },
+    ])
+    const w = mount(SettingsTemplates)
+    await flushPromises()
+    expect(w.find('[data-testid="template-row-old"]').exists()).toBe(true)
+    expect(handler).not.toBeNull()
+
+    // Simulate prefsSync pull: adapter now holds a fresh list.
+    __fake.templates.load = vi.fn().mockResolvedValue([
+      { id: 'synced', label: 'synced-from-relay', text: 'synced-text' },
+    ])
+    handler!()
+    await flushPromises()
+
+    expect(w.find('[data-testid="template-row-old"]').exists()).toBe(false)
+    expect(w.find('[data-testid="template-row-synced"]').exists()).toBe(true)
+
+    w.unmount()
+    expect(off).toHaveBeenCalled()
+  })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '../i18n/useI18n'
 import { usePlatform } from '../platform'
 import { effectiveTemplates, type QuickTemplate } from '../lib/templates'
@@ -24,7 +24,18 @@ async function reload() {
   hidden.value = await platform.templates.loadHidden()
 }
 
-onMounted(reload)
+// prefsSync (Go / Capacitor / Web) writes synced values straight into local
+// storage and fires prefs:changed; if this pane is already open when a pull
+// lands, refresh so the list doesn't stay stuck at the pre-sync snapshot.
+let prefsChangedOff: (() => void) | null = null
+onMounted(async () => {
+  await reload()
+  prefsChangedOff = platform.events.on('prefs:changed', () => { void reload() })
+})
+onBeforeUnmount(() => {
+  prefsChangedOff?.()
+  prefsChangedOff = null
+})
 
 // notifyChanged tells any open terminal to live-reload its template bar +
 // hidden flag, instead of waiting for a remount. Mirrors the mobile

@@ -258,6 +258,71 @@ describe("TerminalView web auxiliary keys", () => {
     expect(focusBody![0]).toMatch(/scrollToBottomForKeyboardOpen\(\)/);
   });
 
+  test("user scroll during a keyboard-open cycle cancels the snap-to-bottom + restore chain", () => {
+    // Regression: on mobile, tapping to open the keyboard fires
+    // scrollToBottomForKeyboardOpen (which snap-to-bottoms + queues 4
+    // restore timers at 80/180/360/700 ms) and scheduleSoftKeyboardOpenFocusRetries
+    // (which re-fires scrollToBottomForKeyboardOpen at 60/180/360 ms). Any
+    // up-scroll the user made in that window would get yanked back to the
+    // bottom. onViewportUserScrollIntent latches a flag + clears pending
+    // restore timers so the user's intent wins; the snap/apply paths bail
+    // on the flag; showSoftKeyboard/hideSoftKeyboard reset the flag to
+    // start a fresh cycle.
+    expect(source).toContain("let userScrolledDuringKeyboardCycle = false;");
+    expect(source).toMatch(/function\s+onViewportUserScrollIntent\s*\([^)]*\)\s*\{[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*true[\s\S]*?clearKeyboardScrollRestoreTimers\(\)[\s\S]*?pendingKeyboardScrollPosition\s*=\s*null[\s\S]*?\}/);
+    // Both scroll-forcing paths must bail on the flag.
+    expect(source).toMatch(/function\s+scrollToBottomForKeyboardOpen[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)/);
+    expect(source).toMatch(/function\s+applyScrollPosition[\s\S]*?if\s*\(\s*userScrolledDuringKeyboardCycle\s*\)/);
+    // Fresh state per open/close cycle so a new tap after user scroll re-arms the snap.
+    expect(source).toMatch(/function\s+showSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
+    expect(source).toMatch(/function\s+hideSoftKeyboard[\s\S]*?userScrolledDuringKeyboardCycle\s*=\s*false/);
+    // Wheel on the viewport still cancels the restore (desktop). Mobile
+    // touch signal is now via onTermTouchMoveForRestoreCancel on .term
+    // (xterm owns the actual scroll; we only piggy-back the flag).
+    expect(source).toContain('addEventListener("wheel", onViewportUserScrollIntent');
+    expect(source).toContain('removeEventListener("wheel", onViewportUserScrollIntent');
+    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel\s*\([^)]*\)\s*\{[\s\S]*?onViewportUserScrollIntent\(\)/);
+  });
+
+  test("onTermTouchStart NEVER stopPropagation — xterm's touchstart must always fire to init Viewport._lastTouchY", () => {
+    // Regression root cause: any stopPropagation on .term's
+    // @touchstart.capture blocks xterm's touchstart (registered on .xterm
+    // root, a descendant of .term) from firing on descendants. Xterm's
+    // touchstart is what sets Viewport._lastTouchY = ev.touches[0].pageY;
+    // without that init, the subsequent touchmove computes deltaY against
+    // 0 → huge negative → viewport.scrollTop clamped to 0 → user sees
+    // "first swipe does nothing." Even scoping stopPropagation to
+    // `softKeyboardOpen.value === true` isn't safe, because that computed
+    // includes `imeFocused.value`, which can be stale when iOS drops a
+    // blur event — the swipe silently dies on subsequent touches with no
+    // visible keyboard involvement. preventDefault alone suffices to
+    // stop the browser's default focus-into-IME, and xterm's touchstart
+    // is registered passive so it can't preventDefault anything.
+    const body = source.match(/function\s+onTermTouchStart\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    // Guard the hide-keyboard side still preventDefaults and hides.
+    expect(body![0]).toMatch(/preventDefault\(\)/);
+    expect(body![0]).toMatch(/hideSoftKeyboard\(\)/);
+    // NO stopPropagation calls anywhere in this function.
+    const stopCount = (body![0].match(/stopPropagation\(\)/g) || []).length;
+    expect(stopCount).toBe(0);
+  });
+
+  test("touchmove on .term forwards user scroll intent to the keyboard-restore cancel (letting xterm own actual scroll)", () => {
+    // Xterm 5.3 already handles the touchmove-to-scrollTop translation via
+    // Viewport.handleTouchMove on the .xterm root. We only piggy-back to
+    // set the userScrolledDuringKeyboardCycle flag so the ~1.6 s soft-
+    // keyboard restore chain stops fighting the user. No delta math, no
+    // scrollTop mutation here.
+    expect(source).toMatch(/function\s+onTermTouchMoveForRestoreCancel\s*\([^)]*\)\s*\{[\s\S]*?onViewportUserScrollIntent\(\)[\s\S]*?\}/);
+    expect(source).toContain('keyTarget.addEventListener("touchmove", onTermTouchMoveForRestoreCancel');
+    expect(source).toContain('copyKeyTarget?.removeEventListener("touchmove", onTermTouchMoveForRestoreCancel');
+    // The earlier misdirected manual bridge is gone (would double-scroll).
+    expect(source).not.toContain("touchScrollLastY");
+    expect(source).not.toContain("onTerminalTouchMoveForScroll");
+    expect(source).not.toContain("onTerminalTouchStartForScroll");
+  });
+
   test("keeps the keyboard opening state stable across transient mobile blur", () => {
     const toggleBody = source.match(/function\s+toggleSoftKeyboard\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
     expect(toggleBody).not.toBeNull();
@@ -341,7 +406,12 @@ describe("TerminalView web auxiliary keys", () => {
     expect(touchBody![0]).toMatch(/shouldBlockTerminalTouchFocus\(event\)/);
     expect(touchBody![0]).toMatch(/lastBlockedTerminalTouchAt\s*=\s*Date\.now\(\)/);
     expect(touchBody![0]).toMatch(/event\.preventDefault\(\)/);
-    expect(touchBody![0]).toMatch(/event\.stopPropagation\(\)/);
+    // stopPropagation was intentionally removed — it blocked xterm's
+    // touchstart from initializing Viewport._lastTouchY, killing the first
+    // swipe. preventDefault alone stops the refocus, xterm's touchstart is
+    // passive (can't preventDefault) and is safe to let through. See the
+    // dedicated "onTermTouchStart NEVER stopPropagation" test above.
+    expect(touchBody![0]).not.toMatch(/event\.stopPropagation\(\)/);
     expect(touchBody![0]).toMatch(/hideSoftKeyboard\(\)/);
 
     const mouseBody = source.match(/function\s+onTermMouseDown\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);

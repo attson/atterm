@@ -196,6 +196,73 @@ let lastShortcutTouchActionAt = 0;
 let softKeyboardOpenFocusTimers: number[] = [];
 let keyboardScrollRestoreTimers: number[] = [];
 let pendingKeyboardScrollPosition: ScrollPosition | null = null;
+// Latched true as soon as the user touches / wheels the terminal viewport
+// after a keyboard-open cycle starts. All snap-to-bottom + restore-to-bottom
+// paths bail on this so the user's scroll intent wins over the mobile
+// "keep prompt visible while soft keyboard animates" heuristic. Reset on
+// showSoftKeyboard / hideSoftKeyboard (fresh cycle).
+let userScrolledDuringKeyboardCycle = false;
+
+// ---- Touch-scroll debug instrumentation ----
+// Default ON in dev / opt-in in prod via localStorage. To disable:
+//   localStorage.setItem('atterm.debugTouch', '0')
+// To enable at any time:
+//   localStorage.setItem('atterm.debugTouch', '1')
+// Logs to console with a [tsc] prefix (`grep tsc` in Safari Web Inspector /
+// Xcode logs). Also keeps an in-memory ring so a follow-up "dump" can
+// print the last N events even if console history is truncated.
+type TouchDebugEntry = { t: number; tag: string; data: unknown };
+const TOUCH_DEBUG_MAX = 300;
+let touchDebugRing: TouchDebugEntry[] = [];
+let touchDebugEnabled = false;
+function readTouchDebugFlag(): boolean {
+  try {
+    const raw = window.localStorage.getItem("atterm.debugTouch");
+    // Explicit opt-in only — the per-touchmove console.log serializations are
+    // expensive enough on iOS Safari (especially with Web Inspector attached)
+    // to noticeably drop touch events, which was masquerading as a "swipe
+    // does nothing" scroll bug. Set atterm.debugTouch=1 to re-enable when
+    // diagnosing.
+    return raw === "1" || raw === "true";
+  } catch {
+    return false;
+  }
+}
+function touchState() {
+  return {
+    selMode: selectionMode.value,
+    imeFocused: imeFocused.value,
+    softKeyboardOpen: softKeyboardOpen.value,
+    softKeyboardOpening: softKeyboardOpening.value,
+    keyboardWanted: keyboardWanted.value,
+    userScrolledDuringKeyboardCycle,
+    scrollTop: terminalTouchViewport?.scrollTop ?? null,
+    scrollHeight: terminalTouchViewport?.scrollHeight ?? null,
+    clientHeight: terminalTouchViewport?.clientHeight ?? null,
+    activeEl: document.activeElement?.className || document.activeElement?.tagName || null,
+  };
+}
+function logTouch(tag: string, data: unknown = {}) {
+  if (!touchDebugEnabled) return;
+  const entry = { t: Date.now(), tag, data };
+  touchDebugRing.push(entry);
+  if (touchDebugRing.length > TOUCH_DEBUG_MAX) touchDebugRing.shift();
+  try {
+    console.log(`[tsc] ${tag}`, data);
+  } catch {
+    /* swallow */
+  }
+}
+// Expose a dump for real-device debugging: user can call
+// `window.__attermTouchDebug()` in Safari Web Inspector to get the ring.
+function installTouchDebugDump() {
+  try {
+    (window as unknown as { __attermTouchDebug?: () => TouchDebugEntry[] }).__attermTouchDebug =
+      () => touchDebugRing.slice();
+  } catch {
+    /* swallow */
+  }
+}
 
 const LONG_PRESS_MS = 500;
 const PRESS_JITTER_PX = 8;
@@ -306,13 +373,41 @@ function captureScrollPosition(): ScrollPosition | null {
 }
 
 function applyScrollPosition(scrollPosition: ScrollPosition | null) {
+  logTouch("applyScrollPosition:entry", { scrollPosition, ...touchState() });
   if (!scrollPosition) return;
   if (!term || !isAlive) return;
+  if (userScrolledDuringKeyboardCycle) { logTouch("applyScrollPosition:bailUserScrolled"); return; }
   if (scrollPosition.atBottom) {
+    logTouch("applyScrollPosition:scrollToBottom");
     term.scrollToBottom();
   } else {
+    logTouch("applyScrollPosition:scrollToLine", { line: scrollPosition.viewportY });
     term.scrollToLine(scrollPosition.viewportY);
   }
+}
+
+function onViewportUserScrollIntent() {
+  logTouch("onViewportUserScrollIntent", { ...touchState() });
+  userScrolledDuringKeyboardCycle = true;
+  clearKeyboardScrollRestoreTimers();
+  pendingKeyboardScrollPosition = null;
+}
+
+// Xterm 5.3 already handles touch scroll via Viewport.handleTouchStart +
+// handleTouchMove (both registered on the .xterm root). We only need to
+// signal user scroll intent so the soft-keyboard scroll-restore chain
+// (up to ~1.6 s of forced snap-to-bottom) stops fighting the user's swipe.
+// touchmove is the right signal (not touchstart — a plain tap to open the
+// keyboard shouldn't count as "scroll intent"). Selection-drag path is
+// unaffected because it also expresses itself through touchmove and its
+// scroll updates should also short-circuit the restore chain.
+function onTermTouchMoveForRestoreCancel(event: TouchEvent) {
+  logTouch("onTermTouchMoveForRestoreCancel", {
+    touches: event.touches.length,
+    y: event.touches[0]?.pageY,
+    ...touchState(),
+  });
+  onViewportUserScrollIntent();
 }
 
 function clearKeyboardScrollRestoreTimers() {
@@ -358,11 +453,14 @@ function hideSoftKeyboard() {
   imeInputTarget?.blur();
   term?.blur();
   void platform.system.hideSoftKeyboard?.();
+  userScrolledDuringKeyboardCycle = false;
   restoreScrollPositionAfterKeyboardToggle(scrollPosition);
 }
 
 function scrollToBottomForKeyboardOpen() {
+  logTouch("scrollToBottomForKeyboardOpen:entry", { ...touchState() });
   if (!term) return;
+  if (userScrolledDuringKeyboardCycle) { logTouch("scrollToBottomForKeyboardOpen:bailUserScrolled"); return; }
   term.scrollToBottom();
   restoreScrollPositionAfterKeyboardToggle({
     viewportY: term.buffer.active.baseY,
@@ -372,6 +470,7 @@ function scrollToBottomForKeyboardOpen() {
 
 function showSoftKeyboard() {
   if (!isDriver.value) return;
+  userScrolledDuringKeyboardCycle = false;
   keyboardWanted.value = true;
   scheduleSoftKeyboardOpenFocusRetries();
   scrollToBottomForKeyboardOpen();
@@ -663,6 +762,7 @@ function onImeInput(event: InputEvent) {
 }
 
 function onImeFocus(event: FocusEvent) {
+  logTouch("onImeFocus", { keyboardWanted: keyboardWanted.value, isDriver: isDriver.value });
   imeFocused.value = true;
   if (isDriver.value) {
     if (keyboardWanted.value) scrollToBottomForKeyboardOpen();
@@ -674,6 +774,7 @@ function onImeFocus(event: FocusEvent) {
 }
 
 function onImeBlur() {
+  logTouch("onImeBlur", { keyboardWanted: keyboardWanted.value });
   imeFocused.value = false;
   if (keyboardWanted.value && shouldPreserveSoftKeyboardForControlPointer()) {
     scheduleSoftKeyboardOpenFocusRetries();
@@ -702,8 +803,15 @@ function shouldHideSoftKeyboardForTerminalPointer(event: PointerEvent) {
 }
 
 function onTermPointerDown(event: PointerEvent) {
+  logTouch("onTermPointerDown:entry", {
+    pointerType: event.pointerType,
+    y: event.clientY,
+    target: (event.target as Element | null)?.className || (event.target as Element | null)?.tagName || null,
+    ...touchState(),
+  });
   const shouldHideKeyboard = shouldHideSoftKeyboardForTerminalPointer(event);
   const shouldBlockFocus = shouldBlockTerminalPointerFocus(event);
+  logTouch("onTermPointerDown:decision", { shouldHideKeyboard, shouldBlockFocus });
   if (shouldHideKeyboard || shouldBlockFocus) lastBlockedTerminalTouchAt = Date.now();
   if (imeFocused.value && imeInputTarget && document.activeElement === imeInputTarget) {
     if (shouldHideKeyboard) {
@@ -729,10 +837,28 @@ function onTermPointerDown(event: PointerEvent) {
 }
 
 function onTermTouchStart(event: TouchEvent) {
-  if (!shouldBlockTerminalTouchFocus(event)) return;
+  logTouch("onTermTouchStart:entry", {
+    touches: event.touches.length,
+    y: event.touches[0]?.pageY,
+    target: (event.target as Element | null)?.className || (event.target as Element | null)?.tagName || null,
+    ...touchState(),
+  });
+  if (!shouldBlockTerminalTouchFocus(event)) { logTouch("onTermTouchStart:earlyReturn:!shouldBlockTerminalTouchFocus"); return; }
   lastBlockedTerminalTouchAt = Date.now();
-  event.stopPropagation();
-  if (!softKeyboardOpen.value) return;
+  if (!softKeyboardOpen.value) { logTouch("onTermTouchStart:earlyReturn:!softKeyboardOpen"); return; }
+  logTouch("onTermTouchStart:hideKeyboardBranch", { ...touchState() });
+  // preventDefault alone stops the default focus that would reopen the
+  // on-screen keyboard; hideSoftKeyboard blurs the IME textarea. We do NOT
+  // stopPropagation — xterm's own touchstart (registered on .xterm root,
+  // a descendant of .term) needs to fire so Viewport._lastTouchY is
+  // initialized against THIS touch's pageY. Without that init, xterm's
+  // subsequent touchmove computes delta against 0 and scroll clamps to
+  // top, and the user sees "first swipe does nothing." This path fires
+  // whenever softKeyboardOpen is true, which includes cases where iOS
+  // dropped a blur event and imeFocused is stale — so blanket
+  // stopPropagation here made those swipes intermittently dead too.
+  // Xterm's touchstart is passive (preventDefault a no-op there) and
+  // does not focus anything, so letting it through is safe.
   event.preventDefault();
   hideSoftKeyboard();
 }
@@ -816,7 +942,13 @@ function updateSelectionPopoverFromSelection() {
 }
 
 function onSelectionPointerDown(event: PointerEvent) {
-  if (!auxKeysCanSend.value || !term) return;
+  logTouch("onSelectionPointerDown:entry", {
+    pointerType: event.pointerType,
+    isPrimary: event.isPrimary,
+    y: event.clientY,
+    ...touchState(),
+  });
+  if (!auxKeysCanSend.value || !term) { logTouch("onSelectionPointerDown:earlyReturn"); return; }
   if (selectionMode.value === "selecting" || selectionMode.value === "dragging") {
     exitSelection();
   }
@@ -863,6 +995,9 @@ function onSelectionPointerDown(event: PointerEvent) {
 }
 
 function onSelectionPointerMove(event: PointerEvent) {
+  if (touchDebugEnabled && selectionMode.value !== "idle") {
+    logTouch("onSelectionPointerMove", { selMode: selectionMode.value, y: event.clientY });
+  }
   if (selectionMode.value === "pressing" && selectionPressAnchor) {
     const dx = event.clientX - selectionPressAnchor.x;
     const dy = event.clientY - selectionPressAnchor.y;
@@ -1331,8 +1466,92 @@ async function ensureTerm() {
   keyTarget.addEventListener("pointerup", onSelectionPointerUp);
   keyTarget.addEventListener("pointercancel", onSelectionPointerCancel);
   terminalTouchViewport = term.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
+  // ---- Neuter xterm's built-in touch scroll ----
+  // xterm 5.3 Viewport.handleTouchMove is a strict 1:1 finger → scrollTop
+  // mapper with no inertia; every touchmove synchronously mutates scrollTop
+  // and — since Terminal.ts wraps handleTouchMove with `cancel(ev)` on
+  // `false` return — calls preventDefault on the event. That blocks the
+  // browser's native scroll (with iOS fling / momentum / high-priority
+  // event pipeline) even after the CSS above stacks .xterm-viewport where
+  // touches can reach it. Patch both handlers to no-op and return true so
+  // xterm never calls cancel → no preventDefault → the browser drives the
+  // scroll natively via `touch-action: pan-y` + `-webkit-overflow-scrolling`.
+  // Harmless on desktop (no touch → these handlers never fire anyway); no
+  // gate needed. See xterm.js #5377.
+  try {
+    const coreAny = (term as unknown as { _core?: { _viewport?: unknown } })._core;
+    const vp = coreAny?._viewport as {
+      handleTouchStart?: (ev: TouchEvent) => void;
+      handleTouchMove?: (ev: TouchEvent) => boolean;
+    } | undefined;
+    if (vp) {
+      vp.handleTouchStart = () => {};
+      vp.handleTouchMove = () => true;
+    }
+  } catch (err) {
+    console.warn("[AT Term] disable xterm touch scroll failed", err);
+  }
+  // Bootstrap the debug flag once term is up and install the console dump.
+  touchDebugEnabled = readTouchDebugFlag();
+  installTouchDebugDump();
+  logTouch("ensureTerm:done", {
+    debugEnabled: touchDebugEnabled,
+    hasViewport: !!terminalTouchViewport,
+    hasXterm: !!term.element,
+    xtermChildren: term.element ? Array.from(term.element.children).map(c => c.className) : [],
+    ...touchState(),
+  });
+  // Passive observer listeners on the .xterm root — that's where xterm 5.3
+  // registers its own touchstart/touchmove for Viewport._lastTouchY + scroll.
+  // If these fire but xterm's own handler didn't run, we know something upstream
+  // is stopping propagation before reaching xterm's listeners.
+  if (touchDebugEnabled && term.element) {
+    const xtermRoot = term.element;
+    xtermRoot.addEventListener("touchstart", (ev) => {
+      const te = ev as TouchEvent;
+      logTouch("observer:xterm.touchstart", {
+        touches: te.touches.length,
+        y: te.touches[0]?.pageY,
+        defaultPrevented: te.defaultPrevented,
+      });
+    }, { passive: true, capture: false });
+    xtermRoot.addEventListener("touchmove", (ev) => {
+      const te = ev as TouchEvent;
+      const before = terminalTouchViewport?.scrollTop ?? null;
+      logTouch("observer:xterm.touchmove:before", {
+        touches: te.touches.length,
+        y: te.touches[0]?.pageY,
+        scrollTopBefore: before,
+        defaultPrevented: te.defaultPrevented,
+      });
+      // Peek scrollTop after this microtask so we see whether xterm's
+      // handleTouchMove (also on this same event) actually moved it.
+      queueMicrotask(() => {
+        const after = terminalTouchViewport?.scrollTop ?? null;
+        logTouch("observer:xterm.touchmove:after", { scrollTopAfter: after, diff: (after ?? 0) - (before ?? 0) });
+      });
+    }, { passive: true, capture: false });
+    xtermRoot.addEventListener("touchend", () => logTouch("observer:xterm.touchend"), { passive: true });
+    xtermRoot.addEventListener("touchcancel", () => logTouch("observer:xterm.touchcancel"), { passive: true });
+  }
   terminalTouchViewport?.addEventListener("touchmove", stopTerminalTouchMove, { passive: true });
   terminalTouchViewport?.addEventListener("scroll", onSelectionViewportScroll);
+  if (touchDebugEnabled && terminalTouchViewport) {
+    // Log every native scroll event on the viewport so we can see whether
+    // scrollTop is being driven by the touch path (xterm.handleTouchMove) or
+    // by a snap-to-bottom / restore-position path.
+    terminalTouchViewport.addEventListener("scroll", () => {
+      logTouch("viewport.scroll", { scrollTop: terminalTouchViewport?.scrollTop, selMode: selectionMode.value });
+    }, { passive: true });
+  }
+  // Wheel on the viewport still fires natively (desktop) — cancel keyboard
+  // scroll-restore on wheel too so wheel-scroll during the ~1.6 s window
+  // isn't clobbered.
+  terminalTouchViewport?.addEventListener("wheel", onViewportUserScrollIntent, { passive: true });
+  // touchmove on the .term wrapper signals "user is actually scrolling"
+  // (as opposed to tap-to-focus). Cancels the keyboard scroll-restore
+  // chain so it doesn't yank the user back to the bottom mid-swipe.
+  keyTarget.addEventListener("touchmove", onTermTouchMoveForRestoreCancel, { passive: true });
   imeInputTarget = term.element?.querySelector<HTMLTextAreaElement>("textarea") ?? null;
   syncTerminalInputMode();
   imeInputTarget?.addEventListener("input", onImeInput as EventListener, { capture: true });
@@ -1771,9 +1990,11 @@ onBeforeUnmount(() => {
   copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);
   copyKeyTarget?.removeEventListener("pointerup", onSelectionPointerUp);
   copyKeyTarget?.removeEventListener("pointercancel", onSelectionPointerCancel);
+  copyKeyTarget?.removeEventListener("touchmove", onTermTouchMoveForRestoreCancel);
   copyKeyTarget = null;
   terminalTouchViewport?.removeEventListener("touchmove", stopTerminalTouchMove);
   terminalTouchViewport?.removeEventListener("scroll", onSelectionViewportScroll);
+  terminalTouchViewport?.removeEventListener("wheel", onViewportUserScrollIntent);
   terminalTouchViewport = null;
   imeInputTarget?.removeEventListener("input", onImeInput as EventListener, { capture: true } as EventListenerOptions);
   imeInputTarget?.removeEventListener("focus", onImeFocus);
@@ -2340,6 +2561,14 @@ watch(
   right: 8px;
   bottom: 6px;
   left: 8px;
+  /* Stack the scrollable viewport ABOVE .xterm-screen (which xterm renders
+     as a sibling immediately after — .xterm-screen wins the default stacking
+     otherwise, so a finger landing on rendered text never reaches viewport
+     and native `touch-action: pan-y` scroll never fires). Transparent bg is
+     required because xterm's default is opaque #000, which would hide the
+     canvas beneath. See xterm.js #3613 / #512 (scrollbar is unclickable). */
+  z-index: 5;
+  background: transparent !important;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;

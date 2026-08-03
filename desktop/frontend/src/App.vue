@@ -27,6 +27,7 @@ import { useFileRevealStore } from "./plugins/fileExplorer/fileReveal";
 import { sendInputToSession } from "./lib/sendInput";
 import { applyTabReorder } from "./lib/tabReorder";
 import { computeCloseTabState } from "./lib/closeTabOptimistic";
+import { tabsToAutoCloseOnExit } from "./lib/autoCloseTab";
 // Plugin theme palettes (CSS vars). Loaded in main bundle so the panel
 // toggle and Quick Input toolbar can read --ed-* vars even when the
 // file-explorer chunk is not yet loaded.
@@ -654,7 +655,11 @@ function snapshotKnownSessions(): Map<string, SessionInfo> {
 
 function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
   const localIds = new Set(localList.value.map((s) => s.id));
+  // Tabs where a local session just disappeared this sweep — candidates for
+  // auto-close once we confirm they hold no other live session.
+  const clearedTabIds: string[] = [];
   for (const t of tabs.value) {
+    let clearedHere = false;
     for (let i = 0; i < t.panes.length; i++) {
       const p = t.panes[i];
       if (!p.sessionId) continue;
@@ -666,8 +671,20 @@ function sweepMissingSessions(snapshot?: Map<string, SessionInfo>) {
         // comes back).
         const lastSeenInfo = snapshot?.get(p.sessionId) ?? p.lastSeenInfo;
         t.panes[i] = { sessionId: null, remote: p.remote, lastSeenInfo };
+        clearedHere = true;
       }
     }
+    if (clearedHere) clearedTabIds.push(t.id);
+  }
+
+  // Auto-close on exit: a terminal (local shell or SSH) that exited leaves its
+  // pane empty above. If that leaves a tab with no live session in ANY pane
+  // (local or remote), close the whole tab instead of stranding an empty
+  // "[empty pane]" placeholder. Only tabs that just lost a session this sweep
+  // are considered, so freshly-opened empty tabs and mid-restore tabs are not
+  // swept away.
+  for (const tabId of tabsToAutoCloseOnExit(tabs.value, localIds, clearedTabIds)) {
+    closeTab(tabId);
   }
 }
 

@@ -103,6 +103,12 @@ const pasteConfirmText = ref("");
 // look like driver mode (no overlay) yet have every IN frame dropped by the
 // relay, stranding the user with no way to type and no hint to take control.
 const isDriver = ref(props.isLocalSession ?? true);
+// Ref to the viewer-overlay's "Take control" button. Focused whenever the
+// overlay appears in an active pane so the browser's native Space/Enter →
+// button-click handles takeover. Without this, viewer mode blurs the IME
+// textarea (see syncTerminalInputMode) and focus falls to document.body —
+// the .term-container keydown listener never fires and Space appears dead.
+const takeControlBtnRef = ref<HTMLButtonElement | null>(null);
 const ptyCols = ref<number | null>(null);
 const ptyRows = ref<number | null>(null);
 // driverHostname is the human-readable name of whoever currently holds the
@@ -532,6 +538,15 @@ function shouldSendShortcutPointer(event: PointerEvent) {
 
 function handleViewerKeydown(event: KeyboardEvent) {
   if (isDriver.value) return; // driver mode passes through
+  // Only fire for the pane the user is actually looking at. Multiple
+  // TerminalView instances all register this document listener; without
+  // this gate a viewer-mode pane in a background tab would grab Space
+  // meant for the foreground pane / input.
+  if (!props.active) return;
+  // Skip when the user is typing in an editable target (sidebar search,
+  // settings, etc.) — Space belongs to that input, not us.
+  const t = event.target as HTMLElement | null;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   // Only intercept bare space (no modifiers) so Cmd+C copy, arrow-key scroll,
   // and other existing shortcuts still work in viewer mode. disableStdin on
   // the terminal already blocks the IN forwarding path for other keys.
@@ -628,7 +643,14 @@ async function handleImagePaste(e: ClipboardEvent) {
 // punctuation, numbers, and space) through the textarea `input` event without
 // xterm forwarding it. Take over only the non-composition insertText case so
 // pinyin -> Hanzi composition remains xterm-owned.
+//
+// Desktop (Wails / local-PTY web) MUST skip this path: xterm already handles
+// the physical-keyboard keydown and calls term.onData(" "); the browser then
+// also inserts the char into the hidden textarea and fires `input`, which
+// without this gate would run onImeInput and sendInput a second time —
+// pressing space once produces two spaces, breaking TUI checkbox toggling.
 function onImeInput(event: InputEvent) {
+  if (platform.caps.wailsBindings || platform.caps.localPty) return;
   if (event.inputType !== "insertText") return;
   if (event.isComposing) return;
   const data = event.data;
@@ -1296,7 +1318,14 @@ async function ensureTerm() {
   copyKeyTarget = keyTarget;
   keyTarget.addEventListener("keydown", handleCopyShortcut, { capture: true });
   keyTarget.addEventListener("keydown", handleCtrlVKeydownPaste, { capture: true });
-  keyTarget.addEventListener("keydown", handleViewerKeydown, { capture: true });
+  // handleViewerKeydown is attached to document (not keyTarget) so it fires
+  // regardless of where focus currently sits. The autofocused take-control
+  // button covers the initial transition, but focus drifts as soon as the
+  // user clicks elsewhere or switches tabs and comes back — the pane's
+  // .term-container never regains focus in viewer mode (IME textarea stays
+  // blurred), so a scoped listener would silently die. See onBeforeUnmount
+  // for the matching removeEventListener.
+  document.addEventListener("keydown", handleViewerKeydown, { capture: true });
   keyTarget.addEventListener("paste", handleImagePaste, { capture: true });
   keyTarget.addEventListener("pointermove", onSelectionPointerMove);
   keyTarget.addEventListener("pointerup", onSelectionPointerUp);
@@ -1424,6 +1453,7 @@ function startConnection() {
         syncTerminalInputMode();
         applyViewerSize();
         if (isMe && (props.active || props.focused)) nextTick(focusTerminalForPaneActivation);
+        if (!isMe && (props.active || props.focused)) nextTick(() => takeControlBtnRef.value?.focus());
         if (wasDriver !== isMe) {
           emit("toast", isMe ? t("terminal.driverNow") : t("terminal.viewerNow"));
         }
@@ -1736,7 +1766,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", onTemplateHotkey, true);
   copyKeyTarget?.removeEventListener("keydown", handleCopyShortcut, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("keydown", handleCtrlVKeydownPaste, { capture: true } as EventListenerOptions);
-  copyKeyTarget?.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
+  document.removeEventListener("keydown", handleViewerKeydown, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("paste", handleImagePaste, { capture: true } as EventListenerOptions);
   copyKeyTarget?.removeEventListener("pointermove", onSelectionPointerMove);
   copyKeyTarget?.removeEventListener("pointerup", onSelectionPointerUp);
@@ -1882,7 +1912,7 @@ watch(
         <div class="viewer-overlay-title">{{ t("terminal.remoteHasTakenControl") }}</div>
         <div v-if="driverHostname" class="viewer-overlay-host">{{ t("terminal.byHost", { host: driverHostname }) }}</div>
         <div class="viewer-overlay-hint">{{ t("terminal.pressSpaceToTakeBack") }}</div>
-        <button class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">{{ t("terminal.takeControl") }}</button>
+        <button ref="takeControlBtnRef" class="viewer-overlay-btn" data-testid="take-control" @click="takeControl">{{ t("terminal.takeControl") }}</button>
       </div>
     </div>
     <Teleport to="body">

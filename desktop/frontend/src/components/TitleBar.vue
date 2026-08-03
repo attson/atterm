@@ -44,7 +44,6 @@ const props = defineProps<{
   errorMsg: string;
   sessionCount: number;
   remoteEndpoint: Endpoint | null;
-  availableRemoteCount: number;
   currentTitle?: string;
   currentTaskState?: TaskState | null;
 }>();
@@ -76,10 +75,6 @@ platform.events.on("e2ee-mode-changed", (data) => {
   }
 });
 
-defineEmits<{
-  (e: "open-remote"): void;
-}>();
-
 // Default to linux if Environment() fails — gives users window controls
 // rather than locking them out of min/max/close.
 const os = ref<"darwin" | "windows" | "linux">("linux");
@@ -107,12 +102,6 @@ const rootStyle = computed(() => ({
 }));
 
 const showWindowControls = computed(() => os.value !== "darwin");
-
-const remoteTitle = computed(() =>
-  props.remoteEndpoint
-    ? t("terminal.remoteSessionsAvailable", { count: props.availableRemoteCount })
-    : t("terminal.connectRelayForRemote"),
-);
 
 const isMaximized = useWindowMaximized();
 
@@ -178,29 +167,6 @@ function onTitleDblClick() {
       :labels="drawerLabels"
       @close="connHealthDrawerOpen = false"
     />
-    <button
-      class="icon-btn"
-      type="button"
-      data-testid="titlebar-remote"
-      :title="remoteTitle"
-      :disabled="!remoteEndpoint"
-      @click="$emit('open-remote')"
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="16" height="16"
-        viewBox="0 0 24 24"
-        fill="none" stroke="currentColor"
-        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M2 16.1A5 5 0 0 1 5.9 20" />
-        <path d="M2 12.05A9 9 0 0 1 9.95 20" />
-        <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
-        <line x1="2" y1="20" x2="2.01" y2="20" />
-      </svg>
-      <span v-if="availableRemoteCount > 0" class="badge">{{ availableRemoteCount }}</span>
-    </button>
     <WindowControls v-if="showWindowControls" />
   </header>
 </template>
@@ -277,30 +243,6 @@ function onTitleDblClick() {
   line-height: 1;
 }
 
-.icon-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--fg-dim);
-  line-height: 1;
-  padding: 6px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: color 120ms, background 120ms;
-  --wails-draggable: no-drag;
-}
-.icon-btn svg { display: block; }
-.icon-btn:hover:not(:disabled) { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
-.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.icon-btn .badge {
-  position: absolute; top: -2px; right: -2px;
-  background: #d29922; color: #0d1117; font-size: 9px; font-weight: 700;
-  border-radius: 10px; padding: 1px 5px; line-height: 1.3;
-  min-width: 16px; text-align: center;
-}
 /* Running indicator at the titlebar bottom: a transparent-base track with a
    long green wave (720px wide) traveling L→R; one wave is always either
    on-screen or just entering, no dead window between cycles.

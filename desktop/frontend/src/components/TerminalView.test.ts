@@ -511,6 +511,19 @@ describe("TerminalView web auxiliary keys", () => {
     expect(source).toContain('removeEventListener("input", onImeInput');
   });
 
+  test("onImeInput skips desktop runtimes so xterm.onData is not double-fired", () => {
+    // Root cause of the "one space → two spaces" regression: on Wails /
+    // local-PTY the physical keyboard already goes through xterm's keydown →
+    // term.onData(" ") → sendInput(" ") path, but the browser also mirrors
+    // the char into the hidden textarea and fires `input`, which
+    // (pre-gate) ran onImeInput → sendInput(" ") a second time. The gate
+    // MUST run BEFORE the inputType check so no branch in this handler can
+    // fire on desktop.
+    expect(source).toMatch(
+      /function\s+onImeInput[^}]*?if\s*\(\s*platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty\s*\)\s*return/,
+    );
+  });
+
   test("supports mobile long-press selection with copy/send/cancel and scroll/outside exit", () => {
     expect(source).toContain('import TerminalSelectionPopover from "./TerminalSelectionPopover.vue"');
     expect(source).toContain("wordBoundaryAt");
@@ -710,6 +723,21 @@ describe("TerminalView viewer key handling", () => {
     expect(source).toMatch(/claimDriver/);
     expect(source).toMatch(/event\.key\s*===\s*" "/);
   });
+
+  test("handleViewerKeydown is attached at document scope so it fires even when the pane's .term-container has lost focus", () => {
+    // Previously scoped to keyTarget (the .term-container). In viewer mode
+    // the IME textarea is blurred and focus falls to document.body, so a
+    // scoped listener silently died — Space appeared dead until the user
+    // clicked the take-control button. Document scope fixes that; the
+    // handler self-gates on props.active so a background pane in viewer
+    // mode doesn't grab Space meant for the foreground pane / input.
+    expect(source).toContain('document.addEventListener("keydown", handleViewerKeydown');
+    expect(source).toContain('document.removeEventListener("keydown", handleViewerKeydown');
+    expect(source).not.toMatch(/keyTarget\.addEventListener\("keydown",\s*handleViewerKeydown/);
+    expect(source).toMatch(/function\s+handleViewerKeydown[\s\S]*?if\s*\(\s*!props\.active\s*\)\s*return/);
+    expect(source).toMatch(/function\s+handleViewerKeydown[\s\S]*?tagName\s*===\s*"INPUT"/);
+    expect(source).toMatch(/function\s+handleViewerKeydown[\s\S]*?tagName\s*===\s*"TEXTAREA"/);
+  });
 });
 
 describe("TerminalView viewer overlay", () => {
@@ -742,6 +770,17 @@ describe("TerminalView viewer overlay", () => {
     expect(buttonCss).toMatch(/pointer-events\s*:\s*auto/);
     expect(source).toContain('data-testid="take-control"');
     expect(source).toContain('@click="takeControl"');
+  });
+
+  test("auto-focuses take-control button on driver→viewer transition in active pane", () => {
+    // Without this, syncTerminalInputMode blurs the IME textarea, focus
+    // falls to document.body, and the .term-container-scoped viewer keydown
+    // listener never fires — Space appears dead until the user clicks the
+    // button first. The ref + programmatic focus restores the native
+    // Space/Enter → button-activation path.
+    expect(source).toContain('ref="takeControlBtnRef"');
+    expect(source).toMatch(/takeControlBtnRef\.value\?\.focus\(\)/);
+    expect(source).toMatch(/!isMe\s*&&\s*\(props\.active\s*\|\|\s*props\.focused\)/);
   });
 });
 

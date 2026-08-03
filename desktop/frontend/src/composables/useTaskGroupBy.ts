@@ -1,59 +1,31 @@
-import { ref } from "vue";
 import { getTaskGroupBy, setTaskGroupBy, type TaskGroupBy } from "../lib/api";
+import { definePersistedSingletonRef } from "./persistedSingletonRef";
 
-const STORAGE_KEY = "taskGroupBy";
-
-function isGroupBy(s: string | null | undefined): s is TaskGroupBy {
+function isGroupBy(s: unknown): s is TaskGroupBy {
   return s === "host" || s === "state";
 }
 
-const activeId = ref<TaskGroupBy>("host");
-let initialized = false;
-
-async function loadInitial() {
-  try {
-    const v = await getTaskGroupBy();
-    if (isGroupBy(v)) {
-      activeId.value = v;
-      return;
-    }
-  } catch {
-    /* fall through */
-  }
-  if (typeof localStorage !== "undefined") {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (isGroupBy(stored)) {
-      activeId.value = stored;
-      return;
-    }
-  }
-}
+const store = definePersistedSingletonRef<TaskGroupBy>({
+  defaultValue: "host",
+  storageKey: "taskGroupBy",
+  // Wrap in closures so vi.spyOn(api, "...") replacements in tests reach
+  // the factory (bound references captured at module init would not).
+  load: () => getTaskGroupBy(),
+  save: (v) => setTaskGroupBy(v),
+  isValid: isGroupBy,
+});
 
 export interface UseTaskGroupBy {
-  activeId: typeof activeId;
+  activeId: typeof store.activeId;
   setGroupBy(id: TaskGroupBy): Promise<void>;
 }
 
 export function useTaskGroupBy(): UseTaskGroupBy {
-  if (!initialized) {
-    initialized = true;
-    void loadInitial();
-  }
-  async function setGroupByFn(id: TaskGroupBy) {
-    activeId.value = id;
-    try {
-      await setTaskGroupBy(id);
-    } catch {
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(STORAGE_KEY, id);
-      }
-    }
-  }
-  return { activeId, setGroupBy: setGroupByFn };
+  store.ensureLoaded();
+  return { activeId: store.activeId, setGroupBy: store.set };
 }
 
 // Test-only reset for the singleton.
 export function __resetForTests(): void {
-  initialized = false;
-  activeId.value = "host";
+  store.__resetForTests();
 }

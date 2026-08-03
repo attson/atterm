@@ -451,7 +451,7 @@ async function remove(id: string) {
   background: var(--bg); border: 1px solid var(--border); color: var(--fg);
   cursor: pointer; transition: color 120ms, background 120ms, border-color 120ms;
 }
-.act svg { display: block; width: 15px; height: 15px; }
+.act svg { display: block; flex: none; width: 15px; height: 15px; }
 .act:hover { color: #fff; border-color: var(--neutral); background: rgba(139, 148, 158, 0.18); }
 /* Connect is the primary action — solid accent, always prominent. */
 .act.connect {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/bytemare/opaque"
 
+	"github.com/attson/atterm/internal/opaquesuite"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -18,11 +19,11 @@ import (
 // returns BOTH the handler and the *opaque.Configuration so a test that
 // needs to drive the library-side client (LoginInit, RegistrationInit,
 // etc.) can use the same suite the server was wired with. The
-// configuration is the one defaultConfig() locks in, identical to what
+// configuration is the one opaquesuite.Config() locks in, identical to what
 // LoadOrInitOpaqueServer uses, so handler + client speak the same group.
 func newTestHandler(t *testing.T) (*OpaqueAuthHandler, *opaque.Configuration) {
 	t.Helper()
-	return newTestOpaqueAuthHandler(t), defaultConfig()
+	return newTestOpaqueAuthHandler(t), opaquesuite.Config()
 }
 
 // registerUserForTest drives a full OPAQUE register-init → register-finalize
@@ -121,7 +122,7 @@ func newTestOpaqueAuthHandlerEmail(t *testing.T, bootstrapEmail string) *OpaqueA
 func TestRegisterInit_ReturnsKE2(t *testing.T) {
 	h := newTestOpaqueAuthHandler(t)
 
-	client, err := defaultConfig().Client()
+	client, err := opaquesuite.Config().Client()
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}
@@ -211,7 +212,7 @@ func TestRegisterInit_BadKE1(t *testing.T) {
 func TestRegisterFinalize_PersistsRecordAndWrap(t *testing.T) {
 	h := newTestOpaqueAuthHandler(t)
 
-	client, err := defaultConfig().Client()
+	client, err := opaquesuite.Config().Client()
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}
@@ -379,7 +380,7 @@ func TestLoginInit_ReturnsKE2AndSessionID(t *testing.T) {
 
 	// KE2 must deserialize under the same configuration the client used
 	// to produce KE1 — guards against a suite mismatch silently slipping
-	// in between LoadOrInitOpaqueServer and defaultConfig().
+	// in between LoadOrInitOpaqueServer and opaquesuite.Config().
 	if _, err := client.Deserialize.KE2(resp.LoginResponse); err != nil {
 		t.Fatalf("client.Deserialize.KE2: %v", err)
 	}

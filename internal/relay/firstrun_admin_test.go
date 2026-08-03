@@ -10,12 +10,13 @@ import (
 
 	"github.com/bytemare/opaque"
 
+	"github.com/attson/atterm/internal/opaquesuite"
 	"github.com/attson/atterm/internal/userstore"
 )
 
 func newTestHandlerEmail(t *testing.T, bootstrapEmail string) (*OpaqueAuthHandler, *opaque.Configuration) {
 	t.Helper()
-	return newTestOpaqueAuthHandlerEmail(t, bootstrapEmail), defaultConfig()
+	return newTestOpaqueAuthHandlerEmail(t, bootstrapEmail), opaquesuite.Config()
 }
 
 func decodeFinalize(t *testing.T, rec *httptest.ResponseRecorder) registerFinalizeResponse {

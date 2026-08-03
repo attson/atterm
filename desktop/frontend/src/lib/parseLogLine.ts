@@ -4,7 +4,7 @@ export type ParsedLogLine =
   | { kind: "structured"; ts: string; level: LogLevel; tag: string; msg: string }
   | { kind: "raw"; text: string };
 
-export const LEVEL_ORDER: Record<LogLevel, number> = {
+const LEVEL_ORDER: Record<LogLevel, number> = {
   DEBUG: 0,
   INFO: 1,
   WARN: 2,

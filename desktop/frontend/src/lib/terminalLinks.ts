@@ -148,17 +148,6 @@ export function mapBufferLineCells(
   return { text, cellStart };
 }
 
-/**
- * 1-based, inclusive cell-column range for a detected link, in the shape
- * xterm's ILink.range expects. `cellStart` comes from mapBufferLineCells().
- */
-export function linkCellRange(
-  m: Pick<LinkMatch, "start" | "end">,
-  cellStart: number[],
-): { startX: number; endX: number } {
-  return { startX: cellStart[m.start] + 1, endX: cellStart[m.end] };
-}
-
 /** True when a 0-based cell column falls within a detected link's cell span. */
 export function cellInLink(
   col: number,

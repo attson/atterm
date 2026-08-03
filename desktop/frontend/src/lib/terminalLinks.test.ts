@@ -3,7 +3,6 @@ import {
   cellInLink,
   detectLinks,
   shouldActivateLink,
-  linkCellRange,
   mapBufferLineCells,
   mapWrappedLogicalLine,
   normalizeForOpen,
@@ -260,16 +259,7 @@ describe("mapBufferLineCells", () => {
   });
 });
 
-describe("linkCellRange / cellInLink past wide glyphs", () => {
-  it("shifts a link's cell range right by the wide glyphs before it", () => {
-    const { line, cols } = fakeLine("填 https://x.test");
-    const { text, cellStart } = mapBufferLineCells(line, cols);
-    const m = detectLinks(text)[0];
-    expect(m.text).toBe("https://x.test");
-    // string span [2,16) -> 1-based inclusive cells 4..17
-    expect(linkCellRange(m, cellStart)).toEqual({ startX: 4, endX: 17 });
-  });
-
+describe("cellInLink past wide glyphs", () => {
   it("hit-tests by cell column, not string index", () => {
     const { line, cols } = fakeLine("填 https://x.test");
     const { text, cellStart } = mapBufferLineCells(line, cols);

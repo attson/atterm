@@ -804,21 +804,6 @@ export class SessionConnection {
   }
 }
 
-export async function fetchSessions(endpoint: Endpoint): Promise<SessionInfo[]> {
-  const httpUrl = endpoint.url.replace(/^ws/, "http").replace(/\/$/, "");
-  const url = `${httpUrl}/api/sessions`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: endpoint.session_token ? { Authorization: "Bearer " + endpoint.session_token } : {},
-    });
-  } catch (e: any) {
-    throw new Error(`fetch ${url}: ${e?.message ?? e}`);
-  }
-  if (!res.ok) throw new Error(`fetch ${url}: http ${res.status}`);
-  return decryptSessionFields((await res.json()) as SessionInfo[]);
-}
-
 // decryptSessionFields overlays the E2EE-sealed {title, cwd, command,
 // current_command} onto each SessionInfo when an account_key is unlocked.
 // The relay strips the plaintext for these fields once the agent seals them

@@ -9,16 +9,6 @@ export type TaskState =
 
 export type PresetId = "iconOnly" | "iconLabel";
 
-export const ALL_TASK_STATES: readonly TaskState[] = [
-  "idle",
-  "running",
-  "waiting_input",
-  "completed",
-  "failed",
-  "disconnected",
-  "closed",
-] as const;
-
 export interface TaskStatePreset {
   id: PresetId;
   i18nKey: string; // tasks.preset.<id>

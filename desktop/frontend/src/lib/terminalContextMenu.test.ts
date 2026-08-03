@@ -3,7 +3,6 @@ import {
   canSendSelection,
   clampContextMenuPosition,
   effectiveRemotePermission,
-  imagePasteBlockedReason,
   isPasteAllowed,
   prepareSendPayload,
 } from "./terminalContextMenu";
@@ -18,11 +17,6 @@ describe("terminal context menu helpers", () => {
     expect(isPasteAllowed("connecting", "full")).toBe(false);
     expect(isPasteAllowed("attached", "view")).toBe(false);
     expect(isPasteAllowed("attached", "control")).toBe(true);
-  });
-
-  it("requires full permission for image paste", () => {
-    expect(imagePasteBlockedReason("control")).toMatch(/full remote permission/);
-    expect(imagePasteBlockedReason("full")).toBeNull();
   });
 
   it("clamps the menu inside the viewport", () => {

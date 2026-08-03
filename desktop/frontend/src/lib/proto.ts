@@ -2,7 +2,7 @@
 // binary WebSocket messages: 6-byte header (ver + type + u32BE payload_len),
 // 16-byte session id, then payload.
 
-export const VERSION = 1;
+const VERSION = 1;
 export const HEADER_LEN = 6;
 export const SID_LEN = 16;
 

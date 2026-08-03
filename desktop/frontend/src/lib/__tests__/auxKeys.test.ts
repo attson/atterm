@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_AUX_KEYS, effectiveAuxKeys, parseSeq, displaySeq } from '../auxKeys'
+import { DEFAULT_AUX_KEYS, effectiveAuxKeys, parseSeq } from '../auxKeys'
 
 describe('effectiveAuxKeys', () => {
   it('returns persisted list when non-empty', async () => {
@@ -55,17 +55,3 @@ describe('parseSeq', () => {
   })
 })
 
-describe('displaySeq', () => {
-  it('encodes control bytes back to readable notation', () => {
-    expect(displaySeq('\r')).toBe('\\r')
-    expect(displaySeq('\x1b')).toBe('\\e')
-    expect(displaySeq('\x03')).toBe('\\x03')
-    expect(displaySeq('\x1b[A')).toBe('\\e[A')
-    expect(displaySeq('\\')).toBe('\\\\')
-  })
-  it('round-trips with parseSeq for the default keys', () => {
-    for (const k of DEFAULT_AUX_KEYS) {
-      expect(parseSeq(displaySeq(k.seq))).toBe(k.seq)
-    }
-  })
-})

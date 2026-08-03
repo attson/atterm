@@ -14,7 +14,3 @@ export const PLUGINS: PluginDescriptor[] = [
 export function descriptorsForSlot(slot: PluginDescriptor["slot"]): PluginDescriptor[] {
   return PLUGINS.filter((p) => p.slot === slot);
 }
-
-export function findDescriptor(id: string): PluginDescriptor | undefined {
-  return PLUGINS.find((p) => p.id === id);
-}

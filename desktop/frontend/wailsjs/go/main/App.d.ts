@@ -5,6 +5,8 @@ import {hookinstall} from '../models';
 import {connhealth} from '../models';
 import {feishu} from '../models';
 
+export function AddSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<main.SSHHost>;
+
 export function BeginFeishuPair():Promise<string>;
 
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;
@@ -22,6 +24,8 @@ export function ConfirmQuit():Promise<void>;
 export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 
 export function DeleteFeishuBinding():Promise<void>;
+
+export function DeleteSSHHost(arg1:string):Promise<void>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
 
@@ -113,9 +117,13 @@ export function HasAccountKey():Promise<boolean>;
 
 export function InstallUpdate():Promise<void>;
 
+export function ListKnownHosts():Promise<Array<main.KnownHostEntry>>;
+
 export function ListRelaySessions():Promise<Array<main.RelaySessionRow>>;
 
 export function ListRemoteSessions():Promise<string>;
+
+export function ListSSHHosts():Promise<Array<main.SSHHost>>;
 
 export function ListShells():Promise<Array<string>>;
 
@@ -130,6 +138,10 @@ export function MarkCleanShutdown():Promise<void>;
 export function MarkSessionsSeen(arg1:Array<string>,arg2:boolean):Promise<void>;
 
 export function NewSession(arg1:main.NewSessionReq):Promise<main.NewSessionResp>;
+
+export function NewSshSession(arg1:main.SSHConnectReq):Promise<main.NewSessionResp>;
+
+export function NewSshSessionByID(arg1:string):Promise<main.NewSessionResp>;
 
 export function PickLogFilePath():Promise<string>;
 
@@ -148,6 +160,8 @@ export function ReceivedFilesOpenDir():Promise<void>;
 export function RegisterRemoteRelay(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function RememberRelayPassword(arg1:string):Promise<void>;
+
+export function RemoveKnownHost(arg1:string):Promise<void>;
 
 export function RevokeRelaySession(arg1:string):Promise<void>;
 
@@ -214,3 +228,5 @@ export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;
+
+export function UpdateSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<void>;

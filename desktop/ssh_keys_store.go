@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/attson/atterm/internal/appdir"
-	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/oklog/ulid/v2"
 	"golang.org/x/crypto/ssh"
 )
@@ -27,6 +25,15 @@ type sshKeySecret struct {
 
 func sshKeyService() string {
 	return "com.atterm.ssh-key.v1" + appdir.KeychainSuffix()
+}
+
+// sshKeySecretSlot addresses one key's private material in the keychain.
+func sshKeySecretSlot(id string) keychainSlot[sshKeySecret] {
+	return keychainSlot[sshKeySecret]{
+		service: sshKeyService(),
+		account: id,
+		codec:   jsonCodec[sshKeySecret](func(s sshKeySecret) bool { return s == sshKeySecret{} }),
+	}
 }
 
 // parseKeyType parses the PEM (optionally with passphrase) and returns a
@@ -78,13 +85,13 @@ func (a *App) AddSSHKey(name, privateKeyPEM, passphrase string) (SSHKey, error) 
 		return SSHKey{}, err
 	}
 	k := SSHKey{ID: ulid.Make().String(), Name: name, KeyType: kt}
-	if err := storeSSHKeySecret(k.ID, sshKeySecret{PrivateKey: privateKeyPEM, Passphrase: passphrase}); err != nil {
+	if err := sshKeySecretSlot(k.ID).Save(sshKeySecret{PrivateKey: privateKeyPEM, Passphrase: passphrase}); err != nil {
 		return SSHKey{}, fmt.Errorf("store key: %w", err)
 	}
 	cfg := a.cfgStore.Get()
 	cfg.SSHKeys = append(cfg.SSHKeys, k)
 	if err := a.cfgStore.Set(cfg); err != nil {
-		_ = safekeyring.Delete(sshKeyService(), k.ID)
+		_ = sshKeySecretSlot(k.ID).Clear()
 		return SSHKey{}, err
 	}
 	a.markSSHHostsDirty()
@@ -115,7 +122,7 @@ func (a *App) UpdateSSHKey(id, name, privateKeyPEM, passphrase string) error {
 			return err
 		}
 		cfg.SSHKeys[idx].KeyType = kt
-		if err := storeSSHKeySecret(id, sshKeySecret{PrivateKey: privateKeyPEM, Passphrase: passphrase}); err != nil {
+		if err := sshKeySecretSlot(id).Save(sshKeySecret{PrivateKey: privateKeyPEM, Passphrase: passphrase}); err != nil {
 			return fmt.Errorf("store key: %w", err)
 		}
 	}
@@ -162,17 +169,9 @@ func (a *App) DeleteSSHKey(id string) error {
 	if err := a.cfgStore.Set(cfg); err != nil {
 		return err
 	}
-	if err := safekeyring.Delete(sshKeyService(), id); err != nil && err != safekeyring.ErrNotFound {
+	if err := sshKeySecretSlot(id).Clear(); err != nil {
 		return fmt.Errorf("delete key secret: %w", err)
 	}
 	a.markSSHHostsDirty()
 	return nil
-}
-
-func storeSSHKeySecret(id string, sec sshKeySecret) error {
-	blob, err := json.Marshal(sec)
-	if err != nil {
-		return err
-	}
-	return safekeyring.Set(sshKeyService(), id, string(blob))
 }

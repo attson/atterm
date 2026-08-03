@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/attson/atterm/internal/prefssync"
-	"github.com/attson/atterm/internal/safekeyring"
 )
 
 // appConfigAdapter glues prefssync.Adapter to the desktop configStore.
@@ -68,20 +67,14 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 		}
 		creds := make(map[string]sshCredential, len(c.SSHHosts))
 		for _, h := range c.SSHHosts {
-			if raw, err := safekeyring.Get(sshCredentialService(), h.ID); err == nil {
-				var cr sshCredential
-				if json.Unmarshal([]byte(raw), &cr) == nil {
-					creds[h.ID] = cr
-				}
+			if cr, err := sshCredentialSlot(h.ID).Load(); err == nil && cr != (sshCredential{}) {
+				creds[h.ID] = cr
 			}
 		}
 		keySecrets := make(map[string]sshKeySecret, len(c.SSHKeys))
 		for _, k := range c.SSHKeys {
-			if raw, err := safekeyring.Get(sshKeyService(), k.ID); err == nil {
-				var sec sshKeySecret
-				if json.Unmarshal([]byte(raw), &sec) == nil {
-					keySecrets[k.ID] = sec
-				}
+			if sec, err := sshKeySecretSlot(k.ID).Load(); err == nil && sec != (sshKeySecret{}) {
+				keySecrets[k.ID] = sec
 			}
 		}
 		blob, err := sealSSHHosts(key, c.SSHHosts, creds, c.SSHKeys, keySecrets)
@@ -148,21 +141,13 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 			return err
 		}
 		for id, cr := range creds {
-			blob, mErr := json.Marshal(cr)
-			if mErr != nil {
-				return mErr
-			}
-			if sErr := safekeyring.Set(sshCredentialService(), id, string(blob)); sErr != nil {
-				return sErr
+			if err := sshCredentialSlot(id).Save(cr); err != nil {
+				return err
 			}
 		}
 		for id, sec := range keySecrets {
-			blob, mErr := json.Marshal(sec)
-			if mErr != nil {
-				return mErr
-			}
-			if sErr := safekeyring.Set(sshKeyService(), id, string(blob)); sErr != nil {
-				return sErr
+			if err := sshKeySecretSlot(id).Save(sec); err != nil {
+				return err
 			}
 		}
 		c.SSHHosts = hosts

@@ -1,12 +1,9 @@
 package main
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/attson/atterm/internal/appdir"
-	"github.com/attson/atterm/internal/safekeyring"
 )
 
 // relayPasswordService is the OS-keychain service name under which atterm
@@ -24,8 +21,8 @@ func relayPasswordService() string {
 // storage (staging vs production), and the same desktop may end up with
 // different accounts per relay — so both inputs are part of the key.
 //
-// Returns "" when either input is empty so callers can treat that as
-// "don't persist" without sprinkling guard clauses everywhere.
+// Returns "" when either input is empty so the resulting slot short-circuits
+// to no-ops.
 func relayPasswordAccount(relayOrigin, email string) string {
 	relayOrigin = strings.TrimRight(strings.TrimSpace(relayOrigin), "/")
 	email = strings.TrimSpace(email)
@@ -35,53 +32,28 @@ func relayPasswordAccount(relayOrigin, email string) string {
 	return relayOrigin + "|" + email
 }
 
+func relayPasswordSlot(relayOrigin, email string) keychainSlot[string] {
+	return keychainSlot[string]{
+		service: relayPasswordService(),
+		account: relayPasswordAccount(relayOrigin, email),
+		codec:   stringCodec,
+	}
+}
+
 // loadRelayPassword reads the persisted relay password for (relayOrigin,
-// email), or returns "" if nothing is stored. Any keychain-level error
-// other than "not found" surfaces verbatim so the caller can log it.
+// email), or returns "" if nothing is stored.
 func loadRelayPassword(relayOrigin, email string) (string, error) {
-	account := relayPasswordAccount(relayOrigin, email)
-	if account == "" {
-		return "", nil
-	}
-	v, err := safekeyring.Get(relayPasswordService(), account)
-	if err != nil {
-		if errors.Is(err, safekeyring.ErrNotFound) {
-			return "", nil
-		}
-		return "", fmt.Errorf("keychain get: %w", err)
-	}
-	return v, nil
+	return relayPasswordSlot(relayOrigin, email).Load()
 }
 
 // saveRelayPassword persists password for (relayOrigin, email). An empty
-// password is treated as "delete" — same code path as clearRelayPasswordFor
-// — so callers can pipe the same setter through without a separate branch.
+// password is treated as delete.
 func saveRelayPassword(relayOrigin, email, password string) error {
-	account := relayPasswordAccount(relayOrigin, email)
-	if account == "" {
-		return nil
-	}
-	if password == "" {
-		return clearRelayPasswordFor(relayOrigin, email)
-	}
-	if err := safekeyring.Set(relayPasswordService(), account, password); err != nil {
-		return fmt.Errorf("keychain set: %w", err)
-	}
-	return nil
+	return relayPasswordSlot(relayOrigin, email).Save(password)
 }
 
 // clearRelayPasswordFor removes the persisted password for (relayOrigin,
-// email). Returns nil when the entry was already absent.
+// email).
 func clearRelayPasswordFor(relayOrigin, email string) error {
-	account := relayPasswordAccount(relayOrigin, email)
-	if account == "" {
-		return nil
-	}
-	if err := safekeyring.Delete(relayPasswordService(), account); err != nil {
-		if errors.Is(err, safekeyring.ErrNotFound) {
-			return nil
-		}
-		return fmt.Errorf("keychain delete: %w", err)
-	}
-	return nil
+	return relayPasswordSlot(relayOrigin, email).Clear()
 }

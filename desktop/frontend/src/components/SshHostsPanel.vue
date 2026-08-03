@@ -405,7 +405,7 @@ async function remove(id: string) {
 
 .card-grid {
   display: grid; gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
 }
 .host-card {
   position: relative;
@@ -443,20 +443,24 @@ async function remove(id: string) {
   margin-top: 2px;
 }
 .card-actions {
-  flex: none; display: flex; gap: 2px;
-  opacity: 0; transition: opacity 140ms;
+  flex: none; display: flex; gap: 4px; align-items: center;
 }
-.host-card:hover .card-actions { opacity: 1; }
 .act {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 6px;
-  background: transparent; border: none; color: var(--fg-dim);
-  cursor: pointer; transition: color 120ms, background 120ms;
+  width: 28px; height: 28px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+  cursor: pointer; transition: color 120ms, background 120ms, border-color 120ms;
 }
-.act:hover { color: var(--fg); background: rgba(139, 148, 158, 0.14); }
-.act.connect:hover { color: var(--good); background: rgba(63, 185, 80, 0.14); }
-.act.danger:hover { color: var(--bad); background: rgba(248, 81, 73, 0.14); }
-.act:disabled { opacity: 0.4; cursor: default; }
+.act svg { display: block; width: 15px; height: 15px; }
+.act:hover { color: #fff; border-color: var(--neutral); background: rgba(139, 148, 158, 0.18); }
+/* Connect is the primary action — solid accent, always prominent. */
+.act.connect {
+  background: var(--accent); border-color: var(--accent); color: #04101f;
+}
+.act.connect:hover:not(:disabled) { filter: brightness(1.12); }
+.act.danger { color: var(--fg-dim); }
+.act.danger:hover { color: #fff; border-color: var(--bad); background: rgba(248, 81, 73, 0.2); }
+.act:disabled { opacity: 0.5; cursor: default; }
 
 /* Empty state */
 .empty {

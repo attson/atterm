@@ -462,6 +462,10 @@ export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
 }
 
+export function TranslateOpenAIChat(arg1) {
+  return window['go']['main']['App']['TranslateOpenAIChat'](arg1);
+}
+
 export function UpdateSSHHost(arg1, arg2) {
   return window['go']['main']['App']['UpdateSSHHost'](arg1, arg2);
 }

@@ -662,6 +662,7 @@ export namespace main {
 	    apiKey: string;
 	    model: string;
 	    defaultTargetLang: string;
+	    extraParams: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TranslateConfig(source);
@@ -675,6 +676,7 @@ export namespace main {
 	        this.apiKey = source["apiKey"];
 	        this.model = source["model"];
 	        this.defaultTargetLang = source["defaultTargetLang"];
+	        this.extraParams = source["extraParams"];
 	    }
 	}
 	export class PluginConfig {
@@ -1067,6 +1069,38 @@ export namespace main {
 	}
 	
 	
+	export class TranslateHTTPRequest {
+	    baseUrl: string;
+	    apiKey: string;
+	    body: string;
+	    timeoutSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TranslateHTTPRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.baseUrl = source["baseUrl"];
+	        this.apiKey = source["apiKey"];
+	        this.body = source["body"];
+	        this.timeoutSeconds = source["timeoutSeconds"];
+	    }
+	}
+	export class TranslateHTTPResponse {
+	    status: number;
+	    body: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TranslateHTTPResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.body = source["body"];
+	    }
+	}
 	export class VersionLine {
 	    minor: string;
 	    latest: string;

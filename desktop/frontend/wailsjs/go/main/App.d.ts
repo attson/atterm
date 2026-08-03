@@ -235,6 +235,8 @@ export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;
 
+export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main.TranslateHTTPResponse>;
+
 export function UpdateSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<void>;
 
 export function UpdateSSHKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;

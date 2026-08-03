@@ -3,6 +3,7 @@ import { computed, ref, onUnmounted } from "vue";
 import { useTranslatePanelStore } from "./panelStore";
 import { useI18n } from "../../i18n/useI18n";
 import type { MessageKey } from "../../i18n";
+import SelectDropdown from "../../components/SelectDropdown.vue";
 
 const store = useTranslatePanelStore();
 const { t: i18nT } = useI18n();
@@ -16,6 +17,14 @@ const TARGETS = [
   { code: "fr", labelKey: "plugins.translate.targetFrench" },
   { code: "es", labelKey: "plugins.translate.targetSpanish" },
 ] satisfies { code: string; labelKey: MessageKey }[];
+
+const targetOptions = computed(() =>
+  TARGETS.map((t) => ({ value: t.code, label: i18nT(t.labelKey) })),
+);
+const targetLangModel = computed({
+  get: () => store.targetLang,
+  set: (next: string) => { void store.changeTarget(next); },
+});
 
 // Dragging: panel top-left position relative to viewport.
 const pos = ref({ x: -1, y: 80 });  // -1 = "not placed yet, center on first mount"
@@ -63,11 +72,6 @@ const panelStyle = computed(() => {
   return { left: `${pos.value.x}px`, top: `${pos.value.y}px` };
 });
 
-function onTargetChange(e: Event) {
-  const next = (e.target as HTMLSelectElement).value;
-  void store.changeTarget(next);
-}
-
 function onRetry() { void store.retry(); }
 </script>
 
@@ -99,15 +103,14 @@ function onRetry() { void store.retry(); }
       </section>
 
       <section class="translate-panel__target-row">
-        <label class="translate-panel__label" for="translate-target">{{ i18nT("plugins.translate.target") }}</label>
-        <select
-          id="translate-target"
-          data-testid="translate-target"
-          :value="store.targetLang"
-          @change="onTargetChange"
-        >
-          <option v-for="target in TARGETS" :key="target.code" :value="target.code">{{ i18nT(target.labelKey) }}</option>
-        </select>
+        <label class="translate-panel__label">{{ i18nT("plugins.translate.target") }}</label>
+        <div class="translate-panel__target-select" data-testid="translate-target">
+          <SelectDropdown
+            v-model="targetLangModel"
+            :options="targetOptions"
+            :aria-label="i18nT('plugins.translate.target')"
+          />
+        </div>
       </section>
 
       <section class="translate-panel__result">
@@ -180,7 +183,7 @@ function onRetry() { void store.retry(); }
   white-space: pre-wrap;
 }
 .translate-panel__target-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--ed-border, #2d333b); }
-.translate-panel__target-row select { flex: 1; }
+.translate-panel__target-select { flex: 1; }
 .translate-panel__result { padding: 12px; border-top: 1px solid var(--ed-border, #2d333b); min-height: 60px; }
 .translate-panel__loading { opacity: 0.7; }
 .translate-panel__error { color: #f87171; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }

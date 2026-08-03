@@ -42,6 +42,77 @@ describe("openai provider — happy path", () => {
   });
 });
 
+describe("openai provider — injected transport", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("uses opts.transport instead of global fetch when provided", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const transport = vi.fn().mockResolvedValue(
+      mkResponse(mkChoice(JSON.stringify({ detectedSrcLang: "en", translated: "你好" }))),
+    );
+    const p = createOpenAIProvider(baseConfig, { transport });
+    const r = await p.translate("hello", "zh-CN", { signal: new AbortController().signal });
+    expect(r).toEqual({ translated: "你好", detectedSrcLang: "en" });
+    expect(transport).toHaveBeenCalledOnce();
+    expect(fetchMock).not.toHaveBeenCalled();
+    const [url, init] = transport.mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/chat/completions");
+    expect((init as RequestInit).method).toBe("POST");
+  });
+});
+
+describe("openai provider — extraParams merge", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("merges extraParams into body and overrides defaults", async () => {
+    const transport = vi.fn().mockResolvedValue(
+      mkResponse(mkChoice(JSON.stringify({ detectedSrcLang: "en", translated: "ok" }))),
+    );
+    const p = createOpenAIProvider(
+      { ...baseConfig, extraParams: '{"stream":true,"top_p":0.9,"temperature":0.9}' },
+      { transport },
+    );
+    await p.translate("x", "en", { signal: new AbortController().signal });
+    const [, init] = transport.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.stream).toBe(true);
+    expect(body.top_p).toBe(0.9);
+    // extraParams wins over the default temperature.
+    expect(body.temperature).toBe(0.9);
+    // Original messages still present.
+    expect(body.messages).toHaveLength(2);
+  });
+
+  it("empty / whitespace extraParams is a no-op", async () => {
+    const transport = vi.fn().mockResolvedValue(
+      mkResponse(mkChoice(JSON.stringify({ detectedSrcLang: "en", translated: "ok" }))),
+    );
+    const p = createOpenAIProvider({ ...baseConfig, extraParams: "   " }, { transport });
+    await p.translate("x", "en", { signal: new AbortController().signal });
+    const [, init] = transport.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.stream).toBeUndefined();
+    expect(body.temperature).toBe(0.2);
+  });
+
+  it("malformed extraParams JSON → TranslateError", async () => {
+    const transport = vi.fn();
+    const p = createOpenAIProvider({ ...baseConfig, extraParams: "not json" }, { transport });
+    await expect(p.translate("x", "en", { signal: new AbortController().signal }))
+      .rejects.toBeInstanceOf(TranslateError);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("extraParams that isn't a JSON object → TranslateError", async () => {
+    const transport = vi.fn();
+    const p = createOpenAIProvider({ ...baseConfig, extraParams: "[1,2,3]" }, { transport });
+    await expect(p.translate("x", "en", { signal: new AbortController().signal }))
+      .rejects.toBeInstanceOf(TranslateError);
+    expect(transport).not.toHaveBeenCalled();
+  });
+});
+
 describe("openai provider — error mapping", () => {
   afterEach(() => { vi.restoreAllMocks(); });
 

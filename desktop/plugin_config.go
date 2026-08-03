@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -25,11 +26,15 @@ type FileExplorerConfig struct {
 
 type TranslateConfig struct {
 	Enabled           bool   `json:"enabled"`
-	Provider          string `json:"provider"`           // currently only "openai-compatible"
-	BaseURL           string `json:"baseUrl"`            // e.g. "https://api.openai.com"
-	APIKey            string `json:"apiKey"`             // plaintext; same trust as other plugin config
-	Model             string `json:"model"`              // free-text; user picks per their endpoint
-	DefaultTargetLang string `json:"defaultTargetLang"`  // one of allowedTranslateTargetLangs
+	Provider          string `json:"provider"`          // currently only "openai-compatible"
+	BaseURL           string `json:"baseUrl"`           // e.g. "https://api.openai.com"
+	APIKey            string `json:"apiKey"`            // plaintext; same trust as other plugin config
+	Model             string `json:"model"`             // free-text; user picks per their endpoint
+	DefaultTargetLang string `json:"defaultTargetLang"` // one of allowedTranslateTargetLangs
+	// ExtraParams is a raw JSON object string merged into every chat
+	// completion body (e.g. {"stream": true, "top_p": 0.9}). Empty means
+	// "no overrides". Validated as a JSON object at save time.
+	ExtraParams string `json:"extraParams"`
 }
 
 // ShortcutsConfig is the persisted shortcut-binding overrides. The map is
@@ -107,6 +112,12 @@ func ValidatePluginConfig(c PluginConfig) error {
 	}
 	if !allowedTranslateTargetLangs[c.Translate.DefaultTargetLang] {
 		return fmt.Errorf("translate.defaultTargetLang %q not allowed", c.Translate.DefaultTargetLang)
+	}
+	if s := strings.TrimSpace(c.Translate.ExtraParams); s != "" {
+		var probe map[string]any
+		if err := json.Unmarshal([]byte(s), &probe); err != nil {
+			return fmt.Errorf("translate.extraParams: not a JSON object (%v)", err)
+		}
 	}
 	for actionID, binding := range c.Shortcuts.Bindings {
 		if actionID == "" {

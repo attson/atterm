@@ -59,9 +59,9 @@ func TestStepUp_FullRoundTripMintsToken(t *testing.T) {
 // userID) coupling, ConsumeStepUpToken would just be a global
 // nonce-store with no per-account check.
 func TestStepUp_WrongUserCannotConsume(t *testing.T) {
-	tok, err := MintStepUpToken("user-A")
+	tok, err := mintStepUpToken("user-A")
 	if err != nil {
-		t.Fatalf("MintStepUpToken: %v", err)
+		t.Fatalf("mintStepUpToken: %v", err)
 	}
 	if ConsumeStepUpToken(tok, "user-B") {
 		t.Fatalf("Consume succeeded for wrong user")
@@ -137,13 +137,13 @@ func TestStepUp_WrongPasswordRejected(t *testing.T) {
 }
 
 // TestStepUp_ConsumeAfterExpiry checks that the TTL window is respected.
-// MintStepUpToken's AfterFunc janitor normally fires before Consume sees
+// mintStepUpToken's AfterFunc janitor normally fires before Consume sees
 // the expired entry, but a defensive in-Consume check guarantees the
 // property even if the janitor is delayed.
 func TestStepUp_ConsumeAfterExpiry(t *testing.T) {
-	tok, err := MintStepUpToken("user-X")
+	tok, err := mintStepUpToken("user-X")
 	if err != nil {
-		t.Fatalf("MintStepUpToken: %v", err)
+		t.Fatalf("mintStepUpToken: %v", err)
 	}
 	// Force the entry to look expired by overwriting it. Reaching into
 	// the internal map is acceptable in a same-package test.

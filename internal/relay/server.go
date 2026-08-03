@@ -125,33 +125,6 @@ type feishuRuntime struct {
 	handler atomic.Pointer[FeishuHTTPHandler]
 }
 
-// ServerDeps holds the constructed subsystems that BuildMux needs to wire
-// the production HTTP routes. Tests create this directly; the production
-// NewServer constructor builds it internally.
-type ServerDeps struct {
-	Store    userstore.Store
-	Resolver *IdentityResolver
-	Limits   *LimitRegistry
-	Auth     *AuthServer
-	Admin    *AdminServer
-}
-
-// BuildMux constructs and returns the HTTP mux with all auth and admin routes
-// registered. It is exported so tests can build the full production mux for
-// route-enumeration checks (Task 3.4 mux-enumerator test). The requireSession
-// argument wraps every protected route; pass nil to leave protected routes
-// unwrapped (tests only).
-func BuildMux(d ServerDeps, requireSession func(http.HandlerFunc) http.HandlerFunc) *http.ServeMux {
-	mux := http.NewServeMux()
-	if d.Auth != nil {
-		d.Auth.RegisterInto(mux, requireSession)
-	}
-	if d.Admin != nil {
-		d.Admin.RegisterInto(mux, requireSession)
-	}
-	return mux
-}
-
 // NewServer builds a Server with its routes installed.
 func NewServer(cfg Config) *Server {
 	if cfg.DebugLog == nil {

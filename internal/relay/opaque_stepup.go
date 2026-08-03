@@ -64,12 +64,12 @@ var (
 	stepUpTokens = map[string]stepUpToken{}
 )
 
-// MintStepUpToken issues a single-use step-up token for userID with the
+// mintStepUpToken issues a single-use step-up token for userID with the
 // fixed TTL. Stored under the in-process map; an AfterFunc janitor
 // deletes the entry when it expires. Returns the plaintext token (which
 // the caller MUST hand back to the client and forget — the relay never
 // re-emits it).
-func MintStepUpToken(userID string) (string, error) {
+func mintStepUpToken(userID string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -269,7 +269,7 @@ func (h *OpaqueAuthHandler) handleStepUpFinalize(w http.ResponseWriter, r *http.
 		return
 	}
 
-	tok, err := MintStepUpToken(pending.userID)
+	tok, err := mintStepUpToken(pending.userID)
 	if err != nil {
 		http.Error(w, "internal: mint stepup token", http.StatusInternalServerError)
 		return

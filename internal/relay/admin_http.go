@@ -35,14 +35,6 @@ func (a *AdminServer) requireAdmin(inner http.HandlerFunc) http.Handler {
 	})
 }
 
-// AdminRoutes returns an http.Handler with all user-account admin endpoints.
-// Used by tests that don't want session-token enforcement.
-func (a *AdminServer) AdminRoutes() http.Handler {
-	mux := http.NewServeMux()
-	a.RegisterInto(mux, nil)
-	return mux
-}
-
 // RegisterInto registers all user-account admin routes into the provided mux.
 // The requireSession argument wraps each admin route so the session-token is
 // validated before requireAdmin checks the is_admin flag. Pass nil to skip

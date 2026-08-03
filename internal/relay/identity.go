@@ -25,13 +25,6 @@ type Principal struct {
 	Scope  authScope // authWrite for every authenticated principal
 }
 
-// IsUser reports whether p is an authenticated user. Admin is a strict
-// superset of user, so every endpoint that accepts PrincipalUser must
-// also accept PrincipalAdmin — call this instead of `p.Kind == PrincipalUser`.
-func (p Principal) IsUser() bool {
-	return p.Kind == PrincipalUser || p.Kind == PrincipalAdmin
-}
-
 // IdentityResolver resolves the static handler's redirect Principal from a
 // bearer token. It is constructed once at relay startup and reused across
 // every static GET. Production HTTP / WebSocket routes do NOT use this type

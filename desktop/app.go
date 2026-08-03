@@ -2174,7 +2174,7 @@ func (a *App) ListRelaySessions() ([]RelaySessionRow, error) {
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return nil, fmt.Errorf("not authenticated")
 	}
-	return a.meSessionsGET(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
+	return meSessionsGET(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
 }
 
 // RevokeRelaySession revokes one session by id_hash. The current
@@ -2193,7 +2193,7 @@ func (a *App) RevokeRelaySession(idHash string) error {
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return fmt.Errorf("not authenticated")
 	}
-	return a.meSessionDELETE(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, idHash, cfg.AllowInsecureRelay)
+	return meSessionDELETE(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, idHash, cfg.AllowInsecureRelay)
 }
 
 // SignOutOtherRelaySessions revokes every session except the current
@@ -2206,7 +2206,7 @@ func (a *App) SignOutOtherRelaySessions() (SignOutOthersResult, error) {
 	if cfg.RelayURL == "" || cfg.RelaySessionToken == "" {
 		return SignOutOthersResult{}, fmt.Errorf("not authenticated")
 	}
-	return a.meSessionsSignOutOthers(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
+	return meSessionsSignOutOthers(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
 }
 
 // PairingTokenResponse is what the renderer receives when generating a QR code.

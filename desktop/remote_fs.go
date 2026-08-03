@@ -59,12 +59,8 @@ func remoteFSAllowRoots() []string {
 	return []string{home}
 }
 
-func (fs *remoteFS) eventsChan() <-chan proto.Frame {
-	return fs.eventCh
-}
-
 func (fs *remoteFS) events() <-chan proto.Frame {
-	return fs.eventsChan()
+	return fs.eventCh
 }
 
 func (fs *remoteFS) handle(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {

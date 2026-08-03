@@ -58,16 +58,6 @@ type AuthServer struct {
 	OnPreferencesChanged func(userID string)
 }
 
-// Routes returns an http.Handler with all auth + me endpoints mounted. The
-// pair-consume and logout routes are public-or-self-authenticating;
-// protected routes are unwrapped — callers that want session enforcement
-// must use RegisterInto with a non-nil requireSession wrapper.
-func (a *AuthServer) Routes() http.Handler {
-	mux := http.NewServeMux()
-	a.RegisterInto(mux, nil)
-	return mux
-}
-
 // RegisterInto registers all auth + me routes into the provided mux. The
 // requireSession argument wraps every protected route; pass nil to leave them
 // unwrapped (only useful when a higher-level mux applies the wrapper, or in

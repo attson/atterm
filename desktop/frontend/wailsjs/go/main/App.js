@@ -242,6 +242,22 @@ export function ListSSHHosts() {
   return window['go']['main']['App']['ListSSHHosts']();
 }
 
+export function ListSSHKeys() {
+  return window['go']['main']['App']['ListSSHKeys']();
+}
+
+export function AddSSHKey(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddSSHKey'](arg1, arg2, arg3);
+}
+
+export function UpdateSSHKey(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['UpdateSSHKey'](arg1, arg2, arg3, arg4);
+}
+
+export function DeleteSSHKey(arg1) {
+  return window['go']['main']['App']['DeleteSSHKey'](arg1);
+}
+
 export function ListShells() {
   return window['go']['main']['App']['ListShells']();
 }

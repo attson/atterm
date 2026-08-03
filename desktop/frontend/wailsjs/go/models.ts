@@ -999,6 +999,7 @@ export namespace main {
 	    port?: string;
 	    user: string;
 	    auth_kind: string;
+	    key_id?: string;
 	    group?: string;
 	    note?: string;
 	
@@ -1014,8 +1015,26 @@ export namespace main {
 	        this.port = source["port"];
 	        this.user = source["user"];
 	        this.auth_kind = source["auth_kind"];
+	        this.key_id = source["key_id"];
 	        this.group = source["group"];
 	        this.note = source["note"];
+	    }
+	}
+
+	export class SSHKey {
+	    id: string;
+	    name: string;
+	    key_type?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SSHKey(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.key_type = source["key_type"];
 	    }
 	}
 	

@@ -125,6 +125,14 @@ export function ListRemoteSessions():Promise<string>;
 
 export function ListSSHHosts():Promise<Array<main.SSHHost>>;
 
+export function ListSSHKeys():Promise<Array<main.SSHKey>>;
+
+export function AddSSHKey(arg1:string,arg2:string,arg3:string):Promise<main.SSHKey>;
+
+export function UpdateSSHKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function DeleteSSHKey(arg1:string):Promise<void>;
+
 export function ListShells():Promise<Array<string>>;
 
 export function LoadRecoverySnapshot():Promise<main.RecoverySnapshot>;

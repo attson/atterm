@@ -24,6 +24,18 @@ func newAppConfigAdapter(s *configStore, accountKey func() []byte) *appConfigAda
 	return &appConfigAdapter{store: s, accountKey: accountKey}
 }
 
+// marshalPtr renders an optional preference: nil → (nil, false) so
+// prefssync knows nothing is stored yet, non-nil → JSON of *p + true.
+// Used by the ReadValue switch to keep each optional-field case one line
+// and stop silent json.Marshal errors from hiding a "no value" signal.
+func marshalPtr[T any](p *T) (json.RawMessage, bool) {
+	if p == nil {
+		return nil, false
+	}
+	b, _ := json.Marshal(*p)
+	return b, true
+}
+
 func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 	c := a.store.Get()
 	switch key {
@@ -34,29 +46,13 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 		b, _ := json.Marshal(c.QuickTemplates)
 		return b, true
 	case "notifications_enabled":
-		if c.NotificationsEnabled == nil {
-			return nil, false
-		}
-		b, _ := json.Marshal(*c.NotificationsEnabled)
-		return b, true
+		return marshalPtr(c.NotificationsEnabled)
 	case "ai_notifications_only":
-		if c.AINotificationsOnly == nil {
-			return nil, false
-		}
-		b, _ := json.Marshal(*c.AINotificationsOnly)
-		return b, true
+		return marshalPtr(c.AINotificationsOnly)
 	case "command_notify_threshold_seconds":
-		if c.CommandNotifyThresholdSeconds == nil {
-			return nil, false
-		}
-		b, _ := json.Marshal(*c.CommandNotifyThresholdSeconds)
-		return b, true
+		return marshalPtr(c.CommandNotifyThresholdSeconds)
 	case "shell_integration_enabled":
-		if c.ShellIntegrationEnabled == nil {
-			return nil, false
-		}
-		b, _ := json.Marshal(*c.ShellIntegrationEnabled)
-		return b, true
+		return marshalPtr(c.ShellIntegrationEnabled)
 	case "pinned_session_ids":
 		b, _ := json.Marshal(c.PinnedSessionIDs)
 		return b, true

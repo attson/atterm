@@ -7,14 +7,28 @@ export interface OpenAIProviderConfig {
   baseUrl: string;  // e.g. "https://api.openai.com" — no trailing slash, no /v1
   apiKey: string;
   model: string;
+  // extraParams is a raw JSON object string merged into every chat
+  // completion body (e.g. '{"stream": true, "top_p": 0.9}'). Empty or
+  // whitespace = no overrides. Non-object JSON throws TranslateError.
+  extraParams?: string;
+}
+
+export type OpenAITransport = (url: string, init: RequestInit) => Promise<Response>;
+
+export interface OpenAIProviderOptions {
+  // transport lets the caller swap fetch — e.g. TranslatePanelHost injects a
+  // wails-backed transport so the request runs through Go (WKWebView blocks
+  // direct fetch to third-party endpoints without CORS).
+  transport?: OpenAITransport;
 }
 
 // createOpenAIProvider returns a stateful TranslateProvider that remembers
 // whether the endpoint supports response_format. After a single failure
 // matching response_format / json_object, all subsequent requests use the
 // plain-text fallback prompt.
-export function createOpenAIProvider(cfg: OpenAIProviderConfig): TranslateProvider {
+export function createOpenAIProvider(cfg: OpenAIProviderConfig, opts: OpenAIProviderOptions = {}): TranslateProvider {
   let supportsJsonMode = true;
+  const transport: OpenAITransport = opts.transport ?? ((url, init) => fetch(url, init));
 
   async function call(text: string, targetLang: string, signal: AbortSignal, useJsonMode: boolean): Promise<TranslateResult> {
     const url = cfg.baseUrl.replace(/\/+$/, "") + "/v1/chat/completions";
@@ -31,6 +45,11 @@ export function createOpenAIProvider(cfg: OpenAIProviderConfig): TranslateProvid
       temperature: 0.2,
     };
     if (useJsonMode) body.response_format = { type: "json_object" };
+    // Merge user-supplied extraParams last so they override our defaults.
+    // Some endpoints require stream:true; others need top_p / max_tokens.
+    // SSE responses are collapsed to non-stream on the Go transport side.
+    const extras = parseExtraParams(cfg.extraParams);
+    if (extras) Object.assign(body, extras);
 
     // Wrap user-supplied abort signal + 30s timeout into a combined signal.
     const timeoutCtl = new AbortController();
@@ -40,7 +59,7 @@ export function createOpenAIProvider(cfg: OpenAIProviderConfig): TranslateProvid
 
     let res: Response;
     try {
-      res = await fetch(url, {
+      res = await transport(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -121,4 +140,18 @@ export function createOpenAIProvider(cfg: OpenAIProviderConfig): TranslateProvid
 
 class ResponseFormatNotSupportedError extends Error {
   constructor() { super(t("plugins.translate.responseFormatUnsupported")); }
+}
+
+function parseExtraParams(raw: string | undefined): Record<string, unknown> | null {
+  if (!raw || !raw.trim()) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new TranslateError("unknown", t("plugins.translate.invalidExtraParams", { detail: e instanceof Error ? e.message : String(e) }));
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TranslateError("unknown", t("plugins.translate.invalidExtraParams", { detail: "must be JSON object" }));
+  }
+  return parsed as Record<string, unknown>;
 }

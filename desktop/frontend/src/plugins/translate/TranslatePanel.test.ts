@@ -50,7 +50,12 @@ describe("TranslatePanel", () => {
     store.configure({ provider: fakeProvider, defaultTargetLang: "zh-CN" });
     await store.openWithSource("x");
     const w = mount(TranslatePanel, mountOptions);
-    await w.find('[data-testid="translate-target"]').setValue("ja");
+    const target = w.find('[data-testid="translate-target"]');
+    await target.find('[data-testid="select-trigger"]').trigger("click");
+    const options = target.findAll('[data-testid="select-option"]');
+    const jaOption = options.find((o) => o.text() === "Japanese" || o.text() === "日语");
+    if (!jaOption) throw new Error("Japanese option not rendered");
+    await jaOption.trigger("click");
     // Pinia/Vue tick + provider resolved
     await new Promise((r) => setTimeout(r, 0));
     expect(store.targetLang).toBe("ja");

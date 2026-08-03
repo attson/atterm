@@ -94,6 +94,10 @@ type SSHConnectReq struct {
 	// AcceptHostKey is set on a retry after the user confirmed an unknown
 	// host fingerprint in the TOFU dialog.
 	AcceptHostKey bool `json:"accept_host_key,omitempty"`
+	// SSHHostID is set internally by NewSshSessionByID to the saved SSHHost.ID
+	// so the adopted session carries it (for recovery reconnect). Empty for
+	// ad-hoc connections. Not part of the frontend-facing request shape.
+	SSHHostID string `json:"-"`
 }
 
 // errCodeHostKeyUnknown is the error string carried by HostKeyUnknownError so

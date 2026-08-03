@@ -40,6 +40,7 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 		Host: found.Host, Port: found.Port, User: found.User,
 		AuthKind:      found.AuthKind,
 		AcceptHostKey: false,
+		SSHHostID:     found.ID, // carried into SessionInfo for recovery reconnect
 	}
 	switch found.AuthKind {
 	case "key":
@@ -149,6 +150,7 @@ func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostK
 		HostID:    h.hostID,
 		Host:      req.Host,
 		User:      req.User,
+		SSHHostID: req.SSHHostID, // empty for ad-hoc; set for saved-host connects
 		StartedAt: time.Now().Unix(),
 	}
 

@@ -126,6 +126,11 @@ export interface RecoveryPaneSnapshot {
   last_command_line?: string;
   title?: string;
   ai?: RecoveryAIInfo;
+  // ssh_host_id, when non-empty, marks this pane as an SSH session connected
+  // from a saved host. On restore it is reconnected via NewSshSessionByID
+  // instead of being forked as a local shell. Empty for local shells and
+  // ad-hoc SSH sessions.
+  ssh_host_id?: string;
 }
 
 export interface RecoveryTabSnapshot {

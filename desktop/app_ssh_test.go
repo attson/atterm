@@ -137,3 +137,29 @@ func TestNewSshSessionByIDKeyMissing(t *testing.T) {
 		t.Fatalf("expected errKeyMissing, got %v", err)
 	}
 }
+
+func TestNewSshSessionByIDSetsSSHHostID(t *testing.T) {
+	safekeyring.UseFileStore()
+	safekeyring.SetFileDirForTest(t.TempDir())
+	addr, hostPub := startSSHTestServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	h := newTestRelayHost(t)
+	// Adopt via OpenSSHSession directly with a known host id, then assert the
+	// registered SessionInfo carries SSHHostID.
+	id, err := h.OpenSSHSession(context.Background(), SSHConnectReq{
+		Host: host, Port: port, User: "u", AuthKind: "password", Password: "pw",
+		AcceptHostKey: true, SSHHostID: "host-123",
+	}, testFixedHostKeyCb(hostPub))
+	if err != nil {
+		t.Fatalf("OpenSSHSession: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatal("session not registered")
+	}
+	if got := sess.Info().SSHHostID; got != "host-123" {
+		t.Fatalf("SSHHostID = %q, want host-123", got)
+	}
+	_ = h.CloseSession(id)
+}

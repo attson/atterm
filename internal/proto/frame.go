@@ -307,6 +307,12 @@ type SessionInfo struct {
 	HostID    string `json:"host_id"`
 	Host      string `json:"host"`
 	User      string `json:"user"`
+	// SSHHostID, when non-empty, marks this session as an SSH remote shell
+	// connected from a saved host (SSHHost.ID). Empty for local shells and for
+	// ad-hoc SSH connections. Used by session recovery to reconnect by host id.
+	// omitempty keeps the wire shape backward-compatible (red line 4): older
+	// publishers omit it, older clients ignore the unknown field.
+	SSHHostID string `json:"ssh_host_id,omitempty"`
 	// RemotePermission is owner-published permission for remote attachers.
 	// Empty means full for backwards compatibility with older ANNOUNCEs.
 	RemotePermission string `json:"remote_permission,omitempty"`

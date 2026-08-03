@@ -864,6 +864,9 @@ export interface SessionInfo {
   host_id?: string;
   host?: string;
   user?: string;
+  // ssh_host_id marks an SSH session connected from a saved host (SSHHost.ID);
+  // used by recovery to reconnect. Absent for local shells / ad-hoc SSH.
+  ssh_host_id?: string;
   remote_permission?: string;
   task_state?: TaskState;
   current_command?: string;

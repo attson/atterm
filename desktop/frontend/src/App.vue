@@ -28,6 +28,7 @@ import { sendInputToSession } from "./lib/sendInput";
 import { applyTabReorder } from "./lib/tabReorder";
 import { computeCloseTabState } from "./lib/closeTabOptimistic";
 import { tabsToAutoCloseOnExit } from "./lib/autoCloseTab";
+import { classifySSHRestore } from "./lib/sshRestore";
 // Plugin theme palettes (CSS vars). Loaded in main bundle so the panel
 // toggle and Quick Input toolbar can read --ed-* vars even when the
 // file-explorer chunk is not yet loaded.
@@ -48,6 +49,7 @@ import {
   getUpdateState,
   listShells,
   newSession,
+  newSshSessionByID,
   markSessionsSeen,
   listRemoteSessions,
   getTaskSidebarCollapsed,
@@ -1195,6 +1197,56 @@ async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: st
       // newSession, matching how a snapshot-less boot renders there.
       if (!caps.localPty) {
         t.panes[i] = { sessionId: null, remote: false };
+        continue;
+      }
+      // SSH sessions must NOT be forked as a local shell (that would spawn a
+      // bogus "ssh" process). Saved-host SSH reconnects by host id; ad-hoc SSH
+      // can't reconnect (used-once creds) so it's left empty with a hint.
+      const sshKind = classifySSHRestore(snap);
+      if (sshKind.kind === "reconnect") {
+        try {
+          const resp = await newSshSessionByID(sshKind.hostId);
+          t.panes[i] = { sessionId: resp.session_id, remote: false };
+          pendingLocalIds.add(resp.session_id);
+          localList.value = [
+            ...localList.value,
+            {
+              id: resp.session_id,
+              command: snap.title || "ssh",
+              cwd: "",
+              title: snap.title || "ssh",
+              type: "shell",
+              cols: predictCellDims(tab.layout).cols,
+              rows: predictCellDims(tab.layout).rows,
+              started_at: Math.floor(Date.now() / 1000),
+              host_id: localHostID.value,
+            },
+          ];
+        } catch (e) {
+          // Host deleted / key missing / TOFU on reconnect → leave empty with a
+          // hint instead of stranding a broken pane.
+          t.panes[i] = {
+            sessionId: null,
+            remote: false,
+            lastSeenInfo: synthSessionInfoFromSnapshot({
+              ...snap,
+              title: (snap.title || "ssh") + " — reconnect failed, open it again",
+            }),
+          };
+          void e;
+        }
+        continue;
+      }
+      if (sshKind.kind === "adhoc") {
+        // Ad-hoc SSH: credentials were used-once; cannot reconnect.
+        t.panes[i] = {
+          sessionId: null,
+          remote: false,
+          lastSeenInfo: synthSessionInfoFromSnapshot({
+            ...snap,
+            title: (snap.title || "ssh") + " — SSH disconnected, reconnect to resume",
+          }),
+        };
         continue;
       }
       try {

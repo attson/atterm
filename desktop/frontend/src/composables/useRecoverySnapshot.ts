@@ -88,6 +88,9 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
             last_command_line: info?.current_command ?? "",
             title: info?.title ?? "",
             ai: persistAI && ai ? ({ ...ai } as RecoveryAIInfo) : undefined,
+            // Carry the SSH host id so executeRestore reconnects saved-host SSH
+            // sessions instead of forking a bogus local "ssh" process.
+            ssh_host_id: info?.ssh_host_id || undefined,
           };
         }),
       }))

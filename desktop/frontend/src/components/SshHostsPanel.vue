@@ -177,6 +177,13 @@ function openNewKey() {
   kPassphrase.value = "";
   keyDrawer.value = true;
 }
+// Jump from the host form's empty-vault hint straight into adding a key:
+// close the host drawer, switch to the Keys tab, open the New Key drawer.
+function jumpToNewKey() {
+  closeHostDrawer();
+  activeTab.value = "keys";
+  openNewKey();
+}
 function openEditKey(k: SSHKey) {
   keyEditId.value = k.id;
   kName.value = k.name;
@@ -336,7 +343,12 @@ async function removeKey(id: string) {
                   <option v-for="k in keys" :key="k.id" :value="k.id">{{ k.name }}{{ k.key_type ? " (" + k.key_type + ")" : "" }}</option>
                 </select>
               </label>
-              <p v-else class="hint">No keys yet — add one in the <strong>Keys</strong> tab first.</p>
+              <div v-else class="empty-keys-hint">
+                <p class="hint">No keys yet.</p>
+                <button class="btn primary sm" data-test="ssh-host-add-key" @click="jumpToNewKey">
+                  <Plus :size="13" /> Add a key
+                </button>
+              </div>
             </template>
           </div>
           <div class="drawer-foot">
@@ -447,6 +459,9 @@ async function removeKey(id: string) {
 .field textarea { resize: vertical; font-family: var(--font-mono-strict); font-size: 12px; }
 .select { cursor: pointer; }
 .hint { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.empty-keys-hint { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.btn.sm { display: inline-flex; align-items: center; gap: 5px; padding: 6px 11px; font-size: 12px; }
+.btn.sm svg { display: block; }
 .seg { display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 3px; gap: 3px; }
 .seg button { flex: 1; background: transparent; border: none; color: var(--fg-dim); font-size: 12px; padding: 6px 0; border-radius: 5px; cursor: pointer; transition: all 120ms; }
 .seg button.on { background: var(--accent); color: #04101f; font-weight: 600; }

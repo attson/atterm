@@ -6,6 +6,10 @@ export function AddSSHHost(arg1, arg2) {
   return window['go']['main']['App']['AddSSHHost'](arg1, arg2);
 }
 
+export function AddSSHKey(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AddSSHKey'](arg1, arg2, arg3);
+}
+
 export function BeginFeishuPair() {
   return window['go']['main']['App']['BeginFeishuPair']();
 }
@@ -44,6 +48,10 @@ export function DeleteFeishuBinding() {
 
 export function DeleteSSHHost(arg1) {
   return window['go']['main']['App']['DeleteSSHHost'](arg1);
+}
+
+export function DeleteSSHKey(arg1) {
+  return window['go']['main']['App']['DeleteSSHKey'](arg1);
 }
 
 export function DiscardRecoverySnapshot() {
@@ -244,18 +252,6 @@ export function ListSSHHosts() {
 
 export function ListSSHKeys() {
   return window['go']['main']['App']['ListSSHKeys']();
-}
-
-export function AddSSHKey(arg1, arg2, arg3) {
-  return window['go']['main']['App']['AddSSHKey'](arg1, arg2, arg3);
-}
-
-export function UpdateSSHKey(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['UpdateSSHKey'](arg1, arg2, arg3, arg4);
-}
-
-export function DeleteSSHKey(arg1) {
-  return window['go']['main']['App']['DeleteSSHKey'](arg1);
 }
 
 export function ListShells() {
@@ -468,4 +464,8 @@ export function StartDownload() {
 
 export function UpdateSSHHost(arg1, arg2) {
   return window['go']['main']['App']['UpdateSSHHost'](arg1, arg2);
+}
+
+export function UpdateSSHKey(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['UpdateSSHKey'](arg1, arg2, arg3, arg4);
 }

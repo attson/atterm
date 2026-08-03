@@ -1020,16 +1020,15 @@ export namespace main {
 	        this.note = source["note"];
 	    }
 	}
-
 	export class SSHKey {
 	    id: string;
 	    name: string;
 	    key_type?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SSHKey(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -1149,8 +1148,6 @@ export namespace main {
 	
 	export class sshCredential {
 	    password?: string;
-	    private_key?: string;
-	    passphrase?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new sshCredential(source);
@@ -1159,8 +1156,6 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.password = source["password"];
-	        this.private_key = source["private_key"];
-	        this.passphrase = source["passphrase"];
 	    }
 	}
 

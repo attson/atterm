@@ -7,6 +7,8 @@ import {feishu} from '../models';
 
 export function AddSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<main.SSHHost>;
 
+export function AddSSHKey(arg1:string,arg2:string,arg3:string):Promise<main.SSHKey>;
+
 export function BeginFeishuPair():Promise<string>;
 
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;
@@ -26,6 +28,8 @@ export function CreatePairingToken():Promise<main.PairingTokenResponse>;
 export function DeleteFeishuBinding():Promise<void>;
 
 export function DeleteSSHHost(arg1:string):Promise<void>;
+
+export function DeleteSSHKey(arg1:string):Promise<void>;
 
 export function DiscardRecoverySnapshot():Promise<void>;
 
@@ -126,12 +130,6 @@ export function ListRemoteSessions():Promise<string>;
 export function ListSSHHosts():Promise<Array<main.SSHHost>>;
 
 export function ListSSHKeys():Promise<Array<main.SSHKey>>;
-
-export function AddSSHKey(arg1:string,arg2:string,arg3:string):Promise<main.SSHKey>;
-
-export function UpdateSSHKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
-
-export function DeleteSSHKey(arg1:string):Promise<void>;
 
 export function ListShells():Promise<Array<string>>;
 
@@ -238,3 +236,5 @@ export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 export function StartDownload():Promise<void>;
 
 export function UpdateSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<void>;
+
+export function UpdateSSHKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;

@@ -117,4 +117,19 @@ describe("SshHostsPanel", () => {
     expect(select.exists()).toBe(true);
     expect(select.text()).toContain("aws");
   });
+
+  it("密钥库为空时主机表单的快捷按钮跳去新增 Key", async () => {
+    listSSHKeys.mockResolvedValue([]); // empty vault
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-auth-key"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-host-add-key"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    // Jumped to Keys tab with the New Key drawer open.
+    expect(wrapper.find('[data-test="ssh-tab-keys"]').classes()).toContain("on");
+    expect(wrapper.find('[data-test="ssh-key-name"]').exists()).toBe(true);
+  });
 });

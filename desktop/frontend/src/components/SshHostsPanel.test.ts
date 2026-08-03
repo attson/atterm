@@ -113,9 +113,14 @@ describe("SshHostsPanel", () => {
     await wrapper.vm.$nextTick();
     await wrapper.find('[data-test="ssh-auth-key"]').trigger("click");
     await wrapper.vm.$nextTick();
-    const select = wrapper.find('[data-test="ssh-add-keyid"]');
-    expect(select.exists()).toBe(true);
-    expect(select.text()).toContain("aws");
+    // The key picker is a custom SelectDropdown, not a native <select>.
+    const picker = wrapper.find('[data-test="ssh-add-keyid"]');
+    expect(picker.exists()).toBe(true);
+    // Open the dropdown to reveal the options.
+    await picker.find('[data-testid="select-trigger"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    const opts = wrapper.findAll('[data-testid="select-option"]');
+    expect(opts.some((o) => o.text().includes("aws"))).toBe(true);
   });
 
   it("密钥库为空时主机表单的快捷按钮跳去新增 Key", async () => {
@@ -131,5 +136,27 @@ describe("SshHostsPanel", () => {
     // Jumped to Keys tab with the New Key drawer open.
     expect(wrapper.find('[data-test="ssh-tab-keys"]').classes()).toContain("on");
     expect(wrapper.find('[data-test="ssh-key-name"]').exists()).toBe(true);
+  });
+
+  it("Group 字段把已有分组作为建议,点击填入", async () => {
+    listSSHHosts.mockResolvedValue([
+      { id: "1", host: "h", user: "u", auth_kind: "password", group: "prod" },
+      { id: "2", host: "h2", user: "u2", auth_kind: "password", group: "staging" },
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    // Focus the group input → suggestions menu shows existing groups.
+    await wrapper.find('[data-test="ssh-add-group"]').trigger("focus");
+    await wrapper.vm.$nextTick();
+    const menu = wrapper.find('[data-test="ssh-group-menu"]');
+    expect(menu.exists()).toBe(true);
+    expect(menu.text()).toContain("prod");
+    expect(menu.text()).toContain("staging");
+    // Pick one → fills the input.
+    await wrapper.find('[data-test="ssh-group-opt-staging"]').trigger("mousedown");
+    await wrapper.vm.$nextTick();
+    expect((wrapper.find('[data-test="ssh-add-group"]').element as HTMLInputElement).value).toBe("staging");
   });
 });

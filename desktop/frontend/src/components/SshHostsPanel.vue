@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted } from "vue";
 import { Server, Plus, X, Pencil, Trash2, Search, Zap, Folder, KeyRound } from "lucide-vue-next";
+import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import {
   listSSHHosts,
   addSSHHost,
@@ -58,6 +59,38 @@ const hostGroups = computed(() => {
     return a.localeCompare(b);
   });
 });
+
+const keyOptions = computed<SelectOption[]>(() =>
+  keys.value.map((k) => ({
+    value: k.id,
+    label: k.key_type ? `${k.name} (${k.key_type})` : k.name,
+  })),
+);
+
+// Existing group names (deduped, sorted) — offered as suggestions in the host
+// form's Group combobox. The user can also type a brand-new group.
+const existingGroups = computed<string[]>(() => {
+  const set = new Set<string>();
+  for (const h of hosts.value) {
+    const g = h.group?.trim();
+    if (g) set.add(g);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+});
+const groupMenuOpen = ref(false);
+const groupSuggestions = computed<string[]>(() => {
+  const q = fGroup.value.trim().toLowerCase();
+  const base = existingGroups.value;
+  return q ? base.filter((g) => g.toLowerCase().includes(q)) : base;
+});
+function pickGroup(g: string) {
+  fGroup.value = g;
+  groupMenuOpen.value = false;
+}
+function onGroupBlur() {
+  // Delay so a mousedown on a suggestion registers before the menu closes.
+  window.setTimeout(() => (groupMenuOpen.value = false), 120);
+}
 
 function hostLabel(h: SSHHost): string {
   return h.alias?.trim() || `${h.user}@${h.host}`;
@@ -326,7 +359,28 @@ async function removeKey(id: string) {
               <label class="field grow"><span class="fl">Label</span><input data-test="ssh-add-alias" v-model="fAlias" placeholder="optional" autocomplete="off" /></label>
               <label class="field port"><span class="fl">Port</span><input data-test="ssh-add-port" v-model="fPort" autocomplete="off" /></label>
             </div>
-            <label class="field"><span class="fl">Group</span><input data-test="ssh-add-group" v-model="fGroup" placeholder="optional" autocomplete="off" /></label>
+            <label class="field group-field">
+              <span class="fl">Group</span>
+              <div class="combo">
+                <input
+                  data-test="ssh-add-group" v-model="fGroup" placeholder="optional"
+                  autocomplete="off" spellcheck="false"
+                  @focus="groupMenuOpen = true" @input="groupMenuOpen = true" @blur="onGroupBlur"
+                />
+                <button
+                  v-if="existingGroups.length" type="button" class="combo-caret"
+                  data-test="ssh-group-caret" title="Pick a group"
+                  @mousedown.prevent="groupMenuOpen = !groupMenuOpen"
+                >▾</button>
+                <ul v-if="groupMenuOpen && groupSuggestions.length" class="combo-menu" data-test="ssh-group-menu">
+                  <li
+                    v-for="g in groupSuggestions" :key="g"
+                    class="combo-opt" :data-test="`ssh-group-opt-${g}`"
+                    @mousedown.prevent="pickGroup(g)"
+                  >{{ g }}</li>
+                </ul>
+              </div>
+            </label>
             <label class="field"><span class="fl">Username</span><input data-test="ssh-add-user" v-model="fUser" placeholder="user" autocomplete="off" /></label>
             <div class="seg">
               <button :class="{ on: fAuthKind === 'password' }" data-test="ssh-auth-password" @click="fAuthKind = 'password'">Password</button>
@@ -339,9 +393,9 @@ async function removeKey(id: string) {
             <template v-else>
               <label v-if="keys.length" class="field">
                 <span class="fl">Key</span>
-                <select data-test="ssh-add-keyid" v-model="fKeyID" class="select">
-                  <option v-for="k in keys" :key="k.id" :value="k.id">{{ k.name }}{{ k.key_type ? " (" + k.key_type + ")" : "" }}</option>
-                </select>
+                <div data-test="ssh-add-keyid">
+                  <SelectDropdown v-model="fKeyID" :options="keyOptions" aria-label="SSH key" />
+                </div>
               </label>
               <div v-else class="empty-keys-hint">
                 <p class="hint">No keys yet.</p>
@@ -454,11 +508,26 @@ async function removeKey(id: string) {
 .field.port { width: 78px; flex: none; }
 .fl { font-size: 11px; color: var(--fg-dim); }
 .fl em { color: var(--neutral); font-style: normal; }
-.field input, .field textarea, .select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg); font-size: 13px; outline: none; transition: border-color 120ms; }
-.field input:focus, .field textarea:focus, .select:focus { border-color: var(--accent); }
+.field input, .field textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg); font-size: 13px; outline: none; transition: border-color 120ms; }
+.field input:focus, .field textarea:focus { border-color: var(--accent); }
 .field textarea { resize: vertical; font-family: var(--font-mono-strict); font-size: 12px; }
-.select { cursor: pointer; }
 .hint { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.combo { position: relative; display: flex; }
+.combo input { flex: 1; padding-right: 26px; width: 100%; }
+.combo-caret {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: transparent; border: none; color: var(--fg-dim); cursor: pointer;
+  font-size: 11px; padding: 2px 4px; line-height: 1;
+}
+.combo-caret:hover { color: var(--fg); }
+.combo-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 10;
+  margin: 0; padding: 4px 0; list-style: none; max-height: 180px; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+.combo-opt { padding: 7px 10px; font-size: 13px; color: var(--fg); cursor: pointer; }
+.combo-opt:hover { background: rgba(255, 255, 255, 0.06); }
 .empty-keys-hint { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .btn.sm { display: inline-flex; align-items: center; gap: 5px; padding: 6px 11px; font-size: 12px; }
 .btn.sm svg { display: block; }

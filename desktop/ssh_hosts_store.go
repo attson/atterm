@@ -41,17 +41,16 @@ type SSHHost struct {
 	Host     string `json:"host"`
 	Port     string `json:"port,omitempty"`
 	User     string `json:"user"`
-	AuthKind string `json:"auth_kind"` // "password" | "privateKey"
+	AuthKind string `json:"auth_kind"`        // "password" | "key"
+	KeyID    string `json:"key_id,omitempty"` // referenced SSHKey when auth_kind=="key"
 	Group    string `json:"group,omitempty"`
 	Note     string `json:"note,omitempty"`
 }
 
 // sshCredential is JSON-encoded into a single keyring entry keyed by host ID.
-// Only the fields relevant to the host's AuthKind are populated.
+// Private keys are no longer inlined here — key auth references an SSHKey by ID.
 type sshCredential struct {
-	Password   string `json:"password,omitempty"`
-	PrivateKey string `json:"private_key,omitempty"`
-	Passphrase string `json:"passphrase,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 // sshCredentialService is the OS-keychain service name under which SSH host

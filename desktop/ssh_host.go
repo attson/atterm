@@ -36,23 +36,35 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 		return NewSessionResp{}, fmt.Errorf("no such host: %s", id)
 	}
 
-	raw, err := safekeyring.Get(sshCredentialService(), id)
-	if err != nil {
-		return NewSessionResp{}, errors.New(errCredentialMissing)
-	}
-	var cred sshCredential
-	if err := json.Unmarshal([]byte(raw), &cred); err != nil {
-		return NewSessionResp{}, errors.New(errCredentialMissing)
-	}
-
-	return a.NewSshSession(SSHConnectReq{
+	req := SSHConnectReq{
 		Host: found.Host, Port: found.Port, User: found.User,
 		AuthKind:      found.AuthKind,
-		Password:      cred.Password,
-		PrivateKey:    cred.PrivateKey,
-		Passphrase:    cred.Passphrase,
 		AcceptHostKey: false,
-	})
+	}
+	switch found.AuthKind {
+	case "key":
+		raw, err := safekeyring.Get(sshKeyService(), found.KeyID)
+		if err != nil {
+			return NewSessionResp{}, errors.New(errKeyMissing)
+		}
+		var sec sshKeySecret
+		if err := json.Unmarshal([]byte(raw), &sec); err != nil {
+			return NewSessionResp{}, errors.New(errKeyMissing)
+		}
+		req.PrivateKey = sec.PrivateKey
+		req.Passphrase = sec.Passphrase
+	default: // "password"
+		raw, err := safekeyring.Get(sshCredentialService(), id)
+		if err != nil {
+			return NewSessionResp{}, errors.New(errCredentialMissing)
+		}
+		var cred sshCredential
+		if err := json.Unmarshal([]byte(raw), &cred); err != nil {
+			return NewSessionResp{}, errors.New(errCredentialMissing)
+		}
+		req.Password = cred.Password
+	}
+	return a.NewSshSession(req)
 }
 
 // NewSshSession opens an SSH remote shell as an adoptable session. On an
@@ -102,7 +114,7 @@ type sshPtyHost struct{ *sshclient.Session }
 func (h *relayHost) OpenSSHSession(ctx context.Context, req SSHConnectReq, hostKeyCb ssh.HostKeyCallback) (uuid.UUID, error) {
 	var auth sshclient.AuthMethod
 	switch req.AuthKind {
-	case "privateKey":
+	case "key":
 		auth = sshclient.PrivateKeyAuth{PEM: []byte(req.PrivateKey), Passphrase: req.Passphrase}
 	default:
 		auth = sshclient.PasswordAuth{Password: req.Password}

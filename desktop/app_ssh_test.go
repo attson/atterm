@@ -100,3 +100,40 @@ func TestNewSshSessionByIDMissingCredential(t *testing.T) {
 		t.Fatalf("expected errCredentialMissing, got %v", err)
 	}
 }
+
+func TestNewSshSessionByIDKeyAuth(t *testing.T) {
+	safekeyring.UseFileStore()
+	safekeyring.SetFileDirForTest(t.TempDir())
+	addr, _ := startSSHTestServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
+
+	k, err := a.AddSSHKey("k", testKeyPEM(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{{ID: "h1", Host: host, Port: port, User: "u", AuthKind: "key", KeyID: k.ID}}
+	_ = a.cfgStore.Set(cfg)
+
+	_, err = a.NewSshSessionByID("h1")
+	var hk *HostKeyUnknownError
+	if !errors.As(err, &hk) {
+		t.Fatalf("expected HostKeyUnknownError (key resolved), got %v", err)
+	}
+}
+
+func TestNewSshSessionByIDKeyMissing(t *testing.T) {
+	safekeyring.UseFileStore()
+	safekeyring.SetFileDirForTest(t.TempDir())
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{{ID: "h1", Host: "h", User: "u", AuthKind: "key", KeyID: "gone"}}
+	_ = a.cfgStore.Set(cfg)
+	_, err := a.NewSshSessionByID("h1")
+	if err == nil || err.Error() != errKeyMissing {
+		t.Fatalf("expected errKeyMissing, got %v", err)
+	}
+}

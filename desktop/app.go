@@ -104,6 +104,10 @@ const errCodeHostKeyUnknown = "ssh_host_key_unknown"
 // stored credential; the frontend prompts the user to supply one.
 const errCredentialMissing = "ssh_credential_missing"
 
+// errKeyMissing is returned when a host references a key ID that no longer
+// exists in the vault.
+const errKeyMissing = "ssh_key_missing"
+
 // HostKeyUnknownError carries the fingerprint so the frontend can show the
 // TOFU dialog and retry with AcceptHostKey=true.
 type HostKeyUnknownError struct {

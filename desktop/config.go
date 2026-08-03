@@ -199,6 +199,10 @@ type appConfig struct {
 	// Credentials live in the keyring keyed by SSHHost.ID, never here.
 	SSHHosts []SSHHost `json:"ssh_hosts,omitempty"`
 
+	// SSHKeys is the saved SSH key vault (non-secret fields only).
+	// Private keys live in the keyring keyed by SSHKey.ID, never here.
+	SSHKeys []SSHKey `json:"ssh_keys,omitempty"`
+
 	// PrefsMeta records per-key sync state (last local update timestamp and
 	// dirty flag) for the synced preferences. Never sent to the relay.
 	PrefsMeta map[string]prefsMetaEntry `json:"prefs_meta,omitempty"`

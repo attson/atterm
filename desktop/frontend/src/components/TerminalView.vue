@@ -1924,6 +1924,7 @@ function onTemplateHotkey(e: KeyboardEvent) {
 
 let templatesOff: (() => void) | null = null;
 let shortcutsOff: (() => void) | null = null;
+let prefsChangedOff: (() => void) | null = null;
 
 onMounted(async () => {
   await ensureTerm();
@@ -1942,6 +1943,12 @@ onMounted(async () => {
   reloadShortcutBars();
   templatesOff = platform.events.on("quickTemplates:changed", reloadShortcutBars);
   shortcutsOff = platform.events.on("mobile:shortcutsChanged", reloadShortcutBars);
+  // prefsSync (Go / Capacitor / Web) writes synced values straight into the
+  // adapter and then fires this event — templates come down that path when
+  // the user logs in on a new device. Without this listener the bottom
+  // template bar keeps rendering DEFAULT_TEMPLATES / the pre-sync list
+  // until a manual edit or a full remount.
+  prefsChangedOff = platform.events.on("prefs:changed", reloadShortcutBars);
   document.addEventListener("mousedown", onDocumentMouseDown);
   document.addEventListener("pointerdown", onDocumentPointerDown, { capture: true });
   document.addEventListener("keydown", onDocumentKeyDown);
@@ -1979,6 +1986,8 @@ onBeforeUnmount(() => {
   templatesOff = null;
   shortcutsOff?.();
   shortcutsOff = null;
+  prefsChangedOff?.();
+  prefsChangedOff = null;
   document.removeEventListener("mousedown", onDocumentMouseDown);
   document.removeEventListener("pointerdown", onDocumentPointerDown, { capture: true } as EventListenerOptions);
   document.removeEventListener("keydown", onDocumentKeyDown);

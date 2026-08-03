@@ -1010,6 +1010,17 @@ describe("TerminalView template bar", () => {
     expect(source).toContain("sendTemplate(tpl)");
     expect(source).toMatch(/effectiveTemplates\s*\(/);
   });
+
+  test("reloads on prefs:changed so relay-synced templates appear without a remount", () => {
+    // Root cause: Go / Capacitor / Web prefsSync all write synced values
+    // straight into the local adapter and then fire platform.events
+    // 'prefs:changed'. Templates come down that path when the user logs
+    // in on a new device. Without a subscription here the bottom bar
+    // keeps rendering the pre-sync list until the user manually edits
+    // a template or fully remounts the terminal.
+    expect(source).toContain('platform.events.on("prefs:changed", reloadShortcutBars)');
+    expect(source).toMatch(/prefsChangedOff\?\.\(\)/);
+  });
 });
 
 describe("TerminalView resize-suspended", () => {

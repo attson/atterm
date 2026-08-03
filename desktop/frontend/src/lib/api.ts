@@ -55,7 +55,9 @@ export interface SSHConnectReq {
   host: string;
   port?: string;
   user: string;
-  auth_kind: "password" | "privateKey";
+  // "key" carries a pasted private_key for the ad-hoc dialog; saved hosts use
+  // key_id via NewSshSessionByID instead.
+  auth_kind: "password" | "key";
   password?: string;
   private_key?: string;
   passphrase?: string;
@@ -66,23 +68,31 @@ export interface SSHConnectReq {
 }
 
 // SSHHost mirrors desktop SSHHost — the non-secret part of a saved host.
+// Key auth references an SSHKey by id rather than inlining a private key.
 export interface SSHHost {
   id: string;
   alias?: string;
   host: string;
   port?: string;
   user: string;
-  auth_kind: "password" | "privateKey";
+  auth_kind: "password" | "key";
+  key_id?: string;
   group?: string;
   note?: string;
 }
 
-// SSHCredential mirrors desktop sshCredential — the secret part, kept in the
-// keyring on the Go side and only ever sent, never returned.
+// SSHCredential mirrors desktop sshCredential — only a password now; private
+// keys live in the key vault (SSHKey), not on the host.
 export interface SSHCredential {
   password?: string;
-  private_key?: string;
-  passphrase?: string;
+}
+
+// SSHKey mirrors desktop SSHKey — a vault key's non-secret fields. The private
+// key + passphrase live in the keyring on the Go side.
+export interface SSHKey {
+  id: string;
+  name: string;
+  key_type?: string;
 }
 
 export interface KnownHostEntry {
@@ -354,6 +364,10 @@ interface AppBindings {
   DeleteSSHHost(id: string): Promise<void>;
   ListKnownHosts(): Promise<KnownHostEntry[]>;
   RemoveKnownHost(host: string): Promise<void>;
+  ListSSHKeys(): Promise<SSHKey[]>;
+  AddSSHKey(name: string, privateKeyPEM: string, passphrase: string): Promise<SSHKey>;
+  UpdateSSHKey(id: string, name: string, privateKeyPEM: string, passphrase: string): Promise<void>;
+  DeleteSSHKey(id: string): Promise<void>;
   CloseSession(sessionID: string): Promise<void>;
   ListShells(): Promise<string[]>;
   GetRelayConfig(): Promise<RelayConfig>;
@@ -547,6 +561,22 @@ export function listKnownHosts(): Promise<KnownHostEntry[]> {
 
 export function removeKnownHost(host: string): Promise<void> {
   return bindings().RemoveKnownHost(host);
+}
+
+export function listSSHKeys(): Promise<SSHKey[]> {
+  return bindings().ListSSHKeys();
+}
+
+export function addSSHKey(name: string, privateKeyPEM: string, passphrase: string): Promise<SSHKey> {
+  return bindings().AddSSHKey(name, privateKeyPEM, passphrase);
+}
+
+export function updateSSHKey(id: string, name: string, privateKeyPEM: string, passphrase: string): Promise<void> {
+  return bindings().UpdateSSHKey(id, name, privateKeyPEM, passphrase);
+}
+
+export function deleteSSHKey(id: string): Promise<void> {
+  return bindings().DeleteSSHKey(id);
 }
 
 export function closeSession(sessionId: string): Promise<void> {

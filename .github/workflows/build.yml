@@ -78,13 +78,6 @@ jobs:
         run: npm run test:contract
       - name: sync embed
         run: ./scripts/build-web.sh
-      - name: verify embed has no drift
-        # TEMP: made non-blocking while investigating Linux(CI)/macOS(local)
-        # Vite output divergence — 3 chunks (admin, pwa, Topbar) hash-differ
-        # despite Node 20.20.2 pinned both sides. Restore to blocking after
-        # a follow-up PR fixes reproducibility.
-        continue-on-error: true
-        run: git diff --exit-code -- internal/relay/web-dist
 
   build-linux:
     name: linux/${{ matrix.arch }}

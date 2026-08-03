@@ -10,8 +10,7 @@ import (
 
 func newHostsTestApp(t *testing.T) *App {
 	t.Helper()
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	return &App{cfgStore: newTestConfigStore(t)}
 }
 
@@ -81,8 +80,7 @@ func TestDeleteSSHHostClearsCredential(t *testing.T) {
 }
 
 func TestAdapterSSHHostsEncryptedRoundTrip(t *testing.T) {
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	cs := newTestConfigStore(t)
 	a := &App{cfgStore: cs}
 

@@ -21,8 +21,7 @@ func testKeyPEM(t *testing.T) string {
 
 func newKeysTestApp(t *testing.T) *App {
 	t.Helper()
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	return &App{cfgStore: newTestConfigStore(t)}
 }
 

@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/attson/atterm/internal/safekeyring"
 )
 
 func newSSHTestApp(t *testing.T) *App {
@@ -62,8 +60,7 @@ func TestNewSshSessionAcceptHostKeyConnects(t *testing.T) {
 }
 
 func TestNewSshSessionByIDResolvesCredAndConnects(t *testing.T) {
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	addr, _ := startSSHTestServer(t)
 	host, port, _ := net.SplitHostPort(addr)
 
@@ -87,8 +84,7 @@ func TestNewSshSessionByIDResolvesCredAndConnects(t *testing.T) {
 }
 
 func TestNewSshSessionByIDMissingCredential(t *testing.T) {
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
 
 	cfg := a.cfgStore.Get()
@@ -102,8 +98,7 @@ func TestNewSshSessionByIDMissingCredential(t *testing.T) {
 }
 
 func TestNewSshSessionByIDKeyAuth(t *testing.T) {
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	addr, _ := startSSHTestServer(t)
 	host, port, _ := net.SplitHostPort(addr)
 
@@ -126,8 +121,7 @@ func TestNewSshSessionByIDKeyAuth(t *testing.T) {
 }
 
 func TestNewSshSessionByIDKeyMissing(t *testing.T) {
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
 	cfg := a.cfgStore.Get()
 	cfg.SSHHosts = []SSHHost{{ID: "h1", Host: "h", User: "u", AuthKind: "key", KeyID: "gone"}}
@@ -139,8 +133,7 @@ func TestNewSshSessionByIDKeyMissing(t *testing.T) {
 }
 
 func TestNewSshSessionByIDSetsSSHHostID(t *testing.T) {
-	safekeyring.UseFileStore()
-	safekeyring.SetFileDirForTest(t.TempDir())
+	useIsolatedKeyring(t)
 	addr, hostPub := startSSHTestServer(t)
 	host, port, _ := net.SplitHostPort(addr)
 

@@ -244,51 +244,6 @@ func (c *Client) Login(ctx context.Context, email, password string) (*LoginResul
 	}, nil
 }
 
-// GetKeyWrap fetches the user's current wrap envelope via GET /api/me/key.
-// Use this when an already-authenticated client lost in-memory
-// account_key (page refresh, app relaunch without persistence) and wants
-// to re-prompt the user for their password without redoing OPAQUE.
-func (c *Client) GetKeyWrap(ctx context.Context, sessionToken string) (AccountKeyWrap, error) {
-	var wrap AccountKeyWrap
-	if err := c.doAuthed(ctx, "GET", "/api/me/key", nil, sessionToken, &wrap); err != nil {
-		return AccountKeyWrap{}, err
-	}
-	return wrap, nil
-}
-
-// PutKeyWrap uploads a fresh wrap envelope via PUT /api/me/key. Used
-// during the password-change flow after the client re-derives wrap_key
-// from the new password and re-seals the existing account_key.
-//
-// SECURITY NOTE: as of M1b the route is gated by session bearer only.
-// An OPAQUE step-up requirement lands in a follow-up milestone.
-func (c *Client) PutKeyWrap(ctx context.Context, sessionToken string, wrap AccountKeyWrap) error {
-	body, _ := json.Marshal(wrap)
-	return c.doAuthed(ctx, "PUT", "/api/me/key", body, sessionToken, nil)
-}
-
-// UnwrapWithPassword decrypts a wrap envelope using the password the user
-// just supplied. Used after GetKeyWrap. Returns ErrInvalidPassword if the
-// password is wrong (the AEAD tag check fails).
-func UnwrapWithPassword(password string, wrap AccountKeyWrap) ([]byte, error) {
-	return unwrapAccountKey(password, wrap)
-}
-
-// ReWrapWithPassword takes an unlocked account_key and a new password,
-// derives a fresh salt, and produces a new wrap envelope. Use the result
-// with PutKeyWrap after the user changes their password.
-func ReWrapWithPassword(newPassword string, accountKey []byte, kp KDFParams) (AccountKeyWrap, error) {
-	if len(accountKey) != 32 {
-		return AccountKeyWrap{}, fmt.Errorf("account_key must be 32 bytes, got %d", len(accountKey))
-	}
-	return wrapAccountKey(newPassword, accountKey, kp)
-}
-
-// ErrInvalidPassword is returned by UnwrapWithPassword (and indirectly by
-// Login → unwrap) when the AEAD tag check fails — i.e. the password did
-// not produce the same wrap_key used to seal the envelope.
-var ErrInvalidPassword = errors.New("e2eeclient: invalid password")
-
 // ---- internal helpers ----
 
 // defaultOpaqueConfig returns the shared OPAQUE suite. The relay server and the
@@ -340,7 +295,7 @@ func unwrapAccountKey(password string, w AccountKeyWrap) ([]byte, error) {
 	}
 	plaintext, err := aead.Open(nil, w.Nonce, w.Wrapped, []byte("atterm-account-key-v1"))
 	if err != nil {
-		return nil, ErrInvalidPassword
+		return nil, errors.New("e2eeclient: invalid password")
 	}
 	return plaintext, nil
 }

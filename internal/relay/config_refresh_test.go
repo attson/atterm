@@ -148,43 +148,6 @@ func TestOriginNormalizationThroughRefresh(t *testing.T) {
 	}
 }
 
-// TestReadOnlyTokensSurviveLoadFromDB verifies that LoadFromDB does not wipe
-// the in-memory ReadOnlyTokens (which are never persisted to the DB).
-// Fails before the Bug 1 fix.
-func TestReadOnlyTokensSurviveLoadFromDB(t *testing.T) {
-	ctx := context.Background()
-	st := openMemStore(t)
-
-	tok := StoredToken{
-		ID:        "viewer",
-		Hash:      HashBearerToken("secret"),
-		CreatedAt: 123,
-	}
-	// Build a store that has a ReadOnlyToken in-memory but no DB config yet.
-	adminStore := NewAdminConfigStore(st, AdminConfig{
-		ReadOnlyTokens: []StoredToken{tok},
-	})
-
-	// Seed a DB config with version > 0 so LoadFromDB replaces in-memory cfg.
-	if _, err := st.SetRelayConfig(ctx, userstore.RelayConfig{
-		RateLimitPerMinute: 10,
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	if _, err := adminStore.LoadFromDB(ctx); err != nil {
-		t.Fatalf("LoadFromDB: %v", err)
-	}
-
-	snap := adminStore.Snapshot()
-	if len(snap.ReadOnlyTokens) != 1 {
-		t.Fatalf("ReadOnlyTokens after LoadFromDB = %d; want 1 (tokens were wiped)", len(snap.ReadOnlyTokens))
-	}
-	if !tokenMatchesHash("secret", snap.ReadOnlyTokens[0].Hash) {
-		t.Fatalf("ReadOnlyToken hash mismatch after LoadFromDB: %+v", snap.ReadOnlyTokens)
-	}
-}
-
 func TestStartConfigRefresherRunsInBackground(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

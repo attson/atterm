@@ -3,7 +3,6 @@ package relay
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"strings"
 
@@ -26,7 +25,7 @@ func UserFromContext(ctx context.Context) (*userstore.User, bool) {
 type authScope uint8
 
 const (
-	authNone authScope = iota
+	_ authScope = iota
 	authRead
 	authWrite
 )
@@ -89,5 +88,3 @@ func tokenFromSubprotocol(r *http.Request) string {
 	}
 	return ""
 }
-
-var errNoSession = errors.New("relay: no session in context")

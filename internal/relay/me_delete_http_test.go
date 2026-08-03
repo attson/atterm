@@ -22,7 +22,7 @@ func deleteMeReq(body any, token, stepUpUserID string) *http.Request {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+token)
 	if stepUpUserID != "" {
-		tok, err := MintStepUpToken(stepUpUserID)
+		tok, err := mintStepUpToken(stepUpUserID)
 		if err != nil {
 			panic(err)
 		}

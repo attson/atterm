@@ -2,28 +2,17 @@ package relay
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/attson/atterm/internal/userstore"
 )
 
-const tokenHashPrefix = "sha256:"
-
-type StoredToken struct {
-	ID        string `json:"id"`
-	Hash      string `json:"hash"`
-	CreatedAt int64  `json:"created_at"`
-}
-
 type AdminConfig struct {
-	RateLimitPerMinute   int           `json:"rate_limit_per_minute"`
-	MaxConnectionsPerKey int           `json:"max_connections_per_key"`
-	ReadOnlyTokens       []StoredToken `json:"read_only_tokens,omitempty"`
+	RateLimitPerMinute   int `json:"rate_limit_per_minute"`
+	MaxConnectionsPerKey int `json:"max_connections_per_key"`
 
 	// Feishu integration — moved out of env so an admin can toggle it at
 	// runtime. FeishuEncryptKey is the relay-wide field-encryption key
@@ -87,9 +76,7 @@ func (s *AdminConfigStore) LoadFromDB(ctx context.Context) (AdminConfig, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if rc.Version > 0 {
-		prev := s.cfg.ReadOnlyTokens
 		s.cfg = relayConfigToAdmin(rc)
-		s.cfg.ReadOnlyTokens = append([]StoredToken(nil), prev...)
 	}
 	return cloneAdminConfig(s.cfg), nil
 }
@@ -116,8 +103,6 @@ func (s *AdminConfigStore) Set(ctx context.Context, cfg AdminConfig) error {
 		return err
 	}
 	applied := relayConfigToAdmin(written)
-	// Preserve ReadOnlyTokens since they are not stored in the DB.
-	applied.ReadOnlyTokens = append([]StoredToken(nil), cfg.ReadOnlyTokens...)
 	s.mu.Lock()
 	s.cfg = applied
 	s.mu.Unlock()
@@ -154,20 +139,6 @@ func adminToRelayConfig(c AdminConfig) userstore.RelayConfig {
 }
 
 func (c AdminConfig) validate() error {
-	seen := make(map[string]struct{}, len(c.ReadOnlyTokens))
-	for _, tok := range c.ReadOnlyTokens {
-		id := strings.TrimSpace(tok.ID)
-		if id == "" {
-			return errors.New("read-only token id is empty")
-		}
-		if _, ok := seen[id]; ok {
-			return fmt.Errorf("duplicate read-only token id %q", id)
-		}
-		seen[id] = struct{}{}
-		if !strings.HasPrefix(tok.Hash, tokenHashPrefix) {
-			return fmt.Errorf("read-only token %q has unsupported hash", id)
-		}
-	}
 	// A Feishu-enabled config must carry a usable 32-byte key.
 	if c.FeishuEnabled {
 		if _, err := c.DecodeFeishuKey(); err != nil {
@@ -178,16 +149,6 @@ func (c AdminConfig) validate() error {
 }
 
 func cloneAdminConfig(cfg AdminConfig) AdminConfig {
-	cfg.ReadOnlyTokens = append([]StoredToken(nil), cfg.ReadOnlyTokens...)
 	cfg.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
 	return cfg
-}
-
-func HashBearerToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return tokenHashPrefix + base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-func tokenMatchesHash(token, hash string) bool {
-	return token != "" && HashBearerToken(token) == hash
 }

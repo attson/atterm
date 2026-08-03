@@ -28,13 +28,13 @@ type SignOutOthersResult struct {
 }
 
 // meSessionsGET issues GET /api/me/sessions and parses the response.
-func (a *App) meSessionsGET(ctx context.Context, base, token string, allowInsecure bool) ([]RelaySessionRow, error) {
+func meSessionsGET(ctx context.Context, base, token string, allowInsecure bool) ([]RelaySessionRow, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(base, "/")+"/api/me/sessions", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	body, err := a.doRelayHTTP(req, allowInsecure)
+	body, err := doRelayHTTP(req, allowInsecure)
 	if err != nil {
 		return nil, err
 	}
@@ -46,25 +46,25 @@ func (a *App) meSessionsGET(ctx context.Context, base, token string, allowInsecu
 }
 
 // meSessionDELETE revokes one session by id_hash.
-func (a *App) meSessionDELETE(ctx context.Context, base, token, idHash string, allowInsecure bool) error {
+func meSessionDELETE(ctx context.Context, base, token, idHash string, allowInsecure bool) error {
 	u := strings.TrimRight(base, "/") + "/api/me/sessions/" + url.PathEscape(idHash)
 	req, err := http.NewRequestWithContext(ctx, "DELETE", u, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	_, err = a.doRelayHTTP(req, allowInsecure)
+	_, err = doRelayHTTP(req, allowInsecure)
 	return err
 }
 
 // meSessionsSignOutOthers revokes every session except the current one.
-func (a *App) meSessionsSignOutOthers(ctx context.Context, base, token string, allowInsecure bool) (SignOutOthersResult, error) {
+func meSessionsSignOutOthers(ctx context.Context, base, token string, allowInsecure bool) (SignOutOthersResult, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(base, "/")+"/api/me/sessions/sign-out-others", nil)
 	if err != nil {
 		return SignOutOthersResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	body, err := a.doRelayHTTP(req, allowInsecure)
+	body, err := doRelayHTTP(req, allowInsecure)
 	if err != nil {
 		return SignOutOthersResult{}, err
 	}
@@ -78,7 +78,7 @@ func (a *App) meSessionsSignOutOthers(ctx context.Context, base, token string, a
 // doRelayHTTP issues req via the shared relay http client and returns
 // the body on 2xx. 401 gets a friendly "session expired" message; other
 // non-2xx codes surface verbatim so the frontend can display them.
-func (a *App) doRelayHTTP(req *http.Request, allowInsecure bool) ([]byte, error) {
+func doRelayHTTP(req *http.Request, allowInsecure bool) ([]byte, error) {
 	// Same TLS + proxy policy as FetchRelayMe (desktop/app.go:1919).
 	client := relayHTTPClient(allowInsecure, 0)
 	resp, err := client.Do(req)

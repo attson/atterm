@@ -66,8 +66,6 @@ func logEmit(level, tag, format string, args ...any) {
 
 func logDebug(tag, format string, args ...any) { logEmit("DEBUG", tag, format, args...) }
 func logInfo(tag, format string, args ...any)  { logEmit("INFO", tag, format, args...) }
-func logWarn(tag, format string, args ...any)  { logEmit("WARN", tag, format, args...) }
-func logError(tag, format string, args ...any) { logEmit("ERROR", tag, format, args...) }
 
 type loggingConfigState struct {
 	enabled bool

@@ -24,7 +24,7 @@ func TestSealOpenSSHHostsRoundTrip(t *testing.T) {
 	hosts := []SSHHost{{ID: "1", Host: "h", User: "u", AuthKind: "password", Alias: canaryAlias}}
 	creds := map[string]sshCredential{"1": {Password: canaryPW}}
 
-	blob, err := sealSSHHosts(key, hosts, creds)
+	blob, err := sealSSHHosts(key, hosts, creds, nil, nil)
 	if err != nil {
 		t.Fatalf("sealSSHHosts: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestSealOpenSSHHostsRoundTrip(t *testing.T) {
 		t.Fatalf("plaintext leaked into sealed blob: %s", blob)
 	}
 
-	gotHosts, gotCreds, err := openSSHHosts(key, blob)
+	gotHosts, gotCreds, _, _, err := openSSHHosts(key, blob)
 	if err != nil {
 		t.Fatalf("openSSHHosts: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestSealOpenSSHHostsRoundTrip(t *testing.T) {
 }
 
 func TestSealSSHHostsEmptyAccountKeySkips(t *testing.T) {
-	blob, err := sealSSHHosts(nil, []SSHHost{{ID: "1"}}, map[string]sshCredential{})
+	blob, err := sealSSHHosts(nil, []SSHHost{{ID: "1"}}, map[string]sshCredential{}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -58,11 +58,40 @@ func TestSealSSHHostsEmptyAccountKeySkips(t *testing.T) {
 }
 
 func TestOpenSSHHostsWrongKeyFails(t *testing.T) {
-	blob, err := sealSSHHosts(testAccountKey(t), []SSHHost{{ID: "1"}}, map[string]sshCredential{})
+	blob, err := sealSSHHosts(testAccountKey(t), []SSHHost{{ID: "1"}}, map[string]sshCredential{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := openSSHHosts(testAccountKey(t), blob); err == nil {
+	if _, _, _, _, err := openSSHHosts(testAccountKey(t), blob); err == nil {
 		t.Fatal("open with wrong key must fail")
+	}
+}
+
+func TestSealOpenWithKeys(t *testing.T) {
+	key := testAccountKey(t)
+	const canaryPK = "CANARY-PRIVATE-KEY-do-not-leak-0123456789"
+	hosts := []SSHHost{{ID: "h1", Host: "h", User: "u", AuthKind: "key", KeyID: "k1"}}
+	keys := []SSHKey{{ID: "k1", Name: "aws", KeyType: "RSA"}}
+	keySecrets := map[string]sshKeySecret{"k1": {PrivateKey: canaryPK}}
+
+	blob, err := sealSSHHosts(key, hosts, map[string]sshCredential{}, keys, keySecrets)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if strings.Contains(string(blob), canaryPK) {
+		t.Fatalf("private key leaked: %s", blob)
+	}
+	gotHosts, _, gotKeys, gotSecrets, err := openSSHHosts(key, blob)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if len(gotHosts) != 1 || gotHosts[0].KeyID != "k1" {
+		t.Fatalf("hosts: %+v", gotHosts)
+	}
+	if len(gotKeys) != 1 || gotKeys[0].Name != "aws" {
+		t.Fatalf("keys: %+v", gotKeys)
+	}
+	if gotSecrets["k1"].PrivateKey != canaryPK {
+		t.Fatalf("secret: %+v", gotSecrets)
 	}
 }

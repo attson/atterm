@@ -75,7 +75,16 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 				}
 			}
 		}
-		blob, err := sealSSHHosts(key, c.SSHHosts, creds)
+		keySecrets := make(map[string]sshKeySecret, len(c.SSHKeys))
+		for _, k := range c.SSHKeys {
+			if raw, err := safekeyring.Get(sshKeyService(), k.ID); err == nil {
+				var sec sshKeySecret
+				if json.Unmarshal([]byte(raw), &sec) == nil {
+					keySecrets[k.ID] = sec
+				}
+			}
+		}
+		blob, err := sealSSHHosts(key, c.SSHHosts, creds, c.SSHKeys, keySecrets)
 		if err != nil || blob == nil {
 			return nil, false
 		}
@@ -134,7 +143,7 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 		if len(key) == 0 {
 			return nil // no key → ignore inbound sync silently (local only)
 		}
-		hosts, creds, err := openSSHHosts(key, value)
+		hosts, creds, keys, keySecrets, err := openSSHHosts(key, value)
 		if err != nil {
 			return err
 		}
@@ -147,7 +156,17 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 				return sErr
 			}
 		}
+		for id, sec := range keySecrets {
+			blob, mErr := json.Marshal(sec)
+			if mErr != nil {
+				return mErr
+			}
+			if sErr := safekeyring.Set(sshKeyService(), id, string(blob)); sErr != nil {
+				return sErr
+			}
+		}
 		c.SSHHosts = hosts
+		c.SSHKeys = keys
 	default:
 		return fmt.Errorf("unknown key %s", key)
 	}

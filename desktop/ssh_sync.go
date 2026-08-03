@@ -20,6 +20,7 @@ const sshSyncFrameType = 0xF0
 
 type sshSyncPayload struct {
 	Hosts []sshSyncHost `json:"hosts"`
+	Keys  []sshSyncKey  `json:"keys"`
 }
 
 type sshSyncHost struct {
@@ -27,16 +28,26 @@ type sshSyncHost struct {
 	Cred sshCredential `json:"cred"`
 }
 
-// sealSSHHosts packs the host list + credentials and seals it with the account
-// key. Returns (nil, nil) when accountKey is empty — the caller treats that as
-// "skip sync" (local-only, never send plaintext to the relay).
-func sealSSHHosts(accountKey []byte, hosts []SSHHost, creds map[string]sshCredential) (json.RawMessage, error) {
+type sshSyncKey struct {
+	Key        SSHKey `json:"key"`
+	PrivateKey string `json:"private_key"`
+	Passphrase string `json:"passphrase,omitempty"`
+}
+
+// sealSSHHosts packs the host list + credentials + key vault and seals it with
+// the account key. Returns (nil, nil) when accountKey is empty — the caller
+// treats that as "skip sync" (local-only, never send plaintext to the relay).
+func sealSSHHosts(accountKey []byte, hosts []SSHHost, creds map[string]sshCredential, keys []SSHKey, keySecrets map[string]sshKeySecret) (json.RawMessage, error) {
 	if len(accountKey) == 0 {
 		return nil, nil
 	}
 	payload := sshSyncPayload{}
 	for _, h := range hosts {
 		payload.Hosts = append(payload.Hosts, sshSyncHost{Host: h, Cred: creds[h.ID]})
+	}
+	for _, k := range keys {
+		sec := keySecrets[k.ID]
+		payload.Keys = append(payload.Keys, sshSyncKey{Key: k, PrivateKey: sec.PrivateKey, Passphrase: sec.Passphrase})
 	}
 	plain, err := json.Marshal(payload)
 	if err != nil {
@@ -59,28 +70,28 @@ func sealSSHHosts(accountKey []byte, hosts []SSHHost, creds map[string]sshCreden
 	return b64, nil
 }
 
-// openSSHHosts decrypts a synced blob back into hosts + credentials keyed by
-// host ID.
-func openSSHHosts(accountKey []byte, value json.RawMessage) ([]SSHHost, map[string]sshCredential, error) {
+// openSSHHosts decrypts a synced blob back into hosts + credentials + key
+// vault, keyed by host / key ID.
+func openSSHHosts(accountKey []byte, value json.RawMessage) ([]SSHHost, map[string]sshCredential, []SSHKey, map[string]sshKeySecret, error) {
 	var b64 string
 	if err := json.Unmarshal(value, &b64); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	ct, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	sessionKey, err := e2eecrypto.DeriveSessionKey(accountKey, sshHostsSyncSessionID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	plain, err := e2eecrypto.OpenUnsequenced(sessionKey, sshHostsSyncSessionID, sshSyncFrameType, ct)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	var payload sshSyncPayload
 	if err := json.Unmarshal(plain, &payload); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	hosts := make([]SSHHost, 0, len(payload.Hosts))
 	creds := make(map[string]sshCredential, len(payload.Hosts))
@@ -88,5 +99,11 @@ func openSSHHosts(accountKey []byte, value json.RawMessage) ([]SSHHost, map[stri
 		hosts = append(hosts, sh.Host)
 		creds[sh.Host.ID] = sh.Cred
 	}
-	return hosts, creds, nil
+	keys := make([]SSHKey, 0, len(payload.Keys))
+	secrets := make(map[string]sshKeySecret, len(payload.Keys))
+	for _, sk := range payload.Keys {
+		keys = append(keys, sk.Key)
+		secrets[sk.Key.ID] = sshKeySecret{PrivateKey: sk.PrivateKey, Passphrase: sk.Passphrase}
+	}
+	return hosts, creds, keys, secrets, nil
 }

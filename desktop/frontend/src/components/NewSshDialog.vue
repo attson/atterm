@@ -10,7 +10,7 @@ const emit = defineEmits<{
 const host = ref("");
 const port = ref("22");
 const user = ref("");
-const authKind = ref<"password" | "privateKey">("password");
+const authKind = ref<"password" | "key">("password");
 const password = ref("");
 const privateKey = ref("");
 const passphrase = ref("");
@@ -38,8 +38,8 @@ function buildReq(acceptHostKey: boolean): SSHConnectReq {
     user: user.value,
     auth_kind: authKind.value,
     password: authKind.value === "password" ? password.value : undefined,
-    private_key: authKind.value === "privateKey" ? privateKey.value : undefined,
-    passphrase: authKind.value === "privateKey" ? passphrase.value : undefined,
+    private_key: authKind.value === "key" ? privateKey.value : undefined,
+    passphrase: authKind.value === "key" ? passphrase.value : undefined,
     accept_host_key: acceptHostKey,
   };
 }
@@ -87,7 +87,7 @@ async function connect(acceptHostKey: boolean) {
           Password
         </label>
         <label class="inline">
-          <input type="radio" value="privateKey" v-model="authKind" data-test="ssh-auth-key" />
+          <input type="radio" value="key" v-model="authKind" data-test="ssh-auth-key" />
           Private key
         </label>
       </div>

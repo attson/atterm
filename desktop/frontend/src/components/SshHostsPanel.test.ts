@@ -7,12 +7,20 @@ const addSSHHost = vi.fn();
 const updateSSHHost = vi.fn();
 const deleteSSHHost = vi.fn();
 const newSshSessionByID = vi.fn();
+const listSSHKeys = vi.fn();
+const addSSHKey = vi.fn();
+const updateSSHKey = vi.fn();
+const deleteSSHKey = vi.fn();
 vi.mock("../lib/api", () => ({
   listSSHHosts: (...a: unknown[]) => listSSHHosts(...a),
   addSSHHost: (...a: unknown[]) => addSSHHost(...a),
   updateSSHHost: (...a: unknown[]) => updateSSHHost(...a),
   deleteSSHHost: (...a: unknown[]) => deleteSSHHost(...a),
   newSshSessionByID: (...a: unknown[]) => newSshSessionByID(...a),
+  listSSHKeys: (...a: unknown[]) => listSSHKeys(...a),
+  addSSHKey: (...a: unknown[]) => addSSHKey(...a),
+  updateSSHKey: (...a: unknown[]) => updateSSHKey(...a),
+  deleteSSHKey: (...a: unknown[]) => deleteSSHKey(...a),
 }));
 
 beforeEach(() => {
@@ -21,6 +29,10 @@ beforeEach(() => {
   updateSSHHost.mockReset();
   deleteSSHHost.mockReset();
   newSshSessionByID.mockReset();
+  listSSHKeys.mockReset().mockResolvedValue([]);
+  addSSHKey.mockReset();
+  updateSSHKey.mockReset();
+  deleteSSHKey.mockReset();
 });
 
 describe("SshHostsPanel", () => {
@@ -74,5 +86,35 @@ describe("SshHostsPanel", () => {
     await wrapper.find('[data-test="ssh-delete-9"]').trigger("click");
     await flushPromises();
     expect(deleteSSHHost).toHaveBeenCalledWith("9");
+  });
+
+  it("切到 Keys tab 显示密钥并可添加", async () => {
+    listSSHKeys.mockResolvedValue([{ id: "k1", name: "aws", key_type: "RSA" }]);
+    addSSHKey.mockResolvedValueOnce({ id: "k2", name: "gcp", key_type: "RSA" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-tab-keys"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("aws");
+    await wrapper.find('[data-test="ssh-key-new"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-key-name"]').setValue("gcp");
+    await wrapper.find('[data-test="ssh-key-pem"]').setValue("-----BEGIN-----");
+    await wrapper.find('[data-test="ssh-key-submit"]').trigger("click");
+    await flushPromises();
+    expect(addSSHKey).toHaveBeenCalledWith("gcp", "-----BEGIN-----", "");
+  });
+
+  it("主机表单切到 Key 认证时列出密钥库", async () => {
+    listSSHKeys.mockResolvedValue([{ id: "k1", name: "aws", key_type: "RSA" }]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-new-host"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-auth-key"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    const select = wrapper.find('[data-test="ssh-add-keyid"]');
+    expect(select.exists()).toBe(true);
+    expect(select.text()).toContain("aws");
   });
 });

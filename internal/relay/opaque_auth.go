@@ -13,6 +13,7 @@ import (
 
 	"github.com/bytemare/opaque"
 
+	"github.com/attson/atterm/internal/opaquesuite"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -77,64 +78,24 @@ func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer, boots
 }
 
 // ----- Wire types -----
+//
+// The struct definitions live in internal/opaquesuite/wire.go so the desktop
+// SDK (internal/e2eeclient) and the browser WASM client see the same shapes;
+// a divergence between the two sides silently deserializes to zero values and
+// produces "invalid credentials" bugs the compiler can't catch. Local
+// unexported aliases keep the rest of this file (and its tests) unchanged.
 
-type registerInitRequest struct {
-	Email          string `json:"email"`
-	RegistrationKE []byte `json:"registration_ke"` // KE1 bytes from client
-}
-
-type registerInitResponse struct {
-	RegistrationResponse []byte `json:"registration_response"` // KE2 bytes
-}
-
-type registerFinalizeRequest struct {
-	Email              string                `json:"email"`
-	RegistrationRecord []byte                `json:"registration_record"`
-	AccountKeyWrap     accountKeyWrapPayload `json:"account_key_wrap"`
-	// ClaimToken is the optional bootstrap / operator-issued one-time
-	// token that promotes the new account to the role baked into the
-	// token (e.g. "admin"). Empty for a normal self-service registration.
-	ClaimToken string `json:"claim_token,omitempty"`
-}
-
-type accountKeyWrapPayload struct {
-	Method    string `json:"method"`
-	Wrapped   []byte `json:"wrapped"`
-	Nonce     []byte `json:"nonce"`
-	Salt      []byte `json:"salt"`
-	KDFParams string `json:"kdf_params"`
-}
-
-type registerFinalizeResponse struct {
-	UserID       string `json:"user_id"`
-	SessionToken string `json:"session_token"`
-	IsAdmin      bool   `json:"is_admin"`
-	RealmID      string `json:"realm_id"`
-}
-
-type loginInitRequest struct {
-	Email   string `json:"email"`
-	LoginKE []byte `json:"login_ke"`
-}
-
-type loginInitResponse struct {
-	LoginResponse []byte `json:"login_response"`
-	SessionID     string `json:"session_id"`
-}
-
-type loginFinalizeRequest struct {
-	Email     string `json:"email"`
-	SessionID string `json:"session_id"`
-	LoginKE3  []byte `json:"login_ke3"`
-}
-
-type loginFinalizeResponse struct {
-	UserID          string                `json:"user_id"`
-	SessionToken    string                `json:"session_token"`
-	AccountKeyWrap  accountKeyWrapPayload `json:"account_key_wrap"`
-	RealmID         string                `json:"realm_id"`
-	HomeInstanceURL string                `json:"home_instance_url"`
-}
+type (
+	registerInitRequest      = opaquesuite.RegisterInitRequest
+	registerInitResponse     = opaquesuite.RegisterInitResponse
+	registerFinalizeRequest  = opaquesuite.RegisterFinalizeRequest
+	registerFinalizeResponse = opaquesuite.RegisterFinalizeResponse
+	loginInitRequest         = opaquesuite.LoginInitRequest
+	loginInitResponse        = opaquesuite.LoginInitResponse
+	loginFinalizeRequest     = opaquesuite.LoginFinalizeRequest
+	loginFinalizeResponse    = opaquesuite.LoginFinalizeResponse
+	accountKeyWrapPayload    = opaquesuite.AccountKeyWrap
+)
 
 // ----- Handlers (stubs filled in by Tasks 7-10) -----
 

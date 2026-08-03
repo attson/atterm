@@ -12,6 +12,7 @@ import (
 
 	"github.com/bytemare/opaque"
 
+	"github.com/attson/atterm/internal/opaquesuite"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -91,7 +92,7 @@ func TestStepUp_WrongPasswordRejected(t *testing.T) {
 
 	// Init the handshake with the WRONG password. The KE2 the server
 	// sends back will refuse to verify under the client's password.
-	conf := defaultConfig()
+	conf := opaquesuite.Config()
 	cl, _ := conf.Client()
 	ke1 := cl.LoginInit([]byte("wrong-password"))
 
@@ -168,7 +169,7 @@ func TestStepUpInit_WrongEmail(t *testing.T) {
 	}
 	h := NewOpaqueAuthHandler(store, srv, "", "", "")
 
-	conf := defaultConfig()
+	conf := opaquesuite.Config()
 	cl, _ := conf.Client()
 	ke1 := cl.LoginInit([]byte("pw"))
 	body, _ := json.Marshal(stepUpInitRequest{Email: "ghost@example.com", LoginKE: ke1.Serialize()})
@@ -203,7 +204,7 @@ func TestStepUp_RoutesRegistered(t *testing.T) {
 
 func registerForStepUp(t *testing.T, h *OpaqueAuthHandler, email, password string) string {
 	t.Helper()
-	conf := defaultConfig()
+	conf := opaquesuite.Config()
 	cl, _ := conf.Client()
 	ke1 := cl.RegistrationInit([]byte(password))
 	initBody, _ := json.Marshal(registerInitRequest{Email: email, RegistrationKE: ke1.Serialize()})
@@ -242,7 +243,7 @@ func registerForStepUp(t *testing.T, h *OpaqueAuthHandler, email, password strin
 
 func doStepUpRoundTrip(t *testing.T, h *OpaqueAuthHandler, email, password string) stepUpFinalizeResponse {
 	t.Helper()
-	conf := defaultConfig()
+	conf := opaquesuite.Config()
 	cl, _ := conf.Client()
 	ke1 := cl.LoginInit([]byte(password))
 

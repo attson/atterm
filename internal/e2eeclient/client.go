@@ -63,16 +63,11 @@ func (kp KDFParams) Marshal() string {
 	return string(b)
 }
 
-// AccountKeyWrap is the on-wire wrap envelope shared with the relay. It
-// matches internal/relay/opaque_auth.go meKeyWrapPayload and
-// userstore.AccountKeyWrap field-for-field.
-type AccountKeyWrap struct {
-	Method    string `json:"method"`
-	Wrapped   []byte `json:"wrapped"`
-	Nonce     []byte `json:"nonce"`
-	Salt      []byte `json:"salt"`
-	KDFParams string `json:"kdf_params"`
-}
+// AccountKeyWrap is the on-wire wrap envelope shared with the relay. The
+// struct lives in internal/opaquesuite so the relay and this SDK cannot
+// silently drift apart. Re-exported here as an alias so external callers can
+// keep writing e2eeclient.AccountKeyWrap unchanged.
+type AccountKeyWrap = opaquesuite.AccountKeyWrap
 
 // Client speaks HTTP to a single relay. Construct one per relay base URL.
 type Client struct {
@@ -349,50 +344,22 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, body []byte,
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// ---- wire types (mirror internal/relay/opaque_auth.go) ----
+// ---- wire types ----
+//
+// The struct definitions live in internal/opaquesuite/wire.go so this SDK
+// and the atterm-relay server share exactly one source of truth. Unexported
+// aliases keep the rest of this file (Register/Login bodies) unchanged. The
+// prior in-file registerFinalizeResponse also silently dropped the IsAdmin
+// field the relay returns; going through the shared struct now preserves it
+// so future admin-aware flows can read reg.IsAdmin.
 
-type registerInitRequest struct {
-	Email          string `json:"email"`
-	RegistrationKE []byte `json:"registration_ke"`
-}
-
-type registerInitResponse struct {
-	RegistrationResponse []byte `json:"registration_response"`
-}
-
-type registerFinalizeRequest struct {
-	Email              string         `json:"email"`
-	RegistrationRecord []byte         `json:"registration_record"`
-	AccountKeyWrap     AccountKeyWrap `json:"account_key_wrap"`
-	ClaimToken         string         `json:"claim_token,omitempty"`
-}
-
-type registerFinalizeResponse struct {
-	UserID       string `json:"user_id"`
-	SessionToken string `json:"session_token"`
-	RealmID      string `json:"realm_id"`
-}
-
-type loginInitRequest struct {
-	Email   string `json:"email"`
-	LoginKE []byte `json:"login_ke"`
-}
-
-type loginInitResponse struct {
-	LoginResponse []byte `json:"login_response"`
-	SessionID     string `json:"session_id"`
-}
-
-type loginFinalizeRequest struct {
-	Email     string `json:"email"`
-	SessionID string `json:"session_id"`
-	LoginKE3  []byte `json:"login_ke3"`
-}
-
-type loginFinalizeResponse struct {
-	UserID          string         `json:"user_id"`
-	SessionToken    string         `json:"session_token"`
-	AccountKeyWrap  AccountKeyWrap `json:"account_key_wrap"`
-	RealmID         string         `json:"realm_id"`
-	HomeInstanceURL string         `json:"home_instance_url"`
-}
+type (
+	registerInitRequest      = opaquesuite.RegisterInitRequest
+	registerInitResponse     = opaquesuite.RegisterInitResponse
+	registerFinalizeRequest  = opaquesuite.RegisterFinalizeRequest
+	registerFinalizeResponse = opaquesuite.RegisterFinalizeResponse
+	loginInitRequest         = opaquesuite.LoginInitRequest
+	loginInitResponse        = opaquesuite.LoginInitResponse
+	loginFinalizeRequest     = opaquesuite.LoginFinalizeRequest
+	loginFinalizeResponse    = opaquesuite.LoginFinalizeResponse
+)

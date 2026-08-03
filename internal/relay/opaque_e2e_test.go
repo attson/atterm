@@ -11,6 +11,7 @@ import (
 
 	"github.com/bytemare/opaque"
 
+	"github.com/attson/atterm/internal/opaquesuite"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -45,7 +46,7 @@ func TestOPAQUE_FullRegisterAndLogin(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	conf := defaultConfig()
+	conf := opaquesuite.Config()
 	client, _ := conf.Client()
 
 	// ---- registration ----

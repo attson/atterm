@@ -14,14 +14,13 @@ package relay
 
 import (
 	"context"
-	"crypto"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/bytemare/ksf"
 	"github.com/bytemare/opaque"
 
+	"github.com/attson/atterm/internal/opaquesuite"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -39,10 +38,10 @@ import (
 const opaqueSuiteTag = "p256-scrypt-v1"
 
 // opaqueServerIdentity is the relay's static server identity, mixed into
-// every AKE transcript via SetKeyMaterial. Clients pin this string, so it
-// is part of the protocol — do not rename without a coordinated client
-// rollout. v1 keeps a single hardcoded relay identity.
-var opaqueServerIdentity = []byte("atterm-relay")
+// every AKE transcript via SetKeyMaterial. Clients pin the same string via
+// internal/opaquesuite.ServerIdentity, so any rename here must ship in
+// lockstep with the SDK and browser WASM client.
+var opaqueServerIdentity = []byte(opaquesuite.ServerIdentity)
 
 // OpaqueServer wraps the bytemare/opaque configuration with the relay's
 // persisted OPRF seed and AKE keypair. It is a passive bundle of material:
@@ -57,27 +56,6 @@ type OpaqueServer struct {
 	akePublic []byte
 }
 
-// defaultConfig returns the cipher suite locked in by the T1 smoke test
-// (TestOPAQUESuiteAvailable). Keep this the single source of truth — both
-// LoadOrInitOpaqueServer and any test that needs to talk to the server
-// should go through this helper so a future suite tweak only edits one
-// place.
-//
-// P256-SHA256 with Scrypt is the CFRG-recommended "TLS 1.3-compatible"
-// OPAQUE configuration; @cloudflare/opaque-ts ships matching client
-// support so a browser can speak this protocol to the relay directly.
-func defaultConfig() *opaque.Configuration {
-	return &opaque.Configuration{
-		OPRF:    opaque.P256Sha256,
-		KDF:     crypto.SHA256,
-		MAC:     crypto.SHA256,
-		Hash:    crypto.SHA256,
-		KSF:     ksf.Scrypt,
-		AKE:     opaque.P256Sha256,
-		Context: nil,
-	}
-}
-
 // LoadOrInitOpaqueServer returns the relay's OPAQUE server singleton.
 //
 // On first boot (no opaque_server_state row), it generates a fresh OPRF
@@ -87,7 +65,7 @@ func defaultConfig() *opaque.Configuration {
 // safe to share across goroutines because it holds only immutable bytes;
 // per-request *opaque.Server instances come from newServer().
 func LoadOrInitOpaqueServer(ctx context.Context, store *userstore.SQLiteStore) (*OpaqueServer, error) {
-	conf := defaultConfig()
+	conf := opaquesuite.Config()
 
 	state, err := store.GetOpaqueServerState(ctx)
 	switch {

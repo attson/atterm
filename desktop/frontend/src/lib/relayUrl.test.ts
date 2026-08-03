@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateRelayBase, relayBaseToWsUrl } from "./relayUrl";
+import { validateRelayBase } from "./relayUrl";
 
 describe("validateRelayBase", () => {
   it("accepts https with host", () => { expect(validateRelayBase("https://r.example.com", false)).toBeNull(); });
@@ -22,12 +22,3 @@ describe("validateRelayBase", () => {
   });
 });
 
-describe("relayBaseToWsUrl", () => {
-  it("https -> wss", () => {
-    expect(relayBaseToWsUrl("https://r.example.com")).toBe("wss://r.example.com");
-    expect(relayBaseToWsUrl("https://r.example.com/")).toBe("wss://r.example.com");
-  });
-  it("http -> ws, preserves port", () => {
-    expect(relayBaseToWsUrl("http://1.2.3.4:8080")).toBe("ws://1.2.3.4:8080");
-  });
-});

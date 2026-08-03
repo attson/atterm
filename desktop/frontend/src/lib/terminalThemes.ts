@@ -188,10 +188,6 @@ export const TERMINAL_THEMES: TerminalThemeDefinition[] = [
   },
 ];
 
-export function isTerminalThemeID(id: string): id is TerminalThemeID {
-  return TERMINAL_THEMES.some((theme) => theme.id === id);
-}
-
 export function getTerminalTheme(id: string): TerminalThemeDefinition {
   return TERMINAL_THEMES.find((theme) => theme.id === id) ?? TERMINAL_THEMES[0];
 }

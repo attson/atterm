@@ -3,7 +3,6 @@ import {
   presets,
   type PresetId,
   type TaskState,
-  ALL_TASK_STATES,
 } from "./taskState";
 
 const STATES: TaskState[] = [
@@ -17,10 +16,6 @@ const STATES: TaskState[] = [
 ];
 
 describe("taskState presets", () => {
-  test("ALL_TASK_STATES enumerates every state", () => {
-    expect([...ALL_TASK_STATES].sort()).toEqual([...STATES].sort());
-  });
-
   for (const id of ["iconOnly", "iconLabel"] as PresetId[]) {
     describe(id, () => {
       const p = presets[id];

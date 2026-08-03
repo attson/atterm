@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { previewKind, isDualMode } from "./previewKind";
+import { previewKind } from "./previewKind";
 
 describe("previewKind", () => {
   const cases: Array<[string, string]> = [
@@ -49,10 +49,3 @@ describe("previewKind", () => {
   });
 });
 
-describe("isDualMode", () => {
-  it("svg has dual mode", () => { expect(isDualMode("svg")).toBe(true); });
-  it("markdown has dual mode", () => { expect(isDualMode("markdown")).toBe(true); });
-  it("code does not", () => { expect(isDualMode("code")).toBe(false); });
-  it("image does not", () => { expect(isDualMode("image")).toBe(false); });
-  it("pdf does not", () => { expect(isDualMode("pdf")).toBe(false); });
-});

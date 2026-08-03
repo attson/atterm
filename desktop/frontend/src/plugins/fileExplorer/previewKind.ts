@@ -36,9 +36,3 @@ export function previewKind(path: string, isBinary: boolean): PreviewKind {
   return "code";
 }
 
-/** Files whose preview component has both a "code" (source) and a "render"
- *  (rendered) view. Used by FileTabs to show the view-mode toggle button and
- *  by tabsModel to pick the right default viewMode for a new tab. */
-export function isDualMode(kind: PreviewKind): boolean {
-  return kind === "svg" || kind === "markdown";
-}

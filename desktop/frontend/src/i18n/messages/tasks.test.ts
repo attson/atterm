@@ -19,7 +19,6 @@ describe("tasks i18n namespace", () => {
     expect(en.tasks.settings.groupBy).toBeTypeOf("string");
     expect(en.tasks.settings.groupByHost).toBeTypeOf("string");
     expect(en.tasks.settings.groupByState).toBeTypeOf("string");
-    expect(en.tasks.unavailableToast).toBeTypeOf("string");
   });
   test("zh-CN matches en shape", () => {
     expect(Object.keys(zhCN.tasks)).toEqual(Object.keys(en.tasks));

@@ -75,20 +75,3 @@ export function parseSeq(input: string): string {
   return out
 }
 
-// displaySeq is the inverse of parseSeq for the common cases, so the editor
-// can show "\x1b" instead of an invisible ESC byte. Control bytes without a
-// named escape render as \xNN.
-export function displaySeq(seq: string): string {
-  let out = ''
-  for (const ch of seq) {
-    const code = ch.charCodeAt(0)
-    if (ch === '\r') out += '\\r'
-    else if (ch === '\n') out += '\\n'
-    else if (ch === '\t') out += '\\t'
-    else if (ch === '\x1b') out += '\\e'
-    else if (ch === '\\') out += '\\\\'
-    else if (code < 0x20 || code === 0x7f) out += '\\x' + code.toString(16).padStart(2, '0')
-    else out += ch
-  }
-  return out
-}

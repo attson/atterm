@@ -35,8 +35,10 @@ export interface NewSessionReq {
   cwd?: string;
   cols?: number;
   rows?: number;
-  // Filled by classifyAIKind() in lib/aiKind.ts when the user-typed command
-  // matches a known AI CLI. Empty value disables sniff + resume.
+  // Filled from the previous run's snapshot during executeRestore
+  // (recoveryRestore.ts). Go-side sniff (desktop/ai_sid_sniff.go) also sets
+  // this after the child prints its prompt so resume works. Empty value
+  // disables sniff + resume.
   ai_kind?: "claude" | "codex" | "aider" | "";
   // Round-tripped from the previous run's snapshot during executeRestore.
   // Not used by Go to spawn the child — only the frontend injects the
@@ -93,11 +95,6 @@ export interface SSHKey {
   id: string;
   name: string;
   key_type?: string;
-}
-
-export interface KnownHostEntry {
-  host: string;
-  fingerprint: string;
 }
 
 export interface NewSessionResp {
@@ -367,8 +364,6 @@ interface AppBindings {
   AddSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost>;
   UpdateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void>;
   DeleteSSHHost(id: string): Promise<void>;
-  ListKnownHosts(): Promise<KnownHostEntry[]>;
-  RemoveKnownHost(host: string): Promise<void>;
   ListSSHKeys(): Promise<SSHKey[]>;
   AddSSHKey(name: string, privateKeyPEM: string, passphrase: string): Promise<SSHKey>;
   UpdateSSHKey(id: string, name: string, privateKeyPEM: string, passphrase: string): Promise<void>;
@@ -383,7 +378,6 @@ interface AppBindings {
   GetUplinkHealth(): Promise<ConnHealthSnapshot>;
   LoginRemoteRelay(relayURL: string, email: string, password: string, allowInsecure: boolean): Promise<void>;
   RegisterRemoteRelay(relayURL: string, email: string, password: string, claimToken: string, allowInsecure: boolean): Promise<void>;
-  HasAccountKey(): Promise<boolean>;
   GetAccountKey(): Promise<string>;
   LoadSavedRelayPassword(): Promise<string>;
   RememberRelayPassword(password: string): Promise<void>;
@@ -560,14 +554,6 @@ export function deleteSSHHost(id: string): Promise<void> {
   return bindings().DeleteSSHHost(id);
 }
 
-export function listKnownHosts(): Promise<KnownHostEntry[]> {
-  return bindings().ListKnownHosts();
-}
-
-export function removeKnownHost(host: string): Promise<void> {
-  return bindings().RemoveKnownHost(host);
-}
-
 export function listSSHKeys(): Promise<SSHKey[]> {
   return bindings().ListSSHKeys();
 }
@@ -668,13 +654,6 @@ export function loginRemoteRelay(relayURL: string, email: string, password: stri
 // promote the new user to admin, otherwise pass "").
 export function registerRemoteRelay(relayURL: string, email: string, password: string, claimToken: string, allowInsecure: boolean): Promise<void> {
   return bindings().RegisterRemoteRelay(relayURL, email, password, claimToken, allowInsecure);
-}
-
-// hasAccountKey reports whether the E2EE account_key is currently unlocked
-// in App memory. False after app restart (key is in-memory only in v1) —
-// the frontend uses this to decide between "unlock" and full-login prompts.
-export function hasAccountKey(): Promise<boolean> {
-  return bindings().HasAccountKey();
 }
 
 // getAccountKey returns the unlocked account_key as a base64 std string,

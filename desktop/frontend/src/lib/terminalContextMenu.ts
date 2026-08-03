@@ -1,5 +1,4 @@
 import type { Status } from "./connection";
-import { t } from "../i18n";
 import { stripC1Controls } from "./stripC1Controls";
 
 export type EffectiveRemotePermission = "view" | "control" | "full";
@@ -30,13 +29,6 @@ export function canSendSelection(input: CanSendSelectionInput): boolean {
   if (!input.hasSelection) return false;
   if (!input.isDriver) return false;
   return isPasteAllowed(input.status, input.permission);
-}
-
-export function imagePasteBlockedReason(permission?: string): string | null {
-  const effective = effectiveRemotePermission(permission);
-  if (effective === "full") return null;
-  if (effective === "control") return t("terminal.imagePasteRequiresFull");
-  return t("terminal.readOnlySession");
 }
 
 export function clampContextMenuPosition(

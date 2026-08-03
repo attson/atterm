@@ -3,7 +3,6 @@ import {
   DEFAULT_TERMINAL_THEME_ID,
   TERMINAL_THEMES,
   getTerminalTheme,
-  isTerminalThemeID,
   type TerminalThemeID,
 } from "./terminalThemes";
 
@@ -23,11 +22,7 @@ describe("terminal themes", () => {
     expect(getTerminalTheme("").id).toBe("classic");
   });
 
-  test("identifies valid theme ids", () => {
-    expect(isTerminalThemeID("nord")).toBe(true);
-    expect(isTerminalThemeID("nord ")).toBe(false);
-    expect(isTerminalThemeID("unknown")).toBe(false);
-
+  test("preserves the TerminalThemeID type through getTerminalTheme", () => {
     const typed: TerminalThemeID = getTerminalTheme("solarized-dark").id;
     expect(typed).toBe("solarized-dark");
   });

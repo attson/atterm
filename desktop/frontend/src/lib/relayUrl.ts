@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 
-export function isLoopbackHost(host: string): boolean {
+function isLoopbackHost(host: string): boolean {
   const h = host.toLowerCase();
   if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
   if (h.startsWith("127.")) return true;
@@ -29,8 +29,3 @@ export function validateRelayBase(base: string, allowInsecure: boolean): string 
   return null;
 }
 
-export function relayBaseToWsUrl(httpBase: string): string {
-  const u = new URL(httpBase);
-  const proto = u.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${u.host}`;
-}

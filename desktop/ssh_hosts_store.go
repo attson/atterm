@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/attson/atterm/internal/appdir"
-	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -60,6 +58,15 @@ func sshCredentialService() string {
 	return "com.atterm.ssh-credential.v1" + appdir.KeychainSuffix()
 }
 
+// sshCredentialSlot addresses one host's credential in the keychain.
+func sshCredentialSlot(id string) keychainSlot[sshCredential] {
+	return keychainSlot[sshCredential]{
+		service: sshCredentialService(),
+		account: id,
+		codec:   jsonCodec[sshCredential](func(c sshCredential) bool { return c == sshCredential{} }),
+	}
+}
+
 // ListSSHHosts returns the saved hosts (non-secret fields only).
 func (a *App) ListSSHHosts() []SSHHost {
 	if a.cfgStore == nil {
@@ -81,14 +88,14 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 	}
 	h.ID = ulid.Make().String()
 
-	if err := storeSSHCredential(h.ID, cred); err != nil {
+	if err := sshCredentialSlot(h.ID).Save(cred); err != nil {
 		return SSHHost{}, fmt.Errorf("store credential: %w", err)
 	}
 
 	cfg := a.cfgStore.Get()
 	cfg.SSHHosts = append(cfg.SSHHosts, h)
 	if err := a.cfgStore.Set(cfg); err != nil {
-		_ = safekeyring.Delete(sshCredentialService(), h.ID) // roll back
+		_ = sshCredentialSlot(h.ID).Clear() // roll back
 		return SSHHost{}, err
 	}
 	a.markSSHHostsDirty()
@@ -113,7 +120,7 @@ func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
 		return fmt.Errorf("no such host: %s", h.ID)
 	}
 	if cred != nil {
-		if err := storeSSHCredential(h.ID, *cred); err != nil {
+		if err := sshCredentialSlot(h.ID).Save(*cred); err != nil {
 			return fmt.Errorf("store credential: %w", err)
 		}
 	}
@@ -148,17 +155,9 @@ func (a *App) DeleteSSHHost(id string) error {
 	if err := a.cfgStore.Set(cfg); err != nil {
 		return err
 	}
-	if err := safekeyring.Delete(sshCredentialService(), id); err != nil && err != safekeyring.ErrNotFound {
+	if err := sshCredentialSlot(id).Clear(); err != nil {
 		return fmt.Errorf("delete credential: %w", err)
 	}
 	a.markSSHHostsDirty()
 	return nil
-}
-
-func storeSSHCredential(id string, cred sshCredential) error {
-	blob, err := json.Marshal(cred)
-	if err != nil {
-		return err
-	}
-	return safekeyring.Set(sshCredentialService(), id, string(blob))
 }

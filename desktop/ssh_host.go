@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
-	"github.com/attson/atterm/internal/safekeyring"
 	"github.com/attson/atterm/internal/sshclient"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
@@ -44,23 +42,15 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 	}
 	switch found.AuthKind {
 	case "key":
-		raw, err := safekeyring.Get(sshKeyService(), found.KeyID)
-		if err != nil {
-			return NewSessionResp{}, errors.New(errKeyMissing)
-		}
-		var sec sshKeySecret
-		if err := json.Unmarshal([]byte(raw), &sec); err != nil {
+		sec, err := sshKeySecretSlot(found.KeyID).Load()
+		if err != nil || sec.PrivateKey == "" {
 			return NewSessionResp{}, errors.New(errKeyMissing)
 		}
 		req.PrivateKey = sec.PrivateKey
 		req.Passphrase = sec.Passphrase
 	default: // "password"
-		raw, err := safekeyring.Get(sshCredentialService(), id)
-		if err != nil {
-			return NewSessionResp{}, errors.New(errCredentialMissing)
-		}
-		var cred sshCredential
-		if err := json.Unmarshal([]byte(raw), &cred); err != nil {
+		cred, err := sshCredentialSlot(id).Load()
+		if err != nil || cred == (sshCredential{}) {
 			return NewSessionResp{}, errors.New(errCredentialMissing)
 		}
 		req.Password = cred.Password

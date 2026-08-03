@@ -10,11 +10,11 @@ import {
   type ShortcutAction,
 } from "../lib/shortcutBindings";
 import HotkeyCaptureCell from "./HotkeyCaptureCell.vue";
+import { modKey } from "../lib/modKey";
 import { useI18n } from "../i18n/useI18n";
 
 function detectMod(): Mod {
-  if (typeof navigator === "undefined") return "Control";
-  return navigator.platform?.toLowerCase().includes("mac") ? "Meta" : "Control";
+  return modKey();
 }
 
 const props = defineProps<{

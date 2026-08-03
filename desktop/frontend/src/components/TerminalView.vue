@@ -29,6 +29,7 @@ import { pasteFileBus } from "../lib/pasteFileBus";
 import { dispatchPastedFile } from "../lib/pasteFileDispatch";
 import { GetPasteboardFileURLs } from "../../wailsjs/go/main/App";
 import { stripC1Controls } from "../lib/stripC1Controls";
+import { isMac } from "../lib/modKey";
 import { createFocusReportCoalescer, type FocusReportCoalescer } from "../lib/focusReportCoalescer";
 import { installModifierScrollGuard } from "../lib/terminalKeyGuard";
 import { broadcastCommandFinished, getHostInfo, getUserHomeDir, getWebglRendererEnabled, showNotification } from "../lib/api";
@@ -1276,7 +1277,7 @@ function onTerminalMouseUp(e: MouseEvent) {
   // Plain click opens the link; a click that ended a drag-select (pointer moved
   // past the threshold) or held shift/alt does not. Mirrors the xterm link
   // provider's activate() judgment via the shared shouldActivateLink().
-  if (!shouldActivateLink(e, linkClickDownPos, isMac)) return;
+  if (!shouldActivateLink(e, linkClickDownPos, isMac())) return;
   const hit = computeLinkHit(e);
   if (!hit) return;
   e.preventDefault();
@@ -1628,7 +1629,7 @@ async function ensureTerm() {
   if (!isLiveTerminal()) return;
   linkProviderDisposer = useTerminalLinkProvider({
     term,
-    isMac,
+    isMac: isMac(),
     getHomeDir: () => cachedHomeDir,
     openLink: (m) => openLinkMatch(m),
     onError: (key) => emit("toast", t(key)),
@@ -1897,10 +1898,8 @@ function parseHotkey(s: string): { mod: boolean; alt: boolean; shift: boolean; k
   return key ? { mod, alt, shift, key } : null;
 }
 
-const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
-
 function hotkeyMatches(e: KeyboardEvent, h: { mod: boolean; alt: boolean; shift: boolean; key: string }): boolean {
-  const modPressed = isMac ? e.metaKey : e.ctrlKey;
+  const modPressed = isMac() ? e.metaKey : e.ctrlKey;
   if (h.mod !== modPressed) return false;
   if (h.alt !== e.altKey) return false;
   if (h.shift !== e.shiftKey) return false;

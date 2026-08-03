@@ -7,6 +7,7 @@
 
 import { computed, onScopeDispose, type Ref } from "vue";
 import type { FocusDir } from "../lib/types";
+import { modKey } from "../lib/modKey";
 import { buildRoutingTable, serialize, type Mod } from "../lib/shortcutBindings";
 
 export type SplitMode = "new" | "pick";
@@ -31,8 +32,7 @@ export interface ShortcutOptions {
 }
 
 function detectMod(): Mod {
-  if (typeof navigator === "undefined") return "Control";
-  return navigator.platform?.toLowerCase().includes("mac") ? "Meta" : "Control";
+  return modKey();
 }
 
 function dispatch(actionId: string, h: ShortcutHandlers): boolean {

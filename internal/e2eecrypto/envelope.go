@@ -27,6 +27,28 @@ const (
 // len(plaintext) + 16 (Poly1305 tag).
 const EnvelopePrefixSize = 1 + chacha20poly1305.NonceSizeX
 
+// minEnvelopeLen is EnvelopePrefixSize + Poly1305 tag length (16). A buffer
+// shorter than this cannot possibly be a well-formed sealed envelope.
+const minEnvelopeLen = EnvelopePrefixSize + 16
+
+// LooksLikeSealed heuristically detects whether data is a sealed envelope
+// (as produced by SealOut / SealUnsequenced): cipher_id 0x01 at byte 0 AND
+// at least the minimum envelope size. The check is intentionally
+// heuristic — a plaintext chunk starting with 0x01 (Ctrl-A) AND at least
+// 41 bytes long would false-positive, but Ctrl-A keystrokes are single-byte
+// chunks in practice, so the overlap is vanishingly small. A false positive
+// only suppresses downstream OSC parsing / plaintext handling, which is the
+// right side to err on under the E2EE threat model.
+//
+// Shared by the relay's inbound OUT gate and the desktop's unsequenced
+// envelope guard so both paths use the same definition of "looks sealed".
+func LooksLikeSealed(data []byte) bool {
+	if len(data) < minEnvelopeLen {
+		return false
+	}
+	return data[0] == byte(CipherXChaCha20Poly1305)
+}
+
 // Sentinel errors. ErrInvalidEnvelope covers structural problems
 // (truncated, unknown cipher ID); ErrAuthFailed covers AEAD tag mismatch
 // (tampered ciphertext, wrong key, wrong AAD). Callers usually want to

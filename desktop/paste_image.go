@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -14,16 +13,10 @@ import (
 
 	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/proto"
-	"github.com/attson/atterm/internal/ptyhost"
 	"github.com/google/uuid"
 )
 
 const maxPasteImageBytes = 10 * 1024 * 1024
-
-type desktopPtyHost struct {
-	*ptyhost.Host
-	cfg *configStore
-}
 
 func (h *desktopPtyHost) PasteImage(ctx context.Context, sessionID uuid.UUID, p proto.PasteImagePayload) error {
 	log.Printf("desktop-paste: request %s", pasteImageLogDetails(sessionID, p))
@@ -216,31 +209,3 @@ func powerShellSingleQuotedString(s string) string {
 	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
 }
 
-// ptyInputDebugTag flags an input write whose lone/leading ESC is the
-// suspected cause of mid-turn cancellations in child TUIs.
-func ptyInputDebugTag(p []byte) string {
-	switch {
-	case len(p) == 1 && p[0] == 0x1b:
-		return " LONE-ESC"
-	case len(p) > 0 && p[0] == 0x1b:
-		return " ESC-LEAD"
-	default:
-		return ""
-	}
-}
-
-// logPtyInput emits a DEBUG [pty-input] line for one PTY write when the
-// config toggle is on. Never blocks or affects the actual write.
-func logPtyInput(cfg *configStore, p []byte) {
-	if cfg == nil || !cfg.Get().PtyInputDebugEnabledOrDefault() {
-		return
-	}
-	logDebug("pty-input", "write n=%d hex=%s%s", len(p), hex.EncodeToString(p), ptyInputDebugTag(p))
-}
-
-// Write intercepts all session input for optional debug logging, then
-// forwards to the underlying PTY master.
-func (h *desktopPtyHost) Write(p []byte) (int, error) {
-	logPtyInput(h.cfg, p)
-	return h.Host.Write(p)
-}

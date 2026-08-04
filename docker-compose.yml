@@ -88,7 +88,7 @@ services:
       retries: 20
 
   watchtower:
-    image: containrrr/watchtower:latest
+    image: ${ATTERM_WATCHTOWER_IMAGE:-containrrr/watchtower:1.7.1}
     container_name: atterm-watchtower
     profiles: ["auto-update"]
     restart: unless-stopped

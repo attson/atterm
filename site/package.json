@@ -21,5 +21,8 @@
     "vfonts": "0.1.0",
     "@noble/ciphers": "^2.2.0",
     "@noble/hashes": "^2.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0 <21"
   }
 }

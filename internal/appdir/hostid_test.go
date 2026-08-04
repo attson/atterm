@@ -1,4 +1,4 @@
-package hostid
+package appdir
 
 import (
 	"os"
@@ -6,11 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/attson/atterm/internal/appdir"
 	"github.com/google/uuid"
 )
 
-// withIsolatedConfigHome routes appdir.ConfigDir() (and therefore hostid) at a
+// withIsolatedConfigHome routes ConfigDir() (and therefore HostID) at a
 // per-test temp directory by hijacking the platform's UserConfigDir lookup:
 //
 //	macOS  : HOME             → <HOME>/Library/Application Support
@@ -27,32 +26,32 @@ func withIsolatedConfigHome(t *testing.T) {
 	t.Setenv("APPDATA", dir)
 }
 
-func TestGet_envOverrideWins(t *testing.T) {
+func TestHostID_envOverrideWins(t *testing.T) {
 	withIsolatedConfigHome(t)
 	t.Setenv("ATTERM_HOST_ID", "fixed-from-env")
-	if got := Get(); got != "fixed-from-env" {
-		t.Errorf("Get() with env override = %q, want %q", got, "fixed-from-env")
+	if got := HostID(); got != "fixed-from-env" {
+		t.Errorf("HostID() with env override = %q, want %q", got, "fixed-from-env")
 	}
 }
 
-func TestGet_generatesAndPersistsUnderAppdir(t *testing.T) {
+func TestHostID_generatesAndPersistsUnderAppdir(t *testing.T) {
 	withIsolatedConfigHome(t)
 	t.Setenv("ATTERM_HOST_ID", "")
 
-	first := Get()
+	first := HostID()
 	if first == "" {
-		t.Fatal("Get() returned empty on first call")
+		t.Fatal("HostID() returned empty on first call")
 	}
 	if _, err := uuid.Parse(first); err != nil {
-		t.Fatalf("Get() = %q, not a valid UUID: %v", first, err)
+		t.Fatalf("HostID() = %q, not a valid UUID: %v", first, err)
 	}
 
-	// The persisted file must live under appdir.ConfigDir() — NOT under a
+	// The persisted file must live under ConfigDir() — NOT under a
 	// hardcoded "atterm" subdir of UserConfigDir. Regression for the bug
 	// where dev (.atterm-dev) and prod ($CFG/atterm) shared one host_id.
-	cfgDir, err := appdir.ConfigDir()
+	cfgDir, err := ConfigDir()
 	if err != nil {
-		t.Fatalf("appdir.ConfigDir(): %v", err)
+		t.Fatalf("ConfigDir(): %v", err)
 	}
 	wantPath := filepath.Join(cfgDir, "host_id")
 	data, err := os.ReadFile(wantPath)
@@ -64,18 +63,18 @@ func TestGet_generatesAndPersistsUnderAppdir(t *testing.T) {
 	}
 
 	// Second call must return the same id (reads the persisted file).
-	if second := Get(); second != first {
-		t.Errorf("Get() second call = %q, want %q (stable across calls)", second, first)
+	if second := HostID(); second != first {
+		t.Errorf("HostID() second call = %q, want %q (stable across calls)", second, first)
 	}
 }
 
-func TestPath_matchesAppdir(t *testing.T) {
+func TestHostIDPath_matchesConfigDir(t *testing.T) {
 	withIsolatedConfigHome(t)
-	cfgDir, err := appdir.ConfigDir()
+	cfgDir, err := ConfigDir()
 	if err != nil {
-		t.Fatalf("appdir.ConfigDir(): %v", err)
+		t.Fatalf("ConfigDir(): %v", err)
 	}
-	if got, want := Path(), filepath.Join(cfgDir, "host_id"); got != want {
-		t.Errorf("Path() = %q, want %q", got, want)
+	if got, want := HostIDPath(), filepath.Join(cfgDir, "host_id"); got != want {
+		t.Errorf("HostIDPath() = %q, want %q", got, want)
 	}
 }

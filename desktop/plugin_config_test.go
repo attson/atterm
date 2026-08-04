@@ -66,8 +66,9 @@ func TestAppConfigEmbedsPluginConfig(t *testing.T) {
 	if c.Plugins.FileExplorer.PanelWidthPx != 0 {
 		t.Fatal("expected zero-value Plugins")
 	}
-	// applyConfigDefaults must inject plugin defaults.
-	applyConfigDefaults(&c)
+	// loadConfig inlines the same call — assert the underlying method
+	// injects plugin defaults.
+	c.Plugins.applyDefaults()
 	if c.Plugins.FileExplorer.PanelWidthPx != 380 {
 		t.Fatalf("plugin defaults not injected, got %+v", c.Plugins)
 	}

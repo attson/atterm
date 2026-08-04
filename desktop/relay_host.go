@@ -272,13 +272,15 @@ func (h *relayHost) notifyChange() {
 func (h *relayHost) WatchChanges() <-chan struct{} { return h.changes }
 
 // Snapshot returns a slice of SessionInfo for all currently-live sessions.
-// Used by the uplink to build ANNOUNCE payloads.
+// Used by the uplink to build ANNOUNCE payloads. Uses ForEach to build the
+// SessionInfo slice in a single pass (previously it copied *Session pointers
+// via List() and then mapped to SessionInfo, allocating twice per announce).
 func (h *relayHost) Snapshot() []proto.SessionInfo {
-	sessions := h.server.Registry().List()
-	out := make([]proto.SessionInfo, 0, len(sessions))
-	for _, s := range sessions {
+	var out []proto.SessionInfo
+	h.server.Registry().ForEach(func(s *session.Session) bool {
 		out = append(out, s.Info())
-	}
+		return true
+	})
 	return out
 }
 

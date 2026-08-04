@@ -24,6 +24,7 @@ export const ReceivedFilesClearSession = notImplemented('ReceivedFilesClearSessi
 export const ReceivedFilesDelete = notImplemented('ReceivedFilesDelete')
 export const ReceivedFilesList = async () => [] as unknown[]
 export const ReceivedFilesOpenDir = notImplemented('ReceivedFilesOpenDir')
+export const TranslateOpenAIChat = notImplemented('TranslateOpenAIChat')
 
 // ----- wailsjs/runtime/runtime -----
 export const EventsOn = (..._args: unknown[]) => () => {}

@@ -20,9 +20,7 @@ import PasteFilePreviewHost from "./components/PasteFilePreviewHost.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
-import { useResizer } from "./plugins/useResizer";
 import { usePluginConfigStore } from "./plugins/configStore";
-import { useFileRevealStore } from "./plugins/fileExplorer/fileReveal";
 import { sendInputToSession } from "./lib/sendInput";
 import { applyTabReorder } from "./lib/tabReorder";
 import { computeCloseTabState } from "./lib/closeTabOptimistic";
@@ -32,8 +30,8 @@ import { classifySSHRestore } from "./lib/sshRestore";
 // toggle and Quick Input toolbar can read --ed-* vars even when the
 // file-explorer chunk is not yet loaded.
 import "./plugins/fileExplorer/theme.css";
-import { isLightTerminalTheme } from "./lib/terminalThemes";
 import { setupMeasureProbe, teardownMeasureProbe, predictCellDims } from "./lib/cellDimsProbe";
+import { usePluginPanel } from "./composables/usePluginPanel";
 import { usePlatform } from './platform'
 const $platform = usePlatform()
 const caps = $platform.caps
@@ -468,67 +466,14 @@ provide("atterm:pluginContext", pluginContext);
 
 const pluginStore = usePluginConfigStore();
 
-const persistedPanelWidth = computed(() => pluginStore.cfg?.fileExplorer.panelWidthPx ?? 380);
-const dragPanelWidth = ref<number | null>(null);
-const panelWidth = computed(() => dragPanelWidth.value ?? persistedPanelWidth.value);
-
-const panelCollapsed = computed({
-  get: () => pluginStore.cfg?.fileExplorer.panelCollapsed ?? true,
-  set: (v: boolean) => {
-    if (!pluginStore.cfg) return;
-    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
-    next.fileExplorer.panelCollapsed = v;
-    void pluginStore.save(next);
-  },
-});
-
-function togglePanel() { panelCollapsed.value = !panelCollapsed.value; }
-
-// When the terminal asks to reveal a path, make sure the file explorer is
-// enabled and the panel is open so it can mount and consume the request.
-const fileRevealStore = useFileRevealStore();
-watch(
-  () => fileRevealStore.pending,
-  async (p) => {
-    if (!p) return;
-    if (!pluginStore.isPluginEnabled("file-explorer")) {
-      await pluginStore.setEnabled("file-explorer", true);
-    }
-    if (panelCollapsed.value) panelCollapsed.value = false;
-  },
-);
-
-// True when at least one right-panel plugin is enabled. Suppresses the
-// collapse handle entirely when the slot has nothing to host.
-const rightPanelHasPlugin = computed(() => pluginStore.isPluginEnabled("file-explorer"));
-
-// Derive a plugin-side theme name from the active terminal theme so the
-// global --ed-* CSS vars on .app can paint the panel toggle, Quick Input
-// bar, and the file explorer in matching dimmed/light skins.
-const fileExplorerTheme = computed<"dimmed" | "light">(() =>
-  isLightTerminalTheme(currentTerminalThemeID.value) ? "light" : "dimmed",
-);
-
-const { onMouseDown: onPanelResizeDown } = useResizer({
-  onDrag: (deltaX) => {
-    // useResizer reports deltaX = -mouseMovementX (right drag → negative).
-    // The resizer sits on the panel's left edge, so dragging right shrinks
-    // the panel: panelWidth + deltaX = panelWidth - movement.
-    const current = dragPanelWidth.value ?? persistedPanelWidth.value;
-    const next = Math.max(240, Math.min(current + deltaX, window.innerWidth * 0.7));
-    dragPanelWidth.value = next;
-  },
-  onEnd: () => {
-    if (dragPanelWidth.value === null || !pluginStore.cfg) {
-      dragPanelWidth.value = null;
-      return;
-    }
-    const next = JSON.parse(JSON.stringify(pluginStore.cfg));
-    next.fileExplorer.panelWidthPx = dragPanelWidth.value;
-    void pluginStore.save(next);
-    dragPanelWidth.value = null;
-  },
-});
+const {
+  panelWidth,
+  panelCollapsed,
+  togglePanel,
+  onPanelResizeDown,
+  rightPanelHasPlugin,
+  fileExplorerTheme,
+} = usePluginPanel({ terminalThemeId: currentTerminalThemeID });
 
 // Sessions visible across all current tabs (drives local sweep + remote-discover panel).
 const allUsedSessionIds = computed(() => {

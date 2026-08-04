@@ -34,6 +34,7 @@ import { usePluginPanel } from "./composables/usePluginPanel";
 import { useWebTabsSnapshot } from "./composables/useWebTabsSnapshot";
 import { useCloseSessionConfirm } from "./composables/useCloseSessionConfirm";
 import { useRecoveryRestore } from "./composables/useRecoveryRestore";
+import { useSessionListStreams } from "./composables/useSessionListStreams";
 import { usePlatform } from './platform'
 const $platform = usePlatform()
 const caps = $platform.caps
@@ -60,7 +61,7 @@ import {
 } from "./lib/api";
 import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
-import { SessionListConnection, type SessionConnection, type SessionInfo } from "./lib/connection";
+import { type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
@@ -318,9 +319,10 @@ const { recoveryDialogState, onRecoveryRestore, onRecoveryDiscard } = useRecover
 
 let autoStarted = false;
 let toastHandle: number | null = null;
-let localSessionListConn: SessionListConnection | null = null;
-let remoteSessionListConn: SessionListConnection | null = null;
-let remotePollHandle: number | null = null;
+// Owns the three transport handles for the session lists: local WS,
+// remote WS, and the remote-poll setInterval. Every attach/detach path
+// goes through the composable so the WS <-> poll mutex is centralised.
+const sessionListStreams = useSessionListStreams();
 // Dedup key for refreshRelayConfig: "connected|attachUrl|token". Avoids
 // restarting the remote poll / re-setting the endpoint when nothing changed.
 let lastRemoteKey = "";
@@ -560,23 +562,12 @@ function applyRemoteSessions(sessions: SessionInfo[]) {
 }
 
 function connectLocalSessionList(endpoint: Endpoint) {
-  localSessionListConn?.detach();
-  localSessionListConn = new SessionListConnection(endpoint, {
+  sessionListStreams.attachLocal(endpoint, {
     onSessions: applyLocalSessions,
     onStatus: (s) => {
       if (s === "error") status.value = "error";
     },
   });
-  localSessionListConn.attach();
-}
-
-function stopRemotePoll() {
-  remoteSessionListConn?.detach();
-  remoteSessionListConn = null;
-  if (remotePollHandle !== null) {
-    window.clearInterval(remotePollHandle);
-    remotePollHandle = null;
-  }
 }
 
 function onRemotePrefsChanged() {
@@ -584,15 +575,13 @@ function onRemotePrefsChanged() {
 }
 
 function connectRemoteSessionListWS(endpoint: Endpoint) {
-  stopRemotePoll();
-  remoteSessionListConn = new SessionListConnection(endpoint, {
+  sessionListStreams.attachRemoteWS(endpoint, {
     onSessions: applyRemoteSessions,
     onPrefsChanged: onRemotePrefsChanged,
     onStatus: (s) => {
       if (s === "error") status.value = "error";
     },
   });
-  remoteSessionListConn.attach();
 }
 
 async function pollRemoteSessions() {
@@ -629,7 +618,7 @@ async function refreshPlatformRelayState(): Promise<boolean> {
   const endpoint = relayCfg ? buildWebRemoteEndpoint(relayCfg) : null;
   remoteEndpoint.value = endpoint;
   if (!endpoint) {
-    stopRemotePoll();
+    sessionListStreams.stopRemote();
     remoteRawList.value = [];
     remoteList.value = [];
     return false;
@@ -639,11 +628,8 @@ async function refreshPlatformRelayState(): Promise<boolean> {
 }
 
 function startPlatformRemotePoll(): void {
-  if (remoteSessionListConn) return;
-  stopRemotePoll();
-  remotePollHandle = window.setInterval(() => {
-    void pollRemoteSessionsViaPlatform();
-  }, 3000);
+  if (sessionListStreams.isRemoteWSAttached()) return;
+  sessionListStreams.startRemotePoll(pollRemoteSessionsViaPlatform, 3000);
 }
 
 // connectRemoteSessionList (re)starts the remote-session list stream and sets the
@@ -653,7 +639,7 @@ function startPlatformRemotePoll(): void {
 //   - The ATTACH endpoint is the Go loopback proxy (remoteProxy). When it's
 //     unavailable the list still shows; you just can't open a remote pane.
 function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpoint | null) {
-  stopRemotePoll();
+  sessionListStreams.stopRemote();
   remoteRawList.value = [];
   remoteList.value = [];
   remoteMissingSince.clear();
@@ -664,7 +650,7 @@ function connectRemoteSessionList(relayConnected: boolean, attachEndpoint: Endpo
     return;
   }
   void pollRemoteSessions();
-  remotePollHandle = window.setInterval(pollRemoteSessions, 2000);
+  sessionListStreams.startRemotePoll(pollRemoteSessions, 2000);
 }
 
 async function refreshRelayConfig() {
@@ -1421,9 +1407,7 @@ onMounted(async () => {
       // Non-fatal: leave status=loading but log; user can retry via reload.
       // The session-list refresh interval is still installed below so a
       // transient error clears itself.
-      remotePollHandle = window.setInterval(() => {
-        void pollRemoteSessionsViaPlatform();
-      }, 3000);
+      sessionListStreams.startRemotePoll(pollRemoteSessionsViaPlatform, 3000);
     }
   }
 
@@ -1486,8 +1470,7 @@ onUnmounted(() => {
   notificationClickListenerOff?.();
   notificationClickListenerOff = null;
   window.removeEventListener("hashchange", syncRoute);
-  localSessionListConn?.detach();
-  stopRemotePoll();
+  sessionListStreams.detachAll();
   if (toastHandle !== null) window.clearTimeout(toastHandle);
   if (updatePollHandle !== null) window.clearInterval(updatePollHandle);
   teardownMeasureProbe();

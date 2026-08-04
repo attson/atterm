@@ -23,7 +23,7 @@ type pairTestUser struct {
 // newPairTestServer builds a Server with RealmID and InstancePublicURL set
 // (so /api/pair/consume can echo them) and seeds one OPAQUE user with a
 // valid session token. Model: helpers_test.go's serverWithSessionAndUser.
-func newPairTestServer(t *testing.T) (*Server, *userstore.SQLiteStore, pairTestUser) {
+func newPairTestServer(t *testing.T) (*Server, *userstore.DBStore, pairTestUser) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()

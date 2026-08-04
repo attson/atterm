@@ -12,9 +12,9 @@ import (
 )
 
 // newTestSeenServer builds a full relay *Server backed by an in-memory
-// SQLiteStore with Resolver and Store wired, so the /api/sessions/seen
+// DBStore with Resolver and Store wired, so the /api/sessions/seen
 // route is registered. Returns the server and the store.
-func newTestSeenServer(t *testing.T) (*Server, *userstore.SQLiteStore) {
+func newTestSeenServer(t *testing.T) (*Server, *userstore.DBStore) {
 	t.Helper()
 	ctx := context.Background()
 	store, err := userstore.Open(ctx, ":memory:")
@@ -49,7 +49,7 @@ func addOwnedSession(t *testing.T, srv *Server, ownerUserID string, attentionAt 
 
 // issueSessionToken mints a fresh session token for userID via the store.
 // Returned plaintext can be used directly as a Bearer credential.
-func issueSessionToken(t *testing.T, store *userstore.SQLiteStore, userID string) string {
+func issueSessionToken(t *testing.T, store *userstore.DBStore, userID string) string {
 	t.Helper()
 	tok, _, err := store.CreateSession(context.Background(), userID, "test-mobile", "127.0.0.1", userstore.DefaultSessionTTL)
 	if err != nil {

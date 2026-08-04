@@ -16,10 +16,10 @@ import (
 	"nhooyr.io/websocket"
 )
 
-// newUplinkTestStore creates an in-memory SQLiteStore and a user+session-token
+// newUplinkTestStore creates an in-memory DBStore and a user+session-token
 // pair for uplink connection tests. Returns the store, userID, and plaintext
 // session token (suitable for "Authorization: Bearer <token>").
-func newUplinkTestStore(t *testing.T) (*userstore.SQLiteStore, string, string) {
+func newUplinkTestStore(t *testing.T) (*userstore.DBStore, string, string) {
 	t.Helper()
 	ctx := context.Background()
 	store, err := userstore.Open(ctx, ":memory:")

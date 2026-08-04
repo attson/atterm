@@ -18,7 +18,7 @@ const testRealmID = "test-realm-desktop"
 // newOPAQUERelay spins up an in-process atterm-relay HTTP server with the
 // OPAQUE endpoints wired. The desktop's LoginRemoteRelay calls into this
 // server via the e2eeclient SDK.
-func newOPAQUERelay(t *testing.T) (*httptest.Server, *userstore.SQLiteStore) {
+func newOPAQUERelay(t *testing.T) (*httptest.Server, *userstore.DBStore) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	opaqueSrv, err := relay.LoadOrInitOpaqueServer(context.Background(), store)

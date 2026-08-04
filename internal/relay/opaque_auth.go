@@ -26,7 +26,7 @@ import (
 // in-memory only; a relay restart cancels every pending flow, which is
 // safe (the client will see a 401 on finalize and re-issue init).
 type OpaqueAuthHandler struct {
-	store *userstore.SQLiteStore
+	store *userstore.DBStore
 	srv   *OpaqueServer
 	// bootstrapEmail is ATTERM_BOOTSTRAP_ADMIN_EMAIL. The first-run setup
 	// flow auto-promotes a registration to admin when its email matches this
@@ -68,7 +68,7 @@ const loginSessionTTL = 30 * time.Second
 // NewOpaqueAuthHandler constructs the handler. Both store and srv must be
 // non-nil; the OpaqueServer is expected to have been initialized via
 // LoadOrInitOpaqueServer before this constructor is called.
-func NewOpaqueAuthHandler(store *userstore.SQLiteStore, srv *OpaqueServer, bootstrapEmail, realmID, instancePublicURL string) *OpaqueAuthHandler {
+func NewOpaqueAuthHandler(store *userstore.DBStore, srv *OpaqueServer, bootstrapEmail, realmID, instancePublicURL string) *OpaqueAuthHandler {
 	return &OpaqueAuthHandler{store: store, srv: srv, bootstrapEmail: strings.TrimSpace(bootstrapEmail), realmID: realmID, instancePublicURL: instancePublicURL}
 }
 

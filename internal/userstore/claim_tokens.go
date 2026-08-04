@@ -40,7 +40,7 @@ func claimTokenHash(plaintext string) string {
 // plaintext (shown to operator exactly once) and persists the hash.
 //
 // Plaintext format: "claim_" + base64url-no-padding(32 random bytes) ≈ 49 chars.
-func (s *SQLiteStore) CreateClaimToken(ctx context.Context, email, role string, ttl time.Duration) (string, error) {
+func (s *DBStore) CreateClaimToken(ctx context.Context, email, role string, ttl time.Duration) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("rand: %w", err)
@@ -66,7 +66,7 @@ func (s *SQLiteStore) CreateClaimToken(ctx context.Context, email, role string, 
 // the OPAQUE register/finalize handler validates up-front to avoid
 // orphaning a user row, then calls ConsumeClaimToken after the user
 // has been created.
-func (s *SQLiteStore) LookupClaimToken(ctx context.Context, plaintext string) (ClaimToken, error) {
+func (s *DBStore) LookupClaimToken(ctx context.Context, plaintext string) (ClaimToken, error) {
 	hash := claimTokenHash(plaintext)
 	var (
 		email, role string
@@ -100,7 +100,7 @@ func (s *SQLiteStore) LookupClaimToken(ctx context.Context, plaintext string) (C
 // ErrClaimTokenConsumed if it was already consumed (lost the race) —
 // same shape as ConsumePairingToken so the relay can collapse both into
 // a generic 401 to the client.
-func (s *SQLiteStore) ConsumeClaimToken(ctx context.Context, plaintext string) error {
+func (s *DBStore) ConsumeClaimToken(ctx context.Context, plaintext string) error {
 	hash := claimTokenHash(plaintext)
 	res, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`UPDATE claim_tokens SET consumed_at = ?

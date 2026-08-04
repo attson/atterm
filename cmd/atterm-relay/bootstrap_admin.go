@@ -34,7 +34,7 @@ func bootstrapAdmin(ctx context.Context, store userstore.Store, email string) er
 	if email == "" {
 		return nil // no admin bootstrap requested
 	}
-	sqliteStore, ok := store.(*userstore.SQLiteStore)
+	sqliteStore, ok := store.(*userstore.DBStore)
 	if !ok {
 		return fmt.Errorf("bootstrap admin: store is not SQLite (got %T)", store)
 	}

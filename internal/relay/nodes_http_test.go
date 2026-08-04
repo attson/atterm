@@ -11,7 +11,7 @@ import (
 )
 
 func TestNodesAndSetHome(t *testing.T) {
-	srv, store := newTestSeenServer(t) // returns (*Server, *userstore.SQLiteStore)
+	srv, store := newTestSeenServer(t) // returns (*Server, *userstore.DBStore)
 	ctx := context.Background()
 	token, userID := createUserWithSession(t, store, "nodes@example.com")
 	_ = store.UpsertInstanceHeartbeat(ctx, "https://a.example", "https://a.example", time.Now().Unix())

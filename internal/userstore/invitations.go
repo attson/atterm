@@ -44,7 +44,7 @@ func inviteHash(plaintext string) string {
 // the row metadata.
 //
 // expiresAt may be nil for no expiry. note is a free-form admin memo.
-func (s *SQLiteStore) CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error) {
+func (s *DBStore) CreateInvitation(ctx context.Context, expiresAt *time.Time, note string) (Secret, *Invitation, error) {
 	// 16 random bytes → 26 base32 chars (no padding). With the "inv_" prefix
 	// the total plaintext length is 30, satisfying the "26+ chars" requirement.
 	raw := make([]byte, 16)
@@ -94,7 +94,7 @@ func (s *SQLiteStore) CreateInvitation(ctx context.Context, expiresAt *time.Time
 //
 // The UPDATE is a single atomic statement; no explicit transaction is needed
 // because SQLite serialises writes and RowsAffected() reflects the outcome.
-func (s *SQLiteStore) ConsumeInvitation(ctx context.Context, plaintext string, userID string) error {
+func (s *DBStore) ConsumeInvitation(ctx context.Context, plaintext string, userID string) error {
 	hash := inviteHash(plaintext)
 	now := time.Now().Unix()
 
@@ -121,7 +121,7 @@ func (s *SQLiteStore) ConsumeInvitation(ctx context.Context, plaintext string, u
 
 // ListInvitations returns all invitation rows, most recent first. The admin
 // UI can derive status from (consumed_at, expires_at) fields.
-func (s *SQLiteStore) ListInvitations(ctx context.Context) ([]Invitation, error) {
+func (s *DBStore) ListInvitations(ctx context.Context) ([]Invitation, error) {
 	rows, err := s.db.QueryContext(ctx,
 		s.dia.Rebind(`SELECT code_hash, note, created_at, expires_at, consumed_at, consumed_by
 		 FROM invitations

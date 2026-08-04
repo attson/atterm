@@ -12,7 +12,7 @@ import (
 
 func TestListSessions_ReturnsRowsWithIsCurrent(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	// Create a second session for the same user (simulates another device).
 	_, _, _ = store.CreateSession(context.Background(), userID, "other-device", "1.2.3.0/24", userstore.DefaultSessionTTL)
@@ -55,7 +55,7 @@ func TestListSessions_RequiresAuth(t *testing.T) {
 
 func TestDeleteSession_OwnerDeletes_204(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 	_, _, _ = store.CreateSession(context.Background(), userID, "other-device", "", userstore.DefaultSessionTTL)
 	list, _ := store.ListSessions(context.Background(), userID)
 	var target string
@@ -83,7 +83,7 @@ func TestDeleteSession_OwnerDeletes_204(t *testing.T) {
 
 func TestDeleteSession_OtherUserSession_404(t *testing.T) {
 	srv, tokA, _ := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	userB, _ := store.CreateOpaqueUser(context.Background(), "b@example.com")
 	_, _, _ = store.CreateSession(context.Background(), userB.ID, "ua-b", "", userstore.DefaultSessionTTL)
@@ -105,7 +105,7 @@ func TestDeleteSession_OtherUserSession_404(t *testing.T) {
 
 func TestSignOutOthers_DeletesAllButCurrent(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	_, _, _ = store.CreateSession(context.Background(), userID, "device-2", "", userstore.DefaultSessionTTL)
 	_, _, _ = store.CreateSession(context.Background(), userID, "device-3", "", userstore.DefaultSessionTTL)

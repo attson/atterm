@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-func (s *SQLiteStore) SetSeen(ctx context.Context, userID string, sessionIDs []string, at int64) error {
+func (s *DBStore) SetSeen(ctx context.Context, userID string, sessionIDs []string, at int64) error {
 	if userID == "" || len(sessionIDs) == 0 {
 		return nil
 	}
@@ -34,7 +34,7 @@ func (s *SQLiteStore) SetSeen(ctx context.Context, userID string, sessionIDs []s
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) SeenAt(ctx context.Context, userID string) (map[string]int64, error) {
+func (s *DBStore) SeenAt(ctx context.Context, userID string) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		s.dia.Rebind(`SELECT session_id, seen_at FROM session_seen WHERE user_id=?`), userID)
 	if err != nil {
@@ -53,7 +53,7 @@ func (s *SQLiteStore) SeenAt(ctx context.Context, userID string) (map[string]int
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) PruneSeenSession(ctx context.Context, sessionID string) error {
+func (s *DBStore) PruneSeenSession(ctx context.Context, sessionID string) error {
 	if _, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`DELETE FROM session_seen WHERE session_id=?`), sessionID); err != nil {
 		return fmt.Errorf("prune session_seen: %w", err)

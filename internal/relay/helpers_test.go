@@ -14,7 +14,7 @@ import (
 // newTestAuthServer returns an AuthServer + the in-memory store backing it.
 // FailureFloor is zeroed so the rate-limit / invite tests don't sleep 200ms
 // on every wrong-invite attempt.
-func newTestAuthServer(t *testing.T) (*AuthServer, *userstore.SQLiteStore) {
+func newTestAuthServer(t *testing.T) (*AuthServer, *userstore.DBStore) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	return &AuthServer{
@@ -25,7 +25,7 @@ func newTestAuthServer(t *testing.T) (*AuthServer, *userstore.SQLiteStore) {
 
 // createInvite mints a fresh invitation code via the store and returns
 // the plaintext token. The empty-string note keeps tests succinct.
-func createInvite(t *testing.T, store *userstore.SQLiteStore) string {
+func createInvite(t *testing.T, store *userstore.DBStore) string {
 	t.Helper()
 	code, _, err := store.CreateInvitation(context.Background(), nil, "")
 	if err != nil {
@@ -119,7 +119,7 @@ func serverWithAuthAndSession(t *testing.T) (*Server, string, string) {
 // createUserWithSession inserts a fresh OPAQUE user, mints a session, and
 // returns (token, userID). Replaces the old signup-flow helper that
 // posted to /api/auth/signup.
-func createUserWithSession(t *testing.T, store *userstore.SQLiteStore, email string) (token, userID string) {
+func createUserWithSession(t *testing.T, store *userstore.DBStore, email string) (token, userID string) {
 	t.Helper()
 	ctx := context.Background()
 	u, err := store.CreateOpaqueUser(ctx, email)

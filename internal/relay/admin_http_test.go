@@ -14,10 +14,10 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 )
 
-// newAdminTestServer returns a Server backed by an in-memory SQLiteStore with
+// newAdminTestServer returns a Server backed by an in-memory DBStore with
 // a fresh admin user. Returns the Server, the store, the admin user ID, and a
 // Bearer session token for that admin.
-func newAdminTestServer(t *testing.T) (*Server, *userstore.SQLiteStore, string, string) {
+func newAdminTestServer(t *testing.T) (*Server, *userstore.DBStore, string, string) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	ctx := context.Background()

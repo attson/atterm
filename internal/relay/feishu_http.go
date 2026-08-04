@@ -21,12 +21,12 @@ import (
 
 // FeishuHTTPHandler exposes /v1/feishu/* routes.
 type FeishuHTTPHandler struct {
-	store    *userstore.SQLiteStore
+	store    *userstore.DBStore
 	svc      *feishu.Service
 	registry *session.Registry
 }
 
-func NewFeishuHTTPHandler(store *userstore.SQLiteStore, svc *feishu.Service, registry *session.Registry) *FeishuHTTPHandler {
+func NewFeishuHTTPHandler(store *userstore.DBStore, svc *feishu.Service, registry *session.Registry) *FeishuHTTPHandler {
 	return &FeishuHTTPHandler{store: store, svc: svc, registry: registry}
 }
 

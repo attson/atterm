@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func newTestStore(t *testing.T) *SQLiteStore {
+func newTestStore(t *testing.T) *DBStore {
 	t.Helper()
 	s, err := Open(context.Background(), ":memory:", WithSecretCipher(testCipher))
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 )
 
-// openMemStore returns an in-memory SQLiteStore for tests.
+// openMemStore returns an in-memory DBStore for tests.
 func openMemStore(t *testing.T) userstore.Store {
 	t.Helper()
 	ctx := context.Background()

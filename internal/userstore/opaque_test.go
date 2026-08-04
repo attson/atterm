@@ -14,7 +14,7 @@ import (
 // (which has its own coverage in users_test.go) — a bug in CreateOpaqueUser
 // shouldn't cascade into failures of the storage primitives being exercised
 // here. Returns the created User.
-func mustMakeUser(t *testing.T, store *SQLiteStore, email string) *User {
+func mustMakeUser(t *testing.T, store *DBStore, email string) *User {
 	t.Helper()
 	ctx := context.Background()
 	id := defaultIDs.New()

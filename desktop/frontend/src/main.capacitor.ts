@@ -1,15 +1,12 @@
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
-import { initI18n, type LocalePreference } from './i18n'
-import { bridgeSharedI18n } from './i18n/shared-bridge'
-import App from './App.vue'
-import { initPlatform } from './platform'
-import { createCapacitorPlatform } from './platform/capacitor'
 import { Capacitor } from '@capacitor/core'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Keyboard } from '@capacitor/keyboard'
-import { createCapacitorPrefsSync, setSharedPrefsSync, notifyLocalChange } from './lib/prefsSync.capacitor'
+
+import type { LocalePreference } from './i18n'
 import { bindCapacitorPrefsSync } from './lib/capacitorPrefsSyncBinder'
+import { bootstrapApp } from './lib/bootstrapApp'
+import { createCapacitorPrefsSync, notifyLocalChange, setSharedPrefsSync } from './lib/prefsSync.capacitor'
+import { createCapacitorPlatform } from './platform/capacitor'
 import './style.css'
 
 const LOCALE_STORAGE_KEY = 'atterm.locale'
@@ -35,31 +32,19 @@ async function saveLocalePreference(preference: LocalePreference): Promise<void>
   }
 }
 
-async function bootstrap() {
-  await initI18n({ loadPreference: loadLocalePreference, savePreference: saveLocalePreference })
-  // @shared/i18n powers components under `@shared/*` (admin panel, shared
-  // Topbar). Keep the three entries consistent so shared components pick up
-  // the user's locale automatically instead of silently rendering in English.
-  bridgeSharedI18n()
+void bootstrapApp({
+  i18n: { loadPreference: loadLocalePreference, savePreference: saveLocalePreference },
+  createPlatform: createCapacitorPlatform,
+  beforeMount: (platform) => {
+    // iOS only: hide WKWebView's input accessory bar (the floating ✓ ↑ ↓ strip
+    // that lands above the on-screen keyboard) so it doesn't overlap our own
+    // control panel (template + aux keys + paste/image).
+    if (Capacitor.getPlatform() === 'ios') {
+      Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => { /* no-op */ })
+    }
 
-  // iOS only: hide WKWebView's input accessory bar (the floating ✓ ↑ ↓ strip
-  // that lands above the on-screen keyboard) so it doesn't overlap our own
-  // control panel (template + aux keys + paste/image).
-  if (Capacitor.getPlatform() === 'ios') {
-    Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => { /* no-op */ })
-  }
-
-  const platform = initPlatform(createCapacitorPlatform)
-
-  const prefsSync = createCapacitorPrefsSync()
-  setSharedPrefsSync(prefsSync)
-  bindCapacitorPrefsSync(platform, prefsSync, CapacitorApp)
-
-  const app = createApp(App)
-  app.use(createPinia())
-  app.provide('platform', platform)
-  app.config.globalProperties.$platform = platform
-  app.mount('#app')
-}
-
-void bootstrap()
+    const prefsSync = createCapacitorPrefsSync()
+    setSharedPrefsSync(prefsSync)
+    bindCapacitorPrefsSync(platform, prefsSync, CapacitorApp)
+  },
+})

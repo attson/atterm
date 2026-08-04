@@ -81,8 +81,12 @@ describe("web capability gates", () => {
 
 describe("capacitor uses the shared web shell", () => {
   test("Capacitor boots the shared App.vue entry instead of the legacy mobile shell", () => {
-    expect(capacitorMainSource).toContain("import App from './App.vue'");
-    expect(capacitorMainSource).toContain("const app = createApp(App)");
+    // Both `import App from '../App.vue'` and the `createApp(App)` step live
+    // inside lib/bootstrapApp.ts now — main.capacitor.ts just wires the
+    // capacitor-specific hooks and calls bootstrapApp(). The absence of
+    // MobileApp is the actual regression this test guards.
+    expect(capacitorMainSource).toContain("bootstrapApp(");
+    expect(capacitorMainSource).toContain("createCapacitorPlatform");
     expect(capacitorMainSource).not.toContain("import MobileApp");
     expect(capacitorMainSource).not.toContain("createApp(MobileApp)");
   });

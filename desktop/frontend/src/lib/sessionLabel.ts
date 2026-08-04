@@ -30,7 +30,8 @@ export interface SessionLike {
   session_id: string
   cwd?: string
   // Optional workload classification — "ai" | "shell" | "test" | "build"
-  // | "deploy". When absent, treat as shell. Drives aiTitleOrCommand().
+  // | "deploy". When absent, treat as shell. Drives usableAITitle() /
+  // usableTitle() heuristics.
   type?: string
 }
 
@@ -75,6 +76,10 @@ function codexAnimatedCwdTitle(
   return strippedTitle === base ? strippedTitle : ''
 }
 
+// usableAITitle returns the OSC 0/1/2 title only when the session is
+// classified as AI. Kept because TabBar.tabTitle uses it: on the tab
+// strip we want shell sessions to display their cwd basename (via
+// shortTitle) rather than an ugly `user@host: ~/dir` OSC title.
 export function usableAITitle(s: Pick<SessionLike, 'current_command' | 'title' | 'type' | 'cwd'>): string {
   if (s.type !== 'ai') return ''
   const title = (s.title ?? '').trim()
@@ -84,12 +89,34 @@ export function usableAITitle(s: Pick<SessionLike, 'current_command' | 'title' |
   return title
 }
 
-// aiTitleOrCommand returns the AI-set window title (from OSC 0/1/2, surfaced
-// via SessionInfo.Title) when the session is classified as an AI workload
-// and a title is available. Otherwise returns the existing short command
-// label so shell sessions keep their current display.
-export function aiTitleOrCommand(s: SessionLike): string {
-  const title = usableAITitle(s)
+// usableTitle returns SessionInfo.Title (from OSC 0/1/2 or user
+// labelling) for the sidebar row's primary label, when it carries
+// signal beyond the executable name:
+//   - non-empty after trim
+//   - not just the command basename (a "zsh" title on a zsh session
+//     duplicates commandLabel and adds no info)
+// Runs for every session type — real remote shell sessions typically
+// have their prompt drive the OSC 2 title to the project directory
+// or a user-set label; hiding those behind an AI-only gate makes
+// every shell row collapse to "zsh".
+export function usableTitle(s: Pick<SessionLike, 'current_command' | 'title' | 'type' | 'cwd' | 'session_id'>): string {
+  const title = (s.title ?? '').trim()
+  if (!title) return ''
+  const codexCwdTitle = codexAnimatedCwdTitle(title, s.current_command, s.cwd)
+  if (codexCwdTitle) return codexCwdTitle
+  const cmdBase = commandLabel({ current_command: s.current_command, title: '', session_id: s.session_id })
+  if (title === cmdBase) return ''
+  return title
+}
+
+// titleOrCommand is the sidebar row's primary label: session title
+// when meaningful (see usableTitle), else the short executable name.
+// Prior name aiTitleOrCommand gated on session.type === 'ai' — the
+// gate has been dropped so real remote shell sessions surface their
+// OSC 2 title (typically the project directory or a user-set label)
+// instead of every row collapsing to "zsh".
+export function titleOrCommand(s: SessionLike): string {
+  const title = usableTitle(s)
   if (title) return title
   return commandLabel(s)
 }

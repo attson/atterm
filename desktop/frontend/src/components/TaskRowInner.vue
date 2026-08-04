@@ -12,7 +12,7 @@ import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
-import { aiTitleOrCommand, rowTitle, taskStateLabel } from "../lib/sessionLabel";
+import { titleOrCommand, rowTitle, taskStateLabel } from "../lib/sessionLabel";
 
 const props = withDefaults(defineProps<{
   session: RemoteSession;
@@ -48,7 +48,7 @@ function stateLabel(state: string | undefined): string {
       data-test="state-label"
     >{{ stateLabel(props.session.task_state) }}</span>
     <span class="cmd-and-cwd" :title="rowTitle(props.session)">
-      <span class="cmd">{{ aiTitleOrCommand(props.session) }}</span>
+      <span class="cmd">{{ titleOrCommand(props.session) }}</span>
     </span>
     <span v-if="props.session.unread" class="unread-dot" data-test="unread-dot">●</span>
     <span

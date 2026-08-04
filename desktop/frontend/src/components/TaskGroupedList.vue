@@ -14,7 +14,7 @@ import { useSessionPins } from "../composables/useSessionPins";
 import { useSessionSelection } from "../composables/useSessionSelection";
 import { matchesSession } from "../lib/sessionMatch";
 import {
-  aiTitleOrCommand,
+  titleOrCommand,
   rowTitle,
   hostNameWithIndex,
   coResidentIndex,
@@ -603,7 +603,7 @@ function stateLabel(state: string | undefined): string {
               data-test="state-label"
             >{{ stateLabel(s.task_state) }}</span>
             <span class="cmd-and-cwd" :title="rowTitle(s)">
-              <span class="cmd">{{ aiTitleOrCommand(s) }}</span>
+              <span class="cmd">{{ titleOrCommand(s) }}</span>
             </span>
           </span>
           <span v-if="shortenCwd(s.cwd, home)" class="cwd">{{ shortenCwd(s.cwd, home) }}</span>

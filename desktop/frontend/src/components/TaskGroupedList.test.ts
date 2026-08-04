@@ -306,12 +306,36 @@ describe("TaskGroupedList AI title", () => {
     expect(cmd.text()).toBe("Remove token auth from relay login");
   });
 
-  test("falls back to commandLabel for non-ai sessions even when title is set", () => {
+  test("shows OSC title for non-ai shell sessions when it carries signal", () => {
+    // Real remote shell sessions drive OSC 2 to a meaningful label
+    // (project dir or user-set); the sidebar should surface it instead
+    // of collapsing every zsh row to "zsh".
     const sess = mk({
       session_id: "s1",
       host: "mac",
       task_state: "running",
       title: "user@host: ~/proj",
+      current_command: "zsh",
+      type: "shell",
+    });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [sess] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+      },
+    });
+    const cmd = w.find('[data-test="task-row"] .cmd');
+    expect(cmd.text()).toBe("user@host: ~/proj");
+  });
+
+  test("suppresses title == command basename to avoid duplicated \"zsh\"", () => {
+    const sess = mk({
+      session_id: "s1",
+      host: "mac",
+      task_state: "running",
+      title: "zsh",
       current_command: "zsh",
       type: "shell",
     });

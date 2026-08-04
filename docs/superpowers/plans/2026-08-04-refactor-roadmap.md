@@ -258,3 +258,83 @@
 - 5-c 里 `AppBindings = typeof import('wailsjs/...')` 类型替换（需验证 112 签名 round-trip）
 - 里程碑 6（包边界）：hostid → appdir、SQLiteStore alias 迁移、wrap/unwrap → e2eecrypto、PtyHost interface → ptyhost
 - 里程碑 7（P2 收尾）：api.ts 按 domain 拆、main.ts 合并、docker-compose watchtower pin、engines 补齐、docs 合并等
+
+---
+
+## 追加交付（2026-08-04–05 后续会话）
+
+上一节表格之后又完成 12 个 PR，覆盖大部分 followup + 3 个新增修：
+
+| 主题 | PR | 状态 | 备注 |
+| --- | --- | --- | --- |
+| M6-a hostid → appdir | [#303](https://github.com/attson/atterm/pull/303) | ✅ merged | |
+| M6-c SQLiteStore alias 清 | [#304](https://github.com/attson/atterm/pull/304) | ✅ merged | 全 codebase 40+ 调用点迁 DBStore |
+| M3-a updatePref helper | [#305](https://github.com/attson/atterm/pull/305) | ✅ merged | 7 setter 迁移 |
+| applyConfigDefaults + Registry.ForEach | [#306](https://github.com/attson/atterm/pull/306) | ✅ merged | M7 收尾 |
+| chore: engines + watchtower pin + roadmap | [#307](https://github.com/attson/atterm/pull/307) | ✅ merged | M7 收尾 |
+| M3-d 跨包 helper 搬家 | [#308](https://github.com/attson/atterm/pull/308) | ✅ merged | webpush/e2eecrypto |
+| M4-b server.go 拆 | [#309](https://github.com/attson/atterm/pull/309) | ✅ merged | 712 → 532 |
+| M3-b feishu 3 map → struct | [#310](https://github.com/attson/atterm/pull/310) | ✅ merged | feishuSessions |
+| M4-c uplinkSession struct 化 | [#311](https://github.com/attson/atterm/pull/311) | ✅ merged | 10 闭包 → 方法 |
+| M5-a-1 cellDimsProbe 抽出 | [#312](https://github.com/attson/atterm/pull/312) | ✅ merged | |
+| M5-a-2 StartupFatalPanel | [#313](https://github.com/attson/atterm/pull/313) | ✅ merged | |
+| M5-a-3 usePluginPanel | [#314](https://github.com/attson/atterm/pull/314) | ✅ merged | |
+| M5-a-4 useWebTabsSnapshot | [#315](https://github.com/attson/atterm/pull/315) | ✅ merged | |
+| M5-a-5 useCloseSessionConfirm | [#316](https://github.com/attson/atterm/pull/316) | ✅ merged | |
+| M5-a-6 useRecoveryRestore | [#317](https://github.com/attson/atterm/pull/317) | ✅ merged | executeRestore 200 行搬走 |
+| M5-a-7 useSessionListStreams | [#318](https://github.com/attson/atterm/pull/318) | ✅ merged | |
+| M7 feishu docs → docs/ | [#319](https://github.com/attson/atterm/pull/319) | ✅ merged | |
+| M7 pty_host.go 抽出 | [#320](https://github.com/attson/atterm/pull/320) | ✅ merged | |
+| M6-b accountKey crypto → e2eecrypto | [#321](https://github.com/attson/atterm/pull/321) | ✅ merged | |
+| M6-d PtyHost interfaces → ptyhost | [#322](https://github.com/attson/atterm/pull/322) | ✅ merged | |
+| M7-c lib/api.ts 按 domain 拆 | [#323](https://github.com/attson/atterm/pull/323) | ✅ merged | 1098 → 299（-73%）|
+| M7-d main.ts × 3 → bootstrapApp | [#324](https://github.com/attson/atterm/pull/324) | ✅ merged | |
+| M5-b-1 touchScrollDebug 抽出 | [#325](https://github.com/attson/atterm/pull/325) | ✅ merged | |
+| M5-b-4 useQuickTemplates | [#326](https://github.com/attson/atterm/pull/326) | ✅ merged | 含 iOS 硬约束 sendTemplate 拆分 |
+| iOS 图标 + title + relay Sealed 修复 | [#327](https://github.com/attson/atterm/pull/327) | ✅ merged | v0.4.3 release 主体 |
+
+**已完全达成** M0-M4 + M5-a + M6-a/b/c/d + M7 + M5-b 部分。
+
+## 剩余待办：M5-b 后续 composable
+
+TerminalView.vue 深度耦合，无 iOS Simulator 无法安全动。有 Simulator 时按下述顺序做，每 slice 一 PR + 手工跑 baseline 场景清单验证。基线场景在会话中已敲定，见本文档下一节。
+
+| slice | 抽出目标 | 风险 | Simulator 场景 |
+| --- | --- | --- | --- |
+| M5-b-2 | `useTerminalContextMenu` (右键菜单 + 链接点击)| 🟡 中 · desktop-only,~10+ 注入 | 桌面右键菜单：Open Link / Copy Link / Copy / Paste |
+| M5-b-3 | `useSessionConnection` (WS attach 生命周期)| 🟡 中 · 15+ 注入 | 会话打开/关闭/reconnect/driver 切换 |
+| M5-b-5 | `TerminalAuxKeyBar.vue` 组件抽出 | 🔴 高 iOS | 键盘点 aux key 不消失(300ms grace),tap vs scroll 区分 |
+| M5-b-6 | `useXtermInstance` (Xterm 构造 + FitAddon + WebGL) | 🟡 中 · ensureTerm 240 行 | 主终端启动 / resize / WebGL fallback |
+| M5-b-7 | `useTerminalSelectionPopover` (长按选择) | 🔴 高 iOS | A1-A7：长按气泡 / handle 拖 / edge scroll / Copy / Send / 外点 |
+| M5-b-8 | `useSoftKeyboard` (iOS IME 状态机 ~340 行) | 🔴🔴 最高 iOS | B1-B8：viewer 不弹 / aux key 保键盘 / scroll restore / 快速切换 |
+
+### iOS Simulator baseline 场景（M5-b-7 / M5-b-8）
+
+**Selection popover · A**
+- A1 长按 500ms → 气泡出，词被选中
+- A2 拖 handle → 选区扩缩
+- A3 拖出 viewport 24px → 自动滚
+- A4 点 Copy → 剪贴板拿到
+- A5 点 Send → 文字发送
+- A6 点气泡外 → 消失不误发
+- A7 长按未松手移动 >8px → 取消
+
+**Soft keyboard · B**
+- B1 viewer 模式点终端 → 不弹键盘
+- B2 take control 后点终端 → 键盘弹 + 光标滚上
+- B3 长按 ⌨️ → 收起
+- B4 键盘开着点 aux key(ESC/Ctrl/Tab)→ 键盘不消失,字符发送
+- B5 键盘开着点 template → 键盘不消失,text+CR 两次发送
+- B6 键盘开着上滑 → scrollTop 不被拽回
+- B7 键盘收起 → 前一次滚动位置复原
+- B8 快速反复 ⌨️（≥3 次 <350ms）→ 稳定
+
+**Cross-cutting 硬约束 · C**
+- C1 键盘关着点 aux key row → 不能把键盘弹起来（`pointer-events: none .term`）
+- C2 `codex` 里点 template → prompt 提交,不看到字面 `text\n`
+- C3 冷启动 pane → 光标位没有游离 `%`（PTY winsize at fork）
+
+### 启动条件
+1. 用户手上有 Xcode + iOS Simulator
+2. 用户愿意每 slice 手工跑对应场景清单
+3. Slice 分工：每 PR 一 slice，改 → `cd desktop/frontend && npm run build:capacitor && cd ../../mobile && npm run ios:sync` → Xcode Cmd+R → 手工验证 → 反馈通过或走样

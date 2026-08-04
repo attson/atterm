@@ -6,6 +6,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -410,6 +411,18 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	}
 	if info.Title != "" && s.meta.Title != info.Title {
 		s.meta.Title = info.Title
+		changed = true
+	}
+	// Preserve the sealed envelope so /api/sessions serving a mirror
+	// session returns the same title/cwd/command payload the agent
+	// uploaded. Without this the mirror's meta.Sealed stays nil and
+	// remote clients (mobile HTTP fetch, web) see empty content
+	// fields, since the agent strips the plaintext before ANNOUNCE.
+	// Empty inbound Sealed is ignored — matches the title/cwd
+	// non-empty guard: an ANNOUNCE without Sealed shouldn't clobber a
+	// previously-set envelope.
+	if len(info.Sealed) > 0 && !bytes.Equal(s.meta.Sealed, info.Sealed) {
+		s.meta.Sealed = append([]byte(nil), info.Sealed...)
 		changed = true
 	}
 	if info.RemotePermission != s.meta.RemotePermission {

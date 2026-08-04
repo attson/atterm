@@ -456,7 +456,7 @@ func loadConfig() *configStore {
 		return s
 	}
 	_ = json.Unmarshal(data, &s.cfg)
-	applyConfigDefaults(&s.cfg)
+	s.cfg.Plugins.applyDefaults()
 	return s
 }
 
@@ -490,8 +490,3 @@ func (s *configStore) Set(c appConfig) error {
 	return os.Rename(tmp, p)
 }
 
-// applyConfigDefaults fills nil/zero fields with their defaults. Called from
-// loadConfig() after JSON unmarshal. Idempotent.
-func applyConfigDefaults(c *appConfig) {
-	c.Plugins.applyDefaults()
-}

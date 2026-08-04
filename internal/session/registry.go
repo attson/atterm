@@ -148,3 +148,18 @@ func (r *Registry) List() []*Session {
 	}
 	return out
 }
+
+// ForEach invokes fn under the read lock for every live session. Returning
+// false from fn stops the iteration. Prefer this over List() on the hot
+// announce path where the caller only needs to read each session once and
+// discard the slice — it avoids the O(n) copy that List() unconditionally
+// makes.
+func (r *Registry) ForEach(fn func(*Session) bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, s := range r.sessions {
+		if !fn(s) {
+			return
+		}
+	}
+}

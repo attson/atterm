@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -52,8 +51,7 @@ func TestNotifSuppressWebPushWhenWatched(t *testing.T) {
 	mirrorSess := session.New(sid, info)
 	mirrorSess.OwnerUserID = ownerUserID
 	ms := &mirrorState{sess: mirrorSess}
-	mirrors := map[uuid.UUID]*mirrorState{sid: ms}
-	var mu sync.Mutex
+	uconn := &uplinkSession{server: srv, mirrors: map[uuid.UUID]*mirrorState{sid: ms}}
 
 	frame, _ := proto.EncodeCommandEvent(sid, proto.CommandEventPayload{
 		ExitCode: 0, ElapsedMS: 1000, Label: "suppress-test",
@@ -69,7 +67,7 @@ func TestNotifSuppressWebPushWhenWatched(t *testing.T) {
 		t.Fatalf("want 1 subscriber before test; got %d", n)
 	}
 
-	srv.handleUplinkCommandEvent(frame, mirrors, &mu)
+	uconn.handleCommandEvent(frame)
 
 	if got := pushRec.count(); got != 0 {
 		t.Fatalf("Phase 1: expected 0 WebPush calls with subscriber attached; got %d", got)
@@ -84,7 +82,7 @@ func TestNotifSuppressWebPushWhenWatched(t *testing.T) {
 		t.Fatalf("want 0 subscribers after Unsubscribe; got %d", n)
 	}
 
-	srv.handleUplinkCommandEvent(frame, mirrors, &mu)
+	uconn.handleCommandEvent(frame)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

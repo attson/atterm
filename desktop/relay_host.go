@@ -82,24 +82,27 @@ type relayHost struct {
 	// RWMutex; initialized lazily but always non-nil after startRelayHost.
 	feishuCards *internalfeishu.CardIndex
 
-	// feishuSubs and feishuSubsMu guard the set of live FeishuSubscribers,
-	// keyed by session ID string. A subscriber is added on attach and removed
-	// on detach (session close or manual disconnect).
+	// feishuSubsMu guards feishuSessions.
 	feishuSubsMu sync.Mutex
-	feishuSubs   map[string]*internalfeishu.FeishuSubscriber
+	// feishuSessions is the per-session Feishu record store, keyed by session
+	// ID string. Each entry may carry any subset of: an attached
+	// FeishuSubscriber (sub), the live status/anchor state (anchor), and a
+	// lazyAttachInFlight flag that collapses concurrent attach attempts.
+	// Previously three parallel maps; consolidated so attach / detach /
+	// concurrent-attach guards operate on a single map lookup.
+	feishuSessions map[string]*feishuSession
+}
 
-	// feishuAnchorRuntimes carries the live status state (task state + last
-	// body) per anchor so SetOnTaskStateChange and the elapsed-time ticker can
-	// re-render the status preamble. Keyed by session ID string. Same lock
-	// discipline as feishuSubs (parallel map, same lifetime).
-	feishuAnchorRuntimes map[string]*anchorRuntime
-
-	// lazyAttachInFlight tracks per-session lazy-backfill attempts kicked
-	// off by SetOnTaskStateChange or Dispatcher.SetOnTurnMissingChunker.
-	// Collapses a burst of concurrent events on the same session into a
-	// single attachFeishuSubscriberForAutoAttach goroutine. Guarded by
-	// feishuSubsMu (same map lifetime; keeps lock discipline minimal).
-	lazyAttachInFlight map[string]bool
+// feishuSession holds the per-session Feishu state. A record may exist with
+// only some fields populated: the anchor is set before the subscriber goes
+// live (attach in progress), sub is set after AttachFeishuSubscriber
+// returns, and lazyAttachInFlight is true only during the attach handshake
+// so a burst of concurrent SetOnTaskStateChange / OnTurnMissingChunker
+// events collapses into a single attach goroutine.
+type feishuSession struct {
+	sub                *internalfeishu.FeishuSubscriber
+	anchor             *anchorRuntime
+	lazyAttachInFlight bool
 }
 
 // anchorRuntime is the per-session live state the anchor card's status
@@ -224,9 +227,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		uplinkSubs:           make(map[uuid.UUID]*session.Subscriber),
 		startSniffFn:         startAIResolve,
 		feishuCards:          internalfeishu.NewCardIndex(),
-		feishuSubs:           make(map[string]*internalfeishu.FeishuSubscriber),
-		feishuAnchorRuntimes: make(map[string]*anchorRuntime),
-		lazyAttachInFlight:   make(map[string]bool),
+		feishuSessions: make(map[string]*feishuSession),
 	}, nil
 }
 
@@ -593,7 +594,10 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			// session.mu re-entry — only touches atomic.Value), then a
 			// goroutine re-PATCHes to avoid blocking the session callback.
 			h.feishuSubsMu.Lock()
-			rt := h.feishuAnchorRuntimes[sid.String()]
+			var rt *anchorRuntime
+			if fs := h.feishuSessions[sid.String()]; fs != nil {
+				rt = fs.anchor
+			}
 			h.feishuSubsMu.Unlock()
 			if rt != nil {
 				rt.taskState.Store(next)

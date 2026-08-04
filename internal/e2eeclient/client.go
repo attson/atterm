@@ -2,12 +2,11 @@
 // register, log in, and unlock their account_key against an atterm-relay
 // running the OPAQUE-based E2EE auth flow added in M1a/M1b.
 //
-// The SDK owns the cryptographic plumbing: OPAQUE protocol round-trips
-// (via github.com/bytemare/opaque), Argon2id derivation of the wrap key
-// from the user's password, and XChaCha20-Poly1305 AEAD wrap/unwrap of
-// the per-account account_key. Wire-format helpers stay in
-// internal/relay/opaque_auth.go; this package speaks JSON to the same
-// endpoints.
+// The SDK owns the OPAQUE protocol round-trips (via
+// github.com/bytemare/opaque) and speaks JSON to the relay's
+// /api/opaque/* endpoints. Wire-format helpers live in
+// internal/opaquesuite; the account_key wrap/unwrap crypto (Argon2id
+// derivation + XChaCha20-Poly1305 AEAD) lives in internal/e2eecrypto.
 //
 // The relay never sees plaintext password, plaintext account_key, or the
 // wrap key. See docs/superpowers/specs/2026-06-15-relay-e2ee-design.md §4.
@@ -24,44 +23,14 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/attson/atterm/internal/e2eecrypto"
 	"github.com/attson/atterm/internal/opaquesuite"
 	"github.com/bytemare/opaque"
-	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // Server identity bound into the AKE transcript. Shared with the relay server
 // and the browser WASM client via internal/opaquesuite.
 const serverIdentity = opaquesuite.ServerIdentity
-
-// Argon2id parameters used to derive the account_key wrap key from the
-// user's password. Tuned for laptop CPUs; mobile may want lower memory.
-// The relay echoes these back in kdf_params at login so a future
-// rotation of parameters survives a password change on a single device.
-type KDFParams struct {
-	Alg     string `json:"alg"` // always "argon2id" in v1
-	MemKiB  uint32 `json:"m"`   // memory in KiB
-	Time    uint32 `json:"t"`   // iterations
-	Threads uint8  `json:"p"`   // parallelism
-}
-
-// DefaultKDFParams returns the v1 baseline parameters: 64 MiB memory,
-// 3 iterations, 1 thread.
-func DefaultKDFParams() KDFParams {
-	return KDFParams{
-		Alg:     "argon2id",
-		MemKiB:  64 * 1024,
-		Time:    3,
-		Threads: 1,
-	}
-}
-
-// Marshal renders kp as the JSON string the relay stores in
-// user_account_key_wraps.kdf_params.
-func (kp KDFParams) Marshal() string {
-	b, _ := json.Marshal(kp)
-	return string(b)
-}
 
 // AccountKeyWrap is the on-wire wrap envelope shared with the relay. The
 // struct lives in internal/opaquesuite so the relay and this SDK cannot
@@ -147,7 +116,7 @@ func (c *Client) Register(ctx context.Context, email, password, claimToken strin
 	if _, err := rand.Read(accountKey); err != nil {
 		return nil, fmt.Errorf("rand account_key: %w", err)
 	}
-	wrap, err := wrapAccountKey(password, accountKey, DefaultKDFParams())
+	wrap, err := e2eecrypto.WrapAccountKey(password, accountKey, e2eecrypto.DefaultKDFParams())
 	if err != nil {
 		return nil, fmt.Errorf("wrap account_key: %w", err)
 	}
@@ -224,7 +193,7 @@ func (c *Client) Login(ctx context.Context, email, password string) (*LoginResul
 		return nil, errors.New("login finalize: empty session_token or user_id")
 	}
 
-	accountKey, err := unwrapAccountKey(password, finResp.AccountKeyWrap)
+	accountKey, err := e2eecrypto.UnwrapAccountKey(password, finResp.AccountKeyWrap)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap account_key: %w", err)
 	}
@@ -246,53 +215,6 @@ func (c *Client) Login(ctx context.Context, email, password string) (*LoginResul
 // bytemare endpoints stay byte-identical (cross-client interop).
 func defaultOpaqueConfig() *opaque.Configuration {
 	return opaquesuite.Config()
-}
-
-// wrapAccountKey derives wrap_key = Argon2id(password, salt, params),
-// generates a fresh 24-byte nonce, and seals account_key into the
-// envelope with XChaCha20-Poly1305.
-func wrapAccountKey(password string, accountKey []byte, kp KDFParams) (AccountKeyWrap, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return AccountKeyWrap{}, fmt.Errorf("rand salt: %w", err)
-	}
-	wrapKey := argon2.IDKey([]byte(password), salt, kp.Time, kp.MemKiB, kp.Threads, chacha20poly1305.KeySize)
-	aead, err := chacha20poly1305.NewX(wrapKey)
-	if err != nil {
-		return AccountKeyWrap{}, fmt.Errorf("aead: %w", err)
-	}
-	nonce := make([]byte, chacha20poly1305.NonceSizeX)
-	if _, err := rand.Read(nonce); err != nil {
-		return AccountKeyWrap{}, fmt.Errorf("rand nonce: %w", err)
-	}
-	ciphertext := aead.Seal(nil, nonce, accountKey, []byte("atterm-account-key-v1"))
-	return AccountKeyWrap{
-		Method:    "password",
-		Wrapped:   ciphertext,
-		Nonce:     nonce,
-		Salt:      salt,
-		KDFParams: kp.Marshal(),
-	}, nil
-}
-
-func unwrapAccountKey(password string, w AccountKeyWrap) ([]byte, error) {
-	var kp KDFParams
-	if err := json.Unmarshal([]byte(w.KDFParams), &kp); err != nil {
-		return nil, fmt.Errorf("kdf_params: %w", err)
-	}
-	if kp.Alg != "argon2id" {
-		return nil, fmt.Errorf("unsupported kdf alg: %q", kp.Alg)
-	}
-	wrapKey := argon2.IDKey([]byte(password), w.Salt, kp.Time, kp.MemKiB, kp.Threads, chacha20poly1305.KeySize)
-	aead, err := chacha20poly1305.NewX(wrapKey)
-	if err != nil {
-		return nil, fmt.Errorf("aead: %w", err)
-	}
-	plaintext, err := aead.Open(nil, w.Nonce, w.Wrapped, []byte("atterm-account-key-v1"))
-	if err != nil {
-		return nil, errors.New("e2eeclient: invalid password")
-	}
-	return plaintext, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body []byte, out any) error {

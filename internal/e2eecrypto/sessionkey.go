@@ -3,9 +3,18 @@
 // frames) so the relay carries only opaque bytes. See the design spec
 // at docs/superpowers/specs/2026-06-15-relay-e2ee-design.md §§5-7.
 //
-// Account-level key (account_key) handling lives in internal/e2eeclient;
-// this package consumes account_key + session_uuid to derive per-session
-// AEAD keys and to seal/open frame payloads.
+// Split into three files by responsibility:
+//   - accountkey.go — Argon2id + XChaCha20-Poly1305 wrap/unwrap of the
+//     per-account account_key by the user's password (AccountKeyWrap
+//     envelope + KDFParams).
+//   - sessionkey.go — HKDF-SHA256 derivation of per-session AEAD keys
+//     from account_key + session_uuid.
+//   - envelope.go   — the on-wire cipher_id + nonce + AEAD framing that
+//     seals/opens session-level payloads.
+//
+// The HTTP client that speaks OPAQUE to the relay (Register / Login /
+// wire-format helpers) lives in internal/e2eeclient — it now imports
+// this package for wrap/unwrap rather than re-implementing it.
 package e2eecrypto
 
 import (

@@ -6,15 +6,12 @@ package relay
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -118,12 +115,6 @@ type Server struct {
 	debugPayloadEnabled atomic.Bool
 }
 
-// feishuRuntime is the swappable Feishu handler holder. mu serializes
-// enable/disable transitions; handler is loaded lock-free on the hot path.
-type feishuRuntime struct {
-	mu      sync.Mutex
-	handler atomic.Pointer[FeishuHTTPHandler]
-}
 
 // NewServer builds a Server with its routes installed.
 func NewServer(cfg Config) *Server {
@@ -308,53 +299,6 @@ func (s *Server) removeSession(id uuid.UUID) {
 	}
 }
 
-// currentAllowedOrigins returns a snapshot of the hot-reloadable Origin
-// allow-list. Never returns nil (empty slice = allow any origin / dev mode).
-func (s *Server) currentAllowedOrigins() []string {
-	if p := s.allowedOrigins.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-// SetAllowedOrigins hot-swaps the WS/HTTP Origin allow-list. An empty slice
-// reverts to "allow any origin". Safe to call at runtime. The stored value is
-// taken verbatim — callers that need desktop-webview hosts appended should
-// pass the result of OriginPatterns.
-func (s *Server) SetAllowedOrigins(origins []string) {
-	cp := append([]string(nil), origins...)
-	s.allowedOrigins.Store(&cp)
-}
-
-// relayDesktopWebviewOriginHosts mirror the packaged-Wails asset hosts so a
-// desktop client keeps matching after an admin edits origins at runtime.
-var relayDesktopWebviewOriginHosts = []string{"wails", "wails.localhost", "wails.localhost:*"}
-
-// OriginPatterns normalizes user-supplied origins to host patterns and appends
-// the desktop webview hosts. Empty input → nil (allow any origin / dev mode).
-// Mirrors the bootstrap's allowedOriginHosts so admin edits stay consistent.
-func OriginPatterns(origins []string) []string {
-	clean := make([]string, 0, len(origins))
-	for _, o := range origins {
-		if o = strings.TrimSpace(o); o != "" {
-			clean = append(clean, o)
-		}
-	}
-	if len(clean) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(clean)+len(relayDesktopWebviewOriginHosts))
-	for _, o := range clean {
-		if u, err := url.Parse(o); err == nil && u.Host != "" {
-			o = u.Host
-		}
-		out = appendUniqueOrigin(out, o)
-	}
-	for _, h := range relayDesktopWebviewOriginHosts {
-		out = appendUniqueOrigin(out, h)
-	}
-	return out
-}
 
 func appendUniqueOrigin(vs []string, v string) []string {
 	for _, e := range vs {
@@ -373,71 +317,6 @@ func (s *Server) acceptOptions() *websocket.AcceptOptions {
 	}
 }
 
-// serveFeishuSession / serveFeishuEvents are the stable route handlers that
-// gate on the runtime Feishu handler. When disabled, session routes return
-// 503 and the (unauthenticated) events route returns 404 — close to the
-// pre-registration "not mounted → 404" behavior.
-func (s *Server) serveFeishuSession(w http.ResponseWriter, r *http.Request) {
-	h := s.feishu.handler.Load()
-	if h == nil {
-		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "feishu integration disabled"})
-		return
-	}
-	h.ServeHTTPSession(w, r)
-}
-
-func (s *Server) serveFeishuEvents(w http.ResponseWriter, r *http.Request) {
-	h := s.feishu.handler.Load()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.ServeHTTPEvents(w, r)
-}
-
-// FeishuEnabled reports whether a Feishu handler is currently attached.
-func (s *Server) FeishuEnabled() bool { return s.feishu.handler.Load() != nil }
-
-// ApplyFeishuConfig hot-applies a Feishu integration state without a restart.
-// When enabling, key must be 32 bytes: it sets the store's field-encryption
-// cipher and attaches a fresh handler. When disabling, it detaches the
-// handler first, then clears the cipher (so in-flight requests that already
-// snapshotted the cipher finish safely). Requires a *userstore.DBStore.
-func (s *Server) ApplyFeishuConfig(enabled bool, key []byte, baseURL string) error {
-	store, ok := s.cfg.Store.(*userstore.DBStore)
-	if !ok {
-		return errors.New("feishu requires a SQLite store")
-	}
-	s.feishu.mu.Lock()
-	defer s.feishu.mu.Unlock()
-	if !enabled {
-		s.feishu.handler.Store(nil)
-		store.SetSecretCipher(nil)
-		return nil
-	}
-	cipher, err := userstore.NewSecretCipher(key)
-	if err != nil {
-		return err
-	}
-	store.SetSecretCipher(cipher)
-	s.feishu.handler.Store(NewFeishuHTTPHandler(store, buildFeishuService(store, baseURL), s.registry))
-	return nil
-}
-
-// buildFeishuService constructs a Feishu service bound to store. Mirrors the
-// startup wiring so both the bootstrap and the admin hot-apply path share one
-// definition. An empty baseURL falls back to Feishu's public endpoint.
-func buildFeishuService(store *userstore.DBStore, baseURL string) *feishu.Service {
-	if baseURL == "" {
-		baseURL = "https://open.feishu.cn"
-	}
-	httpc := &http.Client{Timeout: 10 * time.Second}
-	return feishu.NewService(feishu.ServiceConfig{
-		Store: NewFeishuBindStore(store),
-		IM:    feishu.NewClient(baseURL, httpc),
-		Token: feishu.NewTenantTokenCache(baseURL, httpc, time.Now),
-	})
-}
 
 func (s *Server) acceptOptionsWithAuthSubprotocol(r *http.Request) *websocket.AcceptOptions {
 	opts := s.acceptOptions()
@@ -639,65 +518,6 @@ func (s *Server) handleBootstrapStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]bool{"admin_exists": adminExists})
 }
 
-// allowedStaticPath reports whether p is a known production-asset path the
-// static handler is willing to serve. The whitelist is the exhaustive set of
-// files vite-plugin-pwa + the multi-entry MPA build emits at the embed root,
-// plus the single-segment wildcards content-hashed assets use.
-//
-// Anything else (source files like package.json when --web mistakenly points
-// at web/, dotfiles like .gitkeep / .npmrc, directory listings, nested
-// /assets/ paths, traversals normalised down to root, …) is rejected with
-// 404. The whitelist must be updated when build output gains a new
-// top-level artifact type.
-func allowedStaticPath(p string) bool {
-	switch p {
-	case "/", "/index.html",
-		"/login.html", "/signup.html", "/settings.html", "/firstrun.html",
-		"/sw.js", "/manifest.webmanifest",
-		"/icon.svg", "/icon.png":
-		return true
-	}
-	if rest, ok := strings.CutPrefix(p, "/assets/"); ok {
-		// Exactly one path segment past /assets/.
-		return rest != "" && !strings.ContainsAny(rest, "/")
-	}
-	if strings.HasPrefix(p, "/workbox-") && strings.HasSuffix(p, ".js") {
-		// /workbox-<hash>.js at root, no nested directories.
-		return !strings.ContainsAny(strings.TrimPrefix(p, "/"), "/")
-	}
-	return false
-}
-
-// newStaticHandler wraps http.FileServer for the embedded web bundle.
-//
-// Before the session-token migration the relay relied on an HttpOnly cookie
-// to know whether a browser was authenticated, and this handler 302'd
-// unauthenticated `/` navigations to /login.html. Cookies are gone now and
-// browsers cannot attach the localStorage-resident Bearer token to plain
-// navigation requests, so the resolver always reports PrincipalNone for
-// page loads — the old server-side gate would redirect every successful
-// login back to /login.html (the production bug fixed by this change).
-//
-// Authorization is now a purely client-side concern: every page boots its
-// SPA, which reads the session token from localStorage. If the token is
-// missing or rejected, apiFetch's 401 interceptor sends the user to
-// /login.html. Admin gating works the same way — the admin panel (inline in
-// the main App.vue, not a standalone page) queries /api/me, checks is_admin,
-// and hides the admin entry point for clients without privileges.
-//
-// resolver is retained as a parameter for compatibility but is unused; the
-// resolver argument may be nil and is ignored at runtime.
-func newStaticHandler(resolver *IdentityResolver, webFS fs.FS) http.Handler {
-	_ = resolver
-	fileSrv := http.FileServer(http.FS(webFS))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !allowedStaticPath(r.URL.Path) {
-			http.NotFound(w, r)
-			return
-		}
-		fileSrv.ServeHTTP(w, r)
-	})
-}
 
 // readFrame reads one WS binary message and decodes it as a Frame.
 func readFrame(ctx context.Context, c *websocket.Conn) (proto.Frame, error) {

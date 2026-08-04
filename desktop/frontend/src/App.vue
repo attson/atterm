@@ -1,7 +1,5 @@
 <script lang="ts" setup>
 import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from "vue";
-import { Terminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
 import TabBar from "./components/TabBar.vue";
 import TitleBar from "./components/TitleBar.vue";
 import TaskSidebar from "./components/TaskSidebar.vue";
@@ -34,6 +32,7 @@ import { classifySSHRestore } from "./lib/sshRestore";
 // file-explorer chunk is not yet loaded.
 import "./plugins/fileExplorer/theme.css";
 import { isLightTerminalTheme } from "./lib/terminalThemes";
+import { setupMeasureProbe, teardownMeasureProbe, predictCellDims } from "./lib/cellDimsProbe";
 import { usePlatform } from './platform'
 const $platform = usePlatform()
 const caps = $platform.caps
@@ -379,77 +378,8 @@ let lastRemoteKey = "";
 // and use the result to spawn the PTY at the same cols/rows xterm.js would
 // pick on the real cell. Goal: avoid the SIGWINCH between fork and first
 // prompt that triggers zsh's PROMPT_EOL_MARK ('%') for some prompt themes.
-//
-// Probe layout: a 0x0 overflow:hidden host pinned at the top-left of the
-// viewport, with the actual measure div (400x300, position:absolute) inside
-// it. The host's clip prevents the probe from extending document scroll
-// area — earlier `position:absolute; left:-99999px` placement leaked into
-// body.scrollWidth and made WKWebView paint root-level scrollbars on the
-// real terminal.
-let measureTerm: Terminal | null = null;
-let measureFit: FitAddon | null = null;
-let measureDiv: HTMLDivElement | null = null;
-let measureHost: HTMLDivElement | null = null;
-
-function setupMeasureProbe(): Promise<void> {
-  return new Promise((resolve) => {
-    measureHost = document.createElement("div");
-    measureHost.style.cssText =
-      "position:fixed;top:0;left:0;width:0;height:0;overflow:hidden;pointer-events:none;visibility:hidden;";
-    measureDiv = document.createElement("div");
-    measureDiv.style.cssText = "position:absolute;top:0;left:0;width:400px;height:300px;";
-    measureHost.appendChild(measureDiv);
-    document.body.appendChild(measureHost);
-    measureTerm = new Terminal({
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-      fontSize: 13,
-      allowProposedApi: true,
-    });
-    measureFit = new FitAddon();
-    measureTerm.loadAddon(measureFit);
-    measureTerm.open(measureDiv);
-    // Renderer needs a frame to compute the css cell size.
-    requestAnimationFrame(() => resolve());
-  });
-}
-
-function teardownMeasureProbe() {
-  measureTerm?.dispose();
-  if (measureHost && measureHost.parentElement) {
-    measureHost.parentElement.removeChild(measureHost);
-  }
-  measureTerm = null;
-  measureFit = null;
-  measureDiv = null;
-  measureHost = null;
-}
-
-// Predict what xterm.js's FitAddon will pick for a cell of the given px
-// dimensions. Routes through the probe so the math is the same as the real
-// fit() call — within a column.
-function predictCellDimsForSize(width: number, height: number): { cols: number; rows: number } {
-  if (!measureFit || !measureDiv) return { cols: 80, rows: 24 };
-  measureDiv.style.width = `${Math.max(40, Math.floor(width))}px`;
-  measureDiv.style.height = `${Math.max(40, Math.floor(height))}px`;
-  // Force layout so proposeDimensions reads the new size.
-  void measureDiv.offsetWidth;
-  const dims = measureFit.proposeDimensions();
-  if (!dims || !dims.cols || !dims.rows) return { cols: 80, rows: 24 };
-  return { cols: dims.cols, rows: dims.rows };
-}
-
-function predictCellDims(layout: LayoutKind): { cols: number; rows: number } {
-  const main = document.querySelector(".main") as HTMLElement | null;
-  if (!main || main.clientWidth < 100 || main.clientHeight < 100) {
-    return { cols: 80, rows: 24 };
-  }
-  const colsDiv = layout === "vertical" || layout === "grid2x2" ? 2 : 1;
-  const rowsDiv = layout === "horizontal" || layout === "grid2x2" ? 2 : 1;
-  // PaneGrid has gap:2px between cells.
-  const cellW = (main.clientWidth - (colsDiv - 1) * 2) / colsDiv;
-  const cellH = (main.clientHeight - (rowsDiv - 1) * 2) / rowsDiv;
-  return predictCellDimsForSize(cellW, cellH);
-}
+// Setup/teardown + predictCellDims live in lib/cellDimsProbe.ts so this SFC
+// stays focused on tab/pane orchestration.
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto

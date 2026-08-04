@@ -18,7 +18,6 @@ import (
 	"github.com/attson/atterm/desktop/shellintegration"
 	"github.com/attson/atterm/internal/appdir"
 	internalfeishu "github.com/attson/atterm/internal/feishu"
-	"github.com/attson/atterm/internal/hostid"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ptyhost"
 	"github.com/attson/atterm/internal/relay"
@@ -216,7 +215,7 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 		httpSrv:              httpSrv,
 		store:                store,
 		sqliteStore:          store,
-		hostID:               hostid.Get(),
+		hostID:               appdir.HostID(),
 		host:                 hostnameOrUnknown(),
 		user:                 usernameOrUid(),
 		cfg:                  cfgStore,

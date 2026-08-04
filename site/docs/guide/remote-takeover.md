@@ -25,7 +25,7 @@
 任务关键节点(命令完成、AI 等输入)会触发:
 
 - **系统通知**:桌面原生通知,点击直接路由到对应 session(通知带 `session_id` payload)。
-- **Web Push**:浏览器 / PWA 订阅后收命令完成推送(iOS 有平台限制,详见项目 `docs/web-push.md`)。
+- **Web Push**:浏览器 / PWA 订阅后收命令完成推送(iOS 有平台限制,详见项目 `docs/features/web-push.md`)。
 - **飞书卡片**:锚点卡片承载 AI 会话,支持远程回答(见 [AI Agent 与 Feishu](/guide/ai-agents))。
 - **出站 webhook**:generic JSON,payload 带 session id / 任务类型 / summary。
 

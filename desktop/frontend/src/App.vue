@@ -33,6 +33,7 @@ import "./plugins/fileExplorer/theme.css";
 import { setupMeasureProbe, teardownMeasureProbe, predictCellDims } from "./lib/cellDimsProbe";
 import { usePluginPanel } from "./composables/usePluginPanel";
 import { useWebTabsSnapshot } from "./composables/useWebTabsSnapshot";
+import { useCloseSessionConfirm } from "./composables/useCloseSessionConfirm";
 import { usePlatform } from './platform'
 const $platform = usePlatform()
 const caps = $platform.caps
@@ -223,9 +224,6 @@ watch(isAdmin, (v) => {
 const quitDialogOpen = ref(false);
 const showSshDialog = ref(false);
 const showSshHosts = ref(false);
-const pendingCloseSession = ref<RemoteSession | null>(null);
-const pendingCloseSessions = ref<RemoteSession[]>([]);
-let pendingCloseAction: (() => void | Promise<void>) | null = null;
 let quitListenerOff: (() => void) | null = null;
 let notificationClickListenerOff: (() => void) | null = null;
 
@@ -249,62 +247,31 @@ function onCancelQuit() {
   quitDialogOpen.value = false;
 }
 
-function isCloseRiskySession(s: RemoteSession): boolean {
-  return s.type === "ai" || s.task_state === "running";
-}
-
-function shouldConfirmCloseSession(s: RemoteSession): boolean {
-  return !isOpenRemoteSession(s.session_id) && isCloseRiskySession(s);
-}
-
-function sessionCloseTitle(s: RemoteSession): string {
-  return s.current_command || s.title || s.session_id.slice(0, 8);
-}
-
-const pendingCloseTitle = computed(() => {
-  if (pendingCloseSessions.value.length > 1) return "";
-  const s = pendingCloseSession.value;
-  return s ? sessionCloseTitle(s) : "";
-});
-
-const pendingCloseIsAi = computed(() =>
-  pendingCloseSessions.value.some((s) => s.type === "ai"),
-);
-const pendingCloseIsRunning = computed(() =>
-  pendingCloseSessions.value.some((s) => s.task_state === "running"),
-);
-const pendingCloseIsRemote = computed(() =>
-  pendingCloseSessions.value.length > 0 && pendingCloseSessions.value.every((s) => isOpenRemoteSession(s.session_id)),
-);
-
-function clearPendingCloseSession() {
-  pendingCloseSession.value = null;
-  pendingCloseSessions.value = [];
-  pendingCloseAction = null;
-}
-
-function openCloseSessionConfirm(sessionsToClose: RemoteSession[], action: () => void | Promise<void>) {
-  pendingCloseSessions.value = sessionsToClose;
-  pendingCloseSession.value = sessionsToClose[0] ?? null;
-  pendingCloseAction = action;
-}
-
-function confirmCloseSession() {
-  const action = pendingCloseAction;
-  clearPendingCloseSession();
-  void action?.();
-}
-
-function cancelCloseSession() {
-  clearPendingCloseSession();
-}
-
 function isOpenRemoteSession(sessionId: string): boolean {
   const loc = findPaneLocation(tabs.value, sessionId);
   if (!loc) return false;
   const t = tabs.value.find((tab) => tab.id === loc.tabId);
   return t?.panes[loc.paneIdx]?.remote === true;
 }
+
+// Close-session confirmation dialog + the shouldConfirm / isRisky predicates.
+// Opened from four sites (sidebar close, tab close, pane close, multi-select
+// close) with different follow-up actions, so the composable takes the
+// action-to-run as a thunk at open time and dispatches it on Confirm.
+const {
+  pendingCloseSessions,
+  pendingCloseTitle,
+  pendingCloseIsAi,
+  pendingCloseIsRunning,
+  pendingCloseIsRemote,
+  confirmCloseSession,
+  cancelCloseSession,
+  isCloseRiskySession,
+  shouldConfirmCloseSession,
+  openCloseSessionConfirm,
+} = useCloseSessionConfirm({
+  isOpenRemoteSession: (sid) => isOpenRemoteSession(sid),
+});
 
 function closeCandidateForPane(pane: Pane): RemoteSession | null {
   const id = pane.sessionId;

@@ -44,6 +44,13 @@ import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/type
 import { useI18n } from "../i18n/useI18n";
 import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
 import { effectiveAuxKeys, type AuxKey } from "../lib/auxKeys";
+import {
+  installTouchDebugDump,
+  isTouchDebugEnabled,
+  logTouch,
+  readTouchDebugFlag,
+  setTouchDebugEnabled,
+} from "../lib/touchScrollDebug";
 import { usePlatform } from "../platform";
 import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
@@ -204,31 +211,11 @@ let pendingKeyboardScrollPosition: ScrollPosition | null = null;
 // showSoftKeyboard / hideSoftKeyboard (fresh cycle).
 let userScrolledDuringKeyboardCycle = false;
 
-// ---- Touch-scroll debug instrumentation ----
-// Default ON in dev / opt-in in prod via localStorage. To disable:
-//   localStorage.setItem('atterm.debugTouch', '0')
-// To enable at any time:
-//   localStorage.setItem('atterm.debugTouch', '1')
-// Logs to console with a [tsc] prefix (`grep tsc` in Safari Web Inspector /
-// Xcode logs). Also keeps an in-memory ring so a follow-up "dump" can
-// print the last N events even if console history is truncated.
-type TouchDebugEntry = { t: number; tag: string; data: unknown };
-const TOUCH_DEBUG_MAX = 300;
-let touchDebugRing: TouchDebugEntry[] = [];
-let touchDebugEnabled = false;
-function readTouchDebugFlag(): boolean {
-  try {
-    const raw = window.localStorage.getItem("atterm.debugTouch");
-    // Explicit opt-in only — the per-touchmove console.log serializations are
-    // expensive enough on iOS Safari (especially with Web Inspector attached)
-    // to noticeably drop touch events, which was masquerading as a "swipe
-    // does nothing" scroll bug. Set atterm.debugTouch=1 to re-enable when
-    // diagnosing.
-    return raw === "1" || raw === "true";
-  } catch {
-    return false;
-  }
-}
+// Touch-scroll debug instrumentation lives in lib/touchScrollDebug.ts;
+// this component just latches the opt-in flag at mount and calls
+// logTouch(...) at instrumented sites. touchState() stays here because
+// it closes over reactive refs (selectionMode/imeFocused/etc.) that
+// only exist inside setup.
 function touchState() {
   return {
     selMode: selectionMode.value,
@@ -243,28 +230,6 @@ function touchState() {
     activeEl: document.activeElement?.className || document.activeElement?.tagName || null,
   };
 }
-function logTouch(tag: string, data: unknown = {}) {
-  if (!touchDebugEnabled) return;
-  const entry = { t: Date.now(), tag, data };
-  touchDebugRing.push(entry);
-  if (touchDebugRing.length > TOUCH_DEBUG_MAX) touchDebugRing.shift();
-  try {
-    console.log(`[tsc] ${tag}`, data);
-  } catch {
-    /* swallow */
-  }
-}
-// Expose a dump for real-device debugging: user can call
-// `window.__attermTouchDebug()` in Safari Web Inspector to get the ring.
-function installTouchDebugDump() {
-  try {
-    (window as unknown as { __attermTouchDebug?: () => TouchDebugEntry[] }).__attermTouchDebug =
-      () => touchDebugRing.slice();
-  } catch {
-    /* swallow */
-  }
-}
-
 const LONG_PRESS_MS = 500;
 const PRESS_JITTER_PX = 8;
 const POST_PRESS_DRAG_PX = 4;
@@ -996,7 +961,7 @@ function onSelectionPointerDown(event: PointerEvent) {
 }
 
 function onSelectionPointerMove(event: PointerEvent) {
-  if (touchDebugEnabled && selectionMode.value !== "idle") {
+  if (isTouchDebugEnabled() && selectionMode.value !== "idle") {
     logTouch("onSelectionPointerMove", { selMode: selectionMode.value, y: event.clientY });
   }
   if (selectionMode.value === "pressing" && selectionPressAnchor) {
@@ -1493,10 +1458,10 @@ async function ensureTerm() {
     console.warn("[AT Term] disable xterm touch scroll failed", err);
   }
   // Bootstrap the debug flag once term is up and install the console dump.
-  touchDebugEnabled = readTouchDebugFlag();
+  setTouchDebugEnabled(readTouchDebugFlag());
   installTouchDebugDump();
   logTouch("ensureTerm:done", {
-    debugEnabled: touchDebugEnabled,
+    debugEnabled: isTouchDebugEnabled(),
     hasViewport: !!terminalTouchViewport,
     hasXterm: !!term.element,
     xtermChildren: term.element ? Array.from(term.element.children).map(c => c.className) : [],
@@ -1506,7 +1471,7 @@ async function ensureTerm() {
   // registers its own touchstart/touchmove for Viewport._lastTouchY + scroll.
   // If these fire but xterm's own handler didn't run, we know something upstream
   // is stopping propagation before reaching xterm's listeners.
-  if (touchDebugEnabled && term.element) {
+  if (isTouchDebugEnabled() && term.element) {
     const xtermRoot = term.element;
     xtermRoot.addEventListener("touchstart", (ev) => {
       const te = ev as TouchEvent;
@@ -1537,7 +1502,7 @@ async function ensureTerm() {
   }
   terminalTouchViewport?.addEventListener("touchmove", stopTerminalTouchMove, { passive: true });
   terminalTouchViewport?.addEventListener("scroll", onSelectionViewportScroll);
-  if (touchDebugEnabled && terminalTouchViewport) {
+  if (isTouchDebugEnabled() && terminalTouchViewport) {
     // Log every native scroll event on the viewport so we can see whether
     // scrollTop is being driven by the touch path (xterm.handleTouchMove) or
     // by a snap-to-bottom / restore-position path.

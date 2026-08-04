@@ -42,7 +42,7 @@ import { descriptorsForSlot } from "../plugins/registry";
 import { usePluginConfigStore } from "../plugins/configStore";
 import type { ContextMenuPlugin, MenuItem, PluginContext } from "../plugins/types";
 import { useI18n } from "../i18n/useI18n";
-import { effectiveTemplates, type QuickTemplate } from "../lib/templates";
+import { type QuickTemplate } from "../lib/templates";
 import { effectiveAuxKeys, type AuxKey } from "../lib/auxKeys";
 import {
   installTouchDebugDump,
@@ -51,6 +51,7 @@ import {
   readTouchDebugFlag,
   setTouchDebugEnabled,
 } from "../lib/touchScrollDebug";
+import { useQuickTemplates } from "../composables/useQuickTemplates";
 import { usePlatform } from "../platform";
 import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
@@ -127,12 +128,6 @@ const driverHostname = ref("");
 // client_name in ATTACH and CLAIM_DRIVER so other clients can label us.
 const localHostname = ref("");
 
-// Quick-action templates rendered as a row of buttons above the status bar.
-// effectiveTemplates falls back to DEFAULT_TEMPLATES when persisted list
-// is empty so the bar is never empty on a fresh install.
-const templates = ref<readonly QuickTemplate[]>([]);
-const templatesHidden = ref(false);
-const pendingTemplateConfirm = ref<QuickTemplate | null>(null);
 const auxKeys = ref<readonly AuxKey[]>([]);
 const keyboardWanted = ref(false);
 const imeFocused = ref(false);
@@ -297,10 +292,6 @@ const bottomBarCount = computed(() =>
 );
 const terminalBottom = computed(() => `${bottomBarCount.value * 30}px`);
 const templateBarBottom = computed(() => showAuxKeyBar.value ? "30px" : "0");
-const templateConfirmOpen = computed(() => pendingTemplateConfirm.value !== null);
-const templateConfirmRequired = computed(() =>
-  !(platform.caps.wailsBindings || platform.caps.localPty)
-);
 
 function focusTerminalIfDriver() {
   if (!isDriver.value) return;
@@ -1668,35 +1659,30 @@ function startConnection() {
   }
 }
 
-function sendTemplate(tpl: QuickTemplate) {
-  // Send the text and Enter as two separate writes one tick apart. Codex (and
-  // other raw-mode TUIs) treats a bundled "text\r" payload as a paste — the
-  // trailing CR becomes a literal newline in the prompt instead of submitting.
-  // Same fix landed on the legacy quickInput plugin in #63 before it was
-  // removed; the regression slipped in with the QuickTemplate rewrite.
-  conn?.sendInput(tpl.text);
-  const c = conn;
-  window.setTimeout(() => c?.sendInput("\r"), 16);
-}
-
-function requestTemplateSend(tpl: QuickTemplate) {
-  if (!templateConfirmRequired.value) {
-    sendTemplate(tpl);
-    return;
-  }
-  pendingTemplateConfirm.value = tpl;
-}
-
-function cancelTemplateSend() {
-  pendingTemplateConfirm.value = null;
-}
-
-function confirmTemplateSend() {
-  const tpl = pendingTemplateConfirm.value;
-  pendingTemplateConfirm.value = null;
-  if (!tpl) return;
-  sendTemplate(tpl);
-}
+// Templates + confirm-panel + hotkeys + wheel-scroll live in
+// useQuickTemplates. The send() closure below wraps conn?.sendInput so
+// the composable stays session-transport agnostic; the two-call split
+// for text + CR lives inside sendTemplate (see [[feedback_template_send_split_cr]]).
+const {
+  templates,
+  templatesHidden,
+  pendingTemplateConfirm,
+  templateConfirmOpen,
+  sendTemplate,
+  requestTemplateSend,
+  cancelTemplateSend,
+  confirmTemplateSend,
+  onTemplateHotkey,
+  onTemplateBarWheel,
+  reload: reloadQuickTemplates,
+} = useQuickTemplates({
+  send: (text) => conn?.sendInput(text),
+  confirmRequired: computed(
+    () => !(platform.caps.wailsBindings || platform.caps.localPty),
+  ),
+  focused: () => props.focused,
+  templatesBridge: platform.templates,
+});
 
 function sendAuxPointer(seq: string, event: PointerEvent) {
   if (!shouldSendShortcutPointer(event)) return;
@@ -1822,68 +1808,17 @@ async function onImagePicked(event: Event) {
 // Folding deltaY into scrollLeft gives users a working scroll without
 // reaching for shift. Listener is .passive (we don't preventDefault), so
 // xterm's keyboard/mouse pipeline downstream is untouched.
-function onTemplateBarWheel(e: WheelEvent) {
-  const el = e.currentTarget as HTMLElement | null;
-  if (!el) return;
-  const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
-  if (delta === 0) return;
-  el.scrollLeft += delta;
-}
-
-// Re-read the persisted template list + hidden flag. Wired to the
-// 'quickTemplates:changed' event the Settings page emits so an open
-// terminal updates immediately, without a remount. It also loads aux keys so
-// browser terminals get the same raw control-key row as the mobile shell.
+// Re-read the persisted template list + hidden flag + aux keys. Wired to
+// the 'quickTemplates:changed' / 'mobile:shortcutsChanged' events the
+// Settings page emits so an open terminal updates immediately, without
+// a remount. Delegates templates to reloadQuickTemplates and reloads
+// auxKeys inline (aux keys live in the parent for now).
 async function reloadShortcutBars() {
-  const [nextTemplates, nextAuxKeys, nextHidden] = await Promise.all([
-    effectiveTemplates(platform.templates),
+  const [_, nextAuxKeys] = await Promise.all([
+    reloadQuickTemplates(),
     effectiveAuxKeys(platform.auxKeys),
-    platform.templates.loadHidden(),
   ]);
-  templates.value = nextTemplates;
   auxKeys.value = nextAuxKeys;
-  templatesHidden.value = nextHidden;
-}
-
-// parseHotkey turns a user-typed string like "Mod+1", "Alt+Shift+P", "Mod+/"
-// into modifier flags + a single key. "Mod" maps to ⌘ on macOS, Ctrl elsewhere
-// (matches the shortcuts system convention). Returns null for unparseable input.
-function parseHotkey(s: string): { mod: boolean; alt: boolean; shift: boolean; key: string } | null {
-  if (!s) return null;
-  const parts = s.split("+").map((p) => p.trim()).filter(Boolean);
-  if (parts.length < 2) return null;
-  let mod = false, alt = false, shift = false, key = "";
-  for (const p of parts) {
-    const pl = p.toLowerCase();
-    if (pl === "mod" || pl === "cmd" || pl === "meta" || pl === "ctrl" || pl === "control") mod = true;
-    else if (pl === "alt" || pl === "option") alt = true;
-    else if (pl === "shift") shift = true;
-    else key = p.toLowerCase();
-  }
-  return key ? { mod, alt, shift, key } : null;
-}
-
-function hotkeyMatches(e: KeyboardEvent, h: { mod: boolean; alt: boolean; shift: boolean; key: string }): boolean {
-  const modPressed = isMac() ? e.metaKey : e.ctrlKey;
-  if (h.mod !== modPressed) return false;
-  if (h.alt !== e.altKey) return false;
-  if (h.shift !== e.shiftKey) return false;
-  return e.key.toLowerCase() === h.key;
-}
-
-function onTemplateHotkey(e: KeyboardEvent) {
-  // Only the focused pane responds, so multiple mounted TerminalViews don't
-  // all fire on the same key press.
-  if (!props.focused) return;
-  for (const tpl of templates.value) {
-    const h = parseHotkey(tpl.hotkey || "");
-    if (h && hotkeyMatches(e, h)) {
-      e.preventDefault();
-      e.stopPropagation();
-      sendTemplate(tpl);
-      return;
-    }
-  }
 }
 
 let templatesOff: (() => void) | null = null;

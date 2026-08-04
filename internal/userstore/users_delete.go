@@ -8,7 +8,7 @@ import (
 // DeleteUser hard-deletes userID. Wraps the invitation-null + user-delete
 // pair in a transaction so a partial failure doesn't leave the DB in a
 // half-deleted state.
-func (s *SQLiteStore) DeleteUser(ctx context.Context, userID string) error {
+func (s *DBStore) DeleteUser(ctx context.Context, userID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

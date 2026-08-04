@@ -47,7 +47,7 @@ func newStubFeishu(t *testing.T, sf *stubFeishuServer) *httptest.Server {
 	return srv
 }
 
-func newTestUserStoreWithCipher(t *testing.T) *userstore.SQLiteStore {
+func newTestUserStoreWithCipher(t *testing.T) *userstore.DBStore {
 	t.Helper()
 	key := bytes.Repeat([]byte{0x11}, 32)
 	c, err := userstore.NewSecretCipher(key)
@@ -68,7 +68,7 @@ func ctxWithUser(parent context.Context, userID string) context.Context {
 	return context.WithValue(parent, userCtxKey{}, &userstore.User{ID: userID})
 }
 
-func newFeishuTestHandler(t *testing.T, st *userstore.SQLiteStore, tokenCode int, tokenStr string) (*FeishuHTTPHandler, *httptest.Server) {
+func newFeishuTestHandler(t *testing.T, st *userstore.DBStore, tokenCode int, tokenStr string) (*FeishuHTTPHandler, *httptest.Server) {
 	t.Helper()
 	stub := newStubFeishu(t, &stubFeishuServer{tokenCode: tokenCode, tokenStr: tokenStr})
 	svc := feishu.NewService(feishu.ServiceConfig{
@@ -521,7 +521,7 @@ func TestFeishuHTTP_RelayToken_Unauthorized(t *testing.T) {
 // assert every authenticated session route — including relay-token — is
 // mounted by checking none of them 404 without a token.
 func TestFeishuRoutesRegisteredOnMux(t *testing.T) {
-	srv, _, _ := serverWithSessionAndUser(t) // Store is *SQLiteStore → feishu routes register
+	srv, _, _ := serverWithSessionAndUser(t) // Store is *DBStore → feishu routes register
 
 	routes := []struct {
 		method string

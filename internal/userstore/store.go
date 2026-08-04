@@ -30,11 +30,6 @@ type DBStore struct {
 	cipher atomic.Pointer[SecretCipher]
 }
 
-// SQLiteStore is the historical name for DBStore, kept as an alias so the
-// many callers that reference *userstore.SQLiteStore keep compiling.
-// TODO(cleanup): migrate callers to DBStore / the Store interface.
-type SQLiteStore = DBStore
-
 // OpenOption is a functional option for Open.
 type OpenOption func(*DBStore)
 
@@ -42,21 +37,21 @@ type OpenOption func(*DBStore)
 // (e.g. Feishu app_secret). Must be set with a non-nil cipher before any
 // Feishu CRUD methods are used.
 func WithSecretCipher(c *SecretCipher) OpenOption {
-	return func(s *SQLiteStore) { s.cipher.Store(c) }
+	return func(s *DBStore) { s.cipher.Store(c) }
 }
 
 // SetSecretCipher swaps the field-encryption cipher at runtime. Pass a
 // non-nil cipher to enable Feishu CRUD, or nil to disable it. Safe to call
 // concurrently with Feishu reads/writes (they snapshot the pointer once).
-func (s *SQLiteStore) SetSecretCipher(c *SecretCipher) { s.cipher.Store(c) }
+func (s *DBStore) SetSecretCipher(c *SecretCipher) { s.cipher.Store(c) }
 
 // HasSecretCipher reports whether a field-encryption cipher is configured.
-func (s *SQLiteStore) HasSecretCipher() bool { return s.cipher.Load() != nil }
+func (s *DBStore) HasSecretCipher() bool { return s.cipher.Load() != nil }
 
 // Open opens (or creates) the SQLite database at path and runs any pending
 // migrations. Pass ":memory:" for tests. WAL mode is enabled on file-backed
 // databases; tests against ":memory:" fall back to the default journal.
-func Open(ctx context.Context, path string, opts ...OpenOption) (*SQLiteStore, error) {
+func Open(ctx context.Context, path string, opts ...OpenOption) (*DBStore, error) {
 	dsn := path
 	if path != ":memory:" {
 		dsn = path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
@@ -72,7 +67,7 @@ func Open(ctx context.Context, path string, opts ...OpenOption) (*SQLiteStore, e
 		db.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	s := &SQLiteStore{db: db, dia: dialectSQLite}
+	s := &DBStore{db: db, dia: dialectSQLite}
 	for _, o := range opts {
 		o(s)
 	}
@@ -110,7 +105,7 @@ func OpenPostgres(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore
 	return s, nil
 }
 
-func (s *SQLiteStore) Close() error { return s.db.Close() }
+func (s *DBStore) Close() error { return s.db.Close() }
 
 // OpenFromDSN opens a store from a scheme-tagged DSN:
 //   - "postgres://..." or "postgresql://..."  → Postgres
@@ -134,7 +129,7 @@ func OpenFromDSN(ctx context.Context, dsn string, opts ...OpenOption) (*DBStore,
 
 // DB returns the underlying sql.DB. Only used in tests that need direct
 // SQL access to verify internal state. Not part of the Store interface.
-func (s *SQLiteStore) DB() *sql.DB { return s.db }
+func (s *DBStore) DB() *sql.DB { return s.db }
 
 // Store is the dependency-inversion seam between internal/relay and the
 // concrete SQLite implementation. Tests in internal/relay can substitute
@@ -237,7 +232,7 @@ type Store interface {
 
 func nowUnix() int64 { return time.Now().Unix() }
 
-func (s *SQLiteStore) migrate(ctx context.Context) error {
+func (s *DBStore) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at BIGINT NOT NULL
@@ -292,7 +287,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	return nil
 }
 
-func (s *SQLiteStore) migrationSeen(ctx context.Context, name string) (bool, error) {
+func (s *DBStore) migrationSeen(ctx context.Context, name string) (bool, error) {
 	names := equivalentMigrationNames(name)
 	placeholders := make([]string, len(names))
 	args := make([]any, len(names))
@@ -308,7 +303,7 @@ func (s *SQLiteStore) migrationSeen(ctx context.Context, name string) (bool, err
 	return seen > 0, err
 }
 
-func (s *SQLiteStore) recordMigration(ctx context.Context, name string) error {
+func (s *DBStore) recordMigration(ctx context.Context, name string) error {
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`INSERT INTO schema_migrations(name, applied_at) VALUES(?, ?) ON CONFLICT(name) DO NOTHING`),
 		name, time.Now().Unix())

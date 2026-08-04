@@ -64,7 +64,7 @@ type OpaqueServer struct {
 // reloads the persisted material verbatim. The returned *OpaqueServer is
 // safe to share across goroutines because it holds only immutable bytes;
 // per-request *opaque.Server instances come from newServer().
-func LoadOrInitOpaqueServer(ctx context.Context, store *userstore.SQLiteStore) (*OpaqueServer, error) {
+func LoadOrInitOpaqueServer(ctx context.Context, store *userstore.DBStore) (*OpaqueServer, error) {
 	conf := opaquesuite.Config()
 
 	state, err := store.GetOpaqueServerState(ctx)

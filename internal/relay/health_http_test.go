@@ -43,7 +43,7 @@ func TestIsMobileOriginCompatible(t *testing.T) {
 // newTestStoreForRelay opens an in-memory userstore for relay tests.
 // (helper colocated here because health tests are the first relay tests
 // that need an in-process store outside the AuthServer test harness.)
-func newTestStoreForRelay(t *testing.T) *userstore.SQLiteStore {
+func newTestStoreForRelay(t *testing.T) *userstore.DBStore {
 	t.Helper()
 	store, err := userstore.Open(context.Background(), ":memory:")
 	if err != nil {
@@ -158,7 +158,7 @@ func TestHealthz_Public_NoAuthRequired(t *testing.T) {
 
 // findUserByEmail iterates ListUsers to find a user by email; used in
 // place of a dedicated GetUserByEmail (which the userstore does not expose).
-func findUserByEmail(t *testing.T, store *userstore.SQLiteStore, email string) *userstore.User {
+func findUserByEmail(t *testing.T, store *userstore.DBStore, email string) *userstore.User {
 	t.Helper()
 	users, err := store.ListUsers(context.Background())
 	if err != nil {

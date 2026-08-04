@@ -227,7 +227,7 @@ func TestWebPushHTTP_RequiresUserPrincipal(t *testing.T) {
 func TestWebPushHTTP_KeysSubscriptionByUserID(t *testing.T) {
 	srv, svc, tokA, userAID := newWebPushTestServer(t)
 	// Mint a second user/session to confirm subscriptions don't bleed across.
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 	userB, _ := store.CreateOpaqueUser(context.Background(), "userb@example.com")
 
 	body := `{"endpoint":"https://push.example/userA","keys":{"p256dh":"AAECAwQFBgcICQoLDA0ODw","auth":"AAECAwQFBgcICQoLDA0ODw"}}`

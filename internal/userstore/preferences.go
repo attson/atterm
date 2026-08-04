@@ -45,7 +45,7 @@ var ErrInvalidPreferenceValue = fmt.Errorf("invalid preference value")
 
 // GetUserPreferences returns all preference rows for the user. Empty
 // slice if the user has never synced. Order is unspecified.
-func (s *SQLiteStore) GetUserPreferences(ctx context.Context, userID string) ([]PreferenceItem, error) {
+func (s *DBStore) GetUserPreferences(ctx context.Context, userID string) ([]PreferenceItem, error) {
 	rows, err := s.db.QueryContext(ctx,
 		s.dia.Rebind(`SELECT key, value_json, updated_at FROM user_preferences WHERE user_id = ?`),
 		userID,
@@ -81,7 +81,7 @@ func (s *SQLiteStore) GetUserPreferences(ctx context.Context, userID string) ([]
 //
 // Returns the full current state for every key the user has after the
 // operation (including keys not in the input).
-func (s *SQLiteStore) SetUserPreferences(
+func (s *DBStore) SetUserPreferences(
 	ctx context.Context,
 	userID string,
 	serverNowMs int64,

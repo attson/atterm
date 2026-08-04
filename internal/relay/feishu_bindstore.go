@@ -9,11 +9,11 @@ import (
 	"github.com/attson/atterm/internal/userstore"
 )
 
-// feishuBindStore adapts *userstore.SQLiteStore to feishu.BindingStore.
-type feishuBindStore struct{ st *userstore.SQLiteStore }
+// feishuBindStore adapts *userstore.DBStore to feishu.BindingStore.
+type feishuBindStore struct{ st *userstore.DBStore }
 
 // NewFeishuBindStore wraps a userstore for feishu.Service consumption.
-func NewFeishuBindStore(st *userstore.SQLiteStore) feishu.BindingStore {
+func NewFeishuBindStore(st *userstore.DBStore) feishu.BindingStore {
 	return &feishuBindStore{st: st}
 }
 

@@ -75,7 +75,7 @@ type Config struct {
 	// LoadOrInitOpaqueServer.
 	OpaqueServer *OpaqueServer
 	// Feishu, when non-nil, mounts the /v1/feishu/* routes. Requires Store
-	// to be a *userstore.SQLiteStore with a cipher configured. Nil → routes
+	// to be a *userstore.DBStore with a cipher configured. Nil → routes
 	// are not registered and any /v1/feishu/* request returns 404.
 	Feishu *feishu.Service
 	// BootstrapAdminEmail is ATTERM_BOOTSTRAP_ADMIN_EMAIL. Drives the
@@ -177,7 +177,7 @@ func NewServer(cfg Config) *Server {
 	// present, then gated on the runtime handler so the admin API can enable
 	// or disable the integration without a restart. /v1/feishu/events/{hash}
 	// is unauthenticated (signed by encrypt_key).
-	if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
+	if sqliteStore, ok := cfg.Store.(*userstore.DBStore); ok {
 		s.mux.HandleFunc("/v1/feishu/bindings/me", s.requireSession(s.serveFeishuSession))
 		s.mux.HandleFunc("/v1/feishu/bindings/me/begin-pair", s.requireSession(s.serveFeishuSession))
 		s.mux.HandleFunc("/v1/feishu/relay-token/me", s.requireSession(s.serveFeishuSession))
@@ -219,7 +219,7 @@ func NewServer(cfg Config) *Server {
 		// OPAQUE routes unmounted; there is no longer any legacy
 		// password fallback.
 		if cfg.OpaqueServer != nil {
-			if sqliteStore, ok := cfg.Store.(*userstore.SQLiteStore); ok {
+			if sqliteStore, ok := cfg.Store.(*userstore.DBStore); ok {
 				opaqueAuth := NewOpaqueAuthHandler(sqliteStore, cfg.OpaqueServer, cfg.BootstrapAdminEmail, cfg.RealmID, cfg.InstancePublicURL)
 				opaqueAuth.Register(s.mux)
 			}
@@ -291,10 +291,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // this so its uplink can subscribe to local mini-relay sessions by id.
 func (s *Server) Registry() *session.Registry { return s.registry }
 
-// Store returns the underlying SQLiteStore. Test-only convenience; panics
+// Store returns the underlying DBStore. Test-only convenience; panics
 // if the server was constructed without a store or with a non-SQLite store.
-func (s *Server) Store() *userstore.SQLiteStore {
-	return s.cfg.Store.(*userstore.SQLiteStore)
+func (s *Server) Store() *userstore.DBStore {
+	return s.cfg.Store.(*userstore.DBStore)
 }
 
 // removeSession removes a session from the registry and prunes any per-user
@@ -402,9 +402,9 @@ func (s *Server) FeishuEnabled() bool { return s.feishu.handler.Load() != nil }
 // When enabling, key must be 32 bytes: it sets the store's field-encryption
 // cipher and attaches a fresh handler. When disabling, it detaches the
 // handler first, then clears the cipher (so in-flight requests that already
-// snapshotted the cipher finish safely). Requires a *userstore.SQLiteStore.
+// snapshotted the cipher finish safely). Requires a *userstore.DBStore.
 func (s *Server) ApplyFeishuConfig(enabled bool, key []byte, baseURL string) error {
-	store, ok := s.cfg.Store.(*userstore.SQLiteStore)
+	store, ok := s.cfg.Store.(*userstore.DBStore)
 	if !ok {
 		return errors.New("feishu requires a SQLite store")
 	}
@@ -427,7 +427,7 @@ func (s *Server) ApplyFeishuConfig(enabled bool, key []byte, baseURL string) err
 // buildFeishuService constructs a Feishu service bound to store. Mirrors the
 // startup wiring so both the bootstrap and the admin hot-apply path share one
 // definition. An empty baseURL falls back to Feishu's public endpoint.
-func buildFeishuService(store *userstore.SQLiteStore, baseURL string) *feishu.Service {
+func buildFeishuService(store *userstore.DBStore, baseURL string) *feishu.Service {
 	if baseURL == "" {
 		baseURL = "https://open.feishu.cn"
 	}

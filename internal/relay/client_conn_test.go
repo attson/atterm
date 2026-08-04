@@ -121,9 +121,9 @@ func writeClientFrame(t *testing.T, ctx context.Context, c *websocket.Conn, typ 
 	}
 }
 
-// newClientTestStore creates an in-memory SQLiteStore, two users (A and B),
+// newClientTestStore creates an in-memory DBStore, two users (A and B),
 // and a session token for each. Returns store, userAID, tokenA, userBID, tokenB.
-func newClientTestStore(t *testing.T) (store *userstore.SQLiteStore, userAID, tokenA, userBID, tokenB string) {
+func newClientTestStore(t *testing.T) (store *userstore.DBStore, userAID, tokenA, userBID, tokenB string) {
 	t.Helper()
 	ctx := context.Background()
 	var err error

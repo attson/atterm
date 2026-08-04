@@ -33,7 +33,7 @@ func deleteMeReq(body any, token, stepUpUserID string) *http.Request {
 
 func TestDeleteMe_Success(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
@@ -50,7 +50,7 @@ func TestDeleteMe_Success(t *testing.T) {
 
 func TestDeleteMe_WrongEmail_400(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, deleteMeReq(map[string]string{
@@ -72,7 +72,7 @@ func TestDeleteMe_WrongEmail_400(t *testing.T) {
 
 func TestDeleteMe_LastAdmin_409(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 	if err := store.SetUserAdmin(context.Background(), userID, true); err != nil {
 		t.Fatalf("setup: SetUserAdmin: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDeleteMe_LastAdmin_409(t *testing.T) {
 
 func TestDeleteMe_EmailCaseInsensitive(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	// Email typed with different case must still match. Helper creates "a@b".
 	rec := httptest.NewRecorder()
@@ -119,7 +119,7 @@ func TestDeleteMe_EmailCaseInsensitive(t *testing.T) {
 // user to run the OPAQUE step-up handshake first.
 func TestDeleteMe_MissingStepUpToken_401(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	rec := httptest.NewRecorder()
 	// stepUpUserID == "" intentionally omits the header.
@@ -143,7 +143,7 @@ func TestDeleteMe_MissingStepUpToken_401(t *testing.T) {
 // forgot to do it".
 func TestDeleteMe_InvalidStepUpToken_401(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 
 	// Hand-craft a request with a clearly invalid step-up token.
 	b, _ := json.Marshal(map[string]string{"email": "a@b"})
@@ -169,7 +169,7 @@ func TestDeleteMe_InvalidStepUpToken_401(t *testing.T) {
 
 func TestDeleteMe_AdminButNotLast_Succeeds(t *testing.T) {
 	srv, tok, userID := serverWithAuthAndSession(t)
-	store := srv.cfg.Store.(*userstore.SQLiteStore)
+	store := srv.cfg.Store.(*userstore.DBStore)
 	if err := store.SetUserAdmin(context.Background(), userID, true); err != nil {
 		t.Fatalf("setup: SetUserAdmin for first admin: %v", err)
 	}

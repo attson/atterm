@@ -23,7 +23,7 @@ func mustTestCipher() *SecretCipher {
 
 // NewInMemory opens an in-memory sqlite store and runs migrations. Intended
 // for tests in other packages (e.g. internal/relay) that need a real store.
-func NewInMemory(t *testing.T) *SQLiteStore {
+func NewInMemory(t *testing.T) *DBStore {
 	t.Helper()
 	s, err := Open(context.Background(), ":memory:")
 	if err != nil {

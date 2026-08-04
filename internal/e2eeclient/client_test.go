@@ -12,7 +12,7 @@ import (
 
 // newRelay spins up an in-process atterm-relay HTTP server with the OPAQUE
 // handler mounted at the same paths the SDK targets.
-func newRelay(t *testing.T) (*httptest.Server, *userstore.SQLiteStore) {
+func newRelay(t *testing.T) (*httptest.Server, *userstore.DBStore) {
 	t.Helper()
 	store := userstore.NewInMemory(t)
 	opaqueSrv, err := relay.LoadOrInitOpaqueServer(context.Background(), store)

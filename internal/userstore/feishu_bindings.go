@@ -49,7 +49,7 @@ func hashAppID(appID string) string {
 // nil cipher (Feishu disabled) yields a clear error. Callers reuse the
 // returned local so a concurrent SetSecretCipher(nil) can't turn the cipher
 // nil between successive Encrypt/Decrypt calls within one method.
-func (s *SQLiteStore) loadCipher() (*SecretCipher, error) {
+func (s *DBStore) loadCipher() (*SecretCipher, error) {
 	c := s.cipher.Load()
 	if c == nil {
 		return nil, fmt.Errorf("userstore: feishu not enabled (no secret cipher configured)")
@@ -60,7 +60,7 @@ func (s *SQLiteStore) loadCipher() (*SecretCipher, error) {
 // UpsertFeishuBinding inserts or replaces the row for userID. open_id /
 // bound_at / disabled_at are preserved on upsert (only credentials are
 // rewritten).
-func (s *SQLiteStore) UpsertFeishuBinding(ctx context.Context, userID string, c FeishuBindingCredentials) error {
+func (s *DBStore) UpsertFeishuBinding(ctx context.Context, userID string, c FeishuBindingCredentials) error {
 	cipher, err := s.loadCipher()
 	if err != nil {
 		return err
@@ -110,21 +110,21 @@ const feishuBindingSelectCols = `user_id, app_id_hash, app_id_enc, app_secret_en
         COALESCE(open_id, ''), COALESCE(bound_at, 0), COALESCE(disabled_at, 0), created_at,
         COALESCE(remote_terminal_enabled, 0), COALESCE(session_auto_attach, 'ai')`
 
-func (s *SQLiteStore) GetFeishuBinding(ctx context.Context, userID string) (*FeishuBinding, error) {
+func (s *DBStore) GetFeishuBinding(ctx context.Context, userID string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
 		`SELECT `+feishuBindingSelectCols+` FROM feishu_bindings WHERE user_id = ?`,
 		userID,
 	)
 }
 
-func (s *SQLiteStore) GetFeishuBindingByAppIDHash(ctx context.Context, hash string) (*FeishuBinding, error) {
+func (s *DBStore) GetFeishuBindingByAppIDHash(ctx context.Context, hash string) (*FeishuBinding, error) {
 	return s.getFeishuBinding(ctx,
 		`SELECT `+feishuBindingSelectCols+` FROM feishu_bindings WHERE app_id_hash = ?`,
 		hash,
 	)
 }
 
-func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string) (*FeishuBinding, error) {
+func (s *DBStore) getFeishuBinding(ctx context.Context, q string, arg string) (*FeishuBinding, error) {
 	cipher, err := s.loadCipher()
 	if err != nil {
 		return nil, err
@@ -170,7 +170,7 @@ func (s *SQLiteStore) getFeishuBinding(ctx context.Context, q string, arg string
 
 // SetRemoteTerminalSettings updates the master switch and autoAttach mode
 // for an existing binding. autoAttach must be one of "ai", "all", "none".
-func (s *SQLiteStore) SetRemoteTerminalSettings(ctx context.Context, userID string, enabled bool, autoAttach string) error {
+func (s *DBStore) SetRemoteTerminalSettings(ctx context.Context, userID string, enabled bool, autoAttach string) error {
 	switch autoAttach {
 	case "ai", "all", "none":
 	default:
@@ -196,7 +196,7 @@ func (s *SQLiteStore) SetRemoteTerminalSettings(ctx context.Context, userID stri
 	return nil
 }
 
-func (s *SQLiteStore) MarkFeishuBindingBound(ctx context.Context, userID, openID string) error {
+func (s *DBStore) MarkFeishuBindingBound(ctx context.Context, userID, openID string) error {
 	now := time.Now().Unix()
 	res, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`UPDATE feishu_bindings SET open_id = ?, bound_at = ? WHERE user_id = ?`),
@@ -212,7 +212,7 @@ func (s *SQLiteStore) MarkFeishuBindingBound(ctx context.Context, userID, openID
 	return nil
 }
 
-func (s *SQLiteStore) MarkFeishuBindingDisabled(ctx context.Context, userID string) error {
+func (s *DBStore) MarkFeishuBindingDisabled(ctx context.Context, userID string) error {
 	now := time.Now().Unix()
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`UPDATE feishu_bindings SET disabled_at = ? WHERE user_id = ?`), now, userID)
@@ -222,7 +222,7 @@ func (s *SQLiteStore) MarkFeishuBindingDisabled(ctx context.Context, userID stri
 	return nil
 }
 
-func (s *SQLiteStore) ClearFeishuBindingDisabled(ctx context.Context, userID string) error {
+func (s *DBStore) ClearFeishuBindingDisabled(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`UPDATE feishu_bindings SET disabled_at = NULL WHERE user_id = ?`), userID)
 	if err != nil {
@@ -231,7 +231,7 @@ func (s *SQLiteStore) ClearFeishuBindingDisabled(ctx context.Context, userID str
 	return nil
 }
 
-func (s *SQLiteStore) DeleteFeishuBinding(ctx context.Context, userID string) error {
+func (s *DBStore) DeleteFeishuBinding(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`DELETE FROM feishu_bindings WHERE user_id = ?`), userID)
 	if err != nil {

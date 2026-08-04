@@ -42,7 +42,7 @@ type AccountKeyWrap struct {
 // GetAccountKeyWrap loads the wrap blob for (userID, method). Returns
 // ErrAccountKeyWrapMissing when the row does not exist; callers surface
 // this as a 404 to the client.
-func (s *SQLiteStore) GetAccountKeyWrap(ctx context.Context, userID, method string) (AccountKeyWrap, error) {
+func (s *DBStore) GetAccountKeyWrap(ctx context.Context, userID, method string) (AccountKeyWrap, error) {
 	var (
 		w         AccountKeyWrap
 		createdAt int64
@@ -63,7 +63,7 @@ func (s *SQLiteStore) GetAccountKeyWrap(ctx context.Context, userID, method stri
 
 // StoreAccountKeyWrap upserts the wrap blob for (userID, method). The
 // relay does not validate KDFParams or blob contents — see spec §4.5.
-func (s *SQLiteStore) StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap) error {
+func (s *DBStore) StoreAccountKeyWrap(ctx context.Context, w AccountKeyWrap) error {
 	if w.CreatedAt.IsZero() {
 		w.CreatedAt = time.Now()
 	}
@@ -96,7 +96,7 @@ type OpaqueServerState struct {
 
 // GetOpaqueServerState loads the singleton opaque_server_state row.
 // Returns ErrOpaqueStateMissing when the table is empty (first boot).
-func (s *SQLiteStore) GetOpaqueServerState(ctx context.Context) (OpaqueServerState, error) {
+func (s *DBStore) GetOpaqueServerState(ctx context.Context) (OpaqueServerState, error) {
 	var (
 		seed, sk, pk []byte
 		suite        string
@@ -124,7 +124,7 @@ func (s *SQLiteStore) GetOpaqueServerState(ctx context.Context) (OpaqueServerSta
 // StoreOpaqueServerState upserts the singleton opaque_server_state row.
 // Subsequent calls overwrite the previous values — there is no migration
 // path for OPRF/AKE rotation in v1 (see feedback_no_backward_compat).
-func (s *SQLiteStore) StoreOpaqueServerState(ctx context.Context, st OpaqueServerState) error {
+func (s *DBStore) StoreOpaqueServerState(ctx context.Context, st OpaqueServerState) error {
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`INSERT INTO opaque_server_state(id, oprf_seed, server_ake_sk, server_ake_pk, suite, created_at)
 		 VALUES (1, ?, ?, ?, ?, ?)
@@ -145,7 +145,7 @@ func (s *SQLiteStore) StoreOpaqueServerState(ctx context.Context, st OpaqueServe
 // time. Returns ErrOpaqueRecordMissing when no row exists. Callers MUST
 // keep error reporting opaque to clients (login flow returns a generic
 // credentials-invalid response either way).
-func (s *SQLiteStore) GetOpaqueRecord(ctx context.Context, userID string) ([]byte, error) {
+func (s *DBStore) GetOpaqueRecord(ctx context.Context, userID string) ([]byte, error) {
 	var rec []byte
 	err := s.db.QueryRowContext(ctx,
 		s.dia.Rebind(`SELECT record FROM user_opaque_records WHERE user_id = ?`), userID).Scan(&rec)
@@ -161,7 +161,7 @@ func (s *SQLiteStore) GetOpaqueRecord(ctx context.Context, userID string) ([]byt
 // StoreOpaqueRecord upserts the OPAQUE envelope for userID. Called from
 // RegisterFinalize on first registration, or on a password-change flow
 // that rotates the envelope (re-registration semantics in v1).
-func (s *SQLiteStore) StoreOpaqueRecord(ctx context.Context, userID string, record []byte) error {
+func (s *DBStore) StoreOpaqueRecord(ctx context.Context, userID string, record []byte) error {
 	now := time.Now().Unix()
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`INSERT INTO user_opaque_records(user_id, record, created_at)

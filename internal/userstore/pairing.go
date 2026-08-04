@@ -50,7 +50,7 @@ func pairingHash(plaintext string) string {
 //
 // Plaintext format: "pair_" + base64url-no-padding(32 random bytes) ≈ 47 chars.
 // wrap may be nil; when non-nil, stored verbatim in wrapped_account_key.
-func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl time.Duration, wrap []byte) (Secret, *PairingToken, error) {
+func (s *DBStore) CreatePairingToken(ctx context.Context, userID string, ttl time.Duration, wrap []byte) (Secret, *PairingToken, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return Secret{}, nil, fmt.Errorf("rand: %w", err)
@@ -91,7 +91,7 @@ func (s *SQLiteStore) CreatePairingToken(ctx context.Context, userID string, ttl
 // Concurrency: the atomic UPDATE with the consumed_at IS NULL guard makes
 // "exactly one consumer wins"; the rest get ErrPairingConsumed even if they
 // pass the validity check on the read row.
-func (s *SQLiteStore) ConsumePairingToken(ctx context.Context, plaintext string) (*User, []byte, error) {
+func (s *DBStore) ConsumePairingToken(ctx context.Context, plaintext string) (*User, []byte, error) {
 	hash := pairingHash(plaintext)
 
 	var (

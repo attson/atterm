@@ -37,7 +37,7 @@ type relayHost struct {
 	server       *relay.Server
 	httpSrv      *http.Server
 	store        userstore.Store        // closed on Stop()
-	sqliteStore  *userstore.SQLiteStore // concrete type for Feishu binding lookup
+	sqliteStore  *userstore.DBStore // concrete type for Feishu binding lookup
 
 	hostID string
 	host   string

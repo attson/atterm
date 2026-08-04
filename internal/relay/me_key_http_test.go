@@ -14,7 +14,7 @@ import (
 
 // withWrap seeds the store with a password-method wrap for userID. Returns
 // the wrap so tests can compare what comes back over the wire.
-func withWrap(t *testing.T, store *userstore.SQLiteStore, userID string) userstore.AccountKeyWrap {
+func withWrap(t *testing.T, store *userstore.DBStore, userID string) userstore.AccountKeyWrap {
 	t.Helper()
 	wrap := userstore.AccountKeyWrap{
 		UserID:    userID,

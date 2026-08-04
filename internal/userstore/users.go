@@ -36,7 +36,7 @@ type User struct {
 // constraint. Returns ErrEmailTaken on uniqueness conflict so callers
 // can surface 409 consistently. We reuse the existing ULID generator
 // (defaultIDs) so user IDs stay homogeneous.
-func (s *SQLiteStore) CreateOpaqueUser(ctx context.Context, email string) (*User, error) {
+func (s *DBStore) CreateOpaqueUser(ctx context.Context, email string) (*User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	id := defaultIDs.New()
 	now := time.Now()
@@ -63,7 +63,7 @@ func (s *SQLiteStore) CreateOpaqueUser(ctx context.Context, email string) (*User
 // matches. Used by the OPAQUE login init path which needs (a) the
 // user_id to look up the stored RegistrationRecord and (b) the
 // auth_mode to gate the flow.
-func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+func (s *DBStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	var (
 		id         string
@@ -95,7 +95,7 @@ func (s *SQLiteStore) GetUserByEmail(ctx context.Context, email string) (*User, 
 }
 
 // GetUser by id; returns ErrUserNotFound if missing.
-func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
+func (s *DBStore) GetUser(ctx context.Context, id string) (*User, error) {
 	var (
 		email      string
 		createdAt  int64
@@ -124,7 +124,7 @@ func (s *SQLiteStore) GetUser(ctx context.Context, id string) (*User, error) {
 }
 
 // DisableUser sets disabled_at = now. Idempotent.
-func (s *SQLiteStore) DisableUser(ctx context.Context, id string) error {
+func (s *DBStore) DisableUser(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`UPDATE users SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL`),
 		time.Now().Unix(), id)
@@ -132,7 +132,7 @@ func (s *SQLiteStore) DisableUser(ctx context.Context, id string) error {
 }
 
 // ListUsers returns all users ordered by created_at descending (newest first).
-func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
+func (s *DBStore) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
 		s.dia.Rebind(`SELECT id, email, created_at, disabled_at, is_admin FROM users ORDER BY created_at DESC`))
 	if err != nil {

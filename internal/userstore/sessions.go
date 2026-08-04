@@ -53,7 +53,7 @@ func SessionHash(plaintext string) string { return sessionHash(plaintext) }
 //
 // ttl is the lifetime; pass <=0 for an already-expired row (useful for
 // tests).
-func (s *SQLiteStore) CreateSession(ctx context.Context, userID, userAgent, ipPrefix string, ttl time.Duration) (string, *Session, error) {
+func (s *DBStore) CreateSession(ctx context.Context, userID, userAgent, ipPrefix string, ttl time.Duration) (string, *Session, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, fmt.Errorf("rand: %w", err)
@@ -90,7 +90,7 @@ func (s *SQLiteStore) CreateSession(ctx context.Context, userID, userAgent, ipPr
 // disabled, and returns both the *Session and the joined *User on success.
 //
 // Returns ErrSessionInvalid for any invalid-session condition.
-func (s *SQLiteStore) LookupSession(ctx context.Context, plaintext string) (*Session, *User, error) {
+func (s *DBStore) LookupSession(ctx context.Context, plaintext string) (*Session, *User, error) {
 	hash := sessionHash(plaintext)
 	nowMs := time.Now().UnixMilli()
 
@@ -152,7 +152,7 @@ func (s *SQLiteStore) LookupSession(ctx context.Context, plaintext string) (*Ses
 
 // DeleteSession removes the session identified by the plaintext token value.
 // Subsequent lookups will return ErrSessionInvalid.
-func (s *SQLiteStore) DeleteSession(ctx context.Context, plaintext string) error {
+func (s *DBStore) DeleteSession(ctx context.Context, plaintext string) error {
 	hash := sessionHash(plaintext)
 	_, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`DELETE FROM sessions WHERE id_hash = ?`), hash,
@@ -166,7 +166,7 @@ func (s *SQLiteStore) DeleteSession(ctx context.Context, plaintext string) error
 // PurgeExpiredSessions deletes all sessions whose expires_at is in the past.
 // Returns the number of rows deleted. Called by the background purge
 // goroutine.
-func (s *SQLiteStore) PurgeExpiredSessions(ctx context.Context) (int64, error) {
+func (s *DBStore) PurgeExpiredSessions(ctx context.Context) (int64, error) {
 	nowMs := time.Now().UnixMilli()
 	res, err := s.db.ExecContext(ctx,
 		s.dia.Rebind(`DELETE FROM sessions WHERE expires_at < ?`), nowMs,

@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// createTestUser is a thin wrapper around (*SQLiteStore).CreateOpaqueUser
+// createTestUser is a thin wrapper around (*DBStore).CreateOpaqueUser
 // used by sessions tests. The password argument is ignored — sessions
 // tests only need a user row to exist, not real credentials. Retaining
 // the password parameter keeps callsites mechanical to migrate while the
 // signature contract stays predictable.
-func createTestUser(t *testing.T, st *SQLiteStore, email, _ string) (*User, error) {
+func createTestUser(t *testing.T, st *DBStore, email, _ string) (*User, error) {
 	t.Helper()
 	return st.CreateOpaqueUser(context.Background(), email)
 }

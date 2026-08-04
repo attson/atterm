@@ -31,3 +31,4 @@
 desktop/hookinstall/atterm-hook
 # wails dev project-local data dir (config/recovery/db/cache/logs)
 .atterm-dev/
+.claude/

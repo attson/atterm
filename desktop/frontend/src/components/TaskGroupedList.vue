@@ -521,9 +521,13 @@ function stateLabel(state: string | undefined): string {
           class="mark-all"
           data-test="host-mark-all"
           :title="t('tasks.markAllRead')"
+          :aria-label="t('tasks.markAllRead')"
           @click.stop="onMarkGroup(key)"
         >
-          ✓
+          <!-- ✓ (U+2713) renders as .notdef on iOS 26.3. -->
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 8 l3 3 l7 -7" />
+          </svg>
         </button>
       </header>
       <button

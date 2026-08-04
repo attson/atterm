@@ -4,19 +4,26 @@ import TaskStateIcon from "./TaskStateIcon.vue";
 import { presets } from "../lib/taskState";
 
 describe("TaskStateIcon", () => {
-  test("renders the glyph for a static state", () => {
+  test("renders the SVG shape for a static state", () => {
+    // Icons are now pure SVG (no text glyphs) — iOS 26.3 was rendering the
+    // legacy ◐ / ✓ / ✗ / · unicode symbols as .notdef "?" boxes because
+    // the CJK-first font stack couldn't resolve them.
     const w = mount(TaskStateIcon, {
       props: { state: "waiting_input", preset: presets.iconOnly },
     });
-    expect(w.text()).toContain("◐");
+    expect(w.find(`[data-state="waiting_input"]`).exists()).toBe(true);
+    // waiting_input renders a circle outline + a half-fill path.
+    expect(w.find("svg circle").exists()).toBe(true);
+    expect(w.find("svg path").exists()).toBe(true);
     expect(w.attributes("style")).toContain("color: rgb(245, 158, 11)"); // #f59e0b
   });
   test("renders an SVG spinner for running", () => {
     const w = mount(TaskStateIcon, {
       props: { state: "running", preset: presets.iconOnly },
     });
-    expect(w.find("svg.task-spinner").exists()).toBe(true);
-    expect(w.find("svg.task-spinner").attributes("style")).toContain(
+    // Spinner is now a <path class="task-spinner"> inside the shared <svg>.
+    expect(w.find("path.task-spinner").exists()).toBe(true);
+    expect(w.find("path.task-spinner").attributes("style")).toContain(
       "animation-duration: 1500ms",
     );
   });
@@ -27,8 +34,8 @@ describe("TaskStateIcon", () => {
     const b = mount(TaskStateIcon, {
       props: { state: "running", preset: presets.iconLabel },
     });
-    expect(a.find("svg.task-spinner").attributes("style")).toContain("1500ms");
-    expect(b.find("svg.task-spinner").attributes("style")).toContain("1500ms");
+    expect(a.find("path.task-spinner").attributes("style")).toContain("1500ms");
+    expect(b.find("path.task-spinner").attributes("style")).toContain("1500ms");
   });
   test("waiting_input pulses in both presets", () => {
     const a = mount(TaskStateIcon, {

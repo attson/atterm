@@ -211,7 +211,10 @@ describe("TabBar state icon + unread", () => {
       props: { tabs: [tab], currentId: "t1", starting: false },
     });
     expect(w.find(".task-state-icon").exists()).toBe(true);
-    expect(w.find(".task-state-icon").text()).toContain("◐");
+    // Icons are now SVG (iOS 26.3 dropped the ◐ text glyph). Verify the
+    // task state is exposed via data-state so we can assert on it stably.
+    expect(w.find(`.task-state-icon[data-state="waiting_input"]`).exists()).toBe(true);
+    expect(w.find(".task-state-icon svg").exists()).toBe(true);
   });
 
   test("renders unread dot when activeSession.unread is true", () => {

@@ -13,7 +13,6 @@ export interface TaskStatePreset {
   id: PresetId;
   i18nKey: string; // tasks.preset.<id>
   colorOf(state: TaskState): string;
-  glyphOf(state: TaskState): "spinner" | string;
   spinnerDurationMs(state: TaskState): number;
   animatePulse(state: TaskState): boolean;
   textOpacity: number;
@@ -34,22 +33,16 @@ const COLORS: Record<TaskState, string> = {
   closed: "#6b7280",
 };
 
-const GLYPHS: Record<TaskState, "spinner" | string> = {
-  idle: "·",
-  running: "spinner",
-  waiting_input: "◐",
-  completed: "✓",
-  failed: "✗",
-  disconnected: "·",
-  closed: "·",
-};
+// Glyph shape is not on the preset — TaskStateIcon.vue dispatches on
+// state directly and draws inline SVG. Text-glyph fallback (unicode
+// symbols like ◐ / ✓ / ✗) failed to render on iOS 26.3 as .notdef "?"
+// boxes when the CJK-first font stack couldn't resolve them.
 
 function makePreset(id: PresetId, showLabel: boolean): TaskStatePreset {
   return {
     id,
     i18nKey: `tasks.preset.${id}`,
     colorOf: (s) => COLORS[s],
-    glyphOf: (s) => GLYPHS[s],
     spinnerDurationMs: (s) => (s === "running" ? 1500 : 0),
     animatePulse: (s) => s === "waiting_input",
     textOpacity: 1.0,

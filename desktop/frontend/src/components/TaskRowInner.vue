@@ -12,7 +12,7 @@ import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
-import { aiTitleOrCommand, rowTitle, taskStateLabel } from "../lib/sessionLabel";
+import { titleOrCommand, rowTitle, taskStateLabel } from "../lib/sessionLabel";
 
 const props = withDefaults(defineProps<{
   session: RemoteSession;
@@ -48,7 +48,7 @@ function stateLabel(state: string | undefined): string {
       data-test="state-label"
     >{{ stateLabel(props.session.task_state) }}</span>
     <span class="cmd-and-cwd" :title="rowTitle(props.session)">
-      <span class="cmd">{{ aiTitleOrCommand(props.session) }}</span>
+      <span class="cmd">{{ titleOrCommand(props.session) }}</span>
     </span>
     <span v-if="props.session.unread" class="unread-dot" data-test="unread-dot">●</span>
     <span
@@ -63,7 +63,10 @@ function stateLabel(state: string | undefined): string {
       @keydown.enter.stop.prevent="emit('markRead')"
       @keydown.space.stop.prevent="emit('markRead')"
     >
-      ✓
+      <!-- ✓ (U+2713) renders as .notdef on iOS 26.3. -->
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 8 l3 3 l7 -7" />
+      </svg>
     </span>
     <span
       v-if="props.showClose"

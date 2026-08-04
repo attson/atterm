@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  aiTitleOrCommand,
+  titleOrCommand,
   commandLabel,
   fullCommand,
   rowTitle,
@@ -71,9 +71,9 @@ describe('sessionLabel.taskStateLabel', () => {
   })
 })
 
-describe('sessionLabel.aiTitleOrCommand', () => {
+describe('sessionLabel.titleOrCommand', () => {
   it('returns AI title when session is ai and title is non-empty', () => {
-    expect(aiTitleOrCommand({
+    expect(titleOrCommand({
       session_id: 'x',
       current_command: 'claude --foo',
       title: 'Remove token auth from relay login',
@@ -82,7 +82,7 @@ describe('sessionLabel.aiTitleOrCommand', () => {
   })
 
   it('strips codex animated cwd title prefix and keeps the cwd basename', () => {
-    expect(aiTitleOrCommand({
+    expect(titleOrCommand({
       session_id: 'x',
       current_command: 'codex',
       cwd: '/Users/attson/code/github.com.attson/worktrees/material-tag-front',
@@ -92,7 +92,7 @@ describe('sessionLabel.aiTitleOrCommand', () => {
   })
 
   it('falls back to commandLabel when AI session has empty title', () => {
-    expect(aiTitleOrCommand({
+    expect(titleOrCommand({
       session_id: 'x',
       current_command: '/usr/local/bin/claude --bar',
       title: '',
@@ -100,21 +100,60 @@ describe('sessionLabel.aiTitleOrCommand', () => {
     })).toBe('claude')
   })
 
-  it('ignores title for non-AI sessions even when set', () => {
-    expect(aiTitleOrCommand({
+  it('shows the title for non-AI sessions when it carries signal', () => {
+    // Real remote shell sessions typically drive OSC 2 to the project
+    // directory or a user label; the sidebar row should show that
+    // instead of every zsh row collapsing to "zsh".
+    expect(titleOrCommand({
       session_id: 'x',
       current_command: 'zsh',
       title: 'user@host: ~/proj',
       type: 'shell',
+    })).toBe('user@host: ~/proj')
+  })
+
+  it('suppresses title == command basename to avoid duplicated "zsh"', () => {
+    // Fresh shells that emit `\e]2;zsh\a` echo the executable name as
+    // their title; that duplicates commandLabel and adds no info, so
+    // fall through to commandLabel.
+    expect(titleOrCommand({
+      session_id: 'x',
+      current_command: 'zsh',
+      title: 'zsh',
+      type: 'shell',
     })).toBe('zsh')
   })
 
-  it('treats undefined type as non-AI', () => {
-    expect(aiTitleOrCommand({
+  it('suppresses shell-path title (e.g. /usr/bin/zsh) — falls back to commandLabel basename', () => {
+    // /etc/zshrc on many systems runs `echo -ne "\e]2;$SHELL\a"` on
+    // startup, which lands as SessionInfo.Title = "/usr/bin/zsh". Basename
+    // "zsh" matches commandLabel → row shows the clean "zsh".
+    expect(titleOrCommand({
+      session_id: 'x',
+      current_command: '/usr/bin/zsh',
+      title: '/usr/bin/zsh',
+      type: 'shell',
+    })).toBe('zsh')
+  })
+
+  it('suppresses shell-path title even when current_command is empty (relay stripped)', () => {
+    // On mobile the sealed current_command may not have decrypted yet;
+    // title alone carries "/usr/bin/zsh". commandLabel walks through title
+    // to derive "zsh", and usableTitle compares against that.
+    expect(titleOrCommand({
+      session_id: 'abcd1234',
+      current_command: '',
+      title: '/bin/zsh',
+      type: 'shell',
+    })).toBe('zsh')
+  })
+
+  it('treats undefined type as a generic session (title still surfaces)', () => {
+    expect(titleOrCommand({
       session_id: 'x',
       current_command: 'zsh',
       title: 'something',
-    })).toBe('zsh')
+    })).toBe('something')
   })
 })
 

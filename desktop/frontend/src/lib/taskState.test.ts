@@ -26,14 +26,6 @@ describe("taskState presets", () => {
       test.each(STATES)("colorOf(%s) returns a hex color", (s) => {
         expect(p.colorOf(s)).toMatch(/^#[0-9a-f]{6}$/i);
       });
-      test.each(STATES)("glyphOf(%s) returns spinner or a single char", (s) => {
-        const g = p.glyphOf(s);
-        expect(typeof g).toBe("string");
-        if (g !== "spinner") expect(g.length).toBe(1);
-      });
-      test("running uses spinner glyph", () => {
-        expect(p.glyphOf("running")).toBe("spinner");
-      });
       test("spinnerDurationMs(running) > 0", () => {
         expect(p.spinnerDurationMs("running")).toBeGreaterThan(0);
       });

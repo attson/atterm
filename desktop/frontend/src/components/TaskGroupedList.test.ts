@@ -306,12 +306,36 @@ describe("TaskGroupedList AI title", () => {
     expect(cmd.text()).toBe("Remove token auth from relay login");
   });
 
-  test("falls back to commandLabel for non-ai sessions even when title is set", () => {
+  test("shows OSC title for non-ai shell sessions when it carries signal", () => {
+    // Real remote shell sessions drive OSC 2 to a meaningful label
+    // (project dir or user-set); the sidebar should surface it instead
+    // of collapsing every zsh row to "zsh".
     const sess = mk({
       session_id: "s1",
       host: "mac",
       task_state: "running",
       title: "user@host: ~/proj",
+      current_command: "zsh",
+      type: "shell",
+    });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [sess] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+      },
+    });
+    const cmd = w.find('[data-test="task-row"] .cmd');
+    expect(cmd.text()).toBe("user@host: ~/proj");
+  });
+
+  test("suppresses title == command basename to avoid duplicated \"zsh\"", () => {
+    const sess = mk({
+      session_id: "s1",
+      host: "mac",
+      task_state: "running",
+      title: "zsh",
       current_command: "zsh",
       type: "shell",
     });
@@ -343,11 +367,13 @@ describe("TaskGroupedList AI title", () => {
       },
     });
     expect(w.findAll('[data-test="task-row"]').length).toBe(2);
-    expect(w.find('[data-test="host-header"]').text()).toContain("▼");
+    // Caret is now an inline SVG (iOS 26.3 dropped the ▶/▼ text glyphs).
+    // Detect direction by aria-expanded + the presence of the caret SVG.
+    expect(w.get('[data-test="host-header"]').attributes("aria-expanded")).toBe("true");
+    expect(w.find('[data-test="host-header"] .caret svg').exists()).toBe(true);
 
     await w.get('[data-test="host-header"]').trigger("click");
     expect(w.findAll('[data-test="task-row"]').length).toBe(0);
-    expect(w.find('[data-test="host-header"]').text()).toContain("▶");
     expect(w.get('[data-test="host-header"]').attributes("aria-expanded")).toBe("false");
 
     await w.get('[data-test="host-header"]').trigger("click");

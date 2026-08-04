@@ -243,7 +243,14 @@ const railIcons = computed(() => {
       class="sidebar-hamburger"
       :aria-label="drawerOpen ? t('tasks.sidebar.closeDrawer') : t('tasks.sidebar.openDrawer')"
       @click="drawerOpen = !drawerOpen"
-    >☰</button>
+    >
+      <!-- ☰ (U+2630) renders as .notdef "?" on iOS 26.3; SVG hamburger. -->
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+        <line x1="3" y1="4.5" x2="13" y2="4.5" />
+        <line x1="3" y1="8" x2="13" y2="8" />
+        <line x1="3" y1="11.5" x2="13" y2="11.5" />
+      </svg>
+    </button>
     <aside
       class="task-sidebar"
       :class="{ collapsed, drawer: isNarrow, open: isNarrow && drawerOpen }"
@@ -265,9 +272,14 @@ const railIcons = computed(() => {
         <button
           class="expand-button"
           :title="t('tasks.sidebar.expand')"
+          :aria-label="t('tasks.sidebar.expand')"
           @click="emit('update:collapsed', false)"
         >
-          »
+          <!-- » (U+00BB) renders on iOS 26.3 but keep parity with «. -->
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="3 2 7 6 3 10" />
+            <polyline points="6 2 10 6 6 10" />
+          </svg>
         </button>
         <span v-if="totalUnread > 0" class="rail-badge" data-test="sidebar-rail-badge">
           {{ totalUnread }}
@@ -333,9 +345,13 @@ const railIcons = computed(() => {
             class="collapse-button"
             data-test="collapse-button"
             :title="t('tasks.sidebar.collapse')"
+            :aria-label="t('tasks.sidebar.collapse')"
             @click="emit('update:collapsed', true)"
           >
-            «
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 2 5 6 9 10" />
+              <polyline points="6 2 2 6 6 10" />
+            </svg>
           </button>
         </header>
         <div class="list-wrap" data-test="task-grouped-list">

@@ -14,7 +14,7 @@ import { useSessionPins } from "../composables/useSessionPins";
 import { useSessionSelection } from "../composables/useSessionSelection";
 import { matchesSession } from "../lib/sessionMatch";
 import {
-  aiTitleOrCommand,
+  titleOrCommand,
   rowTitle,
   hostNameWithIndex,
   coResidentIndex,
@@ -434,8 +434,20 @@ function stateLabel(state: string | undefined): string {
         @keydown.enter.prevent="toggleGroupCollapsed(PINNED_KEY)"
         @keydown.space.prevent="toggleGroupCollapsed(PINNED_KEY)"
       >
-        <span class="caret">{{ isGroupCollapsed(PINNED_KEY) ? '▶' : '▼' }}</span>
-        <span class="pin-icon" aria-hidden="true">📌</span>
+        <span class="caret" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+            <path v-if="isGroupCollapsed(PINNED_KEY)" d="M3 1 L7 5 L3 9 Z" />
+            <path v-else d="M1 3 L9 3 L5 8 Z" />
+          </svg>
+        </span>
+        <span class="pin-icon" aria-hidden="true">
+          <!-- Bookmark tag (V-notch bottom). Original 📌 emoji + complex
+               diagonal-pin SVG both failed to render cleanly on iOS 26.3;
+               a simple filled shape is unambiguous and font-independent. -->
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M4 2 h8 v12 l-4 -3 l-4 3 z" />
+          </svg>
+        </span>
         <span class="group-title">{{ t("tasks.pinned.title") }}</span>
         <span class="group-count">{{ pinnedSessions.length }}</span>
       </div>
@@ -484,7 +496,12 @@ function stateLabel(state: string | undefined): string {
         @keydown.enter.prevent="toggleGroupCollapsed(key)"
         @keydown.space.prevent="toggleGroupCollapsed(key)"
       >
-        <span class="caret">{{ isGroupCollapsed(key) ? '▶' : '▼' }}</span>
+        <span class="caret" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+            <path v-if="isGroupCollapsed(key)" d="M3 1 L7 5 L3 9 Z" />
+            <path v-else d="M1 3 L9 3 L5 8 Z" />
+          </svg>
+        </span>
         <span class="host-name">{{ groupHeader(key) }}</span>
         <span
           v-if="groupBy === 'host' && localHostId && key === localHostId"
@@ -505,9 +522,13 @@ function stateLabel(state: string | undefined): string {
           class="mark-all"
           data-test="host-mark-all"
           :title="t('tasks.markAllRead')"
+          :aria-label="t('tasks.markAllRead')"
           @click.stop="onMarkGroup(key)"
         >
-          ✓
+          <!-- ✓ (U+2713) renders as .notdef on iOS 26.3. -->
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 8 l3 3 l7 -7" />
+          </svg>
         </button>
       </header>
       <button
@@ -551,8 +572,11 @@ function stateLabel(state: string | undefined): string {
         data-test="completed-fold-toggle"
         @click="foldOpen = !foldOpen"
       >
-        {{ foldOpen ? "▼" : "▶" }} {{ t("tasks.completedFold") }} ·
-        {{ completedFiltered.length }}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
+          <path v-if="foldOpen" d="M1 3 L9 3 L5 8 Z" />
+          <path v-else d="M3 1 L7 5 L3 9 Z" />
+        </svg>
+        {{ t("tasks.completedFold") }} ({{ completedFiltered.length }})
       </button>
       <template v-if="foldOpen">
         <div
@@ -579,7 +603,7 @@ function stateLabel(state: string | undefined): string {
               data-test="state-label"
             >{{ stateLabel(s.task_state) }}</span>
             <span class="cmd-and-cwd" :title="rowTitle(s)">
-              <span class="cmd">{{ aiTitleOrCommand(s) }}</span>
+              <span class="cmd">{{ titleOrCommand(s) }}</span>
             </span>
           </span>
           <span v-if="shortenCwd(s.cwd, home)" class="cwd">{{ shortenCwd(s.cwd, home) }}</span>

@@ -184,16 +184,8 @@ func sealMetaContentFields(f proto.Frame, accountKey []byte) (proto.Frame, bool)
 	}, true
 }
 
-// looksLikeUnsequencedEnvelope returns true when the payload has the
-// on-wire shape of an e2eecrypto envelope: cipher_id 0x01 at byte zero
-// + at least the minimum envelope length (1 + 24-byte nonce + 16-byte
-// Poly1305 tag). Same heuristic as the relay's looksLikeEncryptedOut
-// helper, but for the unsequenced (no seq prefix) variant used by IN
-// and PASTE_IMAGE.
-func looksLikeUnsequencedEnvelope(payload []byte) bool {
-	const minEnvelopeLen = 1 + 24 + 16
-	if len(payload) < minEnvelopeLen {
-		return false
-	}
-	return payload[0] == 0x01
-}
+// looksLikeUnsequencedEnvelope is an alias for e2eecrypto.LooksLikeSealed,
+// kept as a package-local name so the call sites in this file read the way
+// they always did. Same heuristic on both the relay (inbound OUT) and the
+// desktop (unsequenced IN / PASTE_IMAGE) paths.
+var looksLikeUnsequencedEnvelope = e2eecrypto.LooksLikeSealed

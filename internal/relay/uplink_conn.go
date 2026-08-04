@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/e2eecrypto"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/webpush"
@@ -190,7 +191,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				SessionID:        ms.sess.ID,
 				HostID:           hostID,
 				NotificationType: notificationType,
-				Label:            webPushSessionLabel(info),
+				Label:            webpush.SessionLabel(info),
 				RemotePermission: info.RemotePermission,
 				IdleForSeconds:   idleForSeconds,
 			})
@@ -210,7 +211,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 			cancelIdleTimer(ms)
 			return
 		}
-		idleKey := taskNotificationKey(info)
+		idleKey := webpush.TaskNotificationKey(info)
 		if ms.idleNotifiedCommandStarted == idleKey {
 			cancelIdleTimer(ms)
 			return
@@ -244,7 +245,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 				return
 			}
 			currentInfo := ms.sess.Info()
-			currentIdleKey := taskNotificationKey(currentInfo)
+			currentIdleKey := webpush.TaskNotificationKey(currentInfo)
 			if currentInfo.TaskState != proto.TaskStateRunning ||
 				currentInfo.LastOutputAt > lastOutputAt ||
 				ms.idleNotifiedCommandStarted == currentIdleKey {
@@ -265,7 +266,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		}
 		info := ms.sess.Info()
 		if info.TaskState == proto.TaskStateWaitingInput {
-			key := taskNotificationKey(info)
+			key := webpush.TaskNotificationKey(info)
 			mu.Lock()
 			shouldNotify := ms.waitingNotifiedKey != key
 			if shouldNotify {
@@ -568,42 +569,7 @@ func (s *Server) webPushIdleTimeout() time.Duration {
 	return s.cfg.WebPushIdleTimeout
 }
 
-func webPushSessionLabel(info proto.SessionInfo) string {
-	if info.CurrentCommand != "" {
-		return info.CurrentCommand
-	}
-	if info.Title != "" {
-		return info.Title
-	}
-	if info.Command != "" {
-		return info.Command
-	}
-	return "session"
-}
-
-func taskNotificationKey(info proto.SessionInfo) int64 {
-	if info.CommandStartedAt != 0 {
-		return info.CommandStartedAt
-	}
-	if info.LastOutputAt != 0 {
-		return info.LastOutputAt
-	}
-	return 1
-}
-
-// looksLikeEncryptedOut returns true when the inbound OUT data bytes have
-// the on-wire shape of an e2eecrypto envelope: cipher_id == 0x01 in byte
-// zero, length at least the minimum envelope (cipher_id + 24B nonce +
-// 16B Poly1305 tag). The check is intentionally heuristic — a plaintext
-// chunk starting with 0x01 (Ctrl-A) AND at least 41 bytes long would
-// false-positive, but Ctrl-A keystrokes are tiny single-byte chunks in
-// practice, so the overlap is vanishingly small. A false positive only
-// suppresses OSC parsing on the relay, which is the right side to err
-// on under the E2EE threat model.
-func looksLikeEncryptedOut(data []byte) bool {
-	const minEnvelopeLen = 1 + 24 + 16
-	if len(data) < minEnvelopeLen {
-		return false
-	}
-	return data[0] == 0x01
-}
+// looksLikeEncryptedOut is a thin alias for e2eecrypto.LooksLikeSealed
+// used on the relay's inbound OUT path. Kept as a package-local name so
+// the call sites in handleUplink read the same way they always did.
+var looksLikeEncryptedOut = e2eecrypto.LooksLikeSealed

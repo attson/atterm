@@ -10,34 +10,10 @@ import (
 	"sync/atomic"
 
 	"github.com/attson/atterm/internal/proto"
+	"github.com/attson/atterm/internal/ptyhost"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
 )
-
-// PtyHost is the minimal contract a same-process PTY must satisfy for the
-// relay to adopt it as a session. It mirrors internal/ptyhost.Host's read /
-// write / resize methods without dragging in that import to keep this layer
-// reusable from any caller.
-type PtyHost interface {
-	Read(p []byte) (int, error)
-	Write(p []byte) (int, error)
-	Resize(cols, rows uint16) error
-}
-
-// ImagePasteHost is implemented by desktop PTY wrappers that can bridge a
-// remote browser image paste into the local app running inside the PTY.
-type ImagePasteHost interface {
-	PasteImage(ctx context.Context, sessionID uuid.UUID, payload proto.PasteImagePayload) error
-}
-
-// FilePasteHost is implemented by desktop PTY wrappers that can accept a
-// remote client's file attachment: sanitize+dedup the filename, write the
-// bytes to a session-scoped inbox, and inject the resulting absolute
-// path into the PTY master. Symmetric to ImagePasteHost but for arbitrary
-// files (no clipboard bridging).
-type FilePasteHost interface {
-	PasteFile(ctx context.Context, sessionID uuid.UUID, payload proto.PasteFilePayload) error
-}
 
 // AdoptSession registers an in-process PTY as a relay session, bypassing the
 // /agent WebSocket entirely. It is the desktop app's hook for surfacing
@@ -53,7 +29,7 @@ type FilePasteHost interface {
 // decided the session is over (PTY exited, app shutting down, etc.). It is
 // idempotent. The PtyHost is NOT closed by cleanup — its lifecycle stays
 // with the caller.
-func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.SessionInfo, host PtyHost, ownerUserID string) func() {
+func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.SessionInfo, host ptyhost.PtyHost, ownerUserID string) func() {
 	info.ID = id.String()
 	sess := session.New(id, info)
 	sess.OwnerUserID = ownerUserID
@@ -137,7 +113,7 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 						_ = host.Resize(cols, rows)
 					}
 				case proto.TypePasteImage:
-					pasteHost, ok := host.(ImagePasteHost)
+					pasteHost, ok := host.(ptyhost.ImagePasteHost)
 					if !ok {
 						log.Printf("adopt: paste image unavailable session=%s", f.SessionID)
 						continue
@@ -151,7 +127,7 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 						log.Printf("adopt: paste image failed session=%s filename=%q content_type=%q image_bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
 					}
 				case proto.TypePasteFile:
-					pasteHost, ok := host.(FilePasteHost)
+					pasteHost, ok := host.(ptyhost.FilePasteHost)
 					if !ok {
 						log.Printf("adopt: paste file unavailable session=%s", f.SessionID)
 						continue

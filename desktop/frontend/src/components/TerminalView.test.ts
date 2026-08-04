@@ -1,5 +1,6 @@
 import { describe, expect, it, test, vi } from "vitest";
 import source from "./TerminalView.vue?raw";
+import quickTemplatesSource from "../composables/useQuickTemplates.ts?raw";
 import paneSource from "./PaneGrid.vue?raw";
 import appSource from "../App.vue?raw";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
@@ -129,26 +130,32 @@ describe("TerminalView web auxiliary keys", () => {
   });
 
   test("requires a second confirmation before sending mobile quick templates", () => {
-    expect(source).toMatch(/const\s+pendingTemplateConfirm\s*=\s*ref<QuickTemplate\s*\|\s*null>\(null\)/);
-    expect(source).toMatch(/const\s+templateConfirmOpen\s*=\s*computed\(\s*\(\)\s*=>\s*pendingTemplateConfirm\.value\s*!==\s*null\s*\)/);
-    expect(source).toMatch(/const\s+templateConfirmRequired\s*=\s*computed/);
-    expect(source).toMatch(/platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty/);
-    expect(source).toMatch(/function\s+requestTemplateSend\s*\(\s*tpl:\s*QuickTemplate\s*\)/);
-    expect(source).toMatch(/function\s+confirmTemplateSend\s*\(\s*\)/);
-    expect(source).toMatch(/function\s+cancelTemplateSend\s*\(\s*\)/);
+    // The confirm state machine + requestTemplateSend / confirmTemplateSend /
+    // cancelTemplateSend now live in composables/useQuickTemplates.ts. The
+    // caps-based confirmRequired gate is passed in from TerminalView (that
+    // computed still lives here so the composable stays session-agnostic).
+    expect(quickTemplatesSource).toMatch(/const\s+pendingTemplateConfirm\s*=\s*ref<QuickTemplate\s*\|\s*null>\(null\)/);
+    expect(quickTemplatesSource).toMatch(/const\s+templateConfirmOpen\s*=\s*computed\(\s*\(\)\s*=>\s*pendingTemplateConfirm\.value\s*!==\s*null\s*\)/);
+    expect(quickTemplatesSource).toMatch(/function\s+requestTemplateSend\s*\(\s*tpl:\s*QuickTemplate\s*\)/);
+    expect(quickTemplatesSource).toMatch(/function\s+confirmTemplateSend\s*\(\s*\)/);
+    expect(quickTemplatesSource).toMatch(/function\s+cancelTemplateSend\s*\(\s*\)/);
+    expect(source).toMatch(/useQuickTemplates\(\{[\s\S]*?platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty/);
     expect(source).toContain('@touchend="onKeyboardControlTouchEnd($event, () => requestTemplateSend(tpl))"');
     expect(source).toContain('@click="onKeyboardControlClick(() => requestTemplateSend(tpl))"');
     expect(source).toContain('data-testid="template-confirm-panel"');
     expect(source).toContain('data-testid="template-confirm-send"');
     expect(source).toContain('data-testid="template-confirm-cancel"');
 
-    const requestBody = source.match(/function\s+requestTemplateSend\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    // These functions are nested inside useQuickTemplates() so their
+    // closing braces sit at 2-space indent — `\n {2}\}` matches that
+    // without eating the inner `if`'s 4-space `}`.
+    const requestBody = quickTemplatesSource.match(/function\s+requestTemplateSend\s*\([^)]*\)[^{]*\{[\s\S]*?\n {2}\}/);
     expect(requestBody).not.toBeNull();
-    expect(requestBody![0]).toMatch(/templateConfirmRequired\.value/);
+    expect(requestBody![0]).toMatch(/confirmRequired\.value/);
     expect(requestBody![0]).toMatch(/pendingTemplateConfirm\.value\s*=\s*tpl/);
     expect(requestBody![0]).toMatch(/sendTemplate\(tpl\)/);
 
-    const confirmBody = source.match(/function\s+confirmTemplateSend\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    const confirmBody = quickTemplatesSource.match(/function\s+confirmTemplateSend\s*\([^)]*\)[^{]*\{[\s\S]*?\n {2}\}/);
     expect(confirmBody).not.toBeNull();
     expect(confirmBody![0]).toMatch(/pendingTemplateConfirm\.value/);
     expect(confirmBody![0]).toMatch(/pendingTemplateConfirm\.value\s*=\s*null/);
@@ -1007,8 +1014,12 @@ describe("TerminalView template bar", () => {
   test("includes the template bar markup and click sends directly (no preview)", () => {
     expect(source).toContain('data-testid="template-bar"');
     expect(source).not.toContain("TemplatePreviewDialog");
-    expect(source).toContain("sendTemplate(tpl)");
-    expect(source).toMatch(/effectiveTemplates\s*\(/);
+    // Hotkey path invokes sendTemplate(tpl) inside the composable; the
+    // pointer path invokes requestTemplateSend which then either sends
+    // directly or opens the confirm panel (no preview dialog).
+    expect(quickTemplatesSource).toContain("sendTemplate(tpl)");
+    expect(quickTemplatesSource).toMatch(/effectiveTemplates\s*\(/);
+    expect(source).toMatch(/useQuickTemplates\s*\(/);
   });
 
   test("reloads on prefs:changed so relay-synced templates appear without a remount", () => {

@@ -1,12 +1,15 @@
 import { describe, expect, test } from "vitest";
 import appSource from "./App.vue?raw";
 import apiSource from "./lib/api.ts?raw";
+import bindingsSource from "./lib/api/_bindings.ts?raw";
 import paneSource from "./components/PaneGrid.vue?raw";
 
 describe("App terminal theme wiring", () => {
   test("api exposes terminal theme preference bindings", () => {
-    expect(apiSource).toContain("GetTerminalTheme(): Promise<string>");
-    expect(apiSource).toContain("SetTerminalTheme(themeID: string): Promise<void>");
+    // AppBindings interface lives in lib/api/_bindings.ts after the domain
+    // split; the setter/getter wrappers stay in lib/api.ts.
+    expect(bindingsSource).toContain("GetTerminalTheme(): Promise<string>");
+    expect(bindingsSource).toContain("SetTerminalTheme(themeID: string): Promise<void>");
     expect(apiSource).toContain("export function getTerminalThemePreference()");
     expect(apiSource).toContain("export function setTerminalThemePreference(themeID: string)");
   });

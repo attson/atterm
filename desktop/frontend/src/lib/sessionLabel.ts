@@ -93,8 +93,11 @@ export function usableAITitle(s: Pick<SessionLike, 'current_command' | 'title' |
 // labelling) for the sidebar row's primary label, when it carries
 // signal beyond the executable name:
 //   - non-empty after trim
-//   - not just the command basename (a "zsh" title on a zsh session
-//     duplicates commandLabel and adds no info)
+//   - not a redundant view of the shell itself. Both the bare basename
+//     ("zsh") and the full binary path ("/usr/bin/zsh", "/bin/zsh")
+//     are common OSC 2 values that /etc/zshrc / init scripts emit via
+//     `\e]2;$SHELL\a`; showing either as the row label duplicates
+//     commandLabel with more noise, so fall through.
 // Runs for every session type — real remote shell sessions typically
 // have their prompt drive the OSC 2 title to the project directory
 // or a user-set label; hiding those behind an AI-only gate makes
@@ -104,8 +107,14 @@ export function usableTitle(s: Pick<SessionLike, 'current_command' | 'title' | '
   if (!title) return ''
   const codexCwdTitle = codexAnimatedCwdTitle(title, s.current_command, s.cwd)
   if (codexCwdTitle) return codexCwdTitle
-  const cmdBase = commandLabel({ current_command: s.current_command, title: '', session_id: s.session_id })
+  // Compare against what commandLabel would render for THIS session
+  // (keep the full data — the important case is current_command="" and
+  // title="/usr/bin/zsh", where commandLabel walks through title itself
+  // and derives "zsh").
+  const cmdBase = commandLabel(s)
   if (title === cmdBase) return ''
+  const titleBase = title.split('/').pop()
+  if (titleBase && titleBase === cmdBase) return ''
   return title
 }
 

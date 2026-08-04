@@ -124,6 +124,30 @@ describe('sessionLabel.titleOrCommand', () => {
     })).toBe('zsh')
   })
 
+  it('suppresses shell-path title (e.g. /usr/bin/zsh) — falls back to commandLabel basename', () => {
+    // /etc/zshrc on many systems runs `echo -ne "\e]2;$SHELL\a"` on
+    // startup, which lands as SessionInfo.Title = "/usr/bin/zsh". Basename
+    // "zsh" matches commandLabel → row shows the clean "zsh".
+    expect(titleOrCommand({
+      session_id: 'x',
+      current_command: '/usr/bin/zsh',
+      title: '/usr/bin/zsh',
+      type: 'shell',
+    })).toBe('zsh')
+  })
+
+  it('suppresses shell-path title even when current_command is empty (relay stripped)', () => {
+    // On mobile the sealed current_command may not have decrypted yet;
+    // title alone carries "/usr/bin/zsh". commandLabel walks through title
+    // to derive "zsh", and usableTitle compares against that.
+    expect(titleOrCommand({
+      session_id: 'abcd1234',
+      current_command: '',
+      title: '/bin/zsh',
+      type: 'shell',
+    })).toBe('zsh')
+  })
+
   it('treats undefined type as a generic session (title still surfaces)', () => {
     expect(titleOrCommand({
       session_id: 'x',

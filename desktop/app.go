@@ -868,21 +868,15 @@ func (a *App) GetLocalePreference() string {
 
 // SetLocalePreference persists the user's UI language preference.
 func (a *App) SetLocalePreference(preference string) error {
-	if a == nil || a.cfgStore == nil {
-		return errors.New("app not initialized")
-	}
-	cfg := a.cfgStore.Get()
-	switch preference {
-	case localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified:
-		cfg.LocalePreference = preference
-	default:
-		return errors.New("unsupported locale preference")
-	}
-	if err := a.cfgStore.Set(cfg); err != nil {
-		return err
-	}
-	a.markPrefDirtyAndPush("locale_preference")
-	return nil
+	return a.updatePref("locale_preference", func(cfg *appConfig) error {
+		switch preference {
+		case localePreferenceSystem, localePreferenceEnglish, localePreferenceChineseSimplified:
+			cfg.LocalePreference = preference
+			return nil
+		default:
+			return errors.New("unsupported locale preference")
+		}
+	})
 }
 
 func (a *App) GetDefaultShell() string {
@@ -1042,9 +1036,6 @@ func (a *App) GetPinnedSessionIds() []string {
 // SetPinnedSessionIds persists the list, deduping and dropping empty
 // entries while preserving first-occurrence order.
 func (a *App) SetPinnedSessionIds(ids []string) error {
-	if a.cfgStore == nil {
-		return nil
-	}
 	seen := make(map[string]struct{}, len(ids))
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -1057,13 +1048,10 @@ func (a *App) SetPinnedSessionIds(ids []string) error {
 		seen[id] = struct{}{}
 		out = append(out, id)
 	}
-	cfg := a.cfgStore.Get()
-	cfg.PinnedSessionIDs = out
-	if err := a.cfgStore.Set(cfg); err != nil {
-		return err
-	}
-	a.markPrefDirtyAndPush("pinned_session_ids")
-	return nil
+	return a.updatePref("pinned_session_ids", func(cfg *appConfig) error {
+		cfg.PinnedSessionIDs = out
+		return nil
+	})
 }
 
 // MarkSessionsSeen marks sessions as seen on the relay. If all is true, all
@@ -1288,16 +1276,10 @@ func (a *App) GetNotificationsEnabled() bool {
 
 // SetNotificationsEnabled persists the user's toggle.
 func (a *App) SetNotificationsEnabled(enabled bool) error {
-	if a.cfgStore == nil {
-		return fmt.Errorf("config store unavailable")
-	}
-	cfg := a.cfgStore.Get()
-	cfg.NotificationsEnabled = &enabled
-	if err := a.cfgStore.Set(cfg); err != nil {
-		return err
-	}
-	a.markPrefDirtyAndPush("notifications_enabled")
-	return nil
+	return a.updatePref("notifications_enabled", func(cfg *appConfig) error {
+		cfg.NotificationsEnabled = &enabled
+		return nil
+	})
 }
 
 // GetAINotificationsOnly returns the current persisted preference.
@@ -1311,16 +1293,10 @@ func (a *App) GetAINotificationsOnly() bool {
 
 // SetAINotificationsOnly persists the user's toggle.
 func (a *App) SetAINotificationsOnly(enabled bool) error {
-	if a.cfgStore == nil {
-		return fmt.Errorf("config store unavailable")
-	}
-	cfg := a.cfgStore.Get()
-	cfg.AINotificationsOnly = &enabled
-	if err := a.cfgStore.Set(cfg); err != nil {
-		return err
-	}
-	a.markPrefDirtyAndPush("ai_notifications_only")
-	return nil
+	return a.updatePref("ai_notifications_only", func(cfg *appConfig) error {
+		cfg.AINotificationsOnly = &enabled
+		return nil
+	})
 }
 
 // GetFeishuModePref returns the persisted Feishu mode preference
@@ -1337,12 +1313,10 @@ func (a *App) GetPtyInputDebugEnabled() bool {
 // No markPrefDirtyAndPush: the setting is read live per-write in
 // desktopPtyHost.Write and has no reactive frontend consumer to push to.
 func (a *App) SetPtyInputDebugEnabled(enabled bool) error {
-	if a.cfgStore == nil {
-		return fmt.Errorf("config store unavailable")
-	}
-	cfg := a.cfgStore.Get()
-	cfg.PtyInputDebugEnabled = &enabled
-	return a.cfgStore.Set(cfg)
+	return a.updatePref("", func(cfg *appConfig) error {
+		cfg.PtyInputDebugEnabled = &enabled
+		return nil
+	})
 }
 
 // ShowNotification is called from the frontend when a terminal bell fires
@@ -1380,16 +1354,10 @@ func (a *App) GetShellIntegrationEnabled() bool {
 // SetShellIntegrationEnabled persists the user's toggle. Already-running
 // sessions are unaffected; only newly spawned shells use the new value.
 func (a *App) SetShellIntegrationEnabled(enabled bool) error {
-	if a.cfgStore == nil {
-		return fmt.Errorf("config store unavailable")
-	}
-	cfg := a.cfgStore.Get()
-	cfg.ShellIntegrationEnabled = &enabled
-	if err := a.cfgStore.Set(cfg); err != nil {
-		return err
-	}
-	a.markPrefDirtyAndPush("shell_integration_enabled")
-	return nil
+	return a.updatePref("shell_integration_enabled", func(cfg *appConfig) error {
+		cfg.ShellIntegrationEnabled = &enabled
+		return nil
+	})
 }
 
 // GetCommandNotifyThresholdSeconds returns the current persisted command-
@@ -1406,16 +1374,10 @@ func (a *App) GetCommandNotifyThresholdSeconds() int {
 // stored value is clamped on read, so out-of-range writes (e.g. from a
 // stale UI) are tolerated.
 func (a *App) SetCommandNotifyThresholdSeconds(seconds int) error {
-	if a.cfgStore == nil {
-		return fmt.Errorf("config store unavailable")
-	}
-	cfg := a.cfgStore.Get()
-	cfg.CommandNotifyThresholdSeconds = &seconds
-	if err := a.cfgStore.Set(cfg); err != nil {
-		return err
-	}
-	a.markPrefDirtyAndPush("command_notify_threshold_seconds")
-	return nil
+	return a.updatePref("command_notify_threshold_seconds", func(cfg *appConfig) error {
+		cfg.CommandNotifyThresholdSeconds = &seconds
+		return nil
+	})
 }
 
 // BroadcastCommandFinished is invoked by the desktop frontend when an OSC
@@ -1440,6 +1402,30 @@ func (a *App) BroadcastCommandFinished(sessionID string, exitCode, elapsedMS int
 
 // RelayMe is the response body from the relay's /api/me endpoint.
 
+
+// updatePref applies mutate to a snapshot of the config, persists it, and
+// (when key is non-empty) marks the key dirty so prefsSync pushes it out.
+// The mutate closure is where each Set* method's per-field validation and
+// assignment lives — return an error to abort the update before the store
+// is written. Pass key="" to skip the sync push for settings that have no
+// reactive consumer (e.g. SetPtyInputDebugEnabled, where the value is read
+// live per-write).
+func (a *App) updatePref(key string, mutate func(*appConfig) error) error {
+	if a == nil || a.cfgStore == nil {
+		return fmt.Errorf("config store unavailable")
+	}
+	cfg := a.cfgStore.Get()
+	if err := mutate(&cfg); err != nil {
+		return err
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		return err
+	}
+	if key != "" {
+		a.markPrefDirtyAndPush(key)
+	}
+	return nil
+}
 
 // markPrefDirtyAndPush stamps the meta for key with the current ms,
 // then triggers a background PUSH. Errors are swallowed by design (sync

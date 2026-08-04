@@ -434,8 +434,19 @@ function stateLabel(state: string | undefined): string {
         @keydown.enter.prevent="toggleGroupCollapsed(PINNED_KEY)"
         @keydown.space.prevent="toggleGroupCollapsed(PINNED_KEY)"
       >
-        <span class="caret">{{ isGroupCollapsed(PINNED_KEY) ? '▶' : '▼' }}</span>
-        <span class="pin-icon" aria-hidden="true">📌</span>
+        <span class="caret" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+            <path v-if="isGroupCollapsed(PINNED_KEY)" d="M3 1 L7 5 L3 9 Z" />
+            <path v-else d="M1 3 L9 3 L5 8 Z" />
+          </svg>
+        </span>
+        <span class="pin-icon" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <!-- Simple pin: circular head + diagonal shaft; avoids iOS 26.3
+                 emoji-fallback failure with the 📌 codepoint. -->
+            <path d="M10.5 1.5 L14.5 5.5 L11.5 6.5 L9 9 L10 12 L8.5 13 L4.5 9 L5.5 7.5 L7 5 L9.5 2.5 Z M4 12 L0.5 15.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+        </span>
         <span class="group-title">{{ t("tasks.pinned.title") }}</span>
         <span class="group-count">{{ pinnedSessions.length }}</span>
       </div>
@@ -484,7 +495,12 @@ function stateLabel(state: string | undefined): string {
         @keydown.enter.prevent="toggleGroupCollapsed(key)"
         @keydown.space.prevent="toggleGroupCollapsed(key)"
       >
-        <span class="caret">{{ isGroupCollapsed(key) ? '▶' : '▼' }}</span>
+        <span class="caret" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+            <path v-if="isGroupCollapsed(key)" d="M3 1 L7 5 L3 9 Z" />
+            <path v-else d="M1 3 L9 3 L5 8 Z" />
+          </svg>
+        </span>
         <span class="host-name">{{ groupHeader(key) }}</span>
         <span
           v-if="groupBy === 'host' && localHostId && key === localHostId"
@@ -551,8 +567,11 @@ function stateLabel(state: string | undefined): string {
         data-test="completed-fold-toggle"
         @click="foldOpen = !foldOpen"
       >
-        {{ foldOpen ? "▼" : "▶" }} {{ t("tasks.completedFold") }} ·
-        {{ completedFiltered.length }}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
+          <path v-if="foldOpen" d="M1 3 L9 3 L5 8 Z" />
+          <path v-else d="M3 1 L7 5 L3 9 Z" />
+        </svg>
+        {{ t("tasks.completedFold") }} ({{ completedFiltered.length }})
       </button>
       <template v-if="foldOpen">
         <div

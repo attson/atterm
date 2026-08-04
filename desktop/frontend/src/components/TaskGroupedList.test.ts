@@ -343,11 +343,13 @@ describe("TaskGroupedList AI title", () => {
       },
     });
     expect(w.findAll('[data-test="task-row"]').length).toBe(2);
-    expect(w.find('[data-test="host-header"]').text()).toContain("▼");
+    // Caret is now an inline SVG (iOS 26.3 dropped the ▶/▼ text glyphs).
+    // Detect direction by aria-expanded + the presence of the caret SVG.
+    expect(w.get('[data-test="host-header"]').attributes("aria-expanded")).toBe("true");
+    expect(w.find('[data-test="host-header"] .caret svg').exists()).toBe(true);
 
     await w.get('[data-test="host-header"]').trigger("click");
     expect(w.findAll('[data-test="task-row"]').length).toBe(0);
-    expect(w.find('[data-test="host-header"]').text()).toContain("▶");
     expect(w.get('[data-test="host-header"]').attributes("aria-expanded")).toBe("false");
 
     await w.get('[data-test="host-header"]').trigger("click");

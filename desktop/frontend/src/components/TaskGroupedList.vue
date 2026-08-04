@@ -441,10 +441,11 @@ function stateLabel(state: string | undefined): string {
           </svg>
         </span>
         <span class="pin-icon" aria-hidden="true">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-            <!-- Simple pin: circular head + diagonal shaft; avoids iOS 26.3
-                 emoji-fallback failure with the 📌 codepoint. -->
-            <path d="M10.5 1.5 L14.5 5.5 L11.5 6.5 L9 9 L10 12 L8.5 13 L4.5 9 L5.5 7.5 L7 5 L9.5 2.5 Z M4 12 L0.5 15.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <!-- Bookmark tag (V-notch bottom). Original 📌 emoji + complex
+               diagonal-pin SVG both failed to render cleanly on iOS 26.3;
+               a simple filled shape is unambiguous and font-independent. -->
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M4 2 h8 v12 l-4 -3 l-4 3 z" />
           </svg>
         </span>
         <span class="group-title">{{ t("tasks.pinned.title") }}</span>

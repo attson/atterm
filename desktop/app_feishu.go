@@ -228,11 +228,11 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
 			a.host.feishuSubsMu.Lock()
 			defer a.host.feishuSubsMu.Unlock()
-			fs, ok := a.host.feishuSubs[sessionID]
-			if !ok || fs == nil {
+			rec, ok := a.host.feishuSessions[sessionID]
+			if !ok || rec == nil || rec.sub == nil {
 				return nil
 			}
-			return fs
+			return rec.sub
 		})
 		svc.SetRouter(router)
 	}
@@ -288,11 +288,11 @@ func (a *App) reconcileFeishuMode(ctx context.Context, cfg appConfig) {
 		router := internalfeishu.NewRouter(a.host.feishuCards, func(sessionID string) internalfeishu.Subscriber {
 			a.host.feishuSubsMu.Lock()
 			defer a.host.feishuSubsMu.Unlock()
-			fs, ok := a.host.feishuSubs[sessionID]
-			if !ok || fs == nil {
+			rec, ok := a.host.feishuSessions[sessionID]
+			if !ok || rec == nil || rec.sub == nil {
 				return nil
 			}
-			return fs
+			return rec.sub
 		})
 		newSvc.SetRouter(router)
 	}

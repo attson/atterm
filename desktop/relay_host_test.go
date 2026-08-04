@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	internalfeishu "github.com/attson/atterm/internal/feishu"
 )
 
 // newTestRelayHost spins up a relayHost on a temp HOME / XDG_CONFIG_HOME so
@@ -113,48 +115,48 @@ func TestStartRelayHost_PersistsAdminPasswordAcrossRestarts(t *testing.T) {
 }
 
 // TestOnRemoteTerminalToggle_FalseEmptiesMap verifies that
-// OnRemoteTerminalToggle(false) drains h.feishuSubs. The subscribers in the
-// map are nil (no real session), so sub.Detach() is skipped by
+// OnRemoteTerminalToggle(false) drains h.feishuSessions. The records here
+// carry no real subscriber, so sub.Detach() is skipped by
 // detachFeishuSubscriber's nil-guard — but the map-drain and archive paths
 // are exercised without requiring a full PTY stack.
 func TestOnRemoteTerminalToggle_FalseEmptiesMap(t *testing.T) {
 	h := newTestRelayHost(t)
 
-	// Inject two sentinel nil entries — realistic keys, no real subscriber needed.
+	// Inject two sentinel records — realistic keys, no real subscriber needed.
 	sid1 := "11111111-1111-1111-1111-111111111111"
 	sid2 := "22222222-2222-2222-2222-222222222222"
 	h.feishuSubsMu.Lock()
-	h.feishuSubs[sid1] = nil
-	h.feishuSubs[sid2] = nil
+	h.feishuSessions[sid1] = &feishuSession{}
+	h.feishuSessions[sid2] = &feishuSession{}
 	h.feishuSubsMu.Unlock()
 
 	h.OnRemoteTerminalToggle(false)
 
 	h.feishuSubsMu.Lock()
-	remaining := len(h.feishuSubs)
+	remaining := len(h.feishuSessions)
 	h.feishuSubsMu.Unlock()
 	if remaining != 0 {
-		t.Errorf("feishuSubs has %d entries after toggle-off, want 0", remaining)
+		t.Errorf("feishuSessions has %d entries after toggle-off, want 0", remaining)
 	}
 }
 
 // TestOnRemoteTerminalToggle_TrueIsNoop verifies that
-// OnRemoteTerminalToggle(true) does not touch the subscriber map.
+// OnRemoteTerminalToggle(true) does not touch the session map.
 func TestOnRemoteTerminalToggle_TrueIsNoop(t *testing.T) {
 	h := newTestRelayHost(t)
 
 	sid := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	h.feishuSubsMu.Lock()
-	h.feishuSubs[sid] = nil
+	h.feishuSessions[sid] = &feishuSession{}
 	h.feishuSubsMu.Unlock()
 
 	h.OnRemoteTerminalToggle(true)
 
 	h.feishuSubsMu.Lock()
-	remaining := len(h.feishuSubs)
+	remaining := len(h.feishuSessions)
 	h.feishuSubsMu.Unlock()
 	if remaining != 1 {
-		t.Errorf("feishuSubs has %d entries after toggle-on, want 1", remaining)
+		t.Errorf("feishuSessions has %d entries after toggle-on, want 1", remaining)
 	}
 }
 
@@ -167,17 +169,22 @@ func TestOnRemoteTerminalToggle_TrueIsNoop(t *testing.T) {
 func TestTryStartLazyAttach_SkipsWhenSubscriberExists(t *testing.T) {
 	h := newTestRelayHost(t)
 	sid := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	// Inject a record with a non-nil sub sentinel — matches production
+	// shape (attachFeishuSubscriberForAutoAttach only ever writes non-nil).
 	h.feishuSubsMu.Lock()
-	h.feishuSubs[sid] = nil
+	h.feishuSessions[sid] = &feishuSession{sub: &internalfeishu.FeishuSubscriber{}}
 	h.feishuSubsMu.Unlock()
 
 	if got := h.tryStartLazyAttach(sid); got {
 		t.Fatalf("tryStartLazyAttach = true when subscriber already exists")
 	}
 	h.feishuSubsMu.Lock()
-	_, in := h.lazyAttachInFlight[sid]
+	inflight := false
+	if fs := h.feishuSessions[sid]; fs != nil {
+		inflight = fs.lazyAttachInFlight
+	}
 	h.feishuSubsMu.Unlock()
-	if in {
+	if inflight {
 		t.Fatalf("in-flight slot claimed despite gate returning false")
 	}
 }
@@ -190,7 +197,7 @@ func TestTryStartLazyAttach_TriggersWhenMissing(t *testing.T) {
 		t.Fatalf("tryStartLazyAttach = false when no subscriber and no in-flight")
 	}
 	h.feishuSubsMu.Lock()
-	in := h.lazyAttachInFlight[sid]
+	in := h.feishuSessions[sid] != nil && h.feishuSessions[sid].lazyAttachInFlight
 	h.feishuSubsMu.Unlock()
 	if !in {
 		t.Fatalf("in-flight slot not claimed after gate returned true")
@@ -247,7 +254,7 @@ func TestTryStartLazyAttach_ConcurrentBurstCollapsesToOne(t *testing.T) {
 		t.Fatalf("winners = %d, want exactly 1 across %d concurrent callers", winners.Load(), N)
 	}
 	h.feishuSubsMu.Lock()
-	in := h.lazyAttachInFlight[sid]
+	in := h.feishuSessions[sid] != nil && h.feishuSessions[sid].lazyAttachInFlight
 	h.feishuSubsMu.Unlock()
 	if !in {
 		t.Fatalf("in-flight slot lost after single winner claimed it")

@@ -257,6 +257,17 @@ func shouldNotifySession(sessionType string, aiOnly bool) bool {
 	return sessionType == session.SessionTypeAI
 }
 
+// getOrCreateFeishuSessionLocked returns the per-session record for sid,
+// creating it if absent. Caller must hold feishuSubsMu.
+func (h *relayHost) getOrCreateFeishuSessionLocked(sid string) *feishuSession {
+	fs, ok := h.feishuSessions[sid]
+	if !ok {
+		fs = &feishuSession{}
+		h.feishuSessions[sid] = fs
+	}
+	return fs
+}
+
 // onAISidCaptured forwards a captured AI session id to the registered
 // callback (set by the App during startup). Safe to call when the
 // callback is nil — the sniff just fires and forgets.
@@ -276,25 +287,28 @@ func (h *relayHost) onAISidCaptured(localSessionID uuid.UUID, kind, aiSid string
 func (h *relayHost) tryStartLazyAttach(sidStr string) bool {
 	h.feishuSubsMu.Lock()
 	defer h.feishuSubsMu.Unlock()
-	if _, exists := h.feishuSubs[sidStr]; exists {
-		return false
+	fs := h.feishuSessions[sidStr]
+	if fs != nil && fs.sub != nil {
+		return false // already attached
 	}
-	if h.lazyAttachInFlight == nil {
-		h.lazyAttachInFlight = map[string]bool{}
+	if fs != nil && fs.lazyAttachInFlight {
+		return false // already in flight
 	}
-	if h.lazyAttachInFlight[sidStr] {
-		return false
+	if fs == nil {
+		fs = &feishuSession{}
+		h.feishuSessions[sidStr] = fs
 	}
-	h.lazyAttachInFlight[sidStr] = true
+	fs.lazyAttachInFlight = true
 	return true
 }
 
 // clearLazyAttachInFlight releases the slot claimed by tryStartLazyAttach.
-// Safe to call on a sid that was never claimed (delete on a missing key
-// is a no-op).
+// Safe to call on a sid that was never claimed.
 func (h *relayHost) clearLazyAttachInFlight(sidStr string) {
 	h.feishuSubsMu.Lock()
-	delete(h.lazyAttachInFlight, sidStr)
+	if fs := h.feishuSessions[sidStr]; fs != nil {
+		fs.lazyAttachInFlight = false
+	}
 	h.feishuSubsMu.Unlock()
 }
 
@@ -381,7 +395,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	// session (e.g. autoAttach="all" already attached at NewSession time, then
 	// SetOnAIClassified fires later and re-enters this function), bail.
 	h.feishuSubsMu.Lock()
-	if _, exists := h.feishuSubs[sessionIDStr]; exists {
+	if fs := h.feishuSessions[sessionIDStr]; fs != nil && fs.sub != nil {
 		h.feishuSubsMu.Unlock()
 		return
 	}
@@ -497,7 +511,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	}
 
 	h.feishuSubsMu.Lock()
-	h.feishuAnchorRuntimes[sessionIDStr] = rt
+	h.getOrCreateFeishuSessionLocked(sessionIDStr).anchor = rt
 	h.feishuSubsMu.Unlock()
 
 	// AI sessions render their anchor card body from per-turn AIChunker events
@@ -508,7 +522,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 	sub := internalfeishu.AttachFeishuSubscriber(sess, openID, pumpPTYBytes, flush)
 
 	h.feishuSubsMu.Lock()
-	h.feishuSubs[sessionIDStr] = sub
+	h.getOrCreateFeishuSessionLocked(sessionIDStr).sub = sub
 	h.feishuSubsMu.Unlock()
 
 	// AI session only: wire a per-session AIChunker into the dispatcher so
@@ -565,8 +579,8 @@ func (h *relayHost) OnRemoteTerminalToggle(enabled bool) {
 	// calling detachFeishuSubscriber (which re-acquires the lock for each
 	// entry and removes it atomically).
 	h.feishuSubsMu.Lock()
-	sids := make([]string, 0, len(h.feishuSubs))
-	for sid := range h.feishuSubs {
+	sids := make([]string, 0, len(h.feishuSessions))
+	for sid := range h.feishuSessions {
 		sids = append(sids, sid)
 	}
 	h.feishuSubsMu.Unlock()
@@ -583,9 +597,11 @@ func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
 	sessionIDStr := sessID.String()
 
 	h.feishuSubsMu.Lock()
-	sub := h.feishuSubs[sessionIDStr]
-	delete(h.feishuSubs, sessionIDStr)
-	delete(h.feishuAnchorRuntimes, sessionIDStr)
+	var sub *internalfeishu.FeishuSubscriber
+	if fs := h.feishuSessions[sessionIDStr]; fs != nil {
+		sub = fs.sub
+	}
+	delete(h.feishuSessions, sessionIDStr)
 	h.feishuSubsMu.Unlock()
 
 	// Detach the AIChunker BEFORE sub.Detach() so in-flight hook events do not

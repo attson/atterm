@@ -41,6 +41,7 @@ if (typeof window !== "undefined" && !(window as any).runtime) {
   };
 }
 import source from "./App.vue?raw";
+import closeConfirmSource from "./composables/useCloseSessionConfirm.ts?raw";
 import settingsSource from "./components/SettingsDialog.vue?raw";
 import capacitorMainSource from "./main.capacitor.ts?raw";
 import zhCNSource from "./i18n/messages/zh-CN.ts?raw";
@@ -226,10 +227,12 @@ describe("quit confirmation", () => {
 describe("sidebar close confirmation", () => {
   test("routes sidebar closes through a confirmation request", () => {
     expect(source).toContain("ConfirmCloseSessionDialog");
-    expect(source).toContain("pendingCloseSession");
-    expect(source).toMatch(/function\s+shouldConfirmCloseSession\s*\(/);
+    expect(source).toContain('import { useCloseSessionConfirm } from "./composables/useCloseSessionConfirm"');
+    expect(source).toMatch(/=\s*useCloseSessionConfirm\(\{/);
+    expect(source).toContain("pendingCloseSessions");
+    expect(source).toContain("shouldConfirmCloseSession");
+    expect(source).toContain("confirmCloseSession");
     expect(source).toMatch(/function\s+requestCloseSession\s*\(/);
-    expect(source).toMatch(/function\s+confirmCloseSession\s*\(/);
     expect(source).toContain('@close="requestCloseSession"');
     expect(source).toContain("<ConfirmCloseSessionDialog");
     expect(source).toContain(':is-ai="pendingCloseIsAi"');
@@ -237,14 +240,19 @@ describe("sidebar close confirmation", () => {
   });
 
   test("confirms AI sessions and running sessions before closing", () => {
-    expect(source).toMatch(/s\.type\s*===\s*["']ai["']/);
-    expect(source).toMatch(/s\.task_state\s*===\s*["']running["']/);
-    expect(source).toMatch(/pendingCloseSession\.value\s*=\s*s/);
+    // The AI / running-task predicate + open-dialog state now live in the
+    // useCloseSessionConfirm composable; App.vue only wires the onSidebarClose
+    // follow-up thunk.
+    expect(closeConfirmSource).toMatch(/s\.type\s*===\s*["']ai["']/);
+    expect(closeConfirmSource).toMatch(/s\.task_state\s*===\s*["']running["']/);
+    expect(closeConfirmSource).toMatch(/pendingCloseSession\.value\s*=/);
     expect(source).toMatch(/onSidebarClose\(s\)/);
   });
 
   test("does not confirm remote session closes", () => {
-    expect(source).toMatch(/shouldConfirmCloseSession[\s\S]*?!isOpenRemoteSession\(s\.session_id\)[\s\S]*?isCloseRiskySession\(s\)/);
+    // Composable holds the "already open as remote pane → skip prompt" check;
+    // App.vue's tab-close path still filters risky candidates by !pane.remote.
+    expect(closeConfirmSource).toMatch(/shouldConfirmCloseSession[\s\S]*?!isOpenRemoteSession\(s\.session_id\)[\s\S]*?isCloseRiskySession\(s\)/);
     expect(source).toMatch(/riskyCloseCandidatesForPanes[\s\S]*?filter[\s\S]*?!pane\.remote/);
   });
 

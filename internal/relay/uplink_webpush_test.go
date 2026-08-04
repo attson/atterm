@@ -127,12 +127,11 @@ func TestUplinkCommandEventTriggersDispatchWhenSessionInManifest(t *testing.T) {
 	mirrorSess := session.New(sid, info)
 	mirrorSess.OwnerUserID = ownerUserID
 	ms := &mirrorState{sess: mirrorSess}
-	mirrors := map[uuid.UUID]*mirrorState{sid: ms}
-	var mu sync.Mutex
+	uconn := &uplinkSession{server: srv, mirrors: map[uuid.UUID]*mirrorState{sid: ms}}
 	// Encode the frame.
 	frame, _ := proto.EncodeCommandEvent(sid, proto.CommandEventPayload{ExitCode: 0, ElapsedMS: 12500, Label: "atterm"})
 	// Call the handler.
-	srv.handleUplinkCommandEvent(frame, mirrors, &mu)
+	uconn.handleCommandEvent(frame)
 	// Wait for at least one HTTP push.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -264,10 +263,9 @@ func TestUplinkCommandEventDropsUnknownSession(t *testing.T) {
 	sub.Keys.Auth = "zqbxT6JKstKSY9JKibZLSQ"
 	_ = svc.AddSubscription(u.ID, sub)
 	// Mirrors map is empty (no sessions known to this uplink).
-	mirrors := map[uuid.UUID]*mirrorState{}
-	var mu sync.Mutex
+	uc := &uplinkSession{server: srv, mirrors: map[uuid.UUID]*mirrorState{}}
 	frame, _ := proto.EncodeCommandEvent(uuid.New(), proto.CommandEventPayload{ExitCode: 0})
-	srv.handleUplinkCommandEvent(frame, mirrors, &mu)
+	uc.handleCommandEvent(frame)
 	// Allow goroutines a moment.
 	time.Sleep(150 * time.Millisecond)
 	if rec.count() != 0 {
@@ -277,9 +275,8 @@ func TestUplinkCommandEventDropsUnknownSession(t *testing.T) {
 
 func TestUplinkCommandEventNoOpWhenWebPushNil(t *testing.T) {
 	srv := NewServer(Config{WebPush: nil})
-	mirrors := map[uuid.UUID]*mirrorState{}
-	var mu sync.Mutex
+	u := &uplinkSession{server: srv, mirrors: map[uuid.UUID]*mirrorState{}}
 	frame, _ := proto.EncodeCommandEvent(uuid.New(), proto.CommandEventPayload{ExitCode: 0})
 	// Must not panic.
-	srv.handleUplinkCommandEvent(frame, mirrors, &mu)
+	u.handleCommandEvent(frame)
 }

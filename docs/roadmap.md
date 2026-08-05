@@ -1,5 +1,12 @@
 # 路线图
 
+## 状态速览 (2026-08-05)
+
+- **v0.4.3** 已发布(2026-08-04)。桌面 dmg / Linux deb+tar / Windows exe+zip 全平台构件已 upload,SHA256SUMS + GPG 签名附。
+- P0/P1/P2 核心功能全部完成并稳定;v0.4.x 系列以修复 + 内部重构为主。
+- 大规模重构完成:App.vue 2326→1749 (-25%)、TerminalView.vue 抽 2 slice、api.ts 1098→299 (-73%)、Go 巨型文件全套拆分。详见 [`docs/superpowers/plans/2026-08-04-refactor-roadmap.md`](./superpowers/plans/2026-08-04-refactor-roadmap.md)。
+- 待办:M5-b 剩余 6 slice(TerminalView composable 抽取,需 iOS Simulator 逐 slice 验证);具体见上述 refactor-roadmap 尾部"剩余待办"表。
+
 ## P0：v0.3 核心接管闭环
 
 ### 1. 任务状态模型

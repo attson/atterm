@@ -165,17 +165,19 @@ export interface PointerPos {
 const DRAG_THRESHOLD_PX = 5;
 
 /**
- * Decide whether a click on a detected link should open it. A plain click opens
- * the link (single-click to open); shift/alt clicks never open (reserved for
- * selection); and a click preceded by a mousedown that moved more than
- * DRAG_THRESHOLD_PX is treated as a text drag-select, not an activation. isMac
- * is currently unused but kept for signature stability / future per-OS tweaks.
+ * Decide whether a click on a detected link should open it. Only Ctrl+click
+ * opens the link; plain clicks stay available for normal terminal selection and
+ * focus. Shift/alt clicks never open, and a click preceded by a mousedown that
+ * moved more than DRAG_THRESHOLD_PX is treated as a text drag-select, not an
+ * activation. isMac is currently unused because the product intentionally uses
+ * Ctrl+click rather than Cmd-click here.
  */
 export function shouldActivateLink(
-  e: Pick<MouseEvent, "shiftKey" | "altKey" | "clientX" | "clientY">,
+  e: Pick<MouseEvent, "shiftKey" | "altKey" | "ctrlKey" | "clientX" | "clientY">,
   downPos: PointerPos | null,
   _isMac: boolean,
 ): boolean {
+  if (!e.ctrlKey) return false;
   if (e.shiftKey || e.altKey) return false;
   if (downPos) {
     const dx = e.clientX - downPos.x;

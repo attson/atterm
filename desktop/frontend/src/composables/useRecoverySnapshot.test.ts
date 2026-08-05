@@ -587,4 +587,46 @@ describe("useRecoverySnapshot", () => {
     expect(warnSpy).toHaveBeenCalled();
     scope.stop();
   });
+
+  it("pauses automatic snapshot saves during restore and flushes once on resume", async () => {
+    const tabs = ref<Tab[]>([]);
+    const currentTabId = ref<string | null>(null);
+    const sessionInfoFor = vi.fn().mockReturnValue(undefined);
+
+    const scope = effectScope();
+    let composable!: ReturnType<typeof useRecoverySnapshot>;
+    scope.run(() => {
+      composable = useRecoverySnapshot({
+        tabs,
+        currentTabId,
+        sessionInfoFor,
+        localHostID: ref(""),
+        onEvent: () => () => {},
+      });
+    });
+
+    const resume = composable.pause();
+    tabs.value.push({
+      id: "t1",
+      layout: "single",
+      panes: [{ sessionId: "s1", remote: false }],
+      activePaneIdx: 0,
+      colRatio: 0.5,
+      rowRatio: 0.5,
+    });
+    await nextTick();
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+
+    expect(api.saveRecoverySnapshot).not.toHaveBeenCalled();
+
+    resume();
+    await Promise.resolve();
+    expect(api.saveRecoverySnapshot).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1000);
+    await Promise.resolve();
+    expect(api.saveRecoverySnapshot).toHaveBeenCalledTimes(1);
+    scope.stop();
+  });
 });

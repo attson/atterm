@@ -50,6 +50,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
   let structuralTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   let dirty = false;
+  let pauseDepth = 0;
 
   function buildSnapshot(): RecoverySnapshot {
     const tabs: RecoveryTabSnapshot[] = args.tabs.value
@@ -124,8 +125,22 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     }
   }
 
+  function pause(): () => void {
+    pauseDepth++;
+    if (structuralTimer) { clearTimeout(structuralTimer); structuralTimer = null; }
+    if (heartbeatTimer)  { clearTimeout(heartbeatTimer);  heartbeatTimer = null; }
+    let resumed = false;
+    return () => {
+      if (resumed) return;
+      resumed = true;
+      pauseDepth = Math.max(0, pauseDepth - 1);
+      if (pauseDepth === 0 && dirty) flushNow();
+    };
+  }
+
   function scheduleStructural() {
     dirty = true;
+    if (pauseDepth > 0) return;
     if (structuralTimer) clearTimeout(structuralTimer);
     structuralTimer = setTimeout(() => {
       structuralTimer = null;
@@ -135,6 +150,7 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
 
   function scheduleHeartbeat() {
     dirty = true;
+    if (pauseDepth > 0) return;
     if (heartbeatTimer) return; // first-write-wins
     heartbeatTimer = setTimeout(() => {
       heartbeatTimer = null;
@@ -251,5 +267,6 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
   return {
     buildSnapshot,
     flushNow,
+    pause,
   };
 }

@@ -1230,9 +1230,9 @@ async function openLinkMatch(hit: LinkMatch) {
 
 function onTerminalMouseUp(e: MouseEvent) {
   if (e.button !== 0) return;
-  // Plain click opens the link; a click that ended a drag-select (pointer moved
-  // past the threshold) or held shift/alt does not. Mirrors the xterm link
-  // provider's activate() judgment via the shared shouldActivateLink().
+  // Ctrl+click opens the link; plain clicks stay available for selection.
+  // Mirrors the xterm link provider's activate() judgment via the shared
+  // shouldActivateLink().
   if (!shouldActivateLink(e, linkClickDownPos, isMac())) return;
   const hit = computeLinkHit(e);
   if (!hit) return;

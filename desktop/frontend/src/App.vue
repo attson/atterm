@@ -304,6 +304,7 @@ const pickerCtx = ref<{ tabId: string; paneIdx: number } | null>(null);
 // local fork with pin migration). Boot below populates the ref via
 // `recoveryDialogState.value = { open: true, snapshot }` when
 // loadRecoverySnapshot() + getRecoveryDialogEnabled() warrant it.
+let recovery: ReturnType<typeof useRecoverySnapshot> | null = null;
 const { recoveryDialogState, onRecoveryRestore, onRecoveryDiscard } = useRecoveryRestore({
   tabs,
   localList,
@@ -315,6 +316,7 @@ const { recoveryDialogState, onRecoveryRestore, onRecoveryDiscard } = useRecover
   gotoTab: (id) => gotoTab(id),
   startNewTab: () => startNewTab(),
   predictCellDims,
+  pauseRecoverySnapshot: () => recovery?.pause(),
 });
 
 let autoStarted = false;
@@ -1226,7 +1228,7 @@ useTerminalShortcuts(
 // persists its workspace via webTabsSnapshot, and has no Go-side bindings for
 // SaveRecoverySnapshot to call. Gate construction on caps.wailsBindings so the
 // composable's watchers/timers never fire (and never throw) on web.
-const recovery = caps.wailsBindings
+recovery = caps.wailsBindings
   ? useRecoverySnapshot({
       tabs,
       currentTabId,

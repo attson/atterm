@@ -35,6 +35,10 @@ describe("PaneGrid viewers badge", () => {
 });
 
 describe("PaneGrid close button", () => {
+  test("keeps close controls above the transparent splitter hit targets", () => {
+    expect(source).toMatch(/\.cell-controls\s*\{[\s\S]*?z-index:\s*6;/);
+  });
+
   test("clicking an inactive pane close button does not first activate that pane", async () => {
     const tab: Tab = {
       id: "tab-1",

@@ -201,20 +201,20 @@ describe("shouldActivateLink", () => {
   const ev = (o: Partial<MouseEvent>) =>
     ({ shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, clientX: 0, clientY: 0, ...o }) as MouseEvent;
 
-  it("opens on a plain click with no drag", () => {
-    expect(shouldActivateLink(ev({ clientX: 10, clientY: 10 }), { x: 10, y: 10 }, false)).toBe(true);
+  it("does not open on a plain click with no drag", () => {
+    expect(shouldActivateLink(ev({ clientX: 10, clientY: 10 }), { x: 10, y: 10 }, false)).toBe(false);
   });
 
-  it("opens on a plain click when there is no mousedown record", () => {
-    expect(shouldActivateLink(ev({}), null, false)).toBe(true);
+  it("does not open on a plain click when there is no mousedown record", () => {
+    expect(shouldActivateLink(ev({}), null, false)).toBe(false);
   });
 
   it("does not open when the pointer dragged more than the threshold", () => {
     expect(shouldActivateLink(ev({ clientX: 40, clientY: 10 }), { x: 10, y: 10 }, false)).toBe(false);
   });
 
-  it("opens on a small sub-threshold movement", () => {
-    expect(shouldActivateLink(ev({ clientX: 12, clientY: 11 }), { x: 10, y: 10 }, false)).toBe(true);
+  it("does not open on a small sub-threshold movement without ctrl", () => {
+    expect(shouldActivateLink(ev({ clientX: 12, clientY: 11 }), { x: 10, y: 10 }, false)).toBe(false);
   });
 
   it("does not open when shift is held", () => {
@@ -227,6 +227,11 @@ describe("shouldActivateLink", () => {
 
   it("opens on ctrl-click (non-mac)", () => {
     expect(shouldActivateLink(ev({ ctrlKey: true }), null, false)).toBe(true);
+  });
+
+  it("opens on ctrl-click (mac too; this is intentionally not Cmd-click)", () => {
+    expect(shouldActivateLink(ev({ ctrlKey: true }), null, true)).toBe(true);
+    expect(shouldActivateLink(ev({ metaKey: true }), null, true)).toBe(false);
   });
 });
 

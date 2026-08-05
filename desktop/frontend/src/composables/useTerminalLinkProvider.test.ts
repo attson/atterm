@@ -156,7 +156,7 @@ describe("useTerminalLinkProvider", () => {
     expect(received![0].range.end.x).toBe(17); // 14 cells: columns 4..17 inclusive
   });
 
-  it("activate opens on a plain click (no modifier, no drag)", async () => {
+  it("activate ignores a plain click (no modifier, no drag)", async () => {
     const f = makeFakeTerm("https://x.test");
     const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
@@ -173,8 +173,7 @@ describe("useTerminalLinkProvider", () => {
       new MouseEvent("click", { clientX: 5, clientY: 5 }),
       "https://x.test",
     );
-    expect(openLink).toHaveBeenCalled();
-    expect(openLink.mock.calls[0][0].text).toBe("https://x.test");
+    expect(openLink).not.toHaveBeenCalled();
   });
 
   it("activate does not open when the click followed a drag", async () => {
@@ -225,7 +224,7 @@ describe("useTerminalLinkProvider", () => {
     expect(row2![0].range.start.y).toBe(2);
   });
 
-  it("activate with Mod clears the terminal selection", async () => {
+  it("activate with Ctrl clears the terminal selection", async () => {
     // xterm.js starts a selection on the mousedown that leads into the
     // click; the linkProvider's activate() must clear it after opening the
     // URL so the user isn't left staring at a blue highlight.
@@ -241,7 +240,7 @@ describe("useTerminalLinkProvider", () => {
     let links: any[] | undefined;
     f.getProvider().provideLinks(1, (l) => (links = l as any[]));
     await links![0].activate(
-      new MouseEvent("click", { metaKey: true }),
+      new MouseEvent("click", { ctrlKey: true }),
       "https://x.test",
     );
     expect(f.clearSelection).toHaveBeenCalledOnce();
@@ -260,13 +259,13 @@ describe("useTerminalLinkProvider", () => {
     let links: any[] | undefined;
     f.getProvider().provideLinks(1, (l) => (links = l as any[]));
     await links![0].activate(
-      new MouseEvent("click", { metaKey: true }),
+      new MouseEvent("click", { ctrlKey: true }),
       "https://x.test",
     );
     expect(f.clearSelection).toHaveBeenCalledOnce();
   });
 
-  it("activate with Mod opens URL", async () => {
+  it("activate with Cmd does not open URL", async () => {
     const f = makeFakeTerm("https://x.test");
     const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
@@ -282,11 +281,30 @@ describe("useTerminalLinkProvider", () => {
       new MouseEvent("click", { metaKey: true }),
       "https://x.test",
     );
+    expect(openLink).not.toHaveBeenCalled();
+  });
+
+  it("activate with Ctrl opens URL", async () => {
+    const f = makeFakeTerm("https://x.test");
+    const openLink = vi.fn().mockResolvedValue(undefined);
+    useTerminalLinkProvider({
+      term: f.term,
+      isMac: true,
+      getHomeDir: () => "",
+      openLink,
+      onError: vi.fn(),
+    });
+    let links: any[] | undefined;
+    f.getProvider().provideLinks(1, (l) => (links = l as any[]));
+    await links![0].activate(
+      new MouseEvent("click", { ctrlKey: true }),
+      "https://x.test",
+    );
     expect(openLink).toHaveBeenCalled();
     expect(openLink.mock.calls[0][0].text).toBe("https://x.test");
   });
 
-  it("activate with Mod consumes the click so the WebView does not navigate", async () => {
+  it("activate with Ctrl consumes the click so the WebView does not navigate", async () => {
     const f = makeFakeTerm("https://x.test");
     const openLink = vi.fn().mockResolvedValue(undefined);
     useTerminalLinkProvider({
@@ -299,7 +317,7 @@ describe("useTerminalLinkProvider", () => {
     let links: any[] | undefined;
     f.getProvider().provideLinks(1, (l) => (links = l as any[]));
     const event = new MouseEvent("click", {
-      metaKey: true,
+      ctrlKey: true,
       bubbles: true,
       cancelable: true,
     });
@@ -329,7 +347,7 @@ describe("useTerminalLinkProvider", () => {
     let links: any[] | undefined;
     f.getProvider().provideLinks(1, (l) => (links = l as any[]));
     await links![0].activate(
-      new MouseEvent("click", { metaKey: true }),
+      new MouseEvent("click", { ctrlKey: true }),
       "~/Projects/foo",
     );
     expect(openLink).toHaveBeenCalled();
@@ -350,7 +368,7 @@ describe("useTerminalLinkProvider", () => {
     let links: any[] | undefined;
     f.getProvider().provideLinks(1, (l) => (links = l as any[]));
     await links![0].activate(
-      new MouseEvent("click", { metaKey: true }),
+      new MouseEvent("click", { ctrlKey: true }),
       "https://x.test",
     );
     expect(onError).toHaveBeenCalledWith("terminal.link.openFailed");

@@ -49,6 +49,10 @@ export interface UseRecoveryRestoreOpts {
   /** Web-build gate: skip local-fork branches when there is no local PTY. */
   hasLocalPty: boolean;
 
+  /** Temporarily suppress recovery.json auto-save while multi-pane restore is
+   *  mutating tabs/localList, then flush once at the end. */
+  pauseRecoverySnapshot?: () => (() => void) | void;
+
   // Callables into App.vue's tab/session model.
   newId: () => string;
   gotoTab: (id: string) => void;
@@ -77,6 +81,7 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
     gotoTab,
     startNewTab,
     predictCellDims,
+    pauseRecoverySnapshot,
   } = opts;
 
   const recoveryDialogState = ref<{ open: boolean; snapshot: RecoverySnapshot | null }>({
@@ -91,7 +96,12 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
       if (hasLocalPty) await startNewTab();
       return;
     }
-    await executeRestore(picks, savedActive);
+    const resumeRecoverySnapshot = pauseRecoverySnapshot?.();
+    try {
+      await executeRestore(picks, savedActive);
+    } finally {
+      resumeRecoverySnapshot?.();
+    }
   }
 
   async function onRecoveryDiscard() {

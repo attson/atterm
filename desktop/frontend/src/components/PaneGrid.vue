@@ -260,6 +260,7 @@ function formatWho(info: SessionInfo | null): string {
   display: flex;
   align-items: center;
   gap: 4px;
+  z-index: 6;
   /* badge + close button float over the terminal; clicks on empty space
      between them should pass through to xterm. Each child opts back in. */
   pointer-events: none;

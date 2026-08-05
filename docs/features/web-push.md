@@ -1,6 +1,6 @@
 # Web Push Notifications
 
-AT Term can deliver "command finished" notifications to a browser or PWA via the [Web Push API](https://developer.mozilla.org/en-US/docs/Web/API/Push_API), so you get a ping even when the page is not open. This builds on the [shell integration](shell-integration.md) shipped in v0.1.55 and is self-hosted — the AT Term relay is the push origin; no third-party services are involved.
+AT Term can deliver "command finished" notifications to a browser or PWA via the [Web Push API](https://developer.mozilla.org/en-US/docs/Web/API/Push_API), so you get a ping even when the page is not open. This builds on the [shell integration](./shell-integration.md) shipped in v0.1.55 and is self-hosted — the AT Term relay is the push origin; no third-party services are involved.
 
 ## Requirements
 

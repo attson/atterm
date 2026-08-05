@@ -35,7 +35,7 @@ OPAQUE 登录用浏览器 WebCrypto,只在**安全上下文**(HTTPS 或 `localho
 ## 命令完成通知没弹出?
 
 - 系统通知:确认浏览器 / 系统授予了通知权限。
-- Web Push:需要先在 web / PWA 端订阅;iOS 有平台限制(详见项目 `docs/web-push.md`)。
+- Web Push:需要先在 web / PWA 端订阅;iOS 有平台限制(详见项目 `docs/features/web-push.md`)。
 - 飞书:确认 `internal/feishu` 已在桌面 Settings → Feishu 配置并绑定。
 
 ## 忘记密码怎么办?

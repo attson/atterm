@@ -63,6 +63,17 @@ describe("terminal toasts", () => {
   });
 });
 
+describe("terminal pane mounting", () => {
+  test("mounts only current or previously visited tab panes", () => {
+    expect(source).toContain("const mountedTabIds = reactive(new Set<string>());");
+    expect(source).toMatch(/watch\(\s*currentTabId,[\s\S]*?mountedTabIds\.add\(id\)/);
+    expect(source).toContain("const mountedTabs = computed(() => tabs.value.filter((t) => mountedTabIds.has(t.id)));");
+    expect(source).toContain('<PaneGrid\n            v-for="t in mountedTabs"');
+    expect(source).toContain('v-show="t.id === currentTabId"');
+    expect(source).toContain(':active="t.id === currentTabId"');
+  });
+});
+
 describe("web capability gates", () => {
   test("does not mount plugin hosts when caps.pluginHost=false", () => {
     expect(source).toContain('<template v-if="caps.pluginHost && rightPanelHasPlugin">');

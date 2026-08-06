@@ -1600,6 +1600,10 @@ async function ensureTerm() {
 
 function startConnection() {
   if (!term) return;
+  if (conn) {
+    conn.attach();
+    return;
+  }
   conn = markRaw(new SessionConnection(
     props.endpoint,
     props.sessionId,
@@ -1838,7 +1842,7 @@ onMounted(async () => {
     /* fall back to default */
   }
   if (!isAlive) return;
-  startConnection();
+  if (props.active) startConnection();
   reloadShortcutBars();
   templatesOff = platform.events.on("quickTemplates:changed", reloadShortcutBars);
   shortcutsOff = platform.events.on("mobile:shortcutsChanged", reloadShortcutBars);
@@ -1941,6 +1945,8 @@ watch(
   () => props.active,
   (isActive) => {
     if (isActive) {
+      if (conn) conn.attach();
+      else startConnection();
       // Tab just gained focus — recompute size and let xterm refocus its
       // input so keystrokes go to this term instead of the body.
       nextTick(() => {
@@ -1948,6 +1954,7 @@ watch(
         focusTerminalForPaneActivation();
       });
     } else {
+      conn?.suspend();
       closeContextMenu();
     }
   }

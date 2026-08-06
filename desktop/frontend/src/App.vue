@@ -345,6 +345,11 @@ const newId = () =>
 const currentTab = computed<Tab | null>(
   () => tabs.value.find((t) => t.id === currentTabId.value) ?? null,
 );
+const mountedTabIds = reactive(new Set<string>());
+watch(currentTabId, (id) => {
+  if (id) mountedTabIds.add(id);
+}, { immediate: true });
+const mountedTabs = computed(() => tabs.value.filter((t) => mountedTabIds.has(t.id)));
 
 // Keep a Ref (not ComputedRef) so it satisfies PluginContextInputs.activePane.
 const activePaneRef = ref<Pane | null>(null);
@@ -1553,7 +1558,7 @@ defineExpose({ me });
             {{ emptyMainMessage }}
           </div>
           <PaneGrid
-            v-for="t in tabs"
+            v-for="t in mountedTabs"
             v-show="t.id === currentTabId"
             :key="t.id"
             :tab="t"

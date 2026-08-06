@@ -31,8 +31,19 @@ describe("TerminalView async mount lifecycle", () => {
   test("does not attach after an async mount resumes on an unmounted view", () => {
     expect(source).toContain("let isAlive = true;");
     expect(source).toMatch(/await ensureTerm\(\);\s*if \(!isAlive\) return;/);
-    expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;\s*startConnection\(\)/);
+    expect(source).toMatch(/await getHostInfo\(\);[\s\S]*?if \(!isAlive\) return;\s*if \(props\.active\) startConnection\(\)/);
     expect(source).toMatch(/onBeforeUnmount\(\(\) => \{\s*isAlive = false;/);
+  });
+
+  test("suspends hidden tab connections while keeping the xterm component mounted", () => {
+    expect(source).toMatch(/if \(props\.active\) startConnection\(\)/);
+    expect(source).toMatch(
+      /watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?if \(isActive\)[\s\S]*?conn\.attach\(\)[\s\S]*?else startConnection\(\)[\s\S]*?conn\?\.suspend\(\)/,
+    );
+  });
+
+  test("does not create a second websocket if activation races async mount completion", () => {
+    expect(source).toMatch(/function startConnection\(\) \{[\s\S]*?if \(conn\) \{[\s\S]*?conn\.attach\(\);[\s\S]*?return;[\s\S]*?\}/);
   });
 
   test("checks liveness inside ensureTerm after each async dependency", () => {

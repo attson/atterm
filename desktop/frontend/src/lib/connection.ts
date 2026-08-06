@@ -398,6 +398,7 @@ export class SessionConnection {
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private detached = false;
+  private suspended = false;
   // Latest pending resize request whose WS write was deferred (WS still in
   // CONNECTING state). Flushed in ws.onopen right after the ATTACH frame.
   // Only the most recent request is kept; earlier ones are stale.
@@ -458,11 +459,33 @@ export class SessionConnection {
 
   attach(): void {
     if (this.detached) return;
+    this.suspended = false;
+    if (this.ws || this.reconnectTimer !== null) return;
     this.openWS();
+  }
+
+  suspend(): void {
+    if (this.detached) return;
+    this.suspended = true;
+    this.rejectPendingFSRequests(new Error("filesystem request failed: connection suspended"));
+    this.retiredFSRequestIDs.clear();
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+    }
   }
 
   detach(): void {
     this.detached = true;
+    this.suspended = false;
     this.rejectPendingFSRequests(new Error("filesystem request failed: connection detached"));
     this.retiredFSRequestIDs.clear();
     if (this.reconnectTimer !== null) {
@@ -707,10 +730,11 @@ export class SessionConnection {
     };
 
     ws.onclose = () => {
+      if (this.ws !== ws) return;
       this.ws = null;
       this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
       this.retiredFSRequestIDs.clear();
-      if (this.detached) return;
+      if (this.detached || this.suspended) return;
       this.handlers.onStatus?.("reconnecting");
       const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
       this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);

@@ -44,6 +44,16 @@ function baseSession(id: string, over: Partial<SessionInfo> = {}): SessionInfo {
   return { id, command: "", cwd: "", title: "", cols: 80, rows: 24, started_at: 0, ...over };
 }
 
+function encodeOutPayload(seq: number, text: string): Uint8Array {
+  const data = encodeText(text);
+  const out = new Uint8Array(8 + data.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, Math.floor(seq / 0x100000000), false);
+  dv.setUint32(4, seq >>> 0, false);
+  out.set(data, 8);
+  return out;
+}
+
 describe("SessionConnection FS RPC", () => {
   const sessionId = "11111111-2222-3333-4444-555555555555";
   const endpoint = { url: "ws://127.0.0.1:1234", session_token: "token" };
@@ -438,6 +448,104 @@ describe("SessionConnection driver state", () => {
   test("exposes claimDriver() that sends a CLAIM_DRIVER frame", () => {
     expect(source).toMatch(/claimDriver\s*\(/);
     expect(source).toMatch(/TYPE\.CLAIM_DRIVER/);
+  });
+});
+
+describe("SessionConnection suspend/resume", () => {
+  const sessionId = "11111111-2222-3333-4444-555555555555";
+  const endpoint = { url: "ws://127.0.0.1:1234", session_token: "token" };
+
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 3;
+
+    readyState = FakeWebSocket.CONNECTING;
+    binaryType = "";
+    sent: Uint8Array[] = [];
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+
+    constructor(public url: string, public protocols?: string[]) {
+      FakeWebSocket.instances.push(this);
+    }
+
+    send(data: Uint8Array) {
+      this.sent.push(data);
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.();
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+  }
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("suspends the websocket without losing since_seq for later resume", () => {
+    const onOutput = vi.fn();
+    const conn = new SessionConnection(endpoint, sessionId, { onOutput });
+    conn.attach();
+    const ws1 = FakeWebSocket.instances[0];
+    ws1.open();
+
+    ws1.onmessage?.({
+      data: encodeFrame(TYPE.OUT, uuidParse(sessionId), encodeOutPayload(7, "hello")).buffer,
+    } as MessageEvent);
+    expect(onOutput).toHaveBeenCalledOnce();
+
+    conn.suspend();
+    expect(ws1.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    conn.attach();
+    const ws2 = FakeWebSocket.instances[1];
+    ws2.open();
+
+    const attach = decodeFrame(ws2.sent[0]);
+    expect(JSON.parse(decodeText(attach.payload))).toMatchObject({
+      session_id: sessionId,
+      since_seq: 7,
+    });
+  });
+
+  test("ignores a stale suspended socket close after a new socket has attached", () => {
+    class AsyncCloseWebSocket extends FakeWebSocket {
+      close() {
+        this.readyState = FakeWebSocket.CLOSED;
+      }
+    }
+    vi.stubGlobal("WebSocket", AsyncCloseWebSocket);
+
+    const conn = new SessionConnection(endpoint, sessionId);
+    conn.attach();
+    const ws1 = AsyncCloseWebSocket.instances[0];
+    ws1.open();
+
+    conn.suspend();
+    conn.attach();
+    const ws2 = AsyncCloseWebSocket.instances[1];
+    ws2.open();
+
+    ws1.onclose?.();
+    conn.sendInput("x");
+
+    expect(ws2.sent).toHaveLength(2);
+    expect(decodeFrame(ws2.sent[1]).type).toBe(TYPE.IN);
   });
 });
 

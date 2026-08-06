@@ -14,8 +14,10 @@ import {
   synthSessionInfoFromSnapshot,
 } from "../lib/recoveryRestore";
 import { classifySSHRestore } from "../lib/sshRestore";
-import { PANE_COUNT, type LayoutKind, type Tab } from "../lib/types";
+import { PANE_COUNT, type LayoutKind, type Pane, type Tab } from "../lib/types";
 import type { UseSessionPins } from "./useSessionPins";
+
+const RESTORE_SPAWN_CONCURRENCY = 4;
 
 /**
  * useRecoveryRestore owns the recovery-dialog state + the executeRestore
@@ -114,12 +116,50 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
     if (hasLocalPty) await startNewTab();
   }
 
-  // executeRestore rebuilds tabs/panes from a snapshot. Serial per tab (and
-  // per pane): the spawn must finish before we push the Tab so the spawn
-  // failure paths (pane = empty) land in the correct slot. Parallel would
-  // race against snapshot mutation and complicate error placement.
+  type RestorePaneJob = {
+    pickIdx: number;
+    slot: number;
+    tab: RecoveryTabSnapshot;
+  };
+  type RestorePaneResult = {
+    pickIdx: number;
+    slot: number;
+    pane: Pane;
+    seed?: SessionInfo;
+    pinRename?: { oldSid: string; newSid: string };
+  };
+
+  async function runRestoreJobs(
+    jobs: RestorePaneJob[],
+    fn: (job: RestorePaneJob) => Promise<RestorePaneResult>,
+  ): Promise<RestorePaneResult[]> {
+    const results = new Array<RestorePaneResult>(jobs.length);
+    let next = 0;
+    const workers = Array.from({ length: Math.min(RESTORE_SPAWN_CONCURRENCY, jobs.length) }, async () => {
+      while (next < jobs.length) {
+        const idx = next++;
+        results[idx] = await fn(jobs[idx]);
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
+  // executeRestore rebuilds tabs/panes from a snapshot. Pane startup is bounded
+  // parallel, but UI state is committed once at the end. That avoids two kinds
+  // of boot jank: N shell startups no longer stack serially, and the main view
+  // does not mount/attach/replay partially restored hidden tabs while restore is
+  // still running.
   async function executeRestore(picks: RecoveryTabSnapshot[], savedActiveTabId: string) {
-    const newIds: string[] = [];
+    const newIds = picks.map(() => newId());
+    const restoredTabs: Tab[] = picks.map((tab, idx) => ({
+      id: newIds[idx],
+      layout: tab.layout,
+      activePaneIdx: tab.active_pane_idx,
+      colRatio: tab.col_ratio,
+      rowRatio: tab.row_ratio,
+      panes: [],
+    }));
     // Pin migration: local panes get a fresh session_id on respawn, which
     // would strand the previous generation's pin ids in config. Capture the
     // old sid from the snapshot and hand it to pins.rename after each spawn.
@@ -135,139 +175,157 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
     // empty shell restore against this instead of /bin/sh — see
     // buildRestoreSessionReq.
     const defaultShell = (await listShells())[0] ?? "";
+    const jobs: RestorePaneJob[] = [];
     for (let pickIdx = 0; pickIdx < picks.length; pickIdx++) {
       const tab = picks[pickIdx];
-      const t: Tab = {
-        id: newId(),
-        layout: tab.layout,
-        activePaneIdx: tab.active_pane_idx,
-        colRatio: tab.col_ratio,
-        rowRatio: tab.row_ratio,
-        panes: [],
-      };
       if (tab.id === savedActiveTabId) savedActiveIdx = pickIdx;
       const want = PANE_COUNT[tab.layout];
       for (let i = 0; i < want; i++) {
-        const snap = tab.panes.find((p) => p.slot === i);
-        if (!snap) {
-          t.panes[i] = { sessionId: null, remote: false };
-          continue;
-        }
-        // Remote panes: do NOT fork a new local shell. The session is still
-        // alive on the remote host (or will be when the relay reconnects);
-        // re-bind the pane to the same session_id and let the remote list
-        // push resolve SessionInfo. Until the relay catches up — or if the
-        // session is gone — lastSeenInfo keeps the tab label meaningful
-        // (matches the local-sweep "disconnected" display).
-        if (snap.remote && snap.session_id) {
-          t.panes[i] = {
+        jobs.push({ pickIdx, slot: i, tab });
+      }
+    }
+
+    const results = await runRestoreJobs(jobs, async (job): Promise<RestorePaneResult> => {
+      const { pickIdx, slot: i, tab } = job;
+      const snap = tab.panes.find((p) => p.slot === i);
+      if (!snap) {
+        return { pickIdx, slot: i, pane: { sessionId: null, remote: false } };
+      }
+      // Remote panes: do NOT fork a new local shell. The session is still
+      // alive on the remote host (or will be when the relay reconnects);
+      // re-bind the pane to the same session_id and let the remote list
+      // push resolve SessionInfo. Until the relay catches up — or if the
+      // session is gone — lastSeenInfo keeps the tab label meaningful
+      // (matches the local-sweep "disconnected" display).
+      if (snap.remote && snap.session_id) {
+        return {
+          pickIdx,
+          slot: i,
+          pane: {
             sessionId: snap.session_id,
             remote: true,
             lastSeenInfo: synthSessionInfoFromSnapshot(snap),
+          },
+        };
+      }
+      // Platforms without a local PTY (e.g. the web build) can't fork a
+      // local shell at all — leave the pane empty instead of calling
+      // newSession, matching how a snapshot-less boot renders there.
+      if (!hasLocalPty) {
+        return { pickIdx, slot: i, pane: { sessionId: null, remote: false } };
+      }
+      // SSH sessions must NOT be forked as a local shell (that would spawn a
+      // bogus "ssh" process). Saved-host SSH reconnects by host id; ad-hoc SSH
+      // can't reconnect (used-once creds) so it's left empty with a hint.
+      const sshKind = classifySSHRestore(snap);
+      if (sshKind.kind === "reconnect") {
+        try {
+          const resp = await newSshSessionByID(sshKind.hostId);
+          const dims = predictCellDims(tab.layout);
+          return {
+            pickIdx,
+            slot: i,
+            pane: { sessionId: resp.session_id, remote: false },
+            seed: {
+              id: resp.session_id,
+              command: snap.title || "ssh",
+              cwd: "",
+              title: snap.title || "ssh",
+              type: "shell",
+              cols: dims.cols,
+              rows: dims.rows,
+              started_at: Math.floor(Date.now() / 1000),
+              host_id: localHostID.value,
+            },
           };
-          continue;
-        }
-        // Platforms without a local PTY (e.g. the web build) can't fork a
-        // local shell at all — leave the pane empty instead of calling
-        // newSession, matching how a snapshot-less boot renders there.
-        if (!hasLocalPty) {
-          t.panes[i] = { sessionId: null, remote: false };
-          continue;
-        }
-        // SSH sessions must NOT be forked as a local shell (that would spawn a
-        // bogus "ssh" process). Saved-host SSH reconnects by host id; ad-hoc SSH
-        // can't reconnect (used-once creds) so it's left empty with a hint.
-        const sshKind = classifySSHRestore(snap);
-        if (sshKind.kind === "reconnect") {
-          try {
-            const resp = await newSshSessionByID(sshKind.hostId);
-            t.panes[i] = { sessionId: resp.session_id, remote: false };
-            pendingLocalIds.add(resp.session_id);
-            localList.value = [
-              ...localList.value,
-              {
-                id: resp.session_id,
-                command: snap.title || "ssh",
-                cwd: "",
-                title: snap.title || "ssh",
-                type: "shell",
-                cols: predictCellDims(tab.layout).cols,
-                rows: predictCellDims(tab.layout).rows,
-                started_at: Math.floor(Date.now() / 1000),
-                host_id: localHostID.value,
-              },
-            ];
-          } catch (e) {
-            // Host deleted / key missing / TOFU on reconnect → leave empty with a
-            // hint instead of stranding a broken pane.
-            t.panes[i] = {
+        } catch (e) {
+          // Host deleted / key missing / TOFU on reconnect → leave empty with a
+          // hint instead of stranding a broken pane.
+          return {
+            pickIdx,
+            slot: i,
+            pane: {
               sessionId: null,
               remote: false,
               lastSeenInfo: synthSessionInfoFromSnapshot({
                 ...snap,
                 title: (snap.title || "ssh") + " — reconnect failed, open it again",
               }),
-            };
-            void e;
-          }
-          continue;
+            },
+          };
         }
-        if (sshKind.kind === "adhoc") {
-          // Ad-hoc SSH: credentials were used-once; cannot reconnect.
-          t.panes[i] = {
+      }
+      if (sshKind.kind === "adhoc") {
+        // Ad-hoc SSH: credentials were used-once; cannot reconnect.
+        return {
+          pickIdx,
+          slot: i,
+          pane: {
             sessionId: null,
             remote: false,
             lastSeenInfo: synthSessionInfoFromSnapshot({
               ...snap,
               title: (snap.title || "ssh") + " — SSH disconnected, reconnect to resume",
             }),
-          };
-          continue;
-        }
-        try {
-          // oldSid: previous generation's session_id, saved by useRecoverySnapshot
-          // for local panes (Task 2). Empty when the snapshot pre-dates that
-          // change — skip pin migration in that case, matches old behavior.
-          const oldSid = snap.session_id || "";
-          const dims = predictCellDims(tab.layout);
-          const req = buildRestoreSessionReq(snap, dims.cols, dims.rows, defaultShell);
-          const resp = await newSession(req);
-          t.panes[i] = { sessionId: resp.session_id, remote: false };
-          // Seed localList immediately (mirrors spawnLocalShell) so the recovery
-          // snapshot can resolve this pane's SessionInfo right away. Without this,
-          // the window before the relay's session-list push arrives would persist
-          // shell:"" / cwd:"" — corrupting recovery.json and making the NEXT
-          // restore fall back to /bin/sh (sh-3.2$). pendingLocalIds protects the
-          // seed from being dropped by the FIRST (still-stale) LIST_RESP frame
-          // that arrives after a multi-spawn restore.
-          pendingLocalIds.add(resp.session_id);
-          localList.value = [
-            ...localList.value,
-            {
-              id: resp.session_id,
-              command: req.command,
-              cwd: req.cwd || "",
-              title: snap.title || req.command,
-              type: snap.session_type || "",
-              cols: dims.cols,
-              rows: dims.rows,
-              started_at: Math.floor(Date.now() / 1000),
-              host_id: localHostID.value,
-            },
-          ];
+          },
+        };
+      }
+      try {
+        // oldSid: previous generation's session_id, saved by useRecoverySnapshot
+        // for local panes (Task 2). Empty when the snapshot pre-dates that
+        // change — skip pin migration in that case, matches old behavior.
+        const oldSid = snap.session_id || "";
+        const dims = predictCellDims(tab.layout);
+        const req = buildRestoreSessionReq(snap, dims.cols, dims.rows, defaultShell);
+        const resp = await newSession(req);
+        // Seed localList immediately (mirrors spawnLocalShell) so the recovery
+        // snapshot can resolve this pane's SessionInfo right away. Without this,
+        // the window before the relay's session-list push arrives would persist
+        // shell:"" / cwd:"" — corrupting recovery.json and making the NEXT
+        // restore fall back to /bin/sh (sh-3.2$). pendingLocalIds protects the
+        // seed from being dropped by the FIRST (still-stale) LIST_RESP frame
+        // that arrives after a multi-spawn restore.
+        return {
+          pickIdx,
+          slot: i,
+          pane: { sessionId: resp.session_id, remote: false },
+          seed: {
+            id: resp.session_id,
+            command: req.command,
+            cwd: req.cwd || "",
+            title: snap.title || req.command,
+            type: snap.session_type || "",
+            cols: dims.cols,
+            rows: dims.rows,
+            started_at: Math.floor(Date.now() / 1000),
+            host_id: localHostID.value,
+          },
           // Resume injection is handled Go-side on the shell's first prompt
           // (see relay_host SetOnFirstPrompt) — reliable, no task-state poll.
-          if (oldSid && pins.isPinned(oldSid)) {
-            pins.rename(oldSid, resp.session_id);
-          }
-        } catch (e) {
-          console.warn("[recovery] pane spawn failed", e);
-          t.panes[i] = { sessionId: null, remote: false };
-        }
+          pinRename: oldSid && pins.isPinned(oldSid)
+            ? { oldSid, newSid: resp.session_id }
+            : undefined,
+        };
+      } catch (e) {
+        console.warn("[recovery] pane spawn failed", e);
+        return { pickIdx, slot: i, pane: { sessionId: null, remote: false } };
       }
-      tabs.value.push(t);
-      newIds.push(t.id);
+    });
+
+    const seeds: SessionInfo[] = [];
+    const pinRenames: Array<{ oldSid: string; newSid: string }> = [];
+    for (const r of results) {
+      restoredTabs[r.pickIdx].panes[r.slot] = r.pane;
+      if (r.seed) seeds.push(r.seed);
+      if (r.pinRename) pinRenames.push(r.pinRename);
     }
+    for (const seed of seeds) pendingLocalIds.add(seed.id);
+    const existingLocalIds = new Set(localList.value.map((s) => s.id));
+    const newSeeds = seeds.filter((s) => !existingLocalIds.has(s.id));
+    if (newSeeds.length > 0) localList.value = [...localList.value, ...newSeeds];
+    for (const r of pinRenames) pins.rename(r.oldSid, r.newSid);
+
+    tabs.value = [...tabs.value, ...restoredTabs];
     if (savedActiveIdx >= 0 && newIds[savedActiveIdx]) {
       gotoTab(newIds[savedActiveIdx]);
     } else if (newIds.length > 0) {

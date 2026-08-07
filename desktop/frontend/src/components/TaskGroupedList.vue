@@ -99,34 +99,22 @@ const openSessionIdSet = computed(() => new Set(props.openSessionIds));
 const groups = computed<Record<string, RemoteSession[]>>(() =>
   props.groupBy === "state" ? props.byState : props.byHost,
 );
-// Same source as `groups`, minus any session currently pinned — pinned
-// sessions are pulled out of their host/state group entirely and surface
-// only in the virtual pinned group above (see `pinnedSessions` below).
-const filteredGroups = computed<Record<string, RemoteSession[]>>(() => {
-  const out: Record<string, RemoteSession[]> = {};
-  for (const [k, list] of Object.entries(groups.value)) {
-    out[k] = list.filter(
-      (s) => !pins.isPinned(s.session_id) && matchesSession(s, q.value),
-    );
-  }
-  return out;
-});
+const pinnedIdSet = computed(() => pins.pinnedIds.value);
 // Urgency order for sorting the pinned group — mirrors STATE_ORDER minus
 // "closed" (pinned+closed sessions still sort last via the fallback index).
-const groupKeys = computed<string[]>(() => {
+function orderedGroupKeys(): string[] {
   if (props.groupBy === "state") {
-    return STATE_ORDER.filter((s) => (filteredGroups.value[s] ?? []).length > 0);
+    return STATE_ORDER.filter((s) => (groups.value[s] ?? []).length > 0);
   }
   // Pin the local host to the top so the user's own machine is the first
   // thing visible — the rest stays alphabetical for stability across
   // relay churn (a remote dropping in/out shouldn't reshuffle the list).
-  const keys = Object.keys(groups.value).sort()
-    .filter((k) => (filteredGroups.value[k] ?? []).length > 0);
+  const keys = Object.keys(groups.value).sort();
   if (!props.localHostId) return keys;
   const i = keys.indexOf(props.localHostId);
   if (i <= 0) return keys;
   return [props.localHostId, ...keys.slice(0, i), ...keys.slice(i + 1)];
-});
+}
 const foldOpen = ref(false);
 // Per-group collapse state, in-memory only (matches `foldOpen`'s session-
 // local lifetime). Each entry is a group key that is currently collapsed;
@@ -140,13 +128,8 @@ function isGroupCollapsed(key: string): boolean {
   return collapsedGroups.value.has(key);
 }
 function toggleGroupCollapsed(key: string) {
-  // Mutate a fresh Set so Vue's reactivity picks up the change — Vue's
-  // shallow refs see `.add()` / `.delete()` as same-instance and skip the
-  // re-render.
-  const next = new Set(collapsedGroups.value);
-  if (next.has(key)) next.delete(key);
-  else next.add(key);
-  collapsedGroups.value = next;
+  if (collapsedGroups.value.has(key)) collapsedGroups.value.delete(key);
+  else collapsedGroups.value.add(key);
 }
 const home = ref("");
 
@@ -172,10 +155,11 @@ const pinnedSessions = computed<RemoteSession[]>(() => {
   const out: RemoteSession[] = [];
   const seen = new Set<string>();
   const source = props.groupBy === "state" ? props.byState ?? {} : props.byHost ?? {};
+  const pinned = pinnedIdSet.value;
   for (const list of Object.values(source)) {
     for (const s of list) {
       if (seen.has(s.session_id)) continue;
-      if (pins.isPinned(s.session_id) && matchesSession(s, q.value)) {
+      if (pinned.has(s.session_id) && matchesSession(s, q.value)) {
         seen.add(s.session_id);
         out.push(s);
       }
@@ -192,9 +176,52 @@ const completedFiltered = computed<RemoteSession[]>(() =>
   props.completedSeen.filter((s) => matchesSession(s, q.value)),
 );
 
+interface GroupView {
+  key: string;
+  title: string;
+  sessions: RemoteSession[];
+  count: number;
+  primaryState: TaskState;
+  unreadIds: string[];
+}
+
+// Same source as `groups`, minus any pinned sessions. Compute each group's
+// rows and header metadata together so pin/unpin invalidates one pass through
+// the sidebar data instead of several render-time scans per group.
+const groupViews = computed<GroupView[]>(() => {
+  const out: GroupView[] = [];
+  const pinned = pinnedIdSet.value;
+  const query = q.value;
+  for (const key of orderedGroupKeys()) {
+    const sessions: RemoteSession[] = [];
+    const unreadIds: string[] = [];
+    let best: RemoteSession | null = null;
+    for (const s of groups.value[key] ?? []) {
+      if (pinned.has(s.session_id) || !matchesSession(s, query)) continue;
+      sessions.push(s);
+      if (s.unread) unreadIds.push(s.session_id);
+      if (!best || urgencyIndex(s.task_state) < urgencyIndex(best.task_state)) {
+        best = s;
+      }
+    }
+    if (sessions.length === 0) continue;
+    out.push({
+      key,
+      title: groupHeader(key),
+      sessions,
+      count: sessions.length,
+      primaryState: props.groupBy === "state"
+        ? (key as TaskState)
+        : ((best?.task_state as TaskState | undefined) ?? "idle"),
+      unreadIds,
+    });
+  }
+  return out;
+});
+
 const hasAnyMatch = computed(
   () => pinnedSessions.value.length > 0
-    || groupKeys.value.length > 0
+    || groupViews.value.length > 0
     || completedFiltered.value.length > 0,
 );
 
@@ -206,9 +233,9 @@ const orderedVisibleIds = computed<string[]>(() => {
   if (!isGroupCollapsed(PINNED_KEY)) {
     for (const s of pinnedSessions.value) out.push(s.session_id);
   }
-  for (const key of groupKeys.value) {
-    if (isGroupCollapsed(key)) continue;
-    for (const s of filteredGroups.value[key] ?? []) out.push(s.session_id);
+  for (const group of groupViews.value) {
+    if (isGroupCollapsed(group.key)) continue;
+    for (const s of group.sessions) out.push(s.session_id);
   }
   if (foldOpen.value) {
     for (const s of completedFiltered.value) out.push(s.session_id);
@@ -386,29 +413,11 @@ function groupHeader(key: string): string {
   return hostName(key);
 }
 
-function groupPrimaryState(key: string): TaskState {
-  if (props.groupBy === "state") return (key as TaskState);
-  // Derive from the filtered (post-pin) list so the header icon matches
-  // what's actually rendered underneath. The caller only invokes this for
-  // groups whose filtered list is non-empty (see the `v-if` guarding the
-  // `<section>` below), so `list` is always non-empty here.
-  const list = filteredGroups.value[key] ?? [];
-  let best = list[0];
-  for (const s of list) {
-    if (urgencyIndex(s.task_state) < urgencyIndex(best.task_state)) best = s;
-  }
-  return (best.task_state as TaskState | undefined) ?? "idle";
-}
-
-function unreadIdsForGroup(key: string): string[] {
-  return (filteredGroups.value[key] ?? []).filter((s) => s.unread).map((s) => s.session_id);
-}
-
 function onMarkRead(s: RemoteSession) {
   emit("markSeen", { ids: [s.session_id] });
 }
-function onMarkGroup(key: string) {
-  emit("markSeen", { ids: unreadIdsForGroup(key) });
+function onMarkGroup(ids: string[]) {
+  emit("markSeen", { ids });
 }
 function onMarkFold() {
   emit("markSeen", { ids: props.completedSeen.map((s) => s.session_id) });
@@ -480,50 +489,49 @@ function stateLabel(state: string | undefined): string {
         </button>
       </template>
     </template>
-    <template v-for="key in groupKeys" :key="key">
+    <template v-for="group in groupViews" :key="group.key">
     <section
-      v-if="(filteredGroups[key] ?? []).length > 0"
       class="host-group"
-      :data-test="`host-group-${key}`"
+      :data-test="`host-group-${group.key}`"
     >
       <header
         class="host-header"
         data-test="host-header"
         role="button"
         tabindex="0"
-        :aria-expanded="!isGroupCollapsed(key)"
-        @click="toggleGroupCollapsed(key)"
-        @keydown.enter.prevent="toggleGroupCollapsed(key)"
-        @keydown.space.prevent="toggleGroupCollapsed(key)"
+        :aria-expanded="!isGroupCollapsed(group.key)"
+        @click="toggleGroupCollapsed(group.key)"
+        @keydown.enter.prevent="toggleGroupCollapsed(group.key)"
+        @keydown.space.prevent="toggleGroupCollapsed(group.key)"
       >
         <span class="caret" aria-hidden="true">
           <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-            <path v-if="isGroupCollapsed(key)" d="M3 1 L7 5 L3 9 Z" />
+            <path v-if="isGroupCollapsed(group.key)" d="M3 1 L7 5 L3 9 Z" />
             <path v-else d="M1 3 L9 3 L5 8 Z" />
           </svg>
         </span>
-        <span class="host-name">{{ groupHeader(key) }}</span>
+        <span class="host-name">{{ group.title }}</span>
         <span
-          v-if="groupBy === 'host' && localHostId && key === localHostId"
+          v-if="groupBy === 'host' && localHostId && group.key === localHostId"
           class="local-chip"
           data-test="local-chip"
         >
           {{ t("sessions.thisMachine") }}
         </span>
         <span class="counts">
-          <TaskStateIcon :state="groupPrimaryState(key)" :size="10" />
-          <span class="count">{{ (filteredGroups[key] ?? []).length }}</span>
+          <TaskStateIcon :state="group.primaryState" :size="10" />
+          <span class="count">{{ group.count }}</span>
         </span>
-        <span v-if="unreadIdsForGroup(key).length > 0" class="unread-badge">
-          {{ t("tasks.unreadBadge", { count: unreadIdsForGroup(key).length }) }}
+        <span v-if="group.unreadIds.length > 0" class="unread-badge">
+          {{ t("tasks.unreadBadge", { count: group.unreadIds.length }) }}
         </span>
         <button
-          v-if="unreadIdsForGroup(key).length > 0"
+          v-if="group.unreadIds.length > 0"
           class="mark-all"
           data-test="host-mark-all"
           :title="t('tasks.markAllRead')"
           :aria-label="t('tasks.markAllRead')"
-          @click.stop="onMarkGroup(key)"
+          @click.stop="onMarkGroup(group.unreadIds)"
         >
           <!-- ✓ (U+2713) renders as .notdef on iOS 26.3. -->
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -532,7 +540,7 @@ function stateLabel(state: string | undefined): string {
         </button>
       </header>
       <button
-        v-for="s in (isGroupCollapsed(key) ? [] : filteredGroups[key])"
+        v-for="s in (isGroupCollapsed(group.key) ? [] : group.sessions)"
         :key="s.session_id"
         class="task-row"
         :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"

@@ -215,6 +215,19 @@ const activePath = computed(() =>
 const showHidden = computed(() => store.cfg?.fileExplorer.showHidden ?? false);
 const showLineNumbers = computed(() => store.cfg?.fileExplorer.showLineNumbers ?? false);
 
+// Both view toggles are driven from the file tree's context menu; the config
+// write lives here so FileTree stays purely props-in / events-out.
+async function saveViewOption(key: "showHidden" | "showLineNumbers", value: boolean) {
+  if (!store.cfg) return;
+  const next = JSON.parse(JSON.stringify(store.cfg));
+  next.fileExplorer[key] = value;
+  try {
+    await store.save(next);
+  } catch (err) {
+    console.warn("file-explorer: saving view option failed", err);
+  }
+}
+
 // Derive the explorer skin from the terminal theme. Light terminal → light;
 // any dark terminal → dimmed.
 const explorerTheme = computed<"dimmed" | "light">(() =>
@@ -254,10 +267,13 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             :fs="fs"
             :root="root"
             :show-hidden="showHidden"
+            :show-line-numbers="showLineNumbers"
             :search-query="fileNameSearch"
             :context="context"
             @file-clicked="onFileClick"
             @file-double-clicked="onFileDoubleClick"
+            @toggle-show-hidden="(v: boolean) => saveViewOption('showHidden', v)"
+            @toggle-show-line-numbers="(v: boolean) => saveViewOption('showLineNumbers', v)"
           />
           <div v-else class="placeholder">{{ t("plugins.fileExplorer.noActivePane") }}</div>
         </div>

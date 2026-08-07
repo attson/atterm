@@ -162,6 +162,36 @@ describe("FileEditor (dispatcher)", () => {
     expect(w.find('[data-test="kind-code"]').exists()).toBe(false);
   });
 
+  // Until fileMeta answers, every kind branch is false and the host renders a
+  // bare background — indistinguishable from "the file is empty" or "the
+  // preview silently died". Any stall or empty-message rejection therefore
+  // reads to the user as a blank pane with no way to tell what went wrong.
+  it("shows a loading banner while fileMeta is still in flight", async () => {
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const w = mount(FileEditor, {
+      props: { fs, path: "/x/.env", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+      global: { stubs: { CodeEditor: { template: '<div data-test="kind-code" />' } } },
+    });
+    await flushPromises();
+    expect(w.find('[data-test="kind-pending"]').exists()).toBe(true);
+    expect(w.text().trim()).not.toBe("");
+  });
+
+  it("still surfaces a rejection that carries no message", async () => {
+    (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error(""),
+    );
+    const w = mount(FileEditor, {
+      props: { fs, path: "/x/.env", showLineNumbers: false, theme: "dimmed", viewMode: "code" },
+      global: { stubs: { CodeEditor: { template: '<div data-test="kind-code" />' } } },
+    });
+    await flushPromises();
+    expect(w.find(".err").exists()).toBe(true);
+    expect(w.text().trim()).not.toBe("");
+  });
+
   it("does not let a stale fileMeta response replace the newer file kind", async () => {
     let resolveFirst!: (value: { path: string; size: number; modTime: number; isBinary: boolean }) => void;
     (platform.pluginHost!.fs.fileMeta as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {

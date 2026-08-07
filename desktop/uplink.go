@@ -193,7 +193,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		u.outMu.Unlock()
 	}()
 
-	remoteFS := newRemoteFS(newFSAccess(remoteFSAllowRoots()))
+	remoteFS := newRemoteFS(newFSAccess(remoteFSAllowRoots()), u.accountKey)
 	remoteFS.driverClientID = u.host.DriverClientID
 	defer remoteFS.close()
 
@@ -427,8 +427,12 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				log.Printf("desktop-uplink: inbound_forward_ok type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
 			}
 		case proto.TypeFSRequest:
-			var req proto.FSRequestPayload
-			if err := json.Unmarshal(f.Payload, &req); err != nil {
+			// Opens the sealed path segment when the client sealed it.
+			// Everything downstream (remote_fs, fsaccess) sees a plain
+			// FSRequestPayload and stays unaware of encryption.
+			req, err := proto.DecodeFSRequest(f.Payload, remoteFS.sessionKey(f.SessionID), f.SessionID)
+			if err != nil {
+				log.Printf("desktop-uplink: fs_request_decode_failed session=%s error=%v", f.SessionID, err)
 				continue
 			}
 			if !handleRemoteFSRequest(connCtx, out, f.SessionID, u.rawRemotePermission, remoteFS, req) {

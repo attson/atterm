@@ -308,9 +308,7 @@ export const en = {
     },
     plugins: {
       hint: "Plugins are loaded on demand. Disabled plugins do not affect startup time or memory.",
-      showHidden: "Show hidden files",
-      showLineNumbers: "Show line numbers in editor",
-      panelDragHint: "Panel width and inner ratio are adjusted by dragging in the panel.",
+      panelDragHint: "Panel width and inner ratio are adjusted by dragging in the panel. View options live in the file tree's context menu.",
       noneRegistered: "No plugins registered.",
     },
     shortcuts: {
@@ -666,6 +664,8 @@ export const en = {
       selectFile: "Select a file.",
       pinCurrentCwd: "Pin current cwd",
       unpinFollow: "Unpin (follow active pane)",
+      showHidden: "Show hidden files",
+      showLineNumbers: "Show line numbers in editor",
       searchFiles: "Search files",
       noSearchResults: "No matching files.",
       searchTruncated: "Showing first 200 matches.",
@@ -675,6 +675,7 @@ export const en = {
       binary: "Binary file - no preview.",
       errorPrefix: "Error: {message}",
       unexpectedContentType: "Unexpected file content type",
+      unknownError: "Preview failed for an unknown reason",
       openInSystem: "Open in System App",
       unsupportedPreview: "Inline preview unavailable for this file type.",
       showAsCode: "View as code",

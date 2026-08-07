@@ -341,6 +341,40 @@ describe("FileTree context menu + CRUD", () => {
     expect(w.find('[data-test="menu-delete"]').exists()).toBe(true);
   });
 
+  it("offers the view toggles, reflecting their current state", async () => {
+    const w = mount(FileTree, {
+      props: { fs, root: "/proj", showHidden: true, showLineNumbers: false },
+    });
+    await flushPromises();
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await flushPromises();
+    const hidden = w.find('[data-test="menu-toggle-hidden"]');
+    const lineNumbers = w.find('[data-test="menu-toggle-line-numbers"]');
+    expect(hidden.exists()).toBe(true);
+    expect(lineNumbers.exists()).toBe(true);
+    expect(hidden.attributes("aria-checked")).toBe("true");
+    expect(lineNumbers.attributes("aria-checked")).toBe("false");
+  });
+
+  it("emits toggle events and closes the menu, leaving the config write to the host", async () => {
+    const w = mount(FileTree, {
+      props: { fs, root: "/proj", showHidden: false, showLineNumbers: false },
+    });
+    await flushPromises();
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-toggle-hidden"]').trigger("click");
+    await flushPromises();
+    expect(w.emitted("toggle-show-hidden")).toEqual([[true]]);
+    expect(w.find('[data-test="file-tree-menu"]').exists()).toBe(false);
+
+    await w.find('.node[title="/proj/README.md"]').trigger("contextmenu");
+    await flushPromises();
+    await w.find('[data-test="menu-toggle-line-numbers"]').trigger("click");
+    await flushPromises();
+    expect(w.emitted("toggle-show-line-numbers")).toEqual([[true]]);
+  });
+
   it("clicking Delete without Shift dispatches fs.trash", async () => {
     const w = mount(FileTree, { props: { fs, root: "/proj", showHidden: false } });
     await flushPromises();

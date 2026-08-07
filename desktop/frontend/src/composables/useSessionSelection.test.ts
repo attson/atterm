@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { effectScope } from "vue";
+import { effect, effectScope } from "vue";
 import { __resetForTests, useSessionSelection } from "./useSessionSelection";
 
 describe("useSessionSelection", () => {
@@ -31,6 +31,33 @@ describe("useSessionSelection", () => {
       expect(s.size.value).toBe(0);
       // anchor stays on last-touched even when set becomes empty
       expect(s.anchorId.value).toBe("a");
+    });
+  });
+
+  test("toggle only invalidates reactive has() subscribers for the touched id", () => {
+    scope.run(() => {
+      const s = useSessionSelection();
+      let aRuns = 0;
+      let bRuns = 0;
+      let sizeRuns = 0;
+      effect(() => {
+        s.isSelected("a");
+        aRuns++;
+      });
+      effect(() => {
+        s.isSelected("b");
+        bRuns++;
+      });
+      effect(() => {
+        s.size.value;
+        sizeRuns++;
+      });
+
+      s.toggle("b");
+
+      expect(aRuns).toBe(1);
+      expect(bRuns).toBe(2);
+      expect(sizeRuns).toBe(2);
     });
   });
 

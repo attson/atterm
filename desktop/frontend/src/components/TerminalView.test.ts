@@ -1061,6 +1061,42 @@ describe("TerminalView resize-suspended", () => {
   });
 });
 
+describe("TerminalView driver-side PTY size reconciliation", () => {
+  // term.onResize is the only path that emits RESIZE, and FitAddon is a no-op
+  // when our xterm already has the dims it would compute. So when another
+  // client (e.g. a phone) shrinks the PTY while our WS is suspended — a
+  // background tab closes the socket, so we never mirror the narrow size onto
+  // our own xterm — re-claiming the driver role leaves the PTY stuck at the
+  // other client's dims forever: fit() changes nothing, onResize never fires,
+  // no RESIZE goes out. The driver path has to push our size explicitly
+  // whenever the PTY's advertised size disagrees with ours.
+  test("driver branch of applyViewerSize reconciles the PTY size after fitting", () => {
+    const body = source.match(/function\s+applyViewerSize\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/if \(isDriver\.value\)[\s\S]*?safeFit\(\);[\s\S]*?syncPtySizeToTerm\(\);/);
+  });
+
+  test("syncPtySizeToTerm sends our dims only when the PTY disagrees", () => {
+    const body = source.match(/function\s+syncPtySizeToTerm\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    // Driver-only: a viewer's RESIZE is dropped by the relay anyway.
+    expect(body![0]).toMatch(/if \(!isDriver\.value\) return;/);
+    // Mid pane-splitter drag the falling-edge watch emits the final RESIZE.
+    expect(body![0]).toMatch(/if \(props\.resizeSuspended\) return;/);
+    // Size match => stay silent, preserving the zero-SIGWINCH attach path.
+    expect(body![0]).toMatch(/cols === term\.cols && rows === term\.rows/);
+    expect(body![0]).toMatch(/conn\.sendResize\(term\.cols, term\.rows\)/);
+  });
+
+  test("re-activating a suspended pane reconciles the PTY size too", () => {
+    // conn already exists on tab re-activation, so startConnection() returns
+    // early and its expectedCols/expectedRows comparison never runs.
+    const watchBody = source.match(/watch\(\s*\(\)\s*=>\s*props\.active,[\s\S]*?\n\);/);
+    expect(watchBody).not.toBeNull();
+    expect(watchBody![0]).toMatch(/safeFit\(\);[\s\S]*?syncPtySizeToTerm\(\);/);
+  });
+});
+
 describe("TerminalView paste-file dispatch", () => {
   test("delegates paste to dispatchPastedFile with a Wails-backed local-path hook", () => {
     // handleImagePaste must route through dispatchPastedFile so the local

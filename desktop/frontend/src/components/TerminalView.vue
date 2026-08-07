@@ -1291,11 +1291,35 @@ async function onMenuPaste() {
   }
 }
 
+// syncPtySizeToTerm pushes our xterm dims to the PTY when the two disagree.
+// term.onResize is the only other RESIZE source, and FitAddon is a no-op
+// when our xterm already has the size it would compute — so a PTY that
+// another client resized behind our back never gets corrected on its own.
+// The window where that happens: a background tab calls conn.suspend(),
+// which closes the WS, so the META carrying the other client's smaller size
+// never reaches us and applyViewerSize never mirrors it onto our xterm. On
+// re-attach we re-claim the driver role at an unchanged local size, fit()
+// changes nothing, onResize stays silent, and the PTY sits at the other
+// client's dims until the user happens to resize the window by hand.
+function syncPtySizeToTerm() {
+  if (!term || !conn) return;
+  if (!isDriver.value) return; // the relay drops a viewer's RESIZE anyway
+  if (props.resizeSuspended) return; // mid-drag: the falling-edge watch emits the final RESIZE
+  const cols = ptyCols.value;
+  const rows = ptyRows.value;
+  if (typeof cols !== "number" || typeof rows !== "number") return;
+  if (cols === term.cols && rows === term.rows) return;
+  conn.sendResize(term.cols, term.rows);
+}
+
 function applyViewerSize() {
   if (!term) return;
   if (isDriver.value) {
     // Driver path: re-engage FitAddon (term.onResize → sendResize fires from here).
     safeFit();
+    // ...but fit() is silent when our size didn't change, so reconcile the
+    // PTY explicitly — this is the driver-recovery path described above.
+    syncPtySizeToTerm();
     return;
   }
   const cols = ptyCols.value;
@@ -1951,6 +1975,10 @@ watch(
       // input so keystrokes go to this term instead of the body.
       nextTick(() => {
         safeFit();
+        // conn already exists here, so startConnection() returned early and
+        // its expectedCols/expectedRows comparison never ran. Reconcile the
+        // PTY in case it shrank while this pane was suspended.
+        syncPtySizeToTerm();
         focusTerminalForPaneActivation();
       });
     } else {

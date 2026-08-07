@@ -39,6 +39,28 @@ type SealedFSEventFields struct {
 	Path string `json:"path,omitempty"`
 }
 
+// EncodeFSHead / DecodeFSHead give the relay access to segment 0
+// without a key. The relay routes on request_id / watch_id and gates on
+// op, but must never see a path or a file byte, so these deliberately
+// take no key and ignore every segment past the first.
+func EncodeFSHead(v any) ([]byte, error) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return EncodeSegments([][]byte{body})
+}
+
+// DecodeFSHead parses segment 0 into v. Sealed segments, if any, are
+// left untouched — the caller has no key to open them with.
+func DecodeFSHead(payload []byte, v any) error {
+	segs, err := DecodeSegments(payload)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(segs[0], v)
+}
+
 // EncodeFSRequest seals path/new_path when sessionKey is non-empty. A
 // nil key means the sender is keyless and emits single-segment
 // plaintext — the "no key = no encryption" rule the OUT/META paths

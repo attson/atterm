@@ -14,16 +14,18 @@ export function useSessionSelection() {
   }
 
   function toggle(id: string): void {
-    if (selectedIds.value.has(id)) selectedIds.value.delete(id);
-    else selectedIds.value.add(id);
+    // Mutate a fresh Set so Vue's reactivity picks up the change; refs
+    // hold the same Set instance otherwise. Same pattern as
+    // TaskGroupedList's collapsedGroups.
+    const next = new Set(selectedIds.value);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedIds.value = next;
     anchorId.value = id;
   }
 
   function selectOnly(id: string): void {
-    for (const existing of Array.from(selectedIds.value)) {
-      if (existing !== id) selectedIds.value.delete(existing);
-    }
-    selectedIds.value.add(id);
+    selectedIds.value = new Set([id]);
     anchorId.value = id;
   }
 
@@ -33,14 +35,16 @@ export function useSessionSelection() {
     const b = orderedIds.indexOf(id);
     if (a < 0 || b < 0) return toggle(id);
     const [lo, hi] = a < b ? [a, b] : [b, a];
-    for (let i = lo; i <= hi; i++) selectedIds.value.add(orderedIds[i]);
+    const next = new Set(selectedIds.value);
+    for (let i = lo; i <= hi; i++) next.add(orderedIds[i]);
+    selectedIds.value = next;
     // anchor stays put — mirrors macOS Finder / VSCode Shift+click
     // behavior, so subsequent Shift+click extends from the same origin.
   }
 
   function clear(): void {
     if (selectedIds.value.size === 0 && anchorId.value === null) return;
-    selectedIds.value.clear();
+    selectedIds.value = new Set();
     anchorId.value = null;
   }
 
@@ -58,6 +62,6 @@ export function useSessionSelection() {
 
 // Test-only: reset module state between tests. Do NOT call from app code.
 export function __resetForTests(): void {
-  selectedIds.value.clear();
+  selectedIds.value = new Set();
   anchorId.value = null;
 }

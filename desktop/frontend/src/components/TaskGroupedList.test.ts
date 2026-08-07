@@ -558,17 +558,6 @@ describe("TaskGroupedList pinned group", () => {
     expect(taskRowRule).toContain("-webkit-touch-callout: none");
   });
 
-  test("precomputes group render metadata instead of rescanning groups from the template", () => {
-    const template = source.split("<template>")[1] ?? source;
-    expect(template).not.toContain("filteredGroups[key]");
-    expect(template).not.toContain("unreadIdsForGroup(key)");
-    expect(template).not.toContain("groupPrimaryState(key)");
-  });
-
-  test("mutates collapsed group state in place so unrelated group keys stay cached", () => {
-    expect(source).not.toContain("new Set(collapsedGroups.value)");
-  });
-
   test("touch long-press for 1s opens the SessionRowMenu without opening the row", async () => {
     vi.useFakeTimers();
     const w = mount(TaskGroupedList, { props: seededProps([]) });

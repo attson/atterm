@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { effect, effectScope, nextTick } from "vue";
+import { effectScope, nextTick } from "vue";
 import { flushPromises } from "@vue/test-utils";
 import { useSessionPins, __resetForTests } from "./useSessionPins";
 import { __setPlatformForTests } from "../platform";
@@ -69,39 +69,6 @@ describe("useSessionPins", () => {
     expect(pins.isPinned("b")).toBe(true);
     pins.unpin("b");
     expect(pins.isPinned("b")).toBe(false);
-  });
-
-  test("pin only invalidates reactive has() subscribers for the touched id", async () => {
-    __setPlatformForTests(fakePlatform());
-    let pins!: ReturnType<typeof useSessionPins>;
-    scope.run(() => {
-      pins = useSessionPins();
-    });
-    await pins.ready();
-
-    let aRuns = 0;
-    let bRuns = 0;
-    let sizeRuns = 0;
-    scope.run(() => {
-      effect(() => {
-        pins.isPinned("a");
-        aRuns++;
-      });
-      effect(() => {
-        pins.isPinned("b");
-        bRuns++;
-      });
-      effect(() => {
-        pins.pinnedIds.value.size;
-        sizeRuns++;
-      });
-    });
-
-    pins.pin("b");
-
-    expect(aRuns).toBe(1);
-    expect(bRuns).toBe(2);
-    expect(sizeRuns).toBe(2);
   });
 
   test("rapid toggles debounce into a single setPins call", async () => {

@@ -58,21 +58,27 @@ function bindEventsOnce(): void {
 
 function pinFn(id: string): void {
   if (!id || pinnedIds.value.has(id)) return;
-  pinnedIds.value.add(id);
+  const next = new Set(pinnedIds.value);
+  next.add(id);
+  pinnedIds.value = next;
   schedulePersist();
 }
 
 function unpinFn(id: string): void {
   if (!pinnedIds.value.has(id)) return;
-  pinnedIds.value.delete(id);
+  const next = new Set(pinnedIds.value);
+  next.delete(id);
+  pinnedIds.value = next;
   schedulePersist();
 }
 
 function renameFn(oldId: string, newId: string): void {
   if (!oldId || !newId || oldId === newId) return;
   if (!pinnedIds.value.has(oldId)) return;
-  pinnedIds.value.delete(oldId);
-  pinnedIds.value.add(newId);
+  const next = new Set(pinnedIds.value);
+  next.delete(oldId);
+  next.add(newId);
+  pinnedIds.value = next;
   schedulePersist();
 }
 
@@ -93,9 +99,10 @@ async function flushNowFn(): Promise<void> {
 
 export interface UseSessionPins {
   // Read-only from the outside — the only safe mutation entry points are
-  // pin/unpin/toggle. Keep the Set reactive and mutate it in place so
-  // Vue can track `has(session_id)` by key; replacing the whole Set makes
-  // every row that checks pin state invalidate on each pin/unpin.
+  // pin/unpin/toggle, which always create a fresh Set so Vue's reactivity
+  // picks up the change. Exposing a mutable Set/Ref would let a consumer
+  // call .add()/.delete() directly, which is a same-instance mutation that
+  // Vue's shallow-ref change detection silently misses.
   pinnedIds: Readonly<Ref<ReadonlySet<string>>>;
   isPinned: (id: string) => boolean;
   pin: (id: string) => void;
@@ -131,7 +138,7 @@ export function useSessionPins(): UseSessionPins {
 }
 
 export function __resetForTests(): void {
-  pinnedIds.value.clear();
+  pinnedIds.value = new Set();
   loaded = false;
   loadPromise = null;
   eventsBound = false;

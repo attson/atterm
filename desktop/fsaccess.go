@@ -19,6 +19,11 @@ type fsAccess struct {
 	// allowRoots holds the set of directories accepted as containers for path
 	// arguments. PluginFS seeds this from $HOME plus active local session cwds.
 	allowRoots []string
+	// denyEnv keeps .env* unreadable. Set on the remote path whenever
+	// sealing is not in effect, because that is exactly when the file
+	// would cross the relay in the clear. Never set for the local Wails
+	// path, which produces no frames at all.
+	denyEnv bool
 
 	watchOnce    sync.Once
 	watcher      *fsnotify.Watcher
@@ -31,9 +36,9 @@ type fsAccess struct {
 	onDirChanged func(string)
 }
 
-func newFSAccess(allowRoots []string) *fsAccess {
+func newFSAccess(allowRoots []string, denyEnv bool) *fsAccess {
 	roots := append([]string(nil), allowRoots...)
-	return &fsAccess{allowRoots: roots}
+	return &fsAccess{allowRoots: roots, denyEnv: denyEnv}
 }
 
 var (
@@ -42,21 +47,27 @@ var (
 	ErrPathDenied    = errors.New("plugin_fs: path denied by policy")
 )
 
-// denyExact and denySuffix express paths that are never visible regardless
-// of allowRoots. The check is run on the fully-resolved path.
+// denyExact expresses paths that are never visible regardless of
+// allowRoots or transport. The check runs on the fully-resolved path.
 var denyExact = []string{".ssh", ".gnupg", ".aws"}
-var denySuffix = []string{".env"}
 
-func isDenied(resolved string) bool {
+// envDenySuffix is gated on fsAccess.denyEnv rather than unconditional:
+// .env holds secrets, but reading it is only unsafe when the bytes would
+// leave the machine unencrypted. See docs/superpowers/specs/2026-08-07-fs-frame-e2ee-design.md.
+var envDenySuffix = []string{".env"}
+
+func (a *fsAccess) isDenied(resolved string) bool {
 	base := filepath.Base(resolved)
 	for _, d := range denyExact {
 		if base == d {
 			return true
 		}
 	}
-	for _, suf := range denySuffix {
-		if base == suf || strings.HasPrefix(base, suf+".") {
-			return true
+	if a.denyEnv {
+		for _, suf := range envDenySuffix {
+			if base == suf || strings.HasPrefix(base, suf+".") {
+				return true
+			}
 		}
 	}
 	// Also walk segments for nested ~/.ssh inside an allowed root.
@@ -85,7 +96,7 @@ func (a *fsAccess) resolve(path string) (string, error) {
 		// back to the lexical clean. Allowlist still applies.
 		resolved = clean
 	}
-	if isDenied(resolved) {
+	if a.isDenied(resolved) {
 		return "", fmt.Errorf("%w: %s", ErrPathDenied, resolved)
 	}
 	for _, root := range a.allowRoots {

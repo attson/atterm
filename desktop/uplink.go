@@ -193,7 +193,11 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		u.outMu.Unlock()
 	}()
 
-	remoteFS := newRemoteFS(newFSAccess(remoteFSAllowRoots()), u.accountKey)
+	// .env is readable over the relay only while sealing is actually in
+	// effect. Gating on our own key state (never on anything inbound)
+	// means a tampering relay cannot talk us into serving it in the clear.
+	sealingActive := u.accountKey != nil && len(u.accountKey()) >= e2eecrypto.SessionKeySize
+	remoteFS := newRemoteFS(newFSAccess(remoteFSAllowRoots(), !sealingActive), u.accountKey)
 	remoteFS.driverClientID = u.host.DriverClientID
 	defer remoteFS.close()
 

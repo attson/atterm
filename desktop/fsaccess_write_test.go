@@ -17,7 +17,7 @@ func newTestAccess(t *testing.T) (*fsAccess, string) {
 	if err != nil {
 		t.Fatalf("evalsymlinks tempdir: %v", err)
 	}
-	return newFSAccess([]string{dir}), dir
+	return newFSAccess([]string{dir}, true), dir
 }
 
 func writeSeed(t *testing.T, path, body string) int64 {

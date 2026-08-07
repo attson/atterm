@@ -14,7 +14,9 @@ import (
 func makeFSAccess(t *testing.T) (*fsAccess, string) {
 	t.Helper()
 	home := t.TempDir()
-	return newFSAccess([]string{home}), home
+	// Default to the remote posture (deny .env) so the existing cases keep
+	// their original meaning; TestFSAccessEnvDenyIsConditional covers both.
+	return newFSAccess([]string{home}, true), home
 }
 
 func TestFSAccessResolveRejectsSymlinkEscapeAndDenylist(t *testing.T) {
@@ -316,5 +318,70 @@ func TestFSAccessWatcherLifecycleAndDebounce(t *testing.T) {
 	}
 	if err := access.unwatchDir(handleID); err != nil {
 		t.Fatalf("unwatch should be idempotent, got %v", err)
+	}
+}
+
+// The .env deny is conditional on transport safety, not on the file
+// being secret: reading it locally is fine, reading it over an
+// unencrypted relay is not. .ssh / .gnupg / .aws stay unconditional.
+func TestFSAccessEnvDenyIsConditional(t *testing.T) {
+	home := t.TempDir()
+	envFile := filepath.Join(home, "app", ".env.local")
+	if err := os.MkdirAll(filepath.Dir(envFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envFile, []byte("SECRET=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.Mkdir(ssh, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		denyEnv    bool
+		wantDenied bool
+	}{
+		{"env readable when sealing is in effect", false, false},
+		{"env denied when keyless", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newFSAccess([]string{home}, tc.denyEnv)
+			_, err := a.resolve(envFile)
+			gotDenied := errors.Is(err, ErrPathDenied)
+			if gotDenied != tc.wantDenied {
+				t.Fatalf("denied=%v want %v (err=%v)", gotDenied, tc.wantDenied, err)
+			}
+			if _, err := a.resolve(ssh); !errors.Is(err, ErrPathDenied) {
+				t.Fatalf(".ssh must always be denied, got %v", err)
+			}
+		})
+	}
+}
+
+func TestEnvDenyCoversAllVariants(t *testing.T) {
+	home := t.TempDir()
+	denying := newFSAccess([]string{home}, true)
+	allowing := newFSAccess([]string{home}, false)
+	for _, name := range []string{".env", ".env.local", ".env.example", ".env.production"} {
+		p := filepath.Join(home, name)
+		if err := os.WriteFile(p, []byte("X=1"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := denying.resolve(p); !errors.Is(err, ErrPathDenied) {
+			t.Fatalf("%s: expected deny, got %v", name, err)
+		}
+		if _, err := allowing.resolve(p); err != nil {
+			t.Fatalf("%s: expected allow, got %v", name, err)
+		}
+	}
+	// A file merely containing "env" is not an env file.
+	other := filepath.Join(home, "environment.txt")
+	if err := os.WriteFile(other, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := denying.resolve(other); err != nil {
+		t.Fatalf("environment.txt must not be caught by the .env rule, got %v", err)
 	}
 }

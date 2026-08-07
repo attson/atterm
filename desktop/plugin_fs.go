@@ -97,7 +97,8 @@ var openExternalPath = func(resolved string) error {
 // dynamic enrichment is plugged in below.
 func NewPluginFS() *PluginFS {
 	home, _ := os.UserHomeDir()
-	return &PluginFS{access: newFSAccess([]string{home})}
+	// Local Wails path: never crosses the relay, so .env is readable.
+	return &PluginFS{access: newFSAccess([]string{home}, false)}
 }
 
 func (p *PluginFS) setupWatcher(ctx context.Context) {

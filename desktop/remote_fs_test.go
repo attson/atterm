@@ -19,7 +19,22 @@ func makeRemoteFS(t *testing.T) (*remoteFS, *fsAccess, string) {
 	if err != nil {
 		t.Fatalf("evalsymlinks tempdir: %v", err)
 	}
-	access := newFSAccess([]string{root})
+	// Sealing-in-effect posture by default; the deny case builds its own.
+	access := newFSAccess([]string{root}, false)
+	fs := newRemoteFS(access, nil)
+	t.Cleanup(fs.close)
+	return fs, access, root
+}
+
+// makeRemoteFSDenyingEnv builds the keyless-remote posture: no account
+// key, so no sealing, so .env stays denied.
+func makeRemoteFSDenyingEnv(t *testing.T) (*remoteFS, *fsAccess, string) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("evalsymlinks tempdir: %v", err)
+	}
+	access := newFSAccess([]string{root}, true)
 	fs := newRemoteFS(access, nil)
 	t.Cleanup(fs.close)
 	return fs, access, root
@@ -108,7 +123,9 @@ func TestRemoteFSListDirAndReadChunkSuccess(t *testing.T) {
 }
 
 func TestRemoteFSDeniedPathReturnsError(t *testing.T) {
-	fs, _, root := makeRemoteFS(t)
+	// Keyless remote: .env would cross the relay in the clear, so it is
+	// denied. See TestRemoteFSEnvReadableWhenSealing for the other half.
+	fs, _, root := makeRemoteFSDenyingEnv(t)
 	path := filepath.Join(root, ".env")
 	if err := os.WriteFile(path, []byte("SECRET=1"), 0o600); err != nil {
 		t.Fatal(err)
@@ -558,5 +575,33 @@ func TestRemoteFSSealsEventPath(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no event emitted")
+	}
+}
+
+func TestRemoteFSEnvReadableWhenSealing(t *testing.T) {
+	// The keyed remote posture: sealing is in effect, so .env is served —
+	// and its bytes never appear in plaintext on the wire.
+	fs, _, root := makeRemoteFS(t)
+	key := fsSealTestKey()
+	fs.accountKey = func() []byte { return key }
+	path := filepath.Join(root, ".env")
+	if err := os.WriteFile(path, []byte("SECRET=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sid := uuid.New()
+	frame := fs.handle(sid, proto.FSRequestPayload{RequestID: "env-1", Op: "read_file", Path: path, MaxBytes: 1024})
+	if strings.Contains(string(frame.Payload), "SECRET=1") {
+		t.Fatal(".env bytes present in plaintext on the wire")
+	}
+	sk, err := e2eecrypto.DeriveSessionKey(key, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := proto.DecodeFSResponse(frame.Payload, sk, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || resp.Content == nil || string(resp.Content.Data) != "SECRET=1" {
+		t.Fatalf("expected .env to be readable, got %+v (err=%q)", resp.Content, resp.Error)
 	}
 }

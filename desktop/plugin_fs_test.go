@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -15,7 +14,8 @@ func makeFS(t *testing.T) (*PluginFS, string) {
 	t.Helper()
 	home := t.TempDir()
 	fs := &PluginFS{
-		access: newFSAccess([]string{home}),
+		// PluginFS is the local Wails path: no relay, so .env is readable.
+		access: newFSAccess([]string{home}, false),
 	}
 	return fs, home
 }
@@ -82,6 +82,8 @@ func TestResolveRejectsDenyPattern(t *testing.T) {
 	if _, err := fs.resolve(ssh); err == nil {
 		t.Fatal("expected reject of ~/.ssh")
 	}
+	// .env is readable on the local path: PluginFS is the Wails direct
+	// binding, so nothing here ever reaches a relay.
 	envFile := filepath.Join(home, "app", ".env")
 	if err := os.MkdirAll(filepath.Dir(envFile), 0o755); err != nil {
 		t.Fatal(err)
@@ -89,8 +91,8 @@ func TestResolveRejectsDenyPattern(t *testing.T) {
 	if err := os.WriteFile(envFile, []byte("X=1"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fs.resolve(envFile); err == nil || !strings.Contains(err.Error(), "denied") {
-		t.Fatalf("expected deny on .env, got %v", err)
+	if _, err := fs.resolve(envFile); err != nil {
+		t.Fatalf("expected .env to resolve on the local path, got %v", err)
 	}
 }
 

@@ -292,3 +292,66 @@ function openSealedFields<T>(
     return null
   }
 }
+
+/** AAD frame_type discriminators for the segmented FS frames
+ *  (proto.TypeFSRequest / TypeFSResponse / TypeFSEvent). Each frame seals
+ *  under its own type byte so an envelope lifted from one cannot be
+ *  replayed into another — red line #22. */
+export const FS_REQUEST_AAD_FRAME_TYPE = 0x38
+export const FS_RESPONSE_AAD_FRAME_TYPE = 0x39
+export const FS_EVENT_AAD_FRAME_TYPE = 0x3a
+
+function unsequencedAAD(sessionUUID: string, frameType: number): Uint8Array {
+  const uuidBytes = uuidStringToBytes(sessionUUID)
+  const aad = new Uint8Array(uuidBytes.length + 1)
+  aad.set(uuidBytes, 0)
+  aad[uuidBytes.length] = frameType
+  return aad
+}
+
+/** sealUnsequenced mirrors internal/e2eecrypto/envelope.go seal():
+ *  cipher_id(0x01) || nonce(24B random) || XChaCha20-Poly1305 ciphertext,
+ *  AAD = session_uuid(16B) || frame_type(1B).
+ *
+ *  This is the first code on the client that encrypts rather than
+ *  decrypts — every other E2EE path runs agent→client. The cross-language
+ *  vectors in fsCrypto.vectors.test.ts are the control that keeps the two
+ *  implementations honest. */
+export function sealUnsequenced(
+  accountKey: Uint8Array,
+  sessionUUID: string,
+  frameType: number,
+  plaintext: Uint8Array,
+): Uint8Array {
+  const sk = deriveSessionKey(accountKey, sessionUUID)
+  const aad = unsequencedAAD(sessionUUID, frameType)
+  const nonce = randomBytes(24)
+  const ciphertext = xchacha20poly1305(sk, nonce, aad).encrypt(plaintext)
+  const out = new Uint8Array(1 + nonce.length + ciphertext.length)
+  out[0] = CIPHER_ID_XCHACHA20_POLY1305
+  out.set(nonce, 1)
+  out.set(ciphertext, 1 + nonce.length)
+  return out
+}
+
+/** openUnsequencedFrame is the inverse of sealUnsequenced, returning raw
+ *  plaintext bytes or null on any structural/cipher error so the caller
+ *  drops the frame rather than acting on garbage. */
+export function openUnsequencedFrame(
+  accountKey: Uint8Array,
+  sessionUUID: string,
+  frameType: number,
+  envelope: Uint8Array | number[] | undefined | null,
+): Uint8Array | null {
+  if (!envelope) return null
+  const env = envelope instanceof Uint8Array ? envelope : new Uint8Array(envelope)
+  if (env.length < 1 + 24 + 16) return null
+  if (env[0] !== CIPHER_ID_XCHACHA20_POLY1305) return null
+  try {
+    const sk = deriveSessionKey(accountKey, sessionUUID)
+    const aad = unsequencedAAD(sessionUUID, frameType)
+    return xchacha20poly1305(sk, env.subarray(1, 25), aad).decrypt(env.subarray(25))
+  } catch {
+    return null
+  }
+}

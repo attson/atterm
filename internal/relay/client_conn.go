@@ -266,7 +266,9 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				continue
 			}
 			var request proto.FSRequestPayload
-			if err := json.Unmarshal(f.Payload, &request); err != nil || request.RequestID == "" || request.Op == "" || f.SessionID != sess.ID {
+			// Segment 0 carries op / request_id in the clear precisely so
+			// this gate keeps working without the relay holding a key.
+			if err := proto.DecodeFSHead(f.Payload, &request); err != nil || request.RequestID == "" || request.Op == "" || f.SessionID != sess.ID {
 				s.sendFSClientError(targetedOut, targetedOverflow, sess.ID, request.RequestID, "invalid_request")
 				continue
 			}
@@ -354,7 +356,9 @@ func isReadOnlyFSOperation(op string) bool {
 }
 
 func (s *Server) sendFSClientError(out chan<- proto.Frame, onOverflow func(), sessionID uuid.UUID, requestID, message string) {
-	payload, err := json.Marshal(proto.FSResponsePayload{
+	// Relay-generated errors are single-segment plaintext: the relay has
+	// no key, and these messages carry no agent-side path.
+	payload, err := proto.EncodeFSHead(proto.FSResponsePayload{
 		RequestID: requestID,
 		Error:     message,
 	})

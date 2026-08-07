@@ -56,7 +56,9 @@ async function resolveKind() {
     kind.value = previewKind(path, meta.isBinary);
   } catch (e) {
     if (!isCurrent(fs, path, request)) return;
-    error.value = (e as Error).message;
+    // A message-less rejection must not render as an empty banner — v-if
+    // would drop it and leave the pane blank with no explanation at all.
+    error.value = (e as Error)?.message || String(e) || t("plugins.fileExplorer.unknownError");
   }
 }
 
@@ -97,6 +99,10 @@ onBeforeUnmount(() => {
     <template v-else-if="kind === 'binary-unknown'">
       <BinaryBanner :fs="fs" :path="path" />
     </template>
+    <!-- kind is still null: fileMeta hasn't answered. Without this the host
+         renders a bare background, which is impossible to tell apart from an
+         empty file or a preview that failed silently. -->
+    <div v-else class="banner muted" data-test="kind-pending">{{ t("common.loading") }}</div>
   </div>
 </template>
 
@@ -109,4 +115,5 @@ onBeforeUnmount(() => {
 }
 .banner { padding: 18px 20px; font-size: 13px; }
 .err { color: var(--ed-error, #f47067); }
+.muted { color: var(--ed-muted, rgba(173, 186, 199, 0.55)); }
 </style>

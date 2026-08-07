@@ -21,19 +21,6 @@ async function toggle(id: PluginID, enabled: boolean) {
   }
 }
 
-async function toggleHidden(v: boolean) {
-  if (!store.cfg) return;
-  const next = JSON.parse(JSON.stringify(store.cfg));
-  next.fileExplorer.showHidden = v;
-  try { await store.save(next); } catch (err) { console.error(err); }
-}
-
-async function toggleLineNumbers(v: boolean) {
-  if (!store.cfg) return;
-  const next = JSON.parse(JSON.stringify(store.cfg));
-  next.fileExplorer.showLineNumbers = v;
-  try { await store.save(next); } catch (err) { console.error(err); }
-}
 </script>
 
 <template>
@@ -54,16 +41,6 @@ async function toggleLineNumbers(v: boolean) {
         </label>
         <p class="desc">{{ t(p.descriptionKey) }}</p>
         <div v-if="p.id === 'file-explorer' && store.isPluginEnabled('file-explorer')" class="fe-settings">
-          <label>
-            <input type="checkbox" :checked="store.cfg?.fileExplorer.showHidden ?? false"
-                   @change="toggleHidden(($event.target as HTMLInputElement).checked)" />
-            {{ t("settings.plugins.showHidden") }}
-          </label>
-          <label>
-            <input type="checkbox" :checked="store.cfg?.fileExplorer.showLineNumbers ?? false"
-                   @change="toggleLineNumbers(($event.target as HTMLInputElement).checked)" />
-            {{ t("settings.plugins.showLineNumbers") }}
-          </label>
           <p class="muted">{{ t("settings.plugins.panelDragHint") }}</p>
         </div>
         <TranslateSettings v-if="p.id === 'translate' && store.isPluginEnabled('translate')" />

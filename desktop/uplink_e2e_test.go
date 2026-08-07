@@ -496,7 +496,9 @@ func TestUplinkRemoteFSGateUsesRawRemotePermission(t *testing.T) {
 				}
 				announceCh <- announce
 
-				reqPayload, _ := json.Marshal(proto.FSRequestPayload{
+				// FS payloads are segment-framed; this fake client is
+				// keyless, so a single plaintext segment is the right shape.
+				reqPayload, _ := proto.EncodeFSHead(proto.FSRequestPayload{
 					RequestID: requestID,
 					Op:        "list_dir",
 					Path:      "/tmp",
@@ -514,8 +516,8 @@ func TestUplinkRemoteFSGateUsesRawRemotePermission(t *testing.T) {
 				if err != nil || responseFrame.Type != proto.TypeFSResponse {
 					return
 				}
-				var response proto.FSResponsePayload
-				if err := json.Unmarshal(responseFrame.Payload, &response); err != nil {
+				response, err := proto.DecodeFSResponse(responseFrame.Payload, nil, responseFrame.SessionID)
+				if err != nil {
 					return
 				}
 				responseCh <- response

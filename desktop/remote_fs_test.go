@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/e2eecrypto"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 )
@@ -19,8 +19,23 @@ func makeRemoteFS(t *testing.T) (*remoteFS, *fsAccess, string) {
 	if err != nil {
 		t.Fatalf("evalsymlinks tempdir: %v", err)
 	}
-	access := newFSAccess([]string{root})
-	fs := newRemoteFS(access)
+	// Sealing-in-effect posture by default; the deny case builds its own.
+	access := newFSAccess([]string{root}, false)
+	fs := newRemoteFS(access, nil)
+	t.Cleanup(fs.close)
+	return fs, access, root
+}
+
+// makeRemoteFSDenyingEnv builds the keyless-remote posture: no account
+// key, so no sealing, so .env stays denied.
+func makeRemoteFSDenyingEnv(t *testing.T) (*remoteFS, *fsAccess, string) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("evalsymlinks tempdir: %v", err)
+	}
+	access := newFSAccess([]string{root}, true)
+	fs := newRemoteFS(access, nil)
 	t.Cleanup(fs.close)
 	return fs, access, root
 }
@@ -30,8 +45,10 @@ func decodeFSResponse(t *testing.T, f proto.Frame) proto.FSResponsePayload {
 	if f.Type != proto.TypeFSResponse {
 		t.Fatalf("frame type = %v, want FS_RESPONSE", f.Type)
 	}
-	var resp proto.FSResponsePayload
-	if err := json.Unmarshal(f.Payload, &resp); err != nil {
+	// Keyless by default: makeRemoteFS builds an agent with no account
+	// key, so responses come back as a single plaintext segment.
+	resp, err := proto.DecodeFSResponse(f.Payload, nil, f.SessionID)
+	if err != nil {
 		t.Fatalf("decode FS_RESPONSE: %v", err)
 	}
 	return resp
@@ -44,8 +61,8 @@ func recvRemoteFSEvent(t *testing.T, fs *remoteFS) proto.FSEventPayload {
 		if f.Type != proto.TypeFSEvent {
 			t.Fatalf("event frame type = %v, want FS_EVENT", f.Type)
 		}
-		var event proto.FSEventPayload
-		if err := json.Unmarshal(f.Payload, &event); err != nil {
+		event, err := proto.DecodeFSEvent(f.Payload, fs.sessionKey(f.SessionID), f.SessionID)
+		if err != nil {
 			t.Fatalf("decode FS_EVENT: %v", err)
 		}
 		return event
@@ -106,7 +123,9 @@ func TestRemoteFSListDirAndReadChunkSuccess(t *testing.T) {
 }
 
 func TestRemoteFSDeniedPathReturnsError(t *testing.T) {
-	fs, _, root := makeRemoteFS(t)
+	// Keyless remote: .env would cross the relay in the clear, so it is
+	// denied. See TestRemoteFSEnvReadableWhenSealing for the other half.
+	fs, _, root := makeRemoteFSDenyingEnv(t)
 	path := filepath.Join(root, ".env")
 	if err := os.WriteFile(path, []byte("SECRET=1"), 0o600); err != nil {
 		t.Fatal(err)
@@ -441,5 +460,148 @@ func TestRemoteFSPermissionGateBlocksWrite(t *testing.T) {
 	got, _ := os.ReadFile(target)
 	if string(got) != "x" {
 		t.Fatalf("file mutated despite gate: %q", got)
+	}
+}
+
+func fsSealTestKey() []byte {
+	k := make([]byte, 32)
+	for i := range k {
+		k[i] = byte(i + 1)
+	}
+	return k
+}
+
+func TestRemoteFSSealsResponseWhenKeyed(t *testing.T) {
+	fs, _, root := makeRemoteFS(t)
+	key := fsSealTestKey()
+	fs.accountKey = func() []byte { return key }
+
+	path := filepath.Join(root, "secret.txt")
+	if err := os.WriteFile(path, []byte("TOPSECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sid := uuid.New()
+	frame := fs.handle(sid, proto.FSRequestPayload{RequestID: "s1", Op: "read_file", Path: path, MaxBytes: 1024})
+
+	segs, err := proto.DecodeSegments(frame.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segs) != 3 {
+		t.Fatalf("got %d segments, want 3", len(segs))
+	}
+	if strings.Contains(string(frame.Payload), "TOPSECRET") {
+		t.Fatal("file bytes present in plaintext on the wire")
+	}
+	if strings.Contains(string(segs[0]), "secret.txt") {
+		t.Fatal("path present in the routing segment")
+	}
+
+	sk, err := e2eecrypto.DeriveSessionKey(key, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := proto.DecodeFSResponse(frame.Payload, sk, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content == nil || string(out.Content.Data) != "TOPSECRET" {
+		t.Fatalf("content did not survive: %+v", out.Content)
+	}
+}
+
+func TestRemoteFSPlaintextWhenKeyless(t *testing.T) {
+	fs, _, root := makeRemoteFS(t)
+	path := filepath.Join(root, "plain.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frame := fs.handle(uuid.New(), proto.FSRequestPayload{RequestID: "p1", Op: "read_file", Path: path, MaxBytes: 1024})
+	segs, err := proto.DecodeSegments(frame.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segs) != 1 {
+		t.Fatalf("got %d segments, want 1", len(segs))
+	}
+}
+
+func TestRemoteFSSealsErrorPath(t *testing.T) {
+	// Agent-side errors embed the resolved path; they must be sealed too.
+	fs, _, root := makeRemoteFS(t)
+	key := fsSealTestKey()
+	fs.accountKey = func() []byte { return key }
+	sid := uuid.New()
+	missing := filepath.Join(root, "nope.txt")
+	frame := fs.handle(sid, proto.FSRequestPayload{RequestID: "e1", Op: "read_file", Path: missing, MaxBytes: 1024})
+	if strings.Contains(string(frame.Payload), "nope.txt") {
+		t.Fatal("error message leaked the path in plaintext")
+	}
+	sk, _ := e2eecrypto.DeriveSessionKey(key, sid)
+	out, err := proto.DecodeFSResponse(frame.Payload, sk, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.OK || !strings.Contains(out.Error, "nope.txt") {
+		t.Fatalf("error did not survive sealing: %+v", out)
+	}
+}
+
+func TestRemoteFSSealsEventPath(t *testing.T) {
+	fs, access, root := makeRemoteFS(t)
+	key := fsSealTestKey()
+	fs.accountKey = func() []byte { return key }
+	sid := uuid.New()
+	if _, err := fs.watchDir(sid, root); err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access.onDirChanged(resolvedRoot)
+	select {
+	case frame := <-fs.events():
+		if strings.Contains(string(frame.Payload), resolvedRoot) {
+			t.Fatal("event path present in plaintext")
+		}
+		sk, _ := e2eecrypto.DeriveSessionKey(key, sid)
+		out, err := proto.DecodeFSEvent(frame.Payload, sk, sid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Path != resolvedRoot {
+			t.Fatalf("path did not survive: %q", out.Path)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no event emitted")
+	}
+}
+
+func TestRemoteFSEnvReadableWhenSealing(t *testing.T) {
+	// The keyed remote posture: sealing is in effect, so .env is served —
+	// and its bytes never appear in plaintext on the wire.
+	fs, _, root := makeRemoteFS(t)
+	key := fsSealTestKey()
+	fs.accountKey = func() []byte { return key }
+	path := filepath.Join(root, ".env")
+	if err := os.WriteFile(path, []byte("SECRET=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sid := uuid.New()
+	frame := fs.handle(sid, proto.FSRequestPayload{RequestID: "env-1", Op: "read_file", Path: path, MaxBytes: 1024})
+	if strings.Contains(string(frame.Payload), "SECRET=1") {
+		t.Fatal(".env bytes present in plaintext on the wire")
+	}
+	sk, err := e2eecrypto.DeriveSessionKey(key, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := proto.DecodeFSResponse(frame.Payload, sk, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || resp.Content == nil || string(resp.Content.Data) != "SECRET=1" {
+		t.Fatalf("expected .env to be readable, got %+v (err=%q)", resp.Content, resp.Error)
 	}
 }

@@ -310,9 +310,7 @@ export const zhCN = {
     },
     plugins: {
       hint: "插件按需加载。禁用的插件不会影响启动时间或内存。",
-      showHidden: "显示隐藏文件",
-      showLineNumbers: "在编辑器中显示行号",
-      panelDragHint: "可在面板中拖拽调整面板宽度和内部比例。",
+      panelDragHint: "可在面板中拖拽调整面板宽度和内部比例。显示选项在文件树的右键菜单中。",
       noneRegistered: "未注册插件。",
     },
     shortcuts: {
@@ -668,6 +666,8 @@ export const zhCN = {
       selectFile: "选择一个文件。",
       pinCurrentCwd: "固定当前 cwd",
       unpinFollow: "取消固定（跟随活动面板）",
+      showHidden: "显示隐藏文件",
+      showLineNumbers: "在编辑器中显示行号",
       searchFiles: "搜索文件名",
       noSearchResults: "没有匹配的文件。",
       searchTruncated: "仅显示前 200 个匹配项。",
@@ -677,6 +677,7 @@ export const zhCN = {
       binary: "二进制文件 - 无法预览。",
       errorPrefix: "错误：{message}",
       unexpectedContentType: "文件内容类型异常",
+      unknownError: "预览失败，原因未知",
       openInSystem: "用系统应用打开",
       unsupportedPreview: "此文件类型暂不支持内嵌预览。",
       showAsCode: "看源码",

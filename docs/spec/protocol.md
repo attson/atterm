@@ -434,7 +434,24 @@ payload = JSON：
 
 #### Plaintext / E2EE posture
 
-当前 `FS_REQUEST` / `FS_RESPONSE` / `FS_EVENT` payload 是 relay 可见的 JSON 明文，包含路径、文件名、metadata 和文件内容字节。它们不在现有 [§E2EE 信封](#e2ee-信封) 鉴别表内，也没有 sealed 字段；relay 因此可以做路由、权限、payload 大小限制和审计，但也能读到文件浏览内容。后续如给文件浏览加 sealed payload，必须分配唯一 AAD `frame_type` 字节（`0x38` / `0x39` / `0x3a` 中对应所在帧）并更新 §E2EE 信封表。
+FS 三帧的 payload **不是**单个 JSON 文档，而是分段结构：
+
+```
+payload := segment_count(1B) || segment*
+segment := length(4B BE) || bytes
+```
+
+segment 0 恒为明文 JSON，只放 relay 转发和鉴权真正需要的字段：`FS_REQUEST` 的 `request_id` / `op` / `client_id` / `max_bytes` / `offset` / `length` / `watch_id`，`FS_RESPONSE` 的 `request_id` / `ok` / `watch_id`，`FS_EVENT` 的 `watch_id` / `event`。relay 靠 `op` 执行只读白名单（`isReadOnlyFSOperation`）、靠 `request_id` / `watch_id` 路由，全程不持有 key——它通过 `proto.DecodeFSHead` / `EncodeFSHead` 只读写 segment 0。
+
+其余字段（路径、文件名、目录列表、metadata、agent 侧 error 文本、文件内容字节）走后续 segment 的 [§E2EE 信封](#e2ee-信封)，AAD 鉴别字节见该节表格。文件字节单独占一个 segment 且**不经 base64**——`FileContent.Data` 本来就被 `encoding/json` base64 过一次，若再把信封 base64 进 JSON 字段会叠成 1.78× 膨胀；分段后维持在约 1.0×。
+
+三条与其它 sealed 路径不同的规则：
+
+- **持有 key 的一端恒定发出 sealed segment**，哪怕内容为空（例如 `unwatch_dir` 的响应）。segment 数表达的是 key 状态，不是"这条响应有没有数据"。
+- **seal 失败 fail-closed**，不走 §612 的明文回退。因为 `.env*` 的放开条件正是"sealing 生效"，静默回退等于在守卫失效的瞬间把密钥送上线。此时返回一条不含路径的错误响应。
+- **`.env*` 在远程侧仅当 sealing 生效时可读**。判据是 agent 自己的 key 状态（`fsAccess.denyEnv`），与任何入站字段无关，所以 relay 无法通过篡改请求把会话降级成明文。本地 Wails 直连不产生帧，恒可读。`.ssh` / `.gnupg` / `.aws` 两侧恒拒。
+
+relay 仍可做 payload 大小限制（信封长度可见），但不再能审计路径。完整设计见 [../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md](../superpowers/specs/2026-08-07-fs-frame-e2ee-design.md)。
 
 ### `CLAIM_DRIVER` (0x34) — client → relay
 
@@ -595,6 +612,9 @@ AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字�
 | `0x05` `META` | `MetaPayload.sealed`（base64） | JSON `SealedMetaFields { title, cwd, current_command }` |
 | `0x12` `LIST_RESP` | `SessionInfo.sealed`（base64） | JSON `SealedSessionFields { title, cwd, command, current_command }` |
 | `0x35` `COMMAND_EVENT` | `CommandEventPayload.sealed_body`（base64） | JSON `SealedPushBody { label, exit_code, elapsed_ms }` |
+| `0x38` `FS_REQUEST` | 分段 payload 的 segment 1（裸二进制，非 base64） | JSON `SealedFSRequestFields { path, new_path }` |
+| `0x39` `FS_RESPONSE` | segment 1（元数据）+ segment 2（文件字节） | segment 1 = JSON `SealedFSResponseFields { entries, meta, error, content, chunk }`；segment 2 = 原始文件字节，不经 base64 |
+| `0x3a` `FS_EVENT` | 分段 payload 的 segment 1（裸二进制） | JSON `SealedFSEventFields { path }` |
 
 **红线**：加新 sealed 帧时**必须**给一个**唯一**的 `frame_type` 字节，并在这张表里增行；不允许复用（[AGENTS.md](../../AGENTS.md) §22）。
 

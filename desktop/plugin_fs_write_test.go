@@ -13,7 +13,7 @@ func newTestPluginFS(t *testing.T) (*PluginFS, string) {
 	if err != nil {
 		t.Fatalf("evalsymlinks tempdir: %v", err)
 	}
-	return &PluginFS{access: newFSAccess([]string{dir})}, dir
+	return &PluginFS{access: newFSAccess([]string{dir}, false)}, dir
 }
 
 func TestPluginFSWriteFileSuccess(t *testing.T) {

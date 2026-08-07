@@ -30,6 +30,9 @@ const props = defineProps<{
   fs: FileSystemBridge;
   root: string;
   showHidden: boolean;
+  /** Editor-side view option, surfaced here because the context menu is
+   *  where both view toggles live. The tree itself doesn't read it. */
+  showLineNumbers?: boolean;
   searchQuery?: string;
   context?: PluginContext;
 }>();
@@ -38,6 +41,8 @@ const emit = defineEmits<{
   (e: "file-clicked", path: string): void;
   (e: "file-double-clicked", path: string): void;
   (e: "dir-toggled", path: string, expanded: boolean): void;
+  (e: "toggle-show-hidden", value: boolean): void;
+  (e: "toggle-show-line-numbers", value: boolean): void;
 }>();
 
 type ContextMenuAnchor = { x: number; y: number; node: TreeNode; level: number; shift: boolean };
@@ -68,6 +73,20 @@ function openMenuFromNode(ev: MouseEvent, node: TreeNode, level: number) {
 }
 
 function closeMenu() { menu.value = null; }
+
+// The two view toggles are panel-wide, not node-specific, but the context
+// menu is the only always-reachable surface inside the panel. The config
+// write stays with the host so this component keeps taking its state purely
+// from props.
+function toggleShowHidden() {
+  menu.value = null;
+  emit("toggle-show-hidden", !props.showHidden);
+}
+
+function toggleShowLineNumbers() {
+  menu.value = null;
+  emit("toggle-show-line-numbers", !props.showLineNumbers);
+}
 
 async function copyPathToClipboard(path: string) {
   try {
@@ -575,6 +594,27 @@ defineExpose({ refresh: startGeneration, revealPath });
       <button data-test="menu-copy-path" @click="onMenuAction('copyPath')">{{ t("plugins.fileExplorer.copyPath") }}</button>
       <button data-test="menu-send-to-terminal" @click="onMenuAction('sendToTerminal')">{{ t("plugins.fileExplorer.sendToTerminal") }}</button>
       <button data-test="menu-delete" @click="onMenuAction('delete')">{{ t("plugins.fileExplorer.delete") }}</button>
+      <hr class="ctx-sep" />
+      <button
+        class="ctx-toggle"
+        data-test="menu-toggle-hidden"
+        role="menuitemcheckbox"
+        :aria-checked="showHidden ? 'true' : 'false'"
+        @click="toggleShowHidden"
+      >
+        <span class="ctx-check">{{ showHidden ? "✓" : "" }}</span>
+        {{ t("plugins.fileExplorer.showHidden") }}
+      </button>
+      <button
+        class="ctx-toggle"
+        data-test="menu-toggle-line-numbers"
+        role="menuitemcheckbox"
+        :aria-checked="showLineNumbers ? 'true' : 'false'"
+        @click="toggleShowLineNumbers"
+      >
+        <span class="ctx-check">{{ showLineNumbers ? "✓" : "" }}</span>
+        {{ t("plugins.fileExplorer.showLineNumbers") }}
+      </button>
     </div>
     <ConfirmDialog
       v-if="deleteConfirm"
@@ -657,4 +697,21 @@ defineExpose({ refresh: startGeneration, revealPath });
   cursor: pointer;
 }
 .ctx-menu button:hover { background: var(--ed-row-hover, rgba(255,255,255,0.06)); }
+.ctx-sep {
+  margin: 4px 0;
+  border: none;
+  border-top: 1px solid var(--ed-border, #444c56);
+}
+.ctx-menu button.ctx-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+}
+.ctx-check {
+  display: inline-block;
+  width: 10px;
+  flex: 0 0 10px;
+  color: var(--ed-tab-active-bar, #539bf5);
+}
 </style>

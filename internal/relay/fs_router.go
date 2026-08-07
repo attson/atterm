@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"encoding/json"
 	"sync"
 
 	"github.com/attson/atterm/internal/proto"
@@ -154,8 +153,10 @@ func (r *fsRouter) unregisterSession(sessionID uuid.UUID) {
 }
 
 func (r *fsRouter) routeResponse(f proto.Frame) bool {
+	// Segment 0 only: the relay holds no key and must not see paths or
+	// file bytes. request_id / ok / watch_id are all it needs to route.
 	var payload proto.FSResponsePayload
-	if err := json.Unmarshal(f.Payload, &payload); err != nil || payload.RequestID == "" {
+	if err := proto.DecodeFSHead(f.Payload, &payload); err != nil || payload.RequestID == "" {
 		return false
 	}
 
@@ -173,10 +174,17 @@ func (r *fsRouter) routeResponse(f proto.Frame) bool {
 			if payload.WatchID != "" {
 				watchKey := fsRouteKey{sessionID: f.SessionID, id: payload.WatchID}
 				if existing, exists := r.watches[watchKey]; exists && existing.out != route.out {
-					payload.OK = false
-					payload.Error = "duplicate_watch_id"
-					payload.WatchID = ""
-					f.Payload, _ = json.Marshal(payload)
+					// Replace the whole frame with a single-segment error
+					// rather than rewriting the head in place: OK=false
+					// means the sealed segments carry nothing worth
+					// preserving, and the relay cannot re-seal anyway.
+					if errBody, encErr := proto.EncodeFSHead(proto.FSResponsePayload{
+						RequestID: payload.RequestID,
+						OK:        false,
+						Error:     "duplicate_watch_id",
+					}); encErr == nil {
+						f.Payload = errBody
+					}
 				} else {
 					route.watchID = payload.WatchID
 					r.watches[watchKey] = route
@@ -198,7 +206,7 @@ func (r *fsRouter) routeResponse(f proto.Frame) bool {
 
 func (r *fsRouter) routeEvent(f proto.Frame) bool {
 	var payload proto.FSEventPayload
-	if err := json.Unmarshal(f.Payload, &payload); err != nil || payload.WatchID == "" {
+	if err := proto.DecodeFSHead(f.Payload, &payload); err != nil || payload.WatchID == "" {
 		return false
 	}
 

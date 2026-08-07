@@ -177,6 +177,23 @@ plaintext struct before encoding.
 | 3 | agent → client | `remote_fs.go:291 handleRemoteFSRequest()` egress | seal; all three response branches converge here |
 | 4 | agent → client | `uplink.go:294` (`remoteFS.events()`) | seal FS_EVENT — watcher-driven, bypasses #3 |
 | 5 | agent → client | `connection.ts handleFSResponse / handleFSEvent` | open, overlay |
+| 6 | relay | `client_conn.go:269`, `fs_router.go:158/179/201`, `sendFSClientError` | parse segment 0 only |
+
+Mount point 6 is not optional. The relay reaches into FS payloads with
+`json.Unmarshal(f.Payload, ...)` in four places — the `op` allow-list
+gate, response routing, the `duplicate_watch_id` rewrite, and event
+routing — and constructs one with `json.Marshal` in
+`sendFSClientError`. All five break the moment payloads become
+segmented. `proto` therefore exposes two key-free helpers,
+`DecodeFSHead(payload, &v)` and `EncodeFSHead(v)`, which read and write
+segment 0 and never touch an envelope. The relay uses only those, so it
+still cannot decrypt anything, but it also never has to know a segment
+is there.
+
+The `duplicate_watch_id` branch is a special case: it currently mutates
+the payload and re-marshals it. Under segmentation it replaces the whole
+frame with a single-segment plaintext error, which is correct because
+`OK=false` means the sealed segments carry nothing worth preserving.
 
 `handleRemoteFSRequest` needs a new `accountKey []byte` parameter; the
 key currently lives only on `uplink.go`'s `u.accountKey`. Nothing below

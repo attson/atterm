@@ -8,6 +8,12 @@ import { decryptSessionFields, SessionConnection, SessionListConnection, type FS
 import { setAccountKeyProvider } from "./account-key";
 import type { SealedSessionFields } from "./opaque";
 import { TYPE, NIL_SID, decodeFrame, decodeText, encodeFrame, encodeText, uuidParse } from "./proto";
+import { encodeSegments, decodeSegments } from "./fsSegments";
+
+// FS frames are segment-framed; everything else stays a bare JSON payload.
+function isFSFrameType(type: number): boolean {
+  return type === TYPE.FS_REQUEST || type === TYPE.FS_RESPONSE || type === TYPE.FS_EVENT;
+}
 
 // --- Sealing helper (mirrors opaque.test.ts sealFields) ---------------------
 const SESSION_INFO_AAD_FRAME_TYPE = 0x12;
@@ -96,7 +102,11 @@ describe("SessionConnection FS RPC", () => {
     }
 
     emit(type: number, payload: unknown) {
-      const bytes = encodeFrame(type as any, uuidParse(sessionId), encodeText(JSON.stringify(payload)));
+      // FS frames carry segment-framed payloads since they gained E2EE.
+      // This fake peer is keyless, so one plaintext segment is correct.
+      const json = encodeText(JSON.stringify(payload));
+      const body = isFSFrameType(type) ? encodeSegments([json]) : json;
+      const bytes = encodeFrame(type as any, uuidParse(sessionId), body);
       this.onmessage?.({ data: bytes.buffer } as MessageEvent);
     }
   }
@@ -127,7 +137,7 @@ describe("SessionConnection FS RPC", () => {
     const frame = decodeFrame(ws.sent[1]);
     expect(frame.type).toBe(TYPE.FS_REQUEST);
     expect(Array.from(frame.sid)).toEqual(Array.from(uuidParse(sessionId)));
-    expect(JSON.parse(decodeText(frame.payload))).toEqual({
+    expect(JSON.parse(decodeText(decodeSegments(frame.payload)![0]))).toEqual({
       op: "list_dir",
       path: "/tmp",
       request_id: "fs-test-1",
@@ -147,7 +157,7 @@ describe("SessionConnection FS RPC", () => {
 
     const responsePromise = conn.sendFSRequest({ op: "list_dir", path: "/tmp" });
     const frame = decodeFrame(ws.sent[1]);
-    const payload = JSON.parse(decodeText(frame.payload));
+    const payload = JSON.parse(decodeText(decodeSegments(frame.payload)![0]));
     expect(payload.request_id).toMatch(/^fs-/);
 
     ws.emit(TYPE.FS_RESPONSE, { request_id: payload.request_id, ok: true, entries: [] });

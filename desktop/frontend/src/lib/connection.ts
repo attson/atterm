@@ -15,7 +15,8 @@ import {
 import type { ReplayProgress } from "./replayProgress";
 import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
-import { openMetaFields, openOutFrame, openSessionFields } from "./opaque";
+import { openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame } from "./opaque";
+import { encodeSegments, decodeSegments } from "./fsSegments";
 
 export interface ClosePayload {
   exit_code: number;
@@ -391,6 +392,34 @@ export class SessionListConnection {
   }
 }
 
+/** encodeFSRequestPayload mirrors proto.EncodeFSRequest. request_id / op /
+ *  client_id stay in segment 0 because the relay gates on them
+ *  (isReadOnlyFSOperation) and routes replies by request_id; path and
+ *  new_path go into the sealed segment. A keyless client emits a single
+ *  plaintext segment, matching the agent's "no key = no encryption" rule. */
+function encodeFSRequestPayload(payload: FSRequest, sessionId: string): Uint8Array {
+  const accountKey = getCurrentAccountKey();
+  if (!accountKey) {
+    return encodeSegments([encodeText(JSON.stringify(payload))]);
+  }
+  const sealed = encodeText(JSON.stringify({ path: payload.path, new_path: payload.new_path }));
+  const env = sealUnsequenced(accountKey, sessionId, TYPE.FS_REQUEST, sealed);
+  // Red line #23: never ship a plaintext copy of what we just sealed.
+  const head = { ...payload };
+  delete head.path;
+  delete head.new_path;
+  return encodeSegments([encodeText(JSON.stringify(head)), env]);
+}
+
+/** bytesToBase64 restores the shape Go's encoding/json gives []byte, so
+ *  remoteSessionFS keeps decoding file contents the same way whether the
+ *  bytes arrived sealed or plain. */
+function bytesToBase64(b: Uint8Array): string {
+  let bin = "";
+  for (const x of b) bin += String.fromCharCode(x);
+  return btoa(bin);
+}
+
 export class SessionConnection {
   private ws: WebSocket | null = null;
   private sidBytes: Uint8Array;
@@ -515,7 +544,7 @@ export class SessionConnection {
       return Promise.reject(new Error(`retired filesystem request_id after timeout: ${requestID}`));
     }
     const payload: FSRequest = { ...req, request_id: requestID };
-    const encoded = encodeText(JSON.stringify(payload));
+    const encoded = encodeFSRequestPayload(payload, this.sessionId);
 
     return new Promise<FSResponse>((resolve, reject) => {
       const timer = window.setTimeout(() => {
@@ -777,14 +806,17 @@ export class SessionConnection {
   }
 
   private handleFSResponse(payload: Uint8Array): void {
+    const segs = decodeSegments(payload);
+    if (!segs) return;
     let response: FSResponse;
     try {
-      const parsed = JSON.parse(decodeText(payload));
+      const parsed = JSON.parse(decodeText(segs[0]));
       if (!isFSResponse(parsed)) return;
       response = parsed;
     } catch {
       return;
     }
+    if (segs.length > 1 && !this.openSealedFSResponse(response, segs)) return;
     const pending = this.pendingFSRequests.get(response.request_id);
     if (!pending) return;
     window.clearTimeout(pending.timer);
@@ -793,17 +825,24 @@ export class SessionConnection {
   }
 
   private handleFSEvent(payload: Uint8Array): void {
+    const segs = decodeSegments(payload);
+    if (!segs) return;
     let event: FSEvent;
     try {
-      const parsed = JSON.parse(decodeText(payload)) as Partial<FSEvent>;
-      if (
-        !parsed ||
-        typeof parsed.watch_id !== "string" ||
-        typeof parsed.path !== "string" ||
-        typeof parsed.event !== "string"
-      ) {
+      const parsed = JSON.parse(decodeText(segs[0])) as Partial<FSEvent>;
+      if (!parsed || typeof parsed.watch_id !== "string" || typeof parsed.event !== "string") {
         return;
       }
+      if (segs.length > 1) {
+        // path is sealed; the head carries only watch_id / event.
+        const accountKey = getCurrentAccountKey();
+        if (!accountKey) return;
+        const opened = openUnsequencedFrame(accountKey, this.sessionId, TYPE.FS_EVENT, segs[1]);
+        if (!opened) return;
+        const fields = JSON.parse(decodeText(opened)) as { path?: string };
+        parsed.path = fields.path ?? "";
+      }
+      if (typeof parsed.path !== "string") return;
       event = parsed as FSEvent;
     } catch {
       return;
@@ -815,6 +854,31 @@ export class SessionConnection {
         /* keep later handlers isolated */
       }
     }
+  }
+
+  /** openSealedFSResponse overlays the sealed segments onto `response`,
+   *  returning false when the frame must be dropped. Segment 1 carries
+   *  the metadata (entries / meta / error / content and chunk minus
+   *  their bytes); segment 2, when present, carries the raw file bytes
+   *  which are re-base64'd so consumers keep seeing Go's []byte shape. */
+  private openSealedFSResponse(response: FSResponse, segs: Uint8Array[]): boolean {
+    const accountKey = getCurrentAccountKey();
+    if (!accountKey) return false;
+    const meta = openUnsequencedFrame(accountKey, this.sessionId, TYPE.FS_RESPONSE, segs[1]);
+    if (!meta) return false;
+    try {
+      Object.assign(response, JSON.parse(decodeText(meta)));
+    } catch {
+      return false;
+    }
+    if (segs.length > 2) {
+      const raw = openUnsequencedFrame(accountKey, this.sessionId, TYPE.FS_RESPONSE, segs[2]);
+      if (!raw) return false;
+      const encoded = bytesToBase64(raw);
+      if (response.content) response.content.data = encoded;
+      else if (response.chunk) response.chunk.data = encoded;
+    }
+    return true;
   }
 
   private rejectPendingFSRequests(err: Error): void {

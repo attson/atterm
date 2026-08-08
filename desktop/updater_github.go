@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -151,7 +150,7 @@ func (u *Updater) fetchReleases(ctx context.Context) ([]githubRelease, error) {
 func (u *Updater) refreshLines(ctx context.Context) []VersionLine {
 	rels, err := u.fetchReleases(ctx)
 	if err != nil {
-		log.Printf("updater: fetch releases list: %v", err)
+		logWarn("updater", "fetch releases list: %v", err)
 		return nil
 	}
 	assetName, perr := assetNameForPlatform(runtime.GOOS, runtime.GOARCH)
@@ -177,7 +176,6 @@ func (u *Updater) refreshLines(ctx context.Context) []VersionLine {
 	}
 	return groupLines(cands, u.cfg.current)
 }
-
 
 func (u *Updater) fetchLatestViaRedirect(ctx context.Context) (*githubRelease, error) {
 	req, err := http.NewRequestWithContext(ctx, "HEAD", u.githubLatestURL(), nil)
@@ -263,4 +261,3 @@ func proxiedGitHubReleaseURL(rawURL, proxyBase string) string {
 	}
 	return strings.TrimRight(proxyBase, "/") + "/" + rawURL
 }
-

@@ -1,5 +1,6 @@
 import { ref, type Ref } from "vue";
 import { usePlatform } from "../platform";
+import { errText, logWarn } from "../lib/log";
 
 // Module-scoped so state is shared across all consumers within the app
 // lifetime (matches useCollapsedGroups / useTaskGroupBy pattern).
@@ -40,7 +41,7 @@ function schedulePersist(): void {
     flushHandle = null;
     void usePlatform().sessions.setPins(Array.from(pinnedIds.value)).catch((e) => {
       /* best-effort */
-      console.warn("[pins] schedulePersist failed", e);
+      logWarn("pins", "schedulePersist failed", { error: errText(e) });
     });
   }, PERSIST_DEBOUNCE_MS);
 }
@@ -93,7 +94,7 @@ async function flushNowFn(): Promise<void> {
     // Still best-effort (same policy as schedulePersist), but recovery is
     // the one synchronous window where a silent failure would be costly —
     // log it so the caller has a signal even though flushNow keeps resolving.
-    console.warn("[pins] flushNow persist failed", e);
+    logWarn("pins", "flushNow persist failed", { error: errText(e) });
   }
 }
 

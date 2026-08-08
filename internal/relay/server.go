@@ -6,22 +6,20 @@ package relay
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"io/fs"
-	"log"
 	"net/http"
-	"os"
+	"nhooyr.io/websocket"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
-	"nhooyr.io/websocket"
 )
 
 // Config configures a Server.
@@ -40,8 +38,6 @@ type Config struct {
 	// DebugPayload includes IN/OUT bytes in debug logs. This may leak command
 	// input or terminal output; only enable during local debugging.
 	DebugPayload bool
-	// DebugLog overrides where debug logs are written. Nil writes to stderr.
-	DebugLog io.Writer
 	// RateLimitPerMinute limits HTTP requests and WS upgrade attempts per
 	// remote IP/token pair. Zero uses a conservative default; negative disables.
 	RateLimitPerMinute int
@@ -115,12 +111,8 @@ type Server struct {
 	debugPayloadEnabled atomic.Bool
 }
 
-
 // NewServer builds a Server with its routes installed.
 func NewServer(cfg Config) *Server {
-	if cfg.DebugLog == nil {
-		cfg.DebugLog = os.Stderr
-	}
 	rateLimit := cfg.RateLimitPerMinute
 	if rateLimit == 0 {
 		rateLimit = defaultRateLimitPerMinute
@@ -229,9 +221,9 @@ func NewServer(cfg Config) *Server {
 				select {
 				case <-t.C:
 					if n, err := cfg.Store.PurgeExpiredSessions(ctx); err != nil {
-						log.Printf("relay: PurgeExpiredSessions: %v", err)
+						logging.Warn("relay", "PurgeExpiredSessions: %v", err)
 					} else if n > 0 {
-						log.Printf("relay: purged %d expired sessions", n)
+						logging.Info("relay", "purged %d expired sessions", n)
 					}
 				}
 			}
@@ -299,7 +291,6 @@ func (s *Server) removeSession(id uuid.UUID) {
 	}
 }
 
-
 func appendUniqueOrigin(vs []string, v string) []string {
 	for _, e := range vs {
 		if e == v {
@@ -316,7 +307,6 @@ func (s *Server) acceptOptions() *websocket.AcceptOptions {
 		OriginPatterns:     origins,
 	}
 }
-
 
 func (s *Server) acceptOptionsWithAuthSubprotocol(r *http.Request) *websocket.AcceptOptions {
 	opts := s.acceptOptions()
@@ -509,7 +499,7 @@ func (s *Server) handleBootstrapStatus(w http.ResponseWriter, r *http.Request) {
 	adminExists := true // fail safe: on error, don't advertise an open setup window
 	if s.cfg.Store != nil {
 		if ok, err := s.cfg.Store.AdminExists(r.Context()); err != nil {
-			log.Printf("bootstrap-status: AdminExists: %v", err)
+			logging.Warn("relay-admin", "AdminExists: %v", err)
 		} else {
 			adminExists = ok
 		}
@@ -517,7 +507,6 @@ func (s *Server) handleBootstrapStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"admin_exists": adminExists})
 }
-
 
 // readFrame reads one WS binary message and decodes it as a Frame.
 func readFrame(ctx context.Context, c *websocket.Conn) (proto.Frame, error) {

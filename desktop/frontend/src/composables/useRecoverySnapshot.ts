@@ -10,6 +10,7 @@ import {
   type RecoveryAIInfo,
 } from "../lib/api";
 import { usePlatform } from "../platform";
+import { errText, logWarn } from "../lib/log";
 
 // AI session id captures keyed by atterm session id. Lives outside the
 // reactive store so non-structural changes don't trigger watcher re-runs.
@@ -118,10 +119,10 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     // recovery is best-effort persistence, not a user-visible operation.
     try {
       void saveRecoverySnapshot(buildSnapshot()).catch((e) => {
-        console.warn("[recovery] saveRecoverySnapshot failed", e);
+        logWarn("recovery", "saveRecoverySnapshot failed", { error: errText(e) });
       });
     } catch (e) {
-      console.warn("[recovery] saveRecoverySnapshot failed", e);
+      logWarn("recovery", "saveRecoverySnapshot failed", { error: errText(e) });
     }
   }
 

@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -42,8 +42,8 @@ func bootstrapAdmin(ctx context.Context, store userstore.Store, email string) er
 	if err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
-	log.Printf("bootstrap-admin: claim token for %s (expires in 7 days):", email)
-	log.Printf("    %s", plaintext)
-	log.Printf("bootstrap-admin: complete OPAQUE registration via POST /api/auth/register/finalize with this token in claim_token to receive admin role")
+	logging.Info("bootstrap", "claim token for %s (expires in 7 days):", email)
+	logging.Info("bootstrap", "    %s", plaintext)
+	logging.Info("bootstrap", "complete OPAQUE registration via POST /api/auth/register/finalize with this token in claim_token to receive admin role")
 	return nil
 }

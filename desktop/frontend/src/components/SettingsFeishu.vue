@@ -154,6 +154,7 @@
 </template>
 
 <script setup lang="ts">
+import { errText, logError } from "../lib/log";
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from '../i18n/useI18n'
 import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
@@ -232,7 +233,7 @@ async function onFeishuModeChange(next: string) {
   } catch (err) {
     // Rollback the dropdown to the persisted value on failure.
     feishuModePref.value = (await getFeishuModePref()) as 'auto' | 'local' | 'relay'
-    console.error('SetFeishuModePref failed', err)
+    logError("feishu", "SetFeishuModePref failed", { error: errText(err) })
   }
 }
 

@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -132,7 +131,7 @@ func (u *uplink) Run(ctx context.Context) {
 			if u.recordError != nil {
 				u.recordError(err)
 			}
-			log.Printf("uplink: %v (retry in %s)", err, backoff)
+			logWarn("uplink", "connect failed: %v (retry in %s)", err, backoff)
 		}
 		u.tracker.SetState(connhealth.StateReconnecting, time.Now())
 		select {
@@ -205,7 +204,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 	if err := u.writeAnnounce(connCtx, conn); err != nil {
 		return err
 	}
-	log.Printf("uplink: connected, sent ANNOUNCE (%d session(s))", len(u.host.Snapshot()))
+	logInfo("uplink", "connected, sent ANNOUNCE (%d session(s))", len(u.host.Snapshot()))
 	u.tracker.SetState(connhealth.StateConnected, time.Now())
 
 	// streaming map and its lock.
@@ -301,30 +300,30 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				case <-connCtx.Done():
 					return
 				default:
-					log.Printf("uplink: out chan full; dropping remote fs event session=%s", f.SessionID)
+					logWarn("uplink", "out chan full; dropping remote fs event session=%s", f.SessionID)
 				}
 			}
 		}
 	}()
 
 	startStream := func(id uuid.UUID, sinceSeq uint64) {
-		log.Printf("desktop-uplink: stream_request session=%s since_seq=%d", id, sinceSeq)
+		logDebug("uplink", "stream_request session=%s since_seq=%d", id, sinceSeq)
 		mu.Lock()
 		if _, ok := streaming[id]; ok {
 			mu.Unlock()
-			log.Printf("desktop-uplink: stream_request_duplicate session=%s since_seq=%d", id, sinceSeq)
+			logDebug("uplink", "stream_request_duplicate session=%s since_seq=%d", id, sinceSeq)
 			return
 		}
 		sub, replayToSeq, err := u.host.SubscribeLocal(id, sinceSeq)
 		if err != nil {
 			mu.Unlock()
-			log.Printf("desktop-uplink: stream_request_failed session=%s since_seq=%d error=%v", id, sinceSeq, err)
+			logWarn("uplink", "stream_request_failed session=%s since_seq=%d error=%v", id, sinceSeq, err)
 			return
 		}
 		fwdCtx, cancelFwd := context.WithCancel(connCtx)
 		streaming[id] = &streamingLocal{id: id, sub: sub, cancelFwd: cancelFwd}
 		mu.Unlock()
-		log.Printf("desktop-uplink: stream_subscribed session=%s since_seq=%d replay_to_seq=%d", id, sinceSeq, replayToSeq)
+		logDebug("uplink", "stream_subscribed session=%s since_seq=%d replay_to_seq=%d", id, sinceSeq, replayToSeq)
 
 		// Forwarder: copies frames from local subscriber to remote out queue.
 		// Frames already carry SessionID == id, which the remote uplink_conn
@@ -365,10 +364,10 @@ func (u *uplink) runOnce(ctx context.Context) error {
 		}
 		mu.Unlock()
 		if !ok {
-			log.Printf("desktop-uplink: stream_stop_unknown session=%s", id)
+			logDebug("uplink", "stream_stop_unknown session=%s", id)
 			return
 		}
-		log.Printf("desktop-uplink: stream_stop session=%s", id)
+		logDebug("uplink", "stream_stop session=%s", id)
 		s.cancelFwd()
 		u.host.UnsubscribeLocal(id, s.sub)
 	}
@@ -417,18 +416,18 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			}
 			stopStream(id)
 		case proto.TypeIn, proto.TypeResize, proto.TypePasteImage:
-			log.Printf("desktop-uplink: inbound_recv type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
+			logDebug("uplink", "inbound_recv type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
 			if !localFrameAllowedByPermission(u.remotePermission, f.Type) {
-				log.Printf("desktop-uplink: inbound_drop_permission type=%s permission=%s %s", desktopUplinkFrameTypeName(f.Type), u.remotePermission, desktopUplinkFrameLogDetails(f))
+				logWarn("uplink", "inbound_drop_permission type=%s permission=%s %s", desktopUplinkFrameTypeName(f.Type), u.remotePermission, desktopUplinkFrameLogDetails(f))
 				continue
 			}
 			if opened, ok := openInboundFrame(f, u.accountKey); ok {
 				f = opened
 			}
 			if err := u.host.SendLocalInbound(f.SessionID, f); err != nil {
-				log.Printf("desktop-uplink: inbound_forward_failed type=%s %s error=%v", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f), err)
+				logWarn("uplink", "inbound_forward_failed type=%s %s error=%v", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f), err)
 			} else {
-				log.Printf("desktop-uplink: inbound_forward_ok type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
+				logDebug("uplink", "inbound_forward_ok type=%s %s", desktopUplinkFrameTypeName(f.Type), desktopUplinkFrameLogDetails(f))
 			}
 		case proto.TypeFSRequest:
 			// Opens the sealed path segment when the client sealed it.
@@ -436,23 +435,23 @@ func (u *uplink) runOnce(ctx context.Context) error {
 			// FSRequestPayload and stays unaware of encryption.
 			req, err := proto.DecodeFSRequest(f.Payload, remoteFS.sessionKey(f.SessionID), f.SessionID)
 			if err != nil {
-				log.Printf("desktop-uplink: fs_request_decode_failed session=%s error=%v", f.SessionID, err)
+				logWarn("uplink", "fs_request_decode_failed session=%s error=%v", f.SessionID, err)
 				continue
 			}
 			if !handleRemoteFSRequest(connCtx, out, f.SessionID, u.rawRemotePermission, remoteFS, req) {
 				return nil
 			}
 		case proto.TypeClaimDriver:
-			log.Printf("desktop-uplink: inbound_recv type=CLAIM_DRIVER %s", desktopUplinkFrameLogDetails(f))
+			logDebug("uplink", "inbound_recv type=CLAIM_DRIVER %s", desktopUplinkFrameLogDetails(f))
 			var cp proto.ClaimDriverPayload
 			if err := json.Unmarshal(f.Payload, &cp); err != nil {
-				log.Printf("desktop-uplink: inbound_drop type=CLAIM_DRIVER reason=bad_payload session=%s err=%q", f.SessionID, err)
+				logWarn("uplink", "inbound_drop type=CLAIM_DRIVER reason=bad_payload session=%s err=%q", f.SessionID, err)
 				continue
 			}
 			if err := u.host.ClaimLocalDriver(f.SessionID, cp.ClientID, cp.ClientName); err != nil {
-				log.Printf("desktop-uplink: inbound_drop type=CLAIM_DRIVER reason=%q session=%s", err, f.SessionID)
+				logWarn("uplink", "inbound_drop type=CLAIM_DRIVER reason=%q session=%s", err, f.SessionID)
 			} else {
-				log.Printf("desktop-uplink: inbound_forward_ok type=CLAIM_DRIVER session=%s client_id=%q client_name=%q", f.SessionID, cp.ClientID, cp.ClientName)
+				logDebug("uplink", "inbound_forward_ok type=CLAIM_DRIVER session=%s client_id=%q client_name=%q", f.SessionID, cp.ClientID, cp.ClientName)
 			}
 		case proto.TypeViewers:
 			var p proto.ViewersPayload
@@ -480,7 +479,7 @@ func (u *uplink) runOnce(ctx context.Context) error {
 				}
 			}
 		default:
-			log.Printf("uplink: unexpected frame type 0x%02x", f.Type)
+			logWarn("uplink", "unexpected frame type 0x%02x", f.Type)
 		}
 	}
 }
@@ -632,7 +631,7 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 		stats.observe(f)
 	}
 	if localSubscriberFrameRequestsRepaint(f) && requestRepaint != nil {
-		log.Printf("desktop-uplink: stream_request_repaint %s", desktopUplinkFrameLogDetails(f))
+		logDebug("uplink", "stream_request_repaint %s", desktopUplinkFrameLogDetails(f))
 		requestRepaint()
 	}
 	if !localSubscriberFrameForwardedToUplink(f.Type) {
@@ -661,7 +660,6 @@ func forwardLocalSubscriberFrame(ctx context.Context, out chan<- proto.Frame, f 
 		return false
 	}
 }
-
 
 func localSubscriberFrameRequestsRepaint(f proto.Frame) bool {
 	if f.Type != proto.TypeOut {
@@ -702,13 +700,13 @@ func (u *uplink) SendCommandEvent(sessionID uuid.UUID, exit, elapsedMS int, labe
 	}
 	frame, err := proto.EncodeCommandEvent(sessionID, payload)
 	if err != nil {
-		log.Printf("uplink: SendCommandEvent encode: %v", err)
+		logWarn("uplink", "SendCommandEvent encode: %v", err)
 		return
 	}
 	select {
 	case out <- frame:
 	default:
-		log.Printf("uplink: out chan full; dropping command event session=%s", sessionID)
+		logWarn("uplink", "out chan full; dropping command event session=%s", sessionID)
 	}
 }
 

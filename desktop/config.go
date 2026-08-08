@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/attson/atterm/internal/appdir"
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 )
 
@@ -107,6 +108,12 @@ type appConfig struct {
 	// LogFilePath overrides the platform default desktop log file path.
 	// Empty means "use the platform default".
 	LogFilePath string `json:"log_file_path,omitempty"`
+	// LogLevel is the minimum severity written to the log file
+	// ("DEBUG"/"INFO"/"WARN"/"ERROR"). Empty or unrecognized means INFO.
+	// Per-frame and per-keystroke tracing is logged at DEBUG, so leaving this
+	// at INFO keeps the rotating file readable while the instrumentation stays
+	// one dropdown away.
+	LogLevel string `json:"log_level,omitempty"`
 
 	// Auto-update settings. Nil means "never set" → treated as default true
 	// at read time. Stored as a pointer so we can distinguish "user opted
@@ -359,6 +366,13 @@ func (c appConfig) LogFilePathOrDefault() string {
 	return defaultLogFilePath()
 }
 
+// LogLevelOrDefault resolves the configured write threshold. A missing or
+// malformed value falls back to INFO rather than refusing to start — a typo in
+// config.json must not cost the user their app.
+func (c appConfig) LogLevelOrDefault() logging.Level {
+	return logging.ParseLevelOr(c.LogLevel, logging.LevelInfo)
+}
+
 func (c appConfig) ShellIntegrationEnabledOrDefault() bool {
 	if c.ShellIntegrationEnabled == nil {
 		return true
@@ -489,4 +503,3 @@ func (s *configStore) Set(c appConfig) error {
 	}
 	return os.Rename(tmp, p)
 }
-

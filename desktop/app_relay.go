@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -94,7 +93,7 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 	// the login: the user already has a valid session token and account_key.
 	// See docs/superpowers/specs/2026-06-23-desktop-relay-password-persistence-design.md.
 	if err := saveRelayPassword(wsURL, email, password); err != nil {
-		log.Printf("desktop: save relay password: %v", err)
+		logWarn("relay", "save relay password: %v", err)
 	}
 	if a.prefsSync != nil {
 		go func() {
@@ -180,7 +179,7 @@ func (a *App) RegisterRemoteRelay(relayURL, email, password, claimToken string, 
 	// the registration: the user already has a valid session token and account_key.
 	// See docs/superpowers/specs/2026-06-23-desktop-relay-password-persistence-design.md.
 	if err := saveRelayPassword(wsURL, email, password); err != nil {
-		log.Printf("desktop: save relay password: %v", err)
+		logWarn("relay", "save relay password: %v", err)
 	}
 	return nil
 }
@@ -200,7 +199,7 @@ func (a *App) LoadSavedRelayPassword() (string, error) {
 	cfg := a.cfgStore.Get()
 	pw, err := loadRelayPassword(cfg.RelayURL, cfg.RelayLastEmail)
 	if err != nil {
-		log.Printf("desktop: load saved relay password: %v", err)
+		logWarn("relay", "load saved relay password: %v", err)
 		return "", nil
 	}
 	return pw, nil
@@ -227,7 +226,7 @@ func (a *App) RememberRelayPassword(password string) error {
 	}
 	cfg := a.cfgStore.Get()
 	if err := saveRelayPassword(cfg.RelayURL, cfg.RelayLastEmail, password); err != nil {
-		log.Printf("desktop: remember relay password: %v", err)
+		logWarn("relay", "remember relay password: %v", err)
 	}
 	return nil
 }
@@ -385,7 +384,6 @@ func (a *App) SignOutOtherRelaySessions() (SignOutOthersResult, error) {
 	return meSessionsSignOutOthers(a.ctx, relayHTTPBase(cfg.RelayURL), cfg.RelaySessionToken, cfg.AllowInsecureRelay)
 }
 
-
 // PairingTokenResponse is what the renderer receives when generating a QR code.
 // Mirrors the relay's /api/pair/create response body.
 type PairingTokenResponse struct {
@@ -426,7 +424,7 @@ func (a *App) CreatePairingToken() (PairingTokenResponse, error) {
 	if ak := a.accountKeySnapshot(); len(ak) > 0 {
 		env, key, err := wrapAccountKey(ak)
 		if err != nil {
-			log.Printf("desktop: wrap account_key for pair: %v (falling back to no-wrap QR)", err)
+			logWarn("e2ee", "wrap account_key for pair: %v (falling back to no-wrap QR)", err)
 		} else {
 			wrapB64 = base64.StdEncoding.EncodeToString(env)
 			wk = key
@@ -503,7 +501,6 @@ func (a *App) snapshotRelayErrors() []RelayErrorEntry {
 	copy(out, a.relayErrors)
 	return out
 }
-
 
 // relayHTTPBase rewrites a stored relay WebSocket URL (wss://, ws://) to the
 // HTTP scheme its REST endpoints are served over. http.Client rejects "wss"/

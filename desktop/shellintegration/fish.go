@@ -1,24 +1,25 @@
 package shellintegration
 
 import (
-	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/attson/atterm/internal/logging"
 )
 
 func prepareFish() Plan {
 	confDir, err := fishConfDir()
 	if err != nil {
-		log.Printf("shellintegration: fish conf dir unavailable: %v", err)
+		logging.Warn("shell-integration", "fish conf dir unavailable: %v", err)
 		return Plan{}
 	}
 	if err := os.MkdirAll(confDir, 0o755); err != nil {
-		log.Printf("shellintegration: fish mkdir %s: %v", confDir, err)
+		logging.Warn("shell-integration", "fish mkdir %s: %v", confDir, err)
 		return Plan{}
 	}
 	target := filepath.Join(confDir, "atterm-integration.fish")
 	if err := os.WriteFile(target, []byte(fishSnippet), 0o644); err != nil {
-		log.Printf("shellintegration: fish write %s: %v", target, err)
+		logging.Warn("shell-integration", "fish write %s: %v", target, err)
 		return Plan{}
 	}
 	return Plan{

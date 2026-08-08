@@ -3,10 +3,10 @@ package webpush
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -95,7 +95,7 @@ func (s *Service) RemoveSubscription(userID, endpoint string) error {
 func (s *Service) SubscriptionsForUser(userID string) []Subscription {
 	subs, err := s.store.ListWebPushSubscriptions(context.Background(), userID)
 	if err != nil {
-		log.Printf("webpush: SubscriptionsForUser(%s): %v", userID, err)
+		logging.Warn("webpush", "SubscriptionsForUser(%s): %v", userID, err)
 		return nil
 	}
 	out := make([]Subscription, len(subs))

@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logWarn } from "../../lib/log";
 import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import FileTreeNode from "./FileTreeNode.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
@@ -97,7 +98,7 @@ async function copyPathToClipboard(path: string) {
     }
     props.context?.showToast?.(t("plugins.fileExplorer.pathCopied"));
   } catch (err) {
-    console.warn("file-explorer: copy path failed", err);
+    logWarn("file-explorer", "copy path failed", { error: errText(err) });
   }
 }
 
@@ -150,7 +151,7 @@ async function submitInline(name: string) {
     else if (intent.kind === "newFolder") await props.fs.mkdir(joinPath(intent.parentPath, name));
     else if (intent.kind === "rename") await props.fs.rename(intent.node.path, joinPath(parentDir(intent.node.path), name));
   } catch (err) {
-    console.warn("file-explorer: inline action failed", err);
+    logWarn("file-explorer", "inline action failed", { error: errText(err) });
   }
 }
 
@@ -177,7 +178,7 @@ async function resolveDeleteConfirm(id: string) {
       }
     }
   } catch (err) {
-    console.warn("file-explorer: delete failed", err);
+    logWarn("file-explorer", "delete failed", { error: errText(err) });
   }
 }
 
@@ -360,7 +361,7 @@ watch(
       searchTruncated.value = result.truncated;
     } catch (err) {
       if (disposed || searchGeneration !== request) return;
-      console.warn("file-explorer: filename search failed", err);
+      logWarn("file-explorer", "filename search failed", { error: errText(err) });
       searchResults.value = [];
       searchTruncated.value = false;
     } finally {
@@ -425,7 +426,7 @@ async function toggle(n: TreeNode) {
       watchHandles.set(n.path, { fs, id });
     } catch (err) {
       if (isCurrentNode(fs, root, showHidden, request, n)) {
-        console.warn("plugin-fs: watcher unavailable or cap reached for", n.path, err);
+        logWarn("file-explorer", "watcher unavailable or cap reached", { path: n.path, error: errText(err) });
       }
     } finally {
       if (pendingExpands.get(n.path) === watchRequest) pendingExpands.delete(n.path);

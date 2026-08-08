@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logDebug, logError, logWarn } from "../lib/log";
 import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
@@ -624,7 +625,7 @@ async function handleCopyShortcut(e: KeyboardEvent) {
   try {
     await copyTerminalSelection(term);
   } catch (err) {
-    console.warn("[AT Term] failed to copy terminal selection", err);
+    logWarn("term", "failed to copy terminal selection", { error: errText(err) });
   }
 }
 
@@ -647,7 +648,7 @@ async function handleCtrlVKeydownPaste(e: KeyboardEvent) {
       emit("toast", result.reasonKey ? t(result.reasonKey) : result.reason!);
     }
   } catch (err) {
-    console.warn("[AT Term] failed to paste on Ctrl+V", err);
+    logWarn("term", "failed to paste on Ctrl+V", { error: errText(err) });
   } finally {
     pasteBusy.value = false;
   }
@@ -684,14 +685,14 @@ async function handleImagePaste(e: ClipboardEvent) {
         try {
           return (await GetPasteboardFileURLs()) ?? [];
         } catch (err) {
-          console.warn("[AT Term] GetPasteboardFileURLs failed", err);
+          logWarn("term", "GetPasteboardFileURLs failed", { error: errText(err) });
           return [];
         }
       },
       onFileToast: (name, size) => pasteFileBus.emit(name, size),
     });
   } catch (err) {
-    console.warn("[AT Term] paste dispatch failed", err);
+    logWarn("term", "paste dispatch failed", { error: errText(err) });
   }
 }
 
@@ -1081,7 +1082,7 @@ async function onSelectionCopy() {
   try {
     copied = await copyTerminalSelection(term);
   } catch (err) {
-    console.warn("[AT Term] selection copy failed", err);
+    logWarn("term", "selection copy failed", { error: errText(err) });
   } finally {
     selectionPopover.value.copying = false;
   }
@@ -1138,7 +1139,7 @@ async function openContextMenu(e: MouseEvent) {
         const mod = await d.load();
         enabledPlugins.push((mod as { default: ContextMenuPlugin }).default);
       } catch (err) {
-        console.error(`[AT Term] failed to load context-menu plugin ${d.id}`, err);
+        logError("term", "failed to load context-menu plugin", { plugin: d.id, error: errText(err) });
       }
     }
     pluginMenuItems.value = await collectContextMenuItems(enabledPlugins, pluginContext, selection);
@@ -1223,7 +1224,7 @@ async function openLinkMatch(hit: LinkMatch) {
   try {
     await platform.system.openExternalURL(url);
   } catch (err) {
-    console.warn("[AT Term] open link failed", err);
+    logWarn("term", "open link failed", { error: errText(err) });
     emit("toast", t("terminal.link.openFailed"));
   }
 }
@@ -1249,7 +1250,7 @@ async function onMenuCopyLink() {
   try {
     await navigator.clipboard.writeText(hit.text);
   } catch (err) {
-    console.warn("[AT Term] copy link failed", err);
+    logWarn("term", "copy link failed", { error: errText(err) });
     emit("toast", t("terminal.copyFailed"));
   }
 }
@@ -1260,7 +1261,7 @@ async function onMenuCopy() {
   try {
     await copyTerminalSelection(term);
   } catch (err) {
-    console.warn("[AT Term] failed to copy terminal selection", err);
+    logWarn("term", "failed to copy terminal selection", { error: errText(err) });
     emit("toast", t("terminal.copyFailed"));
   }
 }
@@ -1268,7 +1269,7 @@ async function onMenuCopy() {
 async function onMenuPaste() {
   if (!term || !conn || pasteBusy.value) return;
   pasteBusy.value = true;
-  console.info("[AT Term] terminal menu paste requested", {
+  logDebug("term", "menu paste requested", {
     status: status.value,
     remotePermission: props.remotePermission ?? "full",
   });
@@ -1283,7 +1284,7 @@ async function onMenuPaste() {
       emit("toast", result.reasonKey ? t(result.reasonKey) : result.reason!);
     }
   } catch (err: any) {
-    console.warn("[AT Term] failed to paste from terminal menu", err);
+    logWarn("term", "failed to paste from terminal menu", { error: errText(err) });
     emit("toast", err?.message ?? t("terminal.pasteFailed"));
   } finally {
     pasteBusy.value = false;
@@ -1365,10 +1366,12 @@ function safeFit() {
     const r = termContainer.value.getBoundingClientRect();
     if (term.rows < Math.floor(r.height / 30)) {
       // Heuristic: if cell can fit > N rows but term has way fewer, fit failed.
-      console.warn(
-        "[AT Term] suspicious term size after fit",
-        { containerW: r.width, containerH: r.height, cols: term.cols, rows: term.rows },
-      );
+      logWarn("term", "suspicious term size after fit", {
+        containerW: r.width,
+        containerH: r.height,
+        cols: term.cols,
+        rows: term.rows,
+      });
     }
   }
 }
@@ -1427,7 +1430,7 @@ async function ensureTerm() {
       webgl.onContextLoss(() => webgl.dispose());
       term.loadAddon(webgl);
     } catch (err) {
-      console.warn("[AT Term] WebGL renderer unavailable, falling back to DOM", err);
+      logWarn("term", "WebGL renderer unavailable, falling back to DOM", { error: errText(err) });
     }
   }
   const keyTarget = termContainer.value!;
@@ -1470,7 +1473,7 @@ async function ensureTerm() {
       vp.handleTouchMove = () => true;
     }
   } catch (err) {
-    console.warn("[AT Term] disable xterm touch scroll failed", err);
+    logWarn("term", "disable xterm touch scroll failed", { error: errText(err) });
   }
   // Bootstrap the debug flag once term is up and install the console dump.
   setTouchDebugEnabled(readTouchDebugFlag());
@@ -1543,8 +1546,10 @@ async function ensureTerm() {
   term.onData((data) => {
     const { cleaned, dropped } = stripC1Controls(data);
     if (dropped.length > 0) {
-      console.warn("[AT Term] dropped C1 control chars from terminal input", {
-        droppedCodepoints: dropped.map((cp) => "U+" + cp.toString(16).toUpperCase().padStart(4, "0")),
+      logWarn("term", "dropped C1 control chars from terminal input", {
+        droppedCodepoints: dropped
+          .map((cp) => "U+" + cp.toString(16).toUpperCase().padStart(4, "0"))
+          .join(","),
         originalLength: data.length,
         cleanedLength: cleaned.length,
       });
@@ -1598,7 +1603,7 @@ async function ensureTerm() {
       return false;
     });
   } catch (err) {
-    console.warn("[AT Term] OSC 133 handler registration failed", err);
+    logWarn("term", "OSC 133 handler registration failed", { error: errText(err) });
   }
 
   try {
@@ -1766,7 +1771,7 @@ async function onFilePicked(event: Event) {
     await conn?.sendPasteFile(file, name);
     pasteFileBus.emit(name, file.size);
   } catch (err: any) {
-    console.warn("[AT Term] failed to send picked file", err);
+    logWarn("term", "failed to send picked file", { error: errText(err) });
     emit("toast", err?.message ?? t("terminal.pasteFailed"));
   } finally {
     if (input) input.value = "";
@@ -1809,7 +1814,7 @@ async function openNativeImagePicker() {
     await conn?.sendPasteImage(file, file.name);
   } catch (err) {
     const message = String((err as { message?: string })?.message ?? err);
-    if (!/cancel/i.test(message)) console.warn("[AT Term] image picker failed:", message);
+    if (!/cancel/i.test(message)) logWarn("term", "image picker failed", { message });
   }
 }
 
@@ -1823,7 +1828,7 @@ async function onImagePicked(event: Event) {
     pasteImageBus.emit(file, name);
     await conn?.sendPasteImage(file, name);
   } catch (err: any) {
-    console.warn("[AT Term] failed to send picked image", err);
+    logWarn("term", "failed to send picked image", { error: errText(err) });
     emit("toast", err?.message ?? t("terminal.pasteFailed"));
   } finally {
     if (input) input.value = "";
@@ -1959,7 +1964,7 @@ onBeforeUnmount(() => {
   try {
     term?.dispose();
   } catch (e) {
-    console.warn("[AT Term] xterm dispose race (safe to ignore):", e);
+    logDebug("term", "xterm dispose race (safe to ignore)", { error: errText(e) });
   }
   term = null;
   fit = null;

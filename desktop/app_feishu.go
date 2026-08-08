@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/attson/atterm/desktop/feishu"
@@ -154,7 +153,7 @@ func (a *App) feishuServiceConfig(cfg appConfig) (feishu.ServiceConfig, string) 
 			effective = "relay"
 		} else {
 			effective = "local"
-			log.Printf("desktop: feishu mode=relay requested but not effectively logged in (RelayPaused=%v); falling back to local", cfg.RelayPaused)
+			logWarn("feishu", "mode=relay requested but not effectively logged in (RelayPaused=%v); falling back to local", cfg.RelayPaused)
 		}
 	default: // "auto"
 		if loggedIn {
@@ -196,19 +195,19 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 
 	svc, err := feishu.NewService(svcCfg)
 	if err != nil {
-		log.Printf("desktop: feishu service init: %v", err)
+		logError("feishu", "service init: %v", err)
 		return
 	}
 
 	addr, _, err := svc.HookServer().Start()
 	if err != nil {
-		log.Printf("desktop: feishu hook server start: %v", err)
+		logError("feishu", "hook server start: %v", err)
 		return
 	}
 	hookEndpoint := "http://" + addr + "/atterm-hook/notify"
 
 	if err := feishu.WriteEndpointFile(hookEndpoint); err != nil {
-		log.Printf("desktop: write feishu endpoint file: %v", err)
+		logError("feishu", "write feishu endpoint file: %v", err)
 	}
 
 	svc.HookServer().SetSuspectCallback(func() {
@@ -240,7 +239,7 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	if mode == "local" {
 		if err := svc.EnsureLongConn(ctx); err != nil {
 			// Not fatal — credentials may not be set yet.
-			log.Printf("desktop: feishu long-conn: %v", err)
+			logError("feishu", "long-conn: %v", err)
 		}
 	}
 
@@ -250,7 +249,7 @@ func (a *App) startFeishu(ctx context.Context, cfg appConfig) {
 	a.feishuHookSrv = svc.HookServer()
 	a.feishuHookEndpoint = hookEndpoint
 	a.feishuMu.Unlock()
-	log.Printf("desktop: feishu service started (mode=%s endpoint=%s)", mode, hookEndpoint)
+	logInfo("feishu", "service started (mode=%s endpoint=%s)", mode, hookEndpoint)
 }
 
 // reconcileFeishuMode rebuilds the Feishu service when the relay login state no
@@ -270,12 +269,12 @@ func (a *App) reconcileFeishuMode(ctx context.Context, cfg appConfig) {
 	}
 	newSvc, err := feishu.NewService(svcCfg)
 	if err != nil {
-		log.Printf("desktop: feishu reload (%s→%s): %v", a.feishuMode, desired, err)
+		logError("feishu", "reload (%s→%s): %v", a.feishuMode, desired, err)
 		return
 	}
 	// Stop the outgoing service's long-conn (relay mode has none).
 	if err := a.feishuService.CloseLongConn(ctx); err != nil {
-		log.Printf("desktop: feishu close long-conn: %v", err)
+		logWarn("feishu", "close long-conn: %v", err)
 	}
 	// Repoint the persistent hook server + host at the new dispatcher. The
 	// endpoint/port is unchanged, so already-spawned PTYs keep working.
@@ -300,10 +299,10 @@ func (a *App) reconcileFeishuMode(ctx context.Context, cfg appConfig) {
 	a.feishuMode = desired
 	if desired == "local" {
 		if err := newSvc.EnsureLongConn(ctx); err != nil {
-			log.Printf("desktop: feishu long-conn after reload: %v", err)
+			logError("feishu", "long-conn after reload: %v", err)
 		}
 	}
-	log.Printf("desktop: feishu mode reconciled → %s (endpoint unchanged %s)", desired, a.feishuHookEndpoint)
+	logInfo("feishu", "mode reconciled → %s (endpoint unchanged %s)", desired, a.feishuHookEndpoint)
 }
 
 // FeishuStatusResp is returned by GetFeishuStatus.

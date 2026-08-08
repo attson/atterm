@@ -38,3 +38,18 @@ export const LEVEL_FILTER_OPTIONS: { value: LogLevel; label: string }[] = [
   { value: "WARN", label: "WARN+" },
   { value: "ERROR", label: "ERROR" },
 ];
+
+// Options for the *write* threshold — which records reach the file at all.
+// Deliberately labelled without the "+" suffix used above: the filter picks
+// what to show from an existing file, this picks what gets written in the
+// first place, and conflating the two makes for a confusing bug report.
+export const LEVEL_WRITE_OPTIONS: { value: LogLevel; label: string }[] = [
+  { value: "DEBUG", label: "DEBUG" },
+  { value: "INFO", label: "INFO" },
+  { value: "WARN", label: "WARN" },
+  { value: "ERROR", label: "ERROR" },
+];
+
+export function isLogLevel(value: string): value is LogLevel {
+  return value in LEVEL_ORDER;
+}

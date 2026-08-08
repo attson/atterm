@@ -5,9 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/google/uuid"
 )
 
@@ -115,14 +115,14 @@ func (s *Service) SendTest(userID string) int {
 func (s *Service) sendOne(userID string, sub Subscription, body []byte) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("webpush: panic in send: %v", r)
+			logging.Error("webpush", "panic in send: %v", r)
 		}
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 	resp, err := s.tr.Send(ctx, sub, body)
 	if err != nil {
-		log.Printf("webpush: send err endpoint=%s: %v", sub.Endpoint, err)
+		logging.Warn("webpush", "send err endpoint=%s: %v", sub.Endpoint, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -130,12 +130,12 @@ func (s *Service) sendOne(userID string, sub Subscription, body []byte) {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return
 	case resp.StatusCode == 404 || resp.StatusCode == 410:
-		log.Printf("webpush: endpoint %s gone (status %d); pruning", sub.Endpoint, resp.StatusCode)
+		logging.Info("webpush", "endpoint %s gone (status %d); pruning", sub.Endpoint, resp.StatusCode)
 		if err := s.store.RemoveWebPushSubscription(ctx, userID, sub.Endpoint); err != nil {
-			log.Printf("webpush: prune subscription: %v", err)
+			logging.Warn("webpush", "prune subscription: %v", err)
 		}
 	default:
-		log.Printf("webpush: send non-2xx endpoint=%s status=%d", sub.Endpoint, resp.StatusCode)
+		logging.Warn("webpush", "send non-2xx endpoint=%s status=%d", sub.Endpoint, resp.StatusCode)
 	}
 }
 

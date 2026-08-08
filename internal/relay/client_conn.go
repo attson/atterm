@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"net"
+	"nhooyr.io/websocket"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/google/uuid"
-	"nhooyr.io/websocket"
 )
 
 const clientReadLimit = 17 * 1024 * 1024
@@ -142,7 +142,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		if err != nil {
 			var ce websocket.CloseError
 			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-				log.Printf("client: read: %v", err)
+				logging.Debug("relay-client", "read: %v", err)
 			}
 			return
 		}
@@ -168,7 +168,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 
 		case proto.TypeAttach:
 			if sess != nil {
-				log.Printf("client: ATTACH after attach ignored")
+				logging.Warn("relay-client", "ATTACH after attach ignored")
 				continue
 			}
 			var ap proto.AttachPayload
@@ -225,7 +225,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				}
 			}
 			if !sess.SendInbound(f) {
-				log.Printf("client: inbound full, dropping frame type 0x%02x", f.Type)
+				logging.Warn("relay-client", "inbound full, dropping frame type 0x%02x", f.Type)
 			}
 
 		case proto.TypeClaimDriver:
@@ -255,7 +255,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			// the PTY directly, so the ClaimDriver above is sufficient there.
 			if sess.DriverFromUpstream() {
 				if !sess.SendInbound(f) {
-					log.Printf("client: inbound full, dropping CLAIM_DRIVER session=%s", sess.ID)
+					logging.Warn("relay-client", "inbound full, dropping CLAIM_DRIVER session=%s", sess.ID)
 				}
 			}
 			s.debugf("client claim_driver session=%s client_id=%q client_name=%q", sess.ID, cp.ClientID, cp.ClientName)
@@ -341,7 +341,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 			// keepalive response
 
 		default:
-			log.Printf("client: unexpected frame type 0x%02x", f.Type)
+			logging.Warn("relay-client", "unexpected frame type 0x%02x", f.Type)
 		}
 	}
 }

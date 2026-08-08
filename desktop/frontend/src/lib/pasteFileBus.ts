@@ -1,3 +1,4 @@
+import { errText, logWarn } from "./log";
 export type PasteFileEvent = {
   id: string;
   name: string;
@@ -19,7 +20,7 @@ export const pasteFileBus = {
       try {
         h(event);
       } catch (err) {
-        console.warn("[pasteFileBus] handler threw", err);
+        logWarn("paste", "file bus handler threw", { error: errText(err) });
       }
     }
   },

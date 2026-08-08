@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/attson/atterm/internal/appdir"
@@ -55,7 +54,7 @@ func (a *App) SaveRecoverySnapshot(payload string) error {
 	a.lastSnapshot = snap
 	a.mu.Unlock()
 	if appdir.IsDev() {
-		log.Printf("recovery: save %s", summarizeRecoverySnapshot(snap))
+		logDebug("recovery", "save %s", summarizeRecoverySnapshot(snap))
 	}
 	return a.recoveryStore.Save(snap)
 }

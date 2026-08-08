@@ -1,3 +1,4 @@
+import { errText, logWarn } from "./log";
 export type PasteImageEvent = {
   id: string;
   file: Blob;
@@ -19,7 +20,7 @@ export const pasteImageBus = {
       try {
         h(event);
       } catch (err) {
-        console.warn("[pasteImageBus] handler threw", err);
+        logWarn("paste", "image bus handler threw", { error: errText(err) });
       }
     }
   },

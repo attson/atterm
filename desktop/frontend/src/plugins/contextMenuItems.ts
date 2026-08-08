@@ -1,4 +1,5 @@
 import type { ContextMenuPlugin, MenuItem, PluginContext } from "./types";
+import { errText, logError } from "../lib/log";
 
 // collectContextMenuItems calls each plugin's getMenuItems in registration
 // order and concatenates the results. A plugin that throws is skipped with
@@ -14,7 +15,7 @@ export async function collectContextMenuItems(
       const items = p.getMenuItems(ctx, selection);
       out.push(...items);
     } catch (e) {
-      console.error("context-menu plugin getMenuItems threw", e);
+      logError("plugin", "context-menu getMenuItems threw", { error: errText(e) });
     }
   }
   return out;

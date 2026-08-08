@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -426,12 +425,12 @@ const (
 func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd string, onCapture func(sid string)) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Printf("recovery: no home for codex resolve: %v", err)
+		logWarn("ai-sid", "no home for codex resolve: %v", err)
 		return
 	}
 	dir := codexWatchDir(cwd, time.Now(), home)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		log.Printf("recovery: mkdir %s: %v — skip codex resolve", dir, err)
+		logWarn("ai-sid", "mkdir %s: %v — skip codex resolve", dir, err)
 		return
 	}
 	before := codexRolloutFileInfos(dir, cwd)
@@ -462,7 +461,7 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 			trackCodexUserTitle(ctx, sess, files[sid].Path)
 			return
 		case len(fresh) >= 2:
-			log.Printf("recovery: codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
+			logWarn("ai-sid", "codex resolve ambiguous (%d new in %s) — abort", len(fresh), dir)
 			return
 		case len(advanced) == 1:
 			sid := advanced[0]
@@ -470,12 +469,12 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 			trackCodexUserTitle(ctx, sess, files[sid].Path)
 			return
 		case len(advanced) >= 2:
-			log.Printf("recovery: codex resolve ambiguous (%d advanced in %s) — abort", len(advanced), dir)
+			logWarn("ai-sid", "codex resolve ambiguous (%d advanced in %s) — abort", len(advanced), dir)
 			return
 		}
 		before = files
 	}
-	log.Printf("recovery: codex resolve timeout in %s", dir)
+	logWarn("ai-sid", "codex resolve timeout in %s", dir)
 }
 
 func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string) {
@@ -501,12 +500,12 @@ func startCodexKnownTitleResolve(ctx context.Context, sess *session.Session, cwd
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Printf("recovery: no home for known codex title resolve: %v", err)
+		logWarn("ai-sid", "no home for known codex title resolve: %v", err)
 		return
 	}
 	path, ok := codexRolloutPathBySid(home, cwd, sid)
 	if !ok {
-		log.Printf("recovery: known codex sid %s not found under %s", sid, filepath.Join(home, ".codex", "sessions"))
+		logWarn("ai-sid", "known codex sid %s not found under %s", sid, filepath.Join(home, ".codex", "sessions"))
 		return
 	}
 	trackCodexUserTitle(ctx, sess, path)
@@ -598,7 +597,7 @@ func codexRolloutPathBySid(home, cwd, sid string) (string, bool) {
 	})
 	if len(matches) != 1 {
 		if len(matches) > 1 {
-			log.Printf("recovery: known codex sid %s ambiguous (%d rollout files)", sid, len(matches))
+			logWarn("ai-sid", "known codex sid %s ambiguous (%d rollout files)", sid, len(matches))
 		}
 		return "", false
 	}
@@ -680,13 +679,13 @@ func startAIResolve(ctx context.Context, sess *session.Session, cwd, kind string
 	case "claude":
 		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Printf("recovery: no home for claude resolve: %v", err)
+			logWarn("ai-sid", "no home for claude resolve: %v", err)
 			return
 		}
-		log.Printf("recovery: ai resolve start kind=claude (cwd tracked live, initial=%s)", cwd)
+		logDebug("ai-sid", "ai resolve start kind=claude (cwd tracked live, initial=%s)", cwd)
 		startClaudeTitleResolve(ctx, sess, home, onCapture)
 	case "codex":
-		log.Printf("recovery: ai resolve start kind=codex cwd=%s", cwd)
+		logDebug("ai-sid", "ai resolve start kind=codex cwd=%s", cwd)
 		startCodexFileResolve(ctx, sess, cwd, onCapture)
 	default:
 		// aider and unknown kinds: nothing to resolve.

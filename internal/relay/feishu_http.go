@@ -6,17 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/userstore"
+	"github.com/google/uuid"
 )
 
 // FeishuHTTPHandler exposes /v1/feishu/* routes.
@@ -86,9 +85,9 @@ func (h *FeishuHTTPHandler) ServeHTTPEvents(w http.ResponseWriter, r *http.Reque
 				// owned session whose owner differs from the binding owner is
 				// rejected. Empty on either side is legacy/local and allowed.
 				if sess.OwnerUserID != "" && sess.OwnerUserID != resp.Inject.OwnerUserID {
-					log.Printf("relay: feishu inject denied: session=%s owner mismatch", sid)
+					logging.Warn("relay-feishu", "inject denied: session=%s owner mismatch", sid)
 				} else if !sess.SendInbound(proto.Frame{Type: proto.TypeIn, SessionID: sid, Payload: []byte(resp.Inject.Text)}) {
-					log.Printf("relay: feishu inject dropped: session=%s inbound_full", sid)
+					logging.Warn("relay-feishu", "inject dropped: session=%s inbound_full", sid)
 				}
 			}
 		}
@@ -129,9 +128,9 @@ func logFeishuEventReject(hash string, resp *feishu.HandleResult) {
 		hp = hp[:16] + "…"
 	}
 	if resp.LogError != nil {
-		log.Printf("relay: feishu event rejected: reason=%s hash=%s err=%v", resp.Reason, hp, resp.LogError)
+		logging.Warn("relay-feishu", "event rejected: reason=%s hash=%s err=%v", resp.Reason, hp, resp.LogError)
 	} else {
-		log.Printf("relay: feishu event rejected: reason=%s hash=%s", resp.Reason, hp)
+		logging.Warn("relay-feishu", "event rejected: reason=%s hash=%s", resp.Reason, hp)
 	}
 }
 

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"nhooyr.io/websocket"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
-	"nhooyr.io/websocket"
 )
 
 const (
@@ -27,7 +27,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 	// First frame must be OPEN.
 	openFrame, err := readFrame(ctx, c)
 	if err != nil {
-		log.Printf("agent: read OPEN: %v", err)
+		logging.Warn("relay-agent", "read OPEN: %v", err)
 		_ = c.Close(websocket.StatusPolicyViolation, "expected OPEN")
 		return
 	}
@@ -60,10 +60,10 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 		_ = c.Close(websocket.StatusCode(CloseCodeSessionIDOwnerMismatch), CloseReasonSessionIDOwnerMismatch)
 		return
 	}
-	log.Printf("agent: session %s opened (%q)", openFrame.SessionID, op.Command)
+	logging.Info("relay-agent", "session %s opened (%q)", openFrame.SessionID, op.Command)
 	defer func() {
 		s.removeSession(openFrame.SessionID)
-		log.Printf("agent: session %s closed", openFrame.SessionID)
+		logging.Info("relay-agent", "session %s closed", openFrame.SessionID)
 	}()
 
 	// Writer pump: drains session.Inbound() (client->agent IN/RESIZE frames).
@@ -112,7 +112,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 		if err != nil {
 			var ce websocket.CloseError
 			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) {
-				log.Printf("agent: read: %v", err)
+				logging.Debug("relay-agent", "read: %v", err)
 			}
 			return
 		}
@@ -121,7 +121,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 		case proto.TypeOut:
 			seq, data, err := proto.DecodeOut(f.Payload)
 			if err != nil {
-				log.Printf("agent: bad OUT: %v", err)
+				logging.Warn("relay-agent", "bad OUT: %v", err)
 				return
 			}
 			sess.PushOut(seq, data)
@@ -138,7 +138,7 @@ func (s *Server) handleAgent(ctx context.Context, c *websocket.Conn, ownerUserID
 		case proto.TypePong:
 			// keepalive response; nothing to do
 		default:
-			log.Printf("agent: unexpected frame type 0x%02x", f.Type)
+			logging.Warn("relay-agent", "unexpected frame type 0x%02x", f.Type)
 		}
 	}
 }

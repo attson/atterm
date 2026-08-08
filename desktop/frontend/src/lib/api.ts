@@ -171,12 +171,16 @@ export function getLoggingConfig(): Promise<LoggingConfig> {
 export function setLoggingConfig(cfg: {
   enabled: boolean;
   path?: string;
+  level?: string;
 }): Promise<void> {
   return bindings().SetLoggingConfig({
     enabled: cfg.enabled,
     path: cfg.path ?? "",
     effective_path: "",
     dev_dual_output: false,
+    // Empty means "leave the stored level alone" on the Go side, so callers
+    // that only change the path or the on/off switch don't reset it.
+    level: cfg.level ?? "",
   });
 }
 

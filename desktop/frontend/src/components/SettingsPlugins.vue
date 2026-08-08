@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logError } from "../lib/log";
 import { onMounted } from "vue";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
@@ -17,7 +18,7 @@ async function toggle(id: PluginID, enabled: boolean) {
   try {
     await store.setEnabled(id, enabled);
   } catch (err) {
-    console.error("setEnabled failed", err);
+    logError("plugin", "setEnabled failed", { error: errText(err) });
   }
 }
 

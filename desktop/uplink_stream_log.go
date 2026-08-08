@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
@@ -37,17 +36,17 @@ func (s *streamForwardStats) observe(f proto.Frame) {
 	case proto.TypeOut:
 		seq, data, err := proto.DecodeOut(f.Payload)
 		if err != nil {
-			log.Printf("desktop-uplink: stream_out_decode_failed session=%s error=%v", s.sessionID, err)
+			logWarn("uplink-stream", "stream_out_decode_failed session=%s error=%v", s.sessionID, err)
 			return
 		}
 		s.outFrames++
 		s.outBytes += len(data)
 		if !s.firstOutLogged {
 			s.firstOutLogged = true
-			log.Printf("desktop-uplink: stream_out_first session=%s seq=%d bytes=%d", s.sessionID, seq, len(data))
+			logDebug("uplink-stream", "stream_out_first session=%s seq=%d bytes=%d", s.sessionID, seq, len(data))
 		}
 		if s.outBytes >= s.nextReportBytes || s.outFrames >= s.nextReportFrames {
-			log.Printf("desktop-uplink: stream_out_progress session=%s out_frames=%d out_bytes=%d last_seq=%d", s.sessionID, s.outFrames, s.outBytes, seq)
+			logDebug("uplink-stream", "stream_out_progress session=%s out_frames=%d out_bytes=%d last_seq=%d", s.sessionID, s.outFrames, s.outBytes, seq)
 			for s.outBytes >= s.nextReportBytes {
 				s.nextReportBytes += 1024 * 1024
 			}
@@ -57,21 +56,20 @@ func (s *streamForwardStats) observe(f proto.Frame) {
 		}
 	case proto.TypeMeta:
 		s.metaFrames++
-		log.Printf("desktop-uplink: stream_meta_forward session=%s payload_bytes=%d", s.sessionID, len(f.Payload))
+		logDebug("uplink-stream", "stream_meta_forward session=%s payload_bytes=%d", s.sessionID, len(f.Payload))
 	case proto.TypeClose:
 		s.closeFrames++
-		log.Printf("desktop-uplink: stream_close_forward session=%s payload_bytes=%d", s.sessionID, len(f.Payload))
+		logDebug("uplink-stream", "stream_close_forward session=%s payload_bytes=%d", s.sessionID, len(f.Payload))
 	case proto.TypeReplayProgress:
 		if !s.replayDropLogged {
 			s.replayDropLogged = true
-			log.Printf("desktop-uplink: stream_replay_progress_drop session=%s reason=local_subscriber_only", s.sessionID)
+			logDebug("uplink-stream", "stream_replay_progress_drop session=%s reason=local_subscriber_only", s.sessionID)
 		}
 	}
 }
 
 func (s *streamForwardStats) finish(reason string) {
-	log.Printf(
-		"desktop-uplink: stream_end session=%s reason=%s out_frames=%d out_bytes=%d meta_frames=%d close_frames=%d duration=%s",
+	logDebug("uplink-stream", "stream_end session=%s reason=%s out_frames=%d out_bytes=%d meta_frames=%d close_frames=%d duration=%s",
 		s.sessionID,
 		reason,
 		s.outFrames,
@@ -81,7 +79,6 @@ func (s *streamForwardStats) finish(reason string) {
 		time.Since(s.started).Round(time.Millisecond),
 	)
 }
-
 
 func desktopUplinkFrameTypeName(typ proto.Type) string {
 	switch typ {

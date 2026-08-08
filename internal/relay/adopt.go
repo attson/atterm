@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"sync"
 	"sync/atomic"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ptyhost"
 	"github.com/attson/atterm/internal/session"
@@ -115,30 +115,30 @@ func (s *Server) AdoptSession(ctx context.Context, id uuid.UUID, info proto.Sess
 				case proto.TypePasteImage:
 					pasteHost, ok := host.(ptyhost.ImagePasteHost)
 					if !ok {
-						log.Printf("adopt: paste image unavailable session=%s", f.SessionID)
+						logging.Warn("relay-adopt", "paste image unavailable session=%s", f.SessionID)
 						continue
 					}
 					var p proto.PasteImagePayload
 					if err := json.Unmarshal(f.Payload, &p); err != nil {
-						log.Printf("adopt: bad paste image payload session=%s payload_bytes=%d error=%v", f.SessionID, len(f.Payload), err)
+						logging.Warn("relay-adopt", "bad paste image payload session=%s payload_bytes=%d error=%v", f.SessionID, len(f.Payload), err)
 						continue
 					}
 					if err := pasteHost.PasteImage(loopCtx, f.SessionID, p); err != nil {
-						log.Printf("adopt: paste image failed session=%s filename=%q content_type=%q image_bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
+						logging.Error("relay-adopt", "paste image failed session=%s filename=%q content_type=%q image_bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
 					}
 				case proto.TypePasteFile:
 					pasteHost, ok := host.(ptyhost.FilePasteHost)
 					if !ok {
-						log.Printf("adopt: paste file unavailable session=%s", f.SessionID)
+						logging.Warn("relay-adopt", "paste file unavailable session=%s", f.SessionID)
 						continue
 					}
 					var p proto.PasteFilePayload
 					if err := json.Unmarshal(f.Payload, &p); err != nil {
-						log.Printf("adopt: bad paste file payload session=%s payload_bytes=%d error=%v", f.SessionID, len(f.Payload), err)
+						logging.Warn("relay-adopt", "bad paste file payload session=%s payload_bytes=%d error=%v", f.SessionID, len(f.Payload), err)
 						continue
 					}
 					if err := pasteHost.PasteFile(loopCtx, f.SessionID, p); err != nil {
-						log.Printf("adopt: paste file failed session=%s filename=%q content_type=%q bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
+						logging.Error("relay-adopt", "paste file failed session=%s filename=%q content_type=%q bytes=%d error=%v", f.SessionID, p.Filename, p.ContentType, len(p.Data), err)
 					}
 				}
 			}

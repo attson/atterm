@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"nhooyr.io/websocket"
 	"sync"
 	"time"
 
 	"github.com/attson/atterm/internal/e2eecrypto"
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/session"
 	"github.com/attson/atterm/internal/webpush"
 	"github.com/google/uuid"
-	"nhooyr.io/websocket"
 )
 
 const (
@@ -100,7 +100,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 		}))
 		wc()
 		if err != nil {
-			log.Printf("relay: uplink send AUTH_INFO failed: %v", err)
+			logging.Warn("relay-uplink", "send AUTH_INFO failed: %v", err)
 			return
 		}
 		s.debugf("uplink auth_info_sent user_id=%s", ownerUserID)
@@ -108,7 +108,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 
 	first, err := readFrame(ctx, c)
 	if err != nil {
-		log.Printf("uplink: read ANNOUNCE: %v", err)
+		logging.Warn("relay-uplink", "read ANNOUNCE: %v", err)
 		_ = c.Close(websocket.StatusPolicyViolation, "expected ANNOUNCE")
 		return
 	}
@@ -137,7 +137,7 @@ func (s *Server) handleUplink(ctx context.Context, c *websocket.Conn, ownerUserI
 	}
 	defer u.cleanup()
 
-	log.Printf("uplink: host %s connected (%d session(s))", ann.HostID, len(ann.Sessions))
+	logging.Info("relay-uplink", "host %s connected (%d session(s))", ann.HostID, len(ann.Sessions))
 	u.reconcile(ann.Sessions)
 
 	go u.writeLoop()
@@ -444,7 +444,7 @@ func (u *uplinkSession) writeLoop() {
 			err := u.conn.Ping(wctx)
 			wc()
 			if err != nil {
-				log.Printf("uplink: ping failed (%v), closing", err)
+				logging.Warn("relay-uplink", "ping failed (%v), closing", err)
 				return
 			}
 		case f := <-u.out:
@@ -469,7 +469,7 @@ func (u *uplinkSession) readLoop() {
 		if err != nil {
 			var ce websocket.CloseError
 			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) {
-				log.Printf("uplink: read: %v", err)
+				logging.Debug("relay-uplink", "read: %v", err)
 			}
 			return
 		}
@@ -562,7 +562,7 @@ func (u *uplinkSession) readLoop() {
 		case proto.TypePong:
 			// keepalive
 		default:
-			log.Printf("uplink: unexpected frame type 0x%02x", f.Type)
+			logging.Warn("relay-uplink", "unexpected frame type 0x%02x", f.Type)
 		}
 	}
 }

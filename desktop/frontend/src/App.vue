@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logError, logWarn } from "./lib/log";
 import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from "vue";
 import TabBar from "./components/TabBar.vue";
 import TitleBar from "./components/TitleBar.vue";
@@ -187,7 +188,7 @@ async function onMarkSeen(payload: MarkSessionsSeenOpts) {
   try {
     await markSessionsSeen(payload);
   } catch {
-    console.warn("markSessionsSeen failed", payload);
+    logWarn("app", "markSessionsSeen failed", { payload: JSON.stringify(payload) });
   }
 }
 
@@ -1305,7 +1306,7 @@ onMounted(async () => {
           startPlatformRemotePoll();
         }
       } catch (e) {
-        console.warn("[AT Term] failed to refresh relay state after login", e);
+        logWarn("app", "failed to refresh relay state after login", { error: errText(e) });
       }
     })();
   });
@@ -1331,7 +1332,7 @@ onMounted(async () => {
         return;
       }
     } catch (e) {
-      console.warn("[AT Term] failed to load startup fatal state", e);
+      logWarn("app", "failed to load startup fatal state", { error: errText(e) });
     }
   }
   // Set up the size-prediction probe before anything spawns a PTY — the
@@ -1341,7 +1342,7 @@ onMounted(async () => {
     try {
       commandNotifyThresholdSec.value = await getCommandNotifyThresholdSeconds();
     } catch (e) {
-      console.warn("[AT Term] failed to load command-notify threshold", e);
+      logWarn("app", "failed to load command-notify threshold", { error: errText(e) });
     }
   }
   // Track which boot step is running so a thrown error pins down the call
@@ -1381,7 +1382,7 @@ onMounted(async () => {
     } catch (e: any) {
       const name = e?.name ?? "Error";
       const msg = e?.message ?? String(e);
-      console.error(`[boot] step "${bootStage}" failed`, {
+      logError("boot", `step "${bootStage}" failed`, {
         name,
         message: msg,
         stack: e?.stack,
@@ -1408,8 +1409,10 @@ onMounted(async () => {
     } catch (e: any) {
       const name = e?.name ?? "Error";
       const msg = e?.message ?? String(e);
-      console.error(`[boot-web] step "${bootStage}" failed`, {
-        name, message: msg, stack: e?.stack,
+      logError("boot", `web: step "${bootStage}" failed`, {
+        name,
+        message: msg,
+        stack: e?.stack,
       });
       // Non-fatal: leave status=loading but log; user can retry via reload.
       // The session-list refresh interval is still installed below so a
@@ -1465,7 +1468,7 @@ onMounted(async () => {
   } catch (e: any) {
     const name = e?.name ?? "Error";
     const msg = e?.message ?? String(e);
-    console.error("[boot] auto-start failed", { name, message: msg, stack: e?.stack });
+    logError("boot", "auto-start failed", { name, message: msg, stack: e?.stack });
     status.value = "error";
     errorMsg.value = `autoStart: ${name}: ${msg}`;
   }

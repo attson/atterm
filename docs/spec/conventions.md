@@ -108,7 +108,11 @@ Web 客户端协议层在 `web/src/shared/ws/`，不要再新增 legacy `web/app
 - 使用 `fmt.Errorf("...%w", err)` wrap，调用方用 `errors.Is/As`
 - 不要 `panic` 在请求处理路径；只能在 `init` / `main` 启动失败用
 - 用户可见错误：通过 binding 返回，前端展示
-- 系统错误：`log.Printf("...")` 用标准库 log，**不引入** logrus/zap
+- 系统错误：走 `internal/logging`（`logging.Warn("uplink", "...")`；desktop 的
+  package main 有 `logDebug/logInfo/logWarn/logError` 短别名）。**不引入**
+  logrus/zap —— `internal/logging` 是标准库上的一层薄封装，只负责统一
+  `TS LEVEL [tag] message` 格式和写盘阈值。裸 `log.Printf` 由
+  `internal/logging` 的 AST 回归测试拦截
 
 ```go
 if err != nil {
@@ -185,7 +189,8 @@ if err != nil {
 
 - `gofmt` / `goimports`，提交前 `go vet -tags webkit2_41 ./...` 必须 0 warning
 - 不引入新依赖除非有必要；现有依赖：`creack/pty`, `google/uuid`, `nhooyr.io/websocket`, `golang.org/x/term`, `wails/v2`
-- 不写日志框架；用 `log.Printf` + 短前缀 `"uplink:"`、`"agent:"`、`"desktop relay:"`
+- 不写日志框架；用 `internal/logging` 的 `Debug/Info/Warn/Error(tag, format, args...)`。
+  旧的 `"uplink: "`、`"agent: "` 消息前缀已改成 tag 参数，不要再往消息里写前缀
 - channel 缓冲深度写常量：`subscriberQueueDepth = 256`
 - 锁顺序：`registry.mu` > `Session.mu`，避免反向 lock；持锁尽量短
 
@@ -477,6 +482,56 @@ if (startupErr?.fatal) showStartupFailure(startupErr);
   这种分散 catch——5 个调用就 5 段相同的错误处理，写错一个就回归。
 - 把 `bootStage` 局部化到 try 内（`let bootStage = ""` 放 try 里）——
   catch 拿不到。
+
+### 日志：级别口径与 tag
+
+全仓库一个格式、一个真源：`internal/logging`。desktop 把它接到轮转文件，relay
+接到 stderr（`docker logs`），前端 `lib/log.ts` 批量回传给 Go 写进同一个
+`desktop.log`。设计见
+[`docs/superpowers/specs/2026-08-08-project-wide-logging-design.md`](../superpowers/specs/2026-08-08-project-wide-logging-design.md)。
+
+```
+2026/08/08 15:04:05.123 DEBUG [pty-input] write n=1 hex=1b LONE-ESC
+2026/08/08 15:04:05.140 INFO  [uplink] connected, sent ANNOUNCE (3 session(s))
+```
+
+**级别口径**（Go 与前端同一套）：
+
+| 级别 | 含义 | 例子 |
+|---|---|---|
+| `ERROR` | 用户要做的事失败了、用户可感知、且没有重试 | 启动致命、keychain 写失败、更新验签失败、粘贴文件落盘失败 |
+| `WARN` | 失败但自动降级/重试，或异常但不影响主流程 | uplink 重连、飞书卡片 patch 重试、丢帧、丢弃损坏的 recovery 快照、越权入站帧 |
+| `INFO` | 生命周期与状态迁移，低频，每行人能看懂 | uplink connected、session created、shell integration enabled、恢复注入 resume |
+| `DEBUG` | 逐帧/逐字节/逐轮询的内部细节 | `inbound_recv`、`stream_out_progress`、repaint nudge、pty-input hex |
+
+**写盘阈值**默认 `INFO`（`config.json` 的 `log_level`，Settings → Logging 可改，
+热生效）。所以高频日志一律 `DEBUG`——平时不写盘，排查时一个下拉切过去就有。
+注意 Settings 里两个下拉不是一回事：**日志级别**决定写不写进文件，viewer 里的
+**显示**只过滤已经写进去的内容。
+
+**`EmitForced` 只给"自带开关"的三处用**：`pty-input` 字节追踪（Settings 勾选框）、
+relay 的 `debugOn()`（admin UI 开关）、`ATTERM_DEBUG_SILENCE=1`。它们各自的开关
+**就是**门控，再叠一层全局级别只会让人勾了开关却看不到输出。新代码不要随手用。
+
+**tag 用小写 kebab、按子系统**：`app` `boot` `config` `uplink` `uplink-stream`
+`relay` `relay-host` `relay-client` `relay-agent` `relay-uplink` `relay-admin`
+`relay-adopt` `relay-config` `relay-feishu` `relay-debug` `session` `silence`
+`pty` `pty-input` `repaint` `recovery` `ai-sid` `feishu` `feishu-anchor`
+`feishu-form` `feishu-hook` `feishu-card` `feishu-turn` `shell-integration`
+`paste` `updater` `notify` `keychain` `e2ee` `prefs` `plugin` `webpush`
+`opaque` `hookinstall` `remote-proxy` `migrate` `bootstrap` `keychain`。
+前端传裸 tag，`ui-` 前缀由 Go 侧 `AppendFrontendLogs` 统一加，前端 tag 因此
+永远不会和 Go 的撞名。
+
+**两条回归测试守着**，加新代码时它们会先叫：
+- `internal/logging/nostdlib_test.go` —— AST 扫全仓库，禁裸 `log.Printf/Fatal/...`
+  （只放行 `cmd/atterm-relay/main.go` 的 `log.Fatal*`，那是 fail-closed 启动检查）
+- `desktop/frontend/src/lib/noConsole.test.ts` —— 禁 `console.*`（只放行
+  `lib/log.ts` 自己）。项目没有 ESLint，这个测试就是 `no-console` 规则
+
+**红线 #21 在日志侧的落点**：前端 `LogFields` 只收基本类型（不接受任意对象，
+避免 `{ req }` 把密码整个序列化进去），且 key 命中 `/pass|token|key|secret|cred|auth/i`
+的值一律替换成 `***`。
 
 ### Go 侧 StartupError（前端 bootStage 的配套半边）
 

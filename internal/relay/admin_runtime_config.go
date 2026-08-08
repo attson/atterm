@@ -7,7 +7,6 @@ import (
 	"net/http"
 )
 
-
 type adminConfigResponse struct {
 	// Raw stored values. 0 means "use built-in default"; negative means
 	// "disable the limit entirely". UI clients must interpret 0 via the

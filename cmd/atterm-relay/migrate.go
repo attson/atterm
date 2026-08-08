@@ -4,8 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -20,7 +20,7 @@ func migrateCmd(args []string) int {
 		return 2
 	}
 	if *from == "" || *to == "" {
-		log.Printf("migrate: --from and --to are required")
+		logging.Error("migrate", "--from and --to are required")
 		fs.Usage()
 		return 2
 	}
@@ -28,20 +28,20 @@ func migrateCmd(args []string) int {
 	ctx := context.Background()
 	src, err := userstore.OpenFromDSN(ctx, *from)
 	if err != nil {
-		log.Printf("migrate: open --from: %v", err)
+		logging.Error("migrate", "open --from: %v", err)
 		return 1
 	}
 	defer src.Close()
 	dst, err := userstore.OpenFromDSN(ctx, *to)
 	if err != nil {
-		log.Printf("migrate: open --to: %v", err)
+		logging.Error("migrate", "open --to: %v", err)
 		return 1
 	}
 	defer dst.Close()
 
 	counts, err := userstore.Copy(ctx, src, dst)
 	if err != nil {
-		log.Printf("migrate: %v", err)
+		logging.Error("migrate", "copy userstore: %v", err)
 		return 1
 	}
 

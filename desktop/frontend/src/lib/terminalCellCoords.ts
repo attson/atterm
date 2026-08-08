@@ -1,4 +1,5 @@
 import type { Terminal } from 'xterm'
+import { logWarn } from "./log";
 
 export interface CellHit {
   col: number
@@ -33,7 +34,7 @@ export function readXtermCellSize(term: Terminal): CellSize {
   }
   if (!fellBack.has(term as unknown as object)) {
     fellBack.add(term as unknown as object)
-    console.warn('[AT Term] terminalCellCoords: xterm renderer dimensions unavailable, using fontSize estimate. xterm internal API may have changed.')
+    logWarn("term", "terminalCellCoords: xterm renderer dimensions unavailable, using fontSize estimate. xterm internal API may have changed.")
   }
   // Fallback: estimate from font options. Mono fonts average ~0.6 width/height
   // ratio; xterm 5 default fontSize is 15 and default lineHeight is 1.0.

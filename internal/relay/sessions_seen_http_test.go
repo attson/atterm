@@ -151,4 +151,3 @@ func TestSessionsSeen_Bearer_InvalidToken(t *testing.T) {
 		t.Fatalf("invalid bearer: expected 401, got %d: %s", w.Code, w.Body.String())
 	}
 }
-

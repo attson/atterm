@@ -3,15 +3,51 @@ package relay
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 )
 
+// lockedBuffer collects debug output. relay writes from connection
+// goroutines, so the collector has to be safe under -race.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// captureDebugLog redirects the shared logger to a buffer for one test.
+// The relay's debug output has no per-server sink any more — it goes through
+// internal/logging like everything else.
+func captureDebugLog(t *testing.T) *lockedBuffer {
+	t.Helper()
+	prev := logging.CurrentLevel()
+	t.Cleanup(func() {
+		logging.SetSink(nil)
+		logging.SetLevel(prev)
+	})
+	buf := &lockedBuffer{}
+	logging.SetSink(buf)
+	return buf
+}
+
 func TestDebugFrameDisabledWritesNothing(t *testing.T) {
-	var buf bytes.Buffer
-	s := NewServer(Config{DebugLog: &buf})
+	buf := captureDebugLog(t)
+	s := NewServer(Config{})
 
 	s.debugFrame("client", "recv", proto.Frame{Type: proto.TypeList})
 
@@ -21,9 +57,9 @@ func TestDebugFrameDisabledWritesNothing(t *testing.T) {
 }
 
 func TestDebugFrameSummarizesInOutWithoutPayload(t *testing.T) {
-	var buf bytes.Buffer
+	buf := captureDebugLog(t)
 	id := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	s := NewServer(Config{Debug: true, DebugLog: &buf})
+	s := NewServer(Config{Debug: true})
 
 	s.debugFrame("client", "recv", proto.Frame{
 		Type:      proto.TypeIn,
@@ -34,8 +70,8 @@ func TestDebugFrameSummarizesInOutWithoutPayload(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"relay-debug client recv IN session=11111111-1111-1111-1111-111111111111 bytes=15",
-		"relay-debug agent recv OUT session=11111111-1111-1111-1111-111111111111 seq=42 bytes=14",
+		"[relay-debug] client recv IN session=11111111-1111-1111-1111-111111111111 bytes=15",
+		"[relay-debug] agent recv OUT session=11111111-1111-1111-1111-111111111111 seq=42 bytes=14",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log %q missing %q", got, want)
@@ -47,9 +83,9 @@ func TestDebugFrameSummarizesInOutWithoutPayload(t *testing.T) {
 }
 
 func TestDebugFrameCanIncludeInOutPayload(t *testing.T) {
-	var buf bytes.Buffer
+	buf := captureDebugLog(t)
 	id := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	s := NewServer(Config{Debug: true, DebugPayload: true, DebugLog: &buf})
+	s := NewServer(Config{Debug: true, DebugPayload: true})
 
 	s.debugFrame("client", "recv", proto.Frame{
 		Type:      proto.TypeIn,
@@ -70,9 +106,9 @@ func TestDebugFrameCanIncludeInOutPayload(t *testing.T) {
 }
 
 func TestDebugFrameSummarizesStructuredFrames(t *testing.T) {
-	var buf bytes.Buffer
+	buf := captureDebugLog(t)
 	id := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	s := NewServer(Config{Debug: true, DebugLog: &buf})
+	s := NewServer(Config{Debug: true})
 
 	s.debugFrame("client", "recv", proto.Frame{
 		Type:      proto.TypeResize,

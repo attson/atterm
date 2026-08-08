@@ -3,12 +3,12 @@ package relay
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"nhooyr.io/websocket"
 	"sort"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
-	"nhooyr.io/websocket"
 )
 
 const (
@@ -119,7 +119,7 @@ func (s *Server) seenForOwner(ctx context.Context, ownerUserID string) map[strin
 	}
 	seen, err := s.cfg.Store.SeenAt(ctx, ownerUserID)
 	if err != nil {
-		log.Printf("relay: SeenAt owner=%s: %v", ownerUserID, err)
+		logging.Warn("relay-client", "SeenAt owner=%s: %v", ownerUserID, err)
 		return nil
 	}
 	return seen

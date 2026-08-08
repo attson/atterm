@@ -2,8 +2,9 @@ package relay
 
 import (
 	"context"
-	"log"
 	"time"
+
+	"github.com/attson/atterm/internal/logging"
 )
 
 // refreshConfigOnce pulls relay_config from the DB; if its version differs from
@@ -35,11 +36,11 @@ func (s *Server) applyConfigToCaches(cfg AdminConfig) {
 	s.applyRuntimeLimits(cfg.RateLimitPerMinute, cfg.MaxConnectionsPerKey)
 	if keyBytes, err := cfg.DecodeFeishuKey(); err == nil && cfg.FeishuEnabled {
 		if err := s.ApplyFeishuConfig(true, keyBytes, cfg.FeishuBaseURL); err != nil {
-			log.Printf("relay: config refresh: ApplyFeishuConfig: %v", err)
+			logging.Error("relay-config", "ApplyFeishuConfig: %v", err)
 		}
 	} else {
 		if err := s.ApplyFeishuConfig(false, nil, cfg.FeishuBaseURL); err != nil {
-			log.Printf("relay: config refresh: ApplyFeishuConfig(disable): %v", err)
+			logging.Error("relay-config", "ApplyFeishuConfig(disable): %v", err)
 		}
 	}
 }
@@ -55,7 +56,7 @@ func (s *Server) startConfigRefresher(ctx context.Context, interval time.Duratio
 				return
 			case <-t.C:
 				if _, err := s.refreshConfigOnce(ctx); err != nil {
-					log.Printf("relay: config refresh: %v", err)
+					logging.Warn("relay-config", "periodic refresh: %v", err)
 				}
 			}
 		}

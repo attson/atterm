@@ -3,8 +3,8 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 )
 
@@ -20,11 +20,15 @@ func (s *Server) SetDebug(debug, payload bool) {
 	s.debugPayloadEnabled.Store(payload)
 }
 
+// debugf writes through EmitForced rather than logging.Debug: debugOn() is
+// already the gate, and it is an explicit operator switch in the admin UI.
+// Making it also depend on the process log level would mean flipping "debug"
+// on and seeing nothing.
 func (s *Server) debugf(format string, args ...any) {
 	if !s.debugOn() {
 		return
 	}
-	log.New(s.cfg.DebugLog, "", log.LstdFlags).Printf("relay-debug "+format, args...)
+	logging.EmitForced(logging.LevelDebug, "relay-debug", fmt.Sprintf(format, args...))
 }
 
 func (s *Server) debugFrame(component, direction string, f proto.Frame) {

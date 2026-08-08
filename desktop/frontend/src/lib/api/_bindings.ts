@@ -300,6 +300,19 @@ export interface LoggingConfig {
   path: string;
   effective_path: string;
   dev_dual_output: boolean;
+  /**
+   * Minimum severity written to the file. Distinct from the viewer's level
+   * filter, which only decides what is rendered from what was already written.
+   */
+  level: string;
+}
+
+/** One log line produced in the renderer, flushed in batches to the Go side. */
+export interface FrontendLogRecord {
+  timestamp_ms: number;
+  level: string;
+  tag: string;
+  message: string;
 }
 
 export interface LogPreview {
@@ -429,6 +442,7 @@ export interface AppBindings {
   SetLoggingConfig(cfg: LoggingConfig): Promise<void>;
   PickLogFilePath(): Promise<string>;
   GetLogPreview(): Promise<LogPreview>;
+  AppendFrontendLogs(records: FrontendLogRecord[]): Promise<number>;
   GetTerminalTheme(): Promise<string>;
   SetTerminalTheme(themeID: string): Promise<void>;
   GetLocalePreference(): Promise<LocalePreference>;

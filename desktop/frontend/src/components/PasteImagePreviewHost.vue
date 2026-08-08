@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errText, logWarn } from "../lib/log";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { pasteImageBus, type PasteImageEvent } from "../lib/pasteImageBus";
 
@@ -38,7 +39,7 @@ function handlePaste(event: PasteImageEvent) {
   try {
     url = URL.createObjectURL(event.file);
   } catch (err) {
-    console.warn("[PasteImagePreviewHost] createObjectURL failed", err);
+    logWarn("paste", "preview createObjectURL failed", { error: errText(err) });
     return;
   }
   toasts.value.push({
@@ -77,7 +78,7 @@ function openLightbox(toast: Toast) {
       name: toast.name,
     };
   } catch (err) {
-    console.warn("[PasteImagePreviewHost] lightbox createObjectURL failed", err);
+    logWarn("paste", "lightbox createObjectURL failed", { error: errText(err) });
     lightbox.value = null;
   }
 }

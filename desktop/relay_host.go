@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -35,7 +34,7 @@ type relayHost struct {
 	adminUserID  string // owner ULID for sessions adopted into the mini-relay
 	server       *relay.Server
 	httpSrv      *http.Server
-	store        userstore.Store        // closed on Stop()
+	store        userstore.Store    // closed on Stop()
 	sqliteStore  *userstore.DBStore // concrete type for Feishu binding lookup
 
 	hostID string
@@ -115,7 +114,6 @@ type anchorRuntime struct {
 	render    func()       // re-build wrapper from current state + re-PATCH
 }
 
-
 // sessionPTY is the minimal contract activeSession needs from whatever backs
 // a session — a local PTY (*ptyhost.Host) or an SSH remote shell
 // (*sshclient.Session, via sshPtyHost). Both satisfy it. Resize's signature
@@ -132,7 +130,6 @@ type activeSession struct {
 	cleanup  func()
 	restored bool // true when NewSession was invoked with AIKind set (recovery path)
 }
-
 
 // startRelayHost opens the mini-relay's userstore, bootstraps a desktop-local
 // admin (creating the user on first launch, generating LocalAdminPassword if
@@ -207,26 +204,26 @@ func startRelayHost(cfgStore *configStore) (*relayHost, error) {
 	httpSrv := &http.Server{Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Printf("desktop relay: %v", err)
+			logError("relay-host", "local relay stopped serving: %v", err)
 		}
 	}()
 	return &relayHost{
-		addr:                 ln.Addr().String(),
-		sessionToken:         tok,
-		adminUserID:          adminUser.ID,
-		server:               srv,
-		httpSrv:              httpSrv,
-		store:                store,
-		sqliteStore:          store,
-		hostID:               appdir.HostID(),
-		host:                 hostnameOrUnknown(),
-		user:                 usernameOrUid(),
-		cfg:                  cfgStore,
-		sessions:             make(map[uuid.UUID]*activeSession),
-		changes:              make(chan struct{}, 1),
-		uplinkSubs:           make(map[uuid.UUID]*session.Subscriber),
-		startSniffFn:         startAIResolve,
-		feishuCards:          internalfeishu.NewCardIndex(),
+		addr:           ln.Addr().String(),
+		sessionToken:   tok,
+		adminUserID:    adminUser.ID,
+		server:         srv,
+		httpSrv:        httpSrv,
+		store:          store,
+		sqliteStore:    store,
+		hostID:         appdir.HostID(),
+		host:           hostnameOrUnknown(),
+		user:           usernameOrUid(),
+		cfg:            cfgStore,
+		sessions:       make(map[uuid.UUID]*activeSession),
+		changes:        make(chan struct{}, 1),
+		uplinkSubs:     make(map[uuid.UUID]*session.Subscriber),
+		startSniffFn:   startAIResolve,
+		feishuCards:    internalfeishu.NewCardIndex(),
 		feishuSessions: make(map[string]*feishuSession),
 	}, nil
 }
@@ -313,7 +310,7 @@ func (h *relayHost) SubscribeLocal(id uuid.UUID, sinceSeq uint64) (*session.Subs
 	h.uplinkSubs[id] = sub
 	h.mu.Unlock()
 	info := sess.Info()
-	log.Printf("desktop-uplink: subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d client_id=%q", id, sinceSeq, replayToSeq, info.Cols, info.Rows, uplinkSubClientID)
+	logDebug("uplink", "subscribe_local_ok session=%s since_seq=%d replay_to_seq=%d cols=%d rows=%d client_id=%q", id, sinceSeq, replayToSeq, info.Cols, info.Rows, uplinkSubClientID)
 	return sub, replayToSeq, nil
 }
 
@@ -389,31 +386,31 @@ func (h *relayHost) RequestLocalRepaint(id uuid.UUID) {
 	active := h.sessions[id]
 	h.mu.Unlock()
 	if active == nil || active.host == nil {
-		log.Printf("desktop-repaint: skip session=%s reason=no_active_host", id)
+		logDebug("repaint", "skip session=%s reason=no_active_host", id)
 		return
 	}
 	sess, ok := h.server.Registry().Get(id)
 	if !ok {
-		log.Printf("desktop-repaint: skip session=%s reason=no_session", id)
+		logDebug("repaint", "skip session=%s reason=no_session", id)
 		return
 	}
 	info := sess.Info()
 	if info.Cols < 2 || info.Rows < 2 {
-		log.Printf("desktop-repaint: skip session=%s reason=invalid_size cols=%d rows=%d", id, info.Cols, info.Rows)
+		logDebug("repaint", "skip session=%s reason=invalid_size cols=%d rows=%d", id, info.Cols, info.Rows)
 		return
 	}
-	log.Printf("desktop-repaint: nudge_start session=%s cols=%d rows=%d", id, info.Cols, info.Rows)
+	logDebug("repaint", "nudge_start session=%s cols=%d rows=%d", id, info.Cols, info.Rows)
 	go func(cols, rows uint16) {
 		if err := active.host.Resize(cols, rows-1); err != nil {
-			log.Printf("desktop-repaint: nudge_failed session=%s step=shrink cols=%d rows=%d error=%v", id, cols, rows-1, err)
+			logWarn("repaint", "nudge_failed session=%s step=shrink cols=%d rows=%d error=%v", id, cols, rows-1, err)
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 		if err := active.host.Resize(cols, rows); err != nil {
-			log.Printf("desktop-repaint: nudge_failed session=%s step=restore cols=%d rows=%d error=%v", id, cols, rows, err)
+			logWarn("repaint", "nudge_failed session=%s step=restore cols=%d rows=%d error=%v", id, cols, rows, err)
 			return
 		}
-		log.Printf("desktop-repaint: nudge_ok session=%s cols=%d rows=%d", id, cols, rows)
+		logDebug("repaint", "nudge_ok session=%s cols=%d rows=%d", id, cols, rows)
 	}(info.Cols, info.Rows)
 }
 
@@ -490,7 +487,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	}
 
 	argv := append([]string{req.Command}, defaultShellArgs(req.Command, req.Args)...)
-	log.Printf("desktop-newsession: command=%q args=%v cwd=%q aiKind=%q -> argv=%v",
+	logInfo("session", "command=%q args=%v cwd=%q aiKind=%q -> argv=%v",
 		req.Command, req.Args, cwd, req.AIKind, argv)
 	env := terminalEnvForXterm(os.Environ())
 
@@ -503,7 +500,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	argv, env = mergeShellIntegrationPlan(argv, env, plan)
 	env = appendFeishuHookEnv(env, sid.String(), h.FeishuHookEndpoint)
 	if plan.Shell != "" {
-		log.Printf("desktop-shell-integration: enabled session=%s shell=%s", sid, plan.Shell)
+		logInfo("shell-integration", "enabled session=%s shell=%s", sid, plan.Shell)
 	}
 
 	pty, err := ptyhost.Open(ctx, ptyhost.Config{
@@ -568,7 +565,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				return
 			}
 			resolveOnce.Do(func() {
-				log.Printf("recovery: ai classified session=%s kind=%s — start resolve", sidCopy, kind)
+				logDebug("ai-sid", "classified session=%s kind=%s — start resolve", sidCopy, kind)
 				go h.startSniffFn(resolveCtx, sess, cwd, kind, func(aiSid string) {
 					h.onAISidCaptured(sidCopy, kind, aiSid)
 				})
@@ -680,13 +677,13 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 				line := strings.Join(argv, " ") + "\n"
 				ptyCopy := pty
 				sess.SetOnFirstPrompt(func() {
-					log.Printf("recovery: restored ai session=%s — inject resume %q", sidCopy, strings.TrimSpace(line))
+					logInfo("recovery", "restored ai session=%s — inject resume %q", sidCopy, strings.TrimSpace(line))
 					go func() { _, _ = ptyCopy.Write([]byte(line)) }()
 				})
 			}
 			if h.startSniffFn != nil {
 				resolveOnce.Do(func() {
-					log.Printf("recovery: restored ai session=%s kind=%s — start resolve", sidCopy, req.AIKind)
+					logInfo("recovery", "restored ai session=%s kind=%s — start resolve", sidCopy, req.AIKind)
 					go h.startSniffFn(resolveCtx, sess, cwd, req.AIKind, func(sid string) {
 						h.onAISidCaptured(sidCopy, req.AIKind, sid)
 					})
@@ -817,4 +814,3 @@ func mergeShellIntegrationPlan(argv, env []string, p shellintegration.Plan) ([]s
 	}
 	return outArgv, outEnv
 }
-

@@ -1,5 +1,6 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { getUplinkHealth, type ConnHealthSnapshot } from '../lib/api'
+import { errText, logDebug } from "../lib/log";
 
 const CLOSED_SNAPSHOT: ConnHealthSnapshot = {
   state: 'closed',
@@ -21,8 +22,8 @@ export function useUplinkHealth(opts: { fast?: () => boolean } = {}) {
   async function tick() {
     try {
       health.value = await getUplinkHealth()
-    } catch {
-      /* keep last value */
+    } catch (e) {
+      logDebug('uplink', 'health poll failed; keeping last value', { error: errText(e) })
     }
   }
 

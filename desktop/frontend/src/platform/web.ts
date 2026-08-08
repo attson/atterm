@@ -6,6 +6,7 @@ import { loadRelayConfig, saveRelayConfig, clearRelayConfig } from '@webshared/a
 import { logout as webLogout } from '@webshared/api/auth'
 import { loadAccountKey } from '@webshared/api/account-key'
 import { setAccountKeyProvider } from '../lib/account-key'
+import { errText, logWarn } from "../lib/log";
 // ^ single source of truth for web's relay storage key ('atterm.relay') and
 // shape ({ baseURL, sessionToken, expiresAt, allowInsecure, ... }) — apiFetch
 // itself reads auth through loadRelayConfig, so the bridge below must adapt
@@ -126,7 +127,16 @@ const events: EventBus = (() => {
     emit(name, data) {
       const set = map.get(name)
       if (!set) return
-      for (const fn of Array.from(set)) { try { fn(data) } catch { /* listener errors don't break emit */ } }
+      for (const fn of Array.from(set)) {
+        try {
+          fn(data)
+        } catch (e) {
+          // Isolating a bad listener is right, but staying silent about it is
+          // not: a subscriber that throws is a defect, and swallowing it here
+          // is why it would never be noticed.
+          logWarn('events', 'listener threw', { event: name, error: errText(e) })
+        }
+      }
     },
   }
 })()

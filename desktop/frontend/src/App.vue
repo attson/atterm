@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { errText, logError, logWarn } from "./lib/log";
+import { errText, logDebug, logError, logWarn } from "./lib/log";
 import { computed, onMounted, onUnmounted, provide, reactive, ref, watch } from "vue";
 import TabBar from "./components/TabBar.vue";
 import TitleBar from "./components/TitleBar.vue";
@@ -595,9 +595,11 @@ function connectRemoteSessionListWS(endpoint: Endpoint) {
 async function pollRemoteSessions() {
   try {
     applyRemoteSessions(await listRemoteSessions());
-  } catch {
+  } catch (e) {
     // Transient relay/network error — keep the last known list rather than
-    // flashing it empty on a single failed poll.
+    // flashing it empty on a single failed poll. DEBUG because this fires on
+    // every poll while a link is flaky.
+    logDebug("app", "remote session poll failed; keeping last list", { error: errText(e) });
   }
 }
 
@@ -669,8 +671,8 @@ async function refreshRelayConfig() {
   };
   try {
     cfg = await getRelayConfig();
-  } catch {
-    /* keep last known */
+  } catch (e) {
+    logDebug("app", "getRelayConfig failed; keeping last known", { error: errText(e) });
   }
   // Attach remote sessions through the Go loopback proxy (remote_proxy_url),
   // not the relay URL directly: the WebView can't TLS-dial the relay on some

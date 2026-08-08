@@ -17,7 +17,7 @@ import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
 import { openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame } from "./opaque";
 import { encodeSegments, decodeSegments } from "./fsSegments";
-import { logDebug, logError } from "./log";
+import { errText, logDebug, logError, logWarn } from "./log";
 
 export interface ClosePayload {
   exit_code: number;
@@ -359,8 +359,10 @@ export class SessionListConnection {
       try {
         const sessions = JSON.parse(decodeText(f.payload)) as SessionInfo[];
         this.handlers.onSessions(decryptSessionFields(sessions));
-      } catch {
-        /* ignore malformed snapshots */
+      } catch (e) {
+        // Covers both a malformed frame and a failed field decrypt. Either way
+        // the user sees a stale or empty session list with no other clue.
+        logWarn("conn", "dropping unusable LIST_RESP", { error: errText(e) });
       }
     };
 
@@ -851,8 +853,10 @@ export class SessionConnection {
     for (const handler of this.fsEventHandlers) {
       try {
         handler(event);
-      } catch {
-        /* keep later handlers isolated */
+      } catch (e) {
+        // Later handlers still run — but a throwing subscriber is a bug, and
+        // silence is why it would go unnoticed.
+        logWarn("conn", "fs event handler threw", { error: errText(e) });
       }
     }
   }

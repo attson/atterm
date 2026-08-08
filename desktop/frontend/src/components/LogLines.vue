@@ -1,17 +1,27 @@
 <script lang="ts" setup>
 import { computed } from "vue";
-import { parseLogLine, levelAtLeast, type LogLevel } from "../lib/parseLogLine";
+import {
+  parseLogLine,
+  levelAtLeast,
+  tagMatches,
+  TAG_FILTER_ALL,
+  type LogLevel,
+} from "../lib/parseLogLine";
 
 const props = withDefaults(
-  defineProps<{ content: string; minLevel?: LogLevel }>(),
-  { minLevel: "DEBUG" },
+  defineProps<{ content: string; minLevel?: LogLevel; tag?: string }>(),
+  { minLevel: "DEBUG", tag: TAG_FILTER_ALL },
 );
 
 const lines = computed(() => {
   const out = props.content.split("\n").map(parseLogLine);
-  return out.filter(
-    (l) => l.kind === "raw" || levelAtLeast(l.level, props.minLevel),
-  );
+  return out.filter((l) => {
+    // Unparseable lines (stack-trace continuations, third-party output) are
+    // always kept: they carry no level or tag to judge them by, and dropping
+    // them would silently remove the context around a real error.
+    if (l.kind === "raw") return true;
+    return levelAtLeast(l.level, props.minLevel) && tagMatches(l.tag, props.tag);
+  });
 });
 </script>
 

@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { errText, logError } from "../lib/log";
+import { errText, logError, logWarn } from "../lib/log";
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from '../i18n/useI18n'
 import SelectDropdown, { type SelectOption } from './SelectDropdown.vue'
@@ -218,8 +218,10 @@ async function onToggleAIOnly(e: Event) {
     // Persist failed: re-read so the checkbox reflects the actual backend state.
     try {
       aiOnlyNotifications.value = await getAINotificationsOnly()
-    } catch {
-      /* leave the optimistic value */
+    } catch (e) {
+      // Both the write and the read-back failed, so the checkbox now shows a
+      // value the backend never accepted.
+      logWarn('feishu', 'ai-notifications toggle out of sync with backend', { error: errText(e) })
     }
   }
 }
@@ -259,8 +261,10 @@ async function onRemoteTerminalToggleChange(e: Event) {
       const s = await getFeishuRemoteTerminalSettings()
       remoteTerminalEnabled.value = s.enabled
       sessionAutoAttach.value = s.auto_attach
-    } catch {
-      /* leave the optimistic value */
+    } catch (e) {
+      // Write and read-back both failed: the control now shows a value the
+      // backend never accepted.
+      logWarn('feishu', 'remote-terminal settings out of sync with backend', { error: errText(e) })
     }
   }
 }
@@ -274,8 +278,10 @@ async function onAutoAttachChange(mode: string) {
       const s = await getFeishuRemoteTerminalSettings()
       remoteTerminalEnabled.value = s.enabled
       sessionAutoAttach.value = s.auto_attach
-    } catch {
-      /* leave the optimistic value */
+    } catch (e) {
+      // Write and read-back both failed: the control now shows a value the
+      // backend never accepted.
+      logWarn('feishu', 'remote-terminal settings out of sync with backend', { error: errText(e) })
     }
   }
 }

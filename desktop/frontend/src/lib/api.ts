@@ -70,6 +70,7 @@ export type {
   UpdateState,
   VersionLine,
 } from "./api/_bindings";
+import { errText, logDebug } from "./log";
 export { __setBindingsForTest } from "./api/_bindings";
 
 export * from "./api/relay";
@@ -254,8 +255,8 @@ export async function showNotification(title: string, body: string, data?: Notif
   // wired) defaults to "allow" so we don't silently drop notifications.
   try {
     if (!(await getNotificationsEnabled())) return;
-  } catch {
-    /* default-allow on lookup failure */
+  } catch (e) {
+    logDebug("notify", "enabled-lookup failed; defaulting to allow", { error: errText(e) });
   }
   if (await ensureNotificationRuntimeReady()) {
     try {

@@ -268,6 +268,8 @@ export const en = {
       viewLogs: "view logs",
       liveTail: "Live tail (auto-refreshes every 3s)",
       levelFilter: "Show",
+      tagFilter: "Subsystem",
+      tagFilterAll: "All",
       writeLevel: "Log level",
       writeLevelHint:
         "Minimum severity written to the file. DEBUG adds per-frame and per-keystroke tracing — useful when reproducing a problem, noisy otherwise.",

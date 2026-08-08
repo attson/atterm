@@ -270,6 +270,8 @@ export const zhCN = {
       viewLogs: "查看日志",
       liveTail: "实时尾部（每 3 秒刷新）",
       levelFilter: "显示",
+      tagFilter: "子系统",
+      tagFilterAll: "全部",
       writeLevel: "日志级别",
       writeLevelHint:
         "写入文件的最低级别。DEBUG 会记录逐帧、逐按键的细节——复现问题时有用，平时很吵。",

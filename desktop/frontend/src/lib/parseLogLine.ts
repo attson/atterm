@@ -53,3 +53,81 @@ export const LEVEL_WRITE_OPTIONS: { value: LogLevel; label: string }[] = [
 export function isLogLevel(value: string): value is LogLevel {
   return value in LEVEL_ORDER;
 }
+
+// ---- tag filtering ------------------------------------------------------
+//
+// Tags come in families — feishu / feishu-anchor / feishu-form / feishu-hook,
+// relay-client / relay-agent / relay-uplink, every renderer tag under ui-.
+// Filtering by one exact tag is too narrow when you're chasing "why didn't the
+// Feishu card update", so the option list offers a `<prefix>*` entry alongside
+// the exact tags whenever a family has more than one member.
+
+/** Matches every tag. */
+export const TAG_FILTER_ALL = "";
+
+const FAMILY_SUFFIX = "*";
+
+/**
+ * tagMatches reports whether a line's tag passes the filter.
+ * `""` matches everything, `"feishu*"` matches feishu and feishu-anchor,
+ * anything else is an exact match.
+ */
+export function tagMatches(tag: string, filter: string): boolean {
+  if (!filter) return true;
+  if (filter.endsWith(FAMILY_SUFFIX)) {
+    const prefix = filter.slice(0, -FAMILY_SUFFIX.length);
+    return tag === prefix || tag.startsWith(prefix + "-");
+  }
+  return tag === filter;
+}
+
+/**
+ * logTagOptions derives the filter choices from the log text itself, so the
+ * list can never drift from the tags the code actually emits — no hardcoded
+ * vocabulary to keep in sync.
+ *
+ * Counts are included because "which subsystem is flooding this file" is a
+ * question you usually have before you know which tag to pick.
+ */
+export function logTagOptions(
+  content: string,
+  allLabel: string,
+): { value: string; label: string }[] {
+  const counts = new Map<string, number>();
+  for (const line of content.split("\n")) {
+    const parsed = parseLogLine(line);
+    if (parsed.kind !== "structured") continue;
+    counts.set(parsed.tag, (counts.get(parsed.tag) ?? 0) + 1);
+  }
+
+  const total = Array.from(counts.values()).reduce((a, b) => a + b, 0);
+
+  // A family is a prefix shared by 2+ distinct tags. `feishu` counts as a
+  // member of the `feishu` family even though it has no dash.
+  const familyMembers = new Map<string, string[]>();
+  for (const tag of counts.keys()) {
+    const prefix = tag.split("-")[0];
+    familyMembers.set(prefix, [...(familyMembers.get(prefix) ?? []), tag]);
+  }
+
+  const families = Array.from(familyMembers.entries())
+    .filter(([, members]) => members.length > 1)
+    .map(([prefix, members]) => ({
+      value: prefix + FAMILY_SUFFIX,
+      label: `${prefix}${FAMILY_SUFFIX} (${members.reduce(
+        (n, t) => n + (counts.get(t) ?? 0),
+        0,
+      )})`,
+    }))
+    .sort((a, b) => a.value.localeCompare(b.value));
+
+  const exact = Array.from(counts.entries())
+    .map(([tag, n]) => ({ value: tag, label: `${tag} (${n})` }))
+    .sort((a, b) => a.value.localeCompare(b.value));
+
+  return [
+    { value: TAG_FILTER_ALL, label: `${allLabel} (${total})` },
+    ...families,
+    ...exact,
+  ];
+}

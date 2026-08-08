@@ -1,10 +1,15 @@
 <script lang="ts" setup>
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import type { LogPreview } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
 import LogLines from "./LogLines.vue";
 import SelectDropdown from "./SelectDropdown.vue";
-import { LEVEL_FILTER_OPTIONS, type LogLevel } from "../lib/parseLogLine";
+import {
+  LEVEL_FILTER_OPTIONS,
+  TAG_FILTER_ALL,
+  logTagOptions,
+  type LogLevel,
+} from "../lib/parseLogLine";
 
 const props = defineProps<{
   preview: LogPreview;
@@ -19,6 +24,12 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const minLevel = ref<LogLevel>("DEBUG");
+const tag = ref<string>(TAG_FILTER_ALL);
+// Derived from the loaded content, so the list only ever offers tags that
+// are actually in this file.
+const tagOptions = computed(() =>
+  logTagOptions(props.preview.content, t("settings.logging.tagFilterAll")),
+);
 
 // Logs are append-only and the user almost always wants the latest tail.
 // Auto-scroll the <pre> to the bottom whenever new content lands (mount
@@ -54,7 +65,13 @@ async function copyContent() {
         <div v-if="props.preview.truncated" class="hint">
           {{ t("settings.logging.truncated") }}
         </div>
-        <LogLines ref="contentEl" class="content" :content="props.preview.content" :minLevel="minLevel" />
+        <LogLines
+          ref="contentEl"
+          class="content"
+          :content="props.preview.content"
+          :minLevel="minLevel"
+          :tag="tag"
+        />
       </div>
 
       <div class="row">
@@ -66,6 +83,15 @@ async function copyContent() {
               :options="LEVEL_FILTER_OPTIONS"
               :ariaLabel="t('settings.logging.levelFilter')"
               @update:modelValue="(v) => (minLevel = v as LogLevel)"
+            />
+          </div>
+          <span class="lvl-filter-label">{{ t("settings.logging.tagFilter") }}</span>
+          <div class="tag-filter-select">
+            <SelectDropdown
+              :modelValue="tag"
+              :options="tagOptions"
+              :ariaLabel="t('settings.logging.tagFilter')"
+              @update:modelValue="(v) => (tag = v)"
             />
           </div>
         </div>
@@ -142,4 +168,6 @@ async function copyContent() {
 }
 .lvl-filter { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-dim); margin-right: auto; }
 .lvl-filter-select { width: 104px; }
+/* Wider than the level select: tag labels carry a count suffix. */
+.tag-filter-select { width: 168px; }
 </style>

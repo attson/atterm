@@ -518,7 +518,7 @@ relay 的 `debugOn()`（admin UI 开关）、`ATTERM_DEBUG_SILENCE=1`。它们�
 `relay-adopt` `relay-config` `relay-feishu` `relay-debug` `session` `silence`
 `pty` `pty-input` `repaint` `recovery` `ai-sid` `feishu` `feishu-anchor`
 `feishu-form` `feishu-hook` `feishu-card` `feishu-turn` `shell-integration`
-`paste` `updater` `notify` `keychain` `e2ee` `prefs` `plugin` `webpush`
+`paste` `updater` `notify` `keychain` `e2ee` `prefs` `plugin` `webpush` `events`
 `opaque` `hookinstall` `remote-proxy` `migrate` `bootstrap` `keychain`。
 前端传裸 tag，`ui-` 前缀由 Go 侧 `AppendFrontendLogs` 统一加，前端 tag 因此
 永远不会和 Go 的撞名。
@@ -528,6 +528,28 @@ relay 的 `debugOn()`（admin UI 开关）、`ATTERM_DEBUG_SILENCE=1`。它们�
   （只放行 `cmd/atterm-relay/main.go` 的 `log.Fatal*`，那是 fail-closed 启动检查）
 - `desktop/frontend/src/lib/noConsole.test.ts` —— 禁 `console.*`（只放行
   `lib/log.ts` 自己）。项目没有 ESLint，这个测试就是 `no-console` 规则
+
+**viewer 有两个维度**:级别阈值 + **子系统(tag)**。tag 下拉是从日志内容**实测**出来的
+(`logTagOptions`),不是硬编码列表,所以永远不会和代码里的 tag 脱节;因为 tag 是
+`feishu-*` / `relay-*` / `ui-*` 家族式的,同族有 2 个以上成员时会额外给一个
+`<前缀>*` 选项。标签带条数,方便先看出「是哪个子系统在刷屏」再决定筛谁。
+
+**静默 catch 要不要补日志——一条规则**:满足下面任一条才补,否则保持沉默。
+
+| 补 | 场景 | 例 |
+|---|---|---|
+| ✅ WARN | 订阅者/回调抛异常(隔离是对的,但那是 bug,沉默 = 永远发现不了) | `platform/web.ts` 的 `emit`、`connection.ts` 的 fs handler |
+| ✅ WARN | 安全相关的静默降级 | sealed 字段打不开 → 回落明文;`account_key` 恢复失败 |
+| ✅ WARN | 用户的意图静默没生效(写失败 + 回读也失败 → UI 显示的是假状态) | 飞书开关、记住密码 |
+| ✅ WARN | 数据被整块丢弃 | `LIST_RESP` 解析/解密失败 |
+| ✅ DEBUG | 状态陈旧且无其它出口,但高频 | 远程会话轮询失败、health 轮询失败 |
+| ❌ | 别处已有可见出口(`state.error`、轮询暴露、UI error 态) | `SettingsUpdates` 的一批 |
+| ❌ | DOM/环境能力探测 | `setPointerCapture`、clipboard、Notification 权限 |
+| ❌ | 读一个从未设置过的偏好,走默认值 | `getTaskSidebarCollapsed` |
+| ❌ | 清理已经死掉的资源 | 对已关闭的 ws 再 `close()` |
+
+写这条表的原因:全前端有 ~79 处 catch 体内只有注释,**逐条判断的结论比"全加"或
+"全不加"都有价值** —— 全加会把日志淹掉,全不加就是现在这批 bug 藏身的地方。
 
 **红线 #21 在日志侧的落点**：前端 `LogFields` 只收基本类型（不接受任意对象，
 避免 `{ req }` 把密码整个序列化进去），且 key 命中 `/pass|token|key|secret|cred|auth/i`

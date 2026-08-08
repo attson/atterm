@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   getLogPreview,
   getLoggingConfig,
@@ -15,7 +15,9 @@ import SelectDropdown from "./SelectDropdown.vue";
 import {
   LEVEL_FILTER_OPTIONS,
   LEVEL_WRITE_OPTIONS,
+  TAG_FILTER_ALL,
   isLogLevel,
+  logTagOptions,
   type LogLevel,
 } from "../lib/parseLogLine";
 
@@ -42,6 +44,10 @@ const tailLoading = ref(false);
 let tailTimer: number | null = null;
 const tailEl = ref<any>(null);
 const tailMinLevel = ref<LogLevel>("DEBUG");
+const tailTag = ref<string>(TAG_FILTER_ALL);
+const tailTagOptions = computed(() =>
+  logTagOptions(tail.value?.content ?? "", t("settings.logging.tagFilterAll")),
+);
 // "following" tails the newest lines. It auto-pauses when the user scrolls
 // up to read, so the 3 s refresh never yanks the viewport or swaps content
 // out from under them; scrolling back to the bottom resumes the tail.
@@ -272,6 +278,14 @@ async function onResetPath() {
               @update:modelValue="(v) => (tailMinLevel = v as LogLevel)"
             />
           </div>
+          <div class="tail-tag">
+            <SelectDropdown
+              :modelValue="tailTag"
+              :options="tailTagOptions"
+              :ariaLabel="t('settings.logging.tagFilter')"
+              @update:modelValue="(v) => (tailTag = v)"
+            />
+          </div>
           <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail({ force: true })">
             {{ t("common.refresh") }}
           </button>
@@ -280,7 +294,14 @@ async function onResetPath() {
         <p v-else-if="!tail || !tail.exists" class="tail-empty">
           {{ t("settings.logging.noContent") }}
         </p>
-        <LogLines v-else ref="tailEl" class="tail-content" :content="tail.content" :minLevel="tailMinLevel" />
+        <LogLines
+          v-else
+          ref="tailEl"
+          class="tail-content"
+          :content="tail.content"
+          :minLevel="tailMinLevel"
+          :tag="tailTag"
+        />
       </section>
     </template>
   </div>
@@ -411,6 +432,7 @@ button:hover {
   border-color: var(--accent);
 }
 .tail-level { width: 104px; flex: 0 0 auto; }
+.tail-tag { width: 152px; flex: 0 0 auto; }
 .tail-empty {
   color: var(--fg-dim);
   font-size: 12px;

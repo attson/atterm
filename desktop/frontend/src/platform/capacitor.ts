@@ -265,8 +265,10 @@ async function bootstrapCachedAccountKey(): Promise<void> {
   try {
     const v = await secureStorage.get(ACCOUNT_KEY_KEY)
     if (v) setCachedAccountKey(b64StdToBytes(v))
-  } catch {
-    // ignore — the user can re-login if it matters
+  } catch (e) {
+    // Recoverable by re-logging in, but until then every sealed field stays
+    // unreadable — worth a line so "why is everything blank" has an answer.
+    logWarn('capacitor', 'account_key restore from secure storage failed', { error: errText(e) })
   }
 }
 
@@ -535,8 +537,10 @@ export function createCapacitorPlatform(): Platform {
                 if (fields.command !== undefined) command = fields.command
                 if (fields.current_command !== undefined) currentCommand = fields.current_command
               }
-            } catch {
-              // ignore — fall back to plaintext
+            } catch (e) {
+              // Falling back to plaintext is the designed behaviour, but it is
+              // also exactly the transition worth being able to see afterwards.
+              logWarn('capacitor', 'sealed field open failed; using plaintext', { error: errText(e) })
             }
           }
           s = { ...s, title, cwd, command, current_command: currentCommand }

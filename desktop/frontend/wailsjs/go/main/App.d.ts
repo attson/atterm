@@ -9,6 +9,8 @@ export function AddSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<ma
 
 export function AddSSHKey(arg1:string,arg2:string,arg3:string):Promise<main.SSHKey>;
 
+export function AppendFrontendLogs(arg1:Array<main.FrontendLogRecord>):Promise<number>;
+
 export function BeginFeishuPair():Promise<string>;
 
 export function BroadcastCommandFinished(arg1:string,arg2:number,arg3:number,arg4:string):Promise<void>;

@@ -10,6 +10,10 @@ export function AddSSHKey(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddSSHKey'](arg1, arg2, arg3);
 }
 
+export function AppendFrontendLogs(arg1) {
+  return window['go']['main']['App']['AppendFrontendLogs'](arg1);
+}
+
 export function BeginFeishuPair() {
   return window['go']['main']['App']['BeginFeishuPair']();
 }

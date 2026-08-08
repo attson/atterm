@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -370,10 +369,7 @@ func TestAdminPromoteUser_Success(t *testing.T) {
 
 // TestAdminPromoteUser_AuditLog: POST /admin/api/users/{id}/admin writes an audit log.
 func TestAdminPromoteUser_AuditLog(t *testing.T) {
-	var buf bytes.Buffer
-	oldLogger := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(oldLogger) })
+	buf := captureDebugLog(t)
 
 	srv, store, actorID, adminTok := newAdminTestServer(t)
 
@@ -383,7 +379,7 @@ func TestAdminPromoteUser_AuditLog(t *testing.T) {
 	adminPostBearer(srv, "/admin/api/users/"+target.ID+"/admin", nil, adminTok)
 
 	out := buf.String()
-	if !strings.Contains(out, "admin role change") ||
+	if !strings.Contains(out, "[relay-admin] role change") ||
 		!strings.Contains(out, "actor="+actorID) ||
 		!strings.Contains(out, "target="+target.ID) ||
 		!strings.Contains(out, "op=promote") {
@@ -425,10 +421,7 @@ func TestAdminDemoteUser_Self_400(t *testing.T) {
 
 // TestAdminDemoteUser_AuditLog: DELETE /admin/api/users/{id}/admin writes an audit log.
 func TestAdminDemoteUser_AuditLog(t *testing.T) {
-	var buf bytes.Buffer
-	oldLogger := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(oldLogger) })
+	buf := captureDebugLog(t)
 
 	srv, store, actorID, adminTok := newAdminTestServer(t)
 
@@ -439,7 +432,7 @@ func TestAdminDemoteUser_AuditLog(t *testing.T) {
 	adminDeleteBearer(srv, "/admin/api/users/"+other.ID+"/admin", adminTok)
 
 	out := buf.String()
-	if !strings.Contains(out, "admin role change") ||
+	if !strings.Contains(out, "[relay-admin] role change") ||
 		!strings.Contains(out, "actor="+actorID) ||
 		!strings.Contains(out, "target="+other.ID) ||
 		!strings.Contains(out, "op=demote") {
@@ -497,4 +490,3 @@ func TestAdminListUsers_IncludesIsAdmin(t *testing.T) {
 		t.Errorf("non-admin row missing or is_admin=true; rows=%v", rows)
 	}
 }
-

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"log"
-
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -10,7 +8,7 @@ const notificationClickEvent = "notification:click"
 
 func (a *App) handleNotificationResponse(result wailsruntime.NotificationResult) {
 	if result.Error != nil {
-		log.Printf("desktop: notification response: %v", result.Error)
+		logWarn("notify", "notification response: %v", result.Error)
 		return
 	}
 	if a == nil || a.ctx == nil || a.eventsEmitter == nil {

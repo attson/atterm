@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/attson/atterm/internal/appdir"
+	"github.com/attson/atterm/internal/logging"
 )
 
 const (
@@ -22,31 +22,25 @@ const (
 	defaultLogMaxBackups   = 5
 )
 
-// activeLogManager is the process-wide logging manager, set in
-// newLoggingManager. The leveled helpers (logDebug/...) route through it.
-var activeLogManager *loggingManager
-
-const logTimeLayout = "2006/01/02 15:04:05.000"
-
 // formatLogLine renders one structured, plain-text log record:
 //
 //	2006/01/02 15:04:05.000 LEVEL [tag] message\n
 //
-// LEVEL is right-padded to width 5 for column alignment.
+// The format itself lives in internal/logging so the desktop app, the internal
+// packages and the relay all emit lines the same viewer can parse.
 func formatLogLine(t time.Time, level, tag, msg string) string {
-	return t.Format(logTimeLayout) + " " + padLevel(level) + " [" + tag + "] " + msg + "\n"
+	return logging.FormatLine(t, logging.ParseLevelOr(level, logging.LevelInfo), tag, msg)
 }
 
-func padLevel(level string) string {
-	for len(level) < 5 {
-		level += " "
-	}
-	return level
-}
-
-// Emit writes a level/tag-tagged record through the current sink.
+// Emit writes an already-levelled record straight to the current sink.
 func (m *loggingManager) Emit(level, tag, msg string) {
-	line := formatLogLine(time.Now(), level, tag, msg)
+	m.writeRaw(formatLogLine(time.Now(), level, tag, msg))
+}
+
+// writeRaw is the one place bytes reach the active sink. Callers pass a fully
+// formatted line; the manager only decides *where* it goes (file, terminal,
+// both, or nowhere when logging is switched off).
+func (m *loggingManager) writeRaw(line string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.currentWriter == nil {
@@ -55,21 +49,34 @@ func (m *loggingManager) Emit(level, tag, msg string) {
 	_, _ = io.WriteString(m.currentWriter, line)
 }
 
-func logEmit(level, tag, format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	if activeLogManager != nil {
-		activeLogManager.Emit(level, tag, msg)
-		return
-	}
-	log.Printf("[%s] %s", tag, msg)
+// rawWriter adapts the manager to io.Writer for internal/logging, which hands
+// over lines that are already formatted. Distinct from the manager's own
+// Write, which wraps unformatted stdlib output.
+func (m *loggingManager) rawWriter() io.Writer { return rawSink{m} }
+
+type rawSink struct{ m *loggingManager }
+
+func (s rawSink) Write(p []byte) (int, error) {
+	s.m.writeRaw(string(p))
+	return len(p), nil
 }
 
-func logDebug(tag, format string, args ...any) { logEmit("DEBUG", tag, format, args...) }
-func logInfo(tag, format string, args ...any)  { logEmit("INFO", tag, format, args...) }
+// Short aliases for the shared helpers. desktop/ is package main and logs a
+// lot; the one-word names keep call sites readable. Sibling packages
+// (desktop/feishu, desktop/shellintegration) call internal/logging directly.
+
+func logDebug(tag, format string, args ...any) { logging.Debug(tag, format, args...) }
+func logInfo(tag, format string, args ...any)  { logging.Info(tag, format, args...) }
+func logWarn(tag, format string, args ...any)  { logging.Warn(tag, format, args...) }
+func logError(tag, format string, args ...any) { logging.Error(tag, format, args...) }
 
 type loggingConfigState struct {
 	enabled bool
 	path    string
+	// level is the minimum severity written to the sink. Per-frame and
+	// per-keystroke DEBUG records exist in the code year-round; this keeps
+	// them out of the rotating file unless someone is actually debugging.
+	level logging.Level
 }
 
 type logPreview struct {
@@ -125,8 +132,14 @@ func newLoggingManager(opts loggingOptions) (*loggingManager, error) {
 	}
 	m.logger = log.New(m, "", 0)
 	log.SetFlags(0)
+	// Two legs into the same sink, on purpose:
+	//   - internal/logging carries level + tag and writes preformatted lines
+	//     through rawWriter (the main path).
+	//   - the stdlib logger stays pointed at the manager so any output we do
+	//     not control — Wails, net/http, a not-yet-migrated call site — is
+	//     still normalized into the file instead of vanishing.
 	log.SetOutput(m)
-	activeLogManager = m
+	logging.SetSink(m.rawWriter())
 	return m, nil
 }
 
@@ -142,6 +155,8 @@ func (m *loggingManager) EffectivePath(path string) string {
 }
 
 func (m *loggingManager) Apply(cfg loggingConfigState) error {
+	logging.SetLevel(cfg.level)
+
 	nextWriter := io.Writer(io.Discard)
 	var (
 		nextCloser io.Closer
@@ -180,13 +195,12 @@ func (m *loggingManager) Apply(cfg loggingConfigState) error {
 	return nil
 }
 
+// Write is the stdlib-log leg: it receives an unformatted record and stamps it
+// with the default level and tag. Unlike the leveled helpers it ignores the
+// threshold — output we did not tag ourselves is usually a third-party error,
+// and hiding it behind a raised level is the opposite of what we want.
 func (m *loggingManager) Write(p []byte) (int, error) {
-	line := formatLogLine(time.Now(), "INFO", "app", strings.TrimRight(string(p), "\n"))
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, err := io.WriteString(m.currentWriter, line); err != nil {
-		return 0, err
-	}
+	m.writeRaw(formatLogLine(time.Now(), "INFO", "app", strings.TrimRight(string(p), "\n")))
 	return len(p), nil
 }
 
@@ -245,6 +259,7 @@ func newDesktopLoggingManager(cfg appConfig, version string) (*loggingManager, e
 	if err := m.Apply(loggingConfigState{
 		enabled: cfg.LogToFileEnabledOrDefault(),
 		path:    cfg.LogFilePath,
+		level:   cfg.LogLevelOrDefault(),
 	}); err != nil {
 		_ = m.Close()
 		return nil, err

@@ -1,4 +1,5 @@
 import { posixShellQuote } from "./shellQuote";
+import { logWarn } from "./log";
 
 // dispatchPastedFile is the routing brain for a "Cmd+V of a File" event. It
 // takes the clipboard's DataTransferItems plus injectable side-effect handles
@@ -54,7 +55,7 @@ export async function dispatchPastedFile(opts: DispatchOptions): Promise<Dispatc
   if (!file) return "skipped";
 
   if (file.size > maxBytes) {
-    console.warn("[AT Term] pasted file too large", file.name, file.size);
+    logWarn("paste", "pasted file too large", { name: file.name, bytes: file.size });
     return "skipped";
   }
 

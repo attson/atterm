@@ -870,8 +870,6 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	return changed
 }
 
-
-
 func scanAltScreenMode(alt bool, data []byte) bool {
 	for i := 0; i+2 < len(data); i++ {
 		if data[i] != 0x1b || data[i+1] != '[' {

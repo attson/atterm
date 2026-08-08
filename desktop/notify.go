@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -81,7 +80,7 @@ func runNativeNotify(ctx context.Context, spec commandSpec) error {
 	if _, err := exec.LookPath(spec.name); err != nil {
 		if spec.name == "notify-send" {
 			notifySendMissingOnce.Do(func() {
-				log.Printf("desktop-notify: notify-send not on PATH; install libnotify-bin to enable bell notifications (error=%v)", err)
+				logWarn("notify", "notify-send not on PATH; install libnotify-bin to enable bell notifications (error=%v)", err)
 			})
 		}
 		return nil
@@ -89,7 +88,7 @@ func runNativeNotify(ctx context.Context, spec commandSpec) error {
 	cmd := exec.CommandContext(ctx, spec.name, spec.args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("desktop-notify: %s failed error=%v output=%q", spec.name, err, string(out))
+		logWarn("notify", "%s failed error=%v output=%q", spec.name, err, string(out))
 	}
 	return nil
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,15 +21,15 @@ const maxPasteFileBytes = 10 * 1024 * 1024
 // <cache>/paste-files/<sid>/<name>, and injects the resulting absolute
 // path (no CR, no quoting) into the PTY master via h.Write.
 func (h *desktopPtyHost) PasteFile(ctx context.Context, sessionID uuid.UUID, p proto.PasteFilePayload) error {
-	log.Printf("desktop-paste-file: request %s", pasteFileLogDetails(sessionID, p))
+	logDebug("paste", "request %s", pasteFileLogDetails(sessionID, p))
 	absPath, err := savePastedFile(sessionID, p)
 	if err != nil {
-		log.Printf("desktop-paste-file: save_failed %s error=%v", pasteFileLogDetails(sessionID, p), err)
+		logError("paste", "save_failed %s error=%v", pasteFileLogDetails(sessionID, p), err)
 		return err
 	}
-	log.Printf("desktop-paste-file: saved %s path=%q", pasteFileLogDetails(sessionID, p), absPath)
+	logInfo("paste", "saved %s path=%q", pasteFileLogDetails(sessionID, p), absPath)
 	if _, err := h.Write([]byte(absPath)); err != nil {
-		log.Printf("desktop-paste-file: path_write_failed session=%s path=%q error=%v", sessionID, absPath, err)
+		logError("paste", "path_write_failed session=%s path=%q error=%v", sessionID, absPath, err)
 		return err
 	}
 	return nil

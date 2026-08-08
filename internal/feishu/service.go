@@ -5,8 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
+
+	"github.com/attson/atterm/internal/logging"
 )
 
 // Binding is the service's view of a feishu binding (subset of the
@@ -245,7 +246,7 @@ func (s *Service) handleRouterDecision(ctx context.Context, b *Binding, d Decisi
 		tok, err := s.cfg.Token.Get(ctx, b.AppID, b.AppSecret)
 		if err == nil {
 			if err := s.cfg.IM.SendTextToOpenID(ctx, tok, senderOpenID, d.Toast); err != nil {
-				log.Printf("feishu: router reject reply: %v", err)
+				logging.Warn("feishu", "router reject reply: %v", err)
 			}
 		}
 	}
@@ -262,19 +263,19 @@ func (s *Service) handleBindMessage(ctx context.Context, b *Binding, msg *Messag
 	code := strings.TrimSpace(strings.TrimPrefix(text, "/bind "))
 	uid, err := s.cfg.Store.ConsumePendingBind(ctx, code)
 	if err != nil {
-		log.Printf("feishu: consume pending bind: %v", err)
+		logging.Warn("feishu", "consume pending bind: %v", err)
 		s.sendBindReply(ctx, b, msg.SenderOpenID, "❌ 短码无效或已过期")
 		return
 	}
 	if uid != b.UserID {
 		// The code belongs to a different atterm user — should not happen
 		// because the binding is per-user, but guard.
-		log.Printf("feishu: pending bind user mismatch: %s vs %s", uid, b.UserID)
+		logging.Warn("feishu", "pending bind user mismatch: %s vs %s", uid, b.UserID)
 		s.sendBindReply(ctx, b, msg.SenderOpenID, "❌ 短码无效或已过期")
 		return
 	}
 	if err := s.cfg.Store.MarkBound(ctx, b.UserID, msg.SenderOpenID); err != nil {
-		log.Printf("feishu: mark bound: %v", err)
+		logging.Warn("feishu", "mark bound: %v", err)
 		s.sendBindReply(ctx, b, msg.SenderOpenID, "❌ 服务端错误,请稍后再试")
 		return
 	}
@@ -284,11 +285,11 @@ func (s *Service) handleBindMessage(ctx context.Context, b *Binding, msg *Messag
 func (s *Service) sendBindReply(ctx context.Context, b *Binding, openID, text string) {
 	tok, err := s.cfg.Token.Get(ctx, b.AppID, b.AppSecret)
 	if err != nil {
-		log.Printf("feishu: bind reply token: %v", err)
+		logging.Warn("feishu", "bind reply token: %v", err)
 		return
 	}
 	if err := s.cfg.IM.SendTextToOpenID(ctx, tok, openID, text); err != nil {
-		log.Printf("feishu: bind reply: %v", err)
+		logging.Warn("feishu", "bind reply: %v", err)
 	}
 }
 

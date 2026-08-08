@@ -70,6 +70,7 @@ export type {
   UpdateState,
   VersionLine,
 } from "./api/_bindings";
+import { errText, logDebug } from "./log";
 export { __setBindingsForTest } from "./api/_bindings";
 
 export * from "./api/relay";
@@ -171,12 +172,16 @@ export function getLoggingConfig(): Promise<LoggingConfig> {
 export function setLoggingConfig(cfg: {
   enabled: boolean;
   path?: string;
+  level?: string;
 }): Promise<void> {
   return bindings().SetLoggingConfig({
     enabled: cfg.enabled,
     path: cfg.path ?? "",
     effective_path: "",
     dev_dual_output: false,
+    // Empty means "leave the stored level alone" on the Go side, so callers
+    // that only change the path or the on/off switch don't reset it.
+    level: cfg.level ?? "",
   });
 }
 
@@ -250,8 +255,8 @@ export async function showNotification(title: string, body: string, data?: Notif
   // wired) defaults to "allow" so we don't silently drop notifications.
   try {
     if (!(await getNotificationsEnabled())) return;
-  } catch {
-    /* default-allow on lookup failure */
+  } catch (e) {
+    logDebug("notify", "enabled-lookup failed; defaulting to allow", { error: errText(e) });
   }
   if (await ensureNotificationRuntimeReady()) {
     try {

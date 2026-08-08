@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -52,7 +51,7 @@ func startRemoteProxy(cfgStore *configStore) (*remoteProxy, error) {
 	p.httpSrv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := p.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Printf("desktop remote-proxy: %v", err)
+			logWarn("remote-proxy", "proxy stopped serving: %v", err)
 		}
 	}()
 	return p, nil
@@ -122,7 +121,7 @@ func (p *remoteProxy) handleWSProxy(w http.ResponseWriter, r *http.Request, rela
 	remote, _, err := websocket.Dial(dialCtx, strings.TrimRight(cfg.RelayURL, "/")+relayPath, dialOpts)
 	cancelDial()
 	if err != nil {
-		log.Printf("desktop remote-proxy: dial relay %s: %v", relayPath, err)
+		logWarn("remote-proxy", "dial relay %s: %v", relayPath, err)
 		local.Close(websocket.StatusTryAgainLater, "relay dial failed")
 		return
 	}

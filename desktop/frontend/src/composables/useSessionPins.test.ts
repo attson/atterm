@@ -286,10 +286,12 @@ describe("useSessionPins", () => {
 
     pins.pin("a");
     await expect(pins.flushNow()).resolves.toBeUndefined();
+    // lib/log renders the record as one string and mirrors it to the console
+    // in dev; the reason has to survive into the message either way.
     expect(warnSpy).toHaveBeenCalledWith(
-      "[pins] flushNow persist failed",
-      expect.any(Error),
+      expect.stringContaining("[pins] flushNow persist failed"),
     );
+    expect(warnSpy.mock.calls[0][0]).toContain("disk full");
   });
 
   test("reload re-reads from platform on demand", async () => {

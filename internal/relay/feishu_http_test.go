@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -270,10 +269,7 @@ func TestFeishuHTTP_EventCallback_LogsRejectReason(t *testing.T) {
 	b, _ := st.GetFeishuBinding(ctx, u.ID)
 	h, _ := newFeishuTestHandler(t, st, 0, "tt")
 
-	var buf bytes.Buffer
-	old := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(old) })
+	buf := captureDebugLog(t)
 
 	// Plaintext url_verification (no "encrypt" field) → DecryptEnvelope rejects.
 	req := httptest.NewRequest("POST", "/v1/feishu/events/"+b.AppIDHash,

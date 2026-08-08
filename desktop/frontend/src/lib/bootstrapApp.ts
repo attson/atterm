@@ -5,6 +5,7 @@ import App from "../App.vue";
 import { initI18n, type LocalePreference } from "../i18n";
 import { bridgeSharedI18n } from "../i18n/shared-bridge";
 import { initPlatform, type Platform } from "../platform";
+import { installLogFlushHandlers } from "./log";
 
 /**
  * bootstrapApp is the shared boot skeleton for the three entry points
@@ -47,6 +48,11 @@ export interface BootstrapAppOptions {
 }
 
 export async function bootstrapApp(opts: BootstrapAppOptions): Promise<void> {
+  // First thing, so a failure in any step below is still flushed to the log
+  // file when the window goes away. Renderer logs are batched, and the boot
+  // path is exactly where losing the last batch hurts most.
+  installLogFlushHandlers();
+
   await initI18n(opts.i18n);
   // @shared/i18n powers components under `@shared/*` (admin panel, shared
   // Topbar). Mirror the desktop-local locale into it so those components

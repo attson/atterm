@@ -1,6 +1,7 @@
 import type { DirEntry, FileContent, FileMetaInfo } from "../../platform/types";
 import type { FSChunkPayload, FSResponse, SessionConnection } from "../../lib/connection";
 import type { FileSystemBridge } from "./fsBridge";
+import { errText, logWarn } from "../../lib/log";
 
 const DEFAULT_READ_MAX_BYTES = 2 * 1024 * 1024;
 const ASSET_CHUNK_BYTES = 256 * 1024;
@@ -204,8 +205,13 @@ export function createRemoteSessionFS(conn: SessionConnection, identity = "remot
         for (const { handler: nextHandler } of Array.from(dirChangedHandlers)) {
           try {
             nextHandler(event.path);
-          } catch {
-            // One consumer must not block other file explorer subscribers.
+          } catch (e) {
+            // One consumer must not block other file explorer subscribers —
+            // but it should not disappear either.
+            logWarn("file-explorer", "dir-changed subscriber threw", {
+              path: event.path,
+              error: errText(e),
+            });
           }
         }
       });

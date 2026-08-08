@@ -16,6 +16,7 @@ import {
 import { classifySSHRestore } from "../lib/sshRestore";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab } from "../lib/types";
 import type { UseSessionPins } from "./useSessionPins";
+import { errText, logWarn } from "../lib/log";
 
 const RESTORE_SPAWN_CONCURRENCY = 4;
 
@@ -111,7 +112,7 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
     try {
       await discardRecoverySnapshot();
     } catch (e) {
-      console.warn("[recovery] discard failed", e);
+      logWarn("recovery", "discard failed", { error: errText(e) });
     }
     if (hasLocalPty) await startNewTab();
   }
@@ -307,7 +308,7 @@ export function useRecoveryRestore(opts: UseRecoveryRestoreOpts): UseRecoveryRes
             : undefined,
         };
       } catch (e) {
-        console.warn("[recovery] pane spawn failed", e);
+        logWarn("recovery", "pane spawn failed", { error: errText(e) });
         return { pickIdx, slot: i, pane: { sessionId: null, remote: false } };
       }
     });

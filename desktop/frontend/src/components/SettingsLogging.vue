@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   getLogPreview,
   getLoggingConfig,
@@ -12,7 +12,14 @@ import {
 import { useI18n } from "../i18n/useI18n";
 import LogLines from "./LogLines.vue";
 import SelectDropdown from "./SelectDropdown.vue";
-import { LEVEL_FILTER_OPTIONS, type LogLevel } from "../lib/parseLogLine";
+import {
+  LEVEL_FILTER_OPTIONS,
+  LEVEL_WRITE_OPTIONS,
+  TAG_FILTER_ALL,
+  isLogLevel,
+  logTagOptions,
+  type LogLevel,
+} from "../lib/parseLogLine";
 
 defineEmits<{
   (e: "open-log-viewer"): void;
@@ -24,6 +31,9 @@ const effectivePath = ref("");
 const loading = ref(true);
 const error = ref("");
 const ptyInputDebug = ref(false);
+// writeLevel is the minimum severity persisted to the file. Not to be confused
+// with tailMinLevel below, which only filters what is already there.
+const writeLevel = ref<LogLevel>("INFO");
 const { t } = useI18n();
 
 // Inline log tail: refresh every 3 s while the panel is mounted so the
@@ -34,6 +44,10 @@ const tailLoading = ref(false);
 let tailTimer: number | null = null;
 const tailEl = ref<any>(null);
 const tailMinLevel = ref<LogLevel>("DEBUG");
+const tailTag = ref<string>(TAG_FILTER_ALL);
+const tailTagOptions = computed(() =>
+  logTagOptions(tail.value?.content ?? "", t("settings.logging.tagFilterAll")),
+);
 // "following" tails the newest lines. It auto-pauses when the user scrolls
 // up to read, so the 3 s refresh never yanks the viewport or swaps content
 // out from under them; scrolling back to the bottom resumes the tail.
@@ -93,12 +107,16 @@ watch(tailEl, (cur, _prev, onCleanup) => {
   onCleanup(() => el.removeEventListener("scroll", onTailScroll));
 });
 
+function applyConfig(cfg: Awaited<ReturnType<typeof getLoggingConfig>>) {
+  enabled.value = cfg.enabled;
+  path.value = cfg.path;
+  effectivePath.value = cfg.effective_path;
+  if (isLogLevel(cfg.level)) writeLevel.value = cfg.level;
+}
+
 onMounted(async () => {
   try {
-    const cfg = await getLoggingConfig();
-    enabled.value = cfg.enabled;
-    path.value = cfg.path;
-    effectivePath.value = cfg.effective_path;
+    applyConfig(await getLoggingConfig());
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -127,12 +145,24 @@ async function onToggle(e: Event) {
   error.value = "";
   try {
     await setLoggingConfig({ enabled: target.checked, path: path.value });
-    const cfg = await getLoggingConfig();
-    enabled.value = cfg.enabled;
-    path.value = cfg.path;
-    effectivePath.value = cfg.effective_path;
+    applyConfig(await getLoggingConfig());
   } catch (e: any) {
     enabled.value = previous;
+    error.value = e?.message ?? String(e);
+  }
+}
+
+async function onWriteLevelChange(next: LogLevel) {
+  const previous = writeLevel.value;
+  writeLevel.value = next;
+  error.value = "";
+  try {
+    await setLoggingConfig({ enabled: enabled.value, path: path.value, level: next });
+    applyConfig(await getLoggingConfig());
+    // A lowered write level means new records the tail hasn't seen yet.
+    await refreshTail({ force: true });
+  } catch (e: any) {
+    writeLevel.value = previous;
     error.value = e?.message ?? String(e);
   }
 }
@@ -155,10 +185,7 @@ async function onPickPath() {
     const picked = await pickLogFilePath();
     if (!picked) return;
     await setLoggingConfig({ enabled: enabled.value, path: picked });
-    const cfg = await getLoggingConfig();
-    enabled.value = cfg.enabled;
-    path.value = cfg.path;
-    effectivePath.value = cfg.effective_path;
+    applyConfig(await getLoggingConfig());
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   }
@@ -168,10 +195,7 @@ async function onResetPath() {
   error.value = "";
   try {
     await setLoggingConfig({ enabled: enabled.value, path: "" });
-    const cfg = await getLoggingConfig();
-    enabled.value = cfg.enabled;
-    path.value = cfg.path;
-    effectivePath.value = cfg.effective_path;
+    applyConfig(await getLoggingConfig());
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   }
@@ -190,6 +214,24 @@ async function onResetPath() {
         />
         {{ t("settings.logging.writeLogs") }}
       </label>
+
+      <div class="level-row">
+        <span class="level-label">{{ t("settings.logging.writeLevel") }}</span>
+        <div class="level-select">
+          <SelectDropdown
+            :modelValue="writeLevel"
+            :options="LEVEL_WRITE_OPTIONS"
+            :ariaLabel="t('settings.logging.writeLevel')"
+            @update:modelValue="(v) => onWriteLevelChange(v as LogLevel)"
+          />
+        </div>
+        <span
+          class="info-icon"
+          role="img"
+          :aria-label="t('settings.logging.writeLevelHint')"
+          :title="t('settings.logging.writeLevelHint')"
+        >i</span>
+      </div>
 
       <div class="checkbox-row">
         <label class="checkbox">
@@ -236,6 +278,14 @@ async function onResetPath() {
               @update:modelValue="(v) => (tailMinLevel = v as LogLevel)"
             />
           </div>
+          <div class="tail-tag">
+            <SelectDropdown
+              :modelValue="tailTag"
+              :options="tailTagOptions"
+              :ariaLabel="t('settings.logging.tagFilter')"
+              @update:modelValue="(v) => (tailTag = v)"
+            />
+          </div>
           <button class="tail-refresh" :disabled="tailLoading" @click="refreshTail({ force: true })">
             {{ t("common.refresh") }}
           </button>
@@ -244,7 +294,14 @@ async function onResetPath() {
         <p v-else-if="!tail || !tail.exists" class="tail-empty">
           {{ t("settings.logging.noContent") }}
         </p>
-        <LogLines v-else ref="tailEl" class="tail-content" :content="tail.content" :minLevel="tailMinLevel" />
+        <LogLines
+          v-else
+          ref="tailEl"
+          class="tail-content"
+          :content="tail.content"
+          :minLevel="tailMinLevel"
+          :tag="tailTag"
+        />
       </section>
     </template>
   </div>
@@ -271,6 +328,18 @@ async function onResetPath() {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.level-label {
+  font-size: 13px;
+  color: var(--fg);
+}
+.level-select {
+  width: 104px;
 }
 .info-icon {
   display: inline-flex;
@@ -363,6 +432,7 @@ button:hover {
   border-color: var(--accent);
 }
 .tail-level { width: 104px; flex: 0 0 auto; }
+.tail-tag { width: 152px; flex: 0 0 auto; }
 .tail-empty {
   color: var(--fg-dim);
   font-size: 12px;

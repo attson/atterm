@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logWarn } from "../lib/log";
 import { computed } from 'vue'
 import { usePlatform } from '../platform'
 import { useWindowMaximized, setMaximized } from '../composables/useWindowMaximized'
@@ -13,7 +14,7 @@ function safe(fn: () => void) {
   try {
     fn()
   } catch (e) {
-    console.warn('[WindowControls] runtime call failed', e)
+    logWarn("window", "runtime call failed", { error: errText(e) })
   }
 }
 

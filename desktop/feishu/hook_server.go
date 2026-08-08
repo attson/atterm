@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/google/uuid"
 )
 
@@ -124,7 +124,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// "card body not updating" — distinguishes "claude never called the hook"
 	// from "we got it but dropped it downstream". Keep this BEFORE the
 	// sessions.Exists / adapter lookup so we still see misrouted POSTs.
-	log.Printf("feishu-hook: arrive sid_raw=%q agent=%q body_len=%d",
+	logging.Debug("feishu-hook", "arrive sid_raw=%q agent=%q body_len=%d",
 		req.SessionID, req.AgentKind, len(req.HookInput))
 
 	sid, err := uuid.Parse(strings.TrimSpace(req.SessionID))
@@ -133,14 +133,14 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.sessions != nil && !h.sessions.Exists(sid) {
-		log.Printf("feishu-hook: drop reason=session-unknown sid=%s", sid)
+		logging.Warn("feishu-hook", "drop reason=session-unknown sid=%s", sid)
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
 	}
 
 	adapter, ok := LookupHookAdapter(req.AgentKind)
 	if !ok {
-		log.Printf("feishu-hook: drop reason=unknown-agent agent=%q sid=%s", req.AgentKind, sid)
+		logging.Warn("feishu-hook", "drop reason=unknown-agent agent=%q sid=%s", req.AgentKind, sid)
 		if h.onSuspect != nil {
 			h.onSuspect()
 		}
@@ -153,7 +153,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hook event type that is not a waiting-on-user signal.
 	ev, emit := adapter.Parse(req.HookInput, req.HookVersion)
 	if emit {
-		log.Printf("feishu-hook: parse=waiting sid=%s dedup=%q", sid, ev.DedupKey)
+		logging.Debug("feishu-hook", "parse=waiting sid=%s dedup=%q", sid, ev.DedupKey)
 		if disp := h.dispatcher(); disp != nil {
 			disp.DispatchWaitingInput(r.Context(), WaitingInputDispatchEvent{
 				SessionID:    sid,
@@ -173,7 +173,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dispatchedTurn := false
 	if ccAdapter, ok := adapter.(*claudeCodeAdapter); ok {
 		if turn, hasTurn := ccAdapter.ParseTurn(req.HookInput, req.HookVersion); hasTurn {
-			log.Printf("feishu-hook: parse=turn sid=%s kind=%v tool=%q text_len=%d",
+			logging.Debug("feishu-hook", "parse=turn sid=%s kind=%v tool=%q text_len=%d",
 				sid, turn.Kind, turn.ToolName, len(turn.Text))
 			// Stop kind=1 with empty text means our transcript fallback didn't
 			// recover a body. Surface the raw payload (truncated) once per
@@ -184,7 +184,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if len(preview) > 400 {
 					preview = preview[:400] + "…"
 				}
-				log.Printf("feishu-hook: stop_empty_body sid=%s payload=%s", sid, preview)
+				logging.Debug("feishu-hook", "stop_empty_body sid=%s payload=%s", sid, preview)
 			}
 			if disp := h.dispatcher(); disp != nil {
 				disp.DispatchTurn(sid.String(), turn)
@@ -199,7 +199,7 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if len(preview) > 200 {
 			preview = preview[:200] + "…"
 		}
-		log.Printf("feishu-hook: parse=none sid=%s body=%s", sid, preview)
+		logging.Debug("feishu-hook", "parse=none sid=%s body=%s", sid, preview)
 	}
 
 	_ = errors.New

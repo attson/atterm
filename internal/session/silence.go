@@ -2,12 +2,12 @@ package session
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 )
 
@@ -68,7 +68,6 @@ func envSilenceResizeGraceMS() int64 {
 	}
 	return n
 }
-
 
 // silenceAppliesToLocked decides whether the silence heuristic should apply
 // to this session in its current state. The alt-screen guard catches classic
@@ -227,5 +226,6 @@ func silenceDebugLocked(s *Session, msg string) {
 	if !silenceDebugEnabled {
 		return
 	}
-	log.Printf("[silence] sid=%s cmd=%q %s", s.ID.String()[:8], s.meta.CurrentCommand, msg)
+	logging.EmitForced(logging.LevelDebug, "silence", fmt.Sprintf(
+		"sid=%s cmd=%q %s", s.ID.String()[:8], s.meta.CurrentCommand, msg))
 }

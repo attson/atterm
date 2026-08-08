@@ -21,6 +21,7 @@ import {
   opaqueRegisterFinish,
 } from '../lib/opaqueWasm'
 import { setAccountKeyProvider } from '../lib/account-key'
+import { errText, logWarn } from "../lib/log";
 
 const STORAGE_KEY = 'atterm.relay.session'
 const PASSWORD_KEY = 'atterm.relay.password'
@@ -264,8 +265,10 @@ async function bootstrapCachedAccountKey(): Promise<void> {
   try {
     const v = await secureStorage.get(ACCOUNT_KEY_KEY)
     if (v) setCachedAccountKey(b64StdToBytes(v))
-  } catch {
-    // ignore — the user can re-login if it matters
+  } catch (e) {
+    // Recoverable by re-logging in, but until then every sealed field stays
+    // unreadable — worth a line so "why is everything blank" has an answer.
+    logWarn('capacitor', 'account_key restore from secure storage failed', { error: errText(e) })
   }
 }
 
@@ -322,7 +325,7 @@ export function createCapacitorPlatform(): Platform {
       save: async (cfg) => {
         const json = JSON.stringify(cfg)
         secureStorage.set(STORAGE_KEY, json).catch((e) => {
-          console.warn('[AT Term] Keychain set failed; relay config saved to localStorage only:', e)
+          logWarn("capacitor", "keychain set failed; relay config saved to localStorage only", { error: errText(e) })
         })
         if (typeof localStorage !== 'undefined') {
           localStorage.setItem(STORAGE_KEY, json)
@@ -404,10 +407,10 @@ export function createCapacitorPlatform(): Platform {
               await secureStorage.set(ACCOUNT_KEY_KEY, bytesToB64Std(ak))
               setCachedAccountKey(ak)
             } else {
-              console.warn('pair: wrap decrypt failed; session details will not decrypt')
+              logWarn("capacitor", "pair: wrap decrypt failed; session details will not decrypt")
             }
           } catch (e) {
-            console.warn('pair: wrap open threw', e)
+            logWarn("capacitor", "pair: wrap open threw", { error: errText(e) })
           }
         }
 
@@ -534,8 +537,10 @@ export function createCapacitorPlatform(): Platform {
                 if (fields.command !== undefined) command = fields.command
                 if (fields.current_command !== undefined) currentCommand = fields.current_command
               }
-            } catch {
-              // ignore — fall back to plaintext
+            } catch (e) {
+              // Falling back to plaintext is the designed behaviour, but it is
+              // also exactly the transition worth being able to see afterwards.
+              logWarn('capacitor', 'sealed field open failed; using plaintext', { error: errText(e) })
             }
           }
           s = { ...s, title, cwd, command, current_command: currentCommand }

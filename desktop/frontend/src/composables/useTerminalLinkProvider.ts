@@ -7,6 +7,7 @@ import {
   type LinkMatch,
   type PointerPos,
 } from "../lib/terminalLinks";
+import { errText, logWarn } from "../lib/log";
 
 export type LinkErrorKey =
   | "terminal.link.openFailed"
@@ -89,7 +90,7 @@ export function useTerminalLinkProvider(
       provider as unknown as Parameters<Terminal["registerLinkProvider"]>[0],
     );
   } catch (err) {
-    console.warn("[AT Term] registerLinkProvider failed", err);
+    logWarn("term-link", "registerLinkProvider failed", { error: errText(err) });
   }
   return {
     dispose() {
@@ -132,7 +133,7 @@ function makeLink(
       try {
         await openLink(m);
       } catch (err) {
-        console.warn("[AT Term] openLink failed", err);
+        logWarn("term-link", "openLink failed", { error: errText(err) });
         onError("terminal.link.openFailed");
       }
     },

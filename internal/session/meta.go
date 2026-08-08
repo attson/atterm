@@ -155,4 +155,3 @@ func cloneOptionalInt(v *int) *int {
 	out := *v
 	return &out
 }
-

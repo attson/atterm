@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logWarn } from "../../lib/log";
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { Pin, PinOff } from "lucide-vue-next";
 import { usePlatform } from "../../platform";
@@ -224,7 +225,7 @@ async function saveViewOption(key: "showHidden" | "showLineNumbers", value: bool
   try {
     await store.save(next);
   } catch (err) {
-    console.warn("file-explorer: saving view option failed", err);
+    logWarn("file-explorer", "saving view option failed", { error: errText(err) });
   }
 }
 

@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logWarn } from "../lib/log";
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { getRelayConfig, setRelayConfig, setRelayDisableE2EE, setUplinkPaused, fetchRelayMe, loginRemoteRelay, registerRemoteRelay, probeRelayVersion, loadSavedRelayPassword, rememberRelayPassword, clearRelayConfig } from "../lib/api";
 import { usePlatform } from '../platform'
@@ -253,8 +254,10 @@ async function rememberInputs() {
   if (password.value) {
     try {
       await rememberRelayPassword(password.value);
-    } catch {
-      /* ignore — best-effort */
+    } catch (e) {
+      // Best-effort by design, but the user ticked "remember" and it silently
+      // did not happen.
+      logWarn("relay", "remember relay password failed", { error: errText(e) });
     }
   }
   // The values we just persisted ARE the persisted state now — refresh the

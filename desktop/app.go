@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,6 +21,7 @@ import (
 	"github.com/attson/atterm/desktop/feishu"
 	"github.com/attson/atterm/desktop/hookinstall"
 	"github.com/attson/atterm/internal/connhealth"
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/prefssync"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
@@ -164,6 +164,10 @@ type LoggingConfig struct {
 	Path          string `json:"path"`
 	EffectivePath string `json:"effective_path"`
 	DevDualOutput bool   `json:"dev_dual_output"`
+	// Level is the minimum severity written to the file. Distinct from the
+	// viewer's level filter, which only decides what is rendered from a file
+	// that has already been written.
+	Level string `json:"level"`
 }
 
 type LogPreview struct {
@@ -302,7 +306,7 @@ func (a *App) startup(ctx context.Context) {
 	// so the frontend tunnels /client through Go (whose TLS passes). Non-fatal:
 	// remote viewing still works via ListRemoteSessions if this fails to bind.
 	if rp, err := startRemoteProxy(a.cfgStore); err != nil {
-		log.Printf("desktop: start remote proxy: %v", err)
+		logWarn("remote-proxy", "start remote proxy: %v", err)
 	} else {
 		a.remoteProxy = rp
 	}
@@ -310,7 +314,7 @@ func (a *App) startup(ctx context.Context) {
 	if rs, err := NewRecoveryStore(a.host.hostID); err == nil {
 		a.recoveryStore = rs
 	} else {
-		log.Printf("recovery store unavailable: %v", err)
+		logWarn("recovery", "store unavailable: %v", err)
 	}
 	a.host.aiSidCallback = func(localSessionID uuid.UUID, kind, aiSid string) {
 		a.eventsEmitter(a.ctx, "recovery:ai-sid", map[string]string{
@@ -341,12 +345,12 @@ func (a *App) startup(ctx context.Context) {
 	// up the unlocked key on the same boot.
 	if cfg.RelayURL != "" && cfg.RelaySessionUserID != "" {
 		if key, err := loadAccountKey(cfg.RelayRealmID, cfg.RelaySessionUserID); err != nil {
-			log.Printf("desktop: load persisted account_key: %v", err)
+			logWarn("keychain", "load persisted account_key: %v", err)
 		} else if len(key) > 0 {
 			a.accountKeyMu.Lock()
 			a.accountKey = key
 			a.accountKeyMu.Unlock()
-			log.Printf("desktop: account_key restored from keychain (user=%s)", cfg.RelaySessionUserID)
+			logInfo("keychain", "account_key restored from keychain (user=%s)", cfg.RelaySessionUserID)
 		}
 	}
 	a.applyRelayConfig(cfg)
@@ -356,7 +360,7 @@ func (a *App) startup(ctx context.Context) {
 	// Settings · Feishu panel will surface the LastError.
 	if cfg.HookAutoInstallEnabledOrDefault() {
 		if err := hookinstall.Install(ctx); err != nil {
-			log.Printf("hookinstall: install: %v", err)
+			logWarn("hookinstall", "install: %v", err)
 		}
 	}
 	if a.updater != nil {
@@ -414,7 +418,7 @@ func (a *App) shutdown(ctx context.Context) {
 		a.remoteProxy = nil
 	}
 	if err := feishu.DeleteEndpointFile(); err != nil {
-		log.Printf("desktop: delete feishu endpoint file: %v", err)
+		logWarn("feishu", "delete feishu endpoint file: %v", err)
 	}
 }
 
@@ -453,11 +457,11 @@ func (a *App) applyRelayUplink(cfg appConfig) {
 			// authenticate with, so don't spin a doomed reconnect loop.
 			reason = "no session token"
 		}
-		log.Printf("desktop: uplink disabled (%s)", reason)
+		logInfo("uplink", "disabled (%s)", reason)
 		return
 	}
 	if err := validateRelayEndpoint(cfg.RelayURL, cfg.AllowInsecureRelay); err != nil {
-		log.Printf("desktop: uplink disabled: %v", err)
+		logWarn("uplink", "disabled: %v", err)
 		return
 	}
 	uplinkCtx, cancel := context.WithCancel(a.ctx)
@@ -465,7 +469,7 @@ func (a *App) applyRelayUplink(cfg appConfig) {
 	dialURL := uplinkDialURL(cfg.RelayHomeInstanceURL, cfg.RelayURL)
 	a.uplink = newUplink(dialURL, cfg.RelaySessionToken, cfg.RemotePermissionOrDefault(), a.host, a.recordRelayError, a.agentSealAccountKey, cfg.AllowInsecureRelay)
 	go a.uplink.Run(uplinkCtx)
-	log.Printf("desktop: uplink configured for %s", dialURL)
+	logInfo("uplink", "configured for %s", dialURL)
 }
 
 // GetHostInfo returns this machine's identity. Used for deduping remote
@@ -505,7 +509,7 @@ func (a *App) setStartupFatalError(stage string, err error) {
 	a.startupFatalMu.Lock()
 	a.startupFatal = payload
 	a.startupFatalMu.Unlock()
-	log.Printf("desktop: startup fatal: %s", msg)
+	logError("app", "startup fatal: %s", msg)
 }
 
 func (a *App) startupLogPath() string {
@@ -674,7 +678,7 @@ func (a *App) ClearRelayConfig() error {
 	// persisted config is already gone — "cleared with a stray keychain
 	// entry" is strictly better than "aborted midway".
 	if err := clearRelayPasswordFor(oldURL, oldEmail); err != nil {
-		log.Printf("desktop: clear relay password keychain slot: %v", err)
+		logWarn("keychain", "clear relay password keychain slot: %v", err)
 	}
 
 	a.applyRelayConfig(cfg)
@@ -690,9 +694,6 @@ func (a *App) ClearRelayConfig() error {
 	}
 	return nil
 }
-
-
-
 
 // SetUplinkPaused toggles the user-controlled pause flag without touching the
 // relay URL, token, insecure flag, or remote permission. This fixes the
@@ -740,6 +741,7 @@ func (a *App) GetLoggingConfig() LoggingConfig {
 		Path:          cfg.LogFilePath,
 		EffectivePath: effectivePath,
 		DevDualOutput: isDevBuild(Version),
+		Level:         cfg.LogLevelOrDefault().String(),
 	}
 }
 
@@ -753,25 +755,44 @@ func (a *App) SetLoggingConfig(req LoggingConfig) error {
 	}
 
 	prevCfg := a.cfgStore.Get()
+
+	// An empty level means "leave it alone", so callers that only touch the
+	// path or the on/off switch cannot silently reset a level the user chose.
+	level := prevCfg.LogLevelOrDefault()
+	if trimmed := strings.TrimSpace(req.Level); trimmed != "" {
+		parsed, ok := logging.ParseLevel(trimmed)
+		if !ok {
+			return fmt.Errorf("unknown log level %q", req.Level)
+		}
+		level = parsed
+	}
+
 	prevState := loggingConfigState{
 		enabled: prevCfg.LogToFileEnabledOrDefault(),
 		path:    prevCfg.LogFilePath,
+		level:   prevCfg.LogLevelOrDefault(),
 	}
 	nextCfg := prevCfg
 	nextCfg.LogFilePath = path
 	nextCfg.LogToFileEnabled = &req.Enabled
+	nextCfg.LogLevel = level.String()
 
 	if a.logger != nil {
 		if err := a.logger.Apply(loggingConfigState{
 			enabled: req.Enabled,
 			path:    path,
+			level:   level,
 		}); err != nil {
 			return err
 		}
+	} else {
+		logging.SetLevel(level)
 	}
 	if err := a.cfgStore.Set(nextCfg); err != nil {
 		if a.logger != nil {
 			_ = a.logger.Apply(prevState)
+		} else {
+			logging.SetLevel(prevState.level)
 		}
 		return err
 	}
@@ -1210,7 +1231,6 @@ func windowsShellCandidates() []string {
 	return candidates
 }
 
-
 // beforeClose is wired to wails options.OnBeforeClose. If a previous
 // ConfirmQuit() call set quitApproved, the close proceeds. Otherwise it
 // emits a before-close event to the frontend and tells Wails to abort
@@ -1223,7 +1243,7 @@ func (a *App) beforeClose(ctx context.Context, emit func()) bool {
 		// unexpectedly". Best-effort: a failure here doesn't block the
 		// close — the user already approved.
 		if err := a.MarkCleanShutdown(); err != nil {
-			log.Printf("recovery: MarkCleanShutdown on close: %v", err)
+			logWarn("recovery", "MarkCleanShutdown on close: %v", err)
 		}
 		return false
 	}
@@ -1402,7 +1422,6 @@ func (a *App) BroadcastCommandFinished(sessionID string, exitCode, elapsedMS int
 
 // RelayMe is the response body from the relay's /api/me endpoint.
 
-
 // updatePref applies mutate to a snapshot of the config, persists it, and
 // (when key is non-empty) marks the key dirty so prefsSync pushes it out.
 // The mutate closure is where each Set* method's per-field validation and
@@ -1516,7 +1535,3 @@ func isPrefCustomized(c appConfig) func(string) bool {
 		return false
 	}
 }
-
-
-
-

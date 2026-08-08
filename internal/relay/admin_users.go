@@ -3,10 +3,10 @@ package relay
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -204,7 +204,7 @@ func (a *AdminServer) handlePromoteUser(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("admin role change: actor=%s target=%s op=promote", actorID, id)
+	logging.Info("relay-admin", "role change: actor=%s target=%s op=promote", actorID, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -261,6 +261,6 @@ func (a *AdminServer) handleDemoteUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("admin role change: actor=%s target=%s op=demote", actorID, id)
+	logging.Info("relay-admin", "role change: actor=%s target=%s op=demote", actorID, id)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -471,6 +471,24 @@ export namespace main {
 	        this.isBinary = source["isBinary"];
 	    }
 	}
+	export class FrontendLogRecord {
+	    timestamp_ms: number;
+	    level: string;
+	    tag: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FrontendLogRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.timestamp_ms = source["timestamp_ms"];
+	        this.level = source["level"];
+	        this.tag = source["tag"];
+	        this.message = source["message"];
+	    }
+	}
 	export class HostInfo {
 	    host_id: string;
 	    host: string;
@@ -524,6 +542,7 @@ export namespace main {
 	    path: string;
 	    effective_path: string;
 	    dev_dual_output: boolean;
+	    level: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new LoggingConfig(source);
@@ -535,6 +554,7 @@ export namespace main {
 	        this.path = source["path"];
 	        this.effective_path = source["effective_path"];
 	        this.dev_dual_output = source["dev_dual_output"];
+	        this.level = source["level"];
 	    }
 	}
 	export class NewSessionReq {

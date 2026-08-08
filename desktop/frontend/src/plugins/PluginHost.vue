@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logError, logWarn } from "../lib/log";
 import { computed, onMounted, ref, watch, shallowRef, type Component } from "vue";
 import { usePluginConfigStore } from "./configStore";
 import { descriptorsForSlot } from "./registry";
@@ -38,13 +39,18 @@ async function reconcile() {
         const mod = await d.load();
         next.push({ descriptor: d, component: mod.default });
       } catch (err) {
-        console.error(`plugin ${d.id} failed to load`, err);
+        logError("plugin", "failed to load", { plugin: d.id, error: errText(err) });
         props.context.showToast(t("app.pluginFailedToLoad", { title: t(d.titleKey) }));
         // Disable so the user is not stuck retrying every reconcile.
         try {
           await store.setEnabled(d.id, false);
-        } catch {
-          /* ignore secondary failure */
+        } catch (e) {
+          // Now the plugin is broken AND still enabled, so it will fail again
+          // on every reconcile.
+          logWarn("plugin", "disable-after-load-failure also failed", {
+            plugin: d.id,
+            error: errText(e),
+          });
         }
       }
     }

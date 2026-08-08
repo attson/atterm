@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/relay"
 	"github.com/attson/atterm/internal/userstore"
 	"github.com/attson/atterm/internal/webpush"
@@ -44,7 +45,10 @@ func main() {
 	debug := flag.Bool("debug", debugDefault, "enable verbose relay interaction logs (or ATTERM_RELAY_DEBUG=1)")
 	debugPayload := flag.Bool("debug-payload", debugPayloadDefault, "include IN/OUT byte contents in debug logs (or ATTERM_RELAY_DEBUG_PAYLOAD=1)")
 	devInsecure := flag.Bool("dev-insecure", false, "allow insecure public relay settings (unbootstrapped admin); development/private networks only")
+	logLevel := flag.String("log-level", envOr("ATTERM_RELAY_LOG_LEVEL", "INFO"), "minimum log level written to stderr: DEBUG|INFO|WARN|ERROR (or ATTERM_RELAY_LOG_LEVEL)")
 	flag.Parse()
+
+	configureLogging(*logLevel, *debug || *debugPayload)
 
 	publicListen := (*addr != "" && isPublicListenAddr(*addr)) ||
 		(*httpsAddr != "" && isPublicListenAddr(*httpsAddr))
@@ -154,7 +158,7 @@ func main() {
 	}
 	if seeded {
 		if err := adminStore.Set(ctx, adminCfg); err != nil {
-			log.Printf("WARN: persist seeded relay config: %v", err)
+			logging.Warn("relay-config", "persist seeded relay config: %v", err)
 		}
 		adminCfg = adminStore.Snapshot()
 	}
@@ -209,13 +213,13 @@ func main() {
 	}
 	wpSvc, wpErr := webpush.Open(store, effectiveVapid)
 	if wpErr != nil {
-		log.Printf("WARN: web-push disabled: %v", wpErr)
+		logging.Warn("webpush", "web-push disabled: %v", wpErr)
 		wpSvc = nil
 	}
 	cfg.WebPush = wpSvc
 
 	if *devInsecure {
-		log.Printf("WARNING: INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")
+		logging.Warn("relay", "INSECURE relay mode enabled; tokens, terminal input, and output may be exposed")
 	}
 
 	srv := relay.NewServer(cfg)
@@ -229,15 +233,15 @@ func main() {
 	// UI without restarting.
 	if adminCfg.FeishuEnabled {
 		if key, err := adminCfg.DecodeFeishuKey(); err != nil {
-			log.Printf("WARN: feishu disabled: %v", err)
+			logging.Warn("relay-feishu", "disabled: %v", err)
 		} else if err := srv.ApplyFeishuConfig(true, key, adminCfg.FeishuBaseURL); err != nil {
-			log.Printf("WARN: feishu enable failed: %v", err)
+			logging.Error("relay-feishu", "enable failed: %v", err)
 		} else {
 			base := adminCfg.FeishuBaseURL
 			if base == "" {
 				base = "https://open.feishu.cn"
 			}
-			log.Printf("feishu: app-mode integration enabled (base=%s)", base)
+			logging.Info("relay-feishu", "app-mode integration enabled (base=%s)", base)
 		}
 	}
 
@@ -249,9 +253,9 @@ func main() {
 			select {
 			case <-t.C:
 				if n, err := store.SweepExpiredFeishuPendingBinds(ctx); err != nil {
-					log.Printf("feishu: sweep expired pending binds: %v", err)
+					logging.Warn("relay-feishu", "sweep expired pending binds: %v", err)
 				} else if n > 0 {
-					log.Printf("feishu: swept %d expired pending bind(s)", n)
+					logging.Info("relay-feishu", "swept %d expired pending bind(s)", n)
 				}
 			case <-ctx.Done():
 				return
@@ -262,7 +266,7 @@ func main() {
 	if instancePublicURL != "" {
 		// Immediate first heartbeat so the node is selectable without a 30s wait.
 		if err := store.UpsertInstanceHeartbeat(ctx, instancePublicURL, instancePublicURL, time.Now().Unix()); err != nil {
-			log.Printf("relay: initial instance heartbeat: %v", err)
+			logging.Warn("relay", "initial instance heartbeat: %v", err)
 		}
 		go func() {
 			t := time.NewTicker(30 * time.Second)
@@ -271,7 +275,7 @@ func main() {
 				select {
 				case <-t.C:
 					if err := store.UpsertInstanceHeartbeat(ctx, instancePublicURL, instancePublicURL, time.Now().Unix()); err != nil {
-						log.Printf("relay: instance heartbeat: %v", err)
+						logging.Warn("relay", "instance heartbeat: %v", err)
 					}
 				case <-ctx.Done():
 					return
@@ -303,7 +307,7 @@ func main() {
 		httpSrv := &http.Server{Addr: *addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 		servers = append(servers, httpSrv)
 		go func() {
-			log.Printf("atterm-relay listening (http) on %s", *addr)
+			logging.Info("relay", "atterm-relay listening (http) on %s", *addr)
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("listen http: %v", err)
 			}
@@ -313,7 +317,7 @@ func main() {
 		httpsSrv := &http.Server{Addr: *httpsAddr, Handler: srv, TLSConfig: tlsConfig, ReadHeaderTimeout: 10 * time.Second}
 		servers = append(servers, httpsSrv)
 		go func() {
-			log.Printf("atterm-relay listening (https) on %s", *httpsAddr)
+			logging.Info("relay", "atterm-relay listening (https) on %s", *httpsAddr)
 			if err := httpsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("listen https: %v", err)
 			}
@@ -321,7 +325,7 @@ func main() {
 	}
 
 	<-ctx.Done()
-	log.Println("shutting down")
+	logging.Info("relay", "shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, s := range servers {

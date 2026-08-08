@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync/atomic"
 	"time"
 
@@ -59,7 +58,7 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 		defer cancel()
 		tok, _, err := disp.GetToken(ctx)
 		if err != nil {
-			log.Printf("feishu-anchor-form: token failed session=%s: %v", sessionIDStr, err)
+			logWarn("feishu-form", "token failed session=%s: %v", sessionIDStr, err)
 			return
 		}
 		anchor.SendMu.Lock()
@@ -67,7 +66,7 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 		if anchor.FormMounted {
 			seqDel := atomic.AddInt64(&anchor.PatchSeq, 1)
 			if err := disp.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seqDel); err != nil {
-				log.Printf("feishu-anchor-form: pre-DELETE failed session=%s: %v", sessionIDStr, err)
+				logWarn("feishu-form", "pre-DELETE failed session=%s: %v", sessionIDStr, err)
 				return
 			}
 			anchor.FormMounted = false
@@ -79,7 +78,7 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 		if anchor.CurrentInputID != "" {
 			seqInp := atomic.AddInt64(&anchor.PatchSeq, 1)
 			if err := disp.DeleteAnchorInputWithSeq(ctx, tok, anchor.CardToken, anchor.CurrentInputID, seqInp); err != nil {
-				log.Printf("feishu-anchor-form: input DELETE failed session=%s: %v", sessionIDStr, err)
+				logWarn("feishu-form", "input DELETE failed session=%s: %v", sessionIDStr, err)
 				// Non-fatal — keep going and mount the form anyway.
 			} else {
 				anchor.CurrentInputID = ""
@@ -90,7 +89,7 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 		if anchor.ButtonsMounted {
 			seqBtn := atomic.AddInt64(&anchor.PatchSeq, 1)
 			if err := disp.DeleteAnchorButtonsWithSeq(ctx, tok, anchor.CardToken, seqBtn); err != nil {
-				log.Printf("feishu-anchor-form: buttons DELETE failed session=%s: %v", sessionIDStr, err)
+				logWarn("feishu-form", "buttons DELETE failed session=%s: %v", sessionIDStr, err)
 			} else {
 				anchor.ButtonsMounted = false
 			}
@@ -103,12 +102,12 @@ func (h *relayHost) updateAnchorAskForm(sessionIDStr string, questions []feishu.
 		// subsequent AskUserQuestion cycles (image #107).
 		form := internalfeishu.RenderAskQuestionForm(sessionIDStr, specs, seqCre)
 		if err := disp.InsertAnchorFormWithSeq(ctx, tok, anchor.CardToken, form, seqCre); err != nil {
-			log.Printf("feishu-anchor-form: CREATE failed session=%s q=%d: %v", sessionIDStr, len(questions), err)
+			logError("feishu-form", "CREATE failed session=%s q=%d: %v", sessionIDStr, len(questions), err)
 			return
 		}
 		anchor.FormMounted = true
 		anchor.PendingForm = specs
-		log.Printf("feishu-anchor-form: inserted session=%s q=%d seq=%d", sessionIDStr, len(questions), seqCre)
+		logInfo("feishu-form", "inserted session=%s q=%d seq=%d", sessionIDStr, len(questions), seqCre)
 	}()
 }
 
@@ -128,7 +127,7 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 	defer cancel()
 	tok, _, err := disp.GetToken(ctx)
 	if err != nil {
-		log.Printf("feishu-anchor-form: token failed session=%s: %v", anchor.SessionID, err)
+		logWarn("feishu-form", "token failed session=%s: %v", anchor.SessionID, err)
 		return
 	}
 	anchor.SendMu.Lock()
@@ -136,12 +135,12 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 	if anchor.FormMounted {
 		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
 		if err := disp.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seq); err != nil {
-			log.Printf("feishu-anchor-form: DELETE failed session=%s: %v", anchor.SessionID, err)
+			logWarn("feishu-form", "DELETE failed session=%s: %v", anchor.SessionID, err)
 			return
 		}
 		anchor.FormMounted = false
 		anchor.PendingForm = nil
-		log.Printf("feishu-anchor-form: removed session=%s seq=%d", anchor.SessionID, seq)
+		logInfo("feishu-form", "removed session=%s seq=%d", anchor.SessionID, seq)
 	}
 	// Restore the standalone Type-here input we tore down when the form went
 	// up. New element_id every time — Feishu's client caches by id and would
@@ -150,11 +149,11 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 		seqCre := atomic.AddInt64(&anchor.PatchSeq, 1)
 		newID := fmt.Sprintf("anchor_input_%d", seqCre)
 		if err := disp.CreateAnchorInputWithSeq(ctx, tok, anchor.CardToken, anchor.SessionID, newID, seqCre); err != nil {
-			log.Printf("feishu-anchor-form: input CREATE (restore) failed session=%s: %v", anchor.SessionID, err)
+			logWarn("feishu-form", "input CREATE (restore) failed session=%s: %v", anchor.SessionID, err)
 			return
 		}
 		anchor.CurrentInputID = newID
-		log.Printf("feishu-anchor-form: input restored session=%s seq=%d new_id=%s", anchor.SessionID, seqCre, newID)
+		logInfo("feishu-form", "input restored session=%s seq=%d new_id=%s", anchor.SessionID, seqCre, newID)
 	}
 	// Restore the keystroke buttons row after the input so the on-card
 	// element order stays: body → input → buttons. CurrentInputID is the
@@ -167,11 +166,11 @@ func (h *relayHost) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 			target = internalfeishu.AnchorBodyElementID
 		}
 		if err := disp.CreateAnchorButtonsWithSeq(ctx, tok, anchor.CardToken, anchor.SessionID, target, seqCre); err != nil {
-			log.Printf("feishu-anchor-form: buttons CREATE (restore) failed session=%s: %v", anchor.SessionID, err)
+			logWarn("feishu-form", "buttons CREATE (restore) failed session=%s: %v", anchor.SessionID, err)
 			return
 		}
 		anchor.ButtonsMounted = true
-		log.Printf("feishu-anchor-form: buttons restored session=%s seq=%d", anchor.SessionID, seqCre)
+		logInfo("feishu-form", "buttons restored session=%s seq=%d", anchor.SessionID, seqCre)
 	}
 }
 
@@ -202,7 +201,7 @@ func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
 		defer cancel()
 		tok, _, err := disp.GetToken(ctx)
 		if err != nil {
-			log.Printf("feishu-anchor-buttons: token failed session=%s: %v", sessionIDStr, err)
+			logWarn("feishu-form", "token failed session=%s: %v", sessionIDStr, err)
 			return
 		}
 		anchor.SendMu.Lock()
@@ -213,7 +212,7 @@ func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
 		// back; we shouldn't step on it with a PATCH that can't work.
 		if !anchor.ButtonsMounted {
 			anchor.SendMu.Unlock()
-			log.Printf("feishu-anchor-buttons: skip (buttons not mounted) session=%s opts=%d", sessionIDStr, len(options))
+			logDebug("feishu-form", "skip (buttons not mounted) session=%s opts=%d", sessionIDStr, len(options))
 			return
 		}
 		seq := atomic.AddInt64(&anchor.PatchSeq, 1)
@@ -221,10 +220,10 @@ func (h *relayHost) swapAnchorButtons(sessionIDStr string, options []string) {
 			internalfeishu.AnchorButtonsElementID, partial, seq)
 		anchor.SendMu.Unlock()
 		if err != nil {
-			log.Printf("feishu-anchor-buttons: PATCH failed session=%s opts=%d: %v", sessionIDStr, len(options), err)
+			logWarn("feishu-form", "PATCH failed session=%s opts=%d: %v", sessionIDStr, len(options), err)
 			return
 		}
-		log.Printf("feishu-anchor-buttons: swapped session=%s opts=%d seq=%d", sessionIDStr, len(options), seq)
+		logInfo("feishu-form", "swapped session=%s opts=%d seq=%d", sessionIDStr, len(options), seq)
 	}()
 }
 
@@ -430,13 +429,13 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		Restored:     restored,
 	})
 	if err != nil {
-		log.Printf("feishu-anchor: render create failed session=%s: %v", sessID, err)
+		logError("feishu-anchor", "render create failed session=%s: %v", sessID, err)
 		return
 	}
 
 	msgID, cardToken, _, err := disp.SendAnchorCard(ctx, cardBody)
 	if err != nil {
-		log.Printf("feishu-anchor: send anchor card failed session=%s: %v", sessID, err)
+		logError("feishu-anchor", "send anchor card failed session=%s: %v", sessID, err)
 		return
 	}
 
@@ -464,7 +463,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		go func() {
 			tok, _, err := disp.GetToken(context.Background())
 			if err != nil {
-				log.Printf("feishu-anchor: patch token failed session=%s: %v", sessID, err)
+				logWarn("feishu-anchor", "patch token failed session=%s: %v", sessID, err)
 				return
 			}
 			anchor.SendMu.Lock()
@@ -474,21 +473,21 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 			})
 			anchor.SendMu.Unlock()
 			if err == nil {
-				log.Printf("feishu-anchor: patch ok session=%s seq=%d", sessID, seq)
+				logDebug("feishu-anchor", "patch ok session=%s seq=%d", sessID, seq)
 				return
 			}
 			if internalfeishu.IsCardGoneError(err) {
-				log.Printf("feishu-anchor: card gone session=%s — detaching", sessID)
+				logInfo("feishu-anchor", "card gone session=%s — detaching", sessID)
 				h.feishuCards.RemoveBySessionID(sessID.String())
 				h.detachFeishuSubscriber(sessID)
 				return
 			}
 			var ace *internalfeishu.AuthClassError
 			if errors.As(err, &ace) {
-				log.Printf("feishu-anchor: auth refresh needed session=%s (%v)", sessID, err)
+				logWarn("feishu-anchor", "auth refresh needed session=%s (%v)", sessID, err)
 				return
 			}
-			log.Printf("feishu-anchor: patch gave up after retry session=%s: %v", sessID, err)
+			logWarn("feishu-anchor", "patch gave up after retry session=%s: %v", sessID, err)
 		}()
 	}
 
@@ -505,7 +504,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		if len(preview) > 60 {
 			preview = preview[:60]
 		}
-		log.Printf("feishu-anchor: flush session=%s body_len=%d preview=%q", sessID, len(body), preview)
+		logDebug("feishu-anchor", "flush session=%s body_len=%d preview=%q", sessID, len(body), preview)
 		rt.lastInner.Store(body)
 		rt.render()
 	}
@@ -562,7 +561,7 @@ func (h *relayHost) attachFeishuSubscriberForAutoAttach(ctx context.Context, ses
 		}
 	}()
 
-	log.Printf("feishu-anchor: attached session=%s card_msg_id=%s", sessID, msgID)
+	logInfo("feishu-anchor", "attached session=%s card_msg_id=%s", sessID, msgID)
 }
 
 // OnRemoteTerminalToggle reacts to changes in the binding's
@@ -630,7 +629,7 @@ func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
 		}
 		tok, _, err := disp.GetToken(context.Background())
 		if err != nil {
-			log.Printf("feishu-anchor: archive token failed session=%s: %v", sessID, err)
+			logWarn("feishu-anchor", "archive token failed session=%s: %v", sessID, err)
 			return
 		}
 		// Build the archive body markdown: last shell output + footer line.
@@ -648,7 +647,7 @@ func (h *relayHost) detachFeishuSubscriber(sessID uuid.UUID) {
 		anchor.SendMu.Unlock()
 		if perr != nil {
 			if !internalfeishu.IsCardGoneError(perr) {
-				log.Printf("feishu-anchor: archive patch failed session=%s: %v", sessID, perr)
+				logWarn("feishu-anchor", "archive patch failed session=%s: %v", sessID, perr)
 			}
 		}
 	}()

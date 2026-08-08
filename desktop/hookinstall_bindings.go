@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"sync"
 	"time"
 
@@ -29,7 +28,7 @@ func (a *App) GetHookInstallState() hookinstall.State {
 	s := hookinstall.Check(a.ctx, enabled)
 	if !s.Healthy() && enabled && allowHookInstallRepair() {
 		if err := hookinstall.Install(a.ctx); err != nil {
-			log.Printf("hookinstall: auto-repair: %v", err)
+			logWarn("hookinstall", "auto-repair: %v", err)
 		}
 		s = hookinstall.Check(a.ctx, enabled)
 	}

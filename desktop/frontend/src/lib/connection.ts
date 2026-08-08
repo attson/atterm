@@ -17,6 +17,7 @@ import { t } from "../i18n";
 import { getCurrentAccountKey } from "./account-key";
 import { openMetaFields, openOutFrame, openSessionFields, sealUnsequenced, openUnsequencedFrame } from "./opaque";
 import { encodeSegments, decodeSegments } from "./fsSegments";
+import { errText, logDebug, logError, logWarn } from "./log";
 
 export interface ClosePayload {
   exit_code: number;
@@ -358,8 +359,10 @@ export class SessionListConnection {
       try {
         const sessions = JSON.parse(decodeText(f.payload)) as SessionInfo[];
         this.handlers.onSessions(decryptSessionFields(sessions));
-      } catch {
-        /* ignore malformed snapshots */
+      } catch (e) {
+        // Covers both a malformed frame and a failed field decrypt. Either way
+        // the user sees a stale or empty session list with no other clue.
+        logWarn("conn", "dropping unusable LIST_RESP", { error: errText(e) });
       }
     };
 
@@ -378,9 +381,9 @@ export class SessionListConnection {
 
   private handleOpenFailure(e: unknown, auth: { url: string; protocols?: string[] }): void {
     const err = e as { name?: string; message?: string } | null;
-    console.error("[SessionListConnection] new WebSocket failed", {
+    logError("conn", "session-list: new WebSocket failed", {
       url: auth.url,
-      protocols: auth.protocols,
+      protocols: auth.protocols?.join(","),
       name: err?.name,
       message: err?.message ?? String(e),
     });
@@ -600,7 +603,7 @@ export class SessionConnection {
       content_type: blob.type || "image/png",
       data: arrayBufferToBase64(await blob.arrayBuffer()),
     }));
-    console.info("[AT Term] sending paste image", {
+    logDebug("conn", "sending paste image", {
       filename,
       contentType: blob.type || "image/png",
       bytes: blob.size,
@@ -626,7 +629,7 @@ export class SessionConnection {
       content_type: blob.type || "application/octet-stream",
       data: arrayBufferToBase64(await blob.arrayBuffer()),
     }));
-    console.info("[AT Term] sending paste file", {
+    logDebug("conn", "sending paste file", {
       filename,
       contentType: blob.type || "application/octet-stream",
       bytes: blob.size,
@@ -776,9 +779,9 @@ export class SessionConnection {
 
   private handleOpenFailure(e: unknown, auth: { url: string; protocols?: string[] }): void {
     const err = e as { name?: string; message?: string } | null;
-    console.error("[SessionConnection] new WebSocket failed", {
+    logError("conn", "session: new WebSocket failed", {
       url: auth.url,
-      protocols: auth.protocols,
+      protocols: auth.protocols?.join(","),
       sessionId: this.sessionId,
       name: err?.name,
       message: err?.message ?? String(e),
@@ -850,8 +853,10 @@ export class SessionConnection {
     for (const handler of this.fsEventHandlers) {
       try {
         handler(event);
-      } catch {
-        /* keep later handlers isolated */
+      } catch (e) {
+        // Later handlers still run — but a throwing subscriber is a bug, and
+        // silence is why it would go unnoticed.
+        logWarn("conn", "fs event handler threw", { error: errText(e) });
       }
     }
   }

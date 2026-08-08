@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -83,7 +82,7 @@ func (rs *RecoveryStore) Load() (RecoverySnapshot, error) {
 	}
 	var snap RecoverySnapshot
 	if err := json.Unmarshal(blob, &snap); err != nil {
-		log.Printf("recovery: discard malformed snapshot: %v", err)
+		logWarn("recovery", "discard malformed snapshot: %v", err)
 		_ = os.Remove(rs.path)
 		return RecoverySnapshot{}, nil
 	}
@@ -99,7 +98,7 @@ func (rs *RecoveryStore) Load() (RecoverySnapshot, error) {
 		dirty := snap
 		dirty.CleanShutdown = false
 		if err := rs.Save(dirty); err != nil {
-			log.Printf("recovery: rewrite clean_shutdown=false: %v", err)
+			logWarn("recovery", "rewrite clean_shutdown=false: %v", err)
 		}
 	}
 	return snap, nil

@@ -1,3 +1,4 @@
+import { logDebug } from "./log";
 // Touch-scroll debug instrumentation.
 //
 // Default OFF; opt-in per user via localStorage:
@@ -61,7 +62,7 @@ export function logTouch(tag: string, data: unknown = {}): void {
   touchDebugRing.push(entry);
   if (touchDebugRing.length > TOUCH_DEBUG_MAX) touchDebugRing.shift();
   try {
-    console.log(`[tsc] ${tag}`, data);
+    logDebug("touch-scroll", tag, { data: JSON.stringify(data) });
   } catch {
     /* swallow */
   }

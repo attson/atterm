@@ -3,10 +3,10 @@ package relay
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/userstore"
 )
 
@@ -176,7 +176,7 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 				// Promotion failure is non-fatal: registration succeeded,
 				// the operator can re-promote the user via the admin
 				// console. Log loudly so the gap is visible.
-				log.Printf("opaque-register: set admin on claimed user %s: %v", user.ID, err)
+				logging.Error("opaque", "set admin on claimed user %s: %v", user.ID, err)
 			} else {
 				isAdmin = true
 			}
@@ -187,13 +187,13 @@ func (h *OpaqueAuthHandler) handleRegisterFinalize(w http.ResponseWriter, r *htt
 		// The channel closes the moment the first admin exists; email
 		// UNIQUEness means only one account can ever hold this email.
 		if adminExists, err := h.store.AdminExists(ctx); err != nil {
-			log.Printf("opaque-register: admin-exists check: %v", err)
+			logging.Warn("opaque", "admin-exists check: %v", err)
 		} else if !adminExists {
 			if err := h.store.SetUserAdmin(ctx, user.ID, true); err != nil {
-				log.Printf("opaque-register: first-run auto-admin %s: %v", user.ID, err)
+				logging.Error("opaque", "first-run auto-admin %s: %v", user.ID, err)
 			} else {
 				isAdmin = true
-				log.Printf("opaque-register: first-run admin created for %s", req.Email)
+				logging.Info("opaque", "first-run admin created for %s", req.Email)
 			}
 		}
 	}

@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logError } from "../../lib/log";
 import { computed, ref, watch } from "vue";
 import { usePluginConfigStore, type PluginConfig } from "../configStore";
 import { useI18n } from "../../i18n/useI18n";
@@ -64,7 +65,7 @@ async function update(patch: Partial<PluginConfig["translate"]>) {
   if (!store.cfg) return;
   const next = JSON.parse(JSON.stringify(store.cfg)) as PluginConfig;
   next.translate = { ...next.translate, ...patch };
-  try { await store.save(next); } catch (err) { console.error("save translate cfg", err); }
+  try { await store.save(next); } catch (err) { logError("plugin-translate", "save config failed", { error: errText(err) }); }
 }
 </script>
 

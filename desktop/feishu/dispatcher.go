@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	internalfeishu "github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/logging"
+	"github.com/google/uuid"
 )
 
 // IMClient is the subset of internal/feishu.Client the dispatcher uses.
@@ -303,7 +302,7 @@ func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKe
 		if errors.Is(err, ErrTokenNotConfigured) || errors.Is(err, ErrTokenDisabled) {
 			return
 		}
-		log.Printf("feishu: dispatch token: %v", err)
+		logging.Warn("feishu", "dispatch token: %v", err)
 		return
 	}
 	if openID == "" {
@@ -315,7 +314,7 @@ func (d *Dispatcher) dispatchWaiting(ctx context.Context, sid uuid.UUID, dedupKe
 	if err != nil {
 		// Render errors are programming bugs, not transient — keep the
 		// stamp so we don't retry-storm on the same broken event.
-		log.Printf("feishu: render card: %v", err)
+		logging.Warn("feishu", "render card: %v", err)
 		return
 	}
 
@@ -353,7 +352,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 		if errors.Is(err, ErrTokenNotConfigured) || errors.Is(err, ErrTokenDisabled) {
 			return
 		}
-		log.Printf("feishu: dispatch token: %v", err)
+		logging.Warn("feishu", "dispatch token: %v", err)
 		return
 	}
 	if openID == "" {
@@ -363,7 +362,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, sid uuid.UUID, dedupKey strin
 
 	body, err := render()
 	if err != nil {
-		log.Printf("feishu: render card: %v", err)
+		logging.Warn("feishu", "render card: %v", err)
 		return
 	}
 
@@ -553,7 +552,7 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 	onMissing := d.onTurnMissingChunker
 	d.aiMu.Unlock()
 	if chunker == nil {
-		log.Printf("feishu-turn: no chunker sid=%s kind=%v known_chunkers=%d", sessionID, ev.Kind, known)
+		logging.Warn("feishu-turn", "no chunker sid=%s kind=%v known_chunkers=%d", sessionID, ev.Kind, known)
 		if onMissing != nil {
 			// Fire-and-forget: the host performs a network round-trip to
 			// SendAnchorCard, which we must not block the hook HTTP handler
@@ -563,7 +562,7 @@ func (d *Dispatcher) DispatchTurn(sessionID string, ev TurnEvent) {
 		}
 		return
 	}
-	log.Printf("feishu-turn: route sid=%s kind=%v text_len=%d opts=%d", sessionID, ev.Kind, len(ev.Text), len(ev.Options))
+	logging.Debug("feishu-turn", "route sid=%s kind=%v text_len=%d opts=%d", sessionID, ev.Kind, len(ev.Text), len(ev.Options))
 	switch ev.Kind {
 	case TurnUserPrompt:
 		chunker.PushTurn(internalfeishu.TurnUserPromptEvent{Text: ev.Text, TranscriptPath: ev.TranscriptPath})
@@ -637,11 +636,11 @@ func (d *Dispatcher) recordSendError(ctx context.Context, sid uuid.UUID, err err
 		d.muD.Unlock()
 		if count >= maxAuthFails {
 			if setErr := d.cfg.Store.SetDisabled(ctx); setErr != nil && !errors.Is(setErr, ErrRelayManagedBoundState) {
-				log.Printf("feishu: SetDisabled: %v", setErr)
+				logging.Warn("feishu", "SetDisabled: %v", setErr)
 			}
 			d.cfg.Token.Invalidate()
 		}
 		return
 	}
-	log.Printf("feishu: send to %s: %v", sid, err)
+	logging.Warn("feishu", "send to %s: %v", sid, err)
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/hex"
+	"fmt"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/ptyhost"
 )
 
@@ -43,11 +45,17 @@ func ptyInputDebugTag(p []byte) string {
 
 // logPtyInput emits a DEBUG [pty-input] line for one PTY write when the
 // config toggle is on. Never blocks or affects the actual write.
+//
+// It writes through EmitForced, bypassing the configured log level. The toggle
+// *is* the gate here: someone who ticks "log terminal input bytes" and then
+// sees an empty log because the level happens to sit at INFO would reasonably
+// conclude the feature is broken.
 func logPtyInput(cfg *configStore, p []byte) {
 	if cfg == nil || !cfg.Get().PtyInputDebugEnabledOrDefault() {
 		return
 	}
-	logDebug("pty-input", "write n=%d hex=%s%s", len(p), hex.EncodeToString(p), ptyInputDebugTag(p))
+	logging.EmitForced(logging.LevelDebug, "pty-input", fmt.Sprintf(
+		"write n=%d hex=%s%s", len(p), hex.EncodeToString(p), ptyInputDebugTag(p)))
 }
 
 // Write intercepts all session input for optional debug logging, then

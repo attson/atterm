@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -40,7 +39,7 @@ func (a *App) runRelayPrefsWatch(ctx context.Context, cfg appConfig) {
 			return
 		}
 		if err := a.runRelayPrefsWatchOnce(ctx, url, cfg.RelaySessionToken, cfg.AllowInsecureRelay); err != nil && ctx.Err() == nil {
-			log.Printf("desktop prefs-watch: %v", err)
+			logWarn("prefs", "relay prefs watch: %v", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -81,7 +80,7 @@ func (a *App) runRelayPrefsWatchOnce(ctx context.Context, url, token string, all
 			continue
 		}
 		if err := a.prefsSync.Pull(ctx); err != nil {
-			log.Printf("desktop prefs-watch: pull: %v", err)
+			logWarn("prefs", "pull: %v", err)
 			continue
 		}
 		if a.eventsEmitter != nil {

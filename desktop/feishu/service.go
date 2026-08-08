@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
-
 	internalfeishu "github.com/attson/atterm/internal/feishu"
+	"github.com/attson/atterm/internal/logging"
+	"github.com/google/uuid"
 )
 
 type Mode int
@@ -92,11 +91,11 @@ func (s *Service) replyText(ctx context.Context, openID, text string) {
 	}
 	tok, _, err := s.dispatcher.GetToken(ctx)
 	if err != nil {
-		log.Printf("feishu: replyText get token: %v", err)
+		logging.Warn("feishu", "replyText get token: %v", err)
 		return
 	}
 	if err := s.imClient.SendTextToOpenID(ctx, tok, openID, text); err != nil {
-		log.Printf("feishu: replyText send to %s: %v", openID, err)
+		logging.Warn("feishu", "replyText send to %s: %v", openID, err)
 	}
 }
 
@@ -247,7 +246,7 @@ func (s *Service) handleBindMessage(ctx context.Context, senderOpenID, text stri
 		return
 	}
 	if err := s.store.SetBound(ctx, senderOpenID); err != nil {
-		log.Printf("feishu: bind SetBound: %v", err)
+		logging.Warn("feishu", "bind SetBound: %v", err)
 		s.replyText(ctx, senderOpenID, "❌ 服务端错误,请稍后再试")
 		return
 	}
@@ -305,13 +304,13 @@ func (s *Service) handleReplyMessage(ctx context.Context, senderOpenID, parentID
 		return
 	}
 	if err := s.cfg.Sessions.Inject(sid, text+"\n"); err != nil {
-		log.Printf("feishu: reply inject session=%s: %v", sid, err)
+		logging.Warn("feishu", "reply inject session=%s: %v", sid, err)
 	}
 }
 
 func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, operatorOpenID, text string, formValue map[string]any) {
 	textLen := len(text)
-	log.Printf("feishu-card-action: sid=%s kind=%s event=%q op=%s text_len=%d form_fields=%d",
+	logging.Debug("feishu-card", "sid=%s kind=%s event=%q op=%s text_len=%d form_fields=%d",
 		sessionID, kind, event, operatorOpenID, textLen, len(formValue))
 	switch kind {
 	case "form":
@@ -357,11 +356,11 @@ func (s *Service) handleCardAction(ctx context.Context, sessionID, kind, event, 
 		}
 		sid, err := uuid.Parse(sessionID)
 		if err != nil {
-			log.Printf("feishu: card inject bad session_id %q: %v", sessionID, err)
+			logging.Warn("feishu", "card inject bad session_id %q: %v", sessionID, err)
 			return
 		}
 		if err := s.cfg.Sessions.Inject(sid, text); err != nil {
-			log.Printf("feishu: card inject session=%s: %v", sid, err)
+			logging.Warn("feishu", "card inject session=%s: %v", sid, err)
 		}
 	default:
 		// Unknown kind; ignore.
@@ -387,7 +386,7 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	}
 	anchor := r.AnchorBySession(sessionID)
 	if anchor == nil {
-		log.Printf("feishu: askform submit no-anchor sid=%s", sessionID)
+		logging.Warn("feishu", "askform submit no-anchor sid=%s", sessionID)
 		return
 	}
 	// Snapshot the questions the mounted form was asking about — writer
@@ -399,12 +398,12 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	questions := anchor.PendingForm
 	anchor.SendMu.Unlock()
 	if len(questions) == 0 {
-		log.Printf("feishu: askform submit no-pending-form sid=%s", sessionID)
+		logging.Warn("feishu", "askform submit no-pending-form sid=%s", sessionID)
 		return
 	}
 	slots := parseAskFormSlots(formValue)
 	if len(slots) == 0 {
-		log.Printf("feishu: askform empty submit sid=%s", sessionID)
+		logging.Warn("feishu", "askform empty submit sid=%s", sessionID)
 		return
 	}
 	// Stroke sequence assembled per question via buildQuestionStrokes;
@@ -413,7 +412,7 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	strokes := make([][]byte, 0)
 	for _, sl := range slots {
 		if sl.idx >= len(questions) {
-			log.Printf("feishu: askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
+			logging.Warn("feishu", "askform slot idx=%d out of range (q_count=%d) sid=%s", sl.idx, len(questions), sessionID)
 			return
 		}
 		q := questions[sl.idx]
@@ -426,7 +425,7 @@ func (s *Service) handleAskFormSubmit(ctx context.Context, sessionID, operatorOp
 	// Review page: "Submit answers" is option 1.
 	strokes = append(strokes, []byte{'1'})
 	decision := r.InjectKeystrokesBySession(sessionID, operatorOpenID, strokes, 350*time.Millisecond)
-	log.Printf("feishu: askform submit sid=%s q=%d strokes=%d action=%d", sessionID, len(slots), len(strokes), decision.Action)
+	logging.Info("feishu", "askform submit sid=%s q=%d strokes=%d action=%d", sessionID, len(slots), len(strokes), decision.Action)
 	// Remove the form once injected — success or reject, the form has done
 	// its job (a rejected submit indicates a permission / session issue,
 	// not a bad form; leaving the form up would just confuse).
@@ -467,12 +466,12 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 	// Single-select fast path (one keystroke handles everything).
 	if !q.MultiSelect && !hasCustom {
 		if sl.sel == "" {
-			log.Printf("feishu: askform single-select empty sid=%s q=%d", sessionID, sl.idx)
+			logging.Warn("feishu", "askform single-select empty sid=%s q=%d", sessionID, sl.idx)
 			return nil, false
 		}
 		optIdx := findOptIdx(sl.sel)
 		if optIdx == 0 || optIdx > 9 {
-			log.Printf("feishu: askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
+			logging.Warn("feishu", "askform label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, sl.sel)
 			return nil, false
 		}
 		out = append(out, []byte{'0' + byte(optIdx)})
@@ -484,7 +483,7 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 		for _, label := range sl.selMulti {
 			optIdx := findOptIdx(label)
 			if optIdx == 0 || optIdx > 9 {
-				log.Printf("feishu: askform multi label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, label)
+				logging.Warn("feishu", "askform multi label not-found or >9 options sid=%s q=%d label=%q", sessionID, sl.idx, label)
 				return nil, false
 			}
 			out = append(out, []byte{'0' + byte(optIdx)})
@@ -498,7 +497,7 @@ func buildQuestionStrokes(q internalfeishu.AskFormQuestion, sl askFormSlot, sess
 	if hasCustom {
 		typeIdx := len(q.Options) + 1
 		if typeIdx > 9 {
-			log.Printf("feishu: askform typeIdx=%d exceeds single-digit range sid=%s q=%d", typeIdx, sessionID, sl.idx)
+			logging.Warn("feishu", "askform typeIdx=%d exceeds single-digit range sid=%s q=%d", typeIdx, sessionID, sl.idx)
 			return nil, false
 		}
 		out = append(out, []byte{'0' + byte(typeIdx)})
@@ -623,7 +622,7 @@ func (s *Service) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 	defer cancel()
 	tok, _, err := s.dispatcher.GetToken(ctx)
 	if err != nil {
-		log.Printf("feishu: askform DELETE token failed: %v", err)
+		logging.Warn("feishu", "askform DELETE token failed: %v", err)
 		return
 	}
 	anchor.SendMu.Lock()
@@ -633,12 +632,12 @@ func (s *Service) deleteAnchorForm(anchor *internalfeishu.CardAnchor) {
 	}
 	seq := atomic.AddInt64(&anchor.PatchSeq, 1)
 	if err := s.dispatcher.DeleteAnchorFormWithSeq(ctx, tok, anchor.CardToken, seq); err != nil {
-		log.Printf("feishu: askform DELETE failed session=%s: %v", anchor.SessionID, err)
+		logging.Warn("feishu", "askform DELETE failed session=%s: %v", anchor.SessionID, err)
 		return
 	}
 	anchor.FormMounted = false
 	anchor.PendingForm = nil
-	log.Printf("feishu: askform DELETE ok session=%s seq=%d", anchor.SessionID, seq)
+	logging.Debug("feishu", "askform DELETE ok session=%s seq=%d", anchor.SessionID, seq)
 }
 
 // clearAnchorInput PATCHes the anchor card's input element back to empty so
@@ -652,7 +651,7 @@ func (s *Service) clearAnchorInput(anchor *internalfeishu.CardAnchor, sessionID 
 	defer cancel()
 	tok, _, err := s.dispatcher.GetToken(ctx)
 	if err != nil {
-		log.Printf("feishu: clear input get token: %v", err)
+		logging.Warn("feishu", "clear input get token: %v", err)
 		return
 	}
 	// Hold SendMu across DELETE + CREATE so nothing else can send an op
@@ -669,12 +668,12 @@ func (s *Service) clearAnchorInput(anchor *internalfeishu.CardAnchor, sessionID 
 	newInputID := fmt.Sprintf("anchor_input_%d", seqCre)
 	if err := s.dispatcher.ClearAnchorInputWithSeqs(ctx, tok, anchor.CardToken, sessionID,
 		anchor.CurrentInputID, newInputID, seqDel, seqCre); err != nil {
-		log.Printf("feishu: clear input DELETE+CREATE card=%s seq=%d/%d id_old=%s id_new=%s: %v",
+		logging.Warn("feishu", "clear input DELETE+CREATE card=%s seq=%d/%d id_old=%s id_new=%s: %v",
 			anchor.CardToken, seqDel, seqCre, anchor.CurrentInputID, newInputID, err)
 		return
 	}
 	anchor.CurrentInputID = newInputID
-	log.Printf("feishu: clear input ok card=%s seq=%d/%d new_id=%s", anchor.CardToken, seqDel, seqCre, newInputID)
+	logging.Debug("feishu", "clear input ok card=%s seq=%d/%d new_id=%s", anchor.CardToken, seqDel, seqCre, newInputID)
 }
 
 // In-memory short-code table for local mode.

@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { errText, logWarn } from "../lib/log";
 import { computed, onMounted, ref } from "vue";
 import { usePlatform } from "../platform";
 import WindowControls from "./WindowControls.vue";
@@ -83,17 +84,17 @@ onMounted(async () => {
   try {
     const info = await platform.system.getEnvironment();
     if (info == null) {
-      console.warn("[TitleBar] getEnvironment() returned null, falling back to linux");
+      logWarn("titlebar", "getEnvironment() returned null, falling back to linux");
       return;
     }
     const p = (info.platform ?? "").toLowerCase();
     if (p === "darwin" || p === "windows" || p === "linux") {
       os.value = p;
     } else {
-      console.warn("[TitleBar] unknown platform, falling back to linux:", p);
+      logWarn("titlebar", "unknown platform, falling back to linux", { platform: String(p) });
     }
   } catch (e) {
-    console.warn("[TitleBar] getEnvironment() failed, falling back to linux", e);
+    logWarn("titlebar", "getEnvironment() failed, falling back to linux", { error: errText(e) });
   }
 });
 

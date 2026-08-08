@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/base64"
-	"log"
 )
 
 // setAccountKey stores key as the current in-memory account_key AND persists
@@ -62,7 +61,7 @@ func (a *App) persistAccountKey(key []byte) {
 		return
 	}
 	if err := saveAccountKey(cfg.RelayRealmID, cfg.RelaySessionUserID, key); err != nil {
-		log.Printf("desktop: persist account_key failed: %v", err)
+		logError("keychain", "persist account_key failed: %v", err)
 	}
 }
 

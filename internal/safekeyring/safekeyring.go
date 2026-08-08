@@ -18,12 +18,12 @@ package safekeyring
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/attson/atterm/internal/appdir"
+	"github.com/attson/atterm/internal/logging"
 	"github.com/zalando/go-keyring"
 )
 
@@ -57,7 +57,7 @@ func markDegraded(op string, err error) {
 	degraded = true
 	mu.Unlock()
 	if first {
-		log.Printf("keychain unavailable (%s: %v) — falling back to a 0600 file store for this session. "+
+		logging.Warn("keychain", "keychain unavailable (%s: %v) — falling back to a 0600 file store for this session. "+
 			"This is expected for an unsigned/ad-hoc build; sign + notarize the app to use the OS keychain.", op, err)
 	}
 }

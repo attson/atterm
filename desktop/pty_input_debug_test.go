@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/attson/atterm/internal/logging"
 )
 
 func TestPtyInputDebugEnabledOrDefault(t *testing.T) {
@@ -35,10 +37,7 @@ func TestPtyInputDebugTag(t *testing.T) {
 }
 
 func TestLogPtyInputGating(t *testing.T) {
-	var buf strings.Builder
-	prev := activeLogManager
-	activeLogManager = &loggingManager{currentWriter: &buf}
-	defer func() { activeLogManager = prev }()
+	buf := captureLogSink(t)
 
 	off := &configStore{}
 	logPtyInput(off, []byte{0x1b})
@@ -53,5 +52,21 @@ func TestLogPtyInputGating(t *testing.T) {
 	got := buf.String()
 	if !strings.Contains(got, "DEBUG [pty-input] write n=1 hex=1b LONE-ESC") {
 		t.Fatalf("enabled: missing expected debug line, got %q", got)
+	}
+}
+
+// The toggle is the gate for this trace: a user who turns it on must see
+// output regardless of where the general log level happens to sit.
+func TestLogPtyInputIgnoresLogLevel(t *testing.T) {
+	buf := captureLogSink(t)
+	logging.SetLevel(logging.LevelError)
+
+	on := &configStore{}
+	v := true
+	on.cfg.PtyInputDebugEnabled = &v
+	logPtyInput(on, []byte{0x1b, '[', 'O'})
+
+	if !strings.Contains(buf.String(), "DEBUG [pty-input] write n=3 hex=1b5b4f ESC-LEAD") {
+		t.Fatalf("pty-input trace suppressed by log level: %q", buf.String())
 	}
 }

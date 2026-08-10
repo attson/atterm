@@ -29,6 +29,7 @@ atterm/
 │   ├── uplink.go           lazy 远程上传子系统（控制连 + STREAM_REQUEST 触发上传）
 │   ├── updater.go          自动更新（GitHub Releases 拉取 / 下载 / install helper）
 │   ├── scripts/            install-{darwin.sh,linux.sh,windows.ps1} (go:embed)
+│   ├── widget_*.go         桌面挂件：子进程管理 + `--widget` 窗口 + 三平台隐藏（红线 #37）
 │   ├── config.go           ~/.config/atterm/config.json 持久化
 │   ├── uplink_e2e_test.go  端到端协议测试（不依赖 webview）
 │   ├── updater_test.go     updater 单测（semver / asset / cache / dev short-circuit）
@@ -97,6 +98,18 @@ atterm/
 35. **桌面启动 fatal 不再崩进程 = `setStartupFatalError` + StartupError UI**：延续红线 #19，`desktop/app.go` 在 relay host 启动 / 日志系统初始化失败时，**不再** `log.Fatalf`，而是 `setStartupFatalError(msg, logPath)` 记入 `startupFatal *StartupError` 字段，让 webview 还能起来。前端 `App.vue` 除现有 5 步 bootStage 外新增 `loadRecoverySnapshot` 步（在 `getHostInfo` 与 `connectLocalSessionList` 之间），并在 boot 末尾拉一次 `GetStartupError()`，展示 `startupFailureCopy` 按钮 + 日志路径，让用户能直接复制到 issue。**不要**再在 desktop/ 里加裸 `log.Fatalf`；除测试外，任何"没这个就跑不动"的初始化失败都要走 `setStartupFatalError` + return，而不是崩进程。
 
 36. **Web 主入口复用桌面 App，不再维护第二套终端 UI**：`web/src/main-web.ts` 只桥到 `desktop/frontend/src/main.web.ts`，主界面的 tabs / panes / `TaskSidebar` / `TerminalView` / `SettingsDialog` / `AdminPanel` 都来自 `desktop/frontend/src/`。改 Web 端会话列表、右键菜单、置顶、多选、终端输入、文件/图片粘贴、Settings 或 Admin 时，优先改桌面组件和 `platform/web.ts` 桥接；不要重新创建 `web/src/main/`、`web/src/settings/`、`web/src/admin/` 的第二套主界面。浏览器端终端辅助键和文件/图片选择也在 `TerminalView.vue` 内按 `platform.caps` gated：只给 browser/web 显示，发送 `PASTE_IMAGE`/`PASTE_FILE` 必须要求 attached + driver + 非 view-only + `remote_permission=full`。
+
+37. **桌面挂件 = 同一个二进制的 `--widget` 子进程，什么都不连，五条各自踩过坑**：`desktop/widget_*.go` + `desktop/frontend/src/widget/` + `lib/widgetState.ts`。完整设计与排查记录见 [`docs/superpowers/specs/2026-08-10-desk-widget-design.md`](./docs/superpowers/specs/2026-08-10-desk-widget-design.md)，**改这块前必读**。
+
+    (a) **同一个二进制，不是第二个可执行文件**。第二个二进制要多一套 CI 产物矩阵、macOS 单独签名公证、以及一条必须验签的分发链路（红线 #8）。复用已签名的可执行文件这些全为零。前端多入口沿用 `main.web.ts` / `main.capacitor.ts` 的先例。
+
+    (b) **挂件进程不连任何东西**。远程会话列表是第二条 WS 流、内容可能 E2EE 封着，要 `account_key` 才能解——而红线 #21 禁止它离开主进程。所以由主 app 把**已合并、已解封**的投影经子进程 stdin 推下去（NDJSON），意图从 stdout 回来。不开端口、不鉴权、无凭据入子进程。**不要**让挂件自己去连 relay。
+
+    (c) **推送节流必须"合并"而不是"丢弃"**。`widgetProcess.pushLocked` 把窗口内的更新记进 `pending`，由一次性 timer 补发。改回直接 `return` 会丢终止态：`ls` 这类命令在一个 200ms 窗口内跑完，`running`→`completed` 的第二条被丢掉后**不再有事件来纠正**，挂件就一直显示已完成的命令还在跑。`Stop()` 必须取消 pending timer。
+
+    (d) **窗口高度由前端量、不写死**。`WidgetApp.vue` 的 ResizeObserver → `Resize`，Go 只钳制上限。行数 / 字体 / 语言都会改变高度，任何常量都会把卡片底边连圆角一起切掉。
+
+    (e) **macOS 三件事都必须在 `OnStartup` 里 `dispatch_async` 到主队列做**（`widget_window_darwin.go::atterm_widget_configure`）：`setActivationPolicy:Accessory`（Wails 在 `applicationWillFinishLaunching` 硬编码 `Regular`，之前设会被覆盖）+ `setOpaque:NO` + `clearColor`。**`mac.WindowIsTranslucent` 不是透明开关**，它插的 `NSVisualEffectView` 正是圆角外白边的成因。AppKit 调用在非主线程被静默忽略——`OnStartup` 是 Go goroutine 回调，直接调等于没调。
 
 31. **AskUserQuestion form 按键模型是反向工程的，改前必读 memory**：`desktop/feishu/service.go::buildQuestionStrokes` 里 stroke plan 每题分 4 分支（单选 / 多选 / 单选+custom / 多选+custom），每种发的按键序列不一样（数字键单键 / 数字键 + Tab / 数字键 + Enter / 数字键 + ↓ 走位 + Enter / 数字键 + ↓ + Enter on Submit button）—— 这套模型来自反编译 claude-code 2.1.168 二进制找到的 `if (X && Y) { Y(D); return; }` 分支 + 用户手动实测。**改动这个函数前**必须先读 `~/.claude/projects/-Users-attson-code-github-com-attson-atterm/memory/feedback_askform_key_model.md`（血泪史 + 拒绝方案清单）和 `feedback_askform_permission_grant.md`（本机 claude 需先"Yes, and don't ask again" 授权 AskUserQuestion 才能远程回答，否则第一对 `1\r` 被 permission dialog 吃掉，最后一题空 → tool wedges）。**不要**再花时间试 delay tuning / Right-arrow pump / Ctrl+Return via LF —— 都测过不通。这两条见 memory index。
 
@@ -215,6 +228,7 @@ gh run list --repo attson/atterm --limit 10
 | 改 AskUserQuestion form 按键 stroke plan | `desktop/feishu/service.go::buildQuestionStrokes`（4 分支：单选 / 多选 / 单选+custom / 多选+custom；trailing space 是牺牲字符不要去）+ `desktop/feishu/service.go::handleAskFormSubmit`（parse formValue → slots → 拼 stroke → `Router.InjectKeystrokesBySession`，350ms 间距是硬要求）+ `internal/feishu/router.go::InjectKeystrokesBySession`（每键独立 SendInput，首键 inline 后余键 goroutine）。**改前必读**：`memory/feedback_askform_key_model.md` + `feedback_askform_permission_grant.md`（红线 #31）|
 | 改飞书 form 渲染 / widget 结构 | `internal/feishu/anchor_card.go::RenderAskQuestionForm`（signature 含 `mountSeq int64`；每题一行 column_set：select_static 或 multi_select_static + input；widget element_id 必须带 `_<mountSeq>` 后缀）+ `internal/feishu/anchor_card.go::AskFormQuestion`（`MultiSelect bool` + `Options []AskFormOpt`）+ `desktop/feishu/hook_adapter.go::extractAllAskUserQuestions`（`multiSelect` flag 传下去）+ `desktop/feishu/service.go::parseAskFormSlots`（`sel` 单选 string / `selMulti` 多选 []string / `txt` 都 populate）。红线 #32 |
 | 改飞书本地模式 vs relay 模式配置分流 | `desktop/app.go`（模式路由 + `SetFeishuBinding` / `GetFeishuStatus` 分流）+ `desktop/feishu/binding_store_local.go`（local 存钥匙串）+ `internal/relay/admin_http.go::/admin/api/feishu`（relay 存 sqlite `users.db` + `AdminConfig.Feishu`）+ `desktop/frontend/src/components/SettingsFeishu.vue`（模式选择 + `SelectDropdown` 深色 UI）+ i18n。红线 #29 系列 |
+| 改桌面挂件（悬浮窗 / 形象 / 会话行 / 仅 AI 过滤） | `desktop/widget_process.go`（子进程 + 合并式节流）+ `desktop/widget_window.go`（`--widget` 窗口 + `WidgetBridge` + 入口重写）+ `desktop/widget_window_{darwin,windows,linux}.go`（躲 Dock / 任务栏 / Alt-Tab + 透明）+ `desktop/widget_app_bindings.go`（`StartWidget` / `StopWidget` / `PushWidgetState` + 子进程事件路由，activate 复用 `notificationClickEvent`）+ `desktop/plugin_config.go::WidgetConfig` + `desktop/frontend/src/lib/widgetState.ts`（**唯一**的投影逻辑，纯函数 + 34 个单测：波段排序 / 计数 / 文案 / 截断 / 远程标记 / aiOnly 过滤）+ `desktop/frontend/src/widget/{WidgetApp,WidgetSprite}.vue` + `bridge.ts`（走 Wails 运行时全局，不 import `wailsjs/*`）+ `desktop/frontend/src/composables/useDeskWidget.ts`（生命周期 + 推送）+ `desktop/frontend/src/plugins/deskWidget/index.ts`（`companion-window` slot，PluginHost 跳过）+ `desktop/frontend/index.widget.html` / `src/main.widget.ts` / `vite.config.ts`（wails target 双入口）+ i18n `plugins.deskWidget.*`。红线 #37 |
 | 改 demo 站点 / 首页交互 demo | `site/docs/.vitepress/theme/components/mock/*`（Platform / WebSocket 帧 / 文件系统三层拦截 + `fakeSessions` / `mockGoApp` / `replayScripts` / `fakeCommands`）+ `HomeDemo.vue`（挂载前注入 mock，再动态 import 真实 `App.vue`）+ `config.mjs`（vite alias：`@`→桌面前端、`wailsjs`/`opaqueWasm`/`webTabsSnapshot` 桩）+ 对应 `*.test.ts`。**零侵入**：不改 `desktop/frontend` / `web` 源码；改了这些前端接口（Platform / proto 帧 / caps 门控）时 mock 层要同步。细则见 `docs/spec/site.md` |
 
 ## 风格摘要
@@ -271,6 +285,12 @@ gh run list --repo attson/atterm --limit 10
 - ❌ 在 `desktop/` 里的初始化路径写裸 `log.Fatalf`——必须走 `setStartupFatalError(msg, logPath)` + return，webview 才能起来给用户显示可复制的失败信息（红线 #35）
 - ❌ 只在 `useSessionPins.pin/unpin` 之外的地方直接改 `pinnedIds.value.add(...)` / `.delete(...)`——Vue shallow-ref 检测跳过同实例 mutation；必须 clone 出 `new Set(pinnedIds.value)` 再赋值（`useSessionPins.ts` 里有注释；红线 #34 也涉及）
 - ❌ 在 recovery 里给 `sidebar-viewer on local host` pane 写 `session_id` 用于 pin 迁移——那 sid 属于另一实例的 relay，迁到新本机 sid 是跨实例语义漂移（红线 #34）
+- ❌ 让桌面挂件进程自己去连 relay 或本机 mini relay（红线 #37b）；那要把 token 甚至 `account_key` 交给子进程，直接违反红线 #21。由主 app 推投影下去
+- ❌ 把挂件的推送节流改回"窗口内直接丢弃"（红线 #37c）；`ls` 这类一个窗口内跑完的命令，终止态被丢后不再有事件来纠正，挂件会一直显示已完成的命令还在跑
+- ❌ 给挂件窗口写死高度（红线 #37d）；行数 / 字体 / 语言都会改高度，常量会把卡片底边和圆角一起切掉。高度由 ResizeObserver 量出来报给 Go
+- ❌ 用 `mac.WindowIsTranslucent` 给挂件做透明（红线 #37e）；它插的 `NSVisualEffectView` 就是圆角外白边的来源。透明靠 `setOpaque:NO`，且必须 `dispatch_async` 到主队列
+- ❌ 用 `screencapture` 验证挂件窗口；终端进程没有屏幕录制权限，只能拍到壁纸和菜单栏，会得出"窗口没显示"的错误结论。用 PID 比对 System Events 前台进程列表，或看 `[widget] resize` 日志
+- ❌ 给挂件精灵图用 `scale()` / `rotate()` / 小数位移；那是 12×12 像素图，会糊。尺寸取 12 的倍数、整像素平移 + `steps()`
 - ❌ 加新 relay 实例还去改 `realm_id` / 用 env 覆盖——`realm_id` 只从 DB 读，同一物理集群共享同一个（红线 #33）；实例之间也**不要**拉 gossip / 直连，共享状态全走 DB 表
 
 ## 文档导引

@@ -1,0 +1,322 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"sync"
+	"time"
+)
+
+// widgetProcess supervises the companion window ("桌面挂件" / Desk Widget), which runs as a
+// second process of this same executable launched with --widget.
+//
+// Why a child process at all: Wails v2 is single-window, and the widget needs a
+// frameless always-on-top window that outlives focus changes on the main one.
+// Why the SAME binary rather than a second one: a separate executable would
+// need its own CI artifact per platform, its own macOS signing/notarization,
+// and its own slot in the signed-release verification chain (red line #8).
+// Reusing the already-signed executable costs none of that.
+//
+// Why the child connects to nothing: the remote session list is a second WS
+// stream whose contents may be E2EE-sealed, needing account_key to open — and
+// red line #21 forbids account_key leaving the main process. So the main app
+// pushes an already-merged, already-unsealed projection down a pipe instead.
+// Nothing secret ever reaches the child.
+//
+// Wire format both ways is newline-delimited JSON over the child's stdin and
+// stdout. No port, no auth, no discovery: the OS guarantees only parent and
+// child share these descriptors.
+type widgetProcess struct {
+	mu      sync.Mutex
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	running bool
+
+	// lastPayload dedupes identical pushes. META frames can arrive far faster
+	// than a human can read, and re-rendering the same snapshot is pure waste.
+	lastPayload string
+	lastPushAt  time.Time
+	// pending holds the newest payload held back by the throttle, and
+	// flushTimer is the one-shot that delivers it. Together they make the
+	// throttle coalescing rather than lossy — see pushLocked.
+	pending    string
+	flushTimer *time.Timer
+
+	// onEvent receives decoded child→parent events. Set once before Start.
+	onEvent func(widgetEvent)
+}
+
+// widgetPushInterval throttles state pushes. 200ms is below the threshold where
+// a status change feels laggy but well above the rate at which a busy build
+// emits META frames.
+const widgetPushInterval = 200 * time.Millisecond
+
+// widgetEvent is a message from the widget window back to the main app.
+type widgetEvent struct {
+	// Type is "activate" | "collapse" | "move" | "mute" | "hide".
+	Type string `json:"type"`
+	// SessionID is set for "activate": the row the user clicked.
+	SessionID string `json:"sessionId,omitempty"`
+	// Collapsed is set for "collapse".
+	Collapsed bool `json:"collapsed,omitempty"`
+	// X / Y are set for "move": the window's new screen position.
+	X int `json:"x,omitempty"`
+	Y int `json:"y,omitempty"`
+	// MutedUntilUnix is set for "mute"; 0 clears the mute.
+	MutedUntilUnix int64 `json:"mutedUntilUnix,omitempty"`
+	// AIOnly is set for "ai-only": the widget's own menu toggling the filter.
+	AIOnly bool `json:"aiOnly,omitempty"`
+}
+
+// widgetBootstrap is the first line written to the child, before any state. It
+// carries only presentation preferences — never credentials.
+type widgetBootstrap struct {
+	Type      string `json:"type"` // always "bootstrap"
+	Collapsed bool   `json:"collapsed"`
+	X         int    `json:"x"`
+	Y         int    `json:"y"`
+	Locale    string `json:"locale"`
+}
+
+func newWidgetProcess(onEvent func(widgetEvent)) *widgetProcess {
+	return &widgetProcess{onEvent: onEvent}
+}
+
+// Running reports whether a widget process is currently supervised.
+func (p *widgetProcess) Running() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.running
+}
+
+// Start launches the companion window. It is idempotent: starting an already
+// running widget is a no-op, so a config reconcile can call it unconditionally.
+func (p *widgetProcess) Start(boot widgetBootstrap) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.running {
+		return nil
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate own executable: %w", err)
+	}
+
+	cmd := exec.Command(exe, "--widget")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("widget stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		return fmt.Errorf("widget stdout pipe: %w", err)
+	}
+	// The child's stderr joins ours so a crashing widget is diagnosable from the
+	// same log the user already knows how to collect.
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return fmt.Errorf("start widget process: %w", err)
+	}
+
+	p.cmd = cmd
+	p.stdin = stdin
+	p.running = true
+	p.lastPayload = ""
+	p.lastPushAt = time.Time{}
+	p.pending = ""
+	if p.flushTimer != nil {
+		p.flushTimer.Stop()
+		p.flushTimer = nil
+	}
+
+	boot.Type = "bootstrap"
+	if err := writeNDJSON(stdin, boot); err != nil {
+		logWarn("widget", "bootstrap write failed: %v", err)
+	}
+
+	go p.readEvents(stdout)
+	go p.reap(cmd)
+
+	logInfo("widget", "companion window started (pid %d)", cmd.Process.Pid)
+	return nil
+}
+
+// reap waits for the child and clears the running flag.
+//
+// It deliberately does NOT restart. A widget that crashes on startup would
+// otherwise turn into an unbounded fork loop; the user re-enables it from
+// Settings, which is a rare, cheap, and observable action.
+func (p *widgetProcess) reap(cmd *exec.Cmd) {
+	err := cmd.Wait()
+
+	p.mu.Lock()
+	// A newer Start may have replaced cmd already; only clear our own.
+	if p.cmd == cmd {
+		p.running = false
+		p.cmd = nil
+		if p.stdin != nil {
+			_ = p.stdin.Close()
+			p.stdin = nil
+		}
+	}
+	p.mu.Unlock()
+
+	if err != nil && !errors.Is(err, os.ErrProcessDone) {
+		logWarn("widget", "companion window exited: %v", err)
+		return
+	}
+	logInfo("widget", "companion window exited")
+}
+
+// readEvents decodes child→parent NDJSON until the pipe closes.
+func (p *widgetProcess) readEvents(stdout io.ReadCloser) {
+	defer func() { _ = stdout.Close() }()
+	sc := bufio.NewScanner(stdout)
+	// Widget events are tiny; a modest cap keeps a wedged child from growing the
+	// buffer without bound.
+	sc.Buffer(make([]byte, 0, 4096), 64*1024)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var ev widgetEvent
+		if err := json.Unmarshal(line, &ev); err != nil {
+			logWarn("widget", "undecodable event from companion: %v", err)
+			continue
+		}
+		if p.onEvent != nil {
+			p.onEvent(ev)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		logDebug("widget", "event stream ended: %v", err)
+	}
+}
+
+// PushState sends a rendered WidgetState JSON payload to the companion window.
+//
+// `payload` is passed through opaquely: the projection lives in the frontend
+// (lib/widgetState.ts) so it can be unit-tested there, and duplicating the shape
+// in Go would give two definitions to keep in sync.
+//
+// Returns nil when the widget is not running — callers push on every session
+// list change and should not have to check first.
+func (p *widgetProcess) PushState(payload string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pushLocked(payload)
+}
+
+func (p *widgetProcess) pushLocked(payload string) error {
+	if !p.running || p.stdin == nil {
+		return nil
+	}
+	if payload == p.lastPayload {
+		return nil
+	}
+
+	if wait := widgetPushInterval - time.Since(p.lastPushAt); !p.lastPushAt.IsZero() && wait > 0 {
+		// Coalesce, do NOT drop. Dropping loses terminal states outright: a
+		// command that starts and finishes inside one throttle window pushes
+		// "running" and then "completed" ~50ms later, and with no further
+		// session-list change there is never a later push to correct the
+		// stale row — the widget sat on "1 个在跑" indefinitely.
+		//
+		// Keeping only the newest pending payload is safe because each
+		// snapshot is complete; an older one carries nothing the newer lacks.
+		p.pending = payload
+		if p.flushTimer == nil {
+			p.flushTimer = time.AfterFunc(wait, p.flushPending)
+		}
+		return nil
+	}
+
+	return p.writeLocked(payload)
+}
+
+func (p *widgetProcess) writeLocked(payload string) error {
+	if _, err := io.WriteString(p.stdin, payload+"\n"); err != nil {
+		return fmt.Errorf("push widget state: %w", err)
+	}
+	p.lastPayload = payload
+	p.lastPushAt = time.Now()
+	return nil
+}
+
+// flushPending delivers the newest payload held back by the throttle. It runs
+// on a timer goroutine, so it takes the same lock as PushState.
+func (p *widgetProcess) flushPending() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.flushTimer = nil
+	payload := p.pending
+	p.pending = ""
+	if payload == "" {
+		return
+	}
+	// Back through pushLocked rather than writing directly: if another push
+	// landed while this timer was in flight, the window may have reopened or
+	// the payload may now be redundant.
+	if err := p.pushLocked(payload); err != nil {
+		logWarn("widget", "deferred state push failed: %v", err)
+	}
+}
+
+// Stop terminates the companion window. Idempotent.
+func (p *widgetProcess) Stop() {
+	p.mu.Lock()
+	cmd := p.cmd
+	stdin := p.stdin
+	p.running = false
+	p.cmd = nil
+	p.stdin = nil
+	// A queued flush would otherwise fire into a closed pipe.
+	p.pending = ""
+	if p.flushTimer != nil {
+		p.flushTimer.Stop()
+		p.flushTimer = nil
+	}
+	p.mu.Unlock()
+
+	// Closing stdin is the graceful signal: the child treats EOF as "parent is
+	// gone" and exits on its own, which also covers the case where the parent
+	// is SIGKILLed and never reaches the Kill below.
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = cmd.Process.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		logWarn("widget", "companion window ignored EOF; killing")
+		_ = cmd.Process.Kill()
+	}
+}
+
+func writeNDJSON(w io.Writer, v any) error {
+	blob, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(blob, '\n'))
+	return err
+}

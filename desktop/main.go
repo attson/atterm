@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"os"
 
 	"github.com/attson/atterm/internal/appdir"
 	"github.com/attson/atterm/internal/safekeyring"
@@ -20,6 +21,18 @@ var assets embed.FS
 var Version = "dev"
 
 func main() {
+	// The companion window ("桌面挂件" / Desk Widget) is a second process of this same
+	// executable. It must branch before any of the setup below: it owns no
+	// config, no keychain entry, no log file, and no relay host — everything
+	// it renders arrives on stdin. See
+	// docs/superpowers/specs/2026-08-10-desk-widget-design.md.
+	if isWidgetProcess(os.Args[1:]) {
+		if err := runWidgetWindow(assets); err != nil {
+			println("Error:", err.Error())
+		}
+		return
+	}
+
 	// A `wails dev` build leaves Version unset / "dev". Route all of its data
 	// (config, recovery, local relay db, cache, logs, credentials) to a
 	// project-local .atterm-dev directory so development never reads, clobbers,
@@ -72,6 +85,19 @@ func main() {
 	if err := wails.Run(opts); err != nil {
 		println("Error:", err.Error())
 	}
+}
+
+// isWidgetProcess reports whether this process was launched as the companion
+// window. Kept as a plain scan rather than a flag package so it can run before
+// any other initialisation and stays indifferent to whatever else the OS or a
+// launcher appended to argv.
+func isWidgetProcess(args []string) bool {
+	for _, a := range args {
+		if a == "--widget" {
+			return true
+		}
+	}
+	return false
 }
 
 // mergePlatformOptions copies fields that are non-zero on `p` into `into`.

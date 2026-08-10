@@ -663,6 +663,28 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class WidgetConfig {
+	    enabled: boolean;
+	    aiOnly: boolean;
+	    collapsed: boolean;
+	    windowX: number;
+	    windowY: number;
+	    mutedUntilUnix: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WidgetConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.aiOnly = source["aiOnly"];
+	        this.collapsed = source["collapsed"];
+	        this.windowX = source["windowX"];
+	        this.windowY = source["windowY"];
+	        this.mutedUntilUnix = source["mutedUntilUnix"];
+	    }
+	}
 	export class ShortcutsConfig {
 	    bindings: Record<string, string>;
 	
@@ -703,6 +725,7 @@ export namespace main {
 	    fileExplorer: FileExplorerConfig;
 	    translate: TranslateConfig;
 	    shortcuts: ShortcutsConfig;
+	    widget: WidgetConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
@@ -713,6 +736,7 @@ export namespace main {
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);
 	        this.translate = this.convertValues(source["translate"], TranslateConfig);
 	        this.shortcuts = this.convertValues(source["shortcuts"], ShortcutsConfig);
+	        this.widget = this.convertValues(source["widget"], WidgetConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1199,6 +1223,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	
 	export class sshCredential {
 	    password?: string;

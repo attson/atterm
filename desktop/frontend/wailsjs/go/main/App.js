@@ -302,6 +302,10 @@ export function ProbeRelayVersion(arg1, arg2) {
   return window['go']['main']['App']['ProbeRelayVersion'](arg1, arg2);
 }
 
+export function PushWidgetState(arg1) {
+  return window['go']['main']['App']['PushWidgetState'](arg1);
+}
+
 export function ReceivedFilesClearAll() {
   return window['go']['main']['App']['ReceivedFilesClearAll']();
 }
@@ -464,6 +468,14 @@ export function SignOutOtherRelaySessions() {
 
 export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
+}
+
+export function StartWidget() {
+  return window['go']['main']['App']['StartWidget']();
+}
+
+export function StopWidget() {
+  return window['go']['main']['App']['StopWidget']();
 }
 
 export function TranslateOpenAIChat(arg1) {

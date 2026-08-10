@@ -36,6 +36,10 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
     if (!cfg.value) return false;
     if (id === "file-explorer") return cfg.value.fileExplorer.enabled;
     if (id === "translate") return cfg.value.translate.enabled;
+    // The widget block was added after the others, so a config.json written by an
+    // older build has no `widget` key at all — guard rather than throw during the
+    // boot chain (red line #19 wants boot failures attributable, not silent).
+    if (id === "desk-widget") return cfg.value.widget?.enabled ?? false;
     return false;
   }
 
@@ -44,6 +48,7 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
     const next: PluginConfig = JSON.parse(JSON.stringify(cfg.value));
     if (id === "file-explorer") next.fileExplorer.enabled = enabled;
     if (id === "translate") next.translate.enabled = enabled;
+    if (id === "desk-widget" && next.widget) next.widget.enabled = enabled;
     await save(next);
   }
 

@@ -705,6 +705,14 @@ export const en = {
       confirmHardDelete: "Permanently delete {name}? This cannot be undone.",
       saveFailed: "Save failed: {message}",
     },
+    deskWidget: {
+      title: "Desk Widget",
+      description:
+        "A small always-on-top window showing which sessions are running, failed, or waiting for you — AI agents and plain shells alike. Click a row to jump to that tab.",
+      aiOnly: "Only show AI sessions",
+      aiOnlyHint:
+        "Limits the widget to sessions running claude / codex / aider. Off by default: session state comes from OSC 133, so it works for any command.",
+    },
     translate: {
       title: "Translate",
       description: "Translate the selected text via an OpenAI-compatible API; result shown in a floating panel.",

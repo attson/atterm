@@ -155,6 +155,8 @@ export function PickLogFilePath():Promise<string>;
 
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
+export function PushWidgetState(arg1:string):Promise<void>;
+
 export function ReceivedFilesClearAll():Promise<void>;
 
 export function ReceivedFilesClearSession(arg1:string):Promise<void>;
@@ -236,6 +238,10 @@ export function ShowNotification(arg1:string,arg2:string):Promise<void>;
 export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;
+
+export function StartWidget():Promise<void>;
+
+export function StopWidget():Promise<void>;
 
 export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main.TranslateHTTPResponse>;
 

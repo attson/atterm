@@ -707,6 +707,14 @@ export const zhCN = {
       confirmHardDelete: "永久删除 {name}？此操作无法撤销。",
       saveFailed: "保存失败：{message}",
     },
+    deskWidget: {
+      title: "桌面挂件",
+      description:
+        "一个置顶的小窗口，显示哪些会话在跑、失败了、或者在等你输入——AI agent 和普通 shell 一视同仁。点会话行可直接跳到对应标签页。",
+      aiOnly: "仅显示 AI 会话",
+      aiOnlyHint:
+        "只显示跑着 claude / codex / aider 的会话。默认关闭：会话状态来自 OSC 133，任何命令都适用。",
+    },
     translate: {
       title: "翻译",
       description: "通过兼容 OpenAI 的 API 翻译选中文本，并在浮动面板中显示结果。",

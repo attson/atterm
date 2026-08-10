@@ -13,6 +13,32 @@ type PluginConfig struct {
 	FileExplorer FileExplorerConfig `json:"fileExplorer"`
 	Translate    TranslateConfig    `json:"translate"`
 	Shortcuts    ShortcutsConfig    `json:"shortcuts"`
+	Widget       WidgetConfig          `json:"widget"`
+}
+
+// WidgetConfig is the companion-window plugin ("桌面挂件" / Desk Widget) block. Unlike the other
+// plugins it does not render into the main window — enabling it spawns a
+// second process of this same binary with --widget, which owns a frameless
+// always-on-top window. See
+// docs/superpowers/specs/2026-08-10-desk-widget-design.md.
+type WidgetConfig struct {
+	Enabled bool `json:"enabled"`
+	// AIOnly restricts the widget to sessions classified as AI (claude /
+	// codex / aider). Off by default: the widget's state model comes from
+	// OSC 133 and works for any command, which is what separates it from
+	// hook-based tools that only ever see one agent.
+	AIOnly bool `json:"aiOnly"`
+	// Collapsed hides the session list, leaving only the widget + summary header.
+	Collapsed bool `json:"collapsed"`
+	// WindowX / WindowY are the last dragged screen position in logical
+	// pixels. Both -1 means "never positioned" — the widget window then places
+	// itself at the bottom-right of the primary display on first show.
+	WindowX int `json:"windowX"`
+	WindowY int `json:"windowY"`
+	// MutedUntilUnix silences the attention animation (jump + auto-peek)
+	// until this wall-clock second. 0 means not muted. Counts are still
+	// rendered while muted — muting suppresses motion, not information.
+	MutedUntilUnix int64 `json:"mutedUntilUnix"`
 }
 
 type FileExplorerConfig struct {
@@ -96,6 +122,12 @@ func (c *PluginConfig) applyDefaults() {
 	if c.Shortcuts.Bindings == nil {
 		c.Shortcuts.Bindings = map[string]string{}
 	}
+	if c.Widget.WindowX == 0 && c.Widget.WindowY == 0 {
+		// (0,0) is a legal screen position but never a useful default, so it
+		// doubles as the "unset" marker on a zero-valued struct.
+		c.Widget.WindowX = -1
+		c.Widget.WindowY = -1
+	}
 }
 
 // ValidatePluginConfig rejects malformed PluginConfig payloads coming from the
@@ -118,6 +150,19 @@ func ValidatePluginConfig(c PluginConfig) error {
 		if err := json.Unmarshal([]byte(s), &probe); err != nil {
 			return fmt.Errorf("translate.extraParams: not a JSON object (%v)", err)
 		}
+	}
+	// Screen coordinates can legitimately be negative (a display left of or
+	// above the primary one), so only the sentinel and absurd magnitudes are
+	// rejected — a stale position from an unplugged monitor is clamped back
+	// on screen by the widget process, not here.
+	if c.Widget.WindowX < -32000 || c.Widget.WindowX > 32000 {
+		return fmt.Errorf("widget.windowX out of bounds [-32000, 32000]: %d", c.Widget.WindowX)
+	}
+	if c.Widget.WindowY < -32000 || c.Widget.WindowY > 32000 {
+		return fmt.Errorf("widget.windowY out of bounds [-32000, 32000]: %d", c.Widget.WindowY)
+	}
+	if c.Widget.MutedUntilUnix < 0 {
+		return errors.New("widget.mutedUntilUnix must not be negative")
 	}
 	for actionID, binding := range c.Shortcuts.Bindings {
 		if actionID == "" {

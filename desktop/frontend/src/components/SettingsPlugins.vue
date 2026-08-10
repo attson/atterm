@@ -1,18 +1,37 @@
 <script lang="ts" setup>
 import { errText, logError } from "../lib/log";
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
 import type { PluginID } from "../plugins/types";
 import TranslateSettings from "../plugins/translate/TranslateSettings.vue";
 import { useI18n } from "../i18n/useI18n";
+import { usePlatform } from "../platform";
 
 const store = usePluginConfigStore();
 const { t } = useI18n();
+const platform = usePlatform();
+
+// Desktop-only plugins (the desk widget needs a second always-on-top OS window)
+// would be dead toggles in the browser and on iOS, which share this component.
+const visiblePlugins = computed(() =>
+  PLUGINS.filter((p) => !p.desktopOnly || platform.caps.wailsBindings),
+);
 
 onMounted(async () => {
   if (!store.cfg) await store.load();
 });
+
+async function setWidgetAiOnly(aiOnly: boolean) {
+  if (!store.cfg?.widget) return;
+  const next = JSON.parse(JSON.stringify(store.cfg));
+  next.widget.aiOnly = aiOnly;
+  try {
+    await store.save(next);
+  } catch (err) {
+    logError("plugin", "widget aiOnly save failed", { error: errText(err) });
+  }
+}
 
 async function toggle(id: PluginID, enabled: boolean) {
   try {
@@ -31,7 +50,7 @@ async function toggle(id: PluginID, enabled: boolean) {
     </p>
     <div v-if="!store.cfg" class="loading">{{ t("common.loading") }}</div>
     <ul v-else class="plugin-list">
-      <li v-for="p in PLUGINS" :key="p.id" class="plugin-row">
+      <li v-for="p in visiblePlugins" :key="p.id" class="plugin-row">
         <label class="row-head">
           <input
             type="checkbox"
@@ -45,8 +64,19 @@ async function toggle(id: PluginID, enabled: boolean) {
           <p class="muted">{{ t("settings.plugins.panelDragHint") }}</p>
         </div>
         <TranslateSettings v-if="p.id === 'translate' && store.isPluginEnabled('translate')" />
+        <div v-if="p.id === 'desk-widget' && store.isPluginEnabled('desk-widget')" class="widget-settings">
+          <label>
+            <input
+              type="checkbox"
+              :checked="store.cfg?.widget?.aiOnly ?? false"
+              @change="setWidgetAiOnly(($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ t("plugins.deskWidget.aiOnly") }}</span>
+          </label>
+          <p class="muted">{{ t("plugins.deskWidget.aiOnlyHint") }}</p>
+        </div>
       </li>
-      <li v-if="PLUGINS.length === 0" class="empty">{{ t("settings.plugins.noneRegistered") }}</li>
+      <li v-if="visiblePlugins.length === 0" class="empty">{{ t("settings.plugins.noneRegistered") }}</li>
     </ul>
   </section>
 </template>
@@ -90,4 +120,7 @@ async function toggle(id: PluginID, enabled: boolean) {
 .fe-settings { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2d333b; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
 .fe-settings label { display: inline-flex; align-items: center; gap: 6px; }
 .fe-settings .muted { margin: 6px 0 0; opacity: 0.6; font-size: 11px; }
+.widget-settings { margin: 8px 0 0 24px; padding-top: 8px; border-top: 1px solid #2d333b; font-size: 12px; }
+.widget-settings label { display: inline-flex; align-items: center; gap: 6px; }
+.widget-settings .muted { margin: 6px 0 0; opacity: 0.6; font-size: 11px; }
 </style>

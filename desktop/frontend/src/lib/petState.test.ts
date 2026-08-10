@@ -40,37 +40,46 @@ describe("moodOf", () => {
 });
 
 describe("subtitleOf", () => {
-  it("shows the live command while running or waiting", () => {
-    const s = sess({ id: "a", current_command: "npm run build" });
-    expect(subtitleOf(s, "running")).toBe("npm run build");
-    expect(subtitleOf(s, "waiting")).toBe("npm run build");
+  const HOME = "/Users/me";
+
+  it("elides a deep path to its last two segments, like the sidebar", () => {
+    const s = sess({ id: "a", cwd: "/Users/me/code/github.com/attson/atterm" });
+    expect(subtitleOf(s, HOME, "atterm")).toBe("…/attson/atterm");
   });
 
-  it("shows exit code and duration once finished", () => {
+  it("keeps a shallow path under home intact", () => {
+    const s = sess({ id: "a", cwd: "/Users/me/code/atterm" });
+    expect(subtitleOf(s, HOME, "atterm")).toBe("~/code/atterm");
+  });
+
+  it("renders a short path under home verbatim with a tilde", () => {
+    const s = sess({ id: "a", cwd: "/Users/me/proj" });
+    expect(subtitleOf(s, HOME, "proj")).toBe("~/proj");
+  });
+
+  it("is empty when the path would only repeat the title", () => {
+    // A shell whose OSC title is already its directory would otherwise render
+    // the same word on both lines.
+    const s = sess({ id: "a", cwd: "/Users/me" });
+    expect(subtitleOf(s, HOME, "~")).toBe("");
+  });
+
+  it("is empty when the session has no cwd", () => {
+    expect(subtitleOf(sess({ id: "a", cwd: "" }), HOME, "zsh")).toBe("");
+  });
+
+  it("falls back to the absolute path when home is unknown", () => {
+    const s = sess({ id: "a", cwd: "/opt/thing" });
+    expect(subtitleOf(s, "", "thing")).toBe("/opt/thing");
+  });
+
+  it("does not show the command — a truncated command line is noise here", () => {
     const s = sess({
       id: "a",
-      current_command: "go test ./...",
-      command_exit_code: 1,
-      command_duration_ms: 12_000,
+      cwd: "/Users/me/proj",
+      current_command: "claude --permission-mode bypassPermissions",
     });
-    expect(subtitleOf(s, "failed")).toBe("exit 1 · 12s");
-  });
-
-  it("renders exit 0 for a clean finish", () => {
-    const s = sess({ id: "a", command_exit_code: 0, command_duration_ms: 3_000 });
-    expect(subtitleOf(s, "idle")).toBe("exit 0 · 3s");
-  });
-
-  it("omits duration when the wire carried none", () => {
-    const s = sess({ id: "a", command_exit_code: 0 });
-    expect(subtitleOf(s, "idle")).toBe("exit 0");
-  });
-
-  it("formats durations past a minute and past an hour", () => {
-    const min = sess({ id: "a", command_exit_code: 0, command_duration_ms: 92_000 });
-    expect(subtitleOf(min, "idle")).toBe("exit 0 · 1m32s");
-    const hr = sess({ id: "b", command_exit_code: 0, command_duration_ms: 3_930_000 });
-    expect(subtitleOf(hr, "idle")).toBe("exit 0 · 1h05m");
+    expect(subtitleOf(s, HOME, "Claude Code")).toBe("~/proj");
   });
 });
 
@@ -226,14 +235,13 @@ describe("projectPetState — row fields", () => {
     expect(st.rows[0].title).toBe("atterm");
   });
 
-  it("prefers the live command over the cwd, shortened to the executable", () => {
-    // The full command line lives in the subtitle, so the title stays short.
+  it("titles a row by its command and subtitles it with the path", () => {
     const sessions = [
       sess({ id: "a", title: "", cwd: "/Users/me/atterm", current_command: "npm run build" }),
     ];
-    const row = projectPetState(sessions, { nowMs: NOW }).rows[0];
+    const row = projectPetState(sessions, { nowMs: NOW, home: "/Users/me" }).rows[0];
     expect(row.title).toBe("npm");
-    expect(row.subtitle).toBe("npm run build");
+    expect(row.subtitle).toBe("~/atterm");
   });
 
   it("falls back to the launch command when there is no cwd either", () => {
@@ -291,5 +299,51 @@ describe("projectPetState — idle sessions are still sessions", () => {
     const st = projectPetState(sessions, { nowMs: NOW });
     expect(st.headline).toBe("1 个等你输入");
     expect(st.subline).toBe("1 个在跑 · 2 个空闲");
+  });
+});
+
+describe("projectPetState — AI-only filter", () => {
+  const mixed = () => [
+    sess({ id: "ai1", type: "ai", task_state: "running", current_command: "claude" }),
+    sess({ id: "sh1", type: "shell", task_state: "running", current_command: "npm run dev" }),
+    sess({ id: "sh2", type: "shell", task_state: "idle" }),
+  ];
+
+  it("keeps every session when the filter is off", () => {
+    const st = projectPetState(mixed(), { nowMs: NOW });
+    expect(st.rows).toHaveLength(3);
+    expect(st.aiOnly).toBe(false);
+  });
+
+  it("keeps only AI sessions when the filter is on", () => {
+    const st = projectPetState(mixed(), { nowMs: NOW, aiOnly: true });
+    expect(st.rows.map((r) => r.sessionId)).toEqual(["ai1"]);
+    expect(st.aiOnly).toBe(true);
+  });
+
+  it("counts and headline describe the filtered set, not the whole list", () => {
+    // The filter runs before every count, so the header can never advertise
+    // sessions the list does not show.
+    const st = projectPetState(mixed(), { nowMs: NOW, aiOnly: true });
+    expect(st.runningCount).toBe(1);
+    expect(st.idleCount).toBe(0);
+    expect(st.headline).toBe("1 个在跑");
+  });
+
+  it("says which emptiness it is when the filter hides everything", () => {
+    const shells = [sess({ id: "sh", type: "shell", task_state: "idle" })];
+    expect(projectPetState(shells, { nowMs: NOW, aiOnly: true }).headline).toBe(
+      "没有 AI 会话",
+    );
+    expect(projectPetState(shells, { nowMs: NOW }).headline).toBe("1 个空闲");
+  });
+
+  it("still drops closed sessions while filtering", () => {
+    const sessions = [
+      sess({ id: "gone", type: "ai", task_state: "closed" }),
+      sess({ id: "here", type: "ai", task_state: "running" }),
+    ];
+    const st = projectPetState(sessions, { nowMs: NOW, aiOnly: true });
+    expect(st.rows.map((r) => r.sessionId)).toEqual(["here"]);
   });
 });

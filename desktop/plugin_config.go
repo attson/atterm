@@ -16,13 +16,18 @@ type PluginConfig struct {
 	Pet          PetConfig          `json:"pet"`
 }
 
-// PetConfig is the companion-window ("AI 宠物") plugin block. Unlike the other
+// PetConfig is the companion-window plugin ("桌面挂件" / Desk Widget) block. Unlike the other
 // plugins it does not render into the main window — enabling it spawns a
 // second process of this same binary with --pet, which owns a frameless
 // always-on-top window. See
 // docs/superpowers/specs/2026-08-10-ai-pet-companion-window-design.md.
 type PetConfig struct {
 	Enabled bool `json:"enabled"`
+	// AIOnly restricts the widget to sessions classified as AI (claude /
+	// codex / aider). Off by default: the widget's state model comes from
+	// OSC 133 and works for any command, which is what separates it from
+	// hook-based tools that only ever see one agent.
+	AIOnly bool `json:"aiOnly"`
 	// Collapsed hides the session list, leaving only the pet + summary header.
 	Collapsed bool `json:"collapsed"`
 	// WindowX / WindowY are the last dragged screen position in logical

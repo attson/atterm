@@ -3,9 +3,10 @@ import { usePlatform } from "../platform";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { projectPetState, type PetSessionSource } from "../lib/petState";
 import { errText, logWarn } from "../lib/log";
+import { getUserHomeDir } from "../lib/api";
 
 /**
- * usePetCompanion drives the companion ("AI 宠物") window: it starts and stops
+ * usePetCompanion drives the companion window ("桌面挂件" / Desk Widget): it starts and stops
  * the child process from the plugin's enabled flag, and pushes a projected
  * snapshot whenever the merged session list changes.
  *
@@ -34,11 +35,18 @@ export function usePetCompanion(opts: {
   const pet = platform.pet;
 
   let running = false;
+  // Cached once: the home directory only changes across logins, and the
+  // projection needs it to render cwds as `~/…` the way the sidebar does.
+  let home = "";
 
   async function reconcile(enabled: boolean) {
     if (enabled === running) return;
     try {
       if (enabled) {
+        if (!home) {
+          // Non-fatal: without it paths render absolute instead of `~/…`.
+          home = await getUserHomeDir().catch(() => "");
+        }
         await pet.start();
         running = true;
         // Push immediately so the window has content the moment it appears
@@ -69,6 +77,8 @@ export function usePetCompanion(opts: {
     if (!running) return;
     const state = projectPetState(opts.sessions.value, {
       localHostId: opts.localHostId.value,
+      home,
+      aiOnly: store.cfg?.pet?.aiOnly ?? false,
     });
     try {
       await pet.pushState(JSON.stringify(state));
@@ -89,4 +99,11 @@ export function usePetCompanion(opts: {
   );
 
   watch(opts.sessions, () => void push(), { deep: true });
+
+  // Re-push when the AI-only filter flips, so the widget updates on the
+  // setting change itself rather than waiting for the next session event.
+  watch(
+    () => store.cfg?.pet?.aiOnly,
+    () => void push(),
+  );
 }

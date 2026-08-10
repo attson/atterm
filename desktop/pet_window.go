@@ -279,6 +279,13 @@ func (p *PetBridge) Mute(untilUnix int64) {
 	p.emit(petEvent{Type: "mute", MutedUntilUnix: untilUnix})
 }
 
+// SetAIOnly toggles the AI-only filter from the widget's own menu. The filter
+// itself is applied by the projection in the main app; this only reports the
+// user's intent.
+func (p *PetBridge) SetAIOnly(aiOnly bool) {
+	p.emit(petEvent{Type: "ai-only", AIOnly: aiOnly})
+}
+
 // Hide turns the plugin off from the pet's own context menu.
 func (p *PetBridge) Hide() {
 	p.emit(petEvent{Type: "hide"})

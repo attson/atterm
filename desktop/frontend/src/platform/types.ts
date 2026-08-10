@@ -237,7 +237,7 @@ export interface AuxKeyBridge {
   clear(): Promise<void>
 }
 
-// PetBridge drives the companion ("AI 宠物") window: a second process of the
+// PetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the
 // same executable that owns a frameless always-on-top window. Only the Wails
 // platform implements it — web and Capacitor leave it undefined.
 export interface PetBridge {

@@ -665,6 +665,7 @@ export namespace main {
 	}
 	export class PetConfig {
 	    enabled: boolean;
+	    aiOnly: boolean;
 	    collapsed: boolean;
 	    windowX: number;
 	    windowY: number;
@@ -677,6 +678,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
+	        this.aiOnly = source["aiOnly"];
 	        this.collapsed = source["collapsed"];
 	        this.windowX = source["windowX"];
 	        this.windowY = source["windowY"];

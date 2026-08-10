@@ -4,7 +4,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Bindings for the companion ("AI 宠物") window. The frontend owns the state
+// Bindings for the companion window ("桌面挂件" / Desk Widget). The frontend owns the state
 // projection (lib/petState.ts) and the enable flag (PluginConfig.Pet.Enabled);
 // Go owns only the child process.
 
@@ -66,6 +66,10 @@ func (a *App) handlePetEvent(ev petEvent) {
 		})
 	case "mute":
 		a.mutatePetConfig(func(p *PetConfig) { p.MutedUntilUnix = ev.MutedUntilUnix })
+	case "ai-only":
+		// The filter is applied by the projection in the main app, so this
+		// only has to persist; the next push already carries the filtered list.
+		a.mutatePetConfig(func(p *PetConfig) { p.AIOnly = ev.AIOnly })
 	case "hide":
 		// "Hide" from the pet's own menu means "turn the plugin off", so the
 		// Settings toggle and the pet never disagree about whether it is on.

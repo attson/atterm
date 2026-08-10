@@ -1,5 +1,6 @@
 import type { TaskState } from "./taskState";
 import { commandLabel, titleOrCommand } from "./sessionLabel";
+import { shortenCwd } from "./shortenCwd";
 
 /**
  * PetSessionSource lists exactly the fields the projection reads, so both
@@ -52,7 +53,8 @@ export interface PetSessionRow {
   sessionId: string;
   /** Display name — same helper the sidebar row uses. */
   title: string;
-  /** Current command, exit status, or duration. May be empty. */
+  /** Where the session lives — the shortened cwd, same helper and same
+   *  wording as the sidebar row. Empty when it would only repeat the title. */
   subtitle: string;
   state: PetMood;
   /** "claude" | "codex" | … — empty when the session is not classified AI. */
@@ -80,6 +82,9 @@ export interface PetState {
   rows: PetSessionRow[];
   /** Sessions beyond maxRows that were truncated out of `rows`. */
   overflowCount: number;
+  /** Mirrors the aiOnly setting so the widget's own menu can show its state
+   *  without a second channel — the snapshot is pushed on every change. */
+  aiOnly: boolean;
 }
 
 /** Rows shown in the expanded panel. Beyond this the tail is summarised. */
@@ -155,32 +160,24 @@ export function displayTitle(s: PetSessionSource): string {
   return titleOrCommand(labelInput);
 }
 
-function formatDuration(ms: number): string {
-  if (ms <= 0) return "";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m${String(s % 60).padStart(2, "0")}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h${String(m % 60).padStart(2, "0")}m`;
-}
 
 /**
- * subtitleOf describes what the session is doing right now. Running sessions
- * show the live command; finished ones show how they ended, because "exit 1"
- * is the single most useful thing to know at a glance.
+ * subtitleOf gives the row its second line: where the session lives.
+ *
+ * It used to show the current command, which reads as noise in a 252px row —
+ * a truncated `claude --permission-mode by…` tells you nothing you did not
+ * already get from the title, while the directory tells you *which* of your
+ * five claude sessions this is. Uses the sidebar's shortenCwd so both
+ * surfaces elide paths identically.
+ *
+ * Returns "" when the path would only repeat the title (a shell whose OSC
+ * title is already its directory, e.g. "~"), so the row stays one line
+ * instead of saying the same word twice.
  */
-export function subtitleOf(s: PetSessionSource, mood: PetMood): string {
-  const current = (s.current_command ?? "").trim();
-  if (mood === "running" || mood === "waiting") return current;
-
-  const code = s.command_exit_code;
-  const dur = formatDuration(s.command_duration_ms ?? 0);
-  if (typeof code === "number") {
-    const head = `exit ${code}`;
-    return dur ? `${head} · ${dur}` : head;
-  }
-  return current;
+export function subtitleOf(s: PetSessionSource, home: string, title: string): string {
+  const short = shortenCwd(s.cwd, home);
+  if (!short || short === title) return "";
+  return short;
 }
 
 function ageOf(s: PetSessionSource, mood: PetMood, nowMs: number): number {
@@ -204,6 +201,10 @@ function lastActivityOf(s: PetSessionSource): number {
 export interface ProjectPetStateOptions {
   /** Host id of this machine; sessions with a different host_id are remote. */
   localHostId?: string;
+  /** The user's home directory, so cwds render as `~/…` like the sidebar. */
+  home?: string;
+  /** Restrict the list to AI-classified sessions (claude / codex / aider). */
+  aiOnly?: boolean;
   /** Injected for deterministic tests. Defaults to Date.now(). */
   nowMs?: number;
   maxRows?: number;
@@ -223,8 +224,16 @@ export function projectPetState(
   const nowMs = opts.nowMs ?? Date.now();
   const maxRows = opts.maxRows ?? PET_MAX_ROWS;
   const localHostId = (opts.localHostId ?? "").trim();
+  const home = opts.home ?? "";
 
-  const live = sessions.filter((s) => s.task_state !== "closed");
+  const aiOnly = opts.aiOnly ?? false;
+  // `closed` sessions are dropped entirely — a closed session is nothing the
+  // user can act on, and keeping them would let a long-lived window fill with
+  // dead rows. The aiOnly filter runs here too so every count, the headline
+  // and the overflow all describe the same filtered set.
+  const live = sessions.filter(
+    (s) => s.task_state !== "closed" && (!aiOnly || s.type === "ai"),
+  );
 
   // Sort carries the activity key alongside the row so the comparator stays
   // O(n log n) — looking the session back up inside compare() would be O(n²).
@@ -239,10 +248,11 @@ export function projectPetState(
       cwd: s.cwd,
       type: s.type,
     };
+    const title = displayTitle(s);
     const row: PetSessionRow = {
       sessionId: idOf(s),
-      title: displayTitle(s),
-      subtitle: subtitleOf(s, mood),
+      title,
+      subtitle: subtitleOf(s, home, title),
       state: mood,
       kind: s.type === "ai" ? commandLabel(labelInput) : "",
       remoteHost: isRemote ? (s.host ?? "").trim() : "",
@@ -284,9 +294,10 @@ export function projectPetState(
   return {
     mood,
     ...counts,
-    ...summarize(counts),
+    ...summarize(counts, aiOnly),
     rows: rows.slice(0, maxRows),
     overflowCount: Math.max(0, rows.length - maxRows),
+    aiOnly,
   };
 }
 
@@ -309,7 +320,7 @@ interface Counts {
  * the single most common session state, and leaving it out of the count made
  * a window listing ten live sessions announce "没有会话".
  */
-function summarize(c: Counts): { headline: string; subline: string } {
+function summarize(c: Counts, aiOnly: boolean): { headline: string; subline: string } {
   const parts: string[] = [];
   if (c.waitingCount > 0) parts.push(`${c.waitingCount} 个等你输入`);
   if (c.failedCount > 0) parts.push(`${c.failedCount} 个失败`);
@@ -317,7 +328,11 @@ function summarize(c: Counts): { headline: string; subline: string } {
   if (c.completedCount > 0) parts.push(`${c.completedCount} 个已完成`);
   if (c.idleCount > 0) parts.push(`${c.idleCount} 个空闲`);
 
-  if (parts.length === 0) return { headline: "没有会话", subline: "" };
+  if (parts.length === 0) {
+    // Say which emptiness this is: with the filter on, "没有会话" would read as
+    // "nothing is running" when the user may well have ten shells open.
+    return { headline: aiOnly ? "没有 AI 会话" : "没有会话", subline: "" };
+  }
   // Work finished and nothing else going on — worth saying in words rather
   // than as a bare count.
   if (parts.length === 1 && c.completedCount > 0) {

@@ -24,6 +24,7 @@ const EMPTY: PetState = {
   subline: "",
   rows: [],
   overflowCount: 0,
+  aiOnly: false,
 };
 
 /** Measured to size the OS window; see petBridge.resize. */
@@ -149,6 +150,14 @@ function unmute() {
   menuOpen.value = false;
 }
 
+function toggleAiOnly() {
+  menuOpen.value = false;
+  // Optimistic only in the menu's checkmark sense — the authoritative value
+  // comes back on the next pushed snapshot, since the filter is applied by
+  // the projection in the main app.
+  petBridge.setAiOnly(!state.value.aiOnly);
+}
+
 function hidePet() {
   menuOpen.value = false;
   petBridge.hide();
@@ -261,7 +270,11 @@ onUnmounted(() => {
         <button type="button" @click="muteFor(60)">静音 1 小时</button>
       </template>
       <div class="menu-divider" />
-      <button class="danger" type="button" @click="hidePet">隐藏宠物</button>
+      <button type="button" @click="toggleAiOnly">
+        {{ state.aiOnly ? "✓ 仅 AI 会话" : "仅 AI 会话" }}
+      </button>
+      <div class="menu-divider" />
+      <button class="danger" type="button" @click="hidePet">隐藏挂件</button>
     </div>
   </div>
 </template>

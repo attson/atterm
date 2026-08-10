@@ -143,7 +143,7 @@ const remoteListAdapted = computed<RemoteSession[]>(() => remoteList.value.map(a
 
 const sessions = useSessions(localListAdapted, remoteListAdapted);
 
-// The companion ("AI 宠物") window. This must be fed from the MERGED list, not
+// The companion window ("桌面挂件" / Desk Widget). This must be fed from the MERGED list, not
 // from either stream alone: remote sessions arrive on their own WS and may be
 // E2EE-sealed, and the pet process is never given account_key to open them
 // (red line #21). By this point the list is merged and unsealed, so pushing a

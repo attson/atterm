@@ -21,6 +21,11 @@ func TestPetConfigDefaults(t *testing.T) {
 	if c.Pet.MutedUntilUnix != 0 {
 		t.Fatalf("pet must not start muted, got %d", c.Pet.MutedUntilUnix)
 	}
+	if c.Pet.AIOnly {
+		// The widget's whole point is that OSC 133 gives it every command, not
+		// just one vendor's agent; filtering has to be opt-in.
+		t.Fatal("aiOnly must default to off")
+	}
 }
 
 func TestPetConfigDefaultsPreserveDraggedPosition(t *testing.T) {
@@ -43,6 +48,7 @@ func TestPetConfigJSONRoundtrip(t *testing.T) {
 	orig.Pet.WindowX = -1600 // a display left of the primary one
 	orig.Pet.WindowY = 40
 	orig.Pet.MutedUntilUnix = 1_800_000_000
+	orig.Pet.AIOnly = true
 
 	blob, err := json.Marshal(orig)
 	if err != nil {

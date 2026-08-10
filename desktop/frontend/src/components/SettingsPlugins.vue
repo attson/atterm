@@ -22,6 +22,17 @@ onMounted(async () => {
   if (!store.cfg) await store.load();
 });
 
+async function setPetAiOnly(aiOnly: boolean) {
+  if (!store.cfg?.pet) return;
+  const next = JSON.parse(JSON.stringify(store.cfg));
+  next.pet.aiOnly = aiOnly;
+  try {
+    await store.save(next);
+  } catch (err) {
+    logError("plugin", "pet aiOnly save failed", { error: errText(err) });
+  }
+}
+
 async function toggle(id: PluginID, enabled: boolean) {
   try {
     await store.setEnabled(id, enabled);
@@ -53,6 +64,17 @@ async function toggle(id: PluginID, enabled: boolean) {
           <p class="muted">{{ t("settings.plugins.panelDragHint") }}</p>
         </div>
         <TranslateSettings v-if="p.id === 'translate' && store.isPluginEnabled('translate')" />
+        <div v-if="p.id === 'pet' && store.isPluginEnabled('pet')" class="pet-settings">
+          <label>
+            <input
+              type="checkbox"
+              :checked="store.cfg?.pet?.aiOnly ?? false"
+              @change="setPetAiOnly(($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ t("plugins.pet.aiOnly") }}</span>
+          </label>
+          <p class="muted">{{ t("plugins.pet.aiOnlyHint") }}</p>
+        </div>
       </li>
       <li v-if="visiblePlugins.length === 0" class="empty">{{ t("settings.plugins.noneRegistered") }}</li>
     </ul>
@@ -98,4 +120,7 @@ async function toggle(id: PluginID, enabled: boolean) {
 .fe-settings { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2d333b; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
 .fe-settings label { display: inline-flex; align-items: center; gap: 6px; }
 .fe-settings .muted { margin: 6px 0 0; opacity: 0.6; font-size: 11px; }
+.pet-settings { margin: 8px 0 0 24px; padding-top: 8px; border-top: 1px solid #2d333b; font-size: 12px; }
+.pet-settings label { display: inline-flex; align-items: center; gap: 6px; }
+.pet-settings .muted { margin: 6px 0 0; opacity: 0.6; font-size: 11px; }
 </style>

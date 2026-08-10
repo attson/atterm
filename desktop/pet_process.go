@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// petProcess supervises the companion ("AI 宠物") window, which runs as a
+// petProcess supervises the companion window ("桌面挂件" / Desk Widget), which runs as a
 // second process of this same executable launched with --pet.
 //
 // Why a child process at all: Wails v2 is single-window, and the pet needs a
@@ -64,6 +64,8 @@ type petEvent struct {
 	Y int `json:"y,omitempty"`
 	// MutedUntilUnix is set for "mute"; 0 clears the mute.
 	MutedUntilUnix int64 `json:"mutedUntilUnix,omitempty"`
+	// AIOnly is set for "ai-only": the widget's own menu toggling the filter.
+	AIOnly bool `json:"aiOnly,omitempty"`
 }
 
 // petBootstrap is the first line written to the child, before any state. It

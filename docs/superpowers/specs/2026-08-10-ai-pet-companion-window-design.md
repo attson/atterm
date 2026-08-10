@@ -1,4 +1,4 @@
-# AI 宠物：置顶悬浮伴侣窗口
+# 桌面挂件（Desk Widget）：置顶悬浮会话窗口
 
 Date: 2026-08-10
 Status: Implemented
@@ -35,7 +35,7 @@ atterm 已经拥有一套完整的会话状态模型：`internal/session` 通过
 
 ## Non-Goals
 
-- **不做**可对话 AI 伙伴（不接任何 LLM API），宠物只反映状态。
+- **不做**可对话 AI 伙伴（不接任何 LLM API），挂件只反映状态。
 - **不做**养成 / 抽卡 / 等级。
 - **不做**形态 B（宠物+卡片叠）与形态 C（药丸）——抽象按可扩展设计，但本期只落地形态 A。
 - **不做**权限气泡（在宠物窗口里 Allow/Deny）。atterm 的 `waiting_input` 是正则推导的，
@@ -202,6 +202,19 @@ osascript -e 'tell application "System Events" to get unix id of every process w
 - `desktop/pet_process_test.go` — 进程管理器的 NDJSON 编解码与 stdout 事件解析
   （不起真窗口，用假的 stdin/stdout pipe）。
 - 手动验证：三平台各确认「不出现在 Dock/任务栏/Alt-Tab」+ 置顶 + 透明。
+
+## 命名
+
+插件对用户显示为 **桌面挂件 / Desk Widget**，不是"AI 宠物"。它的状态模型来自 OSC 133，
+对 `vim` / `make` / 任意脚本一视同仁——普通 shell 会话同样会出现在列表里，叫"AI 宠物"
+既不准确，也把它相对同类工具（只认某一家 agent 的 hook）的优势说小了。
+
+想要纯 AI 视图的用户可以打开 `PetConfig.AIOnly`（Settings → 插件，或挂件自己的右键菜单）。
+过滤在主 app 的投影里完成，所以计数、标题、溢出提示描述的都是过滤后的同一批会话；过滤后
+为空时标题是"没有 AI 会话"而不是"没有会话"。
+
+**代码内标识仍叫 `pet`**（`PluginID` / `PetConfig` / `pet_*.go` / `petState.ts` / `--pet`）。
+这是个短小的内部代号，不出现在任何 UI 文案里；重命名要动 20 多个文件，收益为零。
 
 ## Open Questions
 

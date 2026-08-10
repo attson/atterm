@@ -706,9 +706,12 @@ export const en = {
       saveFailed: "Save failed: {message}",
     },
     pet: {
-      title: "AI Pet",
+      title: "Desk Widget",
       description:
-        "A small always-on-top companion window showing which sessions are running, failed, or waiting for you. Click a row to jump to that tab.",
+        "A small always-on-top window showing which sessions are running, failed, or waiting for you — AI agents and plain shells alike. Click a row to jump to that tab.",
+      aiOnly: "Only show AI sessions",
+      aiOnlyHint:
+        "Limits the widget to sessions running claude / codex / aider. Off by default: session state comes from OSC 133, so it works for any command.",
     },
     translate: {
       title: "Translate",

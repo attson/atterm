@@ -1,7 +1,7 @@
 import type { ContextMenuPlugin, PluginDescriptor } from "../types";
 
 /**
- * The companion ("AI 宠物") window plugin.
+ * The companion window ("桌面挂件" / Desk Widget) plugin.
  *
  * Unlike every other plugin, this one mounts nothing into the main window: the
  * UI lives in a second process (`AT Term --pet`, see desktop/pet_window.go)

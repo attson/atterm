@@ -2,7 +2,7 @@ import { createApp } from "vue";
 import PetApp from "./pet/PetApp.vue";
 
 /**
- * Entry point for the companion ("AI 宠物") window — the `--pet` process.
+ * Entry point for the companion window ("桌面挂件" / Desk Widget) — the `--pet` process.
  *
  * Deliberately does NOT go through bootstrapApp(): the pet has no platform
  * adapter, no session store, no i18n bundle, no router and no relay. Pulling

@@ -205,7 +205,7 @@ type App struct {
 
 	pluginFS *PluginFS
 
-	// pet supervises the companion ("AI 宠物") window — a second process of
+	// pet supervises the companion window ("桌面挂件" / Desk Widget) — a second process of
 	// this executable launched with --pet. Always non-nil; whether a process
 	// is actually running is petProcess's own state.
 	pet *petProcess

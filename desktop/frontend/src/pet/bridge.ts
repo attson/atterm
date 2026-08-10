@@ -18,6 +18,7 @@ interface PetBridgeMethods {
   Hide(): Promise<void>;
   Resize(height: number): Promise<void>;
   Ready(): Promise<void>;
+  SetAIOnly(aiOnly: boolean): Promise<void>;
 }
 
 interface WailsRuntime {
@@ -91,6 +92,9 @@ export const petBridge = {
   },
   hide(): void {
     call((m) => m.Hide());
+  },
+  setAiOnly(aiOnly: boolean): void {
+    call((m) => m.SetAIOnly(aiOnly));
   },
 };
 

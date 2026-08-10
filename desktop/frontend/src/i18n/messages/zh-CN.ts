@@ -708,9 +708,12 @@ export const zhCN = {
       saveFailed: "保存失败：{message}",
     },
     pet: {
-      title: "AI 宠物",
+      title: "桌面挂件",
       description:
-        "一个置顶的小伴侣窗口，显示哪些会话在跑、失败了、或者在等你输入。点会话行可直接跳到对应标签页。",
+        "一个置顶的小窗口，显示哪些会话在跑、失败了、或者在等你输入——AI agent 和普通 shell 一视同仁。点会话行可直接跳到对应标签页。",
+      aiOnly: "仅显示 AI 会话",
+      aiOnlyHint:
+        "只显示跑着 claude / codex / aider 的会话。默认关闭：会话状态来自 OSC 133，任何命令都适用。",
     },
     translate: {
       title: "翻译",

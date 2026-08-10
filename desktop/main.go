@@ -21,7 +21,7 @@ var assets embed.FS
 var Version = "dev"
 
 func main() {
-	// The companion ("AI 宠物") window is a second process of this same
+	// The companion window ("桌面挂件" / Desk Widget) is a second process of this same
 	// executable. It must branch before any of the setup below: it owns no
 	// config, no keychain entry, no log file, and no relay host — everything
 	// it renders arrives on stdin. See

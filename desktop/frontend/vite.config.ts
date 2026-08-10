@@ -44,7 +44,7 @@ export default defineConfig({
       input: target === 'capacitor'
         ? { index: fileURLToPath(new URL('./index.capacitor.html', import.meta.url)) }
         // The wails target emits two documents into the same dist/: the main
-        // window and the companion ("AI 宠物") window. They share the hashed
+        // window and the companion window ("桌面挂件" / Desk Widget). They share the hashed
         // /assets/* chunks, and desktop/pet_window.go rewrites "/" to
         // index.pet.html for the pet process. Keep them one build so the
         // shared chunks are genuinely shared rather than duplicated.

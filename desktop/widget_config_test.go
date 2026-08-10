@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPetConfigDefaults(t *testing.T) {
+func TestWidgetConfigDefaults(t *testing.T) {
 	var c PluginConfig
 	c.applyDefaults()
 
@@ -28,7 +28,7 @@ func TestPetConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestPetConfigDefaultsPreserveDraggedPosition(t *testing.T) {
+func TestWidgetConfigDefaultsPreserveDraggedPosition(t *testing.T) {
 	// applyDefaults runs on every load; it must not stomp a real position.
 	var c PluginConfig
 	c.Widget.WindowX = 1400
@@ -40,7 +40,7 @@ func TestPetConfigDefaultsPreserveDraggedPosition(t *testing.T) {
 	}
 }
 
-func TestPetConfigJSONRoundtrip(t *testing.T) {
+func TestWidgetConfigJSONRoundtrip(t *testing.T) {
 	var orig PluginConfig
 	orig.applyDefaults()
 	orig.Widget.Enabled = true
@@ -63,7 +63,7 @@ func TestPetConfigJSONRoundtrip(t *testing.T) {
 	}
 }
 
-func TestValidatePluginConfig_PetAcceptsNegativeScreenCoords(t *testing.T) {
+func TestValidatePluginConfig_WidgetAcceptsNegativeScreenCoords(t *testing.T) {
 	// A monitor to the left of / above the primary display yields negative
 	// logical coordinates; rejecting those would strand the widget for anyone
 	// with a multi-display setup.
@@ -77,7 +77,7 @@ func TestValidatePluginConfig_PetAcceptsNegativeScreenCoords(t *testing.T) {
 	}
 }
 
-func TestValidatePluginConfig_PetRejectsAbsurdCoords(t *testing.T) {
+func TestValidatePluginConfig_WidgetRejectsAbsurdCoords(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		x, y int
@@ -99,7 +99,7 @@ func TestValidatePluginConfig_PetRejectsAbsurdCoords(t *testing.T) {
 	}
 }
 
-func TestValidatePluginConfig_PetRejectsNegativeMute(t *testing.T) {
+func TestValidatePluginConfig_WidgetRejectsNegativeMute(t *testing.T) {
 	var c PluginConfig
 	c.applyDefaults()
 	c.Widget.MutedUntilUnix = -1

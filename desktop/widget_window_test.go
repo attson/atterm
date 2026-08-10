@@ -27,7 +27,7 @@ func TestIsWidgetProcess(t *testing.T) {
 	}
 }
 
-func TestPetEntryRewrite(t *testing.T) {
+func TestWidgetEntryRewrite(t *testing.T) {
 	var seen string
 	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = r.URL.Path
@@ -50,7 +50,7 @@ func TestPetEntryRewrite(t *testing.T) {
 	}
 }
 
-func TestPetEntryRewriteDoesNotMutateCallerRequest(t *testing.T) {
+func TestWidgetEntryRewriteDoesNotMutateCallerRequest(t *testing.T) {
 	// The middleware clones before editing; mutating the caller's request
 	// in place would corrupt anything upstream that still holds it.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -62,7 +62,7 @@ func TestPetEntryRewriteDoesNotMutateCallerRequest(t *testing.T) {
 	}
 }
 
-func TestPetGeometryIsSelfConsistent(t *testing.T) {
+func TestWidgetGeometryIsSelfConsistent(t *testing.T) {
 	if widgetWidth <= 0 || widgetHeightInitial <= 0 {
 		t.Fatal("widget geometry must be positive")
 	}
@@ -77,7 +77,7 @@ func TestPetGeometryIsSelfConsistent(t *testing.T) {
 // rendered card) rather than hardcoded, because it varies with row count,
 // font and locale — a constant clipped the card's bottom edge. Go's only job
 // is to reject values that would be nonsense.
-func TestPetResizeHeightBounds(t *testing.T) {
+func TestWidgetResizeHeightBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		in     int

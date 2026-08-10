@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -43,7 +44,7 @@ func attached() (*widgetProcess, *fakePipe) {
 	return p, pipe
 }
 
-func TestPetPushStateWritesNDJSON(t *testing.T) {
+func TestWidgetPushStateWritesNDJSON(t *testing.T) {
 	p, pipe := attached()
 
 	if err := p.PushState(`{"mood":"running"}`); err != nil {
@@ -55,7 +56,7 @@ func TestPetPushStateWritesNDJSON(t *testing.T) {
 	}
 }
 
-func TestPetPushStateSkipsIdenticalPayload(t *testing.T) {
+func TestWidgetPushStateSkipsIdenticalPayload(t *testing.T) {
 	p, pipe := attached()
 	payload := `{"mood":"running"}`
 
@@ -69,26 +70,83 @@ func TestPetPushStateSkipsIdenticalPayload(t *testing.T) {
 	}
 }
 
-func TestPetPushStateThrottlesRapidChanges(t *testing.T) {
+func TestWidgetPushStateThrottlesRapidChanges(t *testing.T) {
 	p, pipe := attached()
 
 	_ = p.PushState(`{"n":1}`)
-	// A distinct payload arriving inside the throttle window is dropped, not
-	// queued — the next snapshot is complete, so nothing is lost.
+	// A distinct payload arriving inside the throttle window is held back, not
+	// written immediately.
 	_ = p.PushState(`{"n":2}`)
 
 	if n := strings.Count(pipe.String(), "\n"); n != 1 {
-		t.Fatalf("expected throttling to drop the second push; got %d lines", n)
-	}
-
-	p.lastPushAt = time.Now().Add(-widgetPushInterval - time.Millisecond)
-	_ = p.PushState(`{"n":3}`)
-	if n := strings.Count(pipe.String(), "\n"); n != 2 {
-		t.Fatalf("expected push after the throttle window; got %d lines", n)
+		t.Fatalf("expected the second push to be throttled; got %d lines", n)
 	}
 }
 
-func TestPetPushStateNoopWhenNotRunning(t *testing.T) {
+// Regression: the throttle used to DROP anything inside its window. A command
+// that starts and finishes within 200ms — `ls` does — pushed "running" and
+// then "completed" moments later, and the second was discarded. The widget
+// then showed a finished command as still running until some unrelated
+// session-list change happened to land outside a throttle window.
+func TestWidgetPushStateDeliversTheLastStateAfterTheWindow(t *testing.T) {
+	p, pipe := attached()
+
+	_ = p.PushState(`{"state":"running"}`)
+	_ = p.PushState(`{"state":"completed"}`) // throttled, must not be lost
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(pipe.String(), `{"state":"completed"}`) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("terminal state never delivered; pipe had %q", pipe.String())
+}
+
+func TestWidgetPushStateCoalescesToTheNewestPayload(t *testing.T) {
+	p, pipe := attached()
+
+	_ = p.PushState(`{"n":1}`)
+	for i := 2; i <= 6; i++ {
+		_ = p.PushState(fmt.Sprintf(`{"n":%d}`, i))
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(pipe.String(), `{"n":6}`) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	out := pipe.String()
+	if !strings.Contains(out, `{"n":6}`) {
+		t.Fatalf("newest payload never delivered; got %q", out)
+	}
+	// Each snapshot is complete on its own, so only the newest needs to land;
+	// replaying the intermediates would be wasted IPC and visible flicker.
+	for _, stale := range []string{`{"n":2}`, `{"n":3}`, `{"n":4}`, `{"n":5}`} {
+		if strings.Contains(out, stale) {
+			t.Fatalf("intermediate payload %s should have been coalesced away; got %q", stale, out)
+		}
+	}
+}
+
+func TestWidgetStopCancelsAPendingFlush(t *testing.T) {
+	p, pipe := attached()
+
+	_ = p.PushState(`{"n":1}`)
+	_ = p.PushState(`{"n":2}`) // queued behind the throttle
+	p.Stop()                   // must cancel it — the pipe is closed now
+
+	time.Sleep(widgetPushInterval + 150*time.Millisecond)
+	if strings.Contains(pipe.String(), `{"n":2}`) {
+		t.Fatal("a queued flush fired after Stop; it would write to a closed pipe")
+	}
+}
+
+func TestWidgetPushStateNoopWhenNotRunning(t *testing.T) {
 	pipe := &fakePipe{}
 	p := &widgetProcess{running: false, stdin: pipe}
 
@@ -102,7 +160,7 @@ func TestPetPushStateNoopWhenNotRunning(t *testing.T) {
 	}
 }
 
-func TestPetReadEventsDecodesLines(t *testing.T) {
+func TestWidgetReadEventsDecodesLines(t *testing.T) {
 	r, w := io.Pipe()
 
 	var (
@@ -153,7 +211,7 @@ func TestPetReadEventsDecodesLines(t *testing.T) {
 	}
 }
 
-func TestPetBootstrapCarriesNoCredentials(t *testing.T) {
+func TestWidgetBootstrapCarriesNoCredentials(t *testing.T) {
 	// Red line #21: nothing secret may reach the child. Assert on the encoded
 	// shape so adding a token field to widgetBootstrap fails loudly here.
 	blob, err := json.Marshal(widgetBootstrap{
@@ -175,7 +233,7 @@ func TestPetBootstrapCarriesNoCredentials(t *testing.T) {
 	}
 }
 
-func TestPetStopClosesStdinAndClearsRunning(t *testing.T) {
+func TestWidgetStopClosesStdinAndClearsRunning(t *testing.T) {
 	p, pipe := attached()
 
 	// No cmd attached: Stop must still close stdin (the child's EOF suicide
@@ -190,7 +248,7 @@ func TestPetStopClosesStdinAndClearsRunning(t *testing.T) {
 	}
 }
 
-func TestPetStopIsIdempotent(t *testing.T) {
+func TestWidgetStopIsIdempotent(t *testing.T) {
 	p, _ := attached()
 	p.Stop()
 	p.Stop() // must not panic on the now-nil cmd/stdin

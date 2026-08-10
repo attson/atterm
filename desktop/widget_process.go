@@ -41,6 +41,11 @@ type widgetProcess struct {
 	// than a human can read, and re-rendering the same snapshot is pure waste.
 	lastPayload string
 	lastPushAt  time.Time
+	// pending holds the newest payload held back by the throttle, and
+	// flushTimer is the one-shot that delivers it. Together they make the
+	// throttle coalescing rather than lossy — see pushLocked.
+	pending    string
+	flushTimer *time.Timer
 
 	// onEvent receives decoded child→parent events. Set once before Start.
 	onEvent func(widgetEvent)
@@ -127,6 +132,11 @@ func (p *widgetProcess) Start(boot widgetBootstrap) error {
 	p.running = true
 	p.lastPayload = ""
 	p.lastPushAt = time.Time{}
+	p.pending = ""
+	if p.flushTimer != nil {
+		p.flushTimer.Stop()
+		p.flushTimer = nil
+	}
 
 	boot.Type = "bootstrap"
 	if err := writeNDJSON(stdin, boot); err != nil {
@@ -204,24 +214,63 @@ func (p *widgetProcess) readEvents(stdout io.ReadCloser) {
 func (p *widgetProcess) PushState(payload string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.pushLocked(payload)
+}
+
+func (p *widgetProcess) pushLocked(payload string) error {
 	if !p.running || p.stdin == nil {
 		return nil
 	}
 	if payload == p.lastPayload {
 		return nil
 	}
-	if !p.lastPushAt.IsZero() && time.Since(p.lastPushAt) < widgetPushInterval {
-		// Drop rather than queue: the next push carries the whole snapshot,
-		// so a skipped intermediate state is never missing information.
+
+	if wait := widgetPushInterval - time.Since(p.lastPushAt); !p.lastPushAt.IsZero() && wait > 0 {
+		// Coalesce, do NOT drop. Dropping loses terminal states outright: a
+		// command that starts and finishes inside one throttle window pushes
+		// "running" and then "completed" ~50ms later, and with no further
+		// session-list change there is never a later push to correct the
+		// stale row — the widget sat on "1 个在跑" indefinitely.
+		//
+		// Keeping only the newest pending payload is safe because each
+		// snapshot is complete; an older one carries nothing the newer lacks.
+		p.pending = payload
+		if p.flushTimer == nil {
+			p.flushTimer = time.AfterFunc(wait, p.flushPending)
+		}
 		return nil
 	}
 
+	return p.writeLocked(payload)
+}
+
+func (p *widgetProcess) writeLocked(payload string) error {
 	if _, err := io.WriteString(p.stdin, payload+"\n"); err != nil {
 		return fmt.Errorf("push widget state: %w", err)
 	}
 	p.lastPayload = payload
 	p.lastPushAt = time.Now()
 	return nil
+}
+
+// flushPending delivers the newest payload held back by the throttle. It runs
+// on a timer goroutine, so it takes the same lock as PushState.
+func (p *widgetProcess) flushPending() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.flushTimer = nil
+	payload := p.pending
+	p.pending = ""
+	if payload == "" {
+		return
+	}
+	// Back through pushLocked rather than writing directly: if another push
+	// landed while this timer was in flight, the window may have reopened or
+	// the payload may now be redundant.
+	if err := p.pushLocked(payload); err != nil {
+		logWarn("widget", "deferred state push failed: %v", err)
+	}
 }
 
 // Stop terminates the companion window. Idempotent.
@@ -232,6 +281,12 @@ func (p *widgetProcess) Stop() {
 	p.running = false
 	p.cmd = nil
 	p.stdin = nil
+	// A queued flush would otherwise fire into a closed pipe.
+	p.pending = ""
+	if p.flushTimer != nil {
+		p.flushTimer.Stop()
+		p.flushTimer = nil
+	}
 	p.mu.Unlock()
 
 	// Closing stdin is the graceful signal: the child treats EOF as "parent is

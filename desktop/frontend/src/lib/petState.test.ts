@@ -241,3 +241,55 @@ describe("projectPetState — row fields", () => {
     expect(projectPetState(sessions, { nowMs: NOW }).rows[0].title).toBe("zsh");
   });
 });
+
+describe("projectPetState — idle sessions are still sessions", () => {
+  it("counts shells sitting at a prompt instead of claiming there are none", () => {
+    // Regression: idle was not a band, so a window listing ten live sessions
+    // announced "没有会话" while rendering all ten below it.
+    const sessions = Array.from({ length: 10 }, (_, i) =>
+      sess({ id: `s${i}`, task_state: "idle" }),
+    );
+    const st = projectPetState(sessions, { nowMs: NOW });
+    expect(st.idleCount).toBe(10);
+    expect(st.headline).toBe("10 个空闲");
+    expect(st.subline).toBe("");
+  });
+
+  it("still reports no sessions when there really are none", () => {
+    const st = projectPetState([], { nowMs: NOW });
+    expect(st.idleCount).toBe(0);
+    expect(st.headline).toBe("没有会话");
+  });
+
+  it("does not count a completed session in both the completed and idle bands", () => {
+    const sessions = [
+      sess({ id: "done", task_state: "completed" }),
+      sess({ id: "resting", task_state: "idle" }),
+    ];
+    const st = projectPetState(sessions, { nowMs: NOW });
+    expect(st.completedCount).toBe(1);
+    expect(st.idleCount).toBe(1);
+    expect(st.headline).toBe("1 个已完成");
+    expect(st.subline).toBe("1 个空闲");
+  });
+
+  it("counts a disconnected session as idle rather than failed", () => {
+    const st = projectPetState([sess({ id: "gone", task_state: "disconnected" })], {
+      nowMs: NOW,
+    });
+    expect(st.idleCount).toBe(1);
+    expect(st.failedCount).toBe(0);
+  });
+
+  it("keeps idle last so the actionable bands lead", () => {
+    const sessions = [
+      sess({ id: "w", task_state: "waiting_input" }),
+      sess({ id: "r", task_state: "running" }),
+      sess({ id: "i1", task_state: "idle" }),
+      sess({ id: "i2", task_state: "idle" }),
+    ];
+    const st = projectPetState(sessions, { nowMs: NOW });
+    expect(st.headline).toBe("1 个等你输入");
+    expect(st.subline).toBe("1 个在跑 · 2 个空闲");
+  });
+});

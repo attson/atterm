@@ -70,6 +70,9 @@ export interface PetState {
   runningCount: number;
   failedCount: number;
   completedCount: number;
+  /** Sessions doing nothing and not recently finished — typically a shell
+   *  sitting at its prompt, which is the most common state of all. */
+  idleCount: number;
   /** Primary line, e.g. "1 个等你输入". */
   headline: string;
   /** Secondary line, e.g. "2 个在跑 · 1 个已完成". */
@@ -268,13 +271,20 @@ export function projectPetState(
     if (MOOD_RANK[r.state] > MOOD_RANK[mood]) mood = r.state;
   }
 
-  const counts = { waitingCount, failedCount, runningCount, completedCount };
+  // Everything else in the idle band: shells sitting at a prompt, and
+  // disconnected sessions. Subtracting completed stops a finished session
+  // being counted in two bands at once.
+  const idleCount = Math.max(
+    0,
+    rows.filter((r) => r.state === "idle").length - completedCount,
+  );
+
+  const counts = { waitingCount, failedCount, runningCount, completedCount, idleCount };
 
   return {
     mood,
     ...counts,
-    headline: headlineFor(counts),
-    subline: sublineFor(counts),
+    ...summarize(counts),
     rows: rows.slice(0, maxRows),
     overflowCount: Math.max(0, rows.length - maxRows),
   };
@@ -285,26 +295,33 @@ interface Counts {
   failedCount: number;
   runningCount: number;
   completedCount: number;
-}
-
-function headlineFor(c: Counts): string {
-  if (c.waitingCount > 0) return `${c.waitingCount} 个等你输入`;
-  if (c.failedCount > 0) return `${c.failedCount} 个失败`;
-  if (c.runningCount > 0) return `${c.runningCount} 个在跑`;
-  if (c.completedCount > 0) return "都跑完了";
-  return "没有会话";
+  idleCount: number;
 }
 
 /**
- * sublineFor lists the bands the headline did NOT already cover, so the two
- * lines never repeat the same number back at the user.
+ * summarize turns the counts into the two header lines.
+ *
+ * Bands are listed in priority order and the first one becomes the headline,
+ * the rest the subline — so the two lines never repeat the same number, and
+ * every non-zero band is accounted for exactly once.
+ *
+ * The idle band matters more than it looks: a shell sitting at its prompt is
+ * the single most common session state, and leaving it out of the count made
+ * a window listing ten live sessions announce "没有会话".
  */
-function sublineFor(c: Counts): string {
+function summarize(c: Counts): { headline: string; subline: string } {
   const parts: string[] = [];
-  if (c.waitingCount > 0 && c.failedCount > 0) parts.push(`${c.failedCount} 个失败`);
-  if (c.waitingCount + c.failedCount > 0 && c.runningCount > 0) {
-    parts.push(`${c.runningCount} 个在跑`);
-  }
+  if (c.waitingCount > 0) parts.push(`${c.waitingCount} 个等你输入`);
+  if (c.failedCount > 0) parts.push(`${c.failedCount} 个失败`);
+  if (c.runningCount > 0) parts.push(`${c.runningCount} 个在跑`);
   if (c.completedCount > 0) parts.push(`${c.completedCount} 个已完成`);
-  return parts.join(" · ");
+  if (c.idleCount > 0) parts.push(`${c.idleCount} 个空闲`);
+
+  if (parts.length === 0) return { headline: "没有会话", subline: "" };
+  // Work finished and nothing else going on — worth saying in words rather
+  // than as a bare count.
+  if (parts.length === 1 && c.completedCount > 0) {
+    return { headline: "都跑完了", subline: parts[0] };
+  }
+  return { headline: parts[0], subline: parts.slice(1).join(" · ") };
 }

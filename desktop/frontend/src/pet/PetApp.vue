@@ -19,6 +19,7 @@ const EMPTY: PetState = {
   runningCount: 0,
   failedCount: 0,
   completedCount: 0,
+  idleCount: 0,
   headline: "连接中…",
   subline: "",
   rows: [],
@@ -115,12 +116,16 @@ function toggleCollapsed() {
   petBridge.setCollapsed(collapsed.value);
 }
 
-function onHeaderEnter() {
+// Peek tracks the pointer over the WHOLE card, not just the header: opening
+// the list on header-hover and closing it on header-leave meant moving the
+// pointer down onto a session row instantly collapsed the list out from under
+// it, so the rows could never actually be clicked.
+function onPeekEnter() {
   if (!collapsed.value || autoPeekTimer !== null) return;
   peeking.value = true;
 }
 
-function onHeaderLeave() {
+function onPeekLeave() {
   // An auto-peek owns the window until its timer fires; a stray mouse-out
   // must not cut the 3s attention window short.
   if (!collapsed.value || autoPeekTimer !== null) return;
@@ -199,13 +204,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="cardEl" class="pet-window" @contextmenu="openMenu">
-    <header
-      class="pet-header"
-      @click="toggleCollapsed"
-      @mouseenter="onHeaderEnter"
-      @mouseleave="onHeaderLeave"
-    >
+  <div
+    ref="cardEl"
+    class="pet-window"
+    @contextmenu="openMenu"
+    @mouseenter="onPeekEnter"
+    @mouseleave="onPeekLeave"
+  >
+    <header class="pet-header" @click="toggleCollapsed">
       <div class="sprite-wrap">
         <PetSprite :mood="state.mood" :muted="muted" :size="40" />
         <span v-if="state.waitingCount > 0" class="badge">{{ state.waitingCount }}</span>

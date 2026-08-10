@@ -302,6 +302,10 @@ export function ProbeRelayVersion(arg1, arg2) {
   return window['go']['main']['App']['ProbeRelayVersion'](arg1, arg2);
 }
 
+export function PushPetState(arg1) {
+  return window['go']['main']['App']['PushPetState'](arg1);
+}
+
 export function ReceivedFilesClearAll() {
   return window['go']['main']['App']['ReceivedFilesClearAll']();
 }
@@ -466,6 +470,14 @@ export function StartDownload() {
   return window['go']['main']['App']['StartDownload']();
 }
 
+export function StartPet() {
+  return window['go']['main']['App']['StartPet']();
+}
+
+export function StopPet() {
+  return window['go']['main']['App']['StopPet']();
+}
+
 export function TranslateOpenAIChat(arg1) {
   return window['go']['main']['App']['TranslateOpenAIChat'](arg1);
 }
@@ -476,16 +488,4 @@ export function UpdateSSHHost(arg1, arg2) {
 
 export function UpdateSSHKey(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['UpdateSSHKey'](arg1, arg2, arg3, arg4);
-}
-
-export function StartPet() {
-  return window['go']['main']['App']['StartPet']();
-}
-
-export function StopPet() {
-  return window['go']['main']['App']['StopPet']();
-}
-
-export function PushPetState(arg1) {
-  return window['go']['main']['App']['PushPetState'](arg1);
 }

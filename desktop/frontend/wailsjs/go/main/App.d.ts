@@ -155,6 +155,8 @@ export function PickLogFilePath():Promise<string>;
 
 export function ProbeRelayVersion(arg1:string,arg2:boolean):Promise<void>;
 
+export function PushPetState(arg1:string):Promise<void>;
+
 export function ReceivedFilesClearAll():Promise<void>;
 
 export function ReceivedFilesClearSession(arg1:string):Promise<void>;
@@ -237,14 +239,12 @@ export function SignOutOtherRelaySessions():Promise<main.SignOutOthersResult>;
 
 export function StartDownload():Promise<void>;
 
+export function StartPet():Promise<void>;
+
+export function StopPet():Promise<void>;
+
 export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main.TranslateHTTPResponse>;
 
 export function UpdateSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<void>;
 
 export function UpdateSSHKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
-
-export function StartPet():Promise<void>;
-
-export function StopPet():Promise<void>;
-
-export function PushPetState(arg1:string):Promise<void>;

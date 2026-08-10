@@ -461,15 +461,18 @@ type configStore struct {
 
 func loadConfig() *configStore {
 	s := &configStore{}
-	p := configPath()
-	if p == "" {
-		return s
+	if p := configPath(); p != "" {
+		if data, err := os.ReadFile(p); err == nil {
+			_ = json.Unmarshal(data, &s.cfg)
+		}
 	}
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return s
-	}
-	_ = json.Unmarshal(data, &s.cfg)
+	// applyDefaults MUST run on every path, including "no config file yet".
+	// It used to be skipped when ReadFile failed, which is exactly the first
+	// run: the frontend was then handed a zero-valued plugin block, and
+	// because ValidatePluginConfig rejects panelWidthPx=0, enabling ANY
+	// plugin failed with "fileExplorer.panelWidthPx out of bounds" until the
+	// app was restarted (the second load reads the file and does apply
+	// defaults, which is what made this look intermittent).
 	s.cfg.Plugins.applyDefaults()
 	return s
 }

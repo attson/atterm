@@ -669,11 +669,11 @@ export namespace main {
 	    windowX: number;
 	    windowY: number;
 	    mutedUntilUnix: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PetConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -685,11 +685,11 @@ export namespace main {
 	}
 	export class ShortcutsConfig {
 	    bindings: Record<string, string>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ShortcutsConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.bindings = source["bindings"];
@@ -724,11 +724,11 @@ export namespace main {
 	    translate: TranslateConfig;
 	    shortcuts: ShortcutsConfig;
 	    pet: PetConfig;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);

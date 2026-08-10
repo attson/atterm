@@ -1022,7 +1022,7 @@ export namespace main {
 	    user: string;
 	    auth_kind: string;
 	    key_id?: string;
-	    group?: string;
+	    tags?: string[];
 	    note?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -1038,7 +1038,7 @@ export namespace main {
 	        this.user = source["user"];
 	        this.auth_kind = source["auth_kind"];
 	        this.key_id = source["key_id"];
-	        this.group = source["group"];
+	        this.tags = source["tags"];
 	        this.note = source["note"];
 	    }
 	}

@@ -34,15 +34,15 @@ func (a *App) markSSHHostsDirty() {
 // Credentials (password / private key / passphrase) live in the keyring keyed
 // by ID, never here.
 type SSHHost struct {
-	ID       string `json:"id"`
-	Alias    string `json:"alias,omitempty"`
-	Host     string `json:"host"`
-	Port     string `json:"port,omitempty"`
-	User     string `json:"user"`
-	AuthKind string `json:"auth_kind"`        // "password" | "key"
-	KeyID    string `json:"key_id,omitempty"` // referenced SSHKey when auth_kind=="key"
-	Group    string `json:"group,omitempty"`
-	Note     string `json:"note,omitempty"`
+	ID       string   `json:"id"`
+	Alias    string   `json:"alias,omitempty"`
+	Host     string   `json:"host"`
+	Port     string   `json:"port,omitempty"`
+	User     string   `json:"user"`
+	AuthKind string   `json:"auth_kind"`        // "password" | "key"
+	KeyID    string   `json:"key_id,omitempty"` // referenced SSHKey when auth_kind=="key"
+	Tags     []string `json:"tags,omitempty"`
+	Note     string   `json:"note,omitempty"`
 }
 
 // sshCredential is JSON-encoded into a single keyring entry keyed by host ID.

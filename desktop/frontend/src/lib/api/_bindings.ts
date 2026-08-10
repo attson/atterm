@@ -78,7 +78,7 @@ export interface SSHHost {
   user: string;
   auth_kind: "password" | "key";
   key_id?: string;
-  group?: string;
+  tags?: string[];
   note?: string;
 }
 

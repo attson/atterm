@@ -662,6 +662,16 @@ function stateLabel(state: string | undefined): string {
 .group-count { margin-left: auto; font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; }
 .task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; position: relative; }
 .task-row.has-close { padding-right: 32px; }
+/* The close × is a per-row action, not status: keep it out of the scan path
+   until the row is pointed at. Touch has no hover, so it stays visible there.
+   `.active` keeps it reachable on the row the user is actually working in. */
+.task-row :deep(.row-close) { opacity: 0; transition: opacity 100ms; }
+.task-row:hover :deep(.row-close),
+.task-row:focus-within :deep(.row-close),
+.task-row.active :deep(.row-close) { opacity: 1; }
+@media (hover: none) {
+  .task-row :deep(.row-close) { opacity: 1; }
+}
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
 .task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }
 .task-row.active:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }

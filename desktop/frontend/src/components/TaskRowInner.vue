@@ -38,7 +38,7 @@ function stateLabel(state: string | undefined): string {
 </script>
 
 <template>
-  <span class="row-top" :class="{ 'has-close': props.showClose }">
+  <span class="row-top">
     <TaskStateIcon
       :state="(props.session.task_state as TaskState | undefined) ?? 'idle'"
     />
@@ -50,7 +50,9 @@ function stateLabel(state: string | undefined): string {
     <span class="cmd-and-cwd" :title="rowTitle(props.session)">
       <span class="cmd">{{ titleOrCommand(props.session) }}</span>
     </span>
-    <span v-if="props.session.unread" class="unread-dot" data-test="unread-dot">●</span>
+    <!-- Unread dot and "mark read" are one control: the dot IS the button,
+         and it swaps to a check on hover/focus. Two separate affordances ate
+         ~45px of a ~224px row and left the title barely half the width. -->
     <span
       v-if="props.session.unread"
       class="row-mark-read"
@@ -63,8 +65,9 @@ function stateLabel(state: string | undefined): string {
       @keydown.enter.stop.prevent="emit('markRead')"
       @keydown.space.stop.prevent="emit('markRead')"
     >
+      <span class="unread-dot" data-test="unread-dot" aria-hidden="true">●</span>
       <!-- ✓ (U+2713) renders as .notdef on iOS 26.3. -->
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="read-check" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M3 8 l3 3 l7 -7" />
       </svg>
     </span>
@@ -92,20 +95,28 @@ function stateLabel(state: string | undefined): string {
 
 <style scoped>
 .row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.row-top.has-close { padding-right: 24px; box-sizing: border-box; }
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
 .cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; padding-left: 18px; }
-.unread-dot { font-size: 9px; color: currentColor; }
-.row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
+/* One 16px slot holds either glyph, so swapping them never reflows the row. */
+.row-mark-read {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  cursor: pointer; border-radius: 4px; color: currentColor;
+}
+.unread-dot { font-size: 9px; line-height: 1; }
+.read-check { display: none; }
+.row-mark-read:hover, .row-mark-read:focus-visible { background: rgba(255, 255, 255, 0.12); outline: none; }
+.row-mark-read:hover .unread-dot, .row-mark-read:focus-visible .unread-dot { display: none; }
+.row-mark-read:hover .read-check, .row-mark-read:focus-visible .read-check { display: block; }
+
 .row-close {
-  position: absolute;
-  top: 0;
-  right: 0;
-  font-size: 13px;
-  line-height: 1;
-  padding: 0 4px;
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  font-size: 13px; line-height: 1;
   cursor: pointer;
   color: var(--fg-dim);
   border-radius: 4px;

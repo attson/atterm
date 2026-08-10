@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-export type MenuItem = { key: string; label: string; disabled?: boolean };
+export type MenuItem = {
+  key: string;
+  label: string;
+  disabled?: boolean;
+  // Draws a divider above this item, for setting a destructive action apart.
+  separatorBefore?: boolean;
+};
 
 const props = withDefaults(defineProps<{
   open: boolean;
@@ -96,9 +102,14 @@ onBeforeUnmount(() => {
     @focusout.capture="onFocusOut"
     @contextmenu.prevent
   >
+    <template v-for="item in items" :key="item.key">
+    <div
+      v-if="item.separatorBefore"
+      class="menu-separator"
+      :data-test="`session-row-menu-separator-${item.key}`"
+      role="separator"
+    />
     <button
-      v-for="item in items"
-      :key="item.key"
       class="menu-item"
       :class="{ disabled: item.disabled }"
       :data-test="`session-row-menu-item-${item.key}`"
@@ -109,6 +120,7 @@ onBeforeUnmount(() => {
     >
       {{ item.label }}
     </button>
+    </template>
   </div>
 </template>
 
@@ -143,5 +155,10 @@ onBeforeUnmount(() => {
 .menu-item.disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.12);
 }
 </style>

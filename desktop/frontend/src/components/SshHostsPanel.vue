@@ -1,7 +1,12 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted } from "vue";
-import { Server, Plus, X, Pencil, Trash2, Search, Zap, Folder, KeyRound } from "lucide-vue-next";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { Server, Plus, X, Pencil, Trash2, Search, Zap, KeyRound, Upload, FileUp } from "lucide-vue-next";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
+import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
+import { readPrivateKeyFile } from "../lib/sshKeyFile";
+import { sshCommandFor } from "../lib/sshCommand";
+import { allHostTags, hostHasAllTags, normalizeTags, parseTagInput } from "../lib/hostTags";
+import { fallbackCopyText } from "../lib/terminalCopy";
 import {
   listSSHHosts,
   addSSHHost,
@@ -33,32 +38,49 @@ const connectingId = ref("");
 async function reload() {
   [hosts.value, keys.value] = await Promise.all([listSSHHosts(), listSSHKeys()]);
 }
-onMounted(reload);
+
+// The key drawer invites the user to drag a file in. A near-miss drop would
+// otherwise reach the webview, which navigates to the dropped file and wipes
+// the app view. Swallow stray drags for as long as this modal is up; the drop
+// zone's own handler has already run by the time these fire.
+function swallowStrayDrag(e: Event) {
+  e.preventDefault();
+}
+onMounted(() => {
+  window.addEventListener("dragover", swallowStrayDrag);
+  window.addEventListener("drop", swallowStrayDrag);
+  void reload();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("dragover", swallowStrayDrag);
+  window.removeEventListener("drop", swallowStrayDrag);
+});
 
 // ---- Hosts ----
+// Tag filter narrows first (AND across the selected tags), then the free-text
+// query, which also searches tag names.
+const selectedTags = ref<string[]>([]);
+const availableTags = computed(() => allHostTags(hosts.value));
+
 const filteredHosts = computed(() => {
   const q = query.value.trim().toLowerCase();
-  const list = q
-    ? hosts.value.filter((h) =>
-        `${h.alias ?? ""} ${h.host} ${h.user} ${h.group ?? ""}`.toLowerCase().includes(q),
-      )
-    : hosts.value;
-  return list;
-});
-
-const hostGroups = computed(() => {
-  const map = new Map<string, SSHHost[]>();
-  for (const h of filteredHosts.value) {
-    const g = h.group?.trim() || "";
-    if (!map.has(g)) map.set(g, []);
-    map.get(g)!.push(h);
-  }
-  return [...map.entries()].sort(([a], [b]) => {
-    if (a === "") return 1;
-    if (b === "") return -1;
-    return a.localeCompare(b);
+  return hosts.value.filter((h) => {
+    if (!hostHasAllTags(h.tags, selectedTags.value)) return false;
+    if (q === "") return true;
+    const haystack = `${h.alias ?? ""} ${h.host} ${h.user} ${(h.tags ?? []).join(" ")}`;
+    return haystack.toLowerCase().includes(q);
   });
 });
+
+function toggleTagFilter(tag: string) {
+  const at = selectedTags.value.indexOf(tag);
+  selectedTags.value = at >= 0
+    ? selectedTags.value.filter((t) => t !== tag)
+    : [...selectedTags.value, tag];
+}
+function clearTagFilters() {
+  selectedTags.value = [];
+}
 
 const keyOptions = computed<SelectOption[]>(() =>
   keys.value.map((k) => ({
@@ -67,29 +89,38 @@ const keyOptions = computed<SelectOption[]>(() =>
   })),
 );
 
-// Existing group names (deduped, sorted) — offered as suggestions in the host
-// form's Group combobox. The user can also type a brand-new group.
-const existingGroups = computed<string[]>(() => {
-  const set = new Set<string>();
-  for (const h of hosts.value) {
-    const g = h.group?.trim();
-    if (g) set.add(g);
-  }
-  return [...set].sort((a, b) => a.localeCompare(b));
+// Tags already in use elsewhere, minus the ones this host already carries —
+// offered as suggestions in the host form. Typing a brand-new tag also works.
+const tagMenuOpen = ref(false);
+const tagSuggestions = computed<string[]>(() => {
+  const q = fTagInput.value.trim().toLowerCase();
+  const owned = new Set(fTags.value.map((t) => t.toLowerCase()));
+  return availableTags.value.filter(
+    (t) => !owned.has(t.toLowerCase()) && (q === "" || t.toLowerCase().includes(q)),
+  );
 });
-const groupMenuOpen = ref(false);
-const groupSuggestions = computed<string[]>(() => {
-  const q = fGroup.value.trim().toLowerCase();
-  const base = existingGroups.value;
-  return q ? base.filter((g) => g.toLowerCase().includes(q)) : base;
-});
-function pickGroup(g: string) {
-  fGroup.value = g;
-  groupMenuOpen.value = false;
+function addFormTags(raw: string[]) {
+  fTags.value = normalizeTags([...fTags.value, ...raw]);
 }
-function onGroupBlur() {
+function commitTagInput() {
+  addFormTags(parseTagInput(fTagInput.value));
+  fTagInput.value = "";
+}
+function pickTag(t: string) {
+  addFormTags([t]);
+  fTagInput.value = "";
+  tagMenuOpen.value = false;
+}
+function removeFormTag(t: string) {
+  fTags.value = fTags.value.filter((x) => x !== t);
+}
+// Backspace on an empty input peels off the last chip, the usual tag-field feel.
+function onTagBackspace() {
+  if (fTagInput.value === "") fTags.value = fTags.value.slice(0, -1);
+}
+function onTagBlur() {
   // Delay so a mousedown on a suggestion registers before the menu closes.
-  window.setTimeout(() => (groupMenuOpen.value = false), 120);
+  window.setTimeout(() => (tagMenuOpen.value = false), 120);
 }
 
 function hostLabel(h: SSHHost): string {
@@ -115,6 +146,81 @@ async function connect(id: string) {
   }
 }
 
+// ---- Host context menu ----
+const hostMenu = ref<{ open: boolean; x: number; y: number; host: SSHHost | null }>({
+  open: false,
+  x: 0,
+  y: 0,
+  host: null,
+});
+
+const hostMenuItems: MenuItem[] = [
+  { key: "connect", label: "Connect" },
+  { key: "edit", label: "Edit Host Details" },
+  { key: "duplicate", label: "Duplicate" },
+  { key: "copy-ssh", label: "Copy SSH command" },
+  { key: "remove", label: "Remove", separatorBefore: true },
+];
+
+function openHostMenu(e: MouseEvent, h: SSHHost) {
+  hostMenu.value = { open: true, x: e.clientX, y: e.clientY, host: h };
+}
+function closeHostMenu() {
+  hostMenu.value = { ...hostMenu.value, open: false, host: null };
+}
+
+async function onHostMenuSelect(key: string) {
+  const h = hostMenu.value.host;
+  if (!h) return;
+  switch (key) {
+    case "connect":
+      await connect(h.id);
+      break;
+    case "edit":
+      openEditHost(h);
+      break;
+    case "duplicate":
+      await duplicateHost(h);
+      break;
+    case "copy-ssh":
+      await copySshCommand(h);
+      break;
+    case "remove":
+      await removeHost(h.id);
+      break;
+  }
+}
+
+// duplicateHost copies every non-secret field. The password lives in the
+// keyring and cannot be read back, so a password host's copy starts without
+// one — open the drawer in that case rather than leaving a host that silently
+// fails to connect.
+async function duplicateHost(h: SSHHost) {
+  errorMsg.value = "";
+  const copy: SSHHost = {
+    ...h,
+    id: "",
+    alias: h.alias?.trim() ? `${h.alias.trim()} copy` : "",
+  };
+  try {
+    const created = await addSSHHost(copy, {});
+    await reload();
+    if (h.auth_kind === "password") openEditHost(created ?? copy);
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function copySshCommand(h: SSHHost) {
+  const text = sshCommandFor({ user: h.user, host: h.host, port: h.port });
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+  if (clipboard?.writeText) {
+    await clipboard.writeText(text);
+    return;
+  }
+  fallbackCopyText(text);
+}
+
 // ---- Host drawer ----
 const hostDrawer = ref(false);
 const hostEditId = ref<string | null>(null);
@@ -122,7 +228,8 @@ const fAlias = ref("");
 const fHost = ref("");
 const fPort = ref("22");
 const fUser = ref("");
-const fGroup = ref("");
+const fTags = ref<string[]>([]);
+const fTagInput = ref("");
 const fAuthKind = ref<"password" | "key">("password");
 const fPassword = ref("");
 const fKeyID = ref("");
@@ -133,7 +240,8 @@ function openNewHost() {
   fHost.value = "";
   fPort.value = "22";
   fUser.value = "";
-  fGroup.value = "";
+  fTags.value = [];
+  fTagInput.value = "";
   fAuthKind.value = "password";
   fPassword.value = "";
   fKeyID.value = keys.value[0]?.id ?? "";
@@ -145,7 +253,8 @@ function openEditHost(h: SSHHost) {
   fHost.value = h.host;
   fPort.value = h.port || "22";
   fUser.value = h.user;
-  fGroup.value = h.group ?? "";
+  fTags.value = normalizeTags(h.tags ?? []);
+  fTagInput.value = "";
   fAuthKind.value = h.auth_kind;
   fPassword.value = "";
   fKeyID.value = h.key_id ?? keys.value[0]?.id ?? "";
@@ -168,7 +277,7 @@ async function saveHost() {
     host: fHost.value.trim(),
     port: fPort.value.trim() || "22",
     user: fUser.value.trim(),
-    group: fGroup.value.trim(),
+    tags: fTags.value,
     auth_kind: fAuthKind.value,
     key_id: fAuthKind.value === "key" ? fKeyID.value : undefined,
   };
@@ -202,12 +311,20 @@ const keyEditId = ref<string | null>(null);
 const kName = ref("");
 const kPem = ref("");
 const kPassphrase = ref("");
+// Set when an imported key's PEM is passphrase-protected, so the drawer can say
+// so instead of letting the user hit a backend parse error on save.
+const kNeedsPassphrase = ref(false);
 
-function openNewKey() {
-  keyEditId.value = "";
+function resetKeyForm() {
   kName.value = "";
   kPem.value = "";
   kPassphrase.value = "";
+  kNeedsPassphrase.value = false;
+}
+
+function openNewKey() {
+  keyEditId.value = "";
+  resetKeyForm();
   keyDrawer.value = true;
 }
 // Jump from the host form's empty-vault hint straight into adding a key:
@@ -219,15 +336,56 @@ function jumpToNewKey() {
 }
 function openEditKey(k: SSHKey) {
   keyEditId.value = k.id;
+  resetKeyForm();
   kName.value = k.name;
-  kPem.value = "";
-  kPassphrase.value = "";
   keyDrawer.value = true;
 }
 function closeKeyDrawer() {
   keyDrawer.value = false;
   keyEditId.value = null;
 }
+// ---- Key file import ----
+// Dragging is pointer-only; on touch builds (iOS) the drop zone would be dead
+// UI, so only the picker button is offered there. Evaluated per mount so tests
+// (and a device switching input modes) get an honest answer.
+const supportsFileDrag = ref(
+  window.matchMedia?.("(hover: hover) and (pointer: fine)")?.matches ?? true,
+);
+const keyFileInput = ref<HTMLInputElement | null>(null);
+const keyDragOver = ref(false);
+
+function pickKeyFile() {
+  keyFileInput.value?.click();
+}
+
+async function onKeyFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  await importKeyFile(file);
+  // Clear so re-picking the same path fires change again.
+  input.value = "";
+}
+
+async function onKeyFileDropped(e: DragEvent) {
+  keyDragOver.value = false;
+  await importKeyFile(e.dataTransfer?.files?.[0]);
+}
+
+// importKeyFile fills the drawer from a local file. The name is only filled in
+// when the user has not typed one, so an explicit label always wins.
+async function importKeyFile(file: File | undefined | null) {
+  if (!file) return;
+  errorMsg.value = "";
+  try {
+    const imported = await readPrivateKeyFile(file);
+    kPem.value = imported.pem;
+    kNeedsPassphrase.value = imported.encrypted;
+    if (kName.value.trim() === "") kName.value = imported.suggestedName;
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 const canSaveKey = computed(() => kName.value.trim() !== "" && (keyEditId.value ? true : kPem.value.trim() !== ""));
 async function saveKey() {
   if (!canSaveKey.value) return;
@@ -296,16 +454,28 @@ async function removeKey(id: string) {
           <button class="new-btn ghost" @click="openNewHost"><Plus :size="14" /> New Host</button>
         </div>
         <template v-else>
-          <section v-for="[gname, ghosts] in hostGroups" :key="gname || '__ungrouped'" class="group">
-            <div class="group-head">
-              <Folder :size="12" class="group-icon" />
-              <span class="group-name">{{ gname || "Ungrouped" }}</span>
-              <span class="group-count">{{ ghosts.length }}</span>
-            </div>
-            <div class="card-grid">
+          <div v-if="availableTags.length" class="tag-bar" data-test="ssh-tag-filter-bar">
+            <button
+              v-for="t in availableTags" :key="t"
+              class="tag-pill" :class="{ on: selectedTags.includes(t) }"
+              :data-test="`ssh-tag-filter-${t}`" @click="toggleTagFilter(t)"
+            >{{ t }}</button>
+            <button
+              v-if="selectedTags.length" class="tag-clear"
+              data-test="ssh-tag-filter-clear" @click="clearTagFilters"
+            ><X :size="11" /> Clear</button>
+          </div>
+          <div v-if="filteredHosts.length === 0" class="empty" data-test="ssh-hosts-no-match">
+            <Server :size="40" class="empty-icon" />
+            <p class="empty-title">No hosts match</p>
+            <p class="empty-sub">Loosen the filter or clear the selected tags.</p>
+          </div>
+            <div v-else class="card-grid">
               <article
-                v-for="h in ghosts" :key="h.id" class="card"
+                v-for="h in filteredHosts" :key="h.id" class="card"
+                :data-test="`ssh-host-card-${h.id}`"
                 :class="{ busy: connectingId === h.id }" @dblclick="connect(h.id)"
+                @contextmenu.prevent="openHostMenu($event, h)"
               >
                 <div class="card-glyph">
                   <KeyRound v-if="h.auth_kind === 'key'" :size="16" />
@@ -314,6 +484,12 @@ async function removeKey(id: string) {
                 <div class="card-main">
                   <div class="card-label">{{ hostLabel(h) }}</div>
                   <div class="card-sub">{{ hostSubtitle(h) }}</div>
+                  <div v-if="h.tags?.length" class="card-tags">
+                    <span
+                      v-for="t in h.tags" :key="t" class="card-tag"
+                      :data-test="`ssh-host-tag-${h.id}-${t}`"
+                    >{{ t }}</span>
+                  </div>
                 </div>
                 <div class="card-actions">
                   <button class="act connect" :data-test="`ssh-connect-${h.id}`" :disabled="connectingId === h.id" title="Connect" @click.stop="connect(h.id)"><Zap :size="13" /></button>
@@ -322,7 +498,6 @@ async function removeKey(id: string) {
                 </div>
               </article>
             </div>
-          </section>
         </template>
       </div>
 
@@ -349,6 +524,11 @@ async function removeKey(id: string) {
         </div>
       </div>
 
+      <SessionRowMenu
+        :open="hostMenu.open" :x="hostMenu.x" :y="hostMenu.y" :items="hostMenuItems"
+        @close="closeHostMenu" @select="onHostMenuSelect"
+      />
+
       <!-- HOST DRAWER -->
       <transition name="drawer">
         <aside v-if="hostDrawer" class="drawer">
@@ -359,25 +539,34 @@ async function removeKey(id: string) {
               <label class="field grow"><span class="fl">Label</span><input data-test="ssh-add-alias" v-model="fAlias" placeholder="optional" autocomplete="off" /></label>
               <label class="field port"><span class="fl">Port</span><input data-test="ssh-add-port" v-model="fPort" autocomplete="off" /></label>
             </div>
-            <label class="field group-field">
-              <span class="fl">Group</span>
-              <div class="combo">
+            <label class="field tag-field">
+              <span class="fl">Tags</span>
+              <div class="tag-editor">
+                <span
+                  v-for="t in fTags" :key="t" class="chip"
+                  :data-test="`ssh-add-tag-chip-${t}`"
+                >
+                  {{ t }}
+                  <button
+                    type="button" class="chip-x" :data-test="`ssh-add-tag-remove-${t}`"
+                    :title="`Remove ${t}`" @click.prevent="removeFormTag(t)"
+                  ><X :size="10" /></button>
+                </span>
                 <input
-                  data-test="ssh-add-group" v-model="fGroup" placeholder="optional"
+                  class="tag-input" data-test="ssh-add-tag-input" v-model="fTagInput"
+                  :placeholder="fTags.length ? '' : 'comma separated'"
                   autocomplete="off" spellcheck="false"
-                  @focus="groupMenuOpen = true" @input="groupMenuOpen = true" @blur="onGroupBlur"
+                  @focus="tagMenuOpen = true" @input="tagMenuOpen = true" @blur="onTagBlur"
+                  @keydown.enter.prevent="commitTagInput"
+                  @keydown.,.prevent="commitTagInput"
+                  @keydown.backspace="onTagBackspace"
                 />
-                <button
-                  v-if="existingGroups.length" type="button" class="combo-caret"
-                  data-test="ssh-group-caret" title="Pick a group"
-                  @mousedown.prevent="groupMenuOpen = !groupMenuOpen"
-                >▾</button>
-                <ul v-if="groupMenuOpen && groupSuggestions.length" class="combo-menu" data-test="ssh-group-menu">
+                <ul v-if="tagMenuOpen && tagSuggestions.length" class="combo-menu" data-test="ssh-tag-menu">
                   <li
-                    v-for="g in groupSuggestions" :key="g"
-                    class="combo-opt" :data-test="`ssh-group-opt-${g}`"
-                    @mousedown.prevent="pickGroup(g)"
-                  >{{ g }}</li>
+                    v-for="t in tagSuggestions" :key="t"
+                    class="combo-opt" :data-test="`ssh-tag-opt-${t}`"
+                    @mousedown.prevent="pickTag(t)"
+                  >{{ t }}</li>
                 </ul>
               </div>
             </label>
@@ -422,7 +611,34 @@ async function removeKey(id: string) {
               <span class="fl">Private key (PEM)<template v-if="keyEditId"> <em>(leave blank to keep)</em></template></span>
               <textarea data-test="ssh-key-pem" v-model="kPem" rows="6" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
             </label>
-            <label class="field"><span class="fl">Passphrase</span><input data-test="ssh-key-passphrase" type="password" v-model="kPassphrase" autocomplete="off" /></label>
+            <label class="field">
+              <span class="fl">Passphrase</span>
+              <input data-test="ssh-key-passphrase" type="password" v-model="kPassphrase" autocomplete="off" />
+            </label>
+            <p v-if="kNeedsPassphrase" class="enc-hint" data-test="ssh-key-encrypted-hint">
+              This key is encrypted — enter its passphrase above.
+            </p>
+
+            <div class="import-block">
+              <input
+                ref="keyFileInput" class="file-input" data-test="ssh-key-file-input"
+                type="file" @change="onKeyFilePicked"
+              />
+              <div
+                v-if="supportsFileDrag" class="dropzone" :class="{ over: keyDragOver }"
+                data-test="ssh-key-dropzone"
+                @dragover.prevent="keyDragOver = true"
+                @dragenter.prevent="keyDragOver = true"
+                @dragleave="keyDragOver = false"
+                @drop.prevent="onKeyFileDropped"
+              >
+                <FileUp :size="20" class="dropzone-icon" />
+                <span>Drag and drop a private key file to import</span>
+              </div>
+              <button class="btn import" type="button" data-test="ssh-key-import-btn" @click="pickKeyFile">
+                <Upload :size="13" /> Import from key file
+              </button>
+            </div>
           </div>
           <div class="drawer-foot">
             <button class="btn ghost" @click="closeKeyDrawer">Cancel</button>
@@ -473,11 +689,25 @@ async function removeKey(id: string) {
 .close-x:hover { color: var(--fg); background: rgba(139, 148, 158, 0.12); }
 .ssh-error { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--bad); background: rgba(248, 81, 73, 0.08); border-bottom: 1px solid rgba(248, 81, 73, 0.2); }
 .ssh-body { flex: 1; overflow-y: auto; padding: 18px 16px 24px; }
-.group { margin-bottom: 22px; }
-.group-head { display: flex; align-items: center; gap: 7px; margin: 0 2px 10px; color: var(--fg-dim); }
-.group-icon { color: var(--neutral); }
-.group-name { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
-.group-count { font-size: 10px; color: var(--neutral); }
+.tag-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 2px 14px; }
+.tag-pill {
+  background: var(--panel); border: 1px solid var(--border); color: var(--fg-dim);
+  font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.tag-pill:hover { color: var(--fg); border-color: var(--neutral); }
+.tag-pill.on { color: #04101f; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.tag-clear {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: transparent; border: none; color: var(--fg-dim);
+  font-size: 11px; padding: 4px 6px; cursor: pointer;
+}
+.tag-clear:hover { color: var(--fg); }
+.card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.card-tag {
+  font-size: 10px; color: var(--fg-dim); background: rgba(139, 148, 158, 0.16);
+  padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+}
 .card-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); }
 .card { position: relative; display: flex; align-items: center; gap: 11px; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; transition: border-color 140ms, transform 140ms, box-shadow 140ms; }
 .card:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
@@ -512,6 +742,28 @@ async function removeKey(id: string) {
 .field input:focus, .field textarea:focus { border-color: var(--accent); }
 .field textarea { resize: vertical; font-family: var(--font-mono-strict); font-size: 12px; }
 .hint { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.tag-editor {
+  position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 6px; transition: border-color 120ms;
+}
+.tag-editor:focus-within { border-color: var(--accent); }
+.tag-editor .chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; color: var(--fg); background: rgba(88, 166, 255, 0.14);
+  border: 1px solid rgba(88, 166, 255, 0.28); padding: 1px 4px 1px 8px; border-radius: 999px;
+}
+.chip-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--fg-dim); cursor: pointer;
+  padding: 1px; border-radius: 999px; line-height: 1;
+}
+.chip-x:hover { color: #fff; background: rgba(248, 81, 73, 0.35); }
+.tag-input {
+  flex: 1; min-width: 90px;
+  background: transparent; border: none; outline: none;
+  color: var(--fg); font-size: 13px; padding: 2px 3px;
+}
 .combo { position: relative; display: flex; }
 .combo input { flex: 1; padding-right: 26px; width: 100%; }
 .combo-caret {
@@ -529,6 +781,22 @@ async function removeKey(id: string) {
 .combo-opt { padding: 7px 10px; font-size: 13px; color: var(--fg); cursor: pointer; }
 .combo-opt:hover { background: rgba(255, 255, 255, 0.06); }
 .empty-keys-hint { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.enc-hint { margin: -4px 0 0; font-size: 11px; color: var(--warn, #d29922); }
+.import-block { margin-top: 4px; display: flex; flex-direction: column; gap: 8px; }
+.file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 18px 12px; text-align: center;
+  border: 1px dashed var(--border); border-radius: 8px;
+  color: var(--fg-dim); font-size: 11px; line-height: 1.4;
+  transition: border-color 120ms, background 120ms, color 120ms;
+}
+.dropzone-icon { color: var(--neutral); }
+.dropzone.over { border-color: var(--accent); color: var(--fg); background: rgba(88, 166, 255, 0.08); }
+.dropzone.over .dropzone-icon { color: var(--accent); }
+.btn.import { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; }
+.btn.import svg { display: block; }
+.btn.import:hover { background: rgba(139, 148, 158, 0.1); }
 .btn.sm { display: inline-flex; align-items: center; gap: 5px; padding: 6px 11px; font-size: 12px; }
 .btn.sm svg { display: block; }
 .seg { display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 3px; gap: 3px; }

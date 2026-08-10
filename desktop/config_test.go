@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 )
 
@@ -81,5 +82,95 @@ func TestLocalePreferenceOrDefault(t *testing.T) {
 				t.Fatalf("LocalePreferenceOrDefault() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// Regression: Get() returned appConfig by value, but PrefsMeta and
+// PrefsSeedMarkers are maps — a struct copy duplicates the header, not the
+// backing table. Every caller (updatePref, the prefssync adapter's WriteMeta,
+// the login seed path) then mutated the store's live map *outside* the mutex.
+// A pin drives that from three goroutines within a few hundred ms (the UI
+// binding, the background Push, and the relay prefs-watch Pull), which in Go
+// is a fatal "concurrent map writes" or a corrupted hash table.
+func TestConfigStore_GetReturnsIndependentMaps(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	store := loadConfig()
+	c := store.Get()
+	c.PrefsMeta = map[string]prefsMetaEntry{"pinned_session_ids": {UpdatedAtLocal: 1, Dirty: true}}
+	c.PrefsSeedMarkers = map[string]bool{"user-1": true}
+	if err := store.Set(c); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// A snapshot handed to a caller must not alias the stored maps.
+	snap := store.Get()
+	snap.PrefsMeta["pinned_session_ids"] = prefsMetaEntry{UpdatedAtLocal: 999}
+	snap.PrefsSeedMarkers["user-1"] = false
+
+	got := store.Get()
+	if e := got.PrefsMeta["pinned_session_ids"]; e.UpdatedAtLocal != 1 || !e.Dirty {
+		t.Fatalf("snapshot mutation leaked into the store: %+v", e)
+	}
+	if !got.PrefsSeedMarkers["user-1"] {
+		t.Fatal("snapshot mutation leaked into PrefsSeedMarkers")
+	}
+}
+
+func TestConfigStore_SetCopiesCallerMaps(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	store := loadConfig()
+	meta := map[string]prefsMetaEntry{"locale_preference": {UpdatedAtLocal: 7}}
+	markers := map[string]bool{"user-1": true}
+	c := store.Get()
+	c.PrefsMeta = meta
+	c.PrefsSeedMarkers = markers
+	if err := store.Set(c); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// The caller still holds the map it passed in; writing to it afterwards
+	// must not reach the store.
+	meta["locale_preference"] = prefsMetaEntry{UpdatedAtLocal: 42}
+	markers["user-1"] = false
+
+	got := store.Get()
+	if got.PrefsMeta["locale_preference"].UpdatedAtLocal != 7 {
+		t.Fatalf("caller map still aliases the store: %+v", got.PrefsMeta)
+	}
+	if !got.PrefsSeedMarkers["user-1"] {
+		t.Fatal("caller map still aliases PrefsSeedMarkers")
+	}
+}
+
+// The exact shape of the production race: read-modify-write of PrefsMeta from
+// several goroutines, as updatePref / WriteMeta / Pull / Push all do. Run with
+// -race; before the fix this trips the detector (or panics outright).
+func TestConfigStore_ConcurrentMetaWrites(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	store := loadConfig()
+	keys := []string{"pinned_session_ids", "quick_templates", "locale_preference", "notifications_enabled"}
+
+	var wg sync.WaitGroup
+	for i, key := range keys {
+		wg.Add(1)
+		go func(i int, key string) {
+			defer wg.Done()
+			for j := 0; j < 25; j++ {
+				c := store.Get()
+				if c.PrefsMeta == nil {
+					c.PrefsMeta = map[string]prefsMetaEntry{}
+				}
+				c.PrefsMeta[key] = prefsMetaEntry{UpdatedAtLocal: int64(i*100 + j), Dirty: j%2 == 0}
+				_ = store.Set(c)
+			}
+		}(i, key)
+	}
+	wg.Wait()
+
+	if len(store.Get().PrefsMeta) == 0 {
+		t.Fatal("expected meta entries after concurrent writes")
 	}
 }

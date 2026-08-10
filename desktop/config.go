@@ -474,18 +474,50 @@ func loadConfig() *configStore {
 	return s
 }
 
-// Get returns a snapshot of the current config.
+// detachMaps returns a copy of c whose map fields are freshly allocated.
+//
+// appConfig is copied by value everywhere, but a struct copy duplicates a map
+// header, not its backing table — so a plain copy leaves PrefsMeta and
+// PrefsSeedMarkers aliased to the store's live maps. Callers then do
+// read-modify-write (`c := store.Get(); c.PrefsMeta[k] = v; store.Set(c)`)
+// and mutate shared state *outside* the mutex. A single pin drives that from
+// three goroutines within a few hundred ms — the UI binding (updatePref), the
+// background prefssync Push, and the relay prefs-watch Pull — which in Go is
+// a fatal "concurrent map writes" or a silently corrupted hash table.
+// Detaching on both Get and Set makes the store properly value-semantic, so
+// the only mutations of the stored maps happen under the lock.
+func detachMaps(c appConfig) appConfig {
+	if c.PrefsMeta != nil {
+		m := make(map[string]prefsMetaEntry, len(c.PrefsMeta))
+		for k, v := range c.PrefsMeta {
+			m[k] = v
+		}
+		c.PrefsMeta = m
+	}
+	if c.PrefsSeedMarkers != nil {
+		m := make(map[string]bool, len(c.PrefsSeedMarkers))
+		for k, v := range c.PrefsSeedMarkers {
+			m[k] = v
+		}
+		c.PrefsSeedMarkers = m
+	}
+	return c
+}
+
+// Get returns a snapshot of the current config. The snapshot's maps are the
+// caller's own — mutating them does not touch the store (see detachMaps).
 func (s *configStore) Get() appConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cfg
+	return detachMaps(s.cfg)
 }
 
 // Set replaces the config and persists it to disk atomically (write-temp-rename).
+// The caller's maps are copied in, so it may keep using them afterwards.
 func (s *configStore) Set(c appConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cfg = c
+	s.cfg = detachMaps(c)
 	p := configPath()
 	if p == "" {
 		return errors.New("user config dir unavailable")
@@ -493,7 +525,10 @@ func (s *configStore) Set(c appConfig) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	// Marshal the detached copy, not the caller's struct: serializing the
+	// caller's maps here would read them outside their owner's control and
+	// reintroduce the very race this detaching exists to remove.
+	data, err := json.MarshalIndent(s.cfg, "", "  ")
 	if err != nil {
 		return err
 	}

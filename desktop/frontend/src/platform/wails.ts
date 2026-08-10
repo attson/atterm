@@ -64,6 +64,17 @@ export function createWailsPlatform(): Platform {
   EventsOn('account-key:changed', () => {
     void refreshCachedAccountKey()
   })
+  // Event names currently being dispatched by emit() below. Unlike the web /
+  // Capacitor platforms — whose buses are private Maps — `on` and `emit` here
+  // are both backed by the *same* Wails bus, and wails/runtime.js EventsEmit
+  // synchronously calls every EventsOn listener for the name before shipping
+  // the event to Go. So a handler that re-emits the event it is handling
+  // re-enters itself without bound: one 'prefs:changed' recursed ~1286 deep,
+  // threw "Maximum call stack size exceeded" (aborting the dispatch, so the
+  // real listeners never ran) and fired ~1286 WailsInvoke messages that
+  // flooded the main thread and froze the UI for seconds. Guarding here makes
+  // that shape impossible for every event, not just the one that hit it.
+  const dispatching = new Set<string>()
   return {
     caps: {
       localPty: true,
@@ -139,7 +150,17 @@ export function createWailsPlatform(): Platform {
     },
     events: {
       on: (event, handler) => EventsOn(event, handler as (...data: unknown[]) => void),
-      emit: (event, data) => EventsEmit(event, data),
+      emit: (event, data) => {
+        // Re-entrant emit of an in-flight event is the self-recursion case
+        // described above; drop it rather than let it stack.
+        if (dispatching.has(event)) return
+        dispatching.add(event)
+        try {
+          EventsEmit(event, data)
+        } finally {
+          dispatching.delete(event)
+        }
+      },
     },
     templates: {
       load: async () => {

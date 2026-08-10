@@ -222,7 +222,7 @@ onUnmounted(() => {
   >
     <header class="widget-header" @click="toggleCollapsed">
       <div class="sprite-wrap">
-        <WidgetSprite :mood="state.mood" :muted="muted" :size="40" />
+        <WidgetSprite :mood="state.mood" :muted="muted" :size="36" />
         <span v-if="state.waitingCount > 0" class="badge">{{ state.waitingCount }}</span>
       </div>
       <div class="meta">
@@ -309,6 +309,11 @@ onUnmounted(() => {
 .sprite-wrap {
   position: relative;
   flex: 0 0 auto;
+  /* Fixed box so the badge stays put while the sprite hops inside it — the
+     pixel animations translate the svg, and an auto-sized parent would move
+     the badge along with it. */
+  width: 36px;
+  height: 36px;
 }
 
 .badge {

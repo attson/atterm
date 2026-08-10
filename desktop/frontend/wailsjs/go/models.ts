@@ -1224,6 +1224,7 @@ export namespace main {
 		}
 	}
 	
+	
 	export class sshCredential {
 	    password?: string;
 	

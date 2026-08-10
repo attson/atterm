@@ -25,6 +25,10 @@ const EMPTY: PetState = {
   overflowCount: 0,
 };
 
+/** Measured to size the OS window; see petBridge.resize. */
+const cardEl = ref<HTMLElement | null>(null);
+let cardObserver: ResizeObserver | null = null;
+
 const state = ref<PetState>(EMPTY);
 const collapsed = ref(false);
 const peeking = ref(false);
@@ -93,11 +97,9 @@ function applyState(next: PetState) {
 
 function autoPeek() {
   peeking.value = true;
-  petBridge.peek(true);
   if (autoPeekTimer !== null) window.clearTimeout(autoPeekTimer);
   autoPeekTimer = window.setTimeout(() => {
     peeking.value = false;
-    petBridge.peek(false);
     autoPeekTimer = null;
   }, 3000);
 }
@@ -116,7 +118,6 @@ function toggleCollapsed() {
 function onHeaderEnter() {
   if (!collapsed.value || autoPeekTimer !== null) return;
   peeking.value = true;
-  petBridge.peek(true);
 }
 
 function onHeaderLeave() {
@@ -124,7 +125,6 @@ function onHeaderLeave() {
   // must not cut the 3s attention window short.
   if (!collapsed.value || autoPeekTimer !== null) return;
   peeking.value = false;
-  petBridge.peek(false);
 }
 
 function activate(sessionId: string) {
@@ -164,6 +164,17 @@ onMounted(() => {
   });
   onPetState(applyState);
 
+  // Drive the OS window height from the rendered card. A ResizeObserver
+  // covers collapse, expand, peek and row-count changes with one mechanism,
+  // so neither side has to enumerate those states.
+  if (cardEl.value) {
+    cardObserver = new ResizeObserver((entries) => {
+      const h = Math.ceil(entries[0].borderBoxSize?.[0]?.blockSize ?? entries[0].contentRect.height);
+      if (h > 0) petBridge.resize(h);
+    });
+    cardObserver.observe(cardEl.value);
+  }
+
   clockTimer = window.setInterval(() => {
     nowMs.value = Date.now();
   }, 1000);
@@ -172,9 +183,14 @@ onMounted(() => {
   // is released anywhere in the window — that is where a header drag ends.
   window.addEventListener("mouseup", petBridge.reportPosition);
   window.addEventListener("click", closeMenu);
+
+  // Last: everything above must be listening before Go replays the parked
+  // bootstrap and first snapshot.
+  petBridge.ready();
 });
 
 onUnmounted(() => {
+  cardObserver?.disconnect();
   if (clockTimer !== null) window.clearInterval(clockTimer);
   if (autoPeekTimer !== null) window.clearTimeout(autoPeekTimer);
   window.removeEventListener("mouseup", petBridge.reportPosition);
@@ -183,7 +199,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="pet-window" @contextmenu="openMenu">
+  <div ref="cardEl" class="pet-window" @contextmenu="openMenu">
     <header
       class="pet-header"
       @click="toggleCollapsed"

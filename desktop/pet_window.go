@@ -15,14 +15,23 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Companion window geometry, in logical pixels. Expanded fits the pet header
-// plus PET_MAX_ROWS session rows (lib/petState.ts); collapsed keeps only the
-// header, which still carries the headline ("1 个等你输入") so a folded pet is
-// informative rather than blind.
+// Companion window geometry, in logical pixels.
+//
+// Only the width is fixed. The height is reported by the frontend from the
+// rendered card (PetApp.vue's ResizeObserver → Resize) rather than hardcoded
+// here: it depends on the row count, the font, and the locale's line
+// wrapping, so any constant is wrong for most states. Hardcoding it clipped
+// the card's bottom edge — rounded corner included — whenever the guess came
+// in under the real height.
+//
+// petHeightInitial is only the pre-measurement size, chosen to be close
+// enough that the first frame does not visibly jump.
 const (
-	petWidth          = 252
-	petHeightExpanded = 172
-	petHeightCollapse = 54
+	petWidth         = 252
+	petHeightInitial = 172
+	// petMaxHeight bounds what the frontend can ask for, so a rendering bug
+	// cannot grow an always-on-top window over the whole screen.
+	petMaxHeight = 900
 	// petScreenMargin insets the default bottom-right placement so the window
 	// does not butt against the screen edge (or sit under a macOS Dock).
 	petScreenMargin = 24
@@ -38,6 +47,17 @@ type PetBridge struct {
 
 	mu        sync.Mutex
 	collapsed bool
+	// ready flips once the webview has mounted and subscribed to events.
+	//
+	// Wails events emitted before that are dropped, and the parent writes both
+	// the bootstrap line and the first state snapshot immediately after spawn
+	// — long before the webview exists. Without parking them, the pet ignored
+	// the persisted collapsed preference and sat on "连接中…" until the next
+	// session-list change, which can be minutes.
+	ready        bool
+	pendingBoot  *petBootstrap
+	pendingState string
+
 	// outMu serializes writes to stdout; interleaved NDJSON would be
 	// undecodable on the parent side.
 	outMu sync.Mutex
@@ -83,13 +103,32 @@ func (p *PetBridge) readStdin() {
 		switch probe.Type {
 		case "bootstrap":
 			var boot petBootstrap
-			if err := json.Unmarshal([]byte(line), &boot); err == nil {
+			if err := json.Unmarshal([]byte(line), &boot); err != nil {
+				continue
+			}
+			p.mu.Lock()
+			ready := p.ready
+			if !ready {
+				p.pendingBoot = &boot
+			}
+			p.mu.Unlock()
+			if ready {
 				p.applyBootstrap(boot)
 			}
 		default:
 			// Anything else is a PetState snapshot; hand the raw JSON to the
 			// frontend so Go never has to mirror the projection's shape.
-			wailsruntime.EventsEmit(p.ctx, "pet:state", line)
+			p.mu.Lock()
+			ready := p.ready
+			if !ready {
+				// Keep only the newest: each snapshot is complete, so an
+				// older one carries nothing the newer one lacks.
+				p.pendingState = line
+			}
+			p.mu.Unlock()
+			if ready {
+				wailsruntime.EventsEmit(p.ctx, "pet:state", line)
+			}
 		}
 	}
 	// Parent pipe closed.
@@ -98,6 +137,31 @@ func (p *PetBridge) readStdin() {
 		return
 	}
 	os.Exit(0)
+}
+
+// Ready is called by the frontend once PetApp has mounted and subscribed.
+// It replays whatever arrived while the webview was still starting.
+func (p *PetBridge) Ready() {
+	p.mu.Lock()
+	p.ready = true
+	boot := p.pendingBoot
+	state := p.pendingState
+	p.pendingBoot, p.pendingState = nil, ""
+	p.mu.Unlock()
+
+	// State first, so the window is already showing real content by the time
+	// bootstrap makes it visible — no flash of the "连接中…" placeholder.
+	if state != "" {
+		wailsruntime.EventsEmit(p.ctx, "pet:state", state)
+	}
+	if boot != nil {
+		p.applyBootstrap(*boot)
+		return
+	}
+	// Launched without a parent bootstrap (e.g. `--pet` by hand): still show
+	// something rather than leaving an invisible process running.
+	p.placeBottomRight()
+	wailsruntime.WindowShow(p.ctx)
 }
 
 func (p *PetBridge) applyBootstrap(boot petBootstrap) {
@@ -110,7 +174,8 @@ func (p *PetBridge) applyBootstrap(boot petBootstrap) {
 	} else {
 		p.placeBottomRight()
 	}
-	p.applyHeight(boot.Collapsed)
+	// No height applied here — the frontend measures the card and calls
+	// Resize once it has rendered the collapsed/expanded state.
 	wailsruntime.EventsEmit(p.ctx, "pet:bootstrap", boot)
 	wailsruntime.WindowShow(p.ctx)
 }
@@ -129,8 +194,16 @@ func (p *PetBridge) placeBottomRight() {
 			break
 		}
 	}
-	x := primary.Width - petWidth - petScreenMargin
-	y := primary.Height - petHeightExpanded - petScreenMargin*3
+	// Size is the logical-pixel screen size, which is the space
+	// WindowSetPosition works in. Screen.Width/Height are deprecated and
+	// platform-dependent — on a HiDPI display they can be physical pixels,
+	// which would place the window far off the bottom-right corner.
+	w, h := primary.Size.Width, primary.Size.Height
+	if w <= 0 || h <= 0 {
+		w, h = primary.Width, primary.Height
+	}
+	x := w - petWidth - petScreenMargin
+	y := h - petHeightInitial - petScreenMargin*3
 	if x < 0 {
 		x = 0
 	}
@@ -140,12 +213,34 @@ func (p *PetBridge) placeBottomRight() {
 	wailsruntime.WindowSetPosition(p.ctx, x, y)
 }
 
-func (p *PetBridge) applyHeight(collapsed bool) {
-	h := petHeightExpanded
-	if collapsed {
-		h = petHeightCollapse
+// Resize sets the window to the height the frontend measured for the rendered
+// card. Called from a ResizeObserver, so it fires for collapse, expand, peek,
+// and any row-count change without Go having to model those states.
+func (p *PetBridge) Resize(height int) {
+	h := clampPetHeight(height)
+	if h == 0 {
+		return
 	}
+	// Info rather than Debug: the pet branches out of main() before any
+	// --log-level parsing, so Debug is always below threshold here. Window
+	// geometry is otherwise unobservable from outside the process (no
+	// titlebar to read, and screen-capture APIs need permissions a terminal
+	// usually lacks), and this only fires on collapse/expand and row-count
+	// changes.
+	logInfo("pet", "resize to %dx%d (requested %d)", petWidth, h, height)
 	wailsruntime.WindowSetSize(p.ctx, petWidth, h)
+}
+
+// clampPetHeight returns the height to apply, or 0 for "ignore this value".
+// Split out from Resize so the policy is testable without a live window.
+func clampPetHeight(height int) int {
+	if height <= 0 {
+		return 0
+	}
+	if height > petMaxHeight {
+		return petMaxHeight
+	}
+	return height
 }
 
 // emit writes one child→parent event.
@@ -164,29 +259,13 @@ func (p *PetBridge) Activate(sessionID string) {
 	p.emit(petEvent{Type: "activate", SessionID: sessionID})
 }
 
-// SetCollapsed resizes the window and persists the choice via the parent.
+// SetCollapsed persists the choice via the parent. The window resize follows
+// from the DOM change, through the frontend's ResizeObserver → Resize.
 func (p *PetBridge) SetCollapsed(collapsed bool) {
 	p.mu.Lock()
 	p.collapsed = collapsed
 	p.mu.Unlock()
-	p.applyHeight(collapsed)
 	p.emit(petEvent{Type: "collapse", Collapsed: collapsed})
-}
-
-// Peek temporarily grows the window without persisting anything, so a hover
-// preview never rewrites the user's collapsed preference.
-func (p *PetBridge) Peek(open bool) {
-	p.mu.Lock()
-	collapsed := p.collapsed
-	p.mu.Unlock()
-	if !collapsed {
-		return
-	}
-	if open {
-		wailsruntime.WindowSetSize(p.ctx, petWidth, petHeightExpanded)
-		return
-	}
-	wailsruntime.WindowSetSize(p.ctx, petWidth, petHeightCollapse)
 }
 
 // ReportPosition persists the window position after a drag.
@@ -239,7 +318,7 @@ func runPetWindow(assets fs.FS) error {
 	opts := &options.App{
 		Title:  "AT Term Pet",
 		Width:  petWidth,
-		Height: petHeightExpanded,
+		Height: petHeightInitial,
 		// StartHidden avoids a flash at the default position before the
 		// bootstrap line tells us where the user last left the pet.
 		StartHidden:   true,

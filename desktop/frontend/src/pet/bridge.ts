@@ -13,10 +13,11 @@ import type { PetState } from "../lib/petState";
 interface PetBridgeMethods {
   Activate(sessionId: string): Promise<void>;
   SetCollapsed(collapsed: boolean): Promise<void>;
-  Peek(open: boolean): Promise<void>;
   ReportPosition(): Promise<void>;
   Mute(untilUnix: number): Promise<void>;
   Hide(): Promise<void>;
+  Resize(height: number): Promise<void>;
+  Ready(): Promise<void>;
 }
 
 interface WailsRuntime {
@@ -57,6 +58,14 @@ export const petBridge = {
   available(): boolean {
     return methods() !== null;
   },
+  /**
+   * Signal that the window has mounted and subscribed. Wails drops events
+   * emitted before this point, and the parent writes bootstrap + the first
+   * state snapshot immediately after spawn — so Go parks them until now.
+   */
+  ready(): void {
+    call((m) => m.Ready());
+  },
   activate(sessionId: string): void {
     if (!sessionId) return;
     call((m) => m.Activate(sessionId));
@@ -64,8 +73,15 @@ export const petBridge = {
   setCollapsed(collapsed: boolean): void {
     call((m) => m.SetCollapsed(collapsed));
   },
-  peek(open: boolean): void {
-    call((m) => m.Peek(open));
+  /**
+   * Report the rendered card height so the OS window matches it exactly.
+   * The window used to use hardcoded heights, which clipped the card's bottom
+   * edge (rounded corner included) whenever the guess was short — and any
+   * constant is wrong for most states, since height varies with row count,
+   * font and locale.
+   */
+  resize(height: number): void {
+    call((m) => m.Resize(height));
   },
   reportPosition(): void {
     call((m) => m.ReportPosition());

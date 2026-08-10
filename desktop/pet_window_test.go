@@ -63,10 +63,43 @@ func TestPetEntryRewriteDoesNotMutateCallerRequest(t *testing.T) {
 }
 
 func TestPetGeometryIsSelfConsistent(t *testing.T) {
-	if petHeightCollapse >= petHeightExpanded {
-		t.Fatal("collapsed height must be smaller than expanded")
-	}
-	if petWidth <= 0 || petHeightCollapse <= 0 {
+	if petWidth <= 0 || petHeightInitial <= 0 {
 		t.Fatal("pet geometry must be positive")
+	}
+	// The initial height is only a pre-measurement guess; it must still fit
+	// inside the bound the frontend is held to.
+	if petHeightInitial > petMaxHeight {
+		t.Fatalf("initial height %d exceeds the cap %d", petHeightInitial, petMaxHeight)
+	}
+}
+
+// The window height is reported by the frontend (ResizeObserver on the
+// rendered card) rather than hardcoded, because it varies with row count,
+// font and locale — a constant clipped the card's bottom edge. Go's only job
+// is to reject values that would be nonsense.
+func TestPetResizeHeightBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		in     int
+		accept bool
+	}{
+		{"zero is ignored", 0, false},
+		{"negative is ignored", -12, false},
+		{"a real card height passes", 60, true},
+		{"the cap itself passes", petMaxHeight, true},
+		{"beyond the cap is clamped, not rejected", petMaxHeight + 500, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := clampPetHeight(tc.in)
+			if !tc.accept {
+				if got != 0 {
+					t.Fatalf("height %d should be ignored, got %d", tc.in, got)
+				}
+				return
+			}
+			if got <= 0 || got > petMaxHeight {
+				t.Fatalf("height %d resolved to %d, outside (0, %d]", tc.in, got, petMaxHeight)
+			}
+		})
 	}
 }

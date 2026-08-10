@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-// petProcess supervises the companion window ("桌面挂件" / Desk Widget), which runs as a
-// second process of this same executable launched with --pet.
+// widgetProcess supervises the companion window ("桌面挂件" / Desk Widget), which runs as a
+// second process of this same executable launched with --widget.
 //
-// Why a child process at all: Wails v2 is single-window, and the pet needs a
+// Why a child process at all: Wails v2 is single-window, and the widget needs a
 // frameless always-on-top window that outlives focus changes on the main one.
 // Why the SAME binary rather than a second one: a separate executable would
 // need its own CI artifact per platform, its own macOS signing/notarization,
@@ -31,7 +31,7 @@ import (
 // Wire format both ways is newline-delimited JSON over the child's stdin and
 // stdout. No port, no auth, no discovery: the OS guarantees only parent and
 // child share these descriptors.
-type petProcess struct {
+type widgetProcess struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
@@ -43,16 +43,16 @@ type petProcess struct {
 	lastPushAt  time.Time
 
 	// onEvent receives decoded child→parent events. Set once before Start.
-	onEvent func(petEvent)
+	onEvent func(widgetEvent)
 }
 
-// petPushInterval throttles state pushes. 200ms is below the threshold where
+// widgetPushInterval throttles state pushes. 200ms is below the threshold where
 // a status change feels laggy but well above the rate at which a busy build
 // emits META frames.
-const petPushInterval = 200 * time.Millisecond
+const widgetPushInterval = 200 * time.Millisecond
 
-// petEvent is a message from the pet window back to the main app.
-type petEvent struct {
+// widgetEvent is a message from the widget window back to the main app.
+type widgetEvent struct {
 	// Type is "activate" | "collapse" | "move" | "mute" | "hide".
 	Type string `json:"type"`
 	// SessionID is set for "activate": the row the user clicked.
@@ -68,9 +68,9 @@ type petEvent struct {
 	AIOnly bool `json:"aiOnly,omitempty"`
 }
 
-// petBootstrap is the first line written to the child, before any state. It
+// widgetBootstrap is the first line written to the child, before any state. It
 // carries only presentation preferences — never credentials.
-type petBootstrap struct {
+type widgetBootstrap struct {
 	Type      string `json:"type"` // always "bootstrap"
 	Collapsed bool   `json:"collapsed"`
 	X         int    `json:"x"`
@@ -78,20 +78,20 @@ type petBootstrap struct {
 	Locale    string `json:"locale"`
 }
 
-func newPetProcess(onEvent func(petEvent)) *petProcess {
-	return &petProcess{onEvent: onEvent}
+func newWidgetProcess(onEvent func(widgetEvent)) *widgetProcess {
+	return &widgetProcess{onEvent: onEvent}
 }
 
-// Running reports whether a pet process is currently supervised.
-func (p *petProcess) Running() bool {
+// Running reports whether a widget process is currently supervised.
+func (p *widgetProcess) Running() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.running
 }
 
 // Start launches the companion window. It is idempotent: starting an already
-// running pet is a no-op, so a config reconcile can call it unconditionally.
-func (p *petProcess) Start(boot petBootstrap) error {
+// running widget is a no-op, so a config reconcile can call it unconditionally.
+func (p *widgetProcess) Start(boot widgetBootstrap) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.running {
@@ -103,23 +103,23 @@ func (p *petProcess) Start(boot petBootstrap) error {
 		return fmt.Errorf("locate own executable: %w", err)
 	}
 
-	cmd := exec.Command(exe, "--pet")
+	cmd := exec.Command(exe, "--widget")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("pet stdin pipe: %w", err)
+		return fmt.Errorf("widget stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("pet stdout pipe: %w", err)
+		return fmt.Errorf("widget stdout pipe: %w", err)
 	}
-	// The child's stderr joins ours so a crashing pet is diagnosable from the
+	// The child's stderr joins ours so a crashing widget is diagnosable from the
 	// same log the user already knows how to collect.
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("start pet process: %w", err)
+		return fmt.Errorf("start widget process: %w", err)
 	}
 
 	p.cmd = cmd
@@ -130,22 +130,22 @@ func (p *petProcess) Start(boot petBootstrap) error {
 
 	boot.Type = "bootstrap"
 	if err := writeNDJSON(stdin, boot); err != nil {
-		logWarn("pet", "bootstrap write failed: %v", err)
+		logWarn("widget", "bootstrap write failed: %v", err)
 	}
 
 	go p.readEvents(stdout)
 	go p.reap(cmd)
 
-	logInfo("pet", "companion window started (pid %d)", cmd.Process.Pid)
+	logInfo("widget", "companion window started (pid %d)", cmd.Process.Pid)
 	return nil
 }
 
 // reap waits for the child and clears the running flag.
 //
-// It deliberately does NOT restart. A pet that crashes on startup would
+// It deliberately does NOT restart. A widget that crashes on startup would
 // otherwise turn into an unbounded fork loop; the user re-enables it from
 // Settings, which is a rare, cheap, and observable action.
-func (p *petProcess) reap(cmd *exec.Cmd) {
+func (p *widgetProcess) reap(cmd *exec.Cmd) {
 	err := cmd.Wait()
 
 	p.mu.Lock()
@@ -161,17 +161,17 @@ func (p *petProcess) reap(cmd *exec.Cmd) {
 	p.mu.Unlock()
 
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
-		logWarn("pet", "companion window exited: %v", err)
+		logWarn("widget", "companion window exited: %v", err)
 		return
 	}
-	logInfo("pet", "companion window exited")
+	logInfo("widget", "companion window exited")
 }
 
 // readEvents decodes child→parent NDJSON until the pipe closes.
-func (p *petProcess) readEvents(stdout io.ReadCloser) {
+func (p *widgetProcess) readEvents(stdout io.ReadCloser) {
 	defer func() { _ = stdout.Close() }()
 	sc := bufio.NewScanner(stdout)
-	// Pet events are tiny; a modest cap keeps a wedged child from growing the
+	// Widget events are tiny; a modest cap keeps a wedged child from growing the
 	// buffer without bound.
 	sc.Buffer(make([]byte, 0, 4096), 64*1024)
 	for sc.Scan() {
@@ -179,9 +179,9 @@ func (p *petProcess) readEvents(stdout io.ReadCloser) {
 		if len(line) == 0 {
 			continue
 		}
-		var ev petEvent
+		var ev widgetEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
-			logWarn("pet", "undecodable event from companion: %v", err)
+			logWarn("widget", "undecodable event from companion: %v", err)
 			continue
 		}
 		if p.onEvent != nil {
@@ -189,19 +189,19 @@ func (p *petProcess) readEvents(stdout io.ReadCloser) {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		logDebug("pet", "event stream ended: %v", err)
+		logDebug("widget", "event stream ended: %v", err)
 	}
 }
 
-// PushState sends a rendered PetState JSON payload to the companion window.
+// PushState sends a rendered WidgetState JSON payload to the companion window.
 //
 // `payload` is passed through opaquely: the projection lives in the frontend
-// (lib/petState.ts) so it can be unit-tested there, and duplicating the shape
+// (lib/widgetState.ts) so it can be unit-tested there, and duplicating the shape
 // in Go would give two definitions to keep in sync.
 //
-// Returns nil when the pet is not running — callers push on every session
+// Returns nil when the widget is not running — callers push on every session
 // list change and should not have to check first.
-func (p *petProcess) PushState(payload string) error {
+func (p *widgetProcess) PushState(payload string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.running || p.stdin == nil {
@@ -210,14 +210,14 @@ func (p *petProcess) PushState(payload string) error {
 	if payload == p.lastPayload {
 		return nil
 	}
-	if !p.lastPushAt.IsZero() && time.Since(p.lastPushAt) < petPushInterval {
+	if !p.lastPushAt.IsZero() && time.Since(p.lastPushAt) < widgetPushInterval {
 		// Drop rather than queue: the next push carries the whole snapshot,
 		// so a skipped intermediate state is never missing information.
 		return nil
 	}
 
 	if _, err := io.WriteString(p.stdin, payload+"\n"); err != nil {
-		return fmt.Errorf("push pet state: %w", err)
+		return fmt.Errorf("push widget state: %w", err)
 	}
 	p.lastPayload = payload
 	p.lastPushAt = time.Now()
@@ -225,7 +225,7 @@ func (p *petProcess) PushState(payload string) error {
 }
 
 // Stop terminates the companion window. Idempotent.
-func (p *petProcess) Stop() {
+func (p *widgetProcess) Stop() {
 	p.mu.Lock()
 	cmd := p.cmd
 	stdin := p.stdin
@@ -252,7 +252,7 @@ func (p *petProcess) Stop() {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		logWarn("pet", "companion window ignored EOF; killing")
+		logWarn("widget", "companion window ignored EOF; killing")
 		_ = cmd.Process.Kill()
 	}
 }

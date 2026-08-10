@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import { computed } from "vue";
-import type { PetMood } from "../lib/petState";
+import type { WidgetMood } from "../lib/widgetState";
 
 /**
- * The pet itself: one rounded blob whose eyes, mouth and colour are driven by
+ * The sprite itself: one rounded blob whose eyes, mouth and colour are driven by
  * mood. Geometry rather than a sprite sheet so state changes tween instead of
  * cutting between frames, and so it stays crisp at any DPI.
  *
@@ -12,13 +12,13 @@ import type { PetMood } from "../lib/petState";
  * outright on some Linux setups).
  */
 const props = withDefaults(
-  defineProps<{ mood: PetMood; size?: number; muted?: boolean }>(),
+  defineProps<{ mood: WidgetMood; size?: number; muted?: boolean }>(),
   { size: 40, muted: false },
 );
 
 const BODY = "#0d1117";
 
-const COLOR: Record<PetMood, string> = {
+const COLOR: Record<WidgetMood, string> = {
   idle: "#57606a",
   running: "#2f81f7",
   waiting: "#d29922",
@@ -27,8 +27,8 @@ const COLOR: Record<PetMood, string> = {
 
 const fill = computed(() => COLOR[props.mood]);
 
-// Motion is the pet's whole point, so it is tied to mood — but muting kills
-// it. A muted pet still shows colour and counts; muting suppresses movement,
+// Motion is the widget's whole point, so it is tied to mood — but muting kills
+// it. A muted widget still shows colour and counts; muting suppresses movement,
 // not information.
 const animClass = computed(() => {
   if (props.muted) return "";

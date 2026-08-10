@@ -13,25 +13,25 @@ type PluginConfig struct {
 	FileExplorer FileExplorerConfig `json:"fileExplorer"`
 	Translate    TranslateConfig    `json:"translate"`
 	Shortcuts    ShortcutsConfig    `json:"shortcuts"`
-	Pet          PetConfig          `json:"pet"`
+	Widget       WidgetConfig          `json:"widget"`
 }
 
-// PetConfig is the companion-window plugin ("桌面挂件" / Desk Widget) block. Unlike the other
+// WidgetConfig is the companion-window plugin ("桌面挂件" / Desk Widget) block. Unlike the other
 // plugins it does not render into the main window — enabling it spawns a
-// second process of this same binary with --pet, which owns a frameless
+// second process of this same binary with --widget, which owns a frameless
 // always-on-top window. See
-// docs/superpowers/specs/2026-08-10-ai-pet-companion-window-design.md.
-type PetConfig struct {
+// docs/superpowers/specs/2026-08-10-desk-widget-design.md.
+type WidgetConfig struct {
 	Enabled bool `json:"enabled"`
 	// AIOnly restricts the widget to sessions classified as AI (claude /
 	// codex / aider). Off by default: the widget's state model comes from
 	// OSC 133 and works for any command, which is what separates it from
 	// hook-based tools that only ever see one agent.
 	AIOnly bool `json:"aiOnly"`
-	// Collapsed hides the session list, leaving only the pet + summary header.
+	// Collapsed hides the session list, leaving only the widget + summary header.
 	Collapsed bool `json:"collapsed"`
 	// WindowX / WindowY are the last dragged screen position in logical
-	// pixels. Both -1 means "never positioned" — the pet window then places
+	// pixels. Both -1 means "never positioned" — the widget window then places
 	// itself at the bottom-right of the primary display on first show.
 	WindowX int `json:"windowX"`
 	WindowY int `json:"windowY"`
@@ -122,11 +122,11 @@ func (c *PluginConfig) applyDefaults() {
 	if c.Shortcuts.Bindings == nil {
 		c.Shortcuts.Bindings = map[string]string{}
 	}
-	if c.Pet.WindowX == 0 && c.Pet.WindowY == 0 {
+	if c.Widget.WindowX == 0 && c.Widget.WindowY == 0 {
 		// (0,0) is a legal screen position but never a useful default, so it
 		// doubles as the "unset" marker on a zero-valued struct.
-		c.Pet.WindowX = -1
-		c.Pet.WindowY = -1
+		c.Widget.WindowX = -1
+		c.Widget.WindowY = -1
 	}
 }
 
@@ -154,15 +154,15 @@ func ValidatePluginConfig(c PluginConfig) error {
 	// Screen coordinates can legitimately be negative (a display left of or
 	// above the primary one), so only the sentinel and absurd magnitudes are
 	// rejected — a stale position from an unplugged monitor is clamped back
-	// on screen by the pet process, not here.
-	if c.Pet.WindowX < -32000 || c.Pet.WindowX > 32000 {
-		return fmt.Errorf("pet.windowX out of bounds [-32000, 32000]: %d", c.Pet.WindowX)
+	// on screen by the widget process, not here.
+	if c.Widget.WindowX < -32000 || c.Widget.WindowX > 32000 {
+		return fmt.Errorf("widget.windowX out of bounds [-32000, 32000]: %d", c.Widget.WindowX)
 	}
-	if c.Pet.WindowY < -32000 || c.Pet.WindowY > 32000 {
-		return fmt.Errorf("pet.windowY out of bounds [-32000, 32000]: %d", c.Pet.WindowY)
+	if c.Widget.WindowY < -32000 || c.Widget.WindowY > 32000 {
+		return fmt.Errorf("widget.windowY out of bounds [-32000, 32000]: %d", c.Widget.WindowY)
 	}
-	if c.Pet.MutedUntilUnix < 0 {
-		return errors.New("pet.mutedUntilUnix must not be negative")
+	if c.Widget.MutedUntilUnix < 0 {
+		return errors.New("widget.mutedUntilUnix must not be negative")
 	}
 	for actionID, binding := range c.Shortcuts.Bindings {
 		if actionID == "" {

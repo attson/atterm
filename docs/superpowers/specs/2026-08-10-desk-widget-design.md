@@ -27,8 +27,8 @@ atterm 已经拥有一套完整的会话状态模型：`internal/session` 通过
 
 ## Goals
 
-1. 一个**系统级置顶**的小窗口，盖在其它 app 之上，显示宠物形象 + 会话列表。
-2. 生命周期绑 AT Term：主 app 退出，宠物一起退出。
+1. 一个**系统级置顶**的小窗口，盖在其它 app 之上，显示形象 + 会话列表。
+2. 生命周期绑 AT Term：主 app 退出，挂件一起退出。
 3. 走**插件模式**，在 Settings → 插件 里开关，与 fileExplorer / translate 一致。
 4. 单击会话行 → 拉起主窗口并定位到该 tab/pane。
 5. 展开 / 折叠两态，位置与折叠态持久化。
@@ -44,12 +44,12 @@ atterm 已经拥有一套完整的会话状态模型：`internal/session` 通过
 
 ## Architecture
 
-### 进程模型：同一个二进制，`--pet` 分叉
+### 进程模型：同一个二进制，`--widget` 分叉
 
 ```
-AT Term (主进程)  ──exec──►  AT Term --pet (宠物进程)
+AT Term (主进程)  ──exec──►  AT Term --widget (挂件进程)
    wails.Run(主窗口)            wails.Run(Frameless+AlwaysOnTop+Transparent)
-   dist/index.html              dist/pet.html
+   dist/index.html              dist/index.widget.html
 ```
 
 **为什么是同一个二进制而不是第二个可执行文件：** 第二个二进制会要求 CI 产物矩阵
@@ -57,20 +57,20 @@ AT Term (主进程)  ──exec──►  AT Term --pet (宠物进程)
 过 Ed25519 + SHA256 验签，多一个二进制就多一条必须验签的链路。复用同一个已签名的可执行
 文件，这些**全部零改动**。
 
-前端多入口已有先例（`main.web.ts` / `main.capacitor.ts`），新增 `index.pet.html` +
-`src/main.pet.ts`，`vite.config.ts` 的 wails target 从单入口改为 `{ index, pet }`，
+前端多入口已有先例（`main.web.ts` / `main.capacitor.ts`），新增 `index.widget.html` +
+`src/main.widget.ts`，`vite.config.ts` 的 wails target 从单入口改为 `{ index, widget }`，
 `go:embed all:frontend/dist` 自动收进去。
 
-### 数据流：宠物进程什么都不连
+### 数据流：挂件进程什么都不连
 
 ```
-主 app 进程                                      宠物进程
+主 app 进程                                      挂件进程
 ───────────                                      ────────
 App.vue 合并后的 sessions                          Go: bufio.Scanner(os.Stdin)
-  (local 流 + remote 流 + localListMerge)            → EventsEmit("pet:state", json)
-       │                                              → PetApp.vue 渲染
-       ├─ projectPetState()  纯函数，可单测
-       ├─ platform.petHost.pushState(state)
+  (local 流 + remote 流 + localListMerge)            → EventsEmit("widget:state", json)
+       │                                              → WidgetApp.vue 渲染
+       ├─ projectWidgetState()  纯函数，可单测
+       ├─ platform.deskWidget.pushState(state)
        └──────────► child.stdin (NDJSON) ─────►
 
        ◄────────── child.stdout (NDJSON) ──────  {"type":"activate","sessionId":"…"}
@@ -86,40 +86,40 @@ App.vue 合并后的 sessions                          Go: bufio.Scanner(os.Stdi
 
 1. token / `account_key` 一律不出主进程，宠物只拿到渲染好的字符串。
 2. 远程会话照常显示——主 app 早就合并过了。
-3. `projectPetState()` 是纯函数（`SessionInfo[] → PetState`），排序、汇总文案、状态归并
+3. `projectWidgetState()` 是纯函数（`SessionInfo[] → WidgetState`），排序、汇总文案、状态归并
    全都能脱离窗口单测，与 `lib/layout.ts` / `lib/sessionMatch.ts` 同一路数。
 4. 传输走 stdin/stdout 管道：不开端口、不需鉴权、OS 保证只有父子可见。
 
 ### 状态投影
 
-`PetState` 是宠物渲染所需的最小完整快照：
+`WidgetState` 是宠物渲染所需的最小完整快照：
 
 ```ts
-type PetMood = "idle" | "running" | "waiting" | "failed";
+type WidgetMood = "idle" | "running" | "waiting" | "failed";
 
-interface PetSessionRow {
+interface WidgetSessionRow {
   sessionId: string;
   title: string;      // 已经 fallback 过的显示名
   subtitle: string;   // 当前命令 / exit code / 摘要
-  state: PetMood;
+  state: WidgetMood;
   kind: string;       // "claude" | "codex" | "" …
   remoteHost: string; // 非空 = 跑在别的机器上
   ageMs: number;      // 运行时长，宠物侧本地 tick 不重算
 }
 
-interface PetState {
-  mood: PetMood;          // 全局聚合，优先级 waiting > failed > running > idle
+interface WidgetState {
+  mood: WidgetMood;          // 全局聚合，优先级 waiting > failed > running > idle
   waitingCount: number;
   runningCount: number;
   completedCount: number;
   headline: string;       // "1 个等你输入"
   subline: string;        // "2 个在跑 · 1 个已完成"
-  rows: PetSessionRow[];  // 已排序、已截断
+  rows: WidgetSessionRow[];  // 已排序、已截断
 }
 ```
 
 优先级排序：`waiting` → `failed` → `running` → `completed`；同级按最近活动时间倒序。
-`rows` 截断到 `PET_MAX_ROWS = 6`，超出部分在汇总行体现。
+`rows` 截断到 `WIDGET_MAX_ROWS = 6`，超出部分在汇总行体现。
 
 ### 插件化
 
@@ -127,8 +127,8 @@ interface PetState {
 所以 `PluginHost.vue` 必须跳过它——沿用已有的 context-menu 跳过模式（那个 slot 同样是
 headless）。
 
-进程生命周期由 `useCompanionWindow.ts` 驱动：watch `store.isPluginEnabled("pet")`，
-true 就 `platform.petHost.start()`，false 就 `stop()`。配置持久化复用现成的
+进程生命周期由 `composables/useDeskWidget.ts` 驱动：watch `store.isPluginEnabled("desk-widget")`，
+true 就 `platform.deskWidget.start()`，false 就 `stop()`。配置持久化复用现成的
 `PluginConfig` → `config.json` → `plugin-config-changed` 事件链路。
 
 ### 平台细节
@@ -149,7 +149,7 @@ cgo + AppKit 已在 `desktop/pasteboard_files_darwin.go` 使用（`#cgo LDFLAGS:
 
 ### macOS 三个"看起来该生效但不生效"的坑（实测踩过）
 
-都在 `desktop/pet_window_darwin.go::atterm_pet_configure`，**改这块前必读**：
+都在 `desktop/widget_window_darwin.go::atterm_widget_configure`，**改这块前必读**：
 
 1. **必须 `dispatch_async` 到主队列。** Wails 的 `OnStartup` 是从 Go goroutine 回调的，
    AppKit 调用在非主线程上被静默忽略——直接在 `OnStartup` 里调 `setActivationPolicy`
@@ -177,13 +177,15 @@ osascript -e 'tell application "System Events" to get unix id of every process w
 | 动作 | 行为 |
 |---|---|
 | 单击宠物 | 展开 ⇄ 折叠，窗口 resize，写进 config |
-| 悬停折叠态 | peek 临时展开（不改持久态） |
+| 悬停**整张卡片** | peek 临时展开（不改持久态）。悬停区域是整个窗口而不是表头——挂在表头上时，鼠标下移到会话行就离开了表头，列表会在指针底下收起，行永远点不到 |
 | 单击会话行 | 主窗口 Show + Focus，定位到该 tab/pane |
 | 拖动 | 移动窗口，位置写进 config |
-| 右键 | 折叠/展开 · 静音 15/60 分钟 · 隐藏宠物 |
+| 右键 | 折叠/展开 · 静音 15/60 分钟 · 仅 AI 会话 · 隐藏挂件 |
 | 升级到 waiting | 宠物起跳 + 角标；折叠态自动 peek 3 秒 |
 
-尺寸：展开 `252 × 172`，折叠 `252 × 54`。
+尺寸：宽度固定 `252`，**高度由前端量出来**（`WidgetApp.vue` 的 ResizeObserver → `Resize`），
+Go 侧只做上限钳制。实测折叠 `252 × 60`、4 行展开 `252 × 213`。写死高度会切掉卡片底边
+（连圆角一起），而行数 / 字体 / 语言都会改变高度，任何常量都是错的。
 
 ## Error Handling
 
@@ -197,9 +199,9 @@ osascript -e 'tell application "System Events" to get unix id of every process w
 
 ## Testing
 
-- `lib/petState.test.ts` — 投影纯函数：优先级排序、聚合计数、文案、截断、远程标记。
-- `desktop/pet_config_test.go` — PetConfig 默认值 / 校验边界 / JSON 往返。
-- `desktop/pet_process_test.go` — 进程管理器的 NDJSON 编解码与 stdout 事件解析
+- `lib/widgetState.test.ts` — 投影纯函数：优先级排序、聚合计数、文案、截断、远程标记。
+- `desktop/widget_config_test.go` — WidgetConfig 默认值 / 校验边界 / JSON 往返。
+- `desktop/widget_process_test.go` — 进程管理器的 NDJSON 编解码与 stdout 事件解析
   （不起真窗口，用假的 stdin/stdout pipe）。
 - 手动验证：三平台各确认「不出现在 Dock/任务栏/Alt-Tab」+ 置顶 + 透明。
 
@@ -209,12 +211,14 @@ osascript -e 'tell application "System Events" to get unix id of every process w
 对 `vim` / `make` / 任意脚本一视同仁——普通 shell 会话同样会出现在列表里，叫"AI 宠物"
 既不准确，也把它相对同类工具（只认某一家 agent 的 hook）的优势说小了。
 
-想要纯 AI 视图的用户可以打开 `PetConfig.AIOnly`（Settings → 插件，或挂件自己的右键菜单）。
+想要纯 AI 视图的用户可以打开 `WidgetConfig.AIOnly`（Settings → 插件，或挂件自己的右键菜单）。
 过滤在主 app 的投影里完成，所以计数、标题、溢出提示描述的都是过滤后的同一批会话；过滤后
 为空时标题是"没有 AI 会话"而不是"没有会话"。
 
-**代码内标识仍叫 `pet`**（`PluginID` / `PetConfig` / `pet_*.go` / `petState.ts` / `--pet`）。
-这是个短小的内部代号，不出现在任何 UI 文案里；重命名要动 20 多个文件，收益为零。
+**代码内标识与产品名一致**：`PluginID = "desk-widget"`、`WidgetConfig`、`desktop/widget_*.go`、
+`lib/widgetState.ts`、`src/widget/`、`plugins/deskWidget/`、CLI flag `--widget`、Wails 事件
+`widget:state` / `widget:bootstrap`、配置键 `plugins.widget`。曾短暂叫过 `pet`，已全部改掉——
+留着两套叫法只会让后来的人以为它跟 AI 宠物是两个东西。
 
 ## Open Questions
 

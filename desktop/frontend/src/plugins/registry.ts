@@ -1,7 +1,7 @@
 import type { PluginDescriptor } from "./types";
 import { fileExplorerDescriptor } from "./fileExplorer";
 import { translateDescriptor } from "./translate";
-import { petDescriptor } from "./pet";
+import { deskWidgetDescriptor } from "./deskWidget";
 
 // Adding a new plugin requires (1) a directory under plugins/<id>/ with a
 // default Vue export, and (2) a PluginDescriptor entry here. Vite's static
@@ -10,7 +10,7 @@ import { petDescriptor } from "./pet";
 export const PLUGINS: PluginDescriptor[] = [
   fileExplorerDescriptor,
   translateDescriptor,
-  petDescriptor,
+  deskWidgetDescriptor,
 ];
 
 export function descriptorsForSlot(slot: PluginDescriptor["slot"]): PluginDescriptor[] {

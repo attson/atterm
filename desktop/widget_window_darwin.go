@@ -8,11 +8,11 @@ package main
 
 #import <AppKit/AppKit.h>
 
-// atterm_pet_configure fixes two things Wails v2.12 gives no option for.
+// atterm_widget_configure fixes two things Wails v2.12 gives no option for.
 //
 // 1. Activation policy. An accessory app has no Dock tile, no menu bar, and
-//    does not appear in Cmd-Tab — what every desktop pet needs. LSUIElement
-//    cannot be used: the pet is a second process of the SAME bundle as the
+//    does not appear in Cmd-Tab — what every desktop widget needs. LSUIElement
+//    cannot be used: the widget is a second process of the SAME bundle as the
 //    main window, and Info.plist keys are per-bundle. Wails does not expose
 //    ActivationPolicy either (pkg/options/mac/mac.go has the whole type and
 //    field commented out, with no implementation in the module), and it
@@ -30,7 +30,7 @@ package main
 // setting the policy directly in OnStartup appears to do nothing.
 // dispatch_async also lands after Wails' own startup, so it wins the race
 // against applicationWillFinishLaunching.
-static void atterm_pet_configure(void) {
+static void atterm_widget_configure(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         @autoreleasepool {
             [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -55,20 +55,20 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
-// applyPetPlatformOptions configures the companion window for macOS.
-func applyPetPlatformOptions(opts *options.App) {
+// applyWidgetPlatformOptions configures the companion window for macOS.
+func applyWidgetPlatformOptions(opts *options.App) {
 	opts.Mac = &mac.Options{
 		WebviewIsTransparent: true,
 		// Deliberately NOT WindowIsTranslucent: that inserts a light
 		// NSVisualEffectView behind the content, which shows through the
 		// card's rounded corners as a white fringe. Real transparency comes
-		// from setOpaque:NO in atterm_pet_configure.
+		// from setOpaque:NO in atterm_widget_configure.
 		DisableZoom: true,
 	}
 }
 
-// applyPetPostStartup runs from OnStartup, once Wails has finished its own
+// applyWidgetPostStartup runs from OnStartup, once Wails has finished its own
 // NSApplication setup.
-func applyPetPostStartup(_ context.Context) {
-	C.atterm_pet_configure()
+func applyWidgetPostStartup(_ context.Context) {
+	C.atterm_widget_configure()
 }

@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { SessionInfo } from "./connection";
 import {
-  PET_MAX_ROWS,
+  WIDGET_MAX_ROWS,
   moodOf,
-  projectPetState,
+  projectWidgetState,
   subtitleOf,
-  type PetMood,
-} from "./petState";
+  type WidgetMood,
+} from "./widgetState";
 
 const NOW = 1_800_000_000_000; // fixed clock so ageMs assertions are stable
 
@@ -31,7 +31,7 @@ describe("moodOf", () => {
   });
 
   it("folds disconnected and closed into idle, not failed", () => {
-    // A dropped relay is not a failed command — painting the pet red on every
+    // A dropped relay is not a failed command — painting the widget red on every
     // network hiccup would train the user to ignore red.
     expect(moodOf("disconnected")).toBe("idle");
     expect(moodOf("closed")).toBe("idle");
@@ -83,8 +83,8 @@ describe("subtitleOf", () => {
   });
 });
 
-describe("projectPetState — aggregate mood", () => {
-  const cases: [string, SessionInfo["task_state"][], PetMood][] = [
+describe("projectWidgetState — aggregate mood", () => {
+  const cases: [string, SessionInfo["task_state"][], WidgetMood][] = [
     ["waiting outranks everything", ["running", "failed", "waiting_input"], "waiting"],
     ["failed outranks running", ["running", "completed", "failed"], "failed"],
     ["running outranks idle", ["idle", "running"], "running"],
@@ -94,19 +94,19 @@ describe("projectPetState — aggregate mood", () => {
   for (const [name, states, want] of cases) {
     it(name, () => {
       const sessions = states.map((st, i) => sess({ id: `s${i}`, task_state: st }));
-      expect(projectPetState(sessions, { nowMs: NOW }).mood).toBe(want);
+      expect(projectWidgetState(sessions, { nowMs: NOW }).mood).toBe(want);
     });
   }
 
   it("is idle for an empty list", () => {
-    const st = projectPetState([], { nowMs: NOW });
+    const st = projectWidgetState([], { nowMs: NOW });
     expect(st.mood).toBe("idle");
     expect(st.rows).toEqual([]);
     expect(st.headline).toBe("没有会话");
   });
 });
 
-describe("projectPetState — ordering", () => {
+describe("projectWidgetState — ordering", () => {
   it("sorts by priority band, then most-recently-active first", () => {
     const sessions = [
       sess({ id: "old-run", task_state: "running", last_output_at: 100 }),
@@ -115,7 +115,7 @@ describe("projectPetState — ordering", () => {
       sess({ id: "fail", task_state: "failed", last_output_at: 200 }),
       sess({ id: "wait", task_state: "waiting_input", last_output_at: 1 }),
     ];
-    const ids = projectPetState(sessions, { nowMs: NOW }).rows.map((r) => r.sessionId);
+    const ids = projectWidgetState(sessions, { nowMs: NOW }).rows.map((r) => r.sessionId);
     expect(ids).toEqual(["wait", "fail", "new-run", "old-run", "done"]);
   });
 
@@ -124,30 +124,30 @@ describe("projectPetState — ordering", () => {
       sess({ id: "gone", task_state: "closed" }),
       sess({ id: "here", task_state: "running" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.rows.map((r) => r.sessionId)).toEqual(["here"]);
   });
 });
 
-describe("projectPetState — truncation", () => {
+describe("projectWidgetState — truncation", () => {
   it("caps rows at maxRows and reports the overflow", () => {
-    const sessions = Array.from({ length: PET_MAX_ROWS + 3 }, (_, i) =>
+    const sessions = Array.from({ length: WIDGET_MAX_ROWS + 3 }, (_, i) =>
       sess({ id: `s${i}`, task_state: "running" }),
     );
-    const st = projectPetState(sessions, { nowMs: NOW });
-    expect(st.rows).toHaveLength(PET_MAX_ROWS);
+    const st = projectWidgetState(sessions, { nowMs: NOW });
+    expect(st.rows).toHaveLength(WIDGET_MAX_ROWS);
     expect(st.overflowCount).toBe(3);
     // Counts describe every live session, not just the visible slice.
-    expect(st.runningCount).toBe(PET_MAX_ROWS + 3);
+    expect(st.runningCount).toBe(WIDGET_MAX_ROWS + 3);
   });
 
   it("reports no overflow when everything fits", () => {
-    const st = projectPetState([sess({ id: "a", task_state: "running" })], { nowMs: NOW });
+    const st = projectWidgetState([sess({ id: "a", task_state: "running" })], { nowMs: NOW });
     expect(st.overflowCount).toBe(0);
   });
 });
 
-describe("projectPetState — headline and subline", () => {
+describe("projectWidgetState — headline and subline", () => {
   it("leads with waiting and never repeats it in the subline", () => {
     const sessions = [
       sess({ id: "w", task_state: "waiting_input" }),
@@ -155,7 +155,7 @@ describe("projectPetState — headline and subline", () => {
       sess({ id: "r2", task_state: "running" }),
       sess({ id: "c", task_state: "completed" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.headline).toBe("1 个等你输入");
     expect(st.subline).toBe("2 个在跑 · 1 个已完成");
   });
@@ -165,25 +165,25 @@ describe("projectPetState — headline and subline", () => {
       sess({ id: "f", task_state: "failed" }),
       sess({ id: "r", task_state: "running" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.headline).toBe("1 个失败");
     expect(st.subline).toBe("1 个在跑");
   });
 
   it("says everything finished when only completed sessions remain", () => {
-    const st = projectPetState([sess({ id: "c", task_state: "completed" })], { nowMs: NOW });
+    const st = projectWidgetState([sess({ id: "c", task_state: "completed" })], { nowMs: NOW });
     expect(st.headline).toBe("都跑完了");
     expect(st.subline).toBe("1 个已完成");
   });
 });
 
-describe("projectPetState — row fields", () => {
+describe("projectWidgetState — row fields", () => {
   it("marks sessions on another host as remote", () => {
     const sessions = [
       sess({ id: "local", host_id: "H1", host: "mbp", task_state: "running" }),
       sess({ id: "far", host_id: "H2", host: "mac-mini", task_state: "running" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW, localHostId: "H1" });
+    const st = projectWidgetState(sessions, { nowMs: NOW, localHostId: "H1" });
     const byId = Object.fromEntries(st.rows.map((r) => [r.sessionId, r]));
     expect(byId.local.remoteHost).toBe("");
     expect(byId.far.remoteHost).toBe("mac-mini");
@@ -193,7 +193,7 @@ describe("projectPetState — row fields", () => {
     // Boot races can leave localHostId empty; guessing "remote" would tag the
     // user's own sessions with another machine's name.
     const sessions = [sess({ id: "a", host_id: "H2", host: "mac-mini" })];
-    const st = projectPetState(sessions, { nowMs: NOW, localHostId: "" });
+    const st = projectWidgetState(sessions, { nowMs: NOW, localHostId: "" });
     expect(st.rows[0].remoteHost).toBe("");
   });
 
@@ -202,7 +202,7 @@ describe("projectPetState — row fields", () => {
       sess({ id: "ai", type: "ai", current_command: "/usr/local/bin/claude --resume x" }),
       sess({ id: "sh", type: "shell", current_command: "npm run build" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     const byId = Object.fromEntries(st.rows.map((r) => [r.sessionId, r]));
     expect(byId.ai.kind).toBe("claude");
     expect(byId.sh.kind).toBe("");
@@ -213,7 +213,7 @@ describe("projectPetState — row fields", () => {
       sess({ id: "run", task_state: "running", command_started_at: NOW / 1000 - 30 }),
       sess({ id: "done", task_state: "completed", command_started_at: NOW / 1000 - 30 }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     const byId = Object.fromEntries(st.rows.map((r) => [r.sessionId, r]));
     expect(byId.run.ageMs).toBe(30_000);
     expect(byId.done.ageMs).toBe(0);
@@ -223,7 +223,7 @@ describe("projectPetState — row fields", () => {
     const sessions = [
       sess({ id: "skew", task_state: "running", command_started_at: NOW / 1000 + 60 }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.rows[0].ageMs).toBe(0);
   });
 
@@ -231,7 +231,7 @@ describe("projectPetState — row fields", () => {
     // titleOrCommand() bottoms out at session_id.slice(0, 8), which is useless
     // in a one-line row — displayTitle() must reach the cwd basename first.
     const sessions = [sess({ id: "abcdef1234", title: "", cwd: "/Users/me/atterm", command: "zsh" })];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.rows[0].title).toBe("atterm");
   });
 
@@ -239,32 +239,32 @@ describe("projectPetState — row fields", () => {
     const sessions = [
       sess({ id: "a", title: "", cwd: "/Users/me/atterm", current_command: "npm run build" }),
     ];
-    const row = projectPetState(sessions, { nowMs: NOW, home: "/Users/me" }).rows[0];
+    const row = projectWidgetState(sessions, { nowMs: NOW, home: "/Users/me" }).rows[0];
     expect(row.title).toBe("npm");
     expect(row.subtitle).toBe("~/atterm");
   });
 
   it("falls back to the launch command when there is no cwd either", () => {
     const sessions = [sess({ id: "abcdef1234", title: "", cwd: "", command: "/bin/zsh" })];
-    expect(projectPetState(sessions, { nowMs: NOW }).rows[0].title).toBe("zsh");
+    expect(projectWidgetState(sessions, { nowMs: NOW }).rows[0].title).toBe("zsh");
   });
 });
 
-describe("projectPetState — idle sessions are still sessions", () => {
+describe("projectWidgetState — idle sessions are still sessions", () => {
   it("counts shells sitting at a prompt instead of claiming there are none", () => {
     // Regression: idle was not a band, so a window listing ten live sessions
     // announced "没有会话" while rendering all ten below it.
     const sessions = Array.from({ length: 10 }, (_, i) =>
       sess({ id: `s${i}`, task_state: "idle" }),
     );
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.idleCount).toBe(10);
     expect(st.headline).toBe("10 个空闲");
     expect(st.subline).toBe("");
   });
 
   it("still reports no sessions when there really are none", () => {
-    const st = projectPetState([], { nowMs: NOW });
+    const st = projectWidgetState([], { nowMs: NOW });
     expect(st.idleCount).toBe(0);
     expect(st.headline).toBe("没有会话");
   });
@@ -274,7 +274,7 @@ describe("projectPetState — idle sessions are still sessions", () => {
       sess({ id: "done", task_state: "completed" }),
       sess({ id: "resting", task_state: "idle" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.completedCount).toBe(1);
     expect(st.idleCount).toBe(1);
     expect(st.headline).toBe("1 个已完成");
@@ -282,7 +282,7 @@ describe("projectPetState — idle sessions are still sessions", () => {
   });
 
   it("counts a disconnected session as idle rather than failed", () => {
-    const st = projectPetState([sess({ id: "gone", task_state: "disconnected" })], {
+    const st = projectWidgetState([sess({ id: "gone", task_state: "disconnected" })], {
       nowMs: NOW,
     });
     expect(st.idleCount).toBe(1);
@@ -296,13 +296,13 @@ describe("projectPetState — idle sessions are still sessions", () => {
       sess({ id: "i1", task_state: "idle" }),
       sess({ id: "i2", task_state: "idle" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW });
+    const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.headline).toBe("1 个等你输入");
     expect(st.subline).toBe("1 个在跑 · 2 个空闲");
   });
 });
 
-describe("projectPetState — AI-only filter", () => {
+describe("projectWidgetState — AI-only filter", () => {
   const mixed = () => [
     sess({ id: "ai1", type: "ai", task_state: "running", current_command: "claude" }),
     sess({ id: "sh1", type: "shell", task_state: "running", current_command: "npm run dev" }),
@@ -310,13 +310,13 @@ describe("projectPetState — AI-only filter", () => {
   ];
 
   it("keeps every session when the filter is off", () => {
-    const st = projectPetState(mixed(), { nowMs: NOW });
+    const st = projectWidgetState(mixed(), { nowMs: NOW });
     expect(st.rows).toHaveLength(3);
     expect(st.aiOnly).toBe(false);
   });
 
   it("keeps only AI sessions when the filter is on", () => {
-    const st = projectPetState(mixed(), { nowMs: NOW, aiOnly: true });
+    const st = projectWidgetState(mixed(), { nowMs: NOW, aiOnly: true });
     expect(st.rows.map((r) => r.sessionId)).toEqual(["ai1"]);
     expect(st.aiOnly).toBe(true);
   });
@@ -324,7 +324,7 @@ describe("projectPetState — AI-only filter", () => {
   it("counts and headline describe the filtered set, not the whole list", () => {
     // The filter runs before every count, so the header can never advertise
     // sessions the list does not show.
-    const st = projectPetState(mixed(), { nowMs: NOW, aiOnly: true });
+    const st = projectWidgetState(mixed(), { nowMs: NOW, aiOnly: true });
     expect(st.runningCount).toBe(1);
     expect(st.idleCount).toBe(0);
     expect(st.headline).toBe("1 个在跑");
@@ -332,10 +332,10 @@ describe("projectPetState — AI-only filter", () => {
 
   it("says which emptiness it is when the filter hides everything", () => {
     const shells = [sess({ id: "sh", type: "shell", task_state: "idle" })];
-    expect(projectPetState(shells, { nowMs: NOW, aiOnly: true }).headline).toBe(
+    expect(projectWidgetState(shells, { nowMs: NOW, aiOnly: true }).headline).toBe(
       "没有 AI 会话",
     );
-    expect(projectPetState(shells, { nowMs: NOW }).headline).toBe("1 个空闲");
+    expect(projectWidgetState(shells, { nowMs: NOW }).headline).toBe("1 个空闲");
   });
 
   it("still drops closed sessions while filtering", () => {
@@ -343,7 +343,7 @@ describe("projectPetState — AI-only filter", () => {
       sess({ id: "gone", type: "ai", task_state: "closed" }),
       sess({ id: "here", type: "ai", task_state: "running" }),
     ];
-    const st = projectPetState(sessions, { nowMs: NOW, aiOnly: true });
+    const st = projectWidgetState(sessions, { nowMs: NOW, aiOnly: true });
     expect(st.rows.map((r) => r.sessionId)).toEqual(["here"]);
   });
 });

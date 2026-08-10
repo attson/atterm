@@ -15,9 +15,9 @@ import {
 import {
   GetPluginConfig,
   SetPluginConfig,
-  StartPet,
-  StopPet,
-  PushPetState,
+  StartWidget,
+  StopWidget,
+  PushWidgetState,
 } from '../../wailsjs/go/main/App'
 import {
   ListDir,
@@ -232,10 +232,10 @@ export function createWailsPlatform(): Platform {
         trash: (path: string) => Trash(path),
       },
     },
-    pet: {
-      start: () => StartPet(),
-      stop: () => StopPet(),
-      pushState: (json: string) => PushPetState(json),
+    deskWidget: {
+      start: () => StartWidget(),
+      stop: () => StopWidget(),
+      pushState: (json: string) => PushWidgetState(json),
     },
   }
 }

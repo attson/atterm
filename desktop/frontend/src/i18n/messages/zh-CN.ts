@@ -707,7 +707,7 @@ export const zhCN = {
       confirmHardDelete: "永久删除 {name}？此操作无法撤销。",
       saveFailed: "保存失败：{message}",
     },
-    pet: {
+    deskWidget: {
       title: "桌面挂件",
       description:
         "一个置顶的小窗口，显示哪些会话在跑、失败了、或者在等你输入——AI agent 和普通 shell 一视同仁。点会话行可直接跳到对应标签页。",

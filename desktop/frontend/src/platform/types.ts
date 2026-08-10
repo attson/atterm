@@ -237,15 +237,15 @@ export interface AuxKeyBridge {
   clear(): Promise<void>
 }
 
-// PetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the
+// WidgetBridge drives the companion window ("桌面挂件" / Desk Widget): a second process of the
 // same executable that owns a frameless always-on-top window. Only the Wails
 // platform implements it — web and Capacitor leave it undefined.
-export interface PetBridge {
+export interface WidgetBridge {
   /** Spawns the companion window if it is not already running. Idempotent. */
   start(): Promise<void>
   /** Terminates the companion window. Idempotent. */
   stop(): Promise<void>
-  /** Pushes a serialized PetState snapshot. No-op when the pet is stopped. */
+  /** Pushes a serialized WidgetState snapshot. No-op when the widget is stopped. */
   pushState(json: string): Promise<void>
 }
 
@@ -259,5 +259,5 @@ export interface Platform {
   auxKeys: AuxKeyBridge
   updater?: UpdaterBridge
   pluginHost?: PluginHostBridge
-  pet?: PetBridge
+  deskWidget?: WidgetBridge
 }

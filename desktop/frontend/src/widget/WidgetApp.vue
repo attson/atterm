@@ -1,19 +1,19 @@
 <script lang="ts" setup>
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import PetSprite from "./PetSprite.vue";
-import { onPetBootstrap, onPetState, petBridge } from "./bridge";
-import type { PetMood, PetState } from "../lib/petState";
+import WidgetSprite from "./WidgetSprite.vue";
+import { onWidgetBootstrap, onWidgetState, widgetBridge } from "./bridge";
+import type { WidgetMood, WidgetState } from "../lib/widgetState";
 
 /**
- * The companion window (layout A): pet + summary header, then one row per
- * session. Collapsing hides the rows but keeps the header, so a folded pet
+ * The companion window (layout A): widget + summary header, then one row per
+ * session. Collapsing hides the rows but keeps the header, so a folded widget
  * still answers "does anything need me?".
  *
  * This component owns no data. Snapshots arrive from the main app over a pipe
- * (see desktop/pet_process.go); user intent goes back the same way.
+ * (see desktop/widget_process.go); user intent goes back the same way.
  */
 
-const EMPTY: PetState = {
+const EMPTY: WidgetState = {
   mood: "idle",
   waitingCount: 0,
   runningCount: 0,
@@ -27,11 +27,11 @@ const EMPTY: PetState = {
   aiOnly: false,
 };
 
-/** Measured to size the OS window; see petBridge.resize. */
+/** Measured to size the OS window; see widgetBridge.resize. */
 const cardEl = ref<HTMLElement | null>(null);
 let cardObserver: ResizeObserver | null = null;
 
-const state = ref<PetState>(EMPTY);
+const state = ref<WidgetState>(EMPTY);
 const collapsed = ref(false);
 const peeking = ref(false);
 const menuOpen = ref(false);
@@ -48,14 +48,14 @@ const muted = computed(() => mutedUntil.value * 1000 > nowMs.value);
 /** Rows are visible when expanded, or while a hover/auto peek is open. */
 const showRows = computed(() => !collapsed.value || peeking.value);
 
-const DOT: Record<PetMood, string> = {
+const DOT: Record<WidgetMood, string> = {
   idle: "#3fb950",
   running: "#2f81f7",
   waiting: "#d29922",
   failed: "#f85149",
 };
 
-function dotColor(m: PetMood): string {
+function dotColor(m: WidgetMood): string {
   // An idle row in this list is a finished command, so green reads as "done"
   // rather than the grey the sprite uses for "nothing happening at all".
   return DOT[m];
@@ -82,13 +82,13 @@ function liveAge(row: { ageMs: number }, pushedAt: number): string {
 
 const pushedAt = ref(Date.now());
 
-function applyState(next: PetState) {
+function applyState(next: WidgetState) {
   const prev = state.value;
   state.value = next;
   pushedAt.value = Date.now();
 
-  // Something newly needs the user. If the pet is folded away, open it briefly
-  // so a collapsed pet can still raise its hand — then fold back so it does not
+  // Something newly needs the user. If the widget is folded away, open it briefly
+  // so a collapsed widget can still raise its hand — then fold back so it does not
   // silently become a permanent panel.
   const escalated =
     next.waitingCount > prev.waitingCount || next.failedCount > prev.failedCount;
@@ -114,7 +114,7 @@ function toggleCollapsed() {
   }
   peeking.value = false;
   collapsed.value = !collapsed.value;
-  petBridge.setCollapsed(collapsed.value);
+  widgetBridge.setCollapsed(collapsed.value);
 }
 
 // Peek tracks the pointer over the WHOLE card, not just the header: opening
@@ -134,19 +134,19 @@ function onPeekLeave() {
 }
 
 function activate(sessionId: string) {
-  petBridge.activate(sessionId);
+  widgetBridge.activate(sessionId);
 }
 
 function muteFor(minutes: number) {
   const until = Math.floor(Date.now() / 1000) + minutes * 60;
   mutedUntil.value = until;
-  petBridge.mute(until);
+  widgetBridge.mute(until);
   menuOpen.value = false;
 }
 
 function unmute() {
   mutedUntil.value = 0;
-  petBridge.mute(0);
+  widgetBridge.mute(0);
   menuOpen.value = false;
 }
 
@@ -155,12 +155,12 @@ function toggleAiOnly() {
   // Optimistic only in the menu's checkmark sense — the authoritative value
   // comes back on the next pushed snapshot, since the filter is applied by
   // the projection in the main app.
-  petBridge.setAiOnly(!state.value.aiOnly);
+  widgetBridge.setAiOnly(!state.value.aiOnly);
 }
 
-function hidePet() {
+function hideWidget() {
   menuOpen.value = false;
-  petBridge.hide();
+  widgetBridge.hide();
 }
 
 function openMenu(e: MouseEvent) {
@@ -173,10 +173,10 @@ function closeMenu() {
 }
 
 onMounted(() => {
-  onPetBootstrap((boot) => {
+  onWidgetBootstrap((boot) => {
     collapsed.value = boot.collapsed;
   });
-  onPetState(applyState);
+  onWidgetState(applyState);
 
   // Drive the OS window height from the rendered card. A ResizeObserver
   // covers collapse, expand, peek and row-count changes with one mechanism,
@@ -184,7 +184,7 @@ onMounted(() => {
   if (cardEl.value) {
     cardObserver = new ResizeObserver((entries) => {
       const h = Math.ceil(entries[0].borderBoxSize?.[0]?.blockSize ?? entries[0].contentRect.height);
-      if (h > 0) petBridge.resize(h);
+      if (h > 0) widgetBridge.resize(h);
     });
     cardObserver.observe(cardEl.value);
   }
@@ -195,19 +195,19 @@ onMounted(() => {
 
   // Wails reports no drag-end event, so persist the position when the pointer
   // is released anywhere in the window — that is where a header drag ends.
-  window.addEventListener("mouseup", petBridge.reportPosition);
+  window.addEventListener("mouseup", widgetBridge.reportPosition);
   window.addEventListener("click", closeMenu);
 
   // Last: everything above must be listening before Go replays the parked
   // bootstrap and first snapshot.
-  petBridge.ready();
+  widgetBridge.ready();
 });
 
 onUnmounted(() => {
   cardObserver?.disconnect();
   if (clockTimer !== null) window.clearInterval(clockTimer);
   if (autoPeekTimer !== null) window.clearTimeout(autoPeekTimer);
-  window.removeEventListener("mouseup", petBridge.reportPosition);
+  window.removeEventListener("mouseup", widgetBridge.reportPosition);
   window.removeEventListener("click", closeMenu);
 });
 </script>
@@ -215,14 +215,14 @@ onUnmounted(() => {
 <template>
   <div
     ref="cardEl"
-    class="pet-window"
+    class="widget-window"
     @contextmenu="openMenu"
     @mouseenter="onPeekEnter"
     @mouseleave="onPeekLeave"
   >
-    <header class="pet-header" @click="toggleCollapsed">
+    <header class="widget-header" @click="toggleCollapsed">
       <div class="sprite-wrap">
-        <PetSprite :mood="state.mood" :muted="muted" :size="40" />
+        <WidgetSprite :mood="state.mood" :muted="muted" :size="40" />
         <span v-if="state.waitingCount > 0" class="badge">{{ state.waitingCount }}</span>
       </div>
       <div class="meta">
@@ -274,13 +274,13 @@ onUnmounted(() => {
         {{ state.aiOnly ? "✓ 仅 AI 会话" : "仅 AI 会话" }}
       </button>
       <div class="menu-divider" />
-      <button class="danger" type="button" @click="hidePet">隐藏挂件</button>
+      <button class="danger" type="button" @click="hideWidget">隐藏挂件</button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.pet-window {
+.widget-window {
   /* The OS window is transparent; this card is the only thing that paints.
      No box-shadow here: the window is non-opaque, so each platform derives a
      drop shadow from this card's alpha. A CSS shadow would both double that
@@ -295,7 +295,7 @@ onUnmounted(() => {
   user-select: none;
 }
 
-.pet-header {
+.widget-header {
   display: flex;
   align-items: center;
   gap: 9px;

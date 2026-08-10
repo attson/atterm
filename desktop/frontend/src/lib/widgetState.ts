@@ -3,13 +3,13 @@ import { commandLabel, titleOrCommand } from "./sessionLabel";
 import { shortenCwd } from "./shortenCwd";
 
 /**
- * PetSessionSource lists exactly the fields the projection reads, so both
+ * WidgetSessionSource lists exactly the fields the projection reads, so both
  * SessionInfo (which keys on `id`) and the merged RemoteSession shape (which
- * keys on `session_id`) satisfy it structurally. The pet renders the *merged*
+ * keys on `session_id`) satisfy it structurally. The widget renders the *merged*
  * list, so it must accept the merged type without a lossy cast at the call
  * site.
  */
-export interface PetSessionSource {
+export interface WidgetSessionSource {
   id?: string;
   session_id?: string;
   command?: string;
@@ -27,36 +27,36 @@ export interface PetSessionSource {
   type?: string;
 }
 
-function idOf(s: PetSessionSource): string {
+function idOf(s: WidgetSessionSource): string {
   return s.id ?? s.session_id ?? "";
 }
 
 /**
- * petState projects the merged session list into the minimal snapshot the
- * companion (pet) window renders. It is a pure function so the whole
+ * widgetState projects the merged session list into the minimal snapshot the
+ * companion window renders. It is a pure function so the whole
  * aggregation policy — priority ordering, headline wording, truncation —
  * is unit-testable without spawning a window or a webview.
  *
- * The pet process never connects to anything (see
- * docs/superpowers/specs/2026-08-10-ai-pet-companion-window-design.md):
+ * The widget process never connects to anything (see
+ * docs/superpowers/specs/2026-08-10-desk-widget-design.md):
  * the main app owns the merged + unsealed list and pushes this projection
  * down a pipe, so no relay token and no account_key ever leaves the main
  * process (red line #21).
  *
  * Row labels come from sessionLabel.ts rather than a private heuristic, so
- * the pet and the sidebar always name a session the same way.
+ * the widget and the sidebar always name a session the same way.
  */
 
-export type PetMood = "idle" | "running" | "waiting" | "failed";
+export type WidgetMood = "idle" | "running" | "waiting" | "failed";
 
-export interface PetSessionRow {
+export interface WidgetSessionRow {
   sessionId: string;
   /** Display name — same helper the sidebar row uses. */
   title: string;
   /** Where the session lives — the shortened cwd, same helper and same
    *  wording as the sidebar row. Empty when it would only repeat the title. */
   subtitle: string;
-  state: PetMood;
+  state: WidgetMood;
   /** "claude" | "codex" | … — empty when the session is not classified AI. */
   kind: string;
   /** Non-empty when the session runs on another machine (via relay). */
@@ -65,9 +65,9 @@ export interface PetSessionRow {
   ageMs: number;
 }
 
-export interface PetState {
+export interface WidgetState {
   /** Aggregate mood across every session: waiting > failed > running > idle. */
-  mood: PetMood;
+  mood: WidgetMood;
   waitingCount: number;
   runningCount: number;
   failedCount: number;
@@ -79,7 +79,7 @@ export interface PetState {
   headline: string;
   /** Secondary line, e.g. "2 个在跑 · 1 个已完成". */
   subline: string;
-  rows: PetSessionRow[];
+  rows: WidgetSessionRow[];
   /** Sessions beyond maxRows that were truncated out of `rows`. */
   overflowCount: number;
   /** Mirrors the aiOnly setting so the widget's own menu can show its state
@@ -88,10 +88,10 @@ export interface PetState {
 }
 
 /** Rows shown in the expanded panel. Beyond this the tail is summarised. */
-export const PET_MAX_ROWS = 6;
+export const WIDGET_MAX_ROWS = 6;
 
 /** Ordering weight within the list — lower sorts first. */
-const STATE_ORDER: Record<PetMood, number> = {
+const STATE_ORDER: Record<WidgetMood, number> = {
   waiting: 0,
   failed: 1,
   running: 2,
@@ -99,7 +99,7 @@ const STATE_ORDER: Record<PetMood, number> = {
 };
 
 /** Aggregate precedence — higher wins when folding many sessions into one mood. */
-const MOOD_RANK: Record<PetMood, number> = {
+const MOOD_RANK: Record<WidgetMood, number> = {
   idle: 0,
   running: 1,
   failed: 2,
@@ -107,13 +107,13 @@ const MOOD_RANK: Record<PetMood, number> = {
 };
 
 /**
- * moodOf maps a session's TaskState onto the four moods the pet can express.
+ * moodOf maps a session's TaskState onto the four moods the widget can express.
  *
  * `disconnected` folds into `idle` rather than `failed` on purpose: a dropped
- * relay is not a failed command, and painting the pet red every time the
+ * relay is not a failed command, and painting the widget red every time the
  * network hiccups trains the user to ignore red.
  */
-export function moodOf(state: TaskState | string | undefined): PetMood {
+export function moodOf(state: TaskState | string | undefined): WidgetMood {
   switch (state) {
     case "waiting_input":
       return "waiting";
@@ -138,11 +138,11 @@ function basename(p: string): string {
  *
  * titleOrCommand() bottoms out at `session_id.slice(0, 8)` when a session has
  * neither a title nor a current command — fine in the sidebar, which also
- * shows cwd and host, but in the pet's one-line row that renders as a bare
+ * shows cwd and host, but in the widget's one-line row that renders as a bare
  * hex blob. A plain idle shell is exactly that case, so fall back to the cwd
  * basename (then the launch command) before accepting the id.
  */
-export function displayTitle(s: PetSessionSource): string {
+export function displayTitle(s: WidgetSessionSource): string {
   const labelInput = {
     current_command: s.current_command,
     title: s.title,
@@ -174,13 +174,13 @@ export function displayTitle(s: PetSessionSource): string {
  * title is already its directory, e.g. "~"), so the row stays one line
  * instead of saying the same word twice.
  */
-export function subtitleOf(s: PetSessionSource, home: string, title: string): string {
+export function subtitleOf(s: WidgetSessionSource, home: string, title: string): string {
   const short = shortenCwd(s.cwd, home);
   if (!short || short === title) return "";
   return short;
 }
 
-function ageOf(s: PetSessionSource, mood: PetMood, nowMs: number): number {
+function ageOf(s: WidgetSessionSource, mood: WidgetMood, nowMs: number): number {
   if (mood !== "running" && mood !== "waiting") return 0;
   const started = s.command_started_at;
   if (!started) return 0;
@@ -194,11 +194,11 @@ function ageOf(s: PetSessionSource, mood: PetMood, nowMs: number): number {
  * active first. Falls back through last output → command start → session
  * start so a session always has a stable ordering key.
  */
-function lastActivityOf(s: PetSessionSource): number {
+function lastActivityOf(s: WidgetSessionSource): number {
   return s.last_output_at || s.command_started_at || s.started_at || 0;
 }
 
-export interface ProjectPetStateOptions {
+export interface ProjectWidgetStateOptions {
   /** Host id of this machine; sessions with a different host_id are remote. */
   localHostId?: string;
   /** The user's home directory, so cwds render as `~/…` like the sidebar. */
@@ -211,18 +211,18 @@ export interface ProjectPetStateOptions {
 }
 
 /**
- * projectPetState folds the merged session list into a PetState.
+ * projectWidgetState folds the merged session list into a WidgetState.
  *
  * Sessions in `closed` state are dropped entirely — a closed session is not
  * something the user can act on, and keeping them would let a long-lived
  * window accumulate dead rows.
  */
-export function projectPetState(
-  sessions: readonly PetSessionSource[],
-  opts: ProjectPetStateOptions = {},
-): PetState {
+export function projectWidgetState(
+  sessions: readonly WidgetSessionSource[],
+  opts: ProjectWidgetStateOptions = {},
+): WidgetState {
   const nowMs = opts.nowMs ?? Date.now();
-  const maxRows = opts.maxRows ?? PET_MAX_ROWS;
+  const maxRows = opts.maxRows ?? WIDGET_MAX_ROWS;
   const localHostId = (opts.localHostId ?? "").trim();
   const home = opts.home ?? "";
 
@@ -249,7 +249,7 @@ export function projectPetState(
       type: s.type,
     };
     const title = displayTitle(s);
-    const row: PetSessionRow = {
+    const row: WidgetSessionRow = {
       sessionId: idOf(s),
       title,
       subtitle: subtitleOf(s, home, title),
@@ -276,7 +276,7 @@ export function projectPetState(
   // the raw task_state so the subline can still say "1 个已完成".
   const completedCount = live.filter((s) => s.task_state === "completed").length;
 
-  let mood: PetMood = "idle";
+  let mood: WidgetMood = "idle";
   for (const r of rows) {
     if (MOOD_RANK[r.state] > MOOD_RANK[mood]) mood = r.state;
   }

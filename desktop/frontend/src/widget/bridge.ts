@@ -1,16 +1,16 @@
-import type { PetState } from "../lib/petState";
+import type { WidgetState } from "../lib/widgetState";
 
 /**
  * Thin typed wrapper over the Wails runtime globals the companion window uses.
  *
  * It deliberately does NOT import from `wailsjs/` — those files are generated
  * by `wails build`, and the repo convention is that only `src/platform/*` may
- * import them. The pet is a standalone entry with four calls and one event, so
+ * import them. The widget is a standalone entry with four calls and one event, so
  * reaching for the globals keeps it self-contained and lets `npm run build`
  * succeed without a prior binding-generation pass.
  */
 
-interface PetBridgeMethods {
+interface WidgetBridgeMethods {
   Activate(sessionId: string): Promise<void>;
   SetCollapsed(collapsed: boolean): Promise<void>;
   ReportPosition(): Promise<void>;
@@ -29,19 +29,19 @@ interface WailsRuntime {
  * Read the Wails globals through a local cast rather than `declare global`:
  * lib/api/_bindings.ts already augments Window with `go.main.App`, and a
  * second augmentation of the same property is a type conflict even though the
- * pet entry never imports that module.
+ * widget entry never imports that module.
  */
-interface PetWindow {
-  go?: { main?: { PetBridge?: PetBridgeMethods } };
+interface WidgetWindow {
+  go?: { main?: { WidgetBridge?: WidgetBridgeMethods } };
   runtime?: WailsRuntime;
 }
 
-function petWindow(): PetWindow {
-  return window as unknown as PetWindow;
+function widgetWindow(): WidgetWindow {
+  return window as unknown as WidgetWindow;
 }
 
-function methods(): PetBridgeMethods | null {
-  return petWindow().go?.main?.PetBridge ?? null;
+function methods(): WidgetBridgeMethods | null {
+  return widgetWindow().go?.main?.WidgetBridge ?? null;
 }
 
 /**
@@ -49,13 +49,13 @@ function methods(): PetBridgeMethods | null {
  * window resize must never break rendering, and there is no user-meaningful
  * recovery for "the IPC call didn't land".
  */
-function call(fn: (m: PetBridgeMethods) => Promise<void>): void {
+function call(fn: (m: WidgetBridgeMethods) => Promise<void>): void {
   const m = methods();
   if (!m) return;
   void fn(m).catch(() => {});
 }
 
-export const petBridge = {
+export const widgetBridge = {
   available(): boolean {
     return methods() !== null;
   },
@@ -98,7 +98,7 @@ export const petBridge = {
   },
 };
 
-export interface PetBootstrap {
+export interface WidgetBootstrap {
   collapsed: boolean;
   x: number;
   y: number;
@@ -106,25 +106,25 @@ export interface PetBootstrap {
 }
 
 /**
- * onPetState subscribes to parent-pushed snapshots. The Go side forwards the
- * raw JSON line so it never has to mirror PetState's shape; parsing happens
+ * onWidgetState subscribes to parent-pushed snapshots. The Go side forwards the
+ * raw JSON line so it never has to mirror WidgetState's shape; parsing happens
  * here, and a malformed line is dropped rather than blanking the window.
  */
-export function onPetState(cb: (state: PetState) => void): void {
-  petWindow().runtime?.EventsOn("pet:state", (...data: unknown[]) => {
+export function onWidgetState(cb: (state: WidgetState) => void): void {
+  widgetWindow().runtime?.EventsOn("widget:state", (...data: unknown[]) => {
     const raw = data[0];
     if (typeof raw !== "string") return;
     try {
-      cb(JSON.parse(raw) as PetState);
+      cb(JSON.parse(raw) as WidgetState);
     } catch {
       /* keep the last good render */
     }
   });
 }
 
-export function onPetBootstrap(cb: (boot: PetBootstrap) => void): void {
-  petWindow().runtime?.EventsOn("pet:bootstrap", (...data: unknown[]) => {
+export function onWidgetBootstrap(cb: (boot: WidgetBootstrap) => void): void {
+  widgetWindow().runtime?.EventsOn("widget:bootstrap", (...data: unknown[]) => {
     const raw = data[0];
-    if (raw && typeof raw === "object") cb(raw as PetBootstrap);
+    if (raw && typeof raw === "object") cb(raw as WidgetBootstrap);
   });
 }

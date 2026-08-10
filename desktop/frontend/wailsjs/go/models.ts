@@ -663,7 +663,7 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class PetConfig {
+	export class WidgetConfig {
 	    enabled: boolean;
 	    aiOnly: boolean;
 	    collapsed: boolean;
@@ -672,7 +672,7 @@ export namespace main {
 	    mutedUntilUnix: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new PetConfig(source);
+	        return new WidgetConfig(source);
 	    }
 	
 	    constructor(source: any = {}) {
@@ -725,7 +725,7 @@ export namespace main {
 	    fileExplorer: FileExplorerConfig;
 	    translate: TranslateConfig;
 	    shortcuts: ShortcutsConfig;
-	    pet: PetConfig;
+	    widget: WidgetConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
@@ -736,7 +736,7 @@ export namespace main {
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);
 	        this.translate = this.convertValues(source["translate"], TranslateConfig);
 	        this.shortcuts = this.convertValues(source["shortcuts"], ShortcutsConfig);
-	        this.pet = this.convertValues(source["pet"], PetConfig);
+	        this.widget = this.convertValues(source["widget"], WidgetConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

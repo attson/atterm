@@ -35,11 +35,11 @@ func (f *fakePipe) String() string {
 	return f.buf.String()
 }
 
-// attached builds a petProcess wired to a fake stdin, bypassing exec so the
+// attached builds a widgetProcess wired to a fake stdin, bypassing exec so the
 // push policy can be tested without spawning a window.
-func attached() (*petProcess, *fakePipe) {
+func attached() (*widgetProcess, *fakePipe) {
 	pipe := &fakePipe{}
-	p := &petProcess{running: true, stdin: pipe}
+	p := &widgetProcess{running: true, stdin: pipe}
 	return p, pipe
 }
 
@@ -81,7 +81,7 @@ func TestPetPushStateThrottlesRapidChanges(t *testing.T) {
 		t.Fatalf("expected throttling to drop the second push; got %d lines", n)
 	}
 
-	p.lastPushAt = time.Now().Add(-petPushInterval - time.Millisecond)
+	p.lastPushAt = time.Now().Add(-widgetPushInterval - time.Millisecond)
 	_ = p.PushState(`{"n":3}`)
 	if n := strings.Count(pipe.String(), "\n"); n != 2 {
 		t.Fatalf("expected push after the throttle window; got %d lines", n)
@@ -90,9 +90,9 @@ func TestPetPushStateThrottlesRapidChanges(t *testing.T) {
 
 func TestPetPushStateNoopWhenNotRunning(t *testing.T) {
 	pipe := &fakePipe{}
-	p := &petProcess{running: false, stdin: pipe}
+	p := &widgetProcess{running: false, stdin: pipe}
 
-	// Callers push on every session-list change; a disabled pet must not make
+	// Callers push on every session-list change; a disabled widget must not make
 	// that an error path.
 	if err := p.PushState(`{"mood":"idle"}`); err != nil {
 		t.Fatalf("push while stopped must be a no-op, got %v", err)
@@ -107,10 +107,10 @@ func TestPetReadEventsDecodesLines(t *testing.T) {
 
 	var (
 		mu   sync.Mutex
-		got  []petEvent
+		got  []widgetEvent
 		done = make(chan struct{})
 	)
-	p := &petProcess{onEvent: func(ev petEvent) {
+	p := &widgetProcess{onEvent: func(ev widgetEvent) {
 		mu.Lock()
 		got = append(got, ev)
 		if len(got) == 3 {
@@ -155,8 +155,8 @@ func TestPetReadEventsDecodesLines(t *testing.T) {
 
 func TestPetBootstrapCarriesNoCredentials(t *testing.T) {
 	// Red line #21: nothing secret may reach the child. Assert on the encoded
-	// shape so adding a token field to petBootstrap fails loudly here.
-	blob, err := json.Marshal(petBootstrap{
+	// shape so adding a token field to widgetBootstrap fails loudly here.
+	blob, err := json.Marshal(widgetBootstrap{
 		Type: "bootstrap", Collapsed: true, X: 10, Y: 20, Locale: "zh-CN",
 	})
 	if err != nil {
@@ -170,7 +170,7 @@ func TestPetBootstrapCarriesNoCredentials(t *testing.T) {
 	allowed := map[string]bool{"type": true, "collapsed": true, "x": true, "y": true, "locale": true}
 	for k := range fields {
 		if !allowed[k] {
-			t.Fatalf("unexpected field %q in pet bootstrap — the companion process must never receive credentials", k)
+			t.Fatalf("unexpected field %q in widget bootstrap — the companion process must never receive credentials", k)
 		}
 	}
 }

@@ -25,9 +25,9 @@ func main() {
 	// executable. It must branch before any of the setup below: it owns no
 	// config, no keychain entry, no log file, and no relay host — everything
 	// it renders arrives on stdin. See
-	// docs/superpowers/specs/2026-08-10-ai-pet-companion-window-design.md.
-	if isPetProcess(os.Args[1:]) {
-		if err := runPetWindow(assets); err != nil {
+	// docs/superpowers/specs/2026-08-10-desk-widget-design.md.
+	if isWidgetProcess(os.Args[1:]) {
+		if err := runWidgetWindow(assets); err != nil {
 			println("Error:", err.Error())
 		}
 		return
@@ -87,13 +87,13 @@ func main() {
 	}
 }
 
-// isPetProcess reports whether this process was launched as the companion
+// isWidgetProcess reports whether this process was launched as the companion
 // window. Kept as a plain scan rather than a flag package so it can run before
 // any other initialisation and stays indifferent to whatever else the OS or a
 // launcher appended to argv.
-func isPetProcess(args []string) bool {
+func isWidgetProcess(args []string) bool {
 	for _, a := range args {
-		if a == "--pet" {
+		if a == "--widget" {
 			return true
 		}
 	}

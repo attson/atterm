@@ -71,7 +71,7 @@ import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalS
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
 import { useSessionPins } from "./composables/useSessionPins";
-import { usePetCompanion } from "./composables/usePetCompanion";
+import { useDeskWidget } from "./composables/useDeskWidget";
 import { useSessionSelection } from "./composables/useSessionSelection";
 import {
   DEFAULT_TERMINAL_THEME_ID,
@@ -145,11 +145,11 @@ const sessions = useSessions(localListAdapted, remoteListAdapted);
 
 // The companion window ("桌面挂件" / Desk Widget). This must be fed from the MERGED list, not
 // from either stream alone: remote sessions arrive on their own WS and may be
-// E2EE-sealed, and the pet process is never given account_key to open them
+// E2EE-sealed, and the widget process is never given account_key to open them
 // (red line #21). By this point the list is merged and unsealed, so pushing a
-// projection of it is what lets the pet show remote sessions at all.
-// No-ops on web/Capacitor, where platform.pet is undefined.
-usePetCompanion({ sessions: sessions.all, localHostId: localHostID });
+// projection of it is what lets the widget show remote sessions at all.
+// No-ops on web/Capacitor, where platform.deskWidget is undefined.
+useDeskWidget({ sessions: sessions.all, localHostId: localHostID });
 
 // Used by executeRestore for pin migration (rename oldSid -> new session_id
 // on respawn) and by the sidebar pin toggle. Hoisted to setup scope like the

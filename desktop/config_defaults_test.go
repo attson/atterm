@@ -43,8 +43,8 @@ func TestLoadConfigAppliesPluginDefaultsWithoutConfigFile(t *testing.T) {
 	if got.FileExplorer.PanelWidthPx == 0 {
 		t.Fatal("fileExplorer.panelWidthPx left at zero — applyDefaults did not run")
 	}
-	if got.Pet.WindowX != -1 || got.Pet.WindowY != -1 {
-		t.Fatalf("pet position sentinel not applied: (%d,%d)", got.Pet.WindowX, got.Pet.WindowY)
+	if got.Widget.WindowX != -1 || got.Widget.WindowY != -1 {
+		t.Fatalf("widget position sentinel not applied: (%d,%d)", got.Widget.WindowX, got.Widget.WindowY)
 	}
 }
 
@@ -56,7 +56,7 @@ func TestFirstRunPluginToggleRoundTrips(t *testing.T) {
 
 	s := loadConfig()
 	next := s.Get().Plugins
-	next.Pet.Enabled = true // what SettingsPlugins sends when the box is ticked
+	next.Widget.Enabled = true // what SettingsPlugins sends when the box is ticked
 
 	if err := ValidatePluginConfig(next); err != nil {
 		t.Fatalf("enabling a plugin on first run must be accepted, got %v", err)

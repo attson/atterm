@@ -22,7 +22,7 @@ var (
 const (
 	wsExToolWindow  = 0x00000080
 	wsExAppWindow   = 0x00040000
-	petWindowsTitle = "AT Term Pet"
+	widgetWindowsTitle = "AT Term Widget"
 )
 
 // gwlExStyle is GWL_EXSTYLE. It must be a typed variable rather than an
@@ -30,8 +30,8 @@ const (
 // a negative int32 value at runtime wraps as the Win32 API expects.
 var gwlExStyle int32 = -20
 
-// applyPetPlatformOptions configures the companion window for Windows.
-func applyPetPlatformOptions(opts *options.App) {
+// applyWidgetPlatformOptions configures the companion window for Windows.
+func applyWidgetPlatformOptions(opts *options.App) {
 	opts.Windows = &windows.Options{
 		WebviewIsTransparent: true,
 		WindowIsTranslucent:  true,
@@ -39,21 +39,21 @@ func applyPetPlatformOptions(opts *options.App) {
 	}
 }
 
-// applyPetPostStartup runs from OnStartup, once the window exists.
-func applyPetPostStartup(_ context.Context) {
+// applyWidgetPostStartup runs from OnStartup, once the window exists.
+func applyWidgetPostStartup(_ context.Context) {
 	// Even at OnStartup the HWND may not be registered yet, so poll briefly
 	// for it by title before swapping the extended style.
-	go stripPetFromTaskbar()
+	go stripWidgetFromTaskbar()
 }
 
-// stripPetFromTaskbar marks the pet window as a tool window so it stays out of
+// stripWidgetFromTaskbar marks the widget window as a tool window so it stays out of
 // the taskbar and out of Alt-Tab. Wails v2 has no option for this, so it is
 // applied directly via SetWindowLong once the HWND exists.
 //
-// Best-effort: if the window is never found the pet still works, it just also
+// Best-effort: if the window is never found the widget still works, it just also
 // shows up in Alt-Tab.
-func stripPetFromTaskbar() {
-	title, err := syscall.UTF16PtrFromString(petWindowsTitle)
+func stripWidgetFromTaskbar() {
+	title, err := syscall.UTF16PtrFromString(widgetWindowsTitle)
 	if err != nil {
 		return
 	}

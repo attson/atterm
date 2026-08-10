@@ -13,6 +13,27 @@ type PluginConfig struct {
 	FileExplorer FileExplorerConfig `json:"fileExplorer"`
 	Translate    TranslateConfig    `json:"translate"`
 	Shortcuts    ShortcutsConfig    `json:"shortcuts"`
+	Pet          PetConfig          `json:"pet"`
+}
+
+// PetConfig is the companion-window ("AI 宠物") plugin block. Unlike the other
+// plugins it does not render into the main window — enabling it spawns a
+// second process of this same binary with --pet, which owns a frameless
+// always-on-top window. See
+// docs/superpowers/specs/2026-08-10-ai-pet-companion-window-design.md.
+type PetConfig struct {
+	Enabled bool `json:"enabled"`
+	// Collapsed hides the session list, leaving only the pet + summary header.
+	Collapsed bool `json:"collapsed"`
+	// WindowX / WindowY are the last dragged screen position in logical
+	// pixels. Both -1 means "never positioned" — the pet window then places
+	// itself at the bottom-right of the primary display on first show.
+	WindowX int `json:"windowX"`
+	WindowY int `json:"windowY"`
+	// MutedUntilUnix silences the attention animation (jump + auto-peek)
+	// until this wall-clock second. 0 means not muted. Counts are still
+	// rendered while muted — muting suppresses motion, not information.
+	MutedUntilUnix int64 `json:"mutedUntilUnix"`
 }
 
 type FileExplorerConfig struct {
@@ -96,6 +117,12 @@ func (c *PluginConfig) applyDefaults() {
 	if c.Shortcuts.Bindings == nil {
 		c.Shortcuts.Bindings = map[string]string{}
 	}
+	if c.Pet.WindowX == 0 && c.Pet.WindowY == 0 {
+		// (0,0) is a legal screen position but never a useful default, so it
+		// doubles as the "unset" marker on a zero-valued struct.
+		c.Pet.WindowX = -1
+		c.Pet.WindowY = -1
+	}
 }
 
 // ValidatePluginConfig rejects malformed PluginConfig payloads coming from the
@@ -118,6 +145,19 @@ func ValidatePluginConfig(c PluginConfig) error {
 		if err := json.Unmarshal([]byte(s), &probe); err != nil {
 			return fmt.Errorf("translate.extraParams: not a JSON object (%v)", err)
 		}
+	}
+	// Screen coordinates can legitimately be negative (a display left of or
+	// above the primary one), so only the sentinel and absurd magnitudes are
+	// rejected — a stale position from an unplugged monitor is clamped back
+	// on screen by the pet process, not here.
+	if c.Pet.WindowX < -32000 || c.Pet.WindowX > 32000 {
+		return fmt.Errorf("pet.windowX out of bounds [-32000, 32000]: %d", c.Pet.WindowX)
+	}
+	if c.Pet.WindowY < -32000 || c.Pet.WindowY > 32000 {
+		return fmt.Errorf("pet.windowY out of bounds [-32000, 32000]: %d", c.Pet.WindowY)
+	}
+	if c.Pet.MutedUntilUnix < 0 {
+		return errors.New("pet.mutedUntilUnix must not be negative")
 	}
 	for actionID, binding := range c.Shortcuts.Bindings {
 		if actionID == "" {

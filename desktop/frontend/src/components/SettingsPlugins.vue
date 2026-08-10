@@ -1,14 +1,22 @@
 <script lang="ts" setup>
 import { errText, logError } from "../lib/log";
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import { usePluginConfigStore } from "../plugins/configStore";
 import { PLUGINS } from "../plugins/registry";
 import type { PluginID } from "../plugins/types";
 import TranslateSettings from "../plugins/translate/TranslateSettings.vue";
 import { useI18n } from "../i18n/useI18n";
+import { usePlatform } from "../platform";
 
 const store = usePluginConfigStore();
 const { t } = useI18n();
+const platform = usePlatform();
+
+// Desktop-only plugins (the AI pet needs a second always-on-top OS window)
+// would be dead toggles in the browser and on iOS, which share this component.
+const visiblePlugins = computed(() =>
+  PLUGINS.filter((p) => !p.desktopOnly || platform.caps.wailsBindings),
+);
 
 onMounted(async () => {
   if (!store.cfg) await store.load();
@@ -31,7 +39,7 @@ async function toggle(id: PluginID, enabled: boolean) {
     </p>
     <div v-if="!store.cfg" class="loading">{{ t("common.loading") }}</div>
     <ul v-else class="plugin-list">
-      <li v-for="p in PLUGINS" :key="p.id" class="plugin-row">
+      <li v-for="p in visiblePlugins" :key="p.id" class="plugin-row">
         <label class="row-head">
           <input
             type="checkbox"
@@ -46,7 +54,7 @@ async function toggle(id: PluginID, enabled: boolean) {
         </div>
         <TranslateSettings v-if="p.id === 'translate' && store.isPluginEnabled('translate')" />
       </li>
-      <li v-if="PLUGINS.length === 0" class="empty">{{ t("settings.plugins.noneRegistered") }}</li>
+      <li v-if="visiblePlugins.length === 0" class="empty">{{ t("settings.plugins.noneRegistered") }}</li>
     </ul>
   </section>
 </template>

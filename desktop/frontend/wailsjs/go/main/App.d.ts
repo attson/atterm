@@ -242,3 +242,9 @@ export function TranslateOpenAIChat(arg1:main.TranslateHTTPRequest):Promise<main
 export function UpdateSSHHost(arg1:main.SSHHost,arg2:main.sshCredential):Promise<void>;
 
 export function UpdateSSHKey(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function StartPet():Promise<void>;
+
+export function StopPet():Promise<void>;
+
+export function PushPetState(arg1:string):Promise<void>;

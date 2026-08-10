@@ -663,13 +663,33 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class PetConfig {
+	    enabled: boolean;
+	    collapsed: boolean;
+	    windowX: number;
+	    windowY: number;
+	    mutedUntilUnix: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PetConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.collapsed = source["collapsed"];
+	        this.windowX = source["windowX"];
+	        this.windowY = source["windowY"];
+	        this.mutedUntilUnix = source["mutedUntilUnix"];
+	    }
+	}
 	export class ShortcutsConfig {
 	    bindings: Record<string, string>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ShortcutsConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.bindings = source["bindings"];
@@ -703,16 +723,18 @@ export namespace main {
 	    fileExplorer: FileExplorerConfig;
 	    translate: TranslateConfig;
 	    shortcuts: ShortcutsConfig;
-	
+	    pet: PetConfig;
+
 	    static createFrom(source: any = {}) {
 	        return new PluginConfig(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fileExplorer = this.convertValues(source["fileExplorer"], FileExplorerConfig);
 	        this.translate = this.convertValues(source["translate"], TranslateConfig);
 	        this.shortcuts = this.convertValues(source["shortcuts"], ShortcutsConfig);
+	        this.pet = this.convertValues(source["pet"], PetConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

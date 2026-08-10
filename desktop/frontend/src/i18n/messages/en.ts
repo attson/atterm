@@ -705,6 +705,11 @@ export const en = {
       confirmHardDelete: "Permanently delete {name}? This cannot be undone.",
       saveFailed: "Save failed: {message}",
     },
+    pet: {
+      title: "AI Pet",
+      description:
+        "A small always-on-top companion window showing which sessions are running, failed, or waiting for you. Click a row to jump to that tab.",
+    },
     translate: {
       title: "Translate",
       description: "Translate the selected text via an OpenAI-compatible API; result shown in a floating panel.",

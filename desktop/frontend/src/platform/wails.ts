@@ -12,7 +12,13 @@ import {
   Environment,
   BrowserOpenURL,
 } from '../../wailsjs/runtime/runtime'
-import { GetPluginConfig, SetPluginConfig } from '../../wailsjs/go/main/App'
+import {
+  GetPluginConfig,
+  SetPluginConfig,
+  StartPet,
+  StopPet,
+  PushPetState,
+} from '../../wailsjs/go/main/App'
 import {
   ListDir,
   WatchDir,
@@ -225,6 +231,11 @@ export function createWailsPlatform(): Platform {
         mkdir: (path: string) => Mkdir(path) as Promise<import('./types').FileMetaInfo>,
         trash: (path: string) => Trash(path),
       },
+    },
+    pet: {
+      start: () => StartPet(),
+      stop: () => StopPet(),
+      pushState: (json: string) => PushPetState(json),
     },
   }
 }

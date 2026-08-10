@@ -707,6 +707,11 @@ export const zhCN = {
       confirmHardDelete: "永久删除 {name}？此操作无法撤销。",
       saveFailed: "保存失败：{message}",
     },
+    pet: {
+      title: "AI 宠物",
+      description:
+        "一个置顶的小伴侣窗口，显示哪些会话在跑、失败了、或者在等你输入。点会话行可直接跳到对应标签页。",
+    },
     translate: {
       title: "翻译",
       description: "通过兼容 OpenAI 的 API 翻译选中文本，并在浮动面板中显示结果。",

@@ -43,7 +43,15 @@ export default defineConfig({
     rollupOptions: {
       input: target === 'capacitor'
         ? { index: fileURLToPath(new URL('./index.capacitor.html', import.meta.url)) }
-        : fileURLToPath(new URL('./index.html', import.meta.url)),
+        // The wails target emits two documents into the same dist/: the main
+        // window and the companion ("AI 宠物") window. They share the hashed
+        // /assets/* chunks, and desktop/pet_window.go rewrites "/" to
+        // index.pet.html for the pet process. Keep them one build so the
+        // shared chunks are genuinely shared rather than duplicated.
+        : {
+            index: fileURLToPath(new URL('./index.html', import.meta.url)),
+            pet: fileURLToPath(new URL('./index.pet.html', import.meta.url)),
+          },
     },
   },
 })

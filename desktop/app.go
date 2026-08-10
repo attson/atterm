@@ -205,6 +205,11 @@ type App struct {
 
 	pluginFS *PluginFS
 
+	// pet supervises the companion ("AI 宠物") window — a second process of
+	// this executable launched with --pet. Always non-nil; whether a process
+	// is actually running is petProcess's own state.
+	pet *petProcess
+
 	// recent relay errors — bounded ring, newest-first.
 	relayErrMu  sync.Mutex
 	relayErrors []RelayErrorEntry
@@ -277,6 +282,7 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 		repo:            "attson/atterm",
 		verifyPublicKey: parseUpdateVerifyPublicKey(UpdateVerifyPublicKey),
 	})
+	a.pet = newPetProcess(a.handlePetEvent)
 	return a
 }
 
@@ -402,6 +408,12 @@ func (a *App) shutdown(ctx context.Context) {
 		a.prefsWatchCancel = nil
 	}
 	a.mu.Unlock()
+	// Kill the companion window before anything else tears down: it is an
+	// always-on-top window the user cannot close by itself, so leaving it
+	// behind would strand a floating card on their desktop.
+	if a.pet != nil {
+		a.pet.Stop()
+	}
 	if a.updater != nil {
 		a.updater.Stop()
 	}

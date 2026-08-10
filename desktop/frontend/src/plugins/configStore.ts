@@ -36,6 +36,10 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
     if (!cfg.value) return false;
     if (id === "file-explorer") return cfg.value.fileExplorer.enabled;
     if (id === "translate") return cfg.value.translate.enabled;
+    // The pet block was added after the others, so a config.json written by an
+    // older build has no `pet` key at all — guard rather than throw during the
+    // boot chain (red line #19 wants boot failures attributable, not silent).
+    if (id === "pet") return cfg.value.pet?.enabled ?? false;
     return false;
   }
 
@@ -44,6 +48,7 @@ export const usePluginConfigStore = defineStore("pluginConfig", () => {
     const next: PluginConfig = JSON.parse(JSON.stringify(cfg.value));
     if (id === "file-explorer") next.fileExplorer.enabled = enabled;
     if (id === "translate") next.translate.enabled = enabled;
+    if (id === "pet" && next.pet) next.pet.enabled = enabled;
     await save(next);
   }
 

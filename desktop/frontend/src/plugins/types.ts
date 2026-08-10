@@ -4,9 +4,17 @@ import type { SessionConnection } from "../lib/connection";
 import type { Pane } from "../lib/types";
 import type { MessageKey } from "../i18n";
 
-export type PluginSlot = "right-panel" | "bottom-toolbar" | "context-menu";
+// "companion-window" plugins render into a separate OS window owned by a
+// child process rather than anywhere in this window's tree. PluginHost skips
+// them (like the headless "context-menu" slot); their lifecycle is driven by
+// composables/usePetCompanion.ts.
+export type PluginSlot =
+  | "right-panel"
+  | "bottom-toolbar"
+  | "context-menu"
+  | "companion-window";
 
-export type PluginID = "quick-input" | "file-explorer" | "translate";
+export type PluginID = "quick-input" | "file-explorer" | "translate" | "pet";
 
 export interface MenuItem {
   id: string;
@@ -43,4 +51,7 @@ export interface PluginDescriptor {
     | Promise<{ default: Component }>
     | Promise<{ default: ContextMenuPlugin }>;
   defaultEnabled?: boolean;
+  // desktopOnly plugins are hidden from Settings on web and mobile. The pet
+  // needs a second always-on-top OS window, which only the Wails build has.
+  desktopOnly?: boolean;
 }

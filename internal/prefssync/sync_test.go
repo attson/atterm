@@ -83,6 +83,10 @@ type fakeRelay struct {
 	getErr    error
 	putItems  []ClientItem
 	putReturn []ServerItem
+	// onPut, when set, runs after the request has been captured but before
+	// the response is handed back — i.e. while the PUT is "in flight". Tests
+	// use it to simulate the user changing a preference during the round trip.
+	onPut func()
 }
 
 func (f *fakeRelay) Get(ctx context.Context) ([]ServerItem, error) {
@@ -90,6 +94,9 @@ func (f *fakeRelay) Get(ctx context.Context) ([]ServerItem, error) {
 }
 func (f *fakeRelay) Put(ctx context.Context, items []ClientItem) ([]ServerItem, error) {
 	f.putItems = append([]ClientItem(nil), items...)
+	if f.onPut != nil {
+		f.onPut()
+	}
 	if f.putReturn != nil {
 		return f.putReturn, nil
 	}
@@ -264,5 +271,103 @@ func TestSyncedKeys_IncludesPinnedSessionIds(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("SyncedKeys() = %v; want pinned_session_ids", keys)
+	}
+}
+
+// Regression: Push used to apply the server echo unconditionally, including
+// to keys the user had changed *after* the request was serialized. On a slow
+// relay a second pin landing mid-PUT was therefore overwritten by the echo of
+// the first pin, and its Dirty flag was cleared too — so the new pin was lost
+// both locally and on the server, and the sidebar appeared to "undo" the
+// click. Reconciliation must skip any key whose local meta moved while the
+// request was in flight and leave it dirty for the next Push.
+func TestPush_KeepsLocalEditMadeDuringPut(t *testing.T) {
+	a := newFake()
+	a.WriteValue("pinned_session_ids", json.RawMessage(`["a"]`))
+	a.WriteMeta("pinned_session_ids", Meta{UpdatedAtLocal: 100, Dirty: true})
+
+	r := &fakeRelay{
+		// Server accepted the ["a"] we sent and stamped it.
+		putReturn: []ServerItem{
+			{Key: "pinned_session_ids", Value: json.RawMessage(`["a"]`), UpdatedAt: 150},
+		},
+		onPut: func() {
+			// User pins a second session while the PUT is still in flight.
+			a.WriteValue("pinned_session_ids", json.RawMessage(`["a","b"]`))
+			a.WriteMeta("pinned_session_ids", Meta{UpdatedAtLocal: 200, Dirty: true})
+		},
+	}
+
+	e := NewEngine(a, r)
+	if err := e.Push(context.Background()); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	v, _ := a.ReadValue("pinned_session_ids")
+	if string(v) != `["a","b"]` {
+		t.Fatalf("in-flight local edit was clobbered by the server echo: got %s, want [\"a\",\"b\"]", v)
+	}
+	m := a.ReadMeta("pinned_session_ids")
+	if !m.Dirty {
+		t.Fatal("Dirty was cleared for a key edited during the PUT; the new value would never be pushed")
+	}
+	if m.UpdatedAtLocal != 200 {
+		t.Fatalf("UpdatedAtLocal = %d; want the local edit's 200", m.UpdatedAtLocal)
+	}
+}
+
+// Keys untouched during the round trip must still reconcile normally, so the
+// guard above cannot turn into "never accept the server's answer".
+func TestPush_UntouchedKeyStillAdoptsServerEcho(t *testing.T) {
+	a := newFake()
+	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
+	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 100, Dirty: true})
+	a.WriteValue("pinned_session_ids", json.RawMessage(`["a"]`))
+	a.WriteMeta("pinned_session_ids", Meta{UpdatedAtLocal: 100, Dirty: true})
+
+	r := &fakeRelay{
+		putReturn: []ServerItem{
+			{Key: "locale_preference", Value: json.RawMessage(`"zh-CN"`), UpdatedAt: 900},
+			{Key: "pinned_session_ids", Value: json.RawMessage(`["a"]`), UpdatedAt: 900},
+		},
+		onPut: func() {
+			// Only the pins change mid-flight; locale must still reconcile.
+			a.WriteValue("pinned_session_ids", json.RawMessage(`["a","b"]`))
+			a.WriteMeta("pinned_session_ids", Meta{UpdatedAtLocal: 200, Dirty: true})
+		},
+	}
+
+	e := NewEngine(a, r)
+	if err := e.Push(context.Background()); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	v, _ := a.ReadValue("locale_preference")
+	if string(v) != `"zh-CN"` {
+		t.Fatalf("untouched key did not adopt the server value: %s", v)
+	}
+	if m := a.ReadMeta("locale_preference"); m.Dirty || m.UpdatedAtLocal != 900 {
+		t.Fatalf("untouched key meta after push: %+v", m)
+	}
+}
+
+// MarkDirty must never hand out a timestamp that is <= the one already
+// recorded for that key. Two pins inside the same millisecond would otherwise
+// share an UpdatedAtLocal, which is exactly the signal Push uses to detect an
+// in-flight edit — the second pin would look "untouched" and be clobbered.
+func TestMarkDirty_TimestampIsMonotonicPerKey(t *testing.T) {
+	a := newFake()
+	e := NewEngine(a, &fakeRelay{})
+
+	e.MarkDirty("pinned_session_ids", 1000)
+	e.MarkDirty("pinned_session_ids", 1000) // same millisecond
+
+	if m := a.ReadMeta("pinned_session_ids"); m.UpdatedAtLocal <= 1000 {
+		t.Fatalf("UpdatedAtLocal = %d; want > 1000 so the second edit is distinguishable", m.UpdatedAtLocal)
+	}
+	// A genuinely later clock reading is still used verbatim.
+	e.MarkDirty("pinned_session_ids", 5000)
+	if m := a.ReadMeta("pinned_session_ids"); m.UpdatedAtLocal != 5000 {
+		t.Fatalf("UpdatedAtLocal = %d; want 5000", m.UpdatedAtLocal)
 	}
 }

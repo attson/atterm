@@ -110,7 +110,16 @@ func (e *Engine) Pull(ctx context.Context) error {
 // MarkDirty stamps the meta entry for key with the given timestamp and
 // flips Dirty=true. The desktop App should call this after each
 // successful setter for a synced field, with timestamp = time.Now().UnixMilli().
+//
+// The stamp is forced strictly monotonic per key: two edits inside the same
+// millisecond would otherwise share an UpdatedAtLocal, and that value is the
+// signal Push uses to tell "nobody touched this key while the PUT was in
+// flight" from "the user edited it again". Without the bump the second edit
+// looks untouched and gets clobbered by the server echo.
 func (e *Engine) MarkDirty(key string, updatedAtLocalMs int64) {
+	if prev := e.adapter.ReadMeta(key); updatedAtLocalMs <= prev.UpdatedAtLocal {
+		updatedAtLocalMs = prev.UpdatedAtLocal + 1
+	}
 	e.adapter.WriteMeta(key, Meta{UpdatedAtLocal: updatedAtLocalMs, Dirty: true})
 }
 
@@ -160,12 +169,29 @@ func (e *Engine) Push(ctx context.Context) error {
 		return nil
 	}
 
+	// Remember what each key looked like when we serialized the request, so
+	// the reconciliation below can tell an untouched key from one the user
+	// edited while the round trip was in flight.
+	sentAt := make(map[string]int64, len(items))
+	for _, it := range items {
+		sentAt[it.Key] = it.ClientUpdatedAt
+	}
+
 	resp, err := e.relay.Put(ctx, items)
 	if err != nil {
 		return err
 	}
 
 	for _, it := range resp {
+		// A PUT to a remote relay can take seconds. If the user changed this
+		// key in the meantime (MarkDirty stamped a newer UpdatedAtLocal),
+		// applying the echo would overwrite the newer local value AND clear
+		// its Dirty flag, so the edit would be lost locally and never pushed
+		// — the pin the user just clicked would silently undo itself. Leave
+		// the key alone; it is still dirty, so the next Push reconciles it.
+		if e.adapter.ReadMeta(it.Key).UpdatedAtLocal != sentAt[it.Key] {
+			continue
+		}
 		// Always trust server's updated_at; if it accepted our push, server.value == ours.
 		// If server rejected (server newer), server.value overrides ours.
 		if err := e.adapter.WriteValue(it.Key, it.Value); err != nil {

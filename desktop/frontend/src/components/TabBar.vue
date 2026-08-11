@@ -272,12 +272,14 @@ function onClose(e: MouseEvent, id: string) {
         >
           <TaskStateIcon
             :state="(t.activeSession?.task_state as TaskState | undefined) ?? 'idle'"
+            :unread="t.activeSession?.unread === true"
             :size="10"
           />
         </span>
         <TaskStateIcon
           v-else
           :state="(t.activeSession?.task_state as TaskState | undefined) ?? 'idle'"
+          :unread="t.activeSession?.unread === true"
           :size="10"
         />
         <span class="title">{{ tabTitle(t.activeSession) }}</span>

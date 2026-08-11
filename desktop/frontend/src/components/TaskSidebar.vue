@@ -298,6 +298,7 @@ const railIcons = computed(() => {
         >
           <TaskStateIcon
             :state="(s.task_state as TaskState | undefined) ?? 'idle'"
+            :unread="s.unread === true"
             :size="14"
           />
         </span>

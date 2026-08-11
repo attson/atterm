@@ -13,14 +13,16 @@ const props = withDefaults(
     state: TaskState;
     size?: number;
     preset?: TaskStatePreset;
+    unread?: boolean;
   }>(),
-  { size: 12 },
+  { size: 12, unread: false },
 );
 
 const fallback = useTaskPreset();
 const preset = computed(() => props.preset ?? fallback.active.value);
 
-const color = computed(() => preset.value.colorOf(props.state));
+const showUnread = computed(() => props.state === "completed" && props.unread);
+const color = computed(() => (showUnread.value ? "#e6edf3" : preset.value.colorOf(props.state)));
 const spinMs = computed(() => preset.value.spinnerDurationMs(props.state));
 const pulse = computed(() => preset.value.animatePulse(props.state));
 </script>
@@ -36,6 +38,7 @@ const pulse = computed(() => preset.value.animatePulse(props.state));
       gap: '2px',
     }"
     :data-state="state"
+    :data-unread="showUnread ? 'true' : undefined"
   >
     <svg
       :width="size"
@@ -54,9 +57,19 @@ const pulse = computed(() => preset.value.animatePulse(props.state));
         stroke-linecap="round"
         :style="{ animationDuration: spinMs + 'ms' }"
       />
+      <!-- unread completed: unread is the main state until the row is seen -->
+      <circle
+        v-else-if="showUnread"
+        class="task-unread-dot"
+        cx="8"
+        cy="8"
+        r="4"
+        :fill="color"
+      />
       <!-- completed: check mark -->
       <path
         v-else-if="state === 'completed'"
+        class="task-completed-check"
         d="M3 8 l3 3 l7 -7"
         :stroke="color"
         stroke-width="2"

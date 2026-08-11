@@ -219,6 +219,30 @@ describe("projectWidgetState — row fields", () => {
     expect(byId.done.ageMs).toBe(0);
   });
 
+  it("keeps the original task state for row icons", () => {
+    const sessions = [
+      sess({ id: "run", task_state: "running" }),
+      sess({ id: "done", task_state: "completed" }),
+    ];
+    const st = projectWidgetState(sessions, { nowMs: NOW });
+    const byId = Object.fromEntries(st.rows.map((r) => [r.sessionId, r]));
+    expect(byId.run.state).toBe("running");
+    expect(byId.run.taskState).toBe("running");
+    expect(byId.done.state).toBe("idle");
+    expect(byId.done.taskState).toBe("completed");
+  });
+
+  it("keeps the sidebar unread flag for row badges", () => {
+    const sessions = [
+      sess({ id: "new-output", task_state: "completed", unread: true }),
+      sess({ id: "seen", task_state: "completed", unread: false }),
+    ];
+    const st = projectWidgetState(sessions, { nowMs: NOW });
+    const byId = Object.fromEntries(st.rows.map((r) => [r.sessionId, r]));
+    expect(byId["new-output"].unread).toBe(true);
+    expect(byId.seen.unread).toBe(false);
+  });
+
   it("clamps a future command_started_at to zero instead of going negative", () => {
     const sessions = [
       sess({ id: "skew", task_state: "running", command_started_at: NOW / 1000 + 60 }),

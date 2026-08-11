@@ -48,6 +48,19 @@ describe("TaskRowInner right-hand affordances", () => {
     expect(w.find('[data-test="row-mark-read"]').exists()).toBe(false);
   });
 
+  test("an unread completed row shows unread in the main state icon", () => {
+    const w = factory({ unread: true, task_state: "completed", title: "build" });
+    expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(true);
+    expect(w.find("circle.task-unread-dot").exists()).toBe(true);
+    expect(w.find("path.task-completed-check").exists()).toBe(false);
+  });
+
+  test("a read completed row shows the completed state icon", () => {
+    const w = factory({ unread: false, task_state: "completed", title: "build" });
+    expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(false);
+    expect(w.find("path.task-completed-check").exists()).toBe(true);
+  });
+
   test("the close button still emits close", async () => {
     const w = factory({ title: "build" }, true);
     await w.find('[data-test="row-close"]').trigger("click");

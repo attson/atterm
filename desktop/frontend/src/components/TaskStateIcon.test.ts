@@ -27,6 +27,21 @@ describe("TaskStateIcon", () => {
       "animation-duration: 1500ms",
     );
   });
+  test("renders unread as the main icon for unread completed sessions", () => {
+    const w = mount(TaskStateIcon, {
+      props: { state: "completed", unread: true, preset: presets.iconOnly },
+    });
+    expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(true);
+    expect(w.find("circle.task-unread-dot").exists()).toBe(true);
+    expect(w.find("path.task-completed-check").exists()).toBe(false);
+  });
+  test("renders completed check when a completed session is already read", () => {
+    const w = mount(TaskStateIcon, {
+      props: { state: "completed", unread: false, preset: presets.iconOnly },
+    });
+    expect(w.find("path.task-completed-check").exists()).toBe(true);
+    expect(w.find("circle.task-unread-dot").exists()).toBe(false);
+  });
   test("both presets share spinner duration (visual differs only by label)", () => {
     const a = mount(TaskStateIcon, {
       props: { state: "running", preset: presets.iconOnly },

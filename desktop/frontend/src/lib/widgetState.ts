@@ -25,6 +25,7 @@ export interface WidgetSessionSource {
   host_id?: string;
   host?: string;
   type?: string;
+  unread?: boolean;
 }
 
 function idOf(s: WidgetSessionSource): string {
@@ -57,12 +58,16 @@ export interface WidgetSessionRow {
    *  wording as the sidebar row. Empty when it would only repeat the title. */
   subtitle: string;
   state: WidgetMood;
+  /** Original task state for the per-row status icon. */
+  taskState: TaskState;
   /** "claude" | "codex" | … — empty when the session is not classified AI. */
   kind: string;
   /** Non-empty when the session runs on another machine (via relay). */
   remoteHost: string;
   /** Wall-clock age of the current command in ms; 0 when not running. */
   ageMs: number;
+  /** Same per-user unread flag the sidebar renders. */
+  unread: boolean;
 }
 
 export interface WidgetState {
@@ -121,6 +126,20 @@ export function moodOf(state: TaskState | string | undefined): WidgetMood {
       return "failed";
     case "running":
       return "running";
+    default:
+      return "idle";
+  }
+}
+
+function taskStateOf(state: TaskState | string | undefined): TaskState {
+  switch (state) {
+    case "running":
+    case "waiting_input":
+    case "completed":
+    case "failed":
+    case "disconnected":
+    case "closed":
+      return state;
     default:
       return "idle";
   }
@@ -254,9 +273,11 @@ export function projectWidgetState(
       title,
       subtitle: subtitleOf(s, home, title),
       state: mood,
+      taskState: taskStateOf(s.task_state),
       kind: s.type === "ai" ? commandLabel(labelInput) : "",
       remoteHost: isRemote ? (s.host ?? "").trim() : "",
       ageMs: ageOf(s, mood, nowMs),
+      unread: s.unread === true,
     };
     return { row, activity: lastActivityOf(s) };
   });

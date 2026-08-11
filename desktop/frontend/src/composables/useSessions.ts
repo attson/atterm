@@ -18,6 +18,22 @@ function urgencyIndex(s?: TaskState | string): number {
   return i === -1 ? URGENCY.length : i;
 }
 
+function activityAt(s: RemoteSession): number {
+  return Math.max(
+    s.last_output_at ?? 0,
+    s.command_ended_at ?? 0,
+    s.command_started_at ?? 0,
+    s.attention_at ?? 0,
+    s.started_at ?? 0,
+  );
+}
+
+function compareLatestActivity(a: RemoteSession, b: RemoteSession): number {
+  const dt = activityAt(b) - activityAt(a);
+  if (dt !== 0) return dt;
+  return a.session_id.localeCompare(b.session_id);
+}
+
 export interface UseSessionsOptions {
   /** When set, sessions whose host_id equals this are considered "local"
    *  and excluded from remoteByHost. */
@@ -64,17 +80,11 @@ export function useSessions(
       const k = s.host_id || "";
       (out[k] ||= []).push(s);
     }
-    // Sort by started_at ascending (oldest first), with session_id as the
-    // tiebreaker for determinism. Both keys are immutable for the lifetime
-    // of a session, so rows stay put — no jumping when task_state changes
-    // or the PTY writes output. Attention-worthy state still surfaces via
-    // the row's color and the per-row unread dot.
+    // Sort by latest activity descending so the sessions that just printed,
+    // started, finished, or requested attention stay near the top. Use
+    // session_id as the tiebreaker for deterministic equal timestamps.
     for (const k of Object.keys(out)) {
-      out[k].sort((a, b) => {
-        const da = (a.started_at ?? 0) - (b.started_at ?? 0);
-        if (da !== 0) return da;
-        return a.session_id.localeCompare(b.session_id);
-      });
+      out[k].sort(compareLatestActivity);
     }
     return out;
   });
@@ -101,11 +111,13 @@ export function useSessions(
   );
 
   const completedSeen = computed<RemoteSession[]>(() =>
-    all.value.filter(
-      (s) =>
-        (s.task_state === "completed" || s.task_state === "failed") &&
-        s.unread === false,
-    ),
+    all.value
+      .filter(
+        (s) =>
+          (s.task_state === "completed" || s.task_state === "failed") &&
+          s.unread === false,
+      )
+      .sort(compareLatestActivity),
   );
 
   const byState = computed<Record<string, RemoteSession[]>>(() => {
@@ -120,7 +132,7 @@ export function useSessions(
         const au = a.unread ? 0 : 1;
         const bu = b.unread ? 0 : 1;
         if (au !== bu) return au - bu;
-        return (b.last_output_at ?? 0) - (a.last_output_at ?? 0);
+        return compareLatestActivity(a, b);
       });
     }
     return out;

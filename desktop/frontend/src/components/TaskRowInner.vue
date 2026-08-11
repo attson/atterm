@@ -41,6 +41,7 @@ function stateLabel(state: string | undefined): string {
   <span class="row-top">
     <TaskStateIcon
       :state="(props.session.task_state as TaskState | undefined) ?? 'idle'"
+      :unread="props.session.unread === true"
     />
     <span
       v-if="showStateLabel"

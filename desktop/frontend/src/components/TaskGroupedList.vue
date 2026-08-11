@@ -596,7 +596,10 @@ function stateLabel(state: string | undefined): string {
           @pointerleave="onRowPointerEnd"
         >
           <span class="row-top">
-            <TaskStateIcon :state="(s.task_state as TaskState | undefined) ?? 'idle'" />
+            <TaskStateIcon
+              :state="(s.task_state as TaskState | undefined) ?? 'idle'"
+              :unread="s.unread === true"
+            />
             <span
               v-if="showStateLabel"
               class="state-label"

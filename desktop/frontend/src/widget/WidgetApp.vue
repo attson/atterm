@@ -1,8 +1,10 @@
 <script lang="ts" setup>
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import TaskStateIcon from "../components/TaskStateIcon.vue";
+import { presets } from "../lib/taskState";
 import WidgetSprite from "./WidgetSprite.vue";
 import { onWidgetBootstrap, onWidgetState, widgetBridge } from "./bridge";
-import type { WidgetMood, WidgetState } from "../lib/widgetState";
+import type { WidgetState } from "../lib/widgetState";
 
 /**
  * The companion window (layout A): widget + summary header, then one row per
@@ -47,19 +49,6 @@ const muted = computed(() => mutedUntil.value * 1000 > nowMs.value);
 
 /** Rows are visible when expanded, or while a hover/auto peek is open. */
 const showRows = computed(() => !collapsed.value || peeking.value);
-
-const DOT: Record<WidgetMood, string> = {
-  idle: "#3fb950",
-  running: "#2f81f7",
-  waiting: "#d29922",
-  failed: "#f85149",
-};
-
-function dotColor(m: WidgetMood): string {
-  // An idle row in this list is a finished command, so green reads as "done"
-  // rather than the grey the sprite uses for "nothing happening at all".
-  return DOT[m];
-}
 
 function formatAge(ms: number): string {
   if (ms <= 0) return "";
@@ -242,7 +231,14 @@ onUnmounted(() => {
         type="button"
         @click.stop="activate(row.sessionId)"
       >
-        <span :style="{ background: dotColor(row.state) }" class="dot" />
+        <span class="row-state">
+          <TaskStateIcon
+            :preset="presets.iconOnly"
+            :state="row.taskState"
+            :unread="row.unread"
+            :size="12"
+          />
+        </span>
         <span class="row-text">
           <span class="row-title">
             <span v-if="row.remoteHost" class="host">{{ row.remoteHost }} ·</span>
@@ -390,11 +386,13 @@ onUnmounted(() => {
   opacity: 0.6;
 }
 
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.row-state {
+  width: 12px;
+  height: 12px;
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .row-text {

@@ -230,6 +230,7 @@ const showSshDialog = ref(false);
 const showSshHosts = ref(false);
 let quitListenerOff: (() => void) | null = null;
 let notificationClickListenerOff: (() => void) | null = null;
+let widgetActivateListenerOff: (() => void) | null = null;
 
 function handleBeforeClose() {
   // Best-effort final persist so a clean quit always lands the latest state.
@@ -1050,7 +1051,7 @@ function onSwitchTab(delta: number) {
   gotoTab(tabs.value[next].id);
 }
 
-function openRemoteAsTab(sessionId: string) {
+function openRemoteAsTab(sessionId: string, remote = true) {
   // If any tab already holds a pane for this session, switch to it and
   // focus the EXACT pane — sidebar clicks on a session in a multi-pane
   // tab should land focus on that pane, not on whichever pane was active
@@ -1068,7 +1069,7 @@ function openRemoteAsTab(sessionId: string) {
   tabs.value.push({
     id,
     layout: "single",
-    panes: [{ sessionId, remote: true }],
+    panes: [{ sessionId, remote }],
     activePaneIdx: 0,
     colRatio: RATIO_DEFAULT,
     rowRatio: RATIO_DEFAULT,
@@ -1165,7 +1166,16 @@ function focusSessionFromNotification(data: unknown) {
         : "";
   if (!sessionId) return;
   const loc = findPaneLocation(tabs.value, sessionId);
-  if (!loc) return;
+  if (!loc) {
+    // Widget/notification clicks may target either stream. Preserve the
+    // local-vs-remote ownership so a local session is not attached as remote.
+    const isRemote = remoteList.value.some((s) => s.id === sessionId)
+      || !localList.value.some((s) => s.id === sessionId);
+    openRemoteAsTab(sessionId, isRemote);
+    void $platform.system.windowUnminimize?.();
+    void $platform.system.windowShow?.();
+    return;
+  }
   const t = tabs.value.find((tab) => tab.id === loc.tabId);
   if (!t) return;
   t.activePaneIdx = loc.paneIdx;
@@ -1289,6 +1299,7 @@ onMounted(async () => {
   }
   quitListenerOff = $platform.events.on('before-close', handleBeforeClose);
   notificationClickListenerOff = $platform.events.on('notification:click', focusSessionFromNotification);
+  widgetActivateListenerOff = $platform.events.on('widget:activate', focusSessionFromNotification);
   try {
     const info = await $platform.system.getEnvironment();
     if (info !== null) {
@@ -1490,6 +1501,8 @@ onUnmounted(() => {
   quitListenerOff = null;
   notificationClickListenerOff?.();
   notificationClickListenerOff = null;
+  widgetActivateListenerOff?.();
+  widgetActivateListenerOff = null;
   window.removeEventListener("hashchange", syncRoute);
   sessionListStreams.detachAll();
   if (toastHandle !== null) window.clearTimeout(toastHandle);

@@ -1,8 +1,6 @@
 package main
 
-import (
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-)
+import wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 // Bindings for the companion window ("桌面挂件" / Desk Widget). The frontend owns the state
 // projection (lib/widgetState.ts) and the enable flag (PluginConfig.Widget.Enabled);
@@ -45,16 +43,16 @@ func (a *App) handleWidgetEvent(ev widgetEvent) {
 		}
 		// Raise the main window first: the click happened in another process's
 		// window, so this one is in the background and would otherwise route
-		// to a tab the user cannot see.
-		wailsruntime.WindowShow(a.ctx)
-		wailsruntime.WindowUnminimise(a.ctx)
-		// Reuse the notification deep-link event verbatim so "click a widget row"
-		// and "click a notification" share one tab/pane routing path in
-		// App.vue rather than growing a second, drifting one.
+		// to a tab the user cannot see. Linux needs an explicit WM activation
+		// request in addition to Wails' show/unminimise calls.
+		if a.windowActivator != nil {
+			a.windowActivator(a.ctx)
+		}
+		// Widget activation is its own event. It must not reuse the notification
+		// event, whose semantics belong to OS notification responses.
 		if a.eventsEmitter != nil {
-			a.eventsEmitter(a.ctx, notificationClickEvent, map[string]interface{}{
+			a.eventsEmitter(a.ctx, "widget:activate", map[string]interface{}{
 				"session_id": ev.SessionID,
-				"kind":       "widget",
 			})
 		}
 	case "collapse":

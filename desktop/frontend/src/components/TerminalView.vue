@@ -9,6 +9,7 @@ import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
+import { createReplayInputGuard } from "../lib/replayInputGuard";
 import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
 import { TERMINAL_FONT_FAMILY } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
@@ -121,6 +122,10 @@ const isDriver = ref(props.isLocalSession ?? true);
 const takeControlBtnRef = ref<HTMLButtonElement | null>(null);
 const ptyCols = ref<number | null>(null);
 const ptyRows = ref<number | null>(null);
+// Keep this separate from the dimensions advertised by META. A reconnect
+// can deliver a stale META snapshot after we already reclaimed the PTY size;
+// using ptyCols/ptyRows alone would emit the same RESIZE on every tab switch.
+const lastResizeSent = ref<{ cols: number; rows: number } | null>(null);
 // driverHostname is the human-readable name of whoever currently holds the
 // driver role (broadcast via META.driver_client_name). Used in the viewer
 // overlay's sub-line ("by <hostname>"). Empty when nobody or self drives.
@@ -156,6 +161,7 @@ let isAlive = true;
 // Coalesces spurious blur→refocus focus-report flaps so a stray `\x1b[O`
 // doesn't cancel the child TUI's in-flight turn. See focusReportCoalescer.ts.
 let focusCoalescer: FocusReportCoalescer | null = null;
+const replayInputGuard = createReplayInputGuard();
 
 // Map<sessionId, (text) => void> provided by App.vue. Plugins use it to
 // reuse the active driver SessionConnection for input. Absent (undefined)
@@ -1240,6 +1246,7 @@ function onTerminalMouseUp(e: MouseEvent) {
   e.preventDefault();
   e.stopPropagation();
   e.stopImmediatePropagation();
+  term?.clearSelection();
   void openLinkMatch(hit);
 }
 
@@ -1310,7 +1317,9 @@ function syncPtySizeToTerm() {
   const rows = ptyRows.value;
   if (typeof cols !== "number" || typeof rows !== "number") return;
   if (cols === term.cols && rows === term.rows) return;
+  if (lastResizeSent.value?.cols === term.cols && lastResizeSent.value?.rows === term.rows) return;
   conn.sendResize(term.cols, term.rows);
+  lastResizeSent.value = { cols: term.cols, rows: term.rows };
 }
 
 function applyViewerSize() {
@@ -1376,11 +1385,15 @@ function safeFit() {
   }
 }
 
-function scrollToBottomAfterWriteQueue() {
+function scrollToBottomAfterWriteQueue(done?: () => void) {
   const current = term;
-  if (!current) return;
+  if (!current) {
+    done?.();
+    return;
+  }
   current.write("", () => {
     if (term === current) current.scrollToBottom();
+    done?.();
   });
 }
 
@@ -1544,6 +1557,7 @@ async function ensureTerm() {
   safeFit();
   focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
   term.onData((data) => {
+    if (!replayInputGuard.shouldForward()) return;
     const { cleaned, dropped } = stripC1Controls(data);
     if (dropped.length > 0) {
       logWarn("term", "dropped C1 control chars from terminal input", {
@@ -1560,6 +1574,9 @@ async function ensureTerm() {
     if (!isDriver.value) return; // viewer's local resize is FitAddon-suppressed anyway
     if (props.resizeSuspended) return; // mid pane-splitter drag: defer the PTY RESIZE until mouseup
     conn?.sendResize(cols, rows);
+    lastResizeSent.value = { cols, rows };
+    ptyCols.value = cols;
+    ptyRows.value = rows;
   });
 
   let lastBellAt = 0;
@@ -1648,7 +1665,11 @@ function startConnection() {
       },
       onReplayProgress: (progress) => {
         replayProgress.value = progress.phase === "end" ? null : progress;
-        if (progress.phase === "end") scrollToBottomAfterWriteQueue();
+        if (progress.phase === "start" || progress.phase === "chunk") {
+          replayInputGuard.onProgress(progress.phase);
+        } else {
+          replayInputGuard.onProgress("end", (release) => scrollToBottomAfterWriteQueue(release));
+        }
       },
       onMeta: (meta) => {
         if (typeof meta?.cols === "number") ptyCols.value = meta.cols;
@@ -1689,6 +1710,7 @@ function startConnection() {
     (props.expectedCols !== term.cols || props.expectedRows !== term.rows)
   ) {
     conn.sendResize(term.cols, term.rows);
+    lastResizeSent.value = { cols: term.cols, rows: term.rows };
   }
 }
 
@@ -2030,7 +2052,10 @@ watch(
   (next, prev) => {
     if (prev && !next) {
       nextTick(() => {
-        if (term && conn) conn.sendResize(term.cols, term.rows);
+        if (term && conn) {
+          conn.sendResize(term.cols, term.rows);
+          lastResizeSent.value = { cols: term.cols, rows: term.rows };
+        }
       });
     }
   },

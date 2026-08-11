@@ -709,6 +709,17 @@ export class SessionConnection {
       }
       if (f.type === TYPE.OUT) {
         const { seq, data } = decodeOutPayload(f.payload);
+        // A reconnect/replay race can deliver an OUT chunk that this client
+        // has already rendered. Never write it twice: prompt redraws and
+        // alternate-screen frames are not idempotent in xterm.
+        if (seq > 0 && seq <= this.lastSeq) {
+          logDebug("conn", "dropping duplicate OUT", {
+            sessionId: this.sessionId,
+            seq,
+            lastSeq: this.lastSeq,
+          });
+          return;
+        }
         const out = this.remote ? this.decryptOut(data, seq) : data;
         if (out) this.handlers.onOutput?.(out);
         if (seq > this.lastSeq) this.lastSeq = seq;

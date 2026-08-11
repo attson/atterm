@@ -533,6 +533,20 @@ describe("SessionConnection suspend/resume", () => {
     });
   });
 
+  test("drops duplicate OUT frames instead of writing them twice", () => {
+    const onOutput = vi.fn();
+    const conn = new SessionConnection(endpoint, sessionId, { onOutput });
+    conn.attach();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    const output = "prompt\r\n";
+    const frame = encodeFrame(TYPE.OUT, uuidParse(sessionId), encodeOutPayload(3, output));
+    ws.onmessage?.({ data: frame.buffer } as MessageEvent);
+    ws.onmessage?.({ data: frame.buffer } as MessageEvent);
+    expect(onOutput).toHaveBeenCalledOnce();
+    expect(Array.from(onOutput.mock.calls[0][0] as Uint8Array)).toEqual(Array.from(encodeText(output)));
+  });
+
   test("ignores a stale suspended socket close after a new socket has attached", () => {
     class AsyncCloseWebSocket extends FakeWebSocket {
       close() {

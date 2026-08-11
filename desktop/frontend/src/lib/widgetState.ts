@@ -1,6 +1,7 @@
 import type { TaskState } from "./taskState";
 import { commandLabel, titleOrCommand } from "./sessionLabel";
 import { shortenCwd } from "./shortenCwd";
+import { compareSessionsByLatestActivity, compareSessionsBySidebarOrder } from "./sessionSort";
 
 /**
  * WidgetSessionSource lists exactly the fields the projection reads, so both
@@ -20,6 +21,8 @@ export interface WidgetSessionSource {
   command_exit_code?: number;
   command_duration_ms?: number;
   command_started_at?: number;
+  command_ended_at?: number;
+  attention_at?: number;
   last_output_at?: number;
   started_at?: number;
   host_id?: string;
@@ -94,14 +97,6 @@ export interface WidgetState {
 
 /** Rows shown in the expanded panel. Beyond this the tail is summarised. */
 export const WIDGET_MAX_ROWS = 6;
-
-/** Ordering weight within the list — lower sorts first. */
-const STATE_ORDER: Record<WidgetMood, number> = {
-  waiting: 0,
-  failed: 1,
-  running: 2,
-  idle: 3,
-};
 
 /** Aggregate precedence — higher wins when folding many sessions into one mood. */
 const MOOD_RANK: Record<WidgetMood, number> = {
@@ -208,15 +203,6 @@ function ageOf(s: WidgetSessionSource, mood: WidgetMood, nowMs: number): number 
   return age > 0 ? age : 0;
 }
 
-/**
- * lastActivityOf is the tiebreaker within a priority band: most recently
- * active first. Falls back through last output → command start → session
- * start so a session always has a stable ordering key.
- */
-function lastActivityOf(s: WidgetSessionSource): number {
-  return s.last_output_at || s.command_started_at || s.started_at || 0;
-}
-
 export interface ProjectWidgetStateOptions {
   /** Host id of this machine; sessions with a different host_id are remote. */
   localHostId?: string;
@@ -227,6 +213,7 @@ export interface ProjectWidgetStateOptions {
   /** Injected for deterministic tests. Defaults to Date.now(). */
   nowMs?: number;
   maxRows?: number;
+  groupBy?: "host" | "state";
 }
 
 /**
@@ -244,6 +231,7 @@ export function projectWidgetState(
   const maxRows = opts.maxRows ?? WIDGET_MAX_ROWS;
   const localHostId = (opts.localHostId ?? "").trim();
   const home = opts.home ?? "";
+  const groupBy = opts.groupBy ?? "host";
 
   const aiOnly = opts.aiOnly ?? false;
   // `closed` sessions are dropped entirely — a closed session is nothing the
@@ -254,8 +242,6 @@ export function projectWidgetState(
     (s) => s.task_state !== "closed" && (!aiOnly || s.type === "ai"),
   );
 
-  // Sort carries the activity key alongside the row so the comparator stays
-  // O(n log n) — looking the session back up inside compare() would be O(n²).
   const decorated = live.map((s) => {
     const mood = moodOf(s.task_state);
     const hostId = (s.host_id ?? "").trim();
@@ -279,13 +265,22 @@ export function projectWidgetState(
       ageMs: ageOf(s, mood, nowMs),
       unread: s.unread === true,
     };
-    return { row, activity: lastActivityOf(s) };
+    return { row, source: s };
   });
 
   decorated.sort((a, b) => {
-    const d = STATE_ORDER[a.row.state] - STATE_ORDER[b.row.state];
-    if (d !== 0) return d;
-    return b.activity - a.activity;
+    if (groupBy === "state") {
+      return compareSessionsBySidebarOrder({ ...a.source, session_id: idOf(a.source) }, { ...b.source, session_id: idOf(b.source) });
+    }
+    const hostA = a.source.host_id ?? "";
+    const hostB = b.source.host_id ?? "";
+    if (localHostId && hostA !== hostB) {
+      if (hostA === localHostId) return -1;
+      if (hostB === localHostId) return 1;
+    }
+    const hostDelta = hostA.localeCompare(hostB);
+    if (hostDelta !== 0) return hostDelta;
+    return compareSessionsByLatestActivity({ ...a.source, session_id: idOf(a.source) }, { ...b.source, session_id: idOf(b.source) });
   });
 
   const rows = decorated.map((d) => d.row);

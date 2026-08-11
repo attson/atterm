@@ -613,7 +613,10 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 		}
 	}
 	var (
-		lastSeq       uint64
+		// Catch-up must continue from the client's cursor even when the first
+		// Since(sinceSeq) snapshot is empty. Starting at zero would replay the
+		// entire buffer every time an up-to-date client re-attaches.
+		lastSeq       uint64 = sinceSeq
 		replayedBytes uint64
 		nextProgress  uint64 = replayProgressIntervalBytes
 		ok            bool

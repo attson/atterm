@@ -115,8 +115,12 @@ describe("capacitor uses the shared web shell", () => {
 describe("notification click routing", () => {
   test("subscribes to notification:click and focuses the matching pane", () => {
     expect(source).toContain("platform.events.on('notification:click'");
+    expect(source).toContain("platform.events.on('widget:activate'");
     expect(source).toContain("function focusSessionFromNotification");
     expect(source).toContain("findPaneLocation(tabs.value, sessionId)");
+    expect(source).toContain("if (!loc) {");
+    expect(source).toContain("const isRemote = remoteList.value.some");
+    expect(source).toContain("openRemoteAsTab(sessionId, isRemote)");
     expect(source).toContain("t.activePaneIdx = loc.paneIdx");
     expect(source).toContain("gotoTab(loc.tabId)");
     expect(source).toContain("windowUnminimize?.()");

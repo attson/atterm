@@ -166,6 +166,31 @@ func TestSubscribeEmitsReplayProgress(t *testing.T) {
 	}
 }
 
+func TestSubscribeAtLatestSeqDoesNotReplayHistory(t *testing.T) {
+	id := uuid.New()
+	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})
+	s.PushOut(7, []byte("already rendered"))
+
+	sub, replayToSeq := s.Subscribe(7, "", "")
+	defer s.Unsubscribe(sub)
+	if replayToSeq != 7 {
+		t.Fatalf("replayToSeq = %d; want client cursor 7", replayToSeq)
+	}
+
+	start := readFrameForTest(t, sub)
+	if start.Type != proto.TypeReplayProgress {
+		t.Fatalf("first frame type = 0x%02x; want REPLAY_PROGRESS", start.Type)
+	}
+	end := readFrameForTest(t, sub)
+	if end.Type != proto.TypeReplayProgress {
+		t.Fatalf("second frame type = 0x%02x; want REPLAY_PROGRESS end, not historical OUT", end.Type)
+	}
+	progress := decodeProgressForTest(t, end)
+	if progress.Phase != proto.ReplayProgressEnd || progress.TotalBytes != 0 || progress.Seq != 7 {
+		t.Fatalf("end progress = %+v; want phase=end total=0 seq=7", progress)
+	}
+}
+
 func TestSubscribeFromStartMarksTruncatedScrollback(t *testing.T) {
 	id := uuid.New()
 	s := New(id, proto.SessionInfo{Cols: 80, Rows: 24})

@@ -1,35 +1,10 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
-
-const URGENCY: TaskState[] = [
-  "waiting_input",
-  "failed",
-  "running",
-  "completed",
-  "idle",
-  "disconnected",
-  "closed",
-];
-
-function urgencyIndex(s?: TaskState | string): number {
-  if (!s) return URGENCY.length;
-  const i = URGENCY.indexOf(s as TaskState);
-  return i === -1 ? URGENCY.length : i;
-}
-
-function activityAt(s: RemoteSession): number {
-  return Math.max(
-    s.last_output_at ?? 0,
-    s.command_ended_at ?? 0,
-    s.command_started_at ?? 0,
-    s.attention_at ?? 0,
-    s.started_at ?? 0,
-  );
-}
+import { compareSessionsBySidebarOrder, sessionActivityAt, sessionUrgencyIndex } from "../lib/sessionSort";
 
 function compareLatestActivity(a: RemoteSession, b: RemoteSession): number {
-  const dt = activityAt(b) - activityAt(a);
+  const dt = sessionActivityAt(b) - sessionActivityAt(a);
   if (dt !== 0) return dt;
   return a.session_id.localeCompare(b.session_id);
 }
@@ -129,10 +104,7 @@ export function useSessions(
     // Sort within each state group: unread first, then most-recent activity.
     for (const k of Object.keys(out)) {
       out[k].sort((a, b) => {
-        const au = a.unread ? 0 : 1;
-        const bu = b.unread ? 0 : 1;
-        if (au !== bu) return au - bu;
-        return compareLatestActivity(a, b);
+        return compareSessionsBySidebarOrder(a, b);
       });
     }
     return out;
@@ -149,10 +121,10 @@ export function useSessions(
   function primaryStateForHost(hostId: string): TaskState {
     const list = byHost.value[hostId] ?? [];
     let best: TaskState = "idle";
-    let bestIdx = urgencyIndex("idle");
+    let bestIdx = sessionUrgencyIndex("idle");
     for (const s of list) {
       const st = (s.task_state as TaskState | undefined) ?? "idle";
-      const idx = urgencyIndex(st);
+      const idx = sessionUrgencyIndex(st);
       if (idx < bestIdx) {
         best = st;
         bestIdx = idx;

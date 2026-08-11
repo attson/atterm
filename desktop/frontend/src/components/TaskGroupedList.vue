@@ -13,6 +13,7 @@ import { useTaskPreset } from "../composables/useTaskPreset";
 import { useSessionPins } from "../composables/useSessionPins";
 import { useSessionSelection } from "../composables/useSessionSelection";
 import { matchesSession } from "../lib/sessionMatch";
+import { compareSessionsBySidebarOrder, sessionUrgencyIndex } from "../lib/sessionSort";
 import {
   titleOrCommand,
   rowTitle,
@@ -111,8 +112,8 @@ const filteredGroups = computed<Record<string, RemoteSession[]>>(() => {
   }
   return out;
 });
-// Urgency order for sorting the pinned group — mirrors STATE_ORDER minus
-// "closed" (pinned+closed sessions still sort last via the fallback index).
+// Pinned rows stay in one group, but use the same ordering as state-group rows:
+// unread first, then latest activity, with a deterministic session-id tie break.
 const groupKeys = computed<string[]>(() => {
   if (props.groupBy === "state") {
     return STATE_ORDER.filter((s) => (filteredGroups.value[s] ?? []).length > 0);
@@ -160,12 +161,6 @@ onMounted(async () => {
 // collisions since host_ids are UUIDs and states are the fixed enum above.
 const PINNED_KEY = "__pinned__";
 
-function urgencyIndex(state?: TaskState | string): number {
-  if (!state) return STATE_ORDER.length;
-  const i = STATE_ORDER.indexOf(state as TaskState);
-  return i === -1 ? STATE_ORDER.length : i;
-}
-
 // Flattens byHost/byState (whichever is active) and keeps only pinned
 // sessions, sorted by task_state urgency like every other group.
 const pinnedSessions = computed<RemoteSession[]>(() => {
@@ -181,7 +176,7 @@ const pinnedSessions = computed<RemoteSession[]>(() => {
       }
     }
   }
-  out.sort((a, b) => urgencyIndex(a.task_state) - urgencyIndex(b.task_state));
+  out.sort(compareSessionsBySidebarOrder);
   return out;
 });
 
@@ -395,7 +390,7 @@ function groupPrimaryState(key: string): TaskState {
   const list = filteredGroups.value[key] ?? [];
   let best = list[0];
   for (const s of list) {
-    if (urgencyIndex(s.task_state) < urgencyIndex(best.task_state)) best = s;
+    if (sessionUrgencyIndex(s.task_state) < sessionUrgencyIndex(best.task_state)) best = s;
   }
   return (best.task_state as TaskState | undefined) ?? "idle";
 }

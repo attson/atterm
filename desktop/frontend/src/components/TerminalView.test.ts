@@ -66,8 +66,16 @@ describe("TerminalView overlay placement", () => {
 
 describe("TerminalView replay scroll", () => {
   test("scrolls to the newest output after initial replay finishes", () => {
-    expect(source).toContain("function scrollToBottomAfterWriteQueue()");
-    expect(source).toMatch(/progress\.phase === "end"[\s\S]*scrollToBottomAfterWriteQueue\(\)/);
+    expect(source).toMatch(/function scrollToBottomAfterWriteQueue\(done\?: \(\) => void\)/);
+    expect(source).toMatch(/progress\.phase === "start" \|\| progress\.phase === "chunk"/);
+    expect(source).toMatch(/replayInputGuard\.onProgress\("end"[\s\S]*scrollToBottomAfterWriteQueue\(release\)/);
+  });
+});
+
+describe("TerminalView resize deduplication", () => {
+  test("records locally sent PTY dimensions to avoid repeated tab-activation RESIZE", () => {
+    expect(source).toMatch(/conn\.sendResize\(term\.cols, term\.rows\);[\s\S]*lastResizeSent\.value = \{ cols: term\.cols, rows: term\.rows \};/);
+    expect(source).toMatch(/conn\?\.sendResize\(cols, rows\);[\s\S]*ptyCols\.value = cols;[\s\S]*ptyRows\.value = rows;/);
   });
 });
 
@@ -724,6 +732,7 @@ describe("TerminalView right-click menu", () => {
     expect(source).toContain("shouldActivateLink(e, linkClickDownPos, isMac())");
     expect(source).toMatch(/const\s+hit\s*=\s*computeLinkHit\(e\)/);
     expect(source).toContain("openLinkMatch(hit)");
+    expect(source).toMatch(/term\?\.clearSelection\(\)/);
     expect(source).toContain("e.stopImmediatePropagation()");
   });
 });
@@ -1085,6 +1094,8 @@ describe("TerminalView driver-side PTY size reconciliation", () => {
     expect(body![0]).toMatch(/if \(props\.resizeSuspended\) return;/);
     // Size match => stay silent, preserving the zero-SIGWINCH attach path.
     expect(body![0]).toMatch(/cols === term\.cols && rows === term\.rows/);
+    // A stale META must not make the same dimensions emit RESIZE again.
+    expect(body![0]).toMatch(/lastResizeSent\.value\?\.cols === term\.cols/);
     expect(body![0]).toMatch(/conn\.sendResize\(term\.cols, term\.rows\)/);
   });
 

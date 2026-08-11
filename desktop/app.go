@@ -241,6 +241,11 @@ type App struct {
 	// strict context check. Same pattern as uplink.eventsEmit.
 	eventsEmitter func(ctx context.Context, name string, data ...interface{})
 
+	// windowActivator raises and focuses the main window for user-driven
+	// actions arriving outside the main webview (for example the widget child
+	// process). Injectable so event-routing tests do not need a live Wails UI.
+	windowActivator func(ctx context.Context)
+
 	// recoveryStore persists tab/pane layout to disk so a relaunch can show
 	// the recovery dialog. Wired in startup; nil in tests that don't need it.
 	recoveryStore *RecoveryStore
@@ -272,10 +277,11 @@ type App struct {
 // NewApp creates a new App application struct.
 func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 	a := &App{
-		cfgStore:      cfgStore,
-		logger:        logger,
-		pluginFS:      NewPluginFS(),
-		eventsEmitter: wailsruntime.EventsEmit,
+		cfgStore:        cfgStore,
+		logger:          logger,
+		pluginFS:        NewPluginFS(),
+		eventsEmitter:   wailsruntime.EventsEmit,
+		windowActivator: activateMainWindow,
 	}
 	a.updater = newUpdater(updaterConfig{
 		current:         Version,

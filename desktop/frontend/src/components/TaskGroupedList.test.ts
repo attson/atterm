@@ -542,6 +542,19 @@ describe("TaskGroupedList pinned group", () => {
     expect(w.find("[data-test=pinned-group-header]").exists()).toBe(false);
   });
 
+  test("sorts pinned rows by unread, activity, and session id", async () => {
+    const props = seededProps(["a", "b"]);
+    props.byHost.h1 = [
+      mk({ session_id: "b", host_id: "h1", host: "h1", task_state: "running", started_at: 100 }),
+      mk({ session_id: "a", host_id: "h1", host: "h1", task_state: "running", started_at: 100, unread: true }),
+    ];
+    const w = mount(TaskGroupedList, { props });
+    await flushPromises();
+    await nextTick();
+    const ids = w.findAll("[data-test=task-row]").map((r) => r.attributes("data-session-id"));
+    expect(ids.slice(0, 2)).toEqual(["a", "b"]);
+  });
+
   test("@contextmenu on a task row opens the SessionRowMenu", async () => {
     const w = mount(TaskGroupedList, { props: seededProps([]) });
     await flushPromises();

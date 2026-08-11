@@ -16,6 +16,7 @@
 .superpowers/
 .worktrees/
 .workflow-plan/
+docs/tasks/
 
 # Local-only artefacts that should never be committed
 /atterm-relay

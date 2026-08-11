@@ -115,8 +115,28 @@ describe("projectWidgetState — ordering", () => {
       sess({ id: "fail", task_state: "failed", last_output_at: 200 }),
       sess({ id: "wait", task_state: "waiting_input", last_output_at: 1 }),
     ];
-    const ids = projectWidgetState(sessions, { nowMs: NOW }).rows.map((r) => r.sessionId);
+    const ids = projectWidgetState(sessions, { nowMs: NOW, groupBy: "state" }).rows.map((r) => r.sessionId);
     expect(ids).toEqual(["wait", "fail", "new-run", "old-run", "done"]);
+  });
+
+  it("matches the sidebar host grouping by local host then activity", () => {
+    const sessions = [
+      sess({ id: "remote", host_id: "H2", started_at: 900 }),
+      sess({ id: "local-old", host_id: "H1", started_at: 100 }),
+      sess({ id: "local-new", host_id: "H1", started_at: 500 }),
+    ];
+    const ids = projectWidgetState(sessions, { nowMs: NOW, localHostId: "H1" }).rows.map((r) => r.sessionId);
+    expect(ids).toEqual(["local-new", "local-old", "remote"]);
+  });
+
+  it("matches sidebar ordering for unread rows and equal activity", () => {
+    const sessions = [
+      sess({ id: "z", task_state: "running", started_at: 100 }),
+      sess({ id: "a", task_state: "running", started_at: 100 }),
+      sess({ id: "unread", task_state: "running", started_at: 1, unread: true }),
+    ];
+    const ids = projectWidgetState(sessions, { nowMs: NOW, groupBy: "state" }).rows.map((r) => r.sessionId);
+    expect(ids).toEqual(["unread", "a", "z"]);
   });
 
   it("drops closed sessions entirely", () => {

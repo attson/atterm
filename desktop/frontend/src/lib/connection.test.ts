@@ -589,19 +589,121 @@ describe("SessionConnection client_name", () => {
   });
 });
 
-describe("SessionConnection re-claims driver across reconnect", () => {
-  // After an idle reconnect the host recreates its uplink proxy subscriber; with
-  // auto-promote suppressed the session has no driver until someone claims. The
-  // frontend must re-assert its claim on reconnect, or the user silently drops
-  // to viewer (and previously saw a spurious "remote has taken control").
-  test("tracks whether this connection currently holds the driver role", () => {
-    expect(source).toMatch(/this\.isDriverRole\s*=/);
+describe("SessionConnection driver reconciliation across reconnect", () => {
+  const sessionId = "11111111-2222-3333-4444-555555555555";
+  const endpoint = { url: "ws://127.0.0.1:1234", session_token: "token" };
+
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 3;
+
+    readyState = FakeWebSocket.CONNECTING;
+    binaryType = "";
+    sent: Uint8Array[] = [];
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public url: string, public protocols?: string[]) {
+      FakeWebSocket.instances.push(this);
+    }
+
+    send(data: Uint8Array) {
+      this.sent.push(data);
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.();
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+
+    emitMeta(driverClientID: string, driverClientName = "") {
+      const frame = encodeFrame(
+        TYPE.META,
+        uuidParse(sessionId),
+        encodeText(JSON.stringify({
+          driver_client_id: driverClientID,
+          driver_client_name: driverClientName,
+          cols: 80,
+          rows: 24,
+        })),
+      );
+      this.onmessage?.({ data: frame.buffer } as MessageEvent);
+    }
+  }
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
   });
 
-  test("re-sends CLAIM_DRIVER in SessionConnection.onopen when it held the driver role", () => {
-    const m = source.match(/class SessionConnection[\s\S]*?(?=\n}\n)/);
-    expect(m).not.toBeNull();
-    expect(m![0]).toMatch(/if\s*\(this\.isDriverRole\)\s*this\.claimDriver\(\)/);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function attachAsDriver(onDriverChange = vi.fn()) {
+    const conn = new SessionConnection(endpoint, sessionId, { onDriverChange });
+    conn.attach();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    const attach = JSON.parse(decodeText(decodeFrame(ws.sent[0]).payload));
+    ws.emitMeta(attach.client_id, "this-host");
+    expect(onDriverChange).toHaveBeenLastCalledWith(attach.client_id, true, "this-host");
+    return { conn, ws, clientID: String(attach.client_id), onDriverChange };
+  }
+
+  test("does not reclaim when another client became driver while this tab was suspended", () => {
+    const { conn, onDriverChange } = attachAsDriver();
+
+    conn.suspend();
+    conn.attach();
+    const resumed = FakeWebSocket.instances[1];
+    resumed.open();
+
+    // Reconnect must wait for the relay's authoritative snapshot instead of
+    // immediately replaying the stale driver role from before suspension.
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+
+    resumed.emitMeta("other-client", "phone");
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+    expect(onDriverChange).toHaveBeenLastCalledWith("other-client", false, "phone");
+
+    // The old claim intent is consumed by the first authoritative META. A
+    // later driverless update must not make us steal control automatically.
+    resumed.emitMeta("");
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+  });
+
+  test("reclaims once after reconnect only when the authoritative driver is empty", () => {
+    const { conn, clientID } = attachAsDriver();
+
+    conn.suspend();
+    conn.attach();
+    const resumed = FakeWebSocket.instances[1];
+    resumed.open();
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([TYPE.ATTACH]);
+
+    resumed.emitMeta("");
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
+    ]);
+    const claim = JSON.parse(decodeText(decodeFrame(resumed.sent[1]).payload));
+    expect(claim.client_id).toBe(clientID);
+
+    resumed.emitMeta("");
+    expect(resumed.sent.map((bytes) => decodeFrame(bytes).type)).toEqual([
+      TYPE.ATTACH,
+      TYPE.CLAIM_DRIVER,
+    ]);
   });
 });
 

@@ -582,8 +582,10 @@ non-shell 时才覆盖。这条 sticky 规则保证：
 
 - `go test` → `code editor`（shell）的切换不会把 type 从 `test` 退回
   `shell`，否则任务卡片的类型 chip 会闪烁。
-- 一旦升过 `ai` / `test` / `build` / `deploy`，整个 session 生命周期都会保
-  持那个类型直到 session 关闭。
+- `test` / `build` / `deploy` 对后续普通 shell 命令保持 sticky；`ai` 是例外：
+  顶层 AI 命令发出 OSC 133 `D` 后，下一条普通 shell 命令可把 type 退回
+  `shell`。每个新的顶层 AI OSC 133 `C` 仍必须单独通知 desktop，以切换
+  recovery resolver generation，不能因为 type 已经是 `ai` 而吞掉。
 
 只在 `applyOSC133Locked` 一处实现这个语义；不要在 frontend 端再做一层
 "sticky" 补丁，否则两层规则会互相打架。`type` 同样需要走 MetaPayload 广播

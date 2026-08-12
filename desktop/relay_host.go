@@ -57,8 +57,9 @@ type relayHost struct {
 	startSniffFn func(ctx context.Context, sess *session.Session, cwd, kind string, onCapture func(sid string))
 
 	// aiSidCallback is set by app.go after startRelayHost returns; it
-	// receives every captured AI session id and emits a Wails event. Nil
-	// when no app is wired (tests / standalone).
+	// receives AI recovery projection updates and emits a Wails event. An empty
+	// aiSid invalidates the previous generation before the new resolver has a
+	// precise id. Nil when no app is wired (tests / standalone).
 	aiSidCallback func(localSessionID uuid.UUID, kind, aiSid string)
 
 	// FeishuHookEndpoint is set by app.go at startup once the HookServer
@@ -532,20 +533,75 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 
 	cleanup := h.server.AdoptSession(ctx, id, info, &desktopPtyHost{Host: pty, cfg: h.cfg}, h.adminUserID)
 
-	// resolveCtx bounds the AI id-resolution goroutine to the session's
-	// lifetime: it tracks the active conversation continuously (so /resume
-	// switching to another conversation re-captures the new id) and must stop
-	// when the PTY exits. Cancelled from combinedCleanup.
+	// resolveCtx bounds every AI id resolver to the PTY lifetime. A pane may
+	// launch Claude, exit, then launch Codex (or a second Codex); each launch
+	// below creates a new generation and cancels the previous resolver.
 	resolveCtx, resolveCancel := context.WithCancel(ctx)
+	var resolveMu sync.Mutex
+	var resolveGeneration uint64
+	var currentResolveCancel context.CancelFunc
+	var restoredStartKind string
 
-	// resolveOnce ensures a single id-resolution goroutine per session: a
-	// restored session would otherwise start one here AND again when its
-	// injected `claude --resume` re-triggers SetOnAIClassified.
-	var resolveOnce sync.Once
+	startResolveGeneration := func(sess *session.Session, kind, resolveCwd, initialSID string, awaitRestoredStart bool) {
+		resolveMu.Lock()
+		if currentResolveCancel != nil {
+			currentResolveCancel()
+		}
+		resolveGeneration++
+		generation := resolveGeneration
+		generationCtx, generationCancel := context.WithCancel(resolveCtx)
+		currentResolveCancel = generationCancel
+		if awaitRestoredStart {
+			restoredStartKind = kind
+		} else {
+			restoredStartKind = ""
+		}
+		resolveMu.Unlock()
+
+		// SetOnAIClassified runs while session.mu is held, so event publication
+		// and resolver work must stay off that callback stack. This goroutine
+		// publishes the new projection before starting resolution, guaranteeing
+		// that an immediate capture cannot overtake the clear/initial-SID event.
+		go func() {
+			resolveMu.Lock()
+			if generation != resolveGeneration {
+				resolveMu.Unlock()
+				return
+			}
+			// Empty means "latest generation is unresolved"; the frontend
+			// removes the old recovery entry instead of resuming it.
+			h.onAISidCaptured(id, kind, initialSID)
+			resolveMu.Unlock()
+
+			if h.startSniffFn == nil {
+				return
+			}
+			logDebug("ai-sid", "classified session=%s kind=%s generation=%d — start resolve", id, kind, generation)
+			h.startSniffFn(generationCtx, sess, resolveCwd, kind, func(aiSid string) {
+				resolveMu.Lock()
+				if generation == resolveGeneration {
+					// Keep validation + publication in one critical section. Otherwise
+					// a new generation could publish its clearing event after this
+					// check, then this stale callback could overwrite it with an old SID.
+					h.onAISidCaptured(id, kind, aiSid)
+				}
+				resolveMu.Unlock()
+			})
+		}()
+		if kind == "codex" && initialSID != "" {
+			go startCodexKnownTitleResolve(generationCtx, sess, resolveCwd, initialSID)
+		}
+	}
 
 	var cleanupOnce sync.Once
 	combinedCleanup := func() {
 		cleanupOnce.Do(func() {
+			resolveMu.Lock()
+			if currentResolveCancel != nil {
+				currentResolveCancel()
+			}
+			resolveGeneration++
+			resolveMu.Unlock()
 			resolveCancel()
 			cleanup()
 			if plan.Cleanup != nil {
@@ -554,26 +610,27 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		})
 	}
 
-	// Hook fresh AI sniff: session's OSC 133;C handler fires once when type
-	// transitions shell→ai (user types claude/codex/aider at the prompt).
-	// Restored sessions skip this path because req.AIKind triggers sniff below.
+	// Every top-level AI OSC 133 C starts a new resolver generation. The only
+	// exception is the first same-kind command injected for a restored pane: it
+	// confirms the generation already established below instead of clearing the
+	// known initial SID and starting a duplicate resolver.
 	if sess, ok := h.server.Registry().Get(id); ok {
-		sidCopy := id
 		sess.SetOnAIClassified(func(commandLine, cwd string) {
 			kind := classifyAIKindFromCommand(commandLine)
-			if kind == "" || h.startSniffFn == nil {
+			if kind == "" {
 				return
 			}
-			resolveOnce.Do(func() {
-				logDebug("ai-sid", "classified session=%s kind=%s — start resolve", sidCopy, kind)
-				go h.startSniffFn(resolveCtx, sess, cwd, kind, func(aiSid string) {
-					h.onAISidCaptured(sidCopy, kind, aiSid)
-				})
-			})
+			resolveMu.Lock()
+			confirmedRestoredStart := restoredStartKind != "" && restoredStartKind == kind
+			restoredStartKind = ""
+			resolveMu.Unlock()
+			if !confirmedRestoredStart {
+				startResolveGeneration(sess, kind, cwd, "", false)
+			}
 			// autoAttach="ai": attach the Feishu subscriber now that we know
 			// this is an AI session. Use background context (not the session's
 			// resolveCtx) so the anchor survives beyond the sniff lifetime.
-			go h.attachFeishuSubscriberForAutoAttach(context.Background(), sess, sidCopy, "ai")
+			go h.attachFeishuSubscriberForAutoAttach(context.Background(), sess, id, "ai")
 		})
 		sess.SetOnTaskStateChange(func(sid uuid.UUID, prev, next string, meta session.TaskMeta) {
 			disp := h.feishuDispatcher.Load()
@@ -667,26 +724,14 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	if req.AIKind != "" {
 		if sess, ok := h.server.Registry().Get(id); ok {
 			sidCopy := id
-			if req.InitialAISessionID != "" {
-				h.onAISidCaptured(sidCopy, req.AIKind, req.InitialAISessionID)
-				if req.AIKind == "codex" {
-					go startCodexKnownTitleResolve(resolveCtx, sess, cwd, req.InitialAISessionID)
-				}
-			}
-			if argv := computeResumeArgs(req.AIKind, req.InitialAISessionID, req.InitialAICommandLine); argv != nil {
-				line := strings.Join(argv, " ") + "\n"
+			resumeArgv := computeResumeArgs(req.AIKind, req.InitialAISessionID, req.InitialAICommandLine)
+			startResolveGeneration(sess, req.AIKind, cwd, req.InitialAISessionID, resumeArgv != nil)
+			if resumeArgv != nil {
+				line := strings.Join(resumeArgv, " ") + "\n"
 				ptyCopy := pty
 				sess.SetOnFirstPrompt(func() {
 					logInfo("recovery", "restored ai session=%s — inject resume %q", sidCopy, strings.TrimSpace(line))
 					go func() { _, _ = ptyCopy.Write([]byte(line)) }()
-				})
-			}
-			if h.startSniffFn != nil {
-				resolveOnce.Do(func() {
-					logInfo("recovery", "restored ai session=%s kind=%s — start resolve", sidCopy, req.AIKind)
-					go h.startSniffFn(resolveCtx, sess, cwd, req.AIKind, func(sid string) {
-						h.onAISidCaptured(sidCopy, req.AIKind, sid)
-					})
 				})
 			}
 		}

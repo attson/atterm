@@ -154,8 +154,70 @@ func TestScanCodexJsonlForUserTitle(t *testing.T) {
 	)
 
 	title, ok := scanCodexJsonlForUserTitle(p)
-	if !ok || title != "修改site展示页面，同步最新内容" {
-		t.Fatalf("got (%q,%v), want first user message", title, ok)
+	if !ok || title != "更新截图资源" {
+		t.Fatalf("got (%q,%v), want latest user message", title, ok)
+	}
+}
+
+func TestScanCodexJsonlForUserTitle_NewResponseItemFormat(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollout-new-response-item.jsonl")
+	writeJsonl(t, p,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/home/attson</cwd>\n</environment_context>"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"noise"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"如何学会开发"}]}}`,
+	)
+
+	title, ok := scanCodexJsonlForUserTitle(p)
+	if !ok || title != "如何学会开发" {
+		t.Fatalf("got (%q,%v), want latest real response_item user message", title, ok)
+	}
+}
+
+func TestScanCodexJsonlForUserTitle_NewItemCompletedFormat(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollout-new-item-completed.jsonl")
+	writeJsonl(t, p,
+		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"first","text_elements":[]}]}}}`,
+		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"Text","text":"noise"}]}}}`,
+		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"  最新问题\n第二行  ","text_elements":[]}]}}}`,
+	)
+
+	title, ok := scanCodexJsonlForUserTitle(p)
+	if !ok || title != "最新问题 第二行" {
+		t.Fatalf("got (%q,%v), want latest item_completed UserMessage", title, ok)
+	}
+}
+
+func TestScanCodexJsonlForUserTitle_DuplicateNewRecordsRemainLatest(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollout-duplicate-new-records.jsonl")
+	writeJsonl(t, p,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"同一问题"}]}}`,
+		`{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"同一问题"}]}}}`,
+	)
+
+	title, ok := scanCodexJsonlForUserTitle(p)
+	if !ok || title != "同一问题" {
+		t.Fatalf("got (%q,%v), want duplicated user input once as title", title, ok)
+	}
+}
+
+func TestScanCodexJsonlForUserTitle_CurrentCodexFixture(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rollout-current-codex.jsonl")
+	writeJsonl(t, p,
+		`{"timestamp":"2026-08-12T05:04:48Z","ordinal":5,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/home/attson</cwd>\n  <shell>zsh</shell>\n</environment_context>"}]}}`,
+		`{"timestamp":"2026-08-12T05:04:49Z","ordinal":8,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}`,
+		`{"timestamp":"2026-08-12T05:04:49Z","ordinal":9,"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"hello","text_elements":[]}]}}}`,
+		`{"timestamp":"2026-08-12T05:05:00Z","ordinal":17,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"如何学会开发"}]}}`,
+		`{"timestamp":"2026-08-12T05:05:00Z","ordinal":18,"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"如何学会开发","text_elements":[]}]}}}`,
+	)
+
+	title, ok := scanCodexJsonlForUserTitle(p)
+	if !ok || title != "如何学会开发" {
+		t.Fatalf("got (%q,%v), want screenshot conversation title", title, ok)
 	}
 }
 
@@ -267,7 +329,7 @@ func TestStartCodexFileResolve_CapturesResumedExistingRollout(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("session title = %q, want first codex user message", sess.Info().Title)
+	t.Fatalf("session title = %q, want codex user message", sess.Info().Title)
 }
 
 func TestStartCodexKnownTitleResolve_FindsPreviousDaySidAndMirrorsUserTitle(t *testing.T) {
@@ -327,6 +389,18 @@ func TestTrackCodexUserTitle_ReappliesAfterExternalTitleOverwrite(t *testing.T) 
 		t.Fatalf("initial session title = %q, want codex user message", got)
 	}
 
+	appendJsonl(t, path, `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"最新问题"}]}}`)
+	deadline = time.Now().Add(2 * codexTitleInterval)
+	for time.Now().Before(deadline) {
+		if got := sess.Info().Title; got == "最新问题" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := sess.Info().Title; got != "最新问题" {
+		t.Fatalf("session title after rollout append = %q, want latest codex user message", got)
+	}
+
 	sess.UpdateCwdTitle("", "codex")
 	if got := sess.Info().Title; got != "codex" {
 		t.Fatalf("test setup failed: title after overwrite = %q, want codex", got)
@@ -334,12 +408,12 @@ func TestTrackCodexUserTitle_ReappliesAfterExternalTitleOverwrite(t *testing.T) 
 
 	deadline = time.Now().Add(2 * codexTitleInterval)
 	for time.Now().Before(deadline) {
-		if got := sess.Info().Title; got == "web 端这里是不是应该换一种提示" {
+		if got := sess.Info().Title; got == "最新问题" {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("session title after overwrite = %q, want codex user message reapplied", sess.Info().Title)
+	t.Fatalf("session title after overwrite = %q, want latest codex user message reapplied", sess.Info().Title)
 }
 
 func TestAdvancedSids(t *testing.T) {

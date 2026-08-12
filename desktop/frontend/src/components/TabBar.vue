@@ -284,7 +284,7 @@ function onClose(e: MouseEvent, id: string) {
         />
         <span class="title">{{ tabTitle(t.activeSession) }}</span>
         <span
-          v-if="t.activeSession?.unread"
+          v-if="t.activeSession?.unread && t.activeSession.task_state !== 'waiting_input' && t.activeSession.task_state !== 'completed'"
           class="tab-unread-dot"
           data-test="tab-unread-dot"
         >●</span>
@@ -349,7 +349,7 @@ function onClose(e: MouseEvent, id: string) {
   top: 0;
   z-index: 12;
   display: flex; align-items: stretch; background: var(--panel);
-  border-bottom: 1px solid var(--border); flex: 0 0 auto; height: 28px;
+  flex: 0 0 auto; height: 28px;
   overflow: hidden;
 }
 .tabs {

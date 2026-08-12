@@ -54,6 +54,11 @@ describe("TabBar", () => {
     expect(tabbarStyle).toContain("z-index:");
   });
 
+  test("does not duplicate the terminal pane's top border", () => {
+    const tabbarStyle = tabBarSource.match(/\.tabbar\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(tabbarStyle).not.toContain("border-bottom");
+  });
+
   it("renders the lastSeenInfo title with a disconnected style after a remote drop", async () => {
     await initI18n({
       loadPreference: async () => "zh-CN",
@@ -217,7 +222,7 @@ describe("TabBar state icon + unread", () => {
     expect(w.find(".task-state-icon svg").exists()).toBe(true);
   });
 
-  test("renders unread dot when activeSession.unread is true", () => {
+  test("uses only the main star for unread completed sessions", () => {
     const tab = {
       ...baseTab,
       activeSession: {
@@ -230,6 +235,21 @@ describe("TabBar state icon + unread", () => {
         started_at: 0,
         task_state: "completed" as const,
         unread: true,
+      },
+    };
+    const w = mount(TabBar, {
+      props: { tabs: [tab], currentId: "t1", starting: false },
+    });
+    expect(w.find("path.task-unread-star").exists()).toBe(true);
+    expect(w.find('[data-test="tab-unread-dot"]').exists()).toBe(false);
+  });
+
+  test("keeps the separate unread dot for other task states", () => {
+    const tab = {
+      ...baseTab,
+      activeSession: {
+        id: "s1", command: "claude", cwd: "/", title: "", cols: 80, rows: 24,
+        started_at: 0, task_state: "running" as const, unread: true,
       },
     };
     const w = mount(TabBar, {

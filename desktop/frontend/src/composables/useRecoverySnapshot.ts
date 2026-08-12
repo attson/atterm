@@ -242,8 +242,13 @@ export function useRecoverySnapshot(args: UseRecoverySnapshotArgs) {
     const sid: string = payload?.session_id ?? "";
     const kind = (payload?.kind ?? "") as "claude" | "codex" | "aider" | "";
     const aiSid: string = payload?.ai_session_id ?? "";
-    if (!sid || !kind || !aiSid) return;
+    if (!sid || !kind) return;
     if (kind !== "claude" && kind !== "codex" && kind !== "aider") return;
+    if (!aiSid) {
+      aiBySid.delete(sid);
+      scheduleStructural();
+      return;
+    }
     aiBySid.set(sid, {
       kind,
       session_id: aiSid,

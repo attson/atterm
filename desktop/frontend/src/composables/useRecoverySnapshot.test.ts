@@ -206,6 +206,69 @@ describe("useRecoverySnapshot", () => {
     scope.stop();
   });
 
+  it("clears the previous AI credential when a new generation has no resolved SID yet", async () => {
+    const tabs = ref<Tab[]>([
+      {
+        id: "t1",
+        layout: "single",
+        panes: [{ sessionId: "s1", remote: false }],
+        activePaneIdx: 0,
+        colRatio: 0.5,
+        rowRatio: 0.5,
+      },
+    ]);
+    const currentTabId = ref<string | null>("t1");
+    const sessionInfoFor = vi.fn().mockImplementation((sid: string) => ({
+      id: sid,
+      command: "zsh",
+      cwd: "/x",
+      title: "latest AI",
+      type: "ai",
+      cols: 80,
+      rows: 24,
+      started_at: 0,
+      host_id: "h",
+    }));
+    const handlers = new Map<string, (payload: any) => void>();
+    const onEvent = (name: string, cb: (payload: any) => void) => {
+      handlers.set(name, cb);
+      return () => handlers.delete(name);
+    };
+
+    const scope = effectScope();
+    scope.run(() => {
+      useRecoverySnapshot({ tabs, currentTabId, sessionInfoFor, localHostID: ref(""), onEvent });
+    });
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+
+    const handler = handlers.get("recovery:ai-sid")!;
+    handler({ session_id: "s1", kind: "claude", ai_session_id: "claude-old" });
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    let calls = vi.mocked(api.saveRecoverySnapshot).mock.calls;
+    expect(calls[calls.length - 1][0].tabs[0].panes[0].ai).toMatchObject({
+      kind: "claude",
+      session_id: "claude-old",
+    });
+
+    handler({ session_id: "s1", kind: "codex", ai_session_id: "" });
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    calls = vi.mocked(api.saveRecoverySnapshot).mock.calls;
+    expect(calls[calls.length - 1][0].tabs[0].panes[0].ai).toBeUndefined();
+
+    handler({ session_id: "s1", kind: "codex", ai_session_id: "codex-new" });
+    vi.advanceTimersByTime(600);
+    await Promise.resolve();
+    calls = vi.mocked(api.saveRecoverySnapshot).mock.calls;
+    expect(calls[calls.length - 1][0].tabs[0].panes[0].ai).toMatchObject({
+      kind: "codex",
+      session_id: "codex-new",
+    });
+    scope.stop();
+  });
+
   it("persists a pane meta change (type shell→ai) with no structural change", async () => {
     const info = ref<any>({
       id: "s1", command: "zsh", cwd: "/x", title: "t", type: "shell",
@@ -527,7 +590,6 @@ describe("useRecoverySnapshot", () => {
     const handler = handlers.get("recovery:ai-sid")!;
     handler({ session_id: "s1", kind: "", ai_session_id: "x" }); // empty kind → skip
     handler({ session_id: "", kind: "claude", ai_session_id: "x" }); // empty sid → skip
-    handler({ session_id: "s1", kind: "claude", ai_session_id: "" }); // empty aiSid → skip
 
     vi.advanceTimersByTime(600);
     await Promise.resolve();

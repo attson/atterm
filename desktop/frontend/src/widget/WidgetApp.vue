@@ -1,6 +1,7 @@
 <script lang="ts" setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import TaskStateIcon from "../components/TaskStateIcon.vue";
+import LastOutputIndicator from "../components/LastOutputIndicator.vue";
 import { presets } from "../lib/taskState";
 import WidgetSprite from "./WidgetSprite.vue";
 import { onWidgetBootstrap, onWidgetState, widgetBridge } from "./bridge";
@@ -17,6 +18,7 @@ import type { WidgetState } from "../lib/widgetState";
 
 const EMPTY: WidgetState = {
   mood: "idle",
+  unreadCount: 0,
   waitingCount: 0,
   runningCount: 0,
   failedCount: 0,
@@ -32,6 +34,8 @@ const EMPTY: WidgetState = {
 /** Measured to size the OS window; see widgetBridge.resize. */
 const cardEl = ref<HTMLElement | null>(null);
 let cardObserver: ResizeObserver | null = null;
+let resizeFrame: number | null = null;
+let unmounted = false;
 
 const state = ref<WidgetState>(EMPTY);
 const collapsed = ref(false);
@@ -41,7 +45,7 @@ const mutedUntil = ref(0);
 
 /** Auto-peek timer id, so a newer attention event replaces the older one. */
 let autoPeekTimer: number | null = null;
-/** Ticks once a second so running durations count up between pushes. */
+/** Ticks once a second so relative last-output labels advance between pushes. */
 let clockTimer: number | null = null;
 const nowMs = ref(Date.now());
 
@@ -50,31 +54,43 @@ const muted = computed(() => mutedUntil.value * 1000 > nowMs.value);
 /** Rows are visible when expanded, or while a hover/auto peek is open. */
 const showRows = computed(() => !collapsed.value || peeking.value);
 
-function formatAge(ms: number): string {
-  if (ms <= 0) return "";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m${String(s % 60).padStart(2, "0")}s`;
-  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+function reportCardHeight(height: number) {
+  const rounded = Math.ceil(height);
+  if (rounded > 0) widgetBridge.resize(rounded);
+}
+
+function resizeToRenderedCard() {
+  const card = cardEl.value;
+  if (!card) return;
+  reportCardHeight(card.getBoundingClientRect().height);
 }
 
 /**
- * liveAge advances the pushed ageMs with a local clock so the duration ticks
- * smoothly. Re-pushing every second purely to animate a counter would burn IPC
- * for something the window can compute itself.
+ * Explicitly remeasure after Vue has committed a visibility change and the
+ * browser has laid it out. ResizeObserver remains the general layout watcher,
+ * but WebKit/Wails can miss or defer that callback while the native window is
+ * being resized. Without this fallback, the transparent OS window can remain
+ * at its 172px startup height after the visible card has folded to ~60px and
+ * intercept clicks below the card.
  */
-function liveAge(row: { ageMs: number }, pushedAt: number): string {
-  if (row.ageMs <= 0) return "";
-  return formatAge(row.ageMs + (nowMs.value - pushedAt));
+function scheduleCardResize() {
+  void nextTick().then(() => {
+    if (unmounted) return;
+    if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+    resizeFrame = window.requestAnimationFrame(() => {
+      resizeFrame = null;
+      resizeToRenderedCard();
+    });
+  });
 }
 
-const pushedAt = ref(Date.now());
+// All ways of revealing or hiding the rows converge here: persisted collapse,
+// manual collapse/expand, hover peek and the timed attention peek.
+watch(showRows, scheduleCardResize);
 
 function applyState(next: WidgetState) {
   const prev = state.value;
   state.value = next;
-  pushedAt.value = Date.now();
 
   // Something newly needs the user. If the widget is folded away, open it briefly
   // so a collapsed widget can still raise its hand — then fold back so it does not
@@ -172,11 +188,14 @@ onMounted(() => {
   // so neither side has to enumerate those states.
   if (cardEl.value) {
     cardObserver = new ResizeObserver((entries) => {
-      const h = Math.ceil(entries[0].borderBoxSize?.[0]?.blockSize ?? entries[0].contentRect.height);
-      if (h > 0) widgetBridge.resize(h);
+      reportCardHeight(entries[0].borderBoxSize?.[0]?.blockSize ?? entries[0].contentRect.height);
     });
     cardObserver.observe(cardEl.value);
   }
+
+  // Do not depend on ResizeObserver for the first native-window correction
+  // either: the widget starts at an intentionally approximate height.
+  scheduleCardResize();
 
   clockTimer = window.setInterval(() => {
     nowMs.value = Date.now();
@@ -193,7 +212,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  unmounted = true;
   cardObserver?.disconnect();
+  if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
   if (clockTimer !== null) window.clearInterval(clockTimer);
   if (autoPeekTimer !== null) window.clearTimeout(autoPeekTimer);
   window.removeEventListener("mouseup", widgetBridge.reportPosition);
@@ -246,8 +267,19 @@ onUnmounted(() => {
           </span>
           <span v-if="row.subtitle" class="row-sub">{{ row.subtitle }}</span>
         </span>
-        <span v-if="row.kind" class="kind">{{ row.kind }}</span>
-        <span v-else-if="liveAge(row, pushedAt)" class="age">{{ liveAge(row, pushedAt) }}</span>
+        <span
+          v-if="row.kind || row.lastOutputAt > 0"
+          class="row-tail"
+          :class="{ 'time-only': !row.kind }"
+          data-test="widget-row-tail"
+        >
+          <span v-if="row.kind" class="kind">{{ row.kind }}</span>
+          <LastOutputIndicator
+            :last-output-at="row.lastOutputAt"
+            :task-state="row.taskState"
+            :now-ms="nowMs"
+          />
+        </span>
       </button>
 
       <div v-if="state.rows.length === 0" class="empty">没有活跃会话</div>
@@ -423,20 +455,24 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.kind {
+.row-tail {
+  align-self: stretch;
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 3px;
+}
+
+.row-tail.time-only { justify-content: flex-end; }
+
+.kind {
   font-size: 8.5px;
   padding: 1px 4px;
   border-radius: 3px;
   border: 1px solid #30363d;
   color: #8b949e;
-}
-
-.age {
-  flex: 0 0 auto;
-  font-size: 9px;
-  color: #6e7681;
-  font-variant-numeric: tabular-nums;
 }
 
 .empty,

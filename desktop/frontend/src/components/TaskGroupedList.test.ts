@@ -144,6 +144,25 @@ describe("TaskGroupedList", () => {
     expect(w.find('[data-test="completed-fold-row"]').exists()).toBe(true);
   });
 
+  test("completed fold preserves the same last-output second row", async () => {
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: {},
+        primaryStateForHost: () => "idle",
+        completedSeen: [mk({
+          session_id: "x",
+          task_state: "completed",
+          cwd: "",
+          last_output_at: Math.floor(Date.now() / 1000) - 2 * 60 * 60,
+        })],
+      },
+    });
+    await w.get('[data-test="completed-fold-toggle"]').trigger("click");
+    const row = w.get('[data-test="completed-fold-row"]');
+    expect(row.find(".cwd").exists()).toBe(false);
+    expect(row.get('[data-test="last-output"]').text()).toBe("2h");
+  });
+
   test("row renders the session cwd alongside the command", () => {
     const byHost = {
       h: [

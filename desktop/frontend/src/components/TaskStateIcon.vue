@@ -21,10 +21,14 @@ const props = withDefaults(
 const fallback = useTaskPreset();
 const preset = computed(() => props.preset ?? fallback.active.value);
 
-const showUnread = computed(() => props.state === "completed" && props.unread);
+// Waiting/completed are the two normal attention states. When either is
+// unread, unread becomes the primary icon instead of adding a second marker.
+const showUnread = computed(() =>
+  props.unread && (props.state === "waiting_input" || props.state === "completed"),
+);
 const color = computed(() => (showUnread.value ? "#e6edf3" : preset.value.colorOf(props.state)));
 const spinMs = computed(() => preset.value.spinnerDurationMs(props.state));
-const pulse = computed(() => preset.value.animatePulse(props.state));
+const pulse = computed(() => !showUnread.value && preset.value.animatePulse(props.state));
 </script>
 
 <template>
@@ -57,13 +61,11 @@ const pulse = computed(() => preset.value.animatePulse(props.state));
         stroke-linecap="round"
         :style="{ animationDuration: spinMs + 'ms' }"
       />
-      <!-- unread completed: unread is the main state until the row is seen -->
-      <circle
+      <!-- unread attention state: unread is primary until the row is seen -->
+      <path
         v-else-if="showUnread"
-        class="task-unread-dot"
-        cx="8"
-        cy="8"
-        r="4"
+        class="task-unread-star"
+        d="M8 2.5 L9.35 6.65 L13.5 8 L9.35 9.35 L8 13.5 L6.65 9.35 L2.5 8 L6.65 6.65 Z"
         :fill="color"
       />
       <!-- completed: check mark -->
@@ -84,10 +86,16 @@ const pulse = computed(() => preset.value.animatePulse(props.state));
         stroke-width="2"
         stroke-linecap="round"
       />
-      <!-- waiting_input: half-filled circle -->
+      <!-- waiting_input: terminal prompt -->
       <g v-else-if="state === 'waiting_input'">
-        <circle cx="8" cy="8" r="6" :stroke="color" stroke-width="1.5" fill="none" />
-        <path d="M8 2 A6 6 0 0 0 8 14 Z" :fill="color" />
+        <path
+          class="task-waiting-prompt"
+          d="M3 4.5 L6.5 8 L3 11.5 M8 11.5 H13"
+          :stroke="color"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
       </g>
       <!-- idle / disconnected / closed: small dot -->
       <circle v-else cx="8" cy="8" r="2" :fill="color" />

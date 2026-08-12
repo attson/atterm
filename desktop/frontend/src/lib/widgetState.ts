@@ -69,6 +69,8 @@ export interface WidgetSessionRow {
   remoteHost: string;
   /** Wall-clock age of the current command in ms; 0 when not running. */
   ageMs: number;
+  /** Raw unix-seconds output timestamp; the widget formats it against its local clock. */
+  lastOutputAt: number;
   /** Same per-user unread flag the sidebar renders. */
   unread: boolean;
 }
@@ -76,6 +78,8 @@ export interface WidgetSessionRow {
 export interface WidgetState {
   /** Aggregate mood across every session: waiting > failed > running > idle. */
   mood: WidgetMood;
+  /** Sessions with output the user has not read yet. */
+  unreadCount: number;
   waitingCount: number;
   runningCount: number;
   failedCount: number;
@@ -83,9 +87,9 @@ export interface WidgetState {
   /** Sessions doing nothing and not recently finished — typically a shell
    *  sitting at its prompt, which is the most common state of all. */
   idleCount: number;
-  /** Primary line, e.g. "1 个等你输入". */
+  /** Primary line, e.g. "2 个会话有最新内容". */
   headline: string;
-  /** Secondary line, e.g. "2 个在跑 · 1 个已完成". */
+  /** Secondary line containing the existing task-state summary. */
   subline: string;
   rows: WidgetSessionRow[];
   /** Sessions beyond maxRows that were truncated out of `rows`. */
@@ -263,6 +267,7 @@ export function projectWidgetState(
       kind: s.type === "ai" ? commandLabel(labelInput) : "",
       remoteHost: isRemote ? (s.host ?? "").trim() : "",
       ageMs: ageOf(s, mood, nowMs),
+      lastOutputAt: s.last_output_at ?? 0,
       unread: s.unread === true,
     };
     return { row, source: s };
@@ -288,6 +293,7 @@ export function projectWidgetState(
   const waitingCount = rows.filter((r) => r.state === "waiting").length;
   const failedCount = rows.filter((r) => r.state === "failed").length;
   const runningCount = rows.filter((r) => r.state === "running").length;
+  const unreadCount = rows.filter((r) => r.unread).length;
   // "completed" is not a mood — a finished session reads as idle. Count it off
   // the raw task_state so the subline can still say "1 个已完成".
   const completedCount = live.filter((s) => s.task_state === "completed").length;
@@ -309,8 +315,9 @@ export function projectWidgetState(
 
   return {
     mood,
+    unreadCount,
     ...counts,
-    ...summarize(counts, aiOnly),
+    ...summarize(unreadCount, counts),
     rows: rows.slice(0, maxRows),
     overflowCount: Math.max(0, rows.length - maxRows),
     aiOnly,
@@ -328,15 +335,18 @@ interface Counts {
 /**
  * summarize turns the counts into the two header lines.
  *
- * Bands are listed in priority order and the first one becomes the headline,
- * the rest the subline — so the two lines never repeat the same number, and
- * every non-zero band is accounted for exactly once.
+ * The headline reports unread sessions. The subline is exactly the previous
+ * task-state subline, so replacing the headline does not reshuffle status text
+ * into the second row.
  *
  * The idle band matters more than it looks: a shell sitting at its prompt is
  * the single most common session state, and leaving it out of the count made
  * a window listing ten live sessions announce "没有会话".
  */
-function summarize(c: Counts, aiOnly: boolean): { headline: string; subline: string } {
+function summarize(
+  unreadCount: number,
+  c: Counts,
+): { headline: string; subline: string } {
   const parts: string[] = [];
   if (c.waitingCount > 0) parts.push(`${c.waitingCount} 个等你输入`);
   if (c.failedCount > 0) parts.push(`${c.failedCount} 个失败`);
@@ -344,15 +354,19 @@ function summarize(c: Counts, aiOnly: boolean): { headline: string; subline: str
   if (c.completedCount > 0) parts.push(`${c.completedCount} 个已完成`);
   if (c.idleCount > 0) parts.push(`${c.idleCount} 个空闲`);
 
+  let previousSubline = "";
   if (parts.length === 0) {
-    // Say which emptiness this is: with the filter on, "没有会话" would read as
-    // "nothing is running" when the user may well have ten shells open.
-    return { headline: aiOnly ? "没有 AI 会话" : "没有会话", subline: "" };
+    // The previous empty-state headline had no subline.
+    previousSubline = "";
+  } else if (parts.length === 1 && c.completedCount > 0) {
+    // "都跑完了" used to be the headline, with the completed count below.
+    previousSubline = parts[0];
+  } else {
+    previousSubline = parts.slice(1).join(" · ");
   }
-  // Work finished and nothing else going on — worth saying in words rather
-  // than as a bare count.
-  if (parts.length === 1 && c.completedCount > 0) {
-    return { headline: "都跑完了", subline: parts[0] };
-  }
-  return { headline: parts[0], subline: parts.slice(1).join(" · ") };
+
+  return {
+    headline: unreadCount > 0 ? `${unreadCount} 个会话有最新内容` : "暂无最新内容",
+    subline: previousSubline,
+  };
 }

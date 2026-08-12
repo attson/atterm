@@ -170,7 +170,7 @@ ATTACH(sid, client_id)  ───►
 
 - **Viewer 锁尺寸**：viewer 不发 RESIZE，`onMeta { cols, rows }` 直接 `term.resize(cols, rows)` 跟 PTY 走；FitAddon 只在 driver 模式跑（见 `desktop/frontend/src/components/TerminalView.vue::safeFit` / `applyViewerSize`）。
 - **远端 pane 默认 viewer**：`TerminalView.isDriver = ref(props.isLocalSession ?? true)` —— 本机永远 driver，远端起始 viewer，等第一帧 META 校正。乐观默认 driver 会让 "看着能输入但 relay 在丢 IN 帧" 的状态难发现（PR #240）。
-- **恢复 attach 不复用旧 client_id**：每次 SessionConnection 都用新 `crypto.randomUUID()`，relay 视为新加入的 viewer。前任 driver 若已断开，session 进入 driverless 状态，任一端 `CLAIM_DRIVER` 都能拿到。但 **uplink-proxy sub 不会自动 promote 自身**（见 `internal/relay/uplink_conn.go` 注释 + `desktop/frontend/src/lib/connection.ts::openWS` "Re-assert the driver claim if we held it before this (re)connect"），避免桌面 mirror sub 误抢真用户的 driver。
+- **恢复 attach 不复用旧 client_id**：新建 SessionConnection 时用新的 `crypto.randomUUID()`，relay 视为新加入的 viewer；同一连接对象的内部重连保留 client_id，但不会在 `onopen` 立即重申旧 driver。它先等待权威 META：若已有其他 driver 就保持 viewer，只有 META 明确显示 driver 为空且断线前本端确为 driver 时，才补发一次 `CLAIM_DRIVER` 无感恢复。**uplink-proxy sub 不会自动 promote 自身**（见 `internal/relay/uplink_conn.go` 与 `desktop/frontend/src/lib/connection.ts::openWS`），避免桌面 mirror sub 或刚返回的后台 Tab 误抢真用户的 driver。
 
 帧格式与字节级语义见 [protocol.md](./protocol.md) §Driver / Viewer 模型。前端实现在 `desktop/frontend/src/components/TerminalView.vue`（`isDriver` ref + `onDriverChange` handler + Space 拦截调 `claimDriver()`）——web 现在挂载的就是这同一个组件（见「前端架构细节」节），不再有独立的 `web/src/main/` 实现。
 
@@ -204,6 +204,8 @@ session 保留期：**仅 PTY 进程活动期间**。退出即丢弃 ringbuf。*
 - session 在迁移/重启间不持久（PTY 退出即销毁）
 
 **会话置顶跨重启迁移**：本机 pane 重启后 recovery 会拿到新 `session_id`；`desktop/frontend/src/composables/useRecoverySnapshot.ts::buildSnapshot` 现在对纯 local pane 也写 `session_id`（仅供 pin 迁移读，不触发 remote-rebind 分支），`App.vue::executeRestore` spawn 新 sid 后调 `useSessionPins.rename(oldSid, newSid)` 承接置顶状态。**sidebar-viewer on local host**（`p.remote===true` 但 `info.host_id===本机`）是第三种 pane 状态，其 `session_id` 属于另一实例的 relay，故意不参与该迁移——完整三态判定表见 [pinned-session-recovery-design.md](../superpowers/specs/2026-07-23-pinned-session-recovery-design.md) §4.1。
+
+**同一 PTY 内 AI 恢复凭据 latest-generation-wins**：OSC 133 `C` 每报告一次顶层 `claude` / `codex` / `aider` 启动，desktop 就建立新的 resolver generation——包括 Claude→Codex、Codex→Claude 以及同 kind 新会话。新 generation 同步取消旧 resolver，并先通过 `recovery:ai-sid` 的空 `ai_session_id` 清掉旧恢复凭据；只有当前 generation 精确解析出的 SID 才能重新写入 recovery snapshot，旧 resolver 的迟到回调必须按 generation 丢弃。新 SID 抓不到时宁可恢复普通 shell，也不能回退到上一段 AI 对话。恢复注入产生的首次同 kind OSC 只确认已建立的恢复 generation，不重复清凭据/启动 resolver；该豁免只消费一次。
 
 ## phase 完成度（截至当前）
 

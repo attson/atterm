@@ -4,6 +4,8 @@ import TaskRowInner from "./TaskRowInner.vue";
 import source from "./TaskRowInner.vue?raw";
 import type { RemoteSession } from "../platform/types";
 
+const NOW = 1_800_000_000_000;
+
 function mk(over: Partial<RemoteSession>): RemoteSession {
   return {
     session_id: "s",
@@ -18,7 +20,7 @@ function mk(over: Partial<RemoteSession>): RemoteSession {
 }
 
 function factory(session: Partial<RemoteSession>, showClose = false) {
-  return mount(TaskRowInner, { props: { session: mk(session), showClose } });
+  return mount(TaskRowInner, { props: { session: mk(session), showClose, nowMs: NOW } });
 }
 
 describe("TaskRowInner right-hand affordances", () => {
@@ -51,8 +53,16 @@ describe("TaskRowInner right-hand affordances", () => {
   test("an unread completed row shows unread in the main state icon", () => {
     const w = factory({ unread: true, task_state: "completed", title: "build" });
     expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(true);
-    expect(w.find("circle.task-unread-dot").exists()).toBe(true);
+    expect(w.find("path.task-unread-star").exists()).toBe(true);
     expect(w.find("path.task-completed-check").exists()).toBe(false);
+    expect(w.find('[data-test="row-mark-read"]').exists()).toBe(false);
+  });
+
+  test("an unread waiting row uses the same main star without a second unread control", () => {
+    const w = factory({ unread: true, task_state: "waiting_input", title: "build" });
+    expect(w.find('.task-state-icon[data-state="waiting_input"][data-unread="true"]').exists()).toBe(true);
+    expect(w.find("path.task-unread-star").exists()).toBe(true);
+    expect(w.find('[data-test="row-mark-read"]').exists()).toBe(false);
   });
 
   test("a read completed row shows the completed state icon", () => {
@@ -89,5 +99,39 @@ describe("TaskRowInner layout", () => {
     expect(w.find(".cmd-and-cwd").attributes("title")).toContain(
       "a very long session title that will not fit",
     );
+  });
+
+  test("keeps cwd flexible and last output fixed on the second row", () => {
+    const w = factory({
+      title: "a very long title",
+      cwd: "/a/very/long/path/that/must/ellipsis",
+      task_state: "idle",
+      last_output_at: NOW / 1000 - 17 * 60,
+    });
+    const meta = w.get('[data-test="row-meta"]');
+    expect(meta.get('[data-test="row-cwd"]').text()).toContain("ellipsis");
+    expect(meta.get('[data-test="last-output"]').text()).toBe("17m");
+    expect(source).toMatch(/\.cwd\s*\{[^}]*flex:\s*1 1 auto/);
+    expect(source).toMatch(/\.last-output|LastOutputIndicator/);
+  });
+
+  test("shows last output when cwd is empty", () => {
+    const w = factory({ cwd: "", task_state: "idle", last_output_at: NOW / 1000 - 60 });
+    expect(w.find('[data-test="row-cwd"]').exists()).toBe(false);
+    expect(w.get('[data-test="last-output"]').text()).toBe("1m");
+    expect(source).toMatch(/\.row-meta :deep\(\.last-output\)\s*\{[^}]*margin-left:\s*auto[^}]*opacity:\s*0\.65/);
+  });
+
+  test("hides the second row when cwd and last output are both missing", () => {
+    const w = factory({ cwd: "", last_output_at: 0 });
+    expect(w.find('[data-test="row-meta"]').exists()).toBe(false);
+  });
+
+  test("renders live with accessible output status", () => {
+    const w = factory({ task_state: "running", last_output_at: NOW / 1000 - 1 });
+    const indicator = w.get('[data-test="last-output"]');
+    expect(indicator.text()).toBe("live");
+    expect(indicator.classes()).toContain("live");
+    expect(indicator.attributes("aria-label")).toBe("Output active");
   });
 });

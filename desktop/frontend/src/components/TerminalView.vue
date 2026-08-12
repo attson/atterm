@@ -1306,9 +1306,11 @@ async function onMenuPaste() {
 // The window where that happens: a background tab calls conn.suspend(),
 // which closes the WS, so the META carrying the other client's smaller size
 // never reaches us and applyViewerSize never mirrors it onto our xterm. On
-// re-attach we re-claim the driver role at an unchanged local size, fit()
-// changes nothing, onResize stays silent, and the PTY sits at the other
-// client's dims until the user happens to resize the window by hand.
+// re-attach we may reclaim a now-vacant driver role at an unchanged local
+// size. fit() changes nothing, onResize stays silent, and the PTY would sit at
+// the previous driver's dims until the user happened to resize the window by
+// hand. If that other client still owns the role, connection.ts keeps us a
+// viewer and this reconciliation remains gated off below.
 function syncPtySizeToTerm() {
   if (!term || !conn) return;
   if (!isDriver.value) return; // the relay drops a viewer's RESIZE anyway

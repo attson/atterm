@@ -448,10 +448,13 @@ export class SessionConnection {
   // frame. Used to detect transitions and decide whether to fire onDriverChange.
   private currentDriverClientID = "";
   // isDriverRole tracks whether the authoritative META currently names us the
-  // driver. Persisted across reconnects so ws.onopen can re-assert the claim:
-  // after an idle reconnect the host recreates its uplink proxy subscriber with
-  // auto-promote suppressed, so the session has no driver until we re-claim.
+  // driver. It is retained while disconnected only so the first META after a
+  // reconnect can restore control if (and only if) the session is driverless.
   private isDriverRole = false;
+  // One-shot reconnect intent. We cannot claim in onopen: another client may
+  // have taken control while this tab's socket was suspended. The first META is
+  // authoritative and either consumes this intent or permits a vacant reclaim.
+  private recoverDriverIfVacant = false;
   private pendingFSRequests = new Map<
     string,
     {
@@ -669,6 +672,7 @@ export class SessionConnection {
     ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.retiredFSRequestIDs.clear();
+      this.recoverDriverIfVacant = this.isDriverRole;
       this.handlers.onStatus?.("attached");
       const attachPayload = encodeText(
         JSON.stringify({
@@ -694,10 +698,6 @@ export class SessionConnection {
           ws.send(encodeFrame(TYPE.IN, this.sidBytes, encodeText(s)));
         }
       }
-      // Re-assert the driver claim if we held it before this (re)connect. The
-      // host suppresses auto-promote for its uplink proxy sub, so a stream
-      // restart leaves the session driverless until the real driver re-claims.
-      if (this.isDriverRole) this.claimDriver();
     };
 
     ws.onmessage = (ev: MessageEvent) => {
@@ -750,7 +750,15 @@ export class SessionConnection {
           this.handlers.onMeta?.(meta);
           const newDriver = String(meta.driver_client_id ?? "");
           const newDriverName = String(meta.driver_client_name ?? "");
-          if (newDriver !== this.currentDriverClientID) {
+          const recoverIfVacant = this.recoverDriverIfVacant;
+          this.recoverDriverIfVacant = false;
+          if (recoverIfVacant && newDriver === "") {
+            // The old driver disappeared only because this connection was
+            // suspended/reconnected. Restore it after META proves nobody else
+            // took over. Keep the local role stable until the claim echo comes
+            // back, avoiding a false viewer overlay during an idle reconnect.
+            this.claimDriver();
+          } else if (newDriver !== this.currentDriverClientID) {
             this.currentDriverClientID = newDriver;
             const isMe = newDriver !== "" && newDriver === this.clientID;
             this.isDriverRole = isMe;

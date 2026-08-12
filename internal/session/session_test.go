@@ -2,14 +2,57 @@ package session
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
 	"github.com/google/uuid"
 )
+
+func TestPushOutThrottlesListActivityNotifications(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{TaskState: proto.TaskStateRunning})
+	var notifications atomic.Int32
+	s.SetMetaChangedHook(func() { notifications.Add(1) })
+
+	s.PushOut(1, []byte("first output\n"))
+	if got := notifications.Load(); got != 1 {
+		t.Fatalf("notifications after first OUT = %d; want 1", got)
+	}
+
+	s.PushOut(2, []byte("same throttle window\n"))
+	if got := notifications.Load(); got != 1 {
+		t.Fatalf("notifications inside throttle window = %d; want 1", got)
+	}
+
+	// Avoid a slow wall-clock sleep while exercising the same monotonic-time
+	// boundary used in production.
+	s.mu.Lock()
+	s.lastListActivityNotify = time.Now().Add(-listActivityNotifyInterval)
+	s.mu.Unlock()
+	s.PushOut(3, []byte("next throttle window\n"))
+	if got := notifications.Load(); got != 2 {
+		t.Fatalf("notifications after throttle window = %d; want 2", got)
+	}
+}
+
+func TestOpaquePushOutDoesNotInferListActivity(t *testing.T) {
+	s := New(uuid.New(), proto.SessionInfo{TaskState: proto.TaskStateRunning})
+	var notifications atomic.Int32
+	s.SetMetaChangedHook(func() { notifications.Add(1) })
+	s.MarkContentOpaque()
+
+	s.PushOut(1, []byte("ciphertext"))
+	if got := notifications.Load(); got != 0 {
+		t.Fatalf("opaque OUT notifications = %d; want 0", got)
+	}
+	if got := s.Info().LastOutputAt; got != 0 {
+		t.Fatalf("opaque OUT LastOutputAt = %d; want upstream metadata only", got)
+	}
+}
 
 func TestUpdateSizeChangesSessionInfo(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
@@ -952,19 +995,22 @@ func TestSession_OnAIClassified_FiresOnFirstTransition(t *testing.T) {
 	}
 }
 
-func TestSession_OnAIClassified_DoesNotRefireOnSecondAICommand(t *testing.T) {
+func TestSession_OnAIClassified_FiresForEveryTopLevelAICommand(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cwd: "/y"})
 	defer s.Close()
 
-	fires := 0
-	s.SetOnAIClassified(func(_, _ string) { fires++ })
+	var commands []string
+	s.SetOnAIClassified(func(command, _ string) { commands = append(commands, command) })
 
 	_ = s.PushOut(1, []byte("\x1b]133;C;claude\x07"))
-	_ = s.PushOut(2, []byte("\x1b]133;C;codex\x07"))
-	_ = s.PushOut(3, []byte("\x1b]133;C;claude\x07"))
+	_ = s.PushOut(2, []byte("\x1b]133;D;0\x07"))
+	_ = s.PushOut(3, []byte("\x1b]133;C;codex\x07"))
+	_ = s.PushOut(4, []byte("\x1b]133;D;0\x07"))
+	_ = s.PushOut(5, []byte("\x1b]133;C;codex resume sid-b\x07"))
 
-	if fires != 1 {
-		t.Fatalf("expected exactly 1 fire (sticky), got %d", fires)
+	want := []string{"claude", "codex", "codex resume sid-b"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("AI command callbacks = %v, want %v", commands, want)
 	}
 }
 

@@ -17,6 +17,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// listActivityNotifyInterval bounds full session-list snapshot refreshes while
+// a PTY emits output continuously. It stays below the frontend's 5s live
+// window, so a healthy stream does not flicker from live back to now.
+const listActivityNotifyInterval = 3 * time.Second
+
 const (
 	subscriberQueueDepth        = 4096
 	scrollbackBytes             = 4 * 1024 * 1024
@@ -103,6 +108,13 @@ type Session struct {
 	// integer-second boundary.
 	lastOutputMono time.Time
 
+	// lastListActivityNotify throttles session-list refreshes driven by raw
+	// output. LastOutputAt updates for every OUT chunk, but LIST_RESP is a full
+	// snapshot; pushing one per chunk would turn terminal output into a hot
+	// metadata path. The first chunk notifies immediately, then at most once per
+	// interval while output continues. Uses monotonic time via time.Time.
+	lastListActivityNotify time.Time
+
 	// driverSubscriber is the only subscriber whose IN/RESIZE/PASTE_IMAGE
 	// frames are forwarded to the PTY. Nil means no driver is currently
 	// assigned. driverClientID is the end-to-end client_id broadcast in META
@@ -137,7 +149,8 @@ type Session struct {
 	// the session-list subscribers. The hook runs OUTSIDE the lock.
 	onMetaChanged func()
 
-	// onAIClassified fires once per type→ai transition in applyOSC133Locked.
+	// onAIClassified fires for every top-level AI command observed by
+	// applyOSC133Locked, even when the sticky session type is already ai.
 	// Receives the OSC 133;C command line payload (stripped of "C;") and the
 	// session's current cwd at fire time. Desktop uses it to spawn the AI
 	// sid sniffer for fresh sessions (restored sessions get sniff via
@@ -279,9 +292,9 @@ func (s *Session) SetSubscriberCountHook(fn func(int)) {
 	s.mu.Unlock()
 }
 
-// SetMetaChangedHook registers a callback fired after Session-driven async
-// state transitions (currently: silence-heuristic flips). The hook runs
-// outside the lock. Typical use: have the registry owner pass
+// SetMetaChangedHook registers a callback fired after Session-driven metadata
+// activity (silence-heuristic flips and throttled last-output refreshes). The
+// hook runs outside the lock. Typical use: have the registry owner pass
 // `registry.NotifyChange` so the session list view picks up the new state.
 func (s *Session) SetMetaChangedHook(fn func()) {
 	s.mu.Lock()
@@ -289,9 +302,9 @@ func (s *Session) SetMetaChangedHook(fn func()) {
 	s.mu.Unlock()
 }
 
-// SetOnAIClassified registers a callback invoked once when the session's
-// type transitions to ai via OSC 133;C ClassifyCommand. The callback runs
-// while s.mu is held — keep it non-blocking (typically `go startSniff(...)`).
+// SetOnAIClassified registers a callback invoked for every top-level AI command
+// classified via OSC 133 C. The callback runs while s.mu is held — keep it
+// non-blocking (typically start/cancel state followed by `go startSniff(...)`).
 func (s *Session) SetOnAIClassified(fn func(commandLine, cwd string)) {
 	s.mu.Lock()
 	s.onAIClassified = fn
@@ -789,6 +802,11 @@ func (s *Session) updateTerminalState(data []byte) bool {
 		changed = true
 	}
 	s.meta.LastOutputAt = now.Unix()
+	listActivityDue := s.lastListActivityNotify.IsZero() ||
+		now.Sub(s.lastListActivityNotify) >= listActivityNotifyInterval
+	if listActivityDue {
+		s.lastListActivityNotify = now
+	}
 	if s.applyOSC133Locked(data, now) {
 		changed = true
 	} else if s.meta.TaskState != proto.TaskStateRunning && looksLikeWaitingInput(data) && s.meta.TaskState != proto.TaskStateWaitingInput {
@@ -859,7 +877,7 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	// arm based on the post-update state + altScreen + detect-enabled flag.
 	s.rescheduleSilenceTimerLocked()
 	var metaHook func()
-	if restoredFromSilence {
+	if restoredFromSilence || listActivityDue {
 		metaHook = s.onMetaChanged
 	}
 	s.mu.Unlock()

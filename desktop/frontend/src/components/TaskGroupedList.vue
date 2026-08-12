@@ -4,6 +4,7 @@ import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import TaskRowInner from "./TaskRowInner.vue";
+import LastOutputIndicator from "./LastOutputIndicator.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
 import SessionDetailsPopover from "./SessionDetailsPopover.vue";
 import { useI18n } from "../i18n/useI18n";
@@ -150,11 +151,20 @@ function toggleGroupCollapsed(key: string) {
   collapsedGroups.value = next;
 }
 const home = ref("");
+const nowMs = ref(Date.now());
+let clockTimer: number | null = null;
 
 onMounted(async () => {
+  clockTimer = window.setInterval(() => {
+    nowMs.value = Date.now();
+  }, 1000);
   try {
     home.value = await getUserHomeDir();
   } catch { /* leave empty — helper still truncates */ }
+});
+
+onBeforeUnmount(() => {
+  if (clockTimer !== null) window.clearInterval(clockTimer);
 });
 
 // Sentinel collapse key for the virtual pinned group — safe against
@@ -469,6 +479,7 @@ function stateLabel(state: string | undefined): string {
             :show-state-label="showStateLabel"
             :home="home"
             :show-close="openSessionIdSet.has(s.session_id)"
+            :now-ms="nowMs"
             @mark-read="onMarkRead(s)"
             @close="emit('close', s)"
           />
@@ -548,6 +559,7 @@ function stateLabel(state: string | undefined): string {
           :show-state-label="showStateLabel"
           :home="home"
           :show-close="openSessionIdSet.has(s.session_id)"
+          :now-ms="nowMs"
           @mark-read="onMarkRead(s)"
           @close="emit('close', s)"
         />
@@ -604,7 +616,18 @@ function stateLabel(state: string | undefined): string {
               <span class="cmd">{{ titleOrCommand(s) }}</span>
             </span>
           </span>
-          <span v-if="shortenCwd(s.cwd, home)" class="cwd">{{ shortenCwd(s.cwd, home) }}</span>
+          <span
+            v-if="shortenCwd(s.cwd, home) || (s.last_output_at ?? 0) > 0"
+            class="row-meta"
+            data-test="row-meta"
+          >
+            <span v-if="shortenCwd(s.cwd, home)" class="cwd">{{ shortenCwd(s.cwd, home) }}</span>
+            <LastOutputIndicator
+              :last-output-at="s.last_output_at"
+              :task-state="s.task_state"
+              :now-ms="nowMs"
+            />
+          </span>
           <button
             v-if="openSessionIdSet.has(s.session_id)"
             class="row-close completed-row-close"
@@ -683,7 +706,9 @@ function stateLabel(state: string | undefined): string {
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
-.cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; padding-left: 18px; }
+.row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
+.cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 1 1 auto; min-width: 0; }
+.row-meta :deep(.last-output) { margin-left: auto; opacity: 0.65; }
 .unread-dot { font-size: 9px; color: currentColor; }
 .row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
 .completed-row-close {

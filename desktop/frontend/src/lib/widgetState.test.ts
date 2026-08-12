@@ -102,7 +102,7 @@ describe("projectWidgetState — aggregate mood", () => {
     const st = projectWidgetState([], { nowMs: NOW });
     expect(st.mood).toBe("idle");
     expect(st.rows).toEqual([]);
-    expect(st.headline).toBe("没有会话");
+    expect(st.headline).toBe("暂无最新内容");
   });
 });
 
@@ -167,33 +167,46 @@ describe("projectWidgetState — truncation", () => {
   });
 });
 
-describe("projectWidgetState — headline and subline", () => {
-  it("leads with waiting and never repeats it in the subline", () => {
+describe("projectWidgetState — unread headline and unchanged status subline", () => {
+  it("uses unread sessions for the headline and preserves the previous subline", () => {
     const sessions = [
-      sess({ id: "w", task_state: "waiting_input" }),
-      sess({ id: "r1", task_state: "running" }),
+      sess({ id: "w", task_state: "waiting_input", unread: true }),
+      sess({ id: "r1", task_state: "running", unread: true }),
       sess({ id: "r2", task_state: "running" }),
       sess({ id: "c", task_state: "completed" }),
     ];
     const st = projectWidgetState(sessions, { nowMs: NOW });
-    expect(st.headline).toBe("1 个等你输入");
+    expect(st.unreadCount).toBe(2);
+    expect(st.headline).toBe("2 个会话有最新内容");
     expect(st.subline).toBe("2 个在跑 · 1 个已完成");
   });
 
-  it("leads with failed when nothing is waiting", () => {
+  it("shows no latest content when no session is unread", () => {
     const sessions = [
       sess({ id: "f", task_state: "failed" }),
       sess({ id: "r", task_state: "running" }),
     ];
     const st = projectWidgetState(sessions, { nowMs: NOW });
-    expect(st.headline).toBe("1 个失败");
+    expect(st.unreadCount).toBe(0);
+    expect(st.headline).toBe("暂无最新内容");
     expect(st.subline).toBe("1 个在跑");
   });
 
-  it("says everything finished when only completed sessions remain", () => {
+  it("preserves the completed-only subline", () => {
     const st = projectWidgetState([sess({ id: "c", task_state: "completed" })], { nowMs: NOW });
-    expect(st.headline).toBe("都跑完了");
+    expect(st.headline).toBe("暂无最新内容");
     expect(st.subline).toBe("1 个已完成");
+  });
+
+  it("counts unread across all filtered rows but excludes closed sessions", () => {
+    const sessions = [
+      sess({ id: "shown", type: "ai", task_state: "running", unread: true }),
+      sess({ id: "closed", type: "ai", task_state: "closed", unread: true }),
+      sess({ id: "filtered", type: "shell", task_state: "running", unread: true }),
+    ];
+    const st = projectWidgetState(sessions, { nowMs: NOW, aiOnly: true });
+    expect(st.unreadCount).toBe(1);
+    expect(st.headline).toBe("1 个会话有最新内容");
   });
 });
 
@@ -237,6 +250,16 @@ describe("projectWidgetState — row fields", () => {
     const byId = Object.fromEntries(st.rows.map((r) => [r.sessionId, r]));
     expect(byId.run.ageMs).toBe(30_000);
     expect(byId.done.ageMs).toBe(0);
+  });
+
+  it("preserves the raw last-output timestamp for the widget-local clock", () => {
+    const st = projectWidgetState([
+      sess({ id: "active", task_state: "running", last_output_at: NOW / 1000 - 3 }),
+      sess({ id: "unknown", task_state: "idle", last_output_at: undefined }),
+    ], { nowMs: NOW });
+    const byId = Object.fromEntries(st.rows.map((r) => [r.sessionId, r]));
+    expect(byId.active.lastOutputAt).toBe(NOW / 1000 - 3);
+    expect(byId.unknown.lastOutputAt).toBe(0);
   });
 
   it("keeps the original task state for row icons", () => {
@@ -303,14 +326,14 @@ describe("projectWidgetState — idle sessions are still sessions", () => {
     );
     const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.idleCount).toBe(10);
-    expect(st.headline).toBe("10 个空闲");
+    expect(st.headline).toBe("暂无最新内容");
     expect(st.subline).toBe("");
   });
 
   it("still reports no sessions when there really are none", () => {
     const st = projectWidgetState([], { nowMs: NOW });
     expect(st.idleCount).toBe(0);
-    expect(st.headline).toBe("没有会话");
+    expect(st.headline).toBe("暂无最新内容");
   });
 
   it("does not count a completed session in both the completed and idle bands", () => {
@@ -321,7 +344,7 @@ describe("projectWidgetState — idle sessions are still sessions", () => {
     const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.completedCount).toBe(1);
     expect(st.idleCount).toBe(1);
-    expect(st.headline).toBe("1 个已完成");
+    expect(st.headline).toBe("暂无最新内容");
     expect(st.subline).toBe("1 个空闲");
   });
 
@@ -341,7 +364,7 @@ describe("projectWidgetState — idle sessions are still sessions", () => {
       sess({ id: "i2", task_state: "idle" }),
     ];
     const st = projectWidgetState(sessions, { nowMs: NOW });
-    expect(st.headline).toBe("1 个等你输入");
+    expect(st.headline).toBe("暂无最新内容");
     expect(st.subline).toBe("1 个在跑 · 2 个空闲");
   });
 });
@@ -371,15 +394,13 @@ describe("projectWidgetState — AI-only filter", () => {
     const st = projectWidgetState(mixed(), { nowMs: NOW, aiOnly: true });
     expect(st.runningCount).toBe(1);
     expect(st.idleCount).toBe(0);
-    expect(st.headline).toBe("1 个在跑");
+    expect(st.headline).toBe("暂无最新内容");
   });
 
-  it("says which emptiness it is when the filter hides everything", () => {
+  it("uses the same no-unread headline when the filter hides everything", () => {
     const shells = [sess({ id: "sh", type: "shell", task_state: "idle" })];
-    expect(projectWidgetState(shells, { nowMs: NOW, aiOnly: true }).headline).toBe(
-      "没有 AI 会话",
-    );
-    expect(projectWidgetState(shells, { nowMs: NOW }).headline).toBe("1 个空闲");
+    expect(projectWidgetState(shells, { nowMs: NOW, aiOnly: true }).headline).toBe("暂无最新内容");
+    expect(projectWidgetState(shells, { nowMs: NOW }).headline).toBe("暂无最新内容");
   });
 
   it("still drops closed sessions while filtering", () => {

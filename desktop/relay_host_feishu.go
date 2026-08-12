@@ -267,9 +267,10 @@ func (h *relayHost) getOrCreateFeishuSessionLocked(sid string) *feishuSession {
 	return fs
 }
 
-// onAISidCaptured forwards a captured AI session id to the registered
-// callback (set by the App during startup). Safe to call when the
-// callback is nil — the sniff just fires and forgets.
+// onAISidCaptured forwards an AI recovery projection to the registered
+// callback (set by the App during startup). aiSid="" invalidates a previous
+// generation; a non-empty value installs a precise resume credential. Safe to
+// call when the callback is nil — the resolver just fires and forgets.
 func (h *relayHost) onAISidCaptured(localSessionID uuid.UUID, kind, aiSid string) {
 	if h.aiSidCallback != nil {
 		h.aiSidCallback(localSessionID, kind, aiSid)

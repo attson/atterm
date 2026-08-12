@@ -43,6 +43,12 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				changed = true
 			}
 			newType := ClassifyCommand(command)
+			if newType == SessionTypeAI && s.onAIClassified != nil {
+				// Every OSC 133 C is a top-level shell command boundary. Report
+				// every AI launch, even while the sticky session type is already
+				// ai, so desktop can replace the previous CLI's recovery resolver.
+				s.onAIClassified(command, s.meta.Cwd)
+			}
 			// Sticky non-shell classification: shell does not overwrite
 			// test/build/deploy tags. AI is the exception once its command has
 			// explicitly ended and the shell starts a new ordinary command.
@@ -50,14 +56,8 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 				s.meta.Type = SessionTypeShell
 				changed = true
 			} else if newType != SessionTypeShell && s.meta.Type != newType {
-				wasNonAI := s.meta.Type != SessionTypeAI
 				s.meta.Type = newType
 				changed = true
-				if newType == SessionTypeAI && wasNonAI && s.onAIClassified != nil {
-					// First shell→ai transition. Fire so desktop can spawn the AI
-					// sid sniffer. We hold s.mu — callback must be non-blocking.
-					s.onAIClassified(command, s.meta.Cwd)
-				}
 			}
 			s.aiCommandFinished = false
 			started := now.Unix()

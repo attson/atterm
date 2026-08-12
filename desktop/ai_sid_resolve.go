@@ -419,9 +419,9 @@ const (
 // no ai-title record). It baselines the day-dir's rollout ids, then waits for a
 // single new one to appear, or a single existing same-cwd rollout to advance
 // after the user selects it from Codex's resume picker. Ambiguous (≥2) aborts.
-// Once captured, it keeps polling the rollout for the first user_message and
-// mirrors that into the session title; Codex's OSC title is only spinner + cwd
-// basename.
+// Once captured, it keeps polling the rollout for the latest real user message
+// and mirrors that into the session title; Codex's OSC title is only spinner +
+// cwd basename.
 func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd string, onCapture func(sid string)) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -479,12 +479,23 @@ func startCodexFileResolve(ctx context.Context, sess *session.Session, cwd strin
 
 func trackCodexUserTitle(ctx context.Context, sess *session.Session, path string) {
 	last := ""
+	var lastModTime time.Time
+	var lastSize int64 = -1
 	for {
-		if title, ok := scanCodexJsonlForUserTitle(path); ok {
-			if title != last || sess.Info().Title != title {
-				last = title
-				sess.UpdateCwdTitle("", title)
+		if stat, err := os.Stat(path); err == nil {
+			if stat.Size() != lastSize || !stat.ModTime().Equal(lastModTime) {
+				lastSize = stat.Size()
+				lastModTime = stat.ModTime()
+				if title, ok := scanCodexJsonlForUserTitle(path); ok {
+					last = title
+				}
 			}
+		}
+		// Codex's OSC title can overwrite this between rollout writes. Reapply
+		// the cached user title without rescanning an unchanged, potentially
+		// very large rollout file.
+		if last != "" && sess.Info().Title != last {
+			sess.UpdateCwdTitle("", last)
 		}
 		select {
 		case <-ctx.Done():
@@ -520,31 +531,96 @@ func scanCodexJsonlForUserTitle(path string) (string, bool) {
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
-	needle := []byte(`"user_message"`)
 	title := ""
 	for sc.Scan() {
 		line := sc.Bytes()
-		if !bytes.Contains(line, needle) {
+		// Codex has used three user-message shapes over time. Keep a cheap
+		// substring gate so unrelated multi-megabyte tool outputs are never
+		// unmarshaled merely to discover that they cannot carry a title.
+		if !bytes.Contains(line, []byte(`"user_message"`)) &&
+			!bytes.Contains(line, []byte(`"UserMessage"`)) &&
+			!bytes.Contains(line, []byte(`"role":"user"`)) {
 			continue
 		}
 		var rec struct {
-			Type    string `json:"type"`
-			Payload struct {
-				Type    string `json:"type"`
-				Message string `json:"message"`
-			} `json:"payload"`
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
 		}
 		if err := json.Unmarshal(line, &rec); err != nil {
 			continue
 		}
-		if rec.Type != "event_msg" || rec.Payload.Type != "user_message" {
+		message := codexUserMessage(rec.Type, rec.Payload)
+		if message == "" || isCodexInjectedUserContext(message) {
 			continue
 		}
-		if title = normalizeCodexUserTitle(rec.Payload.Message); title != "" {
-			return title, true
+		if next := normalizeCodexUserTitle(message); next != "" {
+			// Last real user message wins. Current Codex writes both a
+			// response_item and an item_completed record for the same input;
+			// accepting both is harmless and lets either shape work alone.
+			title = next
 		}
 	}
 	return title, title != ""
+}
+
+type codexMessageContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func codexUserMessage(recordType string, raw json.RawMessage) string {
+	switch recordType {
+	case "event_msg":
+		var payload struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Item    struct {
+				Type    string                `json:"type"`
+				Content []codexMessageContent `json:"content"`
+			} `json:"item"`
+		}
+		if json.Unmarshal(raw, &payload) != nil {
+			return ""
+		}
+		switch {
+		case payload.Type == "user_message":
+			return payload.Message
+		case payload.Type == "item_completed" && payload.Item.Type == "UserMessage":
+			return joinCodexMessageContent(payload.Item.Content)
+		}
+	case "response_item":
+		var payload struct {
+			Type    string                `json:"type"`
+			Role    string                `json:"role"`
+			Content []codexMessageContent `json:"content"`
+		}
+		if json.Unmarshal(raw, &payload) != nil {
+			return ""
+		}
+		if payload.Type == "message" && payload.Role == "user" {
+			return joinCodexMessageContent(payload.Content)
+		}
+	}
+	return ""
+}
+
+func joinCodexMessageContent(content []codexMessageContent) string {
+	parts := make([]string, 0, len(content))
+	for _, part := range content {
+		if part.Type != "input_text" && part.Type != "text" {
+			continue
+		}
+		if text := strings.TrimSpace(part.Text); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func isCodexInjectedUserContext(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	return strings.HasPrefix(trimmed, "<environment_context>") &&
+		strings.HasSuffix(trimmed, "</environment_context>")
 }
 
 func normalizeCodexUserTitle(s string) string {

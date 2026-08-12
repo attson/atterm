@@ -7,11 +7,14 @@
 // NOTE: the completed-fold row in TaskGroupedList.vue intentionally does
 // NOT use this component — it's a reduced view (no unread dot / mark-read
 // affordance) since folded sessions are already seen.
+import { computed } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
+import LastOutputIndicator from "./LastOutputIndicator.vue";
 import { useI18n } from "../i18n/useI18n";
 import { shortenCwd } from "../lib/shortenCwd";
+import { formatLastOutput } from "../lib/lastOutput";
 import { titleOrCommand, rowTitle, taskStateLabel } from "../lib/sessionLabel";
 
 const props = withDefaults(defineProps<{
@@ -19,6 +22,7 @@ const props = withDefaults(defineProps<{
   showStateLabel?: boolean;
   home?: string;
   showClose?: boolean;
+  nowMs: number;
 }>(), {
   showStateLabel: false,
   home: "",
@@ -31,6 +35,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const cwd = computed(() => shortenCwd(props.session.cwd, props.home));
+const hasLastOutput = computed(() =>
+  formatLastOutput(props.session.last_output_at, props.session.task_state, props.nowMs) !== null,
+);
 
 function stateLabel(state: string | undefined): string {
   return taskStateLabel(state, t);
@@ -55,7 +63,7 @@ function stateLabel(state: string | undefined): string {
          and it swaps to a check on hover/focus. Two separate affordances ate
          ~45px of a ~224px row and left the title barely half the width. -->
     <span
-      v-if="props.session.unread"
+      v-if="props.session.unread && props.session.task_state !== 'waiting_input' && props.session.task_state !== 'completed'"
       class="row-mark-read"
       data-test="row-mark-read"
       role="button"
@@ -87,11 +95,14 @@ function stateLabel(state: string | undefined): string {
       ×
     </span>
   </span>
-  <span
-    v-if="shortenCwd(props.session.cwd, home)"
-    class="cwd"
-    data-test="row-cwd"
-  >{{ shortenCwd(props.session.cwd, home) }}</span>
+  <span v-if="cwd || hasLastOutput" class="row-meta" data-test="row-meta">
+    <span v-if="cwd" class="cwd" data-test="row-cwd">{{ cwd }}</span>
+    <LastOutputIndicator
+      :last-output-at="props.session.last_output_at"
+      :task-state="props.session.task_state"
+      :now-ms="props.nowMs"
+    />
+  </span>
 </template>
 
 <style scoped>
@@ -99,7 +110,9 @@ function stateLabel(state: string | undefined): string {
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
-.cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; padding-left: 18px; }
+.row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
+.cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 1 1 auto; min-width: 0; }
+.row-meta :deep(.last-output) { margin-left: auto; opacity: 0.65; }
 /* One 16px slot holds either glyph, so swapping them never reflows the row. */
 .row-mark-read {
   flex: none;

@@ -12,9 +12,9 @@ describe("TaskStateIcon", () => {
       props: { state: "waiting_input", preset: presets.iconOnly },
     });
     expect(w.find(`[data-state="waiting_input"]`).exists()).toBe(true);
-    // waiting_input renders a circle outline + a half-fill path.
-    expect(w.find("svg circle").exists()).toBe(true);
-    expect(w.find("svg path").exists()).toBe(true);
+    // Read waiting_input renders a terminal prompt.
+    expect(w.find("path.task-waiting-prompt").exists()).toBe(true);
+    expect(w.find("svg circle").exists()).toBe(false);
     expect(w.attributes("style")).toContain("color: rgb(245, 158, 11)"); // #f59e0b
   });
   test("renders an SVG spinner for running", () => {
@@ -27,20 +27,29 @@ describe("TaskStateIcon", () => {
       "animation-duration: 1500ms",
     );
   });
-  test("renders unread as the main icon for unread completed sessions", () => {
+  test("renders a four-point star as the main icon for unread completed sessions", () => {
     const w = mount(TaskStateIcon, {
       props: { state: "completed", unread: true, preset: presets.iconOnly },
     });
     expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(true);
-    expect(w.find("circle.task-unread-dot").exists()).toBe(true);
+    expect(w.find("path.task-unread-star").exists()).toBe(true);
     expect(w.find("path.task-completed-check").exists()).toBe(false);
+  });
+  test("renders the same static four-point star for unread waiting sessions", () => {
+    const w = mount(TaskStateIcon, {
+      props: { state: "waiting_input", unread: true, preset: presets.iconOnly },
+    });
+    expect(w.find('.task-state-icon[data-state="waiting_input"][data-unread="true"]').exists()).toBe(true);
+    expect(w.find("path.task-unread-star").exists()).toBe(true);
+    expect(w.find("path.task-waiting-prompt").exists()).toBe(false);
+    expect(w.classes()).not.toContain("pulse");
   });
   test("renders completed check when a completed session is already read", () => {
     const w = mount(TaskStateIcon, {
       props: { state: "completed", unread: false, preset: presets.iconOnly },
     });
     expect(w.find("path.task-completed-check").exists()).toBe(true);
-    expect(w.find("circle.task-unread-dot").exists()).toBe(false);
+    expect(w.find("path.task-unread-star").exists()).toBe(false);
   });
   test("both presets share spinner duration (visual differs only by label)", () => {
     const a = mount(TaskStateIcon, {

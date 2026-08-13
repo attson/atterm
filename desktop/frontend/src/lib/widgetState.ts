@@ -335,38 +335,22 @@ interface Counts {
 /**
  * summarize turns the counts into the two header lines.
  *
- * The headline reports unread sessions. The subline is exactly the previous
- * task-state subline, so replacing the headline does not reshuffle status text
- * into the second row.
- *
- * The idle band matters more than it looks: a shell sitting at its prompt is
- * the single most common session state, and leaving it out of the count made
- * a window listing ten live sessions announce "没有会话".
+ * The headline reports unread sessions. The subline reports actionable task
+ * states; idle sessions remain in the rows and count model but do not consume
+ * scarce header space.
  */
 function summarize(
   unreadCount: number,
   c: Counts,
 ): { headline: string; subline: string } {
   const parts: string[] = [];
-  if (c.waitingCount > 0) parts.push(`${c.waitingCount} 个等你输入`);
   if (c.failedCount > 0) parts.push(`${c.failedCount} 个失败`);
   if (c.runningCount > 0) parts.push(`${c.runningCount} 个在跑`);
+  if (c.waitingCount > 0) parts.push(`${c.waitingCount} 个等待输入`);
   if (c.completedCount > 0) parts.push(`${c.completedCount} 个已完成`);
-  if (c.idleCount > 0) parts.push(`${c.idleCount} 个空闲`);
-
-  let previousSubline = "";
-  if (parts.length === 0) {
-    // The previous empty-state headline had no subline.
-    previousSubline = "";
-  } else if (parts.length === 1 && c.completedCount > 0) {
-    // "都跑完了" used to be the headline, with the completed count below.
-    previousSubline = parts[0];
-  } else {
-    previousSubline = parts.slice(1).join(" · ");
-  }
 
   return {
     headline: unreadCount > 0 ? `${unreadCount} 个会话有最新内容` : "暂无最新内容",
-    subline: previousSubline,
+    subline: parts.join(" · "),
   };
 }

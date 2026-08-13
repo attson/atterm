@@ -195,6 +195,48 @@ describe("WidgetApp", () => {
     expect(w.find("path.task-completed-check").exists()).toBe(false);
   });
 
+  it("uses unread sessions for the sprite badge instead of waiting sessions", async () => {
+    const w = mount(WidgetApp);
+    stateHandler?.({
+      mood: "waiting",
+      unreadCount: 12,
+      waitingCount: 1,
+      runningCount: 2,
+      failedCount: 1,
+      completedCount: 0,
+      idleCount: 4,
+      headline: "12 个会话有最新内容",
+      subline: "1 个失败 · 2 个在跑 · 1 个等待输入",
+      rows: [],
+      overflowCount: 0,
+      aiOnly: false,
+    });
+    await w.vm.$nextTick();
+
+    expect(w.get('[data-test="widget-unread-badge"]').text()).toBe("12");
+  });
+
+  it("hides the sprite badge when there are no unread sessions", async () => {
+    const w = mount(WidgetApp);
+    stateHandler?.({
+      mood: "waiting",
+      unreadCount: 0,
+      waitingCount: 1,
+      runningCount: 0,
+      failedCount: 0,
+      completedCount: 0,
+      idleCount: 0,
+      headline: "暂无最新内容",
+      subline: "1 个等待输入",
+      rows: [],
+      overflowCount: 0,
+      aiOnly: false,
+    });
+    await w.vm.$nextTick();
+
+    expect(w.find('[data-test="widget-unread-badge"]').exists()).toBe(false);
+  });
+
   it("stacks AI kind above live output in one fixed right tail", async () => {
     const now = 1_800_000_000_000;
     vi.useFakeTimers();

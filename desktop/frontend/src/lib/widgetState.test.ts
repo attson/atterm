@@ -167,8 +167,8 @@ describe("projectWidgetState — truncation", () => {
   });
 });
 
-describe("projectWidgetState — unread headline and unchanged status subline", () => {
-  it("uses unread sessions for the headline and preserves the previous subline", () => {
+describe("projectWidgetState — unread headline and actionable status subline", () => {
+  it("uses unread sessions for the headline and includes waiting in the status subline", () => {
     const sessions = [
       sess({ id: "w", task_state: "waiting_input", unread: true }),
       sess({ id: "r1", task_state: "running", unread: true }),
@@ -178,7 +178,19 @@ describe("projectWidgetState — unread headline and unchanged status subline", 
     const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.unreadCount).toBe(2);
     expect(st.headline).toBe("2 个会话有最新内容");
-    expect(st.subline).toBe("2 个在跑 · 1 个已完成");
+    expect(st.subline).toBe("2 个在跑 · 1 个等待输入 · 1 个已完成");
+  });
+
+  it("shows actionable counts in order and omits idle sessions", () => {
+    const sessions = [
+      sess({ id: "f", task_state: "failed" }),
+      sess({ id: "r1", task_state: "running" }),
+      sess({ id: "r2", task_state: "running" }),
+      sess({ id: "w", task_state: "waiting_input" }),
+      ...Array.from({ length: 4 }, (_, i) => sess({ id: `i${i}`, task_state: "idle" })),
+    ];
+    const st = projectWidgetState(sessions, { nowMs: NOW });
+    expect(st.subline).toBe("1 个失败 · 2 个在跑 · 1 个等待输入");
   });
 
   it("shows no latest content when no session is unread", () => {
@@ -189,7 +201,7 @@ describe("projectWidgetState — unread headline and unchanged status subline", 
     const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.unreadCount).toBe(0);
     expect(st.headline).toBe("暂无最新内容");
-    expect(st.subline).toBe("1 个在跑");
+    expect(st.subline).toBe("1 个失败 · 1 个在跑");
   });
 
   it("preserves the completed-only subline", () => {
@@ -345,7 +357,7 @@ describe("projectWidgetState — idle sessions are still sessions", () => {
     expect(st.completedCount).toBe(1);
     expect(st.idleCount).toBe(1);
     expect(st.headline).toBe("暂无最新内容");
-    expect(st.subline).toBe("1 个空闲");
+    expect(st.subline).toBe("1 个已完成");
   });
 
   it("counts a disconnected session as idle rather than failed", () => {
@@ -356,7 +368,7 @@ describe("projectWidgetState — idle sessions are still sessions", () => {
     expect(st.failedCount).toBe(0);
   });
 
-  it("keeps idle last so the actionable bands lead", () => {
+  it("shows waiting after running and omits idle", () => {
     const sessions = [
       sess({ id: "w", task_state: "waiting_input" }),
       sess({ id: "r", task_state: "running" }),
@@ -365,7 +377,7 @@ describe("projectWidgetState — idle sessions are still sessions", () => {
     ];
     const st = projectWidgetState(sessions, { nowMs: NOW });
     expect(st.headline).toBe("暂无最新内容");
-    expect(st.subline).toBe("1 个在跑 · 2 个空闲");
+    expect(st.subline).toBe("1 个在跑 · 1 个等待输入");
   });
 });
 

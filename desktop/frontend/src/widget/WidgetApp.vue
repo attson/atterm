@@ -233,7 +233,11 @@ onUnmounted(() => {
     <header class="widget-header" @click="toggleCollapsed">
       <div class="sprite-wrap">
         <WidgetSprite :mood="state.mood" :muted="muted" :size="36" />
-        <span v-if="state.waitingCount > 0" class="badge">{{ state.waitingCount }}</span>
+        <span
+          v-if="state.unreadCount > 0"
+          class="badge"
+          data-test="widget-unread-badge"
+        >{{ state.unreadCount }}</span>
       </div>
       <div class="meta">
         <div class="headline">{{ state.headline }}</div>

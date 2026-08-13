@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 )
 
 func TestIsWidgetProcess(t *testing.T) {
@@ -70,6 +71,20 @@ func TestWidgetGeometryIsSelfConsistent(t *testing.T) {
 	// inside the bound the frontend is held to.
 	if widgetHeightInitial > widgetMaxHeight {
 		t.Fatalf("initial height %d exceeds the cap %d", widgetHeightInitial, widgetMaxHeight)
+	}
+}
+
+func TestWidgetWindowOptionsAllowContentDrivenHeight(t *testing.T) {
+	opts := newWidgetWindowOptions(fstest.MapFS{}, NewWidgetBridge())
+
+	if opts.DisableResize {
+		t.Fatal("DisableResize locks GTK min/max to the startup size and rejects content-driven resizing")
+	}
+	if opts.MinWidth != widgetWidth || opts.MaxWidth != widgetWidth {
+		t.Fatalf("widget width constraints = %d..%d, want %d..%d", opts.MinWidth, opts.MaxWidth, widgetWidth, widgetWidth)
+	}
+	if opts.MinHeight != 1 || opts.MaxHeight != widgetMaxHeight {
+		t.Fatalf("widget height constraints = %d..%d, want 1..%d", opts.MinHeight, opts.MaxHeight, widgetMaxHeight)
 	}
 }
 

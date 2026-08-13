@@ -142,6 +142,12 @@ func (p *WidgetBridge) readStdin() {
 // Ready is called by the frontend once WidgetApp has mounted and subscribed.
 // It replays whatever arrived while the webview was still starting.
 func (p *WidgetBridge) Ready() {
+	// Disable only Wails' frameless edge gesture. The native window must stay
+	// resizable so GTK accepts programmatic height changes from Resize.
+	// Ready is invoked after runtime:ready, so this wins over Wails enabling
+	// the gesture during its own initialization.
+	wailsruntime.WindowExecJS(p.ctx, "window.wails.flags.enableResize = false;")
+
 	p.mu.Lock()
 	p.ready = true
 	boot := p.pendingBoot
@@ -321,17 +327,34 @@ const widgetEntryDocument = "index.widget.html"
 // stdin, and everything it wants goes out on stdout.
 func runWidgetWindow(assets fs.FS) error {
 	bridge := NewWidgetBridge()
+	opts := newWidgetWindowOptions(assets, bridge)
+	applyWidgetPlatformOptions(opts)
 
-	opts := &options.App{
+	return wails.Run(opts)
+}
+
+// newWidgetWindowOptions keeps the native window programmatically resizable.
+// On GTK, DisableResize publishes the startup size as both min and max, which
+// prevents the DOM-measured height from being applied in either direction.
+func newWidgetWindowOptions(assets fs.FS, bridge *WidgetBridge) *options.App {
+	return &options.App{
 		Title:  "AT Term Widget",
 		Width:  widgetWidth,
 		Height: widgetHeightInitial,
 		// StartHidden avoids a flash at the default position before the
 		// bootstrap line tells us where the user last left the widget.
-		StartHidden:   true,
-		Frameless:     true,
-		AlwaysOnTop:   true,
-		DisableResize: true,
+		StartHidden: true,
+		Frameless:   true,
+		AlwaysOnTop: true,
+		// GTK implements DisableResize by publishing the startup size as both
+		// the minimum and maximum. That also rejects WindowSetSize calls, so it
+		// cannot be used for a window whose height follows rendered content.
+		// The widget entry disables Wails' edge-resize gesture instead.
+		DisableResize: false,
+		MinWidth:      widgetWidth,
+		MaxWidth:      widgetWidth,
+		MinHeight:     1,
+		MaxHeight:     widgetMaxHeight,
 		// Fully transparent so the widget's rounded card floats over whatever is
 		// behind it instead of sitting in a grey rectangle.
 		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
@@ -342,7 +365,4 @@ func runWidgetWindow(assets fs.FS) error {
 		OnStartup: bridge.startup,
 		Bind:      []interface{}{bridge},
 	}
-	applyWidgetPlatformOptions(opts)
-
-	return wails.Run(opts)
 }

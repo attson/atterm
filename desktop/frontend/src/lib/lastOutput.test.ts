@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLastOutput, LAST_OUTPUT_LIVE_WINDOW_MS } from "./lastOutput";
+import { formatLastOutput } from "./lastOutput";
 
 const NOW = 1_800_000_000_000;
 const at = (elapsedMs: number) => (NOW - elapsedMs) / 1000;
@@ -11,17 +11,25 @@ describe("formatLastOutput", () => {
     expect(formatLastOutput(Number.NaN, "running", NOW)).toBeNull();
   });
 
-  it("shows live only for running sessions inside the freshness window", () => {
-    expect(formatLastOutput(at(LAST_OUTPUT_LIVE_WINDOW_MS), "running", NOW)).toEqual({
-      text: "live", live: true, title: "Output active",
-    });
-    expect(formatLastOutput(at(1_000), "waiting_input", NOW)?.text).toBe("now");
-    expect(formatLastOutput(at(LAST_OUTPUT_LIVE_WINDOW_MS + 1), "running", NOW)?.text).toBe("now");
+  it("stays live for a running session no matter the gap since its last chunk", () => {
+    // A quiet gap between output bursts must not flip the indicator off live —
+    // that gap is the model thinking, not the session going idle.
+    for (const elapsedMs of [0, 1_000, 5_001, 30_000, 5 * 60_000]) {
+      expect(formatLastOutput(at(elapsedMs), "running", NOW)).toEqual({
+        text: "live", live: true, title: "Output active",
+      });
+    }
   });
 
-  it("clamps a future timestamp to now", () => {
-    expect(formatLastOutput((NOW + 60_000) / 1000, "idle", NOW)?.text).toBe("now");
-    expect(formatLastOutput((NOW + 60_000) / 1000, "running", NOW)).toEqual({
+  it("shows relative time, never live, for non-running sessions", () => {
+    expect(formatLastOutput(at(1_000), "waiting_input", NOW)?.text).toBe("now");
+    expect(formatLastOutput(at(1_000), "waiting_input", NOW)?.live).toBe(false);
+    expect(formatLastOutput(at(90_000), "completed", NOW)?.text).toBe("1m");
+    expect(formatLastOutput(at(90_000), "completed", NOW)?.live).toBe(false);
+  });
+
+  it("clamps a future timestamp to now for non-running sessions", () => {
+    expect(formatLastOutput((NOW + 60_000) / 1000, "idle", NOW)).toEqual({
       text: "now", live: false, title: "Last output just now",
     });
   });

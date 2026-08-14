@@ -5,7 +5,7 @@ import LastOutputIndicator from "../components/LastOutputIndicator.vue";
 import { presets } from "../lib/taskState";
 import WidgetSprite from "./WidgetSprite.vue";
 import { onWidgetBootstrap, onWidgetState, widgetBridge } from "./bridge";
-import type { WidgetState } from "../lib/widgetState";
+import type { WidgetSessionRow, WidgetState } from "../lib/widgetState";
 
 /**
  * The companion window (layout A): widget + summary header, then one row per
@@ -45,6 +45,12 @@ const mutedUntil = ref(0);
 
 /** Auto-peek timer id, so a newer attention event replaces the older one. */
 let autoPeekTimer: number | null = null;
+/**
+ * Session ids that just escalated into waiting/failed and triggered the current
+ * auto-peek. Their rows are highlighted so the eye lands on *which* session is
+ * raising its hand, not just that the count went up. Cleared when the peek ends.
+ */
+const highlightedIds = ref<Set<string>>(new Set());
 /** Ticks once a second so relative last-output labels advance between pushes. */
 let clockTimer: number | null = null;
 const nowMs = ref(Date.now());
@@ -88,16 +94,34 @@ function scheduleCardResize() {
 // manual collapse/expand, hover peek and the timed attention peek.
 watch(showRows, scheduleCardResize);
 
+/** Ids of rows currently sitting in a state that demands the user. */
+function attentionIds(rows: readonly WidgetSessionRow[]): Set<string> {
+  const ids = new Set<string>();
+  for (const r of rows) {
+    if (r.state === "waiting" || r.state === "failed") ids.add(r.sessionId);
+  }
+  return ids;
+}
+
 function applyState(next: WidgetState) {
   const prev = state.value;
   state.value = next;
 
-  // Something newly needs the user. If the widget is folded away, open it briefly
-  // so a collapsed widget can still raise its hand — then fold back so it does not
-  // silently become a permanent panel.
-  const escalated =
-    next.waitingCount > prev.waitingCount || next.failedCount > prev.failedCount;
-  if (escalated && collapsed.value && !muted.value) {
+  // Which specific sessions newly need the user — a session already waiting in
+  // the previous snapshot is not "new" even if the aggregate count rose because
+  // another one appeared. Diffing by id lets us both decide whether to raise a
+  // hand and highlight exactly the rows that did.
+  const before = attentionIds(prev.rows);
+  const escalatedIds: string[] = [];
+  for (const id of attentionIds(next.rows)) {
+    if (!before.has(id)) escalatedIds.push(id);
+  }
+
+  // If the widget is folded away, open it briefly so a collapsed widget can
+  // still raise its hand — then fold back so it does not silently become a
+  // permanent panel.
+  if (escalatedIds.length > 0 && collapsed.value && !muted.value) {
+    for (const id of escalatedIds) highlightedIds.value.add(id);
     autoPeek();
   }
 }
@@ -108,7 +132,8 @@ function autoPeek() {
   autoPeekTimer = window.setTimeout(() => {
     peeking.value = false;
     autoPeekTimer = null;
-  }, 3000);
+    highlightedIds.value = new Set();
+  }, 15000);
 }
 
 function toggleCollapsed() {
@@ -118,6 +143,7 @@ function toggleCollapsed() {
     autoPeekTimer = null;
   }
   peeking.value = false;
+  highlightedIds.value = new Set();
   collapsed.value = !collapsed.value;
   widgetBridge.setCollapsed(collapsed.value);
 }
@@ -252,7 +278,7 @@ onUnmounted(() => {
         v-for="row in state.rows"
         :key="row.sessionId"
         class="row"
-        :class="{ done: row.state === 'idle' }"
+        :class="{ done: row.state === 'idle', highlighted: highlightedIds.has(row.sessionId) }"
         type="button"
         @click.stop="activate(row.sessionId)"
       >
@@ -420,6 +446,18 @@ onUnmounted(() => {
 
 .row.done {
   opacity: 0.6;
+}
+
+/* A session that just escalated into waiting/failed: tinted fill plus a left
+   accent bar drawn with an inset shadow so it does not shift the row's layout
+   the way a real border-left would. Cleared when the auto-peek window ends. */
+.row.highlighted {
+  background: rgba(88, 166, 255, 0.14);
+  box-shadow: inset 3px 0 0 #58a6ff;
+}
+
+.row.highlighted:hover {
+  background: rgba(88, 166, 255, 0.2);
 }
 
 .row-state {

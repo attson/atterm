@@ -1,7 +1,5 @@
 import type { TaskState } from "./taskState";
 
-export const LAST_OUTPUT_LIVE_WINDOW_MS = 5_000;
-
 export interface LastOutputDisplay {
   text: string;
   live: boolean;
@@ -11,6 +9,13 @@ export interface LastOutputDisplay {
 /**
  * Formats the wire's unix-seconds last_output_at for compact session rows.
  * Keep every threshold here so the sidebar and desk widget cannot drift.
+ *
+ * `live` is driven purely by task state, not by the gap since the last byte.
+ * An AI session emits output in bursts with quiet gaps between them, so a
+ * freshness window (e.g. "live only within 5s of the last chunk") makes the
+ * indicator flip live→now→live every time the model pauses between tokens.
+ * A session the backend still reports as `running` *is* live, full stop, so
+ * the icon stays stable while the model works.
  */
 export function formatLastOutput(
   lastOutputAt: number | undefined,
@@ -19,14 +24,14 @@ export function formatLastOutput(
 ): LastOutputDisplay | null {
   if (!lastOutputAt || !Number.isFinite(lastOutputAt) || lastOutputAt <= 0) return null;
 
-  const rawElapsedMs = nowMs - lastOutputAt * 1000;
-  const elapsedMs = Math.max(0, rawElapsedMs);
-  // A future timestamp is clock skew, not evidence that bytes are currently
-  // flowing. Render it as now but never promote it to live.
-  if (rawElapsedMs >= 0 && taskState === "running" && elapsedMs <= LAST_OUTPUT_LIVE_WINDOW_MS) {
+  // A running session is live regardless of the gap since its last chunk —
+  // that gap is the model thinking, not the session going idle.
+  if (taskState === "running") {
     return { text: "live", live: true, title: "Output active" };
   }
 
+  const rawElapsedMs = nowMs - lastOutputAt * 1000;
+  const elapsedMs = Math.max(0, rawElapsedMs);
   const elapsedSeconds = Math.floor(elapsedMs / 1000);
   if (elapsedSeconds < 60) {
     return { text: "now", live: false, title: "Last output just now" };

@@ -343,4 +343,76 @@ describe("WidgetApp", () => {
     await w.vm.$nextTick();
     expect(w.get('[data-test="last-output"]').text()).toBe("now");
   });
+
+  // Builds a snapshot whose single row carries the given attention state.
+  function stateWithRow(state: WidgetState["mood"]): WidgetState {
+    return {
+      mood: state,
+      unreadCount: 0,
+      waitingCount: state === "waiting" ? 1 : 0,
+      runningCount: state === "running" ? 1 : 0,
+      failedCount: state === "failed" ? 1 : 0,
+      completedCount: 0,
+      idleCount: 0,
+      headline: "",
+      subline: "",
+      rows: [{
+        sessionId: "s1", title: "claude", subtitle: "~/proj", state,
+        taskState: state === "waiting" ? "waiting_input" : state === "failed" ? "failed" : "running",
+        kind: "claude", remoteHost: "", ageMs: 0, lastOutputAt: 0, unread: false,
+      }],
+      overflowCount: 0,
+      aiOnly: false,
+    };
+  }
+
+  it("highlights a row that newly escalated while collapsed, then clears it after the auto-peek", async () => {
+    vi.useFakeTimers();
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
+
+    // A running session — no attention, no peek, no highlight.
+    stateHandler?.(stateWithRow("running"));
+    await w.vm.$nextTick();
+    expect(w.find(".row.highlighted").exists()).toBe(false);
+
+    // It escalates to waiting_input: the collapsed widget peeks open and the
+    // escalated row is highlighted.
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+    expect(w.find(".row.highlighted").exists()).toBe(true);
+
+    // The highlight survives most of the 15s window...
+    await vi.advanceTimersByTimeAsync(14_000);
+    await w.vm.$nextTick();
+    expect(w.find(".row.highlighted").exists()).toBe(true);
+
+    // ...and clears once the auto-peek ends.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await w.vm.$nextTick();
+    expect(w.find(".row.highlighted").exists()).toBe(false);
+  });
+
+  it("does not re-peek for a session that was already waiting", async () => {
+    vi.useFakeTimers();
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
+
+    // First waiting snapshot raises the hand and highlights the row.
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+    expect(w.find(".row.highlighted").exists()).toBe(true);
+
+    // Let that window fully close.
+    await vi.advanceTimersByTimeAsync(15_000);
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(false);
+
+    // The same session, still waiting, pushed again: not a new escalation, so
+    // no fresh peek and no highlight.
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(false);
+    expect(w.find(".row.highlighted").exists()).toBe(false);
+  });
 });

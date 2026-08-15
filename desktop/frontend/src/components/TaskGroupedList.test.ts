@@ -82,7 +82,9 @@ describe("TaskGroupedList", () => {
     expect(w.emitted("open")?.[0]?.[0]).toEqual(sess);
   });
 
-  test("clicking row mark-read emits markSeen ids", async () => {
+  // Per-row mark-read is gone: unread clears itself on attach, and the group
+  // header's mark-all is the remaining manual dismissal (covered below).
+  test("rows offer no mark-read control", async () => {
     const sess = mk({ session_id: "s1", host: "mac", unread: true, attention_at: 1 });
     const w = mount(TaskGroupedList, {
       props: {
@@ -92,8 +94,8 @@ describe("TaskGroupedList", () => {
         completedSeen: [],
       },
     });
-    await w.find('[data-test="row-mark-read"]').trigger("click");
-    expect(w.emitted("markSeen")?.[0]?.[0]).toEqual({ ids: ["s1"] });
+    expect(w.find('[data-test="row-mark-read"]').exists()).toBe(false);
+    expect(w.find('[data-test="host-mark-all"]').exists()).toBe(true);
   });
 
   test("clicking row close emits close without opening the session", async () => {
@@ -992,5 +994,100 @@ describe("TaskGroupedList — multi-select", () => {
     const popover = w.find("[data-test=session-details-popover]");
     expect(popover.exists()).toBe(true);
     expect(popover.find("[data-test=details-field-sessionId] .value").text()).toBe("s2");
+  });
+});
+
+describe("TaskGroupedList row close affordance", () => {
+  // The active row is the one being read, not the one being managed: a × parked
+  // on it is noise, and it is the easiest to hit by accident.
+  test("the active row does not reveal its close button", () => {
+    expect(source).not.toMatch(/\.task-row\.active :deep\(\.row-close\)/);
+  });
+
+  test("hover and keyboard focus both reveal it", () => {
+    expect(source).toMatch(/\.task-row:hover :deep\(\.row-close\)/);
+    expect(source).toMatch(/\.task-row:focus-within :deep\(\.row-close\)/);
+  });
+
+  // Whatever reveals ×, the kind badge it overlays must yield in the same
+  // breath — otherwise the two render on top of each other.
+  test("the kind badge yields exactly when the close button appears", () => {
+    // Compare only the interaction states (:hover / :focus-within); the bare
+    // rules are the resting opacity and the touch fallback, which are not
+    // reveals and are asserted separately.
+    const states = (target: string) =>
+      (source.match(new RegExp(`\\.task-row(:[a-z-]+) :deep\\(\\.${target}\\)`, "g")) ?? [])
+        .map((x) => x.slice(".task-row".length).split(" ")[0])
+        .sort();
+    expect(states("kind")).toEqual([":focus-within", ":hover"]);
+    expect(states("kind")).toEqual(states("row-close"));
+  });
+});
+
+describe("TaskGroupedList drag source", () => {
+  test("rows are draggable and carry the session id under our private MIME", async () => {
+    const sess = mk({ session_id: "s1", host: "mac", title: "claude" });
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [sess] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+      },
+    });
+    const row = w.get('[data-test="task-row"]');
+    expect(row.attributes("draggable")).toBe("true");
+
+    const setData = vi.fn();
+    const dataTransfer = { setData, effectAllowed: "none" };
+    await row.trigger("dragstart", { dataTransfer });
+    // text/plain would be typed into xterm's hidden textarea by any drop we
+    // fail to intercept; the private type is inert there.
+    expect(setData).toHaveBeenCalledWith("application/x-atterm-session", "s1");
+    expect(setData).not.toHaveBeenCalledWith("text/plain", expect.anything());
+    expect(dataTransfer.effectAllowed).toBe("move");
+  });
+});
+
+describe("TaskGroupedList detach menu item", () => {
+  function mountWith(canDetach: (id: string) => boolean) {
+    return mount(TaskGroupedList, {
+      props: {
+        byHost: { h: [mk({ session_id: "s1", host: "mac", title: "claude" })] },
+        unreadByHost: { h: 0 },
+        primaryStateForHost: () => "running",
+        completedSeen: [],
+        canDetachSession: canDetach,
+      },
+    });
+  }
+
+  test("offers 'move to its own tab' only when the session shares a tab", async () => {
+    const w = mountWith(() => true);
+    await w.get('[data-test="task-row"]').trigger("contextmenu");
+    expect(w.find('[data-test="session-row-menu-item-detach"]').exists()).toBe(true);
+  });
+
+  // A session that already owns its tab (or is not open) has nothing to detach
+  // from; showing the item would make it a dead entry.
+  test("hides it when there is nothing to detach from", async () => {
+    const w = mountWith(() => false);
+    await w.get('[data-test="task-row"]').trigger("contextmenu");
+    expect(w.find('[data-test="session-row-menu-item-detach"]').exists()).toBe(false);
+  });
+
+  test("puts details above the detach item", async () => {
+    const w = mountWith(() => true);
+    await w.get('[data-test="task-row"]').trigger("contextmenu");
+    const keys = w.findAll("[data-test^='session-row-menu-item-']")
+      .map((n) => n.attributes("data-test")!.replace("session-row-menu-item-", ""));
+    expect(keys.indexOf("details")).toBeLessThan(keys.indexOf("detach"));
+  });
+
+  test("emits detach-session with the right-clicked session", async () => {
+    const w = mountWith(() => true);
+    await w.get('[data-test="task-row"]').trigger("contextmenu");
+    await w.get('[data-test="session-row-menu-item-detach"]').trigger("click");
+    expect(w.emitted("detach-session")).toEqual([["s1"]]);
   });
 });

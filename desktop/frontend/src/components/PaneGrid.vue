@@ -9,6 +9,13 @@ import type { TerminalThemeDefinition } from "../lib/terminalThemes";
 import { extractSessionLabel } from "../lib/terminalBell";
 import { useI18n } from "../i18n/useI18n";
 import { RATIO_DEFAULT, clampRatio } from "../lib/layout";
+import {
+  SESSION_DND_MIME,
+  carriesSessionDrag,
+  clearDraggingSession,
+  draggingSession,
+  setDraggingSession,
+} from "../lib/paneDrop";
 
 const props = defineProps<{
   tab: Tab;
@@ -23,6 +30,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "set-active-pane", paneIdx: number): void;
   (e: "close-pane", paneIdx: number): void;
+  (e: "drop-session", payload: { paneIdx: number; sessionId: string }): void;
+  (e: "detach-session", sessionId: string): void;
   (e: "toast", message: string): void;
   (e: "update:col-ratio", ratio: number): void;
   (e: "update:row-ratio", ratio: number): void;
@@ -41,6 +50,57 @@ const areaFor = computed(() => AREA_FOR_LAYOUT[props.tab.layout]);
 
 const gridRoot = ref<HTMLDivElement | null>(null);
 const dragging = ref(false);
+
+// Index of the pane a session is currently hovering over, or null. Only set
+// for drags that carry SESSION_DND_MIME: anything else (a file from the OS,
+// selected text) is left alone so the pane never swallows a drop it has no
+// meaning for, and so a future file-drop feature can claim those events.
+const dropTargetIdx = ref<number | null>(null);
+
+function onPaneDragOver(e: DragEvent, idx: number) {
+  if (!carriesSessionDrag(e.dataTransfer?.types)) return;
+  // preventDefault is what marks this a valid drop target, and it has to happen
+  // on EVERY dragover — the browser treats one un-prevented event as "this
+  // element stopped accepting the drop" and then never fires drop at all.
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  dropTargetIdx.value = idx;
+}
+
+function onPaneDragLeave(e: DragEvent, idx: number) {
+  // Moving between a cell's own children fires dragleave on the cell; ignore
+  // those so the highlight does not flicker as the pointer crosses the
+  // terminal, the badges, and back.
+  const to = e.relatedTarget as Node | null;
+  if (to && e.currentTarget instanceof Node && e.currentTarget.contains(to)) return;
+  if (dropTargetIdx.value === idx) dropTargetIdx.value = null;
+}
+
+function onPaneDrop(e: DragEvent, idx: number) {
+  dropTargetIdx.value = null;
+  if (!carriesSessionDrag(e.dataTransfer?.types)) return;
+  e.preventDefault();
+  // draggingSession() first: WebKit hands back an empty string here for a
+  // custom MIME type, which silently swallowed every drop.
+  const sessionId = draggingSession() || (e.dataTransfer?.getData(SESSION_DND_MIME) ?? "");
+  if (!sessionId) return;
+  emit("drop-session", { paneIdx: idx, sessionId });
+}
+
+// Same payload as a sidebar row, so a pane dropped on another pane is simply a
+// move — the existing drop path handles it — while the tab bar reads it as a
+// detach.
+function onGripDragStart(e: DragEvent, pane: Pane) {
+  if (!pane.sessionId) return;
+  setDraggingSession(pane.sessionId);
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData(SESSION_DND_MIME, pane.sessionId);
+  e.dataTransfer.effectAllowed = "move";
+}
+
+function onGripDragEnd() {
+  clearDraggingSession();
+}
 
 function getContainerRect(): DOMRect | null {
   return gridRoot.value?.getBoundingClientRect() ?? null;
@@ -120,8 +180,13 @@ function formatWho(info: SessionInfo | null): string {
       v-for="(pane, idx) in tab.panes"
       :key="paneKey(pane, idx)"
       class="cell"
+      :class="{ 'drop-target': dropTargetIdx === idx }"
       :style="{ gridArea: areaFor[idx] }"
+      data-test="pane-cell"
       @mousedown="onPaneClick(idx)"
+      @dragover="onPaneDragOver($event, idx)"
+      @dragleave="onPaneDragLeave($event, idx)"
+      @drop="onPaneDrop($event, idx)"
     >
       <div class="term-host">
         <TerminalView
@@ -139,7 +204,9 @@ function formatWho(info: SessionInfo | null): string {
           :is-local-session="!pane.remote"
           :command-notify-threshold-sec="commandNotifyThresholdSec"
           :resize-suspended="dragging"
+          :can-detach="tab.layout !== 'single'"
           @toast="emit('toast', $event)"
+          @detach="pane.sessionId && emit('detach-session', pane.sessionId)"
         />
         <div v-else class="empty">{{ t("terminal.emptyPaneHint") }}</div>
       </div>
@@ -189,6 +256,20 @@ function formatWho(info: SessionInfo | null): string {
           <span class="sid">{{ pane.sessionId.slice(0, 8) }}</span>
         </div>
 
+        <!-- Drag handle. The terminal itself cannot be draggable — xterm needs
+             the mouse for text selection — so the grip is the one place a pane
+             can be picked up by. Only shown when there is somewhere to detach
+             to: in a single-pane tab the session already owns its tab. -->
+        <span
+          v-if="pane.sessionId && tab.layout !== 'single'"
+          class="pane-grip"
+          data-test="pane-grip"
+          draggable="true"
+          :title="t('terminal.dragPaneOut')"
+          @mousedown.stop
+          @dragstart="onGripDragStart($event, pane)"
+          @dragend="onGripDragEnd"
+        >⠿</span>
         <button
           v-if="tab.layout !== 'single'"
           type="button"
@@ -238,6 +319,21 @@ function formatWho(info: SessionInfo | null): string {
   position: relative;
   background: var(--terminal-bg);
   overflow: hidden;
+}
+/* Drop feedback for a session dragged out of the sidebar. Drawn with an inset
+   shadow rather than a border so the terminal underneath keeps its exact
+   geometry — a real border would resize the pane and make xterm reflow mid
+   drag. ::after carries the tint so it sits above the terminal canvas without
+   giving the cell a stacking context of its own. */
+.cell.drop-target {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.cell.drop-target::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
 }
 .term-host {
   position: absolute;
@@ -321,6 +417,28 @@ function formatWho(info: SessionInfo | null): string {
   transition: opacity 120ms, background 120ms, color 120ms;
 }
 .cell:hover .close-pane { opacity: 1; }
+.pane-grip {
+  opacity: 0;
+  transition: opacity 100ms;
+  cursor: grab;
+  /* .cell-controls is pointer-events:none so gaps between the badges fall
+     through to xterm; every child has to opt back in or it is inert. */
+  pointer-events: auto;
+  /* WebKit will not start a drag on an arbitrary element from the draggable
+     attribute alone — doubly so for one that is user-select:none. */
+  -webkit-user-drag: element;
+  padding: 0 3px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--fg-dim);
+  user-select: none;
+}
+.pane-grip:active { cursor: grabbing; }
+.cell:hover .pane-grip { opacity: 1; }
+@media (hover: none) {
+  /* No hover to reveal it, and HTML5 drag never fires on touch anyway. */
+  .pane-grip { display: none; }
+}
 .close-pane:hover {
   background: rgba(248, 81, 73, 0.18);
   color: var(--bad);

@@ -78,6 +78,9 @@ const props = withDefaults(
     theme: ITheme;
     commandNotifyThresholdSec?: number;
     isLocalSession?: boolean;
+    // True when this pane shares its tab with others, so "move to its own tab"
+    // is a meaningful action. A single-pane tab already is that tab.
+    canDetach?: boolean;
     // True while the user is dragging a pane splitter. FitAddon still runs
     // so xterm stays visually correct, but we skip the PTY RESIZE until the
     // drag ends — the child process gets one SIGWINCH on mouseup instead
@@ -89,6 +92,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: "toast", message: string): void;
+  /** Context-menu request to pull this pane out into a tab of its own. */
+  (e: "detach"): void;
 }>();
 const { t } = useI18n();
 
@@ -2126,6 +2131,12 @@ watch(
         <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">{{ t("common.paste") }}</button>
         <button class="term-context-item" :disabled="!menuCanSend" @click="onMenuSend">{{ t("terminal.sendSelection") }}</button>
         <button class="term-context-item" @click="onMenuClear">{{ t("terminal.clearBuffer") }}</button>
+        <button
+          v-if="canDetach"
+          class="term-context-item"
+          data-test="term-detach"
+          @click="emit('detach'); closeContextMenu()"
+        >{{ t("terminal.detachToTab") }}</button>
         <button
           v-for="item in pluginMenuItems"
           :key="item.id"

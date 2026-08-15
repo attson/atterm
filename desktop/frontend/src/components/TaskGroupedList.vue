@@ -15,12 +15,14 @@ import { useSessionPins } from "../composables/useSessionPins";
 import { useSessionSelection } from "../composables/useSessionSelection";
 import { matchesSession } from "../lib/sessionMatch";
 import { compareSessionsBySidebarOrder, sessionUrgencyIndex } from "../lib/sessionSort";
+import { SESSION_DND_MIME, clearDraggingSession, setDraggingSession } from "../lib/paneDrop";
 import {
   titleOrCommand,
   rowTitle,
   hostNameWithIndex,
   coResidentIndex,
   taskStateLabel,
+  commandLabel,
 } from "../lib/sessionLabel";
 
 const preset = useTaskPreset();
@@ -57,6 +59,9 @@ const props = withDefaults(defineProps<{
   paneLocationFor?: (id: string) => { tabId: string; paneIdx: number } | null;
   // Resolves a tabId to its 0-based display index, for the same popover row.
   tabIndexById?: (tabId: string) => number;
+  // True when the session shares a tab with other panes, so "move to its own
+  // tab" is a real action. Only App knows the tab/pane shape.
+  canDetachSession?: (id: string) => boolean;
 }>(), {
   groupBy: "host",
   byState: () => ({}),
@@ -67,6 +72,7 @@ const props = withDefaults(defineProps<{
   searchQuery: "",
   paneLocationFor: () => null,
   tabIndexById: () => 0,
+  canDetachSession: () => false,
 });
 
 const emit = defineEmits<{
@@ -75,6 +81,7 @@ const emit = defineEmits<{
   (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
   (e: "merge-selected"): void;
   (e: "close-selected"): void;
+  (e: "detach-session", sessionId: string): void;
 }>();
 
 const { t } = useI18n();
@@ -293,6 +300,23 @@ function onRowPointerEnd() {
   clearLongPressTimer();
 }
 
+// Drag a row onto a pane to show that session there. Mouse-only by nature:
+// HTML5 drag events never fire on touch, where the long-press menu above is
+// the equivalent affordance. The payload is a private MIME type so that a
+// drop landing anywhere but our pane handler stays inert — notably xterm's
+// hidden textarea, which would happily type a text/plain payload.
+function onRowDragStart(e: DragEvent, s: RemoteSession) {
+  // Stash first: the drop reads this, not dataTransfer (see paneDrop.ts).
+  setDraggingSession(s.session_id);
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData(SESSION_DND_MIME, s.session_id);
+  e.dataTransfer.effectAllowed = "move";
+}
+
+function onRowDragEnd() {
+  clearDraggingSession();
+}
+
 onBeforeUnmount(clearLongPressTimer);
 
 function closeMenu() {
@@ -332,15 +356,21 @@ const menuItems = computed<MenuItem[]>(() => {
       },
     ];
   }
-  return [
+  const items: MenuItem[] = [
     {
       key: pins.isPinned(s.session_id) ? "unpin" : "pin",
       label: pins.isPinned(s.session_id)
         ? t("tasks.pinned.menuUnpin")
         : t("tasks.pinned.menuPin"),
     },
-    { key: "details", label: t("tasks.rowMenu.details") },
   ];
+  items.push({ key: "details", label: t("tasks.rowMenu.details") });
+  // Last, and only when it would do something: a session that already owns its
+  // tab, or is not open at all, has nothing to detach from.
+  if (props.canDetachSession(s.session_id)) {
+    items.push({ key: "detach", label: t("terminal.detachToTab") });
+  }
+  return items;
 });
 
 const detailsState = ref<{
@@ -366,6 +396,8 @@ function onMenuSelect(key: string) {
     emit("merge-selected");
   } else if (key === "close") {
     emit("close-selected");
+  } else if (key === "detach") {
+    emit("detach-session", s.session_id);
   }
 }
 
@@ -409,9 +441,6 @@ function unreadIdsForGroup(key: string): string[] {
   return (filteredGroups.value[key] ?? []).filter((s) => s.unread).map((s) => s.session_id);
 }
 
-function onMarkRead(s: RemoteSession) {
-  emit("markSeen", { ids: [s.session_id] });
-}
 function onMarkGroup(key: string) {
   emit("markSeen", { ids: unreadIdsForGroup(key) });
 }
@@ -473,6 +502,9 @@ function stateLabel(state: string | undefined): string {
           @pointerup="onRowPointerEnd"
           @pointercancel="onRowPointerEnd"
           @pointerleave="onRowPointerEnd"
+          draggable="true"
+          @dragstart="onRowDragStart($event, s)"
+          @dragend="onRowDragEnd"
         >
           <TaskRowInner
             :session="s"
@@ -480,7 +512,6 @@ function stateLabel(state: string | undefined): string {
             :home="home"
             :show-close="openSessionIdSet.has(s.session_id)"
             :now-ms="nowMs"
-            @mark-read="onMarkRead(s)"
             @close="emit('close', s)"
           />
         </button>
@@ -553,6 +584,9 @@ function stateLabel(state: string | undefined): string {
         @pointerup="onRowPointerEnd"
         @pointercancel="onRowPointerEnd"
         @pointerleave="onRowPointerEnd"
+        draggable="true"
+        @dragstart="onRowDragStart($event, s)"
+        @dragend="onRowDragEnd"
       >
         <TaskRowInner
           :session="s"
@@ -560,7 +594,6 @@ function stateLabel(state: string | undefined): string {
           :home="home"
           :show-close="openSessionIdSet.has(s.session_id)"
           :now-ms="nowMs"
-          @mark-read="onMarkRead(s)"
           @close="emit('close', s)"
         />
       </button>
@@ -590,7 +623,7 @@ function stateLabel(state: string | undefined): string {
           v-for="s in completedFiltered"
           :key="s.session_id"
           class="task-row dim"
-          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), 'has-close': openSessionIdSet.has(s.session_id) }"
+          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
           data-test="completed-fold-row"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
           :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
@@ -602,26 +635,38 @@ function stateLabel(state: string | undefined): string {
           @pointercancel="onRowPointerEnd"
           @pointerleave="onRowPointerEnd"
         >
-          <span class="row-top">
-            <TaskStateIcon
-              :state="(s.task_state as TaskState | undefined) ?? 'idle'"
-              :unread="s.unread === true"
-            />
+          <span class="row-main">
+            <span class="row-top">
+              <TaskStateIcon
+                :state="(s.task_state as TaskState | undefined) ?? 'idle'"
+                :unread="s.unread === true"
+              />
+              <span
+                v-if="showStateLabel"
+                class="state-label"
+                data-test="state-label"
+              >{{ stateLabel(s.task_state) }}</span>
+              <span class="cmd-and-cwd" :title="rowTitle(s)">
+                <span class="cmd">{{ titleOrCommand(s) }}</span>
+              </span>
+            </span>
             <span
-              v-if="showStateLabel"
-              class="state-label"
-              data-test="state-label"
-            >{{ stateLabel(s.task_state) }}</span>
-            <span class="cmd-and-cwd" :title="rowTitle(s)">
-              <span class="cmd">{{ titleOrCommand(s) }}</span>
+              v-if="shortenCwd(s.cwd, home)"
+              class="row-meta"
+              data-test="row-meta"
+            >
+              <span class="cwd">{{ shortenCwd(s.cwd, home) }}</span>
             </span>
           </span>
+          <!-- Same tail as TaskRowInner; this fold row is a hand-written
+               reduced view (no unread / mark-read), so the two have to be
+               kept in step by hand. -->
           <span
-            v-if="shortenCwd(s.cwd, home) || (s.last_output_at ?? 0) > 0"
-            class="row-meta"
-            data-test="row-meta"
+            class="row-tail"
+            :class="{ 'time-only': s.type !== 'ai' }"
+            data-test="row-tail"
           >
-            <span v-if="shortenCwd(s.cwd, home)" class="cwd">{{ shortenCwd(s.cwd, home) }}</span>
+            <span v-if="s.type === 'ai'" class="kind" data-test="row-kind">{{ commandLabel(s) }}</span>
             <LastOutputIndicator
               :last-output-at="s.last_output_at"
               :task-state="s.task_state"
@@ -681,17 +726,29 @@ function stateLabel(state: string | undefined): string {
 .pinned-group .pin-icon { font-size: 11px; }
 .group-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-count { margin-left: auto; font-size: 10px; opacity: 0.8; background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 1px 4px; }
-.task-row { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; position: relative; }
-.task-row.has-close { padding-right: 32px; }
+/* Row direction: the stacked title/cwd lines live in .row-main, and .row-tail
+   holds the kind badge + last-output column on the right — same shape as the
+   desk widget's row, so the two surfaces cannot drift. */
+.task-row { display: flex; flex-direction: row; align-items: stretch; gap: 6px; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02); width: 100%; text-align: left; cursor: pointer; color: inherit; border-radius: 6px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y; position: relative; }
 /* The close × is a per-row action, not status: keep it out of the scan path
    until the row is pointed at. Touch has no hover, so it stays visible there.
-   `.active` keeps it reachable on the row the user is actually working in. */
+   `.active` deliberately does NOT show it — the highlighted row is the one the
+   user is reading, and a × parked on it is both visual noise and the easiest
+   one to hit by accident. focus-within stays: it is the keyboard's hover, and
+   without it the control would be unreachable without a pointer. */
 .task-row :deep(.row-close) { opacity: 0; transition: opacity 100ms; }
 .task-row:hover :deep(.row-close),
-.task-row:focus-within :deep(.row-close),
-.task-row.active :deep(.row-close) { opacity: 1; }
+.task-row:focus-within :deep(.row-close) { opacity: 1; }
+/* × and the kind badge share one slot — whenever × shows, the badge yields.
+   Keeps the close affordance at the row's right edge without spending a
+   permanent column on it, and without × ever landing on top of the badge. */
+.task-row:hover :deep(.kind),
+.task-row:focus-within :deep(.kind) { opacity: 0; }
 @media (hover: none) {
-  .task-row :deep(.row-close) { opacity: 1; }
+  /* No hover on touch means × is always visible, which under the swap would
+     hide the kind badge forever. Give × its own column there instead. */
+  .task-row :deep(.row-close) { position: static; align-self: flex-start; opacity: 1; }
+  .task-row :deep(.kind) { opacity: 1; }
 }
 .task-row:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.16); }
 .task-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: inset 2px 0 0 var(--accent); }
@@ -702,15 +759,36 @@ function stateLabel(state: string | undefined): string {
 }
 .task-row.dim { opacity: 0.6; }
 .task-row.dim.active { opacity: 0.9; }
+.row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }
 .cmd-and-cwd { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; overflow: hidden; align-items: baseline; }
 .cmd { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-family: var(--font-mono); flex: 1 1 auto; min-width: 0; }
 .row-meta { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 18px; }
 .cwd { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: 0.85em; flex: 1 1 auto; min-width: 0; }
-.row-meta :deep(.last-output) { margin-left: auto; opacity: 0.65; }
-.unread-dot { font-size: 9px; color: currentColor; }
-.row-mark-read { font-size: 11px; padding: 0 4px; cursor: pointer; }
+/* Mirrors TaskRowInner's tail — see the comment there for why min-width. */
+.row-tail {
+  flex: 0 0 auto;
+  min-width: 46px;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 3px;
+}
+.row-tail.time-only { justify-content: flex-end; }
+.row-tail :deep(.last-output) { opacity: 0.65; }
+.kind {
+  font-size: 8.5px;
+  line-height: 1.4;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  transition: opacity 100ms;
+}
 .completed-row-close {
   position: absolute;
   top: 5px;

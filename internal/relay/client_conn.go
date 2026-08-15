@@ -91,7 +91,14 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 					cancel()
 					if err != nil {
-						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
+						// A write that cannot complete inside clientWriteWait
+						// means the client stopped draining its socket — a
+						// renderer whose main thread is stuck parsing a flood
+						// looks exactly like this. Closing here is what the
+						// user sees as "reconnecting", so say it at a level
+						// they can actually find.
+						logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
+							f.SessionID, frameTypeName(f.Type), err)
 						_ = c.CloseNow()
 						return
 					}
@@ -115,7 +122,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 					cancel()
 					if err != nil {
-						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
+						// Same close as the targeted path above: the live
+						// stream is where a client drowning in output actually
+						// stalls, so this is the line that explains a
+						// "reconnecting" badge on a purely local session.
+						logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
+							f.SessionID, frameTypeName(f.Type), err)
 						_ = c.CloseNow()
 						return
 					}

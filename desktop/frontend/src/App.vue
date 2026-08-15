@@ -66,6 +66,7 @@ import { mergeLocalSessions } from "./lib/localListMerge";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
 import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
+import { resolvePaneRemote } from "./lib/paneRemote";
 import {
   clearDraggingSession,
   planDetachToTab,
@@ -1106,6 +1107,12 @@ function onSwitchTab(delta: number) {
   gotoTab(tabs.value[next].id);
 }
 
+// `remote` defaults true because the only sessions that reach the create-a-pane
+// branch below are ones not currently displayed — and by construction those are
+// remote: every local session is put into a pane in the same step that spawns
+// it, and every detachOnly caller re-places it immediately. resolvePaneRemote
+// is the guard for the day that stops holding, since a local session taking
+// this branch would be pointed at the relay endpoint and render empty.
 function openRemoteAsTab(sessionId: string, remote = true) {
   // If any tab already holds a pane for this session, switch to it and
   // focus the EXACT pane — sidebar clicks on a session in a multi-pane
@@ -1120,11 +1127,15 @@ function openRemoteAsTab(sessionId: string, remote = true) {
     gotoTab(loc.tabId);
     return;
   }
+  const resolved = resolvePaneRemote(sessionId, localList.value.map((s) => s.id), remote);
+  if (resolved.corrected) {
+    logWarn("app", "opened a local session through the remote path", { sessionId });
+  }
   const id = newId();
   tabs.value.push({
     id,
     layout: "single",
-    panes: [{ sessionId, remote }],
+    panes: [{ sessionId, remote: resolved.remote }],
     activePaneIdx: 0,
     colRatio: RATIO_DEFAULT,
     rowRatio: RATIO_DEFAULT,

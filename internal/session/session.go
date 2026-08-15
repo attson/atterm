@@ -595,7 +595,16 @@ func (s *Session) fanout(f proto.Frame) {
 		select {
 		case sub.out <- f:
 		default:
-			// slow consumer: drop and let it reconnect with ATTACH(since_seq)
+			// slow consumer: drop and let it reconnect with ATTACH(since_seq).
+			//
+			// That contract is cheap only while the scrollback still covers the
+			// gap. Under a flood the ring wraps in seconds, so the reconnect
+			// replays the entire buffer, falls behind again, and lands back
+			// here — which shows up as a replay progress bar reappearing with
+			// no tab switch and no re-attach by the user. Log it: from the
+			// outside the loop is invisible.
+			logging.Info("session", "subscriber dropped sid=%s reason=queue-full phase=live",
+				s.ID)
 			s.removeSubscriber(sub)
 		}
 	}

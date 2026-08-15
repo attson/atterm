@@ -35,7 +35,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
-				s.silenceRestoreBytes = 0
+				s.resetSilenceRestoreLocked()
 				changed = true
 			}
 			if s.meta.CurrentCommand != command {
@@ -127,7 +127,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
-				s.silenceRestoreBytes = 0
+				s.resetSilenceRestoreLocked()
 				s.resetSilenceActivityBurstLocked()
 			}
 			if s.silenceTimer != nil {

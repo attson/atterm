@@ -18,8 +18,10 @@ import (
 )
 
 // listActivityNotifyInterval bounds full session-list snapshot refreshes while
-// a PTY emits output continuously. It stays below the frontend's 5s live
-// window, so a healthy stream does not flicker from live back to now.
+// a PTY emits output continuously, so terminal output does not turn the
+// metadata path into a hot loop. The frontend no longer has a freshness
+// window of its own — its live indicator reads task_state directly — so this
+// interval only governs refresh cadence, not whether a row reads as live.
 const listActivityNotifyInterval = 3 * time.Second
 
 const (
@@ -82,7 +84,14 @@ type Session struct {
 	// etc.) keep flipping waiting_input back to running every few seconds
 	// and the sidebar visibly oscillates. Reset on any non-restore state
 	// transition (Close, OSC 133, external UpdateMeta).
+	//
+	// silenceRestoreStartedMono bounds that accumulator to the same
+	// silenceActivityBurstWindow the running-side accumulator uses. Without
+	// the window the counter never decays, so an endless drip of blink-sized
+	// redraws sums its way past the threshold no matter how slow it is —
+	// restoring running, which the silence timer then flips straight back.
 	silenceRestoreBytes         int64
+	silenceRestoreStartedMono   time.Time
 	silenceRestoreByteThreshold int64
 	silenceActivityBytes        int64
 	silenceActivityStartedMono  time.Time
@@ -362,7 +371,7 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
-		s.silenceRestoreBytes = 0
+		s.resetSilenceRestoreLocked()
 		s.resetSilenceActivityBurstLocked()
 	}
 	s.rescheduleSilenceTimerLocked()
@@ -450,7 +459,7 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
-		s.silenceRestoreBytes = 0
+		s.resetSilenceRestoreLocked()
 		s.resetSilenceActivityBurstLocked()
 	}
 	s.rescheduleSilenceTimerLocked()
@@ -845,29 +854,25 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
 		inResizeGrace := !s.lastResizeMono.IsZero() &&
 			now.Sub(s.lastResizeMono) < time.Duration(s.silenceResizeGraceMS)*time.Millisecond
-		switch {
-		case inResizeGrace:
+		if inResizeGrace {
 			// SIGWINCH-driven repaint after a sidebar collapse / window
 			// resize / font change. Don't count these bytes; reset the
 			// accumulator so we start fresh once the grace window closes.
-			s.silenceRestoreBytes = 0
+			s.resetSilenceRestoreLocked()
 			silenceDebugLocked(s, fmt.Sprintf("restore-skip-resize-grace: chunk=%d age=%v",
 				len(data), now.Sub(s.lastResizeMono)))
-		default:
-			s.silenceRestoreBytes += int64(len(data))
-			if s.silenceRestoreBytes >= s.silenceRestoreByteThreshold {
-				silenceDebugLocked(s, fmt.Sprintf("restore: state waiting_input -> running (bytes=%d >= threshold=%d)",
-					s.silenceRestoreBytes, s.silenceRestoreByteThreshold))
-				s.meta.TaskState = proto.TaskStateRunning
-				s.waitingFromSilence = false
-				s.silenceRestoreBytes = 0
-				s.markSilenceActivityLocked(now)
-				changed = true
-				restoredFromSilence = true
-			} else {
-				silenceDebugLocked(s, fmt.Sprintf("restore-defer: bytes=%d < threshold=%d (chunk=%d)",
-					s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
-			}
+		} else if s.noteSilenceRestoreLocked(data, now) {
+			silenceDebugLocked(s, fmt.Sprintf("restore: state waiting_input -> running (bytes=%d >= threshold=%d)",
+				s.silenceRestoreBytes, s.silenceRestoreByteThreshold))
+			s.meta.TaskState = proto.TaskStateRunning
+			s.waitingFromSilence = false
+			s.resetSilenceRestoreLocked()
+			s.markSilenceActivityLocked(now)
+			changed = true
+			restoredFromSilence = true
+		} else {
+			silenceDebugLocked(s, fmt.Sprintf("restore-defer: bytes=%d < threshold=%d (chunk=%d)",
+				s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
 		}
 	}
 	if !restoredFromSilence {

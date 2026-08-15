@@ -93,6 +93,38 @@ func (s *Session) resetSilenceActivityBurstLocked() {
 	s.silenceActivityStartedMono = time.Time{}
 }
 
+// resetSilenceRestoreLocked clears the restore accumulator together with its
+// burst window. Every non-restore transition goes through here so the counter
+// and the window it is measured over cannot drift apart.
+func (s *Session) resetSilenceRestoreLocked() {
+	s.silenceRestoreBytes = 0
+	s.silenceRestoreStartedMono = time.Time{}
+}
+
+// noteSilenceRestoreLocked accumulates output arriving while the session sits
+// in heuristic waiting_input and reports whether it now looks like real
+// content rather than a TUI redraw.
+//
+// This is the mirror image of noteRunningSilenceActivityLocked and MUST stay
+// symmetric with it: both sides ask "did at least silenceRestoreByteThreshold
+// bytes arrive inside one silenceActivityBurstWindow?". An asymmetric pair is
+// an oscillator. The restore side used to accumulate with no window at all, so
+// a drip too thin to *hold* running (blinking cursor, spinner frame) still
+// summed its way past the threshold given enough seconds, restored running,
+// and the silence timer flipped it straight back — a session-lifetime
+// live→now→live blink in the sidebar and desk widget.
+func (s *Session) noteSilenceRestoreLocked(data []byte, now time.Time) bool {
+	chunkBytes := int64(len(data))
+	if s.silenceRestoreStartedMono.IsZero() ||
+		now.Sub(s.silenceRestoreStartedMono) > silenceActivityBurstWindow {
+		s.silenceRestoreStartedMono = now
+		s.silenceRestoreBytes = chunkBytes
+	} else {
+		s.silenceRestoreBytes += chunkBytes
+	}
+	return s.silenceRestoreBytes >= s.silenceRestoreByteThreshold
+}
+
 func (s *Session) noteRunningSilenceActivityLocked(data []byte, now time.Time) {
 	if s.meta.TaskState != proto.TaskStateRunning {
 		return

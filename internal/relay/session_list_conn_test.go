@@ -148,11 +148,17 @@ func TestClientResizeUpdatesSessionListSize(t *testing.T) {
 
 func TestClientWriterPingFailureUnsubscribesSession(t *testing.T) {
 	oldPingPeriod, oldWriteWait := clientPingPeriod, clientWriteWait
+	oldLoopbackWait := clientWriteWaitLoopback
 	clientPingPeriod = 10 * time.Millisecond
 	clientWriteWait = 10 * time.Millisecond
+	// The test client connects over httptest, so it is loopback and picks up
+	// the long bound meant for a busy local renderer. This case is about a peer
+	// that is genuinely gone, so shorten both.
+	clientWriteWaitLoopback = 10 * time.Millisecond
 	t.Cleanup(func() {
 		clientPingPeriod = oldPingPeriod
 		clientWriteWait = oldWriteWait
+		clientWriteWaitLoopback = oldLoopbackWait
 	})
 
 	srv, tok, userID := serverWithSessionAndUser(t)

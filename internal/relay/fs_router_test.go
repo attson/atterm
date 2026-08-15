@@ -820,7 +820,7 @@ func newReadScopeClientHTTPServer(t *testing.T, srv *Server, ownerUserID string)
 			return
 		}
 		defer c.Close(websocket.StatusInternalError, "")
-		srv.handleClient(r.Context(), c, authRead, ownerUserID)
+		srv.handleClient(r.Context(), c, authRead, ownerUserID, r.RemoteAddr)
 	}))
 	t.Cleanup(httpSrv.Close)
 	return httpSrv

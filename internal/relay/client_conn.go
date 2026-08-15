@@ -17,7 +17,6 @@ import (
 const clientReadLimit = 17 * 1024 * 1024
 
 var (
-	clientWriteWait  = 10 * time.Second
 	clientPingPeriod = 25 * time.Second
 )
 
@@ -26,8 +25,11 @@ var (
 // agent -> session -> sub.Out() -> client (writer goroutine), and client ->
 // IN/RESIZE -> session.SendInbound (reader loop).
 // ownerUserID, when non-empty, restricts ATTACH to sessions owned by that user.
-func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string) {
+func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope authScope, ownerUserID string, remoteAddr string) {
 	c.SetReadLimit(clientReadLimit)
+	// A client on this machine is the desktop frontend talking to its own
+	// in-process relay; a stalled write there means "busy", not "gone".
+	writeWait := writeWaitFor(remoteAddr)
 	targetedOut := make(chan proto.Frame, 16)
 
 	var (
@@ -87,7 +89,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					return
 				case f := <-targetedOut:
 					s.debugFrame("client", "send", f)
-					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+					ctx, cancel := context.WithTimeout(writerCtx, writeWait)
 					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 					cancel()
 					if err != nil {
@@ -103,7 +105,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 						return
 					}
 				case <-ticker.C:
-					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+					ctx, cancel := context.WithTimeout(writerCtx, writeWait)
 					err := c.Ping(ctx)
 					cancel()
 					if err != nil {
@@ -118,7 +120,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					}
 				case f := <-sub.Out():
 					s.debugFrame("client", "send", f)
-					ctx, cancel := context.WithTimeout(writerCtx, clientWriteWait)
+					ctx, cancel := context.WithTimeout(writerCtx, writeWait)
 					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 					cancel()
 					if err != nil {

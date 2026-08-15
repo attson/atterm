@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,24 @@ type hookNotifyRequest struct {
 	AgentKind   string          `json:"agent_kind"`
 	HookInput   json.RawMessage `json:"hook_input"`
 	HookVersion string          `json:"hook_version,omitempty"`
+}
+
+const defaultAgentKind = "claude-code"
+
+// agentKindFromArgs reads --agent from argv. The installer always passes it
+// explicitly, so the receiving end never has to guess which CLI called it. The
+// default only covers a settings file written by a build from before the flag
+// existed, which hookinstall rewrites on the next launch.
+func agentKindFromArgs(args []string) string {
+	for i, a := range args {
+		if v, ok := strings.CutPrefix(a, "--agent="); ok && v != "" {
+			return v
+		}
+		if a == "--agent" && i+1 < len(args) && args[i+1] != "" {
+			return args[i+1]
+		}
+	}
+	return defaultAgentKind
 }
 
 func main() {
@@ -61,7 +80,7 @@ func main() {
 
 	req := hookNotifyRequest{
 		SessionID: sessionID,
-		AgentKind: "claude-code",
+		AgentKind: agentKindFromArgs(os.Args[1:]),
 		HookInput: json.RawMessage(body),
 	}
 	if v := os.Getenv("CLAUDE_CODE_VERSION"); v != "" {

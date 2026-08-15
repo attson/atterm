@@ -28,7 +28,7 @@ func TestInstall_FreshHome(t *testing.T) {
 	if len(c.Hooks.PreToolUse) != 1 {
 		t.Fatalf("want 1 PreToolUse entry; got %d: %+v", len(c.Hooks.PreToolUse), c.Hooks.PreToolUse)
 	}
-	link := attermHookSymlink(home)
+	link := attermHookCommand(attermHookSymlink(home), "claude-code")
 	for _, e := range c.Hooks.Notification {
 		for _, h := range e.Hooks {
 			if h.Command != link {
@@ -69,7 +69,7 @@ func TestInstall_PopulatesAllStreamingHookSlots(t *testing.T) {
 			t.Errorf("settings.json missing %s slot: %s", slot, data)
 		}
 	}
-	link := attermHookSymlink(home)
+	link := attermHookCommand(attermHookSymlink(home), "claude-code")
 	// Each owned slot must point at the atterm-hook symlink.
 	count := strings.Count(string(data), link)
 	if count < 5 {
@@ -134,7 +134,8 @@ func TestInstall_MigratesLegacyAttermEntries(t *testing.T) {
 			len(c.Hooks.Notification), c.Hooks.Notification)
 	}
 	e := c.Hooks.Notification[0]
-	if e.Matcher != "" || len(e.Hooks) != 1 || e.Hooks[0].Command != link {
+	if e.Matcher != "" || len(e.Hooks) != 1 ||
+		e.Hooks[0].Command != attermHookCommand(link, "claude-code") {
 		t.Errorf("migrated entry has wrong shape: %+v", e)
 	}
 	// The legacy object-typed matcher must be gone from disk.

@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"runtime"
+
+	"github.com/attson/atterm/internal/logging"
 )
 
 // Install ensures the binary is materialized and ~/.claude/settings.json
@@ -59,6 +61,12 @@ func installAt(home string) error {
 		return err
 	}
 
+	// Codex keeps its hooks in its own file. A failure there must not fail the
+	// whole install: plenty of users have claude and no codex, and the reverse.
+	if err := installCodexAt(home, link); err != nil {
+		logging.Warn("hookinstall", "codex hooks: %v", err)
+	}
+
 	merged := make([][]HookEntry, len(ownedSlots))
 	allEqual := true
 	for i, s := range ownedSlots {
@@ -78,6 +86,9 @@ func installAt(home string) error {
 }
 
 func uninstallAt(home string) error {
+	if err := uninstallCodexAt(home); err != nil {
+		logging.Warn("hookinstall", "codex hooks: %v", err)
+	}
 	link := attermHookSymlink(home)
 	if _, err := os.Lstat(link); err == nil {
 		_ = os.Remove(link)
@@ -125,7 +136,7 @@ func stripAttermEntries(in []HookEntry) []HookEntry {
 // adapter discriminates by notification_type itself.
 func desiredNotificationEntries(link string) []HookEntry {
 	return []HookEntry{
-		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: attermHookCommand(link, "claude-code")}}},
 	}
 }
 
@@ -136,7 +147,7 @@ func desiredNotificationEntries(link string) []HookEntry {
 // The dispatcher's claudeCodeAdapter.Parse / ParseTurn route by tool_name.
 func desiredPreToolUseEntries(link string) []HookEntry {
 	return []HookEntry{
-		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: attermHookCommand(link, "claude-code")}}},
 	}
 }
 
@@ -144,7 +155,7 @@ func desiredPreToolUseEntries(link string) []HookEntry {
 // claudeCodeAdapter.ParseTurn emits TurnUserPrompt → 👤 in the anchor card.
 func desiredUserPromptSubmitEntries(link string) []HookEntry {
 	return []HookEntry{
-		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: attermHookCommand(link, "claude-code")}}},
 	}
 }
 
@@ -152,7 +163,7 @@ func desiredUserPromptSubmitEntries(link string) []HookEntry {
 // emits TurnAssistantFinal → 🤖 in the anchor card.
 func desiredStopEntries(link string) []HookEntry {
 	return []HookEntry{
-		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: attermHookCommand(link, "claude-code")}}},
 	}
 }
 
@@ -160,7 +171,7 @@ func desiredStopEntries(link string) []HookEntry {
 // claudeCodeAdapter.ParseTurn emits TurnToolEnd → 🛠 result in the card.
 func desiredPostToolUseEntries(link string) []HookEntry {
 	return []HookEntry{
-		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: link}}},
+		{Matcher: "", Hooks: []HookCommand{{Type: "command", Command: attermHookCommand(link, "claude-code")}}},
 	}
 }
 

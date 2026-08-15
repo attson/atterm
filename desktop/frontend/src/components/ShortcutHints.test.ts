@@ -48,7 +48,7 @@ describe("ShortcutHints", () => {
     expect(wrapper.find(".hints-backdrop").exists()).toBe(false);
   });
 
-  it("after 100ms long-press of Control, shows 12 rows in 2 groups with Ctrl+* chords", async () => {
+  it("after 100ms long-press of Control, shows 10 rows in 2 groups with Ctrl+* chords", async () => {
     await setupStore({});
     const wrapper = mount(ShortcutHints, { props: { mod: "Control", thresholdMs: 100 }, attachTo: document.body });
     await flushPromises();
@@ -57,7 +57,7 @@ describe("ShortcutHints", () => {
     await flushPromises();
     expect(wrapper.find(".hints-backdrop").exists()).toBe(true);
     const rows = wrapper.findAll(".hint-row");
-    expect(rows).toHaveLength(12);
+    expect(rows).toHaveLength(10);
     expect(wrapper.text()).toContain("Pane");
     expect(wrapper.text()).toContain("Tab");
     expect(wrapper.text()).toContain("Ctrl+N");

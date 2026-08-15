@@ -10,11 +10,10 @@ import type { FocusDir } from "../lib/types";
 import { modKey } from "../lib/modKey";
 import { buildRoutingTable, serialize, type Mod } from "../lib/shortcutBindings";
 
-export type SplitMode = "new" | "pick";
 
 export interface ShortcutHandlers {
-  onSplitVertical: (mode: SplitMode) => void;
-  onSplitHorizontal: (mode: SplitMode) => void;
+  onSplitVertical: () => void;
+  onSplitHorizontal: () => void;
   onClosePane: () => void;
   onFocusPane: (dir: FocusDir) => void;
   onNewTab: () => void;
@@ -37,10 +36,8 @@ function detectMod(): Mod {
 
 function dispatch(actionId: string, h: ShortcutHandlers): boolean {
   switch (actionId) {
-    case "pane.split-vertical-new":    h.onSplitVertical("new"); return true;
-    case "pane.split-vertical-pick":   h.onSplitVertical("pick"); return true;
-    case "pane.split-horizontal-new":  h.onSplitHorizontal("new"); return true;
-    case "pane.split-horizontal-pick": h.onSplitHorizontal("pick"); return true;
+    case "pane.split-vertical-new":    h.onSplitVertical(); return true;
+    case "pane.split-horizontal-new":  h.onSplitHorizontal(); return true;
     case "pane.close":                 h.onClosePane(); return true;
     case "pane.focus-left":            h.onFocusPane("left"); return true;
     case "pane.focus-right":           h.onFocusPane("right"); return true;

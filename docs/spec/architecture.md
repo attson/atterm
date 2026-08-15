@@ -368,7 +368,6 @@ desktop/frontend/src/
 │   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge
 │                          + close-pane × 同行 flex 布局；close 按钮 mousedown
 │                          不冒泡，避免先激活其它 pane 再关错目标
-│   ├── SessionPickerDialog.vue ⌘⌥N 触发：local + remote 已有 session 选一个进 pane
 │   ├── SettingsDialog.vue relay 配置 + Updates 区（current / latest / 进度 /
 │                          autocheck toggle / release notes / 三个按钮）
 │   ├── ConfirmInstallDialog.vue force install & restart 确认弹窗，列出会被

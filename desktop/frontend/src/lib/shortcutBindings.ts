@@ -20,9 +20,7 @@ export interface ShortcutAction {
 
 export const ACTIONS: readonly ShortcutAction[] = [
   { id: "pane.split-vertical-new",    group: "pane", labelKey: "settings.shortcuts.splitPaneVertically",                defaultBinding: "Mod+KeyN" },
-  { id: "pane.split-vertical-pick",   group: "pane", labelKey: "settings.shortcuts.splitPaneVerticallyPick",  defaultBinding: "Mod+Alt+KeyN" },
   { id: "pane.split-horizontal-new",  group: "pane", labelKey: "settings.shortcuts.splitPaneHorizontally",              defaultBinding: "Mod+Shift+KeyN" },
-  { id: "pane.split-horizontal-pick", group: "pane", labelKey: "settings.shortcuts.splitPaneHorizontallyPick", defaultBinding: "Mod+Alt+Shift+KeyN" },
   { id: "pane.close",                 group: "pane", labelKey: "settings.shortcuts.closePane",                            defaultBinding: "Mod+KeyW" },
   { id: "pane.focus-left",            group: "pane", labelKey: "settings.shortcuts.focusPaneLeft",                       defaultBinding: "Mod+Alt+ArrowLeft" },
   { id: "pane.focus-right",           group: "pane", labelKey: "settings.shortcuts.focusPaneRight",                      defaultBinding: "Mod+Alt+ArrowRight" },

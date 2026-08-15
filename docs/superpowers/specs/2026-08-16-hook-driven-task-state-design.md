@@ -1,7 +1,7 @@
 # Hook 驱动的 task_state：让 AI 会话状态不再靠猜
 
 Date: 2026-08-16
-Status: Design
+Status: Implemented
 
 ## Background
 

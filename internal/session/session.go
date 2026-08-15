@@ -35,6 +35,16 @@ const (
 	// At 16 KiB, a full 4 MiB scrollback replays in at most 256 OUT frames —
 	// well below subscriberQueueDepth — regardless of original chunk granularity.
 	replayCoalesceTargetBytes = 16 * 1024
+	// replayTailCapBytes bounds what an attach replays, independent of how much
+	// scrollback the ring holds.
+	//
+	// The client keeps 20000 lines and discards the rest as it parses, so a
+	// larger replay is work it does only to throw the result away — and that
+	// wasted work is what pushes a slow consumer past its queue depth, gets it
+	// dropped by the fan-out, and starts the reconnect-and-replay-again loop.
+	// 512 KiB is roughly those 20000 lines of ordinary output, so nothing the
+	// client could have kept is lost.
+	replayTailCapBytes = 512 * 1024
 )
 
 // Session is the relay-side state for one PTY.
@@ -636,15 +646,17 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
+	chunks, cappedTail := capReplayTail(chunks)
 	s.mu.RLock()
 	altScreen := s.altScreen
 	s.mu.RUnlock()
 	totalBytes := replayBytes(chunks)
 	_ = enqueueReplayProgress(sub, s.ID, proto.ReplayProgressStart, 0, totalBytes, 0)
-	// If the replay starts after evicted bytes, the gap is unrecoverable:
-	// send a soft truncation marker so a fresh xterm doesn't render a torn
-	// tail of cursor-addressed output on top of an unrelated blank state.
-	if replayIsTruncated(s.scroll.OldestSeq(), sinceSeq, len(chunks)) {
+	// If the replay starts after evicted bytes — or after bytes we chose not to
+	// send — the gap is unrecoverable: send a soft truncation marker so a fresh
+	// xterm doesn't render a torn tail of cursor-addressed output on top of an
+	// unrelated blank state.
+	if cappedTail || replayIsTruncated(s.scroll.OldestSeq(), sinceSeq, len(chunks)) {
 		marker := proto.EncodeOut(s.ID, 0, replayResetMarker(altScreen))
 		select {
 		case sub.out <- marker:
@@ -985,6 +997,31 @@ func appendTrailingBytes(dst, prev, data []byte, max int) []byte {
 		combined = combined[len(combined)-max:]
 	}
 	return append(dst, combined...)
+}
+
+// capReplayTail trims a replay to its newest replayTailCapBytes, reporting
+// whether anything was dropped so the caller can mark the view as torn.
+//
+// A single chunk over the cap is kept whole: sending nothing would leave the
+// client with a blank terminal, which is worse than sending more than planned.
+func capReplayTail(chunks []ringbuf.Chunk) ([]ringbuf.Chunk, bool) {
+	if len(chunks) == 0 {
+		return chunks, false
+	}
+	var total uint64
+	start := len(chunks)
+	for i := len(chunks) - 1; i >= 0; i-- {
+		next := total + uint64(len(chunks[i].Data))
+		if next > replayTailCapBytes && start < len(chunks) {
+			break
+		}
+		total = next
+		start = i
+		if total >= replayTailCapBytes {
+			break
+		}
+	}
+	return chunks[start:], start > 0 || total > replayTailCapBytes
 }
 
 func replayBytes(chunks []ringbuf.Chunk) uint64 {

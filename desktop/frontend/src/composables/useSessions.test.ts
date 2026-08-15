@@ -85,6 +85,32 @@ describe("useSessions", () => {
     expect(completedSeen.value.map((s) => s.session_id).sort()).toEqual(["a", "b"]);
   });
 
+  // Running sessions belong above finished ones regardless of clock order: the
+  // list is read top-down for "what needs me", and both grouping modes have to
+  // agree on that.
+  test("rows within a host sort by state urgency first", () => {
+    const local = ref<RemoteSession[]>([]);
+    const remote = ref<RemoteSession[]>([
+      mk({ session_id: "done", host_id: "h", task_state: "completed", command_ended_at: 9000 }),
+      mk({ session_id: "busy", host_id: "h", task_state: "running", command_started_at: 100 }),
+      mk({ session_id: "asks", host_id: "h", task_state: "waiting_input", attention_at: 50 }),
+    ]);
+    const { byHost } = useSessions(local, remote);
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["asks", "busy", "done"]);
+  });
+
+  // Within one state the order is still the stable interaction stamp, so two
+  // running AI sessions do not trade places while they stream.
+  test("running sessions hold their order among themselves", () => {
+    const local = ref<RemoteSession[]>([]);
+    const remote = ref<RemoteSession[]>([
+      mk({ session_id: "older", host_id: "h", task_state: "running", command_started_at: 100, last_output_at: 9999 }),
+      mk({ session_id: "newer", host_id: "h", task_state: "running", command_started_at: 900, last_output_at: 1 }),
+    ]);
+    const { byHost } = useSessions(local, remote);
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["newer", "older"]);
+  });
+
   test("rows within a host sort by latest activity descending", () => {
     const local = ref<RemoteSession[]>([]);
     const remote = ref<RemoteSession[]>([
@@ -113,10 +139,11 @@ describe("useSessions", () => {
       }),
     ]);
     const { byHost } = useSessions(local, remote);
-    // b (command_ended_at 1200) > c (attention_at 800) > a (started_at 100).
-    // `a` streams output at 999 but carries no interaction stamp, so it no
-    // longer outranks c on output alone — that leapfrogging was the churn.
-    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["b", "c", "a"]);
+    // Urgency first: c is waiting_input, a is running, b has completed. Within
+    // a state the interaction stamp decides — `a` streams output at 999 but
+    // carries no interaction stamp, and no longer outranks anyone on output
+    // alone, which is the leapfrogging that used to churn the list.
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["c", "a", "b"]);
   });
 
   test("a running session ranks by when its command started, not by its output", () => {

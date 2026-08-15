@@ -5,7 +5,7 @@ import App from "../App.vue";
 import { initI18n, type LocalePreference } from "../i18n";
 import { bridgeSharedI18n } from "../i18n/shared-bridge";
 import { initPlatform, type Platform } from "../platform";
-import { installLogFlushHandlers } from "./log";
+import { installLogFlushHandlers, logInfo } from "./log";
 
 /**
  * bootstrapApp is the shared boot skeleton for the three entry points
@@ -69,4 +69,13 @@ export async function bootstrapApp(opts: BootstrapAppOptions): Promise<void> {
   app.mount("#app");
 
   await opts.afterMount?.(platform, app);
+
+  // A heartbeat on the happy path. Every other renderer log record sits on a
+  // failure branch, so an empty `ui-*` section in the log file is ambiguous:
+  // it reads the same whether nothing went wrong or the bridge to the Go
+  // logger is broken. One line per boot makes the difference observable —
+  // and marks where each run of the window begins.
+  logInfo("boot", "renderer ready", {
+    href: typeof location === "undefined" ? "" : location.pathname,
+  });
 }

@@ -1,13 +1,11 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
-import { compareSessionsBySidebarOrder, sessionActivityAt, sessionUrgencyIndex } from "../lib/sessionSort";
-
-function compareLatestActivity(a: RemoteSession, b: RemoteSession): number {
-  const dt = sessionActivityAt(b) - sessionActivityAt(a);
-  if (dt !== 0) return dt;
-  return a.session_id.localeCompare(b.session_id);
-}
+import {
+  compareSessionsBySidebarOrder,
+  compareSessionsByLatestActivity,
+  sessionUrgencyIndex,
+} from "../lib/sessionSort";
 
 export interface UseSessionsOptions {
   /** When set, sessions whose host_id equals this are considered "local"
@@ -59,7 +57,7 @@ export function useSessions(
     // started, finished, or requested attention stay near the top. Use
     // session_id as the tiebreaker for deterministic equal timestamps.
     for (const k of Object.keys(out)) {
-      out[k].sort(compareLatestActivity);
+      out[k].sort(compareSessionsByLatestActivity);
     }
     return out;
   });
@@ -92,7 +90,7 @@ export function useSessions(
           (s.task_state === "completed" || s.task_state === "failed") &&
           s.unread === false,
       )
-      .sort(compareLatestActivity),
+      .sort(compareSessionsByLatestActivity),
   );
 
   const byState = computed<Record<string, RemoteSession[]>>(() => {

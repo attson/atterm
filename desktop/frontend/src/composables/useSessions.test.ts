@@ -113,7 +113,20 @@ describe("useSessions", () => {
       }),
     ]);
     const { byHost } = useSessions(local, remote);
-    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["b", "a", "c"]);
+    // b (command_ended_at 1200) > c (attention_at 800) > a (started_at 100).
+    // `a` streams output at 999 but carries no interaction stamp, so it no
+    // longer outranks c on output alone — that leapfrogging was the churn.
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["b", "c", "a"]);
+  });
+
+  test("a running session ranks by when its command started, not by its output", () => {
+    const local = ref<RemoteSession[]>([]);
+    const remote = ref<RemoteSession[]>([
+      mk({ session_id: "old", host_id: "h", task_state: "running", command_started_at: 500, last_output_at: 9999 }),
+      mk({ session_id: "new", host_id: "h", task_state: "running", command_started_at: 900, last_output_at: 1 }),
+    ]);
+    const { byHost } = useSessions(local, remote);
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["new", "old"]);
   });
 
   test("rows with identical latest activity fall back to session_id for deterministic order", () => {

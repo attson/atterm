@@ -1563,8 +1563,21 @@ async function ensureTerm() {
   imeInputTarget?.addEventListener("blur", onImeBlur);
   safeFit();
   focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
+  // xterm emits onData for two very different things: what the user typed, and
+  // the replies it generates itself while parsing escape sequences. Only the
+  // latter needs suppressing during replay, and the two are indistinguishable
+  // by their payload — so mark the keyboard-originated ones as they arrive.
+  // attachCustomKeyEventHandler runs for every key event before the data is
+  // emitted, which is the ordering this depends on.
+  let keyOriginated = false;
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type === "keydown") keyOriginated = true;
+    return true;
+  });
   term.onData((data) => {
-    if (!replayInputGuard.shouldForward()) return;
+    const fromUser = keyOriginated;
+    keyOriginated = false;
+    if (!replayInputGuard.shouldForward(fromUser)) return;
     const { cleaned, dropped } = stripC1Controls(data);
     if (dropped.length > 0) {
       logWarn("term", "dropped C1 control chars from terminal input", {

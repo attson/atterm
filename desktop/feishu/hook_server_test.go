@@ -247,3 +247,95 @@ func mustJSONBytes(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+type taskSinkFake struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *taskSinkFake) ApplyHookTaskState(_ uuid.UUID, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, state)
+}
+
+func (f *taskSinkFake) states() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func postHook(t *testing.T, h *HookServer, sid uuid.UUID, agent, hookInput string) {
+	t.Helper()
+	body := mustJSONBytes(t, hookNotifyRequest{
+		SessionID: sid.String(),
+		AgentKind: agent,
+		HookInput: json.RawMessage(hookInput),
+	})
+	req := httptest.NewRequest("POST", "/atterm-hook/notify", bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:5555"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestHookServer_ForwardsTaskState(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+	h := NewHookServer(&recordingDispatcher{}, sessions)
+	sink := &taskSinkFake{}
+	h.SetTaskStateSink(sink)
+
+	postHook(t, h, sid, "claude-code", `{"hook_event_name":"Stop"}`)
+
+	if got := sink.states(); len(got) != 1 || got[0] != "waiting_input" {
+		t.Fatalf("sink states = %v, want [waiting_input]", got)
+	}
+}
+
+// Events with no state meaning must not reach the sink at all — the sink is
+// authoritative, so a spurious call would overwrite a real state.
+func TestHookServer_IgnoresNonStateEvents(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+	h := NewHookServer(&recordingDispatcher{}, sessions)
+	sink := &taskSinkFake{}
+	h.SetTaskStateSink(sink)
+
+	postHook(t, h, sid, "claude-code", `{"hook_event_name":"SessionStart"}`)
+
+	if got := sink.states(); len(got) != 0 {
+		t.Fatalf("sink states = %v, want none", got)
+	}
+}
+
+// A POST for a session this host does not know is rejected before any consumer
+// runs; the task sink must not be an exception.
+func TestHookServer_UnknownSessionReachesNoSink(t *testing.T) {
+	sessions := &sessionsFake{known: map[string]bool{}}
+	h := NewHookServer(&recordingDispatcher{}, sessions)
+	sink := &taskSinkFake{}
+	h.SetTaskStateSink(sink)
+
+	postHook(t, h, uuid.New(), "claude-code", `{"hook_event_name":"Stop"}`)
+
+	if got := sink.states(); len(got) != 0 {
+		t.Fatalf("sink states = %v, want none", got)
+	}
+}
+
+// Codex rides the same ingress; only the attention event name differs.
+func TestHookServer_ForwardsCodexTaskState(t *testing.T) {
+	sid := uuid.MustParse("00000000-0000-0000-0000-0000000000cc")
+	sessions := &sessionsFake{known: map[string]bool{sid.String(): true}}
+	h := NewHookServer(&recordingDispatcher{}, sessions)
+	sink := &taskSinkFake{}
+	h.SetTaskStateSink(sink)
+
+	postHook(t, h, sid, "codex", `{"hook_event_name":"UserPromptSubmit"}`)
+	postHook(t, h, sid, "codex", `{"hook_event_name":"PermissionRequest"}`)
+
+	want := []string{"running", "waiting_input"}
+	got := sink.states()
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("sink states = %v, want %v", got, want)
+	}
+}

@@ -92,6 +92,17 @@ export interface WidgetState {
   /** Secondary line containing the existing task-state summary. */
   subline: string;
   rows: WidgetSessionRow[];
+  /**
+   * Ids of every session currently demanding the user (waiting / failed),
+   * computed over the WHOLE filtered list rather than the truncated `rows`.
+   *
+   * The widget diffs this set between pushes to decide whether a collapsed
+   * window should raise its hand. Diffing `rows` instead makes a session that
+   * merely scrolled past maxRows look like it left, so the next reordering
+   * that brings it back reads as a fresh escalation and pops the widget open
+   * for something that never changed.
+   */
+  attentionIds: string[];
   /** Sessions beyond maxRows that were truncated out of `rows`. */
   overflowCount: number;
   /** Mirrors the aiOnly setting so the widget's own menu can show its state
@@ -319,6 +330,9 @@ export function projectWidgetState(
     ...counts,
     ...summarize(unreadCount, counts),
     rows: rows.slice(0, maxRows),
+    attentionIds: rows
+      .filter((r) => r.state === "waiting" || r.state === "failed")
+      .map((r) => r.sessionId),
     overflowCount: Math.max(0, rows.length - maxRows),
     aiOnly,
   };

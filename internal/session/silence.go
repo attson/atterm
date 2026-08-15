@@ -166,6 +166,12 @@ func (s *Session) rescheduleSilenceTimerLocked() {
 	if s.closed {
 		return
 	}
+	// An AI client reporting its own turn boundaries beats anything we could
+	// infer from output gaps, so once it does the timer is off for good.
+	if s.hookDriven {
+		silenceDebugLocked(s, "arm-skip: hook-driven")
+		return
+	}
 	if s.meta.TaskState != proto.TaskStateRunning {
 		silenceDebugLocked(s, fmt.Sprintf("arm-skip: state=%q (not running)", s.meta.TaskState))
 		return

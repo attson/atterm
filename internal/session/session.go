@@ -74,6 +74,13 @@ type Session struct {
 	// inject short thresholds via t.Setenv.
 	silenceTimer         *time.Timer
 	waitingFromSilence   bool
+	// hookDriven latches once an AI client's hook has reported state for this
+	// session. From then on the silence heuristic is off for good (see
+	// rescheduleSilenceTimerLocked): the client tells us when a turn starts and
+	// ends, so inferring it from output gaps can only add noise. Cleared when
+	// the AI command exits (OSC 133 D) and the session goes back to being a
+	// plain shell.
+	hookDriven bool
 	silenceThresholdMS   int64
 	silenceDetectEnabled bool
 

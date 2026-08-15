@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ringbuf"
 	"github.com/google/uuid"
@@ -652,6 +653,13 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	)
 	lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, chunks, lastSeq, replayedBytes, totalBytes, nextProgress)
 	if !ok {
+		// The subscriber's queue filled before its snapshot finished, so it is
+		// dropped mid-attach: it never joins s.subs, never becomes driver, and
+		// its client sees the socket close. Worth a line — from the outside
+		// this looks like "the progress bar hangs and my keystrokes do
+		// nothing", with nothing in the log to say why.
+		logging.Info("session", "attach dropped sid=%s reason=queue-full phase=snapshot replayed=%d total=%d",
+			s.ID, replayedBytes, totalBytes)
 		sub.close()
 		return sub, lastSeq
 	}
@@ -666,6 +674,12 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 		s.mu.Unlock()
 		lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, catchup, lastSeq, replayedBytes, totalBytes, nextProgress)
 		if !ok {
+			// Same drop, one phase later: the session produced faster than the
+			// replay could drain for long enough to fill the queue. A command
+			// flooding the scrollback (yes(1), a noisy build) is exactly the
+			// shape that gets here.
+			logging.Info("session", "attach dropped sid=%s reason=queue-full phase=catchup replayed=%d total=%d",
+				s.ID, replayedBytes, totalBytes)
 			sub.close()
 			return sub, lastSeq
 		}

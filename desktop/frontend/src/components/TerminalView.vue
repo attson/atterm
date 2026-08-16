@@ -9,10 +9,11 @@ import { SearchAddon } from "xterm-addon-search";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
+import type { TerminalAppearance } from "../lib/types";
 import { formatReplayProgress, progressPercent, type ReplayProgress } from "../lib/replayProgress";
 import { createReplayInputGuard } from "../lib/replayInputGuard";
 import { copyTerminalSelection, isTerminalCopyShortcut } from "../lib/terminalCopy";
-import { TERMINAL_FONT_FAMILY } from "../lib/terminalFont";
+import { composeFontFamily } from "../lib/terminalFont";
 import { shouldNotify } from "../lib/terminalBell";
 import {
   CommandTracker,
@@ -91,8 +92,30 @@ const props = withDefaults(
     // Monotonic counter bumped by App.vue whenever the search shortcut fires.
     // Every pane sees the same value; only the focused one opens its bar.
     searchRequestSeq?: number;
+    // Drilled down from App.vue as one object (see lib/types.ts) so this
+    // component doesn't grow a prop per setting. Optional so tests and any
+    // standalone embedding keep working without a caller wiring it up.
+    appearance?: TerminalAppearance;
   }>(),
-  { active: true, focused: false, avoidTopRightBadge: false, commandNotifyThresholdSec: 10, isLocalSession: true, resizeSuspended: false, searchRequestSeq: 0 }
+  {
+    active: true,
+    focused: false,
+    avoidTopRightBadge: false,
+    commandNotifyThresholdSec: 10,
+    isLocalSession: true,
+    resizeSuspended: false,
+    searchRequestSeq: 0,
+    // Mirrors the Go side's persisted defaults (internal/config) and
+    // App.vue's own terminalAppearance ref default.
+    appearance: () => ({
+      fontHead: "",
+      fontSize: 13,
+      lineHeight: 1.0,
+      cursorStyle: "block",
+      cursorBlink: true,
+      scrollback: 5000,
+    }),
+  }
 );
 
 const emit = defineEmits<{
@@ -1402,6 +1425,32 @@ function safeFit() {
   }
 }
 
+// Appearance changes split in two: font family / size / line height change the
+// character cell box and therefore need a re-fit (which sends a RESIZE via the
+// existing sendResize path); cursor style and scrollback do not. Fitting is
+// driver-only — a viewer's dimensions are locked to the PTY by onMeta
+// (redline #17), so changing font size on a viewer pane is local-render-only.
+// Goes through safeFit(), not a bare fit.fit(): App.vue keeps every tab's
+// panes mounted (v-show), so this watch fires on background-tab terminals
+// too, and safeFit's display:none rect guard is what keeps that from hitting
+// the NaN-dims crash documented on its own definition above.
+function applyAppearance(next: TerminalAppearance, prev?: TerminalAppearance) {
+  if (!term) return;
+  term.options.fontFamily = composeFontFamily(next.fontHead);
+  term.options.fontSize = next.fontSize;
+  term.options.lineHeight = next.lineHeight;
+  term.options.cursorStyle = next.cursorStyle;
+  term.options.cursorBlink = next.cursorBlink;
+  term.options.scrollback = next.scrollback;
+
+  const metricsChanged =
+    !prev ||
+    prev.fontHead !== next.fontHead ||
+    prev.fontSize !== next.fontSize ||
+    prev.lineHeight !== next.lineHeight;
+  if (metricsChanged && isDriver.value) safeFit();
+}
+
 function scrollToBottomAfterWriteQueue(done?: () => void) {
   const current = term;
   if (!current) {
@@ -1417,15 +1466,18 @@ function scrollToBottomAfterWriteQueue(done?: () => void) {
 async function ensureTerm() {
   if (term) return;
   term = new Terminal({
-    fontFamily: TERMINAL_FONT_FAMILY,
-    fontSize: 13,
-    cursorBlink: true,
+    fontFamily: composeFontFamily(props.appearance.fontHead),
+    fontSize: props.appearance.fontSize,
+    lineHeight: props.appearance.lineHeight,
+    cursorStyle: props.appearance.cursorStyle,
+    cursorBlink: props.appearance.cursorBlink,
     // Every tab stays mounted (App.vue keeps them alive with v-show), so this
     // is paid per open pane, not once. Measured at ~2.75 KB/line at 200
     // columns: 20000 lines cost ~55 MB per terminal, which reached ~600 MB
-    // across a dozen panes. 5000 still gives 5x xterm.js's own default (and
+    // across a dozen panes. 5000 (the default — see App.vue's
+    // terminalAppearance ref) still gives 5x xterm.js's own default (and
     // VS Code's, on the same engine) for reading back long agent output.
-    scrollback: 5000,
+    scrollback: props.appearance.scrollback,
     theme: props.theme,
     convertEol: false,
     disableStdin: !isDriver.value,
@@ -2124,6 +2176,16 @@ watch(
   (theme) => {
     if (term) term.options.theme = theme;
   }
+);
+
+// App.vue replaces its terminalAppearance ref wholesale on every settings
+// commit (not a per-field patch), so this fires with all six values on any
+// one of them changing — applyAppearance's own metricsChanged comparison is
+// what keeps that from re-fitting for a cursor/scrollback-only change.
+watch(
+  () => props.appearance,
+  (next, prev) => applyAppearance(next, prev),
+  { deep: true },
 );
 
 watch(status, (nextStatus) => {

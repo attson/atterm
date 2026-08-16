@@ -1240,3 +1240,31 @@ describe("TerminalView scrollback search wiring", () => {
     expect(paneSource).toContain(':search-request-seq="searchRequestSeq"');
   });
 });
+
+describe("TerminalView appearance", () => {
+  test("seeds the terminal from the appearance prop instead of literals", () => {
+    expect(source).toContain("appearance?: TerminalAppearance");
+    expect(source).toMatch(/fontFamily:\s*composeFontFamily\(/);
+    expect(source).toMatch(/fontSize:\s*props\.appearance/);
+    expect(source).toMatch(/scrollback:\s*props\.appearance/);
+  });
+
+  test("re-fits only for metrics-affecting changes, and only as driver", () => {
+    const body = source.match(/function\s+applyAppearance\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/isDriver\.value/);
+    expect(body![0]).toMatch(/fontFamily|fontSize|lineHeight/);
+  });
+
+  test("cursor and scrollback changes do not trigger a fit", () => {
+    const body = source.match(/function\s+applyAppearance\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body![0]).toMatch(/metricsChanged/);
+  });
+
+  test("App drills one appearance object through PaneGrid", () => {
+    expect(appSource).toMatch(/const terminalAppearance = ref</);
+    expect(appSource).toContain(':appearance="terminalAppearance"');
+    expect(paneSource).toContain("appearance?: TerminalAppearance");
+    expect(paneSource).toContain(':appearance="appearance"');
+  });
+});

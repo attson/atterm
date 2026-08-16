@@ -32,4 +32,7 @@ docs/tasks/
 desktop/hookinstall/atterm-hook
 # wails dev project-local data dir (config/recovery/db/cache/logs)
 .atterm-dev/
-.claude/
+# 例外：仓库导航 skill 随仓库走（AGENTS.md 指向它）。
+# 注意用 .claude/* 而不是 .claude/ —— git 无法重新纳入被排除目录里的文件。
+.claude/*
+!.claude/skills/

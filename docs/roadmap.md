@@ -2,7 +2,7 @@
 
 ## 状态速览 (2026-08-16)
 
-- **v0.4.3** 已发布(2026-08-04)。桌面 dmg / Linux deb+tar / Windows exe+zip 全平台构件已 upload,SHA256SUMS + GPG 签名附。
+- **v0.4.19** 已发布(2026-08-16)。桌面 dmg / Linux deb+tar / Windows exe+zip 全平台构件已 upload,SHA256SUMS + GPG 签名附。
 - **下一阶段方向已定**:以配置同步层为主线,补本地终端基本功 + SSH 主机能力,见 [`docs/superpowers/specs/2026-08-16-sync-layer-roadmap-design.md`](./superpowers/specs/2026-08-16-sync-layer-roadmap-design.md)。对应下面的 **P5 / P6 / P7**;原 P3(协作)降级到 Backlog、原 P4(历史与回放)暂缓。
 - **桌面挂件**(Desk Widget)已落地:置顶悬浮小窗显示所有会话的运行 / 失败 / 等待输入状态,点行跳转对应 tab。走插件模式(Settings → 插件),可选"仅 AI 会话"。设计与踩坑记录见 [`docs/superpowers/specs/2026-08-10-desk-widget-design.md`](./superpowers/specs/2026-08-10-desk-widget-design.md),不变量见 AGENTS.md 红线 #37。
 - **task_state 改由 hook 驱动**(#341):Claude Code / Codex 的 `Stop` / `Notification` / `PreToolUse` 等事件接进 `internal/session`,取代输出静默启发式,AI 会话状态不再在 `running` ↔ `waiting_input` 之间抖。见 [`docs/superpowers/specs/2026-08-16-hook-driven-task-state-design.md`](./superpowers/specs/2026-08-16-hook-driven-task-state-design.md)。后续项:`running` 会话置顶排序、挂件形态 B/C、尚未接入的 `SessionStart` / `SubagentStart|Stop` / `Pre|PostCompact`。
@@ -278,10 +278,11 @@
 
 ### 19. scrollback 搜索
 
-- [x] 引入 `@xterm/addon-search`
-- [x] Cmd+F / Ctrl+Shift+F 打开搜索栏
+- [x] 引入 `xterm-addon-search`(xterm v5 下的无 scope 包名;非 v6 的 `@xterm/addon-search`)
+- [x] `Mod+KeyF`(macOS `Cmd+F`,其它平台 `Ctrl+F`)打开搜索栏
 - [x] 匹配高亮 + 上下跳转 + 结果计数
 - [x] 增加搜索交互测试
+- [x] 会话侧栏搜索快捷键随之从 `Cmd/Ctrl+F` 改绑 `Cmd/Ctrl+Shift+F`,避免与新的终端搜索冲突(见 [`site/docs/guide/remote-takeover.md`](../site/docs/guide/remote-takeover.md))
 
 ### 20. 终端外观设置
 

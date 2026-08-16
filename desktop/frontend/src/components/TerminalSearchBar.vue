@@ -32,8 +32,18 @@ function focusInput() {
   });
 }
 
-watch(() => props.open, (open) => { if (open) focusInput(); });
-watch(() => props.focusSeq, () => { if (props.open) focusInput(); });
+// Reopening (or re-focusing) with a retained query must re-run the search
+// immediately — the query ref survives a close (v-if only tears down the
+// DOM, not the component instance), but the parent resets its result
+// counters on close. Without this, the bar shows a false "no results" until
+// the user types again. Matches VS Code / iTerm2: retained query re-highlights
+// on reopen.
+function refreshIfQuery() {
+  if (query.value) emit("find", query.value, "next", true);
+}
+
+watch(() => props.open, (open) => { if (open) { focusInput(); refreshIfQuery(); } });
+watch(() => props.focusSeq, () => { if (props.open) { focusInput(); refreshIfQuery(); } });
 
 function onInput() {
   emit("find", query.value, "next", true);
@@ -71,12 +81,13 @@ function onKeydown(e: KeyboardEvent) {
       @keydown="onKeydown"
     />
     <span class="term-search-count" data-test="terminal-search-count">
-      {{ resultCount > 0 ? `${resultIndex + 1}/${resultCount}` : (query ? t("terminal.search.noResults") : "") }}
+      {{ resultCount > 0 ? (resultIndex >= 0 ? `${resultIndex + 1}/${resultCount}` : `${resultCount}+`) : (query ? t("terminal.search.noResults") : "") }}
     </span>
     <button
       class="term-search-btn"
       data-test="terminal-search-prev"
       :title="t('terminal.search.prev')"
+      :aria-label="t('terminal.search.prev')"
       :disabled="resultCount === 0"
       @click="step('prev')"
     >↑</button>
@@ -84,6 +95,7 @@ function onKeydown(e: KeyboardEvent) {
       class="term-search-btn"
       data-test="terminal-search-next"
       :title="t('terminal.search.next')"
+      :aria-label="t('terminal.search.next')"
       :disabled="resultCount === 0"
       @click="step('next')"
     >↓</button>
@@ -91,8 +103,9 @@ function onKeydown(e: KeyboardEvent) {
       class="term-search-btn"
       data-test="terminal-search-close"
       :title="t('terminal.search.close')"
+      :aria-label="t('terminal.search.close')"
       @click="emit('close')"
-    >✕</button>
+    >×</button>
   </div>
 </template>
 
@@ -110,39 +123,39 @@ function onKeydown(e: KeyboardEvent) {
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
-  border: 1px solid #2d333b;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #161b22;
+  background: var(--panel);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 .term-search-input {
   width: 180px;
   padding: 2px 6px;
-  border: 1px solid #2d333b;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: #0d1117;
-  color: #c9d1d9;
+  background: var(--bg);
+  color: var(--fg);
   font-size: 12px;
   outline: none;
 }
 .term-search-input:focus { border-color: var(--accent); }
 .term-search-count {
   min-width: 52px;
-  color: #8b949e;
+  color: var(--fg-dim);
   font-size: 11px;
   text-align: center;
   white-space: nowrap;
 }
 .term-search-btn {
   padding: 1px 6px;
-  border: 1px solid #2d333b;
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: #21262d;
-  color: #c9d1d9;
+  color: var(--fg);
   font-size: 11px;
   line-height: 16px;
   cursor: pointer;
 }
-.term-search-btn:hover:not(:disabled) { background: #2d333b; }
+.term-search-btn:hover:not(:disabled) { background: var(--border); }
 .term-search-btn:disabled { opacity: 0.4; cursor: default; }
 </style>

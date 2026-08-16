@@ -844,6 +844,7 @@ Run（在仓库根）：`cd desktop && wails dev -tags webkit2_41`（macOS/Windo
 6. 搜索栏开着时再按一次 `Cmd+F` → 输入框重新聚焦且内容全选
 7. 分屏后只有聚焦的那个 pane 弹出搜索栏
 8. `Cmd+Shift+F` 打开侧栏搜索（原 `Cmd+F` 的功能已迁移到这里）
+9. 搜索 → Esc 关闭 → 再按 Cmd+F 重开，确认高亮与计数立即恢复，而不是显示「无匹配」
 
 - [ ] **Step 10: 重建 web 嵌入产物**
 

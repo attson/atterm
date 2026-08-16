@@ -115,4 +115,32 @@ describe("TerminalSearchBar", () => {
     expect(focus).toHaveBeenCalled();
     expect(select).toHaveBeenCalled();
   });
+
+  test("reopening with a retained query re-runs the search instead of showing a stale no-results state", async () => {
+    // Regression: `query` is a component-internal ref that survives a close
+    // (v-if only tears down the DOM), but the parent resets its counters on
+    // close. Without re-emitting `find` on reopen, the bar would show "no
+    // results" for a query that still has matches in the scrollback.
+    const w = factory({ open: true });
+    await w.find('[data-test="terminal-search-input"]').setValue("needle");
+
+    await w.setProps({ open: false });
+    const findsBeforeReopen = w.emitted("find")?.length ?? 0;
+
+    await w.setProps({ open: true });
+    await w.vm.$nextTick();
+
+    const events = w.emitted("find");
+    expect(events).toBeTruthy();
+    expect(events!.length).toBeGreaterThan(findsBeforeReopen);
+    expect(events!.at(-1)).toEqual(["needle", "next", true]);
+  });
+
+  test("shows a capped total with a plus suffix once the addon's highlight limit is exceeded", () => {
+    // xterm-addon-search caps at `highlightLimit` (default 1000): past that,
+    // resultIndex becomes -1 while resultCount reports the capped count, not
+    // the true total. Rendering resultIndex + 1 would show "0/1000".
+    const w = factory({ resultIndex: -1, resultCount: 1000 });
+    expect(w.find('[data-test="terminal-search-count"]').text()).toBe("1000+");
+  });
 });

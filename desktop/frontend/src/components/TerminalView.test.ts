@@ -1170,16 +1170,30 @@ describe("TerminalView scrollback search wiring", () => {
   });
 
   test("mirrors addon result changes into the bar's counters", () => {
-    expect(source).toMatch(
-      /searchAddon\.onDidChangeResults\(\(\{ resultIndex, resultCount \}\) => \{[\s\S]*?searchResultIndex\.value = resultIndex;[\s\S]*?searchResultCount\.value = resultCount;/,
-    );
+    const body = source.match(/searchAddon\.onDidChangeResults\(\(\{ resultIndex, resultCount \}\) => \{[\s\S]*?\n {2}\}\);/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/searchResultIndex\.value = resultIndex;/);
+    expect(body![0]).toMatch(/searchResultCount\.value = resultCount;/);
   });
 
   test("only the focused pane opens on a search request", () => {
     expect(source).toContain("searchRequestSeq?: number");
-    expect(source).toMatch(
-      /watch\(\s*\(\)\s*=>\s*props\.searchRequestSeq,[\s\S]*?if \(!props\.focused\) return;[\s\S]*?searchOpen\.value = true/,
-    );
+    const watchBody = source.match(/watch\(\s*\(\)\s*=>\s*props\.searchRequestSeq,[\s\S]*?\n\);/);
+    expect(watchBody).not.toBeNull();
+    expect(watchBody![0]).toMatch(/if \(!props\.focused\) return;/);
+    expect(watchBody![0]).toMatch(/searchOpen\.value = true;/);
+  });
+
+  test("onSearchFind clears decorations and resets both counters on an empty query", () => {
+    // This is the sole defense against highlights persisting after the input
+    // is cleared: xterm-addon-search has no "clear query" call of its own, so
+    // the empty-query branch here is what tears the decorations down.
+    const body = source.match(/function\s+onSearchFind\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/if \(!searchAddon\) return;/);
+    expect(body![0]).toMatch(/if \(!query\) \{[\s\S]*?searchAddon\.clearDecorations\(\);[\s\S]*?searchResultIndex\.value = -1;[\s\S]*?searchResultCount\.value = 0;[\s\S]*?return;[\s\S]*?\}/);
+    expect(body![0]).toMatch(/if \(dir === "next"\) searchAddon\.findNext\(query, opts\);/);
+    expect(body![0]).toMatch(/else searchAddon\.findPrevious\(query, opts\);/);
   });
 
   test("closing the search clears decorations and returns focus to the terminal", () => {
@@ -1207,6 +1221,14 @@ describe("TerminalView scrollback search wiring", () => {
   });
 
   test("the search bar is positioned inside the terminal host", () => {
+    // The bar is `position: absolute`, and .term-view is the ancestor that
+    // establishes its positioning context (`position: absolute; inset: 0`
+    // per the comment in TerminalSearchBar.vue). If .term-view ever lost its
+    // `position`, the bar would resolve against a further-up ancestor and
+    // land in the page corner instead of over the pane — this is the only
+    // automated guard against that, since the manual visual pass was
+    // deliberately skipped for this feature.
+    expect(styleBlockFor(".term-view")).toMatch(/position:\s*absolute/);
     expect(searchBarSource).toMatch(/position:\s*absolute/);
   });
 

@@ -1,7 +1,7 @@
 # 配置同步层作为主线 —— v0.5 / v0.6 / v0.7 方向 — design
 
 Date: 2026-08-16
-Status: Drafted — awaiting user review before plan.
+Status: Accepted — item 19 delivered; items 20-32 pending.
 See also: [docs/roadmap.md](../../roadmap.md) · [2026-08-10 desk widget](./2026-08-10-desk-widget-design.md) · [2026-08-16 hook-driven task state](./2026-08-16-hook-driven-task-state-design.md) · [2026-08-04 refactor roadmap](../plans/2026-08-04-refactor-roadmap.md)
 
 ## 0. Summary
@@ -78,7 +78,7 @@ key。而 roadmap Backlog 里堆着的字体、字号、启动目录、环境变
 
 **缺口**
 
-- 无 `@xterm/addon-search`：scrollback 不可搜索。
+- 无 `xterm-addon-search`（xterm v5 下的无 scope 包名；非 v6 的 `@xterm/addon-search`）：scrollback 不可搜索。
 - `TerminalView.vue` 的 `scrollback: 5000` 是硬编码常量（#343 为抗输出洪水从更
   大的值下调而来），用户无法按机器性能调整。
 - 无字号 / 行高 / 光标样式配置；字体族固定在 `lib/terminalFont.ts` 常量里。
@@ -123,7 +123,7 @@ key。而 roadmap Backlog 里堆着的字体、字号、启动目录、环境变
 
 | # | 条目 | 说明 |
 |---|---|---|
-| 1 | scrollback 搜索 | `@xterm/addon-search`，Cmd+F / Ctrl+Shift+F，匹配高亮 + 上下跳转 + 计数 |
+| 1 | scrollback 搜索 | `xterm-addon-search`，`Mod+KeyF`（macOS `Cmd+F`，其它平台 `Ctrl+F`）打开，匹配高亮 + 上下跳转 + 计数；会话侧栏搜索改绑 `Cmd/Ctrl+Shift+F` |
 | 2 | 终端外观设置 | 字体族 / 字号 / 行高 / 光标样式与闪烁 / **scrollback 行数**（把 `TerminalView.vue` 的硬编码 5000 提成配置，保留 5000 为默认）。改 `lib/terminalFont.ts` 时必须保持红线 #13 的 CJK-first 字体栈顺序 |
 | 3 | 已有配置接入同步 | `terminal_theme` + `default_shell` 加进 `syncedKeys`；快捷键绑定从 `Plugins.shortcuts.bindings` 拆成独立 key `shortcut_bindings` 后接入。首次接入必须走 `PrefsSeedMarkers` 播种路径，不能直接 pull 覆盖本地既有配置 |
 | 4 | profile（会话配置档） | name + shell + 启动目录 + 环境变量 + 启动命令；新建 tab / split 时可选 profile，可设默认。一条覆盖 Backlog 的「默认 shell 设置改进」「启动目录设置」「环境变量设置」三项。sealed 同步 |

@@ -26,11 +26,12 @@ export const ACTIONS: readonly ShortcutAction[] = [
   { id: "pane.focus-right",           group: "pane", labelKey: "settings.shortcuts.focusPaneRight",                      defaultBinding: "Mod+Alt+ArrowRight" },
   { id: "pane.focus-up",              group: "pane", labelKey: "settings.shortcuts.focusPaneUp",                         defaultBinding: "Mod+Alt+ArrowUp" },
   { id: "pane.focus-down",            group: "pane", labelKey: "settings.shortcuts.focusPaneDown",                       defaultBinding: "Mod+Alt+ArrowDown" },
+  { id: "terminal.search",            group: "pane", labelKey: "settings.shortcuts.terminalSearch",                      defaultBinding: "Mod+KeyF" },
   { id: "tab.new",                    group: "tab",  labelKey: "settings.shortcuts.newTab",                               defaultBinding: "Mod+KeyT" },
   { id: "tab.prev",                   group: "tab",  labelKey: "settings.shortcuts.previousTab",                          defaultBinding: "Mod+Shift+BracketLeft" },
   { id: "tab.next",                   group: "tab",  labelKey: "settings.shortcuts.nextTab",                              defaultBinding: "Mod+Shift+BracketRight" },
   { id: "toggleTaskSidebar",          group: "sidebar", labelKey: "tasks.sidebar.collapse",                               defaultBinding: "Mod+KeyB" },
-  { id: "sidebar.focus-search",       group: "sidebar", labelKey: "settings.shortcuts.focusSidebarSearch",                defaultBinding: "Mod+KeyF" },
+  { id: "sidebar.focus-search",       group: "sidebar", labelKey: "settings.shortcuts.focusSidebarSearch",                defaultBinding: "Mod+Shift+KeyF" },
 ] as const;
 
 export const ACTION_BY_ID: Record<string, ShortcutAction | undefined> = Object.fromEntries(
@@ -81,7 +82,7 @@ export function serialize(e: KeyboardEvent, mod: Mod): string | null {
 }
 
 // resolvedBindings merges the user overrides with the registry defaults and
-// returns the resulting action -> binding map (containing all 12 actions).
+// returns the resulting action -> binding map (containing all 13 actions).
 export function resolvedBindings(
   overrides: Record<string, string>,
 ): Record<string, string> {

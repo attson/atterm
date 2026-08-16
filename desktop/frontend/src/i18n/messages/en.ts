@@ -335,6 +335,7 @@ export const en = {
       previousTab: "Previous tab",
       nextTab: "Next tab",
       focusSidebarSearch: "Focus sidebar search",
+      terminalSearch: "Search terminal",
     },
     diagnostics: {
       tab: "Diagnostics",

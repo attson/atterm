@@ -33,12 +33,12 @@ async function setupStore(initial: Record<string, string>) {
 }
 
 describe("SettingsShortcuts", () => {
-  it("renders 12 rows grouped under 'pane', 'tab', and 'sidebar'", async () => {
+  it("renders 13 rows grouped under 'pane', 'tab', and 'sidebar'", async () => {
     await setupStore({});
     const wrapper = mount(SettingsShortcuts, { props: { mod: "Control" } });
     await flushPromises();
     const rows = wrapper.findAll(".shortcut-row");
-    expect(rows).toHaveLength(12);
+    expect(rows).toHaveLength(13);
     expect(wrapper.text()).toContain("Pane");
     expect(wrapper.text()).toContain("Tab");
     expect(wrapper.text()).toContain("Sidebar");
@@ -87,8 +87,8 @@ describe("SettingsShortcuts", () => {
     const wrapper = mount(SettingsShortcuts, { props: { mod: "Control" } });
     await flushPromises();
     const cells = wrapper.findAllComponents({ name: "HotkeyCaptureCell" });
-    // Index 7 is tab.new (after pane.* 0..6). Change it to a non-default.
-    await cells[7].vm.$emit("update", "Mod+KeyP");
+    // Index 8 is tab.new (after pane.* 0..7, which now includes terminal.search). Change it to a non-default.
+    await cells[8].vm.$emit("update", "Mod+KeyP");
     await flushPromises();
     await wrapper.find("button.save").trigger("click");
     await flushPromises();

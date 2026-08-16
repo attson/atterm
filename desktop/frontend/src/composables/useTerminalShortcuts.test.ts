@@ -72,8 +72,8 @@ describe("useTerminalShortcuts (default bindings)", () => {
     expect(handlers.onSwitchTab).toHaveBeenCalledWith(-1);
   });
 
-  it("Ctrl+F -> onFocusSidebarSearch, preventDefault", () => {
-    const ev = fireKey({ key: "f", code: "KeyF", ctrlKey: true });
+  it("Ctrl+Shift+F -> onFocusSidebarSearch, preventDefault", () => {
+    const ev = fireKey({ key: "F", code: "KeyF", ctrlKey: true, shiftKey: true });
     expect(handlers.onFocusSidebarSearch).toHaveBeenCalledTimes(1);
     expect(ev.defaultPrevented).toBe(true);
   });
@@ -154,5 +154,65 @@ describe("useTerminalShortcuts (user overrides)", () => {
     expect(handlers.onNewTab).toHaveBeenCalledTimes(1); // old key no longer fires
     fireKey({ key: "p", code: "KeyP", ctrlKey: true });
     expect(handlers.onNewTab).toHaveBeenCalledTimes(2); // new key fires
+  });
+});
+
+describe("useTerminalShortcuts (terminal search)", () => {
+  let scope: ReturnType<typeof effectScope>;
+  let bindings: Ref<Record<string, string>>;
+  const handlers = {
+    onSplitVertical: vi.fn(),
+    onSplitHorizontal: vi.fn(),
+    onClosePane: vi.fn(),
+    onFocusPane: vi.fn(),
+    onNewTab: vi.fn(),
+    onSwitchTab: vi.fn(),
+    onFocusSidebarSearch: vi.fn(),
+    onTerminalSearch: vi.fn(),
+  };
+
+  beforeEach(() => {
+    Object.values(handlers).forEach((h) => h.mockReset());
+    bindings = ref({});
+    scope = effectScope();
+    scope.run(() => useTerminalShortcuts(handlers, { mod: "Control", bindings }));
+  });
+
+  afterEach(() => {
+    scope.stop();
+  });
+
+  it("Ctrl+F -> onTerminalSearch", () => {
+    const ev = fireKey({ key: "f", code: "KeyF", ctrlKey: true });
+    expect(handlers.onTerminalSearch).toHaveBeenCalledTimes(1);
+    expect(handlers.onFocusSidebarSearch).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("Ctrl+Shift+F -> onFocusSidebarSearch", () => {
+    fireKey({ key: "F", code: "KeyF", ctrlKey: true, shiftKey: true });
+    expect(handlers.onFocusSidebarSearch).toHaveBeenCalledTimes(1);
+    expect(handlers.onTerminalSearch).not.toHaveBeenCalled();
+  });
+});
+
+describe("useTerminalShortcuts (terminal search handler omitted)", () => {
+  it("Ctrl+F does not throw when onTerminalSearch is absent", () => {
+    const scope = effectScope();
+    scope.run(() =>
+      useTerminalShortcuts(
+        {
+          onSplitVertical: vi.fn(),
+          onSplitHorizontal: vi.fn(),
+          onClosePane: vi.fn(),
+          onFocusPane: vi.fn(),
+          onNewTab: vi.fn(),
+          onSwitchTab: vi.fn(),
+        },
+        { mod: "Control" },
+      ),
+    );
+    expect(() => fireKey({ key: "f", code: "KeyF", ctrlKey: true })).not.toThrow();
+    scope.stop();
   });
 });

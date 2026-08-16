@@ -20,6 +20,7 @@ export interface ShortcutHandlers {
   onSwitchTab: (delta: number) => void;
   onToggleTaskSidebar?: () => void;
   onFocusSidebarSearch?: () => void;
+  onTerminalSearch?: () => void;
 }
 
 export interface ShortcutOptions {
@@ -48,6 +49,7 @@ function dispatch(actionId: string, h: ShortcutHandlers): boolean {
     case "tab.next":                   h.onSwitchTab(1); return true;
     case "toggleTaskSidebar":          h.onToggleTaskSidebar?.(); return true;
     case "sidebar.focus-search":       h.onFocusSidebarSearch?.(); return true;
+    case "terminal.search":            h.onTerminalSearch?.(); return true;
   }
   return false;
 }

@@ -337,6 +337,7 @@ export const zhCN = {
       previousTab: "上一个标签页",
       nextTab: "下一个标签页",
       focusSidebarSearch: "聚焦侧栏搜索",
+      terminalSearch: "搜索终端",
     },
     diagnostics: {
       tab: "诊断",

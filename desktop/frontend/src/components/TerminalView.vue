@@ -1715,7 +1715,11 @@ function onSearchClose() {
   searchAddon?.clearDecorations();
   searchResultIndex.value = -1;
   searchResultCount.value = 0;
-  term?.focus();
+  // Routed through the gated helper, not a raw direct call — a viewer pane
+  // has disableStdin: !isDriver.value, so taking focus buys it nothing while
+  // risking the iOS soft-keyboard pop this file guards against elsewhere
+  // (see focusTerminalForPaneActivation).
+  focusTerminalIfDriver();
 }
 
 watch(

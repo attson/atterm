@@ -1126,13 +1126,8 @@ describe("TerminalView programmatic focus", () => {
   test("does not focus xterm while the pane is still a viewer", () => {
     expect(source).toMatch(/function\s+focusTerminalIfDriver\s*\(/);
     expect(source).toMatch(/focusTerminalIfDriver[\s\S]*?if\s*\(\s*!isDriver\.value\s*\)\s*return/);
-    // Two unconditional call sites are expected: focusTerminalIfDriver's own
-    // gated call, and onSearchClose's return-focus. Scrollback search works
-    // on viewer panes too (it's local buffer matching, not input), so
-    // closing it intentionally bypasses the driver gate — disableStdin still
-    // blocks typed input either way.
     const directFocusCalls = source.match(/term\?\.focus\(\)/g) ?? [];
-    expect(directFocusCalls).toHaveLength(2);
+    expect(directFocusCalls).toHaveLength(1);
   });
 
   test("keeps xterm textarea non-editable while the pane is still a viewer", () => {
@@ -1188,9 +1183,17 @@ describe("TerminalView scrollback search wiring", () => {
   });
 
   test("closing the search clears decorations and returns focus to the terminal", () => {
-    expect(source).toMatch(
-      /function onSearchClose\(\) \{[\s\S]*?searchOpen\.value = false;[\s\S]*?searchAddon\?\.clearDecorations\(\);[\s\S]*?term\?\.focus\(\);/,
-    );
+    const body = source.match(/function\s+onSearchClose\s*\([^)]*\)\s*\{[\s\S]*?\n\}/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/searchOpen\.value = false;/);
+    expect(body![0]).toMatch(/searchAddon\?\.clearDecorations\(\);/);
+    // Not term?.focus() directly — a viewer pane has disableStdin, so taking
+    // xterm focus buys it nothing while risking the iOS soft-keyboard pop
+    // this file guards against elsewhere. Route through the same gated path
+    // as everywhere else (see "does not focus xterm while the pane is still
+    // a viewer" above, which pins exactly one direct term?.focus() call).
+    expect(body![0]).toMatch(/focusTerminalIfDriver\(\);/);
+    expect(body![0]).not.toMatch(/term\?\.focus\(\)/);
   });
 
   test("renders the search bar bound to the addon-backed state", () => {

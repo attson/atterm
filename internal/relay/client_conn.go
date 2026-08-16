@@ -155,8 +155,21 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		f, err := readFrame(ctx, c)
 		if err != nil {
 			var ce websocket.CloseError
-			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-				logging.Debug("relay-client", "read: %v", err)
+			// Record how the connection ended. The client only reports
+			// "reconnecting", and the close code is the one fact that says
+			// whether the browser hung up, the peer went away, or a frame broke
+			// a limit — without it every disconnect looks the same from both
+			// ends.
+			switch {
+			case errors.As(err, &ce):
+				logging.Info("relay-client", "closed session=%s code=%d reason=%q",
+					attachedSessionID(sess), int(ce.Code), ce.Reason)
+			case errors.Is(err, context.Canceled), errors.Is(err, net.ErrClosed):
+				logging.Info("relay-client", "closed session=%s reason=local-teardown",
+					attachedSessionID(sess))
+			default:
+				logging.Info("relay-client", "closed session=%s reason=read-error error=%v",
+					attachedSessionID(sess), err)
 			}
 			return
 		}
@@ -382,4 +395,13 @@ func (s *Server) sendFSClientError(out chan<- proto.Frame, onOverflow func(), se
 	if !sendFSFrameToRoute(fsClientRoute{out: out, onOverflow: onOverflow}, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
 		s.debugf("client fs_error_drop session=%s request_id=%s", sessionID, requestID)
 	}
+}
+
+// attachedSessionID renders the session a connection was attached to, or a
+// placeholder while it is still pre-ATTACH.
+func attachedSessionID(sess *session.Session) string {
+	if sess == nil {
+		return "none"
+	}
+	return sess.ID.String()
 }

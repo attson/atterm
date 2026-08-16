@@ -206,6 +206,30 @@ export function GetTaskSidebarWidth() {
   return window['go']['main']['App']['GetTaskSidebarWidth']();
 }
 
+export function GetTerminalCursorBlink() {
+  return window['go']['main']['App']['GetTerminalCursorBlink']();
+}
+
+export function GetTerminalCursorStyle() {
+  return window['go']['main']['App']['GetTerminalCursorStyle']();
+}
+
+export function GetTerminalFontHead() {
+  return window['go']['main']['App']['GetTerminalFontHead']();
+}
+
+export function GetTerminalFontSize() {
+  return window['go']['main']['App']['GetTerminalFontSize']();
+}
+
+export function GetTerminalLineHeight() {
+  return window['go']['main']['App']['GetTerminalLineHeight']();
+}
+
+export function GetTerminalScrollback() {
+  return window['go']['main']['App']['GetTerminalScrollback']();
+}
+
 export function GetTerminalTheme() {
   return window['go']['main']['App']['GetTerminalTheme']();
 }
@@ -440,6 +464,30 @@ export function SetTaskSidebarCollapsed(arg1) {
 
 export function SetTaskSidebarWidth(arg1) {
   return window['go']['main']['App']['SetTaskSidebarWidth'](arg1);
+}
+
+export function SetTerminalCursorBlink(arg1) {
+  return window['go']['main']['App']['SetTerminalCursorBlink'](arg1);
+}
+
+export function SetTerminalCursorStyle(arg1) {
+  return window['go']['main']['App']['SetTerminalCursorStyle'](arg1);
+}
+
+export function SetTerminalFontHead(arg1) {
+  return window['go']['main']['App']['SetTerminalFontHead'](arg1);
+}
+
+export function SetTerminalFontSize(arg1) {
+  return window['go']['main']['App']['SetTerminalFontSize'](arg1);
+}
+
+export function SetTerminalLineHeight(arg1) {
+  return window['go']['main']['App']['SetTerminalLineHeight'](arg1);
+}
+
+export function SetTerminalScrollback(arg1) {
+  return window['go']['main']['App']['SetTerminalScrollback'](arg1);
 }
 
 export function SetTerminalTheme(arg1) {

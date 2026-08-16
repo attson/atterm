@@ -201,6 +201,54 @@ export function setTerminalThemePreference(themeID: string): Promise<void> {
   return bindings().SetTerminalTheme(themeID);
 }
 
+export function getTerminalFontHead(): Promise<string> {
+  return bindings().GetTerminalFontHead();
+}
+
+export function setTerminalFontHead(head: string): Promise<void> {
+  return bindings().SetTerminalFontHead(head);
+}
+
+export function getTerminalFontSize(): Promise<number> {
+  return bindings().GetTerminalFontSize();
+}
+
+export function setTerminalFontSize(size: number): Promise<void> {
+  return bindings().SetTerminalFontSize(size);
+}
+
+export function getTerminalLineHeight(): Promise<number> {
+  return bindings().GetTerminalLineHeight();
+}
+
+export function setTerminalLineHeight(lineHeight: number): Promise<void> {
+  return bindings().SetTerminalLineHeight(lineHeight);
+}
+
+export function getTerminalCursorStyle(): Promise<string> {
+  return bindings().GetTerminalCursorStyle();
+}
+
+export function setTerminalCursorStyle(style: string): Promise<void> {
+  return bindings().SetTerminalCursorStyle(style);
+}
+
+export function getTerminalCursorBlink(): Promise<boolean> {
+  return bindings().GetTerminalCursorBlink();
+}
+
+export function setTerminalCursorBlink(blink: boolean): Promise<void> {
+  return bindings().SetTerminalCursorBlink(blink);
+}
+
+export function getTerminalScrollback(): Promise<number> {
+  return bindings().GetTerminalScrollback();
+}
+
+export function setTerminalScrollback(lines: number): Promise<void> {
+  return bindings().SetTerminalScrollback(lines);
+}
+
 export function getLocalePreference(): Promise<LocalePreference> {
   return bindings().GetLocalePreference();
 }

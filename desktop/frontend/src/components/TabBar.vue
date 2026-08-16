@@ -5,7 +5,7 @@ import type { SessionInfo } from "../lib/connection";
 import type { Tab } from "../lib/types";
 import { useI18n } from "../i18n/useI18n";
 import TaskStateIcon from "./TaskStateIcon.vue";
-import type { TaskState } from "../lib/taskState";
+import { stateColor, type TaskState } from "../lib/taskState";
 import { usableAITitle } from "../lib/sessionLabel";
 import { SESSION_DND_MIME, carriesSessionDrag, draggingSession } from "../lib/paneDrop";
 
@@ -211,6 +211,16 @@ function shortTitle(s: SessionInfo | null): string {
 // AI sessions surface the OSC 0/1/2 title their tool sets (claude, codex…)
 // when one is available; everything else falls back to shortTitle so shell
 // tabs keep their cwd-basename display.
+/**
+ * Same tint contract as the sidebar's rows (TaskGroupedList.unreadTint): the
+ * tab wears its session's state colour while unread, so the two surfaces read
+ * as one system instead of each inventing its own unread marker.
+ */
+function unreadTint(s: SessionInfo | null): Record<string, string> | undefined {
+  if (s?.unread !== true) return undefined;
+  return { "--unread-c": stateColor((s.task_state as TaskState | undefined) ?? "idle") };
+}
+
 function tabTitle(s: SessionInfo | null): string {
   if (s) {
     const title = usableAITitle({
@@ -297,10 +307,12 @@ function onStripDrop(e: DragEvent) {
         class="tab"
         :class="{
           active: t.id === currentId,
+          unread: t.activeSession?.unread === true,
           remote: t.activeRemote,
           disconnected: t.disconnected,
           dragging: drag?.active && drag?.fromId === t.id,
         }"
+        :style="unreadTint(t.activeSession)"
         :title="(t.activeRemote ? i18nT('terminal.remotePrefix') : '') + (t.disconnected ? i18nT('terminal.tabDisconnectedSuffix') + ' ' : '') + (t.activeSession?.command ?? '')"
         @click="emit('activate', t.id)"
         @pointerdown="onTabPointerDown(t.id, $event)"
@@ -325,11 +337,6 @@ function onStripDrop(e: DragEvent) {
           :size="10"
         />
         <span class="title">{{ tabTitle(t.activeSession) }}</span>
-        <span
-          v-if="t.activeSession?.unread && t.activeSession.task_state !== 'waiting_input' && t.activeSession.task_state !== 'completed'"
-          class="tab-unread-dot"
-          data-test="tab-unread-dot"
-        >●</span>
         <button class="close" @pointerdown.stop @click="onClose($event, t.id)">×</button>
       </div>
     </div>
@@ -489,10 +496,18 @@ function onStripDrop(e: DragEvent) {
 }
 .admin-btn:hover { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
 .admin-btn.active { color: var(--accent); background: rgba(88, 166, 255, 0.08); }
-.tab .tab-unread-dot {
-  font-size: 8px;
-  margin-left: 4px;
-  color: currentColor;
+/* Unread tab. Same language as the sidebar row — a wash of the session's state
+   colour plus a bolder title — but the accent bar sits at the bottom edge to
+   match how .tab.active already marks itself, rather than on the left where a
+   tab has no room for it. */
+.tab.unread {
+  background: color-mix(in srgb, var(--unread-c) 10%, transparent);
+}
+.tab.unread .title { font-weight: 600; color: #fff; }
+/* Active wins the bottom bar (it is the tab you are looking at); unread keeps
+   the wash, which .active's own background sits on top of. */
+.tab.unread:not(.active) {
+  box-shadow: inset 0 -2px 0 var(--unread-c);
 }
 
 @media (max-width: 767px) {

@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import TaskStateIcon from "../components/TaskStateIcon.vue";
 import LastOutputIndicator from "../components/LastOutputIndicator.vue";
-import { presets } from "../lib/taskState";
+import { presets, stateColor } from "../lib/taskState";
 import WidgetSprite from "./WidgetSprite.vue";
 import { onWidgetBootstrap, onWidgetState, widgetBridge } from "./bridge";
 import type { WidgetSessionRow, WidgetState } from "../lib/widgetState";
@@ -307,9 +307,11 @@ onUnmounted(() => {
         class="row"
         :class="{
           done: row.state === 'idle',
+          unread: row.unread,
           highlighted: highlightedIds.has(row.sessionId),
           'hl-failed': row.state === 'failed',
         }"
+        :style="row.unread ? { '--unread-c': stateColor(row.taskState) } : undefined"
         type="button"
         @click.stop="activate(row.sessionId)"
       >
@@ -477,6 +479,29 @@ onUnmounted(() => {
 
 .row.done {
   opacity: 0.6;
+}
+
+/* Unread, in the same language as the main window's sidebar rows: a left bar
+   and a wash of the row's own state colour, handed to CSS as --unread-c.
+   Deliberately lighter than .highlighted below — that one is a transient
+   "this just escalated" pulse during the 15s auto-peek, this one is the
+   standing "you have not looked at it yet". When both apply the highlight
+   wins, since it is the more urgent and the shorter-lived of the two.
+   .done dims finished rows to 0.6; unread rows are exactly the finished ones
+   worth looking at, so they opt back out of that. */
+.row.unread {
+  background: color-mix(in srgb, var(--unread-c) 9%, transparent);
+  box-shadow: inset 3px 0 0 var(--unread-c);
+}
+.row.unread:hover {
+  background: color-mix(in srgb, var(--unread-c) 16%, transparent);
+}
+.row.unread.done {
+  opacity: 1;
+}
+.row.unread .row-title {
+  font-weight: 600;
+  color: #fff;
 }
 
 /* A session that just escalated into waiting/failed: tinted fill plus a left

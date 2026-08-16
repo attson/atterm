@@ -33,6 +33,17 @@ const COLORS: Record<TaskState, string> = {
   closed: "#6b7280",
 };
 
+/**
+ * Palette lookup for surfaces that tint a whole row rather than draw a glyph
+ * (sidebar rows, tabs, widget rows). They need the raw colour to hand to CSS
+ * as a custom property; going through a preset's colorOf would tie a row's
+ * tint to whichever preset happens to be active, and the two presets differ
+ * only by whether a text label shows.
+ */
+export function stateColor(state: TaskState): string {
+  return COLORS[state];
+}
+
 // Glyph shape is not on the preset — TaskStateIcon.vue dispatches on
 // state directly and draws inline SVG. Text-glyph fallback (unicode
 // symbols like ◐ / ✓ / ✗) failed to render on iOS 26.3 as .notdef "?"

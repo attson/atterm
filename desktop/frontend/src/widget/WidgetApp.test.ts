@@ -193,8 +193,15 @@ describe("WidgetApp", () => {
     await w.vm.$nextTick();
 
     expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(true);
-    expect(w.find("path.task-unread-star").exists()).toBe(true);
-    expect(w.find("path.task-completed-check").exists()).toBe(false);
+    // Same filled-disc treatment as the sidebar and the tab bar — the widget
+    // is not allowed to invent its own unread marker.
+    expect(w.find("circle.task-unread-disc").attributes("fill")).toBe("#22c55e");
+    expect(w.find("circle.task-unread-dot").attributes("fill")).toBe("#22c55e");
+    expect(w.find("path.task-unread-star").exists()).toBe(false);
+    // The row itself carries the state colour, matching TaskGroupedList.
+    const row = w.get(".row");
+    expect(row.classes()).toContain("unread");
+    expect(row.attributes("style")).toContain("--unread-c: #22c55e");
   });
 
   it("uses unread sessions for the sprite badge instead of waiting sessions", async () => {

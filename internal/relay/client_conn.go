@@ -85,7 +85,11 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				case <-writerCtx.Done():
 					return
 				case <-sub.Done():
-					_ = c.Close(websocket.StatusGoingAway, "session ended")
+					// The subscription ended, which is not the same as the session
+					// ending: it also covers the relay letting this client go.
+					// Naming it "session ended" sent at least one debugging
+					// session chasing a session that was alive the whole time.
+					_ = c.Close(websocket.StatusGoingAway, "subscription ended")
 					return
 				case f := <-targetedOut:
 					s.debugFrame("client", "send", f)
@@ -141,7 +145,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 							return
 						case <-sub.Done():
 							timer.Stop()
-							_ = c.Close(websocket.StatusGoingAway, "session ended")
+							_ = c.Close(websocket.StatusGoingAway, "subscription ended")
 							return
 						case <-timer.C:
 						}

@@ -45,6 +45,12 @@ const (
 	// 512 KiB is roughly those 20000 lines of ordinary output, so nothing the
 	// client could have kept is lost.
 	replayTailCapBytes = 512 * 1024
+	// resyncTailBytes is how much recent output a client gets when it falls too
+	// far behind to keep its place in the stream.
+	resyncTailBytes = 64 * 1024
+	// resyncLogInterval throttles the resync log line. Under a flood a client
+	// can overflow many times a second, and a line each would bury the log.
+	resyncLogInterval = 5 * time.Second
 )
 
 // Session is the relay-side state for one PTY.
@@ -134,6 +140,12 @@ type Session struct {
 	// silently rounds sub-second silenceThresholdMS values up to the next
 	// integer-second boundary.
 	lastOutputMono time.Time
+
+	// Bookkeeping for the resync path: how many times a client has been shed
+	// and restarted, and when that was last reported, so a flood cannot bury
+	// the log in one line per overflow.
+	resyncCount      uint64
+	lastResyncLogged time.Time
 
 	// lastListActivityNotify throttles session-list refreshes driven by raw
 	// output. LastOutputAt updates for every OUT chunk, but LIST_RESP is a full
@@ -605,17 +617,16 @@ func (s *Session) fanout(f proto.Frame) {
 		select {
 		case sub.out <- f:
 		default:
-			// slow consumer: drop and let it reconnect with ATTACH(since_seq).
+			// The client is behind by a whole queue. Dropping it here — the old
+			// behaviour — closed its websocket, and it reconnected, replayed,
+			// fell behind again and came straight back: a local terminal that
+			// announced "reconnecting" for as long as the flood lasted.
 			//
-			// That contract is cheap only while the scrollback still covers the
-			// gap. Under a flood the ring wraps in seconds, so the reconnect
-			// replays the entire buffer, falls behind again, and lands back
-			// here — which shows up as a replay progress bar reappearing with
-			// no tab switch and no re-attach by the user. Log it: from the
-			// outside the loop is invisible.
-			logging.Info("session", "subscriber dropped sid=%s reason=queue-full phase=live",
-				s.ID)
-			s.removeSubscriber(sub)
+			// A terminal cannot show every byte of a firehose anyway, and the
+			// user cannot read it. Throw away what it has not caught up on and
+			// hand it a coherent recent view instead. It stays attached, keeps
+			// the driver, and sees a jump rather than a disconnect.
+			s.resyncSubscriber(sub)
 		}
 	}
 
@@ -1102,6 +1113,52 @@ func enqueueReplayProgress(sub *Subscriber, id uuid.UUID, phase string, bytes, t
 // Unsubscribe removes a client outbox.
 func (s *Session) Unsubscribe(sub *Subscriber) {
 	s.removeSubscriber(sub)
+}
+
+// resyncSubscriber discards a subscriber's backlog and queues a coherent
+// restart: the reset marker a truncated replay uses, then the tail of the
+// scrollback. Cursor-addressed output cannot survive a hole, so the marker is
+// what keeps the client from painting new text over an unrelated old frame.
+func (s *Session) resyncSubscriber(sub *Subscriber) {
+	for drained := false; !drained; {
+		select {
+		case <-sub.out:
+		default:
+			drained = true
+		}
+	}
+
+	s.mu.RLock()
+	alt := s.altScreen
+	s.mu.RUnlock()
+
+	tail := s.scroll.TailBytes(resyncTailBytes)
+	seq := s.scroll.LatestSeq()
+
+	select {
+	case sub.out <- proto.EncodeOut(s.ID, 0, replayResetMarker(alt)):
+	default:
+		return
+	}
+	if len(tail) > 0 {
+		select {
+		case sub.out <- proto.EncodeOut(s.ID, seq, tail):
+		default:
+		}
+	}
+
+	s.mu.Lock()
+	s.resyncCount++
+	count := s.resyncCount
+	due := time.Since(s.lastResyncLogged) >= resyncLogInterval
+	if due {
+		s.lastResyncLogged = time.Now()
+	}
+	s.mu.Unlock()
+	if due {
+		logging.Info("session", "subscriber resynced sid=%s reason=queue-full total=%d",
+			s.ID, count)
+	}
 }
 
 func (s *Session) removeSubscriber(sub *Subscriber) {

@@ -8,38 +8,35 @@ import (
 	"github.com/google/uuid"
 )
 
-// A client that cannot keep up is dropped by the live fan-out, which expects it
-// to reconnect. That contract is cheap only while the scrollback still covers
-// the gap: a flood wraps the 4 MiB ring in seconds, so the reconnect replays
-// the whole ring, falls behind again, and is dropped again — which is what puts
-// a replay progress bar on screen with no tab switch and no re-attach by the
-// user.
-func TestFanout_DropsSubscriberThatCannotKeepUp(t *testing.T) {
+// One client that stops reading must never hold up the PTY or the other
+// clients. It gets shed and resynced (see resync_test.go); what matters here is
+// that the fan-out itself stays non-blocking while that happens.
+func TestFanout_NeverBlocksOnAClientThatStoppedReading(t *testing.T) {
 	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
 	defer s.Close()
 
-	sub, _ := s.Subscribe(0, "slow-client", "test")
-	if s.SubscriberCount() != 1 {
-		t.Fatalf("setup: subscriber count = %d, want 1", s.SubscriberCount())
-	}
+	stuck, _ := s.Subscribe(0, "stuck-client", "test")
+	_ = stuck // deliberately never drained
 
-	// Never read sub.out — the shape of a client whose main thread is busy
-	// parsing megabytes of output.
-	chunk := make([]byte, 4096)
+	chunk := make([]byte, 8192)
 	for i := range chunk {
 		chunk[i] = 'y'
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for seq := uint64(1); s.SubscriberCount() > 0 && time.Now().Before(deadline); seq++ {
-		s.PushOut(seq, chunk)
-	}
 
-	if s.SubscriberCount() != 0 {
-		t.Fatal("a subscriber that never drains was not dropped; the reconnect loop theory needs revisiting")
-	}
+	done := make(chan struct{})
+	go func() {
+		for seq := uint64(1); seq <= subscriberQueueDepth*3; seq++ {
+			s.PushOut(seq, chunk)
+		}
+		close(done)
+	}()
+
 	select {
-	case <-sub.closed:
-	default:
-		t.Fatal("dropped subscriber should be closed so the client learns to reconnect")
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PushOut blocked on a client that stopped reading")
+	}
+	if s.SubscriberCount() != 1 {
+		t.Fatal("the client should still be attached after being resynced")
 	}
 }

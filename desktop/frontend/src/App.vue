@@ -8,7 +8,6 @@ import { useWindowMaximized } from "./composables/useWindowMaximized";
 import PaneGrid from "./components/PaneGrid.vue";
 import AdminPanel from "./components/AdminPanel.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
-import SessionPickerDialog from "./components/SessionPickerDialog.vue";
 import NewSshDialog from "./components/NewSshDialog.vue";
 import SshHostsPanel from "./components/SshHostsPanel.vue";
 import ConfirmQuitDialog from "./components/ConfirmQuitDialog.vue";
@@ -67,7 +66,15 @@ import { mergeLocalSessions } from "./lib/localListMerge";
 import { pruneStaleRemoteTabs } from "./lib/remoteTabCleanup";
 import { PANE_COUNT, type LayoutKind, type Pane, type Tab, type SplitDir } from "./lib/types";
 import { RATIO_DEFAULT, closePane, findPaneLocation, focusNeighbor, transitionLayout } from "./lib/layout";
-import { useTerminalShortcuts, type SplitMode } from "./composables/useTerminalShortcuts";
+import { resolvePaneRemote } from "./lib/paneRemote";
+import {
+  clearDraggingSession,
+  planDetachToTab,
+  resolveDroppedSession,
+  swapPanes,
+  type DroppedSession,
+} from "./lib/paneDrop";
+import { useTerminalShortcuts } from "./composables/useTerminalShortcuts";
 import { useSessions } from "./composables/useSessions";
 import { useRecoverySnapshot } from "./composables/useRecoverySnapshot";
 import { useSessionPins } from "./composables/useSessionPins";
@@ -175,6 +182,98 @@ async function setSidebarCollapsedAndPersist(v: boolean) {
 
 function onSidebarOpen(s: RemoteSession) {
   openRemoteAsTab(s.session_id);
+}
+
+// A session dragged out of the sidebar onto a pane. Placement rules live in
+// planSessionDrop; here we only commit them and focus the pane the user just
+// dropped into, since that is the one they mean to type in.
+//
+// Nothing is closed and nothing is spawned: a drag rearranges which pane shows
+// which session, so the displaced session keeps its pane (over in the tab the
+// dragged one came from) and the tab strip stays exactly as it was.
+function onPaneDropSession(t: Tab, payload: { paneIdx: number; sessionId: string }) {
+  const dropped = resolveDroppedSession(tabs.value, payload.sessionId);
+  if (!dropped) return;
+
+  // Already in this tab: the drop means "these two should change places", which
+  // is the only way to rearrange a split. Dropping a pane on itself just
+  // focuses it — and says so, since several sessions can share a title and a
+  // silent no-op reads as the drag having failed.
+  const here = t.panes.findIndex((p) => p.sessionId === payload.sessionId);
+  if (here !== -1) {
+    if (here === payload.paneIdx) {
+      showToast(i18nT("app.sessionAlreadyInTab"));
+    } else {
+      t.panes = swapPanes(t.panes, here, payload.paneIdx);
+    }
+    t.activePaneIdx = payload.paneIdx;
+    clearDraggingSession();
+    return;
+  }
+
+  // Dropping onto an empty slot needs no split — that slot is the destination.
+  const onto = t.panes[payload.paneIdx];
+  const targetIdx = onto && !onto.sessionId ? payload.paneIdx : null;
+  if (targetIdx === null) {
+    // Splitting is what the drop means: the pane the user aimed at keeps its
+    // session and the dragged one lands in the slot that opens up beside it.
+    const r = transitionLayout(t.layout, t.panes, payload.paneIdx, "vertical", t.colRatio, t.rowRatio);
+    if (r.noop) {
+      showToast(i18nT("app.paneFull"));
+      return;
+    }
+    t.layout = r.layout;
+    t.panes = r.panes;
+    t.colRatio = r.colRatio;
+    t.rowRatio = r.rowRatio;
+    t.activePaneIdx = r.newPaneIdx;
+    detachDroppedSession(dropped);
+    t.panes[r.newPaneIdx] = dropped.pane;
+    clearDraggingSession();
+    return;
+  }
+
+  detachDroppedSession(dropped);
+  t.panes[targetIdx] = dropped.pane;
+  t.activePaneIdx = targetIdx;
+  clearDraggingSession();
+}
+
+// Pulls a session out of a split and into a tab of its own — from the pane's
+// drag grip dropped on the tab strip, or its context menu.
+//
+// Order matters: openRemoteAsTab starts by looking the session up in the
+// existing panes and merely focuses it when found, so the pane has to be
+// vacated first or the new tab is never created. detachOnly keeps the PTY
+// alive across the move.
+// Drives the sidebar row menu: only offer "move to its own tab" when the
+// session is actually sharing a tab with other panes.
+function canDetachSession(sessionId: string): boolean {
+  return planDetachToTab(tabs.value, sessionId) !== null;
+}
+
+function onDetachSessionToTab(sessionId: string) {
+  const plan = planDetachToTab(tabs.value, sessionId);
+  clearDraggingSession();
+  if (!plan) {
+    showToast(i18nT("terminal.alreadyOwnTab"));
+    return;
+  }
+  const src = tabs.value.find((tt) => tt.id === plan.tabId);
+  if (!src) return;
+  closePaneAt(src, plan.paneIdx, { detachOnly: true });
+  openRemoteAsTab(sessionId, plan.pane.remote);
+}
+
+// Vacates the pane the dragged session was showing in, if any. detachOnly is
+// load-bearing: the session is moving between panes, not closing, so the local
+// PTY must survive — the same contract the merge-selected path relies on. Runs
+// after the target tab's layout is settled so the source tab collapsing (or
+// closing, when it had nothing else) cannot renumber the slot we just made.
+function detachDroppedSession(dropped: DroppedSession) {
+  if (!dropped.from) return;
+  const src = tabs.value.find((tt) => tt.id === dropped.from!.tabId);
+  if (src) closePaneAt(src, dropped.from.paneIdx, { detachOnly: true });
 }
 
 function onSidebarClose(s: RemoteSession) {
@@ -307,7 +406,6 @@ const showMaximizedInset = computed(() => isMaximized.value && platform.value !=
 
 // Picker state. When non-null, dialog is open and the resolved pick will go
 // into tabs[*].panes[paneIdx] of the indicated tab (always the current tab).
-const pickerCtx = ref<{ tabId: string; paneIdx: number } | null>(null);
 
 // Recovery-dialog state + restore pipeline. The composable owns the ref
 // backing <RecoveryDialog>, both dialog callbacks, and the multi-branch
@@ -881,30 +979,10 @@ function onSshConnected(sessionId: string) {
   openSshTab(sessionId);
 }
 
-async function onSplit(dir: SplitDir, mode: SplitMode) {
+async function onSplit(dir: SplitDir) {
   const t = currentTab.value;
   if (!t) return;
-  const spawnCwd = mode === "new" ? activeLocalPaneCwd(t) : "";
-
-  // Pick mode: bail before mutating layout if there's nothing the picker
-  // could populate. Otherwise the user gets a permanently empty quadrant
-  // they have to manually close after canceling.
-  if (mode === "pick") {
-    const usedIds = new Set(
-      t.panes.map((p) => p.sessionId).filter((id): id is string => !!id),
-    );
-    const eligible =
-      localList.value.filter((s) => !usedIds.has(s.id)).length +
-      remoteList.value.filter((s) => !usedIds.has(s.id)).length;
-    if (eligible === 0) {
-      showToast(
-        remoteEndpoint.value
-          ? i18nT("app.noOtherSessions")
-          : i18nT("app.noOtherSessionsWithRelayHint"),
-      );
-      return;
-    }
-  }
+  const spawnCwd = activeLocalPaneCwd(t);
 
   const result = transitionLayout(t.layout, t.panes, t.activePaneIdx, dir, t.colRatio, t.rowRatio);
   if (result.noop) {
@@ -918,11 +996,6 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
   t.colRatio = result.colRatio;
   t.rowRatio = result.rowRatio;
 
-  if (mode === "pick") {
-    pickerCtx.value = { tabId: t.id, paneIdx: result.newPaneIdx };
-    return;
-  }
-
   // New shell inherits the active local pane's cwd when known; empty cwd
   // still lets the Go side fall back to HOME for remote/empty/unknown panes.
   // Cols/rows are predicted via the FitAddon probe so the PTY is born at
@@ -935,23 +1008,6 @@ async function onSplit(dir: SplitDir, mode: SplitMode) {
   } catch (e: any) {
     showToast(i18nT("app.splitFailed", { message: e?.message ?? String(e) }));
   }
-}
-
-function onPickerPick(payload: { sessionId: string; remote: boolean }) {
-  const ctx = pickerCtx.value;
-  pickerCtx.value = null;
-  if (!ctx) return;
-  const t = tabs.value.find((tt) => tt.id === ctx.tabId);
-  if (!t) return;
-  if (t.panes.some((p, i) => i !== ctx.paneIdx && p.sessionId === payload.sessionId)) {
-    showToast(i18nT("app.sessionAlreadyInTab"));
-    return;
-  }
-  t.panes[ctx.paneIdx] = { sessionId: payload.sessionId, remote: payload.remote };
-}
-
-function onPickerClose() {
-  pickerCtx.value = null;
 }
 
 async function onClosePane() {
@@ -1051,6 +1107,12 @@ function onSwitchTab(delta: number) {
   gotoTab(tabs.value[next].id);
 }
 
+// `remote` defaults true because the only sessions that reach the create-a-pane
+// branch below are ones not currently displayed — and by construction those are
+// remote: every local session is put into a pane in the same step that spawns
+// it, and every detachOnly caller re-places it immediately. resolvePaneRemote
+// is the guard for the day that stops holding, since a local session taking
+// this branch would be pointed at the relay endpoint and render empty.
 function openRemoteAsTab(sessionId: string, remote = true) {
   // If any tab already holds a pane for this session, switch to it and
   // focus the EXACT pane — sidebar clicks on a session in a multi-pane
@@ -1065,11 +1127,15 @@ function openRemoteAsTab(sessionId: string, remote = true) {
     gotoTab(loc.tabId);
     return;
   }
+  const resolved = resolvePaneRemote(sessionId, localList.value.map((s) => s.id), remote);
+  if (resolved.corrected) {
+    logWarn("app", "opened a local session through the remote path", { sessionId });
+  }
   const id = newId();
   tabs.value.push({
     id,
     layout: "single",
-    panes: [{ sessionId, remote }],
+    panes: [{ sessionId, remote: resolved.remote }],
     activePaneIdx: 0,
     colRatio: RATIO_DEFAULT,
     rowRatio: RATIO_DEFAULT,
@@ -1234,8 +1300,8 @@ const shortcutBindings = computed<Record<string, string>>(() => {
 
 useTerminalShortcuts(
   {
-    onSplitVertical: (mode) => onSplit("vertical", mode),
-    onSplitHorizontal: (mode) => onSplit("horizontal", mode),
+    onSplitVertical: () => onSplit("vertical"),
+    onSplitHorizontal: () => onSplit("horizontal"),
     onClosePane,
     onFocusPane,
     onNewTab: () => { if (caps.localPty) startNewTab(); },
@@ -1546,6 +1612,7 @@ defineExpose({ me });
       :is-admin="isAdmin"
       :admin-open="adminViewOpen"
       @activate="gotoTab"
+      @detach-session="onDetachSessionToTab"
       @close="requestCloseTab"
       @new="startNewTab"
       @new-ssh="showSshHosts = true"
@@ -1570,10 +1637,12 @@ defineExpose({ me });
         :local-host-id="localHostID"
         :local-host="localHost"
         :pane-location-for="paneLocationForSession"
+        :can-detach-session="canDetachSession"
         :tab-index-by-id="tabIndexById"
         @update:collapsed="setSidebarCollapsedAndPersist"
         @open="onSidebarOpen"
         @close="requestCloseSession"
+        @detach-session="onDetachSessionToTab"
         @merge-selected="mergeSelectedIntoTab"
         @close-selected="closeSelectedOpen"
         @markSeen="onMarkSeen"
@@ -1597,6 +1666,8 @@ defineExpose({ me });
             :command-notify-threshold-sec="commandNotifyThresholdSec"
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
             @close-pane="(idx) => requestClosePane(t, idx)"
+            @drop-session="(p) => onPaneDropSession(t, p)"
+            @detach-session="onDetachSessionToTab"
             @toast="showToast"
             @update:col-ratio="(r) => { t.colRatio = r; }"
             @update:row-ratio="(r) => { t.rowRatio = r; }"
@@ -1636,14 +1707,6 @@ defineExpose({ me });
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @relay-config-changed="refreshDesktopRelayConfig"
       @close="onSettingsClose"
-    />
-    <SessionPickerDialog
-      v-if="pickerCtx"
-      :exclude-session-ids="currentTab ? currentTab.panes.map((p) => p.sessionId).filter((id): id is string => !!id) : []"
-      :local-sessions="localList"
-      :remote-sessions="remoteList"
-      @pick="onPickerPick"
-      @close="onPickerClose"
     />
     <NewSshDialog
       v-if="showSshDialog"

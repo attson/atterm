@@ -149,6 +149,7 @@ describe("WidgetApp", () => {
           unread: false,
         },
       ],
+      attentionIds: [],
       overflowCount: 0,
       aiOnly: false,
     });
@@ -185,6 +186,7 @@ describe("WidgetApp", () => {
           unread: true,
         },
       ],
+      attentionIds: [],
       overflowCount: 0,
       aiOnly: false,
     });
@@ -208,6 +210,7 @@ describe("WidgetApp", () => {
       headline: "12 个会话有最新内容",
       subline: "1 个失败 · 2 个在跑 · 1 个等待输入",
       rows: [],
+      attentionIds: [],
       overflowCount: 0,
       aiOnly: false,
     });
@@ -229,6 +232,7 @@ describe("WidgetApp", () => {
       headline: "暂无最新内容",
       subline: "1 个等待输入",
       rows: [],
+      attentionIds: [],
       overflowCount: 0,
       aiOnly: false,
     });
@@ -264,6 +268,7 @@ describe("WidgetApp", () => {
         lastOutputAt: now / 1000 - 1,
         unread: false,
       }],
+      attentionIds: [],
       overflowCount: 0,
       aiOnly: false,
     });
@@ -302,6 +307,7 @@ describe("WidgetApp", () => {
           lastOutputAt: 0, unread: false,
         },
       ],
+      attentionIds: [],
       overflowCount: 0,
       aiOnly: false,
     });
@@ -313,7 +319,42 @@ describe("WidgetApp", () => {
     expect(rows[1].find('[data-test="widget-row-tail"]').exists()).toBe(false);
   });
 
-  it("falls from live to now using the existing local clock without a new snapshot", async () => {
+  it("ages the relative label on its own local clock without a new snapshot", async () => {
+    const now = 1_800_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const w = mount(WidgetApp);
+    stateHandler?.({
+      mood: "waiting",
+      unreadCount: 0,
+      waitingCount: 1,
+      runningCount: 0,
+      failedCount: 0,
+      completedCount: 0,
+      idleCount: 0,
+      headline: "1 个等待输入",
+      subline: "",
+      rows: [{
+        sessionId: "ask", title: "claude", subtitle: "/tmp", state: "waiting",
+        taskState: "waiting_input", kind: "", remoteHost: "", ageMs: 1_000,
+        lastOutputAt: now / 1000 - 1, unread: false,
+      }],
+      attentionIds: [],
+      overflowCount: 0,
+      aiOnly: false,
+    });
+    await w.vm.$nextTick();
+    expect(w.get('[data-test="last-output"]').text()).toBe("now");
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    await w.vm.$nextTick();
+    expect(w.get('[data-test="last-output"]').text()).toBe("1m");
+  });
+
+  // The live icon is a property of the task state, not of the gap since the
+  // last byte: a running session that goes quiet while the model thinks must
+  // not blink live -> now -> live on every local clock tick.
+  it("keeps a running row live across local clock ticks", async () => {
     const now = 1_800_000_000_000;
     vi.useFakeTimers();
     vi.setSystemTime(now);
@@ -333,19 +374,20 @@ describe("WidgetApp", () => {
         taskState: "running", kind: "", remoteHost: "", ageMs: 1_000,
         lastOutputAt: now / 1000 - 1, unread: false,
       }],
+      attentionIds: [],
       overflowCount: 0,
       aiOnly: false,
     });
     await w.vm.$nextTick();
     expect(w.get('[data-test="last-output"]').text()).toBe("live");
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
     await w.vm.$nextTick();
-    expect(w.get('[data-test="last-output"]').text()).toBe("now");
+    expect(w.get('[data-test="last-output"]').text()).toBe("live");
   });
 
   // Builds a snapshot whose single row carries the given attention state.
-  function stateWithRow(state: WidgetState["mood"]): WidgetState {
+  function stateWithRow(state: WidgetState["mood"], sessionId = "s1"): WidgetState {
     return {
       mood: state,
       unreadCount: 0,
@@ -357,10 +399,11 @@ describe("WidgetApp", () => {
       headline: "",
       subline: "",
       rows: [{
-        sessionId: "s1", title: "claude", subtitle: "~/proj", state,
+        sessionId, title: "claude", subtitle: "~/proj", state,
         taskState: state === "waiting" ? "waiting_input" : state === "failed" ? "failed" : "running",
         kind: "claude", remoteHost: "", ageMs: 0, lastOutputAt: 0, unread: false,
       }],
+      attentionIds: state === "waiting" || state === "failed" ? [sessionId] : [],
       overflowCount: 0,
       aiOnly: false,
     };
@@ -398,12 +441,11 @@ describe("WidgetApp", () => {
     const w = mount(WidgetApp);
     bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
 
-    // First waiting snapshot raises the hand and highlights the row.
+    // Seed, escalate, and let the peek window fully close.
+    stateHandler?.(stateWithRow("running"));
     stateHandler?.(stateWithRow("waiting"));
     await w.vm.$nextTick();
     expect(w.find(".row.highlighted").exists()).toBe(true);
-
-    // Let that window fully close.
     await vi.advanceTimersByTimeAsync(15_000);
     await w.vm.$nextTick();
     expect(w.find(".rows").exists()).toBe(false);
@@ -414,5 +456,92 @@ describe("WidgetApp", () => {
     await w.vm.$nextTick();
     expect(w.find(".rows").exists()).toBe(false);
     expect(w.find(".row.highlighted").exists()).toBe(false);
+  });
+
+  // Connecting is not an event. The widget's first snapshot describes a world
+  // that already existed — sessions that were waiting before it started have
+  // not just raised their hands, and popping the window open for them trains
+  // the user to ignore it.
+  it("only seeds its baseline from the first snapshot, without peeking", async () => {
+    vi.useFakeTimers();
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
+
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(false);
+    expect(w.find(".row.highlighted").exists()).toBe(false);
+
+    // A genuinely new session escalating afterwards still raises the hand.
+    const next = stateWithRow("waiting");
+    next.attentionIds = ["s1", "s2"];
+    stateHandler?.(next);
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(true);
+  });
+
+  // The widget renders at most WIDGET_MAX_ROWS, so with more waiting sessions
+  // than that the visible slice reshuffles constantly. Attention is diffed over
+  // every session precisely so that churn is not mistaken for an escalation.
+  it("ignores a session scrolling out of the visible rows and back", async () => {
+    vi.useFakeTimers();
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
+
+    const seed = stateWithRow("waiting", "visible");
+    seed.attentionIds = ["visible", "offscreen"];
+    stateHandler?.(seed);
+    await w.vm.$nextTick();
+
+    // "offscreen" takes the visible slot; both are still waiting.
+    const swapped = stateWithRow("waiting", "offscreen");
+    swapped.attentionIds = ["visible", "offscreen"];
+    stateHandler?.(swapped);
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(false);
+  });
+
+  // waiting_input is partly inferred from output silence, so a working AI
+  // session can bounce waiting -> running -> waiting on its own. Each return
+  // trip is a real escalation by the id diff; the cooldown is what stops the
+  // widget unfolding itself every few seconds because of it.
+  it("does not reopen for a session that flaps inside the cooldown", async () => {
+    vi.useFakeTimers();
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
+
+    stateHandler?.(stateWithRow("running"));
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(false);
+
+    // Output resumes, then goes quiet again — well inside the cooldown.
+    stateHandler?.(stateWithRow("running"));
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(false);
+
+    // Once the cooldown lapses the same session may raise its hand again.
+    await vi.advanceTimersByTimeAsync(60_000);
+    stateHandler?.(stateWithRow("running"));
+    stateHandler?.(stateWithRow("waiting"));
+    await w.vm.$nextTick();
+    expect(w.find(".rows").exists()).toBe(true);
+  });
+
+  it("tints a failed escalation differently from a waiting one", async () => {
+    vi.useFakeTimers();
+    const w = mount(WidgetApp);
+    bootstrapHandler?.({ collapsed: true, x: 0, y: 0, locale: "zh-CN" });
+
+    stateHandler?.(stateWithRow("running"));
+    stateHandler?.(stateWithRow("failed"));
+    await w.vm.$nextTick();
+    const row = w.get(".row.highlighted");
+    expect(row.classes()).toContain("hl-failed");
   });
 });

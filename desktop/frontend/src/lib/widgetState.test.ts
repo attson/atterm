@@ -85,8 +85,11 @@ describe("subtitleOf", () => {
 
 describe("projectWidgetState — aggregate mood", () => {
   const cases: [string, SessionInfo["task_state"][], WidgetMood][] = [
-    ["waiting outranks everything", ["running", "failed", "waiting_input"], "waiting"],
-    ["failed outranks running", ["running", "completed", "failed"], "failed"],
+    // Mirrors the sidebar's order, running first, so the sprite and the list
+    // never disagree about what the headline state is.
+    ["running outranks everything", ["waiting_input", "failed", "running"], "running"],
+    ["waiting outranks failed", ["failed", "completed", "waiting_input"], "waiting"],
+    ["failed outranks idle", ["idle", "failed"], "failed"],
     ["running outranks idle", ["idle", "running"], "running"],
     ["all quiet is idle", ["completed", "idle"], "idle"],
   ];
@@ -116,7 +119,8 @@ describe("projectWidgetState — ordering", () => {
       sess({ id: "wait", task_state: "waiting_input", last_output_at: 1 }),
     ];
     const ids = projectWidgetState(sessions, { nowMs: NOW, groupBy: "state" }).rows.map((r) => r.sessionId);
-    expect(ids).toEqual(["wait", "fail", "new-run", "old-run", "done"]);
+    // The widget shares the sidebar's urgency order, so running leads here too.
+    expect(ids).toEqual(["new-run", "old-run", "wait", "fail", "done"]);
   });
 
   it("matches the sidebar host grouping by local host then activity", () => {

@@ -29,6 +29,7 @@ const props = withDefaults(defineProps<{
   // suffixes when multiple atterm instances on this machine share it.
   localHost?: string;
   paneLocationFor?: (id: string) => { tabId: string; paneIdx: number } | null;
+  canDetachSession?: (id: string) => boolean;
   tabIndexById?: (tabId: string) => number;
 }>(), {
   byStateGroups: () => ({}),
@@ -37,6 +38,7 @@ const props = withDefaults(defineProps<{
   localHostId: "",
   localHost: "",
   paneLocationFor: () => null,
+  canDetachSession: () => false,
   tabIndexById: () => 0,
 });
 
@@ -47,6 +49,7 @@ const emit = defineEmits<{
   (e: "markSeen", payload: { ids: string[] } | { all: true }): void;
   (e: "merge-selected"): void;
   (e: "close-selected"): void;
+  (e: "detach-session", sessionId: string): void;
 }>();
 
 const sel = useSessionSelection();
@@ -368,12 +371,14 @@ const railIcons = computed(() => {
             :local-host="localHost"
             :search-query="query"
             :pane-location-for="paneLocationFor"
+            :can-detach-session="canDetachSession"
             :tab-index-by-id="tabIndexById"
             @open="(s) => emit('open', s)"
             @close="(s) => emit('close', s)"
             @markSeen="(p) => emit('markSeen', p)"
             @merge-selected="emit('merge-selected')"
             @close-selected="emit('close-selected')"
+            @detach-session="emit('detach-session', $event)"
           />
         </div>
         <footer v-if="sel.size.value >= 1">

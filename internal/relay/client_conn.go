@@ -17,6 +17,9 @@ import (
 const clientReadLimit = 17 * 1024 * 1024
 
 var (
+	// clientWriteWait bounds a single write (and the keepalive ping) before the
+	// connection is torn down, so a peer that has stopped reading cannot pin the
+	// writer goroutine forever.
 	clientWriteWait  = 10 * time.Second
 	clientPingPeriod = 25 * time.Second
 )
@@ -83,7 +86,11 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 				case <-writerCtx.Done():
 					return
 				case <-sub.Done():
-					_ = c.Close(websocket.StatusGoingAway, "session ended")
+					// The subscription ended, which is not the same as the session
+					// ending: it also covers the relay letting this client go.
+					// Naming it "session ended" sent at least one debugging
+					// session chasing a session that was alive the whole time.
+					_ = c.Close(websocket.StatusGoingAway, "subscription ended")
 					return
 				case f := <-targetedOut:
 					s.debugFrame("client", "send", f)
@@ -91,7 +98,14 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 					cancel()
 					if err != nil {
-						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
+						// A write that cannot complete inside clientWriteWait
+						// means the client stopped draining its socket — a
+						// renderer whose main thread is stuck parsing a flood
+						// looks exactly like this. Closing here is what the
+						// user sees as "reconnecting", so say it at a level
+						// they can actually find.
+						logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
+							f.SessionID, frameTypeName(f.Type), err)
 						_ = c.CloseNow()
 						return
 					}
@@ -115,7 +129,12 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 					err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(f))
 					cancel()
 					if err != nil {
-						s.debugf("client write_failed frame=%s session=%s error=%q", frameTypeName(f.Type), f.SessionID, err)
+						// Same close as the targeted path above: the live
+						// stream is where a client drowning in output actually
+						// stalls, so this is the line that explains a
+						// "reconnecting" badge on a purely local session.
+						logging.Info("relay-client", "closing session=%s reason=write-timeout frame=%s error=%v",
+							f.SessionID, frameTypeName(f.Type), err)
 						_ = c.CloseNow()
 						return
 					}
@@ -127,7 +146,7 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 							return
 						case <-sub.Done():
 							timer.Stop()
-							_ = c.Close(websocket.StatusGoingAway, "session ended")
+							_ = c.Close(websocket.StatusGoingAway, "subscription ended")
 							return
 						case <-timer.C:
 						}
@@ -141,8 +160,21 @@ func (s *Server) handleClient(ctx context.Context, c *websocket.Conn, scope auth
 		f, err := readFrame(ctx, c)
 		if err != nil {
 			var ce websocket.CloseError
-			if !errors.As(err, &ce) && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-				logging.Debug("relay-client", "read: %v", err)
+			// Record how the connection ended. The client only reports
+			// "reconnecting", and the close code is the one fact that says
+			// whether the browser hung up, the peer went away, or a frame broke
+			// a limit — without it every disconnect looks the same from both
+			// ends.
+			switch {
+			case errors.As(err, &ce):
+				logging.Info("relay-client", "closed session=%s code=%d reason=%q",
+					attachedSessionID(sess), int(ce.Code), ce.Reason)
+			case errors.Is(err, context.Canceled), errors.Is(err, net.ErrClosed):
+				logging.Info("relay-client", "closed session=%s reason=local-teardown",
+					attachedSessionID(sess))
+			default:
+				logging.Info("relay-client", "closed session=%s reason=read-error error=%v",
+					attachedSessionID(sess), err)
 			}
 			return
 		}
@@ -368,4 +400,13 @@ func (s *Server) sendFSClientError(out chan<- proto.Frame, onOverflow func(), se
 	if !sendFSFrameToRoute(fsClientRoute{out: out, onOverflow: onOverflow}, proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: payload}) {
 		s.debugf("client fs_error_drop session=%s request_id=%s", sessionID, requestID)
 	}
+}
+
+// attachedSessionID renders the session a connection was attached to, or a
+// placeholder while it is still pre-ATTACH.
+func attachedSessionID(sess *session.Session) string {
+	if sess == nil {
+		return "none"
+	}
+	return sess.ID.String()
 }

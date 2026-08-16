@@ -35,7 +35,7 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
-				s.silenceRestoreBytes = 0
+				s.resetSilenceRestoreLocked()
 				changed = true
 			}
 			if s.meta.CurrentCommand != command {
@@ -127,9 +127,13 @@ func (s *Session) applyOSC133Locked(data []byte, now time.Time) bool {
 			}
 			if s.waitingFromSilence {
 				s.waitingFromSilence = false
-				s.silenceRestoreBytes = 0
+				s.resetSilenceRestoreLocked()
 				s.resetSilenceActivityBurstLocked()
 			}
+			// The AI CLI just exited; its hooks are gone with it. Hand the
+			// session back to the heuristic, or it would sit on whatever state
+			// the last hook reported forever.
+			s.clearHookDrivenLocked()
 			if s.silenceTimer != nil {
 				s.silenceTimer.Stop()
 				s.silenceTimer = nil

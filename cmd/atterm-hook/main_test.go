@@ -190,3 +190,24 @@ func TestVersionFlag(t *testing.T) {
 		t.Errorf("unexpected version line %q", got)
 	}
 }
+
+func TestAgentKindFromArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"space form", []string{"--agent", "codex"}, "codex"},
+		{"equals form", []string{"--agent=codex"}, "codex"},
+		{"claude explicit", []string{"--agent", "claude-code"}, "claude-code"},
+		{"no flag falls back", nil, "claude-code"},
+		{"missing value falls back", []string{"--agent"}, "claude-code"},
+		{"empty value falls back", []string{"--agent="}, "claude-code"},
+		{"ignores other args", []string{"--verbose", "--agent", "codex"}, "codex"},
+	}
+	for _, c := range cases {
+		if got := agentKindFromArgs(c.args); got != c.want {
+			t.Fatalf("%s: agentKindFromArgs(%v) = %q, want %q", c.name, c.args, got, c.want)
+		}
+	}
+}

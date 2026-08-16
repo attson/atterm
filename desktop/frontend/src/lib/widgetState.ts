@@ -76,7 +76,7 @@ export interface WidgetSessionRow {
 }
 
 export interface WidgetState {
-  /** Aggregate mood across every session: waiting > failed > running > idle. */
+  /** Aggregate mood across every session: running > waiting > failed > idle. */
   mood: WidgetMood;
   /** Sessions with output the user has not read yet. */
   unreadCount: number;
@@ -92,6 +92,17 @@ export interface WidgetState {
   /** Secondary line containing the existing task-state summary. */
   subline: string;
   rows: WidgetSessionRow[];
+  /**
+   * Ids of every session currently demanding the user (waiting / failed),
+   * computed over the WHOLE filtered list rather than the truncated `rows`.
+   *
+   * The widget diffs this set between pushes to decide whether a collapsed
+   * window should raise its hand. Diffing `rows` instead makes a session that
+   * merely scrolled past maxRows look like it left, so the next reordering
+   * that brings it back reads as a fresh escalation and pops the widget open
+   * for something that never changed.
+   */
+  attentionIds: string[];
   /** Sessions beyond maxRows that were truncated out of `rows`. */
   overflowCount: number;
   /** Mirrors the aiOnly setting so the widget's own menu can show its state
@@ -102,12 +113,23 @@ export interface WidgetState {
 /** Rows shown in the expanded panel. Beyond this the tail is summarised. */
 export const WIDGET_MAX_ROWS = 6;
 
-/** Aggregate precedence — higher wins when folding many sessions into one mood. */
+/**
+ * Aggregate precedence — higher wins when folding many sessions into one mood.
+ *
+ * Mirrors the sidebar's SESSION_URGENCY, running first: the widget is a
+ * one-glance summary of the same list, and the two disagreeing about which
+ * state is the headline would be worse than either order on its own.
+ *
+ * Note this governs only which face the sprite wears. Which session gets
+ * highlighted, and whether a collapsed widget unfolds itself, still key off
+ * waiting/failed — those are events that call for the user, which is a
+ * different question from what the list is mostly doing.
+ */
 const MOOD_RANK: Record<WidgetMood, number> = {
   idle: 0,
-  running: 1,
-  failed: 2,
-  waiting: 3,
+  failed: 1,
+  waiting: 2,
+  running: 3,
 };
 
 /**
@@ -319,6 +341,9 @@ export function projectWidgetState(
     ...counts,
     ...summarize(unreadCount, counts),
     rows: rows.slice(0, maxRows),
+    attentionIds: rows
+      .filter((r) => r.state === "waiting" || r.state === "failed")
+      .map((r) => r.sessionId),
     overflowCount: Math.max(0, rows.length - maxRows),
     aiOnly,
   };

@@ -10,7 +10,6 @@ describe("tasks i18n namespace", () => {
     expect(en.tasks.preset.iconLabel.name).toBeTypeOf("string");
     expect(en.tasks.preset.iconLabel.description).toBeTypeOf("string");
     expect(en.tasks.markAllRead).toBeTypeOf("string");
-    expect(en.tasks.markRead).toBeTypeOf("string");
     expect(en.tasks.completedFold).toBeTypeOf("string");
     expect(en.tasks.unreadBadge).toBeTypeOf("string");
     expect(en.tasks.settings.section).toBeTypeOf("string");

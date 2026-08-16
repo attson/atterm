@@ -78,6 +78,9 @@ const props = withDefaults(
     theme: ITheme;
     commandNotifyThresholdSec?: number;
     isLocalSession?: boolean;
+    // True when this pane shares its tab with others, so "move to its own tab"
+    // is a meaningful action. A single-pane tab already is that tab.
+    canDetach?: boolean;
     // True while the user is dragging a pane splitter. FitAddon still runs
     // so xterm stays visually correct, but we skip the PTY RESIZE until the
     // drag ends — the child process gets one SIGWINCH on mouseup instead
@@ -89,6 +92,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: "toast", message: string): void;
+  /** Context-menu request to pull this pane out into a tab of its own. */
+  (e: "detach"): void;
 }>();
 const { t } = useI18n();
 
@@ -1558,8 +1563,21 @@ async function ensureTerm() {
   imeInputTarget?.addEventListener("blur", onImeBlur);
   safeFit();
   focusCoalescer = createFocusReportCoalescer({ send: (d) => conn?.sendInput(d) });
+  // xterm emits onData for two very different things: what the user typed, and
+  // the replies it generates itself while parsing escape sequences. Only the
+  // latter needs suppressing during replay, and the two are indistinguishable
+  // by their payload — so mark the keyboard-originated ones as they arrive.
+  // attachCustomKeyEventHandler runs for every key event before the data is
+  // emitted, which is the ordering this depends on.
+  let keyOriginated = false;
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type === "keydown") keyOriginated = true;
+    return true;
+  });
   term.onData((data) => {
-    if (!replayInputGuard.shouldForward()) return;
+    const fromUser = keyOriginated;
+    keyOriginated = false;
+    if (!replayInputGuard.shouldForward(fromUser)) return;
     const { cleaned, dropped } = stripC1Controls(data);
     if (dropped.length > 0) {
       logWarn("term", "dropped C1 control chars from terminal input", {
@@ -2126,6 +2144,12 @@ watch(
         <button class="term-context-item" :disabled="!menuCanPaste || pasteBusy" @click="onMenuPaste">{{ t("common.paste") }}</button>
         <button class="term-context-item" :disabled="!menuCanSend" @click="onMenuSend">{{ t("terminal.sendSelection") }}</button>
         <button class="term-context-item" @click="onMenuClear">{{ t("terminal.clearBuffer") }}</button>
+        <button
+          v-if="canDetach"
+          class="term-context-item"
+          data-test="term-detach"
+          @click="emit('detach'); closeContextMenu()"
+        >{{ t("terminal.detachToTab") }}</button>
         <button
           v-for="item in pluginMenuItems"
           :key="item.id"

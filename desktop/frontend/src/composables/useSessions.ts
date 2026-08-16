@@ -1,13 +1,11 @@
 import { computed, type ComputedRef, type Ref } from "vue";
 import type { RemoteSession } from "../platform/types";
 import type { TaskState } from "../lib/taskState";
-import { compareSessionsBySidebarOrder, sessionActivityAt, sessionUrgencyIndex } from "../lib/sessionSort";
-
-function compareLatestActivity(a: RemoteSession, b: RemoteSession): number {
-  const dt = sessionActivityAt(b) - sessionActivityAt(a);
-  if (dt !== 0) return dt;
-  return a.session_id.localeCompare(b.session_id);
-}
+import {
+  compareSessionsBySidebarOrder,
+  compareSessionsByLatestActivity,
+  sessionUrgencyIndex,
+} from "../lib/sessionSort";
 
 export interface UseSessionsOptions {
   /** When set, sessions whose host_id equals this are considered "local"
@@ -24,10 +22,10 @@ export interface UseSessionsReturn {
   completedSeen: ComputedRef<RemoteSession[]>;
   /** byState groups sessions by their task_state. Keys are TaskState values
    *  in URGENCY order — waiting_input first, closed last. Empty groups are
-   *  omitted so the sidebar doesn't render dead headers. Unread is NOT
-   *  promoted here (unlike byHost's per-group sort), because the user
-   *  asked to see "all running together", not "all attention-worthy
-   *  together". */
+   *  omitted so the sidebar doesn't render dead headers. Within a group every
+   *  session shares a state, so the urgency term is inert and the ordering
+   *  reduces to unread first, then the interaction stamp — the same rule the
+   *  host groups use. */
   byState: ComputedRef<Record<string, RemoteSession[]>>;
   /** unreadByState mirrors unreadByHost but keyed by task_state. */
   unreadByState: ComputedRef<Record<string, number>>;
@@ -55,11 +53,13 @@ export function useSessions(
       const k = s.host_id || "";
       (out[k] ||= []).push(s);
     }
-    // Sort by latest activity descending so the sessions that just printed,
-    // started, finished, or requested attention stay near the top. Use
-    // session_id as the tiebreaker for deterministic equal timestamps.
+    // Same ordering as the state groups: urgency first, then unread, then the
+    // interaction stamp. Grouping by host used to ignore state entirely, so a
+    // finished session could sit above one still running purely because it
+    // ended later — and the two grouping modes disagreed about what "top of the
+    // list" meant.
     for (const k of Object.keys(out)) {
-      out[k].sort(compareLatestActivity);
+      out[k].sort(compareSessionsBySidebarOrder);
     }
     return out;
   });
@@ -92,7 +92,7 @@ export function useSessions(
           (s.task_state === "completed" || s.task_state === "failed") &&
           s.unread === false,
       )
-      .sort(compareLatestActivity),
+      .sort(compareSessionsByLatestActivity),
   );
 
   const byState = computed<Record<string, RemoteSession[]>>(() => {

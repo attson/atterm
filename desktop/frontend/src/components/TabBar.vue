@@ -7,6 +7,7 @@ import { useI18n } from "../i18n/useI18n";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import type { TaskState } from "../lib/taskState";
 import { usableAITitle } from "../lib/sessionLabel";
+import { SESSION_DND_MIME, carriesSessionDrag, draggingSession } from "../lib/paneDrop";
 
 interface TabSummary {
   id: string;
@@ -47,6 +48,8 @@ const emit = defineEmits<{
   // entirely on web/mobile, but TabBar always renders alongside App.vue.
   (e: "open-settings"): void;
   (e: "toggle-admin"): void;
+  /** A session was dragged out of a pane and dropped here: give it its own tab. */
+  (e: "detach-session", sessionId: string): void;
 }>();
 
 const DRAG_THRESHOLD = 4;
@@ -243,10 +246,49 @@ function onClose(e: MouseEvent, id: string) {
   e.stopPropagation();
   emit("close", id);
 }
+
+// Dropping a pane's grip here pulls that session out into a tab of its own.
+// The strip only claims drags that carry our own session type; anything else —
+// an OS file, selected text — passes through untouched.
+const dropActive = ref(false);
+
+function onStripDragOver(e: DragEvent) {
+  if (!carriesSessionDrag(e.dataTransfer?.types)) return;
+  // Must fire on EVERY dragover: one un-prevented event and the browser stops
+  // treating the strip as a drop target, so drop never arrives.
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  dropActive.value = true;
+}
+
+function onStripDragLeave(e: DragEvent) {
+  const to = e.relatedTarget as Node | null;
+  if (to && e.currentTarget instanceof Node && e.currentTarget.contains(to)) return;
+  dropActive.value = false;
+}
+
+function onStripDrop(e: DragEvent) {
+  dropActive.value = false;
+  if (!carriesSessionDrag(e.dataTransfer?.types)) return;
+  e.preventDefault();
+  // draggingSession() first — WebKit returns nothing from getData for a custom
+  // MIME type, which would make the drop a silent no-op.
+  const sessionId = draggingSession() || (e.dataTransfer?.getData(SESSION_DND_MIME) ?? "");
+  if (!sessionId) return;
+  emit("detach-session", sessionId);
+}
+
 </script>
 
 <template>
-  <div class="tabbar">
+  <div
+    class="tabbar"
+    :class="{ 'drop-active': dropActive }"
+    data-test="tabbar"
+    @dragover="onStripDragOver"
+    @dragleave="onStripDragLeave"
+    @drop="onStripDrop"
+  >
     <div class="tabs" ref="tabsEl">
       <div
         v-for="(t, idx) in tabs"
@@ -344,6 +386,13 @@ function onClose(e: MouseEvent, id: string) {
 </template>
 
 <style scoped>
+/* Whole strip lights up while a pane is hovering over it: the drop is "give
+   this session a tab", not "insert it between these two", so there is nothing
+   finer to aim at. */
+.tabbar.drop-active {
+  box-shadow: inset 0 -2px 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
 .tabbar {
   position: sticky;
   top: 0;

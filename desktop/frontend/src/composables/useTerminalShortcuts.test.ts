@@ -32,29 +32,14 @@ describe("useTerminalShortcuts (default bindings)", () => {
     scope.stop();
   });
 
-  it("Ctrl+N -> onSplitVertical('new')", () => {
+  it("Ctrl+N -> onSplitVertical", () => {
     fireKey({ key: "n", code: "KeyN", ctrlKey: true });
-    expect(handlers.onSplitVertical).toHaveBeenCalledWith("new");
+    expect(handlers.onSplitVertical).toHaveBeenCalled();
   });
 
-  it("Ctrl+Shift+N -> onSplitHorizontal('new')", () => {
+  it("Ctrl+Shift+N -> onSplitHorizontal", () => {
     fireKey({ key: "N", code: "KeyN", ctrlKey: true, shiftKey: true });
-    expect(handlers.onSplitHorizontal).toHaveBeenCalledWith("new");
-  });
-
-  it("Ctrl+Alt+N -> onSplitVertical('pick')", () => {
-    fireKey({ key: "n", code: "KeyN", ctrlKey: true, altKey: true });
-    expect(handlers.onSplitVertical).toHaveBeenCalledWith("pick");
-  });
-
-  it("Ctrl+Alt+Shift+N -> onSplitHorizontal('pick')", () => {
-    fireKey({ key: "N", code: "KeyN", ctrlKey: true, altKey: true, shiftKey: true });
-    expect(handlers.onSplitHorizontal).toHaveBeenCalledWith("pick");
-  });
-
-  it("mac dead key key='˜' but code='KeyN' still routes via code", () => {
-    fireKey({ key: "˜", code: "KeyN", ctrlKey: true, altKey: true });
-    expect(handlers.onSplitVertical).toHaveBeenCalledWith("pick");
+    expect(handlers.onSplitHorizontal).toHaveBeenCalled();
   });
 
   it("Ctrl+W -> onClosePane", () => {
@@ -135,9 +120,19 @@ describe("useTerminalShortcuts (user overrides)", () => {
     scope = effectScope();
     scope.run(() => useTerminalShortcuts(handlers, { mod: "Control", bindings }));
     fireKey({ key: "j", code: "KeyJ", ctrlKey: true });
-    expect(handlers.onSplitVertical).toHaveBeenCalledWith("new");
+    expect(handlers.onSplitVertical).toHaveBeenCalled();
     fireKey({ key: "n", code: "KeyN", ctrlKey: true });
     expect(handlers.onSplitVertical).toHaveBeenCalledTimes(1); // not called again
+  });
+
+  // macOS Option+N emits the dead key '˜' as event.key while event.code stays
+  // KeyN. Routing must key off code, or every Alt binding breaks on mac.
+  it("mac dead key key='˜' but code='KeyN' still routes via code", () => {
+    bindings = ref({ "pane.split-vertical-new": "Mod+Alt+KeyN" });
+    scope = effectScope();
+    scope.run(() => useTerminalShortcuts(handlers, { mod: "Control", bindings }));
+    fireKey({ key: "˜", code: "KeyN", ctrlKey: true, altKey: true });
+    expect(handlers.onSplitVertical).toHaveBeenCalled();
   });
 
   it("empty binding disables the action", () => {

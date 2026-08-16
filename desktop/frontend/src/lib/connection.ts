@@ -780,12 +780,24 @@ export class SessionConnection {
       }
     };
 
-    ws.onclose = () => {
+    // The event is optional only because test doubles call this bare; a log
+    // line must never be the thing that throws on a disconnect path.
+    ws.onclose = (e?: CloseEvent) => {
       if (this.ws !== ws) return;
       this.ws = null;
       this.rejectPendingFSRequests(new Error("filesystem request failed: websocket closed"));
       this.retiredFSRequestIDs.clear();
       if (this.detached || this.suspended) return;
+      // The close code is the only thing that distinguishes "the relay hung up"
+      // from "this renderer's own websocket gave up", and the user just sees a
+      // reconnecting badge either way.
+      logWarn("conn", "session websocket closed", {
+        sessionId: this.sessionId,
+        code: e?.code,
+        reason: e?.reason,
+        wasClean: e?.wasClean,
+        attempt: this.reconnectAttempts,
+      });
       this.handlers.onStatus?.("reconnecting");
       const delay = Math.min(8000, 500 * Math.pow(2, this.reconnectAttempts++));
       this.reconnectTimer = window.setTimeout(() => this.openWS(), delay);

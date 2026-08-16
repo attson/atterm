@@ -642,3 +642,47 @@ func TestSilence_NoRaceUnderConcurrentOutput(t *testing.T) {
 	}
 	s.Close()
 }
+
+// A steady drip of small redraws must never accumulate its way back to
+// running. The restore accumulator is the mirror image of the running-side
+// activity accumulator, so it needs the same burst window: without one, a
+// blinking cursor adds a few bytes forever, eventually crosses the byte
+// threshold, flips waiting_input -> running, and the silence timer flips it
+// straight back — the widget's live/now indicator oscillates on a fixed
+// period for as long as the session is open.
+func TestSilence_SlowDripDoesNotOscillate(t *testing.T) {
+	t.Setenv("ATTERM_TASK_SILENCE_THRESHOLD_MS", "60")
+	t.Setenv("ATTERM_TASK_SILENCE_RESTORE_BYTES", "10")
+	s := New(uuid.New(), proto.SessionInfo{Cols: 80, Rows: 24})
+	s.mu.Lock()
+	s.meta.TaskState = proto.TaskStateRunning
+	s.meta.Type = SessionTypeAI
+	s.meta.LastOutputAt = time.Now().Add(-10 * time.Second).Unix()
+	s.lastOutputMono = time.Now().Add(-10 * time.Second)
+	s.rescheduleSilenceTimerLocked()
+	s.mu.Unlock()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && s.Info().TaskState != proto.TaskStateWaitingInput {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s.Info().TaskState != proto.TaskStateWaitingInput {
+		t.Fatalf("setup: expected silence flip; got %q", s.Info().TaskState)
+	}
+
+	// 4 bytes every 600ms: under the 10-byte threshold inside any one-second
+	// window, so the running-side rule does not count it as activity either.
+	// Sample synchronously right after each write — the silence timer flips
+	// a restored session back within the threshold, so a poll loop would miss
+	// the excursion entirely while the user still sees the icon blink.
+	restores := 0
+	for i := 0; i < 6; i++ {
+		time.Sleep(600 * time.Millisecond)
+		s.updateTerminalState([]byte("\x1b[?25l"[:4]))
+		if s.Info().TaskState == proto.TaskStateRunning {
+			restores++
+		}
+	}
+	if restores != 0 {
+		t.Fatalf("slow drip must not accumulate its way back to running; restored %d times", restores)
+	}
+}

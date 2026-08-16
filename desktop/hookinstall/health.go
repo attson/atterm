@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -59,7 +60,10 @@ func checkAt(home string, enabled bool) State {
 	s.BinaryOK = binOK
 	s.BinaryVersion = binVer
 
-	setOK, setErr := checkSettings(home, s.BinaryPath)
+	// Compare against the same string the installer writes, agent flag and all —
+	// the health check and the writer disagreeing would report a permanently
+	// unhealthy install that repairing cannot fix.
+	setOK, setErr := checkSettings(home, attermHookCommand(s.BinaryPath, "claude-code"))
 	s.SettingsOK = setOK
 
 	switch {
@@ -128,10 +132,21 @@ func checkHookKind(kind string, entries []HookEntry, wantCommand string) (ok boo
 			if h.Command != wantCommand {
 				return false, kind + " entry points at stale binary path"
 			}
-			if _, err := os.Stat(h.Command); err != nil {
+			if _, err := os.Stat(hookCommandBinary(h.Command)); err != nil {
 				return false, kind + " command path missing on disk"
 			}
 		}
 	}
 	return true, ""
+}
+
+// hookCommandBinary strips the flags off a hook command line so the path can be
+// stat'ed. The command is ours and always "<binary> --agent <kind>", but split
+// on the flag rather than on whitespace: the binary lives under the user's home
+// directory, which is allowed to contain spaces.
+func hookCommandBinary(cmd string) string {
+	if i := strings.Index(cmd, " --"); i >= 0 {
+		return cmd[:i]
+	}
+	return cmd
 }

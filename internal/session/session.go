@@ -12,14 +12,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/attson/atterm/internal/logging"
 	"github.com/attson/atterm/internal/proto"
 	"github.com/attson/atterm/internal/ringbuf"
 	"github.com/google/uuid"
 )
 
 // listActivityNotifyInterval bounds full session-list snapshot refreshes while
-// a PTY emits output continuously. It stays below the frontend's 5s live
-// window, so a healthy stream does not flicker from live back to now.
+// a PTY emits output continuously, so terminal output does not turn the
+// metadata path into a hot loop. The frontend no longer has a freshness
+// window of its own — its live indicator reads task_state directly — so this
+// interval only governs refresh cadence, not whether a row reads as live.
 const listActivityNotifyInterval = 3 * time.Second
 
 const (
@@ -32,6 +35,22 @@ const (
 	// At 16 KiB, a full 4 MiB scrollback replays in at most 256 OUT frames —
 	// well below subscriberQueueDepth — regardless of original chunk granularity.
 	replayCoalesceTargetBytes = 16 * 1024
+	// replayTailCapBytes bounds what an attach replays, independent of how much
+	// scrollback the ring holds.
+	//
+	// The client keeps 20000 lines and discards the rest as it parses, so a
+	// larger replay is work it does only to throw the result away — and that
+	// wasted work is what pushes a slow consumer past its queue depth, gets it
+	// dropped by the fan-out, and starts the reconnect-and-replay-again loop.
+	// 512 KiB is roughly those 20000 lines of ordinary output, so nothing the
+	// client could have kept is lost.
+	replayTailCapBytes = 512 * 1024
+	// resyncTailBytes is how much recent output a client gets when it falls too
+	// far behind to keep its place in the stream.
+	resyncTailBytes = 64 * 1024
+	// resyncLogInterval throttles the resync log line. Under a flood a client
+	// can overflow many times a second, and a line each would bury the log.
+	resyncLogInterval = 5 * time.Second
 )
 
 // Session is the relay-side state for one PTY.
@@ -72,6 +91,13 @@ type Session struct {
 	// inject short thresholds via t.Setenv.
 	silenceTimer         *time.Timer
 	waitingFromSilence   bool
+	// hookDriven latches once an AI client's hook has reported state for this
+	// session. From then on the silence heuristic is off for good (see
+	// rescheduleSilenceTimerLocked): the client tells us when a turn starts and
+	// ends, so inferring it from output gaps can only add noise. Cleared when
+	// the AI command exits (OSC 133 D) and the session goes back to being a
+	// plain shell.
+	hookDriven bool
 	silenceThresholdMS   int64
 	silenceDetectEnabled bool
 
@@ -82,7 +108,14 @@ type Session struct {
 	// etc.) keep flipping waiting_input back to running every few seconds
 	// and the sidebar visibly oscillates. Reset on any non-restore state
 	// transition (Close, OSC 133, external UpdateMeta).
+	//
+	// silenceRestoreStartedMono bounds that accumulator to the same
+	// silenceActivityBurstWindow the running-side accumulator uses. Without
+	// the window the counter never decays, so an endless drip of blink-sized
+	// redraws sums its way past the threshold no matter how slow it is —
+	// restoring running, which the silence timer then flips straight back.
 	silenceRestoreBytes         int64
+	silenceRestoreStartedMono   time.Time
 	silenceRestoreByteThreshold int64
 	silenceActivityBytes        int64
 	silenceActivityStartedMono  time.Time
@@ -107,6 +140,12 @@ type Session struct {
 	// silently rounds sub-second silenceThresholdMS values up to the next
 	// integer-second boundary.
 	lastOutputMono time.Time
+
+	// Bookkeeping for the resync path: how many times a client has been shed
+	// and restarted, and when that was last reported, so a flood cannot bury
+	// the log in one line per overflow.
+	resyncCount      uint64
+	lastResyncLogged time.Time
 
 	// lastListActivityNotify throttles session-list refreshes driven by raw
 	// output. LastOutputAt updates for every OUT chunk, but LIST_RESP is a full
@@ -362,7 +401,7 @@ func (s *Session) UpdateMeta(m proto.MetaPayload) {
 	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
-		s.silenceRestoreBytes = 0
+		s.resetSilenceRestoreLocked()
 		s.resetSilenceActivityBurstLocked()
 	}
 	s.rescheduleSilenceTimerLocked()
@@ -450,7 +489,7 @@ func (s *Session) UpdateAdvertisedInfo(info proto.SessionInfo) {
 	}
 	if s.waitingFromSilence && s.meta.TaskState != proto.TaskStateWaitingInput {
 		s.waitingFromSilence = false
-		s.silenceRestoreBytes = 0
+		s.resetSilenceRestoreLocked()
 		s.resetSilenceActivityBurstLocked()
 	}
 	s.rescheduleSilenceTimerLocked()
@@ -578,8 +617,16 @@ func (s *Session) fanout(f proto.Frame) {
 		select {
 		case sub.out <- f:
 		default:
-			// slow consumer: drop and let it reconnect with ATTACH(since_seq)
-			s.removeSubscriber(sub)
+			// The client is behind by a whole queue. Dropping it here — the old
+			// behaviour — closed its websocket, and it reconnected, replayed,
+			// fell behind again and came straight back: a local terminal that
+			// announced "reconnecting" for as long as the flood lasted.
+			//
+			// A terminal cannot show every byte of a firehose anyway, and the
+			// user cannot read it. Throw away what it has not caught up on and
+			// hand it a coherent recent view instead. It stays attached, keeps
+			// the driver, and sees a jump rather than a disconnect.
+			s.resyncSubscriber(sub)
 		}
 	}
 
@@ -610,15 +657,17 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	}
 
 	chunks := s.scroll.Since(sinceSeq)
+	chunks, cappedTail := capReplayTail(chunks)
 	s.mu.RLock()
 	altScreen := s.altScreen
 	s.mu.RUnlock()
 	totalBytes := replayBytes(chunks)
 	_ = enqueueReplayProgress(sub, s.ID, proto.ReplayProgressStart, 0, totalBytes, 0)
-	// If the replay starts after evicted bytes, the gap is unrecoverable:
-	// send a soft truncation marker so a fresh xterm doesn't render a torn
-	// tail of cursor-addressed output on top of an unrelated blank state.
-	if replayIsTruncated(s.scroll.OldestSeq(), sinceSeq, len(chunks)) {
+	// If the replay starts after evicted bytes — or after bytes we chose not to
+	// send — the gap is unrecoverable: send a soft truncation marker so a fresh
+	// xterm doesn't render a torn tail of cursor-addressed output on top of an
+	// unrelated blank state.
+	if cappedTail || replayIsTruncated(s.scroll.OldestSeq(), sinceSeq, len(chunks)) {
 		marker := proto.EncodeOut(s.ID, 0, replayResetMarker(altScreen))
 		select {
 		case sub.out <- marker:
@@ -636,6 +685,13 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	)
 	lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, chunks, lastSeq, replayedBytes, totalBytes, nextProgress)
 	if !ok {
+		// The subscriber's queue filled before its snapshot finished, so it is
+		// dropped mid-attach: it never joins s.subs, never becomes driver, and
+		// its client sees the socket close. Rare now that a replay is capped at
+		// replayTailCapBytes, which is two orders of magnitude below the queue
+		// depth — so if this ever fires, the cap or the queue has drifted.
+		logging.Info("session", "attach dropped sid=%s reason=queue-full phase=snapshot replayed=%d total=%d",
+			s.ID, replayedBytes, totalBytes)
 		sub.close()
 		return sub, lastSeq
 	}
@@ -650,6 +706,12 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 		s.mu.Unlock()
 		lastSeq, replayedBytes, nextProgress, ok = enqueueReplayChunks(sub, s.ID, catchup, lastSeq, replayedBytes, totalBytes, nextProgress)
 		if !ok {
+			// Same drop, one phase later: the session produced faster than the
+			// replay could drain for long enough to fill the queue. A command
+			// flooding the scrollback (yes(1), a noisy build) is exactly the
+			// shape that gets here.
+			logging.Info("session", "attach dropped sid=%s reason=queue-full phase=catchup replayed=%d total=%d",
+				s.ID, replayedBytes, totalBytes)
 			sub.close()
 			return sub, lastSeq
 		}
@@ -845,29 +907,25 @@ func (s *Session) updateTerminalState(data []byte) bool {
 	if s.waitingFromSilence && s.meta.TaskState == proto.TaskStateWaitingInput {
 		inResizeGrace := !s.lastResizeMono.IsZero() &&
 			now.Sub(s.lastResizeMono) < time.Duration(s.silenceResizeGraceMS)*time.Millisecond
-		switch {
-		case inResizeGrace:
+		if inResizeGrace {
 			// SIGWINCH-driven repaint after a sidebar collapse / window
 			// resize / font change. Don't count these bytes; reset the
 			// accumulator so we start fresh once the grace window closes.
-			s.silenceRestoreBytes = 0
+			s.resetSilenceRestoreLocked()
 			silenceDebugLocked(s, fmt.Sprintf("restore-skip-resize-grace: chunk=%d age=%v",
 				len(data), now.Sub(s.lastResizeMono)))
-		default:
-			s.silenceRestoreBytes += int64(len(data))
-			if s.silenceRestoreBytes >= s.silenceRestoreByteThreshold {
-				silenceDebugLocked(s, fmt.Sprintf("restore: state waiting_input -> running (bytes=%d >= threshold=%d)",
-					s.silenceRestoreBytes, s.silenceRestoreByteThreshold))
-				s.meta.TaskState = proto.TaskStateRunning
-				s.waitingFromSilence = false
-				s.silenceRestoreBytes = 0
-				s.markSilenceActivityLocked(now)
-				changed = true
-				restoredFromSilence = true
-			} else {
-				silenceDebugLocked(s, fmt.Sprintf("restore-defer: bytes=%d < threshold=%d (chunk=%d)",
-					s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
-			}
+		} else if s.noteSilenceRestoreLocked(data, now) {
+			silenceDebugLocked(s, fmt.Sprintf("restore: state waiting_input -> running (bytes=%d >= threshold=%d)",
+				s.silenceRestoreBytes, s.silenceRestoreByteThreshold))
+			s.meta.TaskState = proto.TaskStateRunning
+			s.waitingFromSilence = false
+			s.resetSilenceRestoreLocked()
+			s.markSilenceActivityLocked(now)
+			changed = true
+			restoredFromSilence = true
+		} else {
+			silenceDebugLocked(s, fmt.Sprintf("restore-defer: bytes=%d < threshold=%d (chunk=%d)",
+				s.silenceRestoreBytes, s.silenceRestoreByteThreshold, len(data)))
 		}
 	}
 	if !restoredFromSilence {
@@ -952,6 +1010,31 @@ func appendTrailingBytes(dst, prev, data []byte, max int) []byte {
 	return append(dst, combined...)
 }
 
+// capReplayTail trims a replay to its newest replayTailCapBytes, reporting
+// whether anything was dropped so the caller can mark the view as torn.
+//
+// A single chunk over the cap is kept whole: sending nothing would leave the
+// client with a blank terminal, which is worse than sending more than planned.
+func capReplayTail(chunks []ringbuf.Chunk) ([]ringbuf.Chunk, bool) {
+	if len(chunks) == 0 {
+		return chunks, false
+	}
+	var total uint64
+	start := len(chunks)
+	for i := len(chunks) - 1; i >= 0; i-- {
+		next := total + uint64(len(chunks[i].Data))
+		if next > replayTailCapBytes && start < len(chunks) {
+			break
+		}
+		total = next
+		start = i
+		if total >= replayTailCapBytes {
+			break
+		}
+	}
+	return chunks[start:], start > 0 || total > replayTailCapBytes
+}
+
 func replayBytes(chunks []ringbuf.Chunk) uint64 {
 	var total uint64
 	for _, c := range chunks {
@@ -1030,6 +1113,52 @@ func enqueueReplayProgress(sub *Subscriber, id uuid.UUID, phase string, bytes, t
 // Unsubscribe removes a client outbox.
 func (s *Session) Unsubscribe(sub *Subscriber) {
 	s.removeSubscriber(sub)
+}
+
+// resyncSubscriber discards a subscriber's backlog and queues a coherent
+// restart: the reset marker a truncated replay uses, then the tail of the
+// scrollback. Cursor-addressed output cannot survive a hole, so the marker is
+// what keeps the client from painting new text over an unrelated old frame.
+func (s *Session) resyncSubscriber(sub *Subscriber) {
+	for drained := false; !drained; {
+		select {
+		case <-sub.out:
+		default:
+			drained = true
+		}
+	}
+
+	s.mu.RLock()
+	alt := s.altScreen
+	s.mu.RUnlock()
+
+	tail := s.scroll.TailBytes(resyncTailBytes)
+	seq := s.scroll.LatestSeq()
+
+	select {
+	case sub.out <- proto.EncodeOut(s.ID, 0, replayResetMarker(alt)):
+	default:
+		return
+	}
+	if len(tail) > 0 {
+		select {
+		case sub.out <- proto.EncodeOut(s.ID, seq, tail):
+		default:
+		}
+	}
+
+	s.mu.Lock()
+	s.resyncCount++
+	count := s.resyncCount
+	due := time.Since(s.lastResyncLogged) >= resyncLogInterval
+	if due {
+		s.lastResyncLogged = time.Now()
+	}
+	s.mu.Unlock()
+	if due {
+		logging.Info("session", "subscriber resynced sid=%s reason=queue-full total=%d",
+			s.ID, count)
+	}
 }
 
 func (s *Session) removeSubscriber(sub *Subscriber) {

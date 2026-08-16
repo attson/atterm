@@ -68,7 +68,7 @@ atterm 是 **本地桌面终端**（Wails app）+ **可选中央 relay**（独�
 |------|------|------|------|
 | `proto` | `internal/proto/` | 帧协议常量 + 编解码 | 任何业务逻辑 |
 | `ringbuf` | `internal/ringbuf/` | 字节预算环形缓冲 | 不知道帧类型 |
-| `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子 | 不开 WS 不读 PTY |
+| `session` | `internal/session/` | session 数据模型、订阅 fan-out、lifecycle 钩子；AI 会话的 `task_state` 由客户端 hook 驱动（`hookDriven` 闩锁关闭静默启发式，OSC 133 D 解锁） | 不开 WS 不读 PTY |
 | `relay` | `internal/relay/` | HTTP/WS 服务，处理 agent/uplink/client/sessions/pair/health 端点 | 不写 PTY、不持久化（除 `users.db` via userstore） |
 | `userstore` | `internal/userstore/` | SQLite/Postgres 双后端持久化：users / invitations / sessions / pairing_tokens / webpush subscriptions / `relay_config`（运行时配置）/ `relay_realm_state`（realm identity）/ `relay_instances`（多实例心跳）；历史 `webhooks` 表已由 migration 删除 | 不知道 HTTP / 不依赖 relay |
 | 多实例 | `internal/relay/node_home.go` + `config_refresh.go` + `internal/userstore/relay_instances.go` | 多实例心跳缓存（`relay_instances` 表）、`resolveHomeInstanceURL` 路由、`relay_config.version` 轮询（~10s TTL）向其它实例传播 admin 配置变更 | 不直连其它实例（gossip）；一切共享状态经 DB |
@@ -368,7 +368,6 @@ desktop/frontend/src/
 │   ├── PaneGrid.vue       CSS Grid 渲染 1/2/4 cell；远程 pane 右上角 cast badge
 │                          + close-pane × 同行 flex 布局；close 按钮 mousedown
 │                          不冒泡，避免先激活其它 pane 再关错目标
-│   ├── SessionPickerDialog.vue ⌘⌥N 触发：local + remote 已有 session 选一个进 pane
 │   ├── SettingsDialog.vue relay 配置 + Updates 区（current / latest / 进度 /
 │                          autocheck toggle / release notes / 三个按钮）
 │   ├── ConfirmInstallDialog.vue force install & restart 确认弹窗，列出会被

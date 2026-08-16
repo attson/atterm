@@ -27,6 +27,7 @@ const EMPTY: WidgetState = {
   headline: "连接中…",
   subline: "",
   rows: [],
+  attentionIds: [],
   overflowCount: 0,
   aiOnly: false,
 };
@@ -94,36 +95,62 @@ function scheduleCardResize() {
 // manual collapse/expand, hover peek and the timed attention peek.
 watch(showRows, scheduleCardResize);
 
-/** Ids of rows currently sitting in a state that demands the user. */
-function attentionIds(rows: readonly WidgetSessionRow[]): Set<string> {
-  const ids = new Set<string>();
-  for (const r of rows) {
-    if (r.state === "waiting" || r.state === "failed") ids.add(r.sessionId);
-  }
-  return ids;
-}
+/**
+ * Attention ids carried by the previous snapshot, or null before the first one
+ * has landed. The null state matters: on connect, `state` still holds EMPTY, so
+ * every session that was *already* waiting would diff as brand new and pop the
+ * window open for a list the user has been staring at all along. The first
+ * snapshot only seeds the baseline.
+ */
+let knownAttention: Set<string> | null = null;
+
+/**
+ * Per-session floor between auto-peeks. A session's state can legitimately
+ * bounce — the backend's silence heuristic flips a quiet AI session to
+ * waiting_input and a later burst of output flips it back to running — and
+ * every return trip diffs as a fresh escalation. Without this floor the widget
+ * reopens on each cycle and effectively never stays folded.
+ */
+const PEEK_COOLDOWN_MS = 60_000;
+const lastPeekAt = new Map<string, number>();
 
 function applyState(next: WidgetState) {
-  const prev = state.value;
   state.value = next;
 
   // Which specific sessions newly need the user — a session already waiting in
   // the previous snapshot is not "new" even if the aggregate count rose because
   // another one appeared. Diffing by id lets us both decide whether to raise a
-  // hand and highlight exactly the rows that did.
-  const before = attentionIds(prev.rows);
-  const escalatedIds: string[] = [];
-  for (const id of attentionIds(next.rows)) {
-    if (!before.has(id)) escalatedIds.push(id);
+  // hand and highlight exactly the rows that did. The ids cover every session,
+  // not just the maxRows the widget renders, so list churn is not an event.
+  const attention = new Set(next.attentionIds);
+  const before = knownAttention;
+  knownAttention = attention;
+  if (before === null) return;
+
+  const escalatedIds = next.attentionIds.filter((id) => !before.has(id));
+  if (escalatedIds.length === 0) return;
+
+  // Track the cooldown only for escalations we would otherwise act on, so a
+  // widget the user is already looking at does not silently burn it.
+  if (!collapsed.value || muted.value) return;
+
+  const now = Date.now();
+  const fresh = escalatedIds.filter((id) => now - (lastPeekAt.get(id) ?? -Infinity) >= PEEK_COOLDOWN_MS);
+  // Drop ids whose cooldown has lapsed; the map would otherwise grow for the
+  // lifetime of the window.
+  for (const [id, at] of lastPeekAt) {
+    if (now - at >= PEEK_COOLDOWN_MS) lastPeekAt.delete(id);
   }
+  if (fresh.length === 0) return;
 
   // If the widget is folded away, open it briefly so a collapsed widget can
   // still raise its hand — then fold back so it does not silently become a
   // permanent panel.
-  if (escalatedIds.length > 0 && collapsed.value && !muted.value) {
-    for (const id of escalatedIds) highlightedIds.value.add(id);
-    autoPeek();
+  for (const id of fresh) {
+    lastPeekAt.set(id, now);
+    highlightedIds.value.add(id);
   }
+  autoPeek();
 }
 
 function autoPeek() {
@@ -278,7 +305,11 @@ onUnmounted(() => {
         v-for="row in state.rows"
         :key="row.sessionId"
         class="row"
-        :class="{ done: row.state === 'idle', highlighted: highlightedIds.has(row.sessionId) }"
+        :class="{
+          done: row.state === 'idle',
+          highlighted: highlightedIds.has(row.sessionId),
+          'hl-failed': row.state === 'failed',
+        }"
         type="button"
         @click.stop="activate(row.sessionId)"
       >
@@ -450,14 +481,57 @@ onUnmounted(() => {
 
 /* A session that just escalated into waiting/failed: tinted fill plus a left
    accent bar drawn with an inset shadow so it does not shift the row's layout
-   the way a real border-left would. Cleared when the auto-peek window ends. */
+   the way a real border-left would. Cleared when the auto-peek window ends.
+
+   The tint follows the *reason* it escalated (waiting = amber, failed = red)
+   rather than the generic accent blue. Blue is already spent on the live
+   indicator and the running icon, and at the old 0.14 alpha it weighed exactly
+   as much as :hover below — so the highlight read as "the pointer is resting
+   here", not "this one is asking for you".
+
+   The entry pulse is what actually moves the eye; the row only has to earn a
+   glance once. It plays out in ~2.7s and leaves the static tint for the rest
+   of the auto-peek window, so a widget sitting in peripheral vision is not
+   blinking at the user for a full 15 seconds. */
 .row.highlighted {
-  background: rgba(88, 166, 255, 0.14);
-  box-shadow: inset 3px 0 0 #58a6ff;
+  background: rgba(245, 158, 11, 0.18);
+  box-shadow: inset 3px 0 0 #f59e0b;
+  animation: hl-pulse-waiting 0.9s ease-out 3;
 }
 
 .row.highlighted:hover {
-  background: rgba(88, 166, 255, 0.2);
+  background: rgba(245, 158, 11, 0.28);
+}
+
+.row.highlighted.hl-failed {
+  background: rgba(239, 68, 68, 0.18);
+  box-shadow: inset 3px 0 0 #ef4444;
+  animation: hl-pulse-failed 0.9s ease-out 3;
+}
+
+.row.highlighted.hl-failed:hover {
+  background: rgba(239, 68, 68, 0.28);
+}
+
+/* Animate background-color, not the background shorthand: the shorthand would
+   also reset the inset box-shadow's stacking on some WebKit builds. */
+@keyframes hl-pulse-waiting {
+  0%, 100% { background-color: rgba(245, 158, 11, 0.18); }
+  50% { background-color: rgba(245, 158, 11, 0.44); }
+}
+
+@keyframes hl-pulse-failed {
+  0%, 100% { background-color: rgba(239, 68, 68, 0.18); }
+  50% { background-color: rgba(239, 68, 68, 0.5); }
+}
+
+/* Reduced motion keeps the highlight, drops the blink: the static tint and the
+   accent bar still separate it from :hover on colour and weight alone. */
+@media (prefers-reduced-motion: reduce) {
+  .row.highlighted,
+  .row.highlighted.hl-failed {
+    animation: none;
+  }
 }
 
 .row-state {

@@ -24,6 +24,13 @@ type SessionLookup interface {
 	Inject(sid uuid.UUID, text string) error
 }
 
+// TaskStateSink receives task states reported by an AI client's hooks. Kept as
+// a narrow interface for the same reason SessionLookup is: this package
+// terminates the HTTP request, it does not know what a session is.
+type TaskStateSink interface {
+	ApplyHookTaskState(sid uuid.UUID, state string)
+}
+
 // WaitingDispatcher is the subset of *Dispatcher the hook server uses.
 type WaitingDispatcher interface {
 	DispatchWaitingInput(ctx context.Context, ev WaitingInputDispatchEvent)
@@ -41,6 +48,7 @@ type HookServer struct {
 	mu        sync.RWMutex
 	disp      WaitingDispatcher
 	sessions  SessionLookup
+	taskSink  TaskStateSink
 	onSuspect func()
 }
 
@@ -53,6 +61,21 @@ type hookNotifyRequest struct {
 
 func NewHookServer(disp WaitingDispatcher, sessions SessionLookup) *HookServer {
 	return &HookServer{disp: disp, sessions: sessions}
+}
+
+// SetTaskStateSink registers where hook-derived task states go. Swappable for
+// the same reason the dispatcher is: the listener outlives service rebuilds,
+// so whatever it forwards to has to be replaceable under it.
+func (h *HookServer) SetTaskStateSink(sink TaskStateSink) {
+	h.mu.Lock()
+	h.taskSink = sink
+	h.mu.Unlock()
+}
+
+func (h *HookServer) taskStateSink() TaskStateSink {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.taskSink
 }
 
 // SetSuspectCallback registers a callback invoked when a POST is well-
@@ -136,6 +159,19 @@ func (h *HookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		logging.Warn("feishu-hook", "drop reason=session-unknown sid=%s", sid)
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
+	}
+
+	// Task-state path. Runs BEFORE the adapter lookup and independently of the
+	// two Feishu paths below: state routing knows both agents on its own, while
+	// the adapter registry only holds the ones that can render a card. Leaving
+	// it after the lookup silently dropped every codex event.
+	//
+	// This is the authoritative source of task_state for AI sessions — see
+	// docs/superpowers/specs/2026-08-16-hook-driven-task-state-design.md.
+	if state, ok := TaskStateForHook(req.AgentKind, req.HookInput); ok {
+		if sink := h.taskStateSink(); sink != nil {
+			sink.ApplyHookTaskState(sid, state)
+		}
 	}
 
 	adapter, ok := LookupHookAdapter(req.AgentKind)

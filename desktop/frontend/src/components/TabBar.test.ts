@@ -477,3 +477,69 @@ describe("TabBar drag reorder", () => {
     }
   });
 });
+
+describe("TabBar detach drop target", () => {
+  const MIME = "application/x-atterm-session";
+
+  function mountBar() {
+    return mount(TabBar, {
+      props: {
+        tabs: [{
+          id: "t1", layout: "single" as const, activeSession: null,
+          activeRemote: false, paneCount: 1, disconnected: false,
+        }],
+        currentId: "t1",
+        starting: false,
+      },
+    });
+  }
+
+  function dragEvent(name: string, types: string[], data: Record<string, string> = {}) {
+    const ev = new Event(name, { cancelable: true, bubbles: true });
+    Object.defineProperty(ev, "dataTransfer", {
+      value: { types, dropEffect: "none", getData: (k: string) => data[k] ?? "" },
+    });
+    return ev;
+  }
+
+  it("lights the strip up while a pane hovers over it", async () => {
+    const w = mountBar();
+    const bar = w.get('[data-test="tabbar"]').element;
+    bar.dispatchEvent(dragEvent("dragover", [MIME]));
+    await w.vm.$nextTick();
+    expect(w.get('[data-test="tabbar"]').classes()).toContain("drop-active");
+  });
+
+  // Every dragover has to be prevented, not just the first: one un-prevented
+  // event and the browser stops delivering drop to this element at all.
+  it("preventDefaults every dragover", () => {
+    const w = mountBar();
+    const bar = w.get('[data-test="tabbar"]').element;
+    for (let i = 0; i < 3; i++) {
+      const ev = dragEvent("dragover", [MIME]);
+      bar.dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(true);
+    }
+  });
+
+  it("emits detach-session with the dropped id", () => {
+    const w = mountBar();
+    const bar = w.get('[data-test="tabbar"]').element;
+    bar.dispatchEvent(dragEvent("drop", [MIME], { [MIME]: "sid-7" }));
+    expect(w.emitted("detach-session")).toEqual([["sid-7"]]);
+  });
+
+  // A file dragged from the OS must pass straight through — the strip neither
+  // lights up nor claims the drop.
+  it("ignores drags that are not one of our sessions", async () => {
+    const w = mountBar();
+    const bar = w.get('[data-test="tabbar"]').element;
+    const over = dragEvent("dragover", ["Files"]);
+    bar.dispatchEvent(over);
+    await w.vm.$nextTick();
+    expect(over.defaultPrevented).toBe(false);
+    expect(w.get('[data-test="tabbar"]').classes()).not.toContain("drop-active");
+    bar.dispatchEvent(dragEvent("drop", ["Files"]));
+    expect(w.emitted("detach-session")).toBeUndefined();
+  });
+});

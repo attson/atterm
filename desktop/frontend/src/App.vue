@@ -1298,6 +1298,10 @@ const shortcutBindings = computed<Record<string, string>>(() => {
   return pluginStore.cfg?.shortcuts?.bindings ?? {};
 });
 
+// Bumped on every terminal-search shortcut press. Drilled down to every pane;
+// only the focused one reacts (TerminalView checks props.focused).
+const terminalSearchSeq = ref(0);
+
 useTerminalShortcuts(
   {
     onSplitVertical: () => onSplit("vertical"),
@@ -1309,6 +1313,9 @@ useTerminalShortcuts(
     onToggleTaskSidebar: () => setSidebarCollapsedAndPersist(!sidebarCollapsed.value),
     onFocusSidebarSearch: () => {
       void taskSidebarRef.value?.focusSearch();
+    },
+    onTerminalSearch: () => {
+      terminalSearchSeq.value++;
     },
   },
   { bindings: shortcutBindings },
@@ -1664,6 +1671,7 @@ defineExpose({ me });
             :active="t.id === currentTabId"
             :terminal-theme="currentTerminalTheme.xtermTheme"
             :command-notify-threshold-sec="commandNotifyThresholdSec"
+            :search-request-seq="terminalSearchSeq"
             @set-active-pane="(idx) => (t.activePaneIdx = idx)"
             @close-pane="(idx) => requestClosePane(t, idx)"
             @drop-session="(p) => onPaneDropSession(t, p)"

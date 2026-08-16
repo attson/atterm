@@ -3,6 +3,7 @@ import source from "./TerminalView.vue?raw";
 import quickTemplatesSource from "../composables/useQuickTemplates.ts?raw";
 import paneSource from "./PaneGrid.vue?raw";
 import appSource from "../App.vue?raw";
+import searchBarSource from "./TerminalSearchBar.vue?raw";
 import { collectContextMenuItems } from "../plugins/contextMenuItems";
 import type { ContextMenuPlugin } from "../plugins/types";
 
@@ -1125,8 +1126,13 @@ describe("TerminalView programmatic focus", () => {
   test("does not focus xterm while the pane is still a viewer", () => {
     expect(source).toMatch(/function\s+focusTerminalIfDriver\s*\(/);
     expect(source).toMatch(/focusTerminalIfDriver[\s\S]*?if\s*\(\s*!isDriver\.value\s*\)\s*return/);
+    // Two unconditional call sites are expected: focusTerminalIfDriver's own
+    // gated call, and onSearchClose's return-focus. Scrollback search works
+    // on viewer panes too (it's local buffer matching, not input), so
+    // closing it intentionally bypasses the driver gate — disableStdin still
+    // blocks typed input either way.
     const directFocusCalls = source.match(/term\?\.focus\(\)/g) ?? [];
-    expect(directFocusCalls).toHaveLength(1);
+    expect(directFocusCalls).toHaveLength(2);
   });
 
   test("keeps xterm textarea non-editable while the pane is still a viewer", () => {
@@ -1155,5 +1161,57 @@ describe("TerminalView programmatic focus", () => {
     expect(helperBody![0]).toMatch(/platform\.caps\.wailsBindings\s*\|\|\s*platform\.caps\.localPty/);
     expect(helperBody![0]).toMatch(/keyboardWanted\.value/);
     expect(helperBody![0]).toMatch(/focusTerminalIfDriver\(\)/);
+  });
+});
+
+describe("TerminalView scrollback search wiring", () => {
+  test("loads the search addon on the live terminal", () => {
+    expect(source).toContain('import { SearchAddon } from "xterm-addon-search"');
+    expect(source).toMatch(/searchAddon = new SearchAddon\(\);\s*term\.loadAddon\(searchAddon\)/);
+  });
+
+  test("keeps allowProposedApi on, which match decorations require", () => {
+    expect(source).toContain("allowProposedApi: true");
+  });
+
+  test("mirrors addon result changes into the bar's counters", () => {
+    expect(source).toMatch(
+      /searchAddon\.onDidChangeResults\(\(\{ resultIndex, resultCount \}\) => \{[\s\S]*?searchResultIndex\.value = resultIndex;[\s\S]*?searchResultCount\.value = resultCount;/,
+    );
+  });
+
+  test("only the focused pane opens on a search request", () => {
+    expect(source).toContain("searchRequestSeq?: number");
+    expect(source).toMatch(
+      /watch\(\s*\(\)\s*=>\s*props\.searchRequestSeq,[\s\S]*?if \(!props\.focused\) return;[\s\S]*?searchOpen\.value = true/,
+    );
+  });
+
+  test("closing the search clears decorations and returns focus to the terminal", () => {
+    expect(source).toMatch(
+      /function onSearchClose\(\) \{[\s\S]*?searchOpen\.value = false;[\s\S]*?searchAddon\?\.clearDecorations\(\);[\s\S]*?term\?\.focus\(\);/,
+    );
+  });
+
+  test("renders the search bar bound to the addon-backed state", () => {
+    expect(source).toContain("<TerminalSearchBar");
+    expect(source).toContain(':open="searchOpen"');
+    expect(source).toContain(':focus-seq="searchFocusSeq"');
+    expect(source).toContain(':result-index="searchResultIndex"');
+    expect(source).toContain(':result-count="searchResultCount"');
+    expect(source).toContain('@find="onSearchFind"');
+    expect(source).toContain('@close="onSearchClose"');
+  });
+
+  test("the search bar is positioned inside the terminal host", () => {
+    expect(searchBarSource).toMatch(/position:\s*absolute/);
+  });
+
+  test("App drills a monotonic search request through PaneGrid", () => {
+    expect(appSource).toMatch(/const terminalSearchSeq = ref\(0\)/);
+    expect(appSource).toMatch(/onTerminalSearch: \(\) => \{\s*terminalSearchSeq\.value\+\+;/);
+    expect(appSource).toContain(':search-request-seq="terminalSearchSeq"');
+    expect(paneSource).toContain("searchRequestSeq?: number");
+    expect(paneSource).toContain(':search-request-seq="searchRequestSeq"');
   });
 });

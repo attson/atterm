@@ -278,10 +278,10 @@
 
 ### 19. scrollback 搜索
 
-- [ ] 引入 `@xterm/addon-search`
-- [ ] Cmd+F / Ctrl+Shift+F 打开搜索栏
-- [ ] 匹配高亮 + 上下跳转 + 结果计数
-- [ ] 增加搜索交互测试
+- [x] 引入 `@xterm/addon-search`
+- [x] Cmd+F / Ctrl+Shift+F 打开搜索栏
+- [x] 匹配高亮 + 上下跳转 + 结果计数
+- [x] 增加搜索交互测试
 
 ### 20. 终端外观设置
 

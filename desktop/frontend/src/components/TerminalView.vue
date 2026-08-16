@@ -5,6 +5,7 @@ import { Terminal } from "xterm";
 import type { ITheme } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebglAddon } from "xterm-addon-webgl";
+import { SearchAddon } from "xterm-addon-search";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { SessionConnection, type Status } from "../lib/connection";
 import type { Endpoint } from "../lib/api";
@@ -57,6 +58,7 @@ import { useQuickTemplates } from "../composables/useQuickTemplates";
 import { usePlatform } from "../platform";
 import { useFileRevealStore } from "../plugins/fileExplorer/fileReveal";
 import TerminalSelectionPopover from "./TerminalSelectionPopover.vue";
+import TerminalSearchBar from "./TerminalSearchBar.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -86,8 +88,11 @@ const props = withDefaults(
     // drag ends — the child process gets one SIGWINCH on mouseup instead
     // of dozens during the drag.
     resizeSuspended?: boolean;
+    // Monotonic counter bumped by App.vue whenever the search shortcut fires.
+    // Every pane sees the same value; only the focused one opens its bar.
+    searchRequestSeq?: number;
   }>(),
-  { active: true, focused: false, avoidTopRightBadge: false, commandNotifyThresholdSec: 10, isLocalSession: true, resizeSuspended: false }
+  { active: true, focused: false, avoidTopRightBadge: false, commandNotifyThresholdSec: 10, isLocalSession: true, resizeSuspended: false, searchRequestSeq: 0 }
 );
 
 const emit = defineEmits<{
@@ -160,6 +165,11 @@ const fileRevealStore = useFileRevealStore();
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
+let searchAddon: SearchAddon | null = null;
+const searchOpen = ref(false);
+const searchFocusSeq = ref(0);
+const searchResultIndex = ref(-1);
+const searchResultCount = ref(0);
 let conn: SessionConnection | null = null;
 let pluginInputSender: ((text: string) => void) | null = null;
 let isAlive = true;
@@ -1423,6 +1433,12 @@ async function ensureTerm() {
   });
   fit = new FitAddon();
   term.loadAddon(fit);
+  searchAddon = new SearchAddon();
+  term.loadAddon(searchAddon);
+  searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
+    searchResultIndex.value = resultIndex;
+    searchResultCount.value = resultCount;
+  });
   term.open(termContainer.value!);
   // Keep a bare Ctrl/⌘ press (e.g. to mod-click a link in the scrollback) from
   // scrolling the viewport to the prompt. CJK IMEs deliver such keydowns as
@@ -1668,6 +1684,48 @@ async function ensureTerm() {
   });
   resizeObserver.observe(termContainer.value!);
 }
+
+// Match colours are fixed rather than theme-derived: the search overlay must
+// stay legible on every terminal theme, and xterm needs concrete hex values
+// for the overview ruler.
+const SEARCH_DECORATIONS = {
+  matchBackground: "#3a3f4b",
+  matchBorder: "#5a6272",
+  matchOverviewRuler: "#5a6272",
+  activeMatchBackground: "#d19a66",
+  activeMatchBorder: "#d19a66",
+  activeMatchColorOverviewRuler: "#d19a66",
+} as const;
+
+function onSearchFind(query: string, dir: "next" | "prev", incremental: boolean) {
+  if (!searchAddon) return;
+  if (!query) {
+    searchAddon.clearDecorations();
+    searchResultIndex.value = -1;
+    searchResultCount.value = 0;
+    return;
+  }
+  const opts = { incremental, decorations: SEARCH_DECORATIONS };
+  if (dir === "next") searchAddon.findNext(query, opts);
+  else searchAddon.findPrevious(query, opts);
+}
+
+function onSearchClose() {
+  searchOpen.value = false;
+  searchAddon?.clearDecorations();
+  searchResultIndex.value = -1;
+  searchResultCount.value = 0;
+  term?.focus();
+}
+
+watch(
+  () => props.searchRequestSeq,
+  () => {
+    if (!props.focused) return;
+    searchOpen.value = true;
+    searchFocusSeq.value++;
+  },
+);
 
 function startConnection() {
   if (!term) return;
@@ -2126,6 +2184,14 @@ watch(
       <span v-else-if="status === 'ended'" class="dim">{{ t("terminal.ended") }}</span>
       <span v-else-if="status === 'error'" class="bad">{{ t("terminal.connectionError") }}</span>
     </div>
+    <TerminalSearchBar
+      :open="searchOpen"
+      :focus-seq="searchFocusSeq"
+      :result-index="searchResultIndex"
+      :result-count="searchResultCount"
+      @find="onSearchFind"
+      @close="onSearchClose"
+    />
     <div v-if="!isDriver" class="viewer-overlay" aria-live="polite">
       <div class="viewer-overlay-card">
         <div class="viewer-overlay-title">{{ t("terminal.remoteHasTakenControl") }}</div>

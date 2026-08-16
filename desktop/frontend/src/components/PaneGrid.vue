@@ -25,6 +25,7 @@ const props = defineProps<{
   active: boolean;
   terminalTheme: TerminalThemeDefinition["xtermTheme"];
   commandNotifyThresholdSec: number;
+  searchRequestSeq?: number;
 }>();
 
 const emit = defineEmits<{
@@ -204,6 +205,7 @@ function formatWho(info: SessionInfo | null): string {
           :is-local-session="!pane.remote"
           :command-notify-threshold-sec="commandNotifyThresholdSec"
           :resize-suspended="dragging"
+          :search-request-seq="searchRequestSeq"
           :can-detach="tab.layout !== 'single'"
           @toast="emit('toast', $event)"
           @detach="pane.sessionId && emit('detach-session', pane.sessionId)"

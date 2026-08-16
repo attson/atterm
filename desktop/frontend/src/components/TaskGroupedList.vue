@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { RemoteSession } from "../platform/types";
-import type { TaskState } from "../lib/taskState";
+import { stateColor, type TaskState } from "../lib/taskState";
 import TaskStateIcon from "./TaskStateIcon.vue";
 import TaskRowInner from "./TaskRowInner.vue";
 import LastOutputIndicator from "./LastOutputIndicator.vue";
@@ -430,6 +430,16 @@ function groupPrimaryState(key: string): TaskState {
   return (best.task_state as TaskState | undefined) ?? "idle";
 }
 
+/**
+ * Hands the row's own state colour to CSS as --unread-c. Unread is tinted with
+ * the state colour rather than one dedicated "unread" hue, so a row only ever
+ * speaks in one colour and the tint never contradicts the icon sitting in it.
+ */
+function unreadTint(s: RemoteSession): Record<string, string> | undefined {
+  if (s.unread !== true) return undefined;
+  return { "--unread-c": stateColor((s.task_state as TaskState | undefined) ?? "idle") };
+}
+
 function unreadIdsForGroup(key: string): string[] {
   return (filteredGroups.value[key] ?? []).filter((s) => s.unread).map((s) => s.session_id);
 }
@@ -483,7 +493,8 @@ function stateLabel(state: string | undefined): string {
           v-for="s in pinnedSessions"
           :key="s.session_id"
           class="task-row"
-          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
+          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), unread: s.unread === true }"
+          :style="unreadTint(s)"
           data-test="task-row"
           :data-session-id="s.session_id"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
@@ -565,7 +576,8 @@ function stateLabel(state: string | undefined): string {
         v-for="s in (isGroupCollapsed(key) ? [] : filteredGroups[key])"
         :key="s.session_id"
         class="task-row"
-        :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
+        :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), unread: s.unread === true }"
+        :style="unreadTint(s)"
         data-test="task-row"
         :data-session-id="s.session_id"
         :data-active="s.session_id === activeSessionId ? 'true' : undefined"
@@ -616,7 +628,8 @@ function stateLabel(state: string | undefined): string {
           v-for="s in completedFiltered"
           :key="s.session_id"
           class="task-row dim"
-          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id) }"
+          :class="{ active: s.session_id === activeSessionId, selected: sel.isSelected(s.session_id), unread: s.unread === true }"
+          :style="unreadTint(s)"
           data-test="completed-fold-row"
           :data-active="s.session_id === activeSessionId ? 'true' : undefined"
           :data-selected="sel.isSelected(s.session_id) ? 'true' : undefined"
@@ -750,8 +763,31 @@ function stateLabel(state: string | undefined): string {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+/* Unread carries the row, not just the 12px icon: a left bar, a wash of the
+   same colour, and a bolder title. --unread-c is the row's *state* colour, set
+   inline by unreadTint() — so waiting rows glow amber and finished ones green,
+   and the row never says two colours at once. The bar is an inset shadow
+   rather than a real border-left so it costs no layout. */
+.task-row.unread {
+  background: color-mix(in srgb, var(--unread-c) 7%, transparent);
+  border-color: color-mix(in srgb, var(--unread-c) 24%, var(--border));
+  box-shadow: inset 2px 0 0 var(--unread-c);
+}
+.task-row.unread:hover { background: color-mix(in srgb, var(--unread-c) 12%, transparent); }
+.task-row.unread :deep(.cmd) { font-weight: 600; color: #fff; }
+/* Active *and* unread. The left bar goes to unread — .active already says
+   "you are here" with its background and border, while unread is the thing
+   you have not looked at yet, and it is the more perishable fact. */
+.task-row.active.unread {
+  background: color-mix(in srgb, var(--unread-c) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  box-shadow: inset 2px 0 0 var(--unread-c);
+}
 .task-row.dim { opacity: 0.6; }
 .task-row.dim.active { opacity: 0.9; }
+/* An unread row in the completed fold is exactly the finished session still
+   worth a look, so it opts out of the fold's dimming. */
+.task-row.dim.unread { opacity: 1; }
 .row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .state-label { font-size: 11px; opacity: 0.85; white-space: nowrap; flex-shrink: 0; }

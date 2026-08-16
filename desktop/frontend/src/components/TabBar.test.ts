@@ -222,7 +222,23 @@ describe("TabBar state icon + unread", () => {
     expect(w.find(".task-state-icon svg").exists()).toBe(true);
   });
 
-  test("uses only the main star for unread completed sessions", () => {
+  test("tints an unread tab with its state colour", () => {
+    const tab = {
+      ...baseTab,
+      activeSession: {
+        id: "s1", command: "claude", cwd: "/", title: "", cols: 80, rows: 24,
+        started_at: 0, task_state: "waiting_input" as const, unread: true,
+      },
+    };
+    const w = mount(TabBar, {
+      props: { tabs: [tab], currentId: "t1", starting: false },
+    });
+    const el = w.get(".tab");
+    expect(el.classes()).toContain("unread");
+    expect(el.attributes("style")).toContain("--unread-c: #f59e0b");
+  });
+
+  test("uses only the main state icon for unread completed sessions", () => {
     const tab = {
       ...baseTab,
       activeSession: {
@@ -240,11 +256,14 @@ describe("TabBar state icon + unread", () => {
     const w = mount(TabBar, {
       props: { tabs: [tab], currentId: "t1", starting: false },
     });
-    expect(w.find("path.task-unread-star").exists()).toBe(true);
+    expect(w.find("circle.task-unread-dot").attributes("fill")).toBe("#22c55e");
     expect(w.find('[data-test="tab-unread-dot"]').exists()).toBe(false);
   });
 
-  test("keeps the separate unread dot for other task states", () => {
+  test("drops the separate unread dot now that every state carries unread", () => {
+    // The standalone ● existed only because the icon honoured unread for
+    // waiting/completed alone. It now handles every state, so a second marker
+    // would just be the same fact twice.
     const tab = {
       ...baseTab,
       activeSession: {
@@ -255,7 +274,8 @@ describe("TabBar state icon + unread", () => {
     const w = mount(TabBar, {
       props: { tabs: [tab], currentId: "t1", starting: false },
     });
-    expect(w.find('[data-test="tab-unread-dot"]').exists()).toBe(true);
+    expect(w.find('[data-test="tab-unread-dot"]').exists()).toBe(false);
+    expect(w.find("circle.task-unread-dot").attributes("fill")).toBe("#06b6d4");
   });
 });
 

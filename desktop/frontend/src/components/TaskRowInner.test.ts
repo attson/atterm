@@ -34,17 +34,21 @@ describe("TaskRowInner right-hand affordances", () => {
     expect(w.find('[data-test="row-mark-read"]').exists()).toBe(false);
   });
 
-  test("an unread completed row shows unread in the main state icon", () => {
+  test("an unread completed row fills the state icon and keeps the check mark", () => {
     const w = factory({ unread: true, task_state: "completed", title: "build" });
     expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(true);
-    expect(w.find("path.task-unread-star").exists()).toBe(true);
-    expect(w.find("path.task-completed-check").exists()).toBe(false);
+    expect(w.find("circle.task-unread-disc").attributes("fill")).toBe("#22c55e");
+    // The glyph survives, knocked out of the disc — an unread row still says
+    // *which* state it is, which the old star could not.
+    expect(w.find("path.task-completed-check").exists()).toBe(true);
   });
 
-  test("an unread waiting row uses the same main star without a second unread control", () => {
+  test("an unread waiting row keeps its prompt glyph and adds no second control", () => {
     const w = factory({ unread: true, task_state: "waiting_input", title: "build" });
     expect(w.find('.task-state-icon[data-state="waiting_input"][data-unread="true"]').exists()).toBe(true);
-    expect(w.find("path.task-unread-star").exists()).toBe(true);
+    expect(w.find("path.task-waiting-prompt").exists()).toBe(true);
+    expect(w.find("circle.task-unread-dot").attributes("fill")).toBe("#f59e0b");
+    expect(w.find('[data-test="row-mark-read"]').exists()).toBe(false);
   });
 
   test("a read completed row shows the completed state icon", () => {

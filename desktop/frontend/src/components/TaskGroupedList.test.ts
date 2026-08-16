@@ -1091,3 +1091,63 @@ describe("TaskGroupedList detach menu item", () => {
     expect(w.emitted("detach-session")).toEqual([["s1"]]);
   });
 });
+
+// I-4 unread styling: the row carries the *state* colour, not a dedicated
+// unread hue. One colour per row, so "what is it waiting on" and "have I seen
+// it" never fight for the same pixel.
+describe("TaskGroupedList unread row highlight", () => {
+  test("tints an unread row with its state colour and leaves read rows alone", () => {
+    const byHost = {
+      h: [
+        mk({ session_id: "s1", host: "mac", task_state: "waiting_input", title: "codex", unread: true }),
+        mk({ session_id: "s2", host: "mac", task_state: "waiting_input", title: "test", unread: false }),
+      ],
+    };
+    const w = mount(TaskGroupedList, {
+      props: { byHost, unreadByHost: { h: 1 }, primaryStateForHost: () => "waiting_input", completedSeen: [] },
+    });
+    const unread = w.get('[data-session-id="s1"]');
+    const read = w.get('[data-session-id="s2"]');
+    expect(unread.classes()).toContain("unread");
+    expect(unread.attributes("style")).toContain("--unread-c: #f59e0b");
+    expect(read.classes()).not.toContain("unread");
+  });
+
+  test("uses the completed colour for an unread completed row", () => {
+    const byHost = {
+      h: [mk({ session_id: "s1", host: "mac", task_state: "completed", title: "claude", unread: true })],
+    };
+    const w = mount(TaskGroupedList, {
+      props: { byHost, unreadByHost: { h: 1 }, primaryStateForHost: () => "completed", completedSeen: [] },
+    });
+    expect(w.get('[data-session-id="s1"]').attributes("style")).toContain("--unread-c: #22c55e");
+  });
+});
+
+// The completed fold is a hand-written reduced row, so it does not inherit
+// TaskRowInner's markup — it has to be kept in step by hand. It can hold
+// unread sessions (the fold carries its own "mark all read"), so an unread
+// one must be tinted like any other row rather than only filling its icon.
+describe("TaskGroupedList completed fold unread", () => {
+  test("tints an unread folded row and lifts it out of the dim treatment", async () => {
+    const w = mount(TaskGroupedList, {
+      props: {
+        byHost: {},
+        unreadByHost: {},
+        primaryStateForHost: () => "completed",
+        completedSeen: [
+          mk({ session_id: "c1", host: "mac", task_state: "completed", title: "build", unread: true }),
+          mk({ session_id: "c2", host: "mac", task_state: "completed", title: "lint", unread: false }),
+        ],
+      },
+    });
+    await w.get('[data-test="completed-fold-toggle"]').trigger("click");
+    // Fold rows render in completedSeen order and carry no data-session-id,
+    // so address them positionally: [0] is the unread one, [1] the read one.
+    const rows = w.findAll('[data-test="completed-fold-row"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].classes()).toContain("unread");
+    expect(rows[0].attributes("style")).toContain("--unread-c: #22c55e");
+    expect(rows[1].classes()).not.toContain("unread");
+  });
+});

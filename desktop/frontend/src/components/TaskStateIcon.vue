@@ -21,13 +21,23 @@ const props = withDefaults(
 const fallback = useTaskPreset();
 const preset = computed(() => props.preset ?? fallback.active.value);
 
-// Waiting/completed are the two normal attention states. When either is
-// unread, unread becomes the primary icon instead of adding a second marker.
-const showUnread = computed(() =>
-  props.unread && (props.state === "waiting_input" || props.state === "completed"),
-);
-const color = computed(() => (showUnread.value ? "#e6edf3" : preset.value.colorOf(props.state)));
+// Unread renders the *same* state glyph in a heavier weight — a solid
+// state-colored disc with the glyph knocked out — plus a state-colored corner
+// dot. Two things stay true that the previous four-point star broke: the row
+// still says which state it is (the star replaced the glyph, so an unread row
+// could not distinguish waiting from finished), and every state can carry
+// unread, so TabBar no longer needs a second marker of its own.
+const showUnread = computed(() => props.unread);
+const color = computed(() => preset.value.colorOf(props.state));
+// Knockout colour for the glyph inside a filled disc. Hardcoded rather than
+// var(--bg): the desk widget has its own stylesheet and never defines the
+// theme variables, so var(--bg) would fail to resolve there and fall back to
+// black. taskState.ts hardcodes the state palette for the same reason.
+const KNOCKOUT = "#0d1117";
+const glyphColor = computed(() => (showUnread.value ? KNOCKOUT : color.value));
 const spinMs = computed(() => preset.value.spinnerDurationMs(props.state));
+// No pulse while unread: the filled disc plus the dot already carry the row,
+// and stacking a fade on top only makes a list of unread rows restless.
 const pulse = computed(() => !showUnread.value && preset.value.animatePulse(props.state));
 </script>
 
@@ -50,55 +60,67 @@ const pulse = computed(() => !showUnread.value && preset.value.animatePulse(prop
       viewBox="0 0 16 16"
       fill="none"
       aria-hidden="true"
+      style="overflow: visible"
     >
-      <!-- running: 3/4 arc, spinning -->
-      <path
-        v-if="state === 'running'"
-        class="task-spinner"
-        d="M14 8 a6 6 0 1 1 -3 -5.196"
-        :stroke="color"
-        stroke-width="2"
-        stroke-linecap="round"
-        :style="{ animationDuration: spinMs + 'ms' }"
-      />
-      <!-- unread attention state: unread is primary until the row is seen -->
-      <path
-        v-else-if="showUnread"
-        class="task-unread-star"
-        d="M8 2.5 L9.35 6.65 L13.5 8 L9.35 9.35 L8 13.5 L6.65 9.35 L2.5 8 L6.65 6.65 Z"
+      <!-- Unread backdrop: the glyph below is drawn in the knockout colour and
+           scaled to fit inside this disc, so the shape reads as a hole. -->
+      <circle
+        v-if="showUnread"
+        class="task-unread-disc"
+        cx="8"
+        cy="8"
+        r="7.5"
         :fill="color"
       />
-      <!-- completed: check mark -->
-      <path
-        v-else-if="state === 'completed'"
-        class="task-completed-check"
-        d="M3 8 l3 3 l7 -7"
-        :stroke="color"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-      <!-- failed: X -->
-      <path
-        v-else-if="state === 'failed'"
-        d="M4 4 L12 12 M12 4 L4 12"
-        :stroke="color"
-        stroke-width="2"
-        stroke-linecap="round"
-      />
-      <!-- waiting_input: terminal prompt -->
-      <g v-else-if="state === 'waiting_input'">
+      <g :transform="showUnread ? 'translate(8,8) scale(0.62) translate(-8,-8)' : undefined">
+        <!-- running: 3/4 arc, spinning -->
         <path
+          v-if="state === 'running'"
+          class="task-spinner"
+          d="M14 8 a6 6 0 1 1 -3 -5.196"
+          :stroke="glyphColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          :style="{ animationDuration: spinMs + 'ms' }"
+        />
+        <!-- completed: check mark -->
+        <path
+          v-else-if="state === 'completed'"
+          class="task-completed-check"
+          d="M3 8 l3 3 l7 -7"
+          :stroke="glyphColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <!-- failed: X -->
+        <path
+          v-else-if="state === 'failed'"
+          d="M4 4 L12 12 M12 4 L4 12"
+          :stroke="glyphColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        />
+        <!-- waiting_input: terminal prompt -->
+        <path
+          v-else-if="state === 'waiting_input'"
           class="task-waiting-prompt"
           d="M3 4.5 L6.5 8 L3 11.5 M8 11.5 H13"
-          :stroke="color"
+          :stroke="glyphColor"
           stroke-width="1.8"
           stroke-linecap="round"
           stroke-linejoin="round"
         />
+        <!-- idle / disconnected / closed: small dot. Bigger inside a disc so
+             it survives the 0.62 scale. -->
+        <circle v-else cx="8" cy="8" :r="showUnread ? 3.2 : 2" :fill="glyphColor" />
       </g>
-      <!-- idle / disconnected / closed: small dot -->
-      <circle v-else cx="8" cy="8" r="2" :fill="color" />
+      <!-- Corner dot. The ring beneath it is painted in the knockout colour so
+           the dot stays legible against the disc it sits on. -->
+      <template v-if="showUnread">
+        <circle cx="12.6" cy="3.4" r="3.3" :fill="KNOCKOUT" />
+        <circle class="task-unread-dot" cx="12.6" cy="3.4" r="2.5" :fill="color" />
+      </template>
     </svg>
   </span>
 </template>

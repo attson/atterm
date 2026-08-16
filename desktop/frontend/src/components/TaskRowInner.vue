@@ -6,8 +6,9 @@
 // instead of drifting.
 //
 // There is no per-row unread marker or mark-read control. Unread already
-// surfaces three other ways — the state icon turns into a star for the two
-// attention states, unread rows sort to the top of their group, and the group
+// surfaces three other ways — the state icon fills in and grows a corner dot
+// (both in the row's state colour, with the row itself tinted to match by
+// TaskGroupedList), unread rows sort to the top of their group, and the group
 // header carries the count plus a "mark all read". A fourth, per-row copy of
 // the same fact cost ~22px of a ~224px row's title. Unread also clears itself
 // the moment a client attaches (relay: attention_at > seen_at AND no

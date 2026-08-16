@@ -27,22 +27,45 @@ describe("TaskStateIcon", () => {
       "animation-duration: 1500ms",
     );
   });
-  test("renders a four-point star as the main icon for unread completed sessions", () => {
+  // Unread is drawn as a filled version of the *same* state glyph — a solid
+  // state-colored disc with the glyph knocked out in the background colour —
+  // plus a state-colored corner dot. The old four-point star replaced the
+  // glyph outright, which meant an unread row could no longer say whether it
+  // was waiting or finished.
+  test("renders a solid state disc with the glyph knocked out for unread completed sessions", () => {
     const w = mount(TaskStateIcon, {
       props: { state: "completed", unread: true, preset: presets.iconOnly },
     });
     expect(w.find('.task-state-icon[data-state="completed"][data-unread="true"]').exists()).toBe(true);
-    expect(w.find("path.task-unread-star").exists()).toBe(true);
-    expect(w.find("path.task-completed-check").exists()).toBe(false);
+    expect(w.find("circle.task-unread-disc").attributes("fill")).toBe("#22c55e");
+    // The check mark survives — knocked out in the background colour.
+    expect(w.find("path.task-completed-check").attributes("stroke")).toBe("#0d1117");
+    expect(w.find("path.task-unread-star").exists()).toBe(false);
   });
-  test("renders the same static four-point star for unread waiting sessions", () => {
+  test("renders a corner dot in the state colour for unread sessions", () => {
     const w = mount(TaskStateIcon, {
       props: { state: "waiting_input", unread: true, preset: presets.iconOnly },
     });
-    expect(w.find('.task-state-icon[data-state="waiting_input"][data-unread="true"]').exists()).toBe(true);
-    expect(w.find("path.task-unread-star").exists()).toBe(true);
-    expect(w.find("path.task-waiting-prompt").exists()).toBe(false);
+    expect(w.find("circle.task-unread-dot").attributes("fill")).toBe("#f59e0b");
+    expect(w.find("path.task-waiting-prompt").attributes("stroke")).toBe("#0d1117");
     expect(w.classes()).not.toContain("pulse");
+  });
+  test("marks unread for every state, not just waiting and completed", () => {
+    // The old rule only honoured unread on waiting_input/completed, which is
+    // why TabBar had to carry a second, separate dot for the rest.
+    const cases = [
+      ["running", "#06b6d4"],
+      ["failed", "#ef4444"],
+      ["idle", "#6b7280"],
+    ] as const;
+    for (const [state, color] of cases) {
+      const w = mount(TaskStateIcon, {
+        props: { state, unread: true, preset: presets.iconOnly },
+      });
+      expect(w.find(`.task-state-icon[data-state="${state}"][data-unread="true"]`).exists()).toBe(true);
+      expect(w.find("circle.task-unread-dot").attributes("fill")).toBe(color);
+      expect(w.find("circle.task-unread-disc").attributes("fill")).toBe(color);
+    }
   });
   test("renders completed check when a completed session is already read", () => {
     const w = mount(TaskStateIcon, {

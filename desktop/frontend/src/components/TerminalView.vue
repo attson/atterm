@@ -189,6 +189,14 @@ const fileRevealStore = useFileRevealStore();
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let searchAddon: SearchAddon | null = null;
+// Snapshot of the metrics-affecting fields (font family / size / line
+// height) last written to term.options, kept independently of whatever
+// object identity props.appearance happens to have. Comparing against this
+// instead of the watcher's `prev` is correct under both wholesale
+// replacement (every current writer) and in-place mutation (Vue would hand
+// the watcher the SAME object as next and prev, making a prev-based diff
+// always report "unchanged").
+let lastAppliedMetrics: { fontHead: string; fontSize: number; lineHeight: number } | null = null;
 const searchOpen = ref(false);
 const searchFocusSeq = ref(0);
 const searchResultIndex = ref(-1);
@@ -1434,7 +1442,11 @@ function safeFit() {
 // panes mounted (v-show), so this watch fires on background-tab terminals
 // too, and safeFit's display:none rect guard is what keeps that from hitting
 // the NaN-dims crash documented on its own definition above.
-function applyAppearance(next: TerminalAppearance, prev?: TerminalAppearance) {
+//
+// metricsChanged compares against lastAppliedMetrics (module-local, see its
+// declaration above), not a caller-supplied `prev` — that stays correct
+// whether props.appearance was replaced wholesale or mutated in place.
+function applyAppearance(next: TerminalAppearance) {
   if (!term) return;
   term.options.fontFamily = composeFontFamily(next.fontHead);
   term.options.fontSize = next.fontSize;
@@ -1444,10 +1456,11 @@ function applyAppearance(next: TerminalAppearance, prev?: TerminalAppearance) {
   term.options.scrollback = next.scrollback;
 
   const metricsChanged =
-    !prev ||
-    prev.fontHead !== next.fontHead ||
-    prev.fontSize !== next.fontSize ||
-    prev.lineHeight !== next.lineHeight;
+    !lastAppliedMetrics ||
+    lastAppliedMetrics.fontHead !== next.fontHead ||
+    lastAppliedMetrics.fontSize !== next.fontSize ||
+    lastAppliedMetrics.lineHeight !== next.lineHeight;
+  lastAppliedMetrics = { fontHead: next.fontHead, fontSize: next.fontSize, lineHeight: next.lineHeight };
   if (metricsChanged && isDriver.value) safeFit();
 }
 
@@ -1483,6 +1496,15 @@ async function ensureTerm() {
     disableStdin: !isDriver.value,
     allowProposedApi: true,
   });
+  // Metrics are already applied via the constructor args above; seed the
+  // snapshot so the first props.appearance watch firing after mount only
+  // re-fits if a metrics field actually differs from what was just
+  // constructed with, not unconditionally.
+  lastAppliedMetrics = {
+    fontHead: props.appearance.fontHead,
+    fontSize: props.appearance.fontSize,
+    lineHeight: props.appearance.lineHeight,
+  };
   fit = new FitAddon();
   term.loadAddon(fit);
   searchAddon = new SearchAddon();
@@ -2180,12 +2202,16 @@ watch(
 
 // App.vue replaces its terminalAppearance ref wholesale on every settings
 // commit (not a per-field patch), so this fires with all six values on any
-// one of them changing — applyAppearance's own metricsChanged comparison is
-// what keeps that from re-fitting for a cursor/scrollback-only change.
+// one of them changing — applyAppearance's own metricsChanged comparison
+// (against lastAppliedMetrics, not this watcher's prev) is what keeps that
+// from re-fitting for a cursor/scrollback-only change. No `deep: true`:
+// every writer replaces the object wholesale, so the shallow identity check
+// already fires; `deep` would only add a failure mode (in-place mutation
+// handing the same object to next and prev) with no upside, and
+// lastAppliedMetrics is immune to that either way.
 watch(
   () => props.appearance,
-  (next, prev) => applyAppearance(next, prev),
-  { deep: true },
+  (next) => applyAppearance(next),
 );
 
 watch(status, (nextStatus) => {

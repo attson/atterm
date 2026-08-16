@@ -79,9 +79,13 @@ key。而 roadmap Backlog 里堆着的字体、字号、启动目录、环境变
 **缺口**
 
 - 无 `xterm-addon-search`（xterm v5 下的无 scope 包名；非 v6 的 `@xterm/addon-search`）：scrollback 不可搜索。
-- `TerminalView.vue` 的 `scrollback: 5000` 是硬编码常量（#343 为抗输出洪水从更
-  大的值下调而来），用户无法按机器性能调整。
-- 无字号 / 行高 / 光标样式配置；字体族固定在 `lib/terminalFont.ts` 常量里。
+- ~~`TerminalView.vue` 的 `scrollback: 5000` 是硬编码常量（#343 为抗输出洪水从更
+  大的值下调而来），用户无法按机器性能调整。~~
+  ~~无字号 / 行高 / 光标样式配置；字体族固定在 `lib/terminalFont.ts` 常量里。~~
+  2026-08-17 补记：item 20 已交付——字体族头部、字号、行高、光标样式/闪烁、
+  scrollback 五项均已变为持久化的用户设置并实时应用到面板，见
+  `2026-08-17-terminal-appearance-design.md`。本节其余是 item 20 之前的点时
+  快照，保留供参照；`docs/roadmap.md` 是活的 tracker。
 - 无 profile 概念：shell、启动目录、环境变量三者散落，其中后两者尚不存在。
 - `terminal_theme`、`default_shell`、快捷键绑定**已在本地持久化但不在
   `syncedKeys` 里**，换台机器要重配。

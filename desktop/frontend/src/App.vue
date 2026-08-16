@@ -880,7 +880,7 @@ async function refreshTerminalAppearance() {
     fontHead,
     fontSize,
     lineHeight,
-    cursorStyle: cursorStyle as TerminalAppearance["cursorStyle"],
+    cursorStyle,
     cursorBlink,
     scrollback,
   };

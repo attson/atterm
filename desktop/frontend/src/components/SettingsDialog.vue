@@ -206,13 +206,11 @@ function onCommandNotifyThresholdChanged(seconds: number) {
 
 // SettingsGeneral re-emits SettingsTerminalAppearance's event unchanged (see
 // its own onAppearanceChanged); this dialog is just a pass-through so App.vue
-// doesn't need to know the settings tree got a level deeper. The cast
-// narrows cursorStyle from TerminalAppearanceState's `string` to the tighter
-// union TerminalAppearance declares — safe because the only writer is
-// SettingsTerminalAppearance.vue's own <select>, whose options are exactly
-// those three values.
+// doesn't need to know the settings tree got a level deeper. No cast needed:
+// TerminalAppearanceState.cursorStyle is typed as the same union
+// TerminalAppearance declares, so the two shapes already match structurally.
 function onAppearanceChanged(state: TerminalAppearanceState) {
-  emit("appearance-changed", state as TerminalAppearance);
+  emit("appearance-changed", state);
 }
 
 async function openLogViewer() {

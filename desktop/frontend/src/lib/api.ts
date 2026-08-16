@@ -225,8 +225,13 @@ export function setTerminalLineHeight(lineHeight: number): Promise<void> {
   return bindings().SetTerminalLineHeight(lineHeight);
 }
 
-export function getTerminalCursorStyle(): Promise<string> {
-  return bindings().GetTerminalCursorStyle();
+// The Wails binding is generated as Promise<string> (Go's method signature
+// is untyped), but App.GetTerminalCursorStyle always routes through
+// TerminalCursorStyleOrDefault, which falls back to a supported value for
+// anything else — so this is the one place that narrows to the tighter
+// union, rather than casting it again at every call site.
+export function getTerminalCursorStyle(): Promise<"block" | "underline" | "bar"> {
+  return bindings().GetTerminalCursorStyle() as Promise<"block" | "underline" | "bar">;
 }
 
 export function setTerminalCursorStyle(style: string): Promise<void> {

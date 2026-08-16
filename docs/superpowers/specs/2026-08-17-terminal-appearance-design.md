@@ -77,6 +77,11 @@ Microsoft YaHei / Noto Sans Mono CJK SC），最后 `monospace`。顺序是红�
 Cascadia Code、Source Code Pro、IBM Plex Mono），外加一个「系统默认」＝不加前缀、
 用原链。用户机器上没装选中的族时，per-glyph 回退自然落到原链，不会坏。
 
+> 2026-08-17 补记：实现（`terminalFont.ts` 的 `TERMINAL_FONT_PRESETS`）没有把
+> Menlo 单列为一个预设项，保留原样而非补齐——Menlo 本来就是 `TERMINAL_FONT_FAMILY`
+> 原链的第一个字体，所以「系统默认」在 macOS 上已经等价于 Menlo 优先；把它再列成
+> 一个可选头部只会得到同一结果的两条路径。
+
 这样红线 #13 的 CJK 尾部**在构造上**无法被绕过，而不是靠 code review 守着。
 `lib/terminalFont.ts` 因此从导出一个常量，改为导出原链 + 预设列表 + 一个
 `composeFontFamily(head)` 纯函数，纯函数单测。

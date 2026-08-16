@@ -5,7 +5,7 @@ export interface TerminalAppearanceState {
   fontHead: string;
   fontSize: number;
   lineHeight: number;
-  cursorStyle: string;
+  cursorStyle: "block" | "underline" | "bar";
   cursorBlink: boolean;
   scrollback: number;
 }
@@ -90,7 +90,7 @@ onMounted(async () => {
     persistedFontHead.value = head;
     fontSize.value = size;
     lineHeight.value = lh;
-    cursorStyle.value = style as "block" | "underline" | "bar";
+    cursorStyle.value = style;
     persistedCursorStyle.value = cursorStyle.value;
     cursorBlink.value = blink;
     scrollback.value = sb;
@@ -105,6 +105,16 @@ onMounted(async () => {
 // Task 4's App.vue replaces its appearance state wholesale on every event
 // rather than patching one field, so every commit re-sends all six current
 // values (not just the one that changed).
+//
+// scrollback reads persistedScrollback, not scrollback.value: unlike the
+// other five fields, scrollback has an `input` handler (onScrollbackInput)
+// that updates scrollback.value unclamped on every keystroke so the memory
+// hint tracks typing, before onScrollbackChange commits/clamps on blur. If
+// some other control's change handler fired emitAppearanceChanged() while a
+// scrollback edit was mid-keystroke, reading scrollback.value here could
+// emit a value that was never actually persisted. Reading
+// persistedScrollback keeps "what we emit" == "what we persisted" true
+// unconditionally rather than depending on tab-order/blur timing.
 function emitAppearanceChanged() {
   emit("appearance-changed", {
     fontHead: fontHead.value,
@@ -112,7 +122,7 @@ function emitAppearanceChanged() {
     lineHeight: lineHeight.value,
     cursorStyle: cursorStyle.value,
     cursorBlink: cursorBlink.value,
-    scrollback: scrollback.value,
+    scrollback: persistedScrollback.value,
   });
 }
 

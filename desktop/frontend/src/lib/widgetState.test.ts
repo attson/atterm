@@ -116,7 +116,8 @@ describe("projectWidgetState — ordering", () => {
       sess({ id: "wait", task_state: "waiting_input", last_output_at: 1 }),
     ];
     const ids = projectWidgetState(sessions, { nowMs: NOW, groupBy: "state" }).rows.map((r) => r.sessionId);
-    expect(ids).toEqual(["wait", "fail", "new-run", "old-run", "done"]);
+    // The widget shares the sidebar's urgency order, so running leads here too.
+    expect(ids).toEqual(["new-run", "old-run", "wait", "fail", "done"]);
   });
 
   it("matches the sidebar host grouping by local host then activity", () => {

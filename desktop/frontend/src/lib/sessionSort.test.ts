@@ -90,10 +90,12 @@ describe("two streaming AI sessions", () => {
 });
 
 describe("compareSessionsBySidebarOrder", () => {
+  // Urgency beats every timestamp, and running leads it: the list answers
+  // "what is moving" before "what is asking for me".
   it("still ranks state urgency above everything", () => {
-    const waiting = ai({ session_id: "w", task_state: "waiting_input", command_started_at: T - 9999 });
-    const running = ai({ session_id: "r", task_state: "running", command_started_at: T });
-    expect([running, waiting].sort(compareSessionsBySidebarOrder)[0]).toBe(waiting);
+    const waiting = ai({ session_id: "w", task_state: "waiting_input", command_started_at: T });
+    const running = ai({ session_id: "r", task_state: "running", command_started_at: T - 9999 });
+    expect([waiting, running].sort(compareSessionsBySidebarOrder)[0]).toBe(running);
   });
 
   it("still puts unread ahead of read within a state", () => {

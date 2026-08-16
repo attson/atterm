@@ -11,8 +11,20 @@ export interface SessionSortFields {
   started_at?: number;
 }
 
+/**
+ * Sidebar order, most urgent first.
+ *
+ * `running` leads: the list answers "what is moving right now" before "what is
+ * asking for me". Both orderings are defensible — a session waiting on you is
+ * arguably the one that needs attention — and this is the one the user picked,
+ * with the consequence that a session waiting for input sits below a noisy
+ * shell that is merely producing output.
+ *
+ * This is the single source for both the row order inside a group and the order
+ * the state groups themselves appear in.
+ */
 export const SESSION_URGENCY: readonly TaskState[] = [
-  "waiting_input", "failed", "running", "completed", "idle", "disconnected", "closed",
+  "running", "waiting_input", "failed", "completed", "idle", "disconnected", "closed",
 ];
 
 export function sessionUrgencyIndex(state?: TaskState | string): number {

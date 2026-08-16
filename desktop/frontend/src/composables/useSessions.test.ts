@@ -70,7 +70,8 @@ describe("useSessions", () => {
       mk({ session_id: "c", host_id: "h", task_state: "waiting_input" }),
     ]);
     const { primaryStateForHost } = useSessions(local, remote);
-    expect(primaryStateForHost("h")).toBe("waiting_input");
+    // running leads the urgency order, so it is what the host header shows.
+    expect(primaryStateForHost("h")).toBe("running");
   });
 
   test("completedSeen is sessions completed/failed with unread===false", () => {
@@ -96,7 +97,7 @@ describe("useSessions", () => {
       mk({ session_id: "asks", host_id: "h", task_state: "waiting_input", attention_at: 50 }),
     ]);
     const { byHost } = useSessions(local, remote);
-    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["asks", "busy", "done"]);
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["busy", "asks", "done"]);
   });
 
   // Within one state the order is still the stable interaction stamp, so two
@@ -139,11 +140,11 @@ describe("useSessions", () => {
       }),
     ]);
     const { byHost } = useSessions(local, remote);
-    // Urgency first: c is waiting_input, a is running, b has completed. Within
+    // Urgency first: a is running, c is waiting_input, b has completed. Within
     // a state the interaction stamp decides — `a` streams output at 999 but
     // carries no interaction stamp, and no longer outranks anyone on output
     // alone, which is the leapfrogging that used to churn the list.
-    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["c", "a", "b"]);
+    expect(byHost.value["h"].map((s) => s.session_id)).toEqual(["a", "c", "b"]);
   });
 
   test("a running session ranks by when its command started, not by its output", () => {

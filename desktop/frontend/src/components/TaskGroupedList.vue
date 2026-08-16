@@ -14,7 +14,7 @@ import { useTaskPreset } from "../composables/useTaskPreset";
 import { useSessionPins } from "../composables/useSessionPins";
 import { useSessionSelection } from "../composables/useSessionSelection";
 import { matchesSession } from "../lib/sessionMatch";
-import { compareSessionsBySidebarOrder, sessionUrgencyIndex } from "../lib/sessionSort";
+import { SESSION_URGENCY, compareSessionsBySidebarOrder, sessionUrgencyIndex } from "../lib/sessionSort";
 import { SESSION_DND_MIME, clearDraggingSession, setDraggingSession } from "../lib/paneDrop";
 import {
   titleOrCommand,
@@ -87,16 +87,9 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const sel = useSessionSelection();
 
-// STATE_ORDER controls the visual order of state groups: most-urgent first.
-const STATE_ORDER: TaskState[] = [
-  "waiting_input",
-  "failed",
-  "running",
-  "completed",
-  "idle",
-  "disconnected",
-  "closed",
-];
+// The group order is the row order: one list, so the two cannot disagree about
+// which state matters most.
+const STATE_ORDER = SESSION_URGENCY;
 
 const pins = useSessionPins();
 // Normalized query — trimmed + lowercased once per input change, then handed

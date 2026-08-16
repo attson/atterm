@@ -72,6 +72,13 @@ export const zhCN = {
     pressSpaceToTakeBack: "按空格取回控制",
     takeControl: "接管控制",
     clearBuffer: "清空缓冲区",
+    search: {
+      placeholder: "查找",
+      next: "下一个匹配",
+      prev: "上一个匹配",
+      close: "关闭搜索",
+      noResults: "无匹配",
+    },
     sendSelection: "发送",
     pickImage: "图片",
     pickFile: "文件",

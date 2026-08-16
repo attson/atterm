@@ -687,9 +687,9 @@ func (s *Session) Subscribe(sinceSeq uint64, clientID, clientName string, opts .
 	if !ok {
 		// The subscriber's queue filled before its snapshot finished, so it is
 		// dropped mid-attach: it never joins s.subs, never becomes driver, and
-		// its client sees the socket close. Worth a line — from the outside
-		// this looks like "the progress bar hangs and my keystrokes do
-		// nothing", with nothing in the log to say why.
+		// its client sees the socket close. Rare now that a replay is capped at
+		// replayTailCapBytes, which is two orders of magnitude below the queue
+		// depth — so if this ever fires, the cap or the queue has drifted.
 		logging.Info("session", "attach dropped sid=%s reason=queue-full phase=snapshot replayed=%d total=%d",
 			s.ID, replayedBytes, totalBytes)
 		sub.close()

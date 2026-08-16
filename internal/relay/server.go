@@ -427,7 +427,7 @@ func (s *Server) handleClientHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.debugf("ws accept path=/client remote=%s origin=%q subprotocol=%q", r.RemoteAddr, r.Header.Get("Origin"), c.Subprotocol())
 	defer c.Close(websocket.StatusInternalError, "")
-	s.handleClient(r.Context(), c, scope, ownerUserID, r.RemoteAddr)
+	s.handleClient(r.Context(), c, scope, ownerUserID)
 }
 
 func (s *Server) handleClientSessionsHTTP(w http.ResponseWriter, r *http.Request) {

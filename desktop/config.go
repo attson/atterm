@@ -99,6 +99,17 @@ type appConfig struct {
 	// TerminalTheme is the user's global desktop terminal theme preference.
 	// Unknown values fall back to classic so older configs remain usable.
 	TerminalTheme string `json:"terminal_theme,omitempty"`
+	// Terminal appearance. Zero values mean "never set" and resolve to the
+	// hardcoded defaults that shipped before these became settings, so an
+	// upgrading user sees no change. Accessors clamp rather than reject:
+	// a corrupt config.json should degrade to a usable terminal, not a
+	// broken one.
+	TerminalFontHead    string  `json:"terminal_font_head,omitempty"`
+	TerminalFontSize    int     `json:"terminal_font_size,omitempty"`
+	TerminalLineHeight  float64 `json:"terminal_line_height,omitempty"`
+	TerminalCursorStyle string  `json:"terminal_cursor_style,omitempty"`
+	TerminalCursorBlink *bool   `json:"terminal_cursor_blink,omitempty"`
+	TerminalScrollback  int     `json:"terminal_scrollback,omitempty"`
 	// DefaultShell selects the shell used for new local sessions. Empty or
 	// "auto" lets AT Term choose the first supported shell available locally.
 	DefaultShell string `json:"default_shell,omitempty"`
@@ -290,6 +301,85 @@ func (c appConfig) TerminalThemeOrDefault() string {
 		return c.TerminalTheme
 	}
 	return terminalThemeClassic
+}
+
+const (
+	terminalFontSizeDefault = 13
+	terminalFontSizeMin     = 8
+	terminalFontSizeMax     = 32
+
+	terminalLineHeightDefault = 1.0
+	terminalLineHeightMin     = 1.0
+	terminalLineHeightMax     = 2.0
+
+	terminalCursorStyleDefault = "block"
+
+	// terminalScrollbackDefault is the value #343 settled on after output
+	// floods pushed memory to ~600 MB across a dozen panes. The ceiling is
+	// the pre-#343 value: known to survive on one pane, known to hurt across
+	// many. Roughly 2.75 KB/line at 200 columns, per pane.
+	terminalScrollbackDefault = 5000
+	terminalScrollbackMax     = 20000
+)
+
+func isSupportedCursorStyle(s string) bool {
+	switch s {
+	case "block", "underline", "bar":
+		return true
+	}
+	return false
+}
+
+func (c appConfig) TerminalFontHeadOrDefault() string { return strings.TrimSpace(c.TerminalFontHead) }
+
+func (c appConfig) TerminalFontSizeOrDefault() int {
+	if c.TerminalFontSize == 0 {
+		return terminalFontSizeDefault
+	}
+	if c.TerminalFontSize < terminalFontSizeMin {
+		return terminalFontSizeMin
+	}
+	if c.TerminalFontSize > terminalFontSizeMax {
+		return terminalFontSizeMax
+	}
+	return c.TerminalFontSize
+}
+
+func (c appConfig) TerminalLineHeightOrDefault() float64 {
+	if c.TerminalLineHeight == 0 {
+		return terminalLineHeightDefault
+	}
+	if c.TerminalLineHeight < terminalLineHeightMin {
+		return terminalLineHeightMin
+	}
+	if c.TerminalLineHeight > terminalLineHeightMax {
+		return terminalLineHeightMax
+	}
+	return c.TerminalLineHeight
+}
+
+func (c appConfig) TerminalCursorStyleOrDefault() string {
+	if isSupportedCursorStyle(c.TerminalCursorStyle) {
+		return c.TerminalCursorStyle
+	}
+	return terminalCursorStyleDefault
+}
+
+func (c appConfig) TerminalCursorBlinkOrDefault() bool {
+	if c.TerminalCursorBlink == nil {
+		return true
+	}
+	return *c.TerminalCursorBlink
+}
+
+func (c appConfig) TerminalScrollbackOrDefault() int {
+	if c.TerminalScrollback <= 0 {
+		return terminalScrollbackDefault
+	}
+	if c.TerminalScrollback > terminalScrollbackMax {
+		return terminalScrollbackMax
+	}
+	return c.TerminalScrollback
 }
 
 // taskPresetDefault is the preset used when TaskPreset has never been set.

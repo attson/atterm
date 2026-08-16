@@ -228,3 +228,23 @@ func TestTerminalAppearanceClamping(t *testing.T) {
 		})
 	}
 }
+
+// TestTerminalCursorBlinkOrDefault_ExplicitValues covers the reason
+// TerminalCursorBlink is a *bool rather than bool: a plain bool's zero value
+// (false) cannot distinguish "never set" from "user explicitly disabled
+// blink". TestTerminalAppearanceDefaults already covers the nil case; this
+// covers both explicit states so a regression to plain bool, or an accessor
+// slip like `return c.TerminalCursorBlink != nil`, fails loudly.
+func TestTerminalCursorBlinkOrDefault_ExplicitValues(t *testing.T) {
+	off := false
+	c := appConfig{TerminalCursorBlink: &off}
+	if got := c.TerminalCursorBlinkOrDefault(); got != false {
+		t.Errorf("explicit false = %v, want false (must not fall back to default)", got)
+	}
+
+	on := true
+	c = appConfig{TerminalCursorBlink: &on}
+	if got := c.TerminalCursorBlinkOrDefault(); got != true {
+		t.Errorf("explicit true = %v, want true", got)
+	}
+}

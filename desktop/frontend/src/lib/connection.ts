@@ -288,11 +288,22 @@ export function webSocketAuth(endpoint: Endpoint, path: string): { url: string; 
   };
 }
 
+// hexHead renders the first `max` bytes of a frame payload as hex, with an
+// elision marker when truncated — enough to recognise what a bad payload
+// actually was, without dumping a whole session list into the log.
+function hexHead(b: Uint8Array, max = 64): string {
+  const n = Math.min(b.length, max);
+  let s = "";
+  for (let i = 0; i < n; i++) s += b[i].toString(16).padStart(2, "0");
+  return b.length > max ? `${s}…` : s;
+}
+
 export class SessionListConnection {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private detached = false;
+  private listParseFailures = 0;
 
   constructor(
     private endpoint: Endpoint,
@@ -356,13 +367,25 @@ export class SessionListConnection {
         return;
       }
       if (f.type !== TYPE.LIST_RESP) return;
+
+      // Parsing and dispatch are reported separately. A parse/decrypt failure
+      // means the frame itself is unusable; a throw out of onSessions is a UI
+      // bug that says nothing about the wire format. Conflating the two hid
+      // the cause of a 6491-frame outage in v0.4.16.
+      let sessions: SessionInfo[];
       try {
-        const sessions = JSON.parse(decodeText(f.payload)) as SessionInfo[];
-        this.handlers.onSessions(decryptSessionFields(sessions));
+        sessions = decryptSessionFields(JSON.parse(decodeText(f.payload)) as SessionInfo[]);
       } catch (e) {
-        // Covers both a malformed frame and a failed field decrypt. Either way
-        // the user sees a stale or empty session list with no other clue.
-        logWarn("conn", "dropping unusable LIST_RESP", { error: errText(e) });
+        this.noteUnusableListFrame(f.payload, e);
+        return;
+      }
+      // Reset before dispatching so a throwing handler cannot be mistaken for
+      // a run of bad frames.
+      this.listParseFailures = 0;
+      try {
+        this.handlers.onSessions(sessions);
+      } catch (e) {
+        logWarn("conn", "session list handler threw", { url: this.endpoint.url, error: errText(e) });
       }
     };
 
@@ -377,6 +400,24 @@ export class SessionListConnection {
     ws.onerror = () => {
       // onclose follows
     };
+  }
+
+  // Rate limited: LIST_RESP arrives several times a second, so a persistent
+  // failure would write thousands of identical lines — in v0.4.16 that rotated
+  // nine days of history out of desktop.log and left nothing to diagnose from.
+  // The first failure and every hundredth carry the full context;
+  // `consecutive` accounts for the ones in between.
+  private noteUnusableListFrame(payload: Uint8Array, e: unknown): void {
+    this.listParseFailures++;
+    const n = this.listParseFailures;
+    if (n !== 1 && n % 100 !== 0) return;
+    logWarn("conn", "dropping unusable LIST_RESP", {
+      url: this.endpoint.url,
+      consecutive: n,
+      payload_len: payload.length,
+      payload_head: hexHead(payload),
+      error: errText(e),
+    });
   }
 
   private handleOpenFailure(e: unknown, auth: { url: string; protocols?: string[] }): void {

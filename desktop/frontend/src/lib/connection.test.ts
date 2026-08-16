@@ -9,6 +9,14 @@ import { setAccountKeyProvider } from "./account-key";
 import type { SealedSessionFields } from "./opaque";
 import { TYPE, NIL_SID, decodeFrame, decodeText, encodeFrame, encodeText, uuidParse } from "./proto";
 import { encodeSegments, decodeSegments } from "./fsSegments";
+import { logWarn } from "./log";
+
+// logWarn is stubbed so the LIST_RESP diagnostics can be asserted directly.
+// Everything else in ./log keeps its real behaviour.
+vi.mock("./log", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./log")>()),
+  logWarn: vi.fn(),
+}));
 
 // FS frames are segment-framed; everything else stays a bare JSON payload.
 function isFSFrameType(type: number): boolean {
@@ -771,5 +779,142 @@ describe("decryptSessionFields", () => {
     setAccountKeyProvider(() => accountKey);
     const [out] = decryptSessionFields([baseSession(uuid, { title: "fallback", sealed: "bm90LXZhbGlk" })]);
     expect(out.title).toBe("fallback");
+  });
+});
+
+// A v0.4.16 desktop.log carried 6491 consecutive `dropping unusable LIST_RESP
+// / RangeError: Bad value` lines over 23 minutes. The message named neither
+// the connection nor the payload, so the cause could not be identified after
+// the fact — and the volume rotated nine days of history out of the log file.
+// These tests pin down the diagnostics that make a repeat diagnosable.
+describe("SessionListConnection LIST_RESP failure reporting", () => {
+  const endpoint = { url: "ws://127.0.0.1:1234", session_token: "token" };
+
+  class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 3;
+
+    readyState = FakeWebSocket.CONNECTING;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public url: string, public protocols?: string[]) {
+      FakeWebSocket.instances.push(this);
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.();
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    }
+
+    emit(type: number, payload?: Uint8Array) {
+      const bytes = encodeFrame(type as any, NIL_SID, payload ?? new Uint8Array(0));
+      this.onmessage?.({ data: bytes.buffer } as MessageEvent);
+    }
+  }
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    vi.mocked(logWarn).mockClear();
+  });
+
+  afterEach(() => {
+    setAccountKeyProvider(null);
+    vi.unstubAllGlobals();
+  });
+
+  function warnings(message: string): Record<string, unknown>[] {
+    return vi
+      .mocked(logWarn)
+      .mock.calls.filter((c) => c[1] === message)
+      .map((c) => (c[2] ?? {}) as Record<string, unknown>);
+  }
+
+  function connect(onSessions = vi.fn()) {
+    const conn = new SessionListConnection(endpoint, { onSessions });
+    conn.attach();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    return { conn, ws, onSessions };
+  }
+
+  const BAD = new Uint8Array([0x7b, 0x00, 0xff, 0x41]); // "{", NUL, 0xff, "A" — not JSON
+  const GOOD = () => encodeText(JSON.stringify([baseSession("sid-1")]));
+
+  test("an unusable frame is logged with the context needed to identify it", () => {
+    const { ws } = connect();
+    ws.emit(TYPE.LIST_RESP, BAD);
+
+    const [w] = warnings("dropping unusable LIST_RESP");
+    expect(w).toBeDefined();
+    expect(w.url).toBe(endpoint.url);
+    expect(w.consecutive).toBe(1);
+    expect(w.payload_len).toBe(4);
+    expect(w.payload_head).toBe("7b00ff41");
+    expect(String(w.error)).toContain("SyntaxError");
+  });
+
+  test("payload_head is capped so a large frame cannot bloat the log line", () => {
+    const { ws } = connect();
+    ws.emit(TYPE.LIST_RESP, new Uint8Array(4096).fill(0xab));
+
+    const [w] = warnings("dropping unusable LIST_RESP");
+    expect(w.payload_len).toBe(4096);
+    // 64 bytes -> 128 hex chars, plus an elision marker.
+    expect(String(w.payload_head)).toHaveLength(129);
+    expect(String(w.payload_head).startsWith("abab")).toBe(true);
+  });
+
+  test("a persistent failure is rate limited instead of flooding the log", () => {
+    const { ws } = connect();
+    for (let i = 0; i < 250; i++) ws.emit(TYPE.LIST_RESP, BAD);
+
+    const w = warnings("dropping unusable LIST_RESP");
+    expect(w.map((x) => x.consecutive)).toEqual([1, 100, 200]);
+  });
+
+  test("a good frame resets the failure counter", () => {
+    const { ws, onSessions } = connect();
+    ws.emit(TYPE.LIST_RESP, BAD);
+    ws.emit(TYPE.LIST_RESP, GOOD());
+    ws.emit(TYPE.LIST_RESP, BAD);
+
+    expect(onSessions).toHaveBeenCalledTimes(1);
+    expect(warnings("dropping unusable LIST_RESP").map((x) => x.consecutive)).toEqual([1, 1]);
+  });
+
+  test("a throw out of onSessions is not blamed on the frame", () => {
+    const onSessions = vi.fn((): void => {
+      throw new RangeError("Bad value");
+    });
+    const { ws } = connect(onSessions);
+    ws.emit(TYPE.LIST_RESP, GOOD());
+
+    expect(warnings("dropping unusable LIST_RESP")).toHaveLength(0);
+    const [w] = warnings("session list handler threw");
+    expect(w).toBeDefined();
+    expect(String(w.error)).toContain("RangeError: Bad value");
+  });
+
+  test("a handler that throws does not poison the parse failure counter", () => {
+    const onSessions = vi.fn((): void => {
+      throw new RangeError("Bad value");
+    });
+    const { ws } = connect(onSessions);
+    ws.emit(TYPE.LIST_RESP, GOOD());
+    ws.emit(TYPE.LIST_RESP, BAD);
+
+    expect(warnings("dropping unusable LIST_RESP").map((x) => x.consecutive)).toEqual([1]);
   });
 });

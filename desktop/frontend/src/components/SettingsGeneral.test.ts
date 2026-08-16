@@ -2,6 +2,7 @@ import { describe, expect, test, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import source from "./SettingsGeneral.vue?raw";
 import SettingsGeneral from "./SettingsGeneral.vue";
+import SettingsTerminalAppearance from "./SettingsTerminalAppearance.vue";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "../lib/api";
@@ -295,10 +296,12 @@ describe("SettingsGeneral push notification section", () => {
 });
 
 describe("SettingsGeneral terminal appearance", () => {
-  // Mirrors createFakePlatform() (caps.wailsBindings: true), plus every
-  // getter/setter the six new appearance controls and the rest of the
-  // onMounted load path touch. Values match the Go-side defaults from Task 1
-  // so a freshly mounted panel reflects "today's behavior unchanged".
+  // The six controls themselves (rendering, the live memory estimate, and
+  // emitting on commit) are covered in SettingsTerminalAppearance.test.ts,
+  // next to the component that now owns them. This only checks the part
+  // that's still SettingsGeneral's job: rendering the child and forwarding
+  // its event untouched, so App.vue's "appearance-changed" listener (Task 4)
+  // doesn't have to know the controls moved.
   beforeEach(() => {
     __setPlatformForTests(createFakePlatform());
     __setBindingsForTest({
@@ -336,30 +339,25 @@ describe("SettingsGeneral terminal appearance", () => {
     return w;
   }
 
-  it("renders all five appearance controls", async () => {
+  it("renders SettingsTerminalAppearance below the terminal theme field", async () => {
     const w = await mountSettings();
-    expect(w.find('[data-test="terminal-font"]').exists()).toBe(true);
-    expect(w.find('[data-test="terminal-font-size"]').exists()).toBe(true);
-    expect(w.find('[data-test="terminal-line-height"]').exists()).toBe(true);
-    expect(w.find('[data-test="terminal-cursor-style"]').exists()).toBe(true);
-    expect(w.find('[data-test="terminal-cursor-blink"]').exists()).toBe(true);
-    expect(w.find('[data-test="terminal-scrollback"]').exists()).toBe(true);
+    expect(w.findComponent(SettingsTerminalAppearance).exists()).toBe(true);
   });
 
-  it("shows a per-pane memory estimate that tracks the scrollback value", async () => {
+  it("re-emits appearance-changed with the child's payload unchanged", async () => {
     const w = await mountSettings();
-    const input = w.find('[data-test="terminal-scrollback"]');
-    await input.setValue("20000");
-    // 20000 lines * 2.75 KB ≈ 55 MB
-    expect(w.find('[data-test="terminal-scrollback-hint"]').text()).toContain("55");
-  });
-
-  it("emits appearance-changed when the font size changes", async () => {
-    const w = await mountSettings();
-    await w.find('[data-test="terminal-font-size"]').setValue("16");
-    await w.find('[data-test="terminal-font-size"]').trigger("change");
+    const child = w.findComponent(SettingsTerminalAppearance);
+    const payload = {
+      fontHead: "jetbrains-mono",
+      fontSize: 16,
+      lineHeight: 1.2,
+      cursorStyle: "bar",
+      cursorBlink: false,
+      scrollback: 8000,
+    };
+    child.vm.$emit("appearance-changed", payload);
     const ev = w.emitted("appearance-changed");
     expect(ev).toBeTruthy();
-    expect((ev!.at(-1)![0] as any).fontSize).toBe(16);
+    expect(ev!.at(-1)![0]).toEqual(payload);
   });
 });

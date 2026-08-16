@@ -1410,7 +1410,12 @@ async function ensureTerm() {
     fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 13,
     cursorBlink: true,
-    scrollback: 20000,
+    // Every tab stays mounted (App.vue keeps them alive with v-show), so this
+    // is paid per open pane, not once. Measured at ~2.75 KB/line at 200
+    // columns: 20000 lines cost ~55 MB per terminal, which reached ~600 MB
+    // across a dozen panes. 5000 still gives 5x xterm.js's own default (and
+    // VS Code's, on the same engine) for reading back long agent output.
+    scrollback: 5000,
     theme: props.theme,
     convertEol: false,
     disableStdin: !isDriver.value,

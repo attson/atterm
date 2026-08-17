@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/attson/atterm/internal/sshclient"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -757,6 +758,197 @@ func TestLostConnectionStopsTunnelsWithReason(t *testing.T) {
 	}
 	if opened, _ := srv.counts(); opened != 1 {
 		t.Fatalf("a dropped connection must not be redialled automatically, server saw %d connections", opened)
+	}
+}
+
+// TestLostConnectionStopsIdleTunnel is the case on-use detection cannot cover:
+// nothing ever connects to the forwarded port, so no DialRemote ever fails.
+// Without the keepalive watcher the rule reports Running: true forever, the
+// panel lies about a tunnel that cannot carry a byte, and startLocal answers
+// "already running" to a user trying to restart it after a network change —
+// blocking the one action that would fix it.
+func TestLostConnectionStopsIdleTunnel(t *testing.T) {
+	old := tunnelKeepalive
+	tunnelKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { tunnelKeepalive = old })
+
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, localRule("r1", targetHost, targetPort))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	addr := activeForward(t, a, "r1").ListenAddr
+
+	srv.dropConns() // and nothing ever dials the forwarded port
+
+	waitFor(t, 5*time.Second, "idle rule marked stopped with a reason", func() bool {
+		for _, f := range a.ListActiveForwards() {
+			if f.RuleID == "r1" {
+				return !f.Running && f.Error != ""
+			}
+		}
+		return false
+	})
+	if c, err := net.DialTimeout("tcp", addr, 2*time.Second); err == nil {
+		c.Close()
+		t.Fatal("listener still open after the SSH connection dropped")
+	}
+	if opened, _ := srv.counts(); opened != 1 {
+		t.Fatalf("a dropped connection must not be redialled automatically, server saw %d connections", opened)
+	}
+
+	// And the user can actually recover: restarting must not be refused with
+	// "already running".
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("restart after a drop must be allowed: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r1") }()
+	f := activeForward(t, a, "r1")
+	if !f.Running || f.Error != "" {
+		t.Fatalf("restarted rule should be running with the error cleared: %+v", f)
+	}
+}
+
+// TestDeliberateStopDoesNotSelfReport: Conn.Done fires on an ordinary Close
+// too, so the watcher runs on every normal stop. It must not resurrect the
+// rule as a stopped-with-error entry — the ordering that prevents it is
+// running=false under m.mu *before* teardown releases the connection.
+func TestDeliberateStopDoesNotSelfReport(t *testing.T) {
+	old := tunnelKeepalive
+	tunnelKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { tunnelKeepalive = old })
+
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, localRule("r1", targetHost, targetPort))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	if err := a.StopForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StopForward: %v", err)
+	}
+	// Restart immediately, before the watcher for the closed connection has
+	// necessarily woken up: it must not mistake the new tunnel for one of its
+	// own and stop it.
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r1") }()
+
+	time.Sleep(300 * time.Millisecond) // let the old watcher wake up and find nothing
+	f := activeForward(t, a, "r1")
+	if !f.Running || f.Error != "" {
+		t.Fatalf("the previous connection's watcher stopped the restarted tunnel: %+v", f)
+	}
+	// And it still works.
+	c, err := net.DialTimeout("tcp", f.ListenAddr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial restarted forward: %v", err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := io.ReadFull(c, make([]byte, 1)); err != nil {
+		t.Fatalf("echo through restarted forward: %v", err)
+	}
+}
+
+// TestFailedDialLeavesNoPoisonedConnection: a failed dial must not leave its
+// entry in m.conns, or the next StartForward is handed the previous attempt's
+// error instead of redialing — the user retries after fixing the network and
+// gets the stale failure back.
+func TestFailedDialLeavesNoPoisonedConnection(t *testing.T) {
+	m := &tunnelManager{}
+	dials := 0
+	dial := func() (*sshclient.Conn, error) {
+		dials++
+		return nil, errors.New("dial refused")
+	}
+
+	if _, err := m.acquireConn("h", dial); err == nil {
+		t.Fatal("expected the dial error")
+	}
+	m.mu.Lock()
+	_, poisoned := m.conns["h"]
+	m.mu.Unlock()
+	if poisoned {
+		t.Fatal("a failed dial left its entry in m.conns")
+	}
+	if _, err := m.acquireConn("h", dial); err == nil {
+		t.Fatal("expected the dial error")
+	}
+	if dials != 2 {
+		t.Fatalf("second acquire replayed the cached error instead of redialing (dials=%d)", dials)
+	}
+}
+
+// TestConnectionLostOnlyTouchesItsOwnConnection pins the instance match
+// deterministically, which the stop/restart test above cannot: whether the old
+// connection's watcher wakes before or after the restart is a race, so that
+// test can pass with a hostID match by pure timing. Here two tunnels on the
+// *same host* ride two different connections, and only the one on the dead
+// connection may be stopped — the shape you get for real when a rule is
+// restarted onto a fresh connection while the old watcher is still in flight.
+func TestConnectionLostOnlyTouchesItsOwnConnection(t *testing.T) {
+	m := &tunnelManager{}
+
+	newTun := func(ruleID string, hc *hostConn) (*tunnel, net.Listener) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		return &tunnel{
+			hostID: "h", ruleID: ruleID, kind: forwardKindLocal,
+			listener: ln, listenAddr: ln.Addr().String(),
+			hc: hc, running: true, live: map[net.Conn]struct{}{},
+		}, ln
+	}
+
+	dead := &hostConn{ready: make(chan struct{}), refs: 1}
+	live := &hostConn{ready: make(chan struct{}), refs: 1}
+	close(dead.ready)
+	close(live.ready)
+
+	tDead, _ := newTun("r1", dead)
+	tLive, liveLn := newTun("r2", live)
+
+	m.mu.Lock()
+	m.ensureLocked()
+	m.tuns[tunnelKey("h", "r1")] = tDead
+	m.tuns[tunnelKey("h", "r2")] = tLive
+	m.conns["h"] = live // the dead one has already been evicted
+	m.mu.Unlock()
+
+	m.connectionLost("h", dead, "boom")
+
+	for _, f := range m.list() {
+		switch f.RuleID {
+		case "r1":
+			if f.Running || f.Error == "" {
+				t.Fatalf("the tunnel on the dead connection should be stopped with a reason: %+v", f)
+			}
+		case "r2":
+			if !f.Running || f.Error != "" {
+				t.Fatalf("a tunnel on a different connection must be untouched: %+v", f)
+			}
+		}
+	}
+	if c, err := net.DialTimeout("tcp", liveLn.Addr().String(), 2*time.Second); err != nil {
+		t.Fatalf("the other connection's listener was closed: %v", err)
+	} else {
+		_ = c.Close()
+	}
+	m.mu.Lock()
+	stillThere := m.conns["h"] == live
+	m.mu.Unlock()
+	if !stillThere {
+		t.Fatal("the live connection was evicted by another connection's failure")
 	}
 }
 

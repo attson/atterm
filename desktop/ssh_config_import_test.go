@@ -56,6 +56,54 @@ func TestImportDoesNotWipeTagsWhenIncomingHasNone(t *testing.T) {
 	}
 }
 
+// TestImportPreservesForwardRules is the same rule as Tags/Note applied to
+// port-forwarding rules, and it is load-bearing rather than tidy: the
+// ssh_config parser has no concept of a forward rule, so incoming.Forwards is
+// *always* nil. Letting it win would mean re-importing ~/.ssh/config silently
+// deletes every rule on a matching alias — and ImportSSHHosts marks the host
+// list dirty, so the deletion would sync to every device. This drives the
+// whole real path (store → ImportSSHHosts → store) rather than the merge
+// helper alone, because that is where the wipe would actually be persisted.
+func TestImportPreservesForwardRules(t *testing.T) {
+	useIsolatedKeyring(t)
+	a := &App{cfgStore: newTestConfigStore(t)}
+
+	rules := []ForwardRule{
+		{ID: "f1", Kind: "local", BindPort: "5432", TargetHost: "db.internal", TargetPort: "5432", Note: "prod db"},
+		{ID: "f2", Kind: "dynamic", BindPort: "1080"},
+	}
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{{
+		ID: "keep-me", Alias: "web1", Host: "old.example", User: "old",
+		AuthKind: "password", Forwards: rules,
+	}}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// A re-import of the same alias, exactly as the parser would produce it:
+	// no Forwards field at all.
+	if _, err := a.ImportSSHHosts([]SSHHost{{Alias: "web1", Host: "new.example", User: "new"}}); err != nil {
+		t.Fatalf("ImportSSHHosts: %v", err)
+	}
+
+	hosts := a.ListSSHHosts()
+	if len(hosts) != 1 {
+		t.Fatalf("expected the alias to merge into one host, got %d", len(hosts))
+	}
+	got := hosts[0]
+	if got.Host != "new.example" {
+		t.Fatalf("config fields must still update on re-import, got %q", got.Host)
+	}
+	if len(got.Forwards) != len(rules) {
+		t.Fatalf("re-import deleted forward rules: %+v", got.Forwards)
+	}
+	if got.Forwards[0].ID != "f1" || got.Forwards[0].TargetHost != "db.internal" ||
+		got.Forwards[0].BindPort != "5432" || got.Forwards[1].ID != "f2" {
+		t.Fatalf("forward rules changed across re-import: %+v", got.Forwards)
+	}
+}
+
 // TestMergeImportedHostPreservesAuthKindWithKeyID covers the traced
 // regression: AuthKind and KeyID are a coupled pair (KeyID only means
 // anything when AuthKind=="key"), so re-import must preserve them together,

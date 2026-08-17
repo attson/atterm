@@ -128,6 +128,13 @@ func (c *Conn) ListenRemote(network, addr string) (net.Listener, error) {
 	return c.client.Listen(network, addr)
 }
 
+// Done is closed when the connection is gone — either because Close was
+// called or because the keepalive loop found the transport dead. It is a
+// read-only view of the same channel Close closes, so a caller can react to a
+// drop instead of only discovering it on the next DialRemote. Without it a
+// port forward on an idle connection keeps reporting itself as running.
+func (c *Conn) Done() <-chan struct{} { return c.closeCh }
+
 func (c *Conn) Close() error {
 	select {
 	case <-c.closeCh:

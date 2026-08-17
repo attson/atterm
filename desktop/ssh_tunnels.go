@@ -43,6 +43,12 @@ const (
 // what makes the default safe when no UI is involved.
 const defaultForwardBindAddr = "127.0.0.1"
 
+// tunnelKeepalive is how often a tunnel connection pings the remote. It also
+// bounds how long a dropped connection can go unnoticed while every tunnel on
+// it is idle, because the failed ping is what closes sshclient.Conn.Done.
+// Tests shorten it so a drop is observable in a test's lifetime.
+var tunnelKeepalive = 30 * time.Second
+
 // ForwardRule is one port-forwarding rule saved on an SSHHost. It is
 // configuration, not state: nothing starts it except an explicit StartForward.
 type ForwardRule struct {
@@ -224,6 +230,7 @@ func (a *App) dialTunnelConn(h SSHHost) (*sshclient.Conn, error) {
 		Auth:      auth,
 		HostKeyCb: cb,
 		Timeout:   15 * time.Second,
+		Keepalive: tunnelKeepalive,
 	})
 	if err != nil {
 		if unknownFP != "" {
@@ -373,6 +380,19 @@ func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*sshcl
 		return err
 	}
 
+	// The watcher for this connection only sees tunnels that are already
+	// registered, so a connection that died between the dial and the
+	// registration below would leave a tunnel nobody ever marks stopped —
+	// exactly the "reports running forever" state the watcher exists to
+	// prevent. Fail the start instead; the user retries and gets a fresh dial.
+	select {
+	case <-hc.conn.Done():
+		_ = ln.Close()
+		m.releaseConn(h.ID, hc)
+		return fmt.Errorf("the ssh connection to %s dropped while the tunnel was starting", h.Host)
+	default:
+	}
+
 	t := &tunnel{
 		hostID: h.ID, ruleID: r.ID, kind: r.Kind,
 		listener: ln, listenAddr: ln.Addr().String(),
@@ -424,12 +444,41 @@ func (m *tunnelManager) acquireConn(hostID string, dial func() (*sshclient.Conn,
 	m.mu.Unlock()
 
 	hc.conn, hc.err = dial()
+	if hc.err != nil {
+		// Drop the poisoned entry before waking anyone. releaseConn only
+		// removes it once refs reach zero, so while other waiters still hold
+		// refs it would linger in m.conns — and a StartForward arriving in
+		// that window would be handed the previous attempt's error instead of
+		// redialing.
+		m.mu.Lock()
+		if m.conns[hostID] == hc {
+			delete(m.conns, hostID)
+		}
+		m.mu.Unlock()
+	}
 	close(hc.ready)
 	if hc.err != nil {
 		m.releaseConn(hostID, hc)
 		return nil, hc.err
 	}
+
+	// Watch for the connection dying on its own. sshclient's keepalive loop
+	// notices a dead transport and closes Done; without this the drop is only
+	// discovered on the next forwarded connection, so an *idle* tunnel would
+	// keep reporting itself as running — and startLocal would then answer
+	// "already running" to the user trying to restart it after a network
+	// change, blocking the obvious recovery.
+	go m.watchConn(hostID, hc)
 	return hc, nil
+}
+
+// watchConn turns a dropped connection into stopped tunnels. Done also fires
+// on a deliberate Close, which is harmless: stop/stopAll/connectionLost all
+// set running=false under m.mu *before* teardown releases the connection, so
+// a watcher waking up afterwards finds nothing left to tear down.
+func (m *tunnelManager) watchConn(hostID string, hc *hostConn) {
+	<-hc.conn.Done()
+	m.connectionLost(hostID, hc, "ssh connection lost (keepalive failed or the peer closed it)")
 }
 
 // releaseConn drops one reference and closes the connection when the last
@@ -480,8 +529,10 @@ func (m *tunnelManager) serveLocalConn(t *tunnel, local net.Conn) {
 			logWarn("ssh", "forward %s: remote refused %s: %v", t.ruleID, t.target, err)
 			return
 		}
-		// Anything else means the SSH transport is gone.
-		m.connectionLost(t.hostID, t.hc, err)
+		// Anything else means the SSH transport is gone. The watcher usually
+		// gets there first; whichever arrives first wins and the other finds
+		// nothing running.
+		m.connectionLost(t.hostID, t.hc, fmt.Sprintf("ssh connection lost: %v", err))
 		return
 	}
 	go func() {
@@ -505,8 +556,7 @@ func (m *tunnelManager) serveLocalConn(t *tunnel, local net.Conn) {
 // authentication in the background and can trip a remote's failed-login
 // lockout while the user is looking at something else; restarting is one
 // click, and the reason is on screen (see ActiveForward).
-func (m *tunnelManager) connectionLost(hostID string, hc *hostConn, cause error) {
-	reason := fmt.Sprintf("ssh connection lost: %v", cause)
+func (m *tunnelManager) connectionLost(hostID string, hc *hostConn, reason string) {
 	m.mu.Lock()
 	m.ensureLocked()
 	var dead []*tunnel
@@ -576,6 +626,7 @@ func (m *tunnelManager) stopAll() {
 
 func (m *tunnelManager) list() []ActiveForward {
 	m.mu.Lock()
+	m.ensureLocked()
 	out := make([]ActiveForward, 0, len(m.tuns))
 	for _, t := range m.tuns {
 		out = append(out, ActiveForward{

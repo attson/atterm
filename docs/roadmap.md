@@ -317,10 +317,22 @@
 - [x] 增加 seal / open 往返测试
 - [x] 本条覆盖原 Backlog 的「默认 shell 设置改进」「启动目录设置」「环境变量设置」
 
-### 23. OSC 133 click-to-move-cursor
+### 23. OSC 133 click-to-move-cursor（阻塞于 shell 支持，移出排期）
 
-- [ ] 前端补提示符内 click → 光标位移
-- [ ] 在真实 shell（zsh + fish）下手动验证 `cl=line` 扩展行为
+> 2026-08-17 决定：调查后移出 v0.5，与第 8 项签名同样处理——不是不做，是先决条件不在我们手里。
+> 完整调查见 [`2026-08-17-click-to-move-cursor-design.md`](./superpowers/specs/2026-08-17-click-to-move-cursor-design.md)。
+>
+> 终端无法直接设置 shell 行编辑器的光标，只能发方向键。这只在 shell 声明 OSC 133 的
+> `cl=line`（「我的提示符输入是单行，方向键在其中安全」）时才可靠，而目前只有 **fish 4.1+ 与
+> nushell 0.111+** 声明它，**zsh 与 bash 不声明**。没有声明就发方向键，等于拿用户正在编辑的
+> 命令行赌一个无从验证的前提，失败形态是命令被悄悄改成别的、可能回车后才发现。
+>
+> 该设计还订正了本条原先的一处事实错误：`internal/session/applyOSC133Locked` 在 Go 侧、
+> 前端够不着，与本项无关；真正的挂载点是 `TerminalView.vue` 已有的
+> `term.parser.registerOscHandler(133, …)`。结论（「只需前端补」）成立，理由不同。
+
+- [ ] 前端补提示符内 click → 光标位移（等 zsh 支持 `cl=line` 后可直接开工）
+- [ ] 宽字符（CJK）按字符而非按列折算方向键次数——设计 §7.3 标注为本项最易写错处
 
 ### 24. macOS 分发改善
 

@@ -1040,6 +1040,27 @@ func (a *App) SetDefaultShell(shell string) error {
 	return a.cfgStore.Set(cfg)
 }
 
+// GetShortcutBindings returns the user's action-id → binding overrides.
+func (a *App) GetShortcutBindings() map[string]string {
+	if a == nil || a.cfgStore == nil {
+		return map[string]string{}
+	}
+	b := a.cfgStore.Get().ShortcutBindings
+	out := make(map[string]string, len(b))
+	for k, v := range b {
+		out[k] = v
+	}
+	return out
+}
+
+// SetShortcutBindings replaces the override map wholesale.
+func (a *App) SetShortcutBindings(bindings map[string]string) error {
+	return a.updatePref("shortcut_bindings", func(cfg *appConfig) error {
+		cfg.ShortcutBindings = bindings
+		return nil
+	})
+}
+
 // GetTaskPreset returns the user's persisted task state display preset.
 func (a *App) GetTaskPreset() string {
 	if a.cfgStore == nil {

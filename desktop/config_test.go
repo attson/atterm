@@ -248,3 +248,71 @@ func TestTerminalCursorBlinkOrDefault_ExplicitValues(t *testing.T) {
 		t.Errorf("explicit true = %v, want true", got)
 	}
 }
+
+func TestMigrateShortcutBindings(t *testing.T) {
+	t.Run("moves bindings out of the plugin blob and clears the old slot", func(t *testing.T) {
+		c := appConfig{}
+		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
+		if !migrateShortcutBindings(&c) {
+			t.Fatal("expected migration to report a change")
+		}
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
+			t.Errorf("binding not moved: %v", c.ShortcutBindings)
+		}
+		if len(c.Plugins.Shortcuts.Bindings) != 0 {
+			t.Errorf("old slot not cleared: %v", c.Plugins.Shortcuts.Bindings)
+		}
+	})
+
+	t.Run("is idempotent — a migrated config survives a second run", func(t *testing.T) {
+		c := appConfig{ShortcutBindings: map[string]string{"tab.new": "Mod+KeyP"}}
+		if migrateShortcutBindings(&c) {
+			t.Error("expected no change on an already-migrated config")
+		}
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
+			t.Error("idempotent run must not clear the migrated value")
+		}
+	})
+
+	t.Run("new field wins when both are populated", func(t *testing.T) {
+		c := appConfig{ShortcutBindings: map[string]string{"tab.new": "Mod+KeyN"}}
+		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
+		migrateShortcutBindings(&c)
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyN" {
+			t.Errorf("new field must win, got %v", c.ShortcutBindings)
+		}
+		if len(c.Plugins.Shortcuts.Bindings) != 0 {
+			t.Error("old slot must still be cleared")
+		}
+	})
+
+	t.Run("no-op on an empty config", func(t *testing.T) {
+		c := appConfig{}
+		if migrateShortcutBindings(&c) {
+			t.Error("empty config needs no migration")
+		}
+	})
+}
+
+func TestDefaultShellExistenceCheck(t *testing.T) {
+	t.Run("absolute path that does not exist falls back to auto", func(t *testing.T) {
+		c := appConfig{DefaultShell: "/nonexistent/bin/fish"}
+		if got := c.DefaultShellOrDefault(); got != defaultShellAuto {
+			t.Errorf("got %q, want %q", got, defaultShellAuto)
+		}
+	})
+
+	t.Run("absolute path that exists is used", func(t *testing.T) {
+		c := appConfig{DefaultShell: "/bin/sh"}
+		if got := c.DefaultShellOrDefault(); got != "/bin/sh" {
+			t.Errorf("got %q, want /bin/sh", got)
+		}
+	})
+
+	t.Run("non-absolute value is passed through unchecked", func(t *testing.T) {
+		c := appConfig{DefaultShell: "fish"}
+		if got := c.DefaultShellOrDefault(); got != "fish" {
+			t.Errorf("got %q, want fish — PATH-resolved shells must not be validated", got)
+		}
+	})
+}

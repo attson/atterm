@@ -205,6 +205,12 @@ type appConfig struct {
 	// on Set in app.go.
 	TaskSidebarWidth int `json:"task_sidebar_width,omitempty"`
 
+	// ShortcutBindings holds action-id → binding-string overrides. Hoisted out
+	// of Plugins.Shortcuts.Bindings so it can be synced on its own key: the
+	// plugins blob mixes in machine-local state (which plugins are enabled)
+	// that must not travel between devices.
+	ShortcutBindings map[string]string `json:"shortcut_bindings,omitempty"`
+
 	// PinnedSessionIDs holds session_ids the user has pinned to the top of
 	// the session bar. Order in the slice is not meaningful — the frontend
 	// sorts pinned rows by task_state urgency, same as other groups. Stale
@@ -434,10 +440,29 @@ func (c appConfig) PrefsSeedMarkerFor(userID string) bool {
 	return c.PrefsSeedMarkers[userID]
 }
 
+// DefaultShellOrDefault resolves the configured shell, falling back to auto
+// when it cannot be used on THIS machine.
+//
+// The existence check exists because this preference syncs across devices
+// (see the L1 prefs-sync design): an absolute path like
+// /opt/homebrew/bin/fish is valid on the Mac it was set on and an unopenable
+// path everywhere else, and a bad shell means new sessions fail to start.
+// Non-absolute values are PATH-resolved at spawn time, so validating them
+// here would reject perfectly good configs.
+//
+// Validation lives on the read side deliberately. Rejecting on write would
+// leave the synced value sitting in config.json while silently not taking
+// effect, which is harder to diagnose than falling back.
 func (c appConfig) DefaultShellOrDefault() string {
 	shell := strings.TrimSpace(c.DefaultShell)
 	if shell == "" || strings.EqualFold(shell, defaultShellAuto) {
 		return defaultShellAuto
+	}
+	if filepath.IsAbs(shell) {
+		if _, err := os.Stat(shell); err != nil {
+			logWarn("config", "configured shell %q is not present on this machine; falling back to auto", shell)
+			return defaultShellAuto
+		}
 	}
 	return shell
 }
@@ -543,6 +568,32 @@ func configPath() string {
 	return filepath.Join(dir, "config.json")
 }
 
+// migrateShortcutBindings hoists bindings out of the plugin blob into the
+// top-level field, and reports whether it changed anything.
+//
+// Idempotent by construction: it only copies when the destination is empty,
+// and clearing the old slot is unconditional so a half-migrated config
+// (both slots populated, only reachable by hand-editing) converges on the
+// new field rather than letting two sources drift apart.
+func migrateShortcutBindings(c *appConfig) bool {
+	old := c.Plugins.Shortcuts.Bindings
+	if len(old) == 0 {
+		return false
+	}
+	changed := false
+	if len(c.ShortcutBindings) == 0 {
+		c.ShortcutBindings = make(map[string]string, len(old))
+		for k, v := range old {
+			c.ShortcutBindings[k] = v
+		}
+		changed = true
+	} else {
+		logWarn("config", "shortcut bindings present in both the new field and the legacy plugin slot; keeping the new field")
+	}
+	c.Plugins.Shortcuts.Bindings = nil
+	return changed
+}
+
 // configStore is a thin lock-protected wrapper around appConfig with disk I/O.
 type configStore struct {
 	mu  sync.Mutex
@@ -564,6 +615,9 @@ func loadConfig() *configStore {
 	// app was restarted (the second load reads the file and does apply
 	// defaults, which is what made this look intermittent).
 	s.cfg.Plugins.applyDefaults()
+	// migrateShortcutBindings runs on every load (idempotent) so a config
+	// written before the hoist keeps working without a one-off migration step.
+	migrateShortcutBindings(&s.cfg)
 	return s
 }
 

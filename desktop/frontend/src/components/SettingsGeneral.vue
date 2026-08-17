@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   getCommandNotifyThresholdSeconds,
   getDefaultShell,
@@ -109,6 +109,56 @@ const defaultShellOptions = computed(() => [
   { value: "__custom__", label: t("settings.general.customPath") },
 ]);
 
+// Shared by onMounted and the prefs:changed listener below (Task 4 fix
+// round 2) so a remote pull and a fresh mount observe Go the same way —
+// mirrors SettingsTerminalAppearance.vue's loadAppearance(). Read-only:
+// assigns refs from getDefaultShell()/listShells() and nothing else. Must
+// never call setDefaultShell — writing back a value we just pulled would
+// push it straight back out, and the other device would pull it, write it
+// back, push it again, forever (design §7.2). Go itself already reads the
+// synced value fresh at spawn time (app.go DefaultShellOrDefault), so this
+// function only needs to keep the *panel display* from going stale — it
+// isn't what makes a remote shell change take effect.
+async function loadDefaultShell() {
+  if (!caps.wailsBindings) return;
+  try {
+    const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
+    availableShells.value = shells;
+    if (configured === "auto") {
+      selectedDefaultShell.value = "auto";
+    } else if (shells.includes(configured)) {
+      selectedDefaultShell.value = configured;
+      customShellPath.value = configured;
+    } else {
+      selectedDefaultShell.value = "__custom__";
+      customShellPath.value = configured;
+    }
+    persistedDefaultShell.value = selectedDefaultShell.value;
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    defaultShellLoading.value = false;
+  }
+}
+
+// default_shell has no draft/Save/Discard flow (unlike SettingsShortcuts.vue,
+// which is why that panel does not get a live listener): the dropdown
+// commits on `change` via onDefaultShellChange, and the one text field
+// (customShellPath, used only while "__custom__" is selected) already
+// accepts being overwritten by a reload the same way
+// SettingsTerminalAppearance.vue's scrollback field does mid-keystroke —
+// an accepted, pre-existing trade in this design, not a new one.
+let prefsChangedOff: (() => void) | null = null;
+onMounted(() => {
+  prefsChangedOff = platform.events.on("prefs:changed", () => {
+    void loadDefaultShell();
+  });
+});
+onBeforeUnmount(() => {
+  prefsChangedOff?.();
+  prefsChangedOff = null;
+});
+
 onMounted(async () => {
   if (caps.wailsBindings) {
     try {
@@ -141,24 +191,7 @@ onMounted(async () => {
     } finally {
       recoveryEnabledLoading.value = false;
     }
-    try {
-      const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
-      availableShells.value = shells;
-      if (configured === "auto") {
-        selectedDefaultShell.value = "auto";
-      } else if (shells.includes(configured)) {
-        selectedDefaultShell.value = configured;
-        customShellPath.value = configured;
-      } else {
-        selectedDefaultShell.value = "__custom__";
-        customShellPath.value = configured;
-      }
-      persistedDefaultShell.value = selectedDefaultShell.value;
-    } catch (e: any) {
-      error.value = e?.message ?? String(e);
-    } finally {
-      defaultShellLoading.value = false;
-    }
+    await loadDefaultShell();
     try {
       webglRendererEnabled.value = await getWebglRendererEnabled();
     } catch (e: any) {

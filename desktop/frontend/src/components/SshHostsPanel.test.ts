@@ -1128,6 +1128,21 @@ describe("SshHostsPanel 转发规则编辑器", () => {
     expect(wrapper.find('[data-test="ssh-forward-bind-warning-f1"]').exists()).toBe(false);
   });
 
+  // A prefix match on "127." also matches a hostname that merely starts with
+  // it, and that hostname resolves wherever its owner points it — so the
+  // warning must not be suppressed by one.
+  it("以 127. 开头的域名不算 loopback,仍然警示", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openHostDrawer(wrapper, "h1");
+    await wrapper.find('[data-test="ssh-forward-bind-addr-f1"]').setValue("127.0.0.1.example.com");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="ssh-forward-bind-warning-f1"]').exists()).toBe(true);
+    // A real 127/8 address other than 127.0.0.1 still counts as loopback.
+    await wrapper.find('[data-test="ssh-forward-bind-addr-f1"]').setValue("127.0.0.53");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="ssh-forward-bind-warning-f1"]').exists()).toBe(false);
+  });
+
   // §5.1: a non-loopback bind is not a convenience setting, so the UI has to
   // say what it actually costs — in the user's words, not "0.0.0.0".
   it("本地转发绑非 loopback 时警示同网段任何人无需凭据即可访问", async () => {

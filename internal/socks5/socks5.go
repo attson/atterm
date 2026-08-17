@@ -152,10 +152,18 @@ func ServeConn(c net.Conn, dial Dialer) error {
 	//
 	// The dial in the middle is the exception, and it is worth being precise
 	// about rather than implying otherwise: this package puts no timeout on the
-	// injected Dialer. In atterm's wiring that is an SSH channel open, bounded
-	// only indirectly — the tunnel's keepalive closes the connection when the
-	// transport is dead, and the pending open fails with it. A Dialer that can
-	// hang without ever failing would hang here, so bound it in the dialer.
+	// injected Dialer, so a Dialer that can hang without ever failing hangs
+	// here.
+	//
+	// atterm's own dialer does not bound it either, and that is a decision
+	// rather than an oversight — see serveDynamicConn in desktop/ssh_tunnels.go.
+	// It is an SSH channel open, bounded only indirectly: the tunnel's
+	// keepalive closes the connection when the transport is dead and the
+	// pending open fails with it, within one keepalive interval. A timeout
+	// wrapped around it would produce an error the caller's own failure
+	// classification reads as "transport dead", which would stop every tunnel
+	// on that connection because one destination was slow. Any other caller
+	// that cannot make that argument should bound its Dialer.
 	_ = c.SetDeadline(handshakeDeadline())
 
 	err := serveConn(c, dial)

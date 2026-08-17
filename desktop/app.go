@@ -301,7 +301,26 @@ func NewApp(cfgStore *configStore, logger *loggingManager) *App {
 		verifyPublicKey: parseUpdateVerifyPublicKey(UpdateVerifyPublicKey),
 	})
 	a.widget = newWidgetProcess(a.handleWidgetEvent)
+	a.observeConfigStore()
 	return a
+}
+
+// observeConfigStore hangs the config-driven reconciles off the store's
+// post-commit observer.
+//
+// Today that is exactly one thing: running port-forward tunnels have to follow
+// the saved rules, because deleting a rule (in the drawer, by deleting the
+// host, or on another device that syncs the deletion here) has to stop the
+// tunnel — nothing else can, since the tunnels tab renders from the saved
+// rules and an orphan therefore has no row. See tunnelManager.reconcile.
+//
+// It is wired here and in startup because a.cfgStore can be supplied either
+// way; calling it twice just replaces the observer with an identical one.
+func (a *App) observeConfigStore() {
+	if a.cfgStore == nil {
+		return
+	}
+	a.cfgStore.setOnCommit(func(c appConfig) { a.tunnels.reconcile(c.SSHHosts) })
 }
 
 // startup is called when the Wails runtime is ready. Boot the in-process
@@ -318,6 +337,7 @@ func (a *App) startup(ctx context.Context) {
 	if a.cfgStore == nil {
 		a.cfgStore = loadConfig()
 	}
+	a.observeConfigStore()
 	h, err := startRelayHost(a.cfgStore)
 	if err != nil {
 		a.setStartupFatalError("start relay host", err)

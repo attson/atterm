@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -66,6 +67,14 @@ type Config struct {
 type Conn struct {
 	client  *ssh.Client
 	closeCh chan struct{}
+	// closeOnce is what makes Close safe to call from several goroutines at
+	// once, which is not hypothetical: the keepalive loop closes on a failed
+	// ping while the tunnel manager's last releaseConn closes on the same
+	// transport death, milliseconds apart. A check-then-close on closeCh lets
+	// both take the "not closed yet" branch and the second close panics
+	// ("close of closed channel"), which is unrecoverable and takes every
+	// terminal session in the app down with it.
+	closeOnce sync.Once
 }
 
 // Session is an opened remote shell satisfying Read/Write/Resize/Close.
@@ -135,12 +144,13 @@ func (c *Conn) ListenRemote(network, addr string) (net.Listener, error) {
 // port forward on an idle connection keeps reporting itself as running.
 func (c *Conn) Done() <-chan struct{} { return c.closeCh }
 
+// Close closes the connection and Done. It is safe to call concurrently and
+// repeatedly; only the first call closes Done. ssh.Client.Close is idempotent
+// in the way that matters here (it ends in net.Conn.Close, which reports an
+// error rather than misbehaving on a second call), so a late caller gets that
+// error and nothing else happens.
 func (c *Conn) Close() error {
-	select {
-	case <-c.closeCh:
-	default:
-		close(c.closeCh)
-	}
+	c.closeOnce.Do(func() { close(c.closeCh) })
 	return c.client.Close()
 }
 

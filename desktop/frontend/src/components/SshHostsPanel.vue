@@ -459,10 +459,18 @@ function forwardKindHint(kind: string): string {
 // isLoopbackBind mirrors defaultForwardBindAddr's contract: empty means the
 // backend fills in 127.0.0.1, and only loopback keeps the listener private to
 // this machine.
+// The 127/8 test is anchored at both ends and spelled out octet by octet on
+// purpose: /^127\./ also matches the hostname 127.0.0.1.example.com, which
+// resolves anywhere its owner likes and would have suppressed the warning.
+// net.Listen would refuse that value with a clear error rather than bind
+// anything wide, so this is not a hole — but a check that only claims what it
+// can prove costs nothing.
 function isLoopbackBind(addr: string | undefined): boolean {
   const a = (addr ?? "").trim().toLowerCase();
   if (a === "") return true;
-  return a === "localhost" || a === "::1" || a === "[::1]" || /^127\./.test(a);
+  if (a === "localhost" || a === "::1" || a === "[::1]") return true;
+  const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(a);
+  return m !== null && m.slice(1).every((o) => Number(o) <= 255);
 }
 
 // forwardBindWarning is the §5.1 warning, and it is deliberately three

@@ -49,9 +49,12 @@ const (
 // That is the difference between leaking a database and becoming an open relay
 // into the remote network.
 //
-// This constant is what makes the default safe when no UI is involved, which
-// today is always: the forwards UI is roadmap item 26 task 5 and does not
-// exist yet, so nothing warns about a non-loopback value except this comment.
+// This constant is what makes the default safe when no UI is involved — a
+// rule that arrives by sync, or one saved with the field left empty. The
+// drawer's own warning (forwardBindWarning in SshHostsPanel.vue) covers the
+// case where a user types a non-loopback address; the two have to keep saying
+// the same thing about what "empty" means, which is why isLoopbackBind treats
+// "" as loopback exactly as this does.
 const defaultForwardBindAddr = "127.0.0.1"
 
 // tunnelKeepalive is how often a tunnel connection pings the remote. It also
@@ -269,6 +272,13 @@ type tunnelManager struct {
 	conns    map[string]*hostConn // hostID → shared SSH connection
 	tuns     map[string]*tunnel   // hostID + "/" + ruleID
 	starting map[string]bool      // keys with a start in flight
+	// rules is the last reconciled view of the saved rules: key →
+	// fingerprint. nil means reconcile has never run (nothing has written
+	// config yet), which registerTunnel reads as "no opinion" rather than as
+	// "no rules exist" — the difference between allowing a start and refusing
+	// every start on a machine that has not touched its config this run.
+	// ensureLocked deliberately does not initialise it.
+	rules map[string]string
 }
 
 func tunnelKey(hostID, ruleID string) string { return hostID + "/" + ruleID }
@@ -298,6 +308,10 @@ type tunnel struct {
 	startedAt      int64
 	hc             *hostConn
 	accepted       atomic.Int64
+	// fingerprint is forwardRuleFingerprint of the rule as it stood when this
+	// tunnel started, so reconcile can tell "the rule still describes this
+	// listener" from "the rule now describes a different one".
+	fingerprint string
 
 	// closeOnce makes teardown idempotent, which is what keeps the hostConn
 	// refcount honest: whether a tunnel is stopped by the user, by a lost
@@ -410,22 +424,103 @@ func (m *tunnelManager) checkConnAlive(h SSHHost, hc *hostConn) error {
 // disagree on: a dynamic forward has no configured target at all (the SOCKS
 // client names one per connection), and deriving it from the rule would
 // publish a meaningless ":" to the UI.
-func (m *tunnelManager) registerTunnel(h SSHHost, r ForwardRule, ln net.Listener, hc *hostConn, target string) *tunnel {
+//
+// It refuses to publish a tunnel whose rule disappeared (or changed) while the
+// start was in flight. That window is not small: the start dials with a 15s
+// timeout, and a rule deleted in the middle of it would otherwise produce
+// exactly the orphan reconcile exists to prevent — a listener the UI cannot
+// show, and so cannot stop.
+func (m *tunnelManager) registerTunnel(h SSHHost, r ForwardRule, ln net.Listener, hc *hostConn, target string) (*tunnel, error) {
 	t := &tunnel{
 		hostID: h.ID, ruleID: r.ID, kind: r.Kind,
 		listener: ln, listenAddr: ln.Addr().String(),
 		target: target, startedAt: time.Now().Unix(),
-		hc: hc, running: true,
+		hc: hc, running: true, fingerprint: forwardRuleFingerprint(r),
 		live: map[net.Conn]struct{}{},
 	}
 	m.mu.Lock()
 	m.ensureLocked()
+	if m.rules != nil {
+		if fp, ok := m.rules[tunnelKey(h.ID, r.ID)]; !ok || fp != t.fingerprint {
+			m.mu.Unlock()
+			return nil, fmt.Errorf(
+				"forward rule %s was deleted or changed while it was starting; nothing is listening", r.ID)
+		}
+	}
 	// A previous entry here can only be a stopped one (claimStart's running
 	// check plus the starting flag rule that out); starting the rule again
 	// replaces it and clears its error.
 	m.tuns[tunnelKey(h.ID, r.ID)] = t
 	m.mu.Unlock()
-	return t
+	return t, nil
+}
+
+// forwardRuleFingerprint is everything about a rule that decides what its
+// listener actually does: the kind, the address and port it binds, and (for
+// -L/-R, which have one) the target it forwards to. The bind address goes
+// through forwardBindAddr so it is the *resolved* one — typing "127.0.0.1"
+// into a field that was empty describes the same listener and must not count
+// as a change.
+//
+// Note is excluded on purpose: relabelling a rule is not a reason to cut a
+// live database session.
+func forwardRuleFingerprint(r ForwardRule) string {
+	kind := strings.TrimSpace(r.Kind)
+	parts := []string{kind, forwardBindAddr(r)}
+	// A dynamic rule has no configured target — the SOCKS client names one per
+	// connection — so leftover text in those fields says nothing about the
+	// running listener and must not tear it down.
+	if kind == forwardKindLocal || kind == forwardKindRemote {
+		parts = append(parts, forwardTarget(r))
+	}
+	return strings.Join(parts, "\x00")
+}
+
+// reconcile joins the rule lifecycle to the tunnel lifecycle: it stops every
+// tunnel whose rule is gone from the saved hosts, or whose rule now describes
+// a different listener.
+//
+// Without it, deleting a rule (or the whole host) left the tunnel running with
+// no way to stop it, because the tunnels tab renders from the *saved* rules —
+// so the orphan had no row, the local port stayed bound, and an authenticated
+// SSH connection outlived the credential the host delete had just wiped from
+// the keyring. The 0.0.0.0 case is why this is a safety fix rather than
+// tidiness: a user who binds wide, thinks better of it and deletes the rule
+// has not closed the exposure until this runs.
+//
+// It is driven from configStore's post-commit observer, so it covers every
+// path that can remove a rule — including an inbound sync, which rewrites the
+// host list in the config store directly and never calls UpdateSSHHost.
+func (m *tunnelManager) reconcile(hosts []SSHHost) {
+	want := make(map[string]string)
+	for _, h := range hosts {
+		for _, r := range h.Forwards {
+			want[tunnelKey(h.ID, r.ID)] = forwardRuleFingerprint(r)
+		}
+	}
+
+	m.mu.Lock()
+	m.ensureLocked()
+	m.rules = want
+	var stale []*tunnel
+	for key, t := range m.tuns {
+		if fp, ok := want[key]; ok && fp == t.fingerprint {
+			continue
+		}
+		// Entries that already stopped on their own go too: their row is
+		// rendered from a rule that no longer exists, so nothing would ever
+		// show — or dismiss — them again.
+		t.running = false
+		delete(m.tuns, key)
+		stale = append(stale, t)
+	}
+	m.mu.Unlock()
+
+	for _, t := range stale {
+		m.teardown(t) // takes m.mu via releaseConn — must be outside the lock
+		logInfo("ssh", "forward %s stopped: its rule was deleted or changed (was listening on %s)",
+			t.ruleID, t.listenAddr)
+	}
 }
 
 // startLocal brings up a -L tunnel: listen locally, and hand every accepted
@@ -455,7 +550,12 @@ func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*sshcl
 		return err
 	}
 
-	t := m.registerTunnel(h, r, ln, hc, forwardTarget(r))
+	t, err := m.registerTunnel(h, r, ln, hc, forwardTarget(r))
+	if err != nil {
+		_ = ln.Close()
+		m.releaseConn(h.ID, hc)
+		return err
+	}
 	go m.acceptLoop(t, m.serveLocalConn)
 	return nil
 }
@@ -490,7 +590,12 @@ func (m *tunnelManager) startDynamic(h SSHHost, r ForwardRule, dial func() (*ssh
 		return err
 	}
 
-	t := m.registerTunnel(h, r, ln, hc, "")
+	t, err := m.registerTunnel(h, r, ln, hc, "")
+	if err != nil {
+		_ = ln.Close()
+		m.releaseConn(h.ID, hc)
+		return err
+	}
 	// The accept loop is ours rather than socks5.Serve's, so every accepted
 	// connection lands in tunnel.live and a stop actually cuts sessions that
 	// are already proxying. socks5.Serve would accept them where the manager
@@ -541,7 +646,12 @@ func (m *tunnelManager) startRemote(h SSHHost, r ForwardRule, dial func() (*sshc
 		return remoteListenError(r, bind, err)
 	}
 
-	t := m.registerTunnel(h, r, ln, hc, forwardTarget(r))
+	t, err := m.registerTunnel(h, r, ln, hc, forwardTarget(r))
+	if err != nil {
+		_ = ln.Close()
+		m.releaseConn(h.ID, hc)
+		return err
+	}
 	go m.acceptLoop(t, m.serveRemoteConn)
 	return nil
 }
@@ -676,7 +786,8 @@ func (m *tunnelManager) acceptLoop(t *tunnel, serve func(*tunnel, net.Conn)) {
 	for {
 		c, err := t.listener.Accept()
 		if err != nil {
-			return // listener closed by stop/teardown, or the ssh transport died
+			m.acceptFailed(t, err)
+			return
 		}
 		if !t.trackConn(c) {
 			_ = c.Close() // raced with teardown
@@ -687,8 +798,44 @@ func (m *tunnelManager) acceptLoop(t *tunnel, serve func(*tunnel, net.Conn)) {
 	}
 }
 
+// acceptFailed ends a tunnel's accept loop.
+//
+// Almost always the error means the listener was closed by stop/teardown, and
+// then there is nothing to do: the tunnel is already unregistered or already
+// marked not-running. The case that matters is the other one — an Accept that
+// fails while the tunnel is still registered and running (EMFILE under fd
+// exhaustion is the plausible one). Returning quietly there left the panel
+// reporting Running for a tunnel that would never accept another connection,
+// with no error and no way to notice. So it goes through the same bookkeeping
+// connectionLost uses: mark it stopped with a reason, keep the entry so the
+// reason is visible, and tear the tunnel down.
+func (m *tunnelManager) acceptFailed(t *tunnel, err error) {
+	m.mu.Lock()
+	m.ensureLocked()
+	live := m.tuns[tunnelKey(t.hostID, t.ruleID)] == t && t.running
+	if live {
+		t.running = false
+		t.errMsg = fmt.Sprintf("stopped accepting connections: %v", err)
+	}
+	m.mu.Unlock()
+	if !live {
+		return
+	}
+	logWarn("ssh", "forward %s: accept failed on %s: %v; tunnel stopped", t.ruleID, t.listenAddr, err)
+	m.teardown(t)
+}
+
 // serveLocalConn splices one accepted local connection to the remote target
 // over a direct-tcpip channel.
+//
+// The DialRemote here has no deadline of its own. x/crypto/ssh's Dial takes no
+// context, and the obvious wrapper — race it against a timer — would be worse
+// than it looks: a timeout error is not an *ssh.OpenChannelError, so
+// noteDialFailure would classify a merely slow remote as a dead transport and
+// stop every tunnel on the connection. What actually bounds it is the
+// keepalive: a transport that has died takes the pending channel open down
+// with it within tunnelKeepalive. socks5.ServeConn documents the same fact
+// from the other side.
 func (m *tunnelManager) serveLocalConn(t *tunnel, local net.Conn) {
 	defer t.untrackConn(local)
 
@@ -740,6 +887,11 @@ func (m *tunnelManager) noteDialFailure(t *tunnel, target string, err error) (de
 // The destination is resolved on the *remote* side: socks5 hands the name
 // through unresolved and DialRemote makes the remote host look it up, which is
 // what makes a SOCKS proxy over SSH useful for names that only exist there.
+//
+// socks5.ServeConn puts a deadline on the handshake but none on the injected
+// dialer, and this dialer adds none either — for the reason spelled out on
+// serveLocalConn: the only thing that can bound an SSH channel open here
+// without lying about what failed is the keepalive.
 func (m *tunnelManager) serveDynamicConn(t *tunnel, local net.Conn) {
 	defer t.untrackConn(local)
 	defer func() { _ = local.Close() }()

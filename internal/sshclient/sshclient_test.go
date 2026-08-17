@@ -266,3 +266,59 @@ func TestDialStillOpensShell(t *testing.T) {
 		t.Fatalf("Dial must still request a pty and a shell; pty=%v shell=%v", sawPty, sawShell)
 	}
 }
+
+// TestConnCloseFromManyGoroutines pins that Close is safe to call
+// concurrently. The old implementation was a check-then-close on closeCh
+// (`select { case <-closeCh: default: close(closeCh) }`), which lets two
+// goroutines both observe "not closed" and both call close — a
+// "close of closed channel" panic that no recover in this codebase catches
+// and that takes every terminal session down with it.
+//
+// This is not a theoretical race: the keepalive loop closes on a failed ping
+// while the tunnel manager's last releaseConn closes on the same transport
+// death, and both fire within milliseconds of each other.
+//
+// The shape matters. All closers wait on one barrier channel so they enter
+// Close at the same instant, and the whole thing repeats over many fresh
+// connections, because a single attempt lands in the window only sometimes.
+// Run it with -race.
+func TestConnCloseFromManyGoroutines(t *testing.T) {
+	addr, hostPub := startTestServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	const rounds, closers = 40, 12
+	for i := 0; i < rounds; i++ {
+		c, err := DialConn(context.Background(), Config{
+			Host: host, Port: port, User: "u",
+			Auth:      PasswordAuth{Password: "pw"},
+			HostKeyCb: ssh.FixedHostKey(hostPub),
+			Timeout:   5 * time.Second,
+			// Short enough that the keepalive goroutine is also live and
+			// pinging while the closers run, so the real racing pair
+			// (keepalive vs. an explicit Close) is exercised too.
+			Keepalive: time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("DialConn: %v", err)
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for j := 0; j < closers; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_ = c.Close()
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		select {
+		case <-c.Done():
+		default:
+			t.Fatal("Done must be closed after Close returned")
+		}
+	}
+}

@@ -639,6 +639,23 @@ func migrateShortcutBindings(c *appConfig) bool {
 type configStore struct {
 	mu  sync.Mutex
 	cfg appConfig
+	// onCommit, when set, runs after every Set — outside the lock. It exists
+	// because some state *outside* the config has to follow the config: a
+	// running port-forward tunnel whose rule was just deleted (see
+	// tunnelManager.reconcile). Hooking here rather than in each caller is
+	// what makes the coverage total, and the coverage is the point: a rule
+	// can vanish through UpdateSSHHost, through DeleteSSHHost, or through an
+	// inbound sync (appConfigAdapter.WriteValue, which writes the host list
+	// straight into the store and never goes near either of them).
+	onCommit func(appConfig)
+}
+
+// setOnCommit installs the post-commit observer. Wired once during App
+// construction/startup, before anything can be writing config.
+func (s *configStore) setOnCommit(fn func(appConfig)) {
+	s.mu.Lock()
+	s.onCommit = fn
+	s.mu.Unlock()
 }
 
 func loadConfig() *configStore {
@@ -727,7 +744,27 @@ func (s *configStore) Get() appConfig {
 
 // Set replaces the config and persists it to disk atomically (write-temp-rename).
 // The caller's maps are copied in, so it may keep using them afterwards.
+//
+// The onCommit observer runs after the store lock is released — never while
+// holding it, so an observer is free to call back into anything (including
+// Get) without deadlocking, and so no other lock is ever taken underneath
+// s.mu. It runs even when the disk write failed: s.cfg has already been
+// replaced by then, so every reader is looking at the new value regardless,
+// and an observer that skipped it would be out of step with what the UI shows.
 func (s *configStore) Set(c appConfig) error {
+	err := s.write(c)
+	// Read the observer and the *current* config together, so two racing Sets
+	// both observe the winner rather than each observing its own snapshot.
+	s.mu.Lock()
+	hook, committed := s.onCommit, detachMaps(s.cfg)
+	s.mu.Unlock()
+	if hook != nil {
+		hook(committed)
+	}
+	return err
+}
+
+func (s *configStore) write(c appConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cfg = detachMaps(c)

@@ -430,6 +430,11 @@ func newForwardTestApp(t *testing.T, srv *forwardTestServer, rules ...ForwardRul
 
 	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
 	a.sshKnownHostsPath = writeKnownHostsFor(t, srv.addr, srv.hostPub)
+	// The same wiring NewApp/startup does, so every test in this file runs
+	// with the production config observer installed — which is also what keeps
+	// the "an ordinary edit does not tear a tunnel down" claim honest: if
+	// reconcile were trigger-happy, tests here that touch config would break.
+	a.observeConfigStore()
 	t.Cleanup(func() { a.tunnels.stopAll() })
 
 	h, err := a.AddSSHHost(

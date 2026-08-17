@@ -44,6 +44,11 @@ var allowedPreferenceKeys = map[string]preferenceKind{
 	"terminal_scrollback":              preferenceKindInt,
 	"default_shell":                    preferenceKindString,
 	"shortcut_bindings":                preferenceKindObject,
+	// profiles_encrypted carries an E2EE-sealed session-profiles blob (design
+	// docs/superpowers/specs/2026-08-17-session-profiles-design.md §5): same
+	// wire shape as ssh_hosts_encrypted — a base64(ciphertext) JSON string
+	// the relay cannot open — so it gets the same kind.
+	"profiles_encrypted": preferenceKindString,
 }
 
 type preferenceKind int

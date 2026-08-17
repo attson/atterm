@@ -110,6 +110,16 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 			return nil, false
 		}
 		return blob, true
+	case "profiles_encrypted":
+		key := a.accountKey()
+		if len(key) == 0 {
+			return nil, false // E2EE inactive → local only, never sync
+		}
+		blob, err := sealProfiles(key, c.Profiles, c.DefaultProfileID)
+		if err != nil || blob == nil {
+			return nil, false
+		}
+		return blob, true
 	}
 	return nil, false
 }
@@ -249,6 +259,32 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 		}
 		c.SSHHosts = hosts
 		c.SSHKeys = keys
+	case "profiles_encrypted":
+		key := a.accountKey()
+		if len(key) == 0 {
+			return nil // no key → ignore inbound sync silently (local only)
+		}
+		incoming, defaultID, err := openProfiles(key, value)
+		if err != nil {
+			return err
+		}
+		// Validate before merging: nothing upstream of this point checked a
+		// payload that came off the relay (SetProfiles only guards local
+		// edits). Drop individually-malformed entries rather than reject the
+		// whole payload — see filterValidProfiles's doc comment for why.
+		incoming = filterValidProfiles(incoming)
+		// Merge, never replace. SyncEnv defaults to false, so a profile that
+		// opted out of env sync is indistinguishable on the wire from one
+		// that has no env at all. Replacing c.Profiles wholesale with
+		// `incoming` would erase whatever env this machine configured
+		// locally for a profile the moment any other machine pushes an
+		// update to it — mergeProfiles is what keeps that env alive across
+		// a pull (design §5.1).
+		c.Profiles = mergeProfiles(c.Profiles, incoming)
+		// A default-profile id that no longer names a surviving profile
+		// (e.g. it pointed at an entry filterValidProfiles just dropped)
+		// must not linger — resolveDefaultProfileID clears it in that case.
+		c.DefaultProfileID = resolveDefaultProfileID(defaultID, c.Profiles)
 	default:
 		return fmt.Errorf("unknown key %s", key)
 	}

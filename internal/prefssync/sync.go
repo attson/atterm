@@ -68,6 +68,7 @@ var syncedKeys = []string{
 	"terminal_scrollback",
 	"default_shell",
 	"shortcut_bindings",
+	"profiles_encrypted",
 }
 
 // SyncedKeys returns the canonical list of keys this engine syncs.

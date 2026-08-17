@@ -45,6 +45,12 @@ type NewSessionReq struct {
 	Cols    uint16   `json:"cols,omitempty"`
 	Rows    uint16   `json:"rows,omitempty"`
 
+	// ProfileID explicitly selects a SessionProfile for this session,
+	// overriding the configured default profile (see relayHost.NewSession's
+	// precedence: explicit > default > default_shell/HOME). Empty means "no
+	// explicit choice" — fall through to the default profile if one is set.
+	ProfileID string `json:"profile_id,omitempty"`
+
 	// AIKind is set by the frontend after calling its own classifyAIKind()
 	// on the user-typed command. Allowed values match the keys of
 	// aiSniffers ("claude" | "codex" | "aider"). Empty disables AI behavior
@@ -1773,6 +1779,8 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.DefaultShell != ""
 		case "shortcut_bindings":
 			return len(c.ShortcutBindings) > 0
+		case "profiles_encrypted":
+			return len(c.Profiles) > 0
 		}
 		return false
 	}

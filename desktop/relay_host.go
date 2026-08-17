@@ -468,12 +468,80 @@ func (h *relayHost) Stop() {
 	}
 }
 
+// resolveSessionProfile implements design §4's precedence for choosing a
+// profile at session-creation time: an explicitly chosen profile id wins,
+// then the configured default, then no profile at all (nil) — the caller
+// then falls back to whatever req.Command/req.Cwd already carry, i.e.
+// today's default_shell + HOME behavior, unchanged.
+//
+// Returns nil rather than an error when the resolved id (explicit or
+// default) does not match any profile: a stale or deleted profile id must
+// never block session creation, it just means "no profile applies".
+func resolveSessionProfile(profiles []SessionProfile, defaultProfileID, explicitProfileID string) *SessionProfile {
+	id := explicitProfileID
+	if id == "" {
+		id = defaultProfileID
+	}
+	if id == "" {
+		return nil
+	}
+	for i := range profiles {
+		if profiles[i].ID == id {
+			p := profiles[i]
+			return &p
+		}
+	}
+	return nil
+}
+
+// applyProfileEnv merges a profile's environment variables onto the base
+// terminal env. Profile entries win over the base environment (design §4
+// precedence) — with one deliberate exception: TERM. relay_host builds its
+// base env via terminalEnvForXterm, which sets TERM=xterm-256color to match
+// the xterm.js renderer atterm actually talks to; a profile env that
+// happened to carry TERM (e.g. copied from a dotfile) would silently break
+// rendering if it were allowed to win (design §6.3). Every other key is the
+// user's to override, TERM is not.
+func applyProfileEnv(env []string, profileEnv map[string]string) []string {
+	for k, v := range profileEnv {
+		if k == envKeyTerm {
+			continue
+		}
+		env = setEnv(env, k, v)
+	}
+	return env
+}
+
 // NewSession spawns a PTY for the given command and adopts it as a session.
 func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUID, error) {
-	if req.Command == "" {
+	var profiles []SessionProfile
+	var defaultProfileID string
+	if h.cfg != nil {
+		c := h.cfg.Get()
+		profiles = c.Profiles
+		defaultProfileID = c.DefaultProfileID
+	}
+	profile := resolveSessionProfile(profiles, defaultProfileID, req.ProfileID)
+	profileID := ""
+	if profile != nil {
+		profileID = profile.ID
+	}
+
+	// Precedence (design §4): the resolved profile's Shell/Cwd win when set;
+	// an empty Shell/Cwd on the profile means "fall back to what the caller
+	// already resolved" (req.Command from default_shell, req.Cwd/HOME) —
+	// exactly today's behavior when no profile applies at all.
+	command := req.Command
+	if profile != nil && profile.Shell != "" {
+		command = profile.Shell
+	}
+	if command == "" {
 		return uuid.Nil, fmt.Errorf("empty command")
 	}
 	cwd := req.Cwd
+	if profile != nil && profile.Cwd != "" {
+		cwd = profile.Cwd
+	}
 	if cwd == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			cwd = home
@@ -487,17 +555,20 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 		rows = 24
 	}
 
-	argv := append([]string{req.Command}, defaultShellArgs(req.Command, req.Args)...)
-	logInfo("session", "command=%q args=%v cwd=%q aiKind=%q -> argv=%v",
-		req.Command, req.Args, cwd, req.AIKind, argv)
+	argv := append([]string{command}, defaultShellArgs(command, req.Args)...)
+	logInfo("session", "command=%q args=%v cwd=%q aiKind=%q profileID=%q -> argv=%v",
+		command, req.Args, cwd, req.AIKind, profileID, argv)
 	env := terminalEnvForXterm(os.Environ())
+	if profile != nil {
+		env = applyProfileEnv(env, profile.Env)
+	}
 
 	enabled := true
 	if h.cfg != nil {
 		enabled = h.cfg.Get().ShellIntegrationEnabledOrDefault()
 	}
 	sid := uuid.New() // generated here so the plan can scope temp files by id
-	plan := shellintegration.Prepare(req.Command, enabled, sid.String())
+	plan := shellintegration.Prepare(command, enabled, sid.String())
 	argv, env = mergeShellIntegrationPlan(argv, env, plan)
 	env = appendFeishuHookEnv(env, sid.String(), h.FeishuHookEndpoint)
 	if plan.Shell != "" {
@@ -522,7 +593,7 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	info := proto.SessionInfo{
 		Command:   strings.Join(argv, " "),
 		Cwd:       cwd,
-		Title:     req.Command,
+		Title:     command,
 		Cols:      cols,
 		Rows:      rows,
 		HostID:    h.hostID,
@@ -734,6 +805,31 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 					go func() { _, _ = ptyCopy.Write([]byte(line)) }()
 				})
 			}
+		}
+	}
+
+	// Profile startup command: written straight to the PTY once the shell
+	// draws its first prompt, reusing the exact SetOnFirstPrompt mechanism
+	// the AI-resume injection above uses — never a frontend sendInput of
+	// "<cmd>\r". Codex reads a trailing CR as a paste, not a submitted
+	// command; this repo has made and re-fixed that exact mistake three
+	// times (PR #63 → #110 → #129, AGENTS.md redline #28), so StartupCmd
+	// must not open a second "inject text into the PTY" implementation.
+	//
+	// Skipped when req.AIKind != "": SetOnFirstPrompt is a single callback
+	// slot (session.Session), and the restore block above already claims it
+	// for the resume command on that path. A profile-selected new session is
+	// never itself an AI-restore session, so the two never legitimately
+	// compete.
+	if profile != nil && profile.StartupCmd != "" && req.AIKind == "" {
+		if sess, ok := h.server.Registry().Get(id); ok {
+			line := profile.StartupCmd + "\n"
+			ptyCopy := pty
+			sidCopy := id
+			sess.SetOnFirstPrompt(func() {
+				logInfo("profile", "session=%s profile=%s — inject startup command %q", sidCopy, profileID, profile.StartupCmd)
+				go func() { _, _ = ptyCopy.Write([]byte(line)) }()
+			})
 		}
 	}
 

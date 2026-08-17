@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 
 	"github.com/attson/atterm/internal/e2eecrypto"
 	"github.com/google/uuid"
@@ -54,7 +55,20 @@ func stripUnsyncedEnv(profiles []SessionProfile) []SessionProfile {
 	return out
 }
 
-// sealProfiles packs the profile list and seals it with the account key.
+// profilesSyncPayload is the wire shape sealed into the profiles_encrypted
+// blob. DefaultProfileID rides alongside the profile list rather than
+// getting a sealed key of its own: SetDefaultProfileID marks the very same
+// "profiles_encrypted" key dirty as SetProfiles (see app.go), because from
+// prefssync's point of view "which profiles exist" and "which one is the
+// default" are one user-facing preference, not two. Splitting them would
+// mean a second sealed key and a second AAD tag just to carry one string.
+type profilesSyncPayload struct {
+	Profiles         []SessionProfile `json:"profiles"`
+	DefaultProfileID string           `json:"default_profile_id,omitempty"`
+}
+
+// sealProfiles packs the profile list and the default-profile selection and
+// seals them with the account key.
 //
 // Strips the Env of every profile with SyncEnv == false before sealing,
 // unconditionally — this is the one enforcement point for "env does not
@@ -71,11 +85,15 @@ func stripUnsyncedEnv(profiles []SessionProfile) []SessionProfile {
 //
 // Returns (nil, nil) when accountKey is empty — the caller treats that as
 // "skip sync" (local-only, never send plaintext to the relay).
-func sealProfiles(accountKey []byte, profiles []SessionProfile) (json.RawMessage, error) {
+func sealProfiles(accountKey []byte, profiles []SessionProfile, defaultProfileID string) (json.RawMessage, error) {
 	if len(accountKey) == 0 {
 		return nil, nil
 	}
-	plain, err := json.Marshal(stripUnsyncedEnv(profiles))
+	payload := profilesSyncPayload{
+		Profiles:         stripUnsyncedEnv(profiles),
+		DefaultProfileID: defaultProfileID,
+	}
+	plain, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -96,29 +114,75 @@ func sealProfiles(accountKey []byte, profiles []SessionProfile) (json.RawMessage
 	return b64, nil
 }
 
-// openProfiles decrypts a synced blob back into a profile list.
-func openProfiles(accountKey []byte, value json.RawMessage) ([]SessionProfile, error) {
+// openProfiles decrypts a synced blob back into a profile list and the
+// default-profile selection that traveled with it.
+func openProfiles(accountKey []byte, value json.RawMessage) ([]SessionProfile, string, error) {
 	var b64 string
 	if err := json.Unmarshal(value, &b64); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	ct, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	sessionKey, err := e2eecrypto.DeriveSessionKey(accountKey, profilesSyncSessionID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	plain, err := e2eecrypto.OpenUnsequenced(sessionKey, profilesSyncSessionID, e2eecrypto.AADTagProfiles, ct)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	var profiles []SessionProfile
-	if err := json.Unmarshal(plain, &profiles); err != nil {
-		return nil, err
+	var payload profilesSyncPayload
+	if err := json.Unmarshal(plain, &payload); err != nil {
+		return nil, "", err
 	}
-	return profiles, nil
+	return payload.Profiles, payload.DefaultProfileID, nil
+}
+
+// filterValidProfiles drops entries that would corrupt this machine's
+// profile list: empty ID, empty Name, or a duplicate ID within the same
+// payload (first occurrence wins). SetProfiles enforces these same
+// invariants for local edits (see app.go), but nothing validated an inbound
+// (pulled) payload before this — a malformed or buggy remote client could
+// put duplicate/empty-id profiles on the wire and WriteValue would store
+// them as-is.
+//
+// Drops the offending entries and keeps the rest, rather than rejecting the
+// whole payload: item 21 shipped broken through four review rounds because
+// one missing relay-whitelist entry 400'd — and therefore silently
+// dropped — every key in the same PUT batch. A malformed profile among ten
+// good ones should cost the user that one profile, not stop the other nine
+// (and every other synced key riding in the same pull) from working.
+func filterValidProfiles(profiles []SessionProfile) []SessionProfile {
+	seen := make(map[string]bool, len(profiles))
+	out := make([]SessionProfile, 0, len(profiles))
+	for _, p := range profiles {
+		id := strings.TrimSpace(p.ID)
+		name := strings.TrimSpace(p.Name)
+		if id == "" || name == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+// resolveDefaultProfileID returns id if it names a profile present in
+// profiles, or "" otherwise. Applied to an inbound default-profile
+// selection so a dangling reference (e.g. the referenced profile was one of
+// the entries filterValidProfiles dropped) never lingers in config.
+func resolveDefaultProfileID(id string, profiles []SessionProfile) string {
+	if id == "" {
+		return ""
+	}
+	for _, p := range profiles {
+		if p.ID == id {
+			return id
+		}
+	}
+	return ""
 }
 
 // mergeProfiles combines the local profile list with an incoming (pulled)
@@ -147,7 +211,19 @@ func mergeProfiles(local, incoming []SessionProfile) []SessionProfile {
 	for _, in := range incoming {
 		if len(in.Env) == 0 {
 			if l, ok := localByID[in.ID]; ok && len(l.Env) > 0 {
-				in.Env = l.Env
+				// Copy, don't alias: in.Env = l.Env would give the merged
+				// output the same map object the local slice holds. That was
+				// harmless while every persist path happened to run through
+				// configStore.Set() -> detachMaps() (which deep-copies again),
+				// but a caller that inspects or mutates the merged result
+				// before storing it — the pull handler in
+				// prefssync_adapter.go is exactly that caller — could reuse
+				// or corrupt `local`'s own env map through this alias.
+				env := make(map[string]string, len(l.Env))
+				for k, v := range l.Env {
+					env[k] = v
+				}
+				in.Env = env
 			}
 		}
 		out = append(out, in)

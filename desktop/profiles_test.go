@@ -40,10 +40,27 @@ func TestMergeProfilesEnvRules(t *testing.T) {
 			t.Errorf("a profile deleted on the other machine must go away here too: %v", got)
 		}
 	})
+
+	// TestMergeProfilesDoesNotAliasLocalEnv guards the Task 2 review finding
+	// carried into Task 3: mergeProfiles used to assign in.Env = l.Env,
+	// handing the merged output the exact map object `local` holds. Mutating
+	// the merged result's Env must never be visible through `local` — a
+	// caller (WriteValue's pull handler) that reads `local` again after
+	// calling mergeProfiles and before storing the result must see its own
+	// untouched map.
+	t.Run("does not alias local's env map", func(t *testing.T) {
+		local := []SessionProfile{{ID: "a", Name: "A", Env: map[string]string{"FOO": "bar"}}}
+		incoming := []SessionProfile{{ID: "a", Name: "A-renamed"}}
+		got := mergeProfiles(local, incoming)
+		got[0].Env["FOO"] = "mutated"
+		if local[0].Env["FOO"] != "bar" {
+			t.Errorf("mergeProfiles aliased local's Env map: mutating the merged output changed local to %v", local[0].Env)
+		}
+	})
 }
 
 func TestSealProfilesSkipsWithoutAccountKey(t *testing.T) {
-	blob, err := sealProfiles(nil, []SessionProfile{{ID: "a"}})
+	blob, err := sealProfiles(nil, []SessionProfile{{ID: "a"}}, "")
 	if err != nil || blob != nil {
 		t.Fatalf("no account key must mean skip-sync, never plaintext: blob=%v err=%v", blob, err)
 	}
@@ -58,16 +75,19 @@ func TestSealProfilesRoundTrip(t *testing.T) {
 	// sealing. Without it, sealProfiles strips Env before it ever reaches the
 	// wire (see TestSealProfilesStripsEnvWhenSyncEnvFalse below).
 	in := []SessionProfile{{ID: "a", Name: "Work", Shell: "/bin/zsh", Env: map[string]string{"K": "V"}, SyncEnv: true}}
-	blob, err := sealProfiles(key, in)
+	blob, err := sealProfiles(key, in, "a")
 	if err != nil || blob == nil {
 		t.Fatalf("seal: %v", err)
 	}
-	out, err := openProfiles(key, blob)
+	out, defaultID, err := openProfiles(key, blob)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if len(out) != 1 || out[0].Name != "Work" || out[0].Env["K"] != "V" {
 		t.Errorf("round trip lost data: %+v", out)
+	}
+	if defaultID != "a" {
+		t.Errorf("default profile id lost in round trip: got %q, want %q", defaultID, "a")
 	}
 }
 
@@ -82,11 +102,11 @@ func TestSealProfilesStripsEnvWhenSyncEnvFalse(t *testing.T) {
 		key[i] = byte(i)
 	}
 	in := []SessionProfile{{ID: "a", Name: "Work", Env: map[string]string{"SECRET": "token"}, SyncEnv: false}}
-	blob, err := sealProfiles(key, in)
+	blob, err := sealProfiles(key, in, "")
 	if err != nil || blob == nil {
 		t.Fatalf("seal: %v", err)
 	}
-	out, err := openProfiles(key, blob)
+	out, _, err := openProfiles(key, blob)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -109,7 +129,7 @@ func TestSealProfilesDoesNotMutateCaller(t *testing.T) {
 	}
 	env := map[string]string{"FOO": "bar"}
 	in := []SessionProfile{{ID: "a", Name: "Work", Env: env, SyncEnv: false}}
-	if _, err := sealProfiles(key, in); err != nil {
+	if _, err := sealProfiles(key, in, ""); err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 	if in[0].Env == nil || in[0].Env["FOO"] != "bar" {
@@ -137,7 +157,34 @@ func TestOpenProfilesRejectsWrongAADTag(t *testing.T) {
 	if err != nil || sealed == nil {
 		t.Skip("ssh seal unavailable in this shape")
 	}
-	if _, err := openProfiles(key, sealed); err == nil {
+	if _, _, err := openProfiles(key, sealed); err == nil {
 		t.Error("an ssh_hosts envelope must not open as a profiles envelope")
+	}
+}
+
+func TestFilterValidProfilesDropsMalformedEntriesKeepsRest(t *testing.T) {
+	in := []SessionProfile{
+		{ID: "a", Name: "Good A"},
+		{ID: "", Name: "No id"},
+		{ID: "b", Name: ""},
+		{ID: "a", Name: "Duplicate of a"},
+		{ID: "c", Name: "Good C"},
+	}
+	got := filterValidProfiles(in)
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" {
+		t.Errorf("expected only the two valid, first-occurrence entries to survive, got %+v", got)
+	}
+}
+
+func TestResolveDefaultProfileID(t *testing.T) {
+	profiles := []SessionProfile{{ID: "a"}, {ID: "b"}}
+	if got := resolveDefaultProfileID("a", profiles); got != "a" {
+		t.Errorf("known id must survive: got %q", got)
+	}
+	if got := resolveDefaultProfileID("missing", profiles); got != "" {
+		t.Errorf("dangling id must be dropped: got %q", got)
+	}
+	if got := resolveDefaultProfileID("", profiles); got != "" {
+		t.Errorf("empty id must stay empty: got %q", got)
 	}
 }

@@ -27,8 +27,8 @@ import (
 // tunnel reused a terminal session's connection and counted as a subscriber,
 // an open tunnel would keep PTY bytes uploading forever with nobody watching.
 
-// Forward kinds. Only "local" is implemented here; "remote" and "dynamic"
-// are roadmap item 26 tasks 3 and 4.
+// Forward kinds. "local" and "remote" are implemented here; "dynamic" is
+// roadmap item 26 task 4.
 const (
 	forwardKindLocal   = "local"
 	forwardKindRemote  = "remote"
@@ -111,7 +111,11 @@ func (a *App) StartForward(hostID, ruleID string) error {
 		return a.tunnels.startLocal(host, rule, func() (*sshclient.Conn, error) {
 			return a.dialTunnelConn(host)
 		})
-	case forwardKindRemote, forwardKindDynamic:
+	case forwardKindRemote:
+		return a.tunnels.startRemote(host, rule, func() (*sshclient.Conn, error) {
+			return a.dialTunnelConn(host)
+		})
+	case forwardKindDynamic:
 		return fmt.Errorf("%s forwarding is not implemented yet", rule.Kind)
 	default:
 		return fmt.Errorf("unknown forward kind %q", rule.Kind)
@@ -422,6 +426,138 @@ func listenError(r ForwardRule, bind string, err error) error {
 		return fmt.Errorf("local port %s is already in use (cannot bind %s)", strings.TrimSpace(r.BindPort), bind)
 	}
 	return fmt.Errorf("cannot listen on %s: %w", bind, err)
+}
+
+// startRemote brings up a -R tunnel: ask the remote host to listen, and hand
+// every connection *it* accepts to a local target via net.Dial.
+//
+// The order is the mirror of startLocal's on purpose. startLocal binds
+// locally before touching the SSH connection, because a local port conflict
+// is common and free to detect before paying for a login. Here there is no
+// such cheap local step: the "listen" *is* the SSH round trip
+// (ListenRemote sends the tcpip-forward global request), so acquiring the
+// connection has to come first.
+func (m *tunnelManager) startRemote(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
+	key := tunnelKey(h.ID, r.ID)
+
+	m.mu.Lock()
+	m.ensureLocked()
+	if m.starting[key] {
+		m.mu.Unlock()
+		return fmt.Errorf("forward %s is already starting", r.ID)
+	}
+	if t, ok := m.tuns[key]; ok && t.running {
+		m.mu.Unlock()
+		return fmt.Errorf("forward %s is already running on %s", r.ID, t.listenAddr)
+	}
+	m.starting[key] = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.starting, key)
+		m.mu.Unlock()
+	}()
+
+	hc, err := m.acquireConn(h.ID, dial)
+	if err != nil {
+		return err
+	}
+
+	// Same reasoning as startLocal: a connection that died between the dial
+	// and registering the tunnel must fail the start rather than register a
+	// tunnel the watcher (which only sees already-registered tunnels) would
+	// never mark stopped.
+	select {
+	case <-hc.conn.Done():
+		m.releaseConn(h.ID, hc)
+		return fmt.Errorf("the ssh connection to %s dropped while the tunnel was starting", h.Host)
+	default:
+	}
+
+	bind := forwardBindAddr(r)
+	ln, err := hc.conn.ListenRemote("tcp", bind)
+	if err != nil {
+		m.releaseConn(h.ID, hc)
+		return remoteListenError(r, bind, err)
+	}
+
+	t := &tunnel{
+		hostID: h.ID, ruleID: r.ID, kind: r.Kind,
+		listener: ln, listenAddr: ln.Addr().String(),
+		target: forwardTarget(r), startedAt: time.Now().Unix(),
+		hc: hc, running: true,
+		live: map[net.Conn]struct{}{},
+	}
+
+	m.mu.Lock()
+	m.ensureLocked()
+	m.tuns[key] = t
+	m.mu.Unlock()
+
+	go m.acceptRemoteLoop(t)
+	return nil
+}
+
+// remoteListenError turns a failed tcpip-forward request into something
+// worth reading. x/crypto/ssh's raw error here ("ssh: tcpip-forward request
+// denied by peer") is accurate but points nowhere useful, and — this is the
+// part that must not be gotten wrong — it must never be phrased like
+// listenError's local EADDRINUSE wording. A local bind failure is ours to
+// fix; this is the *remote* sshd refusing, almost always because
+// GatewayPorts is "no" (the default, which restricts non-loopback binds) or
+// because the requested port needs root on that host. Telling a user "local
+// port 80 is already in use" when the truth is "the remote refused to bind
+// port 80" sends them to check the wrong machine.
+func remoteListenError(r ForwardRule, bind string, err error) error {
+	return fmt.Errorf(
+		"the remote host refused to listen on %s (check the remote sshd's GatewayPorts setting, "+
+			"and whether binding port %s needs root there — nothing on this machine is holding that port): %w",
+		bind, strings.TrimSpace(r.BindPort), err)
+}
+
+// acceptRemoteLoop mirrors acceptLoop for a -R tunnel: it accepts
+// connections the remote host handed back to us over the SSH connection,
+// each one already carrying the bytes of a peer that connected on the
+// remote side.
+func (m *tunnelManager) acceptRemoteLoop(t *tunnel) {
+	for {
+		c, err := t.listener.Accept()
+		if err != nil {
+			return // listener closed by stop/teardown, or the ssh transport died
+		}
+		if !t.trackConn(c) {
+			_ = c.Close() // raced with teardown
+			continue
+		}
+		t.accepted.Add(1)
+		go m.serveRemoteConn(t, c)
+	}
+}
+
+// serveRemoteConn splices one connection the remote host accepted on our
+// behalf to the local target — the mirror of serveLocalConn. The failure
+// case is simpler than serveLocalConn's: dialing the target is a plain local
+// net.Dial, so any error just means nothing is listening on the target
+// locally. Unlike a remote-side dial failure over an SSH channel, a local
+// net.Dial error can never mean the SSH transport itself is gone, so there is
+// no *ssh.OpenChannelError split and no call into connectionLost here.
+func (m *tunnelManager) serveRemoteConn(t *tunnel, remote net.Conn) {
+	defer t.untrackConn(remote)
+
+	local, err := net.DialTimeout("tcp", t.target, 10*time.Second)
+	if err != nil {
+		_ = remote.Close()
+		logWarn("ssh", "forward %s: local target %s refused: %v", t.ruleID, t.target, err)
+		return
+	}
+	go func() {
+		_, _ = io.Copy(local, remote)
+		_ = local.Close()
+		_ = remote.Close()
+	}()
+	_, _ = io.Copy(remote, local)
+	_ = remote.Close()
+	_ = local.Close()
 }
 
 // acquireConn returns the host's shared connection, dialing it if this is the

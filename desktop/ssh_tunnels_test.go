@@ -39,10 +39,66 @@ type forwardTestServer struct {
 	addr    string
 	hostPub ssh.PublicKey
 
-	mu     sync.Mutex
-	conns  []*ssh.ServerConn
-	opened int
-	closed int
+	mu           sync.Mutex
+	conns        []*ssh.ServerConn
+	opened       int
+	closed       int
+	refuseRemote bool // when true, every "tcpip-forward" request is denied
+}
+
+// setRefuseRemoteForward makes every subsequent "tcpip-forward" global
+// request fail, the way a real sshd would refuse to bind a non-loopback
+// address under `GatewayPorts no` or a privileged port without root. It
+// exercises the failure path startRemote has to report with wording that
+// points at the remote, not at a local port conflict.
+func (s *forwardTestServer) setRefuseRemoteForward(v bool) {
+	s.mu.Lock()
+	s.refuseRemote = v
+	s.mu.Unlock()
+}
+
+func (s *forwardTestServer) shouldRefuseRemoteForward() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.refuseRemote
+}
+
+// remoteForwardState tracks the listeners one SSH connection has asked the
+// test server to open via "tcpip-forward", keyed by the address+port the
+// client used to register the forward (the same key `cancel-tcpip-forward`
+// carries). Scoped to a single connection's serve goroutine, so it needs its
+// own lock but nothing shared across connections.
+type remoteForwardState struct {
+	mu  sync.Mutex
+	lns map[string]net.Listener
+}
+
+func newRemoteForwardState() *remoteForwardState {
+	return &remoteForwardState{lns: map[string]net.Listener{}}
+}
+
+func (r *remoteForwardState) add(key string, ln net.Listener) {
+	r.mu.Lock()
+	r.lns[key] = ln
+	r.mu.Unlock()
+}
+
+func (r *remoteForwardState) remove(key string) net.Listener {
+	r.mu.Lock()
+	ln := r.lns[key]
+	delete(r.lns, key)
+	r.mu.Unlock()
+	return ln
+}
+
+func (r *remoteForwardState) closeAll() {
+	r.mu.Lock()
+	lns := r.lns
+	r.lns = map[string]net.Listener{}
+	r.mu.Unlock()
+	for _, ln := range lns {
+		_ = ln.Close()
+	}
 }
 
 func startForwardingSSHTestServer(t *testing.T) *forwardTestServer {
@@ -94,14 +150,17 @@ func (s *forwardTestServer) serve(nc net.Conn, cfg *ssh.ServerConfig) {
 	s.conns = append(s.conns, sc)
 	s.opened++
 	s.mu.Unlock()
+
+	remoteFwd := newRemoteForwardState()
 	defer func() {
 		_ = sc.Close()
+		remoteFwd.closeAll()
 		s.mu.Lock()
 		s.closed++
 		s.mu.Unlock()
 	}()
 
-	go ssh.DiscardRequests(reqs)
+	go s.handleGlobalRequests(sc, reqs, remoteFwd)
 	for newCh := range chans {
 		switch newCh.ChannelType() {
 		case "session":
@@ -149,6 +208,146 @@ func (s *forwardTestServer) serve(nc net.Conn, cfg *ssh.ServerConfig) {
 			_ = newCh.Reject(ssh.UnknownChannelType, "unsupported")
 		}
 	}
+}
+
+// channelForwardMsg is RFC 4254 §7.1's payload for both "tcpip-forward" and
+// "cancel-tcpip-forward" — same shape, same field order, used for both.
+type channelForwardMsg struct {
+	Addr string
+	Port uint32
+}
+
+// forwardedTCPPayload is RFC 4254 §7.2's payload for a "forwarded-tcpip"
+// channel open: the address/port the connection came in on, and the
+// originator's address/port. golang.org/x/crypto/ssh's client matches an
+// incoming "forwarded-tcpip" channel to the right net.Listener purely by
+// comparing this Addr/Port against what it registered when it sent
+// "tcpip-forward" — so Addr here must be the exact string the client sent,
+// and Port must be the port that request actually got bound to.
+type forwardedTCPPayload struct {
+	Addr       string
+	Port       uint32
+	OriginAddr string
+	OriginPort uint32
+}
+
+// handleGlobalRequests answers the global request pair remote forwarding
+// rides on ("tcpip-forward" / "cancel-tcpip-forward") and discards anything
+// else, which is what ssh.DiscardRequests did before this server needed to
+// understand -R.
+func (s *forwardTestServer) handleGlobalRequests(sc *ssh.ServerConn, reqs <-chan *ssh.Request, remoteFwd *remoteForwardState) {
+	for req := range reqs {
+		switch req.Type {
+		case "tcpip-forward":
+			s.handleTCPIPForward(sc, req, remoteFwd)
+		case "cancel-tcpip-forward":
+			handleCancelTCPIPForward(req, remoteFwd)
+		default:
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+		}
+	}
+}
+
+// handleTCPIPForward is the server half of `ssh -R`: bind a real listener,
+// reply with the bound port, and — this is the part a stub that only replies
+// to the request would skip — actually run an accept loop that opens a
+// "forwarded-tcpip" channel back to the client for every connection it
+// accepts. Without that second half the client's Listen "succeeds" but never
+// forwards a single byte, and a test asserting only on the reply would never
+// notice.
+func (s *forwardTestServer) handleTCPIPForward(sc *ssh.ServerConn, req *ssh.Request, remoteFwd *remoteForwardState) {
+	var m channelForwardMsg
+	if err := ssh.Unmarshal(req.Payload, &m); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+	if s.shouldRefuseRemoteForward() {
+		// A real sshd would give no more detail than this either (`GatewayPorts
+		// no` and "needs root for <1024" both just deny the request).
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(m.Port))))
+	if err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+	_, boundPortStr, _ := net.SplitHostPort(ln.Addr().String())
+	boundPort, _ := strconv.Atoi(boundPortStr)
+
+	key := m.Addr + ":" + strconv.Itoa(boundPort)
+	remoteFwd.add(key, ln)
+
+	if req.WantReply {
+		_ = req.Reply(true, ssh.Marshal(&struct{ Port uint32 }{Port: uint32(boundPort)}))
+	}
+
+	go acceptRemoteForward(sc, ln, m.Addr, uint32(boundPort))
+}
+
+func handleCancelTCPIPForward(req *ssh.Request, remoteFwd *remoteForwardState) {
+	var m channelForwardMsg
+	if err := ssh.Unmarshal(req.Payload, &m); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+	key := m.Addr + ":" + strconv.Itoa(int(m.Port))
+	if ln := remoteFwd.remove(key); ln != nil {
+		_ = ln.Close()
+		if req.WantReply {
+			_ = req.Reply(true, nil)
+		}
+		return
+	}
+	if req.WantReply {
+		_ = req.Reply(false, nil)
+	}
+}
+
+// acceptRemoteForward runs the accept loop for one bound "tcpip-forward"
+// listener, opening a "forwarded-tcpip" channel back over sc for each
+// connection accepted — the half of -R that actually carries traffic.
+func acceptRemoteForward(sc *ssh.ServerConn, ln net.Listener, addr string, port uint32) {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return // closed by cancel-tcpip-forward or connection teardown
+		}
+		go forwardOneRemoteConn(sc, c, addr, port)
+	}
+}
+
+// forwardOneRemoteConn is the server-side splice for one accepted
+// -R connection: open the channel the client is waiting on, then copy bytes
+// both ways between it and the TCP connection that arrived here — the exact
+// mirror of what direct-tcpip does for -L above.
+func forwardOneRemoteConn(sc *ssh.ServerConn, c net.Conn, addr string, port uint32) {
+	originHost, originPortStr, _ := net.SplitHostPort(c.RemoteAddr().String())
+	originPort, _ := strconv.Atoi(originPortStr)
+
+	payload := forwardedTCPPayload{
+		Addr: addr, Port: port,
+		OriginAddr: originHost, OriginPort: uint32(originPort),
+	}
+	ch, chReqs, err := sc.OpenChannel("forwarded-tcpip", ssh.Marshal(&payload))
+	if err != nil {
+		_ = c.Close()
+		return
+	}
+	go ssh.DiscardRequests(chReqs)
+	go func() { _, _ = io.Copy(ch, c); _ = ch.Close(); _ = c.Close() }()
+	go func() { _, _ = io.Copy(c, ch); _ = ch.Close(); _ = c.Close() }()
 }
 
 // dropConns kills every SSH connection the server has accepted, simulating the
@@ -229,6 +428,12 @@ func newForwardTestApp(t *testing.T, srv *forwardTestServer, rules ...ForwardRul
 // loopback default is what actually gets exercised.
 func localRule(id, targetHost, targetPort string) ForwardRule {
 	return ForwardRule{ID: id, Kind: "local", BindPort: "0", TargetHost: targetHost, TargetPort: targetPort}
+}
+
+// remoteRule is a -R rule with an ephemeral remote bind port and no
+// BindAddr, mirroring localRule.
+func remoteRule(id, targetHost, targetPort string) ForwardRule {
+	return ForwardRule{ID: id, Kind: "remote", BindPort: "0", TargetHost: targetHost, TargetPort: targetPort}
 }
 
 func activeForward(t *testing.T, a *App, ruleID string) ActiveForward {
@@ -458,6 +663,202 @@ func TestStopForwardCutsEstablishedConnections(t *testing.T) {
 		t.Fatal("StopForward left the established forwarded connection open: " +
 			"the read timed out instead of failing on a closed connection")
 	}
+}
+
+// --- remote forwarding (-R) --------------------------------------------------
+
+// TestRemoteForwardCarriesBytesBothWays is the core proof for this task: a
+// connection that originates on the *remote* side — here, dialing the
+// address the remote host is now listening on, exactly what activeForward's
+// ListenAddr reports for a remote rule — gets spliced through an SSH
+// "forwarded-tcpip" channel to net.Dial'd local target and back. Asserting
+// only that ListenRemote returned a listener would prove nothing: this test
+// fails unless bytes actually round-trip through a real channel open.
+func TestRemoteForwardCarriesBytesBothWays(t *testing.T) {
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, remoteRule("r1", targetHost, targetPort))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r1") }()
+
+	f := activeForward(t, a, "r1")
+	// ListenAddr is the address the *remote* host bound on our behalf; dialing
+	// it here simulates a peer connecting to that listener on the remote side.
+	c, err := net.DialTimeout("tcp", f.ListenAddr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial remote-bound port: %v", err)
+	}
+	defer c.Close()
+
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	const msg = "through the reverse tunnel\n"
+	if _, err := c.Write([]byte(msg)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, len(msg))
+	if _, err := io.ReadFull(c, buf); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(buf) != msg {
+		t.Fatalf("echo = %q, want %q", buf, msg)
+	}
+
+	if got := activeForward(t, a, "r1"); got.Conns != 1 {
+		t.Fatalf("accepted connection count = %d, want 1", got.Conns)
+	}
+}
+
+// TestStartRemoteForwardRefusedByRemoteWording pins design §5.5: a refused
+// tcpip-forward request must be reported as a *remote* configuration problem
+// (GatewayPorts / needing root there), never with local-EADDRINUSE wording —
+// a user told "local port X is already in use" when the truth is "the remote
+// refused to bind" looks in the wrong place entirely.
+func TestStartRemoteForwardRefusedByRemoteWording(t *testing.T) {
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	srv.setRefuseRemoteForward(true)
+	a, h := newForwardTestApp(t, srv, remoteRule("r1", targetHost, targetPort))
+
+	err := a.StartForward(h.ID, "r1")
+	if err == nil {
+		t.Fatal("expected the remote tcpip-forward request to be refused")
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "already in use") || strings.Contains(msg, "local port") {
+		t.Fatalf("error must not use the local EADDRINUSE wording, got %v", err)
+	}
+	if !strings.Contains(msg, "remote") {
+		t.Fatalf("error must point at the remote host/sshd, got %v", err)
+	}
+	if got := a.ListActiveForwards(); len(got) != 0 {
+		t.Fatalf("a refused remote listen must leave nothing behind, got %+v", got)
+	}
+	// The connection this cost must still be released — a refused -R request
+	// is not a reason to leak the shared login.
+	waitFor(t, 3*time.Second, "ssh connection released after a refused remote listen", func() bool {
+		opened, closed := srv.counts()
+		return opened == 1 && closed == 1
+	})
+}
+
+// TestStopForwardCutsEstablishedRemoteConnections is TestStopForwardCutsEstablishedConnections
+// for -R: two remote rules share one connection so stopping one cannot rely
+// on the whole SSH connection dying to also kill the established forward —
+// that would hide a leak in tunnel.live for the remote path specifically.
+func TestStopForwardCutsEstablishedRemoteConnections(t *testing.T) {
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv,
+		remoteRule("r1", targetHost, targetPort),
+		remoteRule("r2", targetHost, targetPort),
+	)
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward r1: %v", err)
+	}
+	if err := a.StartForward(h.ID, "r2"); err != nil {
+		t.Fatalf("StartForward r2: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r2") }()
+
+	c, err := net.DialTimeout("tcp", activeForward(t, a, "r1").ListenAddr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial remote-bound port: %v", err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := io.ReadFull(c, make([]byte, 1)); err != nil {
+		t.Fatalf("echo before stop: %v", err)
+	}
+
+	if err := a.StopForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StopForward r1: %v", err)
+	}
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	_, err = io.ReadFull(c, make([]byte, 1))
+	if err == nil {
+		t.Fatal("the established forwarded connection survived StopForward")
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		t.Fatal("StopForward left the established forwarded connection open: " +
+			"the read timed out instead of failing on a closed connection")
+	}
+}
+
+// TestLostConnectionStopsRemoteTunnelWithReason is
+// TestLostConnectionStopsIdleTunnel for -R: watchConn/connectionLost are
+// shared code, but the tunnel's listener type (a client-side tcpListener
+// over the SSH connection, not a plain net.Listener) is not, so this proves
+// the shared teardown path actually reaches it.
+func TestLostConnectionStopsRemoteTunnelWithReason(t *testing.T) {
+	old := tunnelKeepalive
+	tunnelKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { tunnelKeepalive = old })
+
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, remoteRule("r1", targetHost, targetPort))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+
+	srv.dropConns()
+
+	waitFor(t, 5*time.Second, "remote rule marked stopped with a reason", func() bool {
+		for _, f := range a.ListActiveForwards() {
+			if f.RuleID == "r1" {
+				return !f.Running && f.Error != ""
+			}
+		}
+		return false
+	})
+	if opened, _ := srv.counts(); opened != 1 {
+		t.Fatalf("a dropped connection must not be redialled automatically, server saw %d connections", opened)
+	}
+}
+
+// TestLocalAndRemoteRulesShareOneConnection pins design §4.3's refcount for
+// mixed kinds: a remote rule is not special-cased out of the accounting that
+// makes N rules on one host share one login.
+func TestLocalAndRemoteRulesShareOneConnection(t *testing.T) {
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv,
+		localRule("r1", targetHost, targetPort),
+		remoteRule("r2", targetHost, targetPort),
+	)
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward r1: %v", err)
+	}
+	if err := a.StartForward(h.ID, "r2"); err != nil {
+		t.Fatalf("StartForward r2: %v", err)
+	}
+	if opened, _ := srv.counts(); opened != 1 {
+		t.Fatalf("a local + a remote rule on one host opened %d SSH connections, want 1", opened)
+	}
+
+	if err := a.StopForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StopForward r1: %v", err)
+	}
+	if _, closed := srv.counts(); closed != 0 {
+		t.Fatal("connection closed while the remote rule is still using it")
+	}
+
+	if err := a.StopForward(h.ID, "r2"); err != nil {
+		t.Fatalf("StopForward r2: %v", err)
+	}
+	waitFor(t, 3*time.Second, "connection closed after the last rule stopped", func() bool {
+		_, closed := srv.counts()
+		return closed == 1
+	})
 }
 
 // --- redline #2 -------------------------------------------------------------

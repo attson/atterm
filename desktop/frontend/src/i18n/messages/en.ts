@@ -159,6 +159,104 @@ export const en = {
     unknownHost: "unknown host",
     thisMachine: "this machine",
   },
+  // SshHostsPanel.vue: the Hosts / Keys tabs, both editor drawers, and the
+  // ~/.ssh/config import drawer. Anything the Go side produces verbatim
+  // (import skip reasons, the preview note, connect-time errors) is not keyed
+  // here — it is rendered as it arrives.
+  ssh: {
+    tabHosts: "Hosts",
+    tabKeys: "Keys",
+    filterPlaceholder: "Filter hosts…",
+    newHost: "New Host",
+    newKey: "New Key",
+    edit: "Edit",
+    // Inline words in a host card's "user@host:port · <auth>" subtitle.
+    subtitleAuthKey: "key",
+    subtitleAuthPassword: "password",
+    importedHosts: "Imported {count} host(s)",
+    hosts: {
+      emptyTitle: "No saved hosts",
+      emptySub: "Add a host to connect and take it over from any device.",
+      clearTags: "Clear",
+      noMatchTitle: "No hosts match",
+      noMatchSub: "Loosen the filter or clear the selected tags.",
+      menuConnect: "Connect",
+      menuEdit: "Edit Host Details",
+      menuDuplicate: "Duplicate",
+      menuCopySsh: "Copy SSH command",
+      menuRemove: "Remove",
+    },
+    keys: {
+      emptyTitle: "No keys yet",
+      emptySub: "Add a private key here, then reference it from a host.",
+      typeLabel: "Type {type}",
+      genericSubtitle: "SSH key",
+    },
+    // ProxyJump / ProxyCommand hosts are imported but refuse to dial. The
+    // directive names stay untranslated: they are ssh_config keywords the
+    // user has to find in their own file.
+    proxy: {
+      jumpBadge: "Jump host required",
+      commandBadge: "ProxyCommand",
+      jumpReason:
+        "Needs a jump host (ProxyJump {target}) — jump-host support is not implemented yet, so this host cannot be connected directly.",
+      commandReason:
+        "Configured with a ProxyCommand ({command}) — atterm never runs that command, so this host cannot be connected directly.",
+    },
+    hostDrawer: {
+      titleNew: "New Host",
+      titleEdit: "Edit Host",
+      address: "Address",
+      addressPlaceholder: "IP or hostname",
+      label: "Label",
+      labelPlaceholder: "optional",
+      port: "Port",
+      tags: "Tags",
+      tagsPlaceholder: "comma separated",
+      removeTag: "Remove {tag}",
+      username: "Username",
+      // An example login name, not a translated noun.
+      usernamePlaceholder: "user",
+      authPassword: "Password",
+      authKey: "Key",
+      identityFileLabel: "From ~/.ssh/config",
+      identityFileHint: "Import this key under Keys, then select it below.",
+      password: "Password",
+      keepBlank: "(leave blank to keep)",
+      keyPicker: "Key",
+      keyPickerAria: "SSH key",
+      noKeys: "No keys yet.",
+      addKey: "Add a key",
+      submitNew: "Add Host",
+    },
+    keyDrawer: {
+      titleNew: "New Key",
+      titleEdit: "Edit Key",
+      name: "Name",
+      namePlaceholder: "e.g. aws",
+      pem: "Private key (PEM)",
+      keepBlank: "(leave blank to keep)",
+      passphrase: "Passphrase",
+      encryptedHint: "This key is encrypted — enter its passphrase above.",
+      dropzone: "Drag and drop a private key file to import",
+      importFromFile: "Import from key file",
+      submitNew: "Add Key",
+    },
+    configImport: {
+      open: "Import from ~/.ssh/config",
+      title: "Import from ~/.ssh/config",
+      loading: "Reading ~/.ssh/config…",
+      emptyTitle: "No importable hosts",
+      emptySub: "No usable Host entries were found in ~/.ssh/config.",
+      importableTitle: "Importable hosts ({count})",
+      skippedTitle: "Skipped ({count})",
+      overwriteBadge: "Updates existing",
+      overwriteTitle: "A saved host already uses this label — importing updates it in place",
+      proxyBadge: "{label} — not directly connectable",
+      importing: "Importing…",
+      confirm: "Import selected hosts ({count})",
+    },
+  },
   settings: {
     title: "Settings",
     tabs: {

@@ -72,6 +72,32 @@ else
 fi
 rm -f "$stderr"
 
+# --- Test 4: a version that is not a plain vN.N.N must be rejected before
+# it reaches sed. The substitution is unquoted against sed's replacement
+# metacharacters (/ and &), so a version carrying one would render a
+# syntactically valid cask with a broken url — a failure that would only
+# surface at `brew install` time, on a user's machine. ---
+for badver in "v0.4/20" "0.4.20&evil" "latest" ""; do
+  stderr="$(mktemp)"
+  if "$render" "$badver" "$testdata/SHA256SUMS.ok" >/dev/null 2>"$stderr"; then
+    bad "bad version '$badver': expected non-zero exit, got success"
+  elif grep -qi "version must look like" "$stderr"; then
+    ok "bad version '$badver': rejected before rendering"
+  else
+    bad "bad version '$badver': failed but stderr didn't explain why (was: $(cat "$stderr"))"
+  fi
+  rm -f "$stderr"
+done
+
+# --- Test 5: the guard must not reject the shapes we actually ship. ---
+for goodver in "v0.4.20" "0.4.20" "v1.10.3-rc.1"; do
+  if "$render" "$goodver" "$testdata/SHA256SUMS.ok" >/dev/null 2>&1; then
+    ok "good version '$goodver': accepted"
+  else
+    bad "good version '$goodver': rejected by the version guard"
+  fi
+done
+
 echo "----"
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

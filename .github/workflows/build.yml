@@ -152,6 +152,17 @@ jobs:
       - name: PluginFS isolation guard
         run: ./.github/scripts/check-plugin-fs-isolation.sh
 
+      # The Homebrew cask is only rendered during the release job, from a tag.
+      # Without this, a template or render-script regression would first show
+      # up mid-release, after the GitHub release is already published. The
+      # test is pure bash/awk/sed/diff and architecture-independent, so it
+      # runs here (a PR-triggered job) rather than on the scarcer macOS
+      # runners, and once on amd64 rather than in both matrix legs — same
+      # reasoning as the e2e step below.
+      - name: Homebrew cask render tests
+        if: matrix.arch == 'amd64'
+        run: ./packaging/homebrew/render-cask_test.sh
+
       - name: vet
         run: go vet -tags webkit2_41 ./...
 

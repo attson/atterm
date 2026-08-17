@@ -40,6 +40,16 @@ fi
 # itself, or the rendered url would read ".../vv0.4.20/...".
 version_no_v="${version#v}"
 
+# The substitution at the bottom is `sed s/__VERSION__/$version_no_v/`, whose
+# replacement text treats / as a delimiter and & as "the matched text". Release
+# tags are always vN.N.N so neither can appear today, but a malformed version
+# would otherwise render a syntactically valid cask carrying a broken url, and
+# that only fails at `brew install` time on a user's machine. Fail here instead.
+if ! printf '%s' "$version_no_v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+  echo "ERROR: version must look like v1.2.3 (optionally v1.2.3-rc.1), got: $version" >&2
+  exit 1
+fi
+
 # SHA256SUMS is produced by sign-release-checksums.go in sha256sum text-mode
 # format: "<hex>  <filename>" (two spaces). Match the filename in field 2
 # exactly, so e.g. the arm64 .dmg line can't accidentally satisfy the zip

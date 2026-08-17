@@ -195,3 +195,33 @@ func TestProxyJumpHostRefusesDirectConnect(t *testing.T) {
 		t.Fatalf("gate must return before any dial: got a TOFU prompt (%v), meaning a dial was attempted", err)
 	}
 }
+
+// TestProxyJumpGateFiresBeforeCredentialRead is the discriminator the
+// TOFU-based test above can't provide on its own: that test proves the gate
+// runs before the *dial*, but a gate moved down to just above
+// a.NewSshSession(req) — i.e. below the `switch found.AuthKind` credential
+// read — would still pass it (the switch would fail first, with
+// errCredentialMissing, before ever reaching the moved gate... except here
+// there's no stored credential at all, so a gate-after-switch build returns
+// errCredentialMissing instead of the ProxyJump error). Only a gate
+// positioned strictly before the credential switch returns the ProxyJump
+// error in this exact setup: a ProxyJump host with nothing in the keyring.
+func TestProxyJumpGateFiresBeforeCredentialRead(t *testing.T) {
+	useIsolatedKeyring(t)
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{{ID: "p2", Alias: "db", Host: "10.0.0.5", User: "root", AuthKind: "password", ProxyJump: "bastion"}}
+	_ = a.cfgStore.Set(cfg)
+
+	_, err := a.NewSshSessionByID("p2")
+	if err == nil {
+		t.Fatal("must refuse to connect a ProxyJump host directly")
+	}
+	if err.Error() == errCredentialMissing {
+		t.Fatal("gate must fire before the credential read: got errCredentialMissing, meaning the AuthKind switch ran first")
+	}
+	if !strings.Contains(err.Error(), "ProxyJump") {
+		t.Fatalf("error must name the reason, got %v", err)
+	}
+}

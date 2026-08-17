@@ -33,6 +33,14 @@ const sshConfigImportNote = "仅导入 atterm 用得到的字段（主机名、�
 
 // fsOpener resolves sshconfig.Include paths against the real filesystem.
 //
+// sshconfig joins paths with the POSIX "path" package, not "filepath" (see
+// sshconfig.Opener's doc comment), so every path it hands to Open/Glob is a
+// forward-slash string regardless of OS. filepath.FromSlash converts that
+// back to native separators before touching the real filesystem — on POSIX
+// this is a no-op; on Windows it turns "C:/Users/x/.ssh/conf.d" into
+// "C:\Users\x\.ssh\conf.d" so os.Open and filepath.Glob/Match (which treat
+// "\" as a separator, not an escape character) see what they expect.
+//
 // It also implements sshconfig.Lister, the optional capability Parse needs
 // to expand glob-style Include patterns (e.g. "Include conf.d/*"). Real
 // ~/.ssh/config files commonly split into an Include'd conf.d/ directory
@@ -44,11 +52,11 @@ const sshConfigImportNote = "仅导入 atterm 用得到的字段（主机名、�
 type fsOpener struct{}
 
 func (fsOpener) Open(path string) (io.ReadCloser, error) {
-	return os.Open(path)
+	return os.Open(filepath.FromSlash(path))
 }
 
 func (fsOpener) Glob(pattern string) ([]string, error) {
-	return filepath.Glob(pattern)
+	return filepath.Glob(filepath.FromSlash(pattern))
 }
 
 // PreviewSSHConfigImport parses ~/.ssh/config and returns what can be
@@ -73,7 +81,10 @@ func (a *App) PreviewSSHConfigImport() (SSHConfigImportPreview, error) {
 	}
 	defer f.Close()
 
-	entries, skipped, err := sshconfig.Parse(f, sshDir, fsOpener{})
+	// sshconfig joins base with the POSIX "path" package (see fsOpener's doc
+	// comment) — hand it a forward-slash string even though sshDir itself was
+	// built with filepath.Join (native separators, needed for os.Open above).
+	entries, skipped, err := sshconfig.Parse(f, filepath.ToSlash(sshDir), fsOpener{})
 	if err != nil {
 		return SSHConfigImportPreview{}, fmt.Errorf("解析 SSH 配置文件 %s 失败：%w", cfgPath, err)
 	}
@@ -120,15 +131,32 @@ func hostFromEntry(e sshconfig.Entry) SSHHost {
 
 // mergeImportedHost folds a freshly-parsed entry into an already-saved host
 // that matched by Alias. Config-derived fields (Host, Port, User,
-// AuthKind/IdentityFile, the proxy fields) come from the incoming entry, so
-// re-import reflects the current ssh_config, exactly like a fresh import
-// would. ID, KeyID, Tags and Note are things the user added inside atterm —
-// ~/.ssh/config has no concept of any of them — so they survive untouched,
-// including when incoming's Tags is nil: this is "config says nothing about
-// tags", never "clear the user's tags".
+// IdentityFile, the proxy fields) come from the incoming entry, so re-import
+// reflects the current ssh_config, exactly like a fresh import would.
+//
+// AuthKind and KeyID are a coupled pair, not two independent fields: KeyID
+// only means anything when AuthKind=="key", and NewSshSessionByID branches
+// on AuthKind to decide which credential to load. Preserving KeyID while
+// letting AuthKind come from incoming would desync them — e.g. a user drops
+// the IdentityFile line from ~/.ssh/config (switches to an agent, tidies up,
+// whatever) and re-imports: hostFromEntry now says AuthKind="password", but
+// KeyID from the old import is still sitting there unused, and the host
+// that used to connect via key now fails errCredentialMissing instead.
+// ~/.ssh/config's IdentityFile is a *hint* atterm uses only to seed AuthKind
+// on first import; attaching a key via the UI afterwards is a deliberate,
+// user-owned action of the same kind as Tags/Note, so the pair is preserved
+// the same way. IdentityFile itself keeps updating from incoming — it's
+// informational (recorded verbatim, never read) and doesn't drive the auth
+// branch.
+//
+// ID, AuthKind, KeyID, Tags and Note are all things the user added or
+// established inside atterm — ~/.ssh/config has no concept of any of them —
+// so they survive untouched, including when incoming's Tags is nil: this is
+// "config says nothing about tags", never "clear the user's tags".
 func mergeImportedHost(existing, incoming SSHHost) SSHHost {
 	merged := incoming
 	merged.ID = existing.ID
+	merged.AuthKind = existing.AuthKind
 	merged.KeyID = existing.KeyID
 	merged.Tags = existing.Tags
 	merged.Note = existing.Note

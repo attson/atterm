@@ -120,7 +120,7 @@ func TestJumpHopMustBeASavedHost(t *testing.T) {
 	a := newJumpTestApp(t, srv)
 	target := addServerHost(t, a, "db", srv, "u", "pw", "nosuchhost")
 
-	chain, err := a.dialThroughJumps(context.Background(), target, false)
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
 	if err == nil {
 		_ = chain.Close()
 		t.Fatal("a ProxyJump naming an unsaved host must be refused")
@@ -149,7 +149,7 @@ func TestJumpNeverReusesTargetCredential(t *testing.T) {
 	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
 	targetHost := addServerHost(t, a, "db", target, "target-user", "target-pw", "bastion")
 
-	chain, err := a.dialThroughJumps(context.Background(), targetHost, false)
+	chain, err := a.dialThroughJumps(context.Background(), targetHost, acceptedHostKey{})
 	if err != nil {
 		t.Fatalf("dialThroughJumps: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestJumpUserHostPortElementOnlyMatchesASavedHost(t *testing.T) {
 	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
 	targetHost := addServerHost(t, a, "db", target, "target-user", "target-pw", "root@bastion:2222")
 
-	chain, err := a.dialThroughJumps(context.Background(), targetHost, false)
+	chain, err := a.dialThroughJumps(context.Background(), targetHost, acceptedHostKey{})
 	if err != nil {
 		t.Fatalf("dialThroughJumps: %v", err)
 	}
@@ -193,6 +193,39 @@ func TestJumpUserHostPortElementOnlyMatchesASavedHost(t *testing.T) {
 	}
 	if opened, _ := bastion.counts(); opened != 1 {
 		t.Fatalf("the saved bastion must be the machine dialled, got %d connection(s)", opened)
+	}
+}
+
+// TestJumpElementPortPicksTheSavedHostOnThatPort: two saved records for the
+// same hostname on different ports are an ordinary setup (a container and the
+// machine hosting it). The port in the element cannot build a host, but it can
+// say which of the two the user meant — and taking whichever was saved first
+// would send the connection, and the credential, to the other machine.
+func TestJumpElementPortPicksTheSavedHostOnThatPort(t *testing.T) {
+	wrong := startForwardingSSHTestServerAs(t, "u-wrong", "p-wrong")
+	right := startForwardingSSHTestServerAs(t, "u-right", "p-right")
+	srvT := startForwardingSSHTestServerAs(t, "ut", "pt")
+
+	a := newJumpTestApp(t, wrong, right, srvT)
+	// Both saved under the same hostname; only the port tells them apart, and
+	// the one saved first is deliberately the wrong one.
+	wrongHost, wrongPort, _ := net.SplitHostPort(wrong.addr)
+	rightHost, rightPort, _ := net.SplitHostPort(right.addr)
+	addSavedHost(t, a, "", wrongHost, wrongPort, "u-wrong", "p-wrong", "")
+	addSavedHost(t, a, "", rightHost, rightPort, "u-right", "p-right", "")
+	target := addServerHost(t, a, "db", srvT, "ut", "pt", right.addr)
+
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
+	if err != nil {
+		t.Fatalf("dialThroughJumps: %v", err)
+	}
+	defer chain.Close()
+
+	if opened, _ := right.counts(); opened != 1 {
+		t.Fatalf("the hop on the port the element named must be the one dialled, got %d connection(s)", opened)
+	}
+	if opened, _ := wrong.counts(); opened != 0 {
+		t.Fatalf("the record on the other port must not be dialled, got %d connection(s)", opened)
 	}
 }
 
@@ -215,7 +248,7 @@ func TestJumpChainDialsEveryHopInOrder(t *testing.T) {
 	addServerHost(t, a, "c", srvC, "uc", "pc", "")
 	target := addServerHost(t, a, "db", srvT, "ut", "pt", "a,b,c")
 
-	chain, err := a.dialThroughJumps(context.Background(), target, false)
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
 	if err != nil {
 		t.Fatalf("dialThroughJumps: %v", err)
 	}
@@ -244,6 +277,12 @@ func TestJumpChainDialsEveryHopInOrder(t *testing.T) {
 	if got := srvT.directDestAddrs(); len(got) != 0 {
 		t.Fatalf("the target must not be asked to reach anything, got %q", got)
 	}
+	// The number the target would be reported under in a TOFU prompt, read off
+	// the finished chain — Task 3 asks the same question of a hops-only chain
+	// and must get the same answer.
+	if got := chain.targetHopIndex(); got != 4 {
+		t.Fatalf("targetHopIndex = %d, want 4 (three hops plus the target)", got)
+	}
 
 	// And the handle really is the target: bytes round-trip through all three
 	// hops to a service only the target can reach on our behalf.
@@ -267,7 +306,7 @@ func TestJumpCycleDetectedBeforeAnyDial(t *testing.T) {
 	hostA := addServerHost(t, a, "a", srv, "u", "pw", "b")
 	addServerHost(t, a, "b", srv, "u", "pw", "a")
 
-	chain, err := a.dialThroughJumps(context.Background(), hostA, false)
+	chain, err := a.dialThroughJumps(context.Background(), hostA, acceptedHostKey{})
 	if err == nil {
 		_ = chain.Close()
 		t.Fatal("a ProxyJump cycle must be refused")
@@ -292,7 +331,7 @@ func TestJumpDepthLimited(t *testing.T) {
 	}
 	target := addServerHost(t, a, "db", srv, "u", "pw", strings.Join(names, ","))
 
-	chain, err := a.dialThroughJumps(context.Background(), target, false)
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
 	if err == nil {
 		_ = chain.Close()
 		t.Fatal("a chain deeper than the cap must be refused")
@@ -312,15 +351,16 @@ func TestJumpDepthLimited(t *testing.T) {
 func TestFailedHopClosesEarlierHops(t *testing.T) {
 	srv1 := startForwardingSSHTestServerAs(t, "u1", "p1")
 	srv2 := startForwardingSSHTestServerAs(t, "u2", "p2")
+	srvT := startForwardingSSHTestServerAs(t, "ut", "pt")
 	deadHost, deadPort := deadAddr(t)
 
-	a := newJumpTestApp(t, srv1, srv2)
+	a := newJumpTestApp(t, srv1, srv2, srvT)
 	addServerHost(t, a, "h1", srv1, "u1", "p1", "")
 	addServerHost(t, a, "h2", srv2, "u2", "p2", "")
 	addSavedHost(t, a, "h3", deadHost, deadPort, "u3", "p3", "")
-	target := addServerHost(t, a, "db", srv1, "u1", "p1", "h1,h2,h3")
+	target := addServerHost(t, a, "db", srvT, "ut", "pt", "h1,h2,h3")
 
-	chain, err := a.dialThroughJumps(context.Background(), target, false)
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
 	if err == nil {
 		_ = chain.Close()
 		t.Fatal("a chain whose third hop is unreachable must fail")
@@ -328,8 +368,20 @@ func TestFailedHopClosesEarlierHops(t *testing.T) {
 	if !strings.Contains(err.Error(), "h3") {
 		t.Fatalf("error must name the hop that failed, got %v", err)
 	}
-	waitClosed(t, srv1, 1, "hop 1 after a later hop failed")
-	waitClosed(t, srv2, 1, "hop 2 after a later hop failed")
+	// Both earlier hops were really opened (so this is not passing because the
+	// chain was skipped entirely) and both are closed again.
+	for _, s := range []struct {
+		srv  *forwardTestServer
+		name string
+	}{{srv1, "hop 1"}, {srv2, "hop 2"}} {
+		if opened, _ := s.srv.counts(); opened != 1 {
+			t.Fatalf("%s: want exactly 1 connection opened, got %d", s.name, opened)
+		}
+		waitClosed(t, s.srv, 1, s.name+" after a later hop failed")
+	}
+	if opened, _ := srvT.counts(); opened != 0 {
+		t.Fatalf("the target must not be dialled when a hop failed, got %d connection(s)", opened)
+	}
 }
 
 // --- §5.2 per-hop host key verification -------------------------------------
@@ -351,7 +403,7 @@ func TestUnknownHostKeyNamesTheHop(t *testing.T) {
 	addServerHost(t, a, "bastion-b", srv2, "u2", "p2", "")
 	target := addServerHost(t, a, "db", srvT, "ut", "pt", "h1,bastion-b")
 
-	chain, err := a.dialThroughJumps(context.Background(), target, false)
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
 	if err == nil {
 		_ = chain.Close()
 		t.Fatal("an unknown host key on a jump hop must not connect")
@@ -380,29 +432,264 @@ func TestUnknownHostKeyNamesTheHop(t *testing.T) {
 	waitClosed(t, srv1, 1, "hop 1 after the next hop's key was refused")
 }
 
-// TestAcceptedHostKeyConnectsThroughTheChain is the other half of TOFU: once
-// the user accepts, every hop's key is recorded under its own host:port, so a
-// second connect asks nothing. It also pins design risk #3 — the target's entry
-// is keyed the same whether it was reached directly or through a jump host, so
-// the user is not asked twice for the same machine.
-func TestAcceptedHostKeyConnectsThroughTheChain(t *testing.T) {
-	bastion := startForwardingSSHTestServerAs(t, "ub", "pb")
-	target := startForwardingSSHTestServerAs(t, "ut", "pt")
+// TestAcceptedHostKeyIsScopedToOneHop is the other half of §5.2, and the half
+// that is easy to get wrong in a way nobody notices.
+//
+// An "accept unknown host keys" flag would not merely let the rest of the chain
+// through: sshclient's KnownHostsCallback *writes* an accepted key to
+// known_hosts (handleUnknown → appendKnownHost), so every later hop the user was
+// never shown would be recorded as trusted and would never prompt again. The
+// substitution becomes invisible exactly because it was written down.
+//
+// So this walks the chain one acceptance at a time and asserts that each
+// acceptance moves the prompt on to the *next* hop rather than silencing it, and
+// that known_hosts only ever grows by the entry the user actually agreed to.
+func TestAcceptedHostKeyIsScopedToOneHop(t *testing.T) {
+	srv1 := startForwardingSSHTestServerAs(t, "u1", "p1")
+	srv2 := startForwardingSSHTestServerAs(t, "u2", "p2")
+	srvT := startForwardingSSHTestServerAs(t, "ut", "pt")
 
-	a := newJumpTestApp(t) // trusts nothing
-	addServerHost(t, a, "bastion", bastion, "ub", "pb", "")
-	targetHost := addServerHost(t, a, "db", target, "ut", "pt", "bastion")
+	a := newJumpTestApp(t) // trusts nothing at all
+	addServerHost(t, a, "h1", srv1, "u1", "p1", "")
+	addServerHost(t, a, "h2", srv2, "u2", "p2", "")
+	target := addServerHost(t, a, "db", srvT, "ut", "pt", "h1,h2")
 
-	chain, err := a.dialThroughJumps(context.Background(), targetHost, true)
+	// Each round: the prompt must name the next hop in order, and accepting it
+	// must not accept anything else.
+	var accepted acceptedHostKey
+	for _, want := range []struct {
+		hop  int
+		name string
+	}{{1, "h1"}, {2, "h2"}, {3, "db"}} {
+		chain, err := a.dialThroughJumps(context.Background(), target, accepted)
+		if err == nil {
+			_ = chain.Close()
+			t.Fatalf("hop %d (%s): accepting an earlier hop's key must not accept this one too",
+				want.hop, want.name)
+		}
+		var hk *HostKeyUnknownError
+		if !errors.As(err, &hk) {
+			t.Fatalf("hop %d (%s): expected *HostKeyUnknownError, got %v", want.hop, want.name, err)
+		}
+		if hk.HopIndex != want.hop || hk.HopName != want.name {
+			t.Fatalf("prompt was for hop %d %q, want hop %d %q",
+				hk.HopIndex, hk.HopName, want.hop, want.name)
+		}
+		// Only the hops accepted so far are on file — an acceptance must never
+		// write an entry for a machine the user was not shown.
+		if got := countKnownHostsLines(t, a.sshKnownHostsPath); got != want.hop-1 {
+			t.Fatalf("before accepting hop %d, known_hosts holds %d entries, want %d",
+				want.hop, got, want.hop-1)
+		}
+		accepted = acceptedHostKey{Host: hk.Host, Fingerprint: hk.Fingerprint}
+	}
+
+	// With the last hop accepted the whole chain connects, and every key is now
+	// on file — so a fresh attempt accepting nothing prompts for nothing.
+	chain, err := a.dialThroughJumps(context.Background(), target, accepted)
 	if err != nil {
-		t.Fatalf("dialThroughJumps with acceptHostKey: %v", err)
+		t.Fatalf("accepting the last unknown key must complete the chain: %v", err)
 	}
 	_ = chain.Close()
+	if got := countKnownHostsLines(t, a.sshKnownHostsPath); got != 3 {
+		t.Fatalf("known_hosts holds %d entries after accepting all three, want 3", got)
+	}
 
-	// Both keys are now on file: a second connect needs no acceptance at all.
-	chain2, err := a.dialThroughJumps(context.Background(), targetHost, false)
+	chain2, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
 	if err != nil {
 		t.Fatalf("second connect must not prompt again: %v", err)
 	}
 	_ = chain2.Close()
+}
+
+// TestAcceptedHostKeyDoesNotTravelToAnotherHop is the narrower half of the same
+// rule: an acceptance is a (host, fingerprint) pair, so it cannot be spent on a
+// different machine. Keying it on the hop's *alias* instead would let a
+// substituted hop inherit an acceptance the user granted elsewhere — one
+// bastion can legitimately appear twice in a chain, and an alias is
+// user-editable besides.
+func TestAcceptedHostKeyDoesNotTravelToAnotherHop(t *testing.T) {
+	srv1 := startForwardingSSHTestServerAs(t, "u1", "p1")
+	srvT := startForwardingSSHTestServerAs(t, "ut", "pt")
+
+	a := newJumpTestApp(t)
+	addServerHost(t, a, "h1", srv1, "u1", "p1", "")
+	target := addServerHost(t, a, "db", srvT, "ut", "pt", "h1")
+
+	_, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
+	var hk *HostKeyUnknownError
+	if !errors.As(err, &hk) {
+		t.Fatalf("expected *HostKeyUnknownError for hop 1, got %v", err)
+	}
+
+	// The same fingerprint, attributed to a different host: the callback must
+	// not take it, because the pair is what the user agreed to.
+	wrongHost := acceptedHostKey{Host: "some.other.host", Fingerprint: hk.Fingerprint}
+	if _, err := a.dialThroughJumps(context.Background(), target, wrongHost); !errors.As(err, &hk) {
+		t.Fatalf("an acceptance for a different host must not let this hop through, got %v", err)
+	}
+	// And the right host with a fingerprint that is not the one presented.
+	wrongFP := acceptedHostKey{Host: hk.Host, Fingerprint: "SHA256:not-the-key-you-were-shown"}
+	if _, err := a.dialThroughJumps(context.Background(), target, wrongFP); !errors.As(err, &hk) {
+		t.Fatalf("an acceptance carrying a different fingerprint must not let this hop through, got %v", err)
+	}
+	if got := countKnownHostsLines(t, a.sshKnownHostsPath); got != 0 {
+		t.Fatalf("a mismatched acceptance must write nothing to known_hosts, got %d entries", got)
+	}
+}
+
+// TestUnknownTargetKeyOnAChainNamesTheTarget covers the other end of the chain
+// from TestUnknownHostKeyNamesTheHop: both hops are trusted and the
+// *destination* is the unknown one. Its hop index has to be len(hops)+1 so the
+// dialog can say "this is the machine you asked for" rather than leaving the
+// user to guess from a bare fingerprint again.
+func TestUnknownTargetKeyOnAChainNamesTheTarget(t *testing.T) {
+	srv1 := startForwardingSSHTestServerAs(t, "u1", "p1")
+	srv2 := startForwardingSSHTestServerAs(t, "u2", "p2")
+	srvT := startForwardingSSHTestServerAs(t, "ut", "pt")
+
+	a := newJumpTestApp(t, srv1, srv2) // the target is the untrusted one
+	addServerHost(t, a, "h1", srv1, "u1", "p1", "")
+	addServerHost(t, a, "h2", srv2, "u2", "p2", "")
+	target := addServerHost(t, a, "db", srvT, "ut", "pt", "h1,h2")
+
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
+	if err == nil {
+		_ = chain.Close()
+		t.Fatal("an unknown target key must not connect")
+	}
+	var hk *HostKeyUnknownError
+	if !errors.As(err, &hk) {
+		t.Fatalf("expected *HostKeyUnknownError, got %v", err)
+	}
+	if hk.HopIndex != 3 {
+		t.Fatalf("HopIndex = %d, want 3 (two hops plus the target)", hk.HopIndex)
+	}
+	if hk.HopName != "db" {
+		t.Fatalf("HopName = %q, want %q", hk.HopName, "db")
+	}
+	// Both hops were really opened, and both are closed again.
+	waitClosed(t, srv1, 1, "hop 1 after the target's key was refused")
+	waitClosed(t, srv2, 1, "hop 2 after the target's key was refused")
+}
+
+// --- hosts with no ProxyJump at all -----------------------------------------
+
+// TestDirectHostDialsWithoutAChain is the case that will be nearly every
+// connection the app makes once this path is wired in: a host with no
+// ProxyJump. It must come back as a one-element chain whose Target() is the
+// host itself, having dialled nothing else.
+func TestDirectHostDialsWithoutAChain(t *testing.T) {
+	srv := startForwardingSSHTestServerAs(t, "u", "pw")
+	a := newJumpTestApp(t, srv)
+	host := addServerHost(t, a, "plain", srv, "u", "pw", "")
+
+	chain, err := a.dialThroughJumps(context.Background(), host, acceptedHostKey{})
+	if err != nil {
+		t.Fatalf("dialThroughJumps on a host with no ProxyJump: %v", err)
+	}
+	defer chain.Close()
+
+	if len(chain.conns) != 1 {
+		t.Fatalf("a host with no ProxyJump must yield exactly one connection, got %d", len(chain.conns))
+	}
+	if chain.targetHopIndex() != 0 {
+		t.Fatalf("targetHopIndex = %d, want 0 (no chain to disambiguate)", chain.targetHopIndex())
+	}
+	if opened, _ := srv.counts(); opened != 1 {
+		t.Fatalf("want exactly 1 connection to the host, got %d", opened)
+	}
+	echoHost, echoPort := startEchoTarget(t)
+	remote, err := chain.Target().DialRemote("tcp", net.JoinHostPort(echoHost, echoPort))
+	if err != nil {
+		t.Fatalf("dial through the chain's target: %v", err)
+	}
+	defer remote.Close()
+	echoThrough(t, remote, "hello with no jump host")
+}
+
+// TestDirectHostUnknownKeyReportsNoHop: a direct host's TOFU prompt must read
+// exactly as it did before jump hosts existed. HopIndex 0 is what tells the
+// dialog there is no chain to explain.
+func TestDirectHostUnknownKeyReportsNoHop(t *testing.T) {
+	srv := startForwardingSSHTestServerAs(t, "u", "pw")
+	a := newJumpTestApp(t) // trusts nothing
+	host := addServerHost(t, a, "plain", srv, "u", "pw", "")
+
+	_, err := a.dialThroughJumps(context.Background(), host, acceptedHostKey{})
+	var hk *HostKeyUnknownError
+	if !errors.As(err, &hk) {
+		t.Fatalf("expected *HostKeyUnknownError, got %v", err)
+	}
+	if hk.HopIndex != 0 {
+		t.Fatalf("HopIndex = %d, want 0 for a direct connection", hk.HopIndex)
+	}
+	if hk.Fingerprint == "" || hk.Host == "" {
+		t.Fatalf("the direct case must still carry host + fingerprint, got %+v", hk)
+	}
+}
+
+// TestDirectHostMissingCredentialKeepsTheSentinel: the frontend answers a bare
+// errCredentialMissing by prompting for the host the user named. Wrapping it
+// with chain wording — for a host that has no chain — would break that.
+func TestDirectHostMissingCredentialKeepsTheSentinel(t *testing.T) {
+	srv := startForwardingSSHTestServerAs(t, "u", "pw")
+	a := newJumpTestApp(t, srv)
+	host := addServerHost(t, a, "plain", srv, "u", "", "") // no credential saved
+
+	_, err := a.dialThroughJumps(context.Background(), host, acceptedHostKey{})
+	if err == nil || err.Error() != errCredentialMissing {
+		t.Fatalf("want the bare %q sentinel, got %v", errCredentialMissing, err)
+	}
+	assertNoDials(t, srv, "missing credential")
+}
+
+// TestJumpHopWithoutCredentialFailsBeforeAnyDial: a hop can be a saved host and
+// still have nothing in the keyring. Finding that out at dial time would mean
+// the hops in front of it had already logged in for nothing, which is the same
+// side-effect-before-failure the cycle and depth checks exist to avoid.
+func TestJumpHopWithoutCredentialFailsBeforeAnyDial(t *testing.T) {
+	srv1 := startForwardingSSHTestServerAs(t, "u1", "p1")
+	srv2 := startForwardingSSHTestServerAs(t, "u2", "p2")
+	srvT := startForwardingSSHTestServerAs(t, "ut", "pt")
+
+	a := newJumpTestApp(t, srv1, srv2, srvT)
+	addServerHost(t, a, "h1", srv1, "u1", "p1", "")
+	addServerHost(t, a, "h2", srv2, "u2", "", "") // saved, but no credential
+	target := addServerHost(t, a, "db", srvT, "ut", "pt", "h1,h2")
+
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
+	if err == nil {
+		_ = chain.Close()
+		t.Fatal("a hop with no stored credential must be refused")
+	}
+	if !strings.Contains(err.Error(), "h2") {
+		t.Fatalf("error must name the hop whose credential is missing, got %v", err)
+	}
+	if err.Error() == errCredentialMissing {
+		t.Fatal("a hop's missing credential must not masquerade as the target's " +
+			"(the frontend would prompt for the wrong host)")
+	}
+	assertNoDials(t, srv1, "hop 1 while a later hop has no credential")
+	assertNoDials(t, srvT, "target while a hop has no credential")
+}
+
+// countKnownHostsLines counts the entries in a known_hosts file; a missing file
+// counts as zero.
+func countKnownHostsLines(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }

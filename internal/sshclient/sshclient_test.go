@@ -504,6 +504,114 @@ func TestDialConnViaAnotherConn(t *testing.T) {
 	sess.Close()
 }
 
+// startBrokenSSHServer accepts one connection, offers a valid SSH version
+// string and then garbage where the key exchange should be, and closes the
+// returned channel when that connection is closed from the other end.
+//
+// The version line has to be well-formed: RFC 4253 lets a server send arbitrary
+// lines before its identification string, so x/crypto keeps reading until it
+// sees one starting with "SSH-" — a target that simply says "hello" makes the
+// client wait rather than fail. A valid banner followed by a packet whose
+// length is nonsense fails the handshake immediately instead, which is the
+// state this test needs: a live forwarded channel with a dead handshake on top
+// of it.
+func startBrokenSSHServer(t *testing.T) (addr string, closed <-chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	done := make(chan struct{})
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = c.Write([]byte("SSH-2.0-broken\r\n"))
+		garbage := make([]byte, 64)
+		for i := range garbage {
+			garbage[i] = 0xff // an absurd packet length: rejected on sight
+		}
+		_, _ = c.Write(garbage)
+		_, _ = io.Copy(io.Discard, c) // returns once the far side closes
+		close(done)
+	}()
+	return ln.Addr().String(), done
+}
+
+// TestDialConnViaClosesTheChannelWhenTheHandshakeFails pins the cleanup half of
+// the Via branch: when the SSH handshake on top of the forwarded connection
+// fails, the direct-tcpip channel that DialRemote opened on the jump host must
+// not be left behind. Nothing downstream of a failed dial exists to close it,
+// so a leak here accumulates dangling channels on the bastion, one per failed
+// attempt — invisible from this side, and on someone else's machine.
+//
+// The failure is asserted at the far end of the channel (the fake target sees
+// its connection closed) rather than on our own conn, because that is the only
+// place the channel's fate is observable independently of the code under test.
+//
+// Worth knowing for whoever reads this next: x/crypto's ssh.NewClientConn also
+// closes the net.Conn it was handed when the handshake fails, so today this
+// test does not fail if DialConn's own raw.Close() is deleted. What it does
+// catch is the regression that is actually plausible — an early return added
+// between DialRemote and NewClientConn, or x/crypto ceasing to close on
+// failure — and it pins the invariant either way.
+func TestDialConnViaClosesTheChannelWhenTheHandshakeFails(t *testing.T) {
+	targetAddr, targetClosed := startBrokenSSHServer(t)
+	bastionAddr, bastionHostPub, jump := startJumpTestServer(t, targetAddr)
+
+	bastionHost, bastionPort, _ := net.SplitHostPort(bastionAddr)
+	bastion, err := DialConn(context.Background(), Config{
+		Host: bastionHost, Port: bastionPort, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(bastionHostPub),
+		Timeout:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("DialConn(bastion): %v", err)
+	}
+	defer bastion.Close()
+
+	targetHost, targetPort, _ := net.SplitHostPort(targetAddr)
+	conn, err := DialConn(context.Background(), Config{
+		Host: targetHost, Port: targetPort, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(bastionHostPub), // never reached: no SSH on the far side
+		Timeout:   5 * time.Second,
+		Via:       bastion,
+	})
+	if err == nil {
+		conn.Close()
+		t.Fatal("dialing something that does not speak SSH must fail")
+	}
+
+	if dests := jump.Destinations(); len(dests) != 1 {
+		t.Fatalf("the bastion should have been asked for exactly one direct-tcpip channel, got %v", dests)
+	}
+	select {
+	case <-targetClosed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the direct-tcpip channel opened on the jump host was not closed after the " +
+			"handshake failed; a failed dial must not leave a channel dangling on the bastion")
+	}
+
+	// The bastion connection itself must survive: one failed dial through it is
+	// not a reason to drop every other thing riding it.
+	select {
+	case <-bastion.Done():
+		t.Fatal("a failed dial through the bastion must not close the bastion connection")
+	default:
+	}
+	sess, err := bastion.client.NewSession()
+	if err != nil {
+		t.Fatalf("the bastion must still be usable after a failed dial through it: %v", err)
+	}
+	sess.Close()
+}
+
 // TestDialConnWithoutViaStillDialsDirectly is the regression guard for this
 // task: every SSH session and port forward in the app today calls DialConn
 // with Via == nil, so that path must behave exactly as it did before Via

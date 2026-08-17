@@ -42,6 +42,33 @@ const maxJumpDepth = 10
 // not get a longer budget per hop than a direct connection does.
 const jumpDialTimeout = 15 * time.Second
 
+// acceptedHostKey is the one host key the user accepted in the TOFU dialog.
+// Its zero value accepts nothing, which is what every caller that has not been
+// through a dialog must pass.
+//
+// It replaces a plain "accept unknown keys" bool, and the difference is not
+// cosmetic. sshclient.KnownHostsCallback does not merely allow an accepted key
+// through: handleUnknown *appends it to known_hosts* the moment the callback
+// says yes. So a bool that accepts the next unknown key on a chain would
+// persist keys for hops the user was never shown, and the connection after that
+// would prompt for nothing at all — the substitution becomes invisible
+// precisely because it was recorded as trusted.
+//
+// The pair is keyed on the hostname the callback is handed (the known_hosts
+// key: "host" or "[host]:port"), never on the hop's alias: an alias is
+// user-editable and one bastion can legitimately appear twice in a chain, so
+// matching on it would let a *different* hop that happens to present the same
+// key take an acceptance the user granted elsewhere.
+type acceptedHostKey struct {
+	Host        string
+	Fingerprint string
+}
+
+// accepts reports whether this is exactly the key the user agreed to.
+func (k acceptedHostKey) accepts(host, fingerprint string) bool {
+	return k.Fingerprint != "" && k.Fingerprint == fingerprint && k.Host == host
+}
+
 // jumpChain owns every connection opened to reach a target, target last.
 //
 // Closing the target does not close the connections behind it — each hop is a
@@ -49,6 +76,11 @@ const jumpDialTimeout = 15 * time.Second
 // carries its transport — so the whole chain has to be owned by one handle.
 type jumpChain struct {
 	conns []*sshclient.Conn
+	// hasTarget distinguishes a complete chain from the hops-only chain
+	// dialJumpHops returns, so targetHopIndex answers the same question in
+	// both states instead of meaning something different depending on which
+	// one the caller happens to be holding.
+	hasTarget bool
 
 	closeOnce sync.Once
 }
@@ -60,6 +92,29 @@ func (c *jumpChain) Target() *sshclient.Conn {
 		return nil
 	}
 	return c.conns[len(c.conns)-1]
+}
+
+// targetHopIndex is the hop number the destination carries in a
+// HostKeyUnknownError: the hops in dial order, target last. 0 when there are no
+// hops, meaning the connection is direct and there is nothing to disambiguate —
+// a TOFU prompt for it must read exactly as it did before jump hosts existed.
+//
+// It answers the same on a hops-only chain (target not dialled yet) and on a
+// complete one, so the terminal path — which dials its own last link, with a
+// PTY on it — can number the target the way this file does instead of
+// recomputing the arithmetic and drifting from it.
+func (c *jumpChain) targetHopIndex() int {
+	if c == nil {
+		return 0
+	}
+	hops := len(c.conns)
+	if c.hasTarget {
+		hops--
+	}
+	if hops == 0 {
+		return 0
+	}
+	return hops + 1
 }
 
 // Close closes the whole chain, target first and then back down the hops. The
@@ -84,28 +139,30 @@ func (c *jumpChain) Close() error {
 // dialThroughJumps opens every connection needed to reach h and returns them as
 // one handle, h's own connection last. A host with no ProxyJump yields a
 // one-element chain (a plain direct connection), so callers do not need a
-// second code path for the common case.
+// second code path for the common case — which, once the terminal and tunnel
+// paths route through here, is nearly every connection the app makes.
 //
-// acceptHostKey is the TOFU retry flag from the frontend, exactly as
-// NewSshSession uses it.
-func (a *App) dialThroughJumps(ctx context.Context, h SSHHost, acceptHostKey bool) (*jumpChain, error) {
-	chain, err := a.dialJumpHops(ctx, h, acceptHostKey)
+// accepted is the single host key the user confirmed in the TOFU dialog, echoed
+// back from the *HostKeyUnknownError that produced the dialog. The zero value
+// (accept nothing) is what a first attempt passes.
+func (a *App) dialThroughJumps(ctx context.Context, h SSHHost, accepted acceptedHostKey) (*jumpChain, error) {
+	// The destination's own credential is checked before any hop is dialled:
+	// discovering it is missing after logging into three bastions spends every
+	// side effect the static checks exist to avoid.
+	if _, err := sshAuthForHost(h); err != nil {
+		return nil, err // bare sentinel: the frontend prompts for this host
+	}
+	chain, err := a.dialJumpHops(ctx, h, accepted)
 	if err != nil {
 		return nil, err
 	}
-	// A chain of length 0 means this host is dialled directly; there is no hop
-	// sequence to disambiguate, so its TOFU prompt must read exactly as it did
-	// before jump hosts existed.
-	hopIndex := 0
-	if len(chain.conns) > 0 {
-		hopIndex = len(chain.conns) + 1
-	}
-	conn, err := a.dialJumpHop(ctx, h, hopIndex, chain.Target(), acceptHostKey, true)
+	conn, err := a.dialJumpHop(ctx, h, chain.targetHopIndex(), chain.Target(), accepted, true)
 	if err != nil {
 		_ = chain.Close()
 		return nil, err
 	}
 	chain.conns = append(chain.conns, conn)
+	chain.hasTarget = true
 	return chain, nil
 }
 
@@ -117,14 +174,23 @@ func (a *App) dialThroughJumps(ctx context.Context, h SSHHost, acceptHostKey boo
 // On any failure every connection already opened is closed before returning —
 // a half-built chain left behind is a session hanging on a bastion the user
 // cannot see, let alone close.
-func (a *App) dialJumpHops(ctx context.Context, h SSHHost, acceptHostKey bool) (*jumpChain, error) {
+func (a *App) dialJumpHops(ctx context.Context, h SSHHost, accepted acceptedHostKey) (*jumpChain, error) {
 	hops, err := resolveJumpHops(h, a.ListSSHHosts())
 	if err != nil {
 		return nil, err
 	}
+	// Every hop's credential is resolved before the first dial, for the same
+	// reason the cycle and depth checks are: a hop that is saved but has no
+	// stored credential must not be discovered after the hops in front of it
+	// have really logged in.
+	for i, hop := range hops {
+		if _, err := sshAuthForHost(hop); err != nil {
+			return nil, jumpCredentialError(hop, i+1, err)
+		}
+	}
 	chain := &jumpChain{}
 	for i, hop := range hops {
-		conn, err := a.dialJumpHop(ctx, hop, i+1, chain.Target(), acceptHostKey, false)
+		conn, err := a.dialJumpHop(ctx, hop, i+1, chain.Target(), accepted, false)
 		if err != nil {
 			_ = chain.Close()
 			return nil, err
@@ -144,7 +210,7 @@ func (a *App) dialJumpHops(ctx context.Context, h SSHHost, acceptHostKey bool) (
 // which is the right thing for the target and the wrong thing for a bastion —
 // there the user has to go and fill in that *other* host's credential, so the
 // message has to say which.
-func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *sshclient.Conn, acceptHostKey, isTarget bool) (*sshclient.Conn, error) {
+func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *sshclient.Conn, accepted acceptedHostKey, isTarget bool) (*sshclient.Conn, error) {
 	name := sshHostLabel(h)
 
 	// The hop's own credential. Nothing from the target is in scope here: a
@@ -155,14 +221,17 @@ func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *ssh
 		if isTarget {
 			return nil, err // bare sentinel: the frontend prompts for this host
 		}
-		return nil, fmt.Errorf("jump host %q (hop %d) has no usable credential (%s); "+
-			"open that host and supply one", name, hopIndex, err)
+		return nil, jumpCredentialError(h, hopIndex, err)
 	}
 
 	var unknown *HostKeyUnknownError
 	cb := sshclient.KnownHostsCallback(a.knownHostsPath(), func(host, fp string) bool {
-		if acceptHostKey {
-			return true // user already confirmed in the TOFU dialog
+		// Only the exact key the user was shown and agreed to. Anything else
+		// unknown on this chain stops here and comes back as its own prompt,
+		// naming its own hop — see acceptedHostKey for why a blanket accept
+		// would quietly write a stranger's key into known_hosts.
+		if accepted.accepts(host, fp) {
+			return true
 		}
 		unknown = &HostKeyUnknownError{
 			Fingerprint: fp, Host: host,
@@ -198,6 +267,16 @@ func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *ssh
 		return nil, fmt.Errorf("cannot reach %s: %w", role, err)
 	}
 	return conn, nil
+}
+
+// jumpCredentialError words a hop's missing credential. It deliberately does
+// not return the bare errCredentialMissing / errKeyMissing sentinel the target
+// path returns: the frontend answers that sentinel by prompting for the host
+// the user asked to connect, and here the credential that is missing belongs to
+// a *different* host, which the user has to go and fill in.
+func jumpCredentialError(h SSHHost, hopIndex int, err error) error {
+	return fmt.Errorf("jump host %q (hop %d) has no usable credential (%s); "+
+		"open that host and supply one", sshHostLabel(h), hopIndex, err)
 }
 
 // resolveJumpHops expands h's ProxyJump into the hops to dial, in dial order,
@@ -293,46 +372,78 @@ func splitProxyJump(v string) []string {
 // findJumpHost resolves one ProxyJump element against the saved hosts, by alias
 // first and hostname second.
 //
-// A `user@host:port` element is parsed *only* to get the name to match on. The
-// user and port in it are deliberately dropped: they cannot conjure a host
-// record, and the saved host they match is where the username, the port and —
-// the reason for all of this — the credential come from.
+// A `user@host:port` element is parsed *only* to find which saved host is
+// meant. Neither half is ever used to build a connection: the saved host is
+// where the username, the port and — the reason for all of this — the
+// credential come from.
+//
+// The port does get one job: preference. Two saved records for the same
+// hostname on different ports are a real configuration (a container and its
+// host, an sshd on 2222), and silently taking whichever was saved first would
+// send the connection to a machine the element named a different port for. So
+// an element carrying a port matches a record on that port when one exists, and
+// otherwise falls back to matching on the name alone — which is still a saved
+// host, never a fabricated one.
 func findJumpHost(elem string, hosts []SSHHost) (SSHHost, bool) {
-	name := jumpElementName(elem)
+	name, port := jumpElementNameAndPort(elem)
 	if name == "" {
 		return SSHHost{}, false
 	}
+	if port != "" {
+		if h, ok := matchJumpHost(hosts, name, port); ok {
+			return h, true
+		}
+	}
+	return matchJumpHost(hosts, name, "")
+}
+
+// matchJumpHost finds a saved host by alias, then by hostname. An empty port
+// matches any record.
+func matchJumpHost(hosts []SSHHost, name, port string) (SSHHost, bool) {
 	for _, h := range hosts {
-		if h.Alias != "" && strings.EqualFold(strings.TrimSpace(h.Alias), name) {
+		if h.Alias != "" && strings.EqualFold(strings.TrimSpace(h.Alias), name) && jumpPortMatches(h, port) {
 			return h, true
 		}
 	}
 	for _, h := range hosts {
-		if strings.EqualFold(strings.TrimSpace(h.Host), name) {
+		if strings.EqualFold(strings.TrimSpace(h.Host), name) && jumpPortMatches(h, port) {
 			return h, true
 		}
 	}
 	return SSHHost{}, false
 }
 
-// jumpElementName strips the optional user@ prefix and :port suffix from one
-// ProxyJump element, leaving the host name to match on.
-func jumpElementName(elem string) string {
+func jumpPortMatches(h SSHHost, port string) bool {
+	if port == "" {
+		return true
+	}
+	saved := strings.TrimSpace(h.Port)
+	if saved == "" {
+		saved = "22" // an empty saved port means the default, as it does at dial time
+	}
+	return saved == port
+}
+
+// jumpElementNameAndPort splits one ProxyJump element into the host name to
+// match on and the port it named, if any, dropping the user@ prefix.
+func jumpElementNameAndPort(elem string) (name, port string) {
 	s := strings.TrimSpace(elem)
 	if i := strings.LastIndex(s, "@"); i >= 0 {
 		s = s[i+1:]
 	}
 	switch {
-	case strings.HasPrefix(s, "["): // [::1]:2222 — bracketed IPv6, with or without a port
+	case strings.HasPrefix(s, "["): // [::1] or [::1]:2222 — bracketed IPv6
 		if end := strings.Index(s, "]"); end > 0 {
-			return s[1:end]
+			rest := s[end+1:]
+			return s[1:end], strings.TrimPrefix(rest, ":")
 		}
 	case strings.Count(s, ":") == 1: // host:port
-		return s[:strings.Index(s, ":")]
+		i := strings.Index(s, ":")
+		return s[:i], s[i+1:]
 	}
 	// Anything else with several colons is a bare IPv6 literal, which cannot
 	// carry a port without brackets — so none of it is a port.
-	return s
+	return s, ""
 }
 
 // sshHostLabel is how a host is named to the user: its alias when it has one,

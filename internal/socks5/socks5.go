@@ -54,9 +54,12 @@ const (
 	atypDomain = 0x03
 	atypIPv6   = 0x04
 
-	repSuccess              = 0x00
-	repGeneralFailure       = 0x01
-	repHostUnreachable      = 0x04
+	repSuccess         = 0x00
+	repGeneralFailure  = 0x01
+	repHostUnreachable = 0x04
+	// repConnectionRefused is emitted only when the dialer says so, by
+	// wrapping ErrDestinationRefused. Guessing it from any other failure would
+	// send the user to the wrong machine — see replyCodeForDialError.
 	repConnectionRefused    = 0x05
 	repCommandNotSupported  = 0x07
 	repAddrTypeNotSupported = 0x08
@@ -89,7 +92,27 @@ func handshakeDeadline() time.Time {
 
 // Dialer opens the far side of a CONNECT. addr is "host:port" with host either
 // a literal IP or a name that has deliberately *not* been resolved here.
+//
+// A Dialer that can distinguish "the destination refused this connection" from
+// "the path to it is broken" should wrap ErrDestinationRefused around the
+// former; see replyCodeForDialError for what that buys the client.
 type Dialer func(network, addr string) (net.Conn, error)
+
+// ErrDestinationRefused marks a dial failure that the far side attributed to
+// the *destination itself* — something answered for that host and port, and
+// said no.
+//
+// It exists because this package cannot tell that apart from a dead transport
+// on its own, and the caller can. The SSH dialer's failure is an opaque error
+// carrying a human-readable string, so classifying it here would mean either
+// matching on that text or importing the SSH client — and importing the SSH
+// client is exactly the dependency that keeps this package testable with
+// net.Pipe and no network. A sentinel the caller wraps moves the one decision
+// it can actually make across the boundary without moving the dependency.
+//
+// Wrap, do not replace: fmt.Errorf("%w: %w", socks5.ErrDestinationRefused, err)
+// keeps the underlying error's text for the log.
+var ErrDestinationRefused = errors.New("socks5: destination refused the connection")
 
 // Serve accepts connections on l and serves each one as a SOCKS5 session,
 // returning when Accept fails.
@@ -100,8 +123,7 @@ type Dialer func(network, addr string) (net.Conn, error)
 // atterm's tunnel manager does *not* use this — it runs its own accept loop
 // over ServeConn, because it has to register each accepted connection before
 // serving it so that stopping a rule cuts sessions that are already proxying.
-// Serve is the plain form for callers with no such bookkeeping, and it is what
-// the tests drive.
+// Serve is the plain form for callers with no such bookkeeping.
 func Serve(l net.Listener, dial Dialer) error {
 	for {
 		c, err := l.Accept()
@@ -123,8 +145,16 @@ func Serve(l net.Listener, dial Dialer) error {
 // A returned error is a protocol-level fact about this one connection; it is
 // never a reason to stop serving others.
 func ServeConn(c net.Conn, dial Dialer) error {
-	// One deadline over the entire handshake. Every read below inherits it, so
-	// there is no path from "connected" to "spliced" that can block forever.
+	// One deadline over the entire handshake: every read and write of method
+	// selection and the request inherits it, so no *protocol* step can block
+	// forever.
+	//
+	// The dial in the middle is the exception, and it is worth being precise
+	// about rather than implying otherwise: this package puts no timeout on the
+	// injected Dialer. In atterm's wiring that is an SSH channel open, bounded
+	// only indirectly — the tunnel's keepalive closes the connection when the
+	// transport is dead, and the pending open fails with it. A Dialer that can
+	// hang without ever failing would hang here, so bound it in the dialer.
 	_ = c.SetDeadline(handshakeDeadline())
 
 	err := serveConn(c, dial)
@@ -355,15 +385,31 @@ func writeReply(w io.Writer, rep byte) error {
 }
 
 // replyCodeForDialError maps a dial failure onto the closest RFC 1928 code.
-// The mapping is coarse on purpose: the dialer here is an SSH channel open,
-// whose refusal carries a human-readable string rather than an errno, so the
-// only honest distinctions are "timed out" and "everything else".
+//
+// The catch-all is X'01' (general SOCKS server failure) rather than X'05'
+// (connection refused), and that choice is the whole point of this function.
+// The dialer here is an SSH channel open, so a failure means either "the
+// destination refused" *or* "the SSH transport is gone" — and X'05' asserts the
+// first. Telling a user the destination refused when the truth is that their
+// tunnel died sends them to check the wrong machine entirely; the client is the
+// one place they cannot see that the tunnel is what broke. X'01' says "this
+// proxy could not do it", which is both true and points at the proxy.
+//
+// The distinction does exist, one layer up: the tunnel manager's
+// noteDialFailure separates an *ssh.OpenChannelError (that one target refused,
+// tunnel fine) from anything else (transport dead, mark every rule on it
+// stopped with a reason). That is where the user gets told which happened. This
+// package cannot make the same split without importing the SSH client, which
+// is exactly the dependency that keeps it unit-testable.
+//
+// So X'05' is never emitted. A timeout is the one distinction that stays honest
+// without an SSH-specific error type.
 func replyCodeForDialError(err error) byte {
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
 		return repHostUnreachable
 	}
-	return repConnectionRefused
+	return repGeneralFailure
 }
 
 // splice copies bytes both ways until either side ends, then closes both. It

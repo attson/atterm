@@ -546,6 +546,14 @@ func connectRequestCmd(cmd, atyp byte, addrBody []byte, port uint16) []byte {
 // TestDialFailureReportsAFailureCode: replying success and then hanging up
 // leaves a client convinced the tunnel is open. The failure has to be in the
 // reply code.
+//
+// And it must be X'01', not X'05'. A dial failure here can equally mean the
+// SSH transport died, and X'05' would assert that the *destination* refused —
+// sending the user to check the wrong machine, from the one vantage point
+// where they cannot see that their tunnel is what broke. The error text below
+// even says "connection refused", which is precisely the bait: it is the
+// remote sshd's wording for a channel it declined, not something this package
+// can tell apart from a dead transport.
 func TestDialFailureReportsAFailureCode(t *testing.T) {
 	s := startServer(t, func(network, addr string) (net.Conn, error) {
 		return nil, errors.New("ssh: rejected: connect failed (connection refused)")
@@ -558,6 +566,14 @@ func TestDialFailureReportsAFailureCode(t *testing.T) {
 	rep.assertWellFormed(t)
 	if rep.rep == repSuccess {
 		t.Fatal("a failed dial was reported as a successful CONNECT")
+	}
+	if rep.rep == repConnectionRefused {
+		t.Fatal("a dial failure must not be reported as X'05' connection refused: " +
+			"this package cannot tell a refused destination from a dead ssh transport, " +
+			"and claiming the former points the user at the wrong machine")
+	}
+	if rep.rep != repGeneralFailure {
+		t.Fatalf("reply = %#x, want %#x (general SOCKS server failure)", rep.rep, repGeneralFailure)
 	}
 	expectServerClosed(t, c, 3*time.Second)
 	assertServerStillServes(t, s)

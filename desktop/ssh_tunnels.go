@@ -39,8 +39,19 @@ const (
 // is loopback for a reason that outranks convenience: binding 0.0.0.0 puts the
 // forwarded service in front of everyone on the same network **with no SSH
 // credential at all** — and the rule syncs to every device, where it would
-// bind the same way. The UI warns about non-loopback values; this constant is
-// what makes the default safe when no UI is involved.
+// bind the same way.
+//
+// For "dynamic" the stake is a different size, not a different colour. A
+// non-loopback "local" rule exposes one service on one port. A non-loopback
+// "dynamic" rule is an unauthenticated SOCKS5 proxy (see internal/socks5): it
+// exposes *everything the SSH host can reach*, to any destination the caller
+// names, using our credential and appearing in the far side's logs as us.
+// That is the difference between leaking a database and becoming an open relay
+// into the remote network.
+//
+// This constant is what makes the default safe when no UI is involved, which
+// today is always: the forwards UI is roadmap item 26 task 5 and does not
+// exist yet, so nothing warns about a non-loopback value except this comment.
 const defaultForwardBindAddr = "127.0.0.1"
 
 // tunnelKeepalive is how often a tunnel connection pings the remote. It also

@@ -927,6 +927,33 @@ func TestDynamicForwardPicksTargetPerConnection(t *testing.T) {
 	}
 }
 
+// TestDynamicForwardCarriesADomainNameTarget drives the DOMAINNAME address
+// type (ATYP=3) end to end with an independent client.
+//
+// x/net/proxy picks the address type by net.ParseIP, so every other wiring
+// test here — all of which hand it an IP literal — exercises only ATYP=1.
+// DOMAINNAME is the one address type carrying a length prefix, which makes it
+// both the likeliest place for our encoder and a real client's decoder to
+// disagree and the one most worth checking against a decoder we did not write.
+//
+// It also exercises the passthrough that makes a SOCKS proxy over SSH worth
+// having: "localhost" is resolved by the far side, not here. (That the name
+// reaches the dialer unresolved is pinned byte-for-byte in the socks5 package's
+// TestConnectDomainCarriesBytesBothWays; here it is end-to-end plumbing.)
+func TestDynamicForwardCarriesADomainNameTarget(t *testing.T) {
+	_, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r1") }()
+
+	f := activeForward(t, a, "r1")
+	echoThrough(t, socksDial(t, f.ListenAddr, "localhost:"+targetPort), "by name, not by address")
+}
+
 // TestDynamicForwardListsWithoutATarget: TargetHost/TargetPort are unused for
 // this kind, so the panel must not invent one. forwardTarget on an empty rule
 // yields ":", which is what a copy-paste from the local path would publish.

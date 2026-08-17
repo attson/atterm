@@ -1456,6 +1456,10 @@ onMounted(async () => {
   // A remote device changed a synced L1 pref (prefssync/Task 4). Pull success
   // fires the same "prefs:changed" event a local Push does (prefs_watch.go),
   // so reuse the exact functions boot already calls to load these values.
+  // refreshShortcutBindings() matters here beyond the Settings panel: this
+  // same shortcutBindings ref drives the live useTerminalShortcuts router
+  // below, so without this call a remote rebind would sync but never take
+  // effect until restart — defeating the point of syncing it at all.
   //
   // This handler MUST stay read-only: it may only re-read from Go and assign
   // refs, never call a set* API or MarkDirty. Writing back here would push
@@ -1465,6 +1469,7 @@ onMounted(async () => {
   $platform.events.on('prefs:changed', () => {
     void refreshTerminalTheme();
     void refreshTerminalAppearance();
+    void refreshShortcutBindings();
   });
   $platform.events.on('relay:auth-restored', () => {
     if (caps.wailsBindings) return;

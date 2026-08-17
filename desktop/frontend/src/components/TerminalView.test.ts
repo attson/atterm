@@ -1303,12 +1303,17 @@ describe("TerminalView appearance", () => {
 // must reload its own state from Go so a value that changed on another device
 // shows up here without a restart or a Settings reopen.
 describe("prefs:changed reload", () => {
-  test("App re-reads theme and appearance when prefs change remotely", () => {
+  test("App re-reads theme, appearance, and shortcut bindings when prefs change remotely", () => {
     expect(appSource).toMatch(/events\.on\(\s*["']prefs:changed["']/);
     const body = appSource.match(/events\.on\(\s*["']prefs:changed["'][\s\S]*?\n\s*\}\)/);
     expect(body).not.toBeNull();
     expect(body![0]).toMatch(/refreshTerminalTheme\(\)/);
     expect(body![0]).toMatch(/refreshTerminalAppearance\(\)/);
+    // refreshShortcutBindings() is the one that matters beyond Settings: it
+    // assigns the same shortcutBindings ref that feeds the live
+    // useTerminalShortcuts router, so without it a remote rebind syncs but
+    // never takes effect until restart.
+    expect(body![0]).toMatch(/refreshShortcutBindings\(\)/);
   });
 
   // The negative assertion is the one that matters: a handler that reloads

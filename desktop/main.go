@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"os"
 
 	"github.com/attson/atterm/internal/appdir"
@@ -67,6 +68,7 @@ func main() {
 			Handler: newPluginFSHandler(app.pluginFS),
 		},
 		BackgroundColour: &options.RGBA{R: 13, G: 17, B: 23, A: 1},
+		ErrorFormatter:   frontendErrorFormatter,
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		OnBeforeClose: func(ctx context.Context) bool {
@@ -85,6 +87,38 @@ func main() {
 	if err := wails.Run(opts); err != nil {
 		println("Error:", err.Error())
 	}
+}
+
+// frontendErrorFormatter decides what a rejected bound method sends to the
+// frontend (options.ErrorFormatter, func(error) any).
+//
+// Without one, Wails serialises every rejection as err.Error() — a plain
+// string. That is fatal for the unknown-host-key prompt: HostKeyUnknownError
+// carries the fingerprint and the hop it belongs to in its *fields*, and
+// Error() returns only the bare "ssh_host_key_unknown" sentinel. The frontend
+// detects the case structurally (frontend/src/lib/sshHostKey.ts reads
+// Fingerprint/Host/HopIndex/HopName), so with a string it can never open the
+// TOFU dialog and the user is left staring at the sentinel with no way to
+// accept the key. That is the whole of single-host TOFU, and — since a chain's
+// prompt must name *which* hop an unfamiliar fingerprint belongs to — the whole
+// of jump-host TOFU too.
+//
+// Everything else must keep arriving exactly as it does today. This formatter
+// is cross-cutting: it applies to every bound method, and frontend callers
+// almost universally do `e instanceof Error ? e.message : String(e)`, which
+// only reads right because the rejection is a string. Returning err.Error() for
+// the default case preserves current behaviour by construction — do not widen
+// it to a richer shape for all errors.
+//
+// The struct is returned as-is: it has no json tags, so encoding/json emits the
+// capitalised field names the frontend already reads. errors.As, not a type
+// assertion, because the error may be wrapped on its way up the connect path.
+func frontendErrorFormatter(err error) any {
+	var hostKey *HostKeyUnknownError
+	if errors.As(err, &hostKey) {
+		return hostKey
+	}
+	return err.Error()
 }
 
 // isWidgetProcess reports whether this process was launched as the companion

@@ -1012,6 +1012,36 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     expect(err).not.toContain("ProxyJump");
   });
 
+  // sshconfig parses ProxyJump and ProxyCommand into separate fields, and the
+  // importer carries both when a single Host block sets both lines. Before
+  // this fix proxyLabel/proxyReason branched on proxy_jump first, so a host
+  // like this showed the affirmative "Via bastion" badge and the jumpReason
+  // sentence even though runsProxyCommand disabled Connect — the UI text
+  // contradicted the UI state. It must read as the ProxyCommand refusal.
+  it("同时带 proxy_jump 与 proxy_command 的主机,标记与提示只说 ProxyCommand", async () => {
+    listSSHHosts.mockResolvedValue([
+      {
+        id: "p3", alias: "both", host: "10.0.0.8", user: "root", auth_kind: "password",
+        proxy_jump: "bastion", proxy_command: "corkscrew proxy 8080 %h %p",
+      },
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    const marker = wrapper.find('[data-test="ssh-host-proxy-p3"]');
+    expect(marker.text()).toContain("ProxyCommand");
+    expect(marker.text()).not.toContain("bastion");
+    expect(marker.attributes("title")).toContain("ProxyCommand");
+    expect(marker.attributes("title")).not.toContain("jump host");
+    const btn = wrapper.find('[data-test="ssh-connect-p3"]');
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
+    await wrapper.find('[data-test="ssh-host-card-p3"]').trigger("dblclick");
+    await flushPromises();
+    expect(newSshSessionByID).not.toHaveBeenCalled();
+    const err = wrapper.find('[data-test="ssh-hosts-error"]').text();
+    expect(err).toContain("ProxyCommand");
+    expect(err).not.toContain("jump host");
+  });
+
   // §5.2 records IdentityFile as a path precisely so the user knows which key
   // to go import; a path nothing ever renders is a path that never lands.
   it("编辑抽屉展示 identity_file 作为只读提示", async () => {

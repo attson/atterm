@@ -185,21 +185,26 @@ function runsProxyCommand(h: ProxyFields): boolean {
 function hasProxyMarker(h: ProxyFields): boolean {
   return !!(h.proxy_jump || h.proxy_command);
 }
-// Short pill text for the host row / preview row.
+// Short pill text for the host row / preview row. Checks proxy_command first,
+// via runsProxyCommand: a host can carry both fields (sshconfig parses them
+// separately, and the importer keeps both), and ProxyCommand is the one that
+// blocks the connection. Reading proxy_jump first on such a host would show
+// the affirmative "via bastion" badge on a row Connect refuses to open.
 function proxyLabel(h: ProxyFields): string {
-  return h.proxy_jump
-    ? t("ssh.proxy.jumpBadge", { target: h.proxy_jump })
-    : t("ssh.proxy.commandBadge");
+  return runsProxyCommand(h)
+    ? t("ssh.proxy.commandBadge")
+    : t("ssh.proxy.jumpBadge", { target: h.proxy_jump ?? "" });
 }
-// Full sentence for tooltips and the error line. Branches on which field is
-// actually set — naming ProxyJump at a ProxyCommand-only host sends the user
-// looking for a config line they do not have.
+// Full sentence for tooltips and the error line. Same ordering as
+// proxyLabel, and for the same reason: a host with both fields set must read
+// as the refusal it is, not as the jump sentence that happens to also be
+// true.
 function proxyReason(h: ProxyFields): string {
+  if (runsProxyCommand(h)) {
+    return t("ssh.proxy.commandReason", { command: h.proxy_command ?? "" });
+  }
   if (h.proxy_jump) {
     return t("ssh.proxy.jumpReason", { target: h.proxy_jump });
-  }
-  if (h.proxy_command) {
-    return t("ssh.proxy.commandReason", { command: h.proxy_command });
   }
   return "";
 }

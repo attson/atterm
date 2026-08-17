@@ -68,11 +68,23 @@ var jumpKeepalive = 30 * time.Second
 // would prompt for nothing at all — the substitution becomes invisible
 // precisely because it was recorded as trusted.
 //
-// The pair is keyed on the hostname the callback is handed (the known_hosts
-// key: "host" or "[host]:port"), never on the hop's alias: an alias is
-// user-editable and one bastion can legitimately appear twice in a chain, so
-// matching on it would let a *different* hop that happens to present the same
-// key take an acceptance the user granted elsewhere.
+// The pair is keyed on the hostname the callback is handed, never on the
+// hop's alias: an alias is user-editable and one bastion can legitimately
+// appear twice in a chain, so matching on it would let a *different* hop
+// that happens to present the same key take an acceptance the user granted
+// elsewhere.
+//
+// That hostname is not looked up anywhere — it is the dial address verbatim
+// (net.JoinHostPort(cfg.Host, port), "host" or "[host]:port"), passed
+// through unchanged by x/crypto's handshake code to HostKeyCallback on every
+// attempt. It must stay verbatim: the failed attempt and the retry both dial
+// the same address, so both produce the identical string, which is exactly
+// why echoing it back here matches and rebuilding or normalising it would
+// not. A future "cleanup" that reconstructs this string from cfg.Host and
+// cfg.Port separately, or normalises it, would silently break every
+// acceptance match — the retry would present a hostname that no longer
+// equals what the user was shown — while every existing test stayed green,
+// because none of them compare against a normalised form.
 type acceptedHostKey struct {
 	Host        string
 	Fingerprint string

@@ -647,3 +647,178 @@ func TestDialConnWithoutViaStillDialsDirectly(t *testing.T) {
 		}
 	}
 }
+
+// startStallingServer accepts TCP connections and then does nothing at all —
+// no SSH version banner, no bytes, ever. A client dialing it blocks forever
+// in the version exchange with no protocol-level signal that anything is
+// wrong, which is exactly the shape of a bastion whose sshd accepted the
+// connection but never answers: the case cfg.Timeout must bound on the Via
+// path the same as it does on the direct one.
+func startStallingServer(t *testing.T) (addr string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Hold the connection open and silent; let the test's own
+			// cleanup (closing ln, which does not touch already-accepted
+			// conns) or process exit reclaim it.
+			t.Cleanup(func() { c.Close() })
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TestDialConnViaBoundsHandshakeTimeout is the regression test for the
+// timeout bug: ClientConfig.Timeout becomes a net.DialTimeout on the direct
+// path (ssh.Dial), but DialRemote's net.Conn is backed by an SSH channel
+// whose SetDeadline always errors "deadline not supported", so before this
+// fix nothing on the Via path ever bounded the handshake — a hop that never
+// answers hung until the *bastion's own sshd* gave up, independent of
+// cfg.Timeout. This dials a bastion that really works, then a "target"
+// behind it that accepts the direct-tcpip channel but never sends a single
+// byte, and asserts the whole dial fails within a small multiple of
+// cfg.Timeout rather than hanging for the test's default timeout (or
+// forever).
+func TestDialConnViaBoundsHandshakeTimeout(t *testing.T) {
+	targetAddr := startStallingServer(t)
+	bastionAddr, bastionHostPub, jump := startJumpTestServer(t, targetAddr)
+
+	bastionHost, bastionPort, _ := net.SplitHostPort(bastionAddr)
+	bastion, err := DialConn(context.Background(), Config{
+		Host: bastionHost, Port: bastionPort, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(bastionHostPub),
+		Timeout:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("DialConn(bastion): %v", err)
+	}
+	defer bastion.Close()
+
+	const hopTimeout = 200 * time.Millisecond
+	targetHost, targetPort, _ := net.SplitHostPort(targetAddr)
+	start := time.Now()
+	conn, err := DialConn(context.Background(), Config{
+		Host: targetHost, Port: targetPort, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(bastionHostPub), // never reached: target never speaks SSH
+		Timeout:   hopTimeout,
+		Via:       bastion,
+	})
+	elapsed := time.Since(start)
+	if err == nil {
+		conn.Close()
+		t.Fatal("dialing a hop that never answers must fail, not hang and then succeed")
+	}
+	// Generous slack over hopTimeout for scheduling jitter, but nowhere near
+	// the minutes a bare TCP-level SYN/handshake timeout would take — the
+	// whole point is that this returns quickly and deterministically.
+	const bound = 5 * time.Second
+	if elapsed > bound {
+		t.Fatalf("dial through a stalling hop took %s, want it bounded near %s (bound %s)", elapsed, hopTimeout, bound)
+	}
+
+	if dests := jump.Destinations(); len(dests) != 1 {
+		t.Fatalf("the bastion should have recorded exactly one direct-tcpip request, got %v", dests)
+	}
+
+	// The bastion connection itself must survive: a timed-out dial through it
+	// is not a reason to drop everything else riding it.
+	select {
+	case <-bastion.Done():
+		t.Fatal("a timed-out dial through the bastion must not close the bastion connection")
+	default:
+	}
+	sess, err := bastion.client.NewSession()
+	if err != nil {
+		t.Fatalf("the bastion must still be usable after a timed-out dial through it: %v", err)
+	}
+	sess.Close()
+}
+
+// TestDialConnViaDoesNotCutTheConnectionAfterTheHandshake is the other half
+// of the regression test: the timer that bounds the handshake must not stay
+// armed once the handshake succeeds. A short cfg.Timeout establishing a real
+// connection, followed by a sleep well past that timeout and then a live
+// round trip on the connection, is what would have caught a bounding
+// mechanism that closed raw on a fixed deadline instead of cancelling it —
+// that mistake would sever a long-lived session or tunnel exactly
+// hopTimeout after it was dialled, which is worse than the bug being fixed.
+func TestDialConnViaDoesNotCutTheConnectionAfterTheHandshake(t *testing.T) {
+	targetAddr, targetHostPub := startTestServer(t)
+	bastionAddr, bastionHostPub, jump := startJumpTestServer(t, targetAddr)
+
+	bastionHost, bastionPort, _ := net.SplitHostPort(bastionAddr)
+	bastion, err := DialConn(context.Background(), Config{
+		Host: bastionHost, Port: bastionPort, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(bastionHostPub),
+		Timeout:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("DialConn(bastion): %v", err)
+	}
+	defer bastion.Close()
+
+	const hopTimeout = 100 * time.Millisecond
+	targetHost, targetPort, _ := net.SplitHostPort(targetAddr)
+	target, err := DialConn(context.Background(), Config{
+		Host: targetHost, Port: targetPort, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(targetHostPub),
+		Timeout:   hopTimeout,
+		Via:       bastion,
+	})
+	if err != nil {
+		t.Fatalf("DialConn(target via bastion): %v", err)
+	}
+	defer target.Close()
+
+	if dests := jump.Destinations(); len(dests) != 1 || dests[0] != targetAddr {
+		t.Fatalf("bastion should have recorded exactly one direct-tcpip request for %q, got %v", targetAddr, dests)
+	}
+
+	// Sleep well past hopTimeout. If the handshake bound were a deadline left
+	// armed on the conn rather than a timer that gets cancelled, the
+	// connection would already be dead by the time this wakes up.
+	time.Sleep(10 * hopTimeout)
+
+	sess, err := target.client.NewSession()
+	if err != nil {
+		t.Fatalf("connection through the jump host must survive past the handshake timeout, got: %v", err)
+	}
+	defer sess.Close()
+
+	// A real round trip, not just a channel open: the echo server on the
+	// other end has to actually answer for this to prove the transport is
+	// alive, not merely that Close has not been called on it yet.
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		t.Fatalf("StdinPipe: %v", err)
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe: %v", err)
+	}
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	if _, err := stdin.Write([]byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(stdout, buf); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if string(buf) != "ping" {
+		t.Fatalf("echo = %q, want %q", buf, "ping")
+	}
+}

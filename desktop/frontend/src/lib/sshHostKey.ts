@@ -7,11 +7,18 @@
 
 // HostKeyPrompt is one TOFU question: this fingerprint, on this machine.
 //
-// host is the known_hosts name the backend matched on ("h" or "[h]:2222"), not
-// the address the user typed. It exists to be echoed back untouched — see
-// AcceptedHostKey (desktop/ssh_host.go): an acceptance is scoped to exactly the
-// (host, fingerprint) pair the user was shown, and a reconstructed host matches
-// nothing.
+// host is the dial address the Go side handed to x/crypto's HostKeyCallback
+// verbatim (net.JoinHostPort(host, port), "h" or "[h]:2222") — not a
+// known_hosts name looked up from it, and not necessarily the address the
+// user typed (an alias resolves to the saved host's own host/port). It
+// exists to be echoed back untouched — see AcceptedHostKey
+// (desktop/ssh_host.go): an acceptance is scoped to exactly the (host,
+// fingerprint) pair the user was shown, and the failed attempt and the retry
+// both dial the same address, so both hand the callback the identical
+// string. Rebuilding or normalising this value instead of passing it through
+// would silently break that match — the retry would present a string that
+// no longer equals what the user was shown — with every existing test still
+// green, because none of them compare against a normalised form.
 //
 // hopIndex/hopName say *which machine* the fingerprint belongs to when the
 // connection runs through a jump-host chain. hopIndex is 1-based in dial order

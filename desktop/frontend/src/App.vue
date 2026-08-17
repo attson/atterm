@@ -1453,6 +1453,19 @@ onMounted(async () => {
       viewerCounts[d.session_id] = d.count ?? 0;
     }
   });
+  // A remote device changed a synced L1 pref (prefssync/Task 4). Pull success
+  // fires the same "prefs:changed" event a local Push does (prefs_watch.go),
+  // so reuse the exact functions boot already calls to load these values.
+  //
+  // This handler MUST stay read-only: it may only re-read from Go and assign
+  // refs, never call a set* API or MarkDirty. Writing back here would push
+  // the value we just pulled straight back out, and the other device would
+  // pull it, write it back, push it again — an infinite ping-pong between
+  // machines with no user action driving it. See design doc §7.2.
+  $platform.events.on('prefs:changed', () => {
+    void refreshTerminalTheme();
+    void refreshTerminalAppearance();
+  });
   $platform.events.on('relay:auth-restored', () => {
     if (caps.wailsBindings) return;
     void (async () => {

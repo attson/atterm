@@ -295,12 +295,12 @@
 
 ### 21. 已有配置接入同步
 
-- [ ] `terminal_theme` 加进 `prefssync.syncedKeys`
-- [ ] `default_shell` 加进 `prefssync.syncedKeys`
-- [ ] 快捷键绑定从 `Plugins.shortcuts.bindings` 拆成独立 key `shortcut_bindings`
-- [ ] 老结构一次性迁移到新 key 并清掉旧字段
-- [ ] 首次接入走 `PrefsSeedMarkers` 播种路径，不直接 pull 覆盖本地既有配置
-- [ ] 每个 key 增加 prefssync 往返测试（push / pull / 时间戳裁决）
+- [x] `terminal_theme` 加进 `prefssync.syncedKeys`
+- [x] `default_shell` 加进 `prefssync.syncedKeys`
+- [x] 快捷键绑定从 `Plugins.shortcuts.bindings` 拆成独立 key `shortcut_bindings`
+- [x] 老结构一次性迁移到新 key 并清掉旧字段
+- [x] 首次接入走 `PrefsSeedMarkers` 播种路径，不直接 pull 覆盖本地既有配置
+- [x] 每个 key 增加 prefssync 往返测试（push / pull / 时间戳裁决）
 
 ### 22. profile（会话配置档）
 

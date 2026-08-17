@@ -1297,3 +1297,26 @@ describe("TerminalView appearance", () => {
     expect(appSource).toContain('@appearance-changed="onAppearanceChanged"');
   });
 });
+
+// Task 4 (prefs-sync-l1 §7.2): a remote Pull fires the same "prefs:changed"
+// event markPrefDirtyAndPush fires after a Push (see prefs_watch.go). App.vue
+// must reload its own state from Go so a value that changed on another device
+// shows up here without a restart or a Settings reopen.
+describe("prefs:changed reload", () => {
+  test("App re-reads theme and appearance when prefs change remotely", () => {
+    expect(appSource).toMatch(/events\.on\(\s*["']prefs:changed["']/);
+    const body = appSource.match(/events\.on\(\s*["']prefs:changed["'][\s\S]*?\n\s*\}\)/);
+    expect(body).not.toBeNull();
+    expect(body![0]).toMatch(/refreshTerminalTheme\(\)/);
+    expect(body![0]).toMatch(/refreshTerminalAppearance\(\)/);
+  });
+
+  // The negative assertion is the one that matters: a handler that reloads
+  // state and then persists it would ping-pong forever between two devices
+  // (A pulls -> writes back -> pushes -> B pulls -> writes back -> pushes ->
+  // A pulls, ...). This must fail the moment anyone adds a setter call here.
+  test("the reload path never writes back — that would ping-pong between devices", () => {
+    const body = appSource.match(/events\.on\(\s*["']prefs:changed["'][\s\S]*?\n\s*\}\)/);
+    expect(body![0]).not.toMatch(/setTerminal|setDefaultShell|setShortcutBindings/);
+  });
+});

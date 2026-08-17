@@ -4,19 +4,27 @@ import SettingsTerminalAppearance from "./SettingsTerminalAppearance.vue";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "../lib/api";
+import { createFakePlatform as fakePlatformFactory, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 
 describe("SettingsTerminalAppearance", () => {
   // Mirrors createFakePlatform() (caps.wailsBindings: true), plus the six
   // getter/setter pairs this component's onMounted load path touches. Values
   // match the Go-side defaults from Task 1 so a freshly mounted panel
-  // reflects "today's behavior unchanged".
+  // reflects "today's behavior unchanged". Kept as a named object (not
+  // re-created inline) so the prefs:changed test below can assert on the
+  // same getter/setter mock instances after a reload.
+  let getTerminalFontSizeMock: ReturnType<typeof vi.fn>;
+  let setTerminalFontSizeMock: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     __setPlatformForTests(createFakePlatform());
+    getTerminalFontSizeMock = vi.fn().mockResolvedValue(13);
+    setTerminalFontSizeMock = vi.fn().mockResolvedValue(undefined);
     __setBindingsForTest({
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       SetTerminalFontHead: vi.fn().mockResolvedValue(undefined),
-      GetTerminalFontSize: vi.fn().mockResolvedValue(13),
-      SetTerminalFontSize: vi.fn().mockResolvedValue(undefined),
+      GetTerminalFontSize: getTerminalFontSizeMock,
+      SetTerminalFontSize: setTerminalFontSizeMock,
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
       SetTerminalLineHeight: vi.fn().mockResolvedValue(undefined),
       GetTerminalCursorStyle: vi.fn().mockResolvedValue("block"),
@@ -64,5 +72,25 @@ describe("SettingsTerminalAppearance", () => {
     const ev = w.emitted("appearance-changed");
     expect(ev).toBeTruthy();
     expect((ev!.at(-1)![0] as any).fontSize).toBe(16);
+  });
+
+  // Task 4 (prefs-sync-l1 §7.2): a remote Pull re-fires "prefs:changed", the
+  // same event a local Push fires after commit. This panel must re-read from
+  // Go so an open panel picks up the remote value — but must not persist
+  // what it just read, or the read-then-write would ping-pong the value
+  // between devices forever.
+  it("reloads from Go on prefs:changed without persisting", async () => {
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...fakePlatformFactory(), events });
+    mount(SettingsTerminalAppearance);
+    await flushPromises();
+    getTerminalFontSizeMock.mockClear();
+    setTerminalFontSizeMock.mockClear();
+
+    events.emit("prefs:changed", undefined);
+    await flushPromises();
+
+    expect(getTerminalFontSizeMock).toHaveBeenCalled();
+    expect(setTerminalFontSizeMock).not.toHaveBeenCalled();
   });
 });

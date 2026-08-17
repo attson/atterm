@@ -2,9 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import SettingsTerminalAppearance from "./SettingsTerminalAppearance.vue";
 import { __setPlatformForTests } from "../platform";
-import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
+import { createFakePlatform, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "../lib/api";
-import { createFakePlatform as fakePlatformFactory, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 
 describe("SettingsTerminalAppearance", () => {
   // Mirrors createFakePlatform() (caps.wailsBindings: true), plus the six
@@ -81,7 +80,7 @@ describe("SettingsTerminalAppearance", () => {
   // between devices forever.
   it("reloads from Go on prefs:changed without persisting", async () => {
     const events = fakeEventBus();
-    __setPlatformForTests({ ...fakePlatformFactory(), events });
+    __setPlatformForTests({ ...createFakePlatform(), events });
     mount(SettingsTerminalAppearance);
     await flushPromises();
     getTerminalFontSizeMock.mockClear();

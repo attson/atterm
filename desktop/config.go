@@ -654,6 +654,13 @@ func detachMaps(c appConfig) appConfig {
 		}
 		c.PrefsSeedMarkers = m
 	}
+	if c.ShortcutBindings != nil {
+		m := make(map[string]string, len(c.ShortcutBindings))
+		for k, v := range c.ShortcutBindings {
+			m[k] = v
+		}
+		c.ShortcutBindings = m
+	}
 	return c
 }
 

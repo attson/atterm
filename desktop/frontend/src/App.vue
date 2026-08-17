@@ -1467,6 +1467,7 @@ onMounted(async () => {
   // pull it, write it back, push it again — an infinite ping-pong between
   // machines with no user action driving it. See design doc §7.2.
   $platform.events.on('prefs:changed', () => {
+    if (!caps.wailsBindings) return;
     void refreshTerminalTheme();
     void refreshTerminalAppearance();
     void refreshShortcutBindings();

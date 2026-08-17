@@ -1602,15 +1602,22 @@ func (a *App) updatePref(key string, mutate func(*appConfig) error) error {
 }
 
 // markPrefDirtyAndPush stamps the meta for key with the current ms,
-// then triggers a background PUSH. Errors are swallowed by design (sync
-// is best-effort; user UI already reflects the change).
+// then triggers a background PUSH. A failed Push is not fatal to the local
+// write (the key stays dirty and the next Push retries it), but it must not
+// be silent: an unknown_key/invalid_value 400 poisons every subsequent Push
+// (every dirty key rides along in the same batch and fails with it), and
+// that silence is exactly why ssh_hosts_encrypted stayed broken for months
+// after joining syncedKeys — nothing ever surfaced the 400. Log at warn so
+// that failure mode is visible instead of invisible.
 func (a *App) markPrefDirtyAndPush(key string) {
 	if a.prefsSync == nil {
 		return
 	}
 	a.prefsSync.MarkDirty(key, time.Now().UnixMilli())
 	go func() {
-		if err := a.prefsSync.Push(a.ctx); err == nil {
+		if err := a.prefsSync.Push(a.ctx); err != nil {
+			logWarn("prefssync", "push after %s changed: %v", key, err)
+		} else {
 			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
 		}
 	}()

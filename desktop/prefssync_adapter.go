@@ -212,7 +212,22 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 		if err := json.Unmarshal(value, &b); err != nil {
 			return err
 		}
-		c.ShortcutBindings = b
+		// Unlike the appearance keys (clamped by their *OrDefault() readers)
+		// and default_shell (checked by os.Stat before this switch even
+		// runs), nothing downstream validates a binding string. An inbound
+		// malformed entry would silently drop the action's default keybinding
+		// in buildRoutingTable (lib/shortcutBindings.ts) and never install a
+		// working replacement. Reuse isValidShortcutBinding (the same
+		// predicate SetShortcutBindings applies to local edits) to discard
+		// invalid entries rather than reject the whole pulled map.
+		filtered := make(map[string]string, len(b))
+		for actionID, binding := range b {
+			if actionID == "" || !isValidShortcutBinding(binding) {
+				continue
+			}
+			filtered[actionID] = binding
+		}
+		c.ShortcutBindings = filtered
 	case "ssh_hosts_encrypted":
 		key := a.accountKey()
 		if len(key) == 0 {

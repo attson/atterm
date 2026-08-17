@@ -1,5 +1,25 @@
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { PrefsSyncEngine, type Adapter, type RelayClient, SYNCED_KEYS } from './prefsSync'
+
+// Reads internal/prefssync/sync.go::syncedKeys directly instead of comparing
+// against a second hardcoded TS literal — a literal-vs-literal comparison in
+// this same file can never detect drift from the actual Go source (2026-08-17
+// prefs-sync-l1 final review, I3). This file's SYNCED_KEYS is intentionally a
+// SUBSET of Go's list (see the comment on SYNCED_KEYS in ./prefsSync.ts for
+// why desktop-only keys don't need to be mirrored here), so the check is
+// subset-of, not equals. Path is process.cwd()-relative (vitest runs with cwd
+// = desktop/frontend), matching the convention used elsewhere in this repo
+// (e.g. TaskSidebar.test.ts) rather than import.meta.url, which vitest does
+// not always resolve to a file: URL.
+function goSyncedKeys(): string[] {
+  const goPath = resolve(process.cwd(), '../../internal/prefssync/sync.go')
+  const src = readFileSync(goPath, 'utf-8')
+  const m = src.match(/var syncedKeys = \[\]string\{([\s\S]*?)\}/)
+  if (!m) throw new Error(`could not find syncedKeys in ${goPath}`)
+  return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1])
+}
 
 class FakeAdapter implements Adapter {
   values = new Map<string, unknown>()
@@ -11,25 +31,13 @@ class FakeAdapter implements Adapter {
   keys() { return SYNCED_KEYS.slice() }
 }
 
-// Mirrors internal/prefssync/sync.go::syncedKeys. If Go grows a new key
-// (or drops one), update BOTH this literal AND the SYNCED_KEYS list in
-// desktop/frontend/src/lib/prefsSync.ts + web/src/shared/sync/prefsSync.ts.
-// The drift-check test below cross-checks TS against this expectation —
-// a hardcoded literal is intentional (importing Go at test time is
-// impractical) and reviewed together with the Go change.
-const EXPECTED_SYNCED_KEYS = [
-  'ai_notifications_only',
-  'command_notify_threshold_seconds',
-  'locale_preference',
-  'notifications_enabled',
-  'pinned_session_ids',
-  'quick_templates',
-  'shell_integration_enabled',
-] as const
-
 describe('PrefsSyncEngine', () => {
-  it('SYNCED_KEYS matches the Go source of truth (internal/prefssync/sync.go)', () => {
-    expect(SYNCED_KEYS.slice().sort()).toEqual([...EXPECTED_SYNCED_KEYS])
+  it('SYNCED_KEYS is a subset of the Go source of truth (internal/prefssync/sync.go)', () => {
+    const goKeys = new Set(goSyncedKeys())
+    expect(goKeys.size).toBeGreaterThan(0)
+    for (const k of SYNCED_KEYS) {
+      expect(goKeys.has(k), `SYNCED_KEYS has ${k} but internal/prefssync/sync.go::syncedKeys does not`).toBe(true)
+    }
   })
 
   it('SYNCED_KEYS includes pinned_session_ids', () => {

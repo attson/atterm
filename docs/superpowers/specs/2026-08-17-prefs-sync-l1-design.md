@@ -18,7 +18,9 @@ See also: [2026-08-17 terminal appearance](./2026-08-17-terminal-appearance-desi
 
 - `terminal_theme` 与第 20 项的六个外观键跨桌面设备一致。
 - 快捷键绑定从 `Plugins.shortcuts.bindings` 拆成独立键并跨设备一致。
-- 首次接入不覆盖任何一台设备上已有的本地配置。
+- ~~首次接入不覆盖任何一台设备上已有的本地配置~~ —— **这条目标没有达成，见 §7.1**。
+  实际行为是 Pull 先于 `SeedFromLocal` 跑：relay 上已有值的键会直接覆盖本地自定义；
+  只有 relay 上还没有的键，本地值才会存活下来并被播种上传。
 - 远端 pull 下来的新值立即反映到界面上，不需要重开设置面板或重启。
 
 ## 2. Non-Goals
@@ -109,16 +111,28 @@ LWW 的粒度应该对齐用户心里「一次独立选择」的粒度。代价�
 
 这是本设计的重点。三条都不会报错，只会让用户某天发现配置被改掉了。
 
-### 7.1 首登播种：不能让 pull 覆盖本地
+### 7.1 首登顺序：Pull 先于 SeedFromLocal，relay 已有值的键会覆盖本地
 
-`Engine.SeedFromLocal(isCustomized, now)` 的语义是：对每个「本地已自定义且未 dirty」的键，
-打上 dirty 标记，让接下来的 Push 把本地值送上去。**`isPrefCustomized`（`app.go:1635`）
-是一个 key 的白名单 switch，没列的键一律返回 false**——也就是说，本项新增的九个键
-如果不加进那个 switch，首登时不会被播种，会被 relay 上的空/旧值 pull 覆盖。
+`app_relay.go` 的首登路径固定是 Pull → 检查播种标记 → `SeedFromLocal` → Push。首次登录时本地
+`PrefsMeta` 全空，所以 `Engine.Pull`（`internal/prefssync/sync.go`）会在 `SeedFromLocal` 读取
+本地 config **之前**就跑完：只要某个键在 relay 上已经有值（比如同一账号下另一台设备已经完成过
+迁移/播种），Pull 会直接采用 relay 的值覆盖本地，`SeedFromLocal` 就再也没有机会把本地那份自定义
+标脏上传——它已经被覆盖成 relay 的值了。只有 relay 上**还没有**这个键时，本地值才会存活到
+`SeedFromLocal`，进而被播种上传。
 
-每个新键都要加对应的「是否已自定义」判据，且判据必须是**「用户是否显式设过」而不是
-「是否等于默认值」**：一个显式选择了 13 号字的用户和一个从没动过的用户，config 里的值
-相同但语义不同。第 20 项的字段设计正好支持这点——数值字段零值表示未设，
+也就是说，「首次接入不覆盖任何一台设备上已有的本地配置」这句话**不成立**：它只在"relay 上还没有
+这个键"时成立；一旦 relay 已经有值，首登设备会静默丢失本地自定义，改用 relay 的值。
+
+**未决问题（本次修复不处理，也不建议顺手改）**：反过来——先 `SeedFromLocal` 再 `Pull`——会把
+"谁赢"倒过来，变成本地必赢、relay 上其它设备已经生效的值反而被这台新登录设备覆盖，这是另一个
+方向的覆盖风险，且是一个真实的产品决策（"多设备下谁的历史配置更可信"），不应该在修复波次里
+顺手定。当前实现是 pull-wins-on-first-login；这里只是把这一点写清楚，不代表这是被评审认可的
+"正确"选择。
+
+`isPrefCustomized`（`app.go:1635`）是一个 key 的白名单 switch，没列的键一律返回 false，
+`SeedFromLocal` 自然也就播种不了——这九个新键都需要在那个 switch 里补上对应分支，判据必须是
+**「用户是否显式设过」而不是「是否等于默认值」**：一个显式选择了 13 号字的用户和一个从没动过
+的用户，config 里的值相同但语义不同。第 20 项的字段设计正好支持这点——数值字段零值表示未设，
 `TerminalCursorBlink` 是 `*bool`。所以判据统一为「非零值 / 非 nil」。
 
 ### 7.2 pull 之后界面不刷新

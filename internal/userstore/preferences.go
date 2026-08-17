@@ -16,6 +16,16 @@ type PreferenceItem struct {
 
 // allowedPreferenceKeys is the whitelist enforced on every PUT. Adding a
 // new field requires bumping this list (and matching the spec).
+//
+// This list must stay a superset of prefssync.SyncedKeys() (internal/prefssync,
+// desktop-side sync engine) — the cross-package test in
+// preferences_synced_keys_test.go (this package) enforces that. C1/C2 of the
+// 2026-08-17 prefs-sync-l1 final review: this map was
+// missing every one of the nine L1 keys (terminal_theme, six terminal
+// appearance keys, default_shell, shortcut_bindings) plus ssh_hosts_encrypted,
+// so the relay 400'd every PUT containing any of them — and once a batch
+// fails, the dirty flag never clears, so the client keeps resending the same
+// poisoned batch forever, silently breaking sync for every other key too.
 var allowedPreferenceKeys = map[string]preferenceKind{
 	"locale_preference":                preferenceKindString,
 	"quick_templates":                  preferenceKindArray,
@@ -24,6 +34,16 @@ var allowedPreferenceKeys = map[string]preferenceKind{
 	"command_notify_threshold_seconds": preferenceKindInt,
 	"shell_integration_enabled":        preferenceKindBool,
 	"pinned_session_ids":               preferenceKindArray,
+	"ssh_hosts_encrypted":              preferenceKindString,
+	"terminal_theme":                   preferenceKindString,
+	"terminal_font_head":               preferenceKindString,
+	"terminal_font_size":               preferenceKindInt,
+	"terminal_line_height":             preferenceKindNumber,
+	"terminal_cursor_style":            preferenceKindString,
+	"terminal_cursor_blink":            preferenceKindBool,
+	"terminal_scrollback":              preferenceKindInt,
+	"default_shell":                    preferenceKindString,
+	"shortcut_bindings":                preferenceKindObject,
 }
 
 type preferenceKind int
@@ -33,6 +53,15 @@ const (
 	preferenceKindBool
 	preferenceKindInt
 	preferenceKindArray
+	// preferenceKindNumber is a JSON number that may carry a fractional
+	// part (e.g. terminal_line_height: 1.2). preferenceKindInt would 400
+	// invalid_value on it — json.Unmarshal into int64 rejects non-integer
+	// numbers.
+	preferenceKindNumber
+	// preferenceKindObject is a JSON object (e.g. shortcut_bindings:
+	// map[string]string). preferenceKindArray would 400 invalid_value on
+	// it — json.Unmarshal into []json.RawMessage rejects a `{...}` payload.
+	preferenceKindObject
 )
 
 // ErrUnknownPreferenceKey is returned by SetUserPreferences when a PUT
@@ -141,6 +170,12 @@ func validatePreferenceValue(kind preferenceKind, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &v)
 	case preferenceKindArray:
 		var v []json.RawMessage
+		return json.Unmarshal(raw, &v)
+	case preferenceKindNumber:
+		var v float64
+		return json.Unmarshal(raw, &v)
+	case preferenceKindObject:
+		var v map[string]json.RawMessage
 		return json.Unmarshal(raw, &v)
 	default:
 		return fmt.Errorf("unknown kind %d", kind)

@@ -107,7 +107,18 @@ func (a *App) LoginRemoteRelay(relayURL, email, password string, allowInsecure b
 				return
 			}
 			a.prefsSync.SeedFromLocal(isPrefCustomized(cfg), time.Now().UnixMilli())
-			_ = a.prefsSync.Push(a.ctx)
+			// Only mark the seed as done when Push actually succeeded. A failed
+			// Push leaves the seeded keys dirty locally, so marking the marker
+			// here anyway would make the seed permanently un-retryable: next
+			// launch would see PrefsSeedMarkerFor(userID)==true, skip
+			// SeedFromLocal entirely, and Pull would adopt whatever's on the
+			// relay (nothing, if this Push never landed) over the local values
+			// that never got a second chance to upload.
+			if err := a.prefsSync.Push(a.ctx); err != nil {
+				logWarn("prefssync", "seed push for user %s: %v", userID, err)
+				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
+				return
+			}
 
 			cfg2 := a.cfgStore.Get()
 			if cfg2.PrefsSeedMarkers == nil {

@@ -8,16 +8,49 @@ import (
 	"encoding/pem"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
+// channelRequestRecorder records the type of every channel request a test
+// server receives, so tests can assert on what the client did (or didn't)
+// ask for — in particular, whether it opened a pty/shell.
+type channelRequestRecorder struct {
+	mu   sync.Mutex
+	reqs []string
+}
+
+func (r *channelRequestRecorder) record(reqType string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reqs = append(r.reqs, reqType)
+}
+
+// ChannelRequests returns a snapshot of the channel request types seen so
+// far. Safe to call once the dial under test has completed.
+func (r *channelRequestRecorder) ChannelRequests() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.reqs))
+	copy(out, r.reqs)
+	return out
+}
+
 // startTestServer starts an in-memory ssh server that only accepts
 // user="u" / password="pw". The remote "shell" echoes every byte back.
 // It returns the listen address and the server host public key.
 func startTestServer(t *testing.T) (addr string, hostPub ssh.PublicKey) {
+	t.Helper()
+	addr, hostPub, _ = startTestServerRecorded(t)
+	return addr, hostPub
+}
+
+// startTestServerRecorded is startTestServer plus a recorder the test can
+// use to inspect which channel requests the client sent.
+func startTestServerRecorded(t *testing.T) (addr string, hostPub ssh.PublicKey, rec *channelRequestRecorder) {
 	t.Helper()
 	return startTestServerCfg(t, &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
@@ -33,7 +66,7 @@ func startTestServer(t *testing.T) (addr string, hostPub ssh.PublicKey) {
 // with the given authorized public key.
 func startTestServerWithKey(t *testing.T, authorized ssh.PublicKey) (addr string, hostPub ssh.PublicKey) {
 	t.Helper()
-	return startTestServerCfg(t, &ssh.ServerConfig{
+	addr, hostPub, _ = startTestServerCfg(t, &ssh.ServerConfig{
 		PublicKeyCallback: func(c ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if c.User() == "u" && keyMarshalEqual(key, authorized) {
 				return &ssh.Permissions{}, nil
@@ -41,9 +74,10 @@ func startTestServerWithKey(t *testing.T, authorized ssh.PublicKey) (addr string
 			return nil, io.EOF
 		},
 	})
+	return addr, hostPub
 }
 
-func startTestServerCfg(t *testing.T, cfg *ssh.ServerConfig) (addr string, hostPub ssh.PublicKey) {
+func startTestServerCfg(t *testing.T, cfg *ssh.ServerConfig) (addr string, hostPub ssh.PublicKey, rec *channelRequestRecorder) {
 	t.Helper()
 	hostKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -61,19 +95,23 @@ func startTestServerCfg(t *testing.T, cfg *ssh.ServerConfig) (addr string, hostP
 	}
 	t.Cleanup(func() { ln.Close() })
 
+	rec = &channelRequestRecorder{}
 	go func() {
 		for {
 			nc, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			go serveConn(nc, cfg)
+			go serveConn(nc, cfg, rec)
 		}
 	}()
-	return ln.Addr().String(), signer.PublicKey()
+	return ln.Addr().String(), signer.PublicKey(), rec
 }
 
-func serveConn(nc net.Conn, cfg *ssh.ServerConfig) {
+// serveConn handles one accepted connection. rec is optional; pass nil to
+// skip recording (kept as a parameter, not a global, so concurrent test
+// servers don't share state).
+func serveConn(nc net.Conn, cfg *ssh.ServerConfig, rec *channelRequestRecorder) {
 	sc, chans, reqs, err := ssh.NewServerConn(nc, cfg)
 	if err != nil {
 		return
@@ -91,6 +129,9 @@ func serveConn(nc net.Conn, cfg *ssh.ServerConfig) {
 		}
 		go func() {
 			for r := range chReqs {
+				if rec != nil {
+					rec.record(r.Type)
+				}
 				if r.WantReply {
 					_ = r.Reply(r.Type == "pty-req" || r.Type == "shell" || r.Type == "window-change", nil)
 				}
@@ -172,5 +213,56 @@ func TestDialWrongPasswordAuthError(t *testing.T) {
 	}
 	if !IsAuthError(err) {
 		t.Fatalf("expected auth-classified error, got %v", err)
+	}
+}
+
+func TestDialConnRequestsNoPTYAndNoShell(t *testing.T) {
+	addr, hostPub, rec := startTestServerRecorded(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	c, err := DialConn(context.Background(), Config{
+		Host: host, Port: port, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(hostPub),
+		Timeout:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("DialConn: %v", err)
+	}
+	defer c.Close()
+
+	for _, r := range rec.ChannelRequests() {
+		if r == "pty-req" || r == "shell" {
+			t.Fatalf("DialConn must not open a shell; saw %q", r)
+		}
+	}
+}
+
+// TestDialStillOpensShell is the regression guard for this refactor: Dial's
+// externally-visible behaviour (PTY + shell) must survive being rebuilt on
+// top of DialConn.
+func TestDialStillOpensShell(t *testing.T) {
+	addr, hostPub, rec := startTestServerRecorded(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	s, err := Dial(context.Background(), Config{
+		Host: host, Port: port, User: "u",
+		Auth:      PasswordAuth{Password: "pw"},
+		HostKeyCb: ssh.FixedHostKey(hostPub),
+		Cols:      80, Rows: 24,
+		Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer s.Close()
+
+	var sawPty, sawShell bool
+	for _, r := range rec.ChannelRequests() {
+		sawPty = sawPty || r == "pty-req"
+		sawShell = sawShell || r == "shell"
+	}
+	if !sawPty || !sawShell {
+		t.Fatalf("Dial must still request a pty and a shell; pty=%v shell=%v", sawPty, sawShell)
 	}
 }

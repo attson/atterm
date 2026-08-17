@@ -57,19 +57,33 @@ type Config struct {
 	Keepalive        time.Duration // keepalive interval; 0 → 30s
 }
 
+// Conn is an authenticated SSH connection with no remote shell attached.
+// It exists purely to carry forwarded traffic (local -L, remote -R, dynamic
+// -D): dialing one does not touch the remote PTY table and never shows up
+// in `who`. Session is built on top of a Conn (not the other way around),
+// so the shell-less path (DialConn) has no code left in it that could
+// accidentally request a pty — Dial is the only place RequestPty is called.
+type Conn struct {
+	client  *ssh.Client
+	closeCh chan struct{}
+}
+
 // Session is an opened remote shell satisfying Read/Write/Resize/Close.
 // In PTY mode the remote stderr is merged into stdout by the remote tty, so a
 // single stdout stream carries all output.
 type Session struct {
-	client  *ssh.Client
-	sess    *ssh.Session
-	stdin   io.WriteCloser
-	stdout  io.Reader
-	closeCh chan struct{}
+	conn   *Conn
+	sess   *ssh.Session
+	stdin  io.WriteCloser
+	stdout io.Reader
 }
 
-// Dial connects, authenticates, requests a PTY and starts a shell.
-func Dial(ctx context.Context, cfg Config) (*Session, error) {
+// DialConn connects, authenticates and starts a keepalive loop. It
+// deliberately does not request a PTY or start a shell — callers that want
+// an interactive session should use Dial. DialConn is for port forwarding,
+// where opening a shell would waste a remote PTY and leave a spurious login
+// session behind for no reason.
+func DialConn(ctx context.Context, cfg Config) (*Conn, error) {
 	if cfg.Auth == nil {
 		return nil, fmt.Errorf("sshclient: nil auth")
 	}
@@ -96,19 +110,71 @@ func Dial(ctx context.Context, cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sshclient: dial %s: %w", addr, err)
 	}
-	sess, err := client.NewSession()
+	c := &Conn{client: client, closeCh: make(chan struct{})}
+	go c.keepalive(cfg.Keepalive)
+	return c, nil
+}
+
+// DialRemote opens a connection through the remote host, as `ssh -L` does:
+// the remote host dials network/addr on its side and the returned net.Conn
+// carries traffic to/from it.
+func (c *Conn) DialRemote(network, addr string) (net.Conn, error) {
+	return c.client.Dial(network, addr)
+}
+
+// ListenRemote asks the remote host to listen on network/addr and forward
+// accepted connections back to us, as `ssh -R` does.
+func (c *Conn) ListenRemote(network, addr string) (net.Listener, error) {
+	return c.client.Listen(network, addr)
+}
+
+func (c *Conn) Close() error {
+	select {
+	case <-c.closeCh:
+	default:
+		close(c.closeCh)
+	}
+	return c.client.Close()
+}
+
+func (c *Conn) keepalive(interval time.Duration) {
+	if interval == 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-c.closeCh:
+			return
+		case <-t.C:
+			if _, _, err := c.client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+				c.Close()
+				return
+			}
+		}
+	}
+}
+
+// Dial connects, authenticates, requests a PTY and starts a shell.
+func Dial(ctx context.Context, cfg Config) (*Session, error) {
+	c, err := DialConn(ctx, cfg)
 	if err != nil {
-		client.Close()
+		return nil, err
+	}
+	sess, err := c.client.NewSession()
+	if err != nil {
+		c.Close()
 		return nil, fmt.Errorf("sshclient: new session: %w", err)
 	}
 	stdin, err := sess.StdinPipe()
 	if err != nil {
-		client.Close()
+		c.Close()
 		return nil, err
 	}
 	stdout, err := sess.StdoutPipe()
 	if err != nil {
-		client.Close()
+		c.Close()
 		return nil, err
 	}
 	cols, rows := cfg.Cols, cfg.Rows
@@ -120,15 +186,14 @@ func Dial(ctx context.Context, cfg Config) (*Session, error) {
 	}
 	modes := ssh.TerminalModes{ssh.ECHO: 1}
 	if err := sess.RequestPty("xterm-256color", int(rows), int(cols), modes); err != nil {
-		client.Close()
+		c.Close()
 		return nil, fmt.Errorf("sshclient: request pty: %w", err)
 	}
 	if err := sess.Shell(); err != nil {
-		client.Close()
+		c.Close()
 		return nil, fmt.Errorf("sshclient: shell: %w", err)
 	}
-	s := &Session{client: client, sess: sess, stdin: stdin, stdout: stdout, closeCh: make(chan struct{})}
-	go s.keepalive(cfg.Keepalive)
+	s := &Session{conn: c, sess: sess, stdin: stdin, stdout: stdout}
 	return s, nil
 }
 
@@ -142,33 +207,11 @@ func (s *Session) Resize(cols, rows uint16) error {
 // Wait blocks until the remote shell exits or the connection drops.
 func (s *Session) Wait() error { return s.sess.Wait() }
 
+// Close closes the remote shell and the underlying connection (and, with
+// it, stops the connection's keepalive goroutine).
 func (s *Session) Close() error {
-	select {
-	case <-s.closeCh:
-	default:
-		close(s.closeCh)
-	}
 	_ = s.sess.Close()
-	return s.client.Close()
-}
-
-func (s *Session) keepalive(interval time.Duration) {
-	if interval == 0 {
-		interval = 30 * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-s.closeCh:
-			return
-		case <-t.C:
-			if _, _, err := s.client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
-				s.Close()
-				return
-			}
-		}
-	}
+	return s.conn.Close()
 }
 
 // IsAuthError reports whether err looks like an SSH authentication failure

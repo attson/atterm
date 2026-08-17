@@ -50,6 +50,13 @@ type Skipped struct {
 // Opener resolves an Include path to its contents. Production passes a
 // filesystem-backed implementation rooted at (and ideally restricted to)
 // ~/.ssh; tests use an in-memory map.
+//
+// Paths passed to Open (and the base given to Parse) are POSIX-style,
+// forward-slash strings — this package joins them with the "path" package,
+// not "filepath", so it stays platform-independent and testable with plain
+// string keys. A Windows-facing production Opener is responsible for
+// translating to native path semantics itself (see internal/appdir, which
+// uses filepath.Join for exactly this reason).
 type Opener interface {
 	Open(path string) (io.ReadCloser, error)
 }
@@ -87,9 +94,14 @@ const (
 
 // Parse reads an ssh_config file from r and returns the hosts it can
 // statically resolve, plus a list of things it deliberately skipped. base is
-// the directory relative Include paths resolve against (production passes
-// ~/.ssh). opener resolves Include targets; Parse never touches a real
-// filesystem directly so it stays fully testable.
+// the FIXED directory every relative Include path resolves against —
+// production passes ~/.ssh — matching ssh_config(5): "Files without absolute
+// paths are assumed to be in ~/.ssh". This does not shift as Includes nest:
+// a file reached via one Include that itself contains a relative Include
+// still resolves against the original base, not against its own directory.
+// base is a POSIX-style (forward-slash) string; see the Opener doc comment.
+// opener resolves Include targets; Parse never touches a real filesystem
+// directly so it stays fully testable.
 func Parse(r io.Reader, base string, opener Opener) ([]Entry, []Skipped, error) {
 	var skipped []Skipped
 	visited := map[string]bool{}
@@ -120,8 +132,22 @@ func Parse(r io.Reader, base string, opener Opener) ([]Entry, []Skipped, error) 
 			})
 			continue
 		}
+		if !hasPositivePattern(b.patterns) {
+			// "Host" with no patterns at all, or "Host !a !b" where every
+			// pattern is negated, can never match anything (matchPatterns
+			// requires at least one non-negated match) — it's dead weight
+			// that silently contributes nothing. Say so instead of letting
+			// it disappear; this is distinct from a normal "Host *" block,
+			// which has exactly one non-negated (wildcard) pattern and is
+			// working as intended.
+			skipped = append(skipped, Skipped{
+				Alias:  patternsText(b.patterns),
+				Reason: "Host 未包含任何可匹配的模式（为空或全部被取反），未导入",
+			})
+			continue
+		}
 		for _, p := range b.patterns {
-			if p.negate || p.text == "" || hasWildcard(p.text) {
+			if p.negate || p.text == "" || hostPatternHasWildcard(p.text) {
 				continue // no concrete hostname to import
 			}
 			if !seenAlias[p.text] {
@@ -161,7 +187,14 @@ func resolveEntry(alias string, blocks []*block) Entry {
 		for _, d := range b.lines {
 			ptr, ok := fields[d.key]
 			if !ok || *ptr != "" {
-				continue // unknown keyword, or first-wins: already set
+				// Unknown keyword, or first-wins: already set. Note this
+				// treats "" as "not yet set", so a directive that explicitly
+				// assigns an empty value (e.g. a hypothetical `User ""`)
+				// does not itself "stick" against a later block's
+				// non-empty value for the same keyword — a narrow deviation
+				// from strict first-obtained-value semantics that only
+				// matters for a config nobody writes in practice.
+				continue
 			}
 			*ptr = d.value
 		}
@@ -215,12 +248,60 @@ func matchPatterns(patterns []pattern, alias string) bool {
 	return matched
 }
 
+// globMatch implements ssh_config's Host/Match pattern syntax directly,
+// rather than delegating to path.Match. ssh_config(5) PATTERNS is explicit
+// that a pattern is "zero or more non-whitespace characters, '*' ... or '?'"
+// — nothing else is special. path.Match additionally treats '[' as opening a
+// character class and returns ErrBadPattern on a malformed one, so a literal
+// '[' in a host alias could silently mismatch (or error) under path.Match
+// even though real ssh would match it as a plain character. Since the whole
+// point of this parser is to agree with what `ssh <alias>` actually does,
+// that deviation is not acceptable.
+//
+// This is the standard greedy '*'/'?' matcher (as used by fnmatch-style
+// globbing restricted to these two wildcards): '?' consumes exactly one rune,
+// '*' consumes zero or more, backtracking to the most recent '*' on a
+// mismatch.
 func globMatch(pattern, alias string) bool {
-	ok, err := path.Match(pattern, alias)
-	return err == nil && ok
+	p := []rune(pattern)
+	a := []rune(alias)
+	var pi, ai int
+	starIdx, matchIdx := -1, 0
+	for ai < len(a) {
+		switch {
+		case pi < len(p) && (p[pi] == '?' || p[pi] == a[ai]):
+			pi++
+			ai++
+		case pi < len(p) && p[pi] == '*':
+			starIdx = pi
+			matchIdx = ai
+			pi++
+		case starIdx != -1:
+			pi = starIdx + 1
+			matchIdx++
+			ai = matchIdx
+		default:
+			return false
+		}
+	}
+	for pi < len(p) && p[pi] == '*' {
+		pi++
+	}
+	return pi == len(p)
 }
 
-func hasWildcard(s string) bool {
+// hostPatternHasWildcard reports whether s contains an ssh_config Host/Match
+// pattern metacharacter ('*' or '?' — see globMatch). Unlike the glob(3)
+// syntax used for Include path expansion (includeGlobHasWildcard), '[' is not
+// special in a Host pattern.
+func hostPatternHasWildcard(s string) bool {
+	return strings.ContainsAny(s, "*?")
+}
+
+// includeGlobHasWildcard reports whether s should be treated as a filesystem
+// glob for Include path expansion, which — unlike Host/Match patterns — does
+// support '[' character classes (glob(3) semantics).
+func includeGlobHasWildcard(s string) bool {
 	return strings.ContainsAny(s, "*?[")
 }
 
@@ -246,6 +327,36 @@ func groupBlocks(lines []rawLine) []*block {
 		}
 	}
 	return blocks
+}
+
+// hasPositivePattern reports whether at least one pattern in the list is
+// non-negated. A block with none (empty pattern list, or every pattern
+// negated) can never satisfy matchPatterns for any alias.
+func hasPositivePattern(patterns []pattern) bool {
+	for _, p := range patterns {
+		if !p.negate {
+			return true
+		}
+	}
+	return false
+}
+
+// patternsText reconstructs a display string for a pattern list (re-adding
+// the "!" for negated entries), for use as a Skipped.Alias when the block
+// itself has no host to name.
+func patternsText(patterns []pattern) string {
+	if len(patterns) == 0 {
+		return "(空 Host 行)"
+	}
+	parts := make([]string, len(patterns))
+	for i, p := range patterns {
+		if p.negate {
+			parts[i] = "!" + p.text
+		} else {
+			parts[i] = p.text
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func parsePatterns(rest string) []pattern {
@@ -324,7 +435,12 @@ func flatten(r io.Reader, base string, opener Opener, depth int, visited map[str
 					continue
 				}
 				visited[p] = true
-				sub, err := flatten(rc, path.Dir(p), opener, depth+1, visited, skipped)
+				// base is passed through unchanged, not path.Dir(p): ssh_config
+				// resolves relative Include paths against a FIXED root
+				// (~/.ssh), not against whichever file did the including. A
+				// second-level relative Include inside an already-included
+				// file must still resolve against the original base.
+				sub, err := flatten(rc, base, opener, depth+1, visited, skipped)
 				rc.Close()
 				delete(visited, p) // only cycles (ancestors on the current stack) are rejected
 				if err != nil {
@@ -350,7 +466,7 @@ func resolveIncludePaths(pat, base string, opener Opener) ([]string, error) {
 	if !path.IsAbs(resolved) {
 		resolved = path.Join(base, resolved)
 	}
-	if !hasWildcard(resolved) {
+	if !includeGlobHasWildcard(resolved) {
 		return []string{resolved}, nil
 	}
 	lister, ok := opener.(Lister)

@@ -70,6 +70,31 @@ func TestIncludeResolvesRelativeToBase(t *testing.T) {
 	}
 }
 
+func TestNestedRelativeIncludeResolvesAgainstOriginalBase(t *testing.T) {
+	// ssh_config(5): "Files without absolute paths are assumed to be in
+	// ~/.ssh" — a FIXED base, not "relative to whichever file did the
+	// including". /base/config includes conf.d/a.conf; a.conf itself
+	// contains a *relative* Include. Real ssh resolves that second Include
+	// against the original base (/base/shared.conf), not against a.conf's
+	// own directory (/base/conf.d/shared.conf).
+	fsys := memFS{
+		"/base/conf.d/a.conf": "Include shared.conf\n",
+		"/base/shared.conf":   "Host fromshared\n  HostName 10.0.0.7\n",
+		// Decoy at the wrong (intermediate-relative) location: if base
+		// incorrectly shifted into conf.d/, this file would be found
+		// instead and the test would still pass len(entries)==1 but with
+		// the wrong content — checked below too.
+		"/base/conf.d/shared.conf": "Host wrong\n  HostName 10.0.0.99\n",
+	}
+	entries, _, err := Parse(strings.NewReader("Include conf.d/a.conf\n"), "/base", fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Alias != "fromshared" || entries[0].HostName != "10.0.0.7" {
+		t.Fatalf("nested relative Include resolved against the wrong base: %+v", entries)
+	}
+}
+
 func TestIncludeCycleIsReportedNotHung(t *testing.T) {
 	fsys := memFS{"/base/a": "Include a\n"}
 	_, skipped, err := Parse(strings.NewReader("Include a\n"), "/base", fsys)
@@ -226,6 +251,54 @@ func TestIncludeDepthCapProducesSkippedNotHang(t *testing.T) {
 		if e.Alias == "deep" {
 			t.Fatalf("host past the include depth cap should not have been reached: %+v", entries)
 		}
+	}
+}
+
+func TestBareHostLineIsSkippedNotSilent(t *testing.T) {
+	// "Host" with no patterns at all can never match anything (there is
+	// nothing to compare an alias against) and must not just vanish.
+	cfg := "Host\n  User ghost\n\nHost real\n  HostName 10.0.0.1\n"
+	entries, skipped, err := Parse(strings.NewReader(cfg), "/base", memFS{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Alias != "real" {
+		t.Fatalf("want only the real host imported: %+v", entries)
+	}
+	if len(skipped) != 1 || skipped[0].Reason == "" {
+		t.Fatalf("want one skipped explaining the empty Host line, got %+v", skipped)
+	}
+}
+
+func TestAllNegatedHostPatternsIsSkippedNotSilent(t *testing.T) {
+	// "Host !a !b" can never match anything either: matchPatterns requires
+	// at least one non-negated match, and there isn't one here. Distinct
+	// from a normal "Host *" block (one non-negated wildcard pattern),
+	// which must NOT be flagged this way.
+	cfg := "Host !a !b\n  User ghost\n\nHost real\n  HostName 10.0.0.1\n"
+	entries, skipped, err := Parse(strings.NewReader(cfg), "/base", memFS{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Alias != "real" {
+		t.Fatalf("want only the real host imported: %+v", entries)
+	}
+	if len(skipped) != 1 || skipped[0].Reason == "" {
+		t.Fatalf("want one skipped explaining the all-negated Host line, got %+v", skipped)
+	}
+}
+
+func TestWildcardOnlyHostLineIsNotFlaggedAsDead(t *testing.T) {
+	// Sanity check against the previous two tests: "Host *" alone is a
+	// perfectly normal, working wildcard block (one non-negated pattern) and
+	// must NOT produce a Skipped just because it has no concrete alias.
+	cfg := "Host *\n  User deploy\n\nHost real\n  HostName 10.0.0.1\n"
+	_, skipped, err := Parse(strings.NewReader(cfg), "/base", memFS{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("want no skipped entries for a working wildcard block, got %+v", skipped)
 	}
 }
 

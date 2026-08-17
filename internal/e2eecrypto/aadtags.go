@@ -16,6 +16,13 @@ package e2eecrypto
 // Adding a namespace means adding it here AND adding a row to
 // docs/spec/protocol.md's sealed-envelope table — aadtags_test.go fails if the
 // two disagree.
+//
+// AGENTS.md redline #22 carries its own prose copy of this same allocation
+// list, for the reader who never opens this file. That copy is NOT checked
+// against this registry by any test (it's a sentence, not a table — see
+// aadtags_test.go's doc comment for why that wasn't automated). Editing one
+// without the other silently reintroduces the exact drift this file exists
+// to prevent — update both by hand.
 const (
 	AADTagOut          byte = 0x03
 	AADTagMeta         byte = 0x05

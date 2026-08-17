@@ -46,3 +46,14 @@ func TestAADTagsMatchProtocolDoc(t *testing.T) {
 		}
 	}
 }
+
+// AGENTS.md redline #22 also carries a prose copy of this allocation list
+// ("当前分配：`OUT=0x03` / ..."), for a reader who never opens protocol.md.
+// Deliberately not checked here: it's one clause inside a paragraph, not a
+// delimited table row — there is no structural convention (like markdown's
+// leading `|`) forcing a future edit to keep the `NAME=0xNN` shape. A regex
+// tight enough to read it would be tight enough to break on a harmless
+// reword, and a broken regex here would look like "test infra is flaky" and
+// get deleted rather than fixed — worse than the gap it would have caught.
+// Keep AGENTS.md's list in sync with AADTags by hand; aadtags.go's doc
+// comment says the same.

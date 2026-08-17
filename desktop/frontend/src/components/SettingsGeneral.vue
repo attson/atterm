@@ -74,6 +74,11 @@ const defaultShellSaving = ref(false);
 const selectedDefaultShell = ref("auto");
 const persistedDefaultShell = ref("auto");
 const customShellPath = ref("");
+// Last value known to be in sync with the backend (either just loaded from
+// Go, or just saved via onCustomShellSave). Diverging from customShellPath
+// while "__custom__" is selected means the user has typed something and not
+// yet clicked "Save Custom" — see loadDefaultShell()'s guard below.
+const savedCustomShellPath = ref("");
 const availableShells = ref<string[]>([]);
 const webglRendererEnabled = ref(true);
 const webglRendererLoading = ref(true);
@@ -124,16 +129,31 @@ async function loadDefaultShell() {
   try {
     const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
     availableShells.value = shells;
-    if (configured === "auto") {
-      selectedDefaultShell.value = "auto";
-    } else if (shells.includes(configured)) {
-      selectedDefaultShell.value = configured;
-      customShellPath.value = configured;
-    } else {
-      selectedDefaultShell.value = "__custom__";
-      customShellPath.value = configured;
+    // The custom shell path field has no @change/@blur commit — only the
+    // explicit "Save Custom" button does (onCustomShellSave). A prefs:changed
+    // reload landing while the user has typed an unsaved path here would
+    // silently discard it (Task 4 fix round 3). Guard just the fields that
+    // would clobber that draft; availableShells above still refreshes. This
+    // releases the moment the user saves — onCustomShellSave updates
+    // savedCustomShellPath to match — so it does not wait for the next
+    // prefs:changed to converge, and it does not gate appearance/theme
+    // reloads elsewhere, only this field.
+    const hasUnsavedCustomEdit =
+      selectedDefaultShell.value === "__custom__" && customShellPath.value !== savedCustomShellPath.value;
+    if (!hasUnsavedCustomEdit) {
+      if (configured === "auto") {
+        selectedDefaultShell.value = "auto";
+      } else if (shells.includes(configured)) {
+        selectedDefaultShell.value = configured;
+        customShellPath.value = configured;
+        savedCustomShellPath.value = configured;
+      } else {
+        selectedDefaultShell.value = "__custom__";
+        customShellPath.value = configured;
+        savedCustomShellPath.value = configured;
+      }
+      persistedDefaultShell.value = selectedDefaultShell.value;
     }
-    persistedDefaultShell.value = selectedDefaultShell.value;
   } catch (e: any) {
     error.value = e?.message ?? String(e);
   } finally {
@@ -141,13 +161,17 @@ async function loadDefaultShell() {
   }
 }
 
-// default_shell has no draft/Save/Discard flow (unlike SettingsShortcuts.vue,
-// which is why that panel does not get a live listener): the dropdown
-// commits on `change` via onDefaultShellChange, and the one text field
-// (customShellPath, used only while "__custom__" is selected) already
-// accepts being overwritten by a reload the same way
-// SettingsTerminalAppearance.vue's scrollback field does mid-keystroke —
-// an accepted, pre-existing trade in this design, not a new one.
+// default_shell has no form-wide draft/Save/Discard flow (unlike
+// SettingsShortcuts.vue, which is why that panel does not get a live
+// listener): the dropdown commits on `change` via onDefaultShellChange.
+// The one exception is the custom shell path text field, which only
+// commits on an explicit "Save Custom" click (no @change/@blur) — an
+// open-ended draft window, not the same shape as
+// SettingsTerminalAppearance.vue's scrollback field (which auto-commits on
+// blur, so its clobber window is bounded to a few seconds of active
+// focus). loadDefaultShell()'s hasUnsavedCustomEdit guard above exists
+// specifically to protect that one field; everything else here still
+// reloads unconditionally.
 let prefsChangedOff: (() => void) | null = null;
 onMounted(() => {
   prefsChangedOff = platform.events.on("prefs:changed", () => {
@@ -343,6 +367,11 @@ async function onCustomShellSave() {
     await setDefaultShell(next);
     selectedDefaultShell.value = "__custom__";
     persistedDefaultShell.value = "__custom__";
+    // Normalize the field to the trimmed value we just saved and mark it as
+    // in sync, so loadDefaultShell()'s draft guard releases right away
+    // instead of waiting for the next prefs:changed to converge.
+    customShellPath.value = next;
+    savedCustomShellPath.value = next;
     if (!availableShells.value.includes(next)) {
       availableShells.value = [next, ...availableShells.value];
     }

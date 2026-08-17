@@ -434,4 +434,59 @@ describe("SettingsGeneral default shell prefs:changed reload", () => {
     expect(getDefaultShellMock).toHaveBeenCalled();
     expect(setDefaultShellMock).not.toHaveBeenCalled();
   });
+
+  // Task 4 fix round 3: the custom shell path field has no @change/@blur
+  // commit, only the explicit "Save Custom" button (onCustomShellSave). A
+  // prefs:changed reload landing while the user has typed an unsaved path
+  // must not discard it — unlike SettingsTerminalAppearance.vue's
+  // scrollback field (auto-commits on blur), this field's draft window is
+  // open-ended. This test fails without loadDefaultShell()'s
+  // hasUnsavedCustomEdit guard.
+  it("keeps an unsaved custom shell path on prefs:changed instead of discarding it", async () => {
+    // Mount already pointed at an unrecognized shell, so the panel opens
+    // with "__custom__" selected and the field pre-filled — no dropdown
+    // interaction needed to reach that state.
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/starting-shell");
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...createFakePlatform(), events });
+    const wrapper = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    const input = wrapper.get("input.text-input");
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/starting-shell");
+
+    // User types a new path but has not clicked "Save Custom" yet.
+    await input.setValue("/opt/local/bin/unsaved-typed-path");
+
+    // Meanwhile a remote device pushes a different default_shell.
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/remote-changed-shell");
+    events.emit("prefs:changed", undefined);
+    await flushPromises();
+
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/unsaved-typed-path");
+    expect(setDefaultShellMock).not.toHaveBeenCalled();
+  });
+
+  it("applies the remote default shell once the unsaved custom edit is saved", async () => {
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/starting-shell");
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...createFakePlatform(), events });
+    const wrapper = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    const input = wrapper.get("input.text-input");
+    await input.setValue("/opt/local/bin/user-saved-path");
+    await wrapper.get(".custom-shell-row button").trigger("click");
+    await flushPromises();
+
+    expect(setDefaultShellMock).toHaveBeenCalledWith("/opt/local/bin/user-saved-path");
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/user-saved-path");
+
+    // Guard has released: a later remote change now applies normally.
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/remote-changed-shell");
+    events.emit("prefs:changed", undefined);
+    await flushPromises();
+
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/remote-changed-shell");
+  });
 });

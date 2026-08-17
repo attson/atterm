@@ -59,7 +59,27 @@ func main() {
 
 	app := NewApp(cfgStore, logger)
 
-	opts := &options.App{
+	opts := appOptions(app)
+
+	mergePlatformOptions(opts, platformOptions())
+
+	if err := wails.Run(opts); err != nil {
+		println("Error:", err.Error())
+	}
+}
+
+// appOptions builds the shared, platform-independent Wails options for the main
+// window. Platform specifics are still folded in afterwards by the caller via
+// mergePlatformOptions(platformOptions()).
+//
+// Extracted from main() purely so a test can assert the wiring. ErrorFormatter
+// in particular is a single field assignment that nothing else would notice the
+// loss of: delete it and every Go and frontend test still passes while the
+// unknown-host-key dialog silently stops opening — which is exactly how that
+// bug went unnoticed in the first place. The assertion is the point; see
+// TestAppOptionsInstallsFrontendErrorFormatter.
+func appOptions(app *App) *options.App {
+	return &options.App{
 		Title:  "AT Term",
 		Width:  1100,
 		Height: 720,
@@ -80,12 +100,6 @@ func main() {
 			app,
 			app.pluginFS,
 		},
-	}
-
-	mergePlatformOptions(opts, platformOptions())
-
-	if err := wails.Run(opts); err != nil {
-		println("Error:", err.Error())
 	}
 }
 

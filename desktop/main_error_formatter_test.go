@@ -19,6 +19,77 @@ import (
 // cross-cutting, so *every* other rejected bound method must keep sending the
 // exact string it sends today. These tests pin both halves.
 
+// A correct frontendErrorFormatter that is never attached to options.App is
+// worth nothing, and its absence is invisible: delete the one field assignment
+// and every Go test above still passes, every frontend test still passes, and
+// the TOFU dialog silently stops opening. That is precisely how the original
+// bug survived — parseHostKeyPrompt was right, HostKeyUnknownError was right,
+// and the unasserted link between them was missing. These tests assert the
+// wiring itself.
+//
+// A bare &App{} is enough: the options literal only *reads* app.pluginFS (nil
+// is fine, newPluginFSHandler just stores it) and takes method values, which
+// are never called here.
+func TestAppOptionsInstallsFrontendErrorFormatter(t *testing.T) {
+	opts := appOptions(&App{})
+
+	if opts.ErrorFormatter == nil {
+		t.Fatal("options.App.ErrorFormatter is nil: Wails will send err.Error() for every rejection, so the unknown-host-key dialog can never open")
+	}
+
+	// Non-nil is not enough — it has to be attached to a formatter that
+	// actually produces the structured host-key payload.
+	got := opts.ErrorFormatter(&HostKeyUnknownError{
+		Fingerprint: "SHA256:abc",
+		Host:        "[bastion]:2222",
+		HopIndex:    2,
+		HopName:     "prod-jump",
+	})
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("installed formatter did not produce an object for a host-key error: %v (%s)", err, raw)
+	}
+	for key, want := range map[string]any{
+		"Fingerprint": "SHA256:abc",
+		"Host":        "[bastion]:2222",
+		"HopIndex":    float64(2),
+		"HopName":     "prod-jump",
+	} {
+		if obj[key] != want {
+			t.Errorf("%s = %#v, want %#v", key, obj[key], want)
+		}
+	}
+
+	// And the default branch has to survive the wiring too, since this field
+	// applies to every bound method.
+	if s := opts.ErrorFormatter(errors.New("boom")); s != "boom" {
+		t.Errorf("installed formatter turned an ordinary error into %#v (%T), want the string %q", s, s, "boom")
+	}
+}
+
+// main() does not run appOptions' result directly — it hands it to
+// mergePlatformOptions first. That function copies a hand-listed set of fields
+// from the platform options, so a field it does not know about must survive
+// untouched; assert it rather than assuming, on whichever platform this runs.
+func TestErrorFormatterSurvivesPlatformOptionsMerge(t *testing.T) {
+	opts := appOptions(&App{})
+	mergePlatformOptions(opts, platformOptions())
+
+	if opts.ErrorFormatter == nil {
+		t.Fatal("mergePlatformOptions cleared ErrorFormatter")
+	}
+	if s := opts.ErrorFormatter(errors.New("boom")); s != "boom" {
+		t.Fatalf("after merge, ordinary error formatted as %#v, want %q", s, "boom")
+	}
+	if _, ok := opts.ErrorFormatter(&HostKeyUnknownError{Fingerprint: "f", Host: "h"}).(string); ok {
+		t.Fatal("after merge, host-key error was flattened to a string")
+	}
+}
+
 func TestFrontendErrorFormatterHostKeyMarshalsToObject(t *testing.T) {
 	hk := &HostKeyUnknownError{
 		Fingerprint: "SHA256:abc",

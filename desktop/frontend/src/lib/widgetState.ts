@@ -1,7 +1,7 @@
 import type { TaskState } from "./taskState";
 import { commandLabel, titleOrCommand } from "./sessionLabel";
 import { shortenCwd } from "./shortenCwd";
-import { compareSessionsByLatestActivity, compareSessionsBySidebarOrder } from "./sessionSort";
+import { compareSessionsBySidebarOrder } from "./sessionSort";
 
 /**
  * WidgetSessionSource lists exactly the fields the projection reads, so both
@@ -239,7 +239,6 @@ export interface ProjectWidgetStateOptions {
   /** Injected for deterministic tests. Defaults to Date.now(). */
   nowMs?: number;
   maxRows?: number;
-  groupBy?: "host" | "state";
 }
 
 /**
@@ -257,7 +256,6 @@ export function projectWidgetState(
   const maxRows = opts.maxRows ?? WIDGET_MAX_ROWS;
   const localHostId = (opts.localHostId ?? "").trim();
   const home = opts.home ?? "";
-  const groupBy = opts.groupBy ?? "host";
 
   const aiOnly = opts.aiOnly ?? false;
   // `closed` sessions are dropped entirely — a closed session is nothing the
@@ -295,20 +293,19 @@ export function projectWidgetState(
     return { row, source: s };
   });
 
-  decorated.sort((a, b) => {
-    if (groupBy === "state") {
-      return compareSessionsBySidebarOrder({ ...a.source, session_id: idOf(a.source) }, { ...b.source, session_id: idOf(b.source) });
-    }
-    const hostA = a.source.host_id ?? "";
-    const hostB = b.source.host_id ?? "";
-    if (localHostId && hostA !== hostB) {
-      if (hostA === localHostId) return -1;
-      if (hostB === localHostId) return 1;
-    }
-    const hostDelta = hostA.localeCompare(hostB);
-    if (hostDelta !== 0) return hostDelta;
-    return compareSessionsByLatestActivity({ ...a.source, session_id: idOf(a.source) }, { ...b.source, session_id: idOf(b.source) });
-  });
+  // Always rank by urgency (running first), never by host. The widget is a
+  // one-glance "what is moving right now" view, so a remote running session
+  // must be able to outrank a local idle shell. Grouping local-first — the old
+  // behaviour — buried remote sessions below a pile of idle local shells and,
+  // once the list passed maxRows, sliced them off entirely, so a remote agent
+  // that was actually running never showed up. This is the same comparator the
+  // sidebar's state groups use, so the two surfaces agree on the order.
+  decorated.sort((a, b) =>
+    compareSessionsBySidebarOrder(
+      { ...a.source, session_id: idOf(a.source) },
+      { ...b.source, session_id: idOf(b.source) },
+    ),
+  );
 
   const rows = decorated.map((d) => d.row);
 

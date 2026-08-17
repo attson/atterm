@@ -26,12 +26,14 @@ import {
   startForward,
   stopForward,
   listActiveForwards,
+  type AcceptedHostKey,
   type SSHHost,
   type SSHKey,
   type SSHConfigImportPreview,
   type ForwardRule,
   type ActiveForward,
 } from "../lib/api";
+import { parseHostKeyPrompt, type HostKeyPrompt } from "../lib/sshHostKey";
 
 const emit = defineEmits<{
   (e: "connected", sessionId: string): void;
@@ -157,19 +159,37 @@ function hostSubtitle(h: SSHHost): string {
 }
 
 // ---- Proxied hosts ----
-// A host imported from ~/.ssh/config with ProxyJump or ProxyCommand is not
-// directly connectable: NewSshSessionByID refuses to dial it (a ProxyJump
-// host is usually only reachable through its bastion, and a ProxyCommand is
-// an arbitrary command atterm never runs). The list must say so up front
-// instead of letting the user click Connect and read it off an error.
+// ssh_config puts two very different things behind the same "proxy" word, and
+// roadmap item 27 made them opposites.
+//
+// ProxyJump is connectable now. The backend dials the chain a hop at a time,
+// and every hop has to be a saved host in atterm because a bastion needs its
+// *own* credential — atterm will not send this host's password to a different
+// machine. The route stays on the row, because which machines a connection
+// passes through is worth seeing before it happens, but it is information now
+// rather than a refusal.
+//
+// ProxyCommand is still refused, and always will be: running an arbitrary
+// command to open a connection is an RCE surface atterm does not offer. This is
+// the one the list still has to stop before the click reaches Go.
 type ProxyFields = Pick<SSHHost, "proxy_jump" | "proxy_command">;
 
-function isProxied(h: ProxyFields): boolean {
+// runsProxyCommand is the *blocking* check, and the only one. It deliberately
+// does not look at proxy_jump: this predicate used to be `jump || command`, and
+// while it stayed that way the chain support was unreachable from the UI — the
+// panel short-circuited before the RPC, so a working backend never got asked.
+function runsProxyCommand(h: ProxyFields): boolean {
+  return !!h.proxy_command;
+}
+// Whether the row carries a proxy marker at all — a chain to show, or a refusal.
+function hasProxyMarker(h: ProxyFields): boolean {
   return !!(h.proxy_jump || h.proxy_command);
 }
 // Short pill text for the host row / preview row.
 function proxyLabel(h: ProxyFields): string {
-  return h.proxy_jump ? t("ssh.proxy.jumpBadge") : t("ssh.proxy.commandBadge");
+  return h.proxy_jump
+    ? t("ssh.proxy.jumpBadge", { target: h.proxy_jump })
+    : t("ssh.proxy.commandBadge");
 }
 // Full sentence for tooltips and the error line. Branches on which field is
 // actually set — naming ProxyJump at a ProxyCommand-only host sends the user
@@ -184,22 +204,89 @@ function proxyReason(h: ProxyFields): string {
   return "";
 }
 
-async function connect(id: string) {
+// ---- Unknown host keys (TOFU) ----
+// Until item 27 this panel had no answer to an unknown host key: the rejection
+// arrived, its message was the bare `ssh_host_key_unknown` sentinel, and it went
+// into the error line as that literal string. The flow dead-ended there, and so
+// did the tunnel tab — StartForward refuses unknown keys and tells the user to
+// accept the fingerprint in a terminal first, advice a saved host made
+// impossible to follow.
+//
+// A chain raises the stakes: every hop is verified separately, so every hop can
+// ask, and the user sees an unfamiliar fingerprint with no way to tell the
+// destination from a bastion on the way to it. Accepting a key without knowing
+// whose it is turns TOFU into a formality — permanently, because the accepted
+// key is written into known_hosts and never asked about again. Hence the
+// wording below names the machine.
+const hostKey = ref<{ host: SSHHost; prompt: HostKeyPrompt } | null>(null);
+
+// jumpLabel mirrors Go's sshHostLabel (desktop/ssh_jump.go): the alias when
+// there is one, the hostname otherwise. HopName comes out of that function, so
+// this is what decides whether a prompt is about the destination or about a
+// bastion in front of it.
+function jumpLabel(h: SSHHost): string {
+  return (h.alias ?? "").trim() || (h.host ?? "").trim();
+}
+
+const hostKeyMessage = computed(() => {
+  const state = hostKey.value;
+  if (!state) return "";
+  const { prompt } = state;
+  // hopIndex 0 is a direct connection with no chain to disambiguate, so it
+  // reads exactly as it did before jump hosts existed. (Only hopIndex decides
+  // this — Go populates HopName for a direct saved host too.)
+  if (prompt.hopIndex === 0) return t("ssh.hostKey.direct");
+  const target = jumpLabel(state.host);
+  if (prompt.hopName === target) {
+    return t("ssh.hostKey.targetHop", { target, hop: prompt.hopIndex });
+  }
+  return t("ssh.hostKey.jumpHop", { name: prompt.hopName, hop: prompt.hopIndex, target });
+});
+
+// acceptHostKey retries with the pair the dialog showed, both halves verbatim.
+// Rebuilding either one is how the scoping breaks: prompt.host is the
+// known_hosts name the backend matched on ("[10.0.0.9]:2222"), not the address
+// on the row, and an acceptance that does not match is silently ignored — which
+// looks exactly like the dialog refusing to go away.
+function acceptHostKey() {
+  const state = hostKey.value;
+  if (!state) return;
+  void connect(state.host.id, {
+    host: state.prompt.host,
+    fingerprint: state.prompt.fingerprint,
+  });
+}
+function rejectHostKey() {
+  hostKey.value = null;
+}
+
+// accepted defaults to the pair that matches nothing, so every affordance that
+// is not the TOFU dialog's own button fails closed.
+async function connect(id: string, accepted: AcceptedHostKey = { host: "", fingerprint: "" }) {
   if (connectingId.value) return;
   errorMsg.value = "";
-  // Never dial a proxied host, whichever affordance got us here (button,
+  // Never dial a ProxyCommand host, whichever affordance got us here (button,
   // double-click, context menu). The backend refuses too; stopping here just
   // makes the reason arrive without a round trip.
   const target = hosts.value.find((h) => h.id === id);
-  if (target && isProxied(target)) {
+  if (target && runsProxyCommand(target)) {
     errorMsg.value = proxyReason(target);
     return;
   }
   connectingId.value = id;
   try {
-    const resp = await newSshSessionByID(id);
+    const resp = await newSshSessionByID(id, accepted);
+    hostKey.value = null;
     emit("connected", resp.session_id);
   } catch (e) {
+    // A prompt arriving *after* an acceptance is the next hop asking, not the
+    // one just answered — so replace the question rather than closing it.
+    const prompt = parseHostKeyPrompt(e);
+    if (prompt && target) {
+      hostKey.value = { host: target, prompt };
+      return;
+    }
+    hostKey.value = null;
     errorMsg.value = e instanceof Error ? e.message : String(e);
   } finally {
     connectingId.value = "";
@@ -565,10 +652,11 @@ function forwardStateClass(h: SSHHost, r: ForwardRule): string {
 // connect (§5.3), because a tunnel occupies a local port and opening a
 // terminal must not silently grab 5432.
 async function startRule(h: SSHHost, r: ForwardRule) {
-  // The backend refuses a proxied host too (same gate as NewSshSessionByID);
-  // stopping here is what makes the disabled button honest rather than
-  // decorative.
-  if (isProxied(h) || forwardBusyKey.value) return;
+  // Only ProxyCommand is refused here. A ProxyJump host's tunnel rides the same
+  // chain the terminal does (item 27), and this guard blocking it would make
+  // the UI refuse something the backend does — the greyed button would be the
+  // whole reason the feature looked unimplemented.
+  if (runsProxyCommand(h) || forwardBusyKey.value) return;
   errorMsg.value = "";
   forwardBusyKey.value = forwardKey(h.id, r.id);
   try {
@@ -842,6 +930,23 @@ async function confirmConfigImport() {
       </header>
 
       <p v-if="errorMsg" class="ssh-error" data-test="ssh-hosts-error">{{ errorMsg }}</p>
+      <!-- The fingerprint is a <code> on its own line: it is the one thing the
+           user is supposed to compare character by character against something
+           they got from elsewhere. -->
+      <div v-if="hostKey" class="ssh-tofu" data-test="ssh-host-tofu">
+        <p class="tofu-title">{{ t("ssh.hostKey.title") }}</p>
+        <p class="tofu-msg">{{ hostKeyMessage }}</p>
+        <code class="tofu-fp">{{ hostKey.prompt.fingerprint }}</code>
+        <p v-if="hostKey.prompt.hopIndex > 0" class="tofu-note">{{ t("ssh.hostKey.chainNote") }}</p>
+        <div class="tofu-actions">
+          <button data-test="ssh-host-reject-hostkey" @click="rejectHostKey">
+            {{ t("ssh.hostKey.reject") }}
+          </button>
+          <button class="new-btn" data-test="ssh-host-accept-hostkey" @click="acceptHostKey">
+            {{ t("ssh.hostKey.accept") }}
+          </button>
+        </div>
+      </div>
       <p v-if="configImportResult !== null" class="ssh-success" data-test="ssh-config-import-result">
         {{ t("ssh.importedHosts", { count: configImportResult }) }}
       </p>
@@ -885,9 +990,10 @@ async function confirmConfigImport() {
                 <div class="card-main">
                   <div class="card-label">{{ hostLabel(h) }}</div>
                   <div class="card-sub">{{ hostSubtitle(h) }}</div>
-                  <div v-if="isProxied(h)" class="card-proxy">
+                  <div v-if="hasProxyMarker(h)" class="card-proxy">
                     <span
-                      class="proxy-badge" :data-test="`ssh-host-proxy-${h.id}`"
+                      class="proxy-badge" :class="{ blocked: runsProxyCommand(h) }"
+                      :data-test="`ssh-host-proxy-${h.id}`"
                       :title="proxyReason(h)"
                     >{{ proxyLabel(h) }}</span>
                   </div>
@@ -901,8 +1007,8 @@ async function confirmConfigImport() {
                 <div class="card-actions">
                   <button
                     class="act connect" :data-test="`ssh-connect-${h.id}`"
-                    :disabled="connectingId === h.id || isProxied(h)"
-                    :title="isProxied(h) ? proxyReason(h) : t('common.connect')"
+                    :disabled="connectingId === h.id || runsProxyCommand(h)"
+                    :title="proxyReason(h) || t('common.connect')"
                     @click.stop="connect(h.id)"
                   ><Zap :size="13" /></button>
                   <button class="act" :title="t('ssh.edit')" @click.stop="openEditHost(h)"><Pencil :size="13" /></button>
@@ -951,14 +1057,19 @@ async function confirmConfigImport() {
             <span class="fwd-host-name">{{ hostLabel(h) }}</span>
             <span class="fwd-host-sub">{{ h.user }}@{{ h.host }}</span>
             <span
-              v-if="isProxied(h)" class="proxy-badge"
+              v-if="hasProxyMarker(h)" class="proxy-badge"
+              :class="{ blocked: runsProxyCommand(h) }"
               :data-test="`ssh-tunnel-proxy-${h.id}`"
+              :title="proxyReason(h)"
             >{{ proxyLabel(h) }}</span>
           </header>
           <!-- Spelled out, not just a tooltip on a greyed button: the reason a
-               tunnel cannot start here has nothing to do with the rule. -->
+               tunnel cannot start here has nothing to do with the rule. Only a
+               ProxyCommand host is blocked now — a ProxyJump host's tunnel goes
+               through the same chain the terminal does, so saying it cannot
+               start would be false. -->
           <p
-            v-if="isProxied(h)" class="fwd-proxy-reason"
+            v-if="runsProxyCommand(h)" class="fwd-proxy-reason"
             :data-test="`ssh-tunnel-proxy-reason-${h.id}`"
           >{{ t("ssh.forwards.proxyBlocked") }} {{ proxyReason(h) }}</p>
           <ul class="fwd-list">
@@ -1000,8 +1111,8 @@ async function confirmConfigImport() {
                   <button
                     class="act connect"
                     :data-test="`ssh-tunnel-start-${h.id}-${r.id}`"
-                    :title="isProxied(h) ? proxyReason(h) : t('ssh.forwards.start')"
-                    :disabled="isProxied(h) || forwardBusyKey !== ''"
+                    :title="runsProxyCommand(h) ? proxyReason(h) : t('ssh.forwards.start')"
+                    :disabled="runsProxyCommand(h) || forwardBusyKey !== ''"
                     @click="startRule(h, r)"
                   ><Play :size="13" /></button>
                   <button
@@ -1077,7 +1188,7 @@ async function confirmConfigImport() {
               <code>{{ editingHost.identity_file }}</code>
               <span class="hint">{{ t("ssh.hostDrawer.identityFileHint") }}</span>
             </p>
-            <p v-if="editingHost && isProxied(editingHost)" class="identity-hint proxy" data-test="ssh-host-drawer-proxy">
+            <p v-if="editingHost && hasProxyMarker(editingHost)" class="identity-hint proxy" data-test="ssh-host-drawer-proxy">
               {{ proxyReason(editingHost) }}
             </p>
             <label v-if="fAuthKind === 'password'" class="field">
@@ -1285,11 +1396,20 @@ async function confirmConfigImport() {
                           :data-test="`ssh-config-entry-overwrite-${i}`"
                           :title="t('ssh.configImport.overwriteTitle')"
                         >{{ t("ssh.configImport.overwriteBadge") }}</span>
+                        <!-- Only a ProxyCommand entry carries the "not
+                             directly connectable" disclaimer now; a ProxyJump
+                             entry shows its route, which it can be connected
+                             through once each hop is saved as a host. -->
                         <span
-                          v-if="isProxied(e)" class="proxy-badge"
+                          v-if="hasProxyMarker(e)" class="proxy-badge"
+                          :class="{ blocked: runsProxyCommand(e) }"
                           :data-test="`ssh-config-entry-proxy-${i}`"
                           :title="proxyReason(e)"
-                        >{{ t("ssh.configImport.proxyBadge", { label: proxyLabel(e) }) }}</span>
+                        >{{
+                          runsProxyCommand(e)
+                            ? t("ssh.configImport.proxyBadge", { label: proxyLabel(e) })
+                            : proxyLabel(e)
+                        }}</span>
                       </span>
                     </label>
                   </li>
@@ -1367,6 +1487,17 @@ async function confirmConfigImport() {
 .close-x:hover { color: var(--fg); background: rgba(139, 148, 158, 0.12); }
 .ssh-error { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--bad); background: rgba(248, 81, 73, 0.08); border-bottom: 1px solid rgba(248, 81, 73, 0.2); }
 .ssh-error.inline { border-bottom: none; border-radius: 6px; }
+.ssh-tofu {
+  margin: 0; padding: 10px 16px; display: flex; flex-direction: column; gap: 6px;
+  background: rgba(210, 153, 34, 0.08);
+  border-bottom: 1px solid rgba(210, 153, 34, 0.3);
+}
+.ssh-tofu p { margin: 0; font-size: 12px; line-height: 1.5; }
+.ssh-tofu .tofu-title { font-weight: 600; color: var(--warn, #d29922); }
+.ssh-tofu .tofu-msg { color: var(--fg); }
+.ssh-tofu .tofu-note { color: var(--fg-dim); font-size: 11px; }
+.ssh-tofu .tofu-fp { font-size: 12px; word-break: break-all; color: var(--fg); }
+.ssh-tofu .tofu-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .ssh-success { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--good, #3fb950); background: rgba(63, 185, 80, 0.08); border-bottom: 1px solid rgba(63, 185, 80, 0.2); }
 .ssh-body { flex: 1; overflow-y: auto; padding: 18px 16px 24px; }
 .tag-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 2px 14px; }
@@ -1511,7 +1642,11 @@ async function confirmConfigImport() {
 .config-entry-alias { font-size: 13px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .config-entry-sub { font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .config-entry-badges { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.proxy-badge { flex: none; font-size: 10px; color: var(--warn, #d29922); background: rgba(210, 153, 34, 0.12); border: 1px solid rgba(210, 153, 34, 0.3); padding: 3px 8px; border-radius: 999px; max-width: 150px; line-height: 1.3; text-align: right; }
+/* Neutral by default: a ProxyJump badge describes the route a connection takes,
+   which is information, not a warning. The amber is reserved for the one that
+   still refuses to connect. */
+.proxy-badge { flex: none; font-size: 10px; color: var(--fg-dim); background: rgba(139, 148, 158, 0.12); border: 1px solid rgba(139, 148, 158, 0.3); padding: 3px 8px; border-radius: 999px; max-width: 150px; line-height: 1.3; text-align: right; }
+.proxy-badge.blocked { color: var(--warn, #d29922); background: rgba(210, 153, 34, 0.12); border-color: rgba(210, 153, 34, 0.3); }
 .overwrite-badge { flex: none; font-size: 10px; color: var(--fg-dim); background: rgba(139, 148, 158, 0.16); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; line-height: 1.3; white-space: nowrap; }
 .config-skipped { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .skip-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; background: rgba(139, 148, 158, 0.08); border-radius: 6px; }

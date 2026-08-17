@@ -47,9 +47,9 @@ func TestDefaultShellConfigUsesAutoForEmptyOrUnknown(t *testing.T) {
 func TestSetDefaultShellPersistsAndPreservesConfig(t *testing.T) {
 	custom := writeExecutableShell(t)
 	a := newThemeTestApp(t, appConfig{
-		RelayURL:      "wss://relay.example.com",
-		RelaySessionToken:    "secret-token",
-		TerminalTheme: terminalThemeNord,
+		RelayURL:          "wss://relay.example.com",
+		RelaySessionToken: "secret-token",
+		TerminalTheme:     terminalThemeNord,
 	})
 
 	if err := a.SetDefaultShell(custom); err != nil {

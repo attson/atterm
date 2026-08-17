@@ -103,10 +103,60 @@ func TestNewSshSessionByIDResolvesCredAndConnects(t *testing.T) {
 	// First connect to an unknown host: the credential is resolved and the
 	// connection proceeds far enough to hit TOFU (unknown host key), proving
 	// NewSshSessionByID looked up + passed the stored credential.
-	_, err = a.NewSshSessionByID(h.ID)
+	_, err = a.NewSshSessionByID(h.ID, AcceptedHostKey{})
 	var hkErr *HostKeyUnknownError
 	if !errors.As(err, &hkErr) {
 		t.Fatalf("expected HostKeyUnknownError (cred resolved, TOFU prompt), got %v", err)
+	}
+}
+
+// TestNewSshSessionByIDAcceptedHostKeyConnects is the saved-host half of the
+// TOFU round trip, and the reason NewSshSessionByID grew a second parameter.
+//
+// Before roadmap item 27 this method took the id alone: the prompt came back,
+// the answer had nowhere to go, and the next attempt asked the same question
+// forever. That also walled off the tunnel path, which refuses unknown keys
+// outright and tells the user to accept the fingerprint in a terminal first —
+// advice that was impossible to follow for a saved host.
+//
+// The acceptance has to arrive at the callback as the exact pair the user was
+// shown, so the test feeds back a *wrong* fingerprint for the right host first:
+// that must still be refused.
+func TestNewSshSessionByIDAcceptedHostKeyConnects(t *testing.T) {
+	useIsolatedKeyring(t)
+	addr, _ := startSSHTestServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
+
+	h, err := a.AddSSHHost(SSHHost{Host: host, Port: port, User: "u", AuthKind: "password"},
+		sshCredential{Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.NewSshSessionByID(h.ID, AcceptedHostKey{})
+	var hkErr *HostKeyUnknownError
+	if !errors.As(err, &hkErr) {
+		t.Fatalf("expected HostKeyUnknownError first, got %v", err)
+	}
+	if hkErr.Host == "" || hkErr.Fingerprint == "" {
+		t.Fatalf("prompt must carry both halves to echo back, got host=%q fp=%q",
+			hkErr.Host, hkErr.Fingerprint)
+	}
+
+	wrong := AcceptedHostKey{Host: hkErr.Host, Fingerprint: "SHA256:not-the-key-you-were-shown"}
+	if _, err := a.NewSshSessionByID(h.ID, wrong); !errors.As(err, &hkErr) {
+		t.Fatalf("a fingerprint the user was never shown must not be accepted, got %v", err)
+	}
+
+	resp, err := a.NewSshSessionByID(h.ID, AcceptedHostKey{Host: hkErr.Host, Fingerprint: hkErr.Fingerprint})
+	if err != nil {
+		t.Fatalf("NewSshSessionByID after accepting the shown key: %v", err)
+	}
+	if resp.SessionID == "" {
+		t.Fatal("empty session id")
 	}
 }
 
@@ -118,7 +168,7 @@ func TestNewSshSessionByIDMissingCredential(t *testing.T) {
 	cfg.SSHHosts = []SSHHost{{ID: "noCred", Host: "h", User: "u", AuthKind: "password"}}
 	_ = a.cfgStore.Set(cfg)
 
-	_, err := a.NewSshSessionByID("noCred")
+	_, err := a.NewSshSessionByID("noCred", AcceptedHostKey{})
 	if err == nil || err.Error() != errCredentialMissing {
 		t.Fatalf("expected errCredentialMissing, got %v", err)
 	}
@@ -140,7 +190,7 @@ func TestNewSshSessionByIDKeyAuth(t *testing.T) {
 	cfg.SSHHosts = []SSHHost{{ID: "h1", Host: host, Port: port, User: "u", AuthKind: "key", KeyID: k.ID}}
 	_ = a.cfgStore.Set(cfg)
 
-	_, err = a.NewSshSessionByID("h1")
+	_, err = a.NewSshSessionByID("h1", AcceptedHostKey{})
 	var hk *HostKeyUnknownError
 	if !errors.As(err, &hk) {
 		t.Fatalf("expected HostKeyUnknownError (key resolved), got %v", err)
@@ -153,7 +203,7 @@ func TestNewSshSessionByIDKeyMissing(t *testing.T) {
 	cfg := a.cfgStore.Get()
 	cfg.SSHHosts = []SSHHost{{ID: "h1", Host: "h", User: "u", AuthKind: "key", KeyID: "gone"}}
 	_ = a.cfgStore.Set(cfg)
-	_, err := a.NewSshSessionByID("h1")
+	_, err := a.NewSshSessionByID("h1", AcceptedHostKey{})
 	if err == nil || err.Error() != errKeyMissing {
 		t.Fatalf("expected errKeyMissing, got %v", err)
 	}
@@ -212,7 +262,7 @@ func TestProxyJumpHostOpensASessionThroughTheBastion(t *testing.T) {
 	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
 	th := addServerHost(t, a, "db", target, "target-user", "target-pw", "bastion")
 
-	resp, err := a.NewSshSessionByID(th.ID)
+	resp, err := a.NewSshSessionByID(th.ID, AcceptedHostKey{})
 	if err != nil {
 		t.Fatalf("a ProxyJump host must open a terminal session: %v", err)
 	}
@@ -264,7 +314,7 @@ func TestProxyJumpSessionDialFailureClosesTheChain(t *testing.T) {
 	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
 	th := addServerHost(t, a, "db", target, "target-user", "target-pw", "bastion")
 
-	_, err := a.NewSshSessionByID(th.ID)
+	_, err := a.NewSshSessionByID(th.ID, AcceptedHostKey{})
 	var hk *HostKeyUnknownError
 	if !errors.As(err, &hk) {
 		t.Fatalf("expected *HostKeyUnknownError for the target, got %v", err)
@@ -352,7 +402,7 @@ func TestProxyJumpToAnUnsavedHopIsRefusedWithoutDialling(t *testing.T) {
 	a := newJumpSessionTestApp(t, srv)
 	h := addServerHost(t, a, "db", srv, "u", "pw", "bastion") // "bastion" is not saved
 
-	_, err := a.NewSshSessionByID(h.ID)
+	_, err := a.NewSshSessionByID(h.ID, AcceptedHostKey{})
 	if err == nil {
 		t.Fatal("a ProxyJump naming an unsaved host must be refused")
 	}
@@ -384,7 +434,7 @@ func TestProxyJumpHostWithoutCredentialFailsBeforeAnyDial(t *testing.T) {
 	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
 	th := addServerHost(t, a, "db", target, "target-user", "", "bastion") // no credential saved
 
-	_, err := a.NewSshSessionByID(th.ID)
+	_, err := a.NewSshSessionByID(th.ID, AcceptedHostKey{})
 	if err == nil || err.Error() != errCredentialMissing {
 		t.Fatalf("want the bare %q sentinel, got %v", errCredentialMissing, err)
 	}
@@ -408,7 +458,7 @@ func TestProxyCommandGateFiresBeforeCredentialRead(t *testing.T) {
 	}}
 	_ = a.cfgStore.Set(cfg)
 
-	_, err := a.NewSshSessionByID("p2")
+	_, err := a.NewSshSessionByID("p2", AcceptedHostKey{})
 	if err == nil {
 		t.Fatal("must refuse to connect a ProxyCommand host")
 	}
@@ -435,7 +485,7 @@ func TestProxyCommandHostErrorNamesProxyCommand(t *testing.T) {
 	}}
 	_ = a.cfgStore.Set(cfg)
 
-	_, err := a.NewSshSessionByID("p3")
+	_, err := a.NewSshSessionByID("p3", AcceptedHostKey{})
 	if err == nil {
 		t.Fatal("must refuse to connect a ProxyCommand host directly")
 	}

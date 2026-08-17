@@ -158,4 +158,3 @@ func buildHelperCommand(helperPath, pid, src, dst string) *exec.Cmd {
 	}
 	return exec.Command("false")
 }
-

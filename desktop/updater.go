@@ -143,7 +143,6 @@ func assetNameForPlatform(goos, goarch string) (string, error) {
 	return "", fmt.Errorf("no atterm build for %s/%s", goos, goarch)
 }
 
-
 const (
 	releaseCacheTTL        = 1 * time.Hour
 	updaterCheckTimeout    = 15 * time.Second

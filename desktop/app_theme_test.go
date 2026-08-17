@@ -28,7 +28,7 @@ func TestSetTerminalThemePersistsAndPreservesConfig(t *testing.T) {
 	autoCheck := false
 	a := newThemeTestApp(t, appConfig{
 		RelayURL:           "wss://relay.example.com",
-		RelaySessionToken:         "secret-token",
+		RelaySessionToken:  "secret-token",
 		AllowInsecureRelay: true,
 		RemotePermission:   proto.RemotePermissionControl,
 		AutoCheckUpdates:   &autoCheck,

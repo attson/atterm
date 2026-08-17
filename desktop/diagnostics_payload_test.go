@@ -39,7 +39,7 @@ func TestCollectDiagnostics_ConfiguredRelay_RedactedFields(t *testing.T) {
 	a := newRelayTestApp(t)
 	if err := a.cfgStore.Set(appConfig{
 		RelayURL:           "https://relay.example.com/path?t=secret",
-		RelaySessionToken:         "atk_abcdefghijklmnopqrstuvwxyz0123",
+		RelaySessionToken:  "atk_abcdefghijklmnopqrstuvwxyz0123",
 		AllowInsecureRelay: false,
 	}); err != nil {
 		t.Fatalf("seed cfg: %v", err)

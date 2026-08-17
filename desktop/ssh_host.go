@@ -51,11 +51,44 @@ func (a *App) findSSHHost(id string) (SSHHost, bool) {
 	return SSHHost{}, false
 }
 
+// AcceptedHostKey is the one host key the user confirmed in a TOFU dialog, on
+// its way back in from the frontend: the Host and Fingerprint of the
+// *HostKeyUnknownError that produced the dialog, echoed verbatim. Its zero
+// value accepts nothing, which is what a first attempt sends.
+//
+// It is a struct rather than two parameters on NewSshSessionByID because two
+// adjacent strings can be passed in the wrong order and still compile, and the
+// symptom of that mistake is the one this whole mechanism exists to remove: an
+// acceptance that matches nothing, so the dialog asks again and again. Named
+// fields cannot be swapped.
+//
+// It stays separate from ssh_jump.go's unexported acceptedHostKey, which is the
+// chain builder's matcher: this one is the frontend-facing shape (exported,
+// JSON-tagged), and it never reaches a host-key callback directly — it is
+// copied into SSHConnectReq's AcceptedHostKeyHost / AcceptedHostKeyFingerprint,
+// the fields Task 3 already made the wire contract.
+type AcceptedHostKey struct {
+	Host        string `json:"host"`
+	Fingerprint string `json:"fingerprint"`
+}
+
 // NewSshSessionByID looks up a saved host + its credential by ID and connects,
 // reusing NewSshSession (which carries the slice-1 known_hosts TOFU flow).
 // Returns errCredentialMissing when no credential is stored so the frontend
 // can prompt the user to supply one.
-func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
+//
+// accepted is the one host key the user confirmed in a TOFU dialog, echoed back
+// from the *HostKeyUnknownError that produced it. A first attempt passes the
+// zero value, which accepts nothing.
+//
+// Until roadmap item 27 this method took the id alone, and that made a saved
+// host with an unfamiliar key unconnectable: the error came back, the frontend
+// had nowhere to send the answer, and the next attempt asked the same question.
+// A jump-host chain turns that from an annoyance into a wall, because every hop
+// can ask — and the tunnel path is behind it too, since dialTunnelConn accepts
+// nothing on its own and tells the user to go accept the fingerprints in a
+// terminal first.
+func (a *App) NewSshSessionByID(id string, accepted AcceptedHostKey) (NewSessionResp, error) {
 	if a.host == nil {
 		return NewSessionResp{}, fmt.Errorf("relay host not ready")
 	}
@@ -75,6 +108,11 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 		Host: found.Host, Port: found.Port, User: found.User,
 		AuthKind:  found.AuthKind,
 		SSHHostID: found.ID, // carried into SessionInfo, and used to find the chain
+		// Verbatim, both halves: the acceptance names one key on one machine,
+		// and rebuilding either half here would let it match a hop the user was
+		// never shown. See acceptedHostKey.
+		AcceptedHostKeyHost:        accepted.Host,
+		AcceptedHostKeyFingerprint: accepted.Fingerprint,
 	}
 	switch found.AuthKind {
 	case "key":

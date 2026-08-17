@@ -21,9 +21,9 @@ import (
 // have a per-provider size cap; Apple is ~4 KiB, Chrome is generous,
 // the lowest common denominator is ~3 KiB).
 type sealedPushBody struct {
-	Label      string `json:"label,omitempty"`
-	ExitCode   int    `json:"exit_code"`
-	ElapsedMS  int    `json:"elapsed_ms"`
+	Label     string `json:"label,omitempty"`
+	ExitCode  int    `json:"exit_code"`
+	ElapsedMS int    `json:"elapsed_ms"`
 }
 
 // sealedPushAADFrameType is the AAD discriminator bound into the

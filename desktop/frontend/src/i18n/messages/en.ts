@@ -192,16 +192,36 @@ export const en = {
       typeLabel: "Type {type}",
       genericSubtitle: "SSH key",
     },
-    // ProxyJump / ProxyCommand hosts are imported but refuse to dial. The
-    // directive names stay untranslated: they are ssh_config keywords the
-    // user has to find in their own file.
+    // ProxyJump hosts connect through their chain (roadmap item 27);
+    // ProxyCommand hosts are imported but still refuse to dial. The directive
+    // names stay untranslated: they are ssh_config keywords the user has to
+    // find in their own file.
     proxy: {
-      jumpBadge: "Jump host required",
+      jumpBadge: "Via {target}",
       commandBadge: "ProxyCommand",
       jumpReason:
-        "Needs a jump host (ProxyJump {target}) — jump-host support is not implemented yet, so this host cannot be connected directly.",
+        "Connects through jump host {target}. Every hop on the chain must itself be a saved host in atterm — atterm signs in to each one with that host's own credential, and never sends this host's.",
       commandReason:
         "Configured with a ProxyCommand ({command}) — atterm never runs that command, so this host cannot be connected directly.",
+    },
+    // Unknown host key (TOFU). The three wordings exist because a chain has to
+    // say *whose* key this is: the user sees an unfamiliar fingerprint for a
+    // connection they started by naming one host, and cannot otherwise tell the
+    // destination from a bastion in front of it. Accepting without knowing
+    // whose key it is makes TOFU a formality, and a permanent one — an accepted
+    // key goes into known_hosts and is never questioned again.
+    hostKey: {
+      title: "Unknown host key",
+      // Direct connection, no chain: unchanged from before jump hosts existed.
+      direct: "Unknown host key. Verify this fingerprint before trusting it:",
+      jumpHop:
+        "This fingerprint belongs to {name}, hop {hop} on the route to {target} — it is not {target} itself. Check it against {name} before trusting it:",
+      targetHop:
+        "This fingerprint belongs to {target}, the host you asked to connect (reached as hop {hop}). Verify it before trusting it:",
+      chainNote:
+        "Each machine on the route is asked about separately; accepting this one accepts nothing else.",
+      accept: "Accept & Connect",
+      reject: "Cancel",
     },
     hostDrawer: {
       titleNew: "New Host",

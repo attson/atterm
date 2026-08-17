@@ -13,7 +13,7 @@ type PluginConfig struct {
 	FileExplorer FileExplorerConfig `json:"fileExplorer"`
 	Translate    TranslateConfig    `json:"translate"`
 	Shortcuts    ShortcutsConfig    `json:"shortcuts"`
-	Widget       WidgetConfig          `json:"widget"`
+	Widget       WidgetConfig       `json:"widget"`
 }
 
 // WidgetConfig is the companion-window plugin ("桌面挂件" / Desk Widget) block. Unlike the other

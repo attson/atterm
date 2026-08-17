@@ -144,14 +144,14 @@ func TestValidatePluginConfig_ShortcutsAcceptsValid(t *testing.T) {
 
 func TestValidatePluginConfig_ShortcutsRejectsMalformed(t *testing.T) {
 	cases := map[string]string{
-		"missing modifier":   "KeyN",
-		"missing code":       "Mod+Alt+",
-		"unknown token":      "Foo+KeyN",
-		"two codes":          "Mod+KeyN+KeyM",
-		"code only":          "ArrowLeft",
-		"only modifiers":     "Mod+Alt+Shift",
-		"wrong code name":    "Mod+keya",
-		"empty action id":    "Mod+KeyN", // checked via empty key below
+		"missing modifier": "KeyN",
+		"missing code":     "Mod+Alt+",
+		"unknown token":    "Foo+KeyN",
+		"two codes":        "Mod+KeyN+KeyM",
+		"code only":        "ArrowLeft",
+		"only modifiers":   "Mod+Alt+Shift",
+		"wrong code name":  "Mod+keya",
+		"empty action id":  "Mod+KeyN", // checked via empty key below
 	}
 	for label, binding := range cases {
 		c := PluginConfig{}

@@ -368,6 +368,8 @@
 >
 > **识别不等于能连。** `ProxyJump` / `ProxyCommand` 会被解析并随主机记录导入、随 sealed vault 同步，但带这两个字段的主机**拒绝直连**——`NewSshSessionByID` 会在发起 dial 之前直接报错。跳板链路本身是第 27 项，尚未实现；在那之前，导入这类主机只是把配置记下来，不是让它能用。
 >
+> **订正（第 27 项已完成）：上面这段只剩 `ProxyCommand` 那一半成立。** `ProxyJump` 的主机现在能连——前提是链路上每一跳都已经是保存的主机，见第 27 项。
+>
 > `IdentityFile` 同理只记路径，atterm 不读取私钥文件内容；`AuthKind` 会置为 `"key"`，但 `KeyID` 留空，要用户自己走既有的导入私钥流程去关联。
 >
 > 新增的三个字段（`IdentityFile` / `ProxyJump` / `ProxyCommand`）随整块 `ssh_hosts_encrypted` sealed JSON 同步。第 21 项的教训是这类假设必须验证：`desktop/ssh_hosts_sync_fields_test.go` 用真实 seal → open 往返加带 canary 值的用例证明三个字段不丢；relay 的 `allowedPreferenceKeys`（`internal/userstore/preferences.go:37`）本来就已经放行 `ssh_hosts_encrypted`，未受影响。
@@ -381,6 +383,8 @@
 > 设计见 [`2026-08-17-ssh-port-forwarding-design.md`](./superpowers/specs/2026-08-17-ssh-port-forwarding-design.md)。
 >
 > **跳板机上的转发不支持。** 带 `ProxyJump` / `ProxyCommand` 的主机起隧道会在发起 dial 之前直接被拒——第 27 项的跳板链路还没做，在那之前这类主机连隧道都开不了，更不用说经它转发。
+>
+> **订正（第 27 项已完成）：`ProxyJump` 的主机现在能起隧道**，走的是和终端完全相同的链路构建逻辑；`ProxyCommand` 的主机仍然被拒。一个前提没变：隧道路径背后没有 TOFU 弹框，所以链路上任何一跳的 host key 未知时会直接拒绝并说明先去终端里接受指纹——第 27 项让这句话真正可执行（在那之前保存的主机根本没法完成 TOFU）。
 >
 > **SOCKS5 只实现了 `CONNECT`。** 动态转发是自己写的最小 SOCKS5 服务端（标准库没有服务端实现），只支持 `NO AUTHENTICATION` + `CONNECT`，地址类型覆盖 IPv4 / IPv6 / DOMAINNAME；`UDP ASSOCIATE` 与 `BIND` 均未实现，收到时按 RFC 1928 回一个规规矩矩的 `X'07' Command not supported`，不断链、不 panic，但也不代理这两类流量。
 >
@@ -399,9 +403,25 @@
 
 ### 27. ProxyJump / 跳板机链
 
-- [ ] 单跳
-- [ ] 多跳链路
-- [ ] 链路配置存进 host 记录随 vault 同步
+> 设计见 [`2026-08-17-ssh-proxyjump-design.md`](./superpowers/specs/2026-08-17-ssh-proxyjump-design.md)。
+>
+> **跳板链上每一跳都必须是 atterm 里已保存的主机。** `ProxyJump bastion` 里的 `bastion` 按别名（其次按主机名）在主机清单里查，查不到就拒绝，并明说「请先把它添加为主机」——不会尝试连接。理由是凭据：跳板机自己要认证，而拿目标主机的凭据去连跳板等于把目标机的密码或密钥送给另一台机器，连接时弹框问凭据则要么每次都问、要么等于偷偷造了一条用户没审视过的主机记录。查已保存主机则凭据、端口、用户名一次到位，且都在用户已经看过的地方。`user@host:port` 形式只用来**匹配**已保存主机，不用来凭空构造一台没有凭据的主机。
+>
+> **`ProxyCommand` 仍然永不执行，本项没有改这一点。** 带 `ProxyCommand` 的主机在终端和隧道两条路上都仍然被拒，文案不变（第 25 项 §5.3：执行任意命令是 RCE 面）。第 25 / 26 项里「带 `ProxyJump` 的主机不能直连 / 不能起隧道」的说法从本项起**不再成立**，两处的界面标记也相应改成显示链路而不是拒绝；`ProxyCommand` 那半仍然成立。
+>
+> **每一跳独立校验 host key，TOFU 提示必须指名是哪一跳。** 这是本项唯一的安全红线。只校验最终目标意味着一台被替换的跳板可以在中间转发流量，而用户看到的是「目标指纹没变」。因此 `HostKeyUnknownError` 带上了跳序与该跳的名字，弹框会明说「这个指纹属于 bastion-b，是通往 db-1 途中的第 2 跳，不是 db-1 本身」；直连主机（跳序 0）的文案保持原样。相应地，一次「接受」只作用于用户当时看到的那一对 (host, fingerprint)——不是「接受下一个未知的 key」。这个区别不是风格问题：接受的 key 会**立刻写进 known_hosts**，所以一个笼统的接受会替用户从没见过的机器记下密钥，而被替换的那一跳下次连接时根本不会再问。
+>
+> **成环与深度在发起任何连接之前静态检出**（`a → b → a` 报错说明环路，上限 10 跳），每一跳的凭据也在第一次 dial 之前全部解析完——避免登录了三台跳板之后才发现目标没有凭据。中途某跳失败时，已经建好的前几跳会全部关闭，不会在跳板上留下挂着的会话。
+>
+> **跳板连接不共享。** 多个目标经同一台跳板时，每条链各建各的连接（设计 §6 风险 2：先不共享，链路语义比端口转发复杂，过早共享会让「哪条链还活着」难以推理）。
+>
+> 链路配置就是第 25 项加的 `SSHHost.ProxyJump` 字段，随整块 `ssh_hosts_encrypted` sealed JSON 同步，第 26 项的往返测试已经覆盖，**本项没有新增任何同步机制**。
+
+- [x] 单跳
+- [x] 多跳链路（`ProxyJump a,b,c` 从左到右依次穿过；成环与超深度在 dial 之前拒绝）
+- [x] 链路配置存进 host 记录随 vault 同步（沿用第 25 项字段，无新增同步机制）
+- [x] 终端与隧道两条路共用同一套链路构建逻辑
+- [x] 每一跳独立校验 host key，TOFU 弹框指名跳序与主机名（保存的主机现在也能完成 TOFU：`NewSshSessionByID` 收下用户接受的那一对 (host, fingerprint)）
 
 ### 28. SFTP 浏览与传输
 

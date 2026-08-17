@@ -56,6 +56,16 @@ type Config struct {
 	Cols, Rows       uint16
 	Timeout          time.Duration // dial timeout; 0 → 15s
 	Keepalive        time.Duration // keepalive interval; 0 → 30s
+
+	// Via, when non-nil, is the connection this dial rides on: the TCP
+	// connection to Host:Port is opened *from that host* (via its
+	// DialRemote, a direct-tcpip channel) rather than from this machine,
+	// and the SSH handshake happens on top of it. This is what makes jump
+	// hosts possible — a chain is just this, folded: hop 1 dialled
+	// directly, hop 2 via hop 1, the target via the last hop. Nil means
+	// dial directly, which is what every caller other than the chain
+	// builder does, and must keep doing.
+	Via *Conn
 }
 
 // Conn is an authenticated SSH connection with no remote shell attached.
@@ -115,9 +125,27 @@ func DialConn(ctx context.Context, cfg Config) (*Conn, error) {
 		Timeout:         timeout,
 	}
 	addr := net.JoinHostPort(cfg.Host, port)
-	client, err := ssh.Dial("tcp", addr, clientCfg)
-	if err != nil {
-		return nil, fmt.Errorf("sshclient: dial %s: %w", addr, err)
+	var client *ssh.Client
+	if cfg.Via == nil {
+		client, err = ssh.Dial("tcp", addr, clientCfg)
+		if err != nil {
+			return nil, fmt.Errorf("sshclient: dial %s: %w", addr, err)
+		}
+	} else {
+		raw, derr := cfg.Via.DialRemote("tcp", addr)
+		if derr != nil {
+			return nil, fmt.Errorf("sshclient: reach %s through jump host: %w", addr, derr)
+		}
+		cc, chans, reqs, herr := ssh.NewClientConn(raw, addr, clientCfg)
+		if herr != nil {
+			// DialRemote already opened a channel on the jump host; if the
+			// handshake on top of it fails we still have to close raw
+			// ourselves, or that channel is left dangling on the jump host
+			// with nothing left downstream to ever close it.
+			_ = raw.Close()
+			return nil, fmt.Errorf("sshclient: handshake with %s through jump host: %w", addr, herr)
+		}
+		client = ssh.NewClient(cc, chans, reqs)
 	}
 	c := &Conn{client: client, closeCh: make(chan struct{})}
 	go c.keepalive(cfg.Keepalive)

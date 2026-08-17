@@ -383,7 +383,28 @@ git commit -m "feat(prefssync): sync the L1 preference layer"
 - Modify: `desktop/frontend/src/lib/api.ts`（两个包装）
 - Modify: `desktop/frontend/src/components/SettingsShortcuts.vue`
 - Modify: `desktop/frontend/src/composables/useTerminalShortcuts.ts` 的调用方（`App.vue` 传 bindings 的地方）
-- Test: `desktop/frontend/src/components/SettingsShortcuts.test.ts`
+- Modify: `desktop/config.go`（`migrateShortcutBindings` 补上清空旧槽位，见下方 Step 0）
+- Test: `desktop/frontend/src/components/SettingsShortcuts.test.ts`、`desktop/config_test.go`
+
+- [ ] **Step 0: 清空旧槽位——必须和前端切换在同一个 commit 里**
+
+Task 1 的迁移**刻意只镜像不清空**：在前端仍然读写 `Plugins.Shortcuts.Bindings` 的期间清空它，会让那个版本的用户看到所有自定义快捷键被重置，而且期间的编辑会在下次加载时被静默丢弃（`SettingsShortcuts.vue` 经 `App.SetPluginConfig` 写旧槽位，那条路径绕过迁移函数）。
+
+本任务把读取方切到新字段，所以清空现在安全了，**且必须同时发生**——先清空后切换会重现同一个窗口。改 `migrateShortcutBindings`：
+
+```go
+	// The frontend now reads ShortcutBindings, so the legacy slot can go.
+	// This clear lands in the same commit as the reader swap on purpose:
+	// clearing earlier would blank shortcuts for anyone on a build between
+	// the two, and clearing later would leave two writable sources that
+	// silently drift.
+	if len(c.Plugins.Shortcuts.Bindings) > 0 {
+		c.Plugins.Shortcuts.Bindings = nil
+		changed = true
+	}
+```
+
+对应更新 `desktop/config_test.go`：把「保留旧槽位」的期望改回「清空旧槽位」，并保留返回值断言。
 
 **Interfaces:**
 - Consumes: Task 1 的 `GetShortcutBindings` / `SetShortcutBindings`

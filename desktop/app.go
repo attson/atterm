@@ -118,6 +118,22 @@ const errKeyMissing = "ssh_key_missing"
 type HostKeyUnknownError struct {
 	Fingerprint string
 	Host        string
+
+	// HopIndex and HopName say *which machine* this fingerprint belongs to
+	// when the connection runs through a jump-host chain (roadmap item 27).
+	//
+	// Without them the dialog shows an unfamiliar fingerprint for a
+	// connection the user started by naming one host, and there is no way to
+	// tell the destination from the second bastion on the way to it. Someone
+	// accepting a key without knowing whose it is has turned TOFU into a
+	// formality, which is exactly what a substituted bastion relies on.
+	//
+	// HopIndex is 1-based along the chain in dial order, with the target
+	// last; 0 means the connection is direct and there is no chain to
+	// disambiguate, so the dialog reads as it always has. HopName is the
+	// hop's alias (or hostname when it has no alias).
+	HopIndex int
+	HopName  string
 }
 
 func (e *HostKeyUnknownError) Error() string { return errCodeHostKeyUnknown }

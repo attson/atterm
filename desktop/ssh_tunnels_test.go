@@ -51,6 +51,18 @@ type forwardTestServer struct {
 	// the tunnel, so it is where "the name was not resolved locally" can
 	// actually be observed rather than assumed.
 	directDests []string
+	// directTargets records the same channels as host:port. A jump-chain test
+	// needs the port to tell one hop from the next: every hop in these tests
+	// listens on 127.0.0.1, so DestAddr alone cannot say *which* server this
+	// one was asked to reach.
+	directTargets []string
+
+	// authAttempts records every username/password pair presented to this
+	// server, accepted or not. It is what makes "the bastion was dialled with
+	// its own credential" an assertion rather than an inference: a chain that
+	// reused the target's credential would still connect if both happened to
+	// share one, and would show up here.
+	authAttempts []string
 }
 
 // directDestHosts returns the host part of every direct-tcpip destination this
@@ -59,6 +71,21 @@ func (s *forwardTestServer) directDestHosts() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.directDests...)
+}
+
+// directDestAddrs returns every direct-tcpip destination as host:port, in
+// order — the chain topology as this server saw it.
+func (s *forwardTestServer) directDestAddrs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.directTargets...)
+}
+
+// authCredentials returns every "user:password" this server was offered.
+func (s *forwardTestServer) authCredentials() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.authAttempts...)
 }
 
 // setRefuseRemoteForward makes every subsequent "tcpip-forward" global
@@ -118,6 +145,15 @@ func (r *remoteForwardState) closeAll() {
 
 func startForwardingSSHTestServer(t *testing.T) *forwardTestServer {
 	t.Helper()
+	return startForwardingSSHTestServerAs(t, "u", "pw")
+}
+
+// startForwardingSSHTestServerAs is startForwardingSSHTestServer with a
+// caller-chosen credential. Jump-chain tests give every hop a *different* one,
+// so "each hop authenticated with its own saved credential" can be asserted
+// instead of assumed.
+func startForwardingSSHTestServerAs(t *testing.T, user, password string) *forwardTestServer {
+	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -126,15 +162,6 @@ func startForwardingSSHTestServer(t *testing.T) *forwardTestServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &ssh.ServerConfig{
-		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			if c.User() == "u" && string(pass) == "pw" {
-				return &ssh.Permissions{}, nil
-			}
-			return nil, io.EOF
-		},
-	}
-	cfg.AddHostKey(signer)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -143,6 +170,20 @@ func startForwardingSSHTestServer(t *testing.T) *forwardTestServer {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	s := &forwardTestServer{addr: ln.Addr().String(), hostPub: signer.PublicKey()}
+
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			s.mu.Lock()
+			s.authAttempts = append(s.authAttempts, c.User()+":"+string(pass))
+			s.mu.Unlock()
+			if c.User() == user && string(pass) == password {
+				return &ssh.Permissions{}, nil
+			}
+			return nil, io.EOF
+		},
+	}
+	cfg.AddHostKey(signer)
+
 	go func() {
 		for {
 			nc, err := ln.Accept()
@@ -202,10 +243,11 @@ func (s *forwardTestServer) serve(nc net.Conn, cfg *ssh.ServerConfig) {
 				_ = newCh.Reject(ssh.ConnectionFailed, "bad direct-tcpip payload")
 				continue
 			}
+			target := net.JoinHostPort(p.DestAddr, strconv.Itoa(int(p.DestPort)))
 			s.mu.Lock()
 			s.directDests = append(s.directDests, p.DestAddr)
+			s.directTargets = append(s.directTargets, target)
 			s.mu.Unlock()
-			target := net.JoinHostPort(p.DestAddr, strconv.Itoa(int(p.DestPort)))
 			tc, err := net.DialTimeout("tcp", target, 2*time.Second)
 			if err != nil {
 				// Exactly what a real sshd does when the target refuses:

@@ -504,7 +504,7 @@ async function confirmConfigImport() {
           v-if="activeTab === 'hosts'" class="new-btn ghost"
           data-test="ssh-config-import-open" @click="openConfigImport"
         >
-          <FileDown :size="14" /> 从 ~/.ssh/config 导入
+          <FileDown :size="14" /> Import from ~/.ssh/config
         </button>
         <button v-if="activeTab === 'hosts'" class="new-btn" data-test="ssh-new-host" @click="openNewHost">
           <Plus :size="14" /> New Host
@@ -517,7 +517,7 @@ async function confirmConfigImport() {
 
       <p v-if="errorMsg" class="ssh-error" data-test="ssh-hosts-error">{{ errorMsg }}</p>
       <p v-if="configImportResult !== null" class="ssh-success" data-test="ssh-config-import-result">
-        已导入 {{ configImportResult }} 个主机
+        Imported {{ configImportResult }} host(s)
       </p>
 
       <!-- HOSTS TAB -->
@@ -726,12 +726,12 @@ async function confirmConfigImport() {
       <transition name="drawer">
         <aside v-if="configImportDrawer" class="drawer wide" data-test="ssh-config-import-drawer">
           <div class="drawer-head">
-            <span>从 ~/.ssh/config 导入</span>
+            <span>Import from ~/.ssh/config</span>
             <button class="close-x" @click="closeConfigImportDrawer"><X :size="15" /></button>
           </div>
           <div class="drawer-body">
             <div v-if="configImportLoading" class="empty" data-test="ssh-config-import-loading">
-              <p class="empty-sub">正在读取 ~/.ssh/config…</p>
+              <p class="empty-sub">Reading ~/.ssh/config…</p>
             </div>
             <p v-else-if="configImportError" class="ssh-error inline" data-test="ssh-config-import-error">
               {{ configImportError }}
@@ -742,12 +742,12 @@ async function confirmConfigImport() {
                 class="empty" data-test="ssh-config-import-empty"
               >
                 <FileDown :size="36" class="empty-icon" />
-                <p class="empty-title">没有可导入的主机</p>
-                <p class="empty-sub">~/.ssh/config 中没有找到可用的 Host 条目。</p>
+                <p class="empty-title">No importable hosts</p>
+                <p class="empty-sub">No usable Host entries were found in ~/.ssh/config.</p>
               </div>
               <template v-else>
                 <p v-if="configPreview.entries.length" class="config-section-title">
-                  可导入的主机（{{ configPreview.entries.length }}）
+                  Importable hosts ({{ configPreview.entries.length }})
                 </p>
                 <ul v-if="configPreview.entries.length" class="config-entry-list">
                   <li
@@ -767,13 +767,13 @@ async function confirmConfigImport() {
                         v-if="e.proxy_jump || e.proxy_command" class="proxy-badge"
                         :data-test="`ssh-config-entry-proxy-${i}`"
                       >
-                        需要跳板机（ProxyJump），暂不可直接连接
+                        Needs a jump host (ProxyJump) — not directly connectable yet
                       </span>
                     </label>
                   </li>
                 </ul>
                 <template v-if="configPreview.skipped.length">
-                  <p class="config-section-title">已跳过（{{ configPreview.skipped.length }}）</p>
+                  <p class="config-section-title">Skipped ({{ configPreview.skipped.length }})</p>
                   <ul class="config-skipped" data-test="ssh-config-import-skipped">
                     <li v-for="(s, i) in configPreview.skipped" :key="`${s.alias}-${i}`" class="skip-row">
                       <span class="skip-alias">{{ s.alias }}</span>
@@ -795,7 +795,7 @@ async function confirmConfigImport() {
                 class="btn primary" data-test="ssh-config-import-confirm"
                 :disabled="!canImportConfigSelection || configImporting"
                 @click="confirmConfigImport"
-              >{{ configImporting ? "导入中…" : `导入选中的主机（${configSelected.size}）` }}</button>
+              >{{ configImporting ? "Importing…" : `Import selected hosts (${configSelected.size})` }}</button>
             </div>
           </div>
         </aside>

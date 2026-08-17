@@ -111,7 +111,7 @@ func TestPreviewSSHConfigImportMissingFileIsReadableError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error for a missing ~/.ssh/config, got preview %+v", preview)
 	}
-	if !strings.Contains(err.Error(), "未找到") {
+	if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error must read as 'not found', got %v", err)
 	}
 }
@@ -142,7 +142,7 @@ func TestPreviewSSHConfigImportUnreadableFileIsReadableError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error for an unreadable ~/.ssh/config, got preview %+v", preview)
 	}
-	if !strings.Contains(err.Error(), "无法读取") {
+	if !strings.Contains(err.Error(), "could not read") {
 		t.Fatalf("error must read as 'cannot read', got %v", err)
 	}
 }

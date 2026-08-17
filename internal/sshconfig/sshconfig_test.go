@@ -223,7 +223,7 @@ func TestIncludeCycleReasonIsCycleSpecific(t *testing.T) {
 	if len(skipped) != 1 {
 		t.Fatalf("want exactly 1 skipped (caught on 2nd visit), got %d: %+v", len(skipped), skipped)
 	}
-	if !strings.Contains(skipped[0].Reason, "循环") {
+	if !strings.Contains(skipped[0].Reason, "cycle") {
 		t.Fatalf("want a cycle-specific reason, got %q", skipped[0].Reason)
 	}
 }

@@ -29,7 +29,7 @@ type SSHConfigImportPreview struct {
 // list: this parser only understands a handful of ssh_config keywords, and
 // silently dropping that context would make the import look complete when it
 // is not.
-const sshConfigImportNote = "仅导入 atterm 用得到的字段（主机名、端口、用户名、身份文件路径、跳板配置）；SSH 配置文件中的其它设置不会被识别或带入。"
+const sshConfigImportNote = "Only imports fields atterm uses (hostname, port, username, identity file path, jump host settings); other settings in the SSH config file are not recognized or imported."
 
 // fsOpener resolves sshconfig.Include paths against the real filesystem.
 //
@@ -67,7 +67,7 @@ func (fsOpener) Glob(pattern string) ([]string, error) {
 func (a *App) PreviewSSHConfigImport() (SSHConfigImportPreview, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return SSHConfigImportPreview{}, fmt.Errorf("找不到用户主目录：%w", err)
+		return SSHConfigImportPreview{}, fmt.Errorf("could not find home directory: %w", err)
 	}
 	sshDir := filepath.Join(home, ".ssh")
 	cfgPath := filepath.Join(sshDir, "config")
@@ -75,9 +75,9 @@ func (a *App) PreviewSSHConfigImport() (SSHConfigImportPreview, error) {
 	f, err := os.Open(cfgPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return SSHConfigImportPreview{}, fmt.Errorf("未找到 SSH 配置文件：%s", cfgPath)
+			return SSHConfigImportPreview{}, fmt.Errorf("SSH config file not found: %s", cfgPath)
 		}
-		return SSHConfigImportPreview{}, fmt.Errorf("无法读取 SSH 配置文件 %s：%w", cfgPath, err)
+		return SSHConfigImportPreview{}, fmt.Errorf("could not read SSH config file %s: %w", cfgPath, err)
 	}
 	defer f.Close()
 
@@ -86,7 +86,7 @@ func (a *App) PreviewSSHConfigImport() (SSHConfigImportPreview, error) {
 	// built with filepath.Join (native separators, needed for os.Open above).
 	entries, skipped, err := sshconfig.Parse(f, filepath.ToSlash(sshDir), fsOpener{})
 	if err != nil {
-		return SSHConfigImportPreview{}, fmt.Errorf("解析 SSH 配置文件 %s 失败：%w", cfgPath, err)
+		return SSHConfigImportPreview{}, fmt.Errorf("failed to parse SSH config file %s: %w", cfgPath, err)
 	}
 
 	preview := SSHConfigImportPreview{

@@ -128,7 +128,7 @@ func Parse(r io.Reader, base string, opener Opener) ([]Entry, []Skipped, error) 
 			// reported, not silently dropped.
 			skipped = append(skipped, Skipped{
 				Alias:  b.rawMatch,
-				Reason: "Match 块依赖运行时条件，未导入",
+				Reason: "Match block depends on runtime conditions, not imported",
 			})
 			continue
 		}
@@ -142,7 +142,7 @@ func Parse(r io.Reader, base string, opener Opener) ([]Entry, []Skipped, error) 
 			// working as intended.
 			skipped = append(skipped, Skipped{
 				Alias:  patternsText(b.patterns),
-				Reason: "Host 未包含任何可匹配的模式（为空或全部被取反），未导入",
+				Reason: "Host line has no usable pattern (empty, or all negated), not imported",
 			})
 			continue
 		}
@@ -346,7 +346,7 @@ func hasPositivePattern(patterns []pattern) bool {
 // itself has no host to name.
 func patternsText(patterns []pattern) string {
 	if len(patterns) == 0 {
-		return "(空 Host 行)"
+		return "(empty Host line)"
 	}
 	parts := make([]string, len(patterns))
 	for i, p := range patterns {
@@ -404,7 +404,7 @@ func flatten(r io.Reader, base string, opener Opener, depth int, visited map[str
 		if depth >= maxIncludeDepth {
 			*skipped = append(*skipped, Skipped{
 				Alias:  rest,
-				Reason: fmt.Sprintf("Include 嵌套层数超过上限（%d 层），已跳过", maxIncludeDepth),
+				Reason: fmt.Sprintf("Include nesting exceeds the limit (%d levels), skipped", maxIncludeDepth),
 			})
 			continue
 		}
@@ -414,7 +414,7 @@ func flatten(r io.Reader, base string, opener Opener, depth int, visited map[str
 			if err != nil {
 				*skipped = append(*skipped, Skipped{
 					Alias:  pat,
-					Reason: fmt.Sprintf("无法展开 Include 路径 %s：%v", pat, err),
+					Reason: fmt.Sprintf("could not expand Include path %s: %v", pat, err),
 				})
 				continue
 			}
@@ -422,7 +422,7 @@ func flatten(r io.Reader, base string, opener Opener, depth int, visited map[str
 				if visited[p] {
 					*skipped = append(*skipped, Skipped{
 						Alias:  p,
-						Reason: "检测到 Include 循环引用，已跳过",
+						Reason: "Include cycle detected, skipped",
 					})
 					continue
 				}
@@ -430,7 +430,7 @@ func flatten(r io.Reader, base string, opener Opener, depth int, visited map[str
 				if err != nil {
 					*skipped = append(*skipped, Skipped{
 						Alias:  p,
-						Reason: fmt.Sprintf("无法读取 Include 文件 %s：%v", p, err),
+						Reason: fmt.Sprintf("could not read Include file %s: %v", p, err),
 					})
 					continue
 				}
@@ -471,7 +471,7 @@ func resolveIncludePaths(pat, base string, opener Opener) ([]string, error) {
 	}
 	lister, ok := opener.(Lister)
 	if !ok {
-		return nil, fmt.Errorf("opener 不支持目录枚举，无法展开通配符")
+		return nil, fmt.Errorf("opener does not support directory listing, cannot expand wildcard")
 	}
 	matches, err := lister.Glob(resolved)
 	if err != nil {

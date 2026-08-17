@@ -671,8 +671,8 @@ describe("SshHostsPanel ssh_config 导入", () => {
       entries: [
         { id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" },
       ],
-      skipped: [{ alias: "staging-*", reason: "Match 块不支持,已跳过" }],
-      note: "仅导入 atterm 使用的字段",
+      skipped: [{ alias: "staging-*", reason: "Match block not supported, skipped" }],
+      note: "Only fields atterm uses are imported",
     });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
@@ -681,7 +681,7 @@ describe("SshHostsPanel ssh_config 导入", () => {
     const skipped = wrapper.find('[data-test="ssh-config-import-skipped"]');
     expect(skipped.exists()).toBe(true);
     expect(skipped.text()).toContain("staging-*");
-    expect(skipped.text()).toContain("Match 块不支持,已跳过");
+    expect(skipped.text()).toContain("Match block not supported, skipped");
   });
 
   it("默认不勾选任何一行,直接点导入不会调用 importSSHHosts", async () => {
@@ -690,7 +690,7 @@ describe("SshHostsPanel ssh_config 导入", () => {
         { id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" },
       ],
       skipped: [],
-      note: "仅导入 atterm 使用的字段",
+      note: "Only fields atterm uses are imported",
     });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
@@ -711,7 +711,7 @@ describe("SshHostsPanel ssh_config 导入", () => {
         { id: "", alias: "web2", host: "10.0.0.2", user: "root", auth_kind: "password" },
       ],
       skipped: [],
-      note: "仅导入 atterm 使用的字段",
+      note: "Only fields atterm uses are imported",
     });
     importSSHHosts.mockResolvedValueOnce(1);
     listSSHHosts.mockResolvedValue([]);
@@ -738,14 +738,14 @@ describe("SshHostsPanel ssh_config 导入", () => {
         },
       ],
       skipped: [],
-      note: "仅导入 atterm 使用的字段",
+      note: "Only fields atterm uses are imported",
     });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
     await openConfigImportDrawer(wrapper);
     const badge = wrapper.find('[data-test="ssh-config-entry-proxy-0"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toMatch(/跳板|ProxyJump/);
+    expect(badge.text()).toMatch(/jump host|ProxyJump/);
   });
 
   it("预览请求失败时展示错误信息,而不是空列表", async () => {
@@ -762,7 +762,7 @@ describe("SshHostsPanel ssh_config 导入", () => {
   });
 
   it("entries 和 skipped 都为空时展示空态而不是报错", async () => {
-    previewSSHConfigImport.mockResolvedValueOnce({ entries: [], skipped: [], note: "仅导入 atterm 使用的字段" });
+    previewSSHConfigImport.mockResolvedValueOnce({ entries: [], skipped: [], note: "Only fields atterm uses are imported" });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
     await openConfigImportDrawer(wrapper);
@@ -773,8 +773,8 @@ describe("SshHostsPanel ssh_config 导入", () => {
   it("entries 为空但有 skipped 时展示跳过列表,不是空态", async () => {
     previewSSHConfigImport.mockResolvedValueOnce({
       entries: [],
-      skipped: [{ alias: "weird", reason: "Include 路径不可读" }],
-      note: "仅导入 atterm 使用的字段",
+      skipped: [{ alias: "weird", reason: "Include path unreadable" }],
+      note: "Only fields atterm uses are imported",
     });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
@@ -782,18 +782,18 @@ describe("SshHostsPanel ssh_config 导入", () => {
     expect(wrapper.find('[data-test="ssh-config-import-empty"]').exists()).toBe(false);
     const skipped = wrapper.find('[data-test="ssh-config-import-skipped"]');
     expect(skipped.exists()).toBe(true);
-    expect(skipped.text()).toContain("Include 路径不可读");
+    expect(skipped.text()).toContain("Include path unreadable");
   });
 
   it("抽屉底部展示后端返回的 note", async () => {
     previewSSHConfigImport.mockResolvedValueOnce({
       entries: [{ id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" }],
       skipped: [],
-      note: "仅 atterm 会用到的字段被导入,其余字段(如 ControlMaster)会被忽略",
+      note: "Only fields atterm uses are imported; other settings (e.g. ControlMaster) are ignored",
     });
     const wrapper = mount(SshHostsPanel);
     await flushPromises();
     await openConfigImportDrawer(wrapper);
-    expect(wrapper.text()).toContain("仅 atterm 会用到的字段被导入");
+    expect(wrapper.text()).toContain("Only fields atterm uses are imported");
   });
 });

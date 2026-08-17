@@ -633,6 +633,16 @@ func TestDialErrorsMapToThreeDistinctReplyCodes(t *testing.T) {
 		want: repGeneralFailure,
 		why:  "this is a Timeout() error, so it must be classified before the timeout branch or it becomes X'04'",
 	}, {
+		name: "wrapped context deadline",
+		err:  fmt.Errorf("dialing: %w", context.DeadlineExceeded),
+		want: repGeneralFailure,
+		why:  "the check must be errors.Is, not ==; a dialer that adds context to the error still made this decision on our side",
+	}, {
+		name: "sentinel wrapping an opaque error",
+		err:  fmt.Errorf("%w: boom", ErrDestinationRefused),
+		want: repConnectionRefused,
+		why:  "nothing but the sentinel can produce X'05' here, so this pins the sentinel rather than the underlying text",
+	}, {
 		name: "dial timed out",
 		err:  timeoutErr{},
 		want: repHostUnreachable,
@@ -660,62 +670,7 @@ func TestDialErrorsMapToThreeDistinctReplyCodes(t *testing.T) {
 	}
 }
 
-// TestDestinationRefusedGetsConnectionRefused is the other half of the
-// mapping, and without it the sentinel is decoration: a dialer that *can* tell
-// the destination said no must be able to say so, and the client must get
-// X'05'. Withholding it would be its own lie — "general server failure" for
-// the most ordinary outcome there is, nothing listening on that port.
-//
-// The wrapped error is deliberately generic ("boom"), so nothing but the
-// sentinel can be what produced the code.
-func TestDestinationRefusedGetsConnectionRefused(t *testing.T) {
-	s := startServer(t, func(network, addr string) (net.Conn, error) {
-		return nil, fmt.Errorf("%w: boom", ErrDestinationRefused)
-	})
-	c := dialServer(t, s)
-	negotiateNoAuth(t, c)
 
-	mustWrite(t, c, connectRequest(atypIPv4, []byte{10, 1, 2, 3}, 5432))
-	rep := readReply(t, c)
-	rep.assertWellFormed(t)
-	if rep.rep != repConnectionRefused {
-		t.Fatalf("reply = %#x, want %#x (connection refused)", rep.rep, repConnectionRefused)
-	}
-	expectServerClosed(t, c, 3*time.Second)
-}
-
-// TestCancelledDialIsNotBlamedOnTheDestination pins the ordering the mapping
-// depends on. context.DeadlineExceeded reports Timeout() == true, so a
-// net.Error timeout check placed first would answer X'04' host unreachable —
-// blaming the destination for a deadline this side chose. Both context
-// sentinels must land on X'01'.
-func TestCancelledDialIsNotBlamedOnTheDestination(t *testing.T) {
-	for name, dialErr := range map[string]error{
-		"deadline exceeded": context.DeadlineExceeded,
-		"canceled":          context.Canceled,
-		"wrapped deadline":  fmt.Errorf("dialing: %w", context.DeadlineExceeded),
-	} {
-		t.Run(name, func(t *testing.T) {
-			s := startServer(t, func(network, addr string) (net.Conn, error) {
-				return nil, dialErr
-			})
-			c := dialServer(t, s)
-			negotiateNoAuth(t, c)
-
-			mustWrite(t, c, connectRequest(atypIPv4, []byte{10, 1, 2, 3}, 5432))
-			rep := readReply(t, c)
-			rep.assertWellFormed(t)
-			if rep.rep == repHostUnreachable {
-				t.Fatal("a cancelled dial was reported as X'04' host unreachable: " +
-					"the timeout check ran before the context check, so a decision made " +
-					"on this side is being blamed on the destination")
-			}
-			if rep.rep != repGeneralFailure {
-				t.Fatalf("reply = %#x, want %#x (general SOCKS server failure)", rep.rep, repGeneralFailure)
-			}
-		})
-	}
-}
 
 // TestDialTimeoutReportsAFailureCode pins that a dialer that times out is a
 // failure reply too, not a connection parked forever waiting on it.

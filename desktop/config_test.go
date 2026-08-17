@@ -250,39 +250,50 @@ func TestTerminalCursorBlinkOrDefault_ExplicitValues(t *testing.T) {
 }
 
 func TestMigrateShortcutBindings(t *testing.T) {
-	t.Run("moves bindings out of the plugin blob and clears the old slot", func(t *testing.T) {
+	t.Run("mirrors bindings into the new field without clearing the legacy slot", func(t *testing.T) {
 		c := appConfig{}
 		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
-		if !migrateShortcutBindings(&c) {
+		changed := migrateShortcutBindings(&c)
+		if !changed {
 			t.Fatal("expected migration to report a change")
 		}
 		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
-			t.Errorf("binding not moved: %v", c.ShortcutBindings)
+			t.Errorf("binding not mirrored: %v", c.ShortcutBindings)
 		}
-		if len(c.Plugins.Shortcuts.Bindings) != 0 {
-			t.Errorf("old slot not cleared: %v", c.Plugins.Shortcuts.Bindings)
+		// The frontend still reads/writes the legacy slot until Task 3's swap;
+		// clearing it here would blank every custom shortcut in the interim.
+		if c.Plugins.Shortcuts.Bindings["tab.new"] != "Mod+KeyP" {
+			t.Errorf("legacy slot must stay intact while the frontend still uses it: %v", c.Plugins.Shortcuts.Bindings)
 		}
 	})
 
-	t.Run("is idempotent — a migrated config survives a second run", func(t *testing.T) {
+	t.Run("is idempotent — a mirrored config survives a second run", func(t *testing.T) {
 		c := appConfig{ShortcutBindings: map[string]string{"tab.new": "Mod+KeyP"}}
-		if migrateShortcutBindings(&c) {
-			t.Error("expected no change on an already-migrated config")
+		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
+		changed := migrateShortcutBindings(&c)
+		if changed {
+			t.Error("expected no change when both slots already agree")
 		}
 		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
-			t.Error("idempotent run must not clear the migrated value")
+			t.Error("idempotent run must not alter the mirrored value")
+		}
+		if c.Plugins.Shortcuts.Bindings["tab.new"] != "Mod+KeyP" {
+			t.Error("idempotent run must not alter the legacy slot")
 		}
 	})
 
-	t.Run("new field wins when both are populated", func(t *testing.T) {
+	t.Run("legacy slot wins while it is still live", func(t *testing.T) {
 		c := appConfig{ShortcutBindings: map[string]string{"tab.new": "Mod+KeyN"}}
 		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
-		migrateShortcutBindings(&c)
-		if c.ShortcutBindings["tab.new"] != "Mod+KeyN" {
-			t.Errorf("new field must win, got %v", c.ShortcutBindings)
+		changed := migrateShortcutBindings(&c)
+		if !changed {
+			t.Fatal("expected migration to report a change when the slots disagree")
 		}
-		if len(c.Plugins.Shortcuts.Bindings) != 0 {
-			t.Error("old slot must still be cleared")
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
+			t.Errorf("legacy slot must win (it is the only one the UI writes today), got %v", c.ShortcutBindings)
+		}
+		if c.Plugins.Shortcuts.Bindings["tab.new"] != "Mod+KeyP" {
+			t.Error("legacy slot must remain untouched")
 		}
 	})
 

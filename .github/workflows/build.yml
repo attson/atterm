@@ -478,3 +478,57 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+
+      - name: sync Homebrew cask
+        # The tap repo (attson/homebrew-tap) and its push token are ours to
+        # create by hand, not something this workflow can bootstrap (design
+        # doc §4). Until that's done, HOMEBREW_TAP_TOKEN is absent and this
+        # step must skip *loudly*: markPrefDirtyAndPush once swallowed push
+        # errors and a broken sync path went unnoticed for months. A step
+        # that skips silently is the same failure shape. Do not add
+        # continue-on-error here or turn this into a silent no-op — the log
+        # line below is the whole point of the step existing before the tap
+        # does.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "SKIP: HOMEBREW_TAP_TOKEN is not set, so the Homebrew tap was not updated."
+            echo "The tap repo (attson/homebrew-tap) and its push token are not configured yet."
+            echo "See docs/superpowers/specs/2026-08-17-macos-distribution-design.md section 4."
+            exit 0
+          fi
+
+          # SHA256SUMS was already written into artifacts/ by the "sign
+          # checksums" step above, in this same job — reuse that local copy
+          # instead of downloading it back from the release we just
+          # published, which would race the just-created asset's upload
+          # propagation.
+          cask="$(packaging/homebrew/render-cask.sh "$VERSION" artifacts/SHA256SUMS)"
+
+          tap_dir="$(mktemp -d)"
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/attson/homebrew-tap.git" \
+            "$tap_dir"
+
+          mkdir -p "$tap_dir/Casks"
+          printf '%s\n' "$cask" > "$tap_dir/Casks/atterm.rb"
+
+          # `git diff --quiet` would silently miss the very first sync,
+          # before Casks/atterm.rb exists in the tap: an untracked file
+          # shows no diff. `status --porcelain` catches untracked as well
+          # as modified, so this check is meaningful in both cases.
+          if [ -z "$(git -C "$tap_dir" status --porcelain -- Casks/atterm.rb)" ]; then
+            echo "Homebrew cask already up to date for ${VERSION}; nothing to push."
+            exit 0
+          fi
+
+          git -C "$tap_dir" config user.name "github-actions[bot]"
+          git -C "$tap_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tap_dir" add Casks/atterm.rb
+          git -C "$tap_dir" commit -m "atterm ${VERSION#v}"
+          git -C "$tap_dir" push

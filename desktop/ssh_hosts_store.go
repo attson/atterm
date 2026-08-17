@@ -119,6 +119,28 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 
 // UpdateSSHHost replaces the non-secret fields of the host with matching ID.
 // If cred is non-nil the credential is replaced too; nil leaves it untouched.
+//
+// The UI *owns* Alias, Host, Port, User, Tags, Note, AuthKind and KeyID: the
+// host drawer has a control for each (Note is carried through the form's
+// round trip), so whatever the caller passes wins — including the empty
+// string, because clearing a label or a tag list is a legitimate edit.
+//
+// The UI does *not* own IdentityFile, ProxyJump or ProxyCommand. Those three
+// are derived from ~/.ssh/config by import, have no editor in the drawer, and
+// are only ever (re)written by ImportSSHHosts/mergeImportedHost — so they are
+// carried over from the stored record and UpdateSSHHost cannot change them.
+// This is the same reasoning mergeImportedHost applies in the other
+// direction: each side keeps the fields it is the source of truth for.
+//
+// ProxyJump/ProxyCommand make this load-bearing rather than tidy.
+// NewSshSessionByID refuses to dial a host carrying either of them, and
+// import deliberately writes no credential — so the *mandated* next step
+// after importing a proxied host is to open this very drawer and attach a
+// key or password. Letting that save blank the proxy fields would strip the
+// gate off the host at the one moment it is guaranteed to be exercised, and
+// markSSHHostsDirty below would then sync the ungated record everywhere.
+// Clearing a proxy field is a ~/.ssh/config edit followed by re-import, not
+// a side effect of typing a password.
 func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
 	if a.cfgStore == nil {
 		return fmt.Errorf("config store not ready")
@@ -139,6 +161,9 @@ func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {
 			return fmt.Errorf("store credential: %w", err)
 		}
 	}
+	h.IdentityFile = cfg.SSHHosts[idx].IdentityFile
+	h.ProxyJump = cfg.SSHHosts[idx].ProxyJump
+	h.ProxyCommand = cfg.SSHHosts[idx].ProxyCommand
 	cfg.SSHHosts[idx] = h
 	if err := a.cfgStore.Set(cfg); err != nil {
 		return err

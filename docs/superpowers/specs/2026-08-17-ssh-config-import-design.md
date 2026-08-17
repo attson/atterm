@@ -49,7 +49,7 @@ type Entry struct {
 
 type Skipped struct {
     Alias  string
-    Reason string   // 面向用户的中文原因
+    Reason string   // 面向用户的原因文案（英文，后端持有，前端原样展示）
 }
 
 func Parse(r io.Reader, opener Opener) ([]Entry, []Skipped, error)
@@ -105,7 +105,7 @@ ssh_config 的真实语义是**先出现的值胜出**，且 `Host *` 这类块�
 
 `Match` 的条件（`exec`、`host`、`user`、`final`）依赖运行时状态，`Match exec` 还要执行命令。静态解析给不出正确答案。
 
-处理：遇到 `Match` 块，其中的主机产出 `Skipped{Reason: "Match 块依赖运行时条件，未导入"}`，并在预览里显示。**不是静默忽略**——用户 config 里有 20 台机器却只导入 12 台，必须看得见另外 8 台去哪了。
+处理：遇到 `Match` 块，其中的主机产出 `Skipped{Reason: "Match block depends on runtime conditions, not imported"}`，并在预览里显示。**不是静默忽略**——用户 config 里有 20 台机器却只导入 12 台，必须看得见另外 8 台去哪了。
 
 ## 6. 写入语义
 

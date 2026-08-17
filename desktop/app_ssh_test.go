@@ -225,3 +225,30 @@ func TestProxyJumpGateFiresBeforeCredentialRead(t *testing.T) {
 		t.Fatalf("error must name the reason, got %v", err)
 	}
 }
+
+// TestProxyCommandHostErrorNamesProxyCommand covers the other arm of the
+// gate. A host that only sets ProxyCommand used to be told it "needs a jump
+// host (ProxyJump \"\")" — a config line it does not have, quoting an empty
+// value — sending the user to look for the wrong thing.
+func TestProxyCommandHostErrorNamesProxyCommand(t *testing.T) {
+	useIsolatedKeyring(t)
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+
+	cfg := a.cfgStore.Get()
+	cfg.SSHHosts = []SSHHost{{
+		ID: "p3", Alias: "via-corkscrew", Host: "10.0.0.6", User: "root",
+		AuthKind: "password", ProxyCommand: "corkscrew proxy 8080 %h %p",
+	}}
+	_ = a.cfgStore.Set(cfg)
+
+	_, err := a.NewSshSessionByID("p3")
+	if err == nil {
+		t.Fatal("must refuse to connect a ProxyCommand host directly")
+	}
+	if !strings.Contains(err.Error(), "ProxyCommand") {
+		t.Fatalf("error must name ProxyCommand, got %v", err)
+	}
+	if strings.Contains(err.Error(), "ProxyJump") {
+		t.Fatalf("error must not name a ProxyJump this host does not have, got %v", err)
+	}
+}

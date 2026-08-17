@@ -745,7 +745,7 @@ describe("SshHostsPanel ssh_config 导入", () => {
     await openConfigImportDrawer(wrapper);
     const badge = wrapper.find('[data-test="ssh-config-entry-proxy-0"]');
     expect(badge.exists()).toBe(true);
-    expect(badge.text()).toMatch(/jump host|ProxyJump/);
+    expect(badge.text()).toMatch(/jump host|ProxyJump/i);
   });
 
   it("预览请求失败时展示错误信息,而不是空列表", async () => {
@@ -795,5 +795,204 @@ describe("SshHostsPanel ssh_config 导入", () => {
     await flushPromises();
     await openConfigImportDrawer(wrapper);
     expect(wrapper.text()).toContain("Only fields atterm uses are imported");
+  });
+
+  // Every other mock in this file hard-codes `skipped: []`, which is exactly
+  // why a nil Go slice marshalling to JSON null went unnoticed: the drawer
+  // reads .skipped.length, so `null` throws a TypeError and takes the whole
+  // preview down. The Go side now make()s the slice; this pins the frontend
+  // guard so a regression on either side can't reopen it.
+  it("skipped 为 null 时不炸,照常渲染条目列表", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [{ id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" }],
+      skipped: null,
+      note: "Only fields atterm uses are imported",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    expect(wrapper.find('[data-test="ssh-config-import-error"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("web1");
+    expect(wrapper.find('[data-test="ssh-config-import-skipped"]').exists()).toBe(false);
+  });
+
+  it("entries 为 null 时展示空态而不是抛异常", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: null,
+      skipped: null,
+      note: "Only fields atterm uses are imported",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    expect(wrapper.find('[data-test="ssh-config-import-empty"]').exists()).toBe(true);
+  });
+
+  it("只有 proxy_command 的条目标记 ProxyCommand,不说 ProxyJump", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "", alias: "corky", host: "10.0.0.9", user: "root", auth_kind: "password",
+          proxy_command: "corkscrew proxy 8080 %h %p",
+        },
+      ],
+      skipped: [],
+      note: "n",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    const badge = wrapper.find('[data-test="ssh-config-entry-proxy-0"]');
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toContain("ProxyCommand");
+    expect(badge.text()).not.toContain("ProxyJump");
+  });
+
+  // The two-step import exists because import overwrites hosts that sync to
+  // every other device — so which rows overwrite and which create has to be
+  // visible before the user commits, not discoverable afterwards.
+  it("alias 与已存主机同名的条目标记为覆盖,其余不标", async () => {
+    listSSHHosts.mockResolvedValue([
+      { id: "1", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" },
+    ]);
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [
+        { id: "", alias: "web1", host: "10.0.0.9", user: "root", auth_kind: "password" },
+        { id: "", alias: "brand-new", host: "10.0.0.8", user: "root", auth_kind: "password" },
+      ],
+      skipped: [],
+      note: "n",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    expect(wrapper.find('[data-test="ssh-config-entry-overwrite-0"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="ssh-config-entry-overwrite-1"]').exists()).toBe(false);
+  });
+
+  // A confirm failure leaves the preview intact, so the entry list must stay
+  // on screen — the error belongs in the footer next to the button that
+  // failed, not in place of the list the user is still working with.
+  it("确认导入失败时错误显示在底部,条目列表不消失", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [{ id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" }],
+      skipped: [],
+      note: "n",
+    });
+    importSSHHosts.mockRejectedValueOnce(new Error("config store not ready"));
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    await wrapper.find('[data-test="ssh-config-entry-check-0"]').trigger("change");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-config-import-confirm"]').trigger("click");
+    await flushPromises();
+    const footErr = wrapper.find('[data-test="ssh-config-import-confirm-error"]');
+    expect(footErr.exists()).toBe(true);
+    expect(footErr.text()).toContain("config store not ready");
+    expect(wrapper.find('[data-test="ssh-config-import-error"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="ssh-config-entry-check-0"]').exists()).toBe(true);
+  });
+});
+
+describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
+  const PROXIED = {
+    id: "p1", alias: "inner", host: "10.0.0.9", user: "root", auth_kind: "password",
+    identity_file: "~/.ssh/id_ed25519",
+    proxy_jump: "bastion",
+  };
+
+  // The regression this pins: the drawer used to build its save payload from
+  // the form refs alone, so identity_file / proxy_jump / proxy_command were
+  // sent as absent and wiped. Import writes no credential by design, which
+  // makes "open this drawer and attach one" the *mandated* next step for an
+  // imported host — i.e. the fix must survive exactly the flow that used to
+  // strip the not-directly-connectable gate and sync the result everywhere.
+  it("编辑代理主机保存时,proxy_jump / identity_file 原样带回后端", async () => {
+    listSSHHosts.mockResolvedValue([{ ...PROXIED, proxy_command: "ssh -W %h:%p bastion" }]);
+    updateSSHHost.mockResolvedValue(undefined);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-host-card-p1"]').trigger("contextmenu");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="session-row-menu-item-edit"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-add-user"]').setValue("deploy");
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+    expect(updateSSHHost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "p1",
+        user: "deploy",
+        proxy_jump: "bastion",
+        proxy_command: "ssh -W %h:%p bastion",
+        identity_file: "~/.ssh/id_ed25519",
+      }),
+      null,
+    );
+  });
+
+  it("代理主机在列表里带标记,Connect 被禁用且不会发起连接", async () => {
+    listSSHHosts.mockResolvedValue([PROXIED]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    const marker = wrapper.find('[data-test="ssh-host-proxy-p1"]');
+    expect(marker.exists()).toBe(true);
+    expect(marker.text()).toContain("Jump host");
+    const btn = wrapper.find('[data-test="ssh-connect-p1"]');
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
+    // Double-click bypasses the disabled button, so the guard has to live in
+    // connect() too — a proxied host must never be dialled.
+    await wrapper.find('[data-test="ssh-host-card-p1"]').trigger("dblclick");
+    await flushPromises();
+    expect(newSshSessionByID).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-test="ssh-hosts-error"]').text()).toContain("ProxyJump");
+  });
+
+  it("只有 proxy_command 的主机,提示说 ProxyCommand 而不是 ProxyJump", async () => {
+    listSSHHosts.mockResolvedValue([
+      {
+        id: "p2", alias: "corky", host: "10.0.0.7", user: "root", auth_kind: "password",
+        proxy_command: "corkscrew proxy 8080 %h %p",
+      },
+    ]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    const marker = wrapper.find('[data-test="ssh-host-proxy-p2"]');
+    expect(marker.text()).toContain("ProxyCommand");
+    await wrapper.find('[data-test="ssh-host-card-p2"]').trigger("dblclick");
+    await flushPromises();
+    const err = wrapper.find('[data-test="ssh-hosts-error"]').text();
+    expect(err).toContain("ProxyCommand");
+    expect(err).not.toContain("ProxyJump");
+  });
+
+  // §5.2 records IdentityFile as a path precisely so the user knows which key
+  // to go import; a path nothing ever renders is a path that never lands.
+  it("编辑抽屉展示 identity_file 作为只读提示", async () => {
+    listSSHHosts.mockResolvedValue([PROXIED]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await wrapper.find('[data-test="ssh-host-card-p1"]').trigger("contextmenu");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="session-row-menu-item-edit"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    const hint = wrapper.find('[data-test="ssh-host-identity-file"]');
+    expect(hint.exists()).toBe(true);
+    expect(hint.text()).toContain("~/.ssh/id_ed25519");
+    expect(wrapper.find('[data-test="ssh-host-drawer-proxy"]').exists()).toBe(true);
+  });
+
+  it("普通主机不带代理标记,Connect 正常工作", async () => {
+    listSSHHosts.mockResolvedValue([
+      { id: "n1", alias: "plain", host: "10.0.0.1", user: "root", auth_kind: "password" },
+    ]);
+    newSshSessionByID.mockResolvedValueOnce({ session_id: "s9" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-host-proxy-n1"]').exists()).toBe(false);
+    await wrapper.find('[data-test="ssh-connect-n1"]').trigger("click");
+    await flushPromises();
+    expect(newSshSessionByID).toHaveBeenCalledWith("n1");
   });
 });

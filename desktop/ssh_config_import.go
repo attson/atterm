@@ -17,12 +17,24 @@ import (
 // deliberately skipped and why, and a user-facing note about the parser's
 // coverage limits (design doc §7.3 footnote).
 type SSHConfigImportPreview struct {
-	Entries []SSHHost `json:"entries"`
-	Skipped []struct {
-		Alias  string `json:"alias"`
-		Reason string `json:"reason"`
-	} `json:"skipped"`
-	Note string `json:"note"`
+	Entries []SSHHost                `json:"entries"`
+	Skipped []SSHConfigImportSkipped `json:"skipped"`
+	Note    string                   `json:"note"`
+}
+
+// SSHConfigImportSkipped is one host ~/.ssh/config named that the parser
+// deliberately did not import (a Match block, an unreadable or cyclic
+// Include, …) together with the user-facing reason.
+//
+// This is a named type, not an anonymous struct inlined into
+// SSHConfigImportPreview, because wails' TypeScript generator does not guard
+// anonymous structs on its slice-of-structs branch: it emits
+// "export class  {" — invalid TypeScript — into wailsjs/go/models.ts on the
+// next `wails build`/`wails dev`. The name also matches the hand-written TS
+// shim (frontend/src/lib/api/_bindings.ts), so the two sides stay symmetric.
+type SSHConfigImportSkipped struct {
+	Alias  string `json:"alias"`
+	Reason string `json:"reason"`
 }
 
 // sshConfigImportNote footnotes the preview so the UI can show it under the
@@ -89,18 +101,21 @@ func (a *App) PreviewSSHConfigImport() (SSHConfigImportPreview, error) {
 		return SSHConfigImportPreview{}, fmt.Errorf("failed to parse SSH config file %s: %w", cfgPath, err)
 	}
 
+	// Both slices are make()d, never left nil: a nil slice marshals to JSON
+	// null, and the drawer reads .entries.length / .skipped.length directly.
+	// Most configs have no Match block and no Include trouble, so Skipped is
+	// empty on the *ordinary* success path — exactly the path that must not
+	// hand the UI a null. Same reason ListSSHHosts converts nil → [].
 	preview := SSHConfigImportPreview{
 		Entries: make([]SSHHost, 0, len(entries)),
+		Skipped: make([]SSHConfigImportSkipped, 0, len(skipped)),
 		Note:    sshConfigImportNote,
 	}
 	for _, e := range entries {
 		preview.Entries = append(preview.Entries, hostFromEntry(e))
 	}
 	for _, s := range skipped {
-		preview.Skipped = append(preview.Skipped, struct {
-			Alias  string `json:"alias"`
-			Reason string `json:"reason"`
-		}{Alias: s.Alias, Reason: s.Reason})
+		preview.Skipped = append(preview.Skipped, SSHConfigImportSkipped{Alias: s.Alias, Reason: s.Reason})
 	}
 	return preview, nil
 }

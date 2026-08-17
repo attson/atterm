@@ -135,9 +135,45 @@ function hostSubtitle(h: SSHHost): string {
   return `${h.user}@${h.host}${port} · ${auth}`;
 }
 
+// ---- Proxied hosts ----
+// A host imported from ~/.ssh/config with ProxyJump or ProxyCommand is not
+// directly connectable: NewSshSessionByID refuses to dial it (a ProxyJump
+// host is usually only reachable through its bastion, and a ProxyCommand is
+// an arbitrary command atterm never runs). The list must say so up front
+// instead of letting the user click Connect and read it off an error.
+type ProxyFields = Pick<SSHHost, "proxy_jump" | "proxy_command">;
+
+function isProxied(h: ProxyFields): boolean {
+  return !!(h.proxy_jump || h.proxy_command);
+}
+// Short pill text for the host row / preview row.
+function proxyLabel(h: ProxyFields): string {
+  return h.proxy_jump ? "Jump host required" : "ProxyCommand";
+}
+// Full sentence for tooltips and the error line. Branches on which field is
+// actually set — naming ProxyJump at a ProxyCommand-only host sends the user
+// looking for a config line they do not have.
+function proxyReason(h: ProxyFields): string {
+  if (h.proxy_jump) {
+    return `Needs a jump host (ProxyJump ${h.proxy_jump}) — jump-host support is not implemented yet, so this host cannot be connected directly.`;
+  }
+  if (h.proxy_command) {
+    return `Configured with a ProxyCommand (${h.proxy_command}) — atterm never runs that command, so this host cannot be connected directly.`;
+  }
+  return "";
+}
+
 async function connect(id: string) {
   if (connectingId.value) return;
   errorMsg.value = "";
+  // Never dial a proxied host, whichever affordance got us here (button,
+  // double-click, context menu). The backend refuses too; stopping here just
+  // makes the reason arrive without a round trip.
+  const target = hosts.value.find((h) => h.id === id);
+  if (target && isProxied(target)) {
+    errorMsg.value = proxyReason(target);
+    return;
+  }
   connectingId.value = id;
   try {
     const resp = await newSshSessionByID(id);
@@ -227,6 +263,14 @@ async function copySshCommand(h: SSHHost) {
 // ---- Host drawer ----
 const hostDrawer = ref(false);
 const hostEditId = ref<string | null>(null);
+// The record the drawer was opened on, kept whole. The form refs below only
+// cover the fields the drawer edits; identity_file / proxy_jump /
+// proxy_command have no control and would be dropped from the save payload
+// if it were built from the refs alone — silently stripping the
+// not-directly-connectable gate off an imported host at the exact moment the
+// user has to open this drawer to give it a credential. Same shape as
+// duplicateHost's {...h}.
+const editingHost = ref<SSHHost | null>(null);
 const fAlias = ref("");
 const fHost = ref("");
 const fPort = ref("22");
@@ -239,6 +283,7 @@ const fKeyID = ref("");
 
 function openNewHost() {
   hostEditId.value = "";
+  editingHost.value = null;
   fAlias.value = "";
   fHost.value = "";
   fPort.value = "22";
@@ -252,6 +297,7 @@ function openNewHost() {
 }
 function openEditHost(h: SSHHost) {
   hostEditId.value = h.id;
+  editingHost.value = { ...h };
   fAlias.value = h.alias ?? "";
   fHost.value = h.host;
   fPort.value = h.port || "22";
@@ -266,6 +312,7 @@ function openEditHost(h: SSHHost) {
 function closeHostDrawer() {
   hostDrawer.value = false;
   hostEditId.value = null;
+  editingHost.value = null;
 }
 const canSaveHost = computed(() => {
   if (fHost.value.trim() === "" || fUser.value.trim() === "") return false;
@@ -288,7 +335,12 @@ async function saveHost() {
   const hasNewCred = fAuthKind.value === "password" && fPassword.value !== "";
   try {
     if (hostEditId.value) {
-      await updateSSHHost({ id: hostEditId.value, ...base }, hasNewCred ? cred : null);
+      // Spread the record we opened on first so fields the form does not own
+      // survive the round trip; base then overrides everything it does own.
+      await updateSSHHost(
+        { ...(editingHost.value ?? {}), id: hostEditId.value, ...base },
+        hasNewCred ? cred : null,
+      );
     } else {
       await addSSHHost({ id: "", ...base }, cred);
     }
@@ -424,11 +476,35 @@ async function removeKey(id: string) {
 // big "select all" the user has to partially undo afterwards.
 const configImportDrawer = ref(false);
 const configImportLoading = ref(false);
-const configImportError = ref("");
+// Two separate errors on purpose. A failed *preview* means there is nothing
+// to show, so the body shows the message instead of a list. A failed
+// *confirm* leaves the preview intact and belongs in the footer next to the
+// button that failed — reusing one ref made a confirm error blank out the
+// entry list the user was still working with.
+const configPreviewError = ref("");
+const configConfirmError = ref("");
 const configPreview = ref<SSHConfigImportPreview | null>(null);
 const configSelected = ref<Set<number>>(new Set());
 const configImporting = ref(false);
 const configImportResult = ref<number | null>(null);
+
+// The Go side make()s both slices so they marshal to [] rather than null, but
+// the drawer reads .length on every render — normalise here so one nil slice
+// crossing the boundary can never take the whole panel down with a TypeError.
+const previewEntries = computed<SSHHost[]>(() => configPreview.value?.entries ?? []);
+const previewSkipped = computed(() => configPreview.value?.skipped ?? []);
+
+// Aliases already saved locally. ImportSSHHosts matches incoming entries
+// against stored hosts by exact Alias, so this mirrors it exactly (empty
+// aliases never match — they always append). Computed in the frontend rather
+// than returned by the preview because the backend knows nothing the panel
+// doesn't: the saved host list is already loaded here, and "will this
+// overwrite?" is a fact about the *local* store at the moment the user is
+// looking at the list, not about ~/.ssh/config.
+const savedAliases = computed(() => new Set(hosts.value.map((h) => h.alias).filter(Boolean)));
+function willOverwrite(e: SSHHost): boolean {
+  return !!e.alias && savedAliases.value.has(e.alias);
+}
 
 function hostFromConfigEntry(e: SSHHost): SSHHost {
   return { ...e };
@@ -436,7 +512,8 @@ function hostFromConfigEntry(e: SSHHost): SSHHost {
 
 async function openConfigImport() {
   configImportDrawer.value = true;
-  configImportError.value = "";
+  configPreviewError.value = "";
+  configConfirmError.value = "";
   configImportResult.value = null;
   configPreview.value = null;
   configSelected.value = new Set();
@@ -444,7 +521,7 @@ async function openConfigImport() {
   try {
     configPreview.value = await previewSSHConfigImport();
   } catch (e) {
-    configImportError.value = e instanceof Error ? e.message : String(e);
+    configPreviewError.value = e instanceof Error ? e.message : String(e);
   } finally {
     configImportLoading.value = false;
   }
@@ -463,9 +540,9 @@ const canImportConfigSelection = computed(() => configSelected.value.size > 0);
 async function confirmConfigImport() {
   if (!configPreview.value || configSelected.value.size === 0) return;
   configImporting.value = true;
-  configImportError.value = "";
+  configConfirmError.value = "";
   try {
-    const chosen = configPreview.value.entries
+    const chosen = previewEntries.value
       .filter((_, i) => configSelected.value.has(i))
       .map(hostFromConfigEntry);
     const count = await importSSHHosts(chosen);
@@ -473,7 +550,7 @@ async function confirmConfigImport() {
     configImportDrawer.value = false;
     await reload();
   } catch (e) {
-    configImportError.value = e instanceof Error ? e.message : String(e);
+    configConfirmError.value = e instanceof Error ? e.message : String(e);
   } finally {
     configImporting.value = false;
   }
@@ -559,6 +636,12 @@ async function confirmConfigImport() {
                 <div class="card-main">
                   <div class="card-label">{{ hostLabel(h) }}</div>
                   <div class="card-sub">{{ hostSubtitle(h) }}</div>
+                  <div v-if="isProxied(h)" class="card-proxy">
+                    <span
+                      class="proxy-badge" :data-test="`ssh-host-proxy-${h.id}`"
+                      :title="proxyReason(h)"
+                    >{{ proxyLabel(h) }}</span>
+                  </div>
                   <div v-if="h.tags?.length" class="card-tags">
                     <span
                       v-for="t in h.tags" :key="t" class="card-tag"
@@ -567,7 +650,12 @@ async function confirmConfigImport() {
                   </div>
                 </div>
                 <div class="card-actions">
-                  <button class="act connect" :data-test="`ssh-connect-${h.id}`" :disabled="connectingId === h.id" title="Connect" @click.stop="connect(h.id)"><Zap :size="13" /></button>
+                  <button
+                    class="act connect" :data-test="`ssh-connect-${h.id}`"
+                    :disabled="connectingId === h.id || isProxied(h)"
+                    :title="isProxied(h) ? proxyReason(h) : 'Connect'"
+                    @click.stop="connect(h.id)"
+                  ><Zap :size="13" /></button>
                   <button class="act" title="Edit" @click.stop="openEditHost(h)"><Pencil :size="13" /></button>
                   <button class="act danger" :data-test="`ssh-delete-${h.id}`" title="Delete" @click.stop="removeHost(h.id)"><Trash2 :size="13" /></button>
                 </div>
@@ -650,6 +738,17 @@ async function confirmConfigImport() {
               <button :class="{ on: fAuthKind === 'password' }" data-test="ssh-auth-password" @click="fAuthKind = 'password'">Password</button>
               <button :class="{ on: fAuthKind === 'key' }" data-test="ssh-auth-key" @click="fAuthKind = 'key'">Key</button>
             </div>
+            <!-- Read-only: ssh_config's IdentityFile is recorded as a path,
+                 never read. Showing it is the whole point of recording it —
+                 it tells the user which key to go import. -->
+            <p v-if="editingHost?.identity_file" class="identity-hint" data-test="ssh-host-identity-file">
+              <span class="fl">From ~/.ssh/config</span>
+              <code>{{ editingHost.identity_file }}</code>
+              <span class="hint">Import this key under Keys, then select it below.</span>
+            </p>
+            <p v-if="editingHost && isProxied(editingHost)" class="identity-hint proxy" data-test="ssh-host-drawer-proxy">
+              {{ proxyReason(editingHost) }}
+            </p>
             <label v-if="fAuthKind === 'password'" class="field">
               <span class="fl">Password<template v-if="hostEditId"> <em>(leave blank to keep)</em></template></span>
               <input data-test="ssh-add-password" type="password" v-model="fPassword" autocomplete="off" />
@@ -733,12 +832,12 @@ async function confirmConfigImport() {
             <div v-if="configImportLoading" class="empty" data-test="ssh-config-import-loading">
               <p class="empty-sub">Reading ~/.ssh/config…</p>
             </div>
-            <p v-else-if="configImportError" class="ssh-error inline" data-test="ssh-config-import-error">
-              {{ configImportError }}
+            <p v-else-if="configPreviewError" class="ssh-error inline" data-test="ssh-config-import-error">
+              {{ configPreviewError }}
             </p>
             <template v-else-if="configPreview">
               <div
-                v-if="configPreview.entries.length === 0 && configPreview.skipped.length === 0"
+                v-if="previewEntries.length === 0 && previewSkipped.length === 0"
                 class="empty" data-test="ssh-config-import-empty"
               >
                 <FileDown :size="36" class="empty-icon" />
@@ -746,12 +845,12 @@ async function confirmConfigImport() {
                 <p class="empty-sub">No usable Host entries were found in ~/.ssh/config.</p>
               </div>
               <template v-else>
-                <p v-if="configPreview.entries.length" class="config-section-title">
-                  Importable hosts ({{ configPreview.entries.length }})
+                <p v-if="previewEntries.length" class="config-section-title">
+                  Importable hosts ({{ previewEntries.length }})
                 </p>
-                <ul v-if="configPreview.entries.length" class="config-entry-list">
+                <ul v-if="previewEntries.length" class="config-entry-list">
                   <li
-                    v-for="(e, i) in configPreview.entries" :key="`${e.alias}-${i}`"
+                    v-for="(e, i) in previewEntries" :key="`${e.alias}-${i}`"
                     class="config-entry"
                   >
                     <label class="config-entry-label">
@@ -763,19 +862,25 @@ async function confirmConfigImport() {
                         <span class="config-entry-alias">{{ e.alias || `${e.user}@${e.host}` }}</span>
                         <span class="config-entry-sub">{{ e.user }}@{{ e.host }}{{ e.port && e.port !== '22' ? `:${e.port}` : '' }}</span>
                       </span>
-                      <span
-                        v-if="e.proxy_jump || e.proxy_command" class="proxy-badge"
-                        :data-test="`ssh-config-entry-proxy-${i}`"
-                      >
-                        Needs a jump host (ProxyJump) — not directly connectable yet
+                      <span class="config-entry-badges">
+                        <span
+                          v-if="willOverwrite(e)" class="overwrite-badge"
+                          :data-test="`ssh-config-entry-overwrite-${i}`"
+                          title="A saved host already uses this label — importing updates it in place"
+                        >Updates existing</span>
+                        <span
+                          v-if="isProxied(e)" class="proxy-badge"
+                          :data-test="`ssh-config-entry-proxy-${i}`"
+                          :title="proxyReason(e)"
+                        >{{ proxyLabel(e) }} — not directly connectable</span>
                       </span>
                     </label>
                   </li>
                 </ul>
-                <template v-if="configPreview.skipped.length">
-                  <p class="config-section-title">Skipped ({{ configPreview.skipped.length }})</p>
+                <template v-if="previewSkipped.length">
+                  <p class="config-section-title">Skipped ({{ previewSkipped.length }})</p>
                   <ul class="config-skipped" data-test="ssh-config-import-skipped">
-                    <li v-for="(s, i) in configPreview.skipped" :key="`${s.alias}-${i}`" class="skip-row">
+                    <li v-for="(s, i) in previewSkipped" :key="`${s.alias}-${i}`" class="skip-row">
                       <span class="skip-alias">{{ s.alias }}</span>
                       <span class="skip-reason">{{ s.reason }}</span>
                     </li>
@@ -786,8 +891,8 @@ async function confirmConfigImport() {
             </template>
           </div>
           <div class="drawer-foot config-foot">
-            <p v-if="configImportError && configPreview" class="ssh-error inline" data-test="ssh-config-import-confirm-error">
-              {{ configImportError }}
+            <p v-if="configConfirmError" class="ssh-error inline" data-test="ssh-config-import-confirm-error">
+              {{ configConfirmError }}
             </p>
             <div class="foot-actions">
               <button class="btn ghost" @click="closeConfigImportDrawer">Cancel</button>
@@ -859,6 +964,8 @@ async function confirmConfigImport() {
   font-size: 11px; padding: 4px 6px; cursor: pointer;
 }
 .tag-clear:hover { color: var(--fg); }
+.card-proxy { display: flex; margin-top: 5px; }
+.card-proxy .proxy-badge { max-width: 100%; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .card-tag {
   font-size: 10px; color: var(--fg-dim); background: rgba(139, 148, 158, 0.16);
@@ -937,6 +1044,16 @@ async function confirmConfigImport() {
 }
 .combo-opt { padding: 7px 10px; font-size: 13px; color: var(--fg); cursor: pointer; }
 .combo-opt:hover { background: rgba(255, 255, 255, 0.06); }
+.identity-hint {
+  margin: -4px 0 0; display: flex; flex-direction: column; gap: 3px;
+  font-size: 11px; color: var(--fg-dim); line-height: 1.4;
+}
+.identity-hint code {
+  font-family: var(--font-mono-strict); font-size: 11px; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  padding: 4px 7px; word-break: break-all;
+}
+.identity-hint.proxy { color: var(--warn, #d29922); }
 .empty-keys-hint { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .enc-hint { margin: -4px 0 0; font-size: 11px; color: var(--warn, #d29922); }
 .import-block { margin-top: 4px; display: flex; flex-direction: column; gap: 8px; }
@@ -974,7 +1091,9 @@ async function confirmConfigImport() {
 .config-entry-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .config-entry-alias { font-size: 13px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .config-entry-sub { font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.config-entry-badges { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .proxy-badge { flex: none; font-size: 10px; color: var(--warn, #d29922); background: rgba(210, 153, 34, 0.12); border: 1px solid rgba(210, 153, 34, 0.3); padding: 3px 8px; border-radius: 999px; max-width: 150px; line-height: 1.3; text-align: right; }
+.overwrite-badge { flex: none; font-size: 10px; color: var(--fg-dim); background: rgba(139, 148, 158, 0.16); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; line-height: 1.3; white-space: nowrap; }
 .config-skipped { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .skip-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; background: rgba(139, 148, 158, 0.08); border-radius: 6px; }
 .skip-alias { font-size: 12px; font-weight: 600; color: var(--fg); flex: none; }

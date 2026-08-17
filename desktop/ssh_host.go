@@ -39,10 +39,20 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 	// a ProxyJump host is usually not reachable directly, and ProxyCommand
 	// is never executed by atterm (it would be an RCE surface). Jump-host
 	// support is roadmap item 27.
-	if found.ProxyJump != "" || found.ProxyCommand != "" {
+	//
+	// The two cases get different wording: naming ProxyJump at a host that
+	// only sets ProxyCommand sends the user looking for a line that isn't in
+	// their config, and the two have different outlooks — ProxyJump is
+	// roadmap item 27, ProxyCommand is never going to be executed at all.
+	switch {
+	case found.ProxyJump != "":
 		return NewSessionResp{}, fmt.Errorf(
 			"host %q needs a jump host (ProxyJump %q); jump-host support is roadmap item 27 and not implemented yet",
 			found.Alias, found.ProxyJump)
+	case found.ProxyCommand != "":
+		return NewSessionResp{}, fmt.Errorf(
+			"host %q is configured with a ProxyCommand (%q); atterm never runs that command, so this host cannot be connected directly",
+			found.Alias, found.ProxyCommand)
 	}
 
 	req := SSHConnectReq{

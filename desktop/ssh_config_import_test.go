@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -144,6 +145,55 @@ func TestPreviewSSHConfigImportUnreadableFileIsReadableError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "could not read") {
 		t.Fatalf("error must read as 'cannot read', got %v", err)
+	}
+}
+
+// TestPreviewSSHConfigImportNeverMarshalsNullSlices pins the JSON shape the
+// drawer actually receives, not just the Go value. A plain ~/.ssh/config —
+// no Match block, no Include trouble — is the *ordinary* success path and
+// leaves Skipped empty; a nil slice there marshals to `null`, and the drawer
+// reads configPreview.skipped.length directly, so the whole preview would
+// throw on the most common config in existence. Asserting on the Go slice
+// alone would not catch it: `len(nil) == 0` too.
+func TestPreviewSSHConfigImportNeverMarshalsNullSlices(t *testing.T) {
+	cs := newTestConfigStore(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte("Host web1\n  HostName 10.0.0.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{cfgStore: cs}
+	preview, err := a.PreviewSSHConfigImport()
+	if err != nil {
+		t.Fatalf("PreviewSSHConfigImport: %v", err)
+	}
+	if len(preview.Skipped) != 0 {
+		t.Fatalf("this config should skip nothing: %+v", preview.Skipped)
+	}
+
+	raw, err := json.Marshal(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shape struct {
+		Entries json.RawMessage `json:"entries"`
+		Skipped json.RawMessage `json:"skipped"`
+	}
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		t.Fatal(err)
+	}
+	if string(shape.Skipped) != "[]" {
+		t.Errorf("skipped must marshal to [], got %s", shape.Skipped)
+	}
+	if string(shape.Entries) == "null" {
+		t.Errorf("entries must never marshal to null, got %s", shape.Entries)
 	}
 }
 

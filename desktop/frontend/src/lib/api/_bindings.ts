@@ -128,12 +128,12 @@ export interface SSHKey {
   key_type?: string;
 }
 
-// SSHConfigImportSkipped mirrors one entry of desktop
-// SSHConfigImportPreview.Skipped — a host ~/.ssh/config named that the parser
+// SSHConfigImportSkipped mirrors desktop SSHConfigImportSkipped, one entry of
+// SSHConfigImportPreview.skipped — a host ~/.ssh/config named that the parser
 // deliberately did not import (Match block, unreadable/cyclic Include, …),
-// with a user-facing Chinese reason. Must stay visible in the import drawer:
-// silently dropping these is the exact failure the preview step exists to
-// prevent (design doc §5.4).
+// with a user-facing reason string (English, backend-owned; shown verbatim).
+// Must stay visible in the import drawer: silently dropping these is the
+// exact failure the preview step exists to prevent (design doc §5.4).
 export interface SSHConfigImportSkipped {
   alias: string;
   reason: string;

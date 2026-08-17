@@ -1,13 +1,21 @@
 import { bindings } from "./_bindings";
 import type {
   NewSessionResp,
+  SSHConfigImportPreview,
   SSHConnectReq,
   SSHCredential,
   SSHHost,
   SSHKey,
 } from "./_bindings";
 
-export type { SSHConnectReq, SSHCredential, SSHHost, SSHKey } from "./_bindings";
+export type {
+  SSHConfigImportPreview,
+  SSHConfigImportSkipped,
+  SSHConnectReq,
+  SSHCredential,
+  SSHHost,
+  SSHKey,
+} from "./_bindings";
 
 export function newSshSession(req: SSHConnectReq): Promise<NewSessionResp> {
   return bindings().NewSshSession(req);
@@ -31,6 +39,20 @@ export function updateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<v
 
 export function deleteSSHHost(id: string): Promise<void> {
   return bindings().DeleteSSHHost(id);
+}
+
+// previewSSHConfigImport parses ~/.ssh/config on the Go side and returns
+// importable entries + skipped entries (with reasons) + a coverage note,
+// without writing anything. A missing/unreadable config rejects with a
+// readable message rather than resolving to an empty list.
+export function previewSSHConfigImport(): Promise<SSHConfigImportPreview> {
+  return bindings().PreviewSSHConfigImport();
+}
+
+// importSSHHosts writes the given (user-selected) hosts into the store,
+// merging by alias. Returns the count written.
+export function importSSHHosts(hosts: SSHHost[]): Promise<number> {
+  return bindings().ImportSSHHosts(hosts);
 }
 
 export function listSSHKeys(): Promise<SSHKey[]> {

@@ -11,6 +11,8 @@ const listSSHKeys = vi.fn();
 const addSSHKey = vi.fn();
 const updateSSHKey = vi.fn();
 const deleteSSHKey = vi.fn();
+const previewSSHConfigImport = vi.fn();
+const importSSHHosts = vi.fn();
 vi.mock("../lib/api", () => ({
   listSSHHosts: (...a: unknown[]) => listSSHHosts(...a),
   addSSHHost: (...a: unknown[]) => addSSHHost(...a),
@@ -21,6 +23,8 @@ vi.mock("../lib/api", () => ({
   addSSHKey: (...a: unknown[]) => addSSHKey(...a),
   updateSSHKey: (...a: unknown[]) => updateSSHKey(...a),
   deleteSSHKey: (...a: unknown[]) => deleteSSHKey(...a),
+  previewSSHConfigImport: (...a: unknown[]) => previewSSHConfigImport(...a),
+  importSSHHosts: (...a: unknown[]) => importSSHHosts(...a),
 }));
 
 beforeEach(() => {
@@ -33,6 +37,8 @@ beforeEach(() => {
   addSSHKey.mockReset();
   updateSSHKey.mockReset();
   deleteSSHKey.mockReset();
+  previewSSHConfigImport.mockReset();
+  importSSHHosts.mockReset();
 });
 
 describe("SshHostsPanel", () => {
@@ -649,5 +655,145 @@ describe("SshHostsPanel 私钥文件导入", () => {
         delete (window as unknown as Record<string, unknown>).matchMedia;
       }
     }
+  });
+});
+
+// Open the ssh_config import drawer on a freshly mounted panel.
+async function openConfigImportDrawer(wrapper: ReturnType<typeof mount>) {
+  await wrapper.find('[data-test="ssh-config-import-open"]').trigger("click");
+  await flushPromises();
+  await wrapper.vm.$nextTick();
+}
+
+describe("SshHostsPanel ssh_config 导入", () => {
+  it("预览成功后展示可导入主机与跳过项(带原因)", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [
+        { id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" },
+      ],
+      skipped: [{ alias: "staging-*", reason: "Match 块不支持,已跳过" }],
+      note: "仅导入 atterm 使用的字段",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    expect(wrapper.text()).toContain("web1");
+    const skipped = wrapper.find('[data-test="ssh-config-import-skipped"]');
+    expect(skipped.exists()).toBe(true);
+    expect(skipped.text()).toContain("staging-*");
+    expect(skipped.text()).toContain("Match 块不支持,已跳过");
+  });
+
+  it("默认不勾选任何一行,直接点导入不会调用 importSSHHosts", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [
+        { id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" },
+      ],
+      skipped: [],
+      note: "仅导入 atterm 使用的字段",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    const checkbox = wrapper.find('[data-test="ssh-config-entry-check-0"]').element as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    const confirmBtn = wrapper.find('[data-test="ssh-config-import-confirm"]');
+    expect((confirmBtn.element as HTMLButtonElement).disabled).toBe(true);
+    await confirmBtn.trigger("click");
+    await flushPromises();
+    expect(importSSHHosts).not.toHaveBeenCalled();
+  });
+
+  it("勾选后确认导入,只传入选中的主机并展示导入数量", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [
+        { id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" },
+        { id: "", alias: "web2", host: "10.0.0.2", user: "root", auth_kind: "password" },
+      ],
+      skipped: [],
+      note: "仅导入 atterm 使用的字段",
+    });
+    importSSHHosts.mockResolvedValueOnce(1);
+    listSSHHosts.mockResolvedValue([]);
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    await wrapper.find('[data-test="ssh-config-entry-check-0"]').trigger("change");
+    await wrapper.vm.$nextTick();
+    await wrapper.find('[data-test="ssh-config-import-confirm"]').trigger("click");
+    await flushPromises();
+    expect(importSSHHosts).toHaveBeenCalledTimes(1);
+    const [passed] = importSSHHosts.mock.calls[0] as [{ alias?: string }[]];
+    expect(passed).toHaveLength(1);
+    expect(passed[0].alias).toBe("web1");
+    expect(wrapper.find('[data-test="ssh-config-import-result"]').text()).toContain("1");
+  });
+
+  it("proxy_jump/proxy_command 的主机带跳板机提示标记", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "", alias: "inner", host: "10.0.0.9", user: "root", auth_kind: "password",
+          proxy_jump: "bastion",
+        },
+      ],
+      skipped: [],
+      note: "仅导入 atterm 使用的字段",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    const badge = wrapper.find('[data-test="ssh-config-entry-proxy-0"]');
+    expect(badge.exists()).toBe(true);
+    expect(badge.text()).toMatch(/跳板|ProxyJump/);
+  });
+
+  it("预览请求失败时展示错误信息,而不是空列表", async () => {
+    previewSSHConfigImport.mockRejectedValueOnce(new Error("read ~/.ssh/config: permission denied"));
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    const err = wrapper.find('[data-test="ssh-config-import-error"]');
+    expect(err.exists()).toBe(true);
+    expect(err.text()).toContain("permission denied");
+    expect(wrapper.find('[data-test="ssh-config-import-empty"]').exists()).toBe(false);
+    // Drawer stays open and usable, not force-closed on error.
+    expect(wrapper.find('[data-test="ssh-config-import-confirm"]').exists()).toBe(true);
+  });
+
+  it("entries 和 skipped 都为空时展示空态而不是报错", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({ entries: [], skipped: [], note: "仅导入 atterm 使用的字段" });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    expect(wrapper.find('[data-test="ssh-config-import-empty"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="ssh-config-import-error"]').exists()).toBe(false);
+  });
+
+  it("entries 为空但有 skipped 时展示跳过列表,不是空态", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [],
+      skipped: [{ alias: "weird", reason: "Include 路径不可读" }],
+      note: "仅导入 atterm 使用的字段",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    expect(wrapper.find('[data-test="ssh-config-import-empty"]').exists()).toBe(false);
+    const skipped = wrapper.find('[data-test="ssh-config-import-skipped"]');
+    expect(skipped.exists()).toBe(true);
+    expect(skipped.text()).toContain("Include 路径不可读");
+  });
+
+  it("抽屉底部展示后端返回的 note", async () => {
+    previewSSHConfigImport.mockResolvedValueOnce({
+      entries: [{ id: "", alias: "web1", host: "10.0.0.1", user: "root", auth_kind: "password" }],
+      skipped: [],
+      note: "仅 atterm 会用到的字段被导入,其余字段(如 ControlMaster)会被忽略",
+    });
+    const wrapper = mount(SshHostsPanel);
+    await flushPromises();
+    await openConfigImportDrawer(wrapper);
+    expect(wrapper.text()).toContain("仅 atterm 会用到的字段被导入");
   });
 });

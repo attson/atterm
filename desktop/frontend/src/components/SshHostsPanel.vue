@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { Server, Plus, X, Pencil, Trash2, Search, Zap, KeyRound, Upload, FileUp } from "lucide-vue-next";
+import { Server, Plus, X, Pencil, Trash2, Search, Zap, KeyRound, Upload, FileUp, FileDown } from "lucide-vue-next";
 import SelectDropdown, { type SelectOption } from "./SelectDropdown.vue";
 import SessionRowMenu, { type MenuItem } from "./SessionRowMenu.vue";
 import { readPrivateKeyFile } from "../lib/sshKeyFile";
@@ -17,8 +17,11 @@ import {
   addSSHKey,
   updateSSHKey,
   deleteSSHKey,
+  previewSSHConfigImport,
+  importSSHHosts,
   type SSHHost,
   type SSHKey,
+  type SSHConfigImportPreview,
 } from "../lib/api";
 
 const emit = defineEmits<{
@@ -412,6 +415,69 @@ async function removeKey(id: string) {
     errorMsg.value = e instanceof Error ? e.message : String(e);
   }
 }
+
+// ---- ssh_config import ----
+// Two-step preview/import (design doc §5.1): PreviewSSHConfigImport only
+// reads ~/.ssh/config, ImportSSHHosts only writes what the user explicitly
+// checked. Rows default to unchecked — the host list syncs to other devices,
+// so undoing a bad bulk import means unchecking rows one at a time, not one
+// big "select all" the user has to partially undo afterwards.
+const configImportDrawer = ref(false);
+const configImportLoading = ref(false);
+const configImportError = ref("");
+const configPreview = ref<SSHConfigImportPreview | null>(null);
+const configSelected = ref<Set<number>>(new Set());
+const configImporting = ref(false);
+const configImportResult = ref<number | null>(null);
+
+function hostFromConfigEntry(e: SSHHost): SSHHost {
+  return { ...e };
+}
+
+async function openConfigImport() {
+  configImportDrawer.value = true;
+  configImportError.value = "";
+  configImportResult.value = null;
+  configPreview.value = null;
+  configSelected.value = new Set();
+  configImportLoading.value = true;
+  try {
+    configPreview.value = await previewSSHConfigImport();
+  } catch (e) {
+    configImportError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    configImportLoading.value = false;
+  }
+}
+function closeConfigImportDrawer() {
+  configImportDrawer.value = false;
+}
+function toggleConfigEntry(index: number) {
+  const next = new Set(configSelected.value);
+  if (next.has(index)) next.delete(index);
+  else next.add(index);
+  configSelected.value = next;
+}
+const canImportConfigSelection = computed(() => configSelected.value.size > 0);
+
+async function confirmConfigImport() {
+  if (!configPreview.value || configSelected.value.size === 0) return;
+  configImporting.value = true;
+  configImportError.value = "";
+  try {
+    const chosen = configPreview.value.entries
+      .filter((_, i) => configSelected.value.has(i))
+      .map(hostFromConfigEntry);
+    const count = await importSSHHosts(chosen);
+    configImportResult.value = count;
+    configImportDrawer.value = false;
+    await reload();
+  } catch (e) {
+    configImportError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    configImporting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -434,6 +500,12 @@ async function removeKey(id: string) {
           <input v-model="query" data-test="ssh-search" placeholder="Filter hosts…" spellcheck="false" autocomplete="off" />
         </div>
         <div v-else class="search-spacer" />
+        <button
+          v-if="activeTab === 'hosts'" class="new-btn ghost"
+          data-test="ssh-config-import-open" @click="openConfigImport"
+        >
+          <FileDown :size="14" /> 从 ~/.ssh/config 导入
+        </button>
         <button v-if="activeTab === 'hosts'" class="new-btn" data-test="ssh-new-host" @click="openNewHost">
           <Plus :size="14" /> New Host
         </button>
@@ -444,6 +516,9 @@ async function removeKey(id: string) {
       </header>
 
       <p v-if="errorMsg" class="ssh-error" data-test="ssh-hosts-error">{{ errorMsg }}</p>
+      <p v-if="configImportResult !== null" class="ssh-success" data-test="ssh-config-import-result">
+        已导入 {{ configImportResult }} 个主机
+      </p>
 
       <!-- HOSTS TAB -->
       <div v-show="activeTab === 'hosts'" class="ssh-body">
@@ -646,6 +721,85 @@ async function removeKey(id: string) {
           </div>
         </aside>
       </transition>
+
+      <!-- SSH CONFIG IMPORT DRAWER -->
+      <transition name="drawer">
+        <aside v-if="configImportDrawer" class="drawer wide" data-test="ssh-config-import-drawer">
+          <div class="drawer-head">
+            <span>从 ~/.ssh/config 导入</span>
+            <button class="close-x" @click="closeConfigImportDrawer"><X :size="15" /></button>
+          </div>
+          <div class="drawer-body">
+            <div v-if="configImportLoading" class="empty" data-test="ssh-config-import-loading">
+              <p class="empty-sub">正在读取 ~/.ssh/config…</p>
+            </div>
+            <p v-else-if="configImportError" class="ssh-error inline" data-test="ssh-config-import-error">
+              {{ configImportError }}
+            </p>
+            <template v-else-if="configPreview">
+              <div
+                v-if="configPreview.entries.length === 0 && configPreview.skipped.length === 0"
+                class="empty" data-test="ssh-config-import-empty"
+              >
+                <FileDown :size="36" class="empty-icon" />
+                <p class="empty-title">没有可导入的主机</p>
+                <p class="empty-sub">~/.ssh/config 中没有找到可用的 Host 条目。</p>
+              </div>
+              <template v-else>
+                <p v-if="configPreview.entries.length" class="config-section-title">
+                  可导入的主机（{{ configPreview.entries.length }}）
+                </p>
+                <ul v-if="configPreview.entries.length" class="config-entry-list">
+                  <li
+                    v-for="(e, i) in configPreview.entries" :key="`${e.alias}-${i}`"
+                    class="config-entry"
+                  >
+                    <label class="config-entry-label">
+                      <input
+                        type="checkbox" :data-test="`ssh-config-entry-check-${i}`"
+                        :checked="configSelected.has(i)" @change="toggleConfigEntry(i)"
+                      />
+                      <span class="config-entry-main">
+                        <span class="config-entry-alias">{{ e.alias || `${e.user}@${e.host}` }}</span>
+                        <span class="config-entry-sub">{{ e.user }}@{{ e.host }}{{ e.port && e.port !== '22' ? `:${e.port}` : '' }}</span>
+                      </span>
+                      <span
+                        v-if="e.proxy_jump || e.proxy_command" class="proxy-badge"
+                        :data-test="`ssh-config-entry-proxy-${i}`"
+                      >
+                        需要跳板机（ProxyJump），暂不可直接连接
+                      </span>
+                    </label>
+                  </li>
+                </ul>
+                <template v-if="configPreview.skipped.length">
+                  <p class="config-section-title">已跳过（{{ configPreview.skipped.length }}）</p>
+                  <ul class="config-skipped" data-test="ssh-config-import-skipped">
+                    <li v-for="(s, i) in configPreview.skipped" :key="`${s.alias}-${i}`" class="skip-row">
+                      <span class="skip-alias">{{ s.alias }}</span>
+                      <span class="skip-reason">{{ s.reason }}</span>
+                    </li>
+                  </ul>
+                </template>
+              </template>
+              <p class="config-note">{{ configPreview.note }}</p>
+            </template>
+          </div>
+          <div class="drawer-foot config-foot">
+            <p v-if="configImportError && configPreview" class="ssh-error inline" data-test="ssh-config-import-confirm-error">
+              {{ configImportError }}
+            </p>
+            <div class="foot-actions">
+              <button class="btn ghost" @click="closeConfigImportDrawer">Cancel</button>
+              <button
+                class="btn primary" data-test="ssh-config-import-confirm"
+                :disabled="!canImportConfigSelection || configImporting"
+                @click="confirmConfigImport"
+              >{{ configImporting ? "导入中…" : `导入选中的主机（${configSelected.size}）` }}</button>
+            </div>
+          </div>
+        </aside>
+      </transition>
     </div>
   </div>
 </template>
@@ -688,6 +842,8 @@ async function removeKey(id: string) {
 .close-x { display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--fg-dim); cursor: pointer; padding: 4px; border-radius: 6px; transition: color 120ms, background 120ms; }
 .close-x:hover { color: var(--fg); background: rgba(139, 148, 158, 0.12); }
 .ssh-error { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--bad); background: rgba(248, 81, 73, 0.08); border-bottom: 1px solid rgba(248, 81, 73, 0.2); }
+.ssh-error.inline { border-bottom: none; border-radius: 6px; }
+.ssh-success { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--good, #3fb950); background: rgba(63, 185, 80, 0.08); border-bottom: 1px solid rgba(63, 185, 80, 0.2); }
 .ssh-body { flex: 1; overflow-y: auto; padding: 18px 16px 24px; }
 .tag-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 2px 14px; }
 .tag-pill {
@@ -730,6 +886,7 @@ async function removeKey(id: string) {
 .empty-title { margin: 0; font-size: 14px; color: var(--fg); font-weight: 600; }
 .empty-sub { margin: 0 0 12px; font-size: 12px; }
 .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; max-width: 84%; background: var(--panel); border-left: 1px solid var(--border); box-shadow: -20px 0 48px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; }
+.drawer.wide { width: 480px; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-dim); }
 .drawer-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
@@ -810,4 +967,19 @@ async function removeKey(id: string) {
 .btn.primary:disabled { opacity: 0.4; cursor: default; }
 .drawer-enter-active, .drawer-leave-active { transition: transform 180ms ease, opacity 180ms ease; }
 .drawer-enter-from, .drawer-leave-to { transform: translateX(24px); opacity: 0; }
+.config-section-title { margin: 4px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-dim); }
+.config-entry-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.config-entry { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+.config-entry-label { display: flex; align-items: center; gap: 10px; padding: 9px 10px; cursor: pointer; }
+.config-entry-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.config-entry-alias { font-size: 13px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.config-entry-sub { font-size: 11px; color: var(--fg-dim); font-family: var(--font-mono-strict); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proxy-badge { flex: none; font-size: 10px; color: var(--warn, #d29922); background: rgba(210, 153, 34, 0.12); border: 1px solid rgba(210, 153, 34, 0.3); padding: 3px 8px; border-radius: 999px; max-width: 150px; line-height: 1.3; text-align: right; }
+.config-skipped { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.skip-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; background: rgba(139, 148, 158, 0.08); border-radius: 6px; }
+.skip-alias { font-size: 12px; font-weight: 600; color: var(--fg); flex: none; }
+.skip-reason { font-size: 11px; color: var(--fg-dim); }
+.config-note { margin: 6px 0 0; font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
+.config-foot { flex-direction: column; align-items: stretch; gap: 8px; }
+.foot-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

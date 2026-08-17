@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attson/atterm/internal/sshclient"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/net/proxy"
@@ -553,13 +552,16 @@ func activeForward(t *testing.T, a *App, ruleID string) ActiveForward {
 
 // --- the gate ---------------------------------------------------------------
 
-// TestStartForwardRefusesProxiedHost pins that the tunnel path goes through
-// the same jump-host gate as the terminal path, *before* it reads a
-// credential. The host here has no credential stored at all, which is the
-// discriminator: a gate that ran after the credential read would return
-// errCredentialMissing instead of naming ProxyJump. Asserting no listener was
-// opened covers the other half — a refused host must not grab a local port.
-func TestStartForwardRefusesProxiedHost(t *testing.T) {
+// TestStartForwardRefusesAnUnsavedJumpHost is what is left of the tunnel
+// path's item-25 refusal once item 27 wires the chain in: a ProxyJump host is
+// no longer refused for having a ProxyJump, but a hop that is not a saved host
+// still is (design §5.1 — a bastion needs its own credential, and the target's
+// must never be sent to a different machine).
+//
+// The host has a working credential on purpose, so the error cannot be the
+// credential one, and the two counts are the assertion: nothing dialled, no
+// local port grabbed.
+func TestStartForwardRefusesAnUnsavedJumpHost(t *testing.T) {
 	useIsolatedKeyring(t)
 	// A *reachable* address, so nothing here is unreachable by accident.
 	targetHost, targetPort := startEchoTarget(t)
@@ -570,36 +572,40 @@ func TestStartForwardRefusesProxiedHost(t *testing.T) {
 	a.sshKnownHostsPath = writeKnownHostsFor(t, srv.addr, srv.hostPub)
 	t.Cleanup(func() { a.tunnels.stopAll() })
 
-	cfg := a.cfgStore.Get()
-	cfg.SSHHosts = []SSHHost{{
-		ID: "p1", Alias: "db", Host: sshHost, Port: sshPort, User: "u",
-		AuthKind:  "password",
-		ProxyJump: "bastion",
+	h, err := a.AddSSHHost(SSHHost{
+		Alias: "db", Host: sshHost, Port: sshPort, User: "u", AuthKind: "password",
+		ProxyJump: "bastion", // not a saved host
 		Forwards:  []ForwardRule{localRule("r1", targetHost, targetPort)},
-	}}
-	if err := a.cfgStore.Set(cfg); err != nil {
+	}, sshCredential{Password: "pw"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	err := a.StartForward("p1", "r1")
+	err = a.StartForward(h.ID, "r1")
 	if err == nil {
-		t.Fatal("must refuse to open a tunnel to a ProxyJump host")
+		t.Fatal("must refuse to open a tunnel through a jump host that is not saved")
 	}
-	if err.Error() == errCredentialMissing {
-		t.Fatal("gate must fire before the credential read: got errCredentialMissing, " +
-			"meaning StartForward resolved credentials first")
+	if !strings.Contains(err.Error(), "bastion") {
+		t.Fatalf("error must name the unresolved hop, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "ProxyJump") {
-		t.Fatalf("error must name the reason, got %v", err)
+	if !strings.Contains(err.Error(), "add") {
+		t.Fatalf("error must tell the user to add the hop as a host, got %v", err)
 	}
 	if got := a.ListActiveForwards(); len(got) != 0 {
 		t.Fatalf("a refused host must not open a listener, got %+v", got)
 	}
 	if opened, _ := srv.counts(); opened != 0 {
-		t.Fatalf("gate must fire before any dial, but the SSH server saw %d connections", opened)
+		t.Fatalf("an unresolvable chain must not dial, but the SSH server saw %d connections", opened)
 	}
 }
 
+// TestStartForwardRefusesProxyCommandHost is the regression guard for the arm
+// of the gate item 27 does not relax: ProxyCommand is an arbitrary command
+// atterm never runs, so the wording must not change.
+//
+// The host has no credential stored, which is the discriminator that the gate
+// still runs *before* the credential read: a gate that ran after it would
+// return errCredentialMissing instead of naming ProxyCommand.
 func TestStartForwardRefusesProxyCommandHost(t *testing.T) {
 	useIsolatedKeyring(t)
 	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
@@ -619,6 +625,75 @@ func TestStartForwardRefusesProxyCommandHost(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ProxyCommand") {
 		t.Fatalf("error must name ProxyCommand, got %v", err)
 	}
+	if err.Error() == errCredentialMissing {
+		t.Fatal("gate must fire before the credential read: got errCredentialMissing, " +
+			"meaning StartForward resolved credentials first")
+	}
+	if got := a.ListActiveForwards(); len(got) != 0 {
+		t.Fatalf("a refused host must not open a listener, got %+v", got)
+	}
+}
+
+// --- jump hosts (roadmap item 27) --------------------------------------------
+
+// TestStartForwardThroughAJumpHost is the tunnel half of item 27, and it has to
+// separate two different direct-tcpip channels to mean anything:
+//
+//   - the bastion is asked to reach *the target's SSH port* — that is the chain,
+//     and a build that ignored ProxyJump would leave this empty while still
+//     forwarding bytes, because the target is reachable from the test process;
+//   - the target is asked to reach *the echo service* — that is the tunnel
+//     itself, and it must ride the target's connection, not the bastion's.
+func TestStartForwardThroughAJumpHost(t *testing.T) {
+	echoHost, echoPort := startEchoTarget(t)
+	bastion := startForwardingSSHTestServerAs(t, "bastion-user", "bastion-pw")
+	target := startForwardingSSHTestServerAs(t, "target-user", "target-pw")
+
+	a := newJumpTestApp(t, bastion, target)
+	a.observeConfigStore()
+	t.Cleanup(func() { a.tunnels.stopAll() })
+
+	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
+	targetHost, targetPort, _ := net.SplitHostPort(target.addr)
+	h, err := a.AddSSHHost(SSHHost{
+		Alias: "db", Host: targetHost, Port: targetPort, User: "target-user", AuthKind: "password",
+		ProxyJump: "bastion",
+		Forwards:  []ForwardRule{localRule("r1", echoHost, echoPort)},
+	}, sshCredential{Password: "target-pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("a ProxyJump host must be able to start a tunnel: %v", err)
+	}
+
+	if got := bastion.directDestAddrs(); len(got) != 1 || got[0] != target.addr {
+		t.Fatalf("the bastion must be asked to reach the target %s, got %q", target.addr, got)
+	}
+	if got := bastion.authCredentials(); len(got) != 1 || got[0] != "bastion-user:bastion-pw" {
+		t.Fatalf("the bastion must see only its own credential, got %q", got)
+	}
+
+	f := activeForward(t, a, "r1")
+	c, err := net.DialTimeout("tcp", f.ListenAddr, 3*time.Second)
+	if err != nil {
+		t.Fatalf("dial forwarded port: %v", err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	echoThrough(t, c, "through a bastion and a tunnel")
+
+	if got := target.directDestAddrs(); len(got) != 1 || got[0] != net.JoinHostPort(echoHost, echoPort) {
+		t.Fatalf("the tunnel's own channel must be opened on the target, got %q", got)
+	}
+
+	// Stopping the tunnel releases the whole chain: the bastion login exists
+	// only to carry this connection, and closing the target does not close it.
+	if err := a.StopForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StopForward: %v", err)
+	}
+	waitClosed(t, bastion, 1, "the bastion connection after the tunnel stopped")
 }
 
 // --- binding ----------------------------------------------------------------
@@ -901,9 +976,9 @@ func TestStopForwardCutsEstablishedRemoteConnections(t *testing.T) {
 // over the SSH connection, not a plain net.Listener) is not, so this proves
 // the shared teardown path actually reaches it.
 func TestLostConnectionStopsRemoteTunnelWithReason(t *testing.T) {
-	old := tunnelKeepalive
-	tunnelKeepalive = 50 * time.Millisecond
-	t.Cleanup(func() { tunnelKeepalive = old })
+	old := jumpKeepalive
+	jumpKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { jumpKeepalive = old })
 
 	targetHost, targetPort := startEchoTarget(t)
 	srv := startForwardingSSHTestServer(t)
@@ -1176,9 +1251,9 @@ func TestDynamicForwardSurvivesARefusedTarget(t *testing.T) {
 // for -D: nothing ever connects to the SOCKS port, so only the keepalive
 // watcher can notice the drop.
 func TestLostConnectionStopsDynamicTunnel(t *testing.T) {
-	old := tunnelKeepalive
-	tunnelKeepalive = 50 * time.Millisecond
-	t.Cleanup(func() { tunnelKeepalive = old })
+	old := jumpKeepalive
+	jumpKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { jumpKeepalive = old })
 
 	srv := startForwardingSSHTestServer(t)
 	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
@@ -1294,8 +1369,7 @@ func TestStartForwardDoesNotTouchSubscriberCounts(t *testing.T) {
 	sshHost, sshPort, _ := net.SplitHostPort(srv.addr)
 	sid, err := a.host.OpenSSHSession(context.Background(), SSHConnectReq{
 		Host: sshHost, Port: sshPort, User: "u", AuthKind: "password", Password: "pw",
-		AcceptHostKey: true,
-	}, ssh.FixedHostKey(srv.hostPub))
+	}, ssh.FixedHostKey(srv.hostPub), nil)
 	if err != nil {
 		t.Fatalf("OpenSSHSession: %v", err)
 	}
@@ -1581,9 +1655,9 @@ func TestLostConnectionStopsTunnelsWithReason(t *testing.T) {
 // "already running" to a user trying to restart it after a network change —
 // blocking the one action that would fix it.
 func TestLostConnectionStopsIdleTunnel(t *testing.T) {
-	old := tunnelKeepalive
-	tunnelKeepalive = 50 * time.Millisecond
-	t.Cleanup(func() { tunnelKeepalive = old })
+	old := jumpKeepalive
+	jumpKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { jumpKeepalive = old })
 
 	targetHost, targetPort := startEchoTarget(t)
 	srv := startForwardingSSHTestServer(t)
@@ -1629,9 +1703,9 @@ func TestLostConnectionStopsIdleTunnel(t *testing.T) {
 // rule as a stopped-with-error entry — the ordering that prevents it is
 // running=false under m.mu *before* teardown releases the connection.
 func TestDeliberateStopDoesNotSelfReport(t *testing.T) {
-	old := tunnelKeepalive
-	tunnelKeepalive = 50 * time.Millisecond
-	t.Cleanup(func() { tunnelKeepalive = old })
+	old := jumpKeepalive
+	jumpKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { jumpKeepalive = old })
 
 	targetHost, targetPort := startEchoTarget(t)
 	srv := startForwardingSSHTestServer(t)
@@ -1678,7 +1752,7 @@ func TestDeliberateStopDoesNotSelfReport(t *testing.T) {
 func TestFailedDialLeavesNoPoisonedConnection(t *testing.T) {
 	m := &tunnelManager{}
 	dials := 0
-	dial := func() (*sshclient.Conn, error) {
+	dial := func() (*jumpChain, error) {
 		dials++
 		return nil, errors.New("dial refused")
 	}

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func newSSHTestApp(t *testing.T) *App {
@@ -25,7 +27,6 @@ func TestNewSshSessionUnknownHostReturnsFingerprint(t *testing.T) {
 	_, err := a.NewSshSession(SSHConnectReq{
 		Host: host, Port: port, User: "u",
 		AuthKind: "password", Password: "pw",
-		AcceptHostKey: false,
 	})
 	var hkErr *HostKeyUnknownError
 	if !errors.As(err, &hkErr) {
@@ -34,20 +35,45 @@ func TestNewSshSessionUnknownHostReturnsFingerprint(t *testing.T) {
 	if hkErr.Fingerprint == "" {
 		t.Fatal("empty fingerprint")
 	}
+	if hkErr.Host == "" {
+		t.Fatal("empty host: the retry has nothing to echo back")
+	}
 }
 
-func TestNewSshSessionAcceptHostKeyConnects(t *testing.T) {
+// TestNewSshSessionAcceptedHostKeyConnects walks the real TOFU round trip: the
+// first attempt is refused with a fingerprint, and the retry carries back
+// exactly the (host, fingerprint) pair the user was shown. That pair — not a
+// bool — is what the callback matches, so this is also the test that would fail
+// if the retry ever went back to "accept whatever key turns up next".
+func TestNewSshSessionAcceptedHostKeyConnects(t *testing.T) {
 	addr, _ := startSSHTestServer(t)
 	host, port, _ := net.SplitHostPort(addr)
 
 	a := newSSHTestApp(t)
 	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
 
-	resp, err := a.NewSshSession(SSHConnectReq{
+	req := SSHConnectReq{
 		Host: host, Port: port, User: "u",
 		AuthKind: "password", Password: "pw",
-		AcceptHostKey: true,
-	})
+	}
+	_, err := a.NewSshSession(req)
+	var hkErr *HostKeyUnknownError
+	if !errors.As(err, &hkErr) {
+		t.Fatalf("expected HostKeyUnknownError first, got %v", err)
+	}
+
+	// A fingerprint the user was never shown must not get through, even for the
+	// host they *were* asked about.
+	wrong := req
+	wrong.AcceptedHostKeyHost = hkErr.Host
+	wrong.AcceptedHostKeyFingerprint = "SHA256:not-the-key-you-were-shown"
+	if _, err := a.NewSshSession(wrong); !errors.As(err, &hkErr) {
+		t.Fatalf("a mismatched fingerprint must not be accepted, got %v", err)
+	}
+
+	req.AcceptedHostKeyHost = hkErr.Host
+	req.AcceptedHostKeyFingerprint = hkErr.Fingerprint
+	resp, err := a.NewSshSession(req)
 	if err != nil {
 		t.Fatalf("NewSshSession: %v", err)
 	}
@@ -143,8 +169,8 @@ func TestNewSshSessionByIDSetsSSHHostID(t *testing.T) {
 	// registered SessionInfo carries SSHHostID.
 	id, err := h.OpenSSHSession(context.Background(), SSHConnectReq{
 		Host: host, Port: port, User: "u", AuthKind: "password", Password: "pw",
-		AcceptHostKey: true, SSHHostID: "host-123",
-	}, testFixedHostKeyCb(hostPub))
+		SSHHostID: "host-123",
+	}, testFixedHostKeyCb(hostPub), nil)
 	if err != nil {
 		t.Fatalf("OpenSSHSession: %v", err)
 	}
@@ -158,70 +184,238 @@ func TestNewSshSessionByIDSetsSSHHostID(t *testing.T) {
 	_ = h.CloseSession(id)
 }
 
-// TestProxyJumpHostRefusesDirectConnect is the core assertion for the
-// direct-connect gate. It points the host at a *real, reachable* SSH test
-// server and gives it a valid stored credential — so if the gate did not
-// fire before the dial, NewSshSessionByID would proceed exactly like
-// TestNewSshSessionByIDResolvesCredAndConnects and return
-// *HostKeyUnknownError (TOFU prompt), which only happens after a dial
-// attempt. Asserting that error type is absent, together with the
-// ProxyJump-naming error that IS returned, proves no dial occurred —
-// not just that some error came back.
-func TestProxyJumpHostRefusesDirectConnect(t *testing.T) {
-	useIsolatedKeyring(t)
-	addr, _ := startSSHTestServer(t)
-	host, port, _ := net.SplitHostPort(addr)
+// --- jump hosts on the terminal path (roadmap item 27) -----------------------
 
-	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
-	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
+// newJumpSessionTestApp is newJumpTestApp plus the relay host a terminal
+// session needs to be adopted into.
+func newJumpSessionTestApp(t *testing.T, trusted ...*forwardTestServer) *App {
+	t.Helper()
+	a := newJumpTestApp(t, trusted...)
+	a.host = newTestRelayHost(t)
+	return a
+}
 
-	h, err := a.AddSSHHost(
-		SSHHost{Host: host, Port: port, User: "u", AuthKind: "password", ProxyJump: "bastion"},
-		sshCredential{Password: "pw"},
-	)
+// TestProxyJumpHostOpensASessionThroughTheBastion is the terminal half of item
+// 27: the host item 25 refused now connects, and connects *through the jump
+// host*.
+//
+// "It connected" is not the assertion — a build that ignored ProxyJump and
+// dialled HostName directly would also return a session id here, since the
+// target is reachable from the test process. What pins the topology is what the
+// bastion was asked to reach (a direct-tcpip channel to the target's address)
+// together with each machine seeing only its own credential.
+func TestProxyJumpHostOpensASessionThroughTheBastion(t *testing.T) {
+	bastion := startForwardingSSHTestServerAs(t, "bastion-user", "bastion-pw")
+	target := startForwardingSSHTestServerAs(t, "target-user", "target-pw")
+
+	a := newJumpSessionTestApp(t, bastion, target)
+	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
+	th := addServerHost(t, a, "db", target, "target-user", "target-pw", "bastion")
+
+	resp, err := a.NewSshSessionByID(th.ID)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("a ProxyJump host must open a terminal session: %v", err)
+	}
+	if resp.SessionID == "" {
+		t.Fatal("empty session id")
 	}
 
-	_, err = a.NewSshSessionByID(h.ID)
-	if err == nil {
-		t.Fatal("must refuse to connect a ProxyJump host directly")
+	if got := bastion.directDestAddrs(); len(got) != 1 || got[0] != target.addr {
+		t.Fatalf("the bastion must be asked to reach the target %s, got %q", target.addr, got)
 	}
-	if !strings.Contains(err.Error(), "ProxyJump") {
-		t.Fatalf("error must name the reason, got %v", err)
+	if opened, _ := bastion.counts(); opened != 1 {
+		t.Fatalf("the bastion must be dialled exactly once, got %d connection(s)", opened)
 	}
-	var hkErr *HostKeyUnknownError
-	if errors.As(err, &hkErr) {
-		t.Fatalf("gate must return before any dial: got a TOFU prompt (%v), meaning a dial was attempted", err)
+	if got := bastion.authCredentials(); len(got) != 1 || got[0] != "bastion-user:bastion-pw" {
+		t.Fatalf("the bastion must see only its own credential, got %q", got)
+	}
+	if got := target.authCredentials(); len(got) != 1 || got[0] != "target-user:target-pw" {
+		t.Fatalf("the target must see only its own credential, got %q", got)
+	}
+
+	sid, err := uuid.Parse(resp.SessionID)
+	if err != nil {
+		t.Fatalf("session id %q: %v", resp.SessionID, err)
+	}
+	if _, ok := a.host.server.Registry().Get(sid); !ok {
+		t.Fatal("the session was not adopted into the registry")
+	}
+
+	// Closing the session closes the chain behind it. Session.Close only closes
+	// the target connection, so without the chain being owned somewhere the
+	// bastion login would outlive the terminal the user just closed.
+	if err := a.host.CloseSession(sid); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+	waitClosed(t, bastion, 1, "the bastion connection after the session was closed")
+}
+
+// TestProxyJumpSessionDialFailureClosesTheChain: the hops are up and the
+// *target's* dial then fails (its host key is unknown, so the shell is never
+// opened). The chain has to be closed on that path — the bastion connection is
+// a real login that nothing downstream exists to close, and a user who accepts
+// the fingerprint and retries would otherwise stack up one hanging bastion
+// session per attempt.
+func TestProxyJumpSessionDialFailureClosesTheChain(t *testing.T) {
+	bastion := startForwardingSSHTestServerAs(t, "bastion-user", "bastion-pw")
+	target := startForwardingSSHTestServerAs(t, "target-user", "target-pw")
+
+	a := newJumpSessionTestApp(t, bastion) // the target's key is deliberately unknown
+	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
+	th := addServerHost(t, a, "db", target, "target-user", "target-pw", "bastion")
+
+	_, err := a.NewSshSessionByID(th.ID)
+	var hk *HostKeyUnknownError
+	if !errors.As(err, &hk) {
+		t.Fatalf("expected *HostKeyUnknownError for the target, got %v", err)
+	}
+	if hk.HopIndex != 2 {
+		t.Fatalf("HopIndex = %d, want 2 (one hop plus the target)", hk.HopIndex)
+	}
+	if hk.HopName != "db" {
+		t.Fatalf("HopName = %q, want %q", hk.HopName, "db")
+	}
+	if opened, _ := bastion.counts(); opened != 1 {
+		t.Fatalf("the bastion must really have been dialled, got %d connection(s)", opened)
+	}
+	waitClosed(t, bastion, 1, "the bastion connection after the target's dial failed")
+}
+
+// TestRequestAcceptedHostKeyIsScopedToOneHop is the same rule as
+// TestAcceptedHostKeyIsScopedToOneHop, asserted one layer up — at the request
+// boundary, where the acceptance arrives from the frontend.
+//
+// That boundary used to be a bool ("accept the next unknown key"), and a bool
+// there is a Critical the moment a connection can run through a chain:
+// KnownHostsCallback *appends* an accepted key to known_hosts, so accepting the
+// bastion would silently record the target's key too — and a substituted target
+// would then never prompt again. So each round here must move the prompt on to
+// the next machine rather than silencing it, and known_hosts must only ever
+// grow by the entry the user actually agreed to.
+func TestRequestAcceptedHostKeyIsScopedToOneHop(t *testing.T) {
+	bastion := startForwardingSSHTestServerAs(t, "bastion-user", "bastion-pw")
+	target := startForwardingSSHTestServerAs(t, "target-user", "target-pw")
+
+	a := newJumpSessionTestApp(t) // trusts nothing at all
+	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
+	th := addServerHost(t, a, "db", target, "target-user", "target-pw", "bastion")
+
+	req := SSHConnectReq{
+		Host: th.Host, Port: th.Port, User: th.User,
+		AuthKind: "password", Password: "target-pw",
+		SSHHostID: th.ID,
+	}
+	for _, want := range []struct {
+		hop  int
+		name string
+	}{{1, "bastion"}, {2, "db"}} {
+		_, err := a.NewSshSession(req)
+		var hk *HostKeyUnknownError
+		if !errors.As(err, &hk) {
+			t.Fatalf("hop %d (%s): expected *HostKeyUnknownError, got %v", want.hop, want.name, err)
+		}
+		if hk.HopIndex != want.hop || hk.HopName != want.name {
+			t.Fatalf("prompt was for hop %d %q, want hop %d %q",
+				hk.HopIndex, hk.HopName, want.hop, want.name)
+		}
+		if got := countKnownHostsLines(t, a.sshKnownHostsPath); got != want.hop-1 {
+			t.Fatalf("before accepting hop %d, known_hosts holds %d entries, want %d",
+				want.hop, got, want.hop-1)
+		}
+		req.AcceptedHostKeyHost = hk.Host
+		req.AcceptedHostKeyFingerprint = hk.Fingerprint
+	}
+
+	resp, err := a.NewSshSession(req)
+	if err != nil {
+		t.Fatalf("accepting the last unknown key must complete the connection: %v", err)
+	}
+	if resp.SessionID == "" {
+		t.Fatal("empty session id")
+	}
+	if got := countKnownHostsLines(t, a.sshKnownHostsPath); got != 2 {
+		t.Fatalf("known_hosts holds %d entries after accepting both, want 2", got)
 	}
 }
 
-// TestProxyJumpGateFiresBeforeCredentialRead is the discriminator the
-// TOFU-based test above can't provide on its own: that test proves the gate
-// runs before the *dial*, but a gate moved down to just above
-// a.NewSshSession(req) — i.e. below the `switch found.AuthKind` credential
-// read — would still pass it (the switch would fail first, with
-// errCredentialMissing, before ever reaching the moved gate... except here
-// there's no stored credential at all, so a gate-after-switch build returns
-// errCredentialMissing instead of the ProxyJump error). Only a gate
-// positioned strictly before the credential switch returns the ProxyJump
-// error in this exact setup: a ProxyJump host with nothing in the keyring.
-func TestProxyJumpGateFiresBeforeCredentialRead(t *testing.T) {
+// TestProxyJumpToAnUnsavedHopIsRefusedWithoutDialling replaces item 25's
+// blanket refusal with §5.1's: a ProxyJump host is no longer refused for having
+// a ProxyJump, but a hop that is not a saved host still is — that is the only
+// honest answer to "where does the bastion's credential come from".
+//
+// The dial count is what makes it more than "some error came back": the target
+// is a real, reachable server with a valid stored credential, so a build that
+// resolved hops lazily would connect to it and the count would be 1.
+func TestProxyJumpToAnUnsavedHopIsRefusedWithoutDialling(t *testing.T) {
+	srv := startForwardingSSHTestServerAs(t, "u", "pw")
+
+	a := newJumpSessionTestApp(t, srv)
+	h := addServerHost(t, a, "db", srv, "u", "pw", "bastion") // "bastion" is not saved
+
+	_, err := a.NewSshSessionByID(h.ID)
+	if err == nil {
+		t.Fatal("a ProxyJump naming an unsaved host must be refused")
+	}
+	if !strings.Contains(err.Error(), "bastion") {
+		t.Fatalf("error must name the unresolved hop, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "add") {
+		t.Fatalf("error must tell the user to add the hop as a host, got %v", err)
+	}
+	var hkErr *HostKeyUnknownError
+	if errors.As(err, &hkErr) {
+		t.Fatalf("the refusal must come before any dial: got a TOFU prompt (%v)", err)
+	}
+	if opened, _ := srv.counts(); opened != 0 {
+		t.Fatalf("nothing may be dialled for an unresolvable chain, server saw %d connection(s)", opened)
+	}
+}
+
+// TestProxyJumpHostWithoutCredentialFailsBeforeAnyDial: the destination's own
+// credential is checked before the first hop is dialled, and the error stays the
+// bare errCredentialMissing sentinel the frontend answers by prompting for this
+// host. Discovering it after logging into a bastion would spend exactly the side
+// effect the static checks exist to avoid.
+func TestProxyJumpHostWithoutCredentialFailsBeforeAnyDial(t *testing.T) {
+	bastion := startForwardingSSHTestServerAs(t, "bastion-user", "bastion-pw")
+	target := startForwardingSSHTestServerAs(t, "target-user", "target-pw")
+
+	a := newJumpSessionTestApp(t, bastion, target)
+	addServerHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "")
+	th := addServerHost(t, a, "db", target, "target-user", "", "bastion") // no credential saved
+
+	_, err := a.NewSshSessionByID(th.ID)
+	if err == nil || err.Error() != errCredentialMissing {
+		t.Fatalf("want the bare %q sentinel, got %v", errCredentialMissing, err)
+	}
+	assertNoDials(t, bastion, "the bastion while the destination has no credential")
+}
+
+// TestProxyCommandGateFiresBeforeCredentialRead is the discriminator for the
+// arm of the gate that still refuses. A gate moved down to just above
+// a.NewSshSession(req) — below the `switch found.AuthKind` credential read —
+// would return errCredentialMissing for this host (nothing is in the keyring)
+// instead of naming ProxyCommand. Only a gate positioned strictly before the
+// credential switch names the reason here.
+func TestProxyCommandGateFiresBeforeCredentialRead(t *testing.T) {
 	useIsolatedKeyring(t)
 	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
 
 	cfg := a.cfgStore.Get()
-	cfg.SSHHosts = []SSHHost{{ID: "p2", Alias: "db", Host: "10.0.0.5", User: "root", AuthKind: "password", ProxyJump: "bastion"}}
+	cfg.SSHHosts = []SSHHost{{
+		ID: "p2", Alias: "db", Host: "10.0.0.5", User: "root", AuthKind: "password",
+		ProxyCommand: "corkscrew proxy 8080 %h %p",
+	}}
 	_ = a.cfgStore.Set(cfg)
 
 	_, err := a.NewSshSessionByID("p2")
 	if err == nil {
-		t.Fatal("must refuse to connect a ProxyJump host directly")
+		t.Fatal("must refuse to connect a ProxyCommand host")
 	}
 	if err.Error() == errCredentialMissing {
 		t.Fatal("gate must fire before the credential read: got errCredentialMissing, meaning the AuthKind switch ran first")
 	}
-	if !strings.Contains(err.Error(), "ProxyJump") {
+	if !strings.Contains(err.Error(), "ProxyCommand") {
 		t.Fatalf("error must name the reason, got %v", err)
 	}
 }

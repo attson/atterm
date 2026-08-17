@@ -42,6 +42,16 @@ const maxJumpDepth = 10
 // not get a longer budget per hop than a direct connection does.
 const jumpDialTimeout = 15 * time.Second
 
+// jumpKeepalive is how often every connection on a chain pings its peer — the
+// target's included, since dialThroughJumps dials it through dialJumpHop too.
+//
+// It also bounds how long a dropped connection can go unnoticed, which is what
+// the tunnel path depends on: a tunnel's only notice that its connection died
+// is Conn.Done, and a failed keepalive ping is what closes it. Without that an
+// *idle* tunnel would keep reporting itself as running. Tests shorten this so a
+// drop is observable in a test's lifetime.
+var jumpKeepalive = 30 * time.Second
+
 // acceptedHostKey is the one host key the user accepted in the TOFU dialog.
 // Its zero value accepts nothing, which is what every caller that has not been
 // through a dialog must pass.
@@ -248,6 +258,7 @@ func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *ssh
 		Auth:      auth,
 		HostKeyCb: cb,
 		Timeout:   jumpDialTimeout,
+		Keepalive: jumpKeepalive,
 		Via:       via,
 	})
 	if err != nil {

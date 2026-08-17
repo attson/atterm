@@ -92,17 +92,38 @@ type SSHConnectReq struct {
 	Passphrase string `json:"passphrase,omitempty"`
 	Cols       uint16 `json:"cols,omitempty"`
 	Rows       uint16 `json:"rows,omitempty"`
-	// AcceptHostKey is set on a retry after the user confirmed an unknown
-	// host fingerprint in the TOFU dialog.
-	AcceptHostKey bool `json:"accept_host_key,omitempty"`
+	// AcceptedHostKeyHost and AcceptedHostKeyFingerprint are set on a retry
+	// after the user confirmed an unknown host fingerprint in the TOFU dialog:
+	// they echo back the Host and Fingerprint of the *HostKeyUnknownError that
+	// produced the dialog, so the acceptance names exactly one key on one
+	// machine.
+	//
+	// They replace an "accept the next unknown key" bool, and once a connection
+	// can run through a jump-host chain (roadmap item 27) that difference is a
+	// security one rather than a stylistic one. KnownHostsCallback does not
+	// merely let an accepted key through — it *appends it to known_hosts* — so a
+	// bool would record keys for machines the user was never shown, and the next
+	// connection to a substituted hop would prompt for nothing at all. See
+	// acceptedHostKey in ssh_jump.go.
+	AcceptedHostKeyHost        string `json:"accepted_host_key_host,omitempty"`
+	AcceptedHostKeyFingerprint string `json:"accepted_host_key_fingerprint,omitempty"`
 	// SSHHostID is set internally by NewSshSessionByID to the saved SSHHost.ID
-	// so the adopted session carries it (for recovery reconnect). Empty for
-	// ad-hoc connections. Not part of the frontend-facing request shape.
+	// so the adopted session carries it (for recovery reconnect), and so the
+	// connection can find the host's ProxyJump chain. Empty for ad-hoc
+	// connections. Not part of the frontend-facing request shape.
 	SSHHostID string `json:"-"`
 }
 
+// acceptedHostKey is the (host, fingerprint) pair the user agreed to, in the
+// form the chain builder and the host-key callbacks match on. A request that
+// has not been through a TOFU dialog yields the zero value, which accepts
+// nothing.
+func (r SSHConnectReq) acceptedHostKey() acceptedHostKey {
+	return acceptedHostKey{Host: r.AcceptedHostKeyHost, Fingerprint: r.AcceptedHostKeyFingerprint}
+}
+
 // errCodeHostKeyUnknown is the error string carried by HostKeyUnknownError so
-// the frontend can recognize the TOFU case and re-issue with AcceptHostKey.
+// the frontend can recognize the TOFU case and re-issue with the accepted key.
 const errCodeHostKeyUnknown = "ssh_host_key_unknown"
 
 // errCredentialMissing is returned by NewSshSessionByID when the host has no
@@ -114,7 +135,8 @@ const errCredentialMissing = "ssh_credential_missing"
 const errKeyMissing = "ssh_key_missing"
 
 // HostKeyUnknownError carries the fingerprint so the frontend can show the
-// TOFU dialog and retry with AcceptHostKey=true.
+// TOFU dialog and retry with Host + Fingerprint echoed back in
+// SSHConnectReq.AcceptedHostKeyHost / AcceptedHostKeyFingerprint.
 type HostKeyUnknownError struct {
 	Fingerprint string
 	Host        string

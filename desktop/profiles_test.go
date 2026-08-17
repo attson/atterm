@@ -54,7 +54,10 @@ func TestSealProfilesRoundTrip(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i)
 	}
-	in := []SessionProfile{{ID: "a", Name: "Work", Shell: "/bin/zsh", Env: map[string]string{"K": "V"}}}
+	// SyncEnv: true — this is the only case where Env is expected to survive
+	// sealing. Without it, sealProfiles strips Env before it ever reaches the
+	// wire (see TestSealProfilesStripsEnvWhenSyncEnvFalse below).
+	in := []SessionProfile{{ID: "a", Name: "Work", Shell: "/bin/zsh", Env: map[string]string{"K": "V"}, SyncEnv: true}}
 	blob, err := sealProfiles(key, in)
 	if err != nil || blob == nil {
 		t.Fatalf("seal: %v", err)
@@ -65,6 +68,52 @@ func TestSealProfilesRoundTrip(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].Name != "Work" || out[0].Env["K"] != "V" {
 		t.Errorf("round trip lost data: %+v", out)
+	}
+}
+
+// TestSealProfilesStripsEnvWhenSyncEnvFalse is the mirror of the round trip
+// above and the whole point of the SyncEnv flag: a profile that has not
+// opted in must never have its Env reach the sealed blob, let alone the
+// relay. sealProfiles enforces this itself rather than trusting a caller to
+// strip first — see its doc comment.
+func TestSealProfilesStripsEnvWhenSyncEnvFalse(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	in := []SessionProfile{{ID: "a", Name: "Work", Env: map[string]string{"SECRET": "token"}, SyncEnv: false}}
+	blob, err := sealProfiles(key, in)
+	if err != nil || blob == nil {
+		t.Fatalf("seal: %v", err)
+	}
+	out, err := openProfiles(key, blob)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if len(out) != 1 || out[0].Name != "Work" {
+		t.Fatalf("unexpected profiles: %+v", out)
+	}
+	if len(out[0].Env) != 0 {
+		t.Errorf("SyncEnv:false must never let Env reach the sealed blob, got %v", out[0].Env)
+	}
+}
+
+// TestSealProfilesDoesNotMutateCaller guards the same data-loss shape as
+// TestStripUnsyncedEnvDoesNotMutateCaller, but at the sealProfiles boundary:
+// now that every seal strips unconditionally, an in-place mutation here would
+// wipe the user's own machine-local env on the sending side.
+func TestSealProfilesDoesNotMutateCaller(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	env := map[string]string{"FOO": "bar"}
+	in := []SessionProfile{{ID: "a", Name: "Work", Env: env, SyncEnv: false}}
+	if _, err := sealProfiles(key, in); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if in[0].Env == nil || in[0].Env["FOO"] != "bar" {
+		t.Errorf("sealProfiles must not clear Env on the caller's own slice/profile: %v", in[0].Env)
 	}
 }
 

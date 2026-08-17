@@ -37,12 +37,12 @@ type SessionProfile struct {
 // mergeProfiles exists to prevent, just triggered from the sending side
 // instead of the receiving side.
 //
-// This is a separate step from sealProfiles rather than folded into it:
-// sealProfiles seals exactly what it is handed, so a caller that already has
-// a set of profiles it knows should travel as-is (e.g. a round trip in a
-// test, or a future local-export path) is not forced through the SyncEnv
-// gate. The outbound sync path (wired in Task 3's prefssync adapter) is
-// expected to call stripUnsyncedEnv on its snapshot before sealProfiles.
+// Called unconditionally from inside sealProfiles (see its comment) so that
+// "env does not sync by default" is a guarantee no caller can accidentally
+// skip, rather than a step every future caller has to remember to perform
+// first. Kept as a named helper because it is independently useful to test
+// and to reason about, not because any caller is expected to invoke it on
+// its own.
 func stripUnsyncedEnv(profiles []SessionProfile) []SessionProfile {
 	out := make([]SessionProfile, len(profiles))
 	for i, p := range profiles {
@@ -55,16 +55,27 @@ func stripUnsyncedEnv(profiles []SessionProfile) []SessionProfile {
 }
 
 // sealProfiles packs the profile list and seals it with the account key.
-// Callers that must honor SyncEnv (the real sync path) are expected to pass
-// the result of stripUnsyncedEnv, not the raw config-store slice; sealProfiles
-// itself does not second-guess what it is given. Returns (nil, nil) when
-// accountKey is empty — the caller treats that as "skip sync" (local-only,
-// never send plaintext to the relay).
+//
+// Strips the Env of every profile with SyncEnv == false before sealing,
+// unconditionally — this is the one enforcement point for "env does not
+// leave the machine unless the user opts in per profile" (design §5.1). It
+// deliberately does not trust a caller to have stripped already: a relay
+// that never sees plaintext env is only as strong as the one function on
+// the path to it, and putting the guarantee here instead of in every future
+// caller is the same reasoning as composeFontFamily always appending the
+// CJK fallback chain rather than relying on call sites to remember it.
+//
+// stripUnsyncedEnv already returns a copy, so this never mutates the
+// caller's profiles slice or its Env maps — matters more here than it would
+// in a conditional helper, because every seal now goes through it.
+//
+// Returns (nil, nil) when accountKey is empty — the caller treats that as
+// "skip sync" (local-only, never send plaintext to the relay).
 func sealProfiles(accountKey []byte, profiles []SessionProfile) (json.RawMessage, error) {
 	if len(accountKey) == 0 {
 		return nil, nil
 	}
-	plain, err := json.Marshal(profiles)
+	plain, err := json.Marshal(stripUnsyncedEnv(profiles))
 	if err != nil {
 		return nil, err
 	}

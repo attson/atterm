@@ -227,6 +227,12 @@ type App struct {
 	// (tests set a temp path). Empty → ~/.ssh/known_hosts.
 	sshKnownHostsPath string
 
+	// tunnels owns the running SSH port forwards (see ssh_tunnels.go). It is
+	// deliberately independent of host/relayHost: a tunnel is not a session,
+	// so it never enters the registry or a subscriber count. Zero value is
+	// usable; it holds its own lock.
+	tunnels tunnelManager
+
 	prefsSync *prefssync.Engine
 
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
@@ -429,6 +435,9 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.updater != nil {
 		a.updater.Stop()
 	}
+	// Close forwarded local ports; a listener outliving the window would keep
+	// the port busy for whatever the user starts next.
+	a.tunnels.stopAll()
 	if a.logger != nil {
 		_ = a.logger.Close()
 		a.logger = nil

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/attson/atterm/internal/proto"
@@ -13,6 +11,38 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 )
+
+// hostNeedsJump reports whether h must go through a jump host or an arbitrary
+// proxy command, and returns the user-facing reason to refuse it.
+//
+// A ProxyJump host is usually not reachable directly, so dialing HostName
+// anyway either times out or connects to whatever else answers there.
+// ProxyCommand is never executed by atterm at all (it would be an RCE
+// surface). Callers must run this *before* reading any credential and before
+// any dial: the point is that nothing happens for a host we refuse.
+//
+// Every entry point that dials a saved host gates on this one function —
+// NewSshSessionByID (terminal) and StartForward (tunnel) — so roadmap item 27
+// (jump-host support) has exactly one condition to relax instead of two that
+// can drift apart.
+//
+// The two cases get different wording: naming ProxyJump at a host that only
+// sets ProxyCommand sends the user looking for a line that isn't in their
+// config, and the two have different outlooks — ProxyJump is roadmap item 27,
+// ProxyCommand is never going to be executed at all.
+func hostNeedsJump(h SSHHost) (bool, string) {
+	switch {
+	case h.ProxyJump != "":
+		return true, fmt.Sprintf(
+			"host %q needs a jump host (ProxyJump %q); jump-host support is roadmap item 27 and not implemented yet",
+			h.Alias, h.ProxyJump)
+	case h.ProxyCommand != "":
+		return true, fmt.Sprintf(
+			"host %q is configured with a ProxyCommand (%q); atterm never runs that command, so this host cannot be connected directly",
+			h.Alias, h.ProxyCommand)
+	}
+	return false, ""
+}
 
 // NewSshSessionByID looks up a saved host + its credential by ID and connects,
 // reusing NewSshSession (which carries the slice-1 known_hosts TOFU flow).
@@ -35,24 +65,9 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 	}
 
 	// Refuse hosts that ssh_config marked as needing a jump host or an
-	// arbitrary proxy command. Must run before any credential read or dial:
-	// a ProxyJump host is usually not reachable directly, and ProxyCommand
-	// is never executed by atterm (it would be an RCE surface). Jump-host
-	// support is roadmap item 27.
-	//
-	// The two cases get different wording: naming ProxyJump at a host that
-	// only sets ProxyCommand sends the user looking for a line that isn't in
-	// their config, and the two have different outlooks — ProxyJump is
-	// roadmap item 27, ProxyCommand is never going to be executed at all.
-	switch {
-	case found.ProxyJump != "":
-		return NewSessionResp{}, fmt.Errorf(
-			"host %q needs a jump host (ProxyJump %q); jump-host support is roadmap item 27 and not implemented yet",
-			found.Alias, found.ProxyJump)
-	case found.ProxyCommand != "":
-		return NewSessionResp{}, fmt.Errorf(
-			"host %q is configured with a ProxyCommand (%q); atterm never runs that command, so this host cannot be connected directly",
-			found.Alias, found.ProxyCommand)
+	// arbitrary proxy command, before any credential read or dial.
+	if needsJump, reason := hostNeedsJump(*found); needsJump {
+		return NewSessionResp{}, errors.New(reason)
 	}
 
 	req := SSHConnectReq{
@@ -88,12 +103,7 @@ func (a *App) NewSshSession(req SSHConnectReq) (NewSessionResp, error) {
 	if a.host == nil {
 		return NewSessionResp{}, fmt.Errorf("relay host not ready")
 	}
-	khPath := a.sshKnownHostsPath
-	if khPath == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			khPath = filepath.Join(home, ".ssh", "known_hosts")
-		}
-	}
+	khPath := a.knownHostsPath()
 
 	var unknown *HostKeyUnknownError
 	cb := sshclient.KnownHostsCallback(khPath, func(host, fp string) bool {

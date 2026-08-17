@@ -4,7 +4,6 @@ import { usePluginConfigStore } from "../plugins/configStore";
 import { projectWidgetState, type WidgetSessionSource } from "../lib/widgetState";
 import { errText, logWarn } from "../lib/log";
 import { getUserHomeDir } from "../lib/api";
-import { useTaskGroupBy } from "./useTaskGroupBy";
 
 /**
  * useDeskWidget drives the companion window ("桌面挂件" / Desk Widget): it starts and stops
@@ -34,7 +33,6 @@ export function useDeskWidget(opts: {
   // bridge undefined. Bail out rather than guarding at every call site.
   if (!platform.deskWidget) return;
   const widget = platform.deskWidget;
-  const groupBy = useTaskGroupBy();
 
   let running = false;
   // Cached once: the home directory only changes across logins, and the
@@ -81,7 +79,6 @@ export function useDeskWidget(opts: {
       localHostId: opts.localHostId.value,
       home,
       aiOnly: store.cfg?.widget?.aiOnly ?? false,
-      groupBy: groupBy.activeId.value,
     });
     try {
       await widget.pushState(JSON.stringify(state));
@@ -109,6 +106,4 @@ export function useDeskWidget(opts: {
     () => store.cfg?.widget?.aiOnly,
     () => void push(),
   );
-
-  watch(groupBy.activeId, () => void push());
 }

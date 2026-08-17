@@ -118,19 +118,41 @@ describe("projectWidgetState — ordering", () => {
       sess({ id: "fail", task_state: "failed", last_output_at: 200 }),
       sess({ id: "wait", task_state: "waiting_input", last_output_at: 1 }),
     ];
-    const ids = projectWidgetState(sessions, { nowMs: NOW, groupBy: "state" }).rows.map((r) => r.sessionId);
+    const ids = projectWidgetState(sessions, { nowMs: NOW }).rows.map((r) => r.sessionId);
     // The widget shares the sidebar's urgency order, so running leads here too.
     expect(ids).toEqual(["new-run", "old-run", "wait", "fail", "done"]);
   });
 
-  it("matches the sidebar host grouping by local host then activity", () => {
+  it("ranks by urgency regardless of host — never groups local ahead of remote", () => {
+    // A remote running session must outrank a local idle one. The widget is a
+    // one-glance "what is moving" view, so host is not a sort key: grouping
+    // local-first (the old behaviour) buried remote running sessions below a
+    // pile of idle local shells and, past maxRows, dropped them entirely.
     const sessions = [
-      sess({ id: "remote", host_id: "H2", started_at: 900 }),
-      sess({ id: "local-old", host_id: "H1", started_at: 100 }),
-      sess({ id: "local-new", host_id: "H1", started_at: 500 }),
+      sess({ id: "local-idle", host_id: "H1", task_state: "idle", started_at: 900 }),
+      sess({ id: "remote-run", host_id: "H2", task_state: "running", started_at: 100 }),
     ];
     const ids = projectWidgetState(sessions, { nowMs: NOW, localHostId: "H1" }).rows.map((r) => r.sessionId);
-    expect(ids).toEqual(["local-new", "local-old", "remote"]);
+    expect(ids).toEqual(["remote-run", "local-idle"]);
+  });
+
+  it("keeps a remote running session visible under a flood of local sessions", () => {
+    // Regression: with WIDGET_MAX_ROWS local idle sessions plus one remote
+    // running session, the remote one used to be sorted last (local-first
+    // grouping) and then sliced off — invisible in the widget even though it
+    // was the only thing actually running.
+    const locals = Array.from({ length: WIDGET_MAX_ROWS + 4 }, (_, i) =>
+      sess({ id: `local-${i}`, host_id: "H1", task_state: "idle", started_at: 100 + i }),
+    );
+    const sessions = [
+      ...locals,
+      sess({ id: "remote-run", host_id: "H2", host: "mac-mini", task_state: "running", started_at: 1 }),
+    ];
+    const st = projectWidgetState(sessions, { nowMs: NOW, localHostId: "H1" });
+    const ids = st.rows.map((r) => r.sessionId);
+    expect(ids).toContain("remote-run");
+    expect(ids[0]).toBe("remote-run"); // running outranks every idle local
+    expect(st.runningCount).toBe(1);
   });
 
   it("matches sidebar ordering for unread rows and equal activity", () => {
@@ -139,7 +161,7 @@ describe("projectWidgetState — ordering", () => {
       sess({ id: "a", task_state: "running", started_at: 100 }),
       sess({ id: "unread", task_state: "running", started_at: 1, unread: true }),
     ];
-    const ids = projectWidgetState(sessions, { nowMs: NOW, groupBy: "state" }).rows.map((r) => r.sessionId);
+    const ids = projectWidgetState(sessions, { nowMs: NOW }).rows.map((r) => r.sessionId);
     expect(ids).toEqual(["unread", "a", "z"]);
   });
 

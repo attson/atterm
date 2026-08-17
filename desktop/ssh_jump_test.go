@@ -63,6 +63,22 @@ func addSavedHost(t *testing.T, a *App, alias, host, port, user, pass, proxyJump
 	return h
 }
 
+// addProxyCommandHost saves a host whose record carries a ProxyCommand — the
+// shape ssh_config import produces, and the one the drawer cannot create or
+// clear (see UpdateSSHHost).
+func addProxyCommandHost(t *testing.T, a *App, alias string, srv *forwardTestServer, user, pass, proxyCommand string) SSHHost {
+	t.Helper()
+	host, port, _ := net.SplitHostPort(srv.addr)
+	h, err := a.AddSSHHost(SSHHost{
+		Alias: alias, Host: host, Port: port, User: user,
+		AuthKind: "password", ProxyCommand: proxyCommand,
+	}, sshCredential{Password: pass})
+	if err != nil {
+		t.Fatalf("AddSSHHost %s: %v", alias, err)
+	}
+	return h
+}
+
 func addServerHost(t *testing.T, a *App, alias string, srv *forwardTestServer, user, pass, proxyJump string) SSHHost {
 	t.Helper()
 	host, port, _ := net.SplitHostPort(srv.addr)
@@ -642,6 +658,45 @@ func TestDirectHostMissingCredentialKeepsTheSentinel(t *testing.T) {
 		t.Fatalf("want the bare %q sentinel, got %v", errCredentialMissing, err)
 	}
 	assertNoDials(t, srv, "missing credential")
+}
+
+// TestJumpHopWithProxyCommandIsRefusedBeforeAnyDial closes the gap between what
+// hostRunsProxyCommand promises and what a chain does.
+//
+// A hop is looked up in the saved host list and dialled at its HostName:Port.
+// If that saved record carries a ProxyCommand, the machine is one the gate
+// refuses to dial directly — in those exact words — the moment the user clicks
+// it themselves. Reaching it as somebody else's jump host must not quietly do
+// the thing that sentence promises not to do, and doing it in the middle of a
+// chain is the version the user cannot see.
+//
+// The hop here has a perfectly good credential, so the refusal cannot be coming
+// from the credential check; and both servers are real, so assertNoDials is
+// what proves it happens before any connection exists.
+func TestJumpHopWithProxyCommandIsRefusedBeforeAnyDial(t *testing.T) {
+	srv1 := startForwardingSSHTestServerAs(t, "u1", "p1")
+	srvT := startForwardingSSHTestServerAs(t, "ut", "pt")
+
+	a := newJumpTestApp(t, srv1, srvT)
+	addProxyCommandHost(t, a, "bastion", srv1, "u1", "p1", "corkscrew proxy 8080 %h %p")
+	target := addServerHost(t, a, "db", srvT, "ut", "pt", "bastion")
+
+	chain, err := a.dialThroughJumps(context.Background(), target, acceptedHostKey{})
+	if err == nil {
+		_ = chain.Close()
+		t.Fatal("a jump host configured with a ProxyCommand must be refused")
+	}
+	if !strings.Contains(err.Error(), "bastion") {
+		t.Fatalf("error must name the hop that carries the ProxyCommand, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ProxyCommand") {
+		t.Fatalf("error must name ProxyCommand, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "corkscrew") {
+		t.Fatalf("error must quote the command, got %v", err)
+	}
+	assertNoDials(t, srv1, "the hop carrying a ProxyCommand")
+	assertNoDials(t, srvT, "the target while a hop carries a ProxyCommand")
 }
 
 // TestJumpHopWithoutCredentialFailsBeforeAnyDial: a hop can be a saved host and

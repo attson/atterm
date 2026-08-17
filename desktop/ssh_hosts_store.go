@@ -53,8 +53,10 @@ type SSHHost struct {
 	// empty until the user explicitly imports the key via the existing
 	// key-import flow.
 	//
-	// ProxyJump / ProxyCommand mark a host that NewSshSessionByID must
-	// refuse to dial directly (roadmap item 27 adds jump-host support).
+	// ProxyJump is the chain a connection to this host has to be built
+	// through (see ssh_jump.go); ProxyCommand marks a host atterm refuses to
+	// connect at all, because it never runs that command — as a destination
+	// (hostRunsProxyCommand) and as somebody else's hop alike.
 	IdentityFile string `json:"identity_file,omitempty"`
 	ProxyJump    string `json:"proxy_jump,omitempty"`
 	ProxyCommand string `json:"proxy_command,omitempty"`
@@ -155,13 +157,23 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 // This is the same reasoning mergeImportedHost applies in the other
 // direction: each side keeps the fields it is the source of truth for.
 //
-// ProxyJump/ProxyCommand make this load-bearing rather than tidy.
-// NewSshSessionByID refuses to dial a host carrying either of them, and
-// import deliberately writes no credential — so the *mandated* next step
-// after importing a proxied host is to open this very drawer and attach a
-// key or password. Letting that save blank the proxy fields would strip the
-// gate off the host at the one moment it is guaranteed to be exercised, and
-// markSSHHostsDirty below would then sync the ungated record everywhere.
+// ProxyJump/ProxyCommand make this load-bearing rather than tidy. Import
+// deliberately writes no credential, so the *mandated* next step after
+// importing a proxied host is to open this very drawer and attach a key or
+// password — the one moment these fields are guaranteed to be exercised. What
+// a save that blanked them would cost differs by field, and neither is
+// cosmetic:
+//
+//   - ProxyCommand is a refusal. atterm never runs that command, so a host
+//     carrying one cannot be connected — as a destination
+//     (hostRunsProxyCommand) or as somebody else's jump host (dialJumpHops).
+//     Blanking it strips that refusal off the record.
+//   - ProxyJump is the *route* (roadmap item 27, ssh_jump.go). Blanking it
+//     does not unlock the host, it redirects it: atterm would dial the host's
+//     own HostName:Port directly, which for a machine that lives behind a
+//     bastion either times out or reaches whatever else answers there.
+//
+// markSSHHostsDirty below would then sync the damaged record everywhere.
 // Clearing a proxy field is a ~/.ssh/config edit followed by re-import, not
 // a side effect of typing a password.
 func (a *App) UpdateSSHHost(h SSHHost, cred *sshCredential) error {

@@ -42,12 +42,16 @@ const maxJumpDepth = 10
 // not get a longer budget per hop than a direct connection does.
 const jumpDialTimeout = 15 * time.Second
 
-// jumpKeepalive is how often every connection on a chain pings its peer — the
-// target's included, since dialThroughJumps dials it through dialJumpHop too.
+// jumpKeepalive is how often each connection dialled by dialJumpHop pings its
+// peer: every hop, plus the destination when it comes through dialThroughJumps
+// (the tunnel path). The terminal path's destination is not one of these — it
+// is opened by sshclient.Dial, which leaves Config.Keepalive unset and so takes
+// DialConn's own 30s default. The two numbers are the same today, but a test
+// that shortens this one does not shorten that one.
 //
-// It also bounds how long a dropped connection can go unnoticed, which is what
-// the tunnel path depends on: a tunnel's only notice that its connection died
-// is Conn.Done, and a failed keepalive ping is what closes it. Without that an
+// It bounds how long a dropped connection can go unnoticed, which is what the
+// tunnel path depends on: a tunnel's only notice that its connection died is
+// Conn.Done, and a failed keepalive ping is what closes it. Without that an
 // *idle* tunnel would keep reporting itself as running. Tests shorten this so a
 // drop is observable in a test's lifetime.
 var jumpKeepalive = 30 * time.Second
@@ -189,11 +193,22 @@ func (a *App) dialJumpHops(ctx context.Context, h SSHHost, accepted acceptedHost
 	if err != nil {
 		return nil, err
 	}
-	// Every hop's credential is resolved before the first dial, for the same
-	// reason the cycle and depth checks are: a hop that is saved but has no
-	// stored credential must not be discovered after the hops in front of it
-	// have really logged in.
+	// Every hop is vetted before the first dial, for the same reason the cycle
+	// and depth checks are: a hop that cannot be used must not be discovered
+	// after the hops in front of it have really logged in.
 	for i, hop := range hops {
+		// A hop carrying a ProxyCommand is a machine atterm refuses to dial at
+		// all, in those words, the moment the user clicks it themselves
+		// (hostRunsProxyCommand). Dialling its HostName:Port because somebody
+		// else named it as a jump host would break that promise in the one
+		// place the user cannot see it happening. This check lives here rather
+		// than at the gate on purpose: §5.4 keeps the gate to exactly two call
+		// sites, and this is not a gate — it is the chain refusing to build.
+		if hop.ProxyCommand != "" {
+			return nil, jumpProxyCommandError(hop, i+1)
+		}
+		// A hop that is saved but has no stored credential is the other way to
+		// be unusable.
 		if _, err := sshAuthForHost(hop); err != nil {
 			return nil, jumpCredentialError(hop, i+1, err)
 		}
@@ -278,6 +293,19 @@ func (a *App) dialJumpHop(ctx context.Context, h SSHHost, hopIndex int, via *ssh
 		return nil, fmt.Errorf("cannot reach %s: %w", role, err)
 	}
 	return conn, nil
+}
+
+// jumpProxyCommandError words a hop that is configured with a ProxyCommand. It
+// is a hop-specific message rather than hostRunsProxyCommand's, for the same
+// reason jumpCredentialError is: that one says "this host cannot be connected
+// directly" about the host the user asked for, and here the unusable machine is
+// a *different* one, several steps into a chain the user may not have thought
+// about since they imported it. Naming the hop and its index is the only way
+// the sentence points at something they can act on.
+func jumpProxyCommandError(h SSHHost, hopIndex int) error {
+	return fmt.Errorf("jump host %q (hop %d) is configured with a ProxyCommand (%q); "+
+		"atterm never runs that command, so it cannot be used as a jump host",
+		sshHostLabel(h), hopIndex, h.ProxyCommand)
 }
 
 // jumpCredentialError words a hop's missing credential. It deliberately does

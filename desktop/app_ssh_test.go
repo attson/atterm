@@ -421,6 +421,35 @@ func TestProxyJumpToAnUnsavedHopIsRefusedWithoutDialling(t *testing.T) {
 	}
 }
 
+// TestProxyJumpThroughAProxyCommandHopIsRefused is the same rule as
+// TestJumpHopWithProxyCommandIsRefusedBeforeAnyDial, asserted where the user
+// meets it: the gate refuses a ProxyCommand host with "this host cannot be
+// connected directly", and that sentence has to stay true for a machine reached
+// as somebody else's hop. Clicking "db" must not dial the bastion's
+// HostName:Port behind the promise made about clicking the bastion.
+func TestProxyJumpThroughAProxyCommandHopIsRefused(t *testing.T) {
+	bastion := startForwardingSSHTestServerAs(t, "bastion-user", "bastion-pw")
+	target := startForwardingSSHTestServerAs(t, "target-user", "target-pw")
+
+	a := newJumpSessionTestApp(t, bastion, target)
+	addProxyCommandHost(t, a, "bastion", bastion, "bastion-user", "bastion-pw", "corkscrew proxy 8080 %h %p")
+	th := addServerHost(t, a, "db", target, "target-user", "target-pw", "bastion")
+
+	_, err := a.NewSshSessionByID(th.ID, AcceptedHostKey{})
+	if err == nil {
+		t.Fatal("a chain through a ProxyCommand host must be refused")
+	}
+	if !strings.Contains(err.Error(), "bastion") || !strings.Contains(err.Error(), "ProxyCommand") {
+		t.Fatalf("error must name the hop and the reason, got %v", err)
+	}
+	var hkErr *HostKeyUnknownError
+	if errors.As(err, &hkErr) {
+		t.Fatalf("the refusal must come before any dial: got a TOFU prompt (%v)", err)
+	}
+	assertNoDials(t, bastion, "the hop carrying a ProxyCommand")
+	assertNoDials(t, target, "the destination behind a ProxyCommand hop")
+}
+
 // TestProxyJumpHostWithoutCredentialFailsBeforeAnyDial: the destination's own
 // credential is checked before the first hop is dialled, and the error stays the
 // bare errCredentialMissing sentinel the frontend answers by prompting for this

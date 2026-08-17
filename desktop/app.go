@@ -878,7 +878,14 @@ func (a *App) GetClipboardPastePayload() (ClipboardPastePayload, error) {
 // where no NSPasteboard-equivalent bridge is wired up yet. The frontend
 // treats an empty slice as "no source path — fall back to PASTE_FILE upload".
 func (a *App) GetPasteboardFileURLs() []string {
-	return readPasteboardFileURLs()
+	if urls := readPasteboardFileURLs(); urls != nil {
+		return urls
+	}
+	// Not `return readPasteboardFileURLs()`: the darwin bridge returns nil for
+	// an empty pasteboard and the non-darwin stub always does, and a nil slice
+	// crosses the wails bridge as JSON `null`, not `[]` — which is what the
+	// comment above promises and what every caller destructures.
+	return []string{}
 }
 
 // GetTerminalTheme returns the user's global terminal theme preference.
@@ -1089,9 +1096,12 @@ func (a *App) SetShortcutBindings(bindings map[string]string) error {
 // mutate without affecting the store.
 func (a *App) GetProfiles() []SessionProfile {
 	if a == nil || a.cfgStore == nil {
-		return nil
+		return []SessionProfile{}
 	}
-	return a.cfgStore.Get().Profiles
+	if p := a.cfgStore.Get().Profiles; p != nil {
+		return p
+	}
+	return []SessionProfile{}
 }
 
 // SetProfiles replaces the profile list wholesale. Validates before touching
@@ -1440,6 +1450,11 @@ func (a *App) ListShells() []string {
 	}
 	for _, c := range candidates {
 		addShell(c)
+	}
+	if out == nil {
+		// A machine where none of the candidates resolved. Returning the nil
+		// slice would reach the frontend as JSON `null` rather than `[]`.
+		return []string{}
 	}
 	return out
 }

@@ -43,6 +43,21 @@ type SSHHost struct {
 	KeyID    string   `json:"key_id,omitempty"` // referenced SSHKey when auth_kind=="key"
 	Tags     []string `json:"tags,omitempty"`
 	Note     string   `json:"note,omitempty"`
+
+	// IdentityFile, ProxyJump and ProxyCommand are populated by ssh_config
+	// import (see ssh_config_import.go) and are otherwise empty for
+	// manually-added hosts.
+	//
+	// IdentityFile is the private key *path* only — atterm never reads the
+	// file as part of import; AuthKind is set to "key" but KeyID is left
+	// empty until the user explicitly imports the key via the existing
+	// key-import flow.
+	//
+	// ProxyJump / ProxyCommand mark a host that NewSshSessionByID must
+	// refuse to dial directly (roadmap item 27 adds jump-host support).
+	IdentityFile string `json:"identity_file,omitempty"`
+	ProxyJump    string `json:"proxy_jump,omitempty"`
+	ProxyCommand string `json:"proxy_command,omitempty"`
 }
 
 // sshCredential is JSON-encoded into a single keyring entry keyed by host ID.

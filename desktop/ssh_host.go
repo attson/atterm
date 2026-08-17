@@ -34,6 +34,17 @@ func (a *App) NewSshSessionByID(id string) (NewSessionResp, error) {
 		return NewSessionResp{}, fmt.Errorf("no such host: %s", id)
 	}
 
+	// Refuse hosts that ssh_config marked as needing a jump host or an
+	// arbitrary proxy command. Must run before any credential read or dial:
+	// a ProxyJump host is usually not reachable directly, and ProxyCommand
+	// is never executed by atterm (it would be an RCE surface). Jump-host
+	// support is roadmap item 27.
+	if found.ProxyJump != "" || found.ProxyCommand != "" {
+		return NewSessionResp{}, fmt.Errorf(
+			"host %q needs a jump host (ProxyJump %q); jump-host support is roadmap item 27 and not implemented yet",
+			found.Alias, found.ProxyJump)
+	}
+
 	req := SSHConnectReq{
 		Host: found.Host, Port: found.Port, User: found.User,
 		AuthKind:      found.AuthKind,

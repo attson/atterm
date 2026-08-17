@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -155,4 +156,42 @@ func TestNewSshSessionByIDSetsSSHHostID(t *testing.T) {
 		t.Fatalf("SSHHostID = %q, want host-123", got)
 	}
 	_ = h.CloseSession(id)
+}
+
+// TestProxyJumpHostRefusesDirectConnect is the core assertion for the
+// direct-connect gate. It points the host at a *real, reachable* SSH test
+// server and gives it a valid stored credential — so if the gate did not
+// fire before the dial, NewSshSessionByID would proceed exactly like
+// TestNewSshSessionByIDResolvesCredAndConnects and return
+// *HostKeyUnknownError (TOFU prompt), which only happens after a dial
+// attempt. Asserting that error type is absent, together with the
+// ProxyJump-naming error that IS returned, proves no dial occurred —
+// not just that some error came back.
+func TestProxyJumpHostRefusesDirectConnect(t *testing.T) {
+	useIsolatedKeyring(t)
+	addr, _ := startSSHTestServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+
+	a := &App{host: newTestRelayHost(t), cfgStore: newTestConfigStore(t), ctx: context.Background()}
+	a.sshKnownHostsPath = filepath.Join(t.TempDir(), "known_hosts")
+
+	h, err := a.AddSSHHost(
+		SSHHost{Host: host, Port: port, User: "u", AuthKind: "password", ProxyJump: "bastion"},
+		sshCredential{Password: "pw"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.NewSshSessionByID(h.ID)
+	if err == nil {
+		t.Fatal("must refuse to connect a ProxyJump host directly")
+	}
+	if !strings.Contains(err.Error(), "ProxyJump") {
+		t.Fatalf("error must name the reason, got %v", err)
+	}
+	var hkErr *HostKeyUnknownError
+	if errors.As(err, &hkErr) {
+		t.Fatalf("gate must return before any dial: got a TOFU prompt (%v), meaning a dial was attempted", err)
+	}
 }

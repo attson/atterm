@@ -2,6 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **⚠️ 这份计划有一个错误前提，执行完成后才被全分支 review 抓到。留档不改写，但下面两点在照读之前必须知道：**
+>
+> 1. **Homebrew cask 不能绕开 Gatekeeper。** cask 默认会给装好的 app 打上 `com.apple.quarantine`（刻意模仿浏览器下载），`--no-quarantine` 在 Homebrew 5.0.0 已弃用、之后移除，第三方 tap 也没有替代品。所以本项交付的不是「装上直接能跑」，而是版本化安装 + 自动更新的 checksum + 一份说真话的文档；Gatekeeper 的解法仍是第 8 项签名。
+> 2. **下面 Global Constraints 与 Task 1 里的 `zap` 路径是错的**（`~/.config/atterm` / `~/Library/Logs/atterm`）。macOS 上配置在 `~/Library/Application Support/atterm`、日志在 `~/Library/Logs/AT-Term`。以实际实现和 spec §5.3 为准。
+>
+> 修正见 spec 的 §0/§2/§5.3。
+
 **Goal:** 让 macOS 用户第一次装 atterm 不被 Gatekeeper 拦住——通过 Homebrew cask 分发，加上给直接下载 dmg 的人一份说得清楚的说明。
 
 **Architecture:** cask 模板留在本仓库（`packaging/homebrew/atterm.rb.tmpl`），release 时由一个纯函数式的脚本填入版本号与两个架构的 sha256（从 release 的 `SHA256SUMS` 读），再推到 tap 仓库。tap 仓库与推送 token 都由用户创建；在它们存在之前，同步步骤显式跳过并留日志。

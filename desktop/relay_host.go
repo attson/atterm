@@ -531,9 +531,36 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	// an empty Shell/Cwd on the profile means "fall back to what the caller
 	// already resolved" (req.Command from default_shell, req.Cwd/HOME) —
 	// exactly today's behavior when no profile applies at all.
+	//
+	// Shell and Cwd get deliberately asymmetric treatment for a synced
+	// profile whose Shell/Cwd don't exist on this machine (final-review
+	// ruling, Important 3):
+	//
+	//   - Shell gets a fallback. A shell that cannot start means no session
+	//     at all, so degrading to the caller's already-resolved default
+	//     shell (req.Command) is strictly better than failing outright — and
+	//     a bad *default* profile would otherwise fail every new tab and
+	//     split. Mirrors DefaultShellOrDefault's treatment of a synced
+	//     absolute default_shell (config.go): stat only absolute paths (a
+	//     bare name is PATH-resolved at spawn time, so statting it here would
+	//     reject perfectly good configs) and fall back with a logWarn.
+	//   - Cwd does NOT get a fallback. A wrong cwd still opens a working
+	//     session — just in the wrong directory, which the user may not
+	//     notice and may run commands in unintentionally. Failing loudly
+	//     (see the ptyhost.Open wrap below, which names the profile) is
+	//     better than silently landing somewhere the user didn't choose.
 	command := req.Command
 	if profile != nil && profile.Shell != "" {
-		command = profile.Shell
+		shell := profile.Shell
+		if filepath.IsAbs(shell) {
+			if _, err := os.Stat(shell); err != nil {
+				logWarn("session", "profile %q (%s) shell %q is not present on this machine; falling back to the default shell", profile.Name, profile.ID, shell)
+				shell = ""
+			}
+		}
+		if shell != "" {
+			command = shell
+		}
 	}
 	if command == "" {
 		return uuid.Nil, fmt.Errorf("empty command")
@@ -585,6 +612,14 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	if err != nil {
 		if plan.Cleanup != nil {
 			plan.Cleanup()
+		}
+		// Name the profile when one applied — most likely to fire here is a
+		// synced cwd that doesn't exist on this machine (Shell already has a
+		// fallback above; Cwd deliberately does not). Without this, the user
+		// gets a bare "chdir: no such file or directory" with nothing tying
+		// it to a profile they configured on another machine.
+		if profile != nil {
+			return uuid.Nil, fmt.Errorf("open pty for profile %q (%s): %w", profile.Name, profile.ID, err)
 		}
 		return uuid.Nil, fmt.Errorf("open pty: %w", err)
 	}
@@ -839,7 +874,12 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 			ptyCopy := pty
 			sidCopy := id
 			sess.SetOnFirstPrompt(func() {
-				logInfo("profile", "session=%s profile=%s — inject startup command %q", sidCopy, profileID, profile.StartupCmd)
+				// StartupCmd is user-authored and plausibly carries a secret
+				// (e.g. "export GH_TOKEN=…"). Logs are bundled by
+				// ExportDiagnostics and users share those bundles, so log its
+				// length rather than its contents — enough to confirm
+				// something was injected without leaking what.
+				logInfo("profile", "session=%s profile=%s — injecting startup command (%d bytes)", sidCopy, profileID, len(profile.StartupCmd))
 				go func() { _, _ = ptyCopy.Write([]byte(line)) }()
 			})
 		}

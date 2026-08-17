@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"testing"
+
+	"github.com/attson/atterm/internal/e2eecrypto"
+)
 
 func TestMergeProfilesEnvRules(t *testing.T) {
 	env := map[string]string{"FOO": "bar"}
@@ -149,16 +155,48 @@ func TestStripUnsyncedEnvDoesNotMutateCaller(t *testing.T) {
 	}
 }
 
+// TestOpenProfilesRejectsWrongAADTag isolates the AAD-tag discriminator as
+// the only variable: same account key, same profilesSyncSessionID (so
+// DeriveSessionKey yields exactly the session key openProfiles itself will
+// derive), only the AAD tag differs (AADTagSSHHosts instead of
+// AADTagProfiles). This is the direct check of the control redline #22
+// exists to enforce.
+//
+// The previous version sealed under sshHostsSyncSessionID and opened under
+// profilesSyncSessionID — two different UUIDs — so DeriveSessionKey already
+// produced two different session keys before the AAD tag ever entered the
+// picture. That version would still have passed even if AADTagSSHHosts and
+// AADTagProfiles shared the same byte value, because the key mismatch alone
+// is enough to make OpenUnsequenced fail; it tested "different session ⇒
+// different key" (true but uninteresting here), not "same session, wrong
+// tag ⇒ rejected" (the actual guarantee the discriminator byte provides).
 func TestOpenProfilesRejectsWrongAADTag(t *testing.T) {
-	// Sealing under the SSH namespace and opening under the profiles one must
-	// fail — that is the whole point of a per-namespace discriminator byte.
 	key := make([]byte, 32)
-	sealed, err := sealSSHHosts(key, nil, nil, nil, nil)
-	if err != nil || sealed == nil {
-		t.Skip("ssh seal unavailable in this shape")
+	for i := range key {
+		key[i] = byte(i)
 	}
-	if _, _, err := openProfiles(key, sealed); err == nil {
-		t.Error("an ssh_hosts envelope must not open as a profiles envelope")
+	sessionKey, err := e2eecrypto.DeriveSessionKey(key, profilesSyncSessionID)
+	if err != nil {
+		t.Fatalf("DeriveSessionKey: %v", err)
+	}
+	payload := profilesSyncPayload{Profiles: []SessionProfile{{ID: "a", Name: "A"}}}
+	plain, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	// Seal under the *profiles* session key/id, but with the *ssh_hosts* AAD
+	// tag — everything openProfiles will derive matches except the one byte
+	// under test.
+	ct, err := e2eecrypto.SealUnsequenced(sessionKey, profilesSyncSessionID, e2eecrypto.AADTagSSHHosts, plain)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	b64, err := json.Marshal(base64.StdEncoding.EncodeToString(ct))
+	if err != nil {
+		t.Fatalf("marshal b64: %v", err)
+	}
+	if _, _, err := openProfiles(key, b64); err == nil {
+		t.Error("an envelope sealed with AADTagSSHHosts must not open with openProfiles' AADTagProfiles, even under the identical session key/id")
 	}
 }
 

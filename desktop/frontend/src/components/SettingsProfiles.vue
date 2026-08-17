@@ -23,6 +23,16 @@ import { usePlatform } from "../platform";
 const { t } = useI18n();
 const platform = usePlatform();
 
+// profiles-changed is the same-shape counterpart to
+// SettingsTerminalAppearance's "appearance-changed" and SettingsShortcuts'
+// "bindings-changed": a second, always-fires path so App.vue's picker stays
+// live even when the relay is unreachable and prefs:changed (which only
+// fires on a successful Push) never comes. Forwarded through
+// SettingsDialog.vue exactly like those two.
+const emit = defineEmits<{
+  (e: "profiles-changed"): void;
+}>();
+
 const profiles = ref<SessionProfile[]>([]);
 const defaultProfileId = ref("");
 const loading = ref(true);
@@ -44,7 +54,8 @@ const editing = ref<EditingState | null>(null);
 // SettingsTerminalAppearance.vue's loadAppearance(): read-only, never calls
 // a set* API. A remote pull that changed profiles/default must be reflected
 // here without writing anything back, or an open panel would ping-pong the
-// value between devices (design §7.2, same rule as every other synced pref).
+// value between devices (prefs-sync-l1 design doc §7.2, same rule as every
+// other synced pref — this item's own design doc has no §7.2).
 async function loadProfiles() {
   error.value = "";
   try {
@@ -106,6 +117,7 @@ async function persist(): Promise<boolean> {
   error.value = "";
   try {
     await setProfiles(profiles.value);
+    emit("profiles-changed");
     return true;
   } catch (e: any) {
     const message = e?.message ?? String(e);
@@ -157,7 +169,13 @@ function cancelEdit() {
 async function saveEdit() {
   if (!editing.value) return;
   const e = editing.value;
-  if (!e.name.trim()) return;
+  if (!e.name.trim()) {
+    // Whitespace-only name previously no-opped silently, leaving the editor
+    // open with no feedback — a user clicking Save twice would conclude the
+    // panel was broken. Surface it the same way a failed persist() does.
+    error.value = t("settings.profiles.nameRequired");
+    return;
+  }
   const next: SessionProfile = { id: e.id, name: e.name.trim() };
   if (e.shell.trim()) next.shell = e.shell.trim();
   if (e.cwd.trim()) next.cwd = e.cwd.trim();
@@ -207,6 +225,7 @@ async function setDefault(id: string) {
   error.value = "";
   try {
     await setDefaultProfileID(id);
+    emit("profiles-changed");
   } catch (e: any) {
     defaultProfileId.value = previous;
     error.value = e?.message ?? String(e);

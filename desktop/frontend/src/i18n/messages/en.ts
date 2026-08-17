@@ -470,6 +470,7 @@ export const en = {
       setDefault: "Set as default",
       clearDefault: "Unset default",
       defaultBadge: "Default",
+      nameRequired: "Name is required.",
     },
     devices: {
       hint: 'Devices signed in to this relay account.',

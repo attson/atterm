@@ -39,6 +39,21 @@ func TestResolveSessionProfile(t *testing.T) {
 			t.Fatalf("got %+v, want nil for an unknown id", got)
 		}
 	})
+	// The subtest above passes defaultProfileID: "" — it cannot distinguish
+	// "an unresolvable explicit id falls back to no profile" from "an
+	// unresolvable explicit id falls back to the default profile", because
+	// both answers produce nil when there is no default to fall back to.
+	// This is the pinning test the final whole-branch review asked for
+	// (Important 2): a stale explicit id must resolve to nil EVEN WHEN a
+	// live default profile is configured, i.e. it must not be silently
+	// promoted to the default. The user asked for something specific by id;
+	// if that thing is gone, giving them a different profile they never
+	// picked is a worse surprise than giving them none.
+	t.Run("a stale explicit id does not fall through to a configured default", func(t *testing.T) {
+		if got := resolveSessionProfile(profiles, "p1", "gone"); got != nil {
+			t.Fatalf("got %+v, want nil — an unresolvable explicit id must not silently promote the default (p1)", got)
+		}
+	})
 }
 
 // TestApplyProfileEnvProtectsTERM is the design §6.3 regression test: a
@@ -149,6 +164,75 @@ func TestRelayHost_NewSession_ProfilePrecedence(t *testing.T) {
 			t.Errorf("command = %q, want /bin/sh (no profile applied)", info.Command)
 		}
 	})
+}
+
+// TestRelayHost_NewSession_ProfileShellMissingFallsBackToRequestCommand covers
+// the shell half of the Important 3 final-review ruling: a synced profile
+// whose Shell doesn't exist on this machine must not fail the whole session —
+// NewSession degrades to req.Command (what the caller already resolved from
+// default_shell), exactly as if the profile had no Shell set at all.
+func TestRelayHost_NewSession_ProfileShellMissingFallsBackToRequestCommand(t *testing.T) {
+	h := newTestRelayHost(t)
+
+	missingShell := filepath.Join(t.TempDir(), "no-such-shell")
+	cwd := t.TempDir()
+
+	cfg := h.cfg.Get()
+	cfg.Profiles = []SessionProfile{
+		{ID: "broken-shell", Name: "Broken Shell", Shell: missingShell},
+	}
+	if err := h.cfg.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh", Cwd: cwd, ProfileID: "broken-shell", Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("NewSession must fall back to the request's command rather than fail: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatalf("session %s not found", id)
+	}
+	info := sess.Info()
+	if strings.Contains(info.Command, missingShell) {
+		t.Errorf("command = %q, must not use the missing profile shell %q", info.Command, missingShell)
+	}
+	if !strings.Contains(info.Command, "/bin/sh") {
+		t.Errorf("command = %q, want fallback to the request's /bin/sh", info.Command)
+	}
+}
+
+// TestRelayHost_NewSession_ProfileCwdMissingFailsNamingProfile covers the cwd
+// half of the Important 3 final-review ruling: unlike Shell, a synced
+// profile's Cwd gets no fallback — a wrong cwd would otherwise open a working
+// session in a directory the user never chose, silently. NewSession must fail
+// outright, and the error must name the profile so the failure isn't a bare
+// "no such file or directory" with no link back to the profile that caused
+// it.
+func TestRelayHost_NewSession_ProfileCwdMissingFailsNamingProfile(t *testing.T) {
+	h := newTestRelayHost(t)
+
+	missingCwd := filepath.Join(t.TempDir(), "no-such-dir")
+
+	cfg := h.cfg.Get()
+	cfg.Profiles = []SessionProfile{
+		{ID: "broken-cwd", Name: "Broken Cwd", Cwd: missingCwd},
+	}
+	if err := h.cfg.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh", Cwd: t.TempDir(), ProfileID: "broken-cwd", Cols: 80, Rows: 24,
+	})
+	if err == nil {
+		t.Fatal("NewSession must fail loudly when the profile's cwd does not exist, not silently land elsewhere")
+	}
+	if !strings.Contains(err.Error(), "Broken Cwd") || !strings.Contains(err.Error(), "broken-cwd") {
+		t.Errorf("error = %q, want it to name the profile (name %q and id %q)", err.Error(), "Broken Cwd", "broken-cwd")
+	}
 }
 
 // TestRelayHost_NewSession_ProfileStartupCommandInjectedOnFirstPrompt proves

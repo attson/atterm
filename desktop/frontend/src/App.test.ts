@@ -1416,6 +1416,35 @@ describe("session profile selection wires into newSession", () => {
     const body = newSessionMock.mock.calls[0][0];
     expect(body).not.toHaveProperty("profile_id");
   });
+
+  // onSplit's own profile_id wiring (relay_host.go's resolveSessionProfile is
+  // consulted from both startNewTab and onSplit — see App.vue's onSplit).
+  // startNewTab's path was covered above; onSplit's had zero coverage before
+  // this test, same shape as the F14 gap the picker->newSession seam was
+  // fixed for. Boot's auto-start already left a tab open, so Mod+KeyN's
+  // default binding (pane.split-vertical-new) can act on it directly.
+  it("passes profile_id to newSession when a profile is selected before splitting", async () => {
+    const newSessionMock = vi.fn().mockResolvedValue({ session_id: "local-2" });
+    const wrapper = await mountAppWithProfiles(newSessionMock);
+
+    await wrapper.get('[data-testid="new-tab-profile"]').setValue("p1");
+
+    const isMac = navigator.platform?.toLowerCase().includes("mac") ?? false;
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "n",
+        code: "KeyN",
+        metaKey: isMac,
+        ctrlKey: !isMac,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await flushPromises();
+
+    expect(newSessionMock).toHaveBeenCalledTimes(1);
+    expect(newSessionMock).toHaveBeenCalledWith(expect.objectContaining({ profile_id: "p1" }));
+  });
 });
 
 describe("admin view (main-area swap)", () => {

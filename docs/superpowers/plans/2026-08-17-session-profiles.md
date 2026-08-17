@@ -90,6 +90,12 @@ Expected: FAIL —— `AADTags` 未定义。
 
 - [ ] **Step 3: 建注册表**
 
+> **事后订正（final fix wave，见 progress.md F7）：** 下面这份清单漏了两个已经在用的字节——`0x02`
+> `IN`（`desktop/uplink_frame_seal.go` 里 `byte(f.Type)` 变量取值，不是字面量，第一轮 grep 没解析出来）
+> 和 `0x33` `PASTE_IMAGE`（`desktop/uplink_open_test.go` 有往返测试）。代码里的 `aadtags.go` 已经
+> 补上这两行；这里的快照特意保持原样不改，连同下面 protocol.md 片段一起，作为「枚举类清单第一遍
+> 几乎总漏」这条教训的记录——照抄这份快照去建下一个 sealed 命名空间的人，应该先读这条订正。
+
 `internal/e2eecrypto/aadtags.go`：
 
 ```go
@@ -233,6 +239,16 @@ func TestSealProfilesSkipsWithoutAccountKey(t *testing.T) {
 	}
 }
 
+// 事后订正（final fix wave，见 progress.md F8/F18）：下面这个测试与 Step 3
+// 的说明自相矛盾——Step 3 说 seal 之前要清空未开 SyncEnv 的 profile 的
+// Env，但这里种下的 profile 没有 SyncEnv 字段（也就是 false）却断言 Env 在
+// seal 之后还在。原实现的作者按这个测试的字面意思去做，把 stripUnsyncedEnv
+// 写成一个独立、非强制调用的函数，直到复核时才发现矛盾。最终定案是倒过来
+// 判的：sealProfiles 内部无条件裁剪，这个测试本身错了。代码里
+// `desktop/profiles_test.go` 的 `TestSealProfilesRoundTrip` 已经改成显式设
+// `SyncEnv: true` 来保 Env 存活，并新增了 `TestSealProfilesStripsEnvWhenSyncEnvFalse`
+// 盯住相反的分支。这份快照保留原样、不回填，留作「测试代码本身可能是错的
+// 那一半」的例子。
 func TestSealProfilesRoundTrip(t *testing.T) {
 	key := make([]byte, 32)
 	for i := range key {

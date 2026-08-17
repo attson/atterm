@@ -1100,19 +1100,34 @@ func (a *App) GetProfiles() []SessionProfile {
 func (a *App) SetProfiles(profiles []SessionProfile) error {
 	seen := make(map[string]bool, len(profiles))
 	for _, p := range profiles {
-		if strings.TrimSpace(p.ID) == "" {
+		// Compare trimmed ids, matching filterValidProfiles' inbound check
+		// (profiles.go). Unreachable in practice with generated UUIDs — the
+		// only caller (SettingsProfiles.vue) never emits whitespace-padded
+		// ids — but the two validation boundaries should agree on what an id
+		// is rather than silently diverge on an edge case neither exercises.
+		id := strings.TrimSpace(p.ID)
+		if id == "" {
 			return errors.New("profiles: id must be non-empty")
 		}
-		if seen[p.ID] {
-			return fmt.Errorf("profiles: duplicate id %q", p.ID)
+		if seen[id] {
+			return fmt.Errorf("profiles: duplicate id %q", id)
 		}
-		seen[p.ID] = true
+		seen[id] = true
 		if strings.TrimSpace(p.Name) == "" {
-			return fmt.Errorf("profiles[%q]: name must be non-empty", p.ID)
+			return fmt.Errorf("profiles[%q]: name must be non-empty", id)
 		}
 	}
 	return a.updatePref("profiles_encrypted", func(cfg *appConfig) error {
 		cfg.Profiles = profiles
+		// Structural guarantee, not a caller's responsibility: if this write
+		// removes the profile DefaultProfileID currently names, the default
+		// must fall back to "" rather than persist a dangling reference.
+		// resolveDefaultProfileID already exists for the inbound-sync half
+		// of this same invariant (openProfiles' merge path); reuse it here
+		// so a local SetProfiles call (the UI's delete path already
+		// compensates, but nothing else does — see SettingsProfiles.vue's
+		// deleteProfile) can't strand it either.
+		cfg.DefaultProfileID = resolveDefaultProfileID(cfg.DefaultProfileID, profiles)
 		return nil
 	})
 }

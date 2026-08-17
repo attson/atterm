@@ -96,6 +96,7 @@ const emit = defineEmits<{
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", appearance: TerminalAppearance): void;
   (e: "bindings-changed", bindings: Record<string, string>): void;
+  (e: "profiles-changed"): void;
 }>();
 
 // Logging is no longer a standalone tab — it lives inside the Diagnostics
@@ -236,6 +237,14 @@ function onAppearanceChanged(state: TerminalAppearanceState) {
 // waiting for the dialog to close and remount (see App.vue's onBindingsChanged).
 function onBindingsChanged(bindings: Record<string, string>) {
   emit("bindings-changed", bindings);
+}
+
+// SettingsProfiles emits after a successful persist()/setDefault() so
+// App.vue's picker can refresh independently of prefs:changed, which only
+// fires when a Push to the relay actually succeeds (see SettingsProfiles.vue
+// and App.vue's onProfilesChanged).
+function onProfilesChanged() {
+  emit("profiles-changed");
 }
 
 async function openLogViewer() {
@@ -428,7 +437,7 @@ function onSaveClick() {
           <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
           <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" @bindings-changed="onBindingsChanged" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
-          <SettingsProfiles v-if="activeTab === 'profiles' && caps.wailsBindings" />
+          <SettingsProfiles v-if="activeTab === 'profiles' && caps.wailsBindings" @profiles-changed="onProfilesChanged" />
           <div v-if="activeTab === 'diagnostics' && caps.wailsBindings" class="diag-merged">
             <section v-if="caps.fileDialog" class="merged-section">
               <h4 class="merged-section-title">{{ t("settings.tabs.logging") }}</h4>

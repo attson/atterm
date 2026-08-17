@@ -374,11 +374,17 @@ export function getUserHomeDir(): Promise<string> {
 //
 // GetProfiles/SetProfiles/GetDefaultProfileID/SetDefaultProfileID are marked
 // optional on AppBindings (see _bindings.ts) because they landed after most
-// of App.test.ts's __setBindingsForTest mocks were written. The fallbacks
+// of App.test.ts's __setBindingsForTest mocks were written. The read fallbacks
 // below mirror getStartupError()'s pattern: a missing binding degrades to
 // "no profiles configured" instead of throwing, so callers that load
 // profiles unconditionally (App.vue's onMounted) don't need every existing
 // test mock updated just to keep mounting.
+//
+// The write fallbacks are deliberately NOT the same shape. Degrading a read
+// to "empty" is harmless; degrading a write to "resolved, nothing written"
+// is a different class of bug — persist()/setDefault() in SettingsProfiles.vue
+// would report success to the user while silently performing no write at
+// all. Reject instead so callers surface the failure.
 export function getProfiles(): Promise<SessionProfile[]> {
   const b = bindings();
   if (!b.GetProfiles) return Promise.resolve([]);
@@ -387,7 +393,7 @@ export function getProfiles(): Promise<SessionProfile[]> {
 
 export function setProfiles(profiles: SessionProfile[]): Promise<void> {
   const b = bindings();
-  if (!b.SetProfiles) return Promise.resolve();
+  if (!b.SetProfiles) return Promise.reject(new Error("SetProfiles binding is not available"));
   return b.SetProfiles(profiles);
 }
 
@@ -399,6 +405,6 @@ export function getDefaultProfileID(): Promise<string> {
 
 export function setDefaultProfileID(id: string): Promise<void> {
   const b = bindings();
-  if (!b.SetDefaultProfileID) return Promise.resolve();
+  if (!b.SetDefaultProfileID) return Promise.reject(new Error("SetDefaultProfileID binding is not available"));
   return b.SetDefaultProfileID(id);
 }

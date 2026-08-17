@@ -469,6 +469,7 @@ export const zhCN = {
       setDefault: "设为默认",
       clearDefault: "取消默认",
       defaultBadge: "默认",
+      nameRequired: "请填写名称。",
     },
     devices: {
       hint: '此账号已登录的浏览器 / 桌面 / 移动设备。',

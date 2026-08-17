@@ -138,10 +138,18 @@ const localHost = ref<string>("");
 
 // Session profiles for the TabBar new-tab/split picker (Task 4). Loaded at
 // boot and refreshed on prefs:changed exactly like refreshTerminalAppearance,
-// et al. — read-only here, never written back (design doc §7.2). Which
-// profile is the default is not needed here: the picker's own "Default
-// profile" option (selectedProfileId === "") already lets the Go side
-// resolve it via resolveSessionProfile, so App.vue doesn't need to know it.
+// et al. — read-only here, never written back (prefs-sync-l1 design doc
+// §7.2; this item's own design doc has no §7.2). Which profile is the
+// default is not needed here: the picker's own "Default profile" option
+// (selectedProfileId === "") already lets the Go side resolve it via
+// resolveSessionProfile, so App.vue doesn't need to know it.
+//
+// prefs:changed only fires after a successful relay Push (markPrefDirtyAndPush
+// in prefs.ts), so a local edit made while signed in but unreachable/paused
+// would never reach this ref until restart. SettingsProfiles.vue also emits
+// "profiles-changed" straight after a successful local persist()/setDefault()
+// — forwarded through SettingsDialog.vue exactly like appearance-changed and
+// bindings-changed — so onProfilesChanged below covers that path.
 const profiles = ref<SessionProfile[]>([]);
 // The picker's current selection. Empty string means "use the default
 // profile, if any" — spawnLocalShell only sends profile_id when non-empty,
@@ -911,9 +919,28 @@ function onCommandNotifyThresholdChanged(seconds: number) {
 
 // Read-only — SettingsProfiles.vue owns all writes. Mirrors
 // refreshTerminalAppearance's role: keep the boot value and every
-// prefs:changed pull in sync with what Go has.
+// prefs:changed / profiles-changed refresh in sync with what Go has.
+//
+// Also reconciles selectedProfileId: it is never written back by anything
+// else, so a profile deleted locally or (after a pull) on another device
+// would otherwise leave a dead id selected. The <select> would render blank
+// (no matching option) while startNewTab/onSplit kept sending the dead
+// profile_id — which resolveSessionProfile (relay_host.go) treats as "no
+// profile" WITHOUT falling through to the default, silently giving the user
+// a session that matches neither their pick nor their default. Clearing it
+// here falls the picker back to "" (= default profile, if any), which is
+// the more honest state for "the thing you picked no longer exists".
 async function refreshProfiles() {
   profiles.value = await getProfiles();
+  if (selectedProfileId.value && !profiles.value.some((p) => p.id === selectedProfileId.value)) {
+    selectedProfileId.value = "";
+  }
+}
+
+// SettingsProfiles.vue's second refresh path (see the comment on `profiles`
+// above) — same handler shape as onAppearanceChanged/onBindingsChanged.
+function onProfilesChanged() {
+  void refreshProfiles();
 }
 
 function parseHash(): string | null {
@@ -1490,7 +1517,8 @@ onMounted(async () => {
   // refs, never call a set* API or MarkDirty. Writing back here would push
   // the value we just pulled straight back out, and the other device would
   // pull it, write it back, push it again — an infinite ping-pong between
-  // machines with no user action driving it. See design doc §7.2.
+  // machines with no user action driving it. See the prefs-sync-l1 design
+  // doc §7.2 (this item's own design doc has no §7.2).
   $platform.events.on('prefs:changed', () => {
     if (!caps.wailsBindings) return;
     void refreshTerminalTheme();
@@ -1832,6 +1860,7 @@ defineExpose({ me });
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @appearance-changed="onAppearanceChanged"
       @bindings-changed="onBindingsChanged"
+      @profiles-changed="onProfilesChanged"
       @relay-config-changed="refreshDesktopRelayConfig"
       @close="onSettingsClose"
     />

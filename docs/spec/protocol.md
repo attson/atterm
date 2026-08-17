@@ -619,7 +619,7 @@ AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字�
 | `0x39` `FS_RESPONSE` | segment 1（元数据）+ segment 2（文件字节） | segment 1 = JSON `SealedFSResponseFields { entries, meta, error, content, chunk }`；segment 2 = 原始文件字节，不经 base64 |
 | `0x3a` `FS_EVENT` | 分段 payload 的 segment 1（裸二进制） | JSON `SealedFSEventFields { path }` |
 | `0xF0` （合成，不上 wire） | `ssh_hosts_encrypted` 偏好值 | JSON `sshSyncPayload { hosts, keys }` |
-| `0xF1` （合成，不上 wire） | `profiles_encrypted` 偏好值 | JSON `profilesSyncPayload { profiles }` |
+| `0xF1` （合成，不上 wire） | `profiles_encrypted` 偏好值 | JSON `profilesSyncPayload { profiles, default_profile_id }` |
 
 **红线**：加新 sealed 帧时**必须**给一个**唯一**的 `frame_type` 字节，并在这张表里增行；不允许复用（[AGENTS.md](../../AGENTS.md) §22）。
 

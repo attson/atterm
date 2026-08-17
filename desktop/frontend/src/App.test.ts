@@ -463,6 +463,7 @@ describe("remote tab session retention", () => {
         connected: true,
       }),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
@@ -670,6 +671,7 @@ describe("recovery pin migration integration", () => {
       }),
       ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
@@ -786,6 +788,7 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       }),
       ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
@@ -872,6 +875,7 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       }),
       ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
@@ -939,6 +943,7 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       }),
       ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
@@ -1018,6 +1023,7 @@ describe("local-shell paths gated on caps.localPty (recovery + boot auto-start)"
       }),
       ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
@@ -1144,6 +1150,7 @@ describe("split new pane cwd inheritance", () => {
       }),
       ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
@@ -1435,3 +1442,10 @@ describe("recovery snapshot gated on caps.wailsBindings (web)", () => {
     wrapper.unmount();
   });
 });
+
+// The fixed-file-list version of this guard (checking only App.vue,
+// SettingsDialog.vue, SettingsShortcuts.vue, ShortcutHints.vue) lived here
+// and is superseded by the repo-wide glob-based guard in
+// shortcutBindingsGuard.test.ts — a fixed list only protects the files
+// someone remembered to add to it, which is exactly how ShortcutHints.vue
+// was missed in the first pass.

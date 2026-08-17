@@ -1,36 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
-import { setActivePinia, createPinia } from "pinia";
 import ShortcutHints from "./ShortcutHints.vue";
-import { usePluginConfigStore } from "../plugins/configStore";
 import { __setPlatformForTests } from "../platform";
 import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
 
-let platform: ReturnType<typeof createFakePlatform>;
-
 beforeEach(() => {
   vi.clearAllMocks();
-  platform = createFakePlatform();
-  // Override the default getPluginConfig with the test-specific shape.
-  (platform.pluginHost!.getPluginConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-    fileExplorer: { enabled: false, panelWidthPx: 380, panelCollapsed: false, innerTreeRatio: 0.3, showHidden: false, showLineNumbers: false },
-    translate: { enabled: false, provider: "openai-compatible", baseUrl: "", apiKey: "", model: "gpt-4o-mini", defaultTargetLang: "zh-CN" },
-    shortcuts: { bindings: {} },
-  });
-  __setPlatformForTests(platform);
+  __setPlatformForTests(createFakePlatform());
 });
 
 afterEach(() => {
   __setPlatformForTests(null);
 });
-
-async function setupStore(initial: Record<string, string>) {
-  setActivePinia(createPinia());
-  const store = usePluginConfigStore();
-  await store.load();
-  store.cfg!.shortcuts = { bindings: initial };
-  return store;
-}
 
 function fireKey(type: "keydown" | "keyup", init: KeyboardEventInit & { key: string }) {
   document.dispatchEvent(new KeyboardEvent(type, { ...init, bubbles: true, cancelable: true }));
@@ -42,15 +23,16 @@ describe("ShortcutHints", () => {
   });
 
   it("renders nothing initially (overlay hidden)", async () => {
-    await setupStore({});
-    const wrapper = mount(ShortcutHints, { props: { mod: "Control", thresholdMs: 100 } });
+    const wrapper = mount(ShortcutHints, { props: { mod: "Control", thresholdMs: 100, bindings: {} } });
     await flushPromises();
     expect(wrapper.find(".hints-backdrop").exists()).toBe(false);
   });
 
   it("after 100ms long-press of Control, shows 11 rows in 2 groups with Ctrl+* chords", async () => {
-    await setupStore({});
-    const wrapper = mount(ShortcutHints, { props: { mod: "Control", thresholdMs: 100 }, attachTo: document.body });
+    const wrapper = mount(ShortcutHints, {
+      props: { mod: "Control", thresholdMs: 100, bindings: {} },
+      attachTo: document.body,
+    });
     await flushPromises();
     fireKey("keydown", { key: "Control", ctrlKey: true });
     vi.advanceTimersByTime(100);
@@ -66,8 +48,10 @@ describe("ShortcutHints", () => {
   });
 
   it("mac variant uses ⌘ symbols", async () => {
-    await setupStore({});
-    const wrapper = mount(ShortcutHints, { props: { mod: "Meta", thresholdMs: 100 }, attachTo: document.body });
+    const wrapper = mount(ShortcutHints, {
+      props: { mod: "Meta", thresholdMs: 100, bindings: {} },
+      attachTo: document.body,
+    });
     await flushPromises();
     fireKey("keydown", { key: "Meta", metaKey: true });
     vi.advanceTimersByTime(100);
@@ -78,8 +62,10 @@ describe("ShortcutHints", () => {
   });
 
   it("releasing the mod hides the overlay", async () => {
-    await setupStore({});
-    const wrapper = mount(ShortcutHints, { props: { mod: "Control", thresholdMs: 100 }, attachTo: document.body });
+    const wrapper = mount(ShortcutHints, {
+      props: { mod: "Control", thresholdMs: 100, bindings: {} },
+      attachTo: document.body,
+    });
     await flushPromises();
     fireKey("keydown", { key: "Control", ctrlKey: true });
     vi.advanceTimersByTime(100);
@@ -92,8 +78,10 @@ describe("ShortcutHints", () => {
   });
 
   it("disabled action renders em-dash and dimmed class", async () => {
-    await setupStore({ "pane.close": "" });
-    const wrapper = mount(ShortcutHints, { props: { mod: "Control", thresholdMs: 100 }, attachTo: document.body });
+    const wrapper = mount(ShortcutHints, {
+      props: { mod: "Control", thresholdMs: 100, bindings: { "pane.close": "" } },
+      attachTo: document.body,
+    });
     await flushPromises();
     fireKey("keydown", { key: "Control", ctrlKey: true });
     vi.advanceTimersByTime(100);
@@ -106,12 +94,30 @@ describe("ShortcutHints", () => {
   });
 
   it("user-overridden binding is rendered using formatChord", async () => {
-    await setupStore({ "tab.new": "Mod+KeyL" });
-    const wrapper = mount(ShortcutHints, { props: { mod: "Control", thresholdMs: 100 }, attachTo: document.body });
+    const wrapper = mount(ShortcutHints, {
+      props: { mod: "Control", thresholdMs: 100, bindings: { "tab.new": "Mod+KeyL" } },
+      attachTo: document.body,
+    });
     await flushPromises();
     fireKey("keydown", { key: "Control", ctrlKey: true });
     vi.advanceTimersByTime(100);
     await flushPromises();
+    expect(wrapper.text()).toContain("Ctrl+L");
+    expect(wrapper.text()).not.toContain("Ctrl+T");
+    wrapper.unmount();
+  });
+
+  it("bindings prop is reactive — updating it while visible changes the rendered chord", async () => {
+    const wrapper = mount(ShortcutHints, {
+      props: { mod: "Control", thresholdMs: 100, bindings: {} },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    fireKey("keydown", { key: "Control", ctrlKey: true });
+    vi.advanceTimersByTime(100);
+    await flushPromises();
+    expect(wrapper.text()).toContain("Ctrl+T");
+    await wrapper.setProps({ bindings: { "tab.new": "Mod+KeyL" } });
     expect(wrapper.text()).toContain("Ctrl+L");
     expect(wrapper.text()).not.toContain("Ctrl+T");
     wrapper.unmount();

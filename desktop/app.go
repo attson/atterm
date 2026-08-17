@@ -1050,7 +1050,27 @@ func (a *App) GetShortcutBindings() map[string]string {
 }
 
 // SetShortcutBindings replaces the override map wholesale.
+//
+// Validates before touching the store — the same rule ValidatePluginConfig
+// applies to Plugins.Shortcuts.Bindings (empty action id, malformed binding
+// string), reusing isValidShortcutBinding rather than a second copy of the
+// predicate. This key now syncs, so an unvalidated write here wouldn't just
+// break the local machine: it would propagate a malformed binding to every
+// other device the user owns via prefsSync, where it flows straight into
+// buildRoutingTable on the frontend. A rejected call must leave the
+// previously stored map untouched, so validation runs against the incoming
+// argument before updatePref's mutate callback ever assigns it — mutate
+// returning an error means updatePref never calls cfgStore.Set, so the
+// config on disk (and in memory) is exactly what it was before this call.
 func (a *App) SetShortcutBindings(bindings map[string]string) error {
+	for actionID, binding := range bindings {
+		if actionID == "" {
+			return errors.New("shortcutBindings: action id must be non-empty")
+		}
+		if !isValidShortcutBinding(binding) {
+			return fmt.Errorf("shortcutBindings[%q]: malformed binding %q", actionID, binding)
+		}
+	}
 	return a.updatePref("shortcut_bindings", func(cfg *appConfig) error {
 		cfg.ShortcutBindings = bindings
 		return nil

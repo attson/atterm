@@ -20,7 +20,6 @@ import PasteFilePreviewHost from "./components/PasteFilePreviewHost.vue";
 import PluginHost from "./plugins/PluginHost.vue";
 import TranslatePanelHost from "./plugins/translate/TranslatePanelHost.vue";
 import { createPluginContext } from "./plugins/usePluginContext";
-import { usePluginConfigStore } from "./plugins/configStore";
 import { sendInputToSession } from "./lib/sendInput";
 import { applyTabReorder } from "./lib/tabReorder";
 import { computeCloseTabState } from "./lib/closeTabOptimistic";
@@ -53,6 +52,7 @@ import {
   getTerminalCursorStyle,
   getTerminalCursorBlink,
   getTerminalScrollback,
+  getShortcutBindings,
   getUpdateState,
   listShells,
   newSession,
@@ -570,8 +570,6 @@ const pluginContext = createPluginContext({
   terminalThemeId: currentTerminalThemeID,
 });
 provide("atterm:pluginContext", pluginContext);
-
-const pluginStore = usePluginConfigStore();
 
 const {
   panelWidth,
@@ -1341,9 +1339,26 @@ const remoteSessionCount = computed(() => {
   return n;
 });
 
-const shortcutBindings = computed<Record<string, string>>(() => {
-  return pluginStore.cfg?.shortcuts?.bindings ?? {};
-});
+// Loaded from the dedicated shortcut_bindings preference key (Task 3), not
+// the plugin config — replaces the old computed off usePluginConfigStore.
+// Kept as a plain ref rather than recomputing anything, since there is no
+// longer a shared reactive store to derive from; onBindingsChanged below is
+// what keeps it live while Settings is open. Also fed to ShortcutHints (see
+// template) so the long-press overlay shows the same bindings the router
+// below actually dispatches on, instead of loading its own copy.
+const shortcutBindings = ref<Record<string, string>>({});
+
+async function refreshShortcutBindings() {
+  shortcutBindings.value = await getShortcutBindings();
+}
+
+// SettingsShortcuts (via SettingsDialog) emits the full saved map, mirroring
+// onAppearanceChanged below — replacing the ref wholesale keeps the running
+// keybinding router (useTerminalShortcuts) in sync with what Settings just
+// wrote, without waiting for a remount.
+function onBindingsChanged(bindings: Record<string, string>) {
+  shortcutBindings.value = bindings;
+}
 
 // Bumped on every terminal-search shortcut press. Drilled down to every pane;
 // only the focused one reacts (TerminalView checks props.focused).
@@ -1510,6 +1525,8 @@ onMounted(async () => {
       await refreshTerminalTheme();
       bootStage = "refreshTerminalAppearance";
       await refreshTerminalAppearance();
+      bootStage = "refreshShortcutBindings";
+      await refreshShortcutBindings();
       bootStage = "getEndpoint";
       localEndpoint.value = await getEndpoint();
       bootStage = "getHostInfo";
@@ -1764,6 +1781,7 @@ defineExpose({ me });
       @terminal-theme-changed="onTerminalThemeChanged"
       @command-notify-threshold-changed="onCommandNotifyThresholdChanged"
       @appearance-changed="onAppearanceChanged"
+      @bindings-changed="onBindingsChanged"
       @relay-config-changed="refreshDesktopRelayConfig"
       @close="onSettingsClose"
     />
@@ -1801,7 +1819,7 @@ defineExpose({ me });
       @restore="onRecoveryRestore"
       @discard="onRecoveryDiscard"
     />
-    <ShortcutHints />
+    <ShortcutHints :bindings="shortcutBindings" />
   </div>
 </template>
 

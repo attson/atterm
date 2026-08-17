@@ -570,30 +570,34 @@ func configPath() string {
 }
 
 // migrateShortcutBindings mirrors bindings from the legacy plugin slot into
-// the top-level field and reports whether it changed anything.
+// the top-level field, then clears the legacy slot, and reports whether it
+// changed anything.
 //
-// It deliberately does NOT clear the legacy slot. Until the frontend stops
-// reading and writing Plugins.Shortcuts.Bindings, that slot is still live:
-// the Settings UI writes it through SetPluginConfig, which bypasses this
-// function entirely. Clearing here would blank every custom shortcut for
-// anyone running a build from between this change and the frontend swap,
-// and an edit made in that window would be written to the legacy slot and
-// then silently dropped on the next load. The clear lands together with the
-// frontend swap, so there is never a version where the reader and the
-// storage disagree.
+// The clear landed in the same commit as the frontend swap to
+// GetShortcutBindings/SetShortcutBindings (Task 3) on purpose: clearing
+// earlier — while the Settings UI still wrote Plugins.Shortcuts.Bindings via
+// SetPluginConfig, a path that bypasses this function entirely — would have
+// blanked every custom shortcut for anyone on a build between the two
+// changes, and an edit made in that window would have been written to the
+// legacy slot and then silently dropped on the next load. Now that the
+// frontend reads and writes only the new field, there is no writer left to
+// race with the clear.
 //
-// While the legacy slot is non-empty it wins: an edit made through the old
-// path is mirrored forward rather than lost.
+// While the legacy slot is non-empty it still wins on conflict: an edit made
+// through the old path (e.g. a hand-edited config.json) is mirrored forward
+// rather than lost, before the slot is cleared out from under it.
 func migrateShortcutBindings(c *appConfig) bool {
+	changed := false
 	old := c.Plugins.Shortcuts.Bindings
-	if len(old) == 0 {
-		return false
+	if len(old) > 0 && !maps.Equal(c.ShortcutBindings, old) {
+		c.ShortcutBindings = maps.Clone(old)
+		changed = true
 	}
-	if maps.Equal(c.ShortcutBindings, old) {
-		return false
+	if len(c.Plugins.Shortcuts.Bindings) > 0 {
+		c.Plugins.Shortcuts.Bindings = nil
+		changed = true
 	}
-	c.ShortcutBindings = maps.Clone(old)
-	return true
+	return changed
 }
 
 // configStore is a thin lock-protected wrapper around appConfig with disk I/O.

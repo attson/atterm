@@ -92,6 +92,7 @@ const emit = defineEmits<{
   (e: "terminal-theme-changed", themeID: string): void;
   (e: "command-notify-threshold-changed", seconds: number): void;
   (e: "appearance-changed", appearance: TerminalAppearance): void;
+  (e: "bindings-changed", bindings: Record<string, string>): void;
 }>();
 
 // Logging is no longer a standalone tab — it lives inside the Diagnostics
@@ -211,6 +212,13 @@ function onCommandNotifyThresholdChanged(seconds: number) {
 // TerminalAppearance declares, so the two shapes already match structurally.
 function onAppearanceChanged(state: TerminalAppearanceState) {
   emit("appearance-changed", state);
+}
+
+// SettingsShortcuts emits the full saved bindings map on save; pass it
+// straight through so App.vue's useTerminalShortcuts stays in sync without
+// waiting for the dialog to close and remount (see App.vue's onBindingsChanged).
+function onBindingsChanged(bindings: Record<string, string>) {
+  emit("bindings-changed", bindings);
 }
 
 async function openLogViewer() {
@@ -392,7 +400,7 @@ function onSaveClick() {
             @request-install="onForceInstallClick"
           />
           <SettingsPlugins v-if="caps.pluginHost" v-show="activeTab === 'plugins'" />
-          <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" />
+          <SettingsShortcuts v-if="caps.pluginHost" v-show="activeTab === 'shortcuts'" @bindings-changed="onBindingsChanged" />
           <SettingsTemplates v-if="activeTab === 'templates'" />
           <div v-if="activeTab === 'diagnostics' && caps.wailsBindings" class="diag-merged">
             <section v-if="caps.fileDialog" class="merged-section">

@@ -186,6 +186,10 @@ export function GetShellIntegrationEnabled() {
   return window['go']['main']['App']['GetShellIntegrationEnabled']();
 }
 
+export function GetShortcutBindings() {
+  return window['go']['main']['App']['GetShortcutBindings']();
+}
+
 export function GetStartupError() {
   return window['go']['main']['App']['GetStartupError']();
 }
@@ -448,6 +452,10 @@ export function SetRelayDisableE2EE(arg1) {
 
 export function SetShellIntegrationEnabled(arg1) {
   return window['go']['main']['App']['SetShellIntegrationEnabled'](arg1);
+}
+
+export function SetShortcutBindings(arg1) {
+  return window['go']['main']['App']['SetShortcutBindings'](arg1);
 }
 
 export function SetTaskGroupBy(arg1) {

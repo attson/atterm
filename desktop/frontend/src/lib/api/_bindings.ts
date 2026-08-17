@@ -445,6 +445,8 @@ export interface AppBindings {
   AppendFrontendLogs(records: FrontendLogRecord[]): Promise<number>;
   GetTerminalTheme(): Promise<string>;
   SetTerminalTheme(themeID: string): Promise<void>;
+  GetShortcutBindings(): Promise<Record<string, string>>;
+  SetShortcutBindings(bindings: Record<string, string>): Promise<void>;
   GetTerminalFontHead(): Promise<string>;
   SetTerminalFontHead(head: string): Promise<void>;
   GetTerminalFontSize(): Promise<number>;

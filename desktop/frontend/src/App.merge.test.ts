@@ -140,6 +140,7 @@ describe("App — merge & batch close (integration)", () => {
         connected: true,
       }),
       GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
       GetTerminalFontHead: vi.fn().mockResolvedValue(""),
       GetTerminalFontSize: vi.fn().mockResolvedValue(13),
       GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),

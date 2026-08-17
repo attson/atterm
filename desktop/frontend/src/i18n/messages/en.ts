@@ -242,6 +242,53 @@ export const en = {
       importFromFile: "Import from key file",
       submitNew: "Add Key",
     },
+    // Port forwarding (roadmap item 26). "Local / Remote / Dynamic" keep the
+    // ssh(1) meanings of -L / -R / -D; the hints spell them out because the
+    // words alone do not say which end listens.
+    forwards: {
+      tab: "Tunnels",
+      sectionTitle: "Port forwarding",
+      sectionHint: "Rules are configuration only. Nothing starts until you start it under Tunnels.",
+      add: "Add rule",
+      remove: "Remove this rule",
+      noRules: "No forwarding rules yet.",
+      kindLocal: "Local",
+      kindRemote: "Remote",
+      kindDynamic: "Dynamic",
+      kindLocalHint: "This machine listens; each connection is opened from the SSH host to the target (ssh -L).",
+      kindRemoteHint: "The SSH host listens; each connection it accepts is opened from this machine to the target (ssh -R).",
+      kindDynamicHint: "This machine listens as a SOCKS5 proxy; every connection names its own destination, resolved on the SSH host (ssh -D).",
+      bindAddr: "Bind address",
+      bindPort: "Port",
+      targetHost: "Target host",
+      targetPort: "Target port",
+      label: "Label",
+      labelPlaceholder: "optional",
+      // The three warnings are deliberately not one shared sentence: what a
+      // non-loopback bind costs differs by kind, and a wrong-sized warning is
+      // the same problem as no warning.
+      warnLocal:
+        "Binding {addr} instead of 127.0.0.1 puts this forwarded service in front of anyone on the same network, with no SSH credential — they reach it through your machine. This rule syncs to every device you sign in on and binds the same way there.",
+      warnRemote:
+        "Binding {addr} instead of 127.0.0.1 asks the SSH host to accept connections from anyone on the same network as that host, with no SSH credential, and hand them to the target below through your machine. Most sshd configs refuse it unless GatewayPorts is on. This rule syncs to every device you sign in on.",
+      warnDynamic:
+        "Binding {addr} instead of 127.0.0.1 makes this an unauthenticated SOCKS5 open proxy: anyone on the same network can reach everything this SSH host can reach, to any destination they name, using your SSH credential and appearing in the far side's logs as you. This rule syncs to every device you sign in on and binds the same way there.",
+      emptyTitle: "No forwarding rules",
+      emptySub: "Add a rule in a host's Port forwarding section, then start it here.",
+      start: "Start",
+      starting: "Starting…",
+      stop: "Stop",
+      dismiss: "Dismiss",
+      stateIdle: "Not started",
+      stateRunning: "Running",
+      stateStopped: "Stopped",
+      conns: "{count} accepted",
+      // Rendered where a local/remote rule shows its target: a dynamic
+      // forward has no configured destination at all.
+      dynamicTarget: "SOCKS5 (destination per connection)",
+      proxyBlocked: "Tunnels cannot be started for this host.",
+      refresh: "Refresh",
+    },
     configImport: {
       open: "Import from ~/.ssh/config",
       title: "Import from ~/.ssh/config",

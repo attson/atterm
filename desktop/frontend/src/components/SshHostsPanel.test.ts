@@ -14,6 +14,9 @@ const updateSSHKey = vi.fn();
 const deleteSSHKey = vi.fn();
 const previewSSHConfigImport = vi.fn();
 const importSSHHosts = vi.fn();
+const startForward = vi.fn();
+const stopForward = vi.fn();
+const listActiveForwards = vi.fn();
 vi.mock("../lib/api", () => ({
   listSSHHosts: (...a: unknown[]) => listSSHHosts(...a),
   addSSHHost: (...a: unknown[]) => addSSHHost(...a),
@@ -26,6 +29,9 @@ vi.mock("../lib/api", () => ({
   deleteSSHKey: (...a: unknown[]) => deleteSSHKey(...a),
   previewSSHConfigImport: (...a: unknown[]) => previewSSHConfigImport(...a),
   importSSHHosts: (...a: unknown[]) => importSSHHosts(...a),
+  startForward: (...a: unknown[]) => startForward(...a),
+  stopForward: (...a: unknown[]) => stopForward(...a),
+  listActiveForwards: (...a: unknown[]) => listActiveForwards(...a),
 }));
 
 // The panel renders through the i18n layer, so every assertion below that
@@ -47,6 +53,9 @@ beforeEach(() => {
   deleteSSHKey.mockReset();
   previewSSHConfigImport.mockReset();
   importSSHHosts.mockReset();
+  startForward.mockReset().mockResolvedValue(undefined);
+  stopForward.mockReset().mockResolvedValue(undefined);
+  listActiveForwards.mockReset().mockResolvedValue([]);
 });
 
 describe("SshHostsPanel", () => {
@@ -1002,5 +1011,288 @@ describe("SshHostsPanel 代理主机与导入字段的可见性", () => {
     await wrapper.find('[data-test="ssh-connect-n1"]').trigger("click");
     await flushPromises();
     expect(newSshSessionByID).toHaveBeenCalledWith("n1");
+  });
+});
+
+// ---- Port forwarding (roadmap item 26) ----------------------------------
+
+type RuleLike = {
+  id: string;
+  kind: string;
+  bind_addr?: string;
+  bind_port: string;
+  target_host?: string;
+  target_port?: string;
+  note?: string;
+};
+
+const PG_RULE: RuleLike = {
+  id: "f1", kind: "local", bind_addr: "127.0.0.1", bind_port: "5432",
+  target_host: "db.internal", target_port: "5432", note: "pg",
+};
+
+const FWD_HOST = {
+  id: "h1", alias: "box", host: "10.0.0.1", user: "root", port: "22",
+  auth_kind: "password" as const, forwards: [PG_RULE],
+};
+
+async function mountPanel(hosts: unknown[]) {
+  listSSHHosts.mockResolvedValue(hosts);
+  const wrapper = mount(SshHostsPanel);
+  await flushPromises();
+  return wrapper;
+}
+
+// Open a host's edit drawer through the context menu, the same path a user
+// takes to reach the forwarding editor.
+async function openHostDrawer(wrapper: ReturnType<typeof mount>, id: string) {
+  await wrapper.find(`[data-test="ssh-host-card-${id}"]`).trigger("contextmenu");
+  await wrapper.vm.$nextTick();
+  await wrapper.find('[data-test="session-row-menu-item-edit"]').trigger("click");
+  await wrapper.vm.$nextTick();
+}
+
+function savedForwards(): RuleLike[] {
+  const [payload] = updateSSHHost.mock.calls[0] as [{ forwards?: RuleLike[] }];
+  return payload.forwards ?? [];
+}
+
+describe("SshHostsPanel 转发规则编辑器", () => {
+  it("编辑主机时抽屉里列出已有的转发规则", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openHostDrawer(wrapper, "h1");
+    const row = wrapper.find('[data-test="ssh-forward-rule-f1"]');
+    expect(row.exists()).toBe(true);
+    expect((row.find('[data-test="ssh-forward-bind-port-f1"]').element as HTMLInputElement).value).toBe("5432");
+    expect((row.find('[data-test="ssh-forward-target-host-f1"]').element as HTMLInputElement).value).toBe("db.internal");
+  });
+
+  // The regression this pins is the one that ate proxy_jump in item 25: a save
+  // payload built from the fields the form thinks it owns, silently dropping a
+  // field it does not — and here dropping it means the rule is deleted on
+  // every device, because UpdateSSHHost lets the caller's Forwards win.
+  it("只改用户名保存时,原有转发规则原样带回后端", async () => {
+    updateSSHHost.mockResolvedValue(undefined);
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openHostDrawer(wrapper, "h1");
+    await wrapper.find('[data-test="ssh-add-user"]').setValue("deploy");
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+    expect(updateSSHHost).toHaveBeenCalledTimes(1);
+    const rules = savedForwards();
+    expect(rules).toHaveLength(1);
+    expect(rules[0]).toMatchObject({
+      id: "f1", kind: "local", bind_addr: "127.0.0.1", bind_port: "5432",
+      target_host: "db.internal", target_port: "5432", note: "pg",
+    });
+  });
+
+  it("新增一条规则后保存,新规则出现在写回的 forwards 里", async () => {
+    updateSSHHost.mockResolvedValue(undefined);
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openHostDrawer(wrapper, "h1");
+    await wrapper.find('[data-test="ssh-forward-add"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    const rows = wrapper.findAll('[data-test^="ssh-forward-rule-"]');
+    expect(rows).toHaveLength(2);
+    // The new row's id is generated, so address it through the row itself.
+    const fresh = rows[1];
+    await fresh.find('input[data-test^="ssh-forward-bind-port-"]').setValue("6379");
+    await fresh.find('input[data-test^="ssh-forward-target-host-"]').setValue("redis.internal");
+    await fresh.find('input[data-test^="ssh-forward-target-port-"]').setValue("6379");
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+    const rules = savedForwards();
+    expect(rules).toHaveLength(2);
+    expect(rules[1]).toMatchObject({
+      kind: "local", bind_port: "6379", target_host: "redis.internal", target_port: "6379",
+    });
+    expect(rules[1].id).toBeTruthy();
+  });
+
+  it("删除一条规则后保存,该规则不再写回", async () => {
+    updateSSHHost.mockResolvedValue(undefined);
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openHostDrawer(wrapper, "h1");
+    await wrapper.find('[data-test="ssh-forward-remove-f1"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="ssh-forward-rule-f1"]').exists()).toBe(false);
+    await wrapper.find('[data-test="ssh-add-submit"]').trigger("click");
+    await flushPromises();
+    expect(savedForwards()).toEqual([]);
+  });
+
+  it("默认 loopback 绑定不出现警示", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openHostDrawer(wrapper, "h1");
+    expect(wrapper.find('[data-test="ssh-forward-bind-warning-f1"]').exists()).toBe(false);
+  });
+
+  // §5.1: a non-loopback bind is not a convenience setting, so the UI has to
+  // say what it actually costs — in the user's words, not "0.0.0.0".
+  it("本地转发绑非 loopback 时警示同网段任何人无需凭据即可访问", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openHostDrawer(wrapper, "h1");
+    await wrapper.find('[data-test="ssh-forward-bind-addr-f1"]').setValue("0.0.0.0");
+    await wrapper.vm.$nextTick();
+    const warn = wrapper.find('[data-test="ssh-forward-bind-warning-f1"]');
+    expect(warn.exists()).toBe(true);
+    expect(warn.text()).toContain("anyone on the same network");
+    expect(warn.text()).toContain("no SSH credential");
+    // A local rule exposes one service; it must not be described as a proxy.
+    expect(warn.text()).not.toContain("open proxy");
+  });
+
+  // §5.4: the same bind on a dynamic rule is a different size of mistake —
+  // an unauthenticated SOCKS5 proxy into everything the SSH host can reach.
+  it("动态转发绑非 loopback 时额外警示这是无认证的开放代理", async () => {
+    const wrapper = await mountPanel([
+      { ...FWD_HOST, forwards: [{ id: "d1", kind: "dynamic", bind_addr: "0.0.0.0", bind_port: "1080" }] },
+    ]);
+    await openHostDrawer(wrapper, "h1");
+    const warn = wrapper.find('[data-test="ssh-forward-bind-warning-d1"]');
+    expect(warn.exists()).toBe(true);
+    expect(warn.text()).toContain("open proxy");
+    expect(warn.text()).toContain("anyone on the same network");
+    expect(warn.text()).toContain("everything this SSH host can reach");
+  });
+
+  it("动态转发不显示目标主机字段", async () => {
+    const wrapper = await mountPanel([
+      { ...FWD_HOST, forwards: [{ id: "d1", kind: "dynamic", bind_addr: "127.0.0.1", bind_port: "1080" }] },
+    ]);
+    await openHostDrawer(wrapper, "h1");
+    expect(wrapper.find('[data-test="ssh-forward-target-host-d1"]').exists()).toBe(false);
+    await wrapper.find('[data-test="ssh-forward-kind-local-d1"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="ssh-forward-target-host-d1"]').exists()).toBe(true);
+  });
+});
+
+describe("SshHostsPanel 活跃隧道面板", () => {
+  async function openTunnels(wrapper: ReturnType<typeof mount>) {
+    await wrapper.find('[data-test="ssh-tab-tunnels"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+  }
+
+  it("没有任何规则时显示空态", async () => {
+    const wrapper = await mountPanel([
+      { id: "n1", host: "10.0.0.1", user: "root", auth_kind: "password" },
+    ]);
+    await openTunnels(wrapper);
+    expect(wrapper.find('[data-test="ssh-tunnels-empty"]').exists()).toBe(true);
+  });
+
+  it("列出主机的规则并可启动,启动后刷新活跃列表", async () => {
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    const row = wrapper.find('[data-test="ssh-tunnel-row-h1-f1"]');
+    expect(row.exists()).toBe(true);
+    expect(wrapper.find('[data-test="ssh-tunnel-state-h1-f1"]').text()).toContain("Not started");
+    listActiveForwards.mockResolvedValue([
+      {
+        host_id: "h1", rule_id: "f1", kind: "local", listen_addr: "127.0.0.1:5432",
+        target: "db.internal:5432", conns: 0, started_at: 1, running: true, error: "",
+      },
+    ]);
+    await wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').trigger("click");
+    await flushPromises();
+    expect(startForward).toHaveBeenCalledWith("h1", "f1");
+    expect(wrapper.find('[data-test="ssh-tunnel-state-h1-f1"]').text()).toContain("Running");
+  });
+
+  it("运行中的隧道显示真实监听地址与目标,并给出停止按钮", async () => {
+    listActiveForwards.mockResolvedValue([
+      {
+        host_id: "h1", rule_id: "f1", kind: "local", listen_addr: "127.0.0.1:54321",
+        target: "db.internal:5432", conns: 3, started_at: 1, running: true, error: "",
+      },
+    ]);
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    const row = wrapper.find('[data-test="ssh-tunnel-row-h1-f1"]');
+    expect(row.text()).toContain("127.0.0.1:54321");
+    expect(row.text()).toContain("db.internal:5432");
+    expect(row.text()).toContain("3");
+    expect(wrapper.find('[data-test="ssh-tunnel-stop-h1-f1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').exists()).toBe(false);
+    await wrapper.find('[data-test="ssh-tunnel-stop-h1-f1"]').trigger("click");
+    await flushPromises();
+    expect(stopForward).toHaveBeenCalledWith("h1", "f1");
+  });
+
+  // ListActiveForwards keeps entries that stopped on their own (Running false,
+  // Error set). Rendering one of those as live is the specific mistake the
+  // design warns about: the listener is gone, so "Running" would be a lie.
+  it("连接断开后的隧道显示 stopped 与原因,而不是 running", async () => {
+    listActiveForwards.mockResolvedValue([
+      {
+        host_id: "h1", rule_id: "f1", kind: "local", listen_addr: "127.0.0.1:5432",
+        target: "db.internal:5432", conns: 7, started_at: 1, running: false,
+        error: "ssh connection lost (keepalive failed or the peer closed it)",
+      },
+    ]);
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    const state = wrapper.find('[data-test="ssh-tunnel-state-h1-f1"]');
+    expect(state.text()).toContain("Stopped");
+    expect(state.text()).not.toContain("Running");
+    expect(state.classes()).toContain("stopped");
+    const err = wrapper.find('[data-test="ssh-tunnel-error-h1-f1"]');
+    expect(err.exists()).toBe(true);
+    expect(err.text()).toContain("keepalive failed");
+    // A dead tunnel offers a restart, not a stop.
+    expect(wrapper.find('[data-test="ssh-tunnel-stop-h1-f1"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').exists()).toBe(true);
+  });
+
+  it("启动失败时把后端的原因显示出来", async () => {
+    startForward.mockRejectedValueOnce(new Error("local port 5432 is already in use (cannot bind 127.0.0.1:5432)"));
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    await wrapper.find('[data-test="ssh-tunnel-start-h1-f1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-hosts-error"]').text()).toContain("already in use");
+  });
+
+  // §5.2: a proxied host is refused by StartForward. Letting the user click and
+  // read the error afterwards is exactly what the badge exists to prevent.
+  it("带 proxy_jump 的主机启动按钮禁用,并写明原因", async () => {
+    const wrapper = await mountPanel([{ ...FWD_HOST, id: "p1", proxy_jump: "bastion" }]);
+    await openTunnels(wrapper);
+    const btn = wrapper.find('[data-test="ssh-tunnel-start-p1-f1"]');
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true);
+    const reason = wrapper.find('[data-test="ssh-tunnel-proxy-reason-p1"]');
+    expect(reason.exists()).toBe(true);
+    expect(reason.text()).toContain("ProxyJump");
+    await btn.trigger("click");
+    await flushPromises();
+    expect(startForward).not.toHaveBeenCalled();
+  });
+
+  it("停止后重新拉取活跃列表,该隧道回到未启动态", async () => {
+    listActiveForwards.mockResolvedValue([
+      {
+        host_id: "h1", rule_id: "f1", kind: "local", listen_addr: "127.0.0.1:5432",
+        target: "db.internal:5432", conns: 0, started_at: 1, running: true, error: "",
+      },
+    ]);
+    const wrapper = await mountPanel([FWD_HOST]);
+    await openTunnels(wrapper);
+    listActiveForwards.mockResolvedValue([]);
+    await wrapper.find('[data-test="ssh-tunnel-stop-h1-f1"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-test="ssh-tunnel-state-h1-f1"]').text()).toContain("Not started");
+  });
+
+  it("动态转发的行不谎报一个目标地址", async () => {
+    const wrapper = await mountPanel([
+      { ...FWD_HOST, forwards: [{ id: "d1", kind: "dynamic", bind_addr: "127.0.0.1", bind_port: "1080" }] },
+    ]);
+    await openTunnels(wrapper);
+    const row = wrapper.find('[data-test="ssh-tunnel-row-h1-d1"]');
+    expect(row.text()).toContain("127.0.0.1:1080");
+    expect(row.text()).toContain("SOCKS5");
   });
 });

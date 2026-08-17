@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/attson/atterm/internal/socks5"
 	"github.com/attson/atterm/internal/sshclient"
 	"golang.org/x/crypto/ssh"
 )
@@ -27,8 +28,7 @@ import (
 // tunnel reused a terminal session's connection and counted as a subscriber,
 // an open tunnel would keep PTY bytes uploading forever with nobody watching.
 
-// Forward kinds. "local" and "remote" are implemented here; "dynamic" is
-// roadmap item 26 task 4.
+// Forward kinds.
 const (
 	forwardKindLocal   = "local"
 	forwardKindRemote  = "remote"
@@ -116,7 +116,9 @@ func (a *App) StartForward(hostID, ruleID string) error {
 			return a.dialTunnelConn(host)
 		})
 	case forwardKindDynamic:
-		return fmt.Errorf("%s forwarding is not implemented yet", rule.Kind)
+		return a.tunnels.startDynamic(host, rule, func() (*sshclient.Conn, error) {
+			return a.dialTunnelConn(host)
+		})
 	default:
 		return fmt.Errorf("unknown forward kind %q", rule.Kind)
 	}
@@ -347,28 +349,82 @@ func (m *tunnelManager) ensureLocked() {
 	}
 }
 
-// startLocal brings up a -L tunnel: listen locally, and hand every accepted
-// connection to the remote host via a direct-tcpip channel.
-func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
-	key := tunnelKey(h.ID, r.ID)
-
+// claimStart reserves a rule's start slot and returns the release to defer.
+//
+// Every start kind needs this identically: refuse a concurrent start of the
+// same rule, refuse a rule that is already running, and clear the flag however
+// the start ends. The three kinds differ in what they do *after* this, never
+// in this.
+func (m *tunnelManager) claimStart(key string, r ForwardRule) (release func(), err error) {
 	m.mu.Lock()
 	m.ensureLocked()
 	if m.starting[key] {
 		m.mu.Unlock()
-		return fmt.Errorf("forward %s is already starting", r.ID)
+		return nil, fmt.Errorf("forward %s is already starting", r.ID)
 	}
 	if t, ok := m.tuns[key]; ok && t.running {
 		m.mu.Unlock()
-		return fmt.Errorf("forward %s is already running on %s", r.ID, t.listenAddr)
+		return nil, fmt.Errorf("forward %s is already running on %s", r.ID, t.listenAddr)
 	}
 	m.starting[key] = true
 	m.mu.Unlock()
-	defer func() {
+	return func() {
 		m.mu.Lock()
 		delete(m.starting, key)
 		m.mu.Unlock()
-	}()
+	}, nil
+}
+
+// checkConnAlive fails a start whose connection died between the dial and the
+// registration, releasing the reference it was handed.
+//
+// The watcher for a connection only sees tunnels that are already registered,
+// so a tunnel registered on an already-dead connection is one nobody ever
+// marks stopped — exactly the "reports running forever" state the watcher
+// exists to prevent. Failing the start instead costs the user one retry, which
+// gets a fresh dial.
+func (m *tunnelManager) checkConnAlive(h SSHHost, hc *hostConn) error {
+	select {
+	case <-hc.conn.Done():
+		m.releaseConn(h.ID, hc)
+		return fmt.Errorf("the ssh connection to %s dropped while the tunnel was starting", h.Host)
+	default:
+		return nil
+	}
+}
+
+// registerTunnel builds the tunnel record and publishes it under its key.
+//
+// target is passed rather than derived because it is the one field the kinds
+// disagree on: a dynamic forward has no configured target at all (the SOCKS
+// client names one per connection), and deriving it from the rule would
+// publish a meaningless ":" to the UI.
+func (m *tunnelManager) registerTunnel(h SSHHost, r ForwardRule, ln net.Listener, hc *hostConn, target string) *tunnel {
+	t := &tunnel{
+		hostID: h.ID, ruleID: r.ID, kind: r.Kind,
+		listener: ln, listenAddr: ln.Addr().String(),
+		target: target, startedAt: time.Now().Unix(),
+		hc: hc, running: true,
+		live: map[net.Conn]struct{}{},
+	}
+	m.mu.Lock()
+	m.ensureLocked()
+	// A previous entry here can only be a stopped one (claimStart's running
+	// check plus the starting flag rule that out); starting the rule again
+	// replaces it and clears its error.
+	m.tuns[tunnelKey(h.ID, r.ID)] = t
+	m.mu.Unlock()
+	return t
+}
+
+// startLocal brings up a -L tunnel: listen locally, and hand every accepted
+// connection to the remote host via a direct-tcpip channel.
+func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
+	release, err := m.claimStart(tunnelKey(h.ID, r.ID), r)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	// Bind first: a port conflict is the common failure and it should not
 	// cost a remote login to discover.
@@ -383,37 +439,52 @@ func (m *tunnelManager) startLocal(h SSHHost, r ForwardRule, dial func() (*sshcl
 		_ = ln.Close()
 		return err
 	}
-
-	// The watcher for this connection only sees tunnels that are already
-	// registered, so a connection that died between the dial and the
-	// registration below would leave a tunnel nobody ever marks stopped —
-	// exactly the "reports running forever" state the watcher exists to
-	// prevent. Fail the start instead; the user retries and gets a fresh dial.
-	select {
-	case <-hc.conn.Done():
+	if err := m.checkConnAlive(h, hc); err != nil {
 		_ = ln.Close()
-		m.releaseConn(h.ID, hc)
-		return fmt.Errorf("the ssh connection to %s dropped while the tunnel was starting", h.Host)
-	default:
+		return err
 	}
 
-	t := &tunnel{
-		hostID: h.ID, ruleID: r.ID, kind: r.Kind,
-		listener: ln, listenAddr: ln.Addr().String(),
-		target: forwardTarget(r), startedAt: time.Now().Unix(),
-		hc: hc, running: true,
-		live: map[net.Conn]struct{}{},
+	t := m.registerTunnel(h, r, ln, hc, forwardTarget(r))
+	go m.acceptLoop(t, m.serveLocalConn)
+	return nil
+}
+
+// startDynamic brings up a -D tunnel: listen locally speaking SOCKS5, and open
+// a direct-tcpip channel per CONNECT to whatever destination the SOCKS client
+// names. Its ordering follows startLocal's (bind first, then dial) for the
+// same reason — a local port conflict should not cost a remote login.
+//
+// The rule's TargetHost/TargetPort are unused here: there is no configured
+// destination, which is the entire point of dynamic forwarding.
+func (m *tunnelManager) startDynamic(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
+	release, err := m.claimStart(tunnelKey(h.ID, r.ID), r)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	bind := forwardBindAddr(r)
+	ln, err := net.Listen("tcp", bind)
+	if err != nil {
+		return listenError(r, bind, err)
 	}
 
-	m.mu.Lock()
-	m.ensureLocked()
-	// A previous entry here can only be a stopped one (the running check
-	// above plus the starting flag rule that out); starting the rule again
-	// replaces it and clears its error.
-	m.tuns[key] = t
-	m.mu.Unlock()
+	hc, err := m.acquireConn(h.ID, dial)
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	if err := m.checkConnAlive(h, hc); err != nil {
+		_ = ln.Close()
+		return err
+	}
 
-	go m.acceptLoop(t)
+	t := m.registerTunnel(h, r, ln, hc, "")
+	// The accept loop is ours rather than socks5.Serve's, so every accepted
+	// connection lands in tunnel.live and a stop actually cuts sessions that
+	// are already proxying. socks5.Serve would accept them where the manager
+	// cannot see them.
+	go m.acceptLoop(t, m.serveDynamicConn)
 	return nil
 }
 
@@ -438,40 +509,18 @@ func listenError(r ForwardRule, bind string, err error) error {
 // (ListenRemote sends the tcpip-forward global request), so acquiring the
 // connection has to come first.
 func (m *tunnelManager) startRemote(h SSHHost, r ForwardRule, dial func() (*sshclient.Conn, error)) error {
-	key := tunnelKey(h.ID, r.ID)
-
-	m.mu.Lock()
-	m.ensureLocked()
-	if m.starting[key] {
-		m.mu.Unlock()
-		return fmt.Errorf("forward %s is already starting", r.ID)
+	release, err := m.claimStart(tunnelKey(h.ID, r.ID), r)
+	if err != nil {
+		return err
 	}
-	if t, ok := m.tuns[key]; ok && t.running {
-		m.mu.Unlock()
-		return fmt.Errorf("forward %s is already running on %s", r.ID, t.listenAddr)
-	}
-	m.starting[key] = true
-	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		delete(m.starting, key)
-		m.mu.Unlock()
-	}()
+	defer release()
 
 	hc, err := m.acquireConn(h.ID, dial)
 	if err != nil {
 		return err
 	}
-
-	// Same reasoning as startLocal: a connection that died between the dial
-	// and registering the tunnel must fail the start rather than register a
-	// tunnel the watcher (which only sees already-registered tunnels) would
-	// never mark stopped.
-	select {
-	case <-hc.conn.Done():
-		m.releaseConn(h.ID, hc)
-		return fmt.Errorf("the ssh connection to %s dropped while the tunnel was starting", h.Host)
-	default:
+	if err := m.checkConnAlive(h, hc); err != nil {
+		return err
 	}
 
 	bind := forwardBindAddr(r)
@@ -481,20 +530,8 @@ func (m *tunnelManager) startRemote(h SSHHost, r ForwardRule, dial func() (*sshc
 		return remoteListenError(r, bind, err)
 	}
 
-	t := &tunnel{
-		hostID: h.ID, ruleID: r.ID, kind: r.Kind,
-		listener: ln, listenAddr: ln.Addr().String(),
-		target: forwardTarget(r), startedAt: time.Now().Unix(),
-		hc: hc, running: true,
-		live: map[net.Conn]struct{}{},
-	}
-
-	m.mu.Lock()
-	m.ensureLocked()
-	m.tuns[key] = t
-	m.mu.Unlock()
-
-	go m.acceptRemoteLoop(t)
+	t := m.registerTunnel(h, r, ln, hc, forwardTarget(r))
+	go m.acceptLoop(t, m.serveRemoteConn)
 	return nil
 }
 
@@ -513,25 +550,6 @@ func remoteListenError(r ForwardRule, bind string, err error) error {
 		"the remote host refused to listen on %s (check the remote sshd's GatewayPorts setting, "+
 			"and whether binding port %s needs root there — nothing on this machine is holding that port): %w",
 		bind, strings.TrimSpace(r.BindPort), err)
-}
-
-// acceptRemoteLoop mirrors acceptLoop for a -R tunnel: it accepts
-// connections the remote host handed back to us over the SSH connection,
-// each one already carrying the bytes of a peer that connected on the
-// remote side.
-func (m *tunnelManager) acceptRemoteLoop(t *tunnel) {
-	for {
-		c, err := t.listener.Accept()
-		if err != nil {
-			return // listener closed by stop/teardown, or the ssh transport died
-		}
-		if !t.trackConn(c) {
-			_ = c.Close() // raced with teardown
-			continue
-		}
-		t.accepted.Add(1)
-		go m.serveRemoteConn(t, c)
-	}
 }
 
 // serveRemoteConn splices one connection the remote host accepted on our
@@ -635,18 +653,26 @@ func (m *tunnelManager) releaseConn(hostID string, hc *hostConn) {
 	}
 }
 
-func (m *tunnelManager) acceptLoop(t *tunnel) {
+// acceptLoop accepts on a tunnel's listener and hands each connection to
+// serve. Every kind shares it, including -R, whose listener is a client-side
+// listener over the SSH connection rather than a local socket: the accept side
+// is identical, only what happens to an accepted connection differs.
+//
+// Tracking happens here rather than in the serve functions so that no kind can
+// forget it — an untracked connection survives a stop, which is the bug
+// tunnel.live exists to prevent.
+func (m *tunnelManager) acceptLoop(t *tunnel, serve func(*tunnel, net.Conn)) {
 	for {
 		c, err := t.listener.Accept()
 		if err != nil {
-			return // listener closed by stop/teardown
+			return // listener closed by stop/teardown, or the ssh transport died
 		}
 		if !t.trackConn(c) {
 			_ = c.Close() // raced with teardown
 			continue
 		}
 		t.accepted.Add(1)
-		go m.serveLocalConn(t, c)
+		go serve(t, c)
 	}
 }
 
@@ -658,17 +684,7 @@ func (m *tunnelManager) serveLocalConn(t *tunnel, local net.Conn) {
 	remote, err := t.hc.conn.DialRemote("tcp", t.target)
 	if err != nil {
 		_ = local.Close()
-		var openErr *ssh.OpenChannelError
-		if errors.As(err, &openErr) {
-			// The remote refused this one channel — nothing is listening on
-			// the target, typically. The tunnel itself is fine.
-			logWarn("ssh", "forward %s: remote refused %s: %v", t.ruleID, t.target, err)
-			return
-		}
-		// Anything else means the SSH transport is gone. The watcher usually
-		// gets there first; whichever arrives first wins and the other finds
-		// nothing running.
-		m.connectionLost(t.hostID, t.hc, fmt.Sprintf("ssh connection lost: %v", err))
+		m.noteDialFailure(t, t.target, err)
 		return
 	}
 	go func() {
@@ -679,6 +695,55 @@ func (m *tunnelManager) serveLocalConn(t *tunnel, local net.Conn) {
 	_, _ = io.Copy(local, remote)
 	_ = local.Close()
 	_ = remote.Close()
+}
+
+// noteDialFailure decides whether a failed direct-tcpip open means "that one
+// target refused" or "the SSH connection is gone", and reacts accordingly.
+//
+// The distinction is the whole point: a refused channel is an ordinary event
+// (nothing listening on the target) and must leave the tunnel running, while
+// any other failure means the transport is dead and every tunnel on it has to
+// be marked stopped. Both -L and -D reach this, from the same DialRemote call,
+// so the classification lives in one place.
+func (m *tunnelManager) noteDialFailure(t *tunnel, target string, err error) {
+	var openErr *ssh.OpenChannelError
+	if errors.As(err, &openErr) {
+		logWarn("ssh", "forward %s: remote refused %s: %v", t.ruleID, target, err)
+		return
+	}
+	// The watcher usually gets there first; whichever arrives first wins and
+	// the other finds nothing running.
+	m.connectionLost(t.hostID, t.hc, fmt.Sprintf("ssh connection lost: %v", err))
+}
+
+// serveDynamicConn runs one SOCKS5 session on an accepted connection, opening
+// a direct-tcpip channel to whatever destination the client asks for.
+//
+// The destination is resolved on the *remote* side: socks5 hands the name
+// through unresolved and DialRemote makes the remote host look it up, which is
+// what makes a SOCKS proxy over SSH useful for names that only exist there.
+func (m *tunnelManager) serveDynamicConn(t *tunnel, local net.Conn) {
+	defer t.untrackConn(local)
+	defer func() { _ = local.Close() }()
+
+	err := socks5.ServeConn(local, func(network, addr string) (net.Conn, error) {
+		remote, err := t.hc.conn.DialRemote(network, addr)
+		if err != nil {
+			// Report it exactly as -L does — including tearing the tunnel down
+			// when the transport is gone — and still return the error, so the
+			// SOCKS client gets a failure reply rather than a dropped
+			// connection it cannot interpret.
+			m.noteDialFailure(t, addr, err)
+			return nil, err
+		}
+		return remote, nil
+	})
+	if err != nil {
+		// Per-connection and expected in normal use (a client that hangs up
+		// mid-handshake, a probe that is not SOCKS at all), so this is debug,
+		// not a warning about the tunnel.
+		logDebug("ssh", "forward %s: socks5 session ended: %v", t.ruleID, err)
+	}
 }
 
 // connectionLost tears down every tunnel riding the dead connection and marks

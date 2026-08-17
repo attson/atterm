@@ -18,6 +18,7 @@ import (
 	"github.com/attson/atterm/internal/sshclient"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+	"golang.org/x/net/proxy"
 )
 
 // --- test doubles -----------------------------------------------------------
@@ -434,6 +435,45 @@ func localRule(id, targetHost, targetPort string) ForwardRule {
 // BindAddr, mirroring localRule.
 func remoteRule(id, targetHost, targetPort string) ForwardRule {
 	return ForwardRule{ID: id, Kind: "remote", BindPort: "0", TargetHost: targetHost, TargetPort: targetPort}
+}
+
+// dynamicRule is a -D rule. It carries no target at all, which is the point:
+// the SOCKS client names a destination per connection.
+func dynamicRule(id string) ForwardRule {
+	return ForwardRule{ID: id, Kind: "dynamic", BindPort: "0"}
+}
+
+// socksDial goes through a dynamic forward using golang.org/x/net/proxy — a
+// SOCKS5 client we did not write. Hand-rolling the client here would prove the
+// server agrees with our own encoder and nothing more; this fails if a reply
+// is malformed in any way a real client cares about.
+func socksDial(t *testing.T, proxyAddr, target string) net.Conn {
+	t.Helper()
+	d, err := proxy.SOCKS5("tcp", proxyAddr, nil, proxy.Direct)
+	if err != nil {
+		t.Fatalf("build socks5 client: %v", err)
+	}
+	c, err := d.Dial("tcp", target)
+	if err != nil {
+		t.Fatalf("socks5 dial %s via %s: %v", target, proxyAddr, err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	return c
+}
+
+func echoThrough(t *testing.T, c net.Conn, msg string) {
+	t.Helper()
+	if _, err := c.Write([]byte(msg)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, len(msg))
+	if _, err := io.ReadFull(c, buf); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(buf) != msg {
+		t.Fatalf("echo = %q, want %q", buf, msg)
+	}
 }
 
 func activeForward(t *testing.T, a *App, ruleID string) ActiveForward {
@@ -859,6 +899,251 @@ func TestLocalAndRemoteRulesShareOneConnection(t *testing.T) {
 		_, closed := srv.counts()
 		return closed == 1
 	})
+}
+
+// --- dynamic forwarding (-D) -------------------------------------------------
+
+// TestDynamicForwardPicksTargetPerConnection is the proof that dynamic
+// forwarding is not just local forwarding with a different name: one rule,
+// with no target configured on it at all, carries traffic to two different
+// destinations chosen by the client at CONNECT time.
+func TestDynamicForwardPicksTargetPerConnection(t *testing.T) {
+	hostA, portA := startEchoTarget(t)
+	hostB, portB := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r1") }()
+
+	f := activeForward(t, a, "r1")
+	echoThrough(t, socksDial(t, f.ListenAddr, net.JoinHostPort(hostA, portA)), "to target A")
+	echoThrough(t, socksDial(t, f.ListenAddr, net.JoinHostPort(hostB, portB)), "to target B")
+
+	if got := activeForward(t, a, "r1").Conns; got != 2 {
+		t.Fatalf("accepted connection count = %d, want 2", got)
+	}
+}
+
+// TestDynamicForwardListsWithoutATarget: TargetHost/TargetPort are unused for
+// this kind, so the panel must not invent one. forwardTarget on an empty rule
+// yields ":", which is what a copy-paste from the local path would publish.
+func TestDynamicForwardListsWithoutATarget(t *testing.T) {
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r1") }()
+
+	f := activeForward(t, a, "r1")
+	if f.Kind != forwardKindDynamic {
+		t.Fatalf("kind = %q, want %q", f.Kind, forwardKindDynamic)
+	}
+	if f.Target != "" {
+		t.Fatalf("a dynamic forward has no configured target, but the panel shows %q", f.Target)
+	}
+	// The SOCKS proxy is unauthenticated, so where it binds is the only thing
+	// standing between it and being an open proxy for the whole network.
+	bindHost, _, err := net.SplitHostPort(f.ListenAddr)
+	if err != nil {
+		t.Fatalf("listen addr %q: %v", f.ListenAddr, err)
+	}
+	if bindHost != "127.0.0.1" {
+		t.Fatalf("an unauthenticated socks proxy must default to loopback, listener is on %q", f.ListenAddr)
+	}
+}
+
+// TestDynamicForwardRuleNeedsNoTarget: validateForwardRule rejects a
+// local/remote rule with no target. A dynamic rule legitimately has none, and
+// requiring one would make the UI ask for a value it must then ignore.
+func TestDynamicForwardRuleNeedsNoTarget(t *testing.T) {
+	if err := validateForwardRule(dynamicRule("r1")); err != nil {
+		t.Fatalf("a dynamic rule needs no target, got %v", err)
+	}
+	bad := dynamicRule("r2")
+	bad.BindPort = "not-a-port"
+	if err := validateForwardRule(bad); err == nil {
+		t.Fatal("a dynamic rule still needs a valid bind port")
+	}
+}
+
+// TestStopForwardCutsEstablishedDynamicConnections is the tunnel.live proof
+// for -D. Two dynamic rules share the SSH connection so that stopping one
+// cannot rely on the whole connection dying — which would hide a SOCKS session
+// that was never registered as live.
+func TestStopForwardCutsEstablishedDynamicConnections(t *testing.T) {
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, dynamicRule("r1"), dynamicRule("r2"))
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward r1: %v", err)
+	}
+	if err := a.StartForward(h.ID, "r2"); err != nil {
+		t.Fatalf("StartForward r2: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r2") }()
+
+	c := socksDial(t, activeForward(t, a, "r1").ListenAddr, net.JoinHostPort(targetHost, targetPort))
+	echoThrough(t, c, "x")
+
+	if err := a.StopForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StopForward r1: %v", err)
+	}
+	// A timeout is also a non-nil error, so the timeout case is checked
+	// separately: it would mean the proxied session was left dangling.
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	_, err := io.ReadFull(c, make([]byte, 1))
+	if err == nil {
+		t.Fatal("the established SOCKS session survived StopForward")
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		t.Fatal("StopForward left the established SOCKS session open: " +
+			"the read timed out instead of failing on a closed connection")
+	}
+}
+
+// TestDynamicForwardSurvivesARefusedTarget: a CONNECT to something that is not
+// listening is an ordinary event for a proxy (a browser probing a dead host).
+// It must fail that one request and leave the tunnel serving.
+func TestDynamicForwardSurvivesARefusedTarget(t *testing.T) {
+	targetHost, targetPort := startEchoTarget(t)
+	// A port that was bound and then released, so nothing is listening on it.
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddr := dead.Addr().String()
+	_ = dead.Close()
+
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	defer func() { _ = a.StopForward(h.ID, "r1") }()
+
+	proxyAddr := activeForward(t, a, "r1").ListenAddr
+	d, err := proxy.SOCKS5("tcp", proxyAddr, nil, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := d.Dial("tcp", deadAddr); err == nil {
+		_ = c.Close()
+		t.Fatal("CONNECT to a dead port reported success")
+	}
+
+	// The tunnel is still running and still serving.
+	if f := activeForward(t, a, "r1"); !f.Running || f.Error != "" {
+		t.Fatalf("one refused target stopped the whole tunnel: %+v", f)
+	}
+	echoThrough(t, socksDial(t, proxyAddr, net.JoinHostPort(targetHost, targetPort)), "still works")
+}
+
+// TestLostConnectionStopsDynamicTunnel is TestLostConnectionStopsIdleTunnel
+// for -D: nothing ever connects to the SOCKS port, so only the keepalive
+// watcher can notice the drop.
+func TestLostConnectionStopsDynamicTunnel(t *testing.T) {
+	old := tunnelKeepalive
+	tunnelKeepalive = 50 * time.Millisecond
+	t.Cleanup(func() { tunnelKeepalive = old })
+
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward: %v", err)
+	}
+	addr := activeForward(t, a, "r1").ListenAddr
+
+	srv.dropConns()
+
+	waitFor(t, 5*time.Second, "dynamic rule marked stopped with a reason", func() bool {
+		for _, f := range a.ListActiveForwards() {
+			if f.RuleID == "r1" {
+				return !f.Running && f.Error != ""
+			}
+		}
+		return false
+	})
+	if c, err := net.DialTimeout("tcp", addr, 2*time.Second); err == nil {
+		_ = c.Close()
+		t.Fatal("socks listener still open after the SSH connection dropped")
+	}
+	if opened, _ := srv.counts(); opened != 1 {
+		t.Fatalf("a dropped connection must not be redialled automatically, server saw %d connections", opened)
+	}
+}
+
+// TestDynamicSharesOneConnectionWithOtherKinds pins that -D is not
+// special-cased out of the refcount that makes N rules on a host one login.
+func TestDynamicSharesOneConnectionWithOtherKinds(t *testing.T) {
+	targetHost, targetPort := startEchoTarget(t)
+	srv := startForwardingSSHTestServer(t)
+	a, h := newForwardTestApp(t, srv,
+		localRule("r1", targetHost, targetPort),
+		dynamicRule("r2"),
+	)
+
+	if err := a.StartForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StartForward r1: %v", err)
+	}
+	if err := a.StartForward(h.ID, "r2"); err != nil {
+		t.Fatalf("StartForward r2: %v", err)
+	}
+	if opened, _ := srv.counts(); opened != 1 {
+		t.Fatalf("a local + a dynamic rule on one host opened %d SSH connections, want 1", opened)
+	}
+
+	if err := a.StopForward(h.ID, "r1"); err != nil {
+		t.Fatalf("StopForward r1: %v", err)
+	}
+	if _, closed := srv.counts(); closed != 0 {
+		t.Fatal("connection closed while the dynamic rule is still using it")
+	}
+	// And the dynamic rule still works on the surviving connection.
+	echoThrough(t, socksDial(t, activeForward(t, a, "r2").ListenAddr,
+		net.JoinHostPort(targetHost, targetPort)), "shared")
+
+	if err := a.StopForward(h.ID, "r2"); err != nil {
+		t.Fatalf("StopForward r2: %v", err)
+	}
+	waitFor(t, 3*time.Second, "connection closed after the last rule stopped", func() bool {
+		_, closed := srv.counts()
+		return closed == 1
+	})
+}
+
+// TestStartDynamicForwardPortInUse: the bind-then-dial ordering -D inherits
+// from -L means a port conflict must still be free — reported without an SSH
+// login having been paid for.
+func TestStartDynamicForwardPortInUse(t *testing.T) {
+	srv := startForwardingSSHTestServer(t)
+	squatter, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer squatter.Close()
+	_, busyPort, _ := net.SplitHostPort(squatter.Addr().String())
+
+	rule := dynamicRule("r1")
+	rule.BindPort = busyPort
+	a, h := newForwardTestApp(t, srv, rule)
+
+	err = a.StartForward(h.ID, "r1")
+	if err == nil {
+		t.Fatal("expected a bind failure")
+	}
+	if !strings.Contains(err.Error(), "already in use") || !strings.Contains(err.Error(), busyPort) {
+		t.Fatalf("error must say the local port is already in use and name it, got %v", err)
+	}
+	if opened, _ := srv.counts(); opened != 0 {
+		t.Fatalf("a port conflict must not cost an SSH login, server saw %d connections", opened)
+	}
 }
 
 // --- redline #2 -------------------------------------------------------------

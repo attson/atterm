@@ -38,8 +38,11 @@ import (
 // something else stops it.
 const maxJumpDepth = 10
 
-// jumpDialTimeout bounds each hop's dial+handshake individually. A chain does
-// not get a longer budget per hop than a direct connection does.
+// jumpDialTimeout bounds each hop individually — a chain does not get a longer
+// budget per hop than a direct connection does. What it bounds differs by hop:
+// the first is a plain ssh.Dial, where x/crypto applies Timeout to the TCP
+// connect only; every later hop rides an existing connection, where
+// newClientConnBounded applies it to the handshake as well.
 const jumpDialTimeout = 15 * time.Second
 
 // jumpKeepalive is how often each connection dialled by dialJumpHop pings its
@@ -75,7 +78,9 @@ var jumpKeepalive = 30 * time.Second
 // elsewhere.
 //
 // That hostname is not looked up anywhere — it is the dial address verbatim
-// (net.JoinHostPort(cfg.Host, port), "host" or "[host]:port"), passed
+// (net.JoinHostPort(cfg.Host, port), so always host:port — "10.0.0.9:22", or
+// "[::1]:2222" for IPv6. Never a bare host, and never knownhosts.Normalize's
+// "[host]:port" form, which is only used when writing the file), passed
 // through unchanged by x/crypto's handshake code to HostKeyCallback on every
 // attempt. It must stay verbatim: the failed attempt and the retry both dial
 // the same address, so both produce the identical string, which is exactly

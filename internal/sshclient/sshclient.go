@@ -142,9 +142,10 @@ func DialConn(ctx context.Context, cfg Config) (*Conn, error) {
 			// handshake on top of it fails (including on our own timeout)
 			// we still have to close raw ourselves, or that channel is left
 			// dangling on the jump host with nothing left downstream to
-			// ever close it. newClientConnBounded already closes raw on a
-			// timeout, but ssh.NewClientConn does not close it on every
-			// failure path, so this stays unconditional.
+			// ever close it. x/crypto v0.37.0 does close it on both of its
+			// own error paths, and newClientConnBounded closes it on a
+			// timeout — but this stays unconditional rather than relying on
+			// a detail of the dependency's error handling.
 			_ = raw.Close()
 			return nil, fmt.Errorf("sshclient: handshake with %s through jump host: %w", addr, herr)
 		}
@@ -168,8 +169,12 @@ func DialConn(ctx context.Context, cfg Config) (*Conn, error) {
 //
 // The workaround is a timer instead of a deadline: the handshake runs on its
 // own goroutine, and if timeout elapses before it returns, raw is closed out
-// from under it, which unblocks ssh.NewClientConn's read on raw and turns
-// the hang into an error. The timer is stopped the instant the handshake
+// from under it and the hang turns into an error. Note the bound is soft, not
+// hard: raw is an SSH channel, not a socket, so closing it only *sends* a
+// close message — the blocked read unblocks when the jump host answers, or
+// when that connection's own keepalive tears the mux down. Against a healthy
+// jump host that is one round trip; against one that is TCP-alive but not
+// answering, it is bounded by Keepalive instead. The timer is stopped the instant the handshake
 // returns on its own, so once a connection is established nothing is left
 // armed to cut it later — that is the failure mode to avoid, and it is why
 // this must not be a deadline set once and left on raw.

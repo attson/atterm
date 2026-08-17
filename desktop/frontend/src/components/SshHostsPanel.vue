@@ -249,10 +249,11 @@ const hostKeyMessage = computed(() => {
 });
 
 // acceptHostKey retries with the pair the dialog showed, both halves verbatim.
-// Rebuilding either one is how the scoping breaks: prompt.host is the
-// known_hosts name the backend matched on ("[10.0.0.9]:2222"), not the address
-// on the row, and an acceptance that does not match is silently ignored — which
-// looks exactly like the dialog refusing to go away.
+// Rebuilding either one is how the scoping breaks: prompt.host is the address
+// the backend actually dialled ("10.0.0.9:22"), which for a jump hop is not
+// the address on the row at all. It is not a known_hosts name and must not be
+// normalised into one — an acceptance that does not match is silently ignored,
+// which looks exactly like the dialog refusing to go away.
 function acceptHostKey() {
   const state = hostKey.value;
   if (!state) return;

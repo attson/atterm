@@ -8,8 +8,9 @@
 // HostKeyPrompt is one TOFU question: this fingerprint, on this machine.
 //
 // host is the dial address the Go side handed to x/crypto's HostKeyCallback
-// verbatim (net.JoinHostPort(host, port), "h" or "[h]:2222") — not a
-// known_hosts name looked up from it, and not necessarily the address the
+// verbatim (net.JoinHostPort(host, port), so always host:port — "10.0.0.9:22",
+// or "[::1]:2222" for IPv6) — not a known_hosts name looked up from it, not
+// knownhosts.Normalize's "[host]:port" form, and not necessarily the address the
 // user typed (an alias resolves to the saved host's own host/port). It
 // exists to be echoed back untouched — see AcceptedHostKey
 // (desktop/ssh_host.go): an acceptance is scoped to exactly the (host,

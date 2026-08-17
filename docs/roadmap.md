@@ -336,11 +336,27 @@
 
 ### 24. macOS 分发改善（已准备、待启用）
 
-> 设计见 [`2026-08-17-macos-distribution-design.md`](./superpowers/specs/2026-08-17-macos-distribution-design.md)。cask 模板、渲染脚本、release workflow 同步步骤、安装文档 / FAQ 都已就绪，但 `brew install --cask attson/tap/atterm` **现在还装不上**：承载 cask 的 tap 仓库 `attson/homebrew-tap` 与推送用的 token 需要用户亲自创建，这是对外动作，不在实现者手里；在那之前 release workflow 的同步步骤按 secret 是否存在自动跳过并打日志说明原因。不是签名（第 8 项）的替代品，只是把「第一秒被 Gatekeeper 劝退」的概率压下去。
+> 设计见 [`2026-08-17-macos-distribution-design.md`](./superpowers/specs/2026-08-17-macos-distribution-design.md)。
+>
+> **Homebrew 不是 Gatekeeper 的解法。** 本项立项时假设 `brew install --cask` 能免掉隔离标记——这是错的：Homebrew cask 默认给装好的 app 打 `com.apple.quarantine`，刻意模仿浏览器下载；`--no-quarantine` 在 Homebrew 5.0.0 弃用后已被移除，第三方 tap 也没有替代品。未签名的 app 无论走 dmg 还是走 brew，弹的是同一个对话框。cask 用 `caveats` 在安装完成时告诉用户要自己跑 `xattr`，**不加 `postflight` 自动去标记**——在别人机器上不打招呼就绕过 Gatekeeper，和用户读完解释后自己执行 `xattr` 是两回事。
+>
+> 所以本项实际交付的是：版本化安装、每次发版自动更新的两架构 checksum、一条顺手的升级路径，以及一份说法与事实一致的文档。**Gatekeeper 本身仍归第 8 项**（签名 + 公证，阻塞于 Apple Developer 证书）。
+>
+> 现状是「已准备、待启用」：`brew install --cask attson/tap/atterm` **现在还装不上**，承载 cask 的 tap 仓库 `attson/homebrew-tap` 与推送用的 token 需要用户亲自创建（对外动作，不在实现者手里）；在那之前 release workflow 的同步步骤按 secret 是否存在自动跳过并打日志说明原因。
+
+启用步骤（**顺序不能反**）：
+
+1. 先建 tap 仓库 `attson/homebrew-tap`（Homebrew 要求仓库名为 `homebrew-<name>`）。**不需要手工放第一个 cask 文件**——下一次打 tag 发版时 release job 会自动渲染并推上去。
+2. 仓库建好之后，再把有写权限的 token 存进本仓库 secrets 的 `HOMEBREW_TAP_TOKEN`。反过来先配 token，同步步骤就不再跳过、而是在 `git clone` 一个不存在的仓库时失败，把下一次发版的 release job 弄红。
 
 - [x] Homebrew cask 分发就绪（`packaging/homebrew/atterm.rb.tmpl` + `render-cask.sh` + release workflow 自动同步到 tap；tap 仓库与 token 待用户创建后 `brew install --cask attson/tap/atterm` 才真正可用）
-- [x] `install-darwin.sh` 内 `xattr -d com.apple.quarantine`（已存在，但只覆盖自动更新路径，不覆盖首次下载安装）
-- [x] 安装文档 / FAQ 补 Gatekeeper 说明
+- [x] cask `caveats` 提示未签名 + `xattr` 命令；`zap` 按 macOS 实际路径逐项列举，刻意不删 `users.db` / `keyring-fallback.json`（`account_key` 材料）
+- [x] 安装文档 / FAQ 补 Gatekeeper 说明（含订正：brew 装完同样要跑 `xattr`）
+- [x] `render-cask_test.sh` 接进 `build-linux`（PR 触发），模板回归不再等到发版才暴露
+
+> 母 spec 还列过一项「`install-darwin.sh` 内 `xattr -d com.apple.quarantine`」。**本项没做这一项，也不需要做**：
+> 该行早在本项之前就存在于 `desktop/scripts/install-darwin.sh`，且只覆盖自动更新路径（updater 解包后调用），
+> 与首次安装无关。这里记一笔只是说明它已被排除，不是本项的交付物。
 
 ## P6：v0.6 SSH 主机能力
 
@@ -402,7 +418,8 @@
 ## 阻塞于外部凭据
 
 > 需要 Apple Developer 证书与 Windows 签名证书，凭据到位后随时插队。
-> P5 的第 24 项是不依赖这些凭据的替代方案，不是它的等价物。
+> P5 的第 24 项（Homebrew cask）**不缓解 Gatekeeper**，brew 装完照样弹同一个对话框；
+> 它改善的是安装与升级体验，没有替代本项的任何部分。
 
 见上文 [P1 第 8 项「桌面安装包签名」](#8-桌面安装包签名)。
 

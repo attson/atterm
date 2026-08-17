@@ -50,7 +50,9 @@ xattr -dr com.apple.quarantine "/Applications/AT Term.app"
 
 这条命令只是去掉这一个 app 的下载隔离标记,不会改动任何系统级安全设置。
 
-用 Homebrew 安装不会触发这个隔离标记,不需要这一步——但 Homebrew cask 分发目前还在准备中,尚未可用(见 [安装指南](/guide/#方式-a-只用桌面端))。这不是签名问题本身的解决——真正的修法是签名 + 公证,目前卡在证书上。
+**用 Homebrew 装也要跑这一步。** Homebrew cask 默认会给装好的 app 打上同一个 `com.apple.quarantine` 标记,这是它有意为之——刻意模仿浏览器下载的行为;`--no-quarantine` 这个开关在 Homebrew 5.0.0 已弃用、之后被移除,第三方 tap 也没有替代品。所以无论走哪条安装路径,未签名的 app 都会弹同一个对话框,cask 只是会在安装完成时把上面这条命令再提示你一次(Homebrew cask 分发本身也还在准备中,尚未可用,见 [安装指南](/guide/#方式-a-只用桌面端))。
+
+真正的修法是签名 + 公证(roadmap 第 8 项),目前卡在证书上;签名到位后这一步会消失。
 
 ## 忘记密码怎么办?
 

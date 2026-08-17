@@ -1077,6 +1077,60 @@ func (a *App) SetShortcutBindings(bindings map[string]string) error {
 	})
 }
 
+// GetProfiles returns the user's saved session-launch profiles.
+// cfgStore.Get() already deep-copies each profile's Env map (see
+// detachMaps in config.go), so the returned slice is safe for the caller to
+// mutate without affecting the store.
+func (a *App) GetProfiles() []SessionProfile {
+	if a == nil || a.cfgStore == nil {
+		return nil
+	}
+	return a.cfgStore.Get().Profiles
+}
+
+// SetProfiles replaces the profile list wholesale. Validates before touching
+// the store, same discipline as SetShortcutBindings: a rejected call must
+// leave the previously stored profiles untouched.
+func (a *App) SetProfiles(profiles []SessionProfile) error {
+	seen := make(map[string]bool, len(profiles))
+	for _, p := range profiles {
+		if strings.TrimSpace(p.ID) == "" {
+			return errors.New("profiles: id must be non-empty")
+		}
+		if seen[p.ID] {
+			return fmt.Errorf("profiles: duplicate id %q", p.ID)
+		}
+		seen[p.ID] = true
+		if strings.TrimSpace(p.Name) == "" {
+			return fmt.Errorf("profiles[%q]: name must be non-empty", p.ID)
+		}
+	}
+	return a.updatePref("profiles_encrypted", func(cfg *appConfig) error {
+		cfg.Profiles = profiles
+		return nil
+	})
+}
+
+// GetDefaultProfileID returns the profile used for new tabs/splits when none
+// is explicitly picked. Empty means "no default".
+func (a *App) GetDefaultProfileID() string {
+	if a == nil || a.cfgStore == nil {
+		return ""
+	}
+	return a.cfgStore.Get().DefaultProfileID
+}
+
+// SetDefaultProfileID persists the default profile choice. Marked dirty
+// under the same "profiles_encrypted" key as SetProfiles — the default
+// selection is part of the same user-facing "profiles" preference, wired
+// into the actual sync payload by Task 3.
+func (a *App) SetDefaultProfileID(id string) error {
+	return a.updatePref("profiles_encrypted", func(cfg *appConfig) error {
+		cfg.DefaultProfileID = id
+		return nil
+	})
+}
+
 // GetTaskPreset returns the user's persisted task state display preset.
 func (a *App) GetTaskPreset() string {
 	if a.cfgStore == nil {

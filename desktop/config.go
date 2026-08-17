@@ -228,6 +228,17 @@ type appConfig struct {
 	// Private keys live in the keyring keyed by SSHKey.ID, never here.
 	SSHKeys []SSHKey `json:"ssh_keys,omitempty"`
 
+	// Profiles is the user's named session-launch configurations (shell, cwd,
+	// startup command, env). Sealed under account_key when synced — see
+	// desktop/profiles.go — because Env may carry secrets. Stored here in
+	// plaintext on local disk the same way every other local-only field is;
+	// only the relay-bound copy goes through sealProfiles/stripUnsyncedEnv.
+	Profiles []SessionProfile `json:"profiles,omitempty"`
+	// DefaultProfileID is the profile used for new tabs/splits when none is
+	// explicitly picked. Empty means "no default" — fall back to
+	// DefaultShell + HOME, same as before profiles existed.
+	DefaultProfileID string `json:"default_profile_id,omitempty"`
+
 	// PrefsMeta records per-key sync state (last local update timestamp and
 	// dirty flag) for the synced preferences. Never sent to the relay.
 	PrefsMeta map[string]prefsMetaEntry `json:"prefs_meta,omitempty"`
@@ -684,6 +695,24 @@ func detachMaps(c appConfig) appConfig {
 			m[k] = v
 		}
 		c.ShortcutBindings = m
+	}
+	if c.Profiles != nil {
+		// A struct-slice copy duplicates each SessionProfile's Env map
+		// header, not its backing table, same trap as the maps above — two
+		// callers (e.g. the UI binding and a background sync pull) would
+		// share one Env map and mutate it outside the lock.
+		profiles := make([]SessionProfile, len(c.Profiles))
+		for i, p := range c.Profiles {
+			if p.Env != nil {
+				env := make(map[string]string, len(p.Env))
+				for k, v := range p.Env {
+					env[k] = v
+				}
+				p.Env = env
+			}
+			profiles[i] = p
+		}
+		c.Profiles = profiles
 	}
 	return c
 }

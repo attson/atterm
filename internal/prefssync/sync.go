@@ -57,6 +57,15 @@ var syncedKeys = []string{
 	"shell_integration_enabled",
 	"pinned_session_ids",
 	"ssh_hosts_encrypted",
+	"terminal_theme",
+	"terminal_font_head",
+	"terminal_font_size",
+	"terminal_line_height",
+	"terminal_cursor_style",
+	"terminal_cursor_blink",
+	"terminal_scrollback",
+	"default_shell",
+	"shortcut_bindings",
 }
 
 // SyncedKeys returns the canonical list of keys this engine syncs.

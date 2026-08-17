@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/attson/atterm/internal/prefssync"
@@ -59,4 +60,46 @@ func TestAdapter_PinnedSessionIds_RoundTrip(t *testing.T) {
 	}
 
 	_ = prefssync.Meta{} // silence unused import if none other
+}
+
+func TestAdapterRoundTripsL1Keys(t *testing.T) {
+	keys := []string{
+		"terminal_theme", "terminal_font_head", "terminal_font_size",
+		"terminal_line_height", "terminal_cursor_style", "terminal_cursor_blink",
+		"terminal_scrollback", "default_shell", "shortcut_bindings",
+	}
+	for _, k := range keys {
+		if !slices.Contains(prefssync.SyncedKeys(), k) {
+			t.Errorf("%s is not in SyncedKeys()", k)
+		}
+	}
+}
+
+func TestIsPrefCustomizedCoversL1Keys(t *testing.T) {
+	blink := false
+	customized := appConfig{
+		TerminalTheme:       "nord",
+		TerminalFontHead:    "JetBrains Mono",
+		TerminalFontSize:    16,
+		TerminalLineHeight:  1.2,
+		TerminalCursorStyle: "bar",
+		TerminalCursorBlink: &blink,
+		TerminalScrollback:  9000,
+		DefaultShell:        "/bin/zsh",
+		ShortcutBindings:    map[string]string{"tab.new": "Mod+KeyP"},
+	}
+	isCustom := isPrefCustomized(customized)
+	isVirgin := isPrefCustomized(appConfig{})
+	for _, k := range []string{
+		"terminal_theme", "terminal_font_head", "terminal_font_size",
+		"terminal_line_height", "terminal_cursor_style", "terminal_cursor_blink",
+		"terminal_scrollback", "default_shell", "shortcut_bindings",
+	} {
+		if !isCustom(k) {
+			t.Errorf("%s: explicitly set value must count as customized — otherwise first login pulls a remote value over it", k)
+		}
+		if isVirgin(k) {
+			t.Errorf("%s: an untouched config must not count as customized", k)
+		}
+	}
 }

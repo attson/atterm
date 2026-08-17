@@ -56,6 +56,38 @@ func (a *appConfigAdapter) ReadValue(key string) (json.RawMessage, bool) {
 	case "pinned_session_ids":
 		b, _ := json.Marshal(c.PinnedSessionIDs)
 		return b, true
+	// The L1 keys below read the raw config field, never a *OrDefault()
+	// accessor: what syncs is what the user explicitly set, not what the
+	// value resolves to. A machine where the user never touched font size
+	// must report "unset", not the resolved default — otherwise it would
+	// push that default up and overwrite a real choice made on another
+	// machine.
+	case "terminal_theme":
+		b, _ := json.Marshal(c.TerminalTheme)
+		return b, true
+	case "terminal_font_head":
+		b, _ := json.Marshal(c.TerminalFontHead)
+		return b, true
+	case "terminal_font_size":
+		b, _ := json.Marshal(c.TerminalFontSize)
+		return b, true
+	case "terminal_line_height":
+		b, _ := json.Marshal(c.TerminalLineHeight)
+		return b, true
+	case "terminal_cursor_style":
+		b, _ := json.Marshal(c.TerminalCursorStyle)
+		return b, true
+	case "terminal_cursor_blink":
+		return marshalPtr(c.TerminalCursorBlink)
+	case "terminal_scrollback":
+		b, _ := json.Marshal(c.TerminalScrollback)
+		return b, true
+	case "default_shell":
+		b, _ := json.Marshal(c.DefaultShell)
+		return b, true
+	case "shortcut_bindings":
+		b, _ := json.Marshal(c.ShortcutBindings)
+		return b, true
 	case "ssh_hosts_encrypted":
 		key := a.accountKey()
 		if len(key) == 0 {
@@ -127,6 +159,60 @@ func (a *appConfigAdapter) WriteValue(key string, value json.RawMessage) error {
 			return err
 		}
 		c.PinnedSessionIDs = ids
+	case "terminal_theme":
+		var s string
+		if err := json.Unmarshal(value, &s); err != nil {
+			return err
+		}
+		c.TerminalTheme = s
+	case "terminal_font_head":
+		var s string
+		if err := json.Unmarshal(value, &s); err != nil {
+			return err
+		}
+		c.TerminalFontHead = s
+	case "terminal_font_size":
+		var n int
+		if err := json.Unmarshal(value, &n); err != nil {
+			return err
+		}
+		c.TerminalFontSize = n
+	case "terminal_line_height":
+		var v float64
+		if err := json.Unmarshal(value, &v); err != nil {
+			return err
+		}
+		c.TerminalLineHeight = v
+	case "terminal_cursor_style":
+		var s string
+		if err := json.Unmarshal(value, &s); err != nil {
+			return err
+		}
+		c.TerminalCursorStyle = s
+	case "terminal_cursor_blink":
+		var b *bool
+		if err := json.Unmarshal(value, &b); err != nil {
+			return err
+		}
+		c.TerminalCursorBlink = b
+	case "terminal_scrollback":
+		var n int
+		if err := json.Unmarshal(value, &n); err != nil {
+			return err
+		}
+		c.TerminalScrollback = n
+	case "default_shell":
+		var s string
+		if err := json.Unmarshal(value, &s); err != nil {
+			return err
+		}
+		c.DefaultShell = s
+	case "shortcut_bindings":
+		var b map[string]string
+		if err := json.Unmarshal(value, &b); err != nil {
+			return err
+		}
+		c.ShortcutBindings = b
 	case "ssh_hosts_encrypted":
 		key := a.accountKey()
 		if len(key) == 0 {

@@ -47,6 +47,15 @@ func TestSyncedKeys_MatchesWhitelist(t *testing.T) {
 		"shell_integration_enabled",
 		"pinned_session_ids",
 		"ssh_hosts_encrypted",
+		"terminal_theme",
+		"terminal_font_head",
+		"terminal_font_size",
+		"terminal_line_height",
+		"terminal_cursor_style",
+		"terminal_cursor_blink",
+		"terminal_scrollback",
+		"default_shell",
+		"shortcut_bindings",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d keys, want %d: %v", len(got), len(want), got)
@@ -257,6 +266,16 @@ func TestSeedFromLocal_MarksMissingNonDefaultDirty(t *testing.T) {
 	mn := a.ReadMeta("notifications_enabled")
 	if mn.Dirty {
 		t.Fatalf("non-customized key should not be dirty")
+	}
+}
+
+func TestWebglRendererIsNotSynced(t *testing.T) {
+	// Its correct value depends on the local GPU driver — syncing it would
+	// spread the #48 input-lag bug rather than a preference.
+	for _, k := range SyncedKeys() {
+		if k == "webgl_renderer_enabled" {
+			t.Fatal("webgl_renderer_enabled must never be synced")
+		}
 	}
 }
 

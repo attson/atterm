@@ -334,11 +334,13 @@
 - [ ] 前端补提示符内 click → 光标位移（等 zsh 支持 `cl=line` 后可直接开工）
 - [ ] 宽字符（CJK）按字符而非按列折算方向键次数——设计 §7.3 标注为本项最易写错处
 
-### 24. macOS 分发改善
+### 24. macOS 分发改善（已准备、待启用）
 
-- [ ] Homebrew cask 分发（`brew install --cask atterm`）
-- [ ] `install-darwin.sh` 内 `xattr -d com.apple.quarantine`
-- [ ] 安装文档 / FAQ 补 Gatekeeper 说明
+> 设计见 [`2026-08-17-macos-distribution-design.md`](./superpowers/specs/2026-08-17-macos-distribution-design.md)。cask 模板、渲染脚本、release workflow 同步步骤、安装文档 / FAQ 都已就绪，但 `brew install --cask attson/tap/atterm` **现在还装不上**：承载 cask 的 tap 仓库 `attson/homebrew-tap` 与推送用的 token 需要用户亲自创建，这是对外动作，不在实现者手里；在那之前 release workflow 的同步步骤按 secret 是否存在自动跳过并打日志说明原因。不是签名（第 8 项）的替代品，只是把「第一秒被 Gatekeeper 劝退」的概率压下去。
+
+- [x] Homebrew cask 分发就绪（`packaging/homebrew/atterm.rb.tmpl` + `render-cask.sh` + release workflow 自动同步到 tap；tap 仓库与 token 待用户创建后 `brew install --cask attson/tap/atterm` 才真正可用）
+- [x] `install-darwin.sh` 内 `xattr -d com.apple.quarantine`（已存在，但只覆盖自动更新路径，不覆盖首次下载安装）
+- [x] 安装文档 / FAQ 补 Gatekeeper 说明
 
 ## P6：v0.6 SSH 主机能力
 

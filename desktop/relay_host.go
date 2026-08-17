@@ -792,12 +792,23 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	//  2. Kick id resolution to re-capture the id for the NEXT crash (after
 	//     resume, claude appends to the same jsonl so the title match re-resolves
 	//     the same id).
+	// resumeClaimed tracks whether the block below actually registered a
+	// SetOnFirstPrompt callback for AI-session resume. It is NOT the same as
+	// req.AIKind != "": a freshly classified AI command (user just typed
+	// "claude", no crash involved) has AIKind set but no
+	// InitialAISessionID, so computeResumeArgs returns nil and nothing
+	// claims the callback. Gating the profile-startup block on
+	// req.AIKind == "" would then skip it on that path too, even though the
+	// slot is free — and since a default profile applies to every new
+	// session regardless of what was typed, that's not a corner case.
+	resumeClaimed := false
 	if req.AIKind != "" {
 		if sess, ok := h.server.Registry().Get(id); ok {
 			sidCopy := id
 			resumeArgv := computeResumeArgs(req.AIKind, req.InitialAISessionID, req.InitialAICommandLine)
 			startResolveGeneration(sess, req.AIKind, cwd, req.InitialAISessionID, resumeArgv != nil)
 			if resumeArgv != nil {
+				resumeClaimed = true
 				line := strings.Join(resumeArgv, " ") + "\n"
 				ptyCopy := pty
 				sess.SetOnFirstPrompt(func() {
@@ -816,12 +827,13 @@ func (h *relayHost) NewSession(ctx context.Context, req NewSessionReq) (uuid.UUI
 	// times (PR #63 → #110 → #129, AGENTS.md redline #28), so StartupCmd
 	// must not open a second "inject text into the PTY" implementation.
 	//
-	// Skipped when req.AIKind != "": SetOnFirstPrompt is a single callback
-	// slot (session.Session), and the restore block above already claims it
-	// for the resume command on that path. A profile-selected new session is
-	// never itself an AI-restore session, so the two never legitimately
-	// compete.
-	if profile != nil && profile.StartupCmd != "" && req.AIKind == "" {
+	// Skipped when resumeClaimed: SetOnFirstPrompt is a single callback slot
+	// (session.Session), and the restore block above claims it only when it
+	// actually has a resume command to inject. A profile-selected new
+	// session is never itself a genuine AI-restore session, so the two never
+	// legitimately compete — but "genuine restore" means resumeClaimed, not
+	// merely req.AIKind != "".
+	if profile != nil && profile.StartupCmd != "" && !resumeClaimed {
 		if sess, ok := h.server.Registry().Get(id); ok {
 			line := profile.StartupCmd + "\n"
 			ptyCopy := pty

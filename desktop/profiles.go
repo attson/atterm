@@ -21,7 +21,7 @@ var profilesSyncSessionID = uuid.MustParse("bbbac178-5e9b-45b4-8b79-3257d9af7ca5
 // working directory, startup command, and environment variables. See design
 // §4 (docs/superpowers/specs/2026-08-17-session-profiles-design.md).
 type SessionProfile struct {
-	ID         string            `json:"id"`                    // uuid, assigned at creation; sync and references key off it
+	ID         string            `json:"id"` // uuid, assigned at creation; sync and references key off it
 	Name       string            `json:"name"`
 	Shell      string            `json:"shell,omitempty"`       // empty = fall back to the global default_shell
 	Cwd        string            `json:"cwd,omitempty"`         // empty = existing behavior (HOME)
@@ -154,13 +154,27 @@ func openProfiles(accountKey []byte, value json.RawMessage) ([]SessionProfile, s
 // dropped — every key in the same PUT batch. A malformed profile among ten
 // good ones should cost the user that one profile, not stop the other nine
 // (and every other synced key riding in the same pull) from working.
+//
+// Logs each drop (warn level, tag "profile"): the other keys this adapter
+// handles are scalars where "dropped" just means "kept the old value," but
+// this one can silently erase a named thing the user created on another
+// machine. A log line is the only trace the user gets — there is no UI
+// error path from a background pull.
 func filterValidProfiles(profiles []SessionProfile) []SessionProfile {
 	seen := make(map[string]bool, len(profiles))
 	out := make([]SessionProfile, 0, len(profiles))
 	for _, p := range profiles {
 		id := strings.TrimSpace(p.ID)
 		name := strings.TrimSpace(p.Name)
-		if id == "" || name == "" || seen[id] {
+		switch {
+		case id == "":
+			logWarn("profile", "dropped inbound profile with empty id (name=%q): sync payload malformed", p.Name)
+			continue
+		case name == "":
+			logWarn("profile", "dropped inbound profile id=%q: empty name", id)
+			continue
+		case seen[id]:
+			logWarn("profile", "dropped inbound profile id=%q: duplicate id in the same payload, first occurrence kept", id)
 			continue
 		}
 		seen[id] = true

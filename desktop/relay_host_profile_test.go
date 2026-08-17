@@ -202,9 +202,17 @@ func TestRelayHost_NewSession_ProfileStartupCommandInjectedOnFirstPrompt(t *test
 
 // TestRelayHost_NewSession_ProfileStartupCommandSkippedForAIRestore checks
 // the collision guard: SetOnFirstPrompt is a single callback slot
-// (session.Session), and an AI-restore session already claims it for the
-// resume command. A profile-selected StartupCmd must not clobber that —
-// it is simply skipped when req.AIKind != "".
+// (session.Session), and a GENUINE AI-restore session — AIKind set AND
+// InitialAISessionID non-empty, so computeResumeArgs actually returns a
+// resume command and the restore block really does call SetOnFirstPrompt —
+// already claims it for the resume command. A profile-selected StartupCmd
+// must not clobber that.
+//
+// This must set InitialAISessionID; AIKind alone is not sufficient to claim
+// the callback (see TestRelayHost_NewSession_ProfileStartupCommandRunsForFreshAIClassification,
+// which pins the opposite: AIKind set with no InitialAISessionID must NOT
+// suppress the startup command). An earlier version of this test set only
+// AIKind and passed while pinning the bug this pair now guards against.
 func TestRelayHost_NewSession_ProfileStartupCommandSkippedForAIRestore(t *testing.T) {
 	h := newTestRelayHost(t)
 
@@ -222,7 +230,8 @@ func TestRelayHost_NewSession_ProfileStartupCommandSkippedForAIRestore(t *testin
 
 	id, err := h.NewSession(context.Background(), NewSessionReq{
 		Command: "/bin/sh", Cwd: cwd, Cols: 80, Rows: 24,
-		AIKind: "claude", // restore path: claims SetOnFirstPrompt itself
+		AIKind:             "claude",
+		InitialAISessionID: "sid-123", // makes computeResumeArgs non-nil: a genuine restore
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -235,6 +244,116 @@ func TestRelayHost_NewSession_ProfileStartupCommandSkippedForAIRestore(t *testin
 	sess.PushOut(1, []byte("\x1b]133;A\x07$ "))
 	time.Sleep(200 * time.Millisecond)
 	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("profile startup command ran on an AI-restore session — it must have been skipped, not clobbered the resume injection")
+		t.Fatal("profile startup command ran on a genuine AI-restore session — it must have been skipped, not clobbered the resume injection")
 	}
+}
+
+// TestRelayHost_NewSession_ProfileStartupCommandRunsForFreshAIClassification
+// is the counterpart Finding 1 asked for: a session where the frontend
+// classified AIKind from what the user typed (e.g. they typed "claude"
+// fresh) has AIKind set but NO InitialAISessionID, so computeResumeArgs
+// returns nil and nothing claims SetOnFirstPrompt. A default profile applies
+// to this session exactly as it would to any other new session, so its
+// StartupCmd must still run.
+//
+// This is the test that catches gating on req.AIKind == "" instead of the
+// real "did the resume block actually claim the callback" condition.
+func TestRelayHost_NewSession_ProfileStartupCommandRunsForFreshAIClassification(t *testing.T) {
+	h := newTestRelayHost(t)
+
+	cwd := t.TempDir()
+	marker := filepath.Join(cwd, "startup-ran")
+
+	cfg := h.cfg.Get()
+	cfg.Profiles = []SessionProfile{
+		{ID: "p1", Name: "P1", StartupCmd: "touch " + marker},
+	}
+	cfg.DefaultProfileID = "p1"
+	if err := h.cfg.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh", Cwd: cwd, Cols: 80, Rows: 24,
+		AIKind: "claude", // classified from typed text, NOT a restore
+		// InitialAISessionID intentionally empty: no resume id available.
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatalf("session %s not found", id)
+	}
+
+	sess.PushOut(1, []byte("\x1b]133;A\x07$ "))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(marker); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("profile startup command was not injected — a fresh AI classification with no resume id must not suppress it")
+}
+
+// TestRelayHost_NewSession_ProfileEnvReachesSpawnedProcess proves the
+// resolved profile's Env actually lands in the spawned child's environment
+// through the full h.NewSession path — not just that applyProfileEnv itself
+// is correct in isolation (TestApplyProfileEnvProtectsTERM already covers
+// that). Deleting the `env = applyProfileEnv(env, profile.Env)` call in
+// NewSession would still pass every other profile test, since none of them
+// inspect the child's actual environment.
+//
+// Uses the same "spawn a real shell, observe a side effect" pattern as the
+// startup-command tests: the profile's StartupCmd echoes the profile-set
+// variable to a marker file. If the env never reached the child, the shell
+// would expand $FOO to empty and the file would contain a blank line, not
+// the value.
+func TestRelayHost_NewSession_ProfileEnvReachesSpawnedProcess(t *testing.T) {
+	h := newTestRelayHost(t)
+
+	cwd := t.TempDir()
+	marker := filepath.Join(cwd, "env-seen")
+
+	cfg := h.cfg.Get()
+	cfg.Profiles = []SessionProfile{
+		{
+			ID:         "p1",
+			Name:       "P1",
+			Env:        map[string]string{"ATTERM_PROFILE_TEST_VAR": "profile-env-value"},
+			StartupCmd: "echo $ATTERM_PROFILE_TEST_VAR > " + marker,
+		},
+	}
+	cfg.DefaultProfileID = "p1"
+	if err := h.cfg.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := h.NewSession(context.Background(), NewSessionReq{
+		Command: "/bin/sh", Cwd: cwd, Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	sess, ok := h.server.Registry().Get(id)
+	if !ok {
+		t.Fatalf("session %s not found", id)
+	}
+
+	sess.PushOut(1, []byte("\x1b]133;A\x07$ "))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(marker); err == nil {
+			got := strings.TrimSpace(string(b))
+			if got != "profile-env-value" {
+				t.Fatalf("child process did not see the profile's env var: marker contains %q, want %q", got, "profile-env-value")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("marker file was never written — startup command did not run")
 }

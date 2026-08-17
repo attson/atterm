@@ -258,7 +258,6 @@ export const zhCN = {
       emptyTitle: "还没有转发规则",
       emptySub: "先在某台主机的「端口转发」里添加规则，再回到这里启动它。",
       start: "启动",
-      starting: "启动中…",
       stop: "停止",
       dismiss: "清除",
       stateIdle: "未启动",

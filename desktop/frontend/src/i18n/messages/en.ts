@@ -276,7 +276,6 @@ export const en = {
       emptyTitle: "No forwarding rules",
       emptySub: "Add a rule in a host's Port forwarding section, then start it here.",
       start: "Start",
-      starting: "Starting…",
       stop: "Stop",
       dismiss: "Dismiss",
       stateIdle: "Not started",

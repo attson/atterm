@@ -608,9 +608,11 @@ AAD = `uuid(16B) || frame_type(1B)`。`frame_type` 字节**等于该 sealed 字�
 
 | frame_type | 出现位置 | sealed 内容 |
 |------------|----------|-------------|
+| `0x02` `IN` | IN 帧 payload（整体，无 seq） | 原始 UTF-8 键入字节；relay→agent 方向，desktop `openInboundFrame` 已支持解封，尚无发送端（web/desktop 前端）产出该信封 |
 | `0x03` `OUT` | OUT 帧 `seq` 后的字节流 | 原始 PTY 输出字节 |
 | `0x05` `META` | `MetaPayload.sealed`（base64） | JSON `SealedMetaFields { title, cwd, current_command }` |
 | `0x12` `LIST_RESP` | `SessionInfo.sealed`（base64） | JSON `SealedSessionFields { title, cwd, command, current_command }` |
+| `0x33` `PASTE_IMAGE` | PASTE_IMAGE 帧 payload（整体） | JSON `PasteImagePayload { filename, content_type, data }`；relay→agent 方向，desktop `openInboundFrame` 已支持解封，尚无发送端产出该信封 |
 | `0x35` `COMMAND_EVENT` | `CommandEventPayload.sealed_body`（base64） | JSON `SealedPushBody { label, exit_code, elapsed_ms }` |
 | `0x37` `PASTE_FILE` | PASTE_FILE 帧 payload（整体） | JSON `PasteFilePayload { filename, content_type, data }` |
 | `0x38` `FS_REQUEST` | 分段 payload 的 segment 1（裸二进制，非 base64） | JSON `SealedFSRequestFields { path, new_path }` |

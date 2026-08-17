@@ -120,10 +120,12 @@ func (a *App) AddSSHHost(h SSHHost, cred sshCredential) (SSHHost, error) {
 // UpdateSSHHost replaces the non-secret fields of the host with matching ID.
 // If cred is non-nil the credential is replaced too; nil leaves it untouched.
 //
-// The UI *owns* Alias, Host, Port, User, Tags, Note, AuthKind and KeyID: the
-// host drawer has a control for each (Note is carried through the form's
-// round trip), so whatever the caller passes wins — including the empty
-// string, because clearing a label or a tag list is a legitimate edit.
+// The UI *owns* Alias, Host, Port, User, Tags, AuthKind, KeyID and Note, so
+// whatever the caller passes wins — including the empty string, because
+// clearing a label or a tag list is a legitimate edit. The drawer has a
+// control for all of them except Note, which has no editor today and simply
+// rides through the form's round trip; it stays on this list because the
+// store must keep honouring a caller that does clear it.
 //
 // The UI does *not* own IdentityFile, ProxyJump or ProxyCommand. Those three
 // are derived from ~/.ssh/config by import, have no editor in the drawer, and

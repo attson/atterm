@@ -307,15 +307,15 @@
 
 ### 22. profile（会话配置档）
 
-- [ ] 增加 profile 模型：名称 + shell + 启动目录 + 环境变量 + 启动命令
-- [ ] 新建 tab / split 时可选 profile
-- [ ] 支持设置默认 profile
-- [ ] profile 走 sealed 同步（复用 `ssh_sync.go` 的 `DeriveSessionKey` 模式，分配独立 AAD tag）
-- [ ] 新 AAD tag 登记进 `docs/spec/protocol.md` 的 sealed 信封表
-- [ ] per-profile「不同步此 profile 的环境变量」开关，默认不同步
-- [ ] `accountKey` 为空时不产生任何网络写入
-- [ ] 增加 seal / open 往返测试
-- [ ] 本条覆盖原 Backlog 的「默认 shell 设置改进」「启动目录设置」「环境变量设置」
+- [x] 增加 profile 模型：名称 + shell + 启动目录 + 环境变量 + 启动命令
+- [x] 新建 tab / split 时可选 profile
+- [x] 支持设置默认 profile
+- [x] profile 走 sealed 同步（复用 `ssh_sync.go` 的 `DeriveSessionKey` 模式，分配独立 AAD tag）
+- [x] 新 AAD tag 登记进 `docs/spec/protocol.md` 的 sealed 信封表
+- [x] per-profile「不同步此 profile 的环境变量」开关，默认不同步
+- [x] `accountKey` 为空时不产生任何网络写入
+- [x] 增加 seal / open 往返测试
+- [x] 本条覆盖原 Backlog 的「默认 shell 设置改进」「启动目录设置」「环境变量设置」
 
 ### 23. OSC 133 click-to-move-cursor
 

@@ -1273,6 +1273,151 @@ describe("split new pane cwd inheritance", () => {
   });
 });
 
+// Session profiles (roadmap item 22): covers the App.vue half of the
+// TabBar picker -> newSession seam (TabBar.test.ts covers the picker's own
+// select-profile emit). Traces: TabBar's select-profile emit sets App.vue's
+// selectedProfileId ref -> startNewTab() passes it into spawnLocalShell ->
+// spawnLocalShell conditionally spreads a `profile_id` key into the
+// newSession() call body. Neither test file exercised this seam before.
+describe("session profile selection wires into newSession", () => {
+  class FakeProfileWebSocket {
+    static instances: FakeProfileWebSocket[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeProfileWebSocket.CONNECTING;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public url: string) {
+      FakeProfileWebSocket.instances.push(this);
+    }
+
+    send() {}
+    close() {
+      this.readyState = FakeProfileWebSocket.CONNECTING;
+      this.onclose?.();
+    }
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    __setPlatformForTests(createFakePlatform());
+    FakeProfileWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeProfileWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+  });
+
+  async function mountAppWithProfiles(newSessionMock: ReturnType<typeof vi.fn>) {
+    __setBindingsForTest({
+      GetTaskSidebarCollapsed: vi.fn().mockResolvedValue(false),
+      GetEndpoint: vi.fn().mockResolvedValue({ url: "ws://local", session_token: "" }),
+      GetHostInfo: vi.fn().mockResolvedValue({ host_id: "local-host", host: "local", user: "attson" }),
+      GetRelayConfig: vi.fn().mockResolvedValue({
+        url: "", token: "", session_expires_at: 0,
+        allow_insecure_relay: false, remote_permission: "full", connected: false,
+      }),
+      ListRemoteSessions: vi.fn().mockResolvedValue(JSON.stringify([])),
+      GetTerminalTheme: vi.fn().mockResolvedValue("classic"),
+      GetShortcutBindings: vi.fn().mockResolvedValue({}),
+      GetTerminalFontHead: vi.fn().mockResolvedValue(""),
+      GetTerminalFontSize: vi.fn().mockResolvedValue(13),
+      GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
+      GetTerminalCursorStyle: vi.fn().mockResolvedValue("block"),
+      GetTerminalCursorBlink: vi.fn().mockResolvedValue(true),
+      GetTerminalScrollback: vi.fn().mockResolvedValue(5000),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(0),
+      ListShells: vi.fn().mockResolvedValue(["/bin/zsh"]),
+      GetProfiles: vi.fn().mockResolvedValue([
+        { id: "p1", name: "Work", shell: "/bin/zsh", cwd: "", startup_cmd: "", sync_env: false },
+      ]),
+      NewSession: newSessionMock,
+      CloseSession: vi.fn().mockResolvedValue(undefined),
+      GetUpdateState: vi.fn().mockResolvedValue({ available: false, ready: false }),
+      ConfirmQuit: vi.fn().mockResolvedValue(undefined),
+      MarkSessionsSeen: vi.fn().mockResolvedValue(undefined),
+      LoadRecoverySnapshot: vi.fn().mockResolvedValue({
+        version: 1,
+        host_id: "",
+        clean_shutdown: true,
+        saved_at_unix: 0,
+        tabs: [],
+      }),
+      SaveRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      DiscardRecoverySnapshot: vi.fn().mockResolvedValue(undefined),
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
+    } as any);
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          TitleBar: true,
+          // Real select-profile/new wiring, minimal DOM: mirrors the real
+          // TabBar's picker (select-profile) and "+" button (new) without
+          // dragging in the whole component — TabBar.test.ts already covers
+          // the picker's own emit in isolation.
+          TabBar: {
+            props: ["profiles", "selectedProfileId"],
+            template: `
+              <div>
+                <select
+                  data-testid="new-tab-profile"
+                  :value="selectedProfileId"
+                  @change="$emit('select-profile', $event.target.value)"
+                >
+                  <option value="" />
+                  <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+                </select>
+                <button data-testid="new-tab" @click="$emit('new')">new</button>
+              </div>
+            `,
+          },
+          PluginHost: true,
+          TranslatePanelHost: true,
+          ShortcutHints: true,
+          TaskSidebar: true,
+          PaneGrid: true,
+        },
+      },
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await flushPromises();
+    newSessionMock.mockClear();
+    return wrapper;
+  }
+
+  it("passes profile_id to newSession when a profile is selected before starting a new tab", async () => {
+    const newSessionMock = vi.fn().mockResolvedValue({ session_id: "local-1" });
+    const wrapper = await mountAppWithProfiles(newSessionMock);
+
+    await wrapper.get('[data-testid="new-tab-profile"]').setValue("p1");
+    await wrapper.get('[data-testid="new-tab"]').trigger("click");
+    await flushPromises();
+
+    expect(newSessionMock).toHaveBeenCalledTimes(1);
+    expect(newSessionMock).toHaveBeenCalledWith(expect.objectContaining({ profile_id: "p1" }));
+  });
+
+  it("omits profile_id from newSession when no profile is selected", async () => {
+    const newSessionMock = vi.fn().mockResolvedValue({ session_id: "local-1" });
+    const wrapper = await mountAppWithProfiles(newSessionMock);
+
+    await wrapper.get('[data-testid="new-tab"]').trigger("click");
+    await flushPromises();
+
+    expect(newSessionMock).toHaveBeenCalledTimes(1);
+    const body = newSessionMock.mock.calls[0][0];
+    expect(body).not.toHaveProperty("profile_id");
+  });
+});
+
 describe("admin view (main-area swap)", () => {
   // Minimal TabBar stub: reflects isAdmin/adminOpen props back onto a
   // data-test button (so a test can assert App wired them through) and

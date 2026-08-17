@@ -62,10 +62,11 @@ import {
   setTaskSidebarCollapsed,
   loadRecoverySnapshot,
   getRecoveryDialogEnabled,
+  getProfiles,
   type MarkSessionsSeenOpts,
   type RecoverySnapshot,
 } from "./lib/api";
-import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState } from "./lib/api";
+import type { Endpoint, RelayConfig, RelayMe, StartupError, UpdateState, SessionProfile } from "./lib/api";
 import type { RemoteSession } from "./platform/types";
 import { type SessionConnection, type SessionInfo } from "./lib/connection";
 import { mergeLocalSessions } from "./lib/localListMerge";
@@ -134,6 +135,18 @@ const localEndpoint = ref<Endpoint | null>(null);
 const remoteEndpoint = ref<Endpoint | null>(null);
 const localHostID = ref<string>("");
 const localHost = ref<string>("");
+
+// Session profiles for the TabBar new-tab/split picker (Task 4). Loaded at
+// boot and refreshed on prefs:changed exactly like refreshTerminalAppearance,
+// et al. — read-only here, never written back (design doc §7.2). Which
+// profile is the default is not needed here: the picker's own "Default
+// profile" option (selectedProfileId === "") already lets the Go side
+// resolve it via resolveSessionProfile, so App.vue doesn't need to know it.
+const profiles = ref<SessionProfile[]>([]);
+// The picker's current selection. Empty string means "use the default
+// profile, if any" — spawnLocalShell only sends profile_id when non-empty,
+// so Go's resolveSessionProfile falls back to the synced default itself.
+const selectedProfileId = ref<string>("");
 
 const localList = ref<SessionInfo[]>([]);
 const remoteList = ref<SessionInfo[]>([]);
@@ -896,6 +909,13 @@ function onCommandNotifyThresholdChanged(seconds: number) {
   commandNotifyThresholdSec.value = seconds;
 }
 
+// Read-only — SettingsProfiles.vue owns all writes. Mirrors
+// refreshTerminalAppearance's role: keep the boot value and every
+// prefs:changed pull in sync with what Go has.
+async function refreshProfiles() {
+  profiles.value = await getProfiles();
+}
+
 function parseHash(): string | null {
   const m = location.hash.match(/^#\/t\/([\w-]+)$/);
   return m ? m[1] : null;
@@ -931,6 +951,7 @@ function activeLocalPaneCwd(tab: Tab): string {
 async function spawnLocalShell(
   cwd: string,
   dims: { cols: number; rows: number },
+  profileId?: string,
 ): Promise<string> {
   const shells = await listShells();
   if (shells.length === 0) throw new Error(i18nT("app.noShellsFound"));
@@ -939,6 +960,10 @@ async function spawnLocalShell(
     cwd,
     cols: dims.cols,
     rows: dims.rows,
+    // Empty/undefined means "use the default profile, if any" — resolved
+    // entirely on the Go side (relay_host.go resolveSessionProfile). Only
+    // non-empty when the TabBar picker has an explicit selection.
+    ...(profileId ? { profile_id: profileId } : {}),
   });
   // Reflect immediately so PaneGrid finds the endpoint without poll lag.
   // pendingLocalIds keeps this seed alive across an early/stale LIST_RESP
@@ -966,7 +991,7 @@ async function startNewTab() {
   errorMsg.value = "";
   try {
     const spawnCwd = currentTab.value ? activeLocalPaneCwd(currentTab.value) : "";
-    const sid = await spawnLocalShell(spawnCwd, predictCellDims("single"));
+    const sid = await spawnLocalShell(spawnCwd, predictCellDims("single"), selectedProfileId.value);
     const id = newId();
     tabs.value.push({
       id,
@@ -1048,7 +1073,7 @@ async function onSplit(dir: SplitDir) {
   // there's a SIGWINCH between fork and first prompt that some zsh themes
   // turn into a stray PROMPT_EOL_MARK ('%').
   try {
-    const sid = await spawnLocalShell(spawnCwd, predictCellDims(result.layout));
+    const sid = await spawnLocalShell(spawnCwd, predictCellDims(result.layout), selectedProfileId.value);
     t.panes[result.newPaneIdx] = { sessionId: sid, remote: false };
   } catch (e: any) {
     showToast(i18nT("app.splitFailed", { message: e?.message ?? String(e) }));
@@ -1471,6 +1496,7 @@ onMounted(async () => {
     void refreshTerminalTheme();
     void refreshTerminalAppearance();
     void refreshShortcutBindings();
+    void refreshProfiles();
   });
   $platform.events.on('relay:auth-restored', () => {
     if (caps.wailsBindings) return;
@@ -1546,6 +1572,8 @@ onMounted(async () => {
       await refreshTerminalAppearance();
       bootStage = "refreshShortcutBindings";
       await refreshShortcutBindings();
+      bootStage = "refreshProfiles";
+      await refreshProfiles();
       bootStage = "getEndpoint";
       localEndpoint.value = await getEndpoint();
       bootStage = "getHostInfo";
@@ -1703,6 +1731,8 @@ defineExpose({ me });
       :update-badge="updateBadge"
       :is-admin="isAdmin"
       :admin-open="adminViewOpen"
+      :profiles="profiles"
+      :selected-profile-id="selectedProfileId"
       @activate="gotoTab"
       @detach-session="onDetachSessionToTab"
       @close="requestCloseTab"
@@ -1711,6 +1741,7 @@ defineExpose({ me });
       @reorder="onTabReorder"
       @open-settings="showSettings = true"
       @toggle-admin="adminViewOpen = !adminViewOpen"
+      @select-profile="selectedProfileId = $event"
     />
 
     <StartupFatalPanel v-if="startupFatal" :fatal="startupFatal" @quit="onConfirmQuit" />

@@ -99,6 +99,27 @@ B 机 pull 到一个没有 env 的 profile 之后，如果直接整体替换本�
 不做「env 单独一个键」。那会让 profile 与其 env 分成两个 LWW 键，出现「profile 已删但 env 还在」
 之类的不一致状态。合并规则复杂一点，好过两个键互相不一致。
 
+同理，`DefaultProfileID` 也不单独开一个 sealed 键，而是跟 `Profiles` 一起塞进同一个
+`profilesSyncPayload{ Profiles, DefaultProfileID }`，共用 `0xF1`（见
+`desktop/profiles.go` `profilesSyncPayload` 的注释）。从 prefssync 的角度看，
+「有哪些 profile」和「哪个是默认的」是同一条用户可见偏好的两个字段，不是两条偏好——
+拆成两个键除了多一个 AAD tag 之外没有任何好处，反而引入一个新的时序问题：
+两个键各自 LWW、各自可能先后到达，B 机就可能先 pull 到「默认 profile = X」，
+却还没 pull 到 X 本身（或者 X 已经在 A 机被删了但删除事件还没同步过来）——
+出现一个指向不存在 profile 的悬空默认值。
+
+绑在同一个键里天然避免了「default 先于 profile 到达」这一半的问题（两者原子地一起到达），
+但没有避免「引用了一个已被过滤掉的 profile」——`sealProfiles`/`openProfiles` 只负责整体
+加解密，不校验 `DefaultProfileID` 是否确实命中 `Profiles` 里的某一项（`filterValidProfiles`
+会丢弃畸形/重复 id 的条目，丢弃后原本合法的 `DefaultProfileID` 就可能变成悬空引用）。
+这一步校验放在入站合并路径上：`resolveDefaultProfileID(id, profiles)` 在
+`filterValidProfiles` 之后运行，`id` 不命中任何现存 profile 时一律返回 `""`，
+而不是把悬空 id 存进本地 config。前端（`SettingsProfiles.vue` 的 `deleteProfile()`）
+在本机删除当前默认 profile 时做了同样的事——本地立即清空默认值，
+而不是等下一轮 pull 由 Go 侧纠正——这是同一条不变量在两个方向（出站 —— 本机编辑；
+入站 —— 远端同步）上的对称实现，理由都是「默认值只能指向一个当下存在的 profile，
+不存在就是没有默认值，而不是一个悬空指针」。
+
 ## 6. 风险
 
 ### 6.1 startup 命令注入的时机与形态

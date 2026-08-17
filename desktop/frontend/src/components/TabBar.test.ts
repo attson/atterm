@@ -563,3 +563,55 @@ describe("TabBar detach drop target", () => {
     expect(w.emitted("detach-session")).toBeUndefined();
   });
 });
+
+// Session profiles (roadmap item 22): the picker is the first hop of the
+// "pick a profile, new tab uses it" seam that runs TabBar -> App.vue ->
+// spawnLocalShell -> the `profile_id` JSON tag Go's resolveSessionProfile
+// reads. This describe block only covers TabBar's half (the emit); the
+// App.vue -> newSession half is covered separately in App.test.ts.
+describe("TabBar profile picker", () => {
+  const profiles = [
+    { id: "p1", name: "Work", shell: "/bin/zsh", cwd: "", startup_cmd: "", sync_env: false },
+    { id: "p2", name: "Personal", shell: "/bin/bash", cwd: "", startup_cmd: "", sync_env: false },
+  ];
+
+  it("renders the picker when profiles are available", () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, canNewLocal: true, profiles },
+    });
+    expect(w.find('[data-test="new-tab-profile"]').exists()).toBe(true);
+  });
+
+  it("hides the picker when there are no profiles", () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, canNewLocal: true, profiles: [] },
+    });
+    expect(w.find('[data-test="new-tab-profile"]').exists()).toBe(false);
+  });
+
+  it("hides the picker when local shells cannot be started, even with profiles", () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, canNewLocal: false, profiles },
+    });
+    expect(w.find('[data-test="new-tab-profile"]').exists()).toBe(false);
+  });
+
+  it("emits select-profile with the chosen profile's id", async () => {
+    const w = mount(TabBar, {
+      props: { tabs: [], currentId: null, starting: false, canNewLocal: true, profiles },
+    });
+    await w.get('[data-test="new-tab-profile"]').setValue("p2");
+    expect(w.emitted("select-profile")).toEqual([["p2"]]);
+  });
+
+  it("emits select-profile with an empty id when the default option is chosen", async () => {
+    const w = mount(TabBar, {
+      props: {
+        tabs: [], currentId: null, starting: false, canNewLocal: true, profiles,
+        selectedProfileId: "p1",
+      },
+    });
+    await w.get('[data-test="new-tab-profile"]').setValue("");
+    expect(w.emitted("select-profile")).toEqual([[""]]);
+  });
+});

@@ -48,6 +48,28 @@ export interface NewSessionReq {
   // --permission-mode) into the injected `claude --resume <id>` so recovery
   // preserves them. Not passed as a spawn arg.
   initial_ai_command_line?: string;
+  // Explicit session-profile override for this new session. Empty/absent
+  // means "use the default profile if one is set, else the existing
+  // default_shell + HOME behavior" — resolved entirely on the Go side
+  // (desktop/relay_host.go resolveSessionProfile). The frontend only needs
+  // to send a non-empty value when the user picked a specific profile.
+  profile_id?: string;
+}
+
+// SessionProfile mirrors desktop/profiles.go SessionProfile — a named
+// session-launch configuration (shell, cwd, startup command, env). See
+// design doc §4 (docs/superpowers/specs/2026-08-17-session-profiles-design.md).
+export interface SessionProfile {
+  id: string;
+  name: string;
+  shell?: string;
+  cwd?: string;
+  startup_cmd?: string;
+  env?: Record<string, string>;
+  // sync_env defaults false/absent: Env never leaves this machine. Sealed
+  // sync (SetProfiles) strips Env for every profile with sync_env !== true
+  // before it ever reaches the relay (desktop/profiles.go stripUnsyncedEnv).
+  sync_env?: boolean;
 }
 
 // SSHConnectReq mirrors desktop/app.go SSHConnectReq. Credentials are used for
@@ -524,6 +546,15 @@ export interface AppBindings {
   GetAppVersion(): Promise<string>;
   MarkSessionsSeen(ids: string[], all: boolean): Promise<void>;
   ListRemoteSessions(): Promise<string>;
+  // Optional (like GetStartupError above): session profiles landed after
+  // most of App.test.ts's __setBindingsForTest mocks were written. Marking
+  // these `?` lets api.ts fall back to empty defaults when a mock doesn't
+  // define them, instead of every existing test mock needing to grow these
+  // two methods just to keep mounting App.
+  GetProfiles?(): Promise<SessionProfile[]>;
+  SetProfiles?(profiles: SessionProfile[]): Promise<void>;
+  GetDefaultProfileID?(): Promise<string>;
+  SetDefaultProfileID?(id: string): Promise<void>;
 }
 
 declare global {

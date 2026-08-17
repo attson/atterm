@@ -716,15 +716,22 @@ func (m *tunnelManager) serveLocalConn(t *tunnel, local net.Conn) {
 // any other failure means the transport is dead and every tunnel on it has to
 // be marked stopped. Both -L and -D reach this, from the same DialRemote call,
 // so the classification lives in one place.
-func (m *tunnelManager) noteDialFailure(t *tunnel, target string, err error) {
+//
+// It reports that classification back rather than only acting on it, because
+// -D has a second consumer for it: the SOCKS client is owed a reply code that
+// says which of the two happened, and socks5 cannot work it out for itself
+// without importing this dependency. Returning it here keeps the type switch
+// on *ssh.OpenChannelError in exactly one place.
+func (m *tunnelManager) noteDialFailure(t *tunnel, target string, err error) (destinationRefused bool) {
 	var openErr *ssh.OpenChannelError
 	if errors.As(err, &openErr) {
 		logWarn("ssh", "forward %s: remote refused %s: %v", t.ruleID, target, err)
-		return
+		return true
 	}
 	// The watcher usually gets there first; whichever arrives first wins and
 	// the other finds nothing running.
 	m.connectionLost(t.hostID, t.hc, fmt.Sprintf("ssh connection lost: %v", err))
+	return false
 }
 
 // serveDynamicConn runs one SOCKS5 session on an accepted connection, opening
@@ -744,7 +751,15 @@ func (m *tunnelManager) serveDynamicConn(t *tunnel, local net.Conn) {
 			// when the transport is gone — and still return the error, so the
 			// SOCKS client gets a failure reply rather than a dropped
 			// connection it cannot interpret.
-			m.noteDialFailure(t, addr, err)
+			if m.noteDialFailure(t, addr, err) {
+				// The remote declined this one target and the tunnel is fine,
+				// so the client can be told the truth: X'05', connection
+				// refused. Only this branch may claim that — everything else
+				// reaching socks5 unwrapped becomes X'01', which is what stops
+				// a dead tunnel from being reported as a refusal by the
+				// destination.
+				return nil, fmt.Errorf("%w: %w", socks5.ErrDestinationRefused, err)
+			}
 			return nil, err
 		}
 		return remote, nil

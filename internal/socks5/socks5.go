@@ -29,6 +29,7 @@
 package socks5
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -386,25 +387,43 @@ func writeReply(w io.Writer, rep byte) error {
 
 // replyCodeForDialError maps a dial failure onto the closest RFC 1928 code.
 //
-// The catch-all is X'01' (general SOCKS server failure) rather than X'05'
-// (connection refused), and that choice is the whole point of this function.
-// The dialer here is an SSH channel open, so a failure means either "the
-// destination refused" *or* "the SSH transport is gone" — and X'05' asserts the
-// first. Telling a user the destination refused when the truth is that their
-// tunnel died sends them to check the wrong machine entirely; the client is the
-// one place they cannot see that the tunnel is what broke. X'01' says "this
-// proxy could not do it", which is both true and points at the proxy.
+// The mapping is three-way, and the split it refuses to guess at is the point.
+// A failing dial here means one of two very different things — "the
+// destination refused" or "the SSH transport is gone" — and they send the user
+// to different machines. X'05' (connection refused) asserts the first. Emitting
+// it for a dead tunnel tells the user to go check a destination that is fine,
+// from the one vantage point where they cannot see that their tunnel is what
+// broke.
 //
-// The distinction does exist, one layer up: the tunnel manager's
-// noteDialFailure separates an *ssh.OpenChannelError (that one target refused,
-// tunnel fine) from anything else (transport dead, mark every rule on it
-// stopped with a reason). That is where the user gets told which happened. This
-// package cannot make the same split without importing the SSH client, which
-// is exactly the dependency that keeps it unit-testable.
+// So X'05' is emitted only on an explicit claim from the dialer:
 //
-// So X'05' is never emitted. A timeout is the one distinction that stays honest
-// without an SSH-specific error type.
+//   - ErrDestinationRefused → X'05'. The caller observed a refusal of *that
+//     target* (in atterm, an *ssh.OpenChannelError: the remote sshd declined
+//     the channel and the tunnel is healthy). X'05' is the honest code, and
+//     withholding it would be its own lie — "something went wrong" for the most
+//     ordinary outcome there is, nothing listening on that port.
+//   - a timeout → X'04' (host unreachable). Still the closest RFC 1928 has.
+//   - everything else → X'01' (general SOCKS server failure). Transport death
+//     and context cancellation land here. X'01' says "this proxy could not do
+//     it", which is true and points at the proxy rather than at an innocent
+//     destination.
+//
+// Order matters. context.DeadlineExceeded reports Timeout() == true, so the
+// context check has to come before the timeout check or a cancelled dial would
+// be reported as an unreachable host — blaming the destination for a decision
+// made on this side.
+//
+// The classification is by sentinel and by type, never by error text: the SSH
+// refusal string literally contains "connection refused", so a text match would
+// hand X'05' to exactly the transport failures this function exists to keep it
+// away from.
 func replyCodeForDialError(err error) byte {
+	if errors.Is(err, ErrDestinationRefused) {
+		return repConnectionRefused
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return repGeneralFailure
+	}
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
 		return repHostUnreachable

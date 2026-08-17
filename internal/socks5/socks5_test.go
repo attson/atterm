@@ -1,8 +1,10 @@
 package socks5
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"runtime"
@@ -547,13 +549,17 @@ func connectRequestCmd(cmd, atyp byte, addrBody []byte, port uint16) []byte {
 // leaves a client convinced the tunnel is open. The failure has to be in the
 // reply code.
 //
-// And it must be X'01', not X'05'. A dial failure here can equally mean the
-// SSH transport died, and X'05' would assert that the *destination* refused —
-// sending the user to check the wrong machine, from the one vantage point
-// where they cannot see that their tunnel is what broke. The error text below
-// even says "connection refused", which is precisely the bait: it is the
-// remote sshd's wording for a channel it declined, not something this package
-// can tell apart from a dead transport.
+// And an *unmarked* failure must be X'01', not X'05'. A dial failure that
+// arrives with no claim attached can equally mean the SSH transport died, and
+// X'05' would assert that the *destination* refused — sending the user to check
+// the wrong machine, from the one vantage point where they cannot see that
+// their tunnel is what broke.
+//
+// The error text below is the bait, and it is here deliberately: it says
+// "connection refused" in so many words, because that is the remote sshd's
+// wording. Only ErrDestinationRefused may produce X'05'; an implementation
+// that reached for strings.Contains instead of the sentinel passes every other
+// test in this file and fails this one.
 func TestDialFailureReportsAFailureCode(t *testing.T) {
 	s := startServer(t, func(network, addr string) (net.Conn, error) {
 		return nil, errors.New("ssh: rejected: connect failed (connection refused)")
@@ -577,6 +583,138 @@ func TestDialFailureReportsAFailureCode(t *testing.T) {
 	}
 	expectServerClosed(t, c, 3*time.Second)
 	assertServerStillServes(t, s)
+}
+
+// TestDialErrorsMapToThreeDistinctReplyCodes pins the whole mapping at once,
+// on the wire, because the three codes are three different instructions to the
+// user and collapsing any pair of them is a silent misdirection:
+//
+//   - X'05' sends them to the destination ("nothing is listening there").
+//   - X'01' sends them to the proxy ("your tunnel is broken").
+//   - X'04' says the path did not answer in time.
+//
+// Each row below fails if its branch is merged into the catch-all, so the
+// function cannot be simplified back into "timed out vs everything else"
+// without a red test. The context rows are the subtle ones:
+// context.DeadlineExceeded satisfies net.Error with Timeout() == true, so if
+// the context check is dropped or moved after the timeout check, a dial we
+// cancelled ourselves gets reported as an unreachable host.
+func TestDialErrorsMapToThreeDistinctReplyCodes(t *testing.T) {
+	refusedByRemote := errors.New("ssh: rejected: connect failed (connection refused)")
+
+	cases := []struct {
+		name string
+		err  error
+		want byte
+		why  string
+	}{{
+		name: "destination refused, wrapped by the dialer",
+		err:  fmt.Errorf("%w: %w", ErrDestinationRefused, refusedByRemote),
+		want: repConnectionRefused,
+		why:  "the caller observed a refusal of this target; X'05' is the honest code and the user should look at the destination",
+	}, {
+		name: "bare ErrDestinationRefused",
+		err:  ErrDestinationRefused,
+		want: repConnectionRefused,
+		why:  "the sentinel alone must be enough; not every caller has an underlying error to wrap",
+	}, {
+		name: "transport died",
+		err:  refusedByRemote,
+		want: repGeneralFailure,
+		why:  "unmarked failures may be a dead tunnel, and its text says 'connection refused' — the trap for a text-matching implementation",
+	}, {
+		name: "context cancelled",
+		err:  context.Canceled,
+		want: repGeneralFailure,
+		why:  "we stopped it, so nothing is known about the destination",
+	}, {
+		name: "context deadline exceeded",
+		err:  context.DeadlineExceeded,
+		want: repGeneralFailure,
+		why:  "this is a Timeout() error, so it must be classified before the timeout branch or it becomes X'04'",
+	}, {
+		name: "dial timed out",
+		err:  timeoutErr{},
+		want: repHostUnreachable,
+		why:  "the closest RFC 1928 has for 'the path did not answer'",
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.err
+			s := startServer(t, func(network, addr string) (net.Conn, error) {
+				return nil, err
+			})
+			c := dialServer(t, s)
+			negotiateNoAuth(t, c)
+
+			mustWrite(t, c, connectRequest(atypIPv4, []byte{10, 1, 2, 3}, 5432))
+			rep := readReply(t, c)
+			rep.assertWellFormed(t)
+			if rep.rep != tc.want {
+				t.Fatalf("reply = %#x, want %#x: %s", rep.rep, tc.want, tc.why)
+			}
+			expectServerClosed(t, c, 3*time.Second)
+			assertServerStillServes(t, s)
+		})
+	}
+}
+
+// TestDestinationRefusedGetsConnectionRefused is the other half of the
+// mapping, and without it the sentinel is decoration: a dialer that *can* tell
+// the destination said no must be able to say so, and the client must get
+// X'05'. Withholding it would be its own lie — "general server failure" for
+// the most ordinary outcome there is, nothing listening on that port.
+//
+// The wrapped error is deliberately generic ("boom"), so nothing but the
+// sentinel can be what produced the code.
+func TestDestinationRefusedGetsConnectionRefused(t *testing.T) {
+	s := startServer(t, func(network, addr string) (net.Conn, error) {
+		return nil, fmt.Errorf("%w: boom", ErrDestinationRefused)
+	})
+	c := dialServer(t, s)
+	negotiateNoAuth(t, c)
+
+	mustWrite(t, c, connectRequest(atypIPv4, []byte{10, 1, 2, 3}, 5432))
+	rep := readReply(t, c)
+	rep.assertWellFormed(t)
+	if rep.rep != repConnectionRefused {
+		t.Fatalf("reply = %#x, want %#x (connection refused)", rep.rep, repConnectionRefused)
+	}
+	expectServerClosed(t, c, 3*time.Second)
+}
+
+// TestCancelledDialIsNotBlamedOnTheDestination pins the ordering the mapping
+// depends on. context.DeadlineExceeded reports Timeout() == true, so a
+// net.Error timeout check placed first would answer X'04' host unreachable —
+// blaming the destination for a deadline this side chose. Both context
+// sentinels must land on X'01'.
+func TestCancelledDialIsNotBlamedOnTheDestination(t *testing.T) {
+	for name, dialErr := range map[string]error{
+		"deadline exceeded": context.DeadlineExceeded,
+		"canceled":          context.Canceled,
+		"wrapped deadline":  fmt.Errorf("dialing: %w", context.DeadlineExceeded),
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := startServer(t, func(network, addr string) (net.Conn, error) {
+				return nil, dialErr
+			})
+			c := dialServer(t, s)
+			negotiateNoAuth(t, c)
+
+			mustWrite(t, c, connectRequest(atypIPv4, []byte{10, 1, 2, 3}, 5432))
+			rep := readReply(t, c)
+			rep.assertWellFormed(t)
+			if rep.rep == repHostUnreachable {
+				t.Fatal("a cancelled dial was reported as X'04' host unreachable: " +
+					"the timeout check ran before the context check, so a decision made " +
+					"on this side is being blamed on the destination")
+			}
+			if rep.rep != repGeneralFailure {
+				t.Fatalf("reply = %#x, want %#x (general SOCKS server failure)", rep.rep, repGeneralFailure)
+			}
+		})
+	}
 }
 
 // TestDialTimeoutReportsAFailureCode pins that a dialer that times out is a

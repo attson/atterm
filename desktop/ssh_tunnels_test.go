@@ -45,6 +45,20 @@ type forwardTestServer struct {
 	opened       int
 	closed       int
 	refuseRemote bool // when true, every "tcpip-forward" request is denied
+
+	// directDests records the DestAddr of every "direct-tcpip" channel the
+	// client opened, exactly as it arrived on the wire. That is the far side of
+	// the tunnel, so it is where "the name was not resolved locally" can
+	// actually be observed rather than assumed.
+	directDests []string
+}
+
+// directDestHosts returns the host part of every direct-tcpip destination this
+// server has been asked for, in order.
+func (s *forwardTestServer) directDestHosts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.directDests...)
 }
 
 // setRefuseRemoteForward makes every subsequent "tcpip-forward" global
@@ -188,6 +202,9 @@ func (s *forwardTestServer) serve(nc net.Conn, cfg *ssh.ServerConfig) {
 				_ = newCh.Reject(ssh.ConnectionFailed, "bad direct-tcpip payload")
 				continue
 			}
+			s.mu.Lock()
+			s.directDests = append(s.directDests, p.DestAddr)
+			s.mu.Unlock()
 			target := net.JoinHostPort(p.DestAddr, strconv.Itoa(int(p.DestPort)))
 			tc, err := net.DialTimeout("tcp", target, 2*time.Second)
 			if err != nil {
@@ -927,20 +944,26 @@ func TestDynamicForwardPicksTargetPerConnection(t *testing.T) {
 	}
 }
 
-// TestDynamicForwardCarriesADomainNameTarget drives the DOMAINNAME address
-// type (ATYP=3) end to end with an independent client.
+// TestDynamicForwardCarriesADomainNameTargetUnresolved drives the DOMAINNAME
+// address type (ATYP=3) end to end with an independent client, and asserts the
+// name reached the *far side* still a name.
 //
-// x/net/proxy picks the address type by net.ParseIP, so every other wiring
-// test here — all of which hand it an IP literal — exercises only ATYP=1.
-// DOMAINNAME is the one address type carrying a length prefix, which makes it
-// both the likeliest place for our encoder and a real client's decoder to
-// disagree and the one most worth checking against a decoder we did not write.
+// Why this test has to exist alongside the others: x/net/proxy picks the
+// address type with net.ParseIP, so every other wiring test here — all of which
+// hand it an IP literal — exercises only ATYP=1. DOMAINNAME is the one address
+// type carrying a length prefix, which makes it both the likeliest place for
+// our encoder and a real client's decoder to disagree, and the one most worth
+// checking against a decoder we did not write. Promoting x/net to a direct
+// dependency buys nothing if the third-party client never drives this path.
 //
-// It also exercises the passthrough that makes a SOCKS proxy over SSH worth
-// having: "localhost" is resolved by the far side, not here. (That the name
-// reaches the dialer unresolved is pinned byte-for-byte in the socks5 package's
-// TestConnectDomainCarriesBytesBothWays; here it is end-to-end plumbing.)
-func TestDynamicForwardCarriesADomainNameTarget(t *testing.T) {
+// Why it asserts on the server and not just on the echo: name *passthrough* is
+// the entire reason to run SOCKS over SSH rather than a fixed -L. If the name
+// were resolved on this side, the bytes would still echo and this test would
+// still pass — resolution simply would have happened on the wrong machine, and
+// a name that only exists on the remote network would break in production while
+// "localhost" kept working here. The direct-tcpip payload is the only place
+// that difference is visible.
+func TestDynamicForwardCarriesADomainNameTargetUnresolved(t *testing.T) {
 	_, targetPort := startEchoTarget(t)
 	srv := startForwardingSSHTestServer(t)
 	a, h := newForwardTestApp(t, srv, dynamicRule("r1"))
@@ -952,6 +975,24 @@ func TestDynamicForwardCarriesADomainNameTarget(t *testing.T) {
 
 	f := activeForward(t, a, "r1")
 	echoThrough(t, socksDial(t, f.ListenAddr, "localhost:"+targetPort), "by name, not by address")
+
+	dests := srv.directDestHosts()
+	if len(dests) != 1 {
+		t.Fatalf("ssh server saw %d direct-tcpip opens (%q), want 1", len(dests), dests)
+	}
+	got := dests[0]
+	// The loud half: if a future x/net/proxy resolves hostnames client-side,
+	// this test would otherwise quietly degrade into a second ATYP=1 test that
+	// still passes. An IP literal here means the CONNECT never carried a name,
+	// so nothing above is testing DOMAINNAME any more.
+	if net.ParseIP(got) != nil {
+		t.Fatalf("the ssh server was asked to dial the IP literal %q: the client resolved the name "+
+			"before sending CONNECT, so this test is no longer exercising ATYP=3 (DOMAINNAME) at all "+
+			"— and name resolution is happening on the wrong side of the tunnel", got)
+	}
+	if got != "localhost" {
+		t.Fatalf("ssh server was asked to dial %q, want the unresolved name \"localhost\"", got)
+	}
 }
 
 // TestDynamicForwardListsWithoutATarget: TargetHost/TargetPort are unused for
@@ -1060,9 +1101,21 @@ func TestDynamicForwardSurvivesARefusedTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c, err := d.Dial("tcp", deadAddr); err == nil {
+	c, dialErr := d.Dial("tcp", deadAddr)
+	if dialErr == nil {
 		_ = c.Close()
 		t.Fatal("CONNECT to a dead port reported success")
+	}
+	// And it must arrive as a *refusal*, X'05', not as a general server
+	// failure. This is the end of the wire the sentinel exists for: the manager
+	// saw an *ssh.OpenChannelError (the remote declined this one channel, the
+	// tunnel is healthy), wrapped socks5.ErrDestinationRefused around it, and
+	// that has to survive all the way to a client we did not write. Telling the
+	// user "the proxy could not do it" here would hide the one useful fact —
+	// nothing is listening on that port. The inverse mistake, claiming a
+	// refusal when the tunnel itself is dead, is pinned in the socks5 package.
+	if !strings.Contains(dialErr.Error(), "connection refused") {
+		t.Fatalf("a refused target must reach the client as X'05' connection refused, got %v", dialErr)
 	}
 
 	// The tunnel is still running and still serving.

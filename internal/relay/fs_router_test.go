@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -286,6 +287,88 @@ func TestFSRouterResponseOverflowInvokesCallback(t *testing.T) {
 	case <-overflow:
 	default:
 		t.Fatal("overflow callback was not invoked")
+	}
+}
+
+func TestFSRouterReapsExpiredRequestAfterTTL(t *testing.T) {
+	buf := captureDebugLog(t)
+	r := newFSRouter()
+	sessionID := uuid.New()
+	stuck := make(chan proto.Frame, 1)
+	if !r.registerRequestRoute(sessionID, proto.FSRequestPayload{RequestID: "stuck", Op: "list_dir"}, stuck, nil) {
+		t.Fatal("request route was not registered")
+	}
+
+	// No response ever arrives. Sweep as if fsRequestTTL has elapsed since
+	// registration — this is what a later touch of the map (another
+	// register or routeResponse call) would trigger on its own.
+	r.reapExpiredRequests(time.Now().Add(fsRequestTTL + time.Second))
+
+	if r.routeResponse(proto.Frame{
+		Type:      proto.TypeFSResponse,
+		SessionID: sessionID,
+		Payload:   fsHeadPayload(t, `{"request_id":"stuck","ok":true}`),
+	}) {
+		t.Fatal("expired request route was still delivered")
+	}
+	select {
+	case got := <-stuck:
+		t.Fatalf("stuck requester received a frame after reap: %+v", got)
+	default:
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "reaped expired request") || !strings.Contains(got, "request_id=stuck") {
+		t.Fatalf("reap was not logged: %q", got)
+	}
+}
+
+func TestFSRouterDoesNotReapRequestWithinTTL(t *testing.T) {
+	r := newFSRouter()
+	sessionID := uuid.New()
+	out := make(chan proto.Frame, 1)
+	if !r.registerRequestRoute(sessionID, proto.FSRequestPayload{RequestID: "in-time", Op: "list_dir"}, out, nil) {
+		t.Fatal("request route was not registered")
+	}
+
+	// A sweep run just short of the TTL must be a no-op for this entry.
+	// This exercises the same code path routeResponse runs on every call:
+	// a response that beats the TTL must never be dropped by the reaper.
+	r.reapExpiredRequests(time.Now().Add(fsRequestTTL - time.Second))
+
+	if !r.routeResponse(proto.Frame{
+		Type:      proto.TypeFSResponse,
+		SessionID: sessionID,
+		Payload:   fsHeadPayload(t, `{"request_id":"in-time","ok":true}`),
+	}) {
+		t.Fatal("response within TTL was not routed")
+	}
+	select {
+	case <-out:
+	default:
+		t.Fatal("requester did not receive response")
+	}
+}
+
+func TestFSRouterReapDoesNotRemoveWatches(t *testing.T) {
+	r := newFSRouter()
+	sessionID := uuid.New()
+	owner := make(chan proto.Frame, 1)
+	r.registerWatch(sessionID, "watch-1", owner)
+
+	// Sweep far enough forward that any request-shaped entry would be long
+	// expired. Watches live in a separate map and are never stamped with
+	// registeredAt — the sweep must never touch them: a live directory
+	// subscription has a different lifetime than a single-shot RPC and is
+	// owned by unwatch_dir / disconnect instead.
+	r.reapExpiredRequests(time.Now().Add(10 * fsRequestTTL))
+
+	if !r.routeEvent(proto.Frame{
+		Type:      proto.TypeFSEvent,
+		SessionID: sessionID,
+		Payload:   fsHeadPayload(t, `{"watch_id":"watch-1","path":"/tmp","event":"dir_changed"}`),
+	}) {
+		t.Fatal("watch route was removed by request reaping")
 	}
 }
 

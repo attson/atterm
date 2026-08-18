@@ -126,7 +126,7 @@ func newTestClient(t *testing.T) (*Client, string, *gatedPipe) {
 	go func() { defer close(served); _ = srv.Serve(); serverEnd.Close() }()
 
 	gated := &gatedPipe{Conn: clientEnd, holds: make(chan struct{}, 8)}
-	c, err := New(gated)
+	c, err := newClient(gated)
 	if err != nil {
 		t.Fatal(err)
 	}

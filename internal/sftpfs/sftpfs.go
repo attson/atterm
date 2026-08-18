@@ -172,12 +172,16 @@ type Client struct {
 	closed    chan struct{}
 }
 
-// New wraps an already-open SFTP byte stream. The stream is adopted: closing
-// the Client closes it.
+// newClient wraps an already-open SFTP byte stream. The stream is adopted:
+// closing the Client closes it.
 //
-// New is unbounded and blocks for as long as the handshake takes — see
-// NewContext, which is what callers on a worker pool should use.
-func New(rwc io.ReadWriteCloser) (*Client, error) {
+// It is unbounded and blocks for as long as the handshake takes. It is
+// deliberately unexported: every exported constructor takes a context, so a
+// caller cannot reach an unbounded handshake by accident. That is not
+// hypothetical — the desktop shipped a hand-rolled bounded wrapper around an
+// unbounded open, which freed the caller but left the SSH channel open on the
+// shared connection for every wedged handshake.
+func newClient(rwc io.ReadWriteCloser) (*Client, error) {
 	sc, err := sftp.NewClientPipe(rwc, rwc)
 	if err != nil {
 		return nil, fmt.Errorf("sftpfs: start sftp client: %w", err)
@@ -224,7 +228,7 @@ func NewContext(ctx context.Context, rwc io.ReadWriteCloser) (*Client, error) {
 func newContext(ctx context.Context, g *handshakeGuard) (*Client, error) {
 	done := make(chan openResult, 1)
 	go func() {
-		c, err := New(g)
+		c, err := newClient(g)
 		g.disarm()
 		done <- openResult{c: c, err: err}
 	}()
@@ -295,24 +299,6 @@ func (g *handshakeGuard) Close() error {
 	return g.ReadWriteCloser.Close()
 }
 
-// Open starts SFTP on an existing SSH connection. It rides the connection the
-// host already has — including, transparently, one that is the far end of a
-// jump-host chain — rather than dialing a second one, which would cost another
-// login and another keepalive on the remote side for no benefit.
-//
-// Open is unbounded; prefer OpenContext.
-func Open(conn *sshclient.Conn) (*Client, error) {
-	stream, err := conn.OpenSFTP()
-	if err != nil {
-		return nil, err
-	}
-	c, err := New(stream)
-	if err != nil {
-		_ = stream.Close()
-		return nil, err
-	}
-	return c, nil
-}
 
 // OpenContext is Open under a deadline, and is what the desktop should call.
 //

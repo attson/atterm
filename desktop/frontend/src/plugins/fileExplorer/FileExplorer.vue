@@ -165,7 +165,13 @@ onBeforeUnmount(() => {
 });
 
 const fileRevealStore = useFileRevealStore();
-const fileTreeRef = ref<{ revealPath: (p: string) => Promise<boolean>; refresh: () => void } | null>(null);
+const fileTreeRef = ref<{
+  revealPath: (p: string) => Promise<boolean>;
+  refresh: () => void;
+  refreshDir: (dir: string) => Promise<void>;
+  /** The tree's currently selected directory — see FileTree.selectedDir. */
+  selectedDir: string;
+} | null>(null);
 
 // --- upload (SSH source only) -----------------------------------------------
 //
@@ -178,6 +184,17 @@ const fileTreeRef = ref<{ revealPath: (p: string) => Promise<boolean>; refresh: 
 const uploadInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
 
+// Where an upload lands: the directory selected in the tree, falling back to
+// the root before anything has been selected.
+//
+// It is not the root unconditionally, which is what this used to be. An SSH
+// source opens at "/" because that is the one path that is never a lie about
+// the far side — but for any non-root login "/" is precisely the directory the
+// user cannot write to, so the single write this feature offers would have
+// been guaranteed to fail. The button's tooltip names this same path, so the
+// label and the behaviour cannot drift apart.
+const uploadTargetDir = computed<string | null>(() => fileTreeRef.value?.selectedDir ?? root.value);
+
 function pickUpload() {
   uploadInput.value?.click();
 }
@@ -187,15 +204,18 @@ async function onUploadPicked(ev: Event) {
   const file = input.files?.[0] ?? null;
   input.value = ""; // so picking the same file twice fires again
   const bridge = fs.value;
-  const dir = root.value;
+  const dir = uploadTargetDir.value;
   if (!file || !bridge || !dir) return;
   uploading.value = true;
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const target = dir.endsWith("/") ? dir + file.name : `${dir}/${file.name}`;
     await bridge.writeFile(target, bytes, null);
-    props.context.showToast(t("plugins.fileExplorer.sshUploadDone", { name: file.name }));
-    fileTreeRef.value?.refresh?.();
+    props.context.showToast(t("plugins.fileExplorer.sshUploadDone", { name: file.name, dir }));
+    // Re-list the directory that was written to, not the whole tree: this
+    // source has no change notification, and a full rebuild would collapse the
+    // user back to the root right after they uploaded somewhere below it.
+    void fileTreeRef.value?.refreshDir?.(dir);
   } catch (err) {
     // errText carries the bridge's actionable sentence for the default
     // refusal ("... already exists ... rename it or delete it first"), not the
@@ -330,8 +350,8 @@ const explorerTheme = computed<"dimmed" | "light">(() =>
             v-if="bridgeOwner.sshHostID"
             class="pin"
             data-test="ssh-upload"
-            :disabled="uploading || !root"
-            :title="t('plugins.fileExplorer.sshUpload')"
+            :disabled="uploading || !uploadTargetDir"
+            :title="t('plugins.fileExplorer.sshUpload', { dir: uploadTargetDir ?? '' })"
             @click="pickUpload"
           >
             <Upload :size="14" :stroke-width="1.5" />

@@ -151,6 +151,111 @@ describe("FileExplorer — the SSH host data source", () => {
     expect(wrapper.find('[data-test="listing-truncated"]').exists()).toBe(false);
   });
 
+  it("uploads into the directory selected in the tree, and says so on the button", async () => {
+    // The one write this source offers has to land where the user is looking.
+    // Targeting the root unconditionally would mean that for every non-root
+    // login the upload goes to a directory they cannot write.
+    const SFTPWriteFile = vi.fn().mockResolvedValue({ path: "/srv/app/notes.md", size: 1, modTime: 1, isBinary: false });
+    const SFTPListDir = vi.fn().mockImplementation(async (_id: string, path: string) => ({
+      path,
+      entries: path === "/" ? [{ name: "srv", isDir: true }] : [{ name: "keep", isDir: false }],
+      truncated: false,
+      total: 1,
+    }));
+    bind({ SFTPWriteFile, SFTPListDir });
+    const context = localContext();
+    const wrapper = mountPanel(context);
+    await flushPromises();
+    await wrapper.get('[data-test="fs-source"]').setValue("plain");
+    await flushPromises();
+
+    // Before anything is selected the target is the root, and the button says so.
+    expect(wrapper.get('[data-test="ssh-upload"]').attributes("title")).toContain("/");
+
+    await wrapper.get('.node[title="/srv"]').trigger("click");
+    await flushPromises();
+
+    // The label names the directory that will actually be written to.
+    expect(wrapper.get('[data-test="ssh-upload"]').attributes("title")).toContain("/srv");
+
+    const input = wrapper.get('[data-test="ssh-upload-input"]');
+    Object.defineProperty(input.element, "files", {
+      value: [{ name: "notes.md", arrayBuffer: () => Promise.resolve(new Uint8Array([7]).buffer) }],
+      configurable: true,
+    });
+    await input.trigger("change");
+    await flushPromises();
+
+    expect(SFTPWriteFile).toHaveBeenCalledWith("plain", "/srv/notes.md", [7], 0, true);
+    const toast = (context.showToast as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
+    expect(toast).toContain("/srv");
+    // The written directory is re-listed, and /srv is still open: this source
+    // has no change notification, so if the panel did not do this the file
+    // would simply not appear.
+    expect(SFTPListDir.mock.calls.filter(([, p]) => p === "/srv").length).toBeGreaterThan(1);
+    expect(wrapper.find('.node[title="/srv/keep"]').exists()).toBe(true);
+  });
+
+  it("shows why a host could not be reached instead of an empty tree", async () => {
+    // "no saved credential", "host key not in known_hosts", "the host is down",
+    // "sftp-server is not installed" are ordinary first-run outcomes here. Each
+    // of those sentences is written on the Go side; swallowing the rejection
+    // means no user ever meets one.
+    const SFTPListDir = vi.fn().mockRejectedValue(
+      new Error("no saved credential for build-01; open a terminal on it once to unlock the key"),
+    );
+    bind({ SFTPListDir });
+    const wrapper = mountPanel(localContext());
+    await flushPromises();
+    await wrapper.get('[data-test="fs-source"]').setValue("plain");
+    await flushPromises();
+
+    const banner = wrapper.find('[data-test="tree-error"]');
+    expect(banner.exists()).toBe(true);
+    expect(banner.text()).toContain("no saved credential");
+    // And a way to try again, because "try again to reconnect" is one of the
+    // messages the Go side hands up.
+    expect(wrapper.find('[data-test="tree-error-retry"]').exists()).toBe(true);
+
+    const calls = SFTPListDir.mock.calls.length;
+    await wrapper.get('[data-test="tree-error-retry"]').trigger("click");
+    await flushPromises();
+    expect(SFTPListDir.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it("refuses to delete a remote directory rather than recursively wiping it", async () => {
+    // Roadmap item 28 is scoped to browse + single-file transfer. There is no
+    // trash on the far side, so a recursive delete behind one confirm dialog
+    // is the one action here that nothing can walk back.
+    const SFTPRemove = vi.fn().mockResolvedValue(undefined);
+    const SFTPListDir = vi.fn().mockImplementation(async (_id: string, path: string) => ({
+      path,
+      entries: path === "/" ? [{ name: "srv", isDir: true }] : [],
+      truncated: false,
+      total: 1,
+    }));
+    bind({ SFTPRemove, SFTPListDir });
+    const context = localContext();
+    const wrapper = mountPanel(context);
+    await flushPromises();
+    await wrapper.get('[data-test="fs-source"]').setValue("plain");
+    await flushPromises();
+
+    await wrapper.get('.node[title="/srv"]').trigger("contextmenu");
+    await flushPromises();
+    await wrapper.get('[data-test="menu-delete"]').trigger("click");
+    await flushPromises();
+
+    // No confirmation is offered at all: agreeing to a delete that is then
+    // refused teaches the user that the dialog means nothing.
+    expect(wrapper.find('[data-test="btn-trash"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="btn-hard"]').exists()).toBe(false);
+    expect(SFTPRemove).not.toHaveBeenCalled();
+    const toast = (context.showToast as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
+    expect(toast).toMatch(/permanently/i);
+    expect(toast).toContain("/srv");
+  });
+
   it("refuses an upload onto an existing path with something the user can act on", async () => {
     const SFTPWriteFile = vi.fn().mockRejectedValue(new Error("already_exists: /app.conf"));
     bind({ SFTPWriteFile });
@@ -169,6 +274,8 @@ describe("FileExplorer — the SSH host data source", () => {
     await input.trigger("change");
     await flushPromises();
 
+    // "/" because nothing has been selected in the tree yet — that is the
+    // fallback, not the only target the panel can reach (see the test above).
     expect(SFTPWriteFile).toHaveBeenCalledWith("plain", "/app.conf", [1, 2], 0, true);
     const toast = (context.showToast as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
     expect(toast).toMatch(/already exists on the remote host/);
@@ -195,6 +302,7 @@ describe("FileExplorer — the SSH host data source", () => {
     await input.trigger("change");
     await flushPromises();
 
+    // Again the root, because the tree has no selection.
     expect(SFTPWriteFile).toHaveBeenCalledWith("plain", "/notes.md", [9], 0, true);
     const toast = (context.showToast as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
     expect(toast).toContain("notes.md");

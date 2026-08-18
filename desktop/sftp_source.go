@@ -74,7 +74,10 @@ const (
 //     beside it has none would be theatre, not a boundary. If this source is
 //     ever exposed over the relay FS channel — where the driver may be someone
 //     else's browser — that reasoning stops holding and a roots restriction has
-//     to come back with it.
+//     to come back with it. That last sentence is enforced, not merely written:
+//     .github/scripts/check-plugin-fs-isolation.sh fails the build if any of
+//     this file's identifiers appear in desktop/uplink*.go or internal/, which
+//     is exactly the moment somebody starts wiring it to a relay driver.
 //
 //   - .env. The local Wails path allows it (newFSAccess(..., false)) because
 //     the bytes never leave the machine; the deny exists for the relay path,

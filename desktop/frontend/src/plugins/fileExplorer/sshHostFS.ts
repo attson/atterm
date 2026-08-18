@@ -34,6 +34,22 @@ const ALREADY_EXISTS = "already_exists";
  *  and the user has to be told before the file goes. */
 const NO_TRASH = "no platform trash command available";
 
+/** How many directories the filename search may walk on this source.
+ *
+ *  The local default is 2000, which is a rounding error against a page cache
+ *  and a catastrophe against SSH: every listing here is one round trip, the
+ *  search re-runs on each keystroke burst, and the walk starts at "/". 200 is
+ *  enough to find a file a few levels down from where the user is looking, and
+ *  the search says plainly that it stopped early. */
+const SSH_SEARCH_MAX_DIRS = 200;
+
+/** The one sentence behind both halves of the recursive-delete refusal: the
+ *  tree shows it instead of opening a confirmation, and the bridge throws it
+ *  if the call is made anyway. */
+export function sshNoRecursiveDelete(path: string): string {
+  return t("plugins.fileExplorer.sshNoRecursiveDelete", { path });
+}
+
 export interface SSHHostFileSystemBridge extends FileSystemBridge {
   listDirDetailed(path: string): Promise<DirListing>;
   dispose(): void;
@@ -43,8 +59,8 @@ export interface SSHHostFileSystemBridge extends FileSystemBridge {
  *  rather than a stack trace. Browsing over SFTP is not a superset of the local
  *  filesystem: there is no change notification without polling, no OS to hand a
  *  file to, and no same-origin URL to hang a preview on. */
-function unsupported(what: string): Promise<never> {
-  return Promise.reject(new Error(t("plugins.fileExplorer.sshUnsupportedOp", { op: what })));
+function unsupported(messageKey: "sshNoOpenExternal" | "sshNoInlineAsset"): Promise<never> {
+  return Promise.reject(new Error(t(`plugins.fileExplorer.${messageKey}`)));
 }
 
 /** describeWriteError turns the executor's refusal into something a user can
@@ -144,9 +160,25 @@ export function createSSHHostFS(hostID: string): SSHHostFileSystemBridge {
     }
   }
 
+  /**
+   * remove deletes a single remote file, and refuses a directory.
+   *
+   * The refusal is the decision, not a limitation waiting to be lifted.
+   * Roadmap item 28 is scoped to browsing plus a single-file transfer, and a
+   * recursive delete is the one operation on this source that no part of the
+   * system can walk back: there is no trash on the far side, no versioning,
+   * and a delete that fails halfway leaves a half-deleted tree. The tree
+   * declines it before the confirmation appears (dirRemovalRefusal), and this
+   * is the second gate so that the refusal does not depend on the UI asking
+   * nicely. Deleting a remote directory is a shell command away, in the
+   * terminal that opens on the same host with the same credential.
+   */
   async function remove(path: string, recursive: boolean): Promise<void> {
     ensureLive();
-    await sftpRemove(hostID, path, recursive);
+    if (recursive) {
+      throw new Error(sshNoRecursiveDelete(path));
+    }
+    await sftpRemove(hostID, path, false);
   }
 
   function dispose(): void {
@@ -177,6 +209,8 @@ export function createSSHHostFS(hostID: string): SSHHostFileSystemBridge {
 
   return {
     identity: `ssh:${hostID}`,
+    searchMaxDirs: SSH_SEARCH_MAX_DIRS,
+    dirRemovalRefusal: sshNoRecursiveDelete,
     listDir,
     listDirDetailed,
     fileMeta,
@@ -192,8 +226,8 @@ export function createSSHHostFS(hostID: string): SSHHostFileSystemBridge {
     watchDir: () => Promise.resolve(`ssh:${hostID}`),
     unwatchDir: () => Promise.resolve(),
     onDirChanged: () => () => {},
-    openExternal: () => unsupported("openExternal"),
-    assetUrlFor: () => unsupported("assetUrlFor"),
+    openExternal: () => unsupported("sshNoOpenExternal"),
+    assetUrlFor: () => unsupported("sshNoInlineAsset"),
     // Deliberately the local tree's sentinel: it makes "Move to Trash" fall
     // through to the permanent-delete confirmation instead of failing silently.
     trash: () => Promise.reject(new Error(NO_TRASH)),

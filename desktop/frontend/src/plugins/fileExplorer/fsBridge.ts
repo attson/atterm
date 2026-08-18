@@ -15,6 +15,18 @@ export interface DirListing {
 
 export interface FileSystemBridge {
   readonly identity: string;
+  /** How many directories the filename search may walk on this source before
+   *  it stops and says so. Omitted means "use the search's own default", which
+   *  is sized for a local disk. A source where one listing is one network
+   *  round trip declares a much smaller budget: the search runs per keystroke
+   *  burst, and the user asked for a filename, not for a full remote crawl. */
+  readonly searchMaxDirs?: number;
+  /** Present on a source that will not delete a directory, and returns the
+   *  sentence explaining why for that path. The tree shows it instead of
+   *  opening a confirmation, so the user is not asked to agree to something
+   *  that is then refused. Absent — the local and remote-session answer —
+   *  means directory removal is offered as usual. */
+  readonly dirRemovalRefusal?: (path: string) => string;
   listDir(path: string): Promise<DirEntry[]>;
   /** Optional richer listing for sources that cap. When present the tree
    *  prefers it, so truncation reaches the UI instead of being silently

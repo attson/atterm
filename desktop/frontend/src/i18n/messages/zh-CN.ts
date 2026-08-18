@@ -884,6 +884,15 @@ export const zhCN = {
       confirmTrash: "把 {name} 移到回收站？",
       confirmHardDelete: "永久删除 {name}？此操作无法撤销。",
       saveFailed: "保存失败：{message}",
+      // --- SSH 主机数据源（roadmap 第 28 项）---
+      sourceLabel: "文件来源",
+      sourceActivePane: "当前面板",
+      listingTruncated: "{path}：共 {total} 项，主机只返回了 {shown} 项，其余未列出。",
+      sshUpload: "上传文件到此目录",
+      sshUploadDone: "已上传 {name}",
+      sshUploadExists: "远端已存在 {path}，没有写入任何内容——那边没有回收站，覆盖无法撤销。请先重命名或删除它。",
+      sshUnsupportedOp: "SSH 主机上不支持此操作（{op}）。",
+      sshBridgeDisposed: "该 SSH 文件来源已关闭。",
     },
     deskWidget: {
       title: "桌面挂件",

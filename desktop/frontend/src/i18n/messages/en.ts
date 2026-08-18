@@ -915,6 +915,15 @@ export const en = {
       confirmTrash: "Move {name} to Trash?",
       confirmHardDelete: "Permanently delete {name}? This cannot be undone.",
       saveFailed: "Save failed: {message}",
+      // --- SSH host data source (roadmap item 28) ---
+      sourceLabel: "File source",
+      sourceActivePane: "Active pane",
+      listingTruncated: "{path}: the host returned {shown} of {total} entries; the rest were not listed.",
+      sshUpload: "Upload a file here",
+      sshUploadDone: "Uploaded {name}",
+      sshUploadExists: "{path} already exists on the remote host. Nothing was written — there is no trash there, so an overwrite could not be undone. Rename or delete it first.",
+      sshUnsupportedOp: "This is not available on an SSH host ({op}).",
+      sshBridgeDisposed: "This SSH file source was closed.",
     },
     deskWidget: {
       title: "Desk Widget",

@@ -186,6 +186,53 @@ export interface ActiveForward {
   error?: string;
 }
 
+// ---- the file explorer's SSH data source (desktop/sftp_source.go) ----
+//
+// These mirror the Go types by hand, like everything else in this file. The
+// entry / meta / content shapes are deliberately identical to the local
+// source's (desktop/fsaccess.go DirEntry, FileMetaInfo, FileContent) so one
+// FileSystemBridge implementation can serve either.
+
+// SFTPDirEntry mirrors desktop DirEntry.
+export interface SFTPDirEntry {
+  name: string;
+  isDir: boolean;
+  size?: number;
+  modTime?: number;
+}
+
+// SFTPFileMetaInfo mirrors desktop FileMetaInfo.
+export interface SFTPFileMetaInfo {
+  path: string;
+  size: number;
+  modTime: number;
+  isBinary: boolean;
+}
+
+// SFTPFileContent mirrors desktop FileContent. `data` arrives as a base64
+// string over the Wails JSON boundary even though Go declares []byte — the
+// preview components already accept either form.
+export interface SFTPFileContent {
+  path: string;
+  data: string | number[];
+  isBinary: boolean;
+  truncatedAt?: number;
+}
+
+// SFTPListing mirrors desktop/sftp_source.go SFTPListing.
+//
+// It is not a bare entry array because a remote listing is capped
+// (internal/sftpfs MaxEntries) and the cap has to be visible: a user shown 12
+// of 3000 files with no indication is the failure the cap exists to prevent.
+// `total` is the real count, so the panel can say "showing 2000 of 3000"
+// rather than only that something is missing.
+export interface SFTPListing {
+  path: string;
+  entries: SFTPDirEntry[];
+  truncated: boolean;
+  total: number;
+}
+
 // SSHCredential mirrors desktop sshCredential — only a password now; private
 // keys live in the key vault (SSHKey), not on the host.
 export interface SSHCredential {
@@ -543,6 +590,25 @@ export interface AppBindings {
   StartForward(hostID: string, ruleID: string): Promise<void>;
   StopForward(hostID: string, ruleID: string): Promise<void>;
   ListActiveForwards(): Promise<ActiveForward[]>;
+  // The file explorer's SSH data source. ListSFTPHosts is the source list:
+  // the saved hosts atterm will actually dial, so a ProxyCommand host is
+  // absent rather than present-and-broken.
+  ListSFTPHosts(): Promise<SSHHost[]>;
+  SFTPListDir(hostID: string, path: string): Promise<SFTPListing>;
+  SFTPFileMeta(hostID: string, path: string): Promise<SFTPFileMetaInfo>;
+  SFTPReadFile(hostID: string, path: string, maxBytes: number): Promise<SFTPFileContent>;
+  SFTPWriteFile(
+    hostID: string,
+    path: string,
+    data: number[],
+    expectedModTime: number,
+    createIfMissing: boolean,
+  ): Promise<SFTPFileMetaInfo>;
+  SFTPCreateFile(hostID: string, path: string): Promise<SFTPFileMetaInfo>;
+  SFTPMkdir(hostID: string, path: string): Promise<SFTPFileMetaInfo>;
+  SFTPRename(hostID: string, from: string, to: string): Promise<SFTPFileMetaInfo>;
+  SFTPRemove(hostID: string, path: string, recursive: boolean): Promise<void>;
+  SFTPDisconnect(hostID: string): Promise<void>;
   PreviewSSHConfigImport(): Promise<SSHConfigImportPreview>;
   ImportSSHHosts(hosts: SSHHost[]): Promise<number>;
   ListSSHKeys(): Promise<SSHKey[]>;

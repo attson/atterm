@@ -216,8 +216,38 @@ function isCurrent(fs: FileSystemBridge, root: string, showHidden: boolean, requ
     && props.showHidden === showHidden;
 }
 
+// truncations records the directories whose listing came back capped, keyed by
+// path. A source that caps (the SSH one does, at 2000 entries) has to say so
+// where the user is looking: a tree that quietly shows 2000 of 30000 files is
+// indistinguishable from a directory that really holds 2000, and every
+// conclusion drawn from it is wrong.
+const truncations = ref<Record<string, { shown: number; total: number }>>({});
+
+const truncationNotices = computed(() =>
+  Object.entries(truncations.value).map(([path, info]) => ({ path, ...info })),
+);
+
+function noteTruncation(path: string, truncated: boolean, shown: number, total: number) {
+  const had = path in truncations.value;
+  if (!truncated) {
+    if (had) {
+      const next = { ...truncations.value };
+      delete next[path];
+      truncations.value = next;
+    }
+    return;
+  }
+  truncations.value = { ...truncations.value, [path]: { shown, total } };
+}
+
 async function loadDir(fs: FileSystemBridge, path: string, showHidden: boolean): Promise<TreeNode[]> {
-  const entries = (await fs.listDir(path)) as DirEntry[];
+  // A source that can cap a listing reports it through listDirDetailed;
+  // listDir's plain array has nowhere to put the fact.
+  const listing = fs.listDirDetailed
+    ? await fs.listDirDetailed(path)
+    : { entries: (await fs.listDir(path)) as DirEntry[], truncated: false, total: 0 };
+  const entries = listing.entries as DirEntry[];
+  noteTruncation(path, listing.truncated, entries.length, listing.total);
   return entries
     .filter((e) => showHidden || !e.name.startsWith("."))
     .map((e) => ({
@@ -288,6 +318,7 @@ function stopCurrentGeneration() {
   generation++;
   offDirChanged();
   offDirChanged = () => {};
+  truncations.value = {};
   pendingExpands.clear();
   watchGenerations.clear();
   refreshGenerations.clear();
@@ -566,22 +597,35 @@ defineExpose({ refresh: startGeneration, revealPath });
         {{ t("plugins.fileExplorer.searchTruncated") }}
       </div>
     </div>
-    <ul v-else class="tree-root">
-      <li v-for="n in rootNodes" :key="n.path">
-        <FileTreeNode
-          :node="n"
-          :level="0"
-          :selected-path="selectedPath"
-          :inline-intent="inlineIntent"
-          @toggle="toggle"
-          @click-file="clickFile"
-          @dblclick-file="dblClickFile"
-          @context="openMenuFromNode"
-          @inline-submit="submitInline"
-          @inline-cancel="cancelInline"
-        />
-      </li>
-    </ul>
+    <template v-else>
+      <ul class="tree-root">
+        <li v-for="n in rootNodes" :key="n.path">
+          <FileTreeNode
+            :node="n"
+            :level="0"
+            :selected-path="selectedPath"
+            :inline-intent="inlineIntent"
+            @toggle="toggle"
+            @click-file="clickFile"
+            @dblclick-file="dblClickFile"
+            @context="openMenuFromNode"
+            @inline-submit="submitInline"
+            @inline-cancel="cancelInline"
+          />
+        </li>
+      </ul>
+      <div
+        v-for="notice in truncationNotices"
+        :key="notice.path"
+        class="search-status"
+        data-test="listing-truncated"
+        :title="notice.path"
+      >
+        {{ t("plugins.fileExplorer.listingTruncated", {
+          path: notice.path, shown: notice.shown, total: notice.total,
+        }) }}
+      </div>
+    </template>
     <div
       v-if="menu"
       class="ctx-menu"

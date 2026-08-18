@@ -3,6 +3,9 @@ import type {
   AcceptedHostKey,
   ActiveForward,
   NewSessionResp,
+  SFTPFileContent,
+  SFTPFileMetaInfo,
+  SFTPListing,
   SSHConfigImportPreview,
   SSHConnectReq,
   SSHCredential,
@@ -14,6 +17,10 @@ export type {
   AcceptedHostKey,
   ActiveForward,
   ForwardRule,
+  SFTPDirEntry,
+  SFTPFileContent,
+  SFTPFileMetaInfo,
+  SFTPListing,
   SSHConfigImportPreview,
   SSHConfigImportSkipped,
   SSHConnectReq,
@@ -97,6 +104,71 @@ export function stopForward(hostID: string, ruleID: string): Promise<void> {
 // stopped-with-an-error. Callers must branch on `running`.
 export function listActiveForwards(): Promise<ActiveForward[]> {
   return bindings().ListActiveForwards();
+}
+
+// --- the file explorer's SSH data source (roadmap item 28) ------------------
+
+// listSFTPHosts is the file explorer's source list: the saved hosts atterm
+// will actually dial.
+//
+// A ProxyCommand host is absent rather than present-and-broken. That is not a
+// cosmetic filter — atterm never runs an arbitrary proxy command, so such a
+// host cannot be connected at all, and offering it would produce a failure the
+// user has no way to act on. The Go side derives this list from the same gate
+// the browse path runs, so the two cannot disagree.
+export function listSFTPHosts(): Promise<SSHHost[]> {
+  return bindings().ListSFTPHosts();
+}
+
+export function sftpListDir(hostID: string, path: string): Promise<SFTPListing> {
+  return bindings().SFTPListDir(hostID, path);
+}
+
+export function sftpFileMeta(hostID: string, path: string): Promise<SFTPFileMetaInfo> {
+  return bindings().SFTPFileMeta(hostID, path);
+}
+
+export function sftpReadFile(hostID: string, path: string, maxBytes: number): Promise<SFTPFileContent> {
+  return bindings().SFTPReadFile(hostID, path, maxBytes);
+}
+
+// sftpWriteFile uploads to a remote path. Uploading onto a path that already
+// exists is refused unless expectedModTime is the ModTime the caller last saw:
+// there is no trash and no versioning on the far side, so a mistaken overwrite
+// cannot be undone. The refusal arrives as "already_exists".
+export function sftpWriteFile(
+  hostID: string,
+  path: string,
+  data: Uint8Array | number[],
+  expectedModTime: number,
+  createIfMissing: boolean,
+): Promise<SFTPFileMetaInfo> {
+  return bindings().SFTPWriteFile(hostID, path, Array.from(data), expectedModTime, createIfMissing);
+}
+
+export function sftpCreateFile(hostID: string, path: string): Promise<SFTPFileMetaInfo> {
+  return bindings().SFTPCreateFile(hostID, path);
+}
+
+export function sftpMkdir(hostID: string, path: string): Promise<SFTPFileMetaInfo> {
+  return bindings().SFTPMkdir(hostID, path);
+}
+
+export function sftpRename(hostID: string, from: string, to: string): Promise<SFTPFileMetaInfo> {
+  return bindings().SFTPRename(hostID, from, to);
+}
+
+// sftpRemove is a real delete: there is no trash on the far side to fall back
+// on, so the caller has to have said so before getting here.
+export function sftpRemove(hostID: string, path: string, recursive: boolean): Promise<void> {
+  return bindings().SFTPRemove(hostID, path, recursive);
+}
+
+// sftpDisconnect releases the browser's share of the host's SSH connection.
+// Without it, having browsed a host once holds a login open on it until the
+// app quits.
+export function sftpDisconnect(hostID: string): Promise<void> {
+  return bindings().SFTPDisconnect(hostID);
 }
 
 export function listSSHKeys(): Promise<SSHKey[]> {

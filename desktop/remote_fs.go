@@ -27,6 +27,12 @@ type remoteFS struct {
 	// behavior rather than a read-only filesystem response.
 	driverClientID func(uuid.UUID) (string, bool)
 
+	// exec runs one request and produces its response frame. Nil in
+	// production, where handle dispatches to execute. Tests replace it to
+	// stand in for a filesystem slow enough to matter (SFTP round trips, a
+	// network mount, a sleeping external drive).
+	exec func(uuid.UUID, proto.FSRequestPayload) proto.Frame
+
 	mu             sync.Mutex
 	watchesByID    map[string]remoteFSWatch
 	watchIDsByPath map[string]map[string]struct{}
@@ -87,7 +93,17 @@ func (fs *remoteFS) sessionKey(sessionID uuid.UUID) []byte {
 	return sk
 }
 
+// handle runs one request through the executor in force for this remoteFS.
+// Callers must assume it can block for as long as the underlying filesystem
+// takes; it is never called from the uplink read loop (see fsWorkerPool).
 func (fs *remoteFS) handle(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {
+	if fs.exec != nil {
+		return fs.exec(sessionID, req)
+	}
+	return fs.execute(sessionID, req)
+}
+
+func (fs *remoteFS) execute(sessionID uuid.UUID, req proto.FSRequestPayload) proto.Frame {
 	response := proto.FSResponsePayload{RequestID: req.RequestID, OK: true}
 	var err error
 
@@ -317,6 +333,110 @@ func remoteFSResponseFrame(sessionID uuid.UUID, payload proto.FSResponsePayload,
 	return proto.Frame{Type: proto.TypeFSResponse, SessionID: sessionID, Payload: body}
 }
 
+// fsRequestsPerSession bounds how many filesystem requests one session may
+// have in flight at once. Bounded is the point: an unbounded fan-out lets a
+// single wedged remote filesystem pile up work without limit, and one global
+// budget would let one session's stuck listing starve every other session.
+//
+// The budget is per session, so remote clients browsing the same session
+// share it. Four is comfortably above what the file explorer generates — it
+// awaits each op, and even its chunked asset reads are sequential — so on a
+// local filesystem the cap is unreachable in practice; it bites only when
+// operations are slow enough that the user needs to be told.
+const fsRequestsPerSession = 4
+
+// fsBusyError is what a caller gets when its session is already at its
+// budget. We refuse instead of queueing on purpose: queueing hides the
+// latency until the user concludes their click did nothing, and a refusal
+// they can see beats a wait they cannot.
+const fsBusyError = "filesystem busy: too many requests in flight for this session"
+
+// fsWorkerPool runs filesystem requests off the uplink read loop. That loop
+// also carries every session's keystrokes, so anything slow on it (an SFTP
+// round trip, a network mount, a sleeping external drive) reads to the user
+// as a frozen terminal.
+//
+// Lifetime is the connection's: workers stop writing once ctx is done. A
+// worker already inside a filesystem call cannot be interrupted — it runs to
+// completion and then drops its response — so nothing here waits on one.
+type fsWorkerPool struct {
+	ctx              context.Context
+	out              chan<- proto.Frame
+	remotePermission string
+	fs               *remoteFS
+	limit            int
+
+	mu       sync.Mutex
+	inflight map[uuid.UUID]int
+}
+
+func newFSWorkerPool(ctx context.Context, out chan<- proto.Frame, remotePermission string, fs *remoteFS, limit int) *fsWorkerPool {
+	if limit <= 0 {
+		limit = fsRequestsPerSession
+	}
+	return &fsWorkerPool{
+		ctx:              ctx,
+		out:              out,
+		remotePermission: remotePermission,
+		fs:               fs,
+		limit:            limit,
+		inflight:         make(map[uuid.UUID]int),
+	}
+}
+
+// submit hands one request to a worker and returns immediately. It never
+// blocks on the filesystem, and it never blocks waiting for a slot.
+func (p *fsWorkerPool) submit(sessionID uuid.UUID, req proto.FSRequestPayload) {
+	if !p.acquire(sessionID) {
+		p.sendBusy(sessionID, req)
+		return
+	}
+	go func() {
+		defer p.release(sessionID)
+		handleRemoteFSRequest(p.ctx, p.out, sessionID, p.remotePermission, p.fs, req)
+	}()
+}
+
+func (p *fsWorkerPool) acquire(sessionID uuid.UUID) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.inflight[sessionID] >= p.limit {
+		return false
+	}
+	p.inflight[sessionID]++
+	return true
+}
+
+func (p *fsWorkerPool) release(sessionID uuid.UUID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.inflight[sessionID] <= 1 {
+		delete(p.inflight, sessionID)
+		return
+	}
+	p.inflight[sessionID]--
+}
+
+// sendBusy answers a refused request. Sealed like any other response, and
+// non-blocking: the read loop calls this, so a backed-up writer must not
+// stall it. A dropped busy response degrades to the client's own request
+// timeout, which is the same outcome a stalled link produces anyway.
+func (p *fsWorkerPool) sendBusy(sessionID uuid.UUID, req proto.FSRequestPayload) {
+	frame := remoteFSResponseFrame(sessionID, proto.FSResponsePayload{
+		RequestID: req.RequestID,
+		OK:        false,
+		Error:     fsBusyError,
+	}, p.fs.sessionKey(sessionID))
+	select {
+	case p.out <- frame:
+	default:
+		logWarn("uplink", "out chan full; dropping fs busy response session=%s", sessionID)
+	}
+}
+
+// handleRemoteFSRequest executes one request and queues its response. It runs
+// on a pool worker, never on the uplink read loop: the permission and
+// availability checks are cheap, but fs.handle is not.
 func handleRemoteFSRequest(ctx context.Context, out chan<- proto.Frame, sessionID uuid.UUID, remotePermission string, fs *remoteFS, req proto.FSRequestPayload) bool {
 	var frame proto.Frame
 	if remotePermission != proto.RemotePermissionFull {

@@ -13,7 +13,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/attson/atterm/internal/sftpfs"
 	"github.com/pkg/sftp"
@@ -735,67 +734,6 @@ func TestSFTPListingHidesDeniedEntries(t *testing.T) {
 	}
 }
 
-// --- the unbounded handshake ------------------------------------------------
-
-// TestSFTPOpenIsBounded pins the wrapper around sftpfs.Open.
-//
-// sftp.NewClientPipe reads the server's VERSION packet with a bare Read and no
-// context, so a host that accepts the SSH connection but never starts
-// sftp-server leaves the open parked forever — outside internal/sftpfs's
-// cancellable wrapper, so it is never counted as an orphan and never trips the
-// channel teardown either. That call is exactly what the redial path makes, so
-// unbounded it would be the wedge this whole item exists to remove, sitting in
-// the constructor.
-func TestSFTPOpenIsBounded(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	release := make(chan struct{})
-	defer close(release)
-	opened := make(chan *fakeSFTPClient, 1)
-
-	start := time.Now()
-	_, err := sftpOpenBounded(ctx, func() (sftpClient, error) {
-		<-release // a host that accepted TCP and then said nothing
-		c := newFakeSFTPClient(1)
-		opened <- c
-		return c, nil
-	})
-	if err == nil {
-		t.Fatal("an sftp handshake against a silent host must not block forever")
-	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("the bound did not apply: returned after %v", elapsed)
-	}
-	if !strings.Contains(err.Error(), "sftp-server") {
-		t.Fatalf("the message must point at the actual cause, got %q", err)
-	}
-}
-
-// TestSFTPOpenClosesAClientThatArrivesLate: the caller left on the deadline,
-// but the handshake may still complete afterwards. Whatever it produces has to
-// be closed, or the abandoned open leaks an SFTP channel on the shared
-// connection every time a slow host is retried.
-func TestSFTPOpenClosesAClientThatArrivesLate(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-
-	release := make(chan struct{})
-	late := newFakeSFTPClient(1)
-	if _, err := sftpOpenBounded(ctx, func() (sftpClient, error) {
-		<-release
-		return late, nil
-	}); err == nil {
-		t.Fatal("want a deadline error")
-	}
-	close(release)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if late.isClosed() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("an sftp client that finished opening after its caller gave up must be closed, not leaked")
-}
+// The handshake's bound and the abandoned channel it has to close are pinned
+// where they now live: sftpfs.OpenContext, against a real SSH server
+// (internal/sftpfs). dialSFTP calls it directly.

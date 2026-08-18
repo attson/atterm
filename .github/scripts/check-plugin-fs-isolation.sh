@@ -27,10 +27,14 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$repo_root"
 
 # The uplink/relay side. desktop/uplink*.go is the desktop's half of the relay
-# protocol; internal/ is everything that runs on, or speaks to, the relay.
+# protocol; desktop/remote_fs.go holds the relay FS channel's executor and its
+# op switch, which is the most natural place somebody would wire a new source
+# into the relay path; internal/ is everything that runs on, or speaks to, the
+# relay.
 search_paths=(
     desktop/uplink.go
     desktop/uplink_*.go
+    desktop/remote_fs.go
     internal/
 )
 

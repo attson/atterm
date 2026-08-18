@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -36,9 +37,13 @@ const (
 	// ordinary Tuesday.
 	sftpOpTimeout = 30 * time.Second
 
-	// sftpOpenTimeout bounds the SFTP handshake specifically. See
-	// sftpOpenBounded for why the handshake needs its own bound rather than
-	// inheriting an operation's.
+	// sftpOpenTimeout bounds the SFTP handshake specifically, via
+	// sftpfs.OpenContext. The handshake needs its own bound rather than
+	// inheriting an operation's: it is the redial path's constructor, and the
+	// reads it makes (the subsystem reply, then VERSION) sit outside
+	// internal/sftpfs's cancellable wrapper, so a host that accepts SSH and
+	// never starts sftp-server is never counted as an orphan and never trips
+	// the channel teardown that would otherwise free it.
 	sftpOpenTimeout = 15 * time.Second
 
 	// sftpReadFileMax is the ceiling on a whole-file read, matching the local
@@ -165,50 +170,6 @@ type sftpClient interface {
 	Remove(ctx context.Context, name string, recursive bool) error
 	Done() <-chan struct{}
 	Close() error
-}
-
-// sftpOpenBounded runs an SFTP handshake under a deadline.
-//
-// It exists because sftpfs.Open is currently unbounded: sftp.NewClientPipe
-// reads the server's VERSION packet with a bare Read and no context, so a host
-// that accepts the SSH connection but never starts sftp-server — not
-// installed, or stuck coming up — leaves the open parked forever. That call is
-// outside internal/sftpfs's cancellable wrapper, so it is not counted as an
-// orphan and never trips the channel teardown either. Unbounded, it would be
-// exactly the wedge this whole item exists to remove, sitting in the
-// constructor of the redial path.
-//
-// When sftpfs grows an OpenContext, the production dialer's call site becomes
-// a direct `sftpfs.OpenContext(ctx, conn)` and this helper goes away; nothing
-// else has to move.
-//
-// The goroutine left behind is not leaked into nowhere: it is holding a read on
-// a channel of the shared SSH connection, and closing that connection (which
-// the failed dial's release does, once it is the last reference) ends it. What
-// matters here is that no caller and no worker slot waits on it.
-func sftpOpenBounded(ctx context.Context, open func() (sftpClient, error)) (sftpClient, error) {
-	type result struct {
-		cl  sftpClient
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		cl, err := open()
-		done <- result{cl, err}
-	}()
-	select {
-	case r := <-done:
-		return r.cl, r.err
-	case <-ctx.Done():
-		go func() {
-			if r := <-done; r.cl != nil {
-				_ = r.cl.Close()
-			}
-		}()
-		return nil, fmt.Errorf(
-			"the ssh connection is up but the host did not start an sftp session in time "+
-				"(is sftp-server installed and enabled in its sshd_config?): %w", ctx.Err())
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -626,15 +587,29 @@ func (a *App) dialSFTP(hostID string) (sftpClient, func(), error) {
 	ctx, cancel := context.WithTimeout(a.browserContext(), sftpOpenTimeout)
 	defer cancel()
 	conn := hc.conn()
-	cl, err := sftpOpenBounded(ctx, func() (sftpClient, error) {
-		// One-line swap when internal/sftpfs grows an OpenContext: this whole
-		// closure and sftpOpenBounded collapse into sftpfs.OpenContext(ctx, conn).
-		return sftpfs.Open(conn)
-	})
+	// sftpfs.OpenContext bounds both halves of the handshake — the subsystem
+	// request and the VERSION exchange behind it — and, on the deadline, closes
+	// the abandoned stream on the far side. That second part is what a bound
+	// applied here could not do: releaseConn only closes at refcount zero, so
+	// with a tunnel up to the same host every wedged attempt would otherwise
+	// leave an SSH session channel open until sshd's MaxSessions refused the
+	// next one.
+	//
+	// Note the concrete variable: OpenContext returns *sftpfs.Client, and a nil
+	// one assigned into the sftpClient interface would be a non-nil interface
+	// wrapping a nil pointer — it would pass sftpClientAlive and fail much
+	// later, somewhere far less obvious. err is checked before the conversion.
+	client, err := sftpfs.OpenContext(ctx, conn)
 	if err != nil {
 		a.tunnels.releaseConn(hostID, hc)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, fmt.Errorf(
+				"the ssh connection is up but the host did not start an sftp session in time "+
+					"(is sftp-server installed and enabled in its sshd_config?): %w", err)
+		}
 		return nil, nil, err
 	}
+	var cl sftpClient = client
 
 	// A dead SSH connection has to close the SFTP channel riding it, so the
 	// browser has exactly one liveness signal to check (Done) rather than two

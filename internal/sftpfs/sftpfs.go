@@ -20,6 +20,18 @@
 // Path arguments are remote POSIX paths and must be absolute. This package
 // does not implement an allowlist: that gate lives with the caller, on the
 // same permission check browsing already goes through.
+//
+// # Why github.com/pkg/sftp is pinned to v1.13.9
+//
+// v1.13.11 declares go 1.25 and requires golang.org/x/crypto v0.54. Taking it
+// would move this module's own Go directive and drag x/crypto off v0.37.0,
+// which is the version the jump-host code in internal/sshclient was written
+// and reasoned against. Nothing in v1.13.10 or v1.13.11 is needed here.
+//
+// That is the whole justification, and it is temporary: the moment this
+// module's Go directive moves for any unrelated reason, the pin costs nothing
+// to lift and should be lifted. It is recorded here and in go.mod so that
+// whoever next bumps the directive finds the reason rather than a bare version.
 package sftpfs
 
 import (
@@ -63,9 +75,10 @@ const (
 
 	// orphanGrace is how long an abandoned operation is given to finish on its
 	// own before it counts as stalled. Cancellation is not by itself evidence
-	// of a wedged channel: ListDir threads ctx all the way into the listing
-	// loop, so its goroutine usually returns within microseconds of the
-	// deadline, and a burst of those must not be mistaken for a dead host.
+	// of a wedged channel: a listing cancelled before its directory handle is
+	// open returns within microseconds of the deadline (opendir takes ctx and
+	// there is no handle left to close), and a burst of those must not be
+	// mistaken for a dead host.
 	orphanGrace = 250 * time.Millisecond
 
 	// stalledOpCap is how many operations may be simultaneously orphaned —
@@ -146,8 +159,11 @@ type Client struct {
 	maxEntries  int
 	posixRename bool
 
-	// inflight tracks the goroutine behind every operation, orphaned or not,
-	// so the teardown path can be observed rather than assumed.
+	// inflight counts every goroutine this client leaves running: the one
+	// behind each operation, and the watcher that an orphaned operation adds
+	// (which parks on the same response, so it is a second goroutine and not a
+	// bookkeeping detail). Counting both is what lets a test assert the
+	// teardown path drained rather than assume it.
 	inflight sync.WaitGroup
 	stalled  atomic.Int64
 
@@ -158,6 +174,9 @@ type Client struct {
 
 // New wraps an already-open SFTP byte stream. The stream is adopted: closing
 // the Client closes it.
+//
+// New is unbounded and blocks for as long as the handshake takes — see
+// NewContext, which is what callers on a worker pool should use.
 func New(rwc io.ReadWriteCloser) (*Client, error) {
 	sc, err := sftp.NewClientPipe(rwc, rwc)
 	if err != nil {
@@ -172,10 +191,111 @@ func New(rwc io.ReadWriteCloser) (*Client, error) {
 	}, nil
 }
 
+// openResult is what a bounded open eventually produces, whether or not anyone
+// is still waiting for it.
+type openResult struct {
+	c   *Client
+	err error
+}
+
+// NewContext wraps an already-open SFTP byte stream, bounding the handshake by
+// ctx.
+//
+// The handshake needs a bound of its own because it has none: NewClientPipe
+// sends INIT and then waits for VERSION in a bare Read, with no context and no
+// deadline anywhere under it (pkg/sftp's recvVersion). Against a host that is
+// reachable and answers SSH but never gets sftp-server running — not installed,
+// or stuck coming up — that read never returns. It happens in the constructor,
+// so it is outside do(): not counted as an orphan, and never trips the channel
+// teardown either. It is precisely the wedge this package exists to remove,
+// sitting in the one place the package could not see it.
+//
+// On timeout the stream is closed, and that is the load-bearing half. Merely
+// returning would free the caller and leave the handshake goroutine parked on
+// the same read forever; closing the stream makes that read return EOF, so the
+// goroutine unwinds too. The stream is adopted either way, so closing it is
+// this function's to do.
+func NewContext(ctx context.Context, rwc io.ReadWriteCloser) (*Client, error) {
+	return newContext(ctx, &handshakeGuard{ReadWriteCloser: rwc})
+}
+
+// newContext is NewContext with the stream already wrapped, so that OpenContext
+// can hand the same wrapper to its abandon path rather than the raw stream.
+func newContext(ctx context.Context, g *handshakeGuard) (*Client, error) {
+	done := make(chan openResult, 1)
+	go func() {
+		c, err := New(g)
+		g.disarm()
+		done <- openResult{c: c, err: err}
+	}()
+	select {
+	case r := <-done:
+		return r.c, r.err
+	case <-ctx.Done():
+		_ = g.Close()
+		// The handshake may still have won the race; if it did, its client owns
+		// the stream and has to be closed rather than dropped.
+		go func() {
+			if r := <-done; r.c != nil {
+				_ = r.c.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
+}
+
+// handshakeGuard serializes the handshake's one write against the Close that
+// interrupts it.
+//
+// The interrupting Close is what makes the bound above real, and it arrives
+// from a different goroutine than the write — which is a data race, not a
+// theoretical one: x/crypto/ssh keeps the channel's sentEOF flag as a plain
+// bool that Write reads and CloseWrite writes, with no lock between them, so
+// there is no happens-before edge at all and the detector flags the pair
+// whatever the timing. pkg/sftp has the same requirement and meets it the same
+// way, taking its connection lock in both sendPacket and Close.
+//
+// The guard disarms once the handshake is over, and that is deliberate rather
+// than tidiness: from then on pkg/sftp's own lock provides the ordering, and a
+// guard still in the path would make Close wait behind a multi-megabyte write
+// to a host that has stopped reading — which is precisely the teardown the
+// stalled-operation cap needs to be able to force through.
+//
+// Only the write side is guarded: the read the timeout has to interrupt is
+// exactly the one that must stay interruptible, so Read is never behind the
+// lock.
+type handshakeGuard struct {
+	io.ReadWriteCloser
+	mu  sync.Mutex
+	off atomic.Bool
+}
+
+func (g *handshakeGuard) disarm() { g.off.Store(true) }
+
+func (g *handshakeGuard) Write(p []byte) (int, error) {
+	if g.off.Load() {
+		return g.ReadWriteCloser.Write(p)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.ReadWriteCloser.Write(p)
+}
+
+func (g *handshakeGuard) Close() error {
+	if g.off.Load() {
+		return g.ReadWriteCloser.Close()
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.ReadWriteCloser.Close()
+}
+
 // Open starts SFTP on an existing SSH connection. It rides the connection the
 // host already has — including, transparently, one that is the far end of a
 // jump-host chain — rather than dialing a second one, which would cost another
 // login and another keepalive on the remote side for no benefit.
+//
+// Open is unbounded; prefer OpenContext.
 func Open(conn *sshclient.Conn) (*Client, error) {
 	stream, err := conn.OpenSFTP()
 	if err != nil {
@@ -187,6 +307,73 @@ func Open(conn *sshclient.Conn) (*Client, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// OpenContext is Open under a deadline, and is what the desktop should call.
+//
+// Bounding this one matters more than it looks. Done() means "redial before the
+// next operation", so opening is the redial path: a client torn down for
+// stalling is reopened here, and an open that never returns burns the worker
+// slot that a torn-down client was supposed to free.
+//
+// Both halves are covered, because both can hang against the same host. The
+// subsystem request waits for a channel reply that a wedged sshd need never
+// send; the handshake behind it waits for VERSION (see NewContext). A caller
+// that bounded only the second would still park on the first.
+func OpenContext(ctx context.Context, conn *sshclient.Conn) (*Client, error) {
+	// streams publishes the stream the moment it exists, so the abandon path
+	// below can close it even while this goroutine is still inside OpenSFTP. It
+	// publishes the guard rather than the raw stream, so that close is ordered
+	// against the handshake's write like every other one.
+	streams := make(chan io.Closer, 1)
+	done := make(chan openResult, 1)
+	go func() {
+		stream, err := conn.OpenSFTP()
+		if err != nil {
+			done <- openResult{err: err}
+			return
+		}
+		g := &handshakeGuard{ReadWriteCloser: stream}
+		streams <- g
+		c, err := newContext(ctx, g)
+		if err != nil {
+			_ = g.Close()
+			done <- openResult{err: err}
+			return
+		}
+		done <- openResult{c: c}
+	}()
+	select {
+	case r := <-done:
+		return r.c, r.err
+	case <-ctx.Done():
+		go abandonOpen(streams, done)
+		return nil, ctx.Err()
+	}
+}
+
+// abandonOpen cleans up behind an open whose caller has given up. It closes the
+// stream — ending the subsystem channel, and with it any read parked on the
+// other side of it — and closes the client instead if the open turned out to
+// win the race. Closing the stream does not touch the Conn, which is shared
+// with the terminal and every tunnel on the host.
+//
+// If the goroutine is wedged in OpenSFTP itself, nothing has been created yet
+// to close; this watcher waits for whichever of the two arrives and cleans that
+// up. It is one parked goroutine, not a growing set.
+func abandonOpen(streams <-chan io.Closer, done <-chan openResult) {
+	select {
+	case s := <-streams:
+		_ = s.Close()
+	case r := <-done:
+		if r.c != nil {
+			_ = r.c.Close()
+		}
+		return
+	}
+	if r := <-done; r.c != nil {
+		_ = r.c.Close()
+	}
 }
 
 // Done is closed when the client is finished — either because Close was called
@@ -215,13 +402,19 @@ func (c *Client) do(ctx context.Context, fn func() error) error {
 		return err
 	}
 	done := make(chan error, 1)
-	c.inflight.Add(1)
+	// Two counts, because a cancelled operation leaves two goroutines behind:
+	// the one running fn, and the watcher orphaned() starts, which parks on the
+	// same response. The second count is handed to orphaned() on the
+	// cancellation path and released immediately on the normal one, so it is
+	// reserved before either goroutine can be observed.
+	c.inflight.Add(2)
 	go func() {
 		defer c.inflight.Done()
 		done <- fn()
 	}()
 	select {
 	case err := <-done:
+		c.inflight.Done() // no watcher will be started
 		return err
 	case <-ctx.Done():
 		c.orphaned(done)
@@ -232,8 +425,11 @@ func (c *Client) do(ctx context.Context, fn func() error) error {
 // orphaned watches an operation whose caller has walked away while its round
 // trip is still outstanding, and tears the channel down once enough of them
 // have failed to finish for the channel itself to be the likely explanation.
+//
+// It consumes the second inflight count do() reserved.
 func (c *Client) orphaned(done <-chan error) {
 	go func() {
+		defer c.inflight.Done()
 		select {
 		case <-done:
 			// Finished right behind its caller. Nothing to account for.
@@ -261,6 +457,17 @@ func (c *Client) orphaned(done <-chan error) {
 // shortfall honestly. ctx is passed down into the listing loop as well, so a
 // cancelled listing of a huge directory stops asking for more pages instead of
 // running to completion for a caller who has gone.
+//
+// It stops asking, and then it blocks. ReadDirContext closes the directory
+// handle on its way out with a hard-coded context.Background() (pkg/sftp
+// client.go), so against a host that has stopped answering, a cancellation
+// landing after opendir has succeeded — which is the whole of the paging phase,
+// and the reason ctx is threaded here at all — parks the goroutine on that
+// CLOSE exactly as FileMeta's parks on a Stat. The caller still returns on its
+// own deadline; what is left behind is a genuine orphan, reaped by the
+// machinery around stalledOpCap rather than unwinding by itself. Only a
+// cancellation during opendir gets out cleanly, because then there is no handle
+// to close.
 func (c *Client) ListDir(ctx context.Context, dir string) (Listing, error) {
 	p, err := cleanPath(dir)
 	if err != nil {
@@ -278,12 +485,12 @@ func (c *Client) ListDir(ctx context.Context, dir string) (Listing, error) {
 		// exists to honour.
 		if derr != nil && !errors.Is(derr, os.ErrNotExist) && ctx.Err() == nil {
 			if info, serr := c.sc.Stat(p); serr == nil && !info.IsDir() {
-				return fmt.Errorf("%w: %s", ErrNotADirectory, p)
+				return ErrNotADirectory
 			}
 		}
 		return derr
 	}); err != nil {
-		return Listing{}, translate(p, err)
+		return Listing{}, translate("list", p, err)
 	}
 
 	total := len(infos)
@@ -337,7 +544,7 @@ func (c *Client) FileMeta(ctx context.Context, name string) (FileMetaInfo, error
 		out.IsBinary = isBinary(probe[:n])
 		return nil
 	}); err != nil {
-		return FileMetaInfo{}, translate(p, err)
+		return FileMetaInfo{}, translate("stat", p, err)
 	}
 	return out, nil
 }
@@ -402,7 +609,7 @@ func (c *Client) ReadChunk(ctx context.Context, name string, offset, length int6
 		}
 		return nil
 	}); err != nil {
-		return Chunk{}, translate(p, err)
+		return Chunk{}, translate("read", p, err)
 	}
 	return out, nil
 }
@@ -447,12 +654,12 @@ func (c *Client) ReadChunk(ctx context.Context, name string, offset, length int6
 // and it fails in the safe direction: retrying the upload then finds the path
 // occupied and is refused rather than writing twice.
 func (c *Client) WriteFile(ctx context.Context, name string, data []byte, expectedModTime int64, createIfMissing bool) (FileMetaInfo, error) {
-	if int64(len(data)) > maxWriteBytesHard {
-		return FileMetaInfo{}, fmt.Errorf("write_denied: exceeds %d bytes", maxWriteBytesHard)
-	}
 	p, err := cleanPath(name)
 	if err != nil {
 		return FileMetaInfo{}, err
+	}
+	if int64(len(data)) > maxWriteBytesHard {
+		return FileMetaInfo{}, fmt.Errorf("write %s: write_denied: exceeds %d bytes", p, maxWriteBytesHard)
 	}
 
 	var out FileMetaInfo
@@ -465,7 +672,7 @@ func (c *Client) WriteFile(ctx context.Context, name string, data []byte, expect
 				return ErrIsDirectory
 			}
 			if expectedModTime == 0 {
-				return fmt.Errorf("%w: %s", ErrAlreadyExists, p)
+				return ErrAlreadyExists
 			}
 			if info.ModTime().UnixMilli() != expectedModTime {
 				return fmt.Errorf("%w: current=%d", ErrStaleModTime, info.ModTime().UnixMilli())
@@ -473,12 +680,17 @@ func (c *Client) WriteFile(ctx context.Context, name string, data []byte, expect
 			existed = true
 		case errors.Is(statErr, os.ErrNotExist):
 			if !createIfMissing {
-				return fmt.Errorf("%w: %s", ErrNotFound, p)
+				return ErrNotFound
 			}
 		default:
 			return statErr
 		}
 
+		// Every write_denied below names the target rather than the staging file
+		// it may literally have failed on. That is deliberate: the staging file
+		// is an implementation detail with a random name, and translate attaches
+		// the path the user asked about — the same thing os.WriteFile's
+		// *PathError would have said.
 		tmp, err := c.stage(path.Dir(p), data)
 		if err != nil {
 			return err
@@ -533,7 +745,7 @@ func (c *Client) WriteFile(ctx context.Context, name string, data []byte, expect
 		}
 		return nil
 	}); err != nil {
-		return FileMetaInfo{}, translate(p, err)
+		return FileMetaInfo{}, translate("write", p, err)
 	}
 	return out, nil
 }
@@ -572,7 +784,7 @@ func (c *Client) CreateFile(ctx context.Context, name string) (FileMetaInfo, err
 	var out FileMetaInfo
 	if err := c.do(ctx, func() error {
 		if _, err := c.sc.Stat(p); err == nil {
-			return fmt.Errorf("%w: %s", ErrAlreadyExists, p)
+			return ErrAlreadyExists
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -590,13 +802,17 @@ func (c *Client) CreateFile(ctx context.Context, name string) (FileMetaInfo, err
 		out = FileMetaInfo{Path: p, Size: info.Size(), ModTime: info.ModTime().UnixMilli()}
 		return nil
 	}); err != nil {
-		return FileMetaInfo{}, translate(p, err)
+		return FileMetaInfo{}, translate("create", p, err)
 	}
 	return out, nil
 }
 
 // Rename moves from to to. An existing target is refused, never replaced —
 // same reasoning as WriteFile.
+//
+// Failures on the destination side are labelled with the destination. Blaming
+// the source for "the target already exists", or for a permission error on the
+// directory being moved into, tells the user to go and look at the wrong file.
 func (c *Client) Rename(ctx context.Context, from, to string) (FileMetaInfo, error) {
 	src, err := cleanPath(from)
 	if err != nil {
@@ -609,26 +825,26 @@ func (c *Client) Rename(ctx context.Context, from, to string) (FileMetaInfo, err
 	var out FileMetaInfo
 	if err := c.do(ctx, func() error {
 		if _, err := c.sc.Stat(src); errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: %s", ErrNotFound, src)
+			return ErrNotFound
 		} else if err != nil {
 			return err
 		}
 		if _, err := c.sc.Stat(dst); err == nil {
-			return fmt.Errorf("%w: %s", ErrAlreadyExists, dst)
+			return &pathError{path: dst, err: ErrAlreadyExists}
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+			return &pathError{path: dst, err: err}
 		}
 		if err := c.sc.Rename(src, dst); err != nil {
 			return fmt.Errorf("write_denied: %w", err)
 		}
 		info, err := c.sc.Stat(dst)
 		if err != nil {
-			return err
+			return &pathError{path: dst, err: err}
 		}
 		out = FileMetaInfo{Path: dst, Size: info.Size(), ModTime: info.ModTime().UnixMilli()}
 		return nil
 	}); err != nil {
-		return FileMetaInfo{}, translate(src, err)
+		return FileMetaInfo{}, translate("rename", src, err)
 	}
 	return out, nil
 }
@@ -643,7 +859,7 @@ func (c *Client) Remove(ctx context.Context, name string, recursive bool) error 
 	}
 	if err := c.do(ctx, func() error {
 		if _, err := c.sc.Stat(p); errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: %s", ErrNotFound, p)
+			return ErrNotFound
 		} else if err != nil {
 			return err
 		}
@@ -658,7 +874,7 @@ func (c *Client) Remove(ctx context.Context, name string, recursive bool) error 
 		}
 		return nil
 	}); err != nil {
-		return translate(p, err)
+		return translate("remove", p, err)
 	}
 	return nil
 }
@@ -672,7 +888,7 @@ func (c *Client) Mkdir(ctx context.Context, name string) (FileMetaInfo, error) {
 	var out FileMetaInfo
 	if err := c.do(ctx, func() error {
 		if _, err := c.sc.Stat(p); err == nil {
-			return fmt.Errorf("%w: %s", ErrAlreadyExists, p)
+			return ErrAlreadyExists
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -686,7 +902,7 @@ func (c *Client) Mkdir(ctx context.Context, name string) (FileMetaInfo, error) {
 		out = FileMetaInfo{Path: p, Size: info.Size(), ModTime: info.ModTime().UnixMilli()}
 		return nil
 	}); err != nil {
-		return FileMetaInfo{}, translate(p, err)
+		return FileMetaInfo{}, translate("mkdir", p, err)
 	}
 	return out, nil
 }
@@ -709,18 +925,47 @@ func cleanPath(p string) (string, error) {
 	return path.Clean(p), nil
 }
 
+// pathError carries the path an operation failed on out of the operation's
+// closure, for the cases where it is not the path the operation was named with
+// — Rename's destination, mainly.
+//
+// It exists rather than a variable captured by the closure because the closure
+// runs on its own goroutine and may still be running when a cancelled caller
+// reads the result: a captured variable would be a data race on exactly the
+// path this package is built to handle.
+type pathError struct {
+	path string
+	err  error
+}
+
+func (e *pathError) Error() string { return e.err.Error() }
+func (e *pathError) Unwrap() error { return e.err }
+
 // translate maps the transport's errors onto this package's vocabulary, so
 // callers can branch on ErrNotFound rather than on os.ErrNotExist leaking out
-// of a dependency.
-func translate(p string, err error) error {
-	switch {
-	case err == nil:
+// of a dependency, and names the operation and the path in the message.
+//
+// Naming both is not decoration. The local executor gets it for nothing —
+// os.Stat returns a *PathError, so a permission failure reads "stat
+// /srv/app.conf: permission denied". The same failure over SFTP arrives as
+// `sftp: "Permission denied" (SSH_FX_PERMISSION_DENIED)`: no path, no
+// operation, in a UI where several files can be in flight at once and the
+// message is all the user gets. The sentinels are therefore returned bare from
+// the operation closures and dressed here, in one place, rather than each site
+// remembering to append its own path — and the transport's own errors, which
+// carry no path at all, get the same treatment for free.
+func translate(op, p string, err error) error {
+	if err == nil {
 		return nil
-	case errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("%w: %s", ErrNotFound, p)
-	default:
-		return err
 	}
+	var pe *pathError
+	if errors.As(err, &pe) {
+		p, err = pe.path, pe.err
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		err = ErrNotFound
+	}
+	return fmt.Errorf("%s %s: %w", op, p, err)
 }
 
 func isBinary(data []byte) bool {

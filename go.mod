@@ -12,6 +12,10 @@ require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.6
 	github.com/oklog/ulid/v2 v2.1.1
+	// Pinned: v1.13.11 declares go 1.25 and needs x/crypto v0.54, which would
+	// move this module's Go directive and take x/crypto off v0.37.0. Nothing
+	// newer is needed here — lift the pin as soon as the directive moves for
+	// any other reason. Full rationale in internal/sftpfs's package doc.
 	github.com/pkg/sftp v1.13.9
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/zalando/go-keyring v0.2.8

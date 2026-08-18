@@ -13,11 +13,20 @@ import (
 // the reaper treats it as abandoned.
 //
 // It must stay comfortably above the slowest legitimate FS operation: on a
-// local filesystem that's microseconds, but SFTP adds a network round trip
-// plus queueing behind the per-session bounded worker pool (see design doc
-// mechanism 4.1) ahead of the actual op. 90s gives real margin above the
-// spec's suggested 60s floor without leaving a genuinely dead request
-// registered for anywhere near a client's session lifetime.
+// local filesystem that's microseconds, but SFTP adds network round trips —
+// several of them for a large listing, and more again through a jump chain.
+// The connection itself is reused rather than renegotiated per op (design doc
+// §4.2), so this is round-trip margin, not handshake margin.
+//
+// The desktop's per-session worker pool does *not* contribute: it refuses
+// rather than queues (see fsBusyError), so a request either starts executing
+// immediately or is answered "busy" without ever occupying a registration
+// here. Do not size this TTL as though requests wait for a slot.
+//
+// 90s gives real margin above the spec's suggested 60s floor without leaving
+// a genuinely dead request registered for anywhere near a client's session
+// lifetime. Reaping one that was merely slow produces the hardest symptom to
+// diagnose — a click that does nothing, with no error anywhere — so err long.
 const fsRequestTTL = 90 * time.Second
 
 type fsRouteKey struct {

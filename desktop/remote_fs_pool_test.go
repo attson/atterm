@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -365,4 +366,113 @@ func TestFSResponsesStillMatchTheirRequestID(t *testing.T) {
 			t.Fatalf("request %q got body %q, want %q", id, seen[id], "body-"+id)
 		}
 	}
+}
+
+// TestUplinkWiresFSRequestsThroughTheBoundedPool pins the wiring, not the pool.
+//
+// Every other boundedness assertion in this file constructs newFSWorkerPool
+// directly, so all of them would still pass if runOnce regressed to a bare
+// `go handleRemoteFSRequest(...)`. That is the shape that has bitten this
+// project before: the implementation was right, the wiring was never
+// asserted, and the feature was silently absent. This test drives real frames
+// over a real uplink and requires the bound to be observable from outside.
+//
+// fsRequestsPerSession is 4, so the fifth concurrent request must be refused
+// while the first four are still parked in the executor.
+func TestUplinkWiresFSRequestsThroughTheBoundedPool(t *testing.T) {
+	sessionID := uuid.New()
+	release := make(chan struct{})
+	started := make(chan struct{}, fsRequestsPerSession+1)
+	responses := make(chan proto.FSResponsePayload, fsRequestsPerSession+2)
+
+	addr := startFSTestRelay(t, func(ctx context.Context, c *websocket.Conn) {
+		for i := 0; i < fsRequestsPerSession+1; i++ {
+			reqPayload, err := proto.EncodeFSHead(proto.FSRequestPayload{
+				RequestID: fmt.Sprintf("wired-%d", i),
+				Op:        "list_dir",
+				Path:      "/tmp",
+			})
+			if err != nil {
+				return
+			}
+			if err := c.Write(ctx, websocket.MessageBinary, proto.Marshal(proto.Frame{
+				Type: proto.TypeFSRequest, SessionID: sessionID, Payload: reqPayload,
+			})); err != nil {
+				return
+			}
+		}
+		for {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			f, err := proto.Unmarshal(data)
+			if err != nil || f.Type != proto.TypeFSResponse {
+				continue
+			}
+			resp, err := proto.DecodeFSResponse(f.Payload, nil, f.SessionID)
+			if err != nil {
+				continue
+			}
+			select {
+			case responses <- resp:
+			default:
+			}
+		}
+	})
+
+	host := newTestRelayHost(t)
+	sess := session.New(sessionID, proto.SessionInfo{ID: sessionID.String(), Cols: 80, Rows: 24})
+	if _, err := host.server.Registry().Add(sess); err != nil {
+		t.Fatalf("registry add: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	u := newUplink("ws://"+addr, "tok", proto.RemotePermissionFull, host, nil, nil, false)
+	u.eventsEmit = func(context.Context, string, ...interface{}) {}
+	u.fsExec = func(sid uuid.UUID, req proto.FSRequestPayload) proto.Frame {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		return remoteFSResponseFrame(sid, proto.FSResponsePayload{RequestID: req.RequestID, OK: true}, nil)
+	}
+
+	done := make(chan struct{})
+	go func() { defer close(done); _ = u.runOnce(ctx) }()
+
+	// The refusal must arrive while the first four are still parked, so it can
+	// only have come from the budget rather than from anything downstream.
+	var busy proto.FSResponsePayload
+	select {
+	case busy = <-responses:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no response while four requests were parked: the fifth was not refused, so runOnce is not going through the bounded pool")
+	}
+	if busy.OK || !strings.Contains(busy.Error, "busy") {
+		t.Fatalf("first response = %+v, want a busy refusal", busy)
+	}
+
+	// Exactly one refusal: four slots were taken, one request over.
+	occupied := 0
+	for occupied < fsRequestsPerSession {
+		select {
+		case <-started:
+			occupied++
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of %d requests reached the executor", occupied, fsRequestsPerSession)
+		}
+	}
+	select {
+	case extra := <-started:
+		t.Fatalf("a fifth request reached the executor, so the budget is not enforced on the uplink path: %+v", extra)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	cancel()
+	<-done
 }

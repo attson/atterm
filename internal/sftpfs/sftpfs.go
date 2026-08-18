@@ -232,7 +232,11 @@ func newContext(ctx context.Context, g *handshakeGuard) (*Client, error) {
 	case r := <-done:
 		return r.c, r.err
 	case <-ctx.Done():
-		_ = g.Close()
+		// Closed off the caller's goroutine: g.Close takes the write guard, and
+		// if the handshake's INIT were itself blocked on a full socket buffer we
+		// would sit on that lock past our own deadline — reintroducing, in
+		// miniature, the wedge this function exists to bound.
+		go func() { _ = g.Close() }()
 		// The handshake may still have won the race; if it did, its client owns
 		// the stream and has to be closed rather than dropped.
 		go func() {
@@ -255,11 +259,12 @@ func newContext(ctx context.Context, g *handshakeGuard) (*Client, error) {
 // whatever the timing. pkg/sftp has the same requirement and meets it the same
 // way, taking its connection lock in both sendPacket and Close.
 //
-// The guard disarms once the handshake is over, and that is deliberate rather
-// than tidiness: from then on pkg/sftp's own lock provides the ordering, and a
-// guard still in the path would make Close wait behind a multi-megabyte write
-// to a host that has stopped reading — which is precisely the teardown the
-// stalled-operation cap needs to be able to force through.
+// The guard disarms once the handshake is over. Not because it would otherwise
+// delay teardown — pkg/sftp's own conn.Mutex already serialises Close behind an
+// in-flight write, so disarming buys nothing there — but because after the
+// handshake there is no longer a racing pair to guard: every write goes through
+// that same lock, and the only unguarded close is the one the stalled-operation
+// cap forces, which must not acquire anything this package owns.
 //
 // Only the write side is guarded: the read the timeout has to interrupt is
 // exactly the one that must stay interruptible, so Read is never behind the
@@ -810,9 +815,14 @@ func (c *Client) CreateFile(ctx context.Context, name string) (FileMetaInfo, err
 // Rename moves from to to. An existing target is refused, never replaced —
 // same reasoning as WriteFile.
 //
-// Failures on the destination side are labelled with the destination. Blaming
-// the source for "the target already exists", or for a permission error on the
-// directory being moved into, tells the user to go and look at the wrong file.
+// Failures the server attributes to one side are labelled with that side:
+// blaming the source for "the target already exists" tells the user to go and
+// look at the wrong file.
+//
+// The rename call itself names *both* paths, because a v3 rename can fail for
+// either — the target directory may not be writable, and so may the source's,
+// since the move has to unlink there too. Guessing a side would be worse than
+// naming neither: it sends the user to a file that is fine.
 func (c *Client) Rename(ctx context.Context, from, to string) (FileMetaInfo, error) {
 	src, err := cleanPath(from)
 	if err != nil {
@@ -835,7 +845,7 @@ func (c *Client) Rename(ctx context.Context, from, to string) (FileMetaInfo, err
 			return &pathError{path: dst, err: err}
 		}
 		if err := c.sc.Rename(src, dst); err != nil {
-			return fmt.Errorf("write_denied: %w", err)
+			return fmt.Errorf("write_denied: rename %s to %s: %w", src, dst, err)
 		}
 		info, err := c.sc.Stat(dst)
 		if err != nil {

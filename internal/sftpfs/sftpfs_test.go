@@ -1158,10 +1158,10 @@ func TestOpenContextBoundsAWedgedHandshake(t *testing.T) {
 	}
 }
 
-// TestOpenContextAlreadyCancelledDoesNotDial covers the redial-storm case: a
+// TestOpenContextAlreadyCancelledClosesTheChannelItOpened covers the redial-storm case: a
 // caller whose context is already gone must not leave a session channel open on
 // the far side.
-func TestOpenContextAlreadyCancelledDoesNotDial(t *testing.T) {
+func TestOpenContextAlreadyCancelledClosesTheChannelItOpened(t *testing.T) {
 	srv := startMuteSFTPServer(t)
 	conn := srv.dial(t)
 

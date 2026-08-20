@@ -43,7 +43,9 @@ if [ -f web/package.json ] && [ -d web/node_modules ]; then
   # web-dist/assets/ land in git. The mobile/capacitor bundle builds the SAME
   # wasm into desktop/frontend/src/lib via this same script. Reproducibility
   # flags (-trimpath -buildvcs=false) are documented in build-opaque-wasm.sh.
-  ./scripts/build-opaque-wasm.sh web/src/shared/lib
+  # ATTERM_PINNED_GO=1: this output IS the drift-gated embed, so the wasm must
+  # come from the exact Go patch CI uses — see build-opaque-wasm.sh.
+  ATTERM_PINNED_GO=1 ./scripts/build-opaque-wasm.sh web/src/shared/lib
 
   # Clear Vite's dep cache so the build is reproducible. A WARM cache (left by a
   # prior `vite build`/`vite dev`) produces byte-different chunks than a COLD

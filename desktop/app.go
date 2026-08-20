@@ -493,6 +493,21 @@ func (a *App) startup(ctx context.Context) {
 		a.enqueueSync(syncRequest{pull: true})
 	}
 
+	// Start the preference watch NOW, not in the applyRelayConfig above.
+	//
+	// applyRelayConfig -> applyRelayPrefsWatch returns early when
+	// a.prefsSync == nil (prefs_watch.go), and a.prefsSync is not constructed
+	// until sixteen lines further down this function — so on a cold boot the
+	// watch never started at all. It only came up on a LATER applyRelayConfig:
+	// a relay reconfigure or a login. Until the user happened to do one of
+	// those, a preference changed on another machine never arrived, which is
+	// indistinguishable from "sync is broken".
+	//
+	// Re-running it here is safe and not a double-start: applyRelayPrefsWatch
+	// cancels any existing watch before deciding whether to start one, so the
+	// earlier no-op call and this one collapse to a single live watch.
+	a.applyRelayPrefsWatch(a.cfgStore.Get())
+
 	// Auto-update background loop, gated on the persisted preference.
 	// New installs default to enabled (AutoCheckUpdatesOrDefault returns true).
 	if a.updater != nil && cfg.AutoCheckUpdatesOrDefault() {

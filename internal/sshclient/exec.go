@@ -52,15 +52,19 @@ func (c *Conn) Run(ctx context.Context, cmd string, limit int64) (ExecResult, er
 		return ExecResult{}, fmt.Errorf("sshclient: stderr pipe: %w", err)
 	}
 
+	if err := sess.Start(cmd); err != nil {
+		return ExecResult{}, fmt.Errorf("sshclient: start %q: %w", cmd, err)
+	}
+
+	// The copiers start only once Start has succeeded: starting them earlier
+	// (they were, briefly) meant a failed Start left them reading from pipes
+	// nobody was ever going to close, two goroutines leaked forever on every
+	// call that hit this path against an otherwise-healthy connection.
 	buf := newLimitedBuffer(limit)
 	var copiers sync.WaitGroup
 	copiers.Add(2)
 	go func() { defer copiers.Done(); _, _ = io.Copy(buf, stdout) }()
 	go func() { defer copiers.Done(); _, _ = io.Copy(buf, stderr) }()
-
-	if err := sess.Start(cmd); err != nil {
-		return ExecResult{}, fmt.Errorf("sshclient: start %q: %w", cmd, err)
-	}
 
 	done := make(chan error, 1)
 	go func() {
@@ -74,8 +78,17 @@ func (c *Conn) Run(ctx context.Context, cmd string, limit int64) (ExecResult, er
 
 	select {
 	case <-ctx.Done():
-		_ = sess.Close() // unblocks the Wait/copy goroutine above
-		<-done
+		// sess.Close only sends our half of the channel close — on a link
+		// that looks alive but acks nothing (one dark host in a fan-out,
+		// not a cleanly dropped connection), the peer never replies, so
+		// neither the copiers nor sess.Wait ever unblock. Waiting on done
+		// here would make ctx cancellation not actually bound Run at all,
+		// which defeats the reason a caller passes ctx in the first place.
+		// done is buffered, so the goroutine's eventual send (if the
+		// connection ever does die) still never blocks; buf and sess are
+		// both unreachable to any other caller once this returns, so
+		// leaving them to a goroutine nobody waits on costs nothing.
+		_ = sess.Close()
 		return ExecResult{}, ctx.Err()
 	case waitErr := <-done:
 		res := ExecResult{Output: buf.Bytes(), Truncated: buf.Truncated()}
@@ -88,9 +101,11 @@ func (c *Conn) Run(ctx context.Context, cmd string, limit int64) (ExecResult, er
 			return res, nil
 		}
 		// Not an exit status at all (channel closed, connection dropped,
-		// etc.) — this is the "could not run it" case, so it's a real error
-		// and the partial Output collected so far is discarded with it.
-		return ExecResult{}, fmt.Errorf("sshclient: run %q: %w", cmd, waitErr)
+		// etc.) — this is the "could not run it" case, so err is non-nil,
+		// but res.Output is kept: for a multi-host snippet run, whatever a
+		// host printed before it dropped is usually the most useful thing
+		// to show alongside the failure, not something to throw away.
+		return res, fmt.Errorf("sshclient: run %q: %w", cmd, waitErr)
 	}
 }
 

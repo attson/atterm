@@ -606,9 +606,12 @@ export interface SnippetRunProgress {
 // GetSyncStatus and of the "sync:status" event, which fires on every state
 // transition. "offline" means no relay configured / paused / logged out and
 // is distinct from "error" on purpose: not being configured is not a
-// failure and must not render as one. last_error is only meaningful once
-// (and stays populated only while) state is "error" -- see the Go-side
-// recordSyncOutcome.
+// failure and must not render as one. last_error is only ever non-empty
+// when state is "error": GetSyncStatus suppresses it whenever state is
+// "offline", even if a stale error was recorded before the relay was logged
+// out of or paused, so a UI that renders last_error whenever it is present
+// (rather than gating on state === "error") stays correct too -- see the
+// Go-side GetSyncStatus and recordSyncOutcome.
 export interface SyncStatus {
   state: "idle" | "syncing" | "offline" | "error";
   last_synced_at: number; // ms, 0 = never

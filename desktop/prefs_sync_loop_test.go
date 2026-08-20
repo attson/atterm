@@ -679,7 +679,14 @@ func configuredCfgStore(extra appConfig) *configStore {
 // "offline", never "error" -- even when the engine call that ran while
 // unconfigured (a real relay client would fail auth) came back with an
 // error. syncOffline is checked before the stored error in GetSyncStatus
-// specifically so this can't regress into a red indicator.
+// specifically so this can't regress into a red indicator. It also pins
+// MAJOR 3: LastError itself, not just State, must be suppressed while
+// offline. A user who is offline with a stale recorded error (say, logged
+// out right after a failed push) must not see a red error indicator flash
+// the instant they log back in and GetSyncStatus is polled while still
+// mid-reconnect -- checking State alone in the UI and rendering LastError
+// whenever it's non-empty would do exactly that if LastError leaked
+// through here.
 func TestGetSyncStatus_OfflineWhenRelayNotConfigured(t *testing.T) {
 	a, fake, cancel := newLoopTestApp(t)
 	defer stopLoop(t, a, cancel)
@@ -696,8 +703,12 @@ func TestGetSyncStatus_OfflineWhenRelayNotConfigured(t *testing.T) {
 	})
 	time.Sleep(20 * time.Millisecond)
 
-	if got := a.GetSyncStatus().State; got != "offline" {
-		t.Fatalf("State = %q, want %q (relay is not configured; a failed engine call must not surface as \"error\")", got, "offline")
+	status := a.GetSyncStatus()
+	if status.State != "offline" {
+		t.Fatalf("State = %q, want %q (relay is not configured; a failed engine call must not surface as \"error\")", status.State, "offline")
+	}
+	if status.LastError != "" {
+		t.Fatalf("LastError = %q while offline, want \"\" (a stale/recorded error must not leak through once state is \"offline\")", status.LastError)
 	}
 }
 
@@ -838,11 +849,18 @@ func TestSyncNow_OnlineEnqueuesPullThenPush(t *testing.T) {
 }
 
 // TestSyncStatusEvent_FiresOnTransitions_Success pins "a sync:status event
-// fires on every state transition": a single successful push, starting from
-// idle, must emit exactly the two states the loop actually passes through
-// -- "syncing" then back to "idle" -- not zero (silently updating internal
-// state only) and not more (an emit per internal field write instead of per
-// observable transition).
+// fires on every observable change to SyncStatus": a single successful push,
+// starting from idle, passes through "syncing" twice -- once when the loop
+// marks itself busy (LastSyncedAt still 0, nothing has succeeded yet), and
+// once more when recordSyncOutcome stamps LastSyncedAt after the push
+// actually succeeds, still with busy == true -- before finally dropping to
+// "idle" once the loop clears busy. That middle "syncing" carries genuinely
+// new information (LastSyncedAt going from 0 to non-zero) even though State
+// itself didn't change, which is exactly why emitSyncStatusIfChanged dedupes
+// on the whole SyncStatus value rather than State alone (see MAJOR 2 in the
+// fix-round-1 report): deduping on State only would silently swallow that
+// middle event, and a frontend timing "last synced" off of it would miss the
+// update until the next unrelated transition happened to fire.
 func TestSyncStatusEvent_FiresOnTransitions_Success(t *testing.T) {
 	a, fake, cancel := newLoopTestApp(t)
 	defer stopLoop(t, a, cancel)
@@ -858,14 +876,37 @@ func TestSyncStatusEvent_FiresOnTransitions_Success(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	got := syncStatusStates(events())
-	want := []string{"syncing", "idle"}
+	want := []string{"syncing", "syncing", "idle"}
 	if !statesEqual(got, want) {
 		t.Fatalf("sync:status states = %v, want %v", got, want)
+	}
+
+	all := events()
+	var sawZeroLastSyncedAt, sawNonZeroLastSyncedAt bool
+	for _, e := range all {
+		if e.name != "sync:status" || len(e.data) == 0 {
+			continue
+		}
+		status, ok := e.data[0].(SyncStatus)
+		if !ok {
+			continue
+		}
+		if status.LastSyncedAt == 0 {
+			sawZeroLastSyncedAt = true
+		} else {
+			sawNonZeroLastSyncedAt = true
+		}
+	}
+	if !sawZeroLastSyncedAt || !sawNonZeroLastSyncedAt {
+		t.Fatalf("expected both a pre-success (LastSyncedAt == 0) and a post-success (LastSyncedAt != 0) sync:status event among the two \"syncing\" emissions, got events: %+v", all)
 	}
 }
 
 // TestSyncStatusEvent_FiresOnTransitions_Error is the failing counterpart:
-// a push that errors must transition to "error", not back to "idle".
+// a push that errors must transition to "error", not back to "idle". Like
+// the success case above, "syncing" fires twice -- the loop marking itself
+// busy, then recordSyncOutcome stamping LastError while busy is still true
+// -- before the loop clears busy and the stored error surfaces as "error".
 func TestSyncStatusEvent_FiresOnTransitions_Error(t *testing.T) {
 	a, fake, cancel := newLoopTestApp(t)
 	defer stopLoop(t, a, cancel)
@@ -885,7 +926,7 @@ func TestSyncStatusEvent_FiresOnTransitions_Error(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	got := syncStatusStates(events())
-	want := []string{"syncing", "error"}
+	want := []string{"syncing", "syncing", "error"}
 	if !statesEqual(got, want) {
 		t.Fatalf("sync:status states = %v, want %v", got, want)
 	}
@@ -958,4 +999,222 @@ func TestSyncPulledEvent_SilentWhenPullChangedNothing(t *testing.T) {
 			t.Fatalf("unexpected sync:pulled event for an empty PullResult: %+v", e)
 		}
 	}
+}
+
+// TestSyncStatusEvent_OfflineEditsEachEmitDistinctPendingKeys pins MAJOR 2:
+// emitSyncStatusIfChanged must dedupe on the whole SyncStatus value, not
+// just State. While offline, State is pinned to "offline" for the entire
+// scenario below (syncOffline short-circuits GetSyncStatus's switch before
+// busy/error are even considered), so a State-only dedupe would emit once
+// and then silently swallow every later change -- exactly the bug reported
+// against commit 40ecc85: three edits while offline produced one
+// "sync:status" event carrying the first edit's stale PendingKeys forever
+// after. Each of the three calls below changes PendingKeys by swapping in a
+// cfgStore with a different dirty-key count immediately before calling
+// emitSyncStatusIfChanged directly -- the same call recordSyncOutcome and
+// setSyncBusy make on every engine call, driven here without a real engine
+// round trip so the three "edits" land deterministically instead of racing
+// the loop goroutine.
+func TestSyncStatusEvent_OfflineEditsEachEmitDistinctPendingKeys(t *testing.T) {
+	a, _, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	offlineCfgWithDirtyCount := func(n int) *configStore {
+		meta := map[string]prefsMetaEntry{}
+		for i := 0; i < n; i++ {
+			meta[strconv.Itoa(i)] = prefsMetaEntry{Dirty: true, UpdatedAtLocal: int64(i)}
+		}
+		// RelayURL left empty -- offline throughout this whole test.
+		return &configStore{cfg: appConfig{PrefsMeta: meta}}
+	}
+
+	for _, n := range []int{1, 2, 3} {
+		a.cfgStore = offlineCfgWithDirtyCount(n)
+		a.emitSyncStatusIfChanged()
+	}
+
+	var pending []int
+	for _, e := range events() {
+		if e.name != "sync:status" || len(e.data) == 0 {
+			continue
+		}
+		status, ok := e.data[0].(SyncStatus)
+		if !ok {
+			continue
+		}
+		if status.State != "offline" {
+			t.Fatalf("sync:status event had State = %q while cfg was never configured, want %q", status.State, "offline")
+		}
+		if status.LastError != "" {
+			t.Fatalf("sync:status event had LastError = %q while offline, want suppressed to \"\"", status.LastError)
+		}
+		pending = append(pending, status.PendingKeys)
+	}
+
+	want := []int{1, 2, 3}
+	if len(pending) != len(want) {
+		t.Fatalf("sync:status PendingKeys sequence = %v, want %v (one distinct event per distinct PendingKeys value while offline, not deduped away because State never changes)", pending, want)
+	}
+	for i := range want {
+		if pending[i] != want[i] {
+			t.Fatalf("sync:status PendingKeys sequence = %v, want %v", pending, want)
+		}
+	}
+}
+
+// TestSyncPulledEvent_FiresFromPostLoginSeed pins MAJOR 4: enqueuePostLoginSeed's
+// own Pull call, not just runSyncRequest's, must surface a non-empty
+// PullResult over "sync:pulled". Before this test, deleting the
+// emitSyncPulledIfNonEmpty(result) call from enqueuePostLoginSeed's task
+// closure left the whole suite green: TestSyncPulledEvent_FiresWhenPullChangedSomething
+// only exercises runSyncRequest's pull branch. RelaySessionUserID is left
+// empty so the task returns right after the pull (skipping SeedFromLocal
+// and the seed's own Push), keeping this test's assertions about the pull's
+// event isolated from the seed/push path.
+func TestSyncPulledEvent_FiresFromPostLoginSeed(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{}) // RelaySessionUserID == "" -> pull only, no seed
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	want := prefssync.PullResult{Adopted: []string{"terminal_theme"}, Conflict: []string{"default_shell"}}
+	fake.mu.Lock()
+	fake.pullResult = want
+	fake.mu.Unlock()
+
+	a.enqueuePostLoginSeed()
+	waitFor(t, time.Second, "post-login pull to run", func() bool {
+		pull, _ := fake.counts()
+		return pull == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	if fake.seedCallCount() != 0 {
+		t.Fatalf("SeedFromLocal calls = %d, want 0 (RelaySessionUserID is empty, seeding should be skipped)", fake.seedCallCount())
+	}
+
+	var pulled []recordedEvent
+	for _, e := range events() {
+		if e.name == "sync:pulled" {
+			pulled = append(pulled, e)
+		}
+	}
+	if len(pulled) != 1 {
+		t.Fatalf("sync:pulled events from enqueuePostLoginSeed = %d, want 1", len(pulled))
+	}
+	got, ok := pulled[0].data[0].(prefssync.PullResult)
+	if !ok {
+		t.Fatalf("sync:pulled payload type = %T, want prefssync.PullResult", pulled[0].data[0])
+	}
+	if !statesEqual(got.Adopted, want.Adopted) || !statesEqual(got.Conflict, want.Conflict) {
+		t.Fatalf("sync:pulled payload = %+v, want %+v", got, want)
+	}
+}
+
+// TestGetSyncStatus_ErrorWhenConfiguredAndPullFails pins MAJOR 5: a failing
+// Pull, not just a failing Push, must surface as State == "error" (when a
+// relay is actually configured). Before this test, deleting
+// recordSyncOutcome(err) from runSyncRequest's pull branch left the whole
+// suite green -- TestSyncLoopLogsWarnOnPullFailure only pins the log line,
+// and every other GetSyncStatus/error test in this file drives the failure
+// through a push.
+func TestGetSyncStatus_ErrorWhenConfiguredAndPullFails(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+
+	fake.mu.Lock()
+	fake.pullErr = errors.New("pull failed: 503 relay unavailable")
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{pull: true})
+	waitFor(t, time.Second, "failing pull to run", func() bool {
+		pull, _ := fake.counts()
+		return pull == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	status := a.GetSyncStatus()
+	if status.State != "error" {
+		t.Fatalf("State = %q, want %q", status.State, "error")
+	}
+	if !strings.Contains(status.LastError, "pull failed: 503 relay unavailable") {
+		t.Fatalf("LastError = %q, want it to contain the pull failure's message", status.LastError)
+	}
+}
+
+// TestSyncOffline_EachDisjunctAloneIsOffline pins MAJOR 6: syncOffline is an
+// OR of three independent conditions, and each one alone -- with the other
+// two satisfied -- must be enough to report offline. The task-3 brief's own
+// fixture (appConfig{}) leaves all three simultaneously true, which makes
+// each disjunct individually deletable from `cfg.RelayURL == "" ||
+// cfg.RelayPaused || cfg.RelaySessionToken == ""` without any test noticing
+// (the other two still evaluate true). These cases hold two of the three
+// terms at their "configured" value and only the third at its "missing"
+// value, so deleting any one disjunct flips exactly one of these subtests
+// from offline to (incorrectly) online.
+func TestSyncOffline_EachDisjunctAloneIsOffline(t *testing.T) {
+	a := &App{}
+	cases := []struct {
+		name string
+		cfg  appConfig
+	}{
+		{
+			name: "URL missing only",
+			cfg:  appConfig{RelayURL: "", RelaySessionToken: "session-token", RelayPaused: false},
+		},
+		{
+			name: "token missing only",
+			cfg:  appConfig{RelayURL: "https://relay.example", RelaySessionToken: "", RelayPaused: false},
+		},
+		{
+			name: "paused only",
+			cfg:  appConfig{RelayURL: "https://relay.example", RelaySessionToken: "session-token", RelayPaused: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !a.syncOffline(tc.cfg) {
+				t.Fatalf("syncOffline(%+v) = false, want true -- this disjunct alone must be enough to report offline", tc.cfg)
+			}
+		})
+	}
+
+	t.Run("all three satisfied is online", func(t *testing.T) {
+		cfg := appConfig{RelayURL: "https://relay.example", RelaySessionToken: "session-token", RelayPaused: false}
+		if a.syncOffline(cfg) {
+			t.Fatalf("syncOffline(%+v) = true, want false (URL set, token set, not paused)", cfg)
+		}
+	})
+}
+
+// TestSyncNow_ReturnsBeforeUnderlyingSyncCompletes pins MINOR 9:
+// TestSyncNow_OnlineEnqueuesPullThenPush alone would still pass if SyncNow
+// blocked synchronously on the pull+push it enqueues, since waitFor just
+// polls until the counts land regardless of when SyncNow itself returned.
+// fake.callDelay holds every Pull/Push call up for long enough that a
+// synchronous SyncNow would take at least that long to return; this test
+// asserts SyncNow returns in a small fraction of that time instead.
+func TestSyncNow_ReturnsBeforeUnderlyingSyncCompletes(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+	fake.callDelay = 300 * time.Millisecond
+
+	start := time.Now()
+	if err := a.SyncNow(); err != nil {
+		t.Fatalf("SyncNow() = %v, want nil while configured", err)
+	}
+	if elapsed := time.Since(start); elapsed >= fake.callDelay/3 {
+		t.Fatalf("SyncNow() took %v to return, want well under the %v engine callDelay -- it must enqueue and return immediately, not block on the sync itself", elapsed, fake.callDelay)
+	}
+
+	waitFor(t, 2*time.Second, "SyncNow's pull and push to eventually run", func() bool {
+		pull, push := fake.counts()
+		return pull == 1 && push == 1
+	})
 }

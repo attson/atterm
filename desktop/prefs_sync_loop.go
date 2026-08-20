@@ -130,7 +130,17 @@ func (a *App) dirtyPrefKeys() []string {
 	if a.cfgStore == nil {
 		return nil
 	}
-	meta := a.cfgStore.Get().PrefsMeta
+	return dirtyPrefKeysFromMeta(a.cfgStore.Get().PrefsMeta)
+}
+
+// dirtyPrefKeysFromMeta is dirtyPrefKeys' logic factored out to run against
+// an already-fetched PrefsMeta rather than calling a.cfgStore.Get() itself.
+// GetSyncStatus is on the hot path (called up to four times per sync
+// request via emitSyncStatusIfChanged) and needs both this count and the
+// syncOffline check from the same appConfig snapshot; routing both through
+// one a.cfgStore.Get() here instead of letting dirtyPrefKeys take its own
+// separate clone halves that cost.
+func dirtyPrefKeysFromMeta(meta map[string]prefsMetaEntry) []string {
 	keys := make([]string, 0, len(meta))
 	for key, entry := range meta {
 		if entry.Dirty {
@@ -281,13 +291,13 @@ func (a *App) enqueuePostLoginSeed() {
 		// SeedFromLocal entirely, and Pull would adopt whatever's on the
 		// relay (nothing, if this Push never landed) over the local values
 		// that never got a second chance to upload.
-		if err := engine.Push(a.ctx); err != nil {
-			a.recordSyncOutcome(err)
+		err = engine.Push(a.ctx)
+		a.recordSyncOutcome(err)
+		if err != nil {
 			logWarn("prefssync", "seed push for user %s: %v", userID, err)
 			a.emitPrefsChanged()
 			return
 		}
-		a.recordSyncOutcome(nil)
 		cfg2 := a.cfgStore.Get()
 		if cfg2.PrefsSeedMarkers == nil {
 			cfg2.PrefsSeedMarkers = map[string]bool{}
@@ -314,13 +324,14 @@ type SyncStatus struct {
 }
 
 // syncOffline reports whether cross-device sync cannot currently run at
-// all -- no relay configured, no session, or the relay is paused. This is
-// the exact condition applyRelayPrefsWatch (prefs_watch.go) already uses to
-// decide whether to even start the prefs watch; reused verbatim here rather
-// than restated so the two can never drift apart. It is deliberately not
-// folded into "error": "not configured" is not a failure, and GetSyncStatus
-// checks this first so an unconfigured relay never renders as the red
-// "error" state, no matter what the last engine call happened to return.
+// all -- no relay configured, no session, or the relay is paused.
+// applyRelayPrefsWatch (prefs_watch.go) calls this same method to decide
+// whether to even start the prefs watch, so the two conditions can never
+// drift apart -- prefs_watch.go must not restate this predicate inline. It
+// is deliberately not folded into "error": "not configured" is not a
+// failure, and GetSyncStatus checks this first so an unconfigured relay
+// never renders as the red "error" state, no matter what the last engine
+// call happened to return.
 func (a *App) syncOffline(cfg appConfig) bool {
 	return cfg.RelayURL == "" || cfg.RelayPaused || cfg.RelaySessionToken == ""
 }
@@ -329,13 +340,18 @@ func (a *App) syncOffline(cfg appConfig) bool {
 // for the frontend. Safe to call from any goroutine (the Wails call
 // dispatcher in particular): it only reads a.cfgStore, a.dirtyPrefKeys, and
 // the syncStatusMu-guarded fields written by recordSyncOutcome/setSyncBusy
-// on the loop goroutine.
+// on the loop goroutine. Takes exactly one a.cfgStore.Get() snapshot and
+// derives both the offline check and the pending-key count from it, rather
+// than letting syncOffline and dirtyPrefKeys each fetch (and clone) their
+// own -- this runs up to four times per sync request via
+// emitSyncStatusIfChanged.
 func (a *App) GetSyncStatus() SyncStatus {
 	var cfg appConfig
 	if a.cfgStore != nil {
 		cfg = a.cfgStore.Get()
 	}
-	pending := len(a.dirtyPrefKeys())
+	pending := len(dirtyPrefKeysFromMeta(cfg.PrefsMeta))
+	offline := a.prefsSync == nil || a.syncOffline(cfg)
 
 	a.syncStatusMu.Lock()
 	busy := a.syncBusy
@@ -345,8 +361,15 @@ func (a *App) GetSyncStatus() SyncStatus {
 
 	state := "idle"
 	switch {
-	case a.prefsSync == nil || a.syncOffline(cfg):
+	case offline:
 		state = "offline"
+		// "Not configured" is not a failure -- a stale LastError from before
+		// the relay was logged out of (or paused) must not leak through here
+		// and render as a red error indicator the instant the user is back
+		// online with nothing yet synced. State already reads "offline"
+		// either way; suppressing LastError here keeps the payload
+		// consistent with it instead of contradicting it.
+		lastError = ""
 	case busy:
 		state = "syncing"
 	case lastError != "":
@@ -413,16 +436,23 @@ func (a *App) setSyncBusy(busy bool) {
 }
 
 // emitSyncStatusIfChanged recomputes SyncStatus and emits it over
-// "sync:status" only if State differs from the last emitted value --
+// "sync:status" only if it differs from the last emitted value --
 // recordSyncOutcome and setSyncBusy both call this unconditionally, and
 // without the dedup a single request would emit far more than one event per
 // actual transition (e.g. a successful pull immediately followed by the
 // busy-false transition, both computing to the same "idle").
+//
+// The comparison is on the whole SyncStatus value, not just State: three
+// edits made back-to-back while offline all compute State == "offline", but
+// each one changes PendingKeys, and the frontend's pending-changes count
+// would go stale (stuck at whatever it was on the first of the three) if
+// only State were compared. SyncStatus is comparable with == because every
+// field is a plain string/int64/int.
 func (a *App) emitSyncStatusIfChanged() {
 	status := a.GetSyncStatus()
 	a.syncStatusMu.Lock()
-	changed := status.State != a.syncLastEmittedState
-	a.syncLastEmittedState = status.State
+	changed := status != a.syncLastEmitted
+	a.syncLastEmitted = status
 	a.syncStatusMu.Unlock()
 	if changed {
 		a.emitSyncStatus(status)

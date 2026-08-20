@@ -19,7 +19,7 @@ func (a *App) applyRelayPrefsWatch(cfg appConfig) {
 		a.prefsWatchCancel()
 		a.prefsWatchCancel = nil
 	}
-	if cfg.RelayURL == "" || cfg.RelayPaused || cfg.RelaySessionToken == "" || a.prefsSync == nil {
+	if a.prefsSync == nil || a.syncOffline(cfg) {
 		a.mu.Unlock()
 		return
 	}

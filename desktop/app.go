@@ -312,10 +312,17 @@ type App struct {
 	// ssh_hosts_encrypted staying silently broken for months, is that a
 	// failure must surface, and a success must be able to say so too.
 	syncLastError string
-	// syncLastEmittedState is the last SyncStatus.State value actually sent
-	// over the "sync:status" event, so emitSyncStatusIfChanged only fires on
-	// an observable transition instead of once per internal field write.
-	syncLastEmittedState string
+	// syncLastEmitted is the last full SyncStatus value actually sent over
+	// the "sync:status" event, so emitSyncStatusIfChanged only fires on an
+	// observable change to *any* field -- not just State. Deduping on State
+	// alone let three edits made back-to-back while offline collapse into a
+	// single emitted event still carrying the PendingKeys count from before
+	// any of them landed: State stays "offline" throughout, but PendingKeys
+	// (and, for other transitions, LastSyncedAt/LastError) genuinely changes
+	// and the frontend needs to see that. SyncStatus's fields are all plain
+	// comparable types (string/int64/int), so the whole struct can be
+	// compared with == rather than a field-by-field diff.
+	syncLastEmitted SyncStatus
 
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
 	// the most recent successful LoginRemoteRelay / RegisterRemoteRelay.

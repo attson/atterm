@@ -61,6 +61,8 @@ export type {
   RelayConfig,
   RelayMe,
   RelaySessionRow,
+  SSHConfigImportPreview,
+  SSHConfigImportSkipped,
   SSHConnectReq,
   SSHCredential,
   SSHHost,

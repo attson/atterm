@@ -364,9 +364,17 @@
 
 ### 25. 导入 `~/.ssh/config`
 
-- [ ] 解析主机条目并导入主机清单
-- [ ] 一并识别 `ProxyJump` / `ProxyCommand`
-- [ ] 增加解析测试
+> 设计见 [`2026-08-17-ssh-config-import-design.md`](./superpowers/specs/2026-08-17-ssh-config-import-design.md)。
+>
+> **识别不等于能连。** `ProxyJump` / `ProxyCommand` 会被解析并随主机记录导入、随 sealed vault 同步，但带这两个字段的主机**拒绝直连**——`NewSshSessionByID` 会在发起 dial 之前直接报错。跳板链路本身是第 27 项，尚未实现；在那之前，导入这类主机只是把配置记下来，不是让它能用。
+>
+> `IdentityFile` 同理只记路径，atterm 不读取私钥文件内容；`AuthKind` 会置为 `"key"`，但 `KeyID` 留空，要用户自己走既有的导入私钥流程去关联。
+>
+> 新增的三个字段（`IdentityFile` / `ProxyJump` / `ProxyCommand`）随整块 `ssh_hosts_encrypted` sealed JSON 同步。第 21 项的教训是这类假设必须验证：`desktop/ssh_hosts_sync_fields_test.go` 用真实 seal → open 往返加带 canary 值的用例证明三个字段不丢；relay 的 `allowedPreferenceKeys`（`internal/userstore/preferences.go:37`）本来就已经放行 `ssh_hosts_encrypted`，未受影响。
+
+- [x] 解析主机条目并导入主机清单
+- [x] 一并识别 `ProxyJump` / `ProxyCommand`（导入并标记，**不建立跳板连接**——直连主机被拒绝，见上）
+- [x] 增加解析测试
 
 ### 26. 端口转发
 

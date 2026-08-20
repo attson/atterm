@@ -102,6 +102,16 @@ export interface SSHHost {
   key_id?: string;
   tags?: string[];
   note?: string;
+  // identity_file / proxy_jump / proxy_command are populated by ssh_config
+  // import (desktop/ssh_config_import.go) and are otherwise empty for
+  // manually-added hosts. identity_file is a path only — atterm never reads
+  // the file as part of import. proxy_jump / proxy_command mark a host that
+  // NewSshSessionByID refuses to dial directly until roadmap item 27 adds
+  // jump-host support; the frontend must surface that as a visible marker,
+  // not silently connect.
+  identity_file?: string;
+  proxy_jump?: string;
+  proxy_command?: string;
 }
 
 // SSHCredential mirrors desktop sshCredential — only a password now; private
@@ -116,6 +126,27 @@ export interface SSHKey {
   id: string;
   name: string;
   key_type?: string;
+}
+
+// SSHConfigImportSkipped mirrors desktop SSHConfigImportSkipped, one entry of
+// SSHConfigImportPreview.skipped — a host ~/.ssh/config named that the parser
+// deliberately did not import (Match block, unreadable/cyclic Include, …),
+// with a user-facing reason string (English, backend-owned; shown verbatim).
+// Must stay visible in the import drawer: silently dropping these is the
+// exact failure the preview step exists to prevent (design doc §5.4).
+export interface SSHConfigImportSkipped {
+  alias: string;
+  reason: string;
+}
+
+// SSHConfigImportPreview mirrors desktop SSHConfigImportPreview, the result
+// of PreviewSSHConfigImport. note is a fixed, backend-owned footnote about
+// the parser's field coverage (design doc §7.3) and must be shown, not
+// discarded.
+export interface SSHConfigImportPreview {
+  entries: SSHHost[];
+  skipped: SSHConfigImportSkipped[];
+  note: string;
 }
 
 export interface NewSessionResp {
@@ -437,6 +468,8 @@ export interface AppBindings {
   AddSSHHost(h: SSHHost, cred: SSHCredential): Promise<SSHHost>;
   UpdateSSHHost(h: SSHHost, cred: SSHCredential | null): Promise<void>;
   DeleteSSHHost(id: string): Promise<void>;
+  PreviewSSHConfigImport(): Promise<SSHConfigImportPreview>;
+  ImportSSHHosts(hosts: SSHHost[]): Promise<number>;
   ListSSHKeys(): Promise<SSHKey[]>;
   AddSSHKey(name: string, privateKeyPEM: string, passphrase: string): Promise<SSHKey>;
   UpdateSSHKey(id: string, name: string, privateKeyPEM: string, passphrase: string): Promise<void>;

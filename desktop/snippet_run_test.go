@@ -149,10 +149,16 @@ func TestRunSnippetOnHostsCapsConcurrencyAtEight(t *testing.T) {
 			t.Fatalf("timed out waiting for %d hosts to start; got %d", wantConcurrency, i)
 		}
 	}
+	// A grace window, not a non-blocking poll: with the cap actually broken,
+	// hosts 9-20 are all trying to send on `entered` right now, but "trying"
+	// and "having sent" are not the same instant, and a bare `default:` fires
+	// before a goroutine that hasn't been scheduled yet gets the chance. 200ms
+	// is generous against that scheduling latency while staying far below
+	// this test's own 5s deadline.
 	select {
 	case host := <-entered:
 		t.Fatalf("a 9th host (%s) started running before any of the first %d finished", host, wantConcurrency)
-	default:
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	close(release)
@@ -326,12 +332,18 @@ func TestRunSnippetOnHostsTimesOutOneHostWithoutStallingTheRun(t *testing.T) {
 	// host's goroutine can legitimately be scheduled after the other two have
 	// already finished and been drained, and a flag read at that point would
 	// race with the write. This waits for the actual event instead.
+	// wantHostTimeout is a literal, not snippetHostTimeout, for the same
+	// reason wantConcurrency is one in the concurrency test above: this test
+	// exists to catch someone changing that constant, so referencing it here
+	// would make the check self-adjust to the very mutation it must catch.
+	const wantHostTimeout = 60 * time.Second
+
 	deadlineCh := make(chan bool, 1)
 	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
 		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
 			if h.ID == slow {
 				dl, ok := ctx.Deadline()
-				deadlineCh <- ok && time.Until(dl) <= snippetHostTimeout && time.Until(dl) > 0
+				deadlineCh <- ok && time.Until(dl) <= wantHostTimeout && time.Until(dl) > 0
 				select {
 				case <-unblock:
 				case <-ctx.Done():
@@ -368,18 +380,37 @@ func TestRunSnippetOnHostsTimesOutOneHostWithoutStallingTheRun(t *testing.T) {
 	}
 }
 
+// TestCancelSnippetRunLeavesFinishedResultsAlone is the test this name
+// promises: some hosts must genuinely reach a terminal state — via events
+// actually observed, not merely "cancel was called after some arbitrary
+// delay" — before CancelSnippetRun runs, or the "leaves finished results
+// alone" guard is never exercised at all. It also still covers the original
+// "hosts still queued behind the cap resolve to error" half.
 func TestCancelSnippetRunLeavesFinishedResultsAlone(t *testing.T) {
-	const n = snippetMaxConcurrentHosts + 2 // guarantees some hosts stay pending
+	const n = snippetMaxConcurrentHosts + 2 // guarantees some hosts stay queued behind the cap
+	const wantFast = 3                      // how many of the running hosts are told to finish for real before cancel
+
 	a, hostIDs, events := newSnippetTestApp(t, n)
 
 	entered := make(chan string, n)
-	release := make(chan struct{}) // never closed in this test; ctx cancellation is what unblocks these
+	// One release gate per host, closed individually so the test controls
+	// exactly which hosts finish before cancel and which stay blocked. A
+	// single shared gate cannot do this: closing it unblocks everyone at
+	// once, including whichever of the still-queued hosts races into a
+	// slot the moment one frees up (semaphore slots are up for grabs the
+	// instant any running host returns — see below), and that would let a
+	// host meant to stay queued finish "ok" too, defeating the very split
+	// this test needs.
+	release := make(map[string]chan struct{}, n)
+	for _, id := range hostIDs {
+		release[id] = make(chan struct{})
+	}
 
 	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
 		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
 			entered <- h.ID
 			select {
-			case <-release:
+			case <-release[h.ID]:
 				return sshclient.ExecResult{ExitCode: 0}, nil
 			case <-ctx.Done():
 				return sshclient.ExecResult{}, ctx.Err()
@@ -391,10 +422,25 @@ func TestCancelSnippetRunLeavesFinishedResultsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunSnippetOnHosts: %v", err)
 	}
+	// Captured now, while the run is definitely still registered, so reading
+	// it after cancel does not race the completion-pruning goroutine (which
+	// can delete this run's map entry the instant its last host resolves).
+	// The struct itself stays valid through this pointer regardless of map
+	// membership.
+	a.snippetRunsMu.Lock()
+	run := a.snippetRuns[runID]
+	a.snippetRunsMu.Unlock()
 
+	// Nothing has returned yet at this point — no semaphore slot has freed —
+	// so this is the one moment "first 8 to enter == the running set, the
+	// other 2 are genuinely still queued" is guaranteed rather than merely
+	// likely.
+	runningOrder := make([]string, 0, snippetMaxConcurrentHosts)
 	running := make(map[string]bool, snippetMaxConcurrentHosts)
 	for i := 0; i < snippetMaxConcurrentHosts; i++ {
-		running[<-entered] = true
+		id := <-entered
+		running[id] = true
+		runningOrder = append(runningOrder, id)
 	}
 	var pending []string
 	for _, id := range hostIDs {
@@ -406,30 +452,61 @@ func TestCancelSnippetRunLeavesFinishedResultsAlone(t *testing.T) {
 		t.Fatalf("expected 2 pending hosts, got %d: %v", len(pending), pending)
 	}
 
+	// Let exactly wantFast of the running hosts finish for real, and wait for
+	// their terminal events — the same channel a real client would use, not
+	// inferred from timing. Everyone else's gate stays shut; only cancel (or
+	// this test never calling it) will move them.
+	fastHosts := append([]string(nil), runningOrder[:wantFast]...)
+	for _, id := range fastHosts {
+		close(release[id])
+	}
+	drainTerminal(t, events, fastHosts)
+
 	if err := a.CancelSnippetRun(runID); err != nil {
 		t.Fatalf("CancelSnippetRun: %v", err)
 	}
 
-	// cancelPending runs synchronously inside CancelSnippetRun, under the
-	// run's own lock, so the pending hosts' results are already final the
-	// moment CancelSnippetRun returns — no event wait needed for these two.
-	a.snippetRunsMu.Lock()
-	run := a.snippetRuns[runID]
-	a.snippetRunsMu.Unlock()
-	for _, id := range pending {
+	// The hosts that already finished must be untouched by cancel — the one
+	// guarantee this test exists to pin down. Read live state via the run
+	// struct, not the event captured before cancel: a cancelPending that
+	// forgot to check state would silently rewrite this entry after the
+	// event already fired, and a check against the stale event would never
+	// see that.
+	for _, id := range fastHosts {
 		res := run.snapshot(id)
-		if res.State != snippetHostError {
-			t.Fatalf("pending host %s state = %q, want %q", id, res.State, snippetHostError)
-		}
-		if res.Error == "" {
-			t.Fatalf("pending host %s has no cancellation message", id)
+		if res.State != snippetHostOK {
+			t.Fatalf("finished host %s state = %q, want %q (cancel must not touch it)", id, res.State, snippetHostOK)
 		}
 	}
 
-	// The still-running hosts unblock via ctx cancellation and finish as
-	// "error" too; that is expected (their in-flight run really was cut
-	// short) and is not what this test pins.
-	drainTerminal(t, events, hostIDs)
+	// Everything else — the 2 hosts that were still queued, and the 5
+	// running hosts whose gate was never opened — must resolve to "error".
+	// A queued host may or may not win a semaphore slot freed by a fast
+	// finisher before cancel reaches it (the semaphore does not know or
+	// care which hosts this test meant to keep queued); either way its gate
+	// is never closed, so it only ever unblocks via ctx cancellation and
+	// still ends up "error" — which is the outcome this assertion checks,
+	// not the path taken to get there.
+	rest := make([]string, 0, n-wantFast)
+	isFast := make(map[string]bool, wantFast)
+	for _, id := range fastHosts {
+		isFast[id] = true
+	}
+	for _, id := range hostIDs {
+		if !isFast[id] {
+			rest = append(rest, id)
+		}
+	}
+	restResults := drainTerminal(t, events, rest)
+	for _, id := range rest {
+		res := restResults[id]
+		if res.State != snippetHostError {
+			t.Fatalf("host %s state = %q, want %q", id, res.State, snippetHostError)
+		}
+		if res.Error == "" {
+			t.Fatalf("host %s has no cancellation/timeout message", id)
+		}
+	}
 
 	if err := a.CancelSnippetRun("no-such-run"); err == nil {
 		t.Fatal("expected an error cancelling an unknown run id")
@@ -468,6 +545,295 @@ func TestRunSnippetOnHostsClosesEveryConn(t *testing.T) {
 	want := int32(len(hostIDs) - 1) // every host except the one whose dial failed
 	if got := atomic.LoadInt32(&closed); got != want {
 		t.Fatalf("closed %d connections, want %d", got, want)
+	}
+}
+
+// TestRunSnippetOnHostsPrunesCompletedRunFromMap pins MAJOR 1: snippetRuns
+// exists to route a cancellation to a *live* run, and a finished run has
+// nothing left to cancel — its entry must not sit in the map pinning every
+// host's Output (up to 256KB apiece) forever in a long-lived desktop process.
+func TestRunSnippetOnHostsPrunesCompletedRunFromMap(t *testing.T) {
+	a, hostIDs, events := newSnippetTestApp(t, 6)
+	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
+		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
+			return sshclient.ExecResult{ExitCode: 0}, nil
+		}}, nil
+	}
+
+	runID, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs)
+	if err != nil {
+		t.Fatalf("RunSnippetOnHosts: %v", err)
+	}
+	drainTerminal(t, events, hostIDs)
+
+	// The map entry is deleted by a background goroutine after wg.Wait(),
+	// which runs shortly after the last terminal event but with no direct
+	// happens-before relationship to this goroutine observing it — so this
+	// polls with a bound, rather than asserting on a single read right after
+	// drainTerminal returns.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		a.snippetRunsMu.Lock()
+		_, exists := a.snippetRuns[runID]
+		remaining := len(a.snippetRuns)
+		a.snippetRunsMu.Unlock()
+		if !exists {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s still present in snippetRuns %v after completing", runID, remaining)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := a.CancelSnippetRun(runID); err == nil {
+		t.Fatal("expected an error cancelling a run that already completed and was pruned")
+	}
+}
+
+// TestRunSnippetOnHostsPassesTemplateTextAndOutputCap pins MAJOR 4: nothing
+// else in this suite checks what command actually gets run or what output cap
+// it is run with, so a call like conn.Run(hostCtx, "rm -rf /", 0) would leave
+// every other test green.
+func TestRunSnippetOnHostsPassesTemplateTextAndOutputCap(t *testing.T) {
+	a, hostIDs, events := newSnippetTestApp(t, 1)
+	var mu sync.Mutex
+	var gotCmd string
+	var gotLimit int64
+	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
+		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
+			mu.Lock()
+			gotCmd, gotLimit = cmd, limit
+			mu.Unlock()
+			return sshclient.ExecResult{ExitCode: 0}, nil
+		}}, nil
+	}
+
+	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+		t.Fatalf("RunSnippetOnHosts: %v", err)
+	}
+	drainTerminal(t, events, hostIDs)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotCmd != snippetTestTplText {
+		t.Fatalf("cmd = %q, want the snippet's own text %q", gotCmd, snippetTestTplText)
+	}
+	// 262144 as a hardcoded literal, not snippetMaxOutputBytes: this test
+	// exists to catch someone changing that constant, or the call site's use
+	// of it, out from under the batch run — referencing the same constant
+	// here would let both drift together and still pass.
+	const wantOutputCap = 262144
+	if gotLimit != wantOutputCap {
+		t.Fatalf("limit = %d, want %d", gotLimit, wantOutputCap)
+	}
+}
+
+// TestRunSnippetOnHostsKeepsPartialOutputOnRunError pins MINOR 7: Run's own
+// contract is that a non-nil error can still carry whatever the host printed
+// before it dropped (see internal/sshclient/exec.go), and finishSnippetHost
+// must keep that instead of discarding it just because err != nil.
+func TestRunSnippetOnHostsKeepsPartialOutputOnRunError(t *testing.T) {
+	a, hostIDs, events := newSnippetTestApp(t, 1)
+	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
+		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
+			return sshclient.ExecResult{Output: []byte("partial-output-before-drop")}, errors.New("connection dropped mid-command")
+		}}, nil
+	}
+
+	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+		t.Fatalf("RunSnippetOnHosts: %v", err)
+	}
+	got := drainTerminal(t, events, hostIDs)[hostIDs[0]]
+	if got.State != snippetHostError {
+		t.Fatalf("state = %q, want %q", got.State, snippetHostError)
+	}
+	if got.Output != "partial-output-before-drop" {
+		t.Fatalf("Output = %q, want the partial bytes Run returned alongside its error", got.Output)
+	}
+}
+
+// TestRunSnippetOnHostsResolvesPendingHostsWhenParentContextEnds pins MINOR 8:
+// cancelPending only runs from CancelSnippetRun, but runCtx can also end
+// because a.ctx itself was cancelled — app teardown, not a user-initiated
+// cancel — and a host still queued behind the cap at that moment must still
+// resolve instead of being stuck at "pending" forever.
+func TestRunSnippetOnHostsResolvesPendingHostsWhenParentContextEnds(t *testing.T) {
+	const n = snippetMaxConcurrentHosts + 2
+	appCtx, appCancel := context.WithCancel(context.Background())
+	t.Cleanup(appCancel)
+
+	a, hostIDs, events := newSnippetTestApp(t, n)
+	a.ctx = appCtx
+
+	entered := make(chan string, n)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
+		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
+			entered <- h.ID
+			select {
+			case <-release:
+				return sshclient.ExecResult{ExitCode: 0}, nil
+			case <-ctx.Done():
+				return sshclient.ExecResult{}, ctx.Err()
+			}
+		}}, nil
+	}
+
+	if _, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs); err != nil {
+		t.Fatalf("RunSnippetOnHosts: %v", err)
+	}
+	for i := 0; i < snippetMaxConcurrentHosts; i++ {
+		<-entered
+	}
+
+	// Nothing calls CancelSnippetRun here — the parent context itself ends,
+	// as it would at app teardown mid-run.
+	appCancel()
+
+	got := drainTerminal(t, events, hostIDs)
+	for _, id := range hostIDs {
+		if got[id].State != snippetHostError {
+			t.Fatalf("host %s state = %q, want %q after the parent context ended", id, got[id].State, snippetHostError)
+		}
+	}
+}
+
+// TestRunSnippetOnHostsResolvesLabelForHostsStillQueued pins MINOR 10: a host
+// still "pending" (or later cancelled while still queued) must show its real
+// alias, not the raw host id — resolveHostLabel is what fills that in at
+// RunSnippetOnHosts time, before any goroutine has had the chance to resolve
+// the host for real.
+func TestRunSnippetOnHostsResolvesLabelForHostsStillQueued(t *testing.T) {
+	const n = snippetMaxConcurrentHosts + 1
+	a, hostIDs, events := newSnippetTestApp(t, n)
+
+	cfg := a.cfgStore.Get()
+	aliasOf := make(map[string]string, n)
+	for i := range cfg.SSHHosts {
+		alias := fmt.Sprintf("alias-%d", i) // distinct from the "h%d" id newSnippetTestApp uses as the default alias too
+		cfg.SSHHosts[i].Alias = alias
+		aliasOf[cfg.SSHHosts[i].ID] = alias
+	}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	entered := make(chan string, n)
+	// Closed exactly once, explicitly, once this test is done reading the
+	// pending host's state — not also registered via t.Cleanup, which would
+	// close it a second time and panic.
+	release := make(chan struct{})
+	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
+		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
+			entered <- h.ID
+			<-release
+			return sshclient.ExecResult{ExitCode: 0}, nil
+		}}, nil
+	}
+
+	runID, err := a.RunSnippetOnHosts(snippetTestTplID, hostIDs)
+	if err != nil {
+		t.Fatalf("RunSnippetOnHosts: %v", err)
+	}
+	a.snippetRunsMu.Lock()
+	run := a.snippetRuns[runID]
+	a.snippetRunsMu.Unlock()
+
+	running := make(map[string]bool, snippetMaxConcurrentHosts)
+	for i := 0; i < snippetMaxConcurrentHosts; i++ {
+		running[<-entered] = true
+	}
+	var pending string
+	for _, id := range hostIDs {
+		if !running[id] {
+			pending = id
+			break
+		}
+	}
+	if pending == "" {
+		t.Fatal("expected exactly one host to still be queued behind the cap")
+	}
+
+	res := run.snapshot(pending)
+	if res.State != snippetHostPending {
+		t.Fatalf("host %s state = %q, want %q", pending, res.State, snippetHostPending)
+	}
+	if want := aliasOf[pending]; res.HostLabel != want {
+		t.Fatalf("pending HostLabel = %q, want its alias %q, not the raw host id", res.HostLabel, want)
+	}
+
+	close(release)
+	drainTerminal(t, events, hostIDs)
+}
+
+// TestRunSnippetOnHostsDedupesDuplicateHostIDs pins MINOR 11: a repeated id in
+// the selection must not spawn a second goroutine that silently loses the
+// race for the one results-map entry and reports nothing.
+func TestRunSnippetOnHostsDedupesDuplicateHostIDs(t *testing.T) {
+	a, hostIDs, events := newSnippetTestApp(t, 2)
+	var dialCalls int32
+	a.snippetDialer = func(ctx context.Context, h SSHHost) (snippetConn, error) {
+		atomic.AddInt32(&dialCalls, 1)
+		return fakeSnippetConn{run: func(ctx context.Context, cmd string, limit int64) (sshclient.ExecResult, error) {
+			return sshclient.ExecResult{ExitCode: 0}, nil
+		}}, nil
+	}
+
+	dup := append(append([]string{}, hostIDs...), hostIDs[0]) // hostIDs[0] listed twice
+	if _, err := a.RunSnippetOnHosts(snippetTestTplID, dup); err != nil {
+		t.Fatalf("RunSnippetOnHosts: %v", err)
+	}
+	drainTerminal(t, events, hostIDs)
+
+	if got := atomic.LoadInt32(&dialCalls); got != int32(len(hostIDs)) {
+		t.Fatalf("dialer called %d times, want %d — a duplicate host id must not double-dial", got, len(hostIDs))
+	}
+}
+
+// TestRunSnippetOnHostsSuppressesTOFUAndSurfacesReadableMessage pins MAJOR 5:
+// it deliberately leaves snippetDialer unset so RunSnippetOnHosts falls back
+// to the real dialSnippetConn — a fake standing in for it, the way every
+// other test in this file uses one, can never regress the errors.As
+// conversion this test exists to protect, because the fake never goes near
+// it. Deleting that conversion would let a raw *HostKeyUnknownError (whose
+// Error() is the errCodeHostKeyUnknown sentinel the frontend's TOFU dialog
+// keys on) leak out of a batch run, which has no dialog to show it in.
+func TestRunSnippetOnHostsSuppressesTOFUAndSurfacesReadableMessage(t *testing.T) {
+	srv := startForwardingSSHTestServerAs(t, "u", "pw")
+	a := newJumpTestApp(t) // trusts nothing — the host's key is "unknown"
+	host := addServerHost(t, a, "unseen", srv, "u", "pw", "")
+
+	cfg := a.cfgStore.Get()
+	cfg.QuickTemplates = []QuickTemplate{{ID: snippetTestTplID, Label: "Test", Text: snippetTestTplText}}
+	if err := a.cfgStore.Set(cfg); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	events := make(chan SnippetRunProgress, 16)
+	a.eventsEmitter = func(_ context.Context, name string, data ...interface{}) {
+		if name != "snippet:run:progress" || len(data) == 0 {
+			return
+		}
+		if p, ok := data[0].(SnippetRunProgress); ok {
+			events <- p
+		}
+	}
+
+	if _, err := a.RunSnippetOnHosts(snippetTestTplID, []string{host.ID}); err != nil {
+		t.Fatalf("RunSnippetOnHosts: %v", err)
+	}
+	got := drainTerminal(t, events, []string{host.ID})[host.ID]
+
+	if got.State != snippetHostError {
+		t.Fatalf("state = %q, want %q", got.State, snippetHostError)
+	}
+	if strings.Contains(got.Error, errCodeHostKeyUnknown) {
+		t.Fatalf("error leaked the raw TOFU sentinel %q instead of a readable message: %q", errCodeHostKeyUnknown, got.Error)
+	}
+	if !strings.Contains(got.Error, "not trusted yet") {
+		t.Fatalf("error = %q, want it to explain the host key is not trusted yet", got.Error)
 	}
 }
 

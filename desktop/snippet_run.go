@@ -138,6 +138,27 @@ func (r *snippetRun) setTerminal(result SnippetHostResult) {
 	r.mu.Unlock()
 }
 
+// resolveIfPending moves a single pending host to "error", reporting false
+// when it was not pending — meaning something else (cancelPending's sweep, or
+// another call racing in on the same host) already resolved it. It exists
+// alongside cancelPending because a host's own goroutine can discover runCtx
+// has ended without CancelSnippetRun ever having been called (see the
+// runCtx.Done() branch in runSnippetOnOneHost); sharing r.mu with
+// cancelPending and markRunning is what keeps whichever of them gets there
+// first the sole writer.
+func (r *snippetRun) resolveIfPending(hostID, reason string) (SnippetHostResult, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	res, ok := r.results[hostID]
+	if !ok || res.State != snippetHostPending {
+		return SnippetHostResult{}, false
+	}
+	res.State = snippetHostError
+	res.Error = reason
+	r.results[hostID] = res
+	return res, true
+}
+
 // cancelPending moves every still-pending host straight to "error" and
 // returns the ones it changed, for the caller to emit progress on. A
 // "pending" host has not been dialled at all — there is no in-flight dial or
@@ -173,6 +194,14 @@ func (a *App) RunSnippetOnHosts(snippetID string, hostIDs []string) (string, err
 	if len(hostIDs) == 0 {
 		return "", errors.New("snippet run: no hosts selected")
 	}
+	// A repeated id in the selection would otherwise spawn two goroutines
+	// racing over one results-map entry: the second's markRunning always
+	// loses, so it returns having dialled nothing and reported nothing, and
+	// the caller silently gets one result for two list entries with no error
+	// anywhere to explain the discrepancy. Deduping up front means every
+	// surviving id gets exactly one goroutine and one outcome.
+	hostIDs = dedupeHostIDs(hostIDs)
+
 	tpl, ok := findQuickTemplate(a.GetQuickTemplates(), snippetID)
 	if !ok {
 		return "", fmt.Errorf("snippet run: unknown snippet %q", snippetID)
@@ -195,7 +224,11 @@ func (a *App) RunSnippetOnHosts(snippetID string, hostIDs []string) (string, err
 		results: make(map[string]SnippetHostResult, len(hostIDs)),
 	}
 	for _, hostID := range hostIDs {
-		run.results[hostID] = SnippetHostResult{HostID: hostID, HostLabel: hostID, State: snippetHostPending}
+		// Resolved now, not left as the raw id: a host cancelled while still
+		// queued, or one that turns out not to exist, never reaches the point
+		// further down that would otherwise resolve its alias, and the event
+		// stream is the only thing a client ever sees for it.
+		run.results[hostID] = SnippetHostResult{HostID: hostID, HostLabel: a.resolveHostLabel(hostID), State: snippetHostPending}
 	}
 
 	a.snippetRunsMu.Lock()
@@ -216,12 +249,54 @@ func (a *App) RunSnippetOnHosts(snippetID string, hostIDs []string) (string, err
 	// releasing it here (rather than leaking it until the process exits) is
 	// what makes CancelSnippetRun's cancel() safe to call on a run that has
 	// already finished — it always has something valid to call.
+	//
+	// snippetRuns exists to route a cancellation to a *live* run; a run with
+	// nothing left running has nothing left to cancel, and its results already
+	// reached the UI by event as they happened. Leaving the entry in the map
+	// after that would pin every host's up-to-256KB Output forever in a
+	// long-lived desktop process for no reader that will ever come — so this
+	// is the one place that deletes it. CancelSnippetRun on an id that has
+	// already been pruned this way correctly falls through to the same "no
+	// such run" error an unknown id gets: there is nothing to cancel either
+	// way.
 	go func() {
 		wg.Wait()
 		cancel()
+		a.snippetRunsMu.Lock()
+		delete(a.snippetRuns, run.id)
+		a.snippetRunsMu.Unlock()
 	}()
 
 	return run.id, nil
+}
+
+// dedupeHostIDs drops repeats, keeping the first occurrence's position — the
+// order a run reports hosts in is otherwise arbitrary, but stable input order
+// is one less thing for a caller to have to explain if it ever matters.
+func dedupeHostIDs(hostIDs []string) []string {
+	seen := make(map[string]bool, len(hostIDs))
+	out := make([]string, 0, len(hostIDs))
+	for _, id := range hostIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// resolveHostLabel is how a host is named before runSnippetOnOneHost has
+// necessarily resolved it for real (see connectableSSHHost below) — a
+// pending or cancelled-while-queued result needs a real label up front, not
+// the raw id filled in as a placeholder no caller ever replaces. Falls back
+// to the id itself for a host that does not exist at all, which is the one
+// case there is nothing truer to show.
+func (a *App) resolveHostLabel(hostID string) string {
+	if h, ok := a.findSSHHost(hostID); ok {
+		return sshHostLabel(h)
+	}
+	return hostID
 }
 
 // runSnippetOnOneHost is the whole life of one host within a run: wait for a
@@ -243,29 +318,42 @@ func (a *App) runSnippetOnOneHost(
 	select {
 	case sem <- struct{}{}:
 	case <-runCtx.Done():
-		// Still queued when the run was cancelled: cancelPending (called by
-		// CancelSnippetRun, under run.mu) is the one that resolves this host,
-		// not this goroutine — returning without touching results is what
-		// keeps that resolution single-writer.
+		// Still queued when runCtx ended. CancelSnippetRun's cancelPending
+		// sweep is the usual resolver for a pending host, but runCtx can also
+		// end without it ever being called — a.ctx itself dying at app
+		// teardown, for one — and the event stream is the only way a client
+		// learns anything, so a host left at "pending" here would be a row
+		// that never resolves. resolveIfPending shares cancelPending's lock:
+		// whichever of the two gets there first for this host is the one that
+		// wins, and the other finds the state has already moved on and does
+		// nothing — that is what keeps this single-writer despite two paths
+		// now being able to reach it.
+		if result, ok := run.resolveIfPending(hostID, "snippet run ended before this host started"); ok {
+			a.emitSnippetProgress(run.id, result)
+		}
 		return
 	}
 	defer func() { <-sem }()
 
-	if _, ok := run.markRunning(hostID); !ok {
-		// Lost the race with cancelPending between winning the semaphore and
-		// taking run.mu: this host is already "error" with a cancellation
-		// reason, and starting real work now would stomp that.
+	result, ok := run.markRunning(hostID)
+	if !ok {
+		// Lost the race with cancelPending/resolveIfPending between winning
+		// the semaphore and taking run.mu: this host is already "error" with
+		// a cancellation reason, and starting real work now would stomp that.
 		return
 	}
-	a.emitSnippetProgress(run.id, run.snapshot(hostID))
+	a.emitSnippetProgress(run.id, result)
 
 	host, err := a.connectableSSHHost(hostID)
 	if err != nil {
 		// Covers both "no such host" (a stale id in the selection) and "this
 		// host runs a ProxyCommand" (the same refusal every other entry point
 		// gives) — connectableSSHHost is the one place that judgement is
-		// made, see the file-level comment.
-		a.finishSnippetHost(run, hostID, hostID, snippetHostError, sshclient.ExecResult{}, err)
+		// made, see the file-level comment. result.HostLabel is already
+		// resolved (see resolveHostLabel in RunSnippetOnHosts); a host this
+		// branch reaches at all only has the raw id to fall back on because
+		// resolveHostLabel could not find it either.
+		a.finishSnippetHost(run, hostID, result.HostLabel, snippetHostError, sshclient.ExecResult{}, err)
 		return
 	}
 	label := sshHostLabel(host)

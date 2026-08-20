@@ -977,4 +977,18 @@ export const zhCN = {
       failed: "（已失败）",
     },
   },
+  snippets: {
+    runOnHosts: "在多台主机上运行…",
+    selectHosts: "选择主机",
+    pending: "等待中",
+    running: "运行中…",
+    ok: "成功",
+    failed: "失败",
+    error: "出错",
+    exitCode: "退出码 {code}",
+    truncated: "输出已截断",
+    copyAll: "复制全部",
+    cancel: "取消",
+    noHostsSelected: "请至少选择一台主机",
+  },
 } as const satisfies Messages;

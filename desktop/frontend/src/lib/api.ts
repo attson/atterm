@@ -83,6 +83,7 @@ export * from "./api/feishu";
 export * from "./api/tasks";
 export * from "./api/updates";
 export * from "./api/recovery";
+export * from "./api/snippets";
 
 // ---- notification runtime (kept here alongside showNotification) ----
 

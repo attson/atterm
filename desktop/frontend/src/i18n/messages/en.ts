@@ -1008,6 +1008,26 @@ export const en = {
       failed: "(failed)",
     },
   },
+  // SnippetRunPanel.vue: running one quick-action template on several saved
+  // hosts at once (desktop/snippet_run.go RunSnippetOnHosts). "failed" and
+  // "error" are kept distinct on purpose: failed means the command ran and
+  // exited non-zero (there is a real exit code and output to show); error
+  // means it never ran at all — unreachable, auth rejected, an untrusted
+  // host key, or a timeout.
+  snippets: {
+    runOnHosts: "Run on hosts…",
+    selectHosts: "Select hosts",
+    pending: "Pending",
+    running: "Running…",
+    ok: "OK",
+    failed: "Failed",
+    error: "Error",
+    exitCode: "Exit code {code}",
+    truncated: "Output truncated",
+    copyAll: "Copy all",
+    cancel: "Cancel",
+    noHostsSelected: "Select at least one host",
+  },
 };
 
 export type Messages = typeof en;

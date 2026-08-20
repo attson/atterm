@@ -571,6 +571,37 @@ export interface NotificationRouteData {
 
 export type MarkSessionsSeenOpts = { ids: string[] } | { all: true };
 
+// SnippetHostState mirrors the literal strings desktop/snippet_run.go emits
+// as SnippetHostResult.State. "failed" means the command ran and exited
+// non-zero (ExitCode/Output are meaningful); "error" means it never ran at
+// all — unreachable, auth rejected, an untrusted host key, or a timeout.
+// Both are terminal, alongside "ok"; "pending"/"running" are not.
+export type SnippetHostState = "pending" | "running" | "ok" | "failed" | "error";
+
+// SnippetHostResult mirrors desktop/snippet_run.go SnippetHostResult — one
+// host's outcome, as of the last state change. exit_code/output/truncated
+// are only meaningful once state has left "pending"/"running".
+export interface SnippetHostResult {
+  host_id: string;
+  host_label: string;
+  state: SnippetHostState;
+  exit_code: number;
+  output: string;
+  truncated: boolean;
+  error?: string;
+}
+
+// SnippetRunProgress mirrors desktop/snippet_run.go SnippetRunProgress — the
+// payload of the "snippet:run:progress" event, pushed once a host enters
+// "running" and again when it reaches a terminal state. There is no separate
+// "list results" call: this event stream is the only way a client learns
+// anything about a run in progress. Consumers key a row on run_id +
+// result.host_id.
+export interface SnippetRunProgress {
+  run_id: string;
+  result: SnippetHostResult;
+}
+
 // AppBindings mirrors Go's exposed App.<Method> surface, one entry per
 // wails.MethodDescription in wailsjs/go/main/App.d.ts. Kept as a single
 // interface so the runtime lookup (bindings()) returns a typed value
@@ -706,6 +737,18 @@ export interface AppBindings {
   SetHookInstallEnabled(on: boolean): Promise<void>;
   GetQuickTemplates(): Promise<import('../templates').QuickTemplate[]>;
   SetQuickTemplates(list: import('../templates').QuickTemplate[]): Promise<void>;
+  // RunSnippetOnHosts starts a batch run of snippetText (labelled
+  // snippetLabel for anything that needs a human-readable name) across
+  // several saved hosts and returns immediately with a run id; results only
+  // ever arrive through the "snippet:run:progress" event (SnippetRunProgress
+  // above). CancelSnippetRun moves every host still queued or in flight to
+  // "error" — hosts already at a terminal state are left alone.
+  //
+  // Takes the snippet's label + text directly rather than an id: templates
+  // that still fall back to DEFAULT_TEMPLATES (never customized) have no
+  // Go-side existence, so an id-only lookup would fail on a fresh install.
+  RunSnippetOnHosts(snippetLabel: string, snippetText: string, hostIDs: string[]): Promise<string>;
+  CancelSnippetRun(runID: string): Promise<void>;
   GetTaskPreset(): Promise<string>;
   SetTaskPreset(preset: PresetId): Promise<void>;
   GetTaskGroupBy(): Promise<string>;

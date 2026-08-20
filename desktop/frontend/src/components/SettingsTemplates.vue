@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '../i18n/useI18n'
 import { usePlatform } from '../platform'
 import { effectiveTemplates, type QuickTemplate } from '../lib/templates'
+import SnippetRunPanel from './SnippetRunPanel.vue'
 
 const { t } = useI18n()
 const platform = usePlatform()
@@ -12,6 +13,19 @@ const editing = ref<{ id: string; label: string; text: string; hotkey: string; i
 const resetOpen = ref(false)
 const hidden = ref(false)
 const error = ref('')
+// The template being run across hosts, or null when the run panel is closed.
+// Only one at a time: SnippetRunPanel is a modal, so opening it for a second
+// row while one is already open is not a state this list can reach.
+// Holds the whole template, not just its id: SnippetRunPanel takes the
+// snippet's label + text directly (RunSnippetOnHosts does too, as of the
+// fix round below) because a still-default, never-customized template has
+// no Go-side existence for an id-only lookup to find.
+const runningTemplate = ref<QuickTemplate | null>(null)
+// See the button's comment: this tab renders on web and iOS too, and batch
+// execution is desktop-only because it needs the Wails bindings.
+const canRunOnHosts = platform.caps.wailsBindings
+function openRunPanel(it: QuickTemplate) { runningTemplate.value = it }
+function closeRunPanel() { runningTemplate.value = null }
 
 // Editor mirrors what the runtime template bar shows: the stored list if
 // non-empty, otherwise the bundled DEFAULT_TEMPLATES (via effectiveTemplates).
@@ -140,6 +154,23 @@ function cancelReset() { resetOpen.value = false }
           <button :disabled="idx === 0" @click="moveUp(it.id)">↑</button>
           <button :disabled="idx === items.length - 1" @click="moveDown(it.id)">↓</button>
           <button @click="startEdit(it)">{{ t('settings.templates.edit') }}</button>
+          <!--
+            Desktop only. This component is shared: web/vite.config.ts aliases
+            the web build's `@` to desktop/frontend/src, and Capacitor mounts
+            the same shell, so anything unguarded here also ships to the relay
+            embed and to iOS. Batch execution needs the Wails bindings
+            (listSSHHosts, RunSnippetOnHosts) — without them the modal opens
+            and immediately dies on `app.wailsBindingsNotReady`, which is a
+            developer's error message shown to a user. The rest of this tab
+            works everywhere, so the gate belongs on the button, not the tab.
+          -->
+          <button
+            v-if="canRunOnHosts"
+            :data-testid="`template-run-${it.id}`"
+            @click="openRunPanel(it)"
+          >
+            {{ t('snippets.runOnHosts') }}
+          </button>
           <button class="del" :data-testid="`template-delete-${it.id}`" @click="deleteItem(it.id)">
             {{ t('settings.templates.delete') }}
           </button>
@@ -190,6 +221,13 @@ function cancelReset() { resetOpen.value = false }
         </div>
       </div>
     </div>
+
+    <SnippetRunPanel
+      v-if="runningTemplate"
+      :snippet-label="runningTemplate.label"
+      :snippet-text="runningTemplate.text"
+      @close="closeRunPanel"
+    />
   </div>
 </template>
 

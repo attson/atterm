@@ -31,6 +31,10 @@ AT Term 是一个带远程接管能力的跨平台终端。你在桌面端启动
 | Linux arm64 | `AT-Term_*_arm64.deb` 或 `AT-Term-linux-arm64.tar.gz` | 适合 ARM Linux 桌面 |
 | Windows x64 | `AT-Term_*_amd64.exe` 或 `AT-Term-windows-amd64.zip` | Windows 11 自带 WebView2;Windows 10 可能需另装 |
 
+> **macOS 用户注意**:目前的 macOS 构件**未签名 / 未公证**(签名工作见 roadmap 第 8 项,阻塞于 Apple Developer 证书),下载 dmg 直接双击会被 Gatekeeper 拦截,提示「无法打开,因为无法验证开发者」。解决办法见 [FAQ](/guide/faq)。
+>
+> Homebrew cask 分发(`brew install --cask attson/tap/atterm`)**绕不开这一步**:cask 装完同样会带上隔离标记,该跑的 `xattr` 一条不少(cask 会在安装完成时提示你)。它带来的是版本化安装、每次发版自动更新的 checksum,以及一条顺手的升级路径,不是 Gatekeeper 的解法。另外承载 cask 的 tap 仓库还没建好,这条命令**目前还跑不通**——建好后会在这里换成可直接执行的命令。
+
 ## 方式 B:桌面端 + 自托管 relay(用户账号制)
 
 这个模式适合「电脑上跑任务,手机/另一台机器接管」。

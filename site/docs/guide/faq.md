@@ -38,6 +38,22 @@ OPAQUE 登录用浏览器 WebCrypto,只在**安全上下文**(HTTPS 或 `localho
 - Web Push:需要先在 web / PWA 端订阅;iOS 有平台限制(详见项目 `docs/features/web-push.md`)。
 - 飞书:确认 `internal/feishu` 已在桌面 Settings → Feishu 配置并绑定。
 
+## macOS 提示「无法打开,因为无法验证开发者」?
+
+目前的 macOS 构件**未签名 / 未公证**(roadmap 第 8 项,阻塞于 Apple Developer 证书——我们还没有),下载的 dmg / zip 会带上 Gatekeeper 的下载隔离标记,首次直接双击打开就会被拦截。
+
+解决办法,终端执行:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/AT Term.app"
+```
+
+这条命令只是去掉这一个 app 的下载隔离标记,不会改动任何系统级安全设置。
+
+**用 Homebrew 装也要跑这一步。** Homebrew cask 默认会给装好的 app 打上同一个 `com.apple.quarantine` 标记,这是它有意为之——刻意模仿浏览器下载的行为;`--no-quarantine` 这个开关在 Homebrew 5.0.0 已弃用、之后被移除,第三方 tap 也没有替代品。所以无论走哪条安装路径,未签名的 app 都会弹同一个对话框,cask 只是会在安装完成时把上面这条命令再提示你一次(Homebrew cask 分发本身也还在准备中,尚未可用,见 [安装指南](/guide/#方式-a-只用桌面端))。
+
+真正的修法是签名 + 公证(roadmap 第 8 项),目前卡在证书上;签名到位后这一步会消失。
+
 ## 忘记密码怎么办?
 
 **没有密码找回**。忘记密码只能由 admin reset,相当于换一把新 `account_key`,旧会话的 E2EE sealed 内容永久不可解 —— 这是单用户自托管定位下的有意设计。

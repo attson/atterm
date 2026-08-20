@@ -153,7 +153,15 @@ func TestPull_ServerNewerOverwritesLocal(t *testing.T) {
 	}
 }
 
-func TestPull_LocalDirtyNewerIsPreserved(t *testing.T) {
+// Named for the branch it actually exercises. Its fixture has local newer
+// than the server (800 > 500), so the outer "server is newer" condition never
+// opens and `Dirty` is never even read — this is the no-op branch, not the
+// dirty-conflict branch its old name (TestPull_LocalDirtyNewerIsPreserved)
+// promised. The real conflict branch is pinned by
+// TestPull_ServerNewerButLocalDirty_RecordsConflict below; a name that points
+// at the wrong branch is a trap for whoever next skims this file deciding
+// what is already covered.
+func TestPull_ServerNotNewer_LocalUnchanged(t *testing.T) {
 	a := newFake()
 	a.WriteValue("locale_preference", json.RawMessage(`"en"`))
 	a.WriteMeta("locale_preference", Meta{UpdatedAtLocal: 800, Dirty: true})

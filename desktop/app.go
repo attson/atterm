@@ -1955,6 +1955,17 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return len(c.ShortcutBindings) > 0
 		case "profiles_encrypted":
 			return len(c.Profiles) > 0
+		case "ssh_hosts_encrypted":
+			// Missing until now, while its sibling profiles_encrypted was
+			// present — which is exactly the accident the comment above
+			// describes. Without this case, a machine that already has SSH
+			// hosts marks them "never customized" on first login, so
+			// SeedFromLocal never flags them and they are never uploaded;
+			// and because their local stamp stays 0, a relay already holding
+			// an older set from another machine wins the comparison in Pull
+			// and replaces them. Losing a host list on first login is not a
+			// cosmetic omission.
+			return len(c.SSHHosts) > 0 || len(c.SSHKeys) > 0
 		}
 		return false
 	}

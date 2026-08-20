@@ -1,6 +1,6 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref, watch } from "vue";
-import { usePluginConfigStore } from "../plugins/configStore";
+import { computed, onMounted, ref } from "vue";
+import { getShortcutBindings, setShortcutBindings } from "../lib/api";
 import {
   ACTIONS,
   ACTION_BY_ID,
@@ -22,30 +22,40 @@ const props = defineProps<{
   mod?: Mod;
 }>();
 
+// bindings-changed lets App.vue's useTerminalShortcuts pick up a save
+// immediately, without the two of them sharing a reactive store the way
+// usePluginConfigStore used to provide for free (see the App.vue side of
+// this same swap, onBindingsChanged).
+const emit = defineEmits<{
+  (e: "bindings-changed", bindings: Record<string, string>): void;
+}>();
+
 const mod = computed<Mod>(() => props.mod ?? detectMod());
 
-const store = usePluginConfigStore();
-const draft = ref<Record<string, string>>({});
 const { t } = useI18n();
+// persisted mirrors what Go last confirmed (via GetShortcutBindings on load,
+// or the payload of a successful SetShortcutBindings); draft is the editable
+// working copy. There is no reactive store to watch anymore — the panel
+// re-reads on every mount, matching SettingsTerminalAppearance.vue.
+const persisted = ref<Record<string, string>>({});
+const draft = ref<Record<string, string>>({});
+const error = ref("");
 
 function loadDraft() {
-  draft.value = JSON.parse(JSON.stringify(store.cfg?.shortcuts?.bindings ?? {}));
+  draft.value = JSON.parse(JSON.stringify(persisted.value));
 }
 
 onMounted(async () => {
-  if (!store.cfg) await store.load();
+  try {
+    persisted.value = await getShortcutBindings();
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  }
   loadDraft();
 });
 
-watch(
-  () => store.cfg?.shortcuts?.bindings,
-  () => { if (!dirty.value) loadDraft(); },
-  { deep: true },
-);
-
 const dirty = computed(() => {
-  const cur = store.cfg?.shortcuts?.bindings ?? {};
-  return JSON.stringify(cur) !== JSON.stringify(draft.value);
+  return JSON.stringify(persisted.value) !== JSON.stringify(draft.value);
 });
 
 // Fully-resolved bindings (defaults + draft overrides) for display and
@@ -86,8 +96,6 @@ function resetAll() {
 }
 
 async function save() {
-  if (!store.cfg) return;
-  const next = JSON.parse(JSON.stringify(store.cfg));
   // Strip entries equal to defaults (defensive — already handled in onCellUpdate
   // but a user could have reached this state via resetRow + manual save flow).
   const normalized: Record<string, string> = {};
@@ -96,8 +104,18 @@ async function save() {
       normalized[id] = value;
     }
   }
-  next.shortcuts.bindings = normalized;
-  await store.save(next);
+  error.value = "";
+  try {
+    // setShortcutBindings only — this must never round-trip through the
+    // plugin config (App.SetPluginConfig), or it would resurrect the legacy
+    // Plugins.Shortcuts.Bindings slot that the Go-side migration just
+    // stopped clearing on every load (desktop/config.go migrateShortcutBindings).
+    await setShortcutBindings(normalized);
+    persisted.value = normalized;
+    emit("bindings-changed", normalized);
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  }
 }
 
 function discard() {
@@ -167,6 +185,8 @@ defineExpose({ dirty });
       <button class="discard" :disabled="!dirty" @click="discard">{{ t("common.discard") }}</button>
       <button class="save" :disabled="!dirty || anyConflict" @click="save">{{ t("common.save") }}</button>
     </div>
+
+    <p v-if="error" class="error">{{ error }}</p>
   </div>
 </template>
 
@@ -221,4 +241,9 @@ defineExpose({ dirty });
 .actions-row button:disabled { opacity: 0.4; cursor: default; }
 .actions-row .save { background: var(--accent); color: #0d1117; border-color: var(--accent); }
 .actions-row .save:disabled { background: #21262d; color: #c9d1d9; border-color: #2d333b; }
+.error {
+  color: #f85149;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
 </style>

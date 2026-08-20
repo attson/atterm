@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+
+	"github.com/attson/atterm/internal/logging"
 )
 
 // Meta is the per-key sync state. Mirrors the JSON tags of
@@ -57,6 +59,15 @@ var syncedKeys = []string{
 	"shell_integration_enabled",
 	"pinned_session_ids",
 	"ssh_hosts_encrypted",
+	"terminal_theme",
+	"terminal_font_head",
+	"terminal_font_size",
+	"terminal_line_height",
+	"terminal_cursor_style",
+	"terminal_cursor_blink",
+	"terminal_scrollback",
+	"default_shell",
+	"shortcut_bindings",
 }
 
 // SyncedKeys returns the canonical list of keys this engine syncs.
@@ -96,11 +107,18 @@ func (e *Engine) Pull(ctx context.Context) error {
 			if local.Dirty {
 				continue
 			}
+			// Log-and-continue, not return: with the key count going 8 -> 17
+			// (2026-08-17 prefs-sync-l1 final review, M2), a WriteValue error on
+			// one key — e.g. a malformed shortcut_bindings payload — used to
+			// abort the whole Pull and silently skip every key after it in the
+			// response. One bad key must not take the rest of the sync down.
 			if err := e.adapter.WriteValue(it.Key, it.Value); err != nil {
-				return err
+				logging.Warn("prefssync", "pull: write %s: %v", it.Key, err)
+				continue
 			}
 			if err := e.adapter.WriteMeta(it.Key, Meta{UpdatedAtLocal: it.UpdatedAt, Dirty: false}); err != nil {
-				return err
+				logging.Warn("prefssync", "pull: write meta %s: %v", it.Key, err)
+				continue
 			}
 		}
 	}

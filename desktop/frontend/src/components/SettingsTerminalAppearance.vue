@@ -16,7 +16,7 @@ export interface TerminalAppearanceState {
 // General. Split out of SettingsGeneral.vue (which had grown past 900 lines)
 // because this block has no coupling to the rest of that file and roadmap
 // item 22 (per-profile appearance overrides) will want it already isolated.
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   getTerminalFontHead,
   setTerminalFontHead,
@@ -75,7 +75,12 @@ const cursorStyleOptions = computed(() => [
 // before they raise it — this estimate feeds the {mb} placeholder below.
 const scrollbackEstimateMb = computed(() => Math.round((scrollback.value * 2.75) / 1000));
 
-onMounted(async () => {
+// Shared by onMounted and the prefs:changed listener below (Task 4) so a
+// remote pull and a fresh mount observe Go the exact same way. Read-only:
+// assigns refs from what Go returns and nothing else. Must never call a
+// set* API — a remote change reaching this panel and getting written back
+// out would ping-pong the value between devices forever (design §7.2).
+async function loadAppearance() {
   if (!caps.wailsBindings) return;
   try {
     const [head, size, lh, style, blink, sb] = await Promise.all([
@@ -100,6 +105,25 @@ onMounted(async () => {
   } finally {
     appearanceLoading.value = false;
   }
+}
+
+// prefsSync fires the same "prefs:changed" event on a successful Pull as it
+// does after a local Push; if this panel is already open when a remote
+// change lands, reload so its six controls don't sit stale until the panel
+// is closed and reopened. SettingsDialog mounts this fresh every time
+// Settings opens (App.vue: `v-if="showSettings"`), so the listener must be
+// torn down on unmount or every open leaves one more copy running forever —
+// mirrors SettingsTemplates.vue's prefsChangedOff.
+let prefsChangedOff: (() => void) | null = null;
+onMounted(() => {
+  void loadAppearance();
+  prefsChangedOff = platform.events.on("prefs:changed", () => {
+    void loadAppearance();
+  });
+});
+onBeforeUnmount(() => {
+  prefsChangedOff?.();
+  prefsChangedOff = null;
 });
 
 // Task 4's App.vue replaces its appearance state wholesale on every event

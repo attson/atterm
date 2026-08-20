@@ -4,7 +4,7 @@ import source from "./SettingsGeneral.vue?raw";
 import SettingsGeneral from "./SettingsGeneral.vue";
 import SettingsTerminalAppearance from "./SettingsTerminalAppearance.vue";
 import { __setPlatformForTests } from "../platform";
-import { createFakePlatform } from "../platform/__tests__/_fakePlatform";
+import { createFakePlatform, fakeEventBus } from "../platform/__tests__/_fakePlatform";
 import { __setBindingsForTest } from "../lib/api";
 
 vi.mock("@shared/api/push-flow", () => ({
@@ -142,6 +142,20 @@ describe("SettingsGeneral default shell preference", () => {
     expect(source).toContain("settings.general.customShellPath");
     expect(source).toMatch(/onDefaultShellChange/);
     expect(source).toMatch(/onCustomShellSave/);
+  });
+
+  // Task 4 fix round 2 (prefs-sync-l1 §7.2): loadDefaultShell() re-reads from
+  // Go on prefs:changed so an open panel doesn't show a stale shell after a
+  // remote pull. It must never call setDefaultShell — doing so would push the
+  // value we just pulled straight back out, and the other device would pull
+  // it, write it back, push it again, forever.
+  test("subscribes loadDefaultShell to prefs:changed and never writes back", () => {
+    expect(source).toMatch(/events\.on\(\s*["']prefs:changed["']/);
+    const fn = source.match(/async function loadDefaultShell\(\)\s*\{[\s\S]*?\n\}/);
+    expect(fn).not.toBeNull();
+    expect(fn![0]).toMatch(/getDefaultShell\(\)/);
+    expect(fn![0]).toMatch(/listShells\(\)/);
+    expect(fn![0]).not.toMatch(/setDefaultShell/);
   });
 });
 
@@ -359,5 +373,120 @@ describe("SettingsGeneral terminal appearance", () => {
     const ev = w.emitted("appearance-changed");
     expect(ev).toBeTruthy();
     expect(ev!.at(-1)![0]).toEqual(payload);
+  });
+});
+
+// Task 4 fix round 2 (prefs-sync-l1 §7.2): default_shell had no reload path
+// anywhere — Go already reads the synced value fresh at spawn time, but the
+// panel display went stale until the panel was closed and reopened. Wired
+// the same way as SettingsTerminalAppearance.vue: extract the load path,
+// subscribe to prefs:changed, unsubscribe on unmount, never call the setter
+// from the reload path.
+describe("SettingsGeneral default shell prefs:changed reload", () => {
+  let getDefaultShellMock: ReturnType<typeof vi.fn>;
+  let setDefaultShellMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    getDefaultShellMock = vi.fn().mockResolvedValue("auto");
+    setDefaultShellMock = vi.fn().mockResolvedValue(undefined);
+    __setBindingsForTest({
+      GetLocalePreference: vi.fn().mockResolvedValue("system"),
+      GetNotificationsEnabled: vi.fn().mockResolvedValue(true),
+      GetShellIntegrationEnabled: vi.fn().mockResolvedValue(true),
+      GetRecoveryDialogEnabled: vi.fn().mockResolvedValue(true),
+      GetDefaultShell: getDefaultShellMock,
+      SetDefaultShell: setDefaultShellMock,
+      ListShells: vi.fn().mockResolvedValue(["/bin/zsh", "/opt/homebrew/bin/fish"]),
+      GetWebglRendererEnabled: vi.fn().mockResolvedValue(true),
+      GetCommandNotifyThresholdSeconds: vi.fn().mockResolvedValue(10),
+      GetTerminalFontHead: vi.fn().mockResolvedValue(""),
+      SetTerminalFontHead: vi.fn().mockResolvedValue(undefined),
+      GetTerminalFontSize: vi.fn().mockResolvedValue(13),
+      SetTerminalFontSize: vi.fn().mockResolvedValue(undefined),
+      GetTerminalLineHeight: vi.fn().mockResolvedValue(1.0),
+      SetTerminalLineHeight: vi.fn().mockResolvedValue(undefined),
+      GetTerminalCursorStyle: vi.fn().mockResolvedValue("block"),
+      SetTerminalCursorStyle: vi.fn().mockResolvedValue(undefined),
+      GetTerminalCursorBlink: vi.fn().mockResolvedValue(true),
+      SetTerminalCursorBlink: vi.fn().mockResolvedValue(undefined),
+      GetTerminalScrollback: vi.fn().mockResolvedValue(5000),
+      SetTerminalScrollback: vi.fn().mockResolvedValue(undefined),
+    } as any);
+  });
+
+  afterEach(() => {
+    __setBindingsForTest(undefined);
+    __setPlatformForTests(null);
+  });
+
+  it("reloads the default shell from Go on prefs:changed without persisting", async () => {
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...createFakePlatform(), events });
+    mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+    getDefaultShellMock.mockClear();
+    setDefaultShellMock.mockClear();
+
+    getDefaultShellMock.mockResolvedValue("/opt/homebrew/bin/fish");
+    events.emit("prefs:changed", undefined);
+    await flushPromises();
+
+    expect(getDefaultShellMock).toHaveBeenCalled();
+    expect(setDefaultShellMock).not.toHaveBeenCalled();
+  });
+
+  // Task 4 fix round 3: the custom shell path field has no @change/@blur
+  // commit, only the explicit "Save Custom" button (onCustomShellSave). A
+  // prefs:changed reload landing while the user has typed an unsaved path
+  // must not discard it — unlike SettingsTerminalAppearance.vue's
+  // scrollback field (auto-commits on blur), this field's draft window is
+  // open-ended. This test fails without loadDefaultShell()'s
+  // hasUnsavedCustomEdit guard.
+  it("keeps an unsaved custom shell path on prefs:changed instead of discarding it", async () => {
+    // Mount already pointed at an unrecognized shell, so the panel opens
+    // with "__custom__" selected and the field pre-filled — no dropdown
+    // interaction needed to reach that state.
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/starting-shell");
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...createFakePlatform(), events });
+    const wrapper = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    const input = wrapper.get("input.text-input");
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/starting-shell");
+
+    // User types a new path but has not clicked "Save Custom" yet.
+    await input.setValue("/opt/local/bin/unsaved-typed-path");
+
+    // Meanwhile a remote device pushes a different default_shell.
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/remote-changed-shell");
+    events.emit("prefs:changed", undefined);
+    await flushPromises();
+
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/unsaved-typed-path");
+    expect(setDefaultShellMock).not.toHaveBeenCalled();
+  });
+
+  it("applies the remote default shell once the unsaved custom edit is saved", async () => {
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/starting-shell");
+    const events = fakeEventBus();
+    __setPlatformForTests({ ...createFakePlatform(), events });
+    const wrapper = mount(SettingsGeneral, { props: { terminalThemeId: "classic" } });
+    await flushPromises();
+
+    const input = wrapper.get("input.text-input");
+    await input.setValue("/opt/local/bin/user-saved-path");
+    await wrapper.get(".custom-shell-row button").trigger("click");
+    await flushPromises();
+
+    expect(setDefaultShellMock).toHaveBeenCalledWith("/opt/local/bin/user-saved-path");
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/user-saved-path");
+
+    // Guard has released: a later remote change now applies normally.
+    getDefaultShellMock.mockResolvedValue("/opt/local/bin/remote-changed-shell");
+    events.emit("prefs:changed", undefined);
+    await flushPromises();
+
+    expect((input.element as HTMLInputElement).value).toBe("/opt/local/bin/remote-changed-shell");
   });
 });

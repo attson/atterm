@@ -97,6 +97,8 @@ export function GetRelayConfig():Promise<main.RelayConfig>;
 
 export function GetShellIntegrationEnabled():Promise<boolean>;
 
+export function GetShortcutBindings():Promise<Record<string, string>>;
+
 export function GetStartupError():Promise<main.StartupError>;
 
 export function GetTaskGroupBy():Promise<string>;
@@ -228,6 +230,8 @@ export function SetRelayConfig(arg1:main.RelayConfig):Promise<void>;
 export function SetRelayDisableE2EE(arg1:boolean):Promise<void>;
 
 export function SetShellIntegrationEnabled(arg1:boolean):Promise<void>;
+
+export function SetShortcutBindings(arg1:Record<string, string>):Promise<void>;
 
 export function SetTaskGroupBy(arg1:string):Promise<void>;
 

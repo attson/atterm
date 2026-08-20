@@ -295,12 +295,15 @@
 
 ### 21. 已有配置接入同步
 
-- [ ] `terminal_theme` 加进 `prefssync.syncedKeys`
-- [ ] `default_shell` 加进 `prefssync.syncedKeys`
-- [ ] 快捷键绑定从 `Plugins.shortcuts.bindings` 拆成独立 key `shortcut_bindings`
-- [ ] 老结构一次性迁移到新 key 并清掉旧字段
-- [ ] 首次接入走 `PrefsSeedMarkers` 播种路径，不直接 pull 覆盖本地既有配置
-- [ ] 每个 key 增加 prefssync 往返测试（push / pull / 时间戳裁决）
+- [x] `terminal_theme` 加进 `prefssync.syncedKeys`
+- [x] `default_shell` 加进 `prefssync.syncedKeys`
+- [x] 快捷键绑定从 `Plugins.shortcuts.bindings` 拆成独立 key `shortcut_bindings`
+- [x] 老结构一次性迁移到新 key 并清掉旧字段
+- [x] 首次接入走 `PrefsSeedMarkers` 播种路径；播种顺序是 Pull 先于 `SeedFromLocal`，
+      relay 上已有值的 key 会覆盖本地既有配置，只有 relay 上还没有的 key 才保留本地值
+      并被播种上传（未决问题，见设计 doc §7.1；`PrefsSeedMarkers` 只保证播种失败可重试，
+      不保证"不覆盖"）
+- [x] 每个 key 增加 prefssync 往返测试（push / pull / 时间戳裁决）
 
 ### 22. profile（会话配置档）
 

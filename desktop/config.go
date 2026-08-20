@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -204,6 +205,12 @@ type appConfig struct {
 	// (expanded mode). 0 means "use default 240"; valid range enforced
 	// on Set in app.go.
 	TaskSidebarWidth int `json:"task_sidebar_width,omitempty"`
+
+	// ShortcutBindings holds action-id → binding-string overrides. Hoisted out
+	// of Plugins.Shortcuts.Bindings so it can be synced on its own key: the
+	// plugins blob mixes in machine-local state (which plugins are enabled)
+	// that must not travel between devices.
+	ShortcutBindings map[string]string `json:"shortcut_bindings,omitempty"`
 
 	// PinnedSessionIDs holds session_ids the user has pinned to the top of
 	// the session bar. Order in the slice is not meaningful — the frontend
@@ -434,10 +441,53 @@ func (c appConfig) PrefsSeedMarkerFor(userID string) bool {
 	return c.PrefsSeedMarkers[userID]
 }
 
+// DefaultShellOrDefault resolves the configured shell, falling back to auto
+// when it cannot be used on THIS machine.
+//
+// The existence check exists because this preference syncs across devices
+// (see the L1 prefs-sync design): an absolute path like
+// /opt/homebrew/bin/fish is valid on the Mac it was set on and an unopenable
+// path everywhere else, and a bad shell means new sessions fail to start.
+// Non-absolute values are PATH-resolved at spawn time, so validating them
+// here would reject perfectly good configs.
+//
+// Validation lives on the read side deliberately. Rejecting on write would
+// leave the synced value sitting in config.json while silently not taking
+// effect, which is harder to diagnose than falling back.
+// isCrossPlatformAbs reports whether s looks like an absolute path under either
+// POSIX or Windows rules. filepath.IsAbs only knows the rules of the platform
+// it is compiled for, which is wrong for any value that travels between
+// machines.
+func isCrossPlatformAbs(s string) bool {
+	if filepath.IsAbs(s) {
+		return true
+	}
+	if strings.HasPrefix(s, "/") { // POSIX path seen on Windows
+		return true
+	}
+	// Windows path seen elsewhere: drive letter, or a UNC share.
+	if len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/') {
+		return true
+	}
+	return strings.HasPrefix(s, `\\`)
+}
+
 func (c appConfig) DefaultShellOrDefault() string {
 	shell := strings.TrimSpace(c.DefaultShell)
 	if shell == "" || strings.EqualFold(shell, defaultShellAuto) {
 		return defaultShellAuto
+	}
+	// "Absolute" has to mean absolute by *either* convention, because this value
+	// syncs between machines: a Mac's /opt/homebrew/bin/fish is not
+	// filepath.IsAbs on Windows, so trusting filepath alone would skip the
+	// check on the one platform where the path is guaranteed not to exist and
+	// hand the launcher a shell it can never start. The reverse holds too —
+	// C:\...\pwsh.exe reaching a Linux box.
+	if isCrossPlatformAbs(shell) {
+		if _, err := os.Stat(shell); err != nil {
+			logWarn("config", "configured shell %q is not present on this machine; falling back to auto", shell)
+			return defaultShellAuto
+		}
 	}
 	return shell
 }
@@ -543,6 +593,37 @@ func configPath() string {
 	return filepath.Join(dir, "config.json")
 }
 
+// migrateShortcutBindings mirrors bindings from the legacy plugin slot into
+// the top-level field, then clears the legacy slot, and reports whether it
+// changed anything.
+//
+// The clear landed in the same commit as the frontend swap to
+// GetShortcutBindings/SetShortcutBindings (Task 3) on purpose: clearing
+// earlier — while the Settings UI still wrote Plugins.Shortcuts.Bindings via
+// SetPluginConfig, a path that bypasses this function entirely — would have
+// blanked every custom shortcut for anyone on a build between the two
+// changes, and an edit made in that window would have been written to the
+// legacy slot and then silently dropped on the next load. Now that the
+// frontend reads and writes only the new field, there is no writer left to
+// race with the clear.
+//
+// While the legacy slot is non-empty it still wins on conflict: an edit made
+// through the old path (e.g. a hand-edited config.json) is mirrored forward
+// rather than lost, before the slot is cleared out from under it.
+func migrateShortcutBindings(c *appConfig) bool {
+	changed := false
+	old := c.Plugins.Shortcuts.Bindings
+	if len(old) > 0 && !maps.Equal(c.ShortcutBindings, old) {
+		c.ShortcutBindings = maps.Clone(old)
+		changed = true
+	}
+	if len(c.Plugins.Shortcuts.Bindings) > 0 {
+		c.Plugins.Shortcuts.Bindings = nil
+		changed = true
+	}
+	return changed
+}
+
 // configStore is a thin lock-protected wrapper around appConfig with disk I/O.
 type configStore struct {
 	mu  sync.Mutex
@@ -564,6 +645,9 @@ func loadConfig() *configStore {
 	// app was restarted (the second load reads the file and does apply
 	// defaults, which is what made this look intermittent).
 	s.cfg.Plugins.applyDefaults()
+	// migrateShortcutBindings runs on every load (idempotent) so a config
+	// written before the hoist keeps working without a one-off migration step.
+	migrateShortcutBindings(&s.cfg)
 	return s
 }
 
@@ -593,6 +677,13 @@ func detachMaps(c appConfig) appConfig {
 			m[k] = v
 		}
 		c.PrefsSeedMarkers = m
+	}
+	if c.ShortcutBindings != nil {
+		m := make(map[string]string, len(c.ShortcutBindings))
+		for k, v := range c.ShortcutBindings {
+			m[k] = v
+		}
+		c.ShortcutBindings = m
 	}
 	return c
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -246,5 +248,140 @@ func TestTerminalCursorBlinkOrDefault_ExplicitValues(t *testing.T) {
 	c = appConfig{TerminalCursorBlink: &on}
 	if got := c.TerminalCursorBlinkOrDefault(); got != true {
 		t.Errorf("explicit true = %v, want true", got)
+	}
+}
+
+func TestMigrateShortcutBindings(t *testing.T) {
+	t.Run("mirrors bindings into the new field and clears the legacy slot", func(t *testing.T) {
+		c := appConfig{}
+		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
+		changed := migrateShortcutBindings(&c)
+		if !changed {
+			t.Fatal("expected migration to report a change")
+		}
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
+			t.Errorf("binding not mirrored: %v", c.ShortcutBindings)
+		}
+		// Task 3 switched the frontend to read/write ShortcutBindings exclusively,
+		// so the legacy slot is now safe to clear on the same load that mirrors it.
+		if len(c.Plugins.Shortcuts.Bindings) != 0 {
+			t.Errorf("legacy slot must be cleared once mirrored: %v", c.Plugins.Shortcuts.Bindings)
+		}
+	})
+
+	t.Run("clears an already-mirrored legacy slot even though there is nothing new to copy", func(t *testing.T) {
+		c := appConfig{ShortcutBindings: map[string]string{"tab.new": "Mod+KeyP"}}
+		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
+		changed := migrateShortcutBindings(&c)
+		if !changed {
+			t.Error("expected a change: the legacy slot still had bindings to clear")
+		}
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
+			t.Error("new field must keep its value")
+		}
+		if len(c.Plugins.Shortcuts.Bindings) != 0 {
+			t.Error("legacy slot must end up cleared")
+		}
+	})
+
+	t.Run("legacy slot still wins on conflict, then gets cleared", func(t *testing.T) {
+		c := appConfig{ShortcutBindings: map[string]string{"tab.new": "Mod+KeyN"}}
+		c.Plugins.Shortcuts.Bindings = map[string]string{"tab.new": "Mod+KeyP"}
+		changed := migrateShortcutBindings(&c)
+		if !changed {
+			t.Fatal("expected migration to report a change when the slots disagree")
+		}
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
+			t.Errorf("legacy slot must win while it is being mirrored, got %v", c.ShortcutBindings)
+		}
+		if len(c.Plugins.Shortcuts.Bindings) != 0 {
+			t.Error("legacy slot must end up cleared after the conflict is resolved")
+		}
+	})
+
+	t.Run("no-op on an empty config", func(t *testing.T) {
+		c := appConfig{}
+		if migrateShortcutBindings(&c) {
+			t.Error("empty config needs no migration")
+		}
+	})
+
+	// This is the steady state from here on: every load after the clear lands,
+	// the legacy slot is empty and ShortcutBindings is the only populated
+	// field. Before this task that combination was rare (or manufactured);
+	// after it, it's the path every single config load takes. It was
+	// previously untested even though the early-return in
+	// migrateShortcutBindings made it "correct by inspection" — cover it
+	// explicitly so a future edit to the clear logic can't wipe it silently.
+	t.Run("steady state: legacy empty, new field populated — must not wipe the new field", func(t *testing.T) {
+		c := appConfig{ShortcutBindings: map[string]string{"tab.new": "Mod+KeyP"}}
+		changed := migrateShortcutBindings(&c)
+		if changed {
+			t.Error("expected no change once the legacy slot is already empty")
+		}
+		if c.ShortcutBindings["tab.new"] != "Mod+KeyP" {
+			t.Errorf("new field must survive untouched: %v", c.ShortcutBindings)
+		}
+	})
+}
+
+func TestDefaultShellExistenceCheck(t *testing.T) {
+	t.Run("absolute path that does not exist falls back to auto", func(t *testing.T) {
+		c := appConfig{DefaultShell: "/nonexistent/bin/fish"}
+		if got := c.DefaultShellOrDefault(); got != defaultShellAuto {
+			t.Errorf("got %q, want %q", got, defaultShellAuto)
+		}
+	})
+
+	t.Run("absolute path that exists is used", func(t *testing.T) {
+		// A real file on whatever platform is running, not /bin/sh: this used
+		// to pass on Windows only because filepath.IsAbs rejected the POSIX
+		// path and skipped the check entirely — i.e. for the same reason the
+		// sibling case above was silently broken.
+		shell := filepath.Join(t.TempDir(), "shell")
+		if err := os.WriteFile(shell, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		c := appConfig{DefaultShell: shell}
+		if got := c.DefaultShellOrDefault(); got != shell {
+			t.Errorf("got %q, want %q", got, shell)
+		}
+	})
+
+	t.Run("non-absolute value is passed through unchecked", func(t *testing.T) {
+		c := appConfig{DefaultShell: "fish"}
+		if got := c.DefaultShellOrDefault(); got != "fish" {
+			t.Errorf("got %q, want fish — PATH-resolved shells must not be validated", got)
+		}
+	})
+}
+
+// TestCrossPlatformAbsShellPaths pins the case CI caught and macOS/Linux
+// cannot: default_shell syncs between machines, so the value arriving here may
+// be absolute under the *other* platform's rules. filepath.IsAbs only knows
+// the rules it was compiled for, and skipping the existence check is exactly
+// wrong on the platform where the path is guaranteed not to resolve.
+func TestCrossPlatformAbsShellPaths(t *testing.T) {
+	for _, s := range []string{
+		"/opt/homebrew/bin/fish", // POSIX, as seen from Windows
+		`C:\Windows\System32\cmd.exe`,
+		"C:/Windows/System32/cmd.exe",
+		`\\server\share\pwsh.exe`,
+	} {
+		if !isCrossPlatformAbs(s) {
+			t.Errorf("%q must be recognised as absolute under one of the two conventions", s)
+		}
+	}
+	for _, s := range []string{"fish", "bin/fish", ""} {
+		if isCrossPlatformAbs(s) {
+			t.Errorf("%q is a bare name, not an absolute path", s)
+		}
+	}
+
+	// The whole point: a path absolute under the other platform's rules and
+	// absent here must fall back rather than reach the launcher.
+	c := appConfig{DefaultShell: `C:\definitely\not\here\pwsh.exe`}
+	if got := c.DefaultShellOrDefault(); got != defaultShellAuto {
+		t.Errorf("got %q, want %q", got, defaultShellAuto)
 	}
 }

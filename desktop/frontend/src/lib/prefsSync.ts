@@ -3,13 +3,21 @@
 // Wails desktop entry and the Capacitor mobile entry; the adapter is the
 // per-platform persistence layer (Wails RPC vs Capacitor localStorage).
 
-// Kept in lockstep with `syncedKeys` in internal/prefssync/sync.go —
-// the drift-check test at the bottom of prefsSync.test.ts asserts both
-// lists match. When adding/removing a key you MUST update ALL of:
-//   1. internal/prefssync/sync.go::syncedKeys (Go source of truth)
-//   2. this file's SYNCED_KEYS
-//   3. web/src/shared/sync/prefsSync.ts::SYNCED_KEYS
-//   4. EXPECTED_SYNCED_KEYS in prefsSync.test.ts (the drift-check literal)
+// This file's engine is shared by two platforms that have NO UI for the
+// Wails-desktop-only preferences (terminal_theme, the six terminal-appearance
+// keys, default_shell, shortcut_bindings, ssh_hosts_encrypted): Capacitor
+// mobile (prefsSync.capacitor.ts) and, historically, a plain browser tab.
+// A key belongs in SYNCED_KEYS iff this adapter's `keys()` needs to offer it
+// to Push — i.e. some setter on this platform can mark it dirty via
+// notifyLocalChange. Desktop-only keys are never marked dirty here, so they
+// don't need to be in this list to work correctly: `pull()` above writes
+// whatever the server returns straight into local storage keyed by the
+// server's own item.key, without consulting SYNCED_KEYS at all — an unlisted
+// key just rides along unused in localStorage instead of failing.
+//
+// The Go list (internal/prefssync/sync.go::syncedKeys) is the superset source
+// of truth. Keep this list a subset of it — the drift-check test at the
+// bottom of prefsSync.test.ts reads sync.go directly and asserts that.
 export const SYNCED_KEYS = [
   'locale_preference',
   'quick_templates',

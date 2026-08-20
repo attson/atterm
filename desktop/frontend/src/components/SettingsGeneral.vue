@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   getCommandNotifyThresholdSeconds,
   getDefaultShell,
@@ -74,6 +74,11 @@ const defaultShellSaving = ref(false);
 const selectedDefaultShell = ref("auto");
 const persistedDefaultShell = ref("auto");
 const customShellPath = ref("");
+// Last value known to be in sync with the backend (either just loaded from
+// Go, or just saved via onCustomShellSave). Diverging from customShellPath
+// while "__custom__" is selected means the user has typed something and not
+// yet clicked "Save Custom" — see loadDefaultShell()'s guard below.
+const savedCustomShellPath = ref("");
 const availableShells = ref<string[]>([]);
 const webglRendererEnabled = ref(true);
 const webglRendererLoading = ref(true);
@@ -109,6 +114,75 @@ const defaultShellOptions = computed(() => [
   { value: "__custom__", label: t("settings.general.customPath") },
 ]);
 
+// Shared by onMounted and the prefs:changed listener below (Task 4 fix
+// round 2) so a remote pull and a fresh mount observe Go the same way —
+// mirrors SettingsTerminalAppearance.vue's loadAppearance(). Read-only:
+// assigns refs from getDefaultShell()/listShells() and nothing else. Must
+// never call setDefaultShell — writing back a value we just pulled would
+// push it straight back out, and the other device would pull it, write it
+// back, push it again, forever (design §7.2). Go itself already reads the
+// synced value fresh at spawn time (app.go DefaultShellOrDefault), so this
+// function only needs to keep the *panel display* from going stale — it
+// isn't what makes a remote shell change take effect.
+async function loadDefaultShell() {
+  if (!caps.wailsBindings) return;
+  try {
+    const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
+    availableShells.value = shells;
+    // The custom shell path field has no @change/@blur commit — only the
+    // explicit "Save Custom" button does (onCustomShellSave). A prefs:changed
+    // reload landing while the user has typed an unsaved path here would
+    // silently discard it (Task 4 fix round 3). Guard just the fields that
+    // would clobber that draft; availableShells above still refreshes. This
+    // releases the moment the user saves — onCustomShellSave updates
+    // savedCustomShellPath to match — so it does not wait for the next
+    // prefs:changed to converge, and it does not gate appearance/theme
+    // reloads elsewhere, only this field.
+    const hasUnsavedCustomEdit =
+      selectedDefaultShell.value === "__custom__" && customShellPath.value !== savedCustomShellPath.value;
+    if (!hasUnsavedCustomEdit) {
+      if (configured === "auto") {
+        selectedDefaultShell.value = "auto";
+      } else if (shells.includes(configured)) {
+        selectedDefaultShell.value = configured;
+        customShellPath.value = configured;
+        savedCustomShellPath.value = configured;
+      } else {
+        selectedDefaultShell.value = "__custom__";
+        customShellPath.value = configured;
+        savedCustomShellPath.value = configured;
+      }
+      persistedDefaultShell.value = selectedDefaultShell.value;
+    }
+  } catch (e: any) {
+    error.value = e?.message ?? String(e);
+  } finally {
+    defaultShellLoading.value = false;
+  }
+}
+
+// default_shell has no form-wide draft/Save/Discard flow (unlike
+// SettingsShortcuts.vue, which is why that panel does not get a live
+// listener): the dropdown commits on `change` via onDefaultShellChange.
+// The one exception is the custom shell path text field, which only
+// commits on an explicit "Save Custom" click (no @change/@blur) — an
+// open-ended draft window, not the same shape as
+// SettingsTerminalAppearance.vue's scrollback field (which auto-commits on
+// blur, so its clobber window is bounded to a few seconds of active
+// focus). loadDefaultShell()'s hasUnsavedCustomEdit guard above exists
+// specifically to protect that one field; everything else here still
+// reloads unconditionally.
+let prefsChangedOff: (() => void) | null = null;
+onMounted(() => {
+  prefsChangedOff = platform.events.on("prefs:changed", () => {
+    void loadDefaultShell();
+  });
+});
+onBeforeUnmount(() => {
+  prefsChangedOff?.();
+  prefsChangedOff = null;
+});
+
 onMounted(async () => {
   if (caps.wailsBindings) {
     try {
@@ -141,24 +215,7 @@ onMounted(async () => {
     } finally {
       recoveryEnabledLoading.value = false;
     }
-    try {
-      const [configured, shells] = await Promise.all([getDefaultShell(), listShells()]);
-      availableShells.value = shells;
-      if (configured === "auto") {
-        selectedDefaultShell.value = "auto";
-      } else if (shells.includes(configured)) {
-        selectedDefaultShell.value = configured;
-        customShellPath.value = configured;
-      } else {
-        selectedDefaultShell.value = "__custom__";
-        customShellPath.value = configured;
-      }
-      persistedDefaultShell.value = selectedDefaultShell.value;
-    } catch (e: any) {
-      error.value = e?.message ?? String(e);
-    } finally {
-      defaultShellLoading.value = false;
-    }
+    await loadDefaultShell();
     try {
       webglRendererEnabled.value = await getWebglRendererEnabled();
     } catch (e: any) {
@@ -310,6 +367,11 @@ async function onCustomShellSave() {
     await setDefaultShell(next);
     selectedDefaultShell.value = "__custom__";
     persistedDefaultShell.value = "__custom__";
+    // Normalize the field to the trimmed value we just saved and mark it as
+    // in sync, so loadDefaultShell()'s draft guard releases right away
+    // instead of waiting for the next prefs:changed to converge.
+    customShellPath.value = next;
+    savedCustomShellPath.value = next;
     if (!availableShells.value.includes(next)) {
       availableShells.value = [next, ...availableShells.value];
     }

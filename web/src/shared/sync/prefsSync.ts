@@ -5,13 +5,21 @@
 
 import { apiFetch } from '@shared/api/client'
 
-// Kept in lockstep with `syncedKeys` in internal/prefssync/sync.go —
-// the drift-check test in web/tests/unit/shared/prefsSync.test.ts asserts
-// both lists match. When adding/removing a key you MUST update ALL of:
-//   1. internal/prefssync/sync.go::syncedKeys (Go source of truth)
-//   2. desktop/frontend/src/lib/prefsSync.ts::SYNCED_KEYS
-//   3. this file's SYNCED_KEYS
-//   4. EXPECTED_SYNCED_KEYS in web/tests/unit/shared/prefsSync.test.ts
+// The web frontend has no UI for the Wails-desktop-only preferences
+// (terminal_theme, the six terminal-appearance keys, default_shell,
+// shortcut_bindings, ssh_hosts_encrypted). A key belongs in SYNCED_KEYS iff
+// `keys()` needs to offer it to push() — i.e. some setter on this platform
+// can mark it dirty via notifyLocalChange. Desktop-only keys are never
+// marked dirty here, so they don't need to be in this list to work
+// correctly: pull() above writes whatever the server returns straight into
+// local storage keyed by the server's own item.key, without consulting
+// SYNCED_KEYS — an unlisted key just goes unused in localStorage instead of
+// failing.
+//
+// The Go list (internal/prefssync/sync.go::syncedKeys) is the superset
+// source of truth. Keep this list a subset of it — the drift-check test in
+// web/tests/unit/shared/prefsSync.test.ts reads sync.go directly and
+// asserts that.
 export const SYNCED_KEYS = [
   'locale_preference',
   'quick_templates',

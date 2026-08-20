@@ -1297,3 +1297,46 @@ describe("TerminalView appearance", () => {
     expect(appSource).toContain('@appearance-changed="onAppearanceChanged"');
   });
 });
+
+// Task 4 (prefs-sync-l1 §7.2): a remote Pull fires the same "prefs:changed"
+// event markPrefDirtyAndPush fires after a Push (see prefs_watch.go). App.vue
+// must reload its own state from Go so a value that changed on another device
+// shows up here without a restart or a Settings reopen.
+// prefsChangedBlocks returns the source of every `events.on('prefs:changed', ...)`
+// handler in App.vue. Using matchAll (not a single non-global match) matters:
+// a single match only ever captures the *first* such block, so if a second
+// listener is ever added, the negative assertion below would silently stop
+// checking it instead of failing (M4, 2026-08-17 prefs-sync-l1 final review).
+function prefsChangedBlocks(source: string): string[] {
+  const re = /events\.on\(\s*["']prefs:changed["'][\s\S]*?\n\s*\}\)/g;
+  return [...source.matchAll(re)].map((m) => m[0]);
+}
+
+describe("prefs:changed reload", () => {
+  test("App re-reads theme, appearance, and shortcut bindings when prefs change remotely", () => {
+    expect(appSource).toMatch(/events\.on\(\s*["']prefs:changed["']/);
+    const blocks = prefsChangedBlocks(appSource);
+    expect(blocks.length).toBeGreaterThan(0);
+    const combined = blocks.join("\n");
+    expect(combined).toMatch(/refreshTerminalTheme\(\)/);
+    expect(combined).toMatch(/refreshTerminalAppearance\(\)/);
+    // refreshShortcutBindings() is the one that matters beyond Settings: it
+    // assigns the same shortcutBindings ref that feeds the live
+    // useTerminalShortcuts router, so without it a remote rebind syncs but
+    // never takes effect until restart.
+    expect(combined).toMatch(/refreshShortcutBindings\(\)/);
+  });
+
+  // The negative assertion is the one that matters: a handler that reloads
+  // state and then persists it would ping-pong forever between two devices
+  // (A pulls -> writes back -> pushes -> B pulls -> writes back -> pushes ->
+  // A pulls, ...). This must fail the moment anyone adds a setter call in
+  // ANY prefs:changed block, not just the first one in the file.
+  test("the reload path never writes back — that would ping-pong between devices", () => {
+    const blocks = prefsChangedBlocks(appSource);
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(block).not.toMatch(/setTerminal|setDefaultShell|setShortcutBindings/);
+    }
+  });
+});

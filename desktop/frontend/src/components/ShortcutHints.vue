@@ -1,6 +1,5 @@
 <script lang="ts" setup>
 import { computed, ref } from "vue";
-import { usePluginConfigStore } from "../plugins/configStore";
 import {
   ACTIONS,
   formatChord,
@@ -19,10 +18,17 @@ function detectMod(): Mod {
 const props = defineProps<{
   mod?: Mod;
   thresholdMs?: number;
+  // The live shortcut-bindings map, owned and kept fresh by App.vue (same
+  // ref that feeds useTerminalShortcuts — see App.vue's refreshShortcutBindings
+  // / onBindingsChanged). Passed down instead of loading independently: this
+  // overlay only ever displays what App.vue already dispatches on, so a
+  // second load-and-cache here would just be a second source of truth that
+  // could drift from the first. Defaults to {} so the component still mounts
+  // standalone in tests/Storybook-style usage.
+  bindings?: Record<string, string>;
 }>();
 
 const mod: Mod = props.mod ?? detectMod();
-const store = usePluginConfigStore();
 const visible = ref(false);
 const { t } = useI18n();
 
@@ -33,7 +39,7 @@ useLongPressModifier({
   onHide: () => { visible.value = false; },
 });
 
-const resolved = computed(() => resolvedBindings(store.cfg?.shortcuts?.bindings ?? {}));
+const resolved = computed(() => resolvedBindings(props.bindings ?? {}));
 
 const paneActions = ACTIONS.filter((a) => a.group === "pane");
 const tabActions = ACTIONS.filter((a) => a.group === "tab");

@@ -885,16 +885,14 @@ func (a *App) GetTerminalTheme() string {
 
 // SetTerminalTheme persists the user's global terminal theme preference.
 func (a *App) SetTerminalTheme(theme string) error {
-	if a.cfgStore == nil {
-		return fmt.Errorf("config store unavailable")
-	}
 	theme = strings.TrimSpace(theme)
 	if !isSupportedTerminalTheme(theme) {
 		return fmt.Errorf("bad terminal theme: %s", theme)
 	}
-	cfg := a.cfgStore.Get()
-	cfg.TerminalTheme = theme
-	return a.cfgStore.Set(cfg)
+	return a.updatePref("terminal_theme", func(cfg *appConfig) error {
+		cfg.TerminalTheme = theme
+		return nil
+	})
 }
 
 // GetTerminalFontHead returns the user's chosen leading monospace family,
@@ -908,7 +906,7 @@ func (a *App) GetTerminalFontHead() string {
 }
 
 func (a *App) SetTerminalFontHead(head string) error {
-	return a.updatePref("", func(cfg *appConfig) error {
+	return a.updatePref("terminal_font_head", func(cfg *appConfig) error {
 		cfg.TerminalFontHead = strings.TrimSpace(head)
 		return nil
 	})
@@ -925,7 +923,7 @@ func (a *App) SetTerminalFontSize(px int) error {
 	if px < terminalFontSizeMin || px > terminalFontSizeMax {
 		return fmt.Errorf("font size out of range: %d", px)
 	}
-	return a.updatePref("", func(cfg *appConfig) error {
+	return a.updatePref("terminal_font_size", func(cfg *appConfig) error {
 		cfg.TerminalFontSize = px
 		return nil
 	})
@@ -942,7 +940,7 @@ func (a *App) SetTerminalLineHeight(v float64) error {
 	if v < terminalLineHeightMin || v > terminalLineHeightMax {
 		return fmt.Errorf("line height out of range: %v", v)
 	}
-	return a.updatePref("", func(cfg *appConfig) error {
+	return a.updatePref("terminal_line_height", func(cfg *appConfig) error {
 		cfg.TerminalLineHeight = v
 		return nil
 	})
@@ -960,7 +958,7 @@ func (a *App) SetTerminalCursorStyle(style string) error {
 	if !isSupportedCursorStyle(style) {
 		return fmt.Errorf("bad cursor style: %s", style)
 	}
-	return a.updatePref("", func(cfg *appConfig) error {
+	return a.updatePref("terminal_cursor_style", func(cfg *appConfig) error {
 		cfg.TerminalCursorStyle = style
 		return nil
 	})
@@ -974,7 +972,7 @@ func (a *App) GetTerminalCursorBlink() bool {
 }
 
 func (a *App) SetTerminalCursorBlink(on bool) error {
-	return a.updatePref("", func(cfg *appConfig) error {
+	return a.updatePref("terminal_cursor_blink", func(cfg *appConfig) error {
 		cfg.TerminalCursorBlink = &on
 		return nil
 	})
@@ -991,7 +989,7 @@ func (a *App) SetTerminalScrollback(lines int) error {
 	if lines <= 0 || lines > terminalScrollbackMax {
 		return fmt.Errorf("scrollback out of range: %d", lines)
 	}
-	return a.updatePref("", func(cfg *appConfig) error {
+	return a.updatePref("terminal_scrollback", func(cfg *appConfig) error {
 		cfg.TerminalScrollback = lines
 		return nil
 	})
@@ -1026,18 +1024,57 @@ func (a *App) GetDefaultShell() string {
 }
 
 func (a *App) SetDefaultShell(shell string) error {
-	if a.cfgStore == nil {
-		return fmt.Errorf("config store unavailable")
-	}
 	shell = strings.TrimSpace(shell)
 	if shell == "" || strings.EqualFold(shell, defaultShellAuto) {
 		shell = defaultShellAuto
 	} else if _, err := exec.LookPath(shell); err != nil {
 		return fmt.Errorf("default shell not found: %s", shell)
 	}
-	cfg := a.cfgStore.Get()
-	cfg.DefaultShell = shell
-	return a.cfgStore.Set(cfg)
+	return a.updatePref("default_shell", func(cfg *appConfig) error {
+		cfg.DefaultShell = shell
+		return nil
+	})
+}
+
+// GetShortcutBindings returns the user's action-id → binding overrides.
+func (a *App) GetShortcutBindings() map[string]string {
+	if a == nil || a.cfgStore == nil {
+		return map[string]string{}
+	}
+	b := a.cfgStore.Get().ShortcutBindings
+	out := make(map[string]string, len(b))
+	for k, v := range b {
+		out[k] = v
+	}
+	return out
+}
+
+// SetShortcutBindings replaces the override map wholesale.
+//
+// Validates before touching the store — the same rule ValidatePluginConfig
+// applies to Plugins.Shortcuts.Bindings (empty action id, malformed binding
+// string), reusing isValidShortcutBinding rather than a second copy of the
+// predicate. This key now syncs, so an unvalidated write here wouldn't just
+// break the local machine: it would propagate a malformed binding to every
+// other device the user owns via prefsSync, where it flows straight into
+// buildRoutingTable on the frontend. A rejected call must leave the
+// previously stored map untouched, so validation runs against the incoming
+// argument before updatePref's mutate callback ever assigns it — mutate
+// returning an error means updatePref never calls cfgStore.Set, so the
+// config on disk (and in memory) is exactly what it was before this call.
+func (a *App) SetShortcutBindings(bindings map[string]string) error {
+	for actionID, binding := range bindings {
+		if actionID == "" {
+			return errors.New("shortcutBindings: action id must be non-empty")
+		}
+		if !isValidShortcutBinding(binding) {
+			return fmt.Errorf("shortcutBindings[%q]: malformed binding %q", actionID, binding)
+		}
+	}
+	return a.updatePref("shortcut_bindings", func(cfg *appConfig) error {
+		cfg.ShortcutBindings = bindings
+		return nil
+	})
 }
 
 // GetTaskPreset returns the user's persisted task state display preset.
@@ -1565,15 +1602,22 @@ func (a *App) updatePref(key string, mutate func(*appConfig) error) error {
 }
 
 // markPrefDirtyAndPush stamps the meta for key with the current ms,
-// then triggers a background PUSH. Errors are swallowed by design (sync
-// is best-effort; user UI already reflects the change).
+// then triggers a background PUSH. A failed Push is not fatal to the local
+// write (the key stays dirty and the next Push retries it), but it must not
+// be silent: an unknown_key/invalid_value 400 poisons every subsequent Push
+// (every dirty key rides along in the same batch and fails with it), and
+// that silence is exactly why ssh_hosts_encrypted stayed broken for months
+// after joining syncedKeys — nothing ever surfaced the 400. Log at warn so
+// that failure mode is visible instead of invisible.
 func (a *App) markPrefDirtyAndPush(key string) {
 	if a.prefsSync == nil {
 		return
 	}
 	a.prefsSync.MarkDirty(key, time.Now().UnixMilli())
 	go func() {
-		if err := a.prefsSync.Push(a.ctx); err == nil {
+		if err := a.prefsSync.Push(a.ctx); err != nil {
+			logWarn("prefssync", "push after %s changed: %v", key, err)
+		} else {
 			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
 		}
 	}()
@@ -1649,6 +1693,32 @@ func isPrefCustomized(c appConfig) func(string) bool {
 			return c.ShellIntegrationEnabled != nil
 		case "pinned_session_ids":
 			return len(c.PinnedSessionIDs) > 0
+		// The nine L1 keys below: this switch is the only thing standing
+		// between a user and losing their config on first login. Any key not
+		// named here is silently treated as "never customized" and gets
+		// overwritten by whatever SeedFromLocal finds on the relay (including
+		// nothing at all). Each predicate answers "did the user explicitly
+		// set this?", not "does this differ from the default?" — zero/empty
+		// is the raw-field signal for "never set" (see ReadValue in
+		// prefssync_adapter.go).
+		case "terminal_theme":
+			return c.TerminalTheme != ""
+		case "terminal_font_head":
+			return c.TerminalFontHead != ""
+		case "terminal_font_size":
+			return c.TerminalFontSize != 0
+		case "terminal_line_height":
+			return c.TerminalLineHeight != 0
+		case "terminal_cursor_style":
+			return c.TerminalCursorStyle != ""
+		case "terminal_cursor_blink":
+			return c.TerminalCursorBlink != nil
+		case "terminal_scrollback":
+			return c.TerminalScrollback != 0
+		case "default_shell":
+			return c.DefaultShell != ""
+		case "shortcut_bindings":
+			return len(c.ShortcutBindings) > 0
 		}
 		return false
 	}

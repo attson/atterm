@@ -201,6 +201,18 @@ export function setTerminalThemePreference(themeID: string): Promise<void> {
   return bindings().SetTerminalTheme(themeID);
 }
 
+// getShortcutBindings / setShortcutBindings read and write the dedicated
+// shortcut_bindings preference key (see desktop/config.go ShortcutBindings),
+// replacing the old Plugins.Shortcuts.Bindings round-trip through
+// usePluginConfigStore.
+export function getShortcutBindings(): Promise<Record<string, string>> {
+  return bindings().GetShortcutBindings();
+}
+
+export function setShortcutBindings(b: Record<string, string>): Promise<void> {
+  return bindings().SetShortcutBindings(b);
+}
+
 export function getTerminalFontHead(): Promise<string> {
   return bindings().GetTerminalFontHead();
 }

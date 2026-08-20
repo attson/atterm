@@ -4,22 +4,43 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	internalfeishu "github.com/attson/atterm/internal/feishu"
 )
 
 // newTestRelayHost spins up a relayHost on a temp HOME / XDG_CONFIG_HOME so
-// the userstore SQLite file lives under t.TempDir() and is cleaned up with
-// the test. Shared by tests that want a real mini-relay without booting
-// the full *App wiring.
+// the userstore SQLite file lives under a temp dir cleaned up with the test.
+// Shared by tests that want a real mini-relay without booting the full *App
+// wiring.
+//
+// The root is os.MkdirTemp, NOT t.TempDir(), and that is load-bearing.
+// t.TempDir registers its own removal as a separate cleanup, and t.Cleanup is
+// LIFO, so the removal ran BEFORE h.Stop for every caller that created
+// anything afterwards. Worse, HOME points here and these tests start a real
+// /bin/sh: a shell writes .bash_history when it EXITS, and an AI-restore
+// session's child writes .claude.json and .claude/backups/. Killing those
+// processes during cleanup makes them write into a directory RemoveAll has
+// already scanned, and the removal fails with "directory not empty" — which
+// surfaced as an unattributable flake in whichever test happened to be
+// running (seen across several branches, including trees predating any of
+// this work).
+//
+// Owning the directory here lets one cleanup do the two things in the right
+// order — stop the host first, then remove — and retry the removal for the
+// moment it takes a dying shell to finish its last write.
 func newTestRelayHost(t *testing.T) *relayHost {
 	t.Helper()
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "atterm-relayhost-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
 	t.Setenv("HOME", root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
@@ -28,10 +49,35 @@ func newTestRelayHost(t *testing.T) *relayHost {
 	cfgStore := &configStore{}
 	h, err := startRelayHost(cfgStore)
 	if err != nil {
+		os.RemoveAll(root)
 		t.Fatalf("startRelayHost: %v", err)
 	}
-	t.Cleanup(h.Stop)
+	t.Cleanup(func() {
+		h.Stop()
+		removeAllEventually(t, root)
+	})
 	return h
+}
+
+// removeAllEventually deletes dir, retrying while a process that is on its way
+// out is still creating files inside it. A shell's .bash_history lands after
+// the shell has been told to die, so a single RemoveAll loses that race often
+// enough to redden CI.
+func removeAllEventually(t *testing.T, dir string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := os.RemoveAll(dir); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			// Leaving a temp dir behind is not worth failing a green test
+			// over; the OS reaps it. Say so rather than silently swallowing.
+			t.Logf("could not remove %s within 2s; leaving it for the OS", dir)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestStartRelayHost_CreatesLocalAdminAndSessionToken verifies that the

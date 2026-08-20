@@ -76,16 +76,14 @@ func (a *App) runRelayPrefsWatchOnce(ctx context.Context, url, token string, all
 		if f.Type != proto.TypePrefsChanged {
 			continue
 		}
-		if a.prefsSync == nil {
-			continue
-		}
-		if err := a.prefsSync.Pull(ctx); err != nil {
-			logWarn("prefs", "pull: %v", err)
-			continue
-		}
-		if a.eventsEmitter != nil {
-			a.eventsEmitter(a.ctx, "prefs:changed")
-		}
+		// Hands off to the serial sync loop (prefs_sync_loop.go) instead of
+		// pulling directly: this frame's ctx is the watch connection's own
+		// (cancelled on relay-config change, independent of a.ctx), but the
+		// pull itself must run serialised against every other prefsSync
+		// caller, which only a.ctx-scoped work on the loop goroutine can do.
+		// Non-blocking, so a burst of change notifications coalesces into
+		// one pull instead of one per frame.
+		a.enqueueSync(syncRequest{pull: true})
 	}
 }
 

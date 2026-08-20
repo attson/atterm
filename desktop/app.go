@@ -277,7 +277,20 @@ type App struct {
 	sftpMu sync.Mutex
 	sftp   *sftpBrowser
 
-	prefsSync *prefssync.Engine
+	// prefsSync is layered behind the prefsSyncEngine interface (defined in
+	// prefs_sync_loop.go) rather than typed as *prefssync.Engine directly, so
+	// tests can substitute a fake without internal/prefssync growing any
+	// desktop-only test scaffolding.
+	prefsSync prefsSyncEngine
+
+	// prefsSyncCh and prefsSyncTaskCh feed the serial sync loop in
+	// prefs_sync_loop.go. That file is the only place allowed to call a
+	// method on prefsSync — see its file-level comment for why.
+	prefsSyncCh     chan syncRequest
+	prefsSyncTaskCh chan func(prefsSyncEngine)
+	// prefsSyncLoopDone is closed when runPrefsSyncLoop returns. Test-only
+	// signal — production code never reads it, see startPrefsSyncLoop.
+	prefsSyncLoopDone chan struct{}
 
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
 	// the most recent successful LoginRemoteRelay / RegisterRemoteRelay.
@@ -472,14 +485,12 @@ func (a *App) startup(ctx context.Context) {
 	adapter := newAppConfigAdapter(a.cfgStore, a.accountKeyForSync)
 	relayClient := newHTTPRelayClient(a.cfgStore)
 	a.prefsSync = prefssync.NewEngine(adapter, relayClient)
+	a.startPrefsSyncLoop()
 
-	// Trigger an initial PULL in the background if already logged in.
+	// Trigger an initial pull if already logged in. Goes through the serial
+	// loop (see prefs_sync_loop.go) like every other prefsSync call.
 	if cfg := a.cfgStore.Get(); cfg.RelaySessionToken != "" {
-		go func() {
-			if err := a.prefsSync.Pull(a.ctx); err == nil {
-				wailsruntime.EventsEmit(a.ctx, "prefs:changed")
-			}
-		}()
+		a.enqueueSync(syncRequest{pull: true})
 	}
 
 	// Auto-update background loop, gated on the persisted preference.
@@ -1788,27 +1799,8 @@ func (a *App) updatePref(key string, mutate func(*appConfig) error) error {
 	return nil
 }
 
-// markPrefDirtyAndPush stamps the meta for key with the current ms,
-// then triggers a background PUSH. A failed Push is not fatal to the local
-// write (the key stays dirty and the next Push retries it), but it must not
-// be silent: an unknown_key/invalid_value 400 poisons every subsequent Push
-// (every dirty key rides along in the same batch and fails with it), and
-// that silence is exactly why ssh_hosts_encrypted stayed broken for months
-// after joining syncedKeys — nothing ever surfaced the 400. Log at warn so
-// that failure mode is visible instead of invisible.
-func (a *App) markPrefDirtyAndPush(key string) {
-	if a.prefsSync == nil {
-		return
-	}
-	a.prefsSync.MarkDirty(key, time.Now().UnixMilli())
-	go func() {
-		if err := a.prefsSync.Push(a.ctx); err != nil {
-			logWarn("prefssync", "push after %s changed: %v", key, err)
-		} else {
-			wailsruntime.EventsEmit(a.ctx, "prefs:changed")
-		}
-	}()
-}
+// markPrefDirtyAndPush moved to prefs_sync_loop.go, alongside every other
+// call into the prefs sync engine.
 
 // accountKeyForSync returns a copy of the unlocked E2EE account key, or nil
 // when E2EE is not active. Used by the prefssync adapter to seal/open the SSH

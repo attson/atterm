@@ -174,6 +174,30 @@ jobs:
       - name: PluginFS isolation guard
         run: ./.github/scripts/check-plugin-fs-isolation.sh
 
+      # gofmt has never been gated, and it shows: by the time this step was
+      # added, 14 files across cmd/, desktop/ and internal/ were unformatted,
+      # including two that shipped in the previous two releases. An unenforced
+      # convention rots the same way the "verify embed has no drift" comment
+      # described a gate that did not exist. `gofmt -l` prints offenders and
+      # exits 0, so the emptiness of its output is the assertion.
+      # amd64 only: formatting is architecture-independent, so running it on
+      # both matrix legs would just double the failure noise.
+      - name: gofmt
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          # git ls-files, not `gofmt -l .`: the latter walks node_modules and
+          # every other untracked tree, which is both slow and capable of
+          # failing the build over a file nobody here owns.
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean; run 'gofmt -w' on them"
+            echo "$unformatted"
+            gofmt -d $unformatted | head -200
+            exit 1
+          fi
+          echo "all Go files are gofmt-clean."
+
       - name: vet
         run: go vet -tags webkit2_41 ./...
 

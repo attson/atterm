@@ -20,7 +20,9 @@ func TestGetPreferences_ReturnsEmptyItemsForFreshUser(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK { t.Fatalf("status %d: %s", rec.Code, rec.Body.String()) }
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
 	var body struct {
 		Items []userstore.PreferenceItem `json:"items"`
 	}
@@ -52,13 +54,17 @@ func TestGetPreferences_ReturnsStoredRows(t *testing.T) {
 		[]userstore.PreferenceItem{
 			{Key: "locale_preference", ValueJSON: json.RawMessage(`"en"`), UpdatedAt: 100},
 		})
-	if err != nil { t.Fatalf("seed: %v", err) }
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
 	req := httptest.NewRequest("GET", "/api/me/preferences", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK { t.Fatalf("status %d", rec.Code) }
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
 	if !strings.Contains(rec.Body.String(), `"locale_preference"`) {
 		t.Fatalf("missing key in body: %s", rec.Body.String())
 	}
@@ -77,12 +83,18 @@ func TestPutPreferences_InsertsAndReturnsFullState(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK { t.Fatalf("status %d: %s", rec.Code, rec.Body.String()) }
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
 	var resp struct {
 		Items []userstore.PreferenceItem `json:"items"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil { t.Fatalf("decode: %v", err) }
-	if len(resp.Items) != 2 { t.Fatalf("got %d items: %s", len(resp.Items), rec.Body.String()) }
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("got %d items: %s", len(resp.Items), rec.Body.String())
+	}
 }
 
 func TestPutPreferences_RejectsUnknownKey(t *testing.T) {
@@ -113,7 +125,9 @@ func TestPutPreferences_OlderTimestampIsRejectedAndCurrentReturned(t *testing.T)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK { t.Fatalf("status %d", rec.Code) }
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
 	if !strings.Contains(rec.Body.String(), `"zh-CN"`) {
 		t.Fatalf("expected server value preserved, body=%s", rec.Body.String())
 	}

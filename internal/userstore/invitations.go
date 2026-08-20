@@ -20,8 +20,8 @@ var ErrInviteInvalid = errors.New("userstore: invitation invalid or already cons
 // Invitation is the row shape exposed for admin listings. It never carries
 // the plaintext code — only the hash and a short prefix for UI hinting.
 type Invitation struct {
-	CodeHash   string     // sha256(plaintext) hex; never reversible
-	CodePrefix string     // "inv_" + first 4 chars of base32 body (UI hint)
+	CodeHash   string // sha256(plaintext) hex; never reversible
+	CodePrefix string // "inv_" + first 4 chars of base32 body (UI hint)
 	Note       string
 	CreatedAt  time.Time
 	ExpiresAt  *time.Time
@@ -75,10 +75,10 @@ func (s *DBStore) CreateInvitation(ctx context.Context, expiresAt *time.Time, no
 	}
 
 	inv := &Invitation{
-		CodeHash:  hash,
+		CodeHash:   hash,
 		CodePrefix: prefix,
-		Note:      note,
-		CreatedAt: now,
+		Note:       note,
+		CreatedAt:  now,
 	}
 	if expiresAt != nil {
 		t := *expiresAt

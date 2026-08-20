@@ -2,8 +2,8 @@ package hookinstall
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	_ "embed"
+	"encoding/hex"
 )
 
 //go:embed atterm-hook

@@ -120,7 +120,7 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 
 	t.Log("=== step 5: PATCH column_set with new columns (option buttons) ===")
 	askOpts := internalfeishu.AskOptionsColumnSet("manual-probe-sid", []string{"写代码", "代码审查", "研究"})
-	delete(askOpts, "tag")     // partial_element shouldn't restate tag (immutable)
+	delete(askOpts, "tag") // partial_element shouldn't restate tag (immutable)
 	err = client.PatchCardElement(ctx, tok, cardID, internalfeishu.AnchorButtonsElementID,
 		askOpts, 5)
 	if err != nil {
@@ -227,12 +227,12 @@ func TestManualProbe_SendAndPatch(t *testing.T) {
 						"tag": "column", "width": "auto",
 						"elements": []any{
 							map[string]any{
-								"tag":        "button",
-								"element_id": "probe_reset",
-								"type":       "default",
-								"text":       map[string]any{"tag": "plain_text", "content": "重置"},
+								"tag":              "button",
+								"element_id":       "probe_reset",
+								"type":             "default",
+								"text":             map[string]any{"tag": "plain_text", "content": "重置"},
 								"form_action_type": "reset",
-								"name":       "reset_btn",
+								"name":             "reset_btn",
 							},
 						},
 					},

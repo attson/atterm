@@ -149,7 +149,7 @@ func runStoreContract(t *testing.T, open func(t *testing.T) *DBStore) {
 			RateLimitPerMinute: 600, MaxConnectionsPerKey: 64,
 			AllowedOrigins: []string{"https://a.example", "https://b.example"},
 			VAPIDSubject:   "mailto:x@y.z", Debug: true,
-			FeishuEnabled:  true, FeishuEncryptKey: "k", FeishuBaseURL: "https://f",
+			FeishuEnabled: true, FeishuEncryptKey: "k", FeishuBaseURL: "https://f",
 		}
 		w1, err := st.SetRelayConfig(ctx, in)
 		if err != nil {

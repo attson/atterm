@@ -670,8 +670,6 @@ func TestDialErrorsMapToThreeDistinctReplyCodes(t *testing.T) {
 	}
 }
 
-
-
 // TestDialTimeoutReportsAFailureCode pins that a dialer that times out is a
 // failure reply too, not a connection parked forever waiting on it.
 func TestDialTimeoutReportsAFailureCode(t *testing.T) {

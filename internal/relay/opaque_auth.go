@@ -36,13 +36,13 @@ type OpaqueAuthHandler struct {
 	// realmID is the realm this relay belongs to. It is echoed back in
 	// every auth-finalize response so clients can anchor their account_key
 	// to a (relay, realm) pair rather than just the origin URL.
-	realmID           string
+	realmID string
 	// instancePublicURL is this relay node's public URL (empty for
 	// single-instance / dev). It is used in resolveHomeInstanceURL to
 	// treat the serving node as live even before its heartbeat row exists.
 	instancePublicURL string
 	loginSessions     sync.Map // session_id -> *loginPending
-	stepUpSessions sync.Map // session_id -> *stepUpPending (M1i)
+	stepUpSessions    sync.Map // session_id -> *stepUpPending (M1i)
 }
 
 // loginPending is the in-flight OPAQUE login state for a single (email,
@@ -93,8 +93,6 @@ type (
 )
 
 // ----- Handlers (stubs filled in by Tasks 7-10) -----
-
-
 
 // Register adds the four OPAQUE routes to mux. Mirrors the style used by
 // AuthServer.RegisterInto: method-prefixed patterns (Go 1.22+ ServeMux) with

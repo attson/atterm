@@ -299,7 +299,6 @@ func (g *handshakeGuard) Close() error {
 	return g.ReadWriteCloser.Close()
 }
 
-
 // OpenContext is Open under a deadline, and is what the desktop should call.
 //
 // Bounding this one matters more than it looks. Done() means "redial before the

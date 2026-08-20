@@ -33,9 +33,9 @@ func (f *fakePtyForAdopt) Read(p []byte) (int, error) {
 	<-f.blockRead
 	return 0, io.EOF
 }
-func (f *fakePtyForAdopt) Write(p []byte) (int, error) { return len(p), nil }
+func (f *fakePtyForAdopt) Write(p []byte) (int, error)    { return len(p), nil }
 func (f *fakePtyForAdopt) Resize(cols, rows uint16) error { return nil }
-func (f *fakePtyForAdopt) stop()                       { close(f.blockRead) }
+func (f *fakePtyForAdopt) stop()                          { close(f.blockRead) }
 
 func (f *fakePtyForAdopt) PasteFile(_ context.Context, sid uuid.UUID, p proto.PasteFilePayload) error {
 	f.mu.Lock()
@@ -100,7 +100,7 @@ func (h *hostWithoutPasteFile) Read(p []byte) (int, error) {
 	<-h.blockRead
 	return 0, io.EOF
 }
-func (h *hostWithoutPasteFile) Write(p []byte) (int, error) { return len(p), nil }
+func (h *hostWithoutPasteFile) Write(p []byte) (int, error)    { return len(p), nil }
 func (h *hostWithoutPasteFile) Resize(cols, rows uint16) error { return nil }
 
 func TestAdoptDropsPasteFileWhenHostLacksInterface(t *testing.T) {

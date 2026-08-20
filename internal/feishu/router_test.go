@@ -17,7 +17,7 @@ func (s *stubSubscriber) SendInput(b []byte) bool {
 	s.sentIn = append(s.sentIn, append([]byte(nil), b...))
 	return true
 }
-func (s *stubSubscriber) OwnerOpenID() string      { return s.openID }
+func (s *stubSubscriber) OwnerOpenID() string       { return s.openID }
 func (s *stubSubscriber) CurrentDriverName() string { return "" }
 
 func TestRouter_ReplyHappyPath(t *testing.T) {

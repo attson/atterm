@@ -85,6 +85,6 @@ func main() {
 			Filename: "notes.pdf", ContentType: "application/pdf", Data: []byte("hello"),
 		}),
 	})
-	emit("list.bin", proto.Frame{Type: proto.TypeList})  // no session id, no payload
-	emit("ping.bin", proto.Frame{Type: proto.TypePing})  // empty frame
+	emit("list.bin", proto.Frame{Type: proto.TypeList}) // no session id, no payload
+	emit("ping.bin", proto.Frame{Type: proto.TypePing}) // empty frame
 }

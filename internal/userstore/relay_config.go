@@ -31,8 +31,8 @@ type RelayConfig struct {
 // treat Version==0 as "not configured yet".
 func (s *DBStore) GetRelayConfig(ctx context.Context) (RelayConfig, error) {
 	var (
-		c          RelayConfig
-		originsRaw string
+		c                                  RelayConfig
+		originsRaw                         string
 		debug, debugPayload, feishuEnabled int64
 	)
 	err := s.db.QueryRowContext(ctx, s.dia.Rebind(

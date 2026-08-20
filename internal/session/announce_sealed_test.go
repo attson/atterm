@@ -11,7 +11,7 @@ import (
 // TestUpdateAdvertisedInfo_AdoptsSealed guards the mirror-session data
 // path used by mobile HTTP GET /api/sessions:
 //
-//   agent  ─ANNOUNCE(sealed + stripped)─►  relay mirror  ──ss.Info()──►  /api/sessions
+//	agent  ─ANNOUNCE(sealed + stripped)─►  relay mirror  ──ss.Info()──►  /api/sessions
 //
 // Because the agent's uplink strips plaintext title/cwd/command and
 // carries the sealed envelope instead, the mirror's meta.Sealed MUST

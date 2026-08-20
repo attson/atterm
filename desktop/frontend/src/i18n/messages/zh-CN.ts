@@ -991,4 +991,16 @@ export const zhCN = {
     cancel: "取消",
     noHostsSelected: "请至少选择一台主机",
   },
+  sync: {
+    stateIdle: "已是最新",
+    stateSyncing: "同步中…",
+    stateOffline: "未同步（未配置中转服务器）",
+    stateError: "同步失败",
+    syncNow: "立即同步",
+    lastSyncedNever: "从未同步",
+    lastSyncedAt: "上次同步 {time}",
+    pendingKeys: "还有 {count} 项改动待同步",
+    pulledAdopted: "已从其他设备更新：{keys}",
+    pulledConflict: "保留了本机版本（其他设备也改过）：{keys}",
+  },
 } as const satisfies Messages;

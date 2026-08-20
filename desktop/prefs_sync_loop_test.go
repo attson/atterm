@@ -32,6 +32,9 @@ type fakePrefsSyncEngine struct {
 	pullErr        error
 	pushErr        error
 	pullPanic      bool
+	// pullResult is returned by Pull whenever pullErr is nil, so tests can
+	// drive the "sync:pulled" event without a real relay.
+	pullResult prefssync.PullResult
 
 	// callDelay holds every Pull/Push call up briefly so concurrent
 	// enqueueSync callers have a real window to race into the engine if
@@ -80,6 +83,7 @@ func (f *fakePrefsSyncEngine) Pull(ctx context.Context) (prefssync.PullResult, e
 	err := f.pullErr
 	doPanic := f.pullPanic
 	delay := f.callDelay
+	result := f.pullResult
 	f.mu.Unlock()
 
 	if delay > 0 {
@@ -88,7 +92,10 @@ func (f *fakePrefsSyncEngine) Pull(ctx context.Context) (prefssync.PullResult, e
 	if doPanic {
 		panic("fakePrefsSyncEngine: pull panic")
 	}
-	return prefssync.PullResult{}, err
+	if err != nil {
+		return prefssync.PullResult{}, err
+	}
+	return result, nil
 }
 
 func (f *fakePrefsSyncEngine) Push(ctx context.Context) error {
@@ -596,5 +603,359 @@ func TestMarkPrefDirtyAndPush_MarkDirtyPrecedesThePush(t *testing.T) {
 	}
 	if fake.markDirtyCallCount() != 1 {
 		t.Fatalf("MarkDirty calls = %d, want 1", fake.markDirtyCallCount())
+	}
+}
+
+// --- SyncStatus / SyncNow / sync:status / sync:pulled ---
+//
+// recordedEvent + newRecordingEmitter give the tests below a way to assert
+// both that an event fired and what it carried, without a live Wails
+// context -- the same injection point emitPrefsChanged already relies on.
+
+type recordedEvent struct {
+	name string
+	data []interface{}
+}
+
+func newRecordingEmitter() (emit func(ctx context.Context, name string, data ...interface{}), get func() []recordedEvent) {
+	var mu sync.Mutex
+	var events []recordedEvent
+	emit = func(ctx context.Context, name string, data ...interface{}) {
+		mu.Lock()
+		events = append(events, recordedEvent{name: name, data: data})
+		mu.Unlock()
+	}
+	get = func() []recordedEvent {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]recordedEvent, len(events))
+		copy(out, events)
+		return out
+	}
+	return emit, get
+}
+
+// syncStatusStates filters events down to every "sync:status" payload's
+// State, in emission order -- what the tests below actually care about.
+func syncStatusStates(events []recordedEvent) []string {
+	var out []string
+	for _, e := range events {
+		if e.name != "sync:status" || len(e.data) == 0 {
+			continue
+		}
+		status, ok := e.data[0].(SyncStatus)
+		if !ok {
+			continue
+		}
+		out = append(out, status.State)
+	}
+	return out
+}
+
+func statesEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// configuredCfgStore builds a cfgStore with everything syncOffline checks
+// for present, so GetSyncStatus never falls into "offline" -- the baseline
+// every "error"/"idle"/"syncing" test below starts from.
+func configuredCfgStore(extra appConfig) *configStore {
+	extra.RelayURL = "https://relay.example"
+	extra.RelaySessionToken = "session-token"
+	extra.RelayPaused = false
+	return &configStore{cfg: extra}
+}
+
+// TestGetSyncStatus_OfflineWhenRelayNotConfigured pins the offline/error
+// distinction from the task-3 brief: an unconfigured relay must report
+// "offline", never "error" -- even when the engine call that ran while
+// unconfigured (a real relay client would fail auth) came back with an
+// error. syncOffline is checked before the stored error in GetSyncStatus
+// specifically so this can't regress into a red indicator.
+func TestGetSyncStatus_OfflineWhenRelayNotConfigured(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = &configStore{cfg: appConfig{}} // RelayURL, RelaySessionToken both empty
+
+	fake.mu.Lock()
+	fake.pullErr = errors.New("not logged in")
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{pull: true})
+	waitFor(t, time.Second, "pull to run while unconfigured", func() bool {
+		pull, _ := fake.counts()
+		return pull == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	if got := a.GetSyncStatus().State; got != "offline" {
+		t.Fatalf("State = %q, want %q (relay is not configured; a failed engine call must not surface as \"error\")", got, "offline")
+	}
+}
+
+// TestGetSyncStatus_ErrorWhenConfiguredAndSyncFails pins the other half of
+// the distinction: with a relay actually configured, a failed Push must
+// report "error", carrying the failure's message -- the whole point being
+// that a silent failure (the ssh_hosts_encrypted incident referenced in
+// markPrefDirtyAndPush) is no longer silent.
+func TestGetSyncStatus_ErrorWhenConfiguredAndSyncFails(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+
+	fake.mu.Lock()
+	fake.pushErr = errors.New("400 unknown_key: ssh_hosts_encrypted")
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "failing push to run", func() bool {
+		_, push := fake.counts()
+		return push == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	status := a.GetSyncStatus()
+	if status.State != "error" {
+		t.Fatalf("State = %q, want %q", status.State, "error")
+	}
+	if !strings.Contains(status.LastError, "400 unknown_key: ssh_hosts_encrypted") {
+		t.Fatalf("LastError = %q, want it to contain the push failure's message", status.LastError)
+	}
+}
+
+// TestGetSyncStatus_ErrorClearsOnNextSuccess pins the "clears on the next
+// success" requirement: a failed push puts the status into "error"; a
+// subsequent successful push must clear both State back to "idle" and
+// LastError back to "". Before recordSyncOutcome existed, nothing ever
+// reset a stored failure -- this is the test that would catch that
+// regressing back in.
+func TestGetSyncStatus_ErrorClearsOnNextSuccess(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+
+	fake.mu.Lock()
+	fake.pushErr = errors.New("400 unknown_key")
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "failing push to run", func() bool {
+		_, push := fake.counts()
+		return push == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+	if got := a.GetSyncStatus().State; got != "error" {
+		t.Fatalf("State after failing push = %q, want %q", got, "error")
+	}
+
+	fake.mu.Lock()
+	fake.pushErr = nil
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "succeeding push to run", func() bool {
+		_, push := fake.counts()
+		return push == 2
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	status := a.GetSyncStatus()
+	if status.State != "idle" {
+		t.Fatalf("State after succeeding push = %q, want %q", status.State, "idle")
+	}
+	if status.LastError != "" {
+		t.Fatalf("LastError = %q after a successful push, want empty", status.LastError)
+	}
+	if status.LastSyncedAt == 0 {
+		t.Fatal("LastSyncedAt still 0 after a successful push")
+	}
+}
+
+// TestGetSyncStatus_PendingKeysCountsDirtyKeys pins that PendingKeys is the
+// same number dirtyPrefKeys() would report -- the brief's instruction to
+// reuse that helper rather than growing a second way to count the same
+// thing. A PendingKeys computed some other way (e.g. from push call counts)
+// would not track this.
+func TestGetSyncStatus_PendingKeysCountsDirtyKeys(t *testing.T) {
+	a, _, cancel := newLoopTestApp(t)
+	defer cancel()
+	a.cfgStore = configuredCfgStore(appConfig{PrefsMeta: map[string]prefsMetaEntry{
+		"ssh_hosts_encrypted": {Dirty: true, UpdatedAtLocal: 1},
+		"terminal_theme":      {Dirty: true, UpdatedAtLocal: 2},
+		"default_shell":       {Dirty: false, UpdatedAtLocal: 3},
+	}})
+
+	want := len(a.dirtyPrefKeys())
+	if want != 2 {
+		t.Fatalf("test fixture: dirtyPrefKeys() = %d, want 2 (sanity check on the fixture itself)", want)
+	}
+	if got := a.GetSyncStatus().PendingKeys; got != want {
+		t.Fatalf("PendingKeys = %d, want %d (dirtyPrefKeys() count)", got, want)
+	}
+}
+
+// TestSyncNow_OfflineReturnsErrorWithoutEnqueuing pins "SyncNow errors only
+// for cannot-start (offline)": with no relay configured it must return a
+// non-nil error and must not enqueue any engine work.
+func TestSyncNow_OfflineReturnsErrorWithoutEnqueuing(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = &configStore{cfg: appConfig{}}
+
+	if err := a.SyncNow(); err == nil {
+		t.Fatal("SyncNow() returned nil error while offline, want an error")
+	}
+	time.Sleep(50 * time.Millisecond)
+	pull, push := fake.counts()
+	if pull != 0 || push != 0 {
+		t.Fatalf("pull=%d push=%d after an offline SyncNow, want 0/0 (must not enqueue)", pull, push)
+	}
+}
+
+// TestSyncNow_OnlineEnqueuesPullThenPush pins the success half: with a
+// relay configured, SyncNow returns nil immediately and the loop ends up
+// running both a pull and a push.
+func TestSyncNow_OnlineEnqueuesPullThenPush(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+
+	if err := a.SyncNow(); err != nil {
+		t.Fatalf("SyncNow() = %v, want nil while configured", err)
+	}
+	waitFor(t, time.Second, "SyncNow's pull and push to run", func() bool {
+		pull, push := fake.counts()
+		return pull == 1 && push == 1
+	})
+}
+
+// TestSyncStatusEvent_FiresOnTransitions_Success pins "a sync:status event
+// fires on every state transition": a single successful push, starting from
+// idle, must emit exactly the two states the loop actually passes through
+// -- "syncing" then back to "idle" -- not zero (silently updating internal
+// state only) and not more (an emit per internal field write instead of per
+// observable transition).
+func TestSyncStatusEvent_FiresOnTransitions_Success(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "push to run", func() bool {
+		_, push := fake.counts()
+		return push == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	got := syncStatusStates(events())
+	want := []string{"syncing", "idle"}
+	if !statesEqual(got, want) {
+		t.Fatalf("sync:status states = %v, want %v", got, want)
+	}
+}
+
+// TestSyncStatusEvent_FiresOnTransitions_Error is the failing counterpart:
+// a push that errors must transition to "error", not back to "idle".
+func TestSyncStatusEvent_FiresOnTransitions_Error(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	fake.mu.Lock()
+	fake.pushErr = errors.New("boom")
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{push: true})
+	waitFor(t, time.Second, "failing push to run", func() bool {
+		_, push := fake.counts()
+		return push == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	got := syncStatusStates(events())
+	want := []string{"syncing", "error"}
+	if !statesEqual(got, want) {
+		t.Fatalf("sync:status states = %v, want %v", got, want)
+	}
+}
+
+// TestSyncPulledEvent_FiresWhenPullChangedSomething pins "sync:pulled fires
+// with the PullResult after a pull that changed something": a Pull result
+// carrying an adopted key must produce exactly one "sync:pulled" event
+// carrying that same PullResult.
+func TestSyncPulledEvent_FiresWhenPullChangedSomething(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	want := prefssync.PullResult{Adopted: []string{"terminal_theme"}, Conflict: []string{"default_shell"}}
+	fake.mu.Lock()
+	fake.pullResult = want
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{pull: true})
+	waitFor(t, time.Second, "pull to run", func() bool {
+		pull, _ := fake.counts()
+		return pull == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	var pulled []recordedEvent
+	for _, e := range events() {
+		if e.name == "sync:pulled" {
+			pulled = append(pulled, e)
+		}
+	}
+	if len(pulled) != 1 {
+		t.Fatalf("sync:pulled events = %d, want 1", len(pulled))
+	}
+	got, ok := pulled[0].data[0].(prefssync.PullResult)
+	if !ok {
+		t.Fatalf("sync:pulled payload type = %T, want prefssync.PullResult", pulled[0].data[0])
+	}
+	if !statesEqual(got.Adopted, want.Adopted) || !statesEqual(got.Conflict, want.Conflict) {
+		t.Fatalf("sync:pulled payload = %+v, want %+v", got, want)
+	}
+}
+
+// TestSyncPulledEvent_SilentWhenPullChangedNothing is the counterpart: a
+// Pull whose result is empty (nothing adopted, nothing conflicting -- the
+// common no-op case) must not fire "sync:pulled" at all.
+func TestSyncPulledEvent_SilentWhenPullChangedNothing(t *testing.T) {
+	a, fake, cancel := newLoopTestApp(t)
+	defer stopLoop(t, a, cancel)
+	a.cfgStore = configuredCfgStore(appConfig{})
+	emit, events := newRecordingEmitter()
+	a.eventsEmitter = emit
+
+	fake.mu.Lock()
+	fake.pullResult = prefssync.PullResult{}
+	fake.mu.Unlock()
+
+	a.enqueueSync(syncRequest{pull: true})
+	waitFor(t, time.Second, "pull to run", func() bool {
+		pull, _ := fake.counts()
+		return pull == 1
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	for _, e := range events() {
+		if e.name == "sync:pulled" {
+			t.Fatalf("unexpected sync:pulled event for an empty PullResult: %+v", e)
+		}
 	}
 }

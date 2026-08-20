@@ -292,6 +292,31 @@ type App struct {
 	// signal — production code never reads it, see startPrefsSyncLoop.
 	prefsSyncLoopDone chan struct{}
 
+	// syncStatusMu guards the fields below it, which back GetSyncStatus /
+	// SyncNow (see prefs_sync_loop.go). Read from any goroutine (a Wails
+	// call from the frontend); written only by the serial sync loop
+	// goroutine, via recordSyncOutcome / setSyncBusy — never touched
+	// directly outside those two so there is exactly one writer.
+	syncStatusMu sync.Mutex
+	// syncBusy is true for the duration of one runSyncRequest/runSyncTask
+	// call on the loop goroutine -- surfaced as SyncStatus.State ==
+	// "syncing" (when a relay is actually configured; see syncOffline).
+	syncBusy bool
+	// syncLastSyncedAt is the ms timestamp of the most recent Pull or Push
+	// that returned no error. Zero means never.
+	syncLastSyncedAt int64
+	// syncLastError is the Error() text of the most recent failed Pull or
+	// Push. Cleared (set back to "") the next time either succeeds -- see
+	// recordSyncOutcome. This is deliberately not sticky: the whole point
+	// of this field, per markPrefDirtyAndPush's comment about
+	// ssh_hosts_encrypted staying silently broken for months, is that a
+	// failure must surface, and a success must be able to say so too.
+	syncLastError string
+	// syncLastEmittedState is the last SyncStatus.State value actually sent
+	// over the "sync:status" event, so emitSyncStatusIfChanged only fires on
+	// an observable transition instead of once per internal field write.
+	syncLastEmittedState string
+
 	// accountKey is the user's E2EE account_key (32 bytes) unlocked by
 	// the most recent successful LoginRemoteRelay / RegisterRemoteRelay.
 	// In-memory only in v1 — lost on app restart, requires re-login. A

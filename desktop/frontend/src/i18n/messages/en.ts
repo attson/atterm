@@ -1028,6 +1028,18 @@ export const en = {
     cancel: "Cancel",
     noHostsSelected: "Select at least one host",
   },
+  sync: {
+    stateIdle: "Up to date",
+    stateSyncing: "Syncing…",
+    stateOffline: "Not syncing (no relay configured)",
+    stateError: "Sync failed",
+    syncNow: "Sync now",
+    lastSyncedNever: "Never synced",
+    lastSyncedAt: "Last synced {time}",
+    pendingKeys: "{count} change(s) waiting to sync",
+    pulledAdopted: "Updated from another device: {keys}",
+    pulledConflict: "Kept this device's version (changed elsewhere too): {keys}",
+  },
 };
 
 export type Messages = typeof en;

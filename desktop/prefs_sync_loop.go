@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 
@@ -72,9 +73,13 @@ func (a *App) runPrefsSyncLoop() {
 		case <-a.ctx.Done():
 			return
 		case req := <-a.prefsSyncCh:
+			a.setSyncBusy(true)
 			a.runSyncRequest(req)
+			a.setSyncBusy(false)
 		case task := <-a.prefsSyncTaskCh:
+			a.setSyncBusy(true)
 			a.runSyncTask(task)
+			a.setSyncBusy(false)
 		}
 	}
 }
@@ -151,15 +156,13 @@ func (a *App) runSyncRequest(req syncRequest) {
 		}
 	}()
 	if req.pull {
-		// The result (which keys were adopted vs. left in conflict) is not
-		// consumed yet -- surfacing it to the UI is a later task in this
-		// plan. Widening the signature here so the engine can report it at
-		// all, and updating this one call site plus the desktop-side
-		// interface, is this task's whole scope.
-		if _, err := engine.Pull(a.ctx); err != nil {
+		result, err := engine.Pull(a.ctx)
+		a.recordSyncOutcome(err)
+		if err != nil {
 			logWarn("prefssync", "pull: %v", err)
 		} else {
 			a.emitPrefsChanged()
+			a.emitSyncPulledIfNonEmpty(result)
 		}
 	}
 	if req.push {
@@ -178,7 +181,9 @@ func (a *App) runSyncRequest(req syncRequest) {
 		// about it is exactly how ssh_hosts_encrypted stayed broken for
 		// months after joining syncedKeys — nothing ever surfaced the 400.
 		dirty := a.dirtyPrefKeys()
-		if err := engine.Push(a.ctx); err != nil {
+		err := engine.Push(a.ctx)
+		a.recordSyncOutcome(err)
+		if err != nil {
 			logWarn("prefssync", "push failed (dirty: %v): %v", dirty, err)
 		} else {
 			a.emitPrefsChanged()
@@ -256,9 +261,12 @@ func (a *App) enqueuePostLoginSeed() {
 		return
 	}
 	task := func(engine prefsSyncEngine) {
-		if _, err := engine.Pull(a.ctx); err != nil {
+		result, err := engine.Pull(a.ctx)
+		a.recordSyncOutcome(err)
+		if err != nil {
 			return
 		}
+		a.emitSyncPulledIfNonEmpty(result)
 		cfg := a.cfgStore.Get()
 		userID := cfg.RelaySessionUserID
 		if userID == "" || cfg.PrefsSeedMarkerFor(userID) {
@@ -274,10 +282,12 @@ func (a *App) enqueuePostLoginSeed() {
 		// relay (nothing, if this Push never landed) over the local values
 		// that never got a second chance to upload.
 		if err := engine.Push(a.ctx); err != nil {
+			a.recordSyncOutcome(err)
 			logWarn("prefssync", "seed push for user %s: %v", userID, err)
 			a.emitPrefsChanged()
 			return
 		}
+		a.recordSyncOutcome(nil)
 		cfg2 := a.cfgStore.Get()
 		if cfg2.PrefsSeedMarkers == nil {
 			cfg2.PrefsSeedMarkers = map[string]bool{}
@@ -290,4 +300,154 @@ func (a *App) enqueuePostLoginSeed() {
 	case a.prefsSyncTaskCh <- task:
 	case <-a.ctx.Done():
 	}
+}
+
+// SyncStatus is the frontend-facing view of the sync loop's state, returned
+// by GetSyncStatus and pushed as the "sync:status" event payload on every
+// observable transition. State is one of "idle" | "syncing" | "offline" |
+// "error" -- see syncOffline and GetSyncStatus for how those are told apart.
+type SyncStatus struct {
+	State        string `json:"state"`
+	LastSyncedAt int64  `json:"last_synced_at"` // ms, 0 = never
+	PendingKeys  int    `json:"pending_keys"`
+	LastError    string `json:"last_error,omitempty"`
+}
+
+// syncOffline reports whether cross-device sync cannot currently run at
+// all -- no relay configured, no session, or the relay is paused. This is
+// the exact condition applyRelayPrefsWatch (prefs_watch.go) already uses to
+// decide whether to even start the prefs watch; reused verbatim here rather
+// than restated so the two can never drift apart. It is deliberately not
+// folded into "error": "not configured" is not a failure, and GetSyncStatus
+// checks this first so an unconfigured relay never renders as the red
+// "error" state, no matter what the last engine call happened to return.
+func (a *App) syncOffline(cfg appConfig) bool {
+	return cfg.RelayURL == "" || cfg.RelayPaused || cfg.RelaySessionToken == ""
+}
+
+// GetSyncStatus reports the current state of cross-device preference sync
+// for the frontend. Safe to call from any goroutine (the Wails call
+// dispatcher in particular): it only reads a.cfgStore, a.dirtyPrefKeys, and
+// the syncStatusMu-guarded fields written by recordSyncOutcome/setSyncBusy
+// on the loop goroutine.
+func (a *App) GetSyncStatus() SyncStatus {
+	var cfg appConfig
+	if a.cfgStore != nil {
+		cfg = a.cfgStore.Get()
+	}
+	pending := len(a.dirtyPrefKeys())
+
+	a.syncStatusMu.Lock()
+	busy := a.syncBusy
+	lastSyncedAt := a.syncLastSyncedAt
+	lastError := a.syncLastError
+	a.syncStatusMu.Unlock()
+
+	state := "idle"
+	switch {
+	case a.prefsSync == nil || a.syncOffline(cfg):
+		state = "offline"
+	case busy:
+		state = "syncing"
+	case lastError != "":
+		state = "error"
+	}
+
+	return SyncStatus{
+		State:        state,
+		LastSyncedAt: lastSyncedAt,
+		PendingKeys:  pending,
+		LastError:    lastError,
+	}
+}
+
+// SyncNow enqueues an immediate pull-then-push and returns without waiting
+// for it to finish -- the outcome arrives later via the "sync:status" and
+// "sync:pulled" events. It only ever errors for "cannot start": no relay
+// configured (see syncOffline). A failure of the sync itself (a bad PUT, a
+// network error) is not returned here; that is what LastError /
+// "sync:status" are for.
+func (a *App) SyncNow() error {
+	var cfg appConfig
+	if a.cfgStore != nil {
+		cfg = a.cfgStore.Get()
+	}
+	if a.prefsSync == nil || a.syncOffline(cfg) {
+		return errors.New("sync is offline: no relay configured")
+	}
+	a.enqueueSync(syncRequest{pull: true, push: true})
+	return nil
+}
+
+// recordSyncOutcome updates the stored result of one engine call (a single
+// Pull or Push, not a whole coalesced request) and emits "sync:status" if
+// that changed the externally visible state. err == nil clears any
+// previously stored error and stamps LastSyncedAt with now; a non-nil err
+// overwrites LastError with its text. Called once per engine call rather
+// than once per request so that, within one pull-then-push request, a
+// failing push after a successful pull still ends the request in the
+// "error" state -- the later call's outcome always wins.
+func (a *App) recordSyncOutcome(err error) {
+	a.syncStatusMu.Lock()
+	if err != nil {
+		a.syncLastError = err.Error()
+	} else {
+		a.syncLastError = ""
+		a.syncLastSyncedAt = time.Now().UnixMilli()
+	}
+	a.syncStatusMu.Unlock()
+	a.emitSyncStatusIfChanged()
+}
+
+// setSyncBusy marks whether the loop is currently inside a
+// runSyncRequest/runSyncTask call (runPrefsSyncLoop toggles this around
+// both) and emits "sync:status" if that changed the externally visible
+// state. Wrapped around both request kinds, not inside each individually,
+// so the post-login pull/seed/push sequence reads as one "syncing" span
+// rather than flickering between calls.
+func (a *App) setSyncBusy(busy bool) {
+	a.syncStatusMu.Lock()
+	a.syncBusy = busy
+	a.syncStatusMu.Unlock()
+	a.emitSyncStatusIfChanged()
+}
+
+// emitSyncStatusIfChanged recomputes SyncStatus and emits it over
+// "sync:status" only if State differs from the last emitted value --
+// recordSyncOutcome and setSyncBusy both call this unconditionally, and
+// without the dedup a single request would emit far more than one event per
+// actual transition (e.g. a successful pull immediately followed by the
+// busy-false transition, both computing to the same "idle").
+func (a *App) emitSyncStatusIfChanged() {
+	status := a.GetSyncStatus()
+	a.syncStatusMu.Lock()
+	changed := status.State != a.syncLastEmittedState
+	a.syncLastEmittedState = status.State
+	a.syncStatusMu.Unlock()
+	if changed {
+		a.emitSyncStatus(status)
+	}
+}
+
+// emitSyncStatus pushes status to the frontend. Guarded on eventsEmitter
+// alone, the same pattern emitPrefsChanged uses.
+func (a *App) emitSyncStatus(status SyncStatus) {
+	if a.eventsEmitter == nil {
+		return
+	}
+	a.eventsEmitter(a.ctx, "sync:status", status)
+}
+
+// emitSyncPulledIfNonEmpty pushes result over "sync:pulled" only when Pull
+// actually adopted or conflicted on at least one key -- a Pull that touched
+// nothing (the common case: nothing changed on another device since the
+// last pull) has nothing worth telling the user about.
+func (a *App) emitSyncPulledIfNonEmpty(result prefssync.PullResult) {
+	if len(result.Adopted) == 0 && len(result.Conflict) == 0 {
+		return
+	}
+	if a.eventsEmitter == nil {
+		return
+	}
+	a.eventsEmitter(a.ctx, "sync:pulled", result)
 }

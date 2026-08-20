@@ -1031,7 +1031,7 @@ export const en = {
   sync: {
     stateIdle: "Up to date",
     stateSyncing: "Syncing…",
-    stateOffline: "Not syncing (no relay configured)",
+    stateOffline: "Not syncing",
     stateError: "Sync failed",
     syncNow: "Sync now",
     lastSyncedNever: "Never synced",

@@ -14,6 +14,7 @@ import {
   type UpdateState,
 } from "../lib/api";
 import { useI18n } from "../i18n/useI18n";
+import { formatAgo } from "../lib/formatAgo";
 
 defineEmits<{
   (e: "request-install", version: string): void;
@@ -208,14 +209,6 @@ const statusLine = computed(() => {
   if (st.last_check_at > 0) return t("settings.updates.upToDate", { ago: formatAgo(st.last_check_at) });
   return t("settings.updates.notChecked");
 });
-
-function formatAgo(unixSec: number) {
-  const diffSec = Math.floor(Date.now() / 1000) - unixSec;
-  if (diffSec < 60) return t("settings.updates.justNow");
-  if (diffSec < 3600) return t("settings.updates.minutesAgo", { count: Math.floor(diffSec / 60) });
-  if (diffSec < 86400) return t("settings.updates.hoursAgo", { count: Math.floor(diffSec / 3600) });
-  return t("settings.updates.daysAgo", { count: Math.floor(diffSec / 86400) });
-}
 </script>
 
 <template>

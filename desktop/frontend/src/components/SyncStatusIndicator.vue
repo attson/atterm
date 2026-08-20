@@ -4,17 +4,23 @@ import { useI18n } from '../i18n/useI18n'
 import type { MessageKey } from '../i18n'
 import { usePlatform } from '../platform'
 import { getSyncStatus, syncNow, type SyncStatus, type PullResult } from '../lib/api'
+import { formatAgo } from '../lib/formatAgo'
 
 // Desktop-only (design doc §6 "No mobile indicator" -- mobile reads
 // preferences over HTTP from the relay and does not run this engine).
-// Callers must gate mounting this component on `caps.wailsBindings`
-// themselves (see SettingsDialog.vue's header), matching the pattern
-// SettingsProfiles.vue documents: the whole component assumes
-// GetSyncStatus/SyncNow exist rather than re-checking the cap internally,
-// so a caller that forgets the gate fails loudly (bindings() throws) in
-// dev/tests instead of silently degrading.
+// Gated internally on `caps.wailsBindings`: below, `enabled` short-circuits
+// onMounted so it never calls GetSyncStatus/SyncNow, and the template's
+// root v-if renders nothing at all on web/Capacitor. An earlier draft left
+// this ungated and relied on the fetch/SyncNow rejections being caught and
+// swallowed -- but "swallowed" there actually meant a confidently false UI
+// ("Up to date - Never synced" with a live-looking, silently-broken
+// button), which is worse than showing nothing. SettingsDialog.vue also
+// gates mounting this component at all (`v-if="caps.wailsBindings"`,
+// matching SettingsProfiles.vue's precedent) -- that external gate stays
+// as defense in depth, not as the only gate.
 const { t } = useI18n()
 const platform = usePlatform()
+const enabled = platform.caps.wailsBindings
 
 const status = ref<SyncStatus>({ state: 'idle', last_synced_at: 0, pending_keys: 0 })
 const triggering = ref(false)
@@ -64,17 +70,13 @@ function keyLabel(key: string): string {
 
 // last_synced_at: 0 means "never synced" (see SyncStatus in
 // lib/api/_bindings.ts) and must read as "never", not as an epoch date.
+// Design doc §5 asks for *relative* last-sync time; last_synced_at is
+// milliseconds (per _bindings.ts) while formatAgo takes unix seconds, hence
+// the /1000 below.
 const lastSyncedLabel = computed(() => {
   if (status.value.last_synced_at === 0) return t('sync.lastSyncedNever')
-  const d = new Date(status.value.last_synced_at)
-  const time = t('settings.devices.timeFormat', {
-    y: d.getFullYear(),
-    m: d.getMonth() + 1,
-    d: d.getDate(),
-    hh: String(d.getHours()).padStart(2, '0'),
-    mm: String(d.getMinutes()).padStart(2, '0'),
-  })
-  return t('sync.lastSyncedAt', { time })
+  const ago = formatAgo(Math.floor(status.value.last_synced_at / 1000))
+  return t('sync.lastSyncedAt', { time: ago })
 })
 
 // "offline" (no relay configured / paused / logged out) is deliberately its
@@ -114,7 +116,18 @@ function dismissNotice() {
 }
 
 function onStatus(data: unknown) {
+  // Full replace, not a merge: Go's SyncStatus.last_error is `omitempty`, so
+  // a success payload omits the field entirely rather than sending "". A
+  // merge (`{ ...status.value, ...data }`) would leave a stale last_error
+  // sitting in the reactive object forever once set, even though the
+  // template's error paragraph now trusts last_error's mere presence (see
+  // below) instead of re-checking state -- exactly the silent-failure mode
+  // design doc §2 exists to prevent.
   status.value = data as SyncStatus
+  // A prior "cannot start" trigger error is now stale: the engine has just
+  // reported fresher, authoritative status, so any locally-generated error
+  // text from an earlier click no longer applies.
+  triggerError.value = ''
 }
 
 function onPulled(data: unknown) {
@@ -126,6 +139,7 @@ function onPulled(data: unknown) {
 let offStatus: (() => void) | null = null
 let offPulled: (() => void) | null = null
 onMounted(async () => {
+  if (!enabled) return
   offStatus = platform.events.on('sync:status', onStatus)
   offPulled = platform.events.on('sync:pulled', onPulled)
   try {
@@ -144,7 +158,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="sync-indicator" data-testid="sync-indicator" :data-state="status.state">
+  <div v-if="enabled" class="sync-indicator" data-testid="sync-indicator" :data-state="status.state">
     <div class="sync-row">
       <span class="sync-dot" :class="`state-${status.state}`" aria-hidden="true"></span>
       <span class="sync-state" data-testid="sync-state" :data-state="status.state">{{ stateLabel }}</span>
@@ -160,7 +174,13 @@ onBeforeUnmount(() => {
       >{{ t('sync.syncNow') }}</button>
     </div>
 
-    <p v-if="status.state === 'error' && status.last_error" class="sync-error" data-testid="sync-error">
+    <!-- Gate on last_error's mere presence, not status.state === 'error':
+         the Go side guarantees last_error is only ever populated when state
+         is 'error' (see SyncStatus in lib/api/_bindings.ts), so this stays
+         correct either way -- and gating on presence alone is what makes a
+         merge-vs-replace bug in onStatus actually visible instead of
+         accidentally masked by a redundant state check. -->
+    <p v-if="status.last_error" class="sync-error" data-testid="sync-error">
       {{ status.last_error }}
     </p>
     <p v-if="triggerError" class="sync-error" data-testid="sync-trigger-error">{{ triggerError }}</p>

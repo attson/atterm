@@ -994,7 +994,7 @@ export const zhCN = {
   sync: {
     stateIdle: "已是最新",
     stateSyncing: "同步中…",
-    stateOffline: "未同步（未配置中转服务器）",
+    stateOffline: "未同步",
     stateError: "同步失败",
     syncNow: "立即同步",
     lastSyncedNever: "从未同步",

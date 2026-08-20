@@ -37,13 +37,27 @@ describe("SyncStatusIndicator", () => {
   });
 
   it("renders each of the four states distinctly, and offline is not styled as an error", async () => {
+    // Keyed by state, not just asserted state-by-state, so the final
+    // distinctness check below can catch two states silently sharing copy.
+    const labels: Record<SyncStatus["state"], string> = {
+      idle: en.sync.stateIdle,
+      syncing: en.sync.stateSyncing,
+      offline: en.sync.stateOffline,
+      error: en.sync.stateError,
+    };
     for (const state of ["idle", "syncing", "offline", "error"] as const) {
       getSyncStatus.mockResolvedValue(status({ state, last_error: state === "error" ? "boom" : undefined }));
       const { w } = await mountIndicator();
       const el = w.find('[data-testid="sync-state"]');
       expect(el.attributes("data-state")).toBe(state);
+      // The data-state attribute alone is a direct echo of the input and
+      // proves nothing about what the user actually sees -- assert the
+      // rendered label text too, so a mutation that mislabels one state
+      // (e.g. "syncing" showing the idle copy) is caught.
+      expect(el.text()).toBe(labels[state]);
       expect(w.find('[data-testid="sync-indicator"]').attributes("data-state")).toBe(state);
     }
+    expect(new Set(Object.values(labels)).size).toBe(4);
   });
 
   it("offline renders its own label and dot class, distinct from error's", async () => {
@@ -71,12 +85,24 @@ describe("SyncStatusIndicator", () => {
     expect(text).not.toMatch(/1970/);
   });
 
-  it("renders a formatted time when last_synced_at is non-zero", async () => {
-    getSyncStatus.mockResolvedValue(status({ last_synced_at: Date.UTC(2026, 0, 15, 10, 30) }));
-    const { w } = await mountIndicator();
-    const text = w.find('[data-testid="sync-last-synced"]').text();
-    expect(text).not.toBe(en.sync.lastSyncedNever);
-    expect(text).not.toMatch(/1970/);
+  it("renders a relative time when last_synced_at is non-zero (design doc §5)", async () => {
+    const now = Date.UTC(2026, 0, 15, 10, 30, 0);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      // last_synced_at is milliseconds (per _bindings.ts); 5 minutes ago.
+      getSyncStatus.mockResolvedValue(status({ last_synced_at: now - 5 * 60 * 1000 }));
+      const { w } = await mountIndicator();
+      const text = w.find('[data-testid="sync-last-synced"]').text();
+      // Positive assertion of the actual expected output, not just "isn't
+      // the never/epoch case" -- pins the relative-time wording exactly,
+      // reusing the same i18n keys SettingsUpdates.vue's formatAgo() uses.
+      expect(text).toBe(en.sync.lastSyncedAt.replace("{time}", en.settings.updates.minutesAgo.replace("{count}", "5")));
+      expect(text).not.toBe(en.sync.lastSyncedNever);
+      expect(text).not.toMatch(/1970/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows the pending-keys count when non-zero, and hides it at zero", async () => {
@@ -88,6 +114,41 @@ describe("SyncStatusIndicator", () => {
     getSyncStatus.mockResolvedValue(status({ pending_keys: 0 }));
     const { w: w2 } = await mountIndicator();
     expect(w2.find('[data-testid="sync-pending"]').exists()).toBe(false);
+  });
+
+  it("shows the pending-keys count for exactly 1 pending key, not just when > 1", async () => {
+    getSyncStatus.mockResolvedValue(status({ pending_keys: 1 }));
+    const { w } = await mountIndicator();
+    expect(w.find('[data-testid="sync-pending"]').exists()).toBe(true);
+    expect(w.find('[data-testid="sync-pending"]').text()).toContain("1");
+  });
+
+  it("clears a stale error on the next successful sync:status event (replace, not merge)", async () => {
+    getSyncStatus.mockResolvedValue(status({ state: "error", last_error: "network down" }));
+    const { w, events } = await mountIndicator();
+    expect(w.find('[data-testid="sync-error"]').text()).toBe("network down");
+
+    // Go's SyncStatus.last_error is `omitempty` -- a success payload omits
+    // the field entirely rather than sending "". This event has no
+    // last_error key at all, matching the real wire shape.
+    events.emit("sync:status", { state: "idle", last_synced_at: Date.now(), pending_keys: 0 } satisfies SyncStatus);
+    await flushPromises();
+
+    expect(w.find('[data-testid="sync-state"]').text()).toBe(en.sync.stateIdle);
+    expect(w.find('[data-testid="sync-error"]').exists()).toBe(false);
+  });
+
+  it("clears a stale 'cannot start' trigger error once a fresh sync:status event arrives", async () => {
+    syncNow.mockRejectedValueOnce(new Error("cannot start: offline"));
+    const { w, events } = await mountIndicator();
+    await w.find('[data-testid="sync-now-button"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-testid="sync-trigger-error"]').text()).toBe("cannot start: offline");
+
+    events.emit("sync:status", status({ state: "idle", last_synced_at: Date.now() }));
+    await flushPromises();
+
+    expect(w.find('[data-testid="sync-trigger-error"]').exists()).toBe(false);
   });
 
   it('the "sync now" button calls SyncNow and is disabled while syncing', async () => {
@@ -204,40 +265,29 @@ describe("SyncStatusIndicator", () => {
     expect(offSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("an unmounted instance no longer reacts to events (no leaked handler)", async () => {
-    const { w, events } = await mountIndicator();
-    w.unmount();
-    // Emitting after unmount must not throw, and (since the handler is
-    // gone) nothing to assert on the destroyed wrapper's DOM either -- the
-    // absence of a thrown error is the point here.
-    expect(() => events.emit("sync:status", status({ state: "error", last_error: "x" }))).not.toThrow();
-  });
-
   // Platform-gate safety net: this component is meaningful on desktop only
   // (design doc §6 "No mobile indicator"; mobile syncs prefs over HTTP via
   // lib/prefsSync.capacitor.ts, a wholly separate path with no engine for
-  // this status to describe). The real gate lives in SettingsDialog.vue
-  // (`v-if="caps.wailsBindings"`, see SettingsDialog.test.ts), matching
-  // SettingsProfiles.vue's precedent -- SettingsDialog skips mounting this
-  // component at all on non-wails platforms. This test is the defense-in-
-  // depth half: even if some future caller mounts it unguarded on a
-  // wailsBindings=false shape (the exact mistake item 29 made for the
-  // relay-embed settings button), it must degrade quietly instead of dying
-  // on app.wailsBindingsNotReady.
-  it("mounts under a wailsBindings=false platform shape without throwing", async () => {
-    getSyncStatus.mockReset().mockRejectedValue(new Error("Wails bindings not ready"));
-    syncNow.mockReset().mockRejectedValue(new Error("Wails bindings not ready"));
+  // this status to describe). SettingsDialog.vue also gates mounting this
+  // component at all (`v-if="caps.wailsBindings"`, see SettingsDialog.test.ts,
+  // matching SettingsProfiles.vue's precedent) -- that stays as defense in
+  // depth. This test is the component's own internal gate: even if some
+  // future caller mounts it unguarded on a wailsBindings=false shape (the
+  // exact mistake item 29 made for the relay-embed settings button), it must
+  // render nothing at all -- not a confidently false "Up to date" UI with a
+  // silently-broken button, which is worse than absence.
+  it("renders nothing under a wailsBindings=false platform shape, and never calls GetSyncStatus/SyncNow", async () => {
+    getSyncStatus.mockReset();
+    syncNow.mockReset();
     const webPlatform = { ...createFakePlatform(), caps: { ...createFakePlatform().caps, wailsBindings: false } };
     __setPlatformForTests(webPlatform);
     const w = mount(SyncStatusIndicator);
     await flushPromises();
 
-    expect(w.find('[data-testid="sync-indicator"]').exists()).toBe(true);
-    expect(w.find('[data-testid="sync-state"]').text()).toBe(en.sync.stateIdle);
-
-    await w.find('[data-testid="sync-now-button"]').trigger("click");
-    await flushPromises();
-    expect(w.find('[data-testid="sync-trigger-error"]').exists()).toBe(true);
+    expect(w.find('[data-testid="sync-indicator"]').exists()).toBe(false);
+    expect(w.text()).toBe("");
+    expect(getSyncStatus).not.toHaveBeenCalled();
+    expect(syncNow).not.toHaveBeenCalled();
   });
 
   it("mounts under a wailsBindings=true platform shape and fetches status normally", async () => {

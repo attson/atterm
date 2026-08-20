@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"time"
@@ -9,6 +10,15 @@ import (
 
 	"github.com/attson/atterm/internal/prefssync"
 )
+
+// saveDialogFunc is the function ExportConfig uses to prompt for a save
+// path. Held as a field on App (mirroring writeFile) so tests can substitute
+// a stub instead of driving wailsruntime.SaveFileDialog for real —
+// SaveFileDialog calls log.Fatalf when a.ctx has no frontend bound (see
+// getFrontend in wails/v2/pkg/runtime), which kills the whole test binary
+// rather than failing the one test. Defaults to wailsruntime.SaveFileDialog
+// in production.
+type saveDialogFunc func(ctx context.Context, options wailsruntime.SaveDialogOptions) (string, error)
 
 // configExportVersion travels inside the exported file (not inferred from
 // AppVersion) so a future import can recognize and refuse — or migrate — a
@@ -80,24 +90,26 @@ func (a *App) BuildConfigExport(includeLocalEnv bool) (ConfigExport, error) {
 	// path, so reading it through the same adapter the relay uses keeps this
 	// function from silently drifting out of sync with SyncedKeys().
 	adapter := newAppConfigAdapter(a.cfgStore, func() []byte { return nil })
+	// isPrefCustomized, not "ReadValue returned ok" or "not the zero value",
+	// gates inclusion: ReadValue's ok only means "ReadValue chose to marshal
+	// something" — for a plain string/int field it is true even when the
+	// field is "", 0, or a nil slice (which marshals to literal JSON null).
+	// isPrefCustomized is the one predicate in this codebase that already
+	// answers "did the user explicitly set this", the same question
+	// SeedFromLocal asks before trusting a value — reusing it here means an
+	// export of an untouched preference is absent, not present as "" / 0 /
+	// null, matching what a real import should treat as "nothing to apply".
+	customized := isPrefCustomized(cfg)
 	for _, key := range prefssync.SyncedKeys() {
 		if key == "ssh_hosts_encrypted" || key == "profiles_encrypted" {
 			continue
 		}
-		raw, ok := adapter.ReadValue(key)
-		if !ok {
+		if !customized(key) {
 			continue
 		}
-		// A handful of ReadValue cases marshal a nil slice/map field
-		// straight through (json.Marshal(nil) == "null") and still return
-		// ok=true — ReadValue's ok only distinguishes "no pointer set" for
-		// the *T-backed keys, not "empty collection" for the slice/map ones.
-		// Treat literal null the same as ok=false here so an export never
-		// carries a JSON null for a preference nobody has touched.
-		if string(raw) == "null" {
-			continue
+		if raw, ok := adapter.ReadValue(key); ok {
+			prefs[key] = raw
 		}
-		prefs[key] = raw
 	}
 
 	if len(cfg.SSHHosts) > 0 || len(cfg.SSHKeys) > 0 {
@@ -130,10 +142,13 @@ func (a *App) BuildConfigExport(includeLocalEnv bool) (ConfigExport, error) {
 
 // ExportConfig opens a native save dialog (default filename
 // "atterm-config-<ts>.json") and writes the exported config to the chosen
-// path. Mirrors ExportDiagnostics exactly — same cancel semantics
-// (returns "" with a nil error when the user dismisses the dialog without
-// picking a path) and the same injectable a.writeFile seam, so tests can
-// exercise the write path without a real dialog.
+// path. Mirrors ExportDiagnostics's cancel semantics (returns "" with a nil
+// error when the user dismisses the dialog without picking a path) and its
+// injectable a.writeFile seam, plus a.saveDialog: unlike ExportDiagnostics,
+// this function needs its own dialog seam to be unit-testable at all, since
+// the whole point of a test here is to prove the cancel path returns
+// ("", nil) — impossible to assert on without controlling what the dialog
+// returns (see saveDialogFunc for why the real dialog can't run in tests).
 func (a *App) ExportConfig(includeLocalEnv bool) (string, error) {
 	export, err := a.BuildConfigExport(includeLocalEnv)
 	if err != nil {
@@ -145,7 +160,11 @@ func (a *App) ExportConfig(includeLocalEnv bool) (string, error) {
 	}
 
 	defaultName := "atterm-config-" + time.Now().UTC().Format("2006-01-02T15-04-05Z") + ".json"
-	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+	sd := a.saveDialog
+	if sd == nil {
+		sd = wailsruntime.SaveFileDialog
+	}
+	path, err := sd(a.ctx, wailsruntime.SaveDialogOptions{
 		Title:           "Export config",
 		DefaultFilename: defaultName,
 		Filters: []wailsruntime.FileFilter{

@@ -261,6 +261,11 @@ type App struct {
 	// writeFile is os.WriteFile in production; tests substitute a stub.
 	writeFile writeFileFunc
 
+	// saveDialog is wailsruntime.SaveFileDialog in production; ExportConfig's
+	// tests substitute a stub so they never need a bound Wails frontend (see
+	// saveDialogFunc in config_export.go).
+	saveDialog saveDialogFunc
+
 	// sshKnownHostsPath overrides the known_hosts file used by NewSshSession
 	// (tests set a temp path). Empty → ~/.ssh/known_hosts.
 	sshKnownHostsPath string
